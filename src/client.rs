@@ -192,6 +192,8 @@ async fn run_attached(stream: UnixStream) -> io::Result<()> {
     } else {
         log!("client: session ended");
         println!("\n[session ended]");
+        // Force exit because stdin blocking read in spawn_blocking won't terminate
+        std::process::exit(0);
     }
 
     Ok(())

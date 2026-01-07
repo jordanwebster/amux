@@ -75,8 +75,17 @@ async fn main() {
 
 /// Ensure the server is running, start it if not
 async fn ensure_server_running() {
+    // Check if socket exists and server is actually responding
     if Path::new(SOCKET_PATH).exists() {
-        return;
+        // Try to connect to verify server is alive
+        match tokio::net::UnixStream::connect(SOCKET_PATH).await {
+            Ok(_) => return, // Server is running
+            Err(e) => {
+                // Stale socket - server died without cleanup
+                log!("stale socket detected ({}), removing", e);
+                let _ = std::fs::remove_file(SOCKET_PATH);
+            }
+        }
     }
 
     log!("starting server");
@@ -94,7 +103,10 @@ async fn ensure_server_running() {
     // Wait for server to be ready
     for _ in 0..50 {
         if Path::new(SOCKET_PATH).exists() {
-            return;
+            // Verify server is actually listening
+            if tokio::net::UnixStream::connect(SOCKET_PATH).await.is_ok() {
+                return;
+            }
         }
         tokio::time::sleep(Duration::from_millis(100)).await;
     }

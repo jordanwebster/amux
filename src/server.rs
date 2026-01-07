@@ -119,7 +119,7 @@ async fn handle_attach(
     let session = {
         let mut sessions_write = sessions.write().await;
         if let Some(session) = sessions_write.get(&session_name) {
-            if session.is_alive() {
+            if session.is_alive().await {
                 session.clone()
             } else {
                 // Session is dead, create a new one
@@ -168,12 +168,13 @@ async fn handle_list(
 ) -> std::io::Result<()> {
     log!("server: LIST");
 
-    let sessions = sessions.read().await;
-    let mut names: Vec<&str> = sessions
-        .iter()
-        .filter(|(_, s)| s.is_alive())
-        .map(|(name, _)| name.as_str())
-        .collect();
+    let sessions_guard = sessions.read().await;
+    let mut names: Vec<String> = Vec::new();
+    for (name, session) in sessions_guard.iter() {
+        if session.is_alive().await {
+            names.push(name.clone());
+        }
+    }
     names.sort();
 
     // Simple format: one session name per line
