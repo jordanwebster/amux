@@ -1,8 +1,13 @@
 #[macro_use]
 mod log;
 mod client;
+mod config;
+mod connection;
+mod error;
+mod message;
 mod server;
 mod session;
+mod transport;
 
 use clap::{Parser, Subcommand};
 use server::SOCKET_PATH;
@@ -10,10 +15,10 @@ use std::path::Path;
 use std::process::{Command, Stdio};
 use std::time::Duration;
 
-/// Agent multiplexer - terminal multiplexer for Claude
+/// Agent multiplexer - terminal multiplexer for AI agents
 #[derive(Parser)]
 #[command(name = "amux")]
-#[command(about = "Terminal multiplexer for Claude agents", long_about = None)]
+#[command(about = "Terminal multiplexer for AI agents (Claude, Codex, etc.)", long_about = None)]
 struct Cli {
     #[command(subcommand)]
     command: Option<Commands>,
@@ -25,14 +30,27 @@ struct Cli {
 
 #[derive(Subcommand)]
 enum Commands {
-    /// Attach to an agent session (default if no command given)
-    Attach {
-        /// Target session name (default: agent1)
-        #[arg(short = 't', long, default_value = "agent1")]
+    /// Create a new agent session
+    #[command(name = "new-agent")]
+    NewAgent {
+        /// Command to run (e.g., claude, codex)
+        command: String,
+
+        /// Session name
+        #[arg(short = 't', long, default_value = "default")]
         target: String,
     },
+
+    /// Attach to an existing agent session
+    Attach {
+        /// Target session name (default: first available)
+        #[arg(short = 't', long)]
+        target: Option<String>,
+    },
+
     /// List all running agent sessions
     ListAgents,
+
     /// Kill all agents and shut down the server
     KillServer,
 }
@@ -45,7 +63,7 @@ async fn main() {
 
     // Hidden server mode
     if cli.server {
-        let server = server::Server::new();
+        let mut server = server::Server::new();
         if let Err(e) = server.run().await {
             log!("server error: {}", e);
             std::process::exit(1);
@@ -55,13 +73,17 @@ async fn main() {
 
     let result = match cli.command {
         None => {
-            // Default: attach to agent1
+            // Default: attach to first available agent
             ensure_server_running().await;
-            client::attach("agent1").await
+            client::attach(None).await
+        }
+        Some(Commands::NewAgent { command, target }) => {
+            ensure_server_running().await;
+            client::new_agent(&target, &command).await
         }
         Some(Commands::Attach { target }) => {
             ensure_server_running().await;
-            client::attach(&target).await
+            client::attach(target.as_deref()).await
         }
         Some(Commands::ListAgents) => client::list_agents().await,
         Some(Commands::KillServer) => client::kill_server().await,

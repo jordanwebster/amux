@@ -1,36 +1,96 @@
+use crate::config::Config;
+use crate::error::{AmuxError, Result};
+use crate::message::AgentInfo;
 use portable_pty::{native_pty_system, CommandBuilder, MasterPty, PtySize};
 use std::io::Read;
+use std::path::PathBuf;
 use std::sync::Arc;
-use tokio::io::{AsyncReadExt, AsyncWriteExt};
-use tokio::net::unix::{OwnedReadHalf, OwnedWriteHalf};
 use tokio::sync::{broadcast, mpsc, Mutex, RwLock};
 
+/// Maximum replay buffer size
 const MAX_REPLAY_BUFFER: usize = 10 * 1024 * 1024; // 10MB
 
-/// Message sent when a session ends
-#[derive(Clone)]
-pub enum SessionEvent {
-    /// Session ended normally (Claude exited)
-    Ended(String),
+/// Unique identifier for an agent session
+#[derive(Debug, Clone, Hash, Eq, PartialEq)]
+pub struct AgentId {
+    pub host_id: String,
+    pub user_id: String,
+    pub agent_id: String,
 }
 
-pub struct AgentSession {
-    pub name: String,
-    master: Arc<Mutex<Option<Box<dyn MasterPty + Send>>>>,
+impl AgentId {
+    pub fn new(host_id: &str, user_id: &str, agent_id: &str) -> Self {
+        Self {
+            host_id: host_id.to_string(),
+            user_id: user_id.to_string(),
+            agent_id: agent_id.to_string(),
+        }
+    }
+
+    /// Create an AgentId from config and a local agent name
+    pub fn local(config: &Config, agent_id: &str) -> Self {
+        Self::new(&config.host_id, &config.user_id, agent_id)
+    }
+}
+
+impl std::fmt::Display for AgentId {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        write!(f, "{}:{}:{}", self.host_id, self.user_id, self.agent_id)
+    }
+}
+
+/// Event sent when a session ends
+#[derive(Clone)]
+pub enum SessionEvent {
+    /// Session ended (agent exited)
+    Ended(AgentId),
+}
+
+/// A local agent session with PTY
+pub struct LocalAgentSession {
+    /// Unique identifier
+    pub id: AgentId,
+
+    /// Command used to spawn this agent
+    pub command: String,
+
+    /// Working directory where agent was spawned
+    pub working_dir: PathBuf,
+
+    /// PTY master (None if closed)
+    pty_master: Arc<Mutex<Option<Box<dyn MasterPty + Send>>>>,
+
+    /// Replay buffer for new subscribers
     replay_buffer: Arc<RwLock<Vec<u8>>>,
+
+    /// Broadcast channel for PTY output
     broadcast_tx: Arc<RwLock<Option<broadcast::Sender<Vec<u8>>>>>,
-    pty_input_tx: mpsc::Sender<Vec<u8>>,
+
+    /// Channel to send input to PTY
+    input_tx: mpsc::Sender<Vec<u8>>,
+
+    /// Current terminal size
     current_size: Arc<Mutex<(u16, u16)>>,
 }
 
-impl AgentSession {
+impl LocalAgentSession {
+    /// Create a new agent session
     pub fn new(
-        name: String,
+        id: AgentId,
+        command: &str,
+        working_dir: PathBuf,
         rows: u16,
         cols: u16,
         event_tx: mpsc::Sender<SessionEvent>,
-    ) -> std::io::Result<Self> {
-        log!("session [{}]: creating with size {}x{}", name, cols, rows);
+    ) -> Result<Self> {
+        log!(
+            "session [{}]: creating with command '{}' in {:?} ({}x{})",
+            id.agent_id,
+            command,
+            working_dir,
+            cols,
+            rows
+        );
 
         // Create PTY
         let pty_system = native_pty_system();
@@ -41,24 +101,24 @@ impl AgentSession {
                 pixel_width: 0,
                 pixel_height: 0,
             })
-            .map_err(|e| std::io::Error::new(std::io::ErrorKind::Other, e.to_string()))?;
+            .map_err(|e| AmuxError::Pty(e.to_string()))?;
 
-        // Spawn Claude
-        let mut cmd = CommandBuilder::new("claude");
-        cmd.cwd(std::env::current_dir()?);
+        // Spawn command
+        let mut cmd = CommandBuilder::new(command);
+        cmd.cwd(&working_dir);
         let mut child = pair
             .slave
             .spawn_command(cmd)
-            .map_err(|e| std::io::Error::new(std::io::ErrorKind::Other, e.to_string()))?;
+            .map_err(|e| AmuxError::Pty(e.to_string()))?;
         drop(pair.slave);
 
         let master = pair.master;
         let mut pty_reader = master
             .try_clone_reader()
-            .map_err(|e| std::io::Error::new(std::io::ErrorKind::Other, e.to_string()))?;
+            .map_err(|e| AmuxError::Pty(e.to_string()))?;
         let mut pty_writer = master
             .take_writer()
-            .map_err(|e| std::io::Error::new(std::io::ErrorKind::Other, e.to_string()))?;
+            .map_err(|e| AmuxError::Pty(e.to_string()))?;
 
         let master: Arc<Mutex<Option<Box<dyn MasterPty + Send>>>> =
             Arc::new(Mutex::new(Some(master)));
@@ -67,12 +127,12 @@ impl AgentSession {
         let (broadcast_tx, _) = broadcast::channel::<Vec<u8>>(256);
         let broadcast_tx: Arc<RwLock<Option<broadcast::Sender<Vec<u8>>>>> =
             Arc::new(RwLock::new(Some(broadcast_tx)));
-        let (pty_input_tx, mut pty_input_rx) = mpsc::channel::<Vec<u8>>(256);
+        let (input_tx, mut input_rx) = mpsc::channel::<Vec<u8>>(256);
 
         // Task: Read from PTY, append to replay buffer, broadcast to clients
         let broadcast_tx_clone = broadcast_tx.clone();
         let replay_buffer_clone = replay_buffer.clone();
-        let session_name = name.clone();
+        let session_id = id.agent_id.clone();
         tokio::task::spawn_blocking(move || {
             let rt = tokio::runtime::Handle::current();
             let mut buffer = [0u8; 4096];
@@ -99,180 +159,139 @@ impl AgentSession {
                     Err(_) => break,
                 }
             }
-            log!("session [{}]: PTY reader ended", session_name);
+            log!("session [{}]: PTY reader ended", session_id);
         });
 
         // Task: Forward input to PTY
-        let session_name = name.clone();
+        let session_id = id.agent_id.clone();
         tokio::spawn(async move {
-            while let Some(data) = pty_input_rx.recv().await {
+            while let Some(data) = input_rx.recv().await {
                 if pty_writer.write_all(&data).is_err() {
                     break;
                 }
                 let _ = pty_writer.flush();
             }
-            log!("session [{}]: PTY writer ended", session_name);
+            log!("session [{}]: PTY writer ended", session_id);
         });
 
         // Task: Wait for child to exit, then clean up and notify server
-        let session_name = name.clone();
+        let session_id = id.clone();
         let master_clone = master.clone();
         let broadcast_tx_clone = broadcast_tx.clone();
         tokio::task::spawn_blocking(move || {
             let status = child.wait();
-            log!("session [{}]: Claude exited: {:?}", session_name, status);
+            log!(
+                "session [{}]: command exited: {:?}",
+                session_id.agent_id,
+                status
+            );
 
             let rt = tokio::runtime::Handle::current();
             rt.block_on(async {
-                // Drop the PTY master to kill any remaining shell/processes
+                // Drop the PTY master to kill any remaining processes
                 {
                     let mut master = master_clone.lock().await;
                     master.take();
-                    log!("session [{}]: PTY master dropped", session_name);
+                    log!("session [{}]: PTY master dropped", session_id.agent_id);
                 }
 
                 // Close broadcast channel to disconnect all clients
                 {
                     let mut tx = broadcast_tx_clone.write().await;
                     tx.take();
-                    log!("session [{}]: broadcast channel closed", session_name);
+                    log!(
+                        "session [{}]: broadcast channel closed",
+                        session_id.agent_id
+                    );
                 }
 
                 // Notify server
-                let _ = event_tx.send(SessionEvent::Ended(session_name)).await;
+                let _ = event_tx.send(SessionEvent::Ended(session_id)).await;
             });
         });
 
-        Ok(AgentSession {
-            name,
-            master,
+        Ok(Self {
+            id,
+            command: command.to_string(),
+            working_dir,
+            pty_master: master,
             replay_buffer,
             broadcast_tx,
-            pty_input_tx,
+            input_tx,
             current_size,
         })
     }
 
-    /// Check if the session is still alive (broadcast channel is open)
+    /// Check if the session is still alive
     pub async fn is_alive(&self) -> bool {
         self.broadcast_tx.read().await.is_some()
     }
 
-    pub async fn attach(
-        &self,
-        reader: OwnedReadHalf,
-        writer: OwnedWriteHalf,
-        rows: u16,
-        cols: u16,
-    ) -> bool {
-        // Returns true if detached normally, false if session ended
+    /// Get the replay buffer
+    pub async fn get_replay_buffer(&self) -> Vec<u8> {
+        self.replay_buffer.read().await.clone()
+    }
 
-        if !self.is_alive().await {
-            log!("session [{}]: refusing attach, session is dead", self.name);
-            return false;
-        }
+    /// Subscribe to the broadcast channel
+    pub async fn subscribe(&self) -> Option<broadcast::Receiver<Vec<u8>>> {
+        self.broadcast_tx
+            .read()
+            .await
+            .as_ref()
+            .map(|tx| tx.subscribe())
+    }
 
-        log!("session [{}]: client attaching with size {}x{}", self.name, cols, rows);
+    /// Send input to the PTY
+    pub async fn send_input(&self, data: Vec<u8>) -> Result<()> {
+        self.input_tx
+            .send(data)
+            .await
+            .map_err(|_| AmuxError::ConnectionClosed)
+    }
 
-        // Resize PTY if needed
-        {
-            let mut current = self.current_size.lock().await;
-            if *current != (rows, cols) {
-                let master_guard = self.master.lock().await;
-                if let Some(master) = master_guard.as_ref() {
-                    if let Err(e) = master.resize(PtySize {
+    /// Resize the PTY
+    pub async fn resize(&self, rows: u16, cols: u16) -> Result<()> {
+        let mut current = self.current_size.lock().await;
+        if *current != (rows, cols) {
+            let master_guard = self.pty_master.lock().await;
+            if let Some(master) = master_guard.as_ref() {
+                master
+                    .resize(PtySize {
                         rows,
                         cols,
                         pixel_width: 0,
                         pixel_height: 0,
-                    }) {
-                        log!("session [{}]: resize failed: {}", self.name, e);
-                    } else {
-                        log!("session [{}]: resized to {}x{}", self.name, cols, rows);
-                        *current = (rows, cols);
-                    }
-                }
+                    })
+                    .map_err(|e| AmuxError::Pty(e.to_string()))?;
+                log!(
+                    "session [{}]: resized to {}x{}",
+                    self.id.agent_id,
+                    cols,
+                    rows
+                );
+                *current = (rows, cols);
             }
         }
-
-        let mut writer = writer;
-        let mut reader = reader;
-
-        // Send replay buffer
-        {
-            let buf = self.replay_buffer.read().await;
-            if !buf.is_empty() {
-                log!("session [{}]: sending {} bytes replay", self.name, buf.len());
-                if writer.write_all(&buf).await.is_err() {
-                    return false;
-                }
-                let _ = writer.flush().await;
-            }
-        }
-
-        // Subscribe to broadcast channel
-        let broadcast_rx = {
-            let tx_guard = self.broadcast_tx.read().await;
-            match tx_guard.as_ref() {
-                Some(tx) => tx.subscribe(),
-                None => {
-                    log!("session [{}]: broadcast channel already closed", self.name);
-                    return false;
-                }
-            }
-        };
-        let mut broadcast_rx = broadcast_rx;
-        let pty_input_tx = self.pty_input_tx.clone();
-        let session_name = self.name.clone();
-
-        // Task: PTY output -> client
-        let write_task = tokio::spawn(async move {
-            loop {
-                match broadcast_rx.recv().await {
-                    Ok(data) => {
-                        if writer.write_all(&data).await.is_err() {
-                            return true; // Client disconnected
-                        }
-                        let _ = writer.flush().await;
-                    }
-                    Err(broadcast::error::RecvError::Closed) => {
-                        return false; // Session ended
-                    }
-                    Err(broadcast::error::RecvError::Lagged(_)) => continue,
-                }
-            }
-        });
-
-        // Task: client input -> PTY
-        let read_task = tokio::spawn(async move {
-            let mut buffer = [0u8; 1024];
-            loop {
-                match reader.read(&mut buffer).await {
-                    Ok(0) => return true, // Client disconnected
-                    Ok(n) => {
-                        if pty_input_tx.send(buffer[..n].to_vec()).await.is_err() {
-                            return false; // Session ended
-                        }
-                    }
-                    Err(_) => return true, // Client disconnected
-                }
-            }
-        });
-
-        let client_initiated = tokio::select! {
-            result = write_task => result.unwrap_or(false),
-            result = read_task => result.unwrap_or(false),
-        };
-
-        log!("session [{}]: client detached (client_initiated={})", session_name, client_initiated);
-        client_initiated
+        Ok(())
     }
 
+    /// Shutdown the session
     pub async fn shutdown(&self) {
-        log!("session [{}]: shutting down", self.name);
+        log!("session [{}]: shutting down", self.id.agent_id);
         // Drop the PTY master to kill any remaining processes
-        self.master.lock().await.take();
+        self.pty_master.lock().await.take();
         // Close broadcast channel to disconnect clients
         self.broadcast_tx.write().await.take();
     }
+
+    /// Convert to AgentInfo for listing
+    pub fn to_agent_info(&self) -> AgentInfo {
+        AgentInfo {
+            agent_id: self.id.agent_id.clone(),
+            command: self.command.clone(),
+            working_dir: self.working_dir.clone(),
+        }
+    }
 }
+
+use std::io::Write;

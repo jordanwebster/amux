@@ -2,17 +2,38 @@
 
 This file provides guidance for AI assistants working on the amux codebase.
 
+## First Steps
+
+1. **Read DEVLOG.md** - See recent work, decisions made, and current state
+2. **Read this file** - Understand code style and project structure
+3. **Skim ARCHITECTURE.md** - Canonical design for the system
+
+## After Completing Work
+
+1. Run `cargo fmt && cargo clippy && cargo test`
+2. **Update DEVLOG.md** - Add an entry describing what was done (see template in DEVLOG.md)
+
 ## Current State (January 2025)
 
-The existing code in `src/` is an **early prototype** that predates the current architecture. It demonstrates basic PTY multiplexing but does not follow the designs in ARCHITECTURE.md.
+**Milestone 1 is complete.** The codebase implements local terminal connections with the new architecture:
 
-**Source of truth:** Use ARCHITECTURE.md for the canonical design, not the prototype code. The prototype may be useful for reference on PTY handling (`portable-pty` usage), but the overall structure needs to be rewritten.
+- Message-based protocol with serde/bincode serialization
+- Transport trait with length-prefixed framing
+- Raw byte mode after subscribe (zero framing overhead)
+- Multi-client support via broadcast channels
 
-**Files to note:**
-- `src/main.rs` - CLI parsing (can be adapted)
-- `src/session.rs` - PTY spawning patterns (useful reference)
-- `src/server.rs`, `src/client.rs` - Will be restructured
-- `prototyping.rs` - Design sketches, not real code
+**Files:**
+- `src/main.rs` - CLI (new-agent, attach, list-agents, kill-server)
+- `src/message.rs` - Protocol messages with serde
+- `src/transport.rs` - Transport trait and UnixTransport
+- `src/session.rs` - AgentId and LocalAgentSession with PTY
+- `src/server.rs` - Server with connection and subscription management
+- `src/client.rs` - Client protocol implementation
+- `src/config.rs` - Server configuration
+- `src/connection.rs` - ConnectionId and connection state
+- `src/error.rs` - Error types with thiserror
+
+**Source of truth:** ARCHITECTURE.md remains the canonical design for future work (TCP, WebSocket, cloud mode).
 
 ## Suggested Implementation Order
 
@@ -124,13 +145,33 @@ src/
 2. Update `handle_connection_closed` for cleanup
 3. Update `handle_add_agents` for population
 
-## Testing
+## Building and Testing
+
+**After making any code changes, always run:**
 
 ```bash
+cargo fmt               # Format code
+cargo clippy            # Lint (fix any warnings)
 cargo test              # Run all tests
-cargo test -- --nocapture  # See println output
-cargo clippy            # Lint
-cargo fmt               # Format
+```
+
+**After completing a chunk of work:**
+- Update DEVLOG.md with a new entry (see template in that file)
+
+Additional commands:
+```bash
+cargo check             # Fast type-check without full build
+cargo test -- --nocapture  # See println output in tests
+cargo build --release   # Build optimized binary
+```
+
+Manual testing:
+```bash
+cargo run -- new-agent -t test1 claude   # Create agent
+cargo run -- attach -t test1             # Attach (in another terminal)
+cargo run -- list-agents                 # List running agents
+cargo run -- kill-server                 # Clean shutdown
+# Use Ctrl-b d to detach without killing agent
 ```
 
 ## Questions?

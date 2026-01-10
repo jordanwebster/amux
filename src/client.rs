@@ -1,4 +1,7 @@
-use crate::server::{CMD_ATTACH, CMD_KILL, CMD_LIST, SOCKET_PATH};
+use crate::error::{AmuxError, Result};
+use crate::message::Message;
+use crate::server::SOCKET_PATH;
+use crate::transport::{Transport, UnixTransport};
 use std::io::{self, Read, Write};
 use std::os::unix::io::AsRawFd;
 use std::sync::atomic::{AtomicBool, Ordering};
@@ -21,81 +24,224 @@ pub fn get_terminal_size() -> (u16, u16) {
     }
 }
 
-/// Attach to a session
-pub async fn attach(session_name: &str) -> io::Result<()> {
-    let mut stream = UnixStream::connect(SOCKET_PATH).await?;
+/// Create a new agent and attach to it
+pub async fn new_agent(agent_id: &str, command: &str) -> Result<()> {
+    let stream = UnixStream::connect(SOCKET_PATH).await?;
     log!("client: connected to server");
 
-    // Send ATTACH command
-    stream.write_u8(CMD_ATTACH).await?;
-
-    // Send session name (null-terminated)
-    stream.write_all(session_name.as_bytes()).await?;
-    stream.write_u8(0).await?;
-
-    // Send terminal size
+    let mut transport = UnixTransport::new(stream);
     let (rows, cols) = get_terminal_size();
-    log!("client: ATTACH {} ({}x{})", session_name, cols, rows);
-    stream.write_all(&rows.to_be_bytes()).await?;
-    stream.write_all(&cols.to_be_bytes()).await?;
-    stream.flush().await?;
+    let working_dir = std::env::current_dir()?;
 
-    // Now enter streaming mode
-    run_attached(stream).await
+    log!(
+        "client: CREATE {} command='{}' dir={:?} ({}x{})",
+        agent_id,
+        command,
+        working_dir,
+        cols,
+        rows
+    );
+
+    // Send CreateAgent
+    transport
+        .write_message(&Message::CreateAgent {
+            agent_id: agent_id.to_string(),
+            command: command.to_string(),
+            working_dir: working_dir.clone(),
+            rows,
+            cols,
+        })
+        .await?;
+    transport.flush().await?;
+
+    // Read response
+    let response = transport.read_message().await?;
+    match response {
+        Message::CreateAgentResult { success: true, .. } => {
+            log!("client: agent created successfully");
+        }
+        Message::CreateAgentResult {
+            success: false,
+            error,
+        } => {
+            return Err(AmuxError::Pty(
+                error.unwrap_or_else(|| "Unknown error".to_string()),
+            ));
+        }
+        _ => {
+            return Err(AmuxError::InvalidMessage);
+        }
+    }
+
+    // Now subscribe
+    subscribe_and_stream(transport, agent_id, rows, cols).await
+}
+
+/// Attach to an existing agent
+pub async fn attach(agent_id: Option<&str>) -> Result<()> {
+    let stream = UnixStream::connect(SOCKET_PATH).await?;
+    log!("client: connected to server");
+
+    let mut transport = UnixTransport::new(stream);
+    let (rows, cols) = get_terminal_size();
+
+    // If no agent_id specified, list agents and pick the first one
+    let agent_id = match agent_id {
+        Some(id) => id.to_string(),
+        None => {
+            transport.write_message(&Message::ListAgents).await?;
+            transport.flush().await?;
+
+            let response = transport.read_message().await?;
+            match response {
+                Message::ListAgentsResult { agents } if !agents.is_empty() => {
+                    agents[0].agent_id.clone()
+                }
+                Message::ListAgentsResult { .. } => {
+                    eprintln!("No agents running. Use 'amux new-agent' to create one.");
+                    return Ok(());
+                }
+                _ => {
+                    return Err(AmuxError::InvalidMessage);
+                }
+            }
+        }
+    };
+
+    log!("client: ATTACH {} ({}x{})", agent_id, cols, rows);
+
+    subscribe_and_stream(transport, &agent_id, rows, cols).await
+}
+
+/// Subscribe to an agent and stream I/O
+async fn subscribe_and_stream(
+    mut transport: UnixTransport,
+    agent_id: &str,
+    rows: u16,
+    cols: u16,
+) -> Result<()> {
+    // Send Subscribe
+    transport
+        .write_message(&Message::Subscribe {
+            agent_id: agent_id.to_string(),
+            rows,
+            cols,
+        })
+        .await?;
+    transport.flush().await?;
+
+    // Read SubscribeResult
+    let response = transport.read_message().await?;
+    match response {
+        Message::SubscribeResult { success: true, .. } => {
+            log!("client: subscribed successfully");
+        }
+        Message::SubscribeResult {
+            success: false,
+            error,
+        } => {
+            eprintln!(
+                "Failed to subscribe: {}",
+                error.unwrap_or_else(|| "Unknown error".to_string())
+            );
+            return Ok(());
+        }
+        _ => {
+            return Err(AmuxError::InvalidMessage);
+        }
+    }
+
+    // Read ReplayBytes
+    let response = transport.read_message().await?;
+    let replay_data = match response {
+        Message::ReplayBytes { data } => data,
+        _ => {
+            return Err(AmuxError::InvalidMessage);
+        }
+    };
+
+    // Now enter raw mode and stream
+    run_attached(transport, &replay_data).await
 }
 
 /// List all running agents
-pub async fn list_agents() -> io::Result<()> {
-    let mut stream = match UnixStream::connect(SOCKET_PATH).await {
+pub async fn list_agents() -> Result<()> {
+    let stream = match UnixStream::connect(SOCKET_PATH).await {
         Ok(s) => s,
-        Err(e) if e.kind() == io::ErrorKind::NotFound || e.kind() == io::ErrorKind::ConnectionRefused => {
+        Err(e)
+            if e.kind() == io::ErrorKind::NotFound
+                || e.kind() == io::ErrorKind::ConnectionRefused =>
+        {
             println!("No agents running.");
             return Ok(());
         }
-        Err(e) => return Err(e),
+        Err(e) => return Err(e.into()),
     };
 
-    // Send LIST command
-    stream.write_u8(CMD_LIST).await?;
-    stream.flush().await?;
+    let mut transport = UnixTransport::new(stream);
 
-    // Read response
-    let mut response = String::new();
-    stream.read_to_string(&mut response).await?;
-    print!("{}", response);
+    transport.write_message(&Message::ListAgents).await?;
+    transport.flush().await?;
+
+    let response = transport.read_message().await?;
+    match response {
+        Message::ListAgentsResult { agents } => {
+            if agents.is_empty() {
+                println!("No agents running.");
+            } else {
+                println!("Running agents:");
+                for agent in agents {
+                    println!(
+                        "  {} ({}) - {:?}",
+                        agent.agent_id, agent.command, agent.working_dir
+                    );
+                }
+            }
+        }
+        _ => {
+            return Err(AmuxError::InvalidMessage);
+        }
+    }
 
     Ok(())
 }
 
 /// Kill all agents and shut down the server
-pub async fn kill_server() -> io::Result<()> {
-    let mut stream = match UnixStream::connect(SOCKET_PATH).await {
+pub async fn kill_server() -> Result<()> {
+    let stream = match UnixStream::connect(SOCKET_PATH).await {
         Ok(s) => s,
-        Err(e) if e.kind() == io::ErrorKind::NotFound || e.kind() == io::ErrorKind::ConnectionRefused => {
+        Err(e)
+            if e.kind() == io::ErrorKind::NotFound
+                || e.kind() == io::ErrorKind::ConnectionRefused =>
+        {
             println!("No server running.");
             return Ok(());
         }
-        Err(e) => return Err(e),
+        Err(e) => return Err(e.into()),
     };
 
-    // Send KILL command
-    stream.write_u8(CMD_KILL).await?;
-    stream.flush().await?;
+    let mut transport = UnixTransport::new(stream);
 
-    // Read response
-    let mut response = String::new();
-    stream.read_to_string(&mut response).await?;
-    print!("{}", response);
+    transport.write_message(&Message::Shutdown).await?;
+    transport.flush().await?;
 
+    println!("Server shutting down.");
     Ok(())
 }
 
-/// Run the attached session (streaming mode with Ctrl-a handling)
-async fn run_attached(stream: UnixStream) -> io::Result<()> {
-    let (mut reader, mut writer) = stream.into_split();
+/// Run the attached session (streaming mode with Ctrl-b handling)
+async fn run_attached(transport: UnixTransport, replay_data: &[u8]) -> Result<()> {
+    let (mut reader, mut writer) = transport.into_split();
 
     // Put terminal in raw mode
     let _raw_guard = RawModeGuard::new()?;
+
+    // Write replay data to stdout
+    if !replay_data.is_empty() {
+        log!("client: writing {} bytes replay", replay_data.len());
+        io::stdout().write_all(replay_data)?;
+        io::stdout().flush()?;
+    }
 
     // Flag to signal detach
     let detach_flag = Arc::new(AtomicBool::new(false));
@@ -117,7 +263,7 @@ async fn run_attached(stream: UnixStream) -> io::Result<()> {
         }
     });
 
-    // Task: Forward local stdin to server (with Ctrl-a handling)
+    // Task: Forward local stdin to server (with Ctrl-b handling)
     let stdin_task = tokio::task::spawn_blocking(move || {
         let mut stdin = io::stdin();
         let mut buffer = [0u8; 1024];
@@ -153,7 +299,8 @@ async fn run_attached(stream: UnixStream) -> io::Result<()> {
                                     }
                                 }
                                 _ => {
-                                    if rt.block_on(writer.write_all(&[CTRL_B, next_byte])).is_err() {
+                                    if rt.block_on(writer.write_all(&[CTRL_B, next_byte])).is_err()
+                                    {
                                         return;
                                     }
                                 }
