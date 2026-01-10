@@ -1,0 +1,408 @@
+use serde::Deserialize;
+use std::path::Path;
+
+/// Config definition in test environment
+#[derive(Debug, Clone, Deserialize)]
+pub struct TestConfig {
+    pub name: String,
+    #[serde(default)]
+    pub host_id: Option<String>,
+    #[serde(default)]
+    pub socket_path: Option<String>,
+}
+
+/// Terminal definition in test environment
+#[derive(Debug, Clone, Deserialize)]
+pub struct Terminal {
+    pub name: String,
+    pub config: String,
+}
+
+/// A single step in a test
+#[derive(Debug, Clone)]
+pub enum TestStep {
+    /// Switch to a different terminal
+    SwitchTerminal(String),
+    /// Send input (a line to type)
+    Input(String),
+    /// Expect output (exact match)
+    ExpectOutput(String),
+}
+
+/// A parsed test case
+#[derive(Debug)]
+pub struct TestCase {
+    pub name: String,
+    pub description: Option<String>,
+    pub configs: Vec<TestConfig>,
+    pub terminals: Vec<Terminal>,
+    pub steps: Vec<TestStep>,
+}
+
+/// Parse error
+#[derive(Debug)]
+pub struct ParseError {
+    pub line: usize,
+    pub message: String,
+}
+
+impl std::fmt::Display for ParseError {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        write!(f, "line {}: {}", self.line, self.message)
+    }
+}
+
+impl std::error::Error for ParseError {}
+
+/// Parse a test file
+pub fn parse_test_file(path: &Path) -> Result<TestCase, ParseError> {
+    let content = std::fs::read_to_string(path).map_err(|e| ParseError {
+        line: 0,
+        message: format!("Failed to read file: {}", e),
+    })?;
+    parse_test_content(&content)
+}
+
+/// Parse test content from a string
+pub fn parse_test_content(content: &str) -> Result<TestCase, ParseError> {
+    let mut name: Option<String> = None;
+    let mut description: Option<String> = None;
+    let mut configs: Vec<TestConfig> = Vec::new();
+    let mut terminals: Vec<Terminal> = Vec::new();
+    let mut steps: Vec<TestStep> = Vec::new();
+
+    #[derive(Debug, PartialEq)]
+    enum Section {
+        Header,
+        Environment,
+        Test,
+    }
+
+    let mut current_section = Section::Header;
+    let mut yaml_block: Vec<String> = Vec::new();
+    let mut yaml_type: Option<&str> = None;
+    let mut line_num = 0;
+
+    let flush_yaml_block = |yaml_block: &mut Vec<String>,
+                            yaml_type: &mut Option<&str>,
+                            configs: &mut Vec<TestConfig>,
+                            terminals: &mut Vec<Terminal>,
+                            line_num: usize|
+     -> Result<(), ParseError> {
+        if yaml_block.is_empty() {
+            return Ok(());
+        }
+
+        let yaml_content = yaml_block.join("\n");
+        yaml_block.clear();
+
+        match *yaml_type {
+            Some("config") => {
+                let config: TestConfig =
+                    serde_yaml::from_str(&yaml_content).map_err(|e| ParseError {
+                        line: line_num,
+                        message: format!("Invalid config YAML: {}", e),
+                    })?;
+                configs.push(config);
+            }
+            Some("terminal") => {
+                let terminal: Terminal =
+                    serde_yaml::from_str(&yaml_content).map_err(|e| ParseError {
+                        line: line_num,
+                        message: format!("Invalid terminal YAML: {}", e),
+                    })?;
+                terminals.push(terminal);
+            }
+            _ => {}
+        }
+        *yaml_type = None;
+        Ok(())
+    };
+
+    for line in content.lines() {
+        line_num += 1;
+        let trimmed = line.trim();
+
+        // Handle section headers
+        if trimmed == "## Environment" {
+            flush_yaml_block(
+                &mut yaml_block,
+                &mut yaml_type,
+                &mut configs,
+                &mut terminals,
+                line_num,
+            )?;
+            current_section = Section::Environment;
+            continue;
+        }
+
+        if trimmed == "## Test" {
+            flush_yaml_block(
+                &mut yaml_block,
+                &mut yaml_type,
+                &mut configs,
+                &mut terminals,
+                line_num,
+            )?;
+            current_section = Section::Test;
+            continue;
+        }
+
+        match current_section {
+            Section::Header => {
+                // Parse metadata comments
+                if let Some(rest) = trimmed.strip_prefix("# test:") {
+                    name = Some(rest.trim().to_string());
+                } else if let Some(rest) = trimmed.strip_prefix("# description:") {
+                    description = Some(rest.trim().to_string());
+                }
+                // Ignore other comments in header
+            }
+            Section::Environment => {
+                // Empty line flushes current YAML block
+                if trimmed.is_empty() {
+                    flush_yaml_block(
+                        &mut yaml_block,
+                        &mut yaml_type,
+                        &mut configs,
+                        &mut terminals,
+                        line_num,
+                    )?;
+                    continue;
+                }
+
+                // Skip comments
+                if trimmed.starts_with('#') {
+                    continue;
+                }
+
+                // Start of new YAML block
+                if trimmed == "config:" {
+                    flush_yaml_block(
+                        &mut yaml_block,
+                        &mut yaml_type,
+                        &mut configs,
+                        &mut terminals,
+                        line_num,
+                    )?;
+                    yaml_type = Some("config");
+                    continue;
+                }
+                if trimmed == "terminal:" {
+                    flush_yaml_block(
+                        &mut yaml_block,
+                        &mut yaml_type,
+                        &mut configs,
+                        &mut terminals,
+                        line_num,
+                    )?;
+                    yaml_type = Some("terminal");
+                    continue;
+                }
+
+                // Continuation of YAML block (indented lines)
+                if yaml_type.is_some() && line.starts_with("  ") {
+                    // Remove the leading 2 spaces for YAML parsing
+                    yaml_block.push(line[2..].to_string());
+                }
+            }
+            Section::Test => {
+                // Skip empty lines and comments
+                if trimmed.is_empty() || trimmed.starts_with('#') {
+                    continue;
+                }
+
+                // Terminal switch
+                if let Some(rest) = trimmed.strip_prefix('@') {
+                    steps.push(TestStep::SwitchTerminal(rest.to_string()));
+                    continue;
+                }
+
+                // Input line
+                if let Some(rest) = trimmed.strip_prefix("> ") {
+                    steps.push(TestStep::Input(rest.to_string()));
+                    continue;
+                }
+                // Handle > with no space (empty input)
+                if trimmed == ">" {
+                    steps.push(TestStep::Input(String::new()));
+                    continue;
+                }
+
+                // Expected output (use original line to preserve leading whitespace)
+                // But we trim trailing whitespace
+                steps.push(TestStep::ExpectOutput(line.trim_end().to_string()));
+            }
+        }
+    }
+
+    // Flush any remaining YAML block
+    flush_yaml_block(
+        &mut yaml_block,
+        &mut yaml_type,
+        &mut configs,
+        &mut terminals,
+        line_num,
+    )?;
+
+    // Validate required fields
+    let name = name.ok_or_else(|| ParseError {
+        line: 0,
+        message: "Missing '# test: <name>' header".to_string(),
+    })?;
+
+    if configs.is_empty() {
+        return Err(ParseError {
+            line: 0,
+            message: "No configs defined in environment".to_string(),
+        });
+    }
+
+    if terminals.is_empty() {
+        return Err(ParseError {
+            line: 0,
+            message: "No terminals defined in environment".to_string(),
+        });
+    }
+
+    Ok(TestCase {
+        name,
+        description,
+        configs,
+        terminals,
+        steps,
+    })
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn test_parse_simple_test() {
+        let content = r#"# test: simple_echo
+# description: Test basic echo functionality
+
+## Environment
+
+config:
+  name: local
+
+terminal:
+  name: T1
+  config: local
+
+## Test
+
+@T1
+> hello world
+hello world
+"#;
+
+        let test_case = parse_test_content(content).unwrap();
+
+        assert_eq!(test_case.name, "simple_echo");
+        assert_eq!(
+            test_case.description,
+            Some("Test basic echo functionality".to_string())
+        );
+        assert_eq!(test_case.configs.len(), 1);
+        assert_eq!(test_case.configs[0].name, "local");
+        assert!(test_case.configs[0].host_id.is_none());
+        assert_eq!(test_case.terminals.len(), 1);
+        assert_eq!(test_case.terminals[0].name, "T1");
+        assert_eq!(test_case.terminals[0].config, "local");
+        assert_eq!(test_case.steps.len(), 3);
+
+        match &test_case.steps[0] {
+            TestStep::SwitchTerminal(name) => assert_eq!(name, "T1"),
+            _ => panic!("Expected SwitchTerminal"),
+        }
+        match &test_case.steps[1] {
+            TestStep::Input(input) => assert_eq!(input, "hello world"),
+            _ => panic!("Expected Input"),
+        }
+        match &test_case.steps[2] {
+            TestStep::ExpectOutput(output) => assert_eq!(output, "hello world"),
+            _ => panic!("Expected ExpectOutput"),
+        }
+    }
+
+    #[test]
+    fn test_parse_multi_terminal() {
+        let content = r#"# test: multi_terminal
+
+## Environment
+
+config:
+  name: local
+  host_id: host-a
+
+terminal:
+  name: T1
+  config: local
+
+terminal:
+  name: T2
+  config: local
+
+## Test
+
+@T1
+> first
+first
+
+@T2
+> second
+second
+
+@T1
+second
+"#;
+
+        let test_case = parse_test_content(content).unwrap();
+
+        assert_eq!(test_case.configs.len(), 1);
+        assert_eq!(test_case.configs[0].host_id, Some("host-a".to_string()));
+        assert_eq!(test_case.terminals.len(), 2);
+        assert_eq!(test_case.terminals[0].name, "T1");
+        assert_eq!(test_case.terminals[1].name, "T2");
+
+        // Count terminal switches
+        let switches: Vec<_> = test_case
+            .steps
+            .iter()
+            .filter_map(|s| {
+                if let TestStep::SwitchTerminal(name) = s {
+                    Some(name.as_str())
+                } else {
+                    None
+                }
+            })
+            .collect();
+
+        assert_eq!(switches, vec!["T1", "T2", "T1"]);
+    }
+
+    #[test]
+    fn test_missing_test_name() {
+        let content = r#"## Environment
+
+config:
+  name: local
+
+terminal:
+  name: T1
+  config: local
+
+## Test
+
+@T1
+> hello
+"#;
+
+        let result = parse_test_content(content);
+        assert!(result.is_err());
+        assert!(result.unwrap_err().message.contains("test:"));
+    }
+}

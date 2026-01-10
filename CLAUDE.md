@@ -13,6 +13,12 @@ This file provides guidance for AI assistants working on the amux codebase.
 1. Run `cargo fmt && cargo clippy && cargo test`
 2. **Update DEVLOG.md** - Add an entry describing what was done (see template in DEVLOG.md)
 
+## Git Commits
+
+- **Do NOT include Co-Authored-By lines** in commit messages
+- Keep commit messages concise and descriptive
+- Use lowercase for commit message subjects
+
 ## Current State (January 2025)
 
 **Milestone 1 is complete.** The codebase implements local terminal connections with the new architecture:

@@ -4,12 +4,16 @@ version = "0.1.0"
 edition = "2021"
 description = "Agent multiplexer - transparent CLI wrapper for Claude"
 
+[workspace]
+members = [".", "test-agent", "e2e-runner"]
+
 [dependencies]
 portable-pty = "0.8"
 tokio = { version = "1", features = ["full", "io-util", "net", "sync", "rt-multi-thread", "macros"] }
 libc = "0.2"
 clap = { version = "4", features = ["derive"] }
 serde = { version = "1", features = ["derive"] }
+serde_yaml = "0.9"
 bincode = "1"
 thiserror = "1"
 uuid = { version = "1", features = ["v4"] }

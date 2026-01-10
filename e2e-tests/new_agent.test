@@ -1,0 +1,18 @@
+# test: new_agent
+# description: Create a new agent and verify it responds to input
+
+## Environment
+
+config:
+  name: local
+
+terminal:
+  name: T1
+  config: local
+
+## Test
+
+@T1
+> amux new-agent -t test1 test-agent
+> hello world
+hello world

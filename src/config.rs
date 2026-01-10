@@ -1,4 +1,6 @@
-use std::path::PathBuf;
+use crate::error::{AmuxError, Result};
+use serde::{Deserialize, Serialize};
+use std::path::{Path, PathBuf};
 use uuid::Uuid;
 
 /// Default Unix socket path
@@ -11,7 +13,7 @@ pub const DEFAULT_MAX_REPLAY_BUFFER: usize = 10 * 1024 * 1024;
 pub const DEFAULT_USER_ID: &str = "local";
 
 /// Server configuration
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct Config {
     /// Unique identifier for this server instance
     pub host_id: String,
@@ -27,7 +29,7 @@ pub struct Config {
 }
 
 impl Config {
-    /// Create a new config with a generated host_id
+    /// Create a new config with defaults (generates random host_id)
     pub fn new() -> Self {
         Self {
             host_id: Uuid::new_v4().to_string(),
@@ -35,6 +37,12 @@ impl Config {
             socket_path: PathBuf::from(DEFAULT_SOCKET_PATH),
             max_replay_buffer: DEFAULT_MAX_REPLAY_BUFFER,
         }
+    }
+
+    /// Load config from a YAML file
+    pub fn from_file(path: &Path) -> Result<Self> {
+        let contents = std::fs::read_to_string(path)?;
+        serde_yaml::from_str(&contents).map_err(|e| AmuxError::Config(e.to_string()))
     }
 }
 

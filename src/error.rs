@@ -27,4 +27,7 @@ pub enum AmuxError {
 
     #[error("PTY error: {0}")]
     Pty(String),
+
+    #[error("Config error: {0}")]
+    Config(String),
 }

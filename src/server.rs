@@ -11,8 +11,6 @@ use tokio::io::{AsyncReadExt, AsyncWriteExt};
 use tokio::net::{UnixListener, UnixStream};
 use tokio::sync::{broadcast, mpsc, RwLock};
 
-pub use crate::config::DEFAULT_SOCKET_PATH as SOCKET_PATH;
-
 /// Server state shared across connection handlers
 struct ServerState {
     config: Config,

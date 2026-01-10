@@ -38,6 +38,161 @@ One paragraph describing what was done.
 
 ---
 
+## 2025-01-10: E2E Config-Based Testing Refactor
+
+### Summary
+Refactored E2E testing infrastructure from environment-variable-based configuration to config-file-based approach. Tests now generate real YAML config files in a temp directory and pass them to amux via `--config` flag. This eliminates the need for the `test-support` feature flag and enables future parallel test execution with isolated socket paths.
+
+### Changes
+
+**Modified in amux:**
+- `Cargo.toml` - Added `serde_yaml` dependency, removed `test-support` feature
+- `src/config.rs` - Added `from_file()`, `Serialize`/`Deserialize` traits, removed env var handling
+- `src/error.rs` - Added `Config` error variant
+- `src/main.rs` - Added global `--config <FILE>` flag
+- `src/client.rs` - All functions now accept `&Config` parameter
+- `src/server.rs` - Removed unused `SOCKET_PATH` export
+
+**Modified in e2e-runner:**
+- `src/parser.rs` - Renamed `Server` → `TestConfig`, `server` → `config`
+- `src/executor.rs` - Generates YAML config files, auto-injects `--config` and `test-agent` paths
+
+**Modified test files:**
+- `e2e-tests/new_agent.test` - Renamed from `echo.test`, updated to new format with `config:` entity
+
+### Test File Format (New)
+
+```
+# test: new_agent
+# description: Create a new agent and verify it responds to input
+
+## Environment
+
+config:
+  name: local
+
+terminal:
+  name: T1
+  config: local
+
+## Test
+
+@T1
+> amux new-agent -t test1 test-agent
+> hello world
+hello world
+```
+
+The executor transparently transforms `amux new-agent -t test1 test-agent` into:
+```
+/abs/path/amux --config /tmp/.../local.yaml new-agent -t test1 /abs/path/test-agent
+```
+
+### Decisions Made
+
+1. **YAML config format:** Chose YAML over TOML for consistency with the test file format and easier human editing.
+
+2. **Auto-inject paths:** Test files use simple `amux` and `test-agent` names. The executor injects absolute paths and `--config` flag automatically. This keeps test files clean and portable.
+
+3. **Removed test-support feature:** No more conditional compilation. Config is always loaded from file or defaults - no env var overrides needed.
+
+4. **Each test gets unique socket:** Socket paths are auto-generated as `/tmp/amux-test-{testname}-{configname}.sock`. This enables future parallel test execution.
+
+### Verification
+
+```
+cargo fmt && cargo clippy --workspace  # OK (only dead_code warnings for future infrastructure)
+cargo test --workspace                 # All 13 tests pass
+cargo run -p e2e-runner -- run         # 1/1 E2E tests pass
+```
+
+### Next Steps
+
+- Add more E2E tests (list-agents, attach/detach, multi-terminal)
+- Enable parallel test execution (each test has isolated sockets)
+- Add cloud mode testing with TCP transport
+
+---
+
+## 2025-01-10: E2E Testing Infrastructure
+
+### Summary
+Created a declarative E2E regression testing framework for amux. The framework uses a simple test file format with Server/Terminal environment entities and Input/ExpectOutput test steps. A test-agent binary echoes input with a NUL byte synchronization signal, allowing the test runner to reliably detect when output is complete.
+
+### Changes
+
+**New crates:**
+- `test-agent/` - Minimal echo agent that responds with "received: {input}" + NUL byte
+- `e2e-runner/` - Test harness with parser, PTY wrapper, executor, and CLI
+
+**Files in e2e-runner:**
+- `src/main.rs` - CLI with `run [filter]` and `update [filter]` commands
+- `src/parser.rs` - Parses `.test` files into `TestCase` structs
+- `src/executor.rs` - Runs tests, manages PTY terminals, compares output
+- `src/terminal.rs` - PTY wrapper using `portable-pty`
+
+**New test files:**
+- `e2e-tests/echo.test` - Basic test-agent echo functionality
+
+**Modified files:**
+- `Cargo.toml` - Added workspace members and `test-support` feature
+- `src/config.rs` - Added env var overrides (AMUX_SOCKET, AMUX_HOST_ID) with `#[cfg(feature = "test-support")]`
+- `src/main.rs` - Fixed to use Config for socket path
+- `src/client.rs` - Fixed to use Config for socket path
+
+### Test File Format
+
+```
+# test: echo
+# description: Basic test-agent echo functionality
+
+## Environment
+
+server:
+  name: local
+  host_id: test-host
+
+terminal:
+  name: T1
+  server: local
+
+## Test
+
+@T1
+> amux new-agent -t test1 /path/to/test-agent
+> hello world
+received: hello world
+```
+
+### Decisions Made
+
+1. **test-support feature flag:** Environment variable overrides (AMUX_SOCKET, AMUX_HOST_ID) are only available when amux is built with `--features test-support`. This prevents production builds from accidentally picking up test configuration.
+
+2. **NUL byte synchronization:** The test-agent sends a NUL byte (0x00) after each response. The test runner reads until NUL to know when output is complete. This eliminates timing-based flakiness.
+
+3. **"received:" prefix:** Test-agent responds with "received: {input}" instead of just echoing. This distinguishes agent output from PTY local echo.
+
+4. **PTY echo stripping:** The executor tracks input sent and strips the corresponding PTY echo from the beginning of output before comparison.
+
+5. **Flat test directory:** All tests live in `e2e-tests/*.test` (flat structure). This keeps things simple while allowing easy filtering by name.
+
+### Verification
+
+```
+cargo build --workspace --features test-support  # OK
+cargo fmt && cargo clippy --workspace            # OK (only warnings for future infrastructure)
+cargo test --workspace                           # 13/13 passed
+cargo run -p e2e-runner -- run                   # 1/1 passed
+```
+
+### Next Steps
+
+- Add more test scenarios: `list-agents`, `attach/detach`, `two-terminals`, `replay-buffer`
+- Investigate the potential race condition user mentioned: replay buffer sent before raw mode transition
+- Consider adding `update` mode to auto-update expected output in test files
+
+---
+
 ## 2025-01-10: Milestone 1 Complete - Local Terminal Architecture
 
 ### Summary

@@ -1,6 +1,6 @@
+use crate::config::Config;
 use crate::error::{AmuxError, Result};
 use crate::message::Message;
-use crate::server::SOCKET_PATH;
 use crate::transport::{Transport, UnixTransport};
 use std::io::{self, Read, Write};
 use std::os::unix::io::AsRawFd;
@@ -25,8 +25,8 @@ pub fn get_terminal_size() -> (u16, u16) {
 }
 
 /// Create a new agent and attach to it
-pub async fn new_agent(agent_id: &str, command: &str) -> Result<()> {
-    let stream = UnixStream::connect(SOCKET_PATH).await?;
+pub async fn new_agent(agent_id: &str, command: &str, config: &Config) -> Result<()> {
+    let stream = UnixStream::connect(&config.socket_path).await?;
     log!("client: connected to server");
 
     let mut transport = UnixTransport::new(stream);
@@ -78,8 +78,8 @@ pub async fn new_agent(agent_id: &str, command: &str) -> Result<()> {
 }
 
 /// Attach to an existing agent
-pub async fn attach(agent_id: Option<&str>) -> Result<()> {
-    let stream = UnixStream::connect(SOCKET_PATH).await?;
+pub async fn attach(agent_id: Option<&str>, config: &Config) -> Result<()> {
+    let stream = UnixStream::connect(&config.socket_path).await?;
     log!("client: connected to server");
 
     let mut transport = UnixTransport::new(stream);
@@ -165,8 +165,8 @@ async fn subscribe_and_stream(
 }
 
 /// List all running agents
-pub async fn list_agents() -> Result<()> {
-    let stream = match UnixStream::connect(SOCKET_PATH).await {
+pub async fn list_agents(config: &Config) -> Result<()> {
+    let stream = match UnixStream::connect(&config.socket_path).await {
         Ok(s) => s,
         Err(e)
             if e.kind() == io::ErrorKind::NotFound
@@ -207,8 +207,8 @@ pub async fn list_agents() -> Result<()> {
 }
 
 /// Kill all agents and shut down the server
-pub async fn kill_server() -> Result<()> {
-    let stream = match UnixStream::connect(SOCKET_PATH).await {
+pub async fn kill_server(config: &Config) -> Result<()> {
+    let stream = match UnixStream::connect(&config.socket_path).await {
         Ok(s) => s,
         Err(e)
             if e.kind() == io::ErrorKind::NotFound

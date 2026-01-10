@@ -10,8 +10,8 @@ mod session;
 mod transport;
 
 use clap::{Parser, Subcommand};
-use server::SOCKET_PATH;
-use std::path::Path;
+use config::Config;
+use std::path::{Path, PathBuf};
 use std::process::{Command, Stdio};
 use std::time::Duration;
 
@@ -22,6 +22,10 @@ use std::time::Duration;
 struct Cli {
     #[command(subcommand)]
     command: Option<Commands>,
+
+    /// Path to config file (YAML format)
+    #[arg(long, global = true)]
+    config: Option<PathBuf>,
 
     /// Hidden server mode (used internally for forking)
     #[arg(long, hide = true)]
@@ -61,9 +65,21 @@ async fn main() {
 
     let cli = Cli::parse();
 
+    // Load config from file or use defaults
+    let config = match &cli.config {
+        Some(path) => match Config::from_file(path) {
+            Ok(c) => c,
+            Err(e) => {
+                eprintln!("error: failed to load config from {:?}: {}", path, e);
+                std::process::exit(1);
+            }
+        },
+        None => Config::new(),
+    };
+
     // Hidden server mode
     if cli.server {
-        let mut server = server::Server::new();
+        let mut server = server::Server::with_config(config);
         if let Err(e) = server.run().await {
             log!("server error: {}", e);
             std::process::exit(1);
@@ -74,19 +90,19 @@ async fn main() {
     let result = match cli.command {
         None => {
             // Default: attach to first available agent
-            ensure_server_running().await;
-            client::attach(None).await
+            ensure_server_running(&config, cli.config.as_deref()).await;
+            client::attach(None, &config).await
         }
         Some(Commands::NewAgent { command, target }) => {
-            ensure_server_running().await;
-            client::new_agent(&target, &command).await
+            ensure_server_running(&config, cli.config.as_deref()).await;
+            client::new_agent(&target, &command, &config).await
         }
         Some(Commands::Attach { target }) => {
-            ensure_server_running().await;
-            client::attach(target.as_deref()).await
+            ensure_server_running(&config, cli.config.as_deref()).await;
+            client::attach(target.as_deref(), &config).await
         }
-        Some(Commands::ListAgents) => client::list_agents().await,
-        Some(Commands::KillServer) => client::kill_server().await,
+        Some(Commands::ListAgents) => client::list_agents(&config).await,
+        Some(Commands::KillServer) => client::kill_server(&config).await,
     };
 
     if let Err(e) = result {
@@ -96,16 +112,18 @@ async fn main() {
 }
 
 /// Ensure the server is running, start it if not
-async fn ensure_server_running() {
+async fn ensure_server_running(config: &Config, config_path: Option<&Path>) {
+    let socket_path = &config.socket_path;
+
     // Check if socket exists and server is actually responding
-    if Path::new(SOCKET_PATH).exists() {
+    if socket_path.exists() {
         // Try to connect to verify server is alive
-        match tokio::net::UnixStream::connect(SOCKET_PATH).await {
+        match tokio::net::UnixStream::connect(socket_path).await {
             Ok(_) => return, // Server is running
             Err(e) => {
                 // Stale socket - server died without cleanup
                 log!("stale socket detected ({}), removing", e);
-                let _ = std::fs::remove_file(SOCKET_PATH);
+                let _ = std::fs::remove_file(socket_path);
             }
         }
     }
@@ -114,9 +132,15 @@ async fn ensure_server_running() {
 
     // Spawn server as background process
     let exe = std::env::current_exe().expect("Failed to get current exe");
-    Command::new(&exe)
-        .arg("--server")
-        .stdin(Stdio::null())
+    let mut cmd = Command::new(&exe);
+    cmd.arg("--server");
+
+    // Pass config file path if we have one
+    if let Some(path) = config_path {
+        cmd.arg("--config").arg(path);
+    }
+
+    cmd.stdin(Stdio::null())
         .stdout(Stdio::null())
         .stderr(Stdio::null())
         .spawn()
@@ -124,9 +148,9 @@ async fn ensure_server_running() {
 
     // Wait for server to be ready
     for _ in 0..50 {
-        if Path::new(SOCKET_PATH).exists() {
+        if socket_path.exists() {
             // Verify server is actually listening
-            if tokio::net::UnixStream::connect(SOCKET_PATH).await.is_ok() {
+            if tokio::net::UnixStream::connect(socket_path).await.is_ok() {
                 return;
             }
         }
