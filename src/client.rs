@@ -185,10 +185,11 @@ pub async fn list_agents(config: &Config) -> Result<()> {
 
     let response = transport.read_message().await?;
     match response {
-        Message::ListAgentsResult { agents } => {
+        Message::ListAgentsResult { mut agents } => {
             if agents.is_empty() {
                 println!("No agents running.");
             } else {
+                agents.sort_by(|a, b| a.agent_id.cmp(&b.agent_id));
                 println!("Running agents:");
                 for agent in agents {
                     println!("  {} - {}", agent.agent_id, agent.working_dir.display());
