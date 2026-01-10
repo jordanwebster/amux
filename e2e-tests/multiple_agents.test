@@ -1,0 +1,38 @@
+# test: multiple_agents
+# description: Multiple agents can run concurrently on the same server
+
+## Environment
+
+config:
+  name: local
+
+terminal:
+  name: T1
+  config: local
+
+terminal:
+  name: T2
+  config: local
+
+## Test
+
+# Create first agent
+@T1
+> amux new-agent -t agent-alpha test-agent
+> message to alpha
+message to alpha
+
+# Create second agent (different name, same server)
+@T2
+> amux new-agent -t agent-beta test-agent
+> message to beta
+message to beta
+
+# Both agents remain responsive
+@T1
+> alpha still alive
+alpha still alive
+
+@T2
+> beta still alive
+beta still alive

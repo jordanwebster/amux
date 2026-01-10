@@ -1,0 +1,29 @@
+# test: attach
+# description: Attach second terminal to existing agent session
+
+## Environment
+
+config:
+  name: local
+
+terminal:
+  name: T1
+  config: local
+
+terminal:
+  name: T2
+  config: local
+
+## Test
+
+# T1 creates a new agent
+@T1
+> amux new-agent -t shared-session test-agent
+
+# T2 attaches to the same agent and can interact with it
+@T2
+> amux attach -t shared-session
+> message from attached terminal
+message from attached terminal
+> another message
+another message
