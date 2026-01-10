@@ -1,6 +1,14 @@
 use serde::Deserialize;
 use std::path::Path;
 
+/// Directory definition in test environment
+#[derive(Debug, Clone, Deserialize)]
+pub struct Directory {
+    pub name: String,
+    #[serde(default)]
+    pub path: Option<String>,
+}
+
 /// Config definition in test environment
 #[derive(Debug, Clone, Deserialize)]
 pub struct TestConfig {
@@ -15,7 +23,10 @@ pub struct TestConfig {
 #[derive(Debug, Clone, Deserialize)]
 pub struct Terminal {
     pub name: String,
-    pub config: String,
+    #[serde(default)]
+    pub config: Option<String>,
+    #[serde(default)]
+    pub cwd: Option<String>,
 }
 
 /// A single step in a test
@@ -25,7 +36,7 @@ pub enum TestStep {
     SwitchTerminal(String),
     /// Send input (a line to type)
     Input(String),
-    /// Expect output (exact match)
+    /// Expect output (may be multiple lines, joined with \n)
     ExpectOutput(String),
 }
 
@@ -34,6 +45,7 @@ pub enum TestStep {
 pub struct TestCase {
     pub name: String,
     pub description: Option<String>,
+    pub directories: Vec<Directory>,
     pub configs: Vec<TestConfig>,
     pub terminals: Vec<Terminal>,
     pub steps: Vec<TestStep>,
@@ -67,6 +79,7 @@ pub fn parse_test_file(path: &Path) -> Result<TestCase, ParseError> {
 pub fn parse_test_content(content: &str) -> Result<TestCase, ParseError> {
     let mut name: Option<String> = None;
     let mut description: Option<String> = None;
+    let mut directories: Vec<Directory> = Vec::new();
     let mut configs: Vec<TestConfig> = Vec::new();
     let mut terminals: Vec<Terminal> = Vec::new();
     let mut steps: Vec<TestStep> = Vec::new();
@@ -83,8 +96,12 @@ pub fn parse_test_content(content: &str) -> Result<TestCase, ParseError> {
     let mut yaml_type: Option<&str> = None;
     let mut line_num = 0;
 
+    // For grouping output lines
+    let mut pending_output_lines: Vec<String> = Vec::new();
+
     let flush_yaml_block = |yaml_block: &mut Vec<String>,
                             yaml_type: &mut Option<&str>,
+                            directories: &mut Vec<Directory>,
                             configs: &mut Vec<TestConfig>,
                             terminals: &mut Vec<Terminal>,
                             line_num: usize|
@@ -97,6 +114,14 @@ pub fn parse_test_content(content: &str) -> Result<TestCase, ParseError> {
         yaml_block.clear();
 
         match *yaml_type {
+            Some("directory") => {
+                let dir: Directory =
+                    serde_yaml::from_str(&yaml_content).map_err(|e| ParseError {
+                        line: line_num,
+                        message: format!("Invalid directory YAML: {}", e),
+                    })?;
+                directories.push(dir);
+            }
             Some("config") => {
                 let config: TestConfig =
                     serde_yaml::from_str(&yaml_content).map_err(|e| ParseError {
@@ -119,6 +144,15 @@ pub fn parse_test_content(content: &str) -> Result<TestCase, ParseError> {
         Ok(())
     };
 
+    let flush_pending_output = |pending_output_lines: &mut Vec<String>,
+                                steps: &mut Vec<TestStep>| {
+        if !pending_output_lines.is_empty() {
+            let output = pending_output_lines.join("\n");
+            steps.push(TestStep::ExpectOutput(output));
+            pending_output_lines.clear();
+        }
+    };
+
     for line in content.lines() {
         line_num += 1;
         let trimmed = line.trim();
@@ -128,6 +162,7 @@ pub fn parse_test_content(content: &str) -> Result<TestCase, ParseError> {
             flush_yaml_block(
                 &mut yaml_block,
                 &mut yaml_type,
+                &mut directories,
                 &mut configs,
                 &mut terminals,
                 line_num,
@@ -140,6 +175,7 @@ pub fn parse_test_content(content: &str) -> Result<TestCase, ParseError> {
             flush_yaml_block(
                 &mut yaml_block,
                 &mut yaml_type,
+                &mut directories,
                 &mut configs,
                 &mut terminals,
                 line_num,
@@ -164,6 +200,7 @@ pub fn parse_test_content(content: &str) -> Result<TestCase, ParseError> {
                     flush_yaml_block(
                         &mut yaml_block,
                         &mut yaml_type,
+                        &mut directories,
                         &mut configs,
                         &mut terminals,
                         line_num,
@@ -177,10 +214,23 @@ pub fn parse_test_content(content: &str) -> Result<TestCase, ParseError> {
                 }
 
                 // Start of new YAML block
+                if trimmed == "directory:" {
+                    flush_yaml_block(
+                        &mut yaml_block,
+                        &mut yaml_type,
+                        &mut directories,
+                        &mut configs,
+                        &mut terminals,
+                        line_num,
+                    )?;
+                    yaml_type = Some("directory");
+                    continue;
+                }
                 if trimmed == "config:" {
                     flush_yaml_block(
                         &mut yaml_block,
                         &mut yaml_type,
+                        &mut directories,
                         &mut configs,
                         &mut terminals,
                         line_num,
@@ -192,6 +242,7 @@ pub fn parse_test_content(content: &str) -> Result<TestCase, ParseError> {
                     flush_yaml_block(
                         &mut yaml_block,
                         &mut yaml_type,
+                        &mut directories,
                         &mut configs,
                         &mut terminals,
                         line_num,
@@ -212,26 +263,28 @@ pub fn parse_test_content(content: &str) -> Result<TestCase, ParseError> {
                     continue;
                 }
 
-                // Terminal switch
+                // Terminal switch - flush any pending output first
                 if let Some(rest) = trimmed.strip_prefix('@') {
+                    flush_pending_output(&mut pending_output_lines, &mut steps);
                     steps.push(TestStep::SwitchTerminal(rest.to_string()));
                     continue;
                 }
 
-                // Input line
+                // Input line - flush any pending output first
                 if let Some(rest) = trimmed.strip_prefix("> ") {
+                    flush_pending_output(&mut pending_output_lines, &mut steps);
                     steps.push(TestStep::Input(rest.to_string()));
                     continue;
                 }
                 // Handle > with no space (empty input)
                 if trimmed == ">" {
+                    flush_pending_output(&mut pending_output_lines, &mut steps);
                     steps.push(TestStep::Input(String::new()));
                     continue;
                 }
 
-                // Expected output (use original line to preserve leading whitespace)
-                // But we trim trailing whitespace
-                steps.push(TestStep::ExpectOutput(line.trim_end().to_string()));
+                // Output line - accumulate (use original line to preserve leading whitespace)
+                pending_output_lines.push(line.trim_end().to_string());
             }
         }
     }
@@ -240,10 +293,14 @@ pub fn parse_test_content(content: &str) -> Result<TestCase, ParseError> {
     flush_yaml_block(
         &mut yaml_block,
         &mut yaml_type,
+        &mut directories,
         &mut configs,
         &mut terminals,
         line_num,
     )?;
+
+    // Flush any remaining output lines
+    flush_pending_output(&mut pending_output_lines, &mut steps);
 
     // Validate required fields
     let name = name.ok_or_else(|| ParseError {
@@ -251,23 +308,10 @@ pub fn parse_test_content(content: &str) -> Result<TestCase, ParseError> {
         message: "Missing '# test: <name>' header".to_string(),
     })?;
 
-    if configs.is_empty() {
-        return Err(ParseError {
-            line: 0,
-            message: "No configs defined in environment".to_string(),
-        });
-    }
-
-    if terminals.is_empty() {
-        return Err(ParseError {
-            line: 0,
-            message: "No terminals defined in environment".to_string(),
-        });
-    }
-
     Ok(TestCase {
         name,
         description,
+        directories,
         configs,
         terminals,
         steps,
@@ -311,7 +355,7 @@ hello world
         assert!(test_case.configs[0].host_id.is_none());
         assert_eq!(test_case.terminals.len(), 1);
         assert_eq!(test_case.terminals[0].name, "T1");
-        assert_eq!(test_case.terminals[0].config, "local");
+        assert_eq!(test_case.terminals[0].config, Some("local".to_string()));
         assert_eq!(test_case.steps.len(), 3);
 
         match &test_case.steps[0] {
@@ -382,6 +426,96 @@ second
             .collect();
 
         assert_eq!(switches, vec!["T1", "T2", "T1"]);
+    }
+
+    #[test]
+    fn test_parse_grouped_output() {
+        let content = r#"# test: grouped_output
+
+## Environment
+
+config:
+  name: local
+
+terminal:
+  name: T1
+
+## Test
+
+@T1
+> command
+line1
+line2
+line3
+"#;
+
+        let test_case = parse_test_content(content).unwrap();
+
+        // Should have: SwitchTerminal, Input, ExpectOutput (grouped)
+        assert_eq!(test_case.steps.len(), 3);
+
+        match &test_case.steps[2] {
+            TestStep::ExpectOutput(output) => {
+                assert_eq!(output, "line1\nline2\nline3");
+            }
+            _ => panic!("Expected ExpectOutput"),
+        }
+    }
+
+    #[test]
+    fn test_parse_directory() {
+        let content = r#"# test: with_directory
+
+## Environment
+
+directory:
+  name: cwd
+  path: /tmp/test
+
+config:
+  name: local
+
+terminal:
+  name: T1
+  cwd: cwd
+
+## Test
+
+@T1
+> hello
+hello
+"#;
+
+        let test_case = parse_test_content(content).unwrap();
+
+        assert_eq!(test_case.directories.len(), 1);
+        assert_eq!(test_case.directories[0].name, "cwd");
+        assert_eq!(test_case.directories[0].path, Some("/tmp/test".to_string()));
+        assert_eq!(test_case.terminals[0].cwd, Some("cwd".to_string()));
+    }
+
+    #[test]
+    fn test_parse_minimal_terminal() {
+        // Terminal with only name - config and cwd will be auto-injected
+        let content = r#"# test: minimal
+
+## Environment
+
+terminal:
+  name: T1
+
+## Test
+
+@T1
+> hello
+hello
+"#;
+
+        let test_case = parse_test_content(content).unwrap();
+        assert_eq!(test_case.terminals.len(), 1);
+        assert_eq!(test_case.terminals[0].name, "T1");
+        assert!(test_case.terminals[0].config.is_none());
+        assert!(test_case.terminals[0].cwd.is_none());
     }
 
     #[test]

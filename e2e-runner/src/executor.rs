@@ -1,4 +1,4 @@
-use crate::parser::{TestCase, TestStep};
+use crate::parser::{Directory, Terminal, TestCase, TestConfig, TestStep};
 use crate::terminal::TestTerminal;
 use std::collections::HashMap;
 use std::path::{Path, PathBuf};
@@ -8,11 +8,8 @@ use tempfile::TempDir;
 /// Result of running a test
 #[derive(Debug)]
 pub struct TestResult {
-    pub name: String,
     pub passed: bool,
     pub error: Option<String>,
-    /// Actual output collected during test (for update mode)
-    pub actual_outputs: Vec<String>,
 }
 
 /// Configuration for the executor
@@ -23,9 +20,7 @@ pub struct ExecutorConfig {
     pub test_agent_binary: PathBuf,
     /// Base directory for socket files
     pub socket_dir: PathBuf,
-    /// Working directory for commands
-    pub working_dir: PathBuf,
-    /// Timeout for operations
+    /// Timeout for read operations
     pub timeout: Duration,
 }
 
@@ -35,9 +30,45 @@ impl Default for ExecutorConfig {
             amux_binary: PathBuf::from("target/debug/amux"),
             test_agent_binary: PathBuf::from("target/debug/test-agent"),
             socket_dir: PathBuf::from("/tmp"),
-            working_dir: std::env::current_dir().unwrap_or_else(|_| PathBuf::from(".")),
-            timeout: Duration::from_secs(10),
+            timeout: Duration::from_millis(200),
         }
+    }
+}
+
+/// Variable context for substitution
+struct VariableContext {
+    /// directory name -> path
+    directories: HashMap<String, PathBuf>,
+    /// config name -> socket_path
+    configs: HashMap<String, PathBuf>,
+}
+
+impl VariableContext {
+    fn new() -> Self {
+        Self {
+            directories: HashMap::new(),
+            configs: HashMap::new(),
+        }
+    }
+
+    /// Substitute variables in a string.
+    /// Supports: $name.path (for directories), $name.socket_path (for configs)
+    fn substitute(&self, input: &str) -> String {
+        let mut result = input.to_string();
+
+        // Substitute directory variables: $name.path
+        for (name, path) in &self.directories {
+            let var = format!("${}.path", name);
+            result = result.replace(&var, &path.to_string_lossy());
+        }
+
+        // Substitute config variables: $name.socket_path
+        for (name, socket_path) in &self.configs {
+            let var = format!("${}.socket_path", name);
+            result = result.replace(&var, &socket_path.to_string_lossy());
+        }
+
+        result
     }
 }
 
@@ -54,38 +85,57 @@ impl Executor {
     /// Run a test case
     pub fn run_test(&self, test_case: &TestCase) -> TestResult {
         match self.run_test_inner(test_case) {
-            Ok(outputs) => TestResult {
-                name: test_case.name.clone(),
+            Ok(()) => TestResult {
                 passed: true,
                 error: None,
-                actual_outputs: outputs,
             },
             Err(e) => TestResult {
-                name: test_case.name.clone(),
                 passed: false,
                 error: Some(e),
-                actual_outputs: Vec::new(),
             },
         }
     }
 
-    fn run_test_inner(&self, test_case: &TestCase) -> Result<Vec<String>, String> {
-        // Create temp directory for config files
-        let config_dir = TempDir::new().map_err(|e| format!("Failed to create temp dir: {}", e))?;
+    fn run_test_inner(&self, test_case: &TestCase) -> Result<(), String> {
+        // Create temp directory for test artifacts
+        let temp_dir = TempDir::new().map_err(|e| format!("Failed to create temp dir: {}", e))?;
 
-        // Generate config files for each config entry
+        // Prepare environment by auto-injecting missing fields
+        let (directories, configs, terminals) =
+            self.prepare_environment(test_case, temp_dir.path())?;
+
+        // Build variable context
+        let mut var_ctx = VariableContext::new();
+
+        // Create temp directories and populate variable context
+        let mut dir_temp_dirs: Vec<TempDir> = Vec::new();
+        for dir in &directories {
+            let path = if let Some(ref p) = dir.path {
+                PathBuf::from(p)
+            } else {
+                // Create a unique temp directory
+                let td = TempDir::new()
+                    .map_err(|e| format!("Failed to create temp dir for {}: {}", dir.name, e))?;
+                let path = td.path().to_path_buf();
+                dir_temp_dirs.push(td);
+                path
+            };
+            // Canonicalize to resolve symlinks (e.g., /var -> /private/var on macOS)
+            let canonical_path = path.canonicalize().unwrap_or(path);
+            var_ctx.directories.insert(dir.name.clone(), canonical_path);
+        }
+
+        // Generate config files and populate config paths in variable context
         let mut config_paths: HashMap<String, PathBuf> = HashMap::new();
 
-        for cfg in &test_case.configs {
+        for cfg in &configs {
             // Determine socket path
             let socket_path = match &cfg.socket_path {
-                Some(p) if p != "auto" => p.clone(),
+                Some(p) if p != "auto" => PathBuf::from(p),
                 _ => self
                     .config
                     .socket_dir
-                    .join(format!("amux-test-{}-{}.sock", test_case.name, cfg.name))
-                    .to_string_lossy()
-                    .to_string(),
+                    .join(format!("amux-test-{}-{}.sock", test_case.name, cfg.name)),
             };
 
             // Clean up any existing socket
@@ -102,28 +152,45 @@ user_id: "test"
 socket_path: "{}"
 max_replay_buffer: 10485760
 "#,
-                host_id, socket_path
+                host_id,
+                socket_path.display()
             );
 
-            let config_path = config_dir.path().join(format!("{}.yaml", cfg.name));
-            std::fs::write(&config_path, yaml_content)
+            let config_file_path = temp_dir.path().join(format!("{}.yaml", cfg.name));
+            std::fs::write(&config_file_path, yaml_content)
                 .map_err(|e| format!("Failed to write config file: {}", e))?;
 
-            config_paths.insert(cfg.name.clone(), config_path);
+            config_paths.insert(cfg.name.clone(), config_file_path);
+            var_ctx.configs.insert(cfg.name.clone(), socket_path);
         }
 
-        // Map terminal names to their config
-        let terminal_to_config: HashMap<String, String> = test_case
-            .terminals
+        // Map terminal names to their config and cwd
+        let terminal_configs: HashMap<String, (String, PathBuf)> = terminals
             .iter()
-            .map(|t| (t.name.clone(), t.config.clone()))
+            .map(|t| {
+                let config_name = t.config.clone().unwrap_or_else(|| configs[0].name.clone());
+                let cwd = t
+                    .cwd
+                    .as_ref()
+                    .and_then(|name| var_ctx.directories.get(name))
+                    .cloned()
+                    .unwrap_or_else(|| {
+                        var_ctx
+                            .directories
+                            .values()
+                            .next()
+                            .cloned()
+                            .unwrap_or_else(|| {
+                                std::env::current_dir().unwrap_or_else(|_| PathBuf::from("."))
+                            })
+                    });
+                (t.name.clone(), (config_name, cwd))
+            })
             .collect();
 
         // Active terminals
-        let mut terminals: HashMap<String, TestTerminal> = HashMap::new();
+        let mut active_terminals: HashMap<String, TestTerminal> = HashMap::new();
         let mut current_terminal: Option<String> = None;
-        let mut actual_outputs: Vec<String> = Vec::new();
-        let mut last_input: Option<String> = None;
 
         // Execute test steps
         for step in &test_case.steps {
@@ -133,7 +200,7 @@ max_replay_buffer: 10485760
                 }
                 TestStep::Input(input) => {
                     let term_name = current_terminal.as_ref().ok_or("No terminal selected")?;
-                    let config_name = terminal_to_config
+                    let (config_name, cwd) = terminal_configs
                         .get(term_name)
                         .ok_or(format!("Unknown terminal: {}", term_name))?;
                     let config_path = config_paths
@@ -143,31 +210,29 @@ max_replay_buffer: 10485760
                     // Check if this is an amux command that starts a new terminal session
                     let is_amux_command = input.starts_with("amux ");
 
-                    if is_amux_command && !terminals.contains_key(term_name) {
+                    if is_amux_command && !active_terminals.contains_key(term_name) {
                         // Transform the command: inject --config and replace test-agent
                         let transformed = self.transform_command(input, config_path);
                         let parts: Vec<&str> = transformed.split_whitespace().collect();
 
                         // Start a new terminal for this amux session
                         let terminal = TestTerminal::spawn(
-                            &parts[0], // amux binary path
+                            parts[0], // amux binary path
                             &parts[1..],
-                            &self.config.working_dir,
-                            &HashMap::new(), // No env vars needed anymore
+                            cwd,
+                            &HashMap::new(),
                         )
                         .map_err(|e| format!("Failed to spawn terminal {}: {}", term_name, e))?;
 
-                        terminals.insert(term_name.clone(), terminal);
+                        active_terminals.insert(term_name.clone(), terminal);
 
-                        // Wait for amux to enter raw mode
+                        // Wait for amux to initialize
                         std::thread::sleep(Duration::from_millis(500));
-                    } else if let Some(terminal) = terminals.get_mut(term_name) {
+                    } else if let Some(terminal) = active_terminals.get_mut(term_name) {
                         // Send input to existing terminal
                         terminal
                             .send_line(input)
                             .map_err(|e| format!("Failed to send input: {}", e))?;
-                        // Track for echo stripping
-                        last_input = Some(input.clone());
                     } else {
                         return Err(format!(
                             "Terminal {} not initialized. First command must be 'amux ...'",
@@ -177,41 +242,69 @@ max_replay_buffer: 10485760
                 }
                 TestStep::ExpectOutput(expected) => {
                     let term_name = current_terminal.as_ref().ok_or("No terminal selected")?;
-                    let terminal = terminals
+                    let terminal = active_terminals
                         .get_mut(term_name)
                         .ok_or(format!("Terminal {} not initialized", term_name))?;
 
-                    // Read output until NUL (from test-agent)
+                    // Apply variable substitution to expected output
+                    let expected_substituted = var_ctx.substitute(expected);
+
+                    // test-agent sends "{message}\n" for each line
+                    let expected_with_newline = format!("{}\n", expected_substituted);
+
+                    // Read and normalize output (handles \r\n vs \n from nested PTYs)
                     let actual = terminal
-                        .read_until_nul(self.config.timeout)
+                        .read_expected(&expected_with_newline, self.config.timeout)
                         .map_err(|e| format!("Failed to read output: {}", e))?;
 
-                    // Strip PTY echo of the input we sent
-                    let actual_stripped = if let Some(ref input) = last_input {
-                        let echo_pattern = format!("{}\r\n", input);
-                        if actual.starts_with(&echo_pattern) {
-                            actual[echo_pattern.len()..].to_string()
-                        } else {
-                            actual.clone()
-                        }
-                    } else {
-                        actual.clone()
-                    };
-
-                    let actual_trimmed = actual_stripped.trim();
-                    actual_outputs.push(actual_trimmed.to_string());
-
-                    if actual_trimmed != expected {
+                    // Compare
+                    if actual != expected_with_newline {
                         return Err(format!(
                             "Output mismatch in terminal {}:\n  Expected: {:?}\n  Actual:   {:?}",
-                            term_name, expected, actual_trimmed
+                            term_name, expected_with_newline, actual
                         ));
                     }
                 }
             }
         }
 
-        Ok(actual_outputs)
+        Ok(())
+    }
+
+    /// Prepare environment by auto-injecting missing fields
+    #[allow(clippy::type_complexity)]
+    fn prepare_environment(
+        &self,
+        test_case: &TestCase,
+        _temp_dir: &Path,
+    ) -> Result<(Vec<Directory>, Vec<TestConfig>, Vec<Terminal>), String> {
+        let mut directories = test_case.directories.clone();
+        let mut configs = test_case.configs.clone();
+        let terminals = test_case.terminals.clone();
+
+        // If no directories, create a default "cwd" directory
+        if directories.is_empty() {
+            directories.push(Directory {
+                name: "cwd".to_string(),
+                path: None, // Will be auto-generated
+            });
+        }
+
+        // If no configs, create a default "local" config
+        if configs.is_empty() {
+            configs.push(TestConfig {
+                name: "local".to_string(),
+                host_id: None,
+                socket_path: None,
+            });
+        }
+
+        // Terminals must have at least a name - validation
+        if terminals.is_empty() {
+            return Err("No terminals defined".to_string());
+        }
+
+        Ok((directories, configs, terminals))
     }
 
     /// Transform a command by:
@@ -238,18 +331,5 @@ max_replay_buffer: 10485760
         );
 
         result
-    }
-}
-
-/// Clean up test sockets matching a pattern
-pub fn cleanup_test_sockets(socket_dir: &Path, test_name: &str) {
-    if let Ok(entries) = std::fs::read_dir(socket_dir) {
-        for entry in entries.flatten() {
-            if let Some(name) = entry.file_name().to_str() {
-                if name.starts_with(&format!("amux-test-{}", test_name)) {
-                    let _ = std::fs::remove_file(entry.path());
-                }
-            }
-        }
     }
 }

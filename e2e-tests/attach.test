@@ -3,16 +3,11 @@
 
 ## Environment
 
-config:
-  name: local
-
 terminal:
   name: T1
-  config: local
 
 terminal:
   name: T2
-  config: local
 
 ## Test
 
@@ -25,5 +20,7 @@ terminal:
 > amux attach -t shared-session
 > message from attached terminal
 message from attached terminal
+echo: message from attached terminal
 > another message
 another message
+echo: another message

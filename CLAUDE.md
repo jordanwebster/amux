@@ -159,6 +159,7 @@ src/
 cargo fmt               # Format code
 cargo clippy            # Lint (fix any warnings)
 cargo test              # Run all tests
+cargo run -p e2e-runner -- run   # Run E2E tests
 ```
 
 **After completing a chunk of work:**
@@ -169,6 +170,7 @@ Additional commands:
 cargo check             # Fast type-check without full build
 cargo test -- --nocapture  # See println output in tests
 cargo build --release   # Build optimized binary
+cargo run -p e2e-runner -- run <filter>  # Run specific E2E test
 ```
 
 Manual testing:
@@ -179,6 +181,84 @@ cargo run -- list-agents                 # List running agents
 cargo run -- kill-server                 # Clean shutdown
 # Use Ctrl-b d to detach without killing agent
 ```
+
+## Writing E2E Tests
+
+When adding or changing features, write an E2E test to verify the behavior. Tests live in `e2e-tests/*.test`.
+
+### Test File Format
+
+```
+# test: my_feature
+# description: What this test verifies
+
+## Environment
+
+# Only declare what you need - defaults are auto-injected
+terminal:
+  name: T1
+
+## Test
+
+@T1
+> amux new-agent -t myagent test-agent
+> input here
+input here
+echo: input here
+```
+
+### Key Concepts
+
+1. **Explicit output:** Tests show ALL terminal output - PTY echo + agent response. When you send `> hello`, expect to see `hello` (PTY echo) then `echo: hello` (test-agent response).
+
+2. **Minimal environment:** Only declare entities when needed:
+   - `terminal:` - Required, at least one
+   - `directory:` - Only if you need `$name.path` variables
+   - `config:` - Only for multi-server tests (not yet implemented)
+
+3. **Variables:** Use `$dirname.path` to match dynamic temp directory paths:
+   ```
+   directory:
+     name: mydir
+
+   terminal:
+     name: T1
+     cwd: mydir
+
+   ## Test
+
+   @T1
+   > amux list-agents
+     agent1 - $mydir.path
+   ```
+
+4. **Multi-terminal:** Test attach, broadcast, replay buffer:
+   ```
+   @T1
+   > amux new-agent -t shared test-agent
+   > message one
+   message one
+   echo: message one
+
+   @T2
+   > amux attach -t shared
+   message one
+   echo: message one
+   > message two
+   message two
+   echo: message two
+
+   @T1
+   message two
+   echo: message two
+   ```
+
+### When to Write E2E Tests
+
+- New CLI commands or flags
+- Changes to protocol behavior (attach, subscribe, replay)
+- Multi-client interactions (broadcast, late-join replay)
+- Output format changes (list-agents, error messages)
 
 ## Questions?
 

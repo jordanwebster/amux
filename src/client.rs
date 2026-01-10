@@ -191,10 +191,7 @@ pub async fn list_agents(config: &Config) -> Result<()> {
             } else {
                 println!("Running agents:");
                 for agent in agents {
-                    println!(
-                        "  {} ({}) - {:?}",
-                        agent.agent_id, agent.command, agent.working_dir
-                    );
+                    println!("  {} - {}", agent.agent_id, agent.working_dir.display());
                 }
             }
         }

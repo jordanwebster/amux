@@ -4,7 +4,7 @@ mod terminal;
 
 use clap::{Parser, Subcommand};
 use executor::{Executor, ExecutorConfig};
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 
 #[derive(Parser)]
 #[command(name = "e2e-runner")]
@@ -46,7 +46,7 @@ enum Commands {
     },
 }
 
-fn find_test_files(test_dir: &PathBuf, filter: &str) -> Vec<PathBuf> {
+fn find_test_files(test_dir: &Path, filter: &str) -> Vec<PathBuf> {
     let pattern = test_dir.join("*.test");
     let pattern_str = pattern.to_string_lossy();
 
@@ -90,12 +90,13 @@ fn run_tests(
         std::process::exit(1);
     }
 
-    // Find binaries
+    // Find binaries and convert to absolute paths
     let amux_binary = amux_binary.unwrap_or_else(|| {
         // Try to find in target/debug first
         let debug_path = PathBuf::from("target/debug/amux");
         if debug_path.exists() {
-            debug_path
+            // Convert to absolute path so it works regardless of cwd
+            debug_path.canonicalize().unwrap_or(debug_path)
         } else {
             // Fall back to PATH
             PathBuf::from("amux")
@@ -105,22 +106,23 @@ fn run_tests(
     let test_agent_binary = test_agent_binary.unwrap_or_else(|| {
         let debug_path = PathBuf::from("target/debug/test-agent");
         if debug_path.exists() {
-            debug_path
+            // Convert to absolute path so it works regardless of cwd
+            debug_path.canonicalize().unwrap_or(debug_path)
         } else {
             PathBuf::from("test-agent")
         }
     });
 
     // Check binaries exist
-    if !amux_binary.exists() && amux_binary != PathBuf::from("amux") {
+    if !amux_binary.exists() && amux_binary != Path::new("amux") {
         eprintln!(
-            "amux binary not found at {}. Did you run 'cargo build -p amux --features test-support'?",
+            "amux binary not found at {}. Did you run 'cargo build'?",
             amux_binary.display()
         );
         std::process::exit(1);
     }
 
-    if !test_agent_binary.exists() && test_agent_binary != PathBuf::from("test-agent") {
+    if !test_agent_binary.exists() && test_agent_binary != Path::new("test-agent") {
         eprintln!(
             "test-agent binary not found at {}. Did you run 'cargo build -p test-agent'?",
             test_agent_binary.display()
@@ -157,7 +159,7 @@ fn run_tests(
                     passed += 1;
                 } else {
                     println!("FAILED");
-                    if let Some(error) = &result.error {
+                    if let Some(ref error) = result.error {
                         println!("    Error: {}", error);
                     }
                     failed += 1;

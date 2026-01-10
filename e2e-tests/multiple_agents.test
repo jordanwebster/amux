@@ -3,16 +3,11 @@
 
 ## Environment
 
-config:
-  name: local
-
 terminal:
   name: T1
-  config: local
 
 terminal:
   name: T2
-  config: local
 
 ## Test
 
@@ -21,18 +16,22 @@ terminal:
 > amux new-agent -t agent-alpha test-agent
 > message to alpha
 message to alpha
+echo: message to alpha
 
 # Create second agent (different name, same server)
 @T2
 > amux new-agent -t agent-beta test-agent
 > message to beta
 message to beta
+echo: message to beta
 
 # Both agents remain responsive
 @T1
 > alpha still alive
 alpha still alive
+echo: alpha still alive
 
 @T2
 > beta still alive
 beta still alive
+echo: beta still alive

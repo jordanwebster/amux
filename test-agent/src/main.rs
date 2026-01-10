@@ -11,8 +11,8 @@ fn main() {
             Ok(0) => break, // EOF
             Ok(_) => {
                 let line = buf.trim_end_matches('\n').trim_end_matches('\r');
-                writeln!(stdout, "{}", line).unwrap();
-                stdout.write_all(&[0x00]).unwrap(); // NUL = "done"
+                // Prefix with "echo: " to distinguish from PTY echo
+                writeln!(stdout, "echo: {}", line).unwrap();
                 stdout.flush().unwrap();
             }
             Err(_) => break,

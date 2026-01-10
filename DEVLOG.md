@@ -38,6 +38,120 @@ One paragraph describing what was done.
 
 ---
 
+## 2025-01-10: E2E Testing Framework - Explicit Output & Variables
+
+### Summary
+Refactored the e2e testing framework to use explicit output matching and added variable substitution for dynamic values. Tests now include all terminal output (PTY echo + agent response), making them transparent and easy to debug. Added directory entity for unique temp paths per test, enabling parallel execution and path variable assertions.
+
+### Changes
+
+**test-agent/src/main.rs:**
+- Changed output from `{message}` to `echo: {message}` to distinguish from PTY echo
+
+**e2e-runner/src/executor.rs:**
+- Added `VariableContext` for `$name.path` and `$name.socket_path` substitution
+- Added auto-injection of default directory ("cwd") and config ("local") when not specified
+- Canonicalize directory paths to resolve symlinks (e.g., `/var` → `/private/var` on macOS)
+- Reduced timeout from 2s to 200ms (bytes transfer rapidly)
+
+**e2e-runner/src/terminal.rs:**
+- Added `read_expected()` with `\r\n` → `\n` normalization
+- Added `stty raw` wrapper to disable outer PTY processing
+- Added `shell_quote()` for safe command argument handling
+
+**e2e-runner/src/parser.rs:**
+- Added `Directory` struct with name and optional path
+- Made terminal `config` and `cwd` fields optional (use defaults)
+- Output lines are grouped until next input/terminal-switch
+
+**src/client.rs:**
+- Simplified `list-agents` output to `{agent_id} - {working_dir}` (display format, not debug)
+
+**New test files:**
+- `e2e-tests/list_agents.test` - Tests list-agents with directory variables
+- `e2e-tests/replay_buffer.test` - Tests replay buffer and broadcast
+
+### Test File Format
+
+Tests are explicit about all terminal output:
+
+```
+# test: replay_buffer
+
+## Environment
+
+terminal:
+  name: T1
+
+terminal:
+  name: T2
+
+## Test
+
+@T1
+> amux new-agent -t myagent test-agent
+> hello
+hello
+echo: hello
+
+@T2
+> amux attach -t myagent
+hello
+echo: hello
+> world
+world
+echo: world
+```
+
+For dynamic paths, use directory entities and variables:
+
+```
+## Environment
+
+directory:
+  name: mydir
+
+terminal:
+  name: T1
+  cwd: mydir
+
+## Test
+
+@T1
+> amux list-agents
+  myagent - $mydir.path
+```
+
+### Decisions Made
+
+1. **Explicit output:** Tests show exactly what the terminal shows - PTY echo followed by agent response. No hidden magic or stripping. More verbose but completely transparent.
+
+2. **"echo:" prefix:** test-agent prefixes responses with "echo:" to distinguish from PTY echo. This makes test output unambiguous.
+
+3. **Minimal environment:** Tests only specify what they need. Default config and directory are auto-injected. Only declare entities when you need to name them for variables.
+
+4. **200ms timeout:** Bytes transfer rapidly over Unix sockets. 200ms is generous - could potentially go lower.
+
+### Verification
+
+```
+cargo fmt && cargo clippy --workspace  # OK
+cargo test --workspace                 # 16 tests pass
+cargo run -p e2e-runner -- run         # 5/5 E2E tests pass
+```
+
+### Current E2E Tests
+
+| Test | Coverage |
+|------|----------|
+| `new_agent` | Create agent, send input, verify response |
+| `attach` | Second terminal attaches and interacts |
+| `multiple_agents` | Two agents on same server |
+| `list_agents` | List agents with directory path variables |
+| `replay_buffer` | Late joiner sees history, broadcast works |
+
+---
+
 ## 2025-01-10: E2E Config-Based Testing Refactor
 
 ### Summary

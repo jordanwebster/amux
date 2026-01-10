@@ -1,0 +1,45 @@
+# test: list_agents
+# description: List all running agents
+
+## Environment
+
+# Named directories so we can use $dir_alpha.path and $dir_beta.path in assertions
+directory:
+  name: dir_alpha
+
+directory:
+  name: dir_beta
+
+terminal:
+  name: T1
+  cwd: dir_alpha
+
+terminal:
+  name: T2
+  cwd: dir_beta
+
+terminal:
+  name: T3
+
+## Test
+
+# Create first agent in dir_alpha
+@T1
+> amux new-agent -t alpha test-agent
+> ping from alpha
+ping from alpha
+echo: ping from alpha
+
+# Create second agent in dir_beta
+@T2
+> amux new-agent -t beta test-agent
+> ping from beta
+ping from beta
+echo: ping from beta
+
+# List agents and verify both are shown with their directories
+@T3
+> amux list-agents
+Running agents:
+  alpha - $dir_alpha.path
+  beta - $dir_beta.path

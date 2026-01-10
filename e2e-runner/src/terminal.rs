@@ -4,6 +4,23 @@ use std::io::{Read, Write};
 use std::path::Path;
 use std::time::Duration;
 
+// Note: We disable PTY echo (stty -echo) when spawning commands.
+// PTY echo causes input to be echoed back before the command's response.
+// Rather than eagerly draining echo bytes after each input, we simply
+// disable echo to get cleaner output for test assertions.
+
+/// Quote a string for safe use in a shell command
+fn shell_quote(s: &str) -> String {
+    // If the string contains no special characters, return as-is
+    if s.chars()
+        .all(|c| c.is_ascii_alphanumeric() || c == '_' || c == '-' || c == '.' || c == '/')
+    {
+        return s.to_string();
+    }
+    // Otherwise, wrap in single quotes and escape any existing single quotes
+    format!("'{}'", s.replace('\'', "'\\''"))
+}
+
 /// Error type for terminal operations
 #[derive(Debug)]
 pub struct TerminalError {
@@ -55,8 +72,21 @@ impl TestTerminal {
                 message: format!("Failed to create PTY: {}", e),
             })?;
 
-        let mut cmd = CommandBuilder::new(command);
-        cmd.args(args);
+        // Build the shell command that disables echo before exec'ing the real command
+        // This prevents PTY echo from cluttering our output
+        // We quote each argument to handle paths with spaces or special characters
+        let quoted_args: Vec<String> = args.iter().map(|arg| shell_quote(arg)).collect();
+        // stty raw: disable all input/output processing (no echo, no NL translation, etc.)
+        // Note: This only affects the outer PTY; nested PTYs (like those created by amux)
+        // will still have default terminal settings, so we normalize \r\n -> \n when reading.
+        let shell_cmd = format!(
+            "stty raw; exec {} {}",
+            shell_quote(command),
+            quoted_args.join(" ")
+        );
+
+        let mut cmd = CommandBuilder::new("sh");
+        cmd.args(["-c", &shell_cmd]);
         cmd.cwd(working_dir);
         // Inherit all current environment vars first
         for (key, value) in std::env::vars() {
@@ -95,92 +125,52 @@ impl TestTerminal {
         Ok(())
     }
 
-    /// Send raw bytes to the terminal
-    pub fn send_raw(&mut self, data: &[u8]) -> Result<(), TerminalError> {
-        self.writer.write_all(data)?;
-        self.writer.flush()?;
-        Ok(())
-    }
-
-    /// Read output until we see a NUL byte (sync signal from test-agent)
-    /// Returns the output without the NUL byte
-    pub fn read_until_nul(&mut self, timeout: Duration) -> Result<String, TerminalError> {
+    /// Read output and normalize to match expected string.
+    /// Handles \r\n vs \n differences from terminal output processing.
+    /// Waits up to `timeout` for enough data to arrive.
+    pub fn read_expected(
+        &mut self,
+        expected: &str,
+        timeout: Duration,
+    ) -> Result<String, TerminalError> {
         let start = std::time::Instant::now();
         let mut buffer = [0u8; 1024];
 
         loop {
+            // Normalize what we have so far and check if it matches
+            let normalized = self.normalize_buffer();
+
+            if normalized.len() >= expected.len() {
+                // We have enough normalized bytes - extract and compare
+                let result = normalized[..expected.len()].to_string();
+                // Calculate how many raw bytes we consumed
+                // This is tricky because we normalized \r\n to \n
+                let consumed = self.calculate_consumed_bytes(expected.len());
+                self.output_buffer.drain(..consumed);
+                return Ok(result);
+            }
+
             if start.elapsed() > timeout {
                 return Err(TerminalError {
                     message: format!(
-                        "Timeout waiting for NUL byte. Buffer so far: {:?}",
-                        String::from_utf8_lossy(&self.output_buffer)
+                        "Timeout waiting for {} bytes (got {} normalized bytes: {:?})",
+                        expected.len(),
+                        normalized.len(),
+                        normalized
                     ),
                 });
             }
 
-            // Non-blocking read attempt with small timeout
-            // Note: portable-pty doesn't support non-blocking reads directly,
-            // so we use a small sleep and check
             match self.reader.read(&mut buffer) {
                 Ok(0) => {
-                    // EOF - process ended
-                    let output = String::from_utf8_lossy(&self.output_buffer).to_string();
-                    self.output_buffer.clear();
-                    return Ok(output);
-                }
-                Ok(n) => {
-                    // Check for NUL byte
-                    for i in 0..n {
-                        if buffer[i] == 0x00 {
-                            // Found NUL - add everything before it to buffer
-                            self.output_buffer.extend_from_slice(&buffer[..i]);
-                            let output = String::from_utf8_lossy(&self.output_buffer).to_string();
-                            self.output_buffer.clear();
-
-                            // Any data after NUL goes into buffer for next read
-                            if i + 1 < n {
-                                self.output_buffer.extend_from_slice(&buffer[i + 1..n]);
-                            }
-
-                            return Ok(output);
-                        }
-                    }
-                    // No NUL found - add to buffer and continue
-                    self.output_buffer.extend_from_slice(&buffer[..n]);
-                }
-                Err(ref e) if e.kind() == std::io::ErrorKind::WouldBlock => {
-                    std::thread::sleep(Duration::from_millis(10));
-                    continue;
-                }
-                Err(e) => {
                     return Err(TerminalError {
-                        message: format!("Read error: {}", e),
+                        message: format!(
+                            "EOF before receiving {} bytes (got {} normalized bytes: {:?})",
+                            expected.len(),
+                            normalized.len(),
+                            normalized
+                        ),
                     });
-                }
-            }
-        }
-    }
-
-    /// Read all available output (with timeout), not waiting for NUL
-    /// Used for commands that exit (like list-agents)
-    pub fn read_until_exit(&mut self, timeout: Duration) -> Result<String, TerminalError> {
-        let start = std::time::Instant::now();
-        let mut buffer = [0u8; 1024];
-
-        loop {
-            if start.elapsed() > timeout {
-                // Return what we have so far
-                let output = String::from_utf8_lossy(&self.output_buffer).to_string();
-                self.output_buffer.clear();
-                return Ok(output);
-            }
-
-            match self.reader.read(&mut buffer) {
-                Ok(0) => {
-                    // EOF - process ended
-                    let output = String::from_utf8_lossy(&self.output_buffer).to_string();
-                    self.output_buffer.clear();
-                    return Ok(output);
                 }
                 Ok(n) => {
                     self.output_buffer.extend_from_slice(&buffer[..n]);
@@ -198,10 +188,29 @@ impl TestTerminal {
         }
     }
 
-    /// Drain and return any buffered output
-    pub fn drain_buffer(&mut self) -> String {
-        let output = String::from_utf8_lossy(&self.output_buffer).to_string();
-        self.output_buffer.clear();
-        output
+    /// Normalize buffer: convert \r\n to \n, and standalone \r to \n
+    fn normalize_buffer(&self) -> String {
+        let s = String::from_utf8_lossy(&self.output_buffer);
+        s.replace("\r\n", "\n").replace('\r', "\n")
+    }
+
+    /// Calculate how many raw bytes to consume to get `normalized_len` normalized bytes
+    fn calculate_consumed_bytes(&self, normalized_len: usize) -> usize {
+        let mut raw_idx = 0;
+        let mut norm_count = 0;
+        let bytes = &self.output_buffer;
+
+        while norm_count < normalized_len && raw_idx < bytes.len() {
+            if raw_idx + 1 < bytes.len() && bytes[raw_idx] == b'\r' && bytes[raw_idx + 1] == b'\n' {
+                // \r\n counts as one normalized char
+                raw_idx += 2;
+                norm_count += 1;
+            } else {
+                raw_idx += 1;
+                norm_count += 1;
+            }
+        }
+
+        raw_idx
     }
 }

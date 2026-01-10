@@ -1,0 +1,38 @@
+# test: replay_buffer
+# description: Verify replay buffer shows previous session output when attaching
+
+## Environment
+
+terminal:
+  name: T1
+
+terminal:
+  name: T2
+
+## Test
+
+# T1 creates agent and sends some messages
+@T1
+> amux new-agent -t replay-test test-agent
+> first message
+first message
+echo: first message
+> second message
+second message
+echo: second message
+
+# T2 attaches - should immediately see replay buffer with previous output
+@T2
+> amux attach -t replay-test
+first message
+echo: first message
+second message
+echo: second message
+> third message from T2
+third message from T2
+echo: third message from T2
+
+# Verify T1 also sees T2's message (broadcast)
+@T1
+third message from T2
+echo: third message from T2

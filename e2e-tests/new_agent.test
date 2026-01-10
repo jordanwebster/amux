@@ -3,12 +3,8 @@
 
 ## Environment
 
-config:
-  name: local
-
 terminal:
   name: T1
-  config: local
 
 ## Test
 
@@ -16,3 +12,4 @@ terminal:
 > amux new-agent -t test1 test-agent
 > hello world
 hello world
+echo: hello world
