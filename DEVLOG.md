@@ -38,6 +38,64 @@ One paragraph describing what was done.
 
 ---
 
+## 2025-01-11: SubscriptionHandle - Simplify Session/Server Interface
+
+### Summary
+Introduced `SubscriptionHandle` as a unified abstraction for interacting with agent sessions. The handle bundles output reading and input sending into a single object returned by `subscribe()`. This simplifies the server code by removing the need to track session references and connection state separately.
+
+### Changes
+
+**Modified files:**
+- `src/session.rs` - Added `SubscriptionHandle` and `SubscriptionSender` structs; `subscribe()` now returns `SubscriptionHandle` instead of `MultiplexReader`; removed `send_input()` method (now encapsulated in handle)
+- `src/server.rs` - Simplified `handle_subscribe()` to return just `SubscriptionHandle`; simplified `handle_raw_mode()` to take just `SubscriptionHandle`; removed `LocalConnectionState` usage
+- `src/connection.rs` - Removed `LocalConnectionState` struct (no longer needed)
+
+### Decisions Made
+
+1. **SubscriptionHandle naming:** Named it "subscription" rather than "session" because you're subscribing to a session - the handle represents your subscription, not the session itself. Multiple clients can have their own handles to the same session.
+
+2. **`send()` instead of `write()`:** The method is named `send()` to make the direction clear - you're sending input TO the agent, not "writing" to the subscription.
+
+3. **`split()` method:** Added `split()` to decompose the handle into `(MultiplexReader, SubscriptionSender)` for use in separate async tasks. This matches the pattern of `transport.into_split()`.
+
+4. **Remove LocalConnectionState:** The `subscribed_agent` and `raw_mode` fields were written but never read - pure bookkeeping with no consumers. Removed entirely.
+
+### Verification
+
+```
+cargo fmt                           # OK
+cargo clippy --workspace            # OK (existing dead_code warnings only)
+cargo test --workspace              # 26 tests pass (20 amux, 6 e2e-runner)
+cargo run -p e2e-runner -- run      # 5/5 E2E tests pass
+```
+
+### API Summary
+
+```rust
+pub struct SubscriptionHandle { ... }
+
+impl SubscriptionHandle {
+    pub async fn read(&mut self) -> Option<Vec<u8>>;
+    pub async fn send(&self, data: Vec<u8>) -> Result<()>;
+    pub fn split(self) -> (MultiplexReader, SubscriptionSender);
+}
+
+pub struct SubscriptionSender { ... }
+
+impl SubscriptionSender {
+    pub async fn send(&self, data: Vec<u8>) -> Result<()>;
+}
+```
+
+The flow is now:
+```
+session.subscribe() -> SubscriptionHandle
+handle.read()       -> bytes from agent
+handle.send(bytes)  -> bytes to agent
+```
+
+---
+
 ## 2025-01-11: MultiplexBuffer - Fix Replay/Broadcast Race Condition
 
 ### Summary

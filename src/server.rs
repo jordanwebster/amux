@@ -1,9 +1,8 @@
-use crate::buffer::MultiplexReader;
 use crate::config::Config;
-use crate::connection::{ConnectionId, LocalConnectionState};
+use crate::connection::ConnectionId;
 use crate::error::{AmuxError, Result};
 use crate::message::Message;
-use crate::session::{AgentId, LocalAgentSession, SessionEvent};
+use crate::session::{AgentId, LocalAgentSession, SessionEvent, SubscriptionHandle};
 use crate::transport::{Transport, UnixTransport};
 use std::collections::HashMap;
 use std::path::PathBuf;
@@ -125,7 +124,6 @@ async fn handle_connection(
     log!("server: {} connected", conn_id);
 
     let mut transport = UnixTransport::new(stream);
-    let mut conn_state = LocalConnectionState::new(conn_id);
 
     // Message handling loop
     loop {
@@ -196,10 +194,10 @@ async fn handle_connection(
                 rows,
                 cols,
             } => {
-                let result = handle_subscribe(&state, &mut conn_state, &agent_id, rows, cols).await;
+                let result = handle_subscribe(&state, &agent_id, rows, cols).await;
 
                 match result {
-                    Ok((reader, session)) => {
+                    Ok(handle) => {
                         // Send success response
                         transport
                             .write_message(&Message::SubscribeResult {
@@ -209,12 +207,10 @@ async fn handle_connection(
                             .await?;
                         transport.flush().await?;
 
-                        // Enter raw mode - replay bytes come through the reader automatically
-                        conn_state.enter_raw_mode();
                         log!("server: {} entering raw mode", conn_id);
 
                         // Switch to raw streaming
-                        return handle_raw_mode(transport, reader, session, conn_id).await;
+                        return handle_raw_mode(transport, handle, conn_id).await;
                     }
                     Err(e) => {
                         transport
@@ -296,11 +292,10 @@ async fn create_agent(
 /// Handle subscribe request
 async fn handle_subscribe(
     state: &Arc<RwLock<ServerState>>,
-    conn_state: &mut LocalConnectionState,
     agent_id: &str,
     rows: u16,
     cols: u16,
-) -> Result<(MultiplexReader, Arc<LocalAgentSession>)> {
+) -> Result<SubscriptionHandle> {
     let state_guard = state.read().await;
 
     let session = state_guard
@@ -309,40 +304,29 @@ async fn handle_subscribe(
         .ok_or_else(|| AmuxError::AgentNotFound(agent_id.to_string()))?
         .clone();
 
-    // Check if session is alive
-    if !session.is_alive().await {
-        return Err(AmuxError::AgentNotFound(agent_id.to_string()));
-    }
-
     // Resize PTY if needed
     session.resize(rows, cols).await?;
 
-    // Subscribe to the session - this atomically gives us all existing output
-    // plus a stream of future output, with no gaps or duplicates
-    let reader = session
+    // Subscribe to the session - this atomically gives us a handle with
+    // all existing output plus a stream of future output, with no gaps or duplicates
+    session
         .subscribe()
         .await
-        .ok_or_else(|| AmuxError::AgentNotFound(agent_id.to_string()))?;
-
-    // Update connection state
-    let full_id = AgentId::local(&state_guard.config, agent_id);
-    conn_state.subscribe(full_id);
-
-    Ok((reader, session))
+        .ok_or_else(|| AmuxError::AgentNotFound(agent_id.to_string()))
 }
 
 /// Handle raw mode streaming
 async fn handle_raw_mode(
     transport: UnixTransport,
-    mut reader: MultiplexReader,
-    session: Arc<LocalAgentSession>,
+    handle: SubscriptionHandle,
     conn_id: ConnectionId,
 ) -> Result<()> {
     let (mut socket_reader, mut socket_writer) = transport.into_split();
+    let (mut output_reader, input_sender) = handle.split();
 
-    // Task: PTY output -> client (via MultiplexReader)
+    // Task: PTY output -> client
     let write_task = tokio::spawn(async move {
-        while let Some(data) = reader.read().await {
+        while let Some(data) = output_reader.read().await {
             if socket_writer.write_all(&data).await.is_err() {
                 return true; // Client disconnected
             }
@@ -358,7 +342,7 @@ async fn handle_raw_mode(
             match socket_reader.read(&mut buffer).await {
                 Ok(0) => return true, // Client disconnected
                 Ok(n) => {
-                    if session.send_input(buffer[..n].to_vec()).await.is_err() {
+                    if input_sender.send(buffer[..n].to_vec()).await.is_err() {
                         return false; // Session ended
                     }
                 }
