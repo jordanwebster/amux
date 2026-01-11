@@ -46,9 +46,6 @@ pub enum Message {
         error: Option<String>,
     },
 
-    /// Replay buffer data (sent after successful Subscribe)
-    ReplayBytes { data: Vec<u8> },
-
     /// Agent session has ended
     AgentEnded,
 
@@ -130,20 +127,6 @@ mod tests {
             assert!(error.is_none());
         } else {
             panic!("Expected SubscribeResult");
-        }
-    }
-
-    #[test]
-    fn test_message_roundtrip_replay_bytes() {
-        let msg = Message::ReplayBytes {
-            data: vec![1, 2, 3, 4, 5],
-        };
-        let encoded = msg.encode().unwrap();
-        let decoded = Message::decode(&encoded).unwrap();
-        if let Message::ReplayBytes { data } = decoded {
-            assert_eq!(data, vec![1, 2, 3, 4, 5]);
-        } else {
-            panic!("Expected ReplayBytes");
         }
     }
 

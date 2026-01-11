@@ -38,6 +38,59 @@ One paragraph describing what was done.
 
 ---
 
+## 2025-01-11: MultiplexBuffer - Fix Replay/Broadcast Race Condition
+
+### Summary
+Replaced the separate `replay_buffer` + `broadcast_tx` architecture with a unified `MultiplexBuffer` abstraction. This eliminates a race condition where data could be lost between getting the replay buffer and subscribing to the broadcast channel. The new design provides atomic subscribe semantics - subscribers receive all existing bytes plus all future bytes with no gaps or duplicates.
+
+### Changes
+
+**New files:**
+- `src/buffer.rs` - MultiplexBuffer and MultiplexReader implementations with 11 unit tests
+
+**Modified files:**
+- `src/main.rs` - Added `mod buffer`
+- `src/session.rs` - Replaced `replay_buffer` + `broadcast_tx` fields with single `MultiplexBuffer`; simplified PTY reader task; updated `subscribe()` to return `MultiplexReader`
+- `src/server.rs` - Simplified `handle_subscribe()` (no separate replay + subscribe); updated `handle_raw_mode()` to use `MultiplexReader`
+- `src/client.rs` - Removed `ReplayBytes` message handling; replay now comes through raw stream
+- `src/message.rs` - Removed `ReplayBytes` variant and its test
+
+### Decisions Made
+
+1. **Single buffer abstraction:** Instead of separate replay buffer and broadcast channel, use one `MultiplexBuffer` that handles both concerns. Writers append to the buffer and broadcast to subscribers. New subscribers get the current buffer contents plus future writes.
+
+2. **Per-subscriber channels:** Each subscriber gets their own `mpsc::unbounded_channel`. When they subscribe, we copy the current buffer to their channel and register them for future broadcasts. This avoids cursor arithmetic and works naturally with async.
+
+3. **Mutual exclusion via buffer lock:** `write()` holds the buffer write lock during both append and broadcast. `subscribe()` holds the buffer read lock during both snapshot and registration. These are mutually exclusive, ensuring no data is lost or duplicated.
+
+4. **Remove ReplayBytes message:** Since replay bytes now flow through the raw stream automatically (subscriber's first read contains the replay), there's no need for a separate protocol message. This simplifies the client/server handshake.
+
+### Verification
+
+```
+cargo fmt                           # OK
+cargo clippy --workspace            # OK (existing dead_code warnings only)
+cargo test --workspace              # 26 tests pass (20 amux, 6 e2e-runner)
+cargo run -p e2e-runner -- run      # 5/5 E2E tests pass
+```
+
+### Technical Details
+
+The race condition in the old code:
+```
+t0: get_replay_buffer() -> gets bytes [A]
+t1: PTY outputs B, appends to replay, broadcasts B
+t2: subscribe() -> receiver created (too late for B)
+Result: client gets [A] then [C, D, ...] - B is lost
+```
+
+The fix ensures atomicity:
+- `write()` holds buffer lock during append AND broadcast
+- `subscribe()` holds buffer lock during snapshot AND registration
+- Either B is in the snapshot, OR the subscriber is registered before B is broadcast
+
+---
+
 ## 2025-01-10: E2E Testing Framework - Explicit Output & Variables
 
 ### Summary

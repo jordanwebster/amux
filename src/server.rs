@@ -1,3 +1,4 @@
+use crate::buffer::MultiplexReader;
 use crate::config::Config;
 use crate::connection::{ConnectionId, LocalConnectionState};
 use crate::error::{AmuxError, Result};
@@ -9,7 +10,7 @@ use std::path::PathBuf;
 use std::sync::Arc;
 use tokio::io::{AsyncReadExt, AsyncWriteExt};
 use tokio::net::{UnixListener, UnixStream};
-use tokio::sync::{broadcast, mpsc, RwLock};
+use tokio::sync::{mpsc, RwLock};
 
 /// Server state shared across connection handlers
 struct ServerState {
@@ -198,7 +199,7 @@ async fn handle_connection(
                 let result = handle_subscribe(&state, &mut conn_state, &agent_id, rows, cols).await;
 
                 match result {
-                    Ok((replay_data, broadcast_rx, session)) => {
+                    Ok((reader, session)) => {
                         // Send success response
                         transport
                             .write_message(&Message::SubscribeResult {
@@ -206,19 +207,14 @@ async fn handle_connection(
                                 error: None,
                             })
                             .await?;
-
-                        // Send replay buffer
-                        transport
-                            .write_message(&Message::ReplayBytes { data: replay_data })
-                            .await?;
                         transport.flush().await?;
 
-                        // Enter raw mode
+                        // Enter raw mode - replay bytes come through the reader automatically
                         conn_state.enter_raw_mode();
                         log!("server: {} entering raw mode", conn_id);
 
                         // Switch to raw streaming
-                        return handle_raw_mode(transport, broadcast_rx, session, conn_id).await;
+                        return handle_raw_mode(transport, reader, session, conn_id).await;
                     }
                     Err(e) => {
                         transport
@@ -304,11 +300,7 @@ async fn handle_subscribe(
     agent_id: &str,
     rows: u16,
     cols: u16,
-) -> Result<(
-    Vec<u8>,
-    broadcast::Receiver<Vec<u8>>,
-    Arc<LocalAgentSession>,
-)> {
+) -> Result<(MultiplexReader, Arc<LocalAgentSession>)> {
     let state_guard = state.read().await;
 
     let session = state_guard
@@ -325,11 +317,9 @@ async fn handle_subscribe(
     // Resize PTY if needed
     session.resize(rows, cols).await?;
 
-    // Get replay buffer
-    let replay_data = session.get_replay_buffer().await;
-
-    // Subscribe to broadcast
-    let broadcast_rx = session
+    // Subscribe to the session - this atomically gives us all existing output
+    // plus a stream of future output, with no gaps or duplicates
+    let reader = session
         .subscribe()
         .await
         .ok_or_else(|| AmuxError::AgentNotFound(agent_id.to_string()))?;
@@ -338,41 +328,34 @@ async fn handle_subscribe(
     let full_id = AgentId::local(&state_guard.config, agent_id);
     conn_state.subscribe(full_id);
 
-    Ok((replay_data, broadcast_rx, session))
+    Ok((reader, session))
 }
 
 /// Handle raw mode streaming
 async fn handle_raw_mode(
     transport: UnixTransport,
-    mut broadcast_rx: broadcast::Receiver<Vec<u8>>,
+    mut reader: MultiplexReader,
     session: Arc<LocalAgentSession>,
     conn_id: ConnectionId,
 ) -> Result<()> {
-    let (mut reader, mut writer) = transport.into_split();
+    let (mut socket_reader, mut socket_writer) = transport.into_split();
 
-    // Task: PTY output -> client
+    // Task: PTY output -> client (via MultiplexReader)
     let write_task = tokio::spawn(async move {
-        loop {
-            match broadcast_rx.recv().await {
-                Ok(data) => {
-                    if writer.write_all(&data).await.is_err() {
-                        return true; // Client disconnected
-                    }
-                    let _ = writer.flush().await;
-                }
-                Err(broadcast::error::RecvError::Closed) => {
-                    return false; // Session ended
-                }
-                Err(broadcast::error::RecvError::Lagged(_)) => continue,
+        while let Some(data) = reader.read().await {
+            if socket_writer.write_all(&data).await.is_err() {
+                return true; // Client disconnected
             }
+            let _ = socket_writer.flush().await;
         }
+        false // Session ended (reader returned None)
     });
 
     // Task: client input -> PTY
     let read_task = tokio::spawn(async move {
         let mut buffer = [0u8; 1024];
         loop {
-            match reader.read(&mut buffer).await {
+            match socket_reader.read(&mut buffer).await {
                 Ok(0) => return true, // Client disconnected
                 Ok(n) => {
                     if session.send_input(buffer[..n].to_vec()).await.is_err() {

@@ -151,17 +151,9 @@ async fn subscribe_and_stream(
         }
     }
 
-    // Read ReplayBytes
-    let response = transport.read_message().await?;
-    let replay_data = match response {
-        Message::ReplayBytes { data } => data,
-        _ => {
-            return Err(AmuxError::InvalidMessage);
-        }
-    };
-
     // Now enter raw mode and stream
-    run_attached(transport, &replay_data).await
+    // Replay bytes come through the raw socket automatically (no separate message)
+    run_attached(transport).await
 }
 
 /// List all running agents
@@ -228,18 +220,11 @@ pub async fn kill_server(config: &Config) -> Result<()> {
 }
 
 /// Run the attached session (streaming mode with Ctrl-b handling)
-async fn run_attached(transport: UnixTransport, replay_data: &[u8]) -> Result<()> {
+async fn run_attached(transport: UnixTransport) -> Result<()> {
     let (mut reader, mut writer) = transport.into_split();
 
     // Put terminal in raw mode
     let _raw_guard = RawModeGuard::new()?;
-
-    // Write replay data to stdout
-    if !replay_data.is_empty() {
-        log!("client: writing {} bytes replay", replay_data.len());
-        io::stdout().write_all(replay_data)?;
-        io::stdout().flush()?;
-    }
 
     // Flag to signal detach
     let detach_flag = Arc::new(AtomicBool::new(false));

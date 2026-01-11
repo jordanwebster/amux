@@ -1,5 +1,6 @@
 #[macro_use]
 mod log;
+mod buffer;
 mod client;
 mod config;
 mod connection;

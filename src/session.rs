@@ -1,11 +1,12 @@
+use crate::buffer::{MultiplexBuffer, MultiplexReader};
 use crate::config::Config;
 use crate::error::{AmuxError, Result};
 use crate::message::AgentInfo;
 use portable_pty::{native_pty_system, CommandBuilder, MasterPty, PtySize};
-use std::io::Read;
+use std::io::{Read, Write};
 use std::path::PathBuf;
 use std::sync::Arc;
-use tokio::sync::{broadcast, mpsc, Mutex, RwLock};
+use tokio::sync::{mpsc, Mutex};
 
 /// Maximum replay buffer size
 const MAX_REPLAY_BUFFER: usize = 10 * 1024 * 1024; // 10MB
@@ -60,11 +61,8 @@ pub struct LocalAgentSession {
     /// PTY master (None if closed)
     pty_master: Arc<Mutex<Option<Box<dyn MasterPty + Send>>>>,
 
-    /// Replay buffer for new subscribers
-    replay_buffer: Arc<RwLock<Vec<u8>>>,
-
-    /// Broadcast channel for PTY output
-    broadcast_tx: Arc<RwLock<Option<broadcast::Sender<Vec<u8>>>>>,
+    /// Multiplex buffer for PTY output (handles both replay and broadcast)
+    buffer: Arc<MultiplexBuffer>,
 
     /// Channel to send input to PTY
     input_tx: mpsc::Sender<Vec<u8>>,
@@ -123,38 +121,20 @@ impl LocalAgentSession {
         let master: Arc<Mutex<Option<Box<dyn MasterPty + Send>>>> =
             Arc::new(Mutex::new(Some(master)));
         let current_size: Arc<Mutex<(u16, u16)>> = Arc::new(Mutex::new((rows, cols)));
-        let replay_buffer: Arc<RwLock<Vec<u8>>> = Arc::new(RwLock::new(Vec::new()));
-        let (broadcast_tx, _) = broadcast::channel::<Vec<u8>>(256);
-        let broadcast_tx: Arc<RwLock<Option<broadcast::Sender<Vec<u8>>>>> =
-            Arc::new(RwLock::new(Some(broadcast_tx)));
+        let buffer = Arc::new(MultiplexBuffer::new(MAX_REPLAY_BUFFER));
         let (input_tx, mut input_rx) = mpsc::channel::<Vec<u8>>(256);
 
-        // Task: Read from PTY, append to replay buffer, broadcast to clients
-        let broadcast_tx_clone = broadcast_tx.clone();
-        let replay_buffer_clone = replay_buffer.clone();
+        // Task: Read from PTY, write to multiplex buffer
+        let buffer_clone = buffer.clone();
         let session_id = id.agent_id.clone();
         tokio::task::spawn_blocking(move || {
             let rt = tokio::runtime::Handle::current();
-            let mut buffer = [0u8; 4096];
+            let mut read_buf = [0u8; 4096];
             loop {
-                match pty_reader.read(&mut buffer) {
+                match pty_reader.read(&mut read_buf) {
                     Ok(0) => break,
                     Ok(n) => {
-                        let data = buffer[..n].to_vec();
-                        rt.block_on(async {
-                            let mut buf = replay_buffer_clone.write().await;
-                            buf.extend_from_slice(&data);
-                            if buf.len() > MAX_REPLAY_BUFFER {
-                                let excess = buf.len() - MAX_REPLAY_BUFFER;
-                                buf.drain(..excess);
-                            }
-                        });
-                        // Send to broadcast channel if still open
-                        rt.block_on(async {
-                            if let Some(tx) = broadcast_tx_clone.read().await.as_ref() {
-                                let _ = tx.send(data);
-                            }
-                        });
+                        rt.block_on(buffer_clone.write(&read_buf[..n]));
                     }
                     Err(_) => break,
                 }
@@ -177,7 +157,7 @@ impl LocalAgentSession {
         // Task: Wait for child to exit, then clean up and notify server
         let session_id = id.clone();
         let master_clone = master.clone();
-        let broadcast_tx_clone = broadcast_tx.clone();
+        let buffer_clone = buffer.clone();
         tokio::task::spawn_blocking(move || {
             let status = child.wait();
             log!(
@@ -195,15 +175,9 @@ impl LocalAgentSession {
                     log!("session [{}]: PTY master dropped", session_id.agent_id);
                 }
 
-                // Close broadcast channel to disconnect all clients
-                {
-                    let mut tx = broadcast_tx_clone.write().await;
-                    tx.take();
-                    log!(
-                        "session [{}]: broadcast channel closed",
-                        session_id.agent_id
-                    );
-                }
+                // Close the multiplex buffer to disconnect all clients
+                buffer_clone.close().await;
+                log!("session [{}]: multiplex buffer closed", session_id.agent_id);
 
                 // Notify server
                 let _ = event_tx.send(SessionEvent::Ended(session_id)).await;
@@ -215,8 +189,7 @@ impl LocalAgentSession {
             command: command.to_string(),
             working_dir,
             pty_master: master,
-            replay_buffer,
-            broadcast_tx,
+            buffer,
             input_tx,
             current_size,
         })
@@ -224,21 +197,18 @@ impl LocalAgentSession {
 
     /// Check if the session is still alive
     pub async fn is_alive(&self) -> bool {
-        self.broadcast_tx.read().await.is_some()
+        !self.buffer.is_closed().await
     }
 
-    /// Get the replay buffer
-    pub async fn get_replay_buffer(&self) -> Vec<u8> {
-        self.replay_buffer.read().await.clone()
-    }
-
-    /// Subscribe to the broadcast channel
-    pub async fn subscribe(&self) -> Option<broadcast::Receiver<Vec<u8>>> {
-        self.broadcast_tx
-            .read()
-            .await
-            .as_ref()
-            .map(|tx| tx.subscribe())
+    /// Subscribe to the session output.
+    ///
+    /// Returns a reader that will receive all existing output (replay) followed
+    /// by any new output. This operation is atomic - no data will be lost or
+    /// duplicated between the replay and live output.
+    ///
+    /// Returns `None` if the session has ended.
+    pub async fn subscribe(&self) -> Option<MultiplexReader> {
+        self.buffer.subscribe().await
     }
 
     /// Send input to the PTY
@@ -280,8 +250,8 @@ impl LocalAgentSession {
         log!("session [{}]: shutting down", self.id.agent_id);
         // Drop the PTY master to kill any remaining processes
         self.pty_master.lock().await.take();
-        // Close broadcast channel to disconnect clients
-        self.broadcast_tx.write().await.take();
+        // Close the multiplex buffer to disconnect clients
+        self.buffer.close().await;
     }
 
     /// Convert to AgentInfo for listing
@@ -293,5 +263,3 @@ impl LocalAgentSession {
         }
     }
 }
-
-use std::io::Write;
