@@ -27,6 +27,9 @@ pub enum Message {
     /// Unsubscribe from the current agent
     Unsubscribe,
 
+    /// Send input bytes to the subscribed agent
+    Input { data: Vec<u8> },
+
     /// Shutdown the server
     Shutdown,
 
@@ -45,6 +48,9 @@ pub enum Message {
         success: bool,
         error: Option<String>,
     },
+
+    /// Output bytes from the agent
+    Output { data: Vec<u8> },
 
     /// Agent session has ended
     AgentEnded,

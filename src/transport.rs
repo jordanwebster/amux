@@ -1,31 +1,11 @@
 use crate::error::{AmuxError, Result};
 use crate::message::Message;
-use async_trait::async_trait;
 use tokio::io::{AsyncReadExt, AsyncWriteExt};
 use tokio::net::unix::{OwnedReadHalf, OwnedWriteHalf};
 use tokio::net::UnixStream;
 
 /// Maximum frame size (16MB) to prevent DoS via huge length prefix
 const MAX_FRAME_SIZE: usize = 16 * 1024 * 1024;
-
-/// Transport trait for reading and writing messages
-#[async_trait]
-pub trait Transport: Send {
-    /// Read the next framed message
-    async fn read_frame(&mut self) -> Result<Vec<u8>>;
-
-    /// Write a framed message
-    async fn write_frame(&mut self, data: &[u8]) -> Result<()>;
-
-    /// Read raw bytes (no framing) - for post-subscribe streaming
-    async fn read_raw(&mut self, buf: &mut [u8]) -> Result<usize>;
-
-    /// Write raw bytes (no framing) - for post-subscribe streaming
-    async fn write_raw(&mut self, data: &[u8]) -> Result<()>;
-
-    /// Flush any buffered data
-    async fn flush(&mut self) -> Result<()>;
-}
 
 /// Unix socket transport with length-prefixed framing
 pub struct UnixTransport {
@@ -52,25 +32,7 @@ impl UnixTransport {
         self.write_frame(&data).await
     }
 
-    /// Get the reader half for raw streaming
-    pub fn into_reader(self) -> OwnedReadHalf {
-        self.reader
-    }
-
-    /// Get the writer half for raw streaming
-    pub fn into_writer(self) -> OwnedWriteHalf {
-        self.writer
-    }
-
-    /// Split into reader and writer halves
-    pub fn into_split(self) -> (OwnedReadHalf, OwnedWriteHalf) {
-        (self.reader, self.writer)
-    }
-}
-
-#[async_trait]
-impl Transport for UnixTransport {
-    /// Read a length-prefixed frame
+    /// Read a length-prefixed frame (internal implementation detail)
     ///
     /// Frame format: 4-byte big-endian length + payload
     async fn read_frame(&mut self) -> Result<Vec<u8>> {
@@ -91,34 +53,13 @@ impl Transport for UnixTransport {
         Ok(buf)
     }
 
-    /// Write a length-prefixed frame
+    /// Write a length-prefixed frame (internal implementation detail)
     ///
     /// Frame format: 4-byte big-endian length + payload
     async fn write_frame(&mut self, data: &[u8]) -> Result<()> {
         let len = data.len() as u32;
         self.writer.write_all(&len.to_be_bytes()).await?;
         self.writer.write_all(data).await?;
-        Ok(())
-    }
-
-    /// Read raw bytes without framing
-    async fn read_raw(&mut self, buf: &mut [u8]) -> Result<usize> {
-        let n = self.reader.read(buf).await?;
-        if n == 0 {
-            return Err(AmuxError::ConnectionClosed);
-        }
-        Ok(n)
-    }
-
-    /// Write raw bytes without framing
-    async fn write_raw(&mut self, data: &[u8]) -> Result<()> {
-        self.writer.write_all(data).await?;
-        Ok(())
-    }
-
-    /// Flush buffered data
-    async fn flush(&mut self) -> Result<()> {
-        self.writer.flush().await?;
         Ok(())
     }
 }
@@ -148,18 +89,6 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn test_frame_roundtrip() {
-        let (mut client, mut server) = create_socket_pair().await;
-
-        let data = b"hello world";
-        client.write_frame(data).await.unwrap();
-        client.flush().await.unwrap();
-
-        let received = server.read_frame().await.unwrap();
-        assert_eq!(received, data);
-    }
-
-    #[tokio::test]
     async fn test_message_roundtrip() {
         let (mut client, mut server) = create_socket_pair().await;
 
@@ -172,7 +101,6 @@ mod tests {
         };
 
         client.write_message(&msg).await.unwrap();
-        client.flush().await.unwrap();
 
         let received = server.read_message().await.unwrap();
         if let Message::CreateAgent {
@@ -194,46 +122,38 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn test_raw_roundtrip() {
+    async fn test_output_message_roundtrip() {
         let (mut client, mut server) = create_socket_pair().await;
 
-        let data = b"raw bytes";
-        client.write_raw(data).await.unwrap();
-        client.flush().await.unwrap();
+        let msg = Message::Output {
+            data: b"hello world".to_vec(),
+        };
 
-        let mut buf = [0u8; 1024];
-        let n = server.read_raw(&mut buf).await.unwrap();
-        assert_eq!(&buf[..n], data);
+        client.write_message(&msg).await.unwrap();
+
+        let received = server.read_message().await.unwrap();
+        if let Message::Output { data } = received {
+            assert_eq!(data, b"hello world");
+        } else {
+            panic!("Expected Output");
+        }
     }
 
     #[tokio::test]
-    async fn test_empty_frame() {
+    async fn test_input_message_roundtrip() {
         let (mut client, mut server) = create_socket_pair().await;
 
-        let data: &[u8] = b"";
-        client.write_frame(data).await.unwrap();
-        client.flush().await.unwrap();
+        let msg = Message::Input {
+            data: b"user input".to_vec(),
+        };
 
-        let received = server.read_frame().await.unwrap();
-        assert!(received.is_empty());
-    }
+        client.write_message(&msg).await.unwrap();
 
-    #[tokio::test]
-    async fn test_frame_length_prefix() {
-        let (client, mut server) = create_socket_pair().await;
-
-        // Write a frame manually to verify format
-        let data = b"test";
-        let len = (data.len() as u32).to_be_bytes();
-
-        // Write using raw to bypass framing
-        let (_, mut writer) = client.into_split();
-        writer.write_all(&len).await.unwrap();
-        writer.write_all(data).await.unwrap();
-        writer.flush().await.unwrap();
-
-        // Read using framing
-        let received = server.read_frame().await.unwrap();
-        assert_eq!(received, data);
+        let received = server.read_message().await.unwrap();
+        if let Message::Input { data } = received {
+            assert_eq!(data, b"user input");
+        } else {
+            panic!("Expected Input");
+        }
     }
 }

@@ -8,62 +8,6 @@ use std::path::PathBuf;
 use std::sync::Arc;
 use tokio::sync::{mpsc, Mutex};
 
-/// A handle to a subscription to an agent session.
-///
-/// This bundles together the ability to read output from the agent
-/// and send input to the agent. When a client subscribes to a session,
-/// they receive a SubscriptionHandle that provides bidirectional
-/// communication with the agent.
-pub struct SubscriptionHandle {
-    output: MultiplexReader,
-    input: mpsc::Sender<Vec<u8>>,
-}
-
-/// Sender half of a SubscriptionHandle for sending input to the agent.
-pub struct SubscriptionSender {
-    input: mpsc::Sender<Vec<u8>>,
-}
-
-impl SubscriptionSender {
-    /// Send input to the agent.
-    ///
-    /// Returns an error if the session has ended.
-    pub async fn send(&self, data: Vec<u8>) -> Result<()> {
-        self.input
-            .send(data)
-            .await
-            .map_err(|_| AmuxError::ConnectionClosed)
-    }
-}
-
-impl SubscriptionHandle {
-    /// Read output from the agent.
-    ///
-    /// Returns `Some(bytes)` when data is available, or `None` when the
-    /// session has ended and no more data will arrive.
-    pub async fn read(&mut self) -> Option<Vec<u8>> {
-        self.output.read().await
-    }
-
-    /// Send input to the agent.
-    ///
-    /// Returns an error if the session has ended.
-    pub async fn send(&self, data: Vec<u8>) -> Result<()> {
-        self.input
-            .send(data)
-            .await
-            .map_err(|_| AmuxError::ConnectionClosed)
-    }
-
-    /// Split the handle into separate reader and sender parts.
-    ///
-    /// This is useful when you need to use the reader and sender in
-    /// different async tasks.
-    pub fn split(self) -> (MultiplexReader, SubscriptionSender) {
-        (self.output, SubscriptionSender { input: self.input })
-    }
-}
-
 /// Maximum replay buffer size
 const MAX_REPLAY_BUFFER: usize = 10 * 1024 * 1024; // 10MB
 
@@ -258,20 +202,18 @@ impl LocalAgentSession {
 
     /// Subscribe to the session.
     ///
-    /// Returns a handle that provides bidirectional communication with the agent:
-    /// - `read()` receives all existing output (replay) followed by any new output
-    /// - `send()` sends input to the agent
+    /// Returns a tuple of (MultiplexReader, input_sender) for bidirectional
+    /// communication with the agent:
+    /// - MultiplexReader receives all existing output (replay) followed by new output
+    /// - input_sender sends input bytes to the agent
     ///
     /// This operation is atomic - no data will be lost or duplicated between
     /// the replay and live output.
     ///
     /// Returns `None` if the session has ended.
-    pub async fn subscribe(&self) -> Option<SubscriptionHandle> {
+    pub async fn subscribe(&self) -> Option<(MultiplexReader, mpsc::Sender<Vec<u8>>)> {
         let output = self.buffer.subscribe().await?;
-        Some(SubscriptionHandle {
-            output,
-            input: self.input_tx.clone(),
-        })
+        Some((output, self.input_tx.clone()))
     }
 
     /// Resize the PTY

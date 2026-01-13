@@ -1,13 +1,13 @@
 use crate::config::Config;
 use crate::error::{AmuxError, Result};
 use crate::message::Message;
-use crate::transport::{Transport, UnixTransport};
+use crate::transport::UnixTransport;
 use std::io::{self, Read, Write};
 use std::os::unix::io::AsRawFd;
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::Arc;
-use tokio::io::{AsyncReadExt, AsyncWriteExt};
 use tokio::net::UnixStream;
+use tokio::sync::mpsc;
 
 /// Control key prefix (Ctrl-b = 0x02)
 const CTRL_B: u8 = 0x02;
@@ -52,7 +52,6 @@ pub async fn new_agent(agent_id: &str, command: &str, config: &Config) -> Result
             cols,
         })
         .await?;
-    transport.flush().await?;
 
     // Read response
     let response = transport.read_message().await?;
@@ -90,7 +89,6 @@ pub async fn attach(agent_id: Option<&str>, config: &Config) -> Result<()> {
         Some(id) => id.to_string(),
         None => {
             transport.write_message(&Message::ListAgents).await?;
-            transport.flush().await?;
 
             let response = transport.read_message().await?;
             match response {
@@ -128,7 +126,6 @@ async fn subscribe_and_stream(
             cols,
         })
         .await?;
-    transport.flush().await?;
 
     // Read SubscribeResult
     let response = transport.read_message().await?;
@@ -173,7 +170,6 @@ pub async fn list_agents(config: &Config) -> Result<()> {
     let mut transport = UnixTransport::new(stream);
 
     transport.write_message(&Message::ListAgents).await?;
-    transport.flush().await?;
 
     let response = transport.read_message().await?;
     match response {
@@ -213,44 +209,27 @@ pub async fn kill_server(config: &Config) -> Result<()> {
     let mut transport = UnixTransport::new(stream);
 
     transport.write_message(&Message::Shutdown).await?;
-    transport.flush().await?;
 
     println!("Server shutting down.");
     Ok(())
 }
 
 /// Run the attached session (streaming mode with Ctrl-b handling)
-async fn run_attached(transport: UnixTransport) -> Result<()> {
-    let (mut reader, mut writer) = transport.into_split();
-
+async fn run_attached(mut transport: UnixTransport) -> Result<()> {
     // Put terminal in raw mode
     let _raw_guard = RawModeGuard::new()?;
+
+    // Channel to bridge blocking stdin to async loop
+    let (input_tx, mut input_rx) = mpsc::channel::<Vec<u8>>(256);
 
     // Flag to signal detach
     let detach_flag = Arc::new(AtomicBool::new(false));
     let detach_flag_clone = detach_flag.clone();
 
-    // Task: Forward server output to local stdout
-    let stdout_task = tokio::spawn(async move {
-        let mut stdout = io::stdout();
-        let mut buffer = [0u8; 4096];
-        loop {
-            match reader.read(&mut buffer).await {
-                Ok(0) => break,
-                Ok(n) => {
-                    stdout.write_all(&buffer[..n]).ok();
-                    stdout.flush().ok();
-                }
-                Err(_) => break,
-            }
-        }
-    });
-
-    // Task: Forward local stdin to server (with Ctrl-b handling)
-    let stdin_task = tokio::task::spawn_blocking(move || {
+    // Task: Read stdin, handle Ctrl-b, send to channel
+    tokio::task::spawn_blocking(move || {
         let mut stdin = io::stdin();
         let mut buffer = [0u8; 1024];
-        let rt = tokio::runtime::Handle::current();
 
         loop {
             match stdin.read(&mut buffer) {
@@ -277,13 +256,14 @@ async fn run_attached(transport: UnixTransport) -> Result<()> {
                                     return;
                                 }
                                 CTRL_B => {
-                                    if rt.block_on(writer.write_all(&[CTRL_B])).is_err() {
+                                    // Send literal Ctrl-b
+                                    if input_tx.blocking_send(vec![CTRL_B]).is_err() {
                                         return;
                                     }
                                 }
                                 _ => {
-                                    if rt.block_on(writer.write_all(&[CTRL_B, next_byte])).is_err()
-                                    {
+                                    // Send Ctrl-b + next byte
+                                    if input_tx.blocking_send(vec![CTRL_B, next_byte]).is_err() {
                                         return;
                                     }
                                 }
@@ -294,21 +274,46 @@ async fn run_attached(transport: UnixTransport) -> Result<()> {
                             while i < n && buffer[i] != CTRL_B {
                                 i += 1;
                             }
-                            if rt.block_on(writer.write_all(&buffer[start..i])).is_err() {
+                            if input_tx.blocking_send(buffer[start..i].to_vec()).is_err() {
                                 return;
                             }
                         }
                     }
-                    let _ = rt.block_on(writer.flush());
                 }
                 Err(_) => break,
             }
         }
     });
 
-    tokio::select! {
-        _ = stdout_task => {}
-        _ = stdin_task => {}
+    // Main loop: select on stdin channel and server messages
+    loop {
+        if detach_flag.load(Ordering::SeqCst) {
+            break;
+        }
+
+        tokio::select! {
+            // Input from stdin ready to send
+            Some(data) = input_rx.recv() => {
+                if transport.write_message(&Message::Input { data }).await.is_err() {
+                    break;
+                }
+            }
+            // Message from server
+            msg = transport.read_message() => {
+                match msg {
+                    Ok(Message::Output { data }) => {
+                        io::stdout().write_all(&data).ok();
+                        io::stdout().flush().ok();
+                    }
+                    Ok(Message::AgentEnded) => {
+                        log!("client: agent ended");
+                        break;
+                    }
+                    Err(_) => break,
+                    _ => {} // Ignore unexpected messages
+                }
+            }
+        }
     }
 
     let detached = detach_flag.load(Ordering::SeqCst);

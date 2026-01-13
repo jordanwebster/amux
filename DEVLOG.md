@@ -38,6 +38,60 @@ One paragraph describing what was done.
 
 ---
 
+## 2025-01-13: Remove Raw Mode, Simplify to Message-Based Streaming
+
+### Summary
+Removed the raw byte mode optimization for local Unix domain sockets. After subscribe, bytes now flow via `Output` and `Input` messages instead of switching to unframed raw bytes. Also removed the `SubscriptionHandle` abstraction and `Transport` trait, simplifying to just inherent methods on `UnixTransport`.
+
+### Changes
+
+**Modified files:**
+- `src/message.rs` - Added `Output { data: Vec<u8> }` and `Input { data: Vec<u8> }` message variants
+- `src/session.rs` - Removed `SubscriptionHandle` and `SubscriptionSender`; `subscribe()` now returns `Option<(MultiplexReader, mpsc::Sender<Vec<u8>>)>` directly
+- `src/server.rs` - Removed `handle_raw_mode()` function; subscribe handler now uses `tokio::select!` loop with `Output`/`Input` messages
+- `src/client.rs` - Rewrote `run_attached()` to use message-based I/O with mpsc channel bridging blocking stdin
+- `src/transport.rs` - Removed `Transport` trait; made `read_frame()`/`write_frame()` private; removed `read_raw()`, `write_raw()`, `flush()`, `into_split()` methods
+- `Cargo.toml` - Removed `async-trait` dependency (using native async traits in Rust 1.75+)
+
+### Decisions Made
+
+1. **No raw mode:** The optimization was premature - message framing overhead is negligible for local sockets. Consistent message-based protocol simplifies the codebase and makes debugging easier.
+
+2. **Remove SubscriptionHandle:** The abstraction added complexity without clear benefit. Session now exposes `MultiplexReader` and input sender directly.
+
+3. **Remove Transport trait:** With only one transport type (UnixTransport) for now, the trait was unnecessary indirection. Methods are now inherent to `UnixTransport`. Can add trait back when implementing TCP/WebSocket transports.
+
+4. **Native async traits:** Rust 1.75+ supports async functions in traits natively. Removed `async-trait` crate dependency.
+
+5. **Channel bridge for stdin:** Client still needs `spawn_blocking` for stdin (no async stdin in std), but uses an mpsc channel to bridge to the async select! loop instead of raw socket writes.
+
+### Verification
+
+```
+cargo fmt                           # OK
+cargo clippy                        # OK (only dead_code warnings)
+cargo test                          # 18 tests pass
+cargo run -p e2e-runner -- run      # 5/5 E2E tests pass
+```
+
+### Message Flow (Updated)
+
+```
+Client                              Server
+  |                                    |
+  |-- CreateAgent -------------------> |
+  |<-- CreateAgentResult ------------- |
+  |-- Subscribe ---------------------> |
+  |<-- SubscribeResult --------------- |
+  |                                    |
+  |<-- Output { data } --------------- |  (PTY output as messages)
+  |-- Input { data } ----------------> |  (user input as messages)
+  |<-- Output { data } --------------- |
+  |...                                 |
+```
+
+---
+
 ## 2025-01-11: SubscriptionHandle - Simplify Session/Server Interface
 
 ### Summary

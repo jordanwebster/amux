@@ -1,13 +1,13 @@
+use crate::buffer::MultiplexReader;
 use crate::config::Config;
 use crate::connection::ConnectionId;
 use crate::error::{AmuxError, Result};
 use crate::message::Message;
-use crate::session::{AgentId, LocalAgentSession, SessionEvent, SubscriptionHandle};
-use crate::transport::{Transport, UnixTransport};
+use crate::session::{AgentId, LocalAgentSession, SessionEvent};
+use crate::transport::UnixTransport;
 use std::collections::HashMap;
 use std::path::PathBuf;
 use std::sync::Arc;
-use tokio::io::{AsyncReadExt, AsyncWriteExt};
 use tokio::net::{UnixListener, UnixStream};
 use tokio::sync::{mpsc, RwLock};
 
@@ -154,7 +154,6 @@ async fn handle_connection(
                 transport
                     .write_message(&Message::ListAgentsResult { agents })
                     .await?;
-                transport.flush().await?;
             }
 
             Message::CreateAgent {
@@ -186,7 +185,6 @@ async fn handle_connection(
                     },
                 };
                 transport.write_message(&response).await?;
-                transport.flush().await?;
             }
 
             Message::Subscribe {
@@ -197,7 +195,7 @@ async fn handle_connection(
                 let result = handle_subscribe(&state, &agent_id, rows, cols).await;
 
                 match result {
-                    Ok(handle) => {
+                    Ok((mut buffer_reader, input_tx)) => {
                         // Send success response
                         transport
                             .write_message(&Message::SubscribeResult {
@@ -205,12 +203,41 @@ async fn handle_connection(
                                 error: None,
                             })
                             .await?;
-                        transport.flush().await?;
 
-                        log!("server: {} entering raw mode", conn_id);
+                        log!("server: {} entering subscribed mode", conn_id);
 
-                        // Switch to raw streaming
-                        return handle_raw_mode(transport, handle, conn_id).await;
+                        // Enter subscribed mode - single loop with select!
+                        loop {
+                            tokio::select! {
+                                // PTY output ready → send to client
+                                output = buffer_reader.read() => {
+                                    match output {
+                                        Some(data) => {
+                                            transport.write_message(&Message::Output { data }).await?;
+                                        }
+                                        None => {
+                                            log!("server: {} session ended", conn_id);
+                                            break;
+                                        }
+                                    }
+                                }
+                                // Client message
+                                msg = transport.read_message() => {
+                                    match msg {
+                                        Ok(Message::Input { data }) => {
+                                            let _ = input_tx.send(data).await;
+                                        }
+                                        Err(_) => {
+                                            log!("server: {} client disconnected", conn_id);
+                                            break;
+                                        }
+                                        _ => {} // Ignore unexpected messages
+                                    }
+                                }
+                            }
+                        }
+
+                        return Ok(());
                     }
                     Err(e) => {
                         transport
@@ -219,7 +246,6 @@ async fn handle_connection(
                                 error: Some(e.to_string()),
                             })
                             .await?;
-                        transport.flush().await?;
                     }
                 }
             }
@@ -233,7 +259,6 @@ async fn handle_connection(
                         message: "Server shutting down".to_string(),
                     })
                     .await?;
-                transport.flush().await?;
 
                 // Remove socket and exit
                 let socket_path = {
@@ -252,7 +277,6 @@ async fn handle_connection(
                         message: "Unexpected message".to_string(),
                     })
                     .await?;
-                transport.flush().await?;
             }
         }
     }
@@ -295,7 +319,7 @@ async fn handle_subscribe(
     agent_id: &str,
     rows: u16,
     cols: u16,
-) -> Result<SubscriptionHandle> {
+) -> Result<(MultiplexReader, mpsc::Sender<Vec<u8>>)> {
     let state_guard = state.read().await;
 
     let session = state_guard
@@ -307,62 +331,12 @@ async fn handle_subscribe(
     // Resize PTY if needed
     session.resize(rows, cols).await?;
 
-    // Subscribe to the session - this atomically gives us a handle with
+    // Subscribe to the session - this atomically gives us a reader with
     // all existing output plus a stream of future output, with no gaps or duplicates
     session
         .subscribe()
         .await
         .ok_or_else(|| AmuxError::AgentNotFound(agent_id.to_string()))
-}
-
-/// Handle raw mode streaming
-async fn handle_raw_mode(
-    transport: UnixTransport,
-    handle: SubscriptionHandle,
-    conn_id: ConnectionId,
-) -> Result<()> {
-    let (mut socket_reader, mut socket_writer) = transport.into_split();
-    let (mut output_reader, input_sender) = handle.split();
-
-    // Task: PTY output -> client
-    let write_task = tokio::spawn(async move {
-        while let Some(data) = output_reader.read().await {
-            if socket_writer.write_all(&data).await.is_err() {
-                return true; // Client disconnected
-            }
-            let _ = socket_writer.flush().await;
-        }
-        false // Session ended (reader returned None)
-    });
-
-    // Task: client input -> PTY
-    let read_task = tokio::spawn(async move {
-        let mut buffer = [0u8; 1024];
-        loop {
-            match socket_reader.read(&mut buffer).await {
-                Ok(0) => return true, // Client disconnected
-                Ok(n) => {
-                    if input_sender.send(buffer[..n].to_vec()).await.is_err() {
-                        return false; // Session ended
-                    }
-                }
-                Err(_) => return true, // Client disconnected
-            }
-        }
-    });
-
-    let client_initiated = tokio::select! {
-        result = write_task => result.unwrap_or(false),
-        result = read_task => result.unwrap_or(false),
-    };
-
-    log!(
-        "server: {} raw mode ended (client_initiated={})",
-        conn_id,
-        client_initiated
-    );
-
-    Ok(())
 }
 
 /// Shutdown the server
