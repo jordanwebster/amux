@@ -528,6 +528,7 @@ async fn handle_unix_client_loop(
 }
 
 /// Handle subscribed mode - streaming output to client
+#[allow(clippy::too_many_arguments)]
 async fn handle_subscribed_mode(
     mut transport: UnixTransport,
     mut outgoing_rx: mpsc::Receiver<Message>,
