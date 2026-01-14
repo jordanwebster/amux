@@ -2,8 +2,25 @@ use crate::parser::{Directory, Terminal, TestCase, TestConfig, TestStep};
 use crate::terminal::TestTerminal;
 use std::collections::HashMap;
 use std::path::{Path, PathBuf};
+use std::process::Command;
 use std::time::Duration;
 use tempfile::TempDir;
+
+/// Check if an amux command is non-interactive (runs and exits)
+fn is_oneshot_amux_command(cmd: &str) -> bool {
+    // Commands that don't create an interactive session
+    let oneshot_commands = ["connect", "list-agents", "kill-server"];
+    for subcmd in oneshot_commands {
+        // Match patterns like "amux connect" or "amux --config X connect"
+        if cmd.contains(&format!(" {} ", subcmd))
+            || cmd.contains(&format!(" {}\n", subcmd))
+            || cmd.ends_with(&format!(" {}", subcmd))
+        {
+            return true;
+        }
+    }
+    false
+}
 
 /// Result of running a test
 #[derive(Debug)]
@@ -41,6 +58,8 @@ struct VariableContext {
     directories: HashMap<String, PathBuf>,
     /// config name -> socket_path
     configs: HashMap<String, PathBuf>,
+    /// config name -> tcp_port
+    tcp_ports: HashMap<String, u16>,
 }
 
 impl VariableContext {
@@ -48,11 +67,12 @@ impl VariableContext {
         Self {
             directories: HashMap::new(),
             configs: HashMap::new(),
+            tcp_ports: HashMap::new(),
         }
     }
 
     /// Substitute variables in a string.
-    /// Supports: $name.path (for directories), $name.socket_path (for configs)
+    /// Supports: $name.path (for directories), $name.socket_path (for configs), $name.tcp_port (for configs)
     fn substitute(&self, input: &str) -> String {
         let mut result = input.to_string();
 
@@ -66,6 +86,12 @@ impl VariableContext {
         for (name, socket_path) in &self.configs {
             let var = format!("${}.socket_path", name);
             result = result.replace(&var, &socket_path.to_string_lossy());
+        }
+
+        // Substitute config variables: $name.tcp_port
+        for (name, port) in &self.tcp_ports {
+            let var = format!("${}.tcp_port", name);
+            result = result.replace(&var, &port.to_string());
         }
 
         result
@@ -141,6 +167,20 @@ impl Executor {
             // Clean up any existing socket
             let _ = std::fs::remove_file(&socket_path);
 
+            // Determine TCP port (auto-assign if not specified)
+            let tcp_port = match cfg.tcp_port {
+                Some(p) => p,
+                None => {
+                    // Bind to port 0 to get an available port from the OS
+                    let listener = std::net::TcpListener::bind("127.0.0.1:0")
+                        .map_err(|e| format!("Failed to find free TCP port: {}", e))?;
+                    listener
+                        .local_addr()
+                        .map_err(|e| format!("Failed to get assigned port: {}", e))?
+                        .port()
+                }
+            };
+
             // Generate YAML config file
             let host_id = cfg
                 .host_id
@@ -151,9 +191,11 @@ impl Executor {
 user_id: "test"
 socket_path: "{}"
 max_replay_buffer: 10485760
+tcp_port: {}
 "#,
                 host_id,
-                socket_path.display()
+                socket_path.display(),
+                tcp_port
             );
 
             let config_file_path = temp_dir.path().join(format!("{}.yaml", cfg.name));
@@ -162,6 +204,7 @@ max_replay_buffer: 10485760
 
             config_paths.insert(cfg.name.clone(), config_file_path);
             var_ctx.configs.insert(cfg.name.clone(), socket_path);
+            var_ctx.tcp_ports.insert(cfg.name.clone(), tcp_port);
         }
 
         // Map terminal names to their config and cwd
@@ -188,8 +231,10 @@ max_replay_buffer: 10485760
             })
             .collect();
 
-        // Active terminals
+        // Active terminals (interactive sessions)
         let mut active_terminals: HashMap<String, TestTerminal> = HashMap::new();
+        // Output from oneshot commands (keyed by terminal name)
+        let mut oneshot_outputs: HashMap<String, String> = HashMap::new();
         let mut current_terminal: Option<String> = None;
 
         // Execute test steps
@@ -207,31 +252,62 @@ max_replay_buffer: 10485760
                         .get(config_name)
                         .ok_or(format!("Unknown config: {}", config_name))?;
 
-                    // Check if this is an amux command that starts a new terminal session
-                    let is_amux_command = input.starts_with("amux ");
+                    // Apply variable substitution to input
+                    let input_substituted = var_ctx.substitute(input);
+
+                    // Check if this is an amux command
+                    let is_amux_command = input_substituted.starts_with("amux ");
 
                     if is_amux_command && !active_terminals.contains_key(term_name) {
                         // Transform the command: inject --config and replace test-agent
-                        let transformed = self.transform_command(input, config_path);
-                        let parts: Vec<&str> = transformed.split_whitespace().collect();
+                        let transformed = self.transform_command(&input_substituted, config_path);
 
-                        // Start a new terminal for this amux session
-                        let terminal = TestTerminal::spawn(
-                            parts[0], // amux binary path
-                            &parts[1..],
-                            cwd,
-                            &HashMap::new(),
-                        )
-                        .map_err(|e| format!("Failed to spawn terminal {}: {}", term_name, e))?;
+                        // Check if this is a oneshot command (runs and exits)
+                        if is_oneshot_amux_command(&transformed) {
+                            // Run synchronously and capture output
+                            let parts: Vec<&str> = transformed.split_whitespace().collect();
+                            let output = Command::new(parts[0])
+                                .args(&parts[1..])
+                                .current_dir(cwd)
+                                .output()
+                                .map_err(|e| format!("Failed to run oneshot command: {}", e))?;
 
-                        active_terminals.insert(term_name.clone(), terminal);
+                            let stdout = String::from_utf8_lossy(&output.stdout).to_string();
+                            let stderr = String::from_utf8_lossy(&output.stderr).to_string();
 
-                        // Wait for amux to initialize
-                        std::thread::sleep(Duration::from_millis(500));
+                            // Store output for next ExpectOutput
+                            let combined = if stderr.is_empty() {
+                                stdout
+                            } else if stdout.is_empty() {
+                                stderr
+                            } else {
+                                format!("{}{}", stdout, stderr)
+                            };
+                            oneshot_outputs.insert(term_name.clone(), combined);
+                        } else {
+                            // Interactive command - spawn PTY
+                            let parts: Vec<&str> = transformed.split_whitespace().collect();
+
+                            // Start a new terminal for this amux session
+                            let terminal = TestTerminal::spawn(
+                                parts[0], // amux binary path
+                                &parts[1..],
+                                cwd,
+                                &HashMap::new(),
+                            )
+                            .map_err(|e| {
+                                format!("Failed to spawn terminal {}: {}", term_name, e)
+                            })?;
+
+                            active_terminals.insert(term_name.clone(), terminal);
+
+                            // Wait for amux to initialize
+                            std::thread::sleep(Duration::from_millis(500));
+                        }
                     } else if let Some(terminal) = active_terminals.get_mut(term_name) {
                         // Send input to existing terminal
                         terminal
-                            .send_line(input)
+                            .send_line(&input_substituted)
                             .map_err(|e| format!("Failed to send input: {}", e))?;
                     } else {
                         return Err(format!(
@@ -242,9 +318,6 @@ max_replay_buffer: 10485760
                 }
                 TestStep::ExpectOutput(expected) => {
                     let term_name = current_terminal.as_ref().ok_or("No terminal selected")?;
-                    let terminal = active_terminals
-                        .get_mut(term_name)
-                        .ok_or(format!("Terminal {} not initialized", term_name))?;
 
                     // Apply variable substitution to expected output
                     let expected_substituted = var_ctx.substitute(expected);
@@ -252,10 +325,21 @@ max_replay_buffer: 10485760
                     // test-agent sends "{message}\n" for each line
                     let expected_with_newline = format!("{}\n", expected_substituted);
 
-                    // Read and normalize output (handles \r\n vs \n from nested PTYs)
-                    let actual = terminal
-                        .read_expected(&expected_with_newline, self.config.timeout)
-                        .map_err(|e| format!("Failed to read output: {}", e))?;
+                    // Check if we have oneshot output for this terminal
+                    let actual = if let Some(output) = oneshot_outputs.remove(term_name) {
+                        // Use stored oneshot output
+                        output
+                    } else {
+                        // Read from terminal
+                        let terminal = active_terminals
+                            .get_mut(term_name)
+                            .ok_or(format!("Terminal {} not initialized", term_name))?;
+
+                        // Read and normalize output (handles \r\n vs \n from nested PTYs)
+                        terminal
+                            .read_expected(&expected_with_newline, self.config.timeout)
+                            .map_err(|e| format!("Failed to read output: {}", e))?
+                    };
 
                     // Compare
                     if actual != expected_with_newline {
@@ -296,6 +380,7 @@ max_replay_buffer: 10485760
                 name: "local".to_string(),
                 host_id: None,
                 socket_path: None,
+                tcp_port: None,
             });
         }
 

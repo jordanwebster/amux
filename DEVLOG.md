@@ -38,6 +38,123 @@ One paragraph describing what was done.
 
 ---
 
+## 2025-01-15: Remote Subscriptions with Hierarchical Routing
+
+### Summary
+Implemented remote agent subscriptions allowing a client on Server B to attach to an agent running on Server A. This required implementing a hierarchical routing protocol where each server prefixes `src_host` when forwarding upstream and strips its prefix when routing responses downstream. Fixed a critical mutex deadlock by switching from shared transport access to channel-based message passing.
+
+### Changes
+
+**Modified files:**
+- `src/server.rs` - Major refactor:
+  - Changed `routes` from `HashMap<String, Arc<Mutex<Box<dyn Transport>>>>` to `HashMap<String, mpsc::Sender<Message>>` (channel-based)
+  - Added `resolve_route()` function for hierarchical routing (strip prefix, extract next hop)
+  - Rewrote `handle_unix_client_loop()` to use `select!` loop with transport reads and channel receives
+  - Added `handle_subscribed_mode()` for local subscription streaming
+  - Rewrote `handle_tcp_connection()` and added `handle_tcp_message()` with channel-based outgoing messages
+  - Added `Message::Input` handling in Unix client loop for forwarding to remote agents
+- `src/client.rs` - Added Connect handshake with UUID-based client ID, updated all client functions to use `connect_and_handshake()`
+- `src/message.rs` - Updated Connect/ConnectResponse messages with host_id field (done in previous session)
+- `src/transport.rs` - Added Transport trait (done in previous session)
+- `src/session.rs` - Added `send_input()` method (done in previous session)
+
+### Decisions Made
+
+1. **Hierarchical host IDs with "/" separator:** Client IDs are prefixed by their server's host_id (e.g., "host-b/client-uuid"). This creates a NAT-like routing scheme where each server only knows its immediate neighbors.
+
+2. **Routes table uses single-layer keys:** No nested host_ids in route keys. When routing to "host-b/client-uuid", extract "host-b" as the next hop. This keeps routing logic simple and stateless.
+
+3. **Upstream prefixing / downstream stripping:**
+   - Forwarding upstream: prefix `src_host` with our host_id
+   - Routing downstream: strip our prefix from `dst_host`, route to first segment of remainder
+
+4. **Channel-based message passing instead of shared transport:** The original design used `Arc<Mutex<Box<dyn Transport>>>` in the routes table, but this caused deadlock:
+   - TCP handler holds mutex while blocked on `read_message().await`
+   - Unix client handler tries to acquire mutex to write → blocked forever
+   - Solution: Store `mpsc::Sender<Message>` in routes. TCP handler owns transport and uses `select!` to read from transport OR receive from channel.
+
+### Verification
+
+```
+cargo fmt                           # OK
+cargo clippy                        # OK (only dead_code warnings)
+cargo test                          # 18 tests pass
+cargo run -p e2e-runner -- run      # 6/6 E2E tests pass (including remote_connection)
+```
+
+### Message Flow (Remote Subscribe)
+
+```
+Client (Server B)                Server B                    Server A
+       |                            |                            |
+       |-- Subscribe -------------> |                            |
+       |   dst=host-a               |-- Subscribe --------------> |
+       |   src=""                   |   dst=host-a                |
+       |                            |   src=host-b/client-uuid    |
+       |                            |                             |
+       |                            |<-- SubscribeResult -------- |
+       |<-- SubscribeResult ------- |    dst=host-b/client-uuid   |
+       |    dst=client-uuid         |                             |
+       |                            |<-- Output ----------------- |
+       |<-- Output ---------------- |    dst=host-b/client-uuid   |
+       |                            |                             |
+       |-- Input -----------------> |                             |
+       |   dst=host-a               |-- Input ------------------> |
+       |                            |   dst=host-a                |
+       |                            |   src=host-b/client-uuid    |
+```
+
+### Next Steps
+
+- Add agent discovery (AddAgents message) for listing remote agents
+- Add cloud mode with WebSocket transport
+- Add token-based authentication
+
+---
+
+## 2025-01-13: Add TCP Listener and Server-to-Server Connection Foundation
+
+### Summary
+Added the foundation for server-to-server communication. The server now listens on both Unix socket (for local clients) and TCP (for remote servers). Added `amux connect <host:port>` command that tells the local server to connect to a remote server. Connections use a simple handshake protocol before entering the (currently stubbed) server-to-server handler.
+
+### Changes
+
+**Modified files:**
+- `src/config.rs` - Added `tcp_port: Option<u16>` field (defaults to 9001), `DEFAULT_TCP_PORT` constant
+- `src/message.rs` - Added `ConnectToServer`, `ConnectToServerResult`, `ServerConnect`, `ServerConnectResponse` messages
+- `src/transport.rs` - Added `TcpTransport` struct mirroring `UnixTransport` with same framing protocol
+- `src/main.rs` - Added `Connect { address }` CLI command
+- `src/client.rs` - Added `connect()` function that sends `ConnectToServer` to local server
+- `src/server.rs` - Added TCP listener in `run()` using `tokio::select!`, added `handle_connect_to_server()`, `handle_inbound_tcp()`, and stubbed `handle_tcp_connection()`
+
+### Decisions Made
+
+1. **TCP port in config is optional:** The `tcp_port` field is `Option<u16>` so it's optional in YAML config files. Server always creates TCP listener using `config.tcp_port.unwrap_or(DEFAULT_TCP_PORT)`.
+
+2. **Connect goes through local server:** The `amux connect` command doesn't make a direct connection. It sends `ConnectToServer` to the local server via Unix socket, and the local server makes the outbound TCP connection. This keeps connection state managed by the server.
+
+3. **Simple handshake protocol:** Initiator sends `ServerConnect` (empty), receiver responds with `ServerConnectResponse { success, error }`. Any unexpected message before handshake completes closes the connection.
+
+4. **Stubbed handler:** `handle_tcp_connection()` is called after handshake succeeds on both sides. Currently just logs and returns - protocol implementation deferred to next milestone.
+
+### Verification
+
+```
+cargo fmt                           # OK
+cargo clippy                        # OK (only dead_code warnings)
+cargo test                          # 18 tests pass
+cargo run -p e2e-runner -- run      # 5/5 E2E tests pass
+```
+
+### Next Steps
+
+- Implement server-to-server protocol in `handle_tcp_connection`:
+  - AddAgents for agent discovery
+  - Subscribe/Output forwarding
+  - Routing table updates
+
+---
+
 ## 2025-01-13: Remove Raw Mode, Simplify to Message-Based Streaming
 
 ### Summary

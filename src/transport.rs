@@ -1,11 +1,23 @@
 use crate::error::{AmuxError, Result};
 use crate::message::Message;
+use async_trait::async_trait;
 use tokio::io::{AsyncReadExt, AsyncWriteExt};
+use tokio::net::tcp::{OwnedReadHalf as TcpReadHalf, OwnedWriteHalf as TcpWriteHalf};
 use tokio::net::unix::{OwnedReadHalf, OwnedWriteHalf};
-use tokio::net::UnixStream;
+use tokio::net::{TcpStream, UnixStream};
 
 /// Maximum frame size (16MB) to prevent DoS via huge length prefix
 const MAX_FRAME_SIZE: usize = 16 * 1024 * 1024;
+
+/// Transport trait for reading and writing messages
+#[async_trait]
+pub trait Transport: Send + Sync {
+    /// Read and decode a Message from the transport
+    async fn read_message(&mut self) -> Result<Message>;
+
+    /// Encode and write a Message to the transport
+    async fn write_message(&mut self, msg: &Message) -> Result<()>;
+}
 
 /// Unix socket transport with length-prefixed framing
 pub struct UnixTransport {
@@ -18,18 +30,6 @@ impl UnixTransport {
     pub fn new(stream: UnixStream) -> Self {
         let (reader, writer) = stream.into_split();
         Self { reader, writer }
-    }
-
-    /// Read and decode a Message from the transport
-    pub async fn read_message(&mut self) -> Result<Message> {
-        let data = self.read_frame().await?;
-        Message::decode(&data).map_err(AmuxError::Serialization)
-    }
-
-    /// Encode and write a Message to the transport
-    pub async fn write_message(&mut self, msg: &Message) -> Result<()> {
-        let data = msg.encode().map_err(AmuxError::Serialization)?;
-        self.write_frame(&data).await
     }
 
     /// Read a length-prefixed frame (internal implementation detail)
@@ -61,6 +61,77 @@ impl UnixTransport {
         self.writer.write_all(&len.to_be_bytes()).await?;
         self.writer.write_all(data).await?;
         Ok(())
+    }
+}
+
+#[async_trait]
+impl Transport for UnixTransport {
+    async fn read_message(&mut self) -> Result<Message> {
+        let data = self.read_frame().await?;
+        Message::decode(&data).map_err(AmuxError::Serialization)
+    }
+
+    async fn write_message(&mut self, msg: &Message) -> Result<()> {
+        let data = msg.encode().map_err(AmuxError::Serialization)?;
+        self.write_frame(&data).await
+    }
+}
+
+/// TCP transport with length-prefixed framing (for server-to-server connections)
+pub struct TcpTransport {
+    reader: TcpReadHalf,
+    writer: TcpWriteHalf,
+}
+
+impl TcpTransport {
+    /// Create a new transport from a TCP stream
+    pub fn new(stream: TcpStream) -> Self {
+        let (reader, writer) = stream.into_split();
+        Self { reader, writer }
+    }
+
+    /// Read a length-prefixed frame
+    ///
+    /// Frame format: 4-byte big-endian length + payload
+    async fn read_frame(&mut self) -> Result<Vec<u8>> {
+        // Read length prefix
+        let mut len_buf = [0u8; 4];
+        self.reader.read_exact(&mut len_buf).await?;
+        let len = u32::from_be_bytes(len_buf) as usize;
+
+        // Validate length
+        if len > MAX_FRAME_SIZE {
+            return Err(AmuxError::InvalidMessage);
+        }
+
+        // Read payload
+        let mut buf = vec![0u8; len];
+        self.reader.read_exact(&mut buf).await?;
+
+        Ok(buf)
+    }
+
+    /// Write a length-prefixed frame
+    ///
+    /// Frame format: 4-byte big-endian length + payload
+    async fn write_frame(&mut self, data: &[u8]) -> Result<()> {
+        let len = data.len() as u32;
+        self.writer.write_all(&len.to_be_bytes()).await?;
+        self.writer.write_all(data).await?;
+        Ok(())
+    }
+}
+
+#[async_trait]
+impl Transport for TcpTransport {
+    async fn read_message(&mut self) -> Result<Message> {
+        let data = self.read_frame().await?;
+        Message::decode(&data).map_err(AmuxError::Serialization)
+    }
+
+    async fn write_message(&mut self, msg: &Message) -> Result<()> {
+        let data = msg.encode().map_err(AmuxError::Serialization)?;
+        self.write_frame(&data).await
     }
 }
 
@@ -126,13 +197,16 @@ mod tests {
         let (mut client, mut server) = create_socket_pair().await;
 
         let msg = Message::Output {
+            src_host: "host-a".to_string(),
+            dst_host: "host-b".to_string(),
+            agent_id: "test".to_string(),
             data: b"hello world".to_vec(),
         };
 
         client.write_message(&msg).await.unwrap();
 
         let received = server.read_message().await.unwrap();
-        if let Message::Output { data } = received {
+        if let Message::Output { data, .. } = received {
             assert_eq!(data, b"hello world");
         } else {
             panic!("Expected Output");
@@ -144,13 +218,16 @@ mod tests {
         let (mut client, mut server) = create_socket_pair().await;
 
         let msg = Message::Input {
+            src_host: "host-a".to_string(),
+            dst_host: "host-b".to_string(),
+            agent_id: "test".to_string(),
             data: b"user input".to_vec(),
         };
 
         client.write_message(&msg).await.unwrap();
 
         let received = server.read_message().await.unwrap();
-        if let Message::Input { data } = received {
+        if let Message::Input { data, .. } = received {
             assert_eq!(data, b"user input");
         } else {
             panic!("Expected Input");

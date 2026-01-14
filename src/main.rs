@@ -58,6 +58,12 @@ enum Commands {
 
     /// Kill all agents and shut down the server
     KillServer,
+
+    /// Connect to a remote amux server
+    Connect {
+        /// Remote server address (host:port)
+        address: String,
+    },
 }
 
 #[tokio::main]
@@ -104,6 +110,10 @@ async fn main() {
         }
         Some(Commands::ListAgents) => client::list_agents(&config).await,
         Some(Commands::KillServer) => client::kill_server(&config).await,
+        Some(Commands::Connect { address }) => {
+            ensure_server_running(&config, cli.config.as_deref()).await;
+            client::connect(&address, &config).await
+        }
     };
 
     if let Err(e) = result {

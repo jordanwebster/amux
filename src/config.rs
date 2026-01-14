@@ -12,6 +12,9 @@ pub const DEFAULT_MAX_REPLAY_BUFFER: usize = 10 * 1024 * 1024;
 /// Default user ID for local mode
 pub const DEFAULT_USER_ID: &str = "local";
 
+/// Default TCP port for server-to-server connections
+pub const DEFAULT_TCP_PORT: u16 = 9001;
+
 /// Server configuration
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct Config {
@@ -26,6 +29,10 @@ pub struct Config {
 
     /// Maximum size of the replay buffer in bytes
     pub max_replay_buffer: usize,
+
+    /// TCP port for server-to-server connections (defaults to 9001)
+    #[serde(default)]
+    pub tcp_port: Option<u16>,
 }
 
 impl Config {
@@ -36,6 +43,7 @@ impl Config {
             user_id: DEFAULT_USER_ID.to_string(),
             socket_path: PathBuf::from(DEFAULT_SOCKET_PATH),
             max_replay_buffer: DEFAULT_MAX_REPLAY_BUFFER,
+            tcp_port: None,
         }
     }
 

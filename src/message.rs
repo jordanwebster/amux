@@ -17,8 +17,10 @@ pub enum Message {
         cols: u16,
     },
 
-    /// Subscribe to an agent's output stream
+    /// Subscribe to an agent's output stream (routable)
     Subscribe {
+        src_host: String,
+        dst_host: String,
         agent_id: String,
         rows: u16,
         cols: u16,
@@ -27,8 +29,13 @@ pub enum Message {
     /// Unsubscribe from the current agent
     Unsubscribe,
 
-    /// Send input bytes to the subscribed agent
-    Input { data: Vec<u8> },
+    /// Send input bytes to the subscribed agent (routable)
+    Input {
+        src_host: String,
+        dst_host: String,
+        agent_id: String,
+        data: Vec<u8>,
+    },
 
     /// Shutdown the server
     Shutdown,
@@ -43,20 +50,49 @@ pub enum Message {
         error: Option<String>,
     },
 
-    /// Response to Subscribe
+    /// Response to Subscribe (routable)
     SubscribeResult {
+        src_host: String,
+        dst_host: String,
+        agent_id: String,
         success: bool,
         error: Option<String>,
     },
 
-    /// Output bytes from the agent
-    Output { data: Vec<u8> },
+    /// Output bytes from the agent (routable)
+    Output {
+        src_host: String,
+        dst_host: String,
+        agent_id: String,
+        data: Vec<u8>,
+    },
 
     /// Agent session has ended
     AgentEnded,
 
     /// Generic error response
     Error { code: u32, message: String },
+
+    // Client -> Server: remote connection management
+    /// Request local server to connect to a remote amux server
+    ConnectToServer { address: String },
+
+    /// Response to ConnectToServer
+    ConnectToServerResult {
+        success: bool,
+        error: Option<String>,
+    },
+
+    // Handshake (unified for client-server and server-server)
+    /// Sent to initiate connection handshake
+    Connect { host_id: String },
+
+    /// Response to Connect
+    ConnectResponse {
+        success: bool,
+        error: Option<String>,
+        host_id: String,
+    },
 }
 
 /// Information about a running agent
@@ -123,12 +159,15 @@ mod tests {
     #[test]
     fn test_message_roundtrip_subscribe_result() {
         let msg = Message::SubscribeResult {
+            src_host: "host-a".to_string(),
+            dst_host: "host-b".to_string(),
+            agent_id: "test".to_string(),
             success: true,
             error: None,
         };
         let encoded = msg.encode().unwrap();
         let decoded = Message::decode(&encoded).unwrap();
-        if let Message::SubscribeResult { success, error } = decoded {
+        if let Message::SubscribeResult { success, error, .. } = decoded {
             assert!(success);
             assert!(error.is_none());
         } else {

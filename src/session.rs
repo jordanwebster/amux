@@ -216,6 +216,14 @@ impl LocalAgentSession {
         Some((output, self.input_tx.clone()))
     }
 
+    /// Send input data to the agent
+    pub async fn send_input(&self, data: Vec<u8>) -> Result<()> {
+        self.input_tx
+            .send(data)
+            .await
+            .map_err(|_| AmuxError::Pty("Session closed".to_string()))
+    }
+
     /// Resize the PTY
     pub async fn resize(&self, rows: u16, cols: u16) -> Result<()> {
         let mut current = self.current_size.lock().await;
