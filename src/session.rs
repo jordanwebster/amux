@@ -195,11 +195,6 @@ impl LocalAgentSession {
         })
     }
 
-    /// Check if the session is still alive
-    pub async fn is_alive(&self) -> bool {
-        !self.buffer.is_closed().await
-    }
-
     /// Subscribe to the session.
     ///
     /// Returns a tuple of (MultiplexReader, input_sender) for bidirectional

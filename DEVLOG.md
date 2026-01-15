@@ -38,6 +38,45 @@ One paragraph describing what was done.
 
 ---
 
+## 2025-01-15: Dead code cleanup
+
+### Summary
+Aggressive cleanup of unused code from the initial architecture plan. Removed unused structs, methods, error variants, and function parameters. Re-enabled dead_code warnings in CI.
+
+### Changes
+
+**Removed files:**
+- `src/connection.rs` - Only contained unused `ConnectionId` struct
+
+**Modified files:**
+- `src/server.rs`:
+  - Removed `next_connection_id` field and `next_conn_id()` method
+  - Removed `Server::new()` (only `with_config` is used)
+  - Removed unused `local_client_id` parameter from `handle_unix_client_loop`
+  - Removed unused `transport` parameter from `handle_tcp_message`
+  - Removed unused `event_tx` parameter from `handle_tcp_connection`, `handle_inbound_tcp`, `handle_connect_to_server`
+  - Updated log messages to use meaningful identifiers (`client_host_id`, `agent_id`) instead of opaque connection IDs
+- `src/session.rs` - Removed unused `is_alive()` method
+- `src/buffer.rs` - Removed unused `is_closed()` method and its test
+- `src/error.rs` - Removed unused `NotSubscribed` and `ConnectionClosed` variants
+- `src/main.rs` - Removed `mod connection` declaration
+- `e2e-runner/src/parser.rs` - Removed unused `description` field from `TestCase`
+- `.github/workflows/ci.yml` - Removed `-A dead_code` exception from clippy
+- `CLAUDE.md` - Updated file list and structure, added `cargo check` to workflow
+
+### Decisions Made
+- Be aggressive about removing dead code (YAGNI) - can always add back when needed
+- Remove code only used in tests if the underlying feature is unused
+- Re-enable dead_code lint in CI to catch future issues
+
+### Verification
+- `cargo check && cargo fmt && cargo clippy` - no warnings
+- `cargo test` - 17 tests pass
+- `cargo run -p e2e-runner -- run` - 6 e2e tests pass
+- `cargo clippy --all-targets -- -D warnings` - passes (CI command)
+
+---
+
 ## 2025-01-15: Remote Subscriptions with Hierarchical Routing
 
 ### Summary

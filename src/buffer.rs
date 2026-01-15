@@ -105,11 +105,6 @@ impl MultiplexBuffer {
         // Clear subscribers to drop all senders, which closes the channels
         self.inner.subscribers.write().await.clear();
     }
-
-    /// Check if the buffer has been closed.
-    pub async fn is_closed(&self) -> bool {
-        *self.inner.closed.read().await
-    }
 }
 
 impl Clone for MultiplexBuffer {
@@ -257,15 +252,6 @@ mod tests {
 
         // Subscribe after close should return None
         assert!(buffer.subscribe().await.is_none());
-    }
-
-    #[tokio::test]
-    async fn test_is_closed() {
-        let buffer = MultiplexBuffer::new(1024);
-        assert!(!buffer.is_closed().await);
-
-        buffer.close().await;
-        assert!(buffer.is_closed().await);
     }
 
     #[tokio::test]

@@ -1,6 +1,5 @@
 use crate::buffer::MultiplexReader;
 use crate::config::{Config, DEFAULT_TCP_PORT};
-use crate::connection::ConnectionId;
 use crate::error::{AmuxError, Result};
 use crate::message::Message;
 use crate::session::{AgentId, LocalAgentSession, SessionEvent};
@@ -46,7 +45,6 @@ struct ServerState {
     /// Routes to other hosts. Each route is a channel sender for outgoing messages.
     /// The actual transport is owned by the connection handler task.
     routes: HashMap<String, mpsc::Sender<Message>>,
-    next_connection_id: u64,
 }
 
 impl ServerState {
@@ -55,14 +53,7 @@ impl ServerState {
             config,
             agents: HashMap::new(),
             routes: HashMap::new(),
-            next_connection_id: 0,
         }
-    }
-
-    fn next_conn_id(&mut self) -> ConnectionId {
-        let id = ConnectionId(self.next_connection_id);
-        self.next_connection_id += 1;
-        id
     }
 }
 
@@ -74,11 +65,6 @@ pub struct Server {
 }
 
 impl Server {
-    /// Create a new server with default config
-    pub fn new() -> Self {
-        Self::with_config(Config::new())
-    }
-
     /// Create a new server with custom config
     pub fn with_config(config: Config) -> Self {
         let (event_tx, event_rx) = mpsc::channel::<SessionEvent>(256);
@@ -153,9 +139,8 @@ impl Server {
                     match result {
                         Ok((stream, _)) => {
                             let state = self.state.clone();
-                            let event_tx = self.event_tx.clone();
                             tokio::spawn(async move {
-                                if let Err(e) = handle_inbound_tcp(stream, state, event_tx).await {
+                                if let Err(e) = handle_inbound_tcp(stream, state).await {
                                     log!("server: TCP connection error: {}", e);
                                 }
                             });
@@ -179,13 +164,6 @@ async fn handle_connection(
     state: Arc<RwLock<ServerState>>,
     event_tx: mpsc::Sender<SessionEvent>,
 ) -> Result<()> {
-    let conn_id = {
-        let mut state = state.write().await;
-        state.next_conn_id()
-    };
-
-    log!("server: {} connected, waiting for handshake", conn_id);
-
     let mut transport = UnixTransport::new(stream);
 
     // Wait for Connect message from client
@@ -193,7 +171,7 @@ async fn handle_connection(
     let local_client_id = match msg {
         Message::Connect { host_id } => host_id,
         _ => {
-            log!("server: {} expected Connect, got {:?}", conn_id, msg);
+            log!("server: expected Connect, got {:?}", msg);
             return Err(AmuxError::InvalidMessage);
         }
     };
@@ -215,11 +193,7 @@ async fn handle_connection(
         })
         .await?;
 
-    log!(
-        "server: {} handshake complete, client_host_id: {}",
-        conn_id,
-        client_host_id
-    );
+    log!("server: client {} connected", client_host_id);
 
     // Create channel for outgoing messages to this client
     // Routes table uses single-layer keys only (no "/" in keys)
@@ -230,13 +204,10 @@ async fn handle_connection(
     }
 
     // Message handling loop
-    // Pass both the local client ID (for routing) and full hierarchical ID (for src_host rewriting)
     let result = handle_unix_client_loop(
         transport,
         outgoing_rx,
-        &local_client_id,
         &client_host_id,
-        conn_id,
         state.clone(),
         event_tx,
     )
@@ -256,19 +227,14 @@ async fn handle_connection(
 ///
 /// - `transport`: The transport to the client (owned, not shared)
 /// - `outgoing_rx`: Channel receiver for messages to send to this client (from routing)
-/// - `local_client_id`: The client's local ID (used as key in routes table)
 /// - `client_host_id`: The full hierarchical ID (our_host/local_client_id, used for src_host)
 async fn handle_unix_client_loop(
     mut transport: UnixTransport,
     mut outgoing_rx: mpsc::Receiver<Message>,
-    local_client_id: &str,
     client_host_id: &str,
-    conn_id: ConnectionId,
     state: Arc<RwLock<ServerState>>,
     event_tx: mpsc::Sender<SessionEvent>,
 ) -> Result<()> {
-    let _ = local_client_id; // Used for routes cleanup in caller
-
     loop {
         // Select between incoming messages from client and outgoing messages from routes
         tokio::select! {
@@ -277,16 +243,16 @@ async fn handle_unix_client_loop(
                 let msg = match msg {
                     Ok(msg) => msg,
                     Err(AmuxError::Io(e)) if e.kind() == std::io::ErrorKind::UnexpectedEof => {
-                        log!("server: {} disconnected", conn_id);
+                        log!("server: client {} disconnected", client_host_id);
                         return Ok(());
                     }
                     Err(e) => {
-                        log!("server: {} read error: {}", conn_id, e);
+                        log!("server: client {} read error: {}", client_host_id, e);
                         return Err(e);
                     }
                 };
 
-                log!("server: {} received {:?}", conn_id, msg);
+                log!("server: client {} received {:?}", client_host_id, msg);
 
                 match msg {
                     Message::ListAgents => {
@@ -352,10 +318,9 @@ async fn handle_unix_client_loop(
                         if dst_host != our_host {
                             // Forward to remote host with client's host_id as src
                             log!(
-                                "server: {} forwarding Subscribe to {} (src={})",
-                                conn_id,
-                                dst_host,
-                                src_host
+                                "server: forwarding Subscribe from {} to {}",
+                                src_host,
+                                dst_host
                             );
                             let route = {
                                 let state = state.read().await;
@@ -363,8 +328,7 @@ async fn handle_unix_client_loop(
                             };
 
                             if let Some(route) = route {
-                                log!("server: {} found route to {}", conn_id, dst_host);
-                                if route
+                                let _ = route
                                     .send(Message::Subscribe {
                                         src_host,
                                         dst_host: dst_host.clone(),
@@ -372,19 +336,11 @@ async fn handle_unix_client_loop(
                                         rows,
                                         cols,
                                     })
-                                    .await
-                                    .is_ok()
-                                {
-                                    log!("server: {} forwarded Subscribe to {}", conn_id, dst_host);
-                                }
+                                    .await;
                                 // Response will come back through handle_tcp_connection
                                 // and be routed to this client via outgoing_rx
                             } else {
-                                log!(
-                                    "server: {} no route to {}, sending error",
-                                    conn_id,
-                                    dst_host
-                                );
+                                log!("server: no route to {}", dst_host);
                                 transport
                                     .write_message(&Message::SubscribeResult {
                                         src_host: dst_host.clone(),
@@ -414,7 +370,11 @@ async fn handle_unix_client_loop(
                                     })
                                     .await?;
 
-                                log!("server: {} entering subscribed mode", conn_id);
+                                log!(
+                                    "server: client {} subscribed to agent {}",
+                                    client_host_id,
+                                    agent_id
+                                );
 
                                 // Enter subscribed mode with dedicated loop
                                 return handle_subscribed_mode(
@@ -425,7 +385,6 @@ async fn handle_unix_client_loop(
                                     our_host,
                                     src_host,
                                     agent_id,
-                                    conn_id,
                                 )
                                 .await;
                             }
@@ -444,7 +403,7 @@ async fn handle_unix_client_loop(
                     }
 
                     Message::Shutdown => {
-                        log!("server: {} requested shutdown", conn_id);
+                        log!("server: shutdown requested by {}", client_host_id);
                         shutdown_server(&state).await;
                         transport
                             .write_message(&Message::Error {
@@ -464,7 +423,7 @@ async fn handle_unix_client_loop(
                     }
 
                     Message::ConnectToServer { address } => {
-                        let result = handle_connect_to_server(&address, &state, &event_tx).await;
+                        let result = handle_connect_to_server(&address, &state).await;
                         let response = match result {
                             Ok(()) => Message::ConnectToServerResult {
                                 success: true,
@@ -515,9 +474,9 @@ async fn handle_unix_client_loop(
 
             // Outgoing message from routing (e.g., SubscribeResult, Output from remote)
             Some(msg) = outgoing_rx.recv() => {
-                log!("server: {} sending routed message {:?}", conn_id, msg);
+                log!("server: routing message to {}: {:?}", client_host_id, msg);
                 if transport.write_message(&msg).await.is_err() {
-                    log!("server: {} failed to send routed message", conn_id);
+                    log!("server: failed to send routed message to {}", client_host_id);
                     break;
                 }
             }
@@ -528,7 +487,6 @@ async fn handle_unix_client_loop(
 }
 
 /// Handle subscribed mode - streaming output to client
-#[allow(clippy::too_many_arguments)]
 async fn handle_subscribed_mode(
     mut transport: UnixTransport,
     mut outgoing_rx: mpsc::Receiver<Message>,
@@ -537,7 +495,6 @@ async fn handle_subscribed_mode(
     our_host: String,
     client_host: String,
     agent_id: String,
-    conn_id: ConnectionId,
 ) -> Result<()> {
     loop {
         tokio::select! {
@@ -555,7 +512,7 @@ async fn handle_subscribed_mode(
                         }
                     }
                     None => {
-                        log!("server: {} session ended", conn_id);
+                        log!("server: agent {} session ended", agent_id);
                         let _ = transport.write_message(&Message::AgentEnded).await;
                         break;
                     }
@@ -569,7 +526,7 @@ async fn handle_subscribed_mode(
                         let _ = input_tx.send(data).await;
                     }
                     Err(_) => {
-                        log!("server: {} client disconnected", conn_id);
+                        log!("server: client {} disconnected from agent {}", client_host, agent_id);
                         break;
                     }
                     _ => {} // Ignore unexpected messages
@@ -654,11 +611,7 @@ async fn shutdown_server(state: &Arc<RwLock<ServerState>>) {
 }
 
 /// Handle client request to connect to a remote server
-async fn handle_connect_to_server(
-    address: &str,
-    state: &Arc<RwLock<ServerState>>,
-    event_tx: &mpsc::Sender<SessionEvent>,
-) -> Result<()> {
+async fn handle_connect_to_server(address: &str, state: &Arc<RwLock<ServerState>>) -> Result<()> {
     // Parse address
     let addr: SocketAddr = address
         .parse()
@@ -721,16 +674,9 @@ async fn handle_connect_to_server(
     }
 
     let state = state.clone();
-    let event_tx = event_tx.clone();
     tokio::spawn(async move {
-        if let Err(e) = handle_tcp_connection(
-            transport,
-            outgoing_rx,
-            remote_host.clone(),
-            state.clone(),
-            event_tx,
-        )
-        .await
+        if let Err(e) =
+            handle_tcp_connection(transport, outgoing_rx, remote_host.clone(), state.clone()).await
         {
             log!("server: TCP connection error: {}", e);
         }
@@ -744,11 +690,7 @@ async fn handle_connect_to_server(
 }
 
 /// Handle incoming TCP connection (from accept loop)
-async fn handle_inbound_tcp(
-    stream: TcpStream,
-    state: Arc<RwLock<ServerState>>,
-    event_tx: mpsc::Sender<SessionEvent>,
-) -> Result<()> {
+async fn handle_inbound_tcp(stream: TcpStream, state: Arc<RwLock<ServerState>>) -> Result<()> {
     stream.set_nodelay(true)?;
     let peer_addr = stream.peer_addr().ok();
     log!("server: inbound TCP from {:?}", peer_addr);
@@ -791,14 +733,8 @@ async fn handle_inbound_tcp(
         state.routes.insert(remote_host.clone(), outgoing_tx);
     }
 
-    let result = handle_tcp_connection(
-        transport,
-        outgoing_rx,
-        remote_host.clone(),
-        state.clone(),
-        event_tx,
-    )
-    .await;
+    let result =
+        handle_tcp_connection(transport, outgoing_rx, remote_host.clone(), state.clone()).await;
 
     // Clean up route on disconnect
     {
@@ -819,10 +755,8 @@ async fn handle_tcp_connection(
     mut outgoing_rx: mpsc::Receiver<Message>,
     remote_host: String,
     state: Arc<RwLock<ServerState>>,
-    event_tx: mpsc::Sender<SessionEvent>,
 ) -> Result<()> {
     log!("server: handling TCP connection with {}", remote_host);
-    let _ = event_tx; // May be used later for session events
 
     loop {
         tokio::select! {
@@ -842,7 +776,7 @@ async fn handle_tcp_connection(
 
                 log!("server: received from {}: {:?}", remote_host, msg);
 
-                if let Err(e) = handle_tcp_message(msg, &mut transport, &state).await {
+                if let Err(e) = handle_tcp_message(msg, &state).await {
                     log!("server: error handling message from {}: {}", remote_host, e);
                 }
             }
@@ -862,11 +796,7 @@ async fn handle_tcp_connection(
 }
 
 /// Handle a single message received on a TCP connection
-async fn handle_tcp_message(
-    msg: Message,
-    transport: &mut TcpTransport,
-    state: &Arc<RwLock<ServerState>>,
-) -> Result<()> {
+async fn handle_tcp_message(msg: Message, state: &Arc<RwLock<ServerState>>) -> Result<()> {
     match msg {
         Message::Subscribe {
             src_host,
@@ -1085,6 +1015,5 @@ async fn handle_tcp_message(
         }
     }
 
-    let _ = transport; // Used for potential direct responses
     Ok(())
 }

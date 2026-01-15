@@ -46,7 +46,6 @@ pub enum TestStep {
 #[derive(Debug)]
 pub struct TestCase {
     pub name: String,
-    pub description: Option<String>,
     pub directories: Vec<Directory>,
     pub configs: Vec<TestConfig>,
     pub terminals: Vec<Terminal>,
@@ -80,7 +79,6 @@ pub fn parse_test_file(path: &Path) -> Result<TestCase, ParseError> {
 /// Parse test content from a string
 pub fn parse_test_content(content: &str) -> Result<TestCase, ParseError> {
     let mut name: Option<String> = None;
-    let mut description: Option<String> = None;
     let mut directories: Vec<Directory> = Vec::new();
     let mut configs: Vec<TestConfig> = Vec::new();
     let mut terminals: Vec<Terminal> = Vec::new();
@@ -191,8 +189,6 @@ pub fn parse_test_content(content: &str) -> Result<TestCase, ParseError> {
                 // Parse metadata comments
                 if let Some(rest) = trimmed.strip_prefix("# test:") {
                     name = Some(rest.trim().to_string());
-                } else if let Some(rest) = trimmed.strip_prefix("# description:") {
-                    description = Some(rest.trim().to_string());
                 }
                 // Ignore other comments in header
             }
@@ -312,7 +308,6 @@ pub fn parse_test_content(content: &str) -> Result<TestCase, ParseError> {
 
     Ok(TestCase {
         name,
-        description,
         directories,
         configs,
         terminals,
@@ -348,10 +343,6 @@ hello world
         let test_case = parse_test_content(content).unwrap();
 
         assert_eq!(test_case.name, "simple_echo");
-        assert_eq!(
-            test_case.description,
-            Some("Test basic echo functionality".to_string())
-        );
         assert_eq!(test_case.configs.len(), 1);
         assert_eq!(test_case.configs[0].name, "local");
         assert!(test_case.configs[0].host_id.is_none());

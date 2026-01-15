@@ -10,7 +10,7 @@ This file provides guidance for AI assistants working on the amux codebase.
 
 ## After Completing Work
 
-1. Run `cargo fmt && cargo clippy && cargo test`
+1. Run `cargo check && cargo fmt && cargo clippy && cargo test`
 2. **Update DEVLOG.md** - Add an entry describing what was done (see template in DEVLOG.md)
 
 ## Git Commits
@@ -36,8 +36,9 @@ This file provides guidance for AI assistants working on the amux codebase.
 - `src/server.rs` - Server with connection and subscription management
 - `src/client.rs` - Client protocol implementation
 - `src/config.rs` - Server configuration
-- `src/connection.rs` - ConnectionId and connection state
 - `src/error.rs` - Error types with thiserror
+- `src/buffer.rs` - MultiplexBuffer for replay and broadcast
+- `src/log.rs` - Simple file-based logging
 
 **Source of truth:** ARCHITECTURE.md remains the canonical design for future work (TCP, WebSocket, cloud mode).
 
@@ -115,12 +116,14 @@ Terminal ──Unix socket──> Local amux server ──TCP──> Cloud amux 
 src/
 ├── main.rs           # CLI parsing, server startup
 ├── server.rs         # Server struct, connection management
-├── connection.rs     # Connection types, message handling
 ├── session.rs        # LocalAgentSession, PTY management
-├── transport.rs      # Transport trait, Unix/TCP/WebSocket impls
+├── transport.rs      # Transport trait, Unix/TCP impls
 ├── message.rs        # Message enum, serde setup
-├── routing.rs        # Routing table, Route enum
-└── config.rs         # Config struct
+├── client.rs         # Client-side protocol
+├── config.rs         # Config struct
+├── buffer.rs         # MultiplexBuffer for replay/broadcast
+├── error.rs          # Error types
+└── log.rs            # File-based logging
 ```
 
 ### Guidelines
@@ -156,6 +159,7 @@ src/
 **After making any code changes, always run:**
 
 ```bash
+cargo check             # Fast type-check
 cargo fmt               # Format code
 cargo clippy            # Lint (fix any warnings)
 cargo test              # Run all tests
@@ -167,7 +171,6 @@ cargo run -p e2e-runner -- run   # Run E2E tests
 
 Additional commands:
 ```bash
-cargo check             # Fast type-check without full build
 cargo test -- --nocapture  # See println output in tests
 cargo build --release   # Build optimized binary
 cargo run -p e2e-runner -- run <filter>  # Run specific E2E test

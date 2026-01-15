@@ -16,12 +16,6 @@ pub enum AmuxError {
     #[error("Agent already exists: {0}")]
     AgentAlreadyExists(String),
 
-    #[error("Not subscribed to any agent")]
-    NotSubscribed,
-
-    #[error("Connection closed")]
-    ConnectionClosed,
-
     #[error("Invalid message")]
     InvalidMessage,
 

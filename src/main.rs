@@ -3,7 +3,6 @@ mod log;
 mod buffer;
 mod client;
 mod config;
-mod connection;
 mod error;
 mod message;
 mod server;

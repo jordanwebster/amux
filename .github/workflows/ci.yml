@@ -41,8 +41,7 @@ jobs:
           components: clippy
       - uses: Swatinem/rust-cache@v2
       - name: Run clippy
-        # Allow dead_code warnings - we have infrastructure prepared for future milestones
-        run: cargo clippy --all-targets -- -D warnings -A dead_code
+        run: cargo clippy --all-targets -- -D warnings
 
   test:
     name: Test
