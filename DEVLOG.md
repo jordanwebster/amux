@@ -38,6 +38,49 @@ One paragraph describing what was done.
 
 ---
 
+## 2025-01-15: Remove unix_subscribed_mode
+
+### Summary
+
+Removed `unix_subscribed_mode` and the `UnixAction` enum to achieve symmetry with the TCP flow. The subscribed mode was a leftover from the removed "raw mode" optimization (2025-01-13). Now Subscribe spawns an output streaming task and the main loop continues handling all messages.
+
+### Changes
+
+**Removed:**
+- `UnixAction` enum (Continue, EnterSubscribed, Shutdown variants)
+- `unix_subscribed_mode` function (~60 lines)
+
+**Modified in `src/server.rs`:**
+- `unix_handle_message` now returns `Result<()>`
+- Subscribe handling spawns output task via route channel
+- Input handling checks if dst_host is local before routing
+- Shutdown handling inlines process::exit
+- `unix_client_loop` simplified to a select! loop
+
+### Decisions Made
+
+1. **Spawn output task on Subscribe:** When Subscribe succeeds, spawn a task that reads from buffer_reader and sends Output messages via the client's route channel. Main loop continues handling all messages.
+
+2. **Don't store input_tx:** On Input messages, look up the agent via `agents.get(&agent_id)` and call `send_input` directly. No need to store subscription state.
+
+3. **Inline shutdown:** The handler calls `process::exit(0)` directly instead of returning an action.
+
+### Verification
+
+```
+cargo check && cargo fmt && cargo clippy  # OK
+cargo test                                 # 17 tests pass
+cargo run -p e2e-runner -- run             # 6/6 E2E tests pass
+```
+
+### Benefits
+
+1. **Commands while attached:** Since the main loop continues, clients can send other messages while subscribed
+2. **Simpler code:** Removed ~80 lines (enum + function + action matching)
+3. **No special types:** No UnixAction enum, no state machine transitions
+
+---
+
 ## 2025-01-15: Symmetric Connection Handler Refactoring
 
 ### Summary

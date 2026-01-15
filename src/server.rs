@@ -65,20 +65,6 @@ struct UnixClientContext {
     our_host: String,
 }
 
-/// Result of handling a Unix client message
-enum UnixAction {
-    /// Continue the message loop
-    Continue,
-    /// Transition to subscribed mode
-    EnterSubscribed {
-        reader: MultiplexReader,
-        input_tx: mpsc::Sender<Vec<u8>>,
-        agent_id: String,
-    },
-    /// Shutdown the server and exit
-    Shutdown,
-}
-
 /// The amux server
 pub struct Server {
     state: Arc<RwLock<ServerState>>,
@@ -251,7 +237,7 @@ async fn unix_handle_message(
     transport: &mut UnixTransport,
     msg: Message,
     ctx: &UnixClientContext,
-) -> Result<UnixAction> {
+) -> Result<()> {
     log!("server: client {} received {:?}", ctx.client_host_id, msg);
 
     match msg {
@@ -267,7 +253,7 @@ async fn unix_handle_message(
             transport
                 .write_message(&Message::ListAgentsResult { agents })
                 .await?;
-            Ok(UnixAction::Continue)
+            Ok(())
         }
 
         Message::CreateAgent {
@@ -299,7 +285,7 @@ async fn unix_handle_message(
                 },
             };
             transport.write_message(&response).await?;
-            Ok(UnixAction::Continue)
+            Ok(())
         }
 
         Message::Subscribe {
@@ -349,14 +335,14 @@ async fn unix_handle_message(
                         })
                         .await?;
                 }
-                return Ok(UnixAction::Continue);
+                return Ok(());
             }
 
-            // Local subscribe - enter subscribed mode
+            // Local subscribe - spawn output streaming task
             let result = handle_subscribe(&ctx.state, &agent_id, rows, cols).await;
 
             match result {
-                Ok((buffer_reader, input_tx)) => {
+                Ok((mut buffer_reader, input_tx)) => {
                     // Send success response
                     transport
                         .write_message(&Message::SubscribeResult {
@@ -374,11 +360,44 @@ async fn unix_handle_message(
                         agent_id
                     );
 
-                    Ok(UnixAction::EnterSubscribed {
-                        reader: buffer_reader,
-                        input_tx,
-                        agent_id,
-                    })
+                    // Get outgoing_tx for this client (stored in routes as local_client_id)
+                    let outgoing_tx = {
+                        let state = ctx.state.read().await;
+                        // local_client_id = last segment of client_host_id
+                        let local_id = ctx.client_host_id.rsplit('/').next().unwrap();
+                        state.routes.get(local_id).cloned()
+                    };
+
+                    // Spawn output streaming task
+                    if let Some(tx) = outgoing_tx {
+                        let our_host = ctx.our_host.clone();
+                        let client_host = ctx.client_host_id.clone();
+                        let agent_id_clone = agent_id.clone();
+                        tokio::spawn(async move {
+                            while let Some(data) = buffer_reader.read().await {
+                                if tx
+                                    .send(Message::Output {
+                                        src_host: our_host.clone(),
+                                        dst_host: client_host.clone(),
+                                        agent_id: agent_id_clone.clone(),
+                                        data,
+                                    })
+                                    .await
+                                    .is_err()
+                                {
+                                    break;
+                                }
+                            }
+                            // Agent ended - send via same channel
+                            let _ = tx.send(Message::AgentEnded).await;
+                            log!("server: output stream to {} ended", client_host);
+                        });
+                    }
+
+                    // Drop input_tx - we look up agent directly on Input
+                    let _ = input_tx;
+
+                    Ok(())
                 }
                 Err(e) => {
                     transport
@@ -390,7 +409,7 @@ async fn unix_handle_message(
                             error: Some(e.to_string()),
                         })
                         .await?;
-                    Ok(UnixAction::Continue)
+                    Ok(())
                 }
             }
         }
@@ -404,7 +423,15 @@ async fn unix_handle_message(
                     message: "Server shutting down".to_string(),
                 })
                 .await?;
-            Ok(UnixAction::Shutdown)
+
+            // Handle shutdown directly
+            let socket_path = {
+                let state = ctx.state.read().await;
+                state.config.socket_path.clone()
+            };
+            let _ = std::fs::remove_file(socket_path);
+            log!("server: exiting");
+            std::process::exit(0);
         }
 
         Message::ConnectToServer { address } => {
@@ -420,32 +447,40 @@ async fn unix_handle_message(
                 },
             };
             transport.write_message(&response).await?;
-            Ok(UnixAction::Continue)
+            Ok(())
         }
 
-        // Input from client - forward to remote host if subscribed remotely
+        // Input from client - forward to local agent or remote host
         Message::Input {
             dst_host,
             agent_id,
             data,
             ..
         } => {
-            // Forward input to the destination
-            let route = {
+            if dst_host == ctx.our_host {
+                // Local agent - send directly
                 let state = ctx.state.read().await;
-                state.routes.get(&dst_host).cloned()
-            };
-            if let Some(route) = route {
-                let _ = route
-                    .send(Message::Input {
-                        src_host: ctx.client_host_id.clone(),
-                        dst_host,
-                        agent_id,
-                        data,
-                    })
-                    .await;
+                if let Some(session) = state.agents.get(&agent_id) {
+                    let _ = session.send_input(data).await;
+                }
+            } else {
+                // Remote agent - forward via route
+                let route = {
+                    let state = ctx.state.read().await;
+                    state.routes.get(&dst_host).cloned()
+                };
+                if let Some(route) = route {
+                    let _ = route
+                        .send(Message::Input {
+                            src_host: ctx.client_host_id.clone(),
+                            dst_host,
+                            agent_id,
+                            data,
+                        })
+                        .await;
+                }
             }
-            Ok(UnixAction::Continue)
+            Ok(())
         }
 
         _ => {
@@ -455,7 +490,7 @@ async fn unix_handle_message(
                     message: "Unexpected message".to_string(),
                 })
                 .await?;
-            Ok(UnixAction::Continue)
+            Ok(())
         }
     }
 }
@@ -482,97 +517,14 @@ async fn unix_client_loop(
                     }
                 };
 
-                match unix_handle_message(&mut transport, msg, &ctx).await? {
-                    UnixAction::Continue => {}
-                    UnixAction::EnterSubscribed { reader, input_tx, agent_id } => {
-                        return unix_subscribed_mode(
-                            transport,
-                            outgoing_rx,
-                            reader,
-                            input_tx,
-                            ctx.our_host,
-                            ctx.client_host_id,
-                            agent_id,
-                        )
-                        .await;
-                    }
-                    UnixAction::Shutdown => {
-                        // Remove socket and exit
-                        let socket_path = {
-                            let state = ctx.state.read().await;
-                            state.config.socket_path.clone()
-                        };
-                        let _ = std::fs::remove_file(socket_path);
-                        log!("server: exiting");
-                        std::process::exit(0);
-                    }
-                }
+                unix_handle_message(&mut transport, msg, &ctx).await?;
             }
 
-            // Outgoing message from routing (e.g., SubscribeResult, Output from remote)
+            // Outgoing message from routing (e.g., SubscribeResult, Output from local/remote)
             Some(msg) = outgoing_rx.recv() => {
                 log!("server: routing message to {}: {:?}", ctx.client_host_id, msg);
                 if transport.write_message(&msg).await.is_err() {
                     log!("server: failed to send routed message to {}", ctx.client_host_id);
-                    break;
-                }
-            }
-        }
-    }
-
-    Ok(())
-}
-
-/// Unix subscribed mode - dedicated streaming after local subscribe
-async fn unix_subscribed_mode(
-    mut transport: UnixTransport,
-    mut outgoing_rx: mpsc::Receiver<Message>,
-    mut buffer_reader: crate::buffer::MultiplexReader,
-    input_tx: mpsc::Sender<Vec<u8>>,
-    our_host: String,
-    client_host: String,
-    agent_id: String,
-) -> Result<()> {
-    loop {
-        tokio::select! {
-            // PTY output ready → send to client
-            output = buffer_reader.read() => {
-                match output {
-                    Some(data) => {
-                        if transport.write_message(&Message::Output {
-                            src_host: our_host.clone(),
-                            dst_host: client_host.clone(),
-                            agent_id: agent_id.clone(),
-                            data,
-                        }).await.is_err() {
-                            break;
-                        }
-                    }
-                    None => {
-                        log!("server: agent {} session ended", agent_id);
-                        let _ = transport.write_message(&Message::AgentEnded).await;
-                        break;
-                    }
-                }
-            }
-
-            // Client message (input)
-            msg = transport.read_message() => {
-                match msg {
-                    Ok(Message::Input { data, .. }) => {
-                        let _ = input_tx.send(data).await;
-                    }
-                    Err(_) => {
-                        log!("server: client {} disconnected from agent {}", client_host, agent_id);
-                        break;
-                    }
-                    _ => {} // Ignore unexpected messages
-                }
-            }
-
-            // Outgoing message from routing (shouldn't happen in subscribed mode, but handle it)
-            Some(msg) = outgoing_rx.recv() => {
-                if transport.write_message(&msg).await.is_err() {
                     break;
                 }
             }
