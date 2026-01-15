@@ -38,6 +38,59 @@ One paragraph describing what was done.
 
 ---
 
+## 2025-01-15: Symmetric Connection Handler Refactoring
+
+### Summary
+Refactored Unix and TCP connection handlers to have symmetric naming and structure. The protocol was designed for transport-agnostic routing, and this refactor makes the code reflect that symmetry while keeping Unix and TCP handlers separate (since they serve different roles: local clients vs peer servers).
+
+### Changes
+
+**Renamed functions for clarity:**
+- `handle_connection` → `unix_accept` (Unix bootstrap)
+- `handle_unix_client_loop` → `unix_client_loop` (Unix message loop)
+- `handle_subscribed_mode` → `unix_subscribed_mode` (Unix subscribed streaming)
+- `handle_inbound_tcp` → `tcp_accept` (TCP bootstrap)
+- `handle_tcp_connection` → `tcp_peer_loop` (TCP message loop)
+- `handle_tcp_message` → `tcp_handle_message` (TCP message handler)
+- `handle_connect_to_server` → `tcp_connect` (TCP outbound connection)
+
+**Added new types:**
+- `UnixClientContext` - bundles state, event_tx, client_host_id, our_host
+- `UnixAction` enum - Continue, EnterSubscribed, Shutdown
+
+**Extracted message handler:**
+- `unix_handle_message` - extracted from inline code in unix_client_loop
+
+### Decisions Made
+
+1. **Keep handlers separate:** Unix and TCP serve different roles (local client vs peer server). Merging would add conditional complexity without meaningful simplification.
+
+2. **Symmetric naming pattern:**
+   - Bootstrap: `unix_accept`, `tcp_accept`
+   - Loop: `unix_client_loop`, `tcp_peer_loop`
+   - Handler: `unix_handle_message`, `tcp_handle_message`
+
+3. **UnixAction enum for state transitions:** Unix can transition to subscribed mode, which requires an action enum. TCP doesn't have this need, so it just returns Result<()>.
+
+4. **Context struct only for Unix:** UnixClientContext bundles parameters cleanly. TCP's tcp_handle_message only needs state, so no context struct was added.
+
+### Verification
+
+```
+cargo check && cargo fmt && cargo clippy  # OK
+cargo test                                 # 17 tests pass
+cargo run -p e2e-runner -- run             # 6/6 E2E tests pass
+```
+
+### Next Steps (Phase 2)
+
+Consider removing `unix_subscribed_mode` in favor of spawned output tasks (like TCP does). This would:
+- Allow commands while subscribed (like tmux's Ctrl-b + s)
+- Enable clean Unsubscribe message for detaching
+- Make Unix and TCP even more symmetric
+
+---
+
 ## 2025-01-15: Dead code cleanup
 
 ### Summary

@@ -24,16 +24,16 @@ This file provides guidance for AI assistants working on the amux codebase.
 **Milestone 1 is complete.** The codebase implements local terminal connections with the new architecture:
 
 - Message-based protocol with serde/bincode serialization
-- Transport trait with length-prefixed framing
-- Raw byte mode after subscribe (zero framing overhead)
+- Transport trait with length-prefixed framing (UnixTransport, TcpTransport)
 - Multi-client support via broadcast channels
+- Server-to-server TCP connections with hierarchical routing
 
 **Files:**
-- `src/main.rs` - CLI (new-agent, attach, list-agents, kill-server)
+- `src/main.rs` - CLI (new-agent, attach, list-agents, kill-server, connect)
 - `src/message.rs` - Protocol messages with serde
-- `src/transport.rs` - Transport trait and UnixTransport
+- `src/transport.rs` - Transport trait, UnixTransport, TcpTransport
 - `src/session.rs` - AgentId and LocalAgentSession with PTY
-- `src/server.rs` - Server with connection and subscription management
+- `src/server.rs` - Server with symmetric Unix/TCP handlers (unix_accept, tcp_accept, etc.)
 - `src/client.rs` - Client protocol implementation
 - `src/config.rs` - Server configuration
 - `src/error.rs` - Error types with thiserror

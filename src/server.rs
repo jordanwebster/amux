@@ -57,6 +57,28 @@ impl ServerState {
     }
 }
 
+/// Context for Unix client connection handlers
+struct UnixClientContext {
+    state: Arc<RwLock<ServerState>>,
+    event_tx: mpsc::Sender<SessionEvent>,
+    client_host_id: String,
+    our_host: String,
+}
+
+/// Result of handling a Unix client message
+enum UnixAction {
+    /// Continue the message loop
+    Continue,
+    /// Transition to subscribed mode
+    EnterSubscribed {
+        reader: MultiplexReader,
+        input_tx: mpsc::Sender<Vec<u8>>,
+        agent_id: String,
+    },
+    /// Shutdown the server and exit
+    Shutdown,
+}
+
 /// The amux server
 pub struct Server {
     state: Arc<RwLock<ServerState>>,
@@ -123,8 +145,8 @@ impl Server {
                             let state = self.state.clone();
                             let event_tx = self.event_tx.clone();
                             tokio::spawn(async move {
-                                if let Err(e) = handle_connection(stream, state, event_tx).await {
-                                    log!("server: connection error: {}", e);
+                                if let Err(e) = unix_accept(stream, state, event_tx).await {
+                                    log!("server: unix connection error: {}", e);
                                 }
                             });
                         }
@@ -140,8 +162,8 @@ impl Server {
                         Ok((stream, _)) => {
                             let state = self.state.clone();
                             tokio::spawn(async move {
-                                if let Err(e) = handle_inbound_tcp(stream, state).await {
-                                    log!("server: TCP connection error: {}", e);
+                                if let Err(e) = tcp_accept(stream, state).await {
+                                    log!("server: tcp connection error: {}", e);
                                 }
                             });
                         }
@@ -158,8 +180,8 @@ impl Server {
     }
 }
 
-/// Handle a single connection
-async fn handle_connection(
+/// Unix client bootstrap - accept and handshake
+async fn unix_accept(
     stream: UnixStream,
     state: Arc<RwLock<ServerState>>,
     event_tx: mpsc::Sender<SessionEvent>,
@@ -203,15 +225,16 @@ async fn handle_connection(
         state.routes.insert(local_client_id.clone(), outgoing_tx);
     }
 
-    // Message handling loop
-    let result = handle_unix_client_loop(
-        transport,
-        outgoing_rx,
-        &client_host_id,
-        state.clone(),
+    // Create context for the message loop
+    let ctx = UnixClientContext {
+        state: state.clone(),
         event_tx,
-    )
-    .await;
+        client_host_id,
+        our_host,
+    };
+
+    // Message handling loop
+    let result = unix_client_loop(transport, outgoing_rx, ctx).await;
 
     // Clean up route on disconnect (use local_client_id since that's what's in routes)
     {
@@ -223,260 +246,274 @@ async fn handle_connection(
     result
 }
 
-/// Handle the message loop for a Unix client
-///
-/// - `transport`: The transport to the client (owned, not shared)
-/// - `outgoing_rx`: Channel receiver for messages to send to this client (from routing)
-/// - `client_host_id`: The full hierarchical ID (our_host/local_client_id, used for src_host)
-async fn handle_unix_client_loop(
+/// Handle a single message from Unix client
+async fn unix_handle_message(
+    transport: &mut UnixTransport,
+    msg: Message,
+    ctx: &UnixClientContext,
+) -> Result<UnixAction> {
+    log!("server: client {} received {:?}", ctx.client_host_id, msg);
+
+    match msg {
+        Message::ListAgents => {
+            let agents = {
+                let state = ctx.state.read().await;
+                state
+                    .agents
+                    .values()
+                    .map(|s| s.to_agent_info())
+                    .collect::<Vec<_>>()
+            };
+            transport
+                .write_message(&Message::ListAgentsResult { agents })
+                .await?;
+            Ok(UnixAction::Continue)
+        }
+
+        Message::CreateAgent {
+            agent_id,
+            command,
+            working_dir,
+            rows,
+            cols,
+        } => {
+            let result = create_agent(
+                &ctx.state,
+                &ctx.event_tx,
+                &agent_id,
+                &command,
+                working_dir,
+                rows,
+                cols,
+            )
+            .await;
+
+            let response = match result {
+                Ok(()) => Message::CreateAgentResult {
+                    success: true,
+                    error: None,
+                },
+                Err(e) => Message::CreateAgentResult {
+                    success: false,
+                    error: Some(e.to_string()),
+                },
+            };
+            transport.write_message(&response).await?;
+            Ok(UnixAction::Continue)
+        }
+
+        Message::Subscribe {
+            src_host: _,
+            dst_host,
+            agent_id,
+            rows,
+            cols,
+        } => {
+            // Rewrite src_host to client's full hierarchical ID
+            let src_host = ctx.client_host_id.clone();
+
+            // Check if this subscribe is for a local agent or needs routing
+            if dst_host != ctx.our_host {
+                // Forward to remote host with client's host_id as src
+                log!(
+                    "server: forwarding Subscribe from {} to {}",
+                    src_host,
+                    dst_host
+                );
+                let route = {
+                    let state = ctx.state.read().await;
+                    state.routes.get(&dst_host).cloned()
+                };
+
+                if let Some(route) = route {
+                    let _ = route
+                        .send(Message::Subscribe {
+                            src_host,
+                            dst_host: dst_host.clone(),
+                            agent_id,
+                            rows,
+                            cols,
+                        })
+                        .await;
+                    // Response will come back through tcp_peer_loop
+                    // and be routed to this client via outgoing_rx
+                } else {
+                    log!("server: no route to {}", dst_host);
+                    transport
+                        .write_message(&Message::SubscribeResult {
+                            src_host: dst_host.clone(),
+                            dst_host: src_host,
+                            agent_id,
+                            success: false,
+                            error: Some("No route to host".to_string()),
+                        })
+                        .await?;
+                }
+                return Ok(UnixAction::Continue);
+            }
+
+            // Local subscribe - enter subscribed mode
+            let result = handle_subscribe(&ctx.state, &agent_id, rows, cols).await;
+
+            match result {
+                Ok((buffer_reader, input_tx)) => {
+                    // Send success response
+                    transport
+                        .write_message(&Message::SubscribeResult {
+                            src_host: ctx.our_host.clone(),
+                            dst_host: src_host.clone(),
+                            agent_id: agent_id.clone(),
+                            success: true,
+                            error: None,
+                        })
+                        .await?;
+
+                    log!(
+                        "server: client {} subscribed to agent {}",
+                        ctx.client_host_id,
+                        agent_id
+                    );
+
+                    Ok(UnixAction::EnterSubscribed {
+                        reader: buffer_reader,
+                        input_tx,
+                        agent_id,
+                    })
+                }
+                Err(e) => {
+                    transport
+                        .write_message(&Message::SubscribeResult {
+                            src_host: ctx.our_host.clone(),
+                            dst_host: src_host,
+                            agent_id,
+                            success: false,
+                            error: Some(e.to_string()),
+                        })
+                        .await?;
+                    Ok(UnixAction::Continue)
+                }
+            }
+        }
+
+        Message::Shutdown => {
+            log!("server: shutdown requested by {}", ctx.client_host_id);
+            shutdown_server(&ctx.state).await;
+            transport
+                .write_message(&Message::Error {
+                    code: 0,
+                    message: "Server shutting down".to_string(),
+                })
+                .await?;
+            Ok(UnixAction::Shutdown)
+        }
+
+        Message::ConnectToServer { address } => {
+            let result = tcp_connect(&address, &ctx.state).await;
+            let response = match result {
+                Ok(()) => Message::ConnectToServerResult {
+                    success: true,
+                    error: None,
+                },
+                Err(e) => Message::ConnectToServerResult {
+                    success: false,
+                    error: Some(e.to_string()),
+                },
+            };
+            transport.write_message(&response).await?;
+            Ok(UnixAction::Continue)
+        }
+
+        // Input from client - forward to remote host if subscribed remotely
+        Message::Input {
+            dst_host,
+            agent_id,
+            data,
+            ..
+        } => {
+            // Forward input to the destination
+            let route = {
+                let state = ctx.state.read().await;
+                state.routes.get(&dst_host).cloned()
+            };
+            if let Some(route) = route {
+                let _ = route
+                    .send(Message::Input {
+                        src_host: ctx.client_host_id.clone(),
+                        dst_host,
+                        agent_id,
+                        data,
+                    })
+                    .await;
+            }
+            Ok(UnixAction::Continue)
+        }
+
+        _ => {
+            transport
+                .write_message(&Message::Error {
+                    code: 1,
+                    message: "Unexpected message".to_string(),
+                })
+                .await?;
+            Ok(UnixAction::Continue)
+        }
+    }
+}
+
+/// Unix client message loop
+async fn unix_client_loop(
     mut transport: UnixTransport,
     mut outgoing_rx: mpsc::Receiver<Message>,
-    client_host_id: &str,
-    state: Arc<RwLock<ServerState>>,
-    event_tx: mpsc::Sender<SessionEvent>,
+    ctx: UnixClientContext,
 ) -> Result<()> {
     loop {
-        // Select between incoming messages from client and outgoing messages from routes
         tokio::select! {
             // Incoming message from client
             msg = transport.read_message() => {
                 let msg = match msg {
                     Ok(msg) => msg,
                     Err(AmuxError::Io(e)) if e.kind() == std::io::ErrorKind::UnexpectedEof => {
-                        log!("server: client {} disconnected", client_host_id);
+                        log!("server: client {} disconnected", ctx.client_host_id);
                         return Ok(());
                     }
                     Err(e) => {
-                        log!("server: client {} read error: {}", client_host_id, e);
+                        log!("server: client {} read error: {}", ctx.client_host_id, e);
                         return Err(e);
                     }
                 };
 
-                log!("server: client {} received {:?}", client_host_id, msg);
-
-                match msg {
-                    Message::ListAgents => {
-                        let agents = {
-                            let state = state.read().await;
-                            state
-                                .agents
-                                .values()
-                                .map(|s| s.to_agent_info())
-                                .collect::<Vec<_>>()
-                        };
-                        transport
-                            .write_message(&Message::ListAgentsResult { agents })
-                            .await?;
-                    }
-
-                    Message::CreateAgent {
-                        agent_id,
-                        command,
-                        working_dir,
-                        rows,
-                        cols,
-                    } => {
-                        let result = create_agent(
-                            &state,
-                            &event_tx,
-                            &agent_id,
-                            &command,
-                            working_dir,
-                            rows,
-                            cols,
+                match unix_handle_message(&mut transport, msg, &ctx).await? {
+                    UnixAction::Continue => {}
+                    UnixAction::EnterSubscribed { reader, input_tx, agent_id } => {
+                        return unix_subscribed_mode(
+                            transport,
+                            outgoing_rx,
+                            reader,
+                            input_tx,
+                            ctx.our_host,
+                            ctx.client_host_id,
+                            agent_id,
                         )
                         .await;
-
-                        let response = match result {
-                            Ok(()) => Message::CreateAgentResult {
-                                success: true,
-                                error: None,
-                            },
-                            Err(e) => Message::CreateAgentResult {
-                                success: false,
-                                error: Some(e.to_string()),
-                            },
-                        };
-                        transport.write_message(&response).await?;
                     }
-
-                    Message::Subscribe {
-                        src_host: _,
-                        dst_host,
-                        agent_id,
-                        rows,
-                        cols,
-                    } => {
-                        // Rewrite src_host to client's full hierarchical ID
-                        let src_host = client_host_id.to_string();
-                        let our_host = {
-                            let state = state.read().await;
-                            state.config.host_id.clone()
-                        };
-
-                        // Check if this subscribe is for a local agent or needs routing
-                        if dst_host != our_host {
-                            // Forward to remote host with client's host_id as src
-                            log!(
-                                "server: forwarding Subscribe from {} to {}",
-                                src_host,
-                                dst_host
-                            );
-                            let route = {
-                                let state = state.read().await;
-                                state.routes.get(&dst_host).cloned()
-                            };
-
-                            if let Some(route) = route {
-                                let _ = route
-                                    .send(Message::Subscribe {
-                                        src_host,
-                                        dst_host: dst_host.clone(),
-                                        agent_id,
-                                        rows,
-                                        cols,
-                                    })
-                                    .await;
-                                // Response will come back through handle_tcp_connection
-                                // and be routed to this client via outgoing_rx
-                            } else {
-                                log!("server: no route to {}", dst_host);
-                                transport
-                                    .write_message(&Message::SubscribeResult {
-                                        src_host: dst_host.clone(),
-                                        dst_host: src_host,
-                                        agent_id,
-                                        success: false,
-                                        error: Some("No route to host".to_string()),
-                                    })
-                                    .await?;
-                            }
-                            continue;
-                        }
-
-                        // Local subscribe - enter subscribed mode
-                        let result = handle_subscribe(&state, &agent_id, rows, cols).await;
-
-                        match result {
-                            Ok((buffer_reader, input_tx)) => {
-                                // Send success response
-                                transport
-                                    .write_message(&Message::SubscribeResult {
-                                        src_host: our_host.clone(),
-                                        dst_host: src_host.clone(),
-                                        agent_id: agent_id.clone(),
-                                        success: true,
-                                        error: None,
-                                    })
-                                    .await?;
-
-                                log!(
-                                    "server: client {} subscribed to agent {}",
-                                    client_host_id,
-                                    agent_id
-                                );
-
-                                // Enter subscribed mode with dedicated loop
-                                return handle_subscribed_mode(
-                                    transport,
-                                    outgoing_rx,
-                                    buffer_reader,
-                                    input_tx,
-                                    our_host,
-                                    src_host,
-                                    agent_id,
-                                )
-                                .await;
-                            }
-                            Err(e) => {
-                                transport
-                                    .write_message(&Message::SubscribeResult {
-                                        src_host: our_host,
-                                        dst_host: src_host,
-                                        agent_id,
-                                        success: false,
-                                        error: Some(e.to_string()),
-                                    })
-                                    .await?;
-                            }
-                        }
-                    }
-
-                    Message::Shutdown => {
-                        log!("server: shutdown requested by {}", client_host_id);
-                        shutdown_server(&state).await;
-                        transport
-                            .write_message(&Message::Error {
-                                code: 0,
-                                message: "Server shutting down".to_string(),
-                            })
-                            .await?;
-
+                    UnixAction::Shutdown => {
                         // Remove socket and exit
                         let socket_path = {
-                            let state = state.read().await;
+                            let state = ctx.state.read().await;
                             state.config.socket_path.clone()
                         };
                         let _ = std::fs::remove_file(socket_path);
                         log!("server: exiting");
                         std::process::exit(0);
                     }
-
-                    Message::ConnectToServer { address } => {
-                        let result = handle_connect_to_server(&address, &state).await;
-                        let response = match result {
-                            Ok(()) => Message::ConnectToServerResult {
-                                success: true,
-                                error: None,
-                            },
-                            Err(e) => Message::ConnectToServerResult {
-                                success: false,
-                                error: Some(e.to_string()),
-                            },
-                        };
-                        transport.write_message(&response).await?;
-                    }
-
-                    // Input from client - forward to remote host if subscribed remotely
-                    Message::Input {
-                        dst_host,
-                        agent_id,
-                        data,
-                        ..
-                    } => {
-                        // Forward input to the destination
-                        let route = {
-                            let state = state.read().await;
-                            state.routes.get(&dst_host).cloned()
-                        };
-                        if let Some(route) = route {
-                            let _ = route
-                                .send(Message::Input {
-                                    src_host: client_host_id.to_string(),
-                                    dst_host,
-                                    agent_id,
-                                    data,
-                                })
-                                .await;
-                        }
-                    }
-
-                    _ => {
-                        transport
-                            .write_message(&Message::Error {
-                                code: 1,
-                                message: "Unexpected message".to_string(),
-                            })
-                            .await?;
-                    }
                 }
             }
 
             // Outgoing message from routing (e.g., SubscribeResult, Output from remote)
             Some(msg) = outgoing_rx.recv() => {
-                log!("server: routing message to {}: {:?}", client_host_id, msg);
+                log!("server: routing message to {}: {:?}", ctx.client_host_id, msg);
                 if transport.write_message(&msg).await.is_err() {
-                    log!("server: failed to send routed message to {}", client_host_id);
+                    log!("server: failed to send routed message to {}", ctx.client_host_id);
                     break;
                 }
             }
@@ -486,8 +523,8 @@ async fn handle_unix_client_loop(
     Ok(())
 }
 
-/// Handle subscribed mode - streaming output to client
-async fn handle_subscribed_mode(
+/// Unix subscribed mode - dedicated streaming after local subscribe
+async fn unix_subscribed_mode(
     mut transport: UnixTransport,
     mut outgoing_rx: mpsc::Receiver<Message>,
     mut buffer_reader: crate::buffer::MultiplexReader,
@@ -610,8 +647,8 @@ async fn shutdown_server(state: &Arc<RwLock<ServerState>>) {
     state.agents.clear();
 }
 
-/// Handle client request to connect to a remote server
-async fn handle_connect_to_server(address: &str, state: &Arc<RwLock<ServerState>>) -> Result<()> {
+/// TCP outbound connection - connect and handshake
+async fn tcp_connect(address: &str, state: &Arc<RwLock<ServerState>>) -> Result<()> {
     // Parse address
     let addr: SocketAddr = address
         .parse()
@@ -676,7 +713,7 @@ async fn handle_connect_to_server(address: &str, state: &Arc<RwLock<ServerState>
     let state = state.clone();
     tokio::spawn(async move {
         if let Err(e) =
-            handle_tcp_connection(transport, outgoing_rx, remote_host.clone(), state.clone()).await
+            tcp_peer_loop(transport, outgoing_rx, remote_host.clone(), state.clone()).await
         {
             log!("server: TCP connection error: {}", e);
         }
@@ -689,8 +726,8 @@ async fn handle_connect_to_server(address: &str, state: &Arc<RwLock<ServerState>
     Ok(())
 }
 
-/// Handle incoming TCP connection (from accept loop)
-async fn handle_inbound_tcp(stream: TcpStream, state: Arc<RwLock<ServerState>>) -> Result<()> {
+/// TCP peer bootstrap - accept inbound and handshake
+async fn tcp_accept(stream: TcpStream, state: Arc<RwLock<ServerState>>) -> Result<()> {
     stream.set_nodelay(true)?;
     let peer_addr = stream.peer_addr().ok();
     log!("server: inbound TCP from {:?}", peer_addr);
@@ -733,8 +770,7 @@ async fn handle_inbound_tcp(stream: TcpStream, state: Arc<RwLock<ServerState>>) 
         state.routes.insert(remote_host.clone(), outgoing_tx);
     }
 
-    let result =
-        handle_tcp_connection(transport, outgoing_rx, remote_host.clone(), state.clone()).await;
+    let result = tcp_peer_loop(transport, outgoing_rx, remote_host.clone(), state.clone()).await;
 
     // Clean up route on disconnect
     {
@@ -746,11 +782,11 @@ async fn handle_inbound_tcp(stream: TcpStream, state: Arc<RwLock<ServerState>>) 
     result
 }
 
-/// Handle an established TCP connection with another server
+/// TCP peer message loop
 ///
 /// This is called after the handshake is complete, on both the initiator
 /// and receiver sides. It routes messages between this server and the remote.
-async fn handle_tcp_connection(
+async fn tcp_peer_loop(
     mut transport: TcpTransport,
     mut outgoing_rx: mpsc::Receiver<Message>,
     remote_host: String,
@@ -776,7 +812,7 @@ async fn handle_tcp_connection(
 
                 log!("server: received from {}: {:?}", remote_host, msg);
 
-                if let Err(e) = handle_tcp_message(msg, &state).await {
+                if let Err(e) = tcp_handle_message(msg, &state).await {
                     log!("server: error handling message from {}: {}", remote_host, e);
                 }
             }
@@ -795,8 +831,8 @@ async fn handle_tcp_connection(
     Ok(())
 }
 
-/// Handle a single message received on a TCP connection
-async fn handle_tcp_message(msg: Message, state: &Arc<RwLock<ServerState>>) -> Result<()> {
+/// Handle a single message from TCP peer
+async fn tcp_handle_message(msg: Message, state: &Arc<RwLock<ServerState>>) -> Result<()> {
     match msg {
         Message::Subscribe {
             src_host,
