@@ -4,6 +4,7 @@ mod buffer;
 mod client;
 mod config;
 mod error;
+mod hooks;
 mod message;
 mod server;
 mod session;
@@ -63,6 +64,28 @@ enum Commands {
         /// Remote server address (host:port)
         address: String,
     },
+
+    /// Internal: Handle hooks from AI coding assistants
+    #[command(hide = true)]
+    Hooks {
+        #[command(subcommand)]
+        provider: HooksProvider,
+    },
+}
+
+#[derive(Subcommand)]
+enum HooksProvider {
+    /// Claude Code hooks
+    Claude {
+        #[command(subcommand)]
+        event: ClaudeHookEvent,
+    },
+}
+
+#[derive(Subcommand)]
+enum ClaudeHookEvent {
+    /// Called when a Claude Code session starts
+    SessionStart,
 }
 
 #[tokio::main]
@@ -82,6 +105,18 @@ async fn main() {
         },
         None => Config::new(),
     };
+
+    // Handle hooks commands first (no server needed)
+    if let Some(Commands::Hooks { provider }) = &cli.command {
+        match provider {
+            HooksProvider::Claude { event } => match event {
+                ClaudeHookEvent::SessionStart => {
+                    hooks::handle_claude_session_start();
+                    return;
+                }
+            },
+        }
+    }
 
     // Hidden server mode
     if cli.server {
@@ -113,6 +148,7 @@ async fn main() {
             ensure_server_running(&config, cli.config.as_deref()).await;
             client::connect(&address, &config).await
         }
+        Some(Commands::Hooks { .. }) => unreachable!("hooks handled above"),
     };
 
     if let Err(e) = result {

@@ -38,6 +38,73 @@ One paragraph describing what was done.
 
 ---
 
+## 2025-01-15: Claude Code Hooks Integration (SessionStart)
+
+### Summary
+
+Added initial support for Claude Code hooks integration. The new `amux hooks claude session-start` command receives hook data from Claude Code via stdin and logs it to `claude_hooks.jsonl` in the current working directory. Hook data is parsed into typed structs (`ClaudeHook` enum) for type safety.
+
+### Changes
+
+**New files:**
+- `src/hooks.rs` - Hook handling with `ClaudeHook` enum and `ClaudeSessionStart` struct
+
+**Modified files:**
+- `src/main.rs` - Added `Hooks` command with nested `HooksProvider` and `ClaudeHookEvent` enums
+- `Cargo.toml` - Added `serde_json` dependency
+
+**New types:**
+```rust
+pub enum ClaudeHook {
+    SessionStart(ClaudeSessionStart),
+}
+
+pub struct ClaudeSessionStart {
+    pub cwd: String,
+    pub session_id: String,
+    pub source: String,  // "startup", "resume", "clear"
+    pub transcript_path: String,
+}
+```
+
+### Decisions Made
+
+1. **Hidden command:** The `hooks` command is hidden from `--help` using `#[command(hide = true)]`. Like the `--server` flag, it's internal infrastructure.
+
+2. **Nested subcommand structure:** `amux hooks <provider> <event>` allows future expansion to other providers (opencode, codex) and events (PreToolUse, PostToolUse).
+
+3. **Typed parsing:** Hook data is parsed into `ClaudeHook` enum using serde's internally tagged enum (`#[serde(tag = "hook_event_name")]`). This gives type safety and easy access to fields like `transcript_path`.
+
+4. **Fail silently:** Errors are logged to `/tmp/amux.log` but the command exits with code 0. Hooks should not block Claude Code workflow.
+
+5. **Log to cwd:** `claude_hooks.jsonl` is created in the current working directory (the project root when invoked by Claude Code).
+
+### Verification
+
+```
+cargo check && cargo fmt && cargo clippy  # OK
+cargo test                                 # 17 tests pass
+cargo run -p e2e-runner -- run             # 6/6 E2E tests pass
+```
+
+Manual testing:
+```bash
+# Basic invocation with real Claude Code format
+echo '{"cwd":"/Users/jlw","hook_event_name":"SessionStart","session_id":"test","source":"startup","transcript_path":"~/.claude/test.jsonl"}' | cargo run -- hooks claude session-start
+cat claude_hooks.jsonl  # Shows typed entry
+
+# Hidden from help
+cargo run -- --help  # Does not show "hooks"
+```
+
+### Next Steps
+
+- Add more Claude Code hook events (PreToolUse, PostToolUse, Stop)
+- Read transcript file to capture conversation messages
+- Consider per-agent abstractions for different AI tools
+
+---
+
 ## 2025-01-15: Remove unix_subscribed_mode
 
 ### Summary
