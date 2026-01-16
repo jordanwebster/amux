@@ -15,6 +15,9 @@ pub const DEFAULT_USER_ID: &str = "local";
 /// Default TCP port for server-to-server connections
 pub const DEFAULT_TCP_PORT: u16 = 9001;
 
+/// Default WebSocket port for rich clients
+pub const DEFAULT_WEBSOCKET_PORT: u16 = 9002;
+
 /// Server configuration
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct Config {
@@ -33,6 +36,10 @@ pub struct Config {
     /// TCP port for server-to-server connections (defaults to 9001)
     #[serde(default)]
     pub tcp_port: Option<u16>,
+
+    /// WebSocket port for rich clients (defaults to 9002)
+    #[serde(default)]
+    pub websocket_port: Option<u16>,
 }
 
 impl Config {
@@ -44,6 +51,7 @@ impl Config {
             socket_path: PathBuf::from(DEFAULT_SOCKET_PATH),
             max_replay_buffer: DEFAULT_MAX_REPLAY_BUFFER,
             tcp_port: None,
+            websocket_port: None,
         }
     }
 

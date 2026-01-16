@@ -6,8 +6,11 @@ mod config;
 mod error;
 mod hooks;
 mod message;
+mod multiplex_log_buffer;
 mod server;
 mod session;
+mod structured_log;
+mod transcript;
 mod transport;
 
 use clap::{Parser, Subcommand};
@@ -111,7 +114,7 @@ async fn main() {
         match provider {
             HooksProvider::Claude { event } => match event {
                 ClaudeHookEvent::SessionStart => {
-                    hooks::handle_claude_session_start();
+                    hooks::handle_claude_session_start(&config);
                     return;
                 }
             },

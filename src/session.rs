@@ -2,14 +2,20 @@ use crate::buffer::{MultiplexBuffer, MultiplexReader};
 use crate::config::Config;
 use crate::error::{AmuxError, Result};
 use crate::message::AgentInfo;
+use crate::multiplex_log_buffer::{MultiplexLogBuffer, MultiplexLogReader};
+use crate::transcript::TranscriptTailer;
 use portable_pty::{native_pty_system, CommandBuilder, MasterPty, PtySize};
 use std::io::{Read, Write};
 use std::path::PathBuf;
 use std::sync::Arc;
 use tokio::sync::{mpsc, Mutex};
+use tokio::task::JoinHandle;
 
-/// Maximum replay buffer size
+/// Maximum replay buffer size for PTY bytes
 const MAX_REPLAY_BUFFER: usize = 10 * 1024 * 1024; // 10MB
+
+/// Maximum number of structured log entries to keep
+const MAX_LOG_ENTRIES: usize = 1000;
 
 /// Unique identifier for an agent session
 #[derive(Debug, Clone, Hash, Eq, PartialEq)]
@@ -63,6 +69,12 @@ pub struct LocalAgentSession {
 
     /// Multiplex buffer for PTY output (handles both replay and broadcast)
     buffer: Arc<MultiplexBuffer>,
+
+    /// Multiplex buffer for structured logs (populated by transcript tailer)
+    log_buffer: Arc<MultiplexLogBuffer>,
+
+    /// Transcript tailer handle (None if no transcript linked)
+    transcript_tailer: Mutex<Option<(TranscriptTailer, JoinHandle<()>)>>,
 
     /// Channel to send input to PTY
     input_tx: mpsc::Sender<Vec<u8>>,
@@ -190,6 +202,8 @@ impl LocalAgentSession {
             working_dir,
             pty_master: master,
             buffer,
+            log_buffer: Arc::new(MultiplexLogBuffer::new(MAX_LOG_ENTRIES)),
+            transcript_tailer: Mutex::new(None),
             input_tx,
             current_size,
         })
@@ -248,10 +262,41 @@ impl LocalAgentSession {
     /// Shutdown the session
     pub async fn shutdown(&self) {
         log!("session [{}]: shutting down", self.id.agent_id);
+        // Stop transcript tailer if running
+        if let Some((tailer, _handle)) = self.transcript_tailer.lock().await.take() {
+            tailer.stop();
+        }
         // Drop the PTY master to kill any remaining processes
         self.pty_master.lock().await.take();
         // Close the multiplex buffer to disconnect clients
         self.buffer.close().await;
+        // Close the log buffer
+        self.log_buffer.close().await;
+    }
+
+    /// Link a transcript file to this session.
+    ///
+    /// Starts a background task that tails the transcript file and writes
+    /// parsed log entries to the log buffer.
+    pub async fn link_transcript(&self, path: PathBuf) {
+        log!(
+            "session [{}]: linking transcript {:?}",
+            self.id.agent_id,
+            path
+        );
+        let tailer = TranscriptTailer::new(path, self.log_buffer.clone());
+        let handle = tailer.start();
+        *self.transcript_tailer.lock().await = Some((tailer, handle));
+    }
+
+    /// Subscribe to structured logs.
+    ///
+    /// Returns a reader that receives all existing log entries (replay) followed
+    /// by new entries as they are parsed from the transcript.
+    ///
+    /// Returns `None` if the log buffer has been closed.
+    pub async fn subscribe_logs(&self) -> Option<MultiplexLogReader> {
+        self.log_buffer.subscribe().await
     }
 
     /// Convert to AgentInfo for listing

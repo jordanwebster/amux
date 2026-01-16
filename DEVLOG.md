@@ -38,6 +38,86 @@ One paragraph describing what was done.
 
 ---
 
+## 2025-01-15: WebSocket Subscription to Structured Logs
+
+### Summary
+
+Added WebSocket connections that subscribe to structured conversation logs (user/assistant messages) parsed from Claude's transcript file. When a WebSocket client subscribes to an agent, it receives structured log entries instead of raw PTY bytes. The hook handler now sends a `HookEvent` to the server to link transcripts to sessions.
+
+### Changes
+
+**New files:**
+- `src/structured_log.rs` - `StructuredLog` enum (UserMessage, AssistantMessage)
+- `src/multiplex_log_buffer.rs` - `MultiplexLogBuffer` and `MultiplexLogReader` for log broadcast
+- `src/transcript.rs` - `TranscriptTailer` that parses Claude's JSONL transcript
+
+**Modified files:**
+- `src/message.rs` - Added `HookEvent`, `HookEventResult`, `StructuredOutput` message types
+- `src/session.rs` - Added `log_buffer`, `link_transcript()`, `subscribe_logs()` to `LocalAgentSession`
+- `src/hooks.rs` - Updated to send `HookEvent` to server instead of just logging
+- `src/transport.rs` - Added `WebSocketTransport` with JSON serialization
+- `src/config.rs` - Added `websocket_port` field (default 9002)
+- `src/server.rs` - Added WebSocket listener, `websocket_accept()`, `websocket_client_loop()`, HookEvent handling
+- `src/main.rs` - Added module declarations for new files
+- `Cargo.toml` - Added `tokio-tungstenite` and `futures-util` dependencies
+
+### Decisions Made
+
+1. **Separate `MultiplexLogBuffer`:** Logs need entry-count limits, not byte limits, so a separate buffer type was created (not generic MultiplexBuffer).
+
+2. **Connection-type determines subscription:** WebSocket subscribes to logs, Unix/TCP subscribes to bytes. No new Subscribe message variants needed - same protocol, different behavior.
+
+3. **JSON serialization for WebSocket:** Human-readable and web-friendly, vs bincode for Unix/TCP.
+
+4. **Session linking via most-recent:** HookEvent links transcript to the most recently created session (simplest approach for single-user local mode).
+
+5. **Transcript parsing extracts text only:** Assistant messages with thinking blocks are parsed to extract just the text content, ignoring tool use and thinking.
+
+6. **Runtime nesting fix:** The hook command runs through `#[tokio::main]`, so creating a nested runtime panicked. Fixed by using `tokio::task::block_in_place` with `Handle::current().block_on()`.
+
+7. **Separate Hook enums for JSON vs wire protocol:** Bincode doesn't support internally tagged enums (`#[serde(tag = "...")]` fails with `DeserializeAnyNotSupported`). We maintain `hooks::ClaudeHook` with serde tag for parsing Claude's JSON input, and `message::ClaudeHook` untagged for bincode wire protocol, with a `From` impl to convert between them.
+
+8. **Proper transcript parsing with serde:** Refactored `transcript.rs` to use serde tagged enums (`TranscriptEntry`, `ContentBlock`) instead of manual string matching. Uses `#[serde(other)]` for catch-all variants and railway-oriented `.ok().and_then()` for clean parsing flow.
+
+### Verification
+
+```
+cargo check                        # OK
+cargo fmt                          # OK
+cargo clippy                       # OK
+cargo test                         # 31 tests pass
+```
+
+Tests added: 7 for MultiplexLogBuffer, 6 for TranscriptTailer parsing, 1 for HookEvent bincode roundtrip.
+
+### Manual Testing
+
+```bash
+# Terminal 1: Start Claude agent via amux
+cargo run -- new-agent -t test1 claude
+
+# Terminal 2: Connect via WebSocket
+websocat ws://localhost:9002
+{"Connect":{"host_id":"ws-client"}}
+# Response: {"ConnectResponse":{"success":true,"error":null,"host_id":"<server-host-id>"}}
+
+{"Subscribe":{"src_host":"","dst_host":"<server-host-id>","agent_id":"test1","rows":24,"cols":80}}
+# Response: {"SubscribeResult":{...,"success":true,...}}
+
+# As conversation happens in Terminal 1, structured logs stream to Terminal 2:
+{"StructuredOutput":{...,"entry":{"type":"UserMessage","content":"Hi Claude...","timestamp":"...","uuid":"..."}}}
+{"StructuredOutput":{...,"entry":{"type":"AssistantMessage","content":"Let me check...","timestamp":"...","uuid":"..."}}}
+```
+
+User and assistant messages stream in real-time as the conversation progresses.
+
+### Next Steps
+
+- Add E2E tests for WebSocket subscription flow
+- Consider environment variable for session linking (AMUX_SESSION_ID)
+
+---
+
 ## 2025-01-15: Claude Code Hooks Integration (SessionStart)
 
 ### Summary

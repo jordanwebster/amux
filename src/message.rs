@@ -1,5 +1,16 @@
+use crate::structured_log::StructuredLog;
 use serde::{Deserialize, Serialize};
 use std::path::PathBuf;
+
+#[derive(Serialize, Deserialize, Debug, Clone)]
+pub enum Hook {
+    Claude(ClaudeHook),
+}
+
+#[derive(Serialize, Deserialize, Debug, Clone)]
+pub enum ClaudeHook {
+    SessionStart { transcript_path: String },
+}
 
 /// All protocol messages between client and server
 #[derive(Serialize, Deserialize, Debug, Clone)]
@@ -92,6 +103,25 @@ pub enum Message {
         success: bool,
         error: Option<String>,
         host_id: String,
+    },
+
+    // Hook events
+    /// Hook event from CLI hook handler (e.g., Claude Code SessionStart)
+    HookEvent { hook: Hook },
+
+    /// Acknowledgement of HookEvent
+    HookEventResult {
+        success: bool,
+        error: Option<String>,
+    },
+
+    // Structured output for WebSocket clients
+    /// Structured log entry from agent (for WebSocket subscribers)
+    StructuredOutput {
+        src_host: String,
+        dst_host: String,
+        agent_id: String,
+        entry: StructuredLog,
     },
 }
 
@@ -187,5 +217,20 @@ mod tests {
         assert_eq!(decoded.agent_id, "claude-1");
         assert_eq!(decoded.command, "claude");
         assert_eq!(decoded.working_dir, PathBuf::from("/tmp"));
+    }
+
+    #[test]
+    fn test_message_roundtrip_hook_event() {
+        let hook = Hook::Claude(ClaudeHook::SessionStart {
+            transcript_path: "/tmp/transcript.jsonl".to_string(),
+        });
+        let msg = Message::HookEvent { hook };
+        let encoded = msg.encode().unwrap();
+        let decoded = Message::decode(&encoded).unwrap();
+        let Message::HookEvent { hook: decoded_hook } = decoded else {
+            panic!("Expected HookEvent");
+        };
+        let Hook::Claude(ClaudeHook::SessionStart { transcript_path }) = decoded_hook;
+        assert_eq!(transcript_path, "/tmp/transcript.jsonl");
     }
 }

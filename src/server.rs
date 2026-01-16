@@ -1,15 +1,16 @@
 use crate::buffer::MultiplexReader;
-use crate::config::{Config, DEFAULT_TCP_PORT};
+use crate::config::{Config, DEFAULT_TCP_PORT, DEFAULT_WEBSOCKET_PORT};
 use crate::error::{AmuxError, Result};
-use crate::message::Message;
+use crate::message::{ClaudeHook, Hook, Message};
 use crate::session::{AgentId, LocalAgentSession, SessionEvent};
-use crate::transport::{TcpTransport, Transport, UnixTransport};
+use crate::transport::{TcpTransport, Transport, UnixTransport, WebSocketTransport};
 use std::collections::HashMap;
 use std::net::SocketAddr;
 use std::path::PathBuf;
 use std::sync::Arc;
 use tokio::net::{TcpListener, TcpStream, UnixListener, UnixStream};
 use tokio::sync::{mpsc, RwLock};
+use tokio_tungstenite::accept_async;
 
 /// Determine how to route a message based on dst_host.
 ///
@@ -85,11 +86,15 @@ impl Server {
 
     /// Run the server
     pub async fn run(&mut self) -> Result<()> {
-        let (socket_path, tcp_port) = {
+        let (socket_path, tcp_port, ws_port) = {
             let state = self.state.read().await;
             (
                 state.config.socket_path.clone(),
                 state.config.tcp_port.unwrap_or(DEFAULT_TCP_PORT),
+                state
+                    .config
+                    .websocket_port
+                    .unwrap_or(DEFAULT_WEBSOCKET_PORT),
             )
         };
 
@@ -103,6 +108,11 @@ impl Server {
         let tcp_addr = SocketAddr::from(([0, 0, 0, 0], tcp_port));
         let tcp_listener = TcpListener::bind(tcp_addr).await?;
         log!("server: listening on TCP {}", tcp_addr);
+
+        // Start WebSocket listener
+        let ws_addr = SocketAddr::from(([0, 0, 0, 0], ws_port));
+        let ws_listener = TcpListener::bind(ws_addr).await?;
+        log!("server: listening on WebSocket {}", ws_addr);
 
         // Take the event receiver
         let mut event_rx = self.event_rx.take().expect("run() called twice");
@@ -159,10 +169,222 @@ impl Server {
                         }
                     }
                 }
+                // WebSocket connection (rich clients)
+                result = ws_listener.accept() => {
+                    match result {
+                        Ok((stream, addr)) => {
+                            log!("server: websocket client connected from {}", addr);
+                            let state = self.state.clone();
+                            tokio::spawn(async move {
+                                if let Err(e) = websocket_accept(stream, state).await {
+                                    log!("server: websocket connection error: {}", e);
+                                }
+                            });
+                        }
+                        Err(e) => {
+                            log!("server: websocket accept error: {}", e);
+                            break;
+                        }
+                    }
+                }
             }
         }
 
         Ok(())
+    }
+}
+
+/// WebSocket client bootstrap - accept, upgrade, and handshake
+async fn websocket_accept(stream: TcpStream, state: Arc<RwLock<ServerState>>) -> Result<()> {
+    // Upgrade to WebSocket
+    let ws_stream = accept_async(stream)
+        .await
+        .map_err(|e| AmuxError::Io(std::io::Error::other(e.to_string())))?;
+
+    let mut transport = WebSocketTransport::new(ws_stream);
+
+    // Wait for Connect message from client
+    let msg = transport.read_message().await?;
+    let local_client_id = match msg {
+        Message::Connect { host_id } => host_id,
+        _ => {
+            log!("server: websocket expected Connect, got {:?}", msg);
+            return Err(AmuxError::InvalidMessage);
+        }
+    };
+
+    // Construct hierarchical client ID
+    let (our_host, client_host_id) = {
+        let state = state.read().await;
+        let our_host = state.config.host_id.clone();
+        let client_host_id = format!("{}/{}", our_host, local_client_id);
+        (our_host, client_host_id)
+    };
+
+    // Send ConnectResponse
+    transport
+        .write_message(&Message::ConnectResponse {
+            success: true,
+            error: None,
+            host_id: our_host.clone(),
+        })
+        .await?;
+
+    log!("server: websocket client {} connected", client_host_id);
+
+    // Create context
+    let ctx = WebSocketClientContext {
+        state: state.clone(),
+        client_host_id: client_host_id.clone(),
+        our_host,
+    };
+
+    // Run WebSocket client loop
+    let result = websocket_client_loop(transport, ctx).await;
+
+    log!("server: websocket client {} disconnected", client_host_id);
+    result
+}
+
+/// Context for WebSocket client message handling
+struct WebSocketClientContext {
+    state: Arc<RwLock<ServerState>>,
+    client_host_id: String,
+    our_host: String,
+}
+
+/// WebSocket client message loop
+async fn websocket_client_loop(
+    mut transport: WebSocketTransport,
+    ctx: WebSocketClientContext,
+) -> Result<()> {
+    loop {
+        let msg = match transport.read_message().await {
+            Ok(msg) => msg,
+            Err(AmuxError::Io(e)) if e.kind() == std::io::ErrorKind::UnexpectedEof => {
+                return Ok(());
+            }
+            Err(e) => {
+                log!("server: websocket read error: {}", e);
+                return Err(e);
+            }
+        };
+
+        if let Err(e) = websocket_handle_message(&mut transport, msg, &ctx).await {
+            log!("server: websocket message error: {}", e);
+        }
+    }
+}
+
+/// Handle a message from a WebSocket client
+async fn websocket_handle_message(
+    transport: &mut WebSocketTransport,
+    msg: Message,
+    ctx: &WebSocketClientContext,
+) -> Result<()> {
+    log!(
+        "server: websocket {} received {:?}",
+        ctx.client_host_id,
+        msg
+    );
+
+    match msg {
+        Message::ListAgents => {
+            let agents = {
+                let state = ctx.state.read().await;
+                state
+                    .agents
+                    .values()
+                    .map(|s| s.to_agent_info())
+                    .collect::<Vec<_>>()
+            };
+            transport
+                .write_message(&Message::ListAgentsResult { agents })
+                .await?;
+            Ok(())
+        }
+
+        // Subscribe for WebSocket clients uses structured logs
+        Message::Subscribe {
+            dst_host, agent_id, ..
+        } => {
+            // Only support local agents for now
+            if dst_host != ctx.our_host {
+                transport
+                    .write_message(&Message::SubscribeResult {
+                        src_host: dst_host.clone(),
+                        dst_host: ctx.client_host_id.clone(),
+                        agent_id,
+                        success: false,
+                        error: Some("Remote agents not supported via WebSocket".to_string()),
+                    })
+                    .await?;
+                return Ok(());
+            }
+
+            // Get log reader from session
+            let log_reader = {
+                let state = ctx.state.read().await;
+                if let Some(session) = state.agents.get(&agent_id) {
+                    session.subscribe_logs().await
+                } else {
+                    None
+                }
+            };
+
+            match log_reader {
+                Some(mut reader) => {
+                    // Send success response
+                    transport
+                        .write_message(&Message::SubscribeResult {
+                            src_host: ctx.our_host.clone(),
+                            dst_host: ctx.client_host_id.clone(),
+                            agent_id: agent_id.clone(),
+                            success: true,
+                            error: None,
+                        })
+                        .await?;
+
+                    // Stream structured log entries
+                    while let Some(entry) = reader.read().await {
+                        transport
+                            .write_message(&Message::StructuredOutput {
+                                src_host: ctx.our_host.clone(),
+                                dst_host: ctx.client_host_id.clone(),
+                                agent_id: agent_id.clone(),
+                                entry,
+                            })
+                            .await?;
+                    }
+
+                    // Session ended
+                    transport.write_message(&Message::AgentEnded).await?;
+                    Ok(())
+                }
+                None => {
+                    transport
+                        .write_message(&Message::SubscribeResult {
+                            src_host: ctx.our_host.clone(),
+                            dst_host: ctx.client_host_id.clone(),
+                            agent_id,
+                            success: false,
+                            error: Some("Agent not found or ended".to_string()),
+                        })
+                        .await?;
+                    Ok(())
+                }
+            }
+        }
+
+        _ => {
+            transport
+                .write_message(&Message::Error {
+                    code: 1,
+                    message: "Unsupported message for WebSocket clients".to_string(),
+                })
+                .await?;
+            Ok(())
+        }
     }
 }
 
@@ -480,6 +702,49 @@ async fn unix_handle_message(
                         .await;
                 }
             }
+            Ok(())
+        }
+
+        // Hook event from CLI hook handler - link transcript to most recent session
+        Message::HookEvent { hook } => {
+            log!("server: HookEvent from {}: {:?}", ctx.client_host_id, hook);
+
+            // Extract transcript path based on hook type
+            let transcript_path = match &hook {
+                Hook::Claude(ClaudeHook::SessionStart { transcript_path }) => {
+                    Some(transcript_path.clone())
+                }
+            };
+
+            // Find most recently created local session and link transcript
+            let result = {
+                let state = ctx.state.read().await;
+                match transcript_path {
+                    Some(path) => {
+                        // Get the most recently created agent (last in iteration)
+                        if let Some((agent_id, session)) = state.agents.iter().last() {
+                            log!("server: linking transcript to agent {}", agent_id);
+                            session.link_transcript(PathBuf::from(&path)).await;
+                            Ok(())
+                        } else {
+                            Err("No agents running".to_string())
+                        }
+                    }
+                    None => Err("Hook type has no transcript path".to_string()),
+                }
+            };
+
+            let response = match result {
+                Ok(()) => Message::HookEventResult {
+                    success: true,
+                    error: None,
+                },
+                Err(e) => Message::HookEventResult {
+                    success: false,
+                    error: Some(e),
+                },
+            };
+            transport.write_message(&response).await?;
             Ok(())
         }
 
