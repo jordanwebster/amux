@@ -134,6 +134,46 @@ src/
 4. **Prefer composition** - Use traits and enums over inheritance patterns
 5. **Test the boundaries** - Focus tests on message handling and state transitions
 
+### Commenting Guidelines
+
+Write comments that add value. Prefer clear code over comment clutter.
+
+**Good comments (KEEP):**
+- `///` doc comments on public APIs explaining behavior, invariants, return values
+- `//!` module-level doc comments explaining purpose and guarantees
+- WHY comments explaining non-obvious decisions or constraints
+- `// Task:` labels on spawned async blocks (established pattern in this codebase)
+- Important invariants (e.g., "routes table uses single-layer keys only")
+
+**Bad comments (REMOVE):**
+- Comments restating what the next line obviously does
+- Comments echoing the variable/function name
+- Outdated or misleading comments
+
+**Examples:**
+
+```rust
+// BAD: echoes the field name
+/// Path to the Unix socket
+pub socket_path: PathBuf,
+
+// GOOD: adds useful context
+/// TCP port for server-to-server connections (defaults to 9001)
+pub tcp_port: Option<u16>,
+
+// BAD: restates the obvious
+// Read length prefix
+let mut len_buf = [0u8; 4];
+
+// GOOD: explains a non-obvious decision
+// Routes table uses single-layer keys only (no "/" in keys)
+let (outgoing_tx, outgoing_rx) = mpsc::channel::<Message>(256);
+
+// GOOD: Task label on spawned block
+// Task: Read from PTY, write to multiplex buffer
+tokio::task::spawn_blocking(move || { ... });
+```
+
 ## Common Tasks
 
 ### Adding a new message type

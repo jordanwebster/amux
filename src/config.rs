@@ -21,23 +21,21 @@ pub const DEFAULT_WEBSOCKET_PORT: u16 = 9002;
 /// Server configuration
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct Config {
-    /// Unique identifier for this server instance
     pub host_id: String,
 
-    /// User ID (hardcoded for local mode)
+    /// Hardcoded for local mode; will be authenticated in cloud mode
     pub user_id: String,
 
-    /// Path to the Unix socket
     pub socket_path: PathBuf,
 
-    /// Maximum size of the replay buffer in bytes
+    /// In bytes
     pub max_replay_buffer: usize,
 
-    /// TCP port for server-to-server connections (defaults to 9001)
+    /// Defaults to 9001
     #[serde(default)]
     pub tcp_port: Option<u16>,
 
-    /// WebSocket port for rich clients (defaults to 9002)
+    /// Defaults to 9002
     #[serde(default)]
     pub websocket_port: Option<u16>,
 }

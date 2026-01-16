@@ -98,23 +98,19 @@ impl Server {
             )
         };
 
-        // Clean up old socket
         let _ = std::fs::remove_file(&socket_path);
 
         let unix_listener = UnixListener::bind(&socket_path)?;
         log!("server: listening on {:?}", socket_path);
 
-        // Start TCP listener
         let tcp_addr = SocketAddr::from(([0, 0, 0, 0], tcp_port));
         let tcp_listener = TcpListener::bind(tcp_addr).await?;
         log!("server: listening on TCP {}", tcp_addr);
 
-        // Start WebSocket listener
         let ws_addr = SocketAddr::from(([0, 0, 0, 0], ws_port));
         let ws_listener = TcpListener::bind(ws_addr).await?;
         log!("server: listening on WebSocket {}", ws_addr);
 
-        // Take the event receiver
         let mut event_rx = self.event_rx.take().expect("run() called twice");
 
         // Task: Handle session lifecycle events
@@ -196,14 +192,12 @@ impl Server {
 
 /// WebSocket client bootstrap - accept, upgrade, and handshake
 async fn websocket_accept(stream: TcpStream, state: Arc<RwLock<ServerState>>) -> Result<()> {
-    // Upgrade to WebSocket
     let ws_stream = accept_async(stream)
         .await
         .map_err(|e| AmuxError::Io(std::io::Error::other(e.to_string())))?;
 
     let mut transport = WebSocketTransport::new(ws_stream);
 
-    // Wait for Connect message from client
     let msg = transport.read_message().await?;
     let local_client_id = match msg {
         Message::Connect { host_id } => host_id,
@@ -213,7 +207,7 @@ async fn websocket_accept(stream: TcpStream, state: Arc<RwLock<ServerState>>) ->
         }
     };
 
-    // Construct hierarchical client ID
+    // Construct hierarchical client ID: our_host/client_id
     let (our_host, client_host_id) = {
         let state = state.read().await;
         let our_host = state.config.host_id.clone();
@@ -221,7 +215,6 @@ async fn websocket_accept(stream: TcpStream, state: Arc<RwLock<ServerState>>) ->
         (our_host, client_host_id)
     };
 
-    // Send ConnectResponse
     transport
         .write_message(&Message::ConnectResponse {
             success: true,
@@ -232,14 +225,12 @@ async fn websocket_accept(stream: TcpStream, state: Arc<RwLock<ServerState>>) ->
 
     log!("server: websocket client {} connected", client_host_id);
 
-    // Create context
     let ctx = WebSocketClientContext {
         state: state.clone(),
         client_host_id: client_host_id.clone(),
         our_host,
     };
 
-    // Run WebSocket client loop
     let result = websocket_client_loop(transport, ctx).await;
 
     log!("server: websocket client {} disconnected", client_host_id);
@@ -396,7 +387,6 @@ async fn unix_accept(
 ) -> Result<()> {
     let mut transport = UnixTransport::new(stream);
 
-    // Wait for Connect message from client
     let msg = transport.read_message().await?;
     let local_client_id = match msg {
         Message::Connect { host_id } => host_id,
@@ -414,7 +404,6 @@ async fn unix_accept(
         (our_host, client_host_id)
     };
 
-    // Send ConnectResponse with our host_id
     transport
         .write_message(&Message::ConnectResponse {
             success: true,
@@ -425,7 +414,6 @@ async fn unix_accept(
 
     log!("server: client {} connected", client_host_id);
 
-    // Create channel for outgoing messages to this client
     // Routes table uses single-layer keys only (no "/" in keys)
     let (outgoing_tx, outgoing_rx) = mpsc::channel::<Message>(256);
     {
@@ -433,7 +421,6 @@ async fn unix_accept(
         state.routes.insert(local_client_id.clone(), outgoing_tx);
     }
 
-    // Create context for the message loop
     let ctx = UnixClientContext {
         state: state.clone(),
         event_tx,
@@ -441,10 +428,8 @@ async fn unix_accept(
         our_host,
     };
 
-    // Message handling loop
     let result = unix_client_loop(transport, outgoing_rx, ctx).await;
 
-    // Clean up route on disconnect (use local_client_id since that's what's in routes)
     {
         let mut state = state.write().await;
         state.routes.remove(&local_client_id);
@@ -866,32 +851,27 @@ async fn shutdown_server(state: &Arc<RwLock<ServerState>>) {
 
 /// TCP outbound connection - connect and handshake
 async fn tcp_connect(address: &str, state: &Arc<RwLock<ServerState>>) -> Result<()> {
-    // Parse address
     let addr: SocketAddr = address
         .parse()
         .map_err(|_| AmuxError::Config(format!("Invalid address: {}", address)))?;
 
-    // Connect to remote server
     let stream = TcpStream::connect(addr).await?;
     stream.set_nodelay(true)?;
 
     log!("server: connected to remote server at {}", addr);
 
-    // Perform handshake as initiator
     let mut transport = TcpTransport::new(stream);
     let our_host = {
         let state = state.read().await;
         state.config.host_id.clone()
     };
 
-    // Send Connect with our host_id
     transport
         .write_message(&Message::Connect {
             host_id: our_host.clone(),
         })
         .await?;
 
-    // Expect ConnectResponse
     let response = transport.read_message().await?;
     let remote_host = match response {
         Message::ConnectResponse {
@@ -920,7 +900,6 @@ async fn tcp_connect(address: &str, state: &Arc<RwLock<ServerState>>) -> Result<
         remote_host
     );
 
-    // Create channel for outgoing messages and register in routes
     let (outgoing_tx, outgoing_rx) = mpsc::channel::<Message>(256);
     {
         let mut state = state.write().await;
@@ -934,7 +913,6 @@ async fn tcp_connect(address: &str, state: &Arc<RwLock<ServerState>>) -> Result<
         {
             log!("server: TCP connection error: {}", e);
         }
-        // Clean up route on disconnect
         let mut state = state.write().await;
         state.routes.remove(&remote_host);
         log!("server: removed route to {}", remote_host);
@@ -955,7 +933,6 @@ async fn tcp_accept(stream: TcpStream, state: Arc<RwLock<ServerState>>) -> Resul
         state.config.host_id.clone()
     };
 
-    // Expect Connect as first message
     let msg = transport.read_message().await?;
     let remote_host = match msg {
         Message::Connect { host_id } => host_id,
@@ -965,7 +942,6 @@ async fn tcp_accept(stream: TcpStream, state: Arc<RwLock<ServerState>>) -> Resul
         }
     };
 
-    // Send success response with our host_id
     transport
         .write_message(&Message::ConnectResponse {
             success: true,
@@ -980,7 +956,6 @@ async fn tcp_accept(stream: TcpStream, state: Arc<RwLock<ServerState>>) -> Resul
         remote_host
     );
 
-    // Create channel for outgoing messages and register in routes
     let (outgoing_tx, outgoing_rx) = mpsc::channel::<Message>(256);
     {
         let mut state = state.write().await;
@@ -989,7 +964,6 @@ async fn tcp_accept(stream: TcpStream, state: Arc<RwLock<ServerState>>) -> Resul
 
     let result = tcp_peer_loop(transport, outgoing_rx, remote_host.clone(), state.clone()).await;
 
-    // Clean up route on disconnect
     {
         let mut state = state.write().await;
         state.routes.remove(&remote_host);

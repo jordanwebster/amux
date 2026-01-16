@@ -38,6 +38,51 @@ One paragraph describing what was done.
 
 ---
 
+## 2025-01-16: Comment Cleanup and Commenting Guidelines
+
+### Summary
+
+Cleaned up comments across the codebase to follow a consistent commenting philosophy: comments should add value, not restate the obvious. Added commenting guidelines to CLAUDE.md to establish standards for future development.
+
+### Changes
+
+**Modified files:**
+- `CLAUDE.md` - Added "Commenting Guidelines" section with good/bad examples
+- `src/config.rs` - Removed redundant field doc comments that just echoed field names
+- `src/transport.rs` - Added module-level doc comment explaining frame format; removed duplicate frame format comments from individual methods; removed obvious inline comments
+- `src/server.rs` - Removed obvious inline comments while keeping important invariants and Task labels
+
+### Commenting Philosophy Established
+
+**Good comments (keep):**
+- `///` doc comments on public APIs explaining behavior, invariants, return values
+- `//!` module-level doc comments explaining purpose and guarantees
+- WHY comments explaining non-obvious decisions or constraints
+- `// Task:` labels on spawned async blocks
+- Important invariants (e.g., "routes table uses single-layer keys only")
+
+**Bad comments (remove):**
+- Comments restating what the next line obviously does
+- Comments echoing the variable/function name
+- Duplicate documentation (e.g., frame format repeated 4 times)
+
+### Files Reviewed But Not Changed
+
+- `src/buffer.rs` and `src/multiplex_log_buffer.rs` - Already excellent documentation with invariants
+- `src/session.rs` - Good Task labels and public API docs
+- `src/client.rs` - Good Task labels, flow comments help navigation
+- `src/hooks.rs` - Good WHY comment explaining enum duplication
+
+### Verification
+
+```
+cargo check && cargo fmt && cargo clippy  # OK
+cargo test                                 # 31 tests pass
+cargo run -p e2e-runner -- run             # 6/6 E2E tests pass
+```
+
+---
+
 ## 2025-01-16: Fix E2E remote_connection Test WebSocket Port Conflict
 
 ### Summary

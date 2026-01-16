@@ -1,3 +1,11 @@
+//! Transport layer for amux protocol.
+//!
+//! Unix and TCP transports use length-prefixed framing:
+//! - 4-byte big-endian length prefix
+//! - Followed by payload bytes
+//!
+//! WebSocket transport uses JSON-encoded messages.
+
 use crate::error::{AmuxError, Result};
 use crate::message::Message;
 use async_trait::async_trait;
@@ -9,7 +17,7 @@ use tokio::net::{TcpStream, UnixStream};
 use tokio_tungstenite::tungstenite::protocol::Message as WsMessage;
 use tokio_tungstenite::WebSocketStream;
 
-/// Maximum frame size (16MB) to prevent DoS via huge length prefix
+/// 16MB limit to prevent DoS via huge length prefix
 const MAX_FRAME_SIZE: usize = 16 * 1024 * 1024;
 
 /// Transport trait for reading and writing messages
@@ -35,30 +43,21 @@ impl UnixTransport {
         Self { reader, writer }
     }
 
-    /// Read a length-prefixed frame (internal implementation detail)
-    ///
-    /// Frame format: 4-byte big-endian length + payload
     async fn read_frame(&mut self) -> Result<Vec<u8>> {
-        // Read length prefix
         let mut len_buf = [0u8; 4];
         self.reader.read_exact(&mut len_buf).await?;
         let len = u32::from_be_bytes(len_buf) as usize;
 
-        // Validate length
         if len > MAX_FRAME_SIZE {
             return Err(AmuxError::InvalidMessage);
         }
 
-        // Read payload
         let mut buf = vec![0u8; len];
         self.reader.read_exact(&mut buf).await?;
 
         Ok(buf)
     }
 
-    /// Write a length-prefixed frame (internal implementation detail)
-    ///
-    /// Frame format: 4-byte big-endian length + payload
     async fn write_frame(&mut self, data: &[u8]) -> Result<()> {
         let len = data.len() as u32;
         self.writer.write_all(&len.to_be_bytes()).await?;
@@ -93,30 +92,21 @@ impl TcpTransport {
         Self { reader, writer }
     }
 
-    /// Read a length-prefixed frame
-    ///
-    /// Frame format: 4-byte big-endian length + payload
     async fn read_frame(&mut self) -> Result<Vec<u8>> {
-        // Read length prefix
         let mut len_buf = [0u8; 4];
         self.reader.read_exact(&mut len_buf).await?;
         let len = u32::from_be_bytes(len_buf) as usize;
 
-        // Validate length
         if len > MAX_FRAME_SIZE {
             return Err(AmuxError::InvalidMessage);
         }
 
-        // Read payload
         let mut buf = vec![0u8; len];
         self.reader.read_exact(&mut buf).await?;
 
         Ok(buf)
     }
 
-    /// Write a length-prefixed frame
-    ///
-    /// Frame format: 4-byte big-endian length + payload
     async fn write_frame(&mut self, data: &[u8]) -> Result<()> {
         let len = data.len() as u32;
         self.writer.write_all(&len.to_be_bytes()).await?;
