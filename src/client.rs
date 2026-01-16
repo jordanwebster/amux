@@ -1,6 +1,6 @@
 use crate::config::Config;
 use crate::error::{AmuxError, Result};
-use crate::message::Message;
+use crate::message::{AgentType, Message};
 use crate::transport::{Transport, UnixTransport};
 use std::io::{self, Read, Write};
 use std::os::unix::io::AsRawFd;
@@ -59,15 +59,15 @@ pub fn get_terminal_size() -> (u16, u16) {
 }
 
 /// Create a new agent and attach to it
-pub async fn new_agent(agent_id: &str, command: &str, config: &Config) -> Result<()> {
+pub async fn new_agent(agent_id: &str, agent_type: AgentType, config: &Config) -> Result<()> {
     let (mut transport, server_host_id) = connect_and_handshake(config).await?;
     let (rows, cols) = get_terminal_size();
     let working_dir = std::env::current_dir()?;
 
     log!(
-        "client: CREATE {} command='{}' dir={:?} ({}x{}) on server {}",
+        "client: CREATE {} type={:?} dir={:?} ({}x{}) on server {}",
         agent_id,
-        command,
+        agent_type,
         working_dir,
         cols,
         rows,
@@ -78,7 +78,7 @@ pub async fn new_agent(agent_id: &str, command: &str, config: &Config) -> Result
     transport
         .write_message(&Message::CreateAgent {
             agent_id: agent_id.to_string(),
-            command: command.to_string(),
+            agent_type,
             working_dir: working_dir.clone(),
             rows,
             cols,

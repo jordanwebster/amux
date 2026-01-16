@@ -207,11 +207,13 @@ mod tests {
 
     #[tokio::test]
     async fn test_message_roundtrip() {
+        use crate::message::AgentType;
+
         let (mut client, mut server) = create_socket_pair().await;
 
         let msg = Message::CreateAgent {
             agent_id: "test".to_string(),
-            command: "claude".to_string(),
+            agent_type: AgentType::Claude,
             working_dir: std::path::PathBuf::from("/tmp"),
             rows: 24,
             cols: 80,
@@ -222,14 +224,14 @@ mod tests {
         let received = server.read_message().await.unwrap();
         if let Message::CreateAgent {
             agent_id,
-            command,
+            agent_type,
             working_dir,
             rows,
             cols,
         } = received
         {
             assert_eq!(agent_id, "test");
-            assert_eq!(command, "claude");
+            assert_eq!(agent_type, AgentType::Claude);
             assert_eq!(working_dir, std::path::PathBuf::from("/tmp"));
             assert_eq!(rows, 24);
             assert_eq!(cols, 80);

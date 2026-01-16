@@ -38,6 +38,7 @@ impl From<ClaudeHook> for message::Hook {
         match hook {
             ClaudeHook::SessionStart(session) => {
                 message::Hook::Claude(message::ClaudeHook::SessionStart {
+                    session_id: session.session_id,
                     transcript_path: session.transcript_path,
                 })
             }

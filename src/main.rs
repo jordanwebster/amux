@@ -41,8 +41,8 @@ enum Commands {
     /// Create a new agent session
     #[command(name = "new-agent")]
     NewAgent {
-        /// Command to run (e.g., claude, codex)
-        command: String,
+        /// Agent type: claude or test-agent (test-agent only in dev builds)
+        agent_type: String,
 
         /// Session name
         #[arg(short = 't', long, default_value = "default")]
@@ -137,9 +137,16 @@ async fn main() {
             ensure_server_running(&config, cli.config.as_deref()).await;
             client::attach(None, &config).await
         }
-        Some(Commands::NewAgent { command, target }) => {
+        Some(Commands::NewAgent { agent_type, target }) => {
+            let agent_type = match parse_agent_type(&agent_type) {
+                Ok(t) => t,
+                Err(e) => {
+                    eprintln!("error: {}", e);
+                    std::process::exit(1);
+                }
+            };
             ensure_server_running(&config, cli.config.as_deref()).await;
-            client::new_agent(&target, &command, &config).await
+            client::new_agent(&target, agent_type, &config).await
         }
         Some(Commands::Attach { target }) => {
             ensure_server_running(&config, cli.config.as_deref()).await;
@@ -208,4 +215,26 @@ async fn ensure_server_running(config: &Config, config_path: Option<&Path>) {
 
     eprintln!("error: Server failed to start");
     std::process::exit(1);
+}
+
+// TODO: Once E2E executor can call amux/test-agent binaries directly (without
+// path substitution), switch to Clap's ValueEnum for proper enum argument parsing.
+fn parse_agent_type(s: &str) -> Result<message::AgentType, String> {
+    match s.to_lowercase().as_str() {
+        "claude" => Ok(message::AgentType::Claude),
+        #[cfg(any(debug_assertions, test))]
+        "test-agent" => Ok(message::AgentType::TestAgent(s.to_string())),
+        #[cfg(any(debug_assertions, test))]
+        _ if s.ends_with("test-agent") => {
+            // Accept full path for E2E tests (e.g., /abs/path/test-agent)
+            Ok(message::AgentType::TestAgent(s.to_string()))
+        }
+        #[cfg(not(any(debug_assertions, test)))]
+        _ => Err(format!("Unknown agent type: '{}'. Valid: claude", s)),
+        #[cfg(any(debug_assertions, test))]
+        _ => Err(format!(
+            "Unknown agent type: '{}'. Valid: claude, test-agent",
+            s
+        )),
+    }
 }

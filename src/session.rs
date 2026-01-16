@@ -1,7 +1,7 @@
 use crate::buffer::{MultiplexBuffer, MultiplexReader};
 use crate::config::Config;
 use crate::error::{AmuxError, Result};
-use crate::message::AgentInfo;
+use crate::message::{AgentInfo, AgentType};
 use crate::multiplex_log_buffer::{MultiplexLogBuffer, MultiplexLogReader};
 use crate::transcript::TranscriptTailer;
 use portable_pty::{native_pty_system, CommandBuilder, MasterPty, PtySize};
@@ -87,16 +87,27 @@ impl LocalAgentSession {
     /// Create a new agent session
     pub fn new(
         id: AgentId,
-        command: &str,
+        agent_type: AgentType,
         working_dir: PathBuf,
         rows: u16,
         cols: u16,
         event_tx: mpsc::Sender<SessionEvent>,
     ) -> Result<Self> {
+        // Build command and args based on agent type
+        let (command, args): (String, Vec<String>) = match agent_type {
+            AgentType::Claude => (
+                "claude".to_string(),
+                vec![format!("--session-id={}", id.agent_id)],
+            ),
+            #[cfg(any(debug_assertions, test))]
+            AgentType::TestAgent(cmd) => (cmd, vec![]),
+        };
+
         log!(
-            "session [{}]: creating with command '{}' in {:?} ({}x{})",
+            "session [{}]: creating with command '{}' args={:?} in {:?} ({}x{})",
             id.agent_id,
             command,
+            args,
             working_dir,
             cols,
             rows
@@ -113,8 +124,11 @@ impl LocalAgentSession {
             })
             .map_err(|e| AmuxError::Pty(e.to_string()))?;
 
-        // Spawn command
-        let mut cmd = CommandBuilder::new(command);
+        // Spawn command with arguments
+        let mut cmd = CommandBuilder::new(&command);
+        for arg in &args {
+            cmd.arg(arg);
+        }
         cmd.cwd(&working_dir);
         let mut child = pair
             .slave

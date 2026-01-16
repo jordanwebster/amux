@@ -1,7 +1,7 @@
 use crate::buffer::MultiplexReader;
 use crate::config::{Config, DEFAULT_TCP_PORT, DEFAULT_WEBSOCKET_PORT};
 use crate::error::{AmuxError, Result};
-use crate::message::{ClaudeHook, Hook, Message};
+use crate::message::{AgentType, ClaudeHook, Hook, Message};
 use crate::session::{AgentId, LocalAgentSession, SessionEvent};
 use crate::transport::{TcpTransport, Transport, UnixTransport, WebSocketTransport};
 use std::collections::HashMap;
@@ -465,7 +465,7 @@ async fn unix_handle_message(
 
         Message::CreateAgent {
             agent_id,
-            command,
+            agent_type,
             working_dir,
             rows,
             cols,
@@ -474,7 +474,7 @@ async fn unix_handle_message(
                 &ctx.state,
                 &ctx.event_tx,
                 &agent_id,
-                &command,
+                agent_type,
                 working_dir,
                 rows,
                 cols,
@@ -690,32 +690,32 @@ async fn unix_handle_message(
             Ok(())
         }
 
-        // Hook event from CLI hook handler - link transcript to most recent session
+        // Hook event from CLI hook handler - link transcript by session_id
         Message::HookEvent { hook } => {
             log!("server: HookEvent from {}: {:?}", ctx.client_host_id, hook);
 
-            // Extract transcript path based on hook type
-            let transcript_path = match &hook {
-                Hook::Claude(ClaudeHook::SessionStart { transcript_path }) => {
-                    Some(transcript_path.clone())
-                }
-            };
-
-            // Find most recently created local session and link transcript
-            let result = {
-                let state = ctx.state.read().await;
-                match transcript_path {
-                    Some(path) => {
-                        // Get the most recently created agent (last in iteration)
-                        if let Some((agent_id, session)) = state.agents.iter().last() {
-                            log!("server: linking transcript to agent {}", agent_id);
-                            session.link_transcript(PathBuf::from(&path)).await;
-                            Ok(())
-                        } else {
-                            Err("No agents running".to_string())
-                        }
+            // Look up agent by session_id and link transcript
+            let result = match &hook {
+                Hook::Claude(ClaudeHook::SessionStart {
+                    session_id,
+                    transcript_path,
+                }) => {
+                    let state = ctx.state.read().await;
+                    // session_id is the agent_id we passed to claude --session-id
+                    if let Some(session) = state.agents.get(session_id) {
+                        log!("server: linking transcript to agent {}", session_id);
+                        session
+                            .link_transcript(PathBuf::from(transcript_path))
+                            .await;
+                        Ok(())
+                    } else {
+                        log!(
+                            "server: no agent with session_id {}, agents: {:?}",
+                            session_id,
+                            state.agents.keys().collect::<Vec<_>>()
+                        );
+                        Err(format!("No agent found with session_id: {}", session_id))
                     }
-                    None => Err("Hook type has no transcript path".to_string()),
                 }
             };
 
@@ -789,7 +789,7 @@ async fn create_agent(
     state: &Arc<RwLock<ServerState>>,
     event_tx: &mpsc::Sender<SessionEvent>,
     agent_id: &str,
-    command: &str,
+    agent_type: AgentType,
     working_dir: PathBuf,
     rows: u16,
     cols: u16,
@@ -805,7 +805,8 @@ async fn create_agent(
     let id = AgentId::local(&state.config, agent_id);
 
     // Create session
-    let session = LocalAgentSession::new(id, command, working_dir, rows, cols, event_tx.clone())?;
+    let session =
+        LocalAgentSession::new(id, agent_type, working_dir, rows, cols, event_tx.clone())?;
 
     state.agents.insert(agent_id.to_string(), Arc::new(session));
 

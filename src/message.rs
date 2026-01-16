@@ -2,6 +2,16 @@ use crate::structured_log::StructuredLog;
 use serde::{Deserialize, Serialize};
 use std::path::PathBuf;
 
+/// Type of agent to spawn
+#[derive(Serialize, Deserialize, Debug, Clone, PartialEq)]
+pub enum AgentType {
+    /// Claude Code agent (passes --session-id to claude command)
+    Claude,
+    /// Test agent for E2E tests (only available in dev/test builds)
+    #[cfg(any(debug_assertions, test))]
+    TestAgent(String),
+}
+
 #[derive(Serialize, Deserialize, Debug, Clone)]
 pub enum Hook {
     Claude(ClaudeHook),
@@ -9,7 +19,10 @@ pub enum Hook {
 
 #[derive(Serialize, Deserialize, Debug, Clone)]
 pub enum ClaudeHook {
-    SessionStart { transcript_path: String },
+    SessionStart {
+        session_id: String,
+        transcript_path: String,
+    },
 }
 
 /// All protocol messages between client and server
@@ -19,10 +32,10 @@ pub enum Message {
     /// List all running agents
     ListAgents,
 
-    /// Create a new agent with the given command
+    /// Create a new agent with the given type
     CreateAgent {
         agent_id: String,
-        command: String,
+        agent_type: AgentType,
         working_dir: PathBuf,
         rows: u16,
         cols: u16,
@@ -161,7 +174,7 @@ mod tests {
     fn test_message_roundtrip_create_agent() {
         let msg = Message::CreateAgent {
             agent_id: "test".to_string(),
-            command: "claude".to_string(),
+            agent_type: AgentType::Claude,
             working_dir: PathBuf::from("/home/user/project"),
             rows: 24,
             cols: 80,
@@ -170,14 +183,14 @@ mod tests {
         let decoded = Message::decode(&encoded).unwrap();
         if let Message::CreateAgent {
             agent_id,
-            command,
+            agent_type,
             working_dir,
             rows,
             cols,
         } = decoded
         {
             assert_eq!(agent_id, "test");
-            assert_eq!(command, "claude");
+            assert_eq!(agent_type, AgentType::Claude);
             assert_eq!(working_dir, PathBuf::from("/home/user/project"));
             assert_eq!(rows, 24);
             assert_eq!(cols, 80);
@@ -222,6 +235,7 @@ mod tests {
     #[test]
     fn test_message_roundtrip_hook_event() {
         let hook = Hook::Claude(ClaudeHook::SessionStart {
+            session_id: "my-session".to_string(),
             transcript_path: "/tmp/transcript.jsonl".to_string(),
         });
         let msg = Message::HookEvent { hook };
@@ -230,7 +244,11 @@ mod tests {
         let Message::HookEvent { hook: decoded_hook } = decoded else {
             panic!("Expected HookEvent");
         };
-        let Hook::Claude(ClaudeHook::SessionStart { transcript_path }) = decoded_hook;
+        let Hook::Claude(ClaudeHook::SessionStart {
+            session_id,
+            transcript_path,
+        }) = decoded_hook;
+        assert_eq!(session_id, "my-session");
         assert_eq!(transcript_path, "/tmp/transcript.jsonl");
     }
 }

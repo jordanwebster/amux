@@ -38,6 +38,44 @@ One paragraph describing what was done.
 
 ---
 
+## 2025-01-16: Robust Agent Session ID Linking
+
+### Summary
+
+Made agent creation robust by passing `--session-id=<agent_id>` to Claude when spawning, then using that session_id to look up the correct agent when the SessionStart hook arrives. This replaces the fragile `agents.iter().last()` hack with proper session-based lookup.
+
+### Changes
+
+**Modified files:**
+- `src/message.rs` - Added `AgentType` enum (`Claude`, `TestAgent(String)`), updated `CreateAgent` message to use `agent_type` instead of `command`, added `session_id` field to `ClaudeHook::SessionStart`
+- `src/hooks.rs` - Updated `From<ClaudeHook>` conversion to preserve `session_id` in the wire protocol
+- `src/session.rs` - Updated `LocalAgentSession::new` to accept `AgentType`, builds command/args based on type (Claude gets `--session-id=<agent_id>`)
+- `src/server.rs` - Updated `create_agent` to accept `AgentType`, changed HookEvent handler to look up agents by `session_id` instead of `agents.iter().last()`
+- `src/client.rs` - Updated `new_agent` to accept `AgentType`
+- `src/main.rs` - Added `parse_agent_type` function with TODO for future ValueEnum migration
+- `src/transport.rs` - Updated test to use `AgentType`
+
+### Decisions Made
+
+- **AgentType enum over command string**: Type safety ensures only known agent types can be created. `TestAgent(String)` variant holds the command/path for E2E test flexibility.
+- **TestAgent only in debug builds**: Uses `#[cfg(any(debug_assertions, test))]` to exclude test-agent from release builds.
+- **Flexible parse_agent_type**: Accepts both "test-agent" and full paths ending in "test-agent" to support E2E executor's path substitution. Added TODO to switch to Clap's ValueEnum once E2E executor can call binaries directly.
+- **session_id = agent_id**: We pass the amux agent target name (e.g., "myagent") as Claude's `--session-id`, so when the hook arrives we can directly look up `agents.get(session_id)`.
+
+### Verification
+
+```
+cargo check && cargo fmt && cargo clippy  # OK
+cargo test                                 # 31 tests pass
+cargo run -p e2e-runner -- run            # 6 E2E tests pass
+```
+
+### Next Steps
+
+- Once E2E executor can call binaries directly, switch to Clap's ValueEnum for cleaner CLI parsing
+
+---
+
 ## 2025-01-16: Comment Cleanup and Commenting Guidelines
 
 ### Summary
