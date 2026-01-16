@@ -19,6 +19,8 @@ pub struct TestConfig {
     pub socket_path: Option<String>,
     #[serde(default)]
     pub tcp_port: Option<u16>,
+    #[serde(default)]
+    pub websocket_port: Option<u16>,
 }
 
 /// Terminal definition in test environment

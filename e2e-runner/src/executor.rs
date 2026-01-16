@@ -181,6 +181,20 @@ impl Executor {
                 }
             };
 
+            // Determine WebSocket port (auto-assign if not specified)
+            let ws_port = match cfg.websocket_port {
+                Some(p) => p,
+                None => {
+                    // Bind to port 0 to get an available port from the OS
+                    let listener = std::net::TcpListener::bind("127.0.0.1:0")
+                        .map_err(|e| format!("Failed to find free WebSocket port: {}", e))?;
+                    listener
+                        .local_addr()
+                        .map_err(|e| format!("Failed to get assigned WebSocket port: {}", e))?
+                        .port()
+                }
+            };
+
             // Generate YAML config file
             let host_id = cfg
                 .host_id
@@ -192,10 +206,12 @@ user_id: "test"
 socket_path: "{}"
 max_replay_buffer: 10485760
 tcp_port: {}
+websocket_port: {}
 "#,
                 host_id,
                 socket_path.display(),
-                tcp_port
+                tcp_port,
+                ws_port
             );
 
             let config_file_path = temp_dir.path().join(format!("{}.yaml", cfg.name));
@@ -381,6 +397,7 @@ tcp_port: {}
                 host_id: None,
                 socket_path: None,
                 tcp_port: None,
+                websocket_port: None,
             });
         }
 

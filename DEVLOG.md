@@ -38,6 +38,61 @@ One paragraph describing what was done.
 
 ---
 
+## 2025-01-16: Fix E2E remote_connection Test WebSocket Port Conflict
+
+### Summary
+
+Fixed a CI failure in the `remote_connection` E2E test. When running tests with multiple server configs, each server was getting a unique TCP port but defaulting to the same WebSocket port (9002). This caused the second server to fail to start with "Server failed to start" because port 9002 was already bound by the first server.
+
+### Changes
+
+**Modified files:**
+- `e2e-runner/src/parser.rs` - Added `websocket_port: Option<u16>` field to `TestConfig`
+- `e2e-runner/src/executor.rs` - Added auto-assignment of unique WebSocket port for each config (matching tcp_port pattern), added `websocket_port` to generated YAML config
+
+### Root Cause
+
+The executor was generating YAML configs with only `tcp_port` specified:
+```yaml
+host_id: "host-b"
+user_id: "test"
+socket_path: "/tmp/amux-test-remote_connection-server_b.sock"
+tcp_port: 49188
+```
+
+Without `websocket_port`, the server used the default (9002). When two servers started, both tried to bind port 9002, causing the second to fail.
+
+### Fix
+
+Added `websocket_port` to `TestConfig` (matching how `tcp_port` is handled):
+```rust
+pub struct TestConfig {
+    // ...
+    pub websocket_port: Option<u16>,
+}
+```
+
+And auto-assignment in the environment setup (matching tcp_port pattern):
+```rust
+let ws_port = match cfg.websocket_port {
+    Some(p) => p,
+    None => {
+        let listener = std::net::TcpListener::bind("127.0.0.1:0")?;
+        listener.local_addr()?.port()
+    }
+};
+```
+
+### Verification
+
+```
+cargo check && cargo fmt && cargo clippy  # OK
+cargo test                                 # 31 tests pass
+cargo run -p e2e-runner -- run             # 6/6 E2E tests pass (including remote_connection)
+```
+
+---
+
 ## 2025-01-15: WebSocket Subscription to Structured Logs
 
 ### Summary
