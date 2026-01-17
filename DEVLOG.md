@@ -38,6 +38,35 @@ One paragraph describing what was done.
 
 ---
 
+## 2025-01-17: Fix subscriber leak in MultiplexBuffer and MultiplexLogBuffer
+
+### Summary
+
+Fixed a resource leak where dead subscribers (disconnected clients) accumulated in the `subscribers` list of `MultiplexBuffer` and `MultiplexLogBuffer`. When a `MultiplexReader` was dropped, the corresponding `mpsc::UnboundedSender` remained in the list indefinitely, causing unbounded growth for long-running agents with many attach/detach cycles.
+
+### Changes
+
+**Modified files:**
+- `src/buffer.rs` - Changed `write()` to use `subs.retain(|tx| tx.send(...).is_ok())`
+- `src/multiplex_log_buffer.rs` - Same pattern applied to `write()`
+
+### Decisions Made
+
+1. **Use send error instead of `is_closed()`**: `UnboundedSender::send()` returns `SendError` only when the receiver has dropped. Using `retain(|tx| tx.send(...).is_ok())` combines broadcast and cleanup in a single pass, and respects the error rather than discarding it with `let _ = ...`.
+
+2. **Write lock instead of read lock**: Changed `subscribers.read()` to `subscribers.write()` to enable `retain()`. Lock ordering analysis confirmed no deadlock risk - both `write()` and `subscribe()` acquire locks in the same order (buffer → subscribers).
+
+### Verification
+
+- `cargo check && cargo fmt && cargo clippy && cargo test` - all 31 tests pass
+- `cargo run -p e2e-runner -- run` - all 6 E2E tests pass
+
+### Next Steps
+
+- None - fix is complete
+
+---
+
 ## 2025-01-17: Enable dashboard input with SubmitInput message
 
 ### Summary

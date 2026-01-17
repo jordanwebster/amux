@@ -50,6 +50,8 @@ impl MultiplexBuffer {
     ///
     /// This method holds the buffer write lock during both the append and
     /// broadcast operations, ensuring atomicity with `subscribe()`.
+    /// Dead subscribers (where the receiver has been dropped) are automatically
+    /// cleaned up during each write.
     pub async fn write(&self, bytes: &[u8]) {
         if bytes.is_empty() {
             return;
@@ -65,12 +67,9 @@ impl MultiplexBuffer {
             buf.drain(..excess);
         }
 
-        // Broadcast to all subscribers (while still holding buffer lock)
-        let subs = self.inner.subscribers.read().await;
-        for tx in subs.iter() {
-            // Ignore send errors - subscriber may have dropped
-            let _ = tx.send(bytes.to_vec());
-        }
+        // Broadcast to subscribers, removing any whose receivers have dropped
+        let mut subs = self.inner.subscribers.write().await;
+        subs.retain(|tx| tx.send(bytes.to_vec()).is_ok());
     }
 
     /// Subscribe to the buffer, receiving all existing bytes and future writes.

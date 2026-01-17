@@ -51,6 +51,8 @@ impl MultiplexLogBuffer {
     ///
     /// This method holds the buffer write lock during both the append and
     /// broadcast operations, ensuring atomicity with `subscribe()`.
+    /// Dead subscribers (where the receiver has been dropped) are automatically
+    /// cleaned up during each write.
     pub async fn write(&self, entry: StructuredLog) {
         // Hold buffer write lock during append AND broadcast
         let mut entries = self.inner.entries.write().await;
@@ -62,12 +64,9 @@ impl MultiplexLogBuffer {
             entries.drain(..excess);
         }
 
-        // Broadcast to all subscribers (while still holding buffer lock)
-        let subs = self.inner.subscribers.read().await;
-        for tx in subs.iter() {
-            // Ignore send errors - subscriber may have dropped
-            let _ = tx.send(entry.clone());
-        }
+        // Broadcast to subscribers, removing any whose receivers have dropped
+        let mut subs = self.inner.subscribers.write().await;
+        subs.retain(|tx| tx.send(entry.clone()).is_ok());
     }
 
     /// Subscribe to the buffer, receiving all existing entries and future writes.
