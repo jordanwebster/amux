@@ -1,12 +1,12 @@
 import { RefreshCw, Circle } from "lucide-react"
 import { useAppStore } from "../store/appStore"
-import { useWebSocket } from "../hooks/useWebSocket"
+import { useWebSocketContext } from "../contexts/WebSocketContext"
 import { cn } from "@/lib/utils"
 
 export function AgentSidebar() {
   const { agents, selectedAgentId, connectionStatus, selectAgent, clearMessages } =
     useAppStore()
-  const { subscribeToAgent, refreshAgents } = useWebSocket()
+  const { subscribeToAgent, refreshAgents } = useWebSocketContext()
 
   const handleSelectAgent = (agentId: string) => {
     if (agentId !== selectedAgentId) {

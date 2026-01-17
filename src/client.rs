@@ -393,7 +393,7 @@ async fn run_attached(mut transport: UnixTransport, dst_host: &str, agent_id: &s
             // Input from stdin ready to send
             // Note: src_host is set by server, we send empty and server rewrites
             Some(data) = input_rx.recv() => {
-                if transport.write_message(&Message::Input {
+                if transport.write_message(&Message::InputBytes {
                     src_host: String::new(),
                     dst_host: dst_host.clone(),
                     agent_id: agent_id.clone(),

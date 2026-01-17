@@ -226,13 +226,26 @@ async fn websocket_accept(stream: TcpStream, state: Arc<RwLock<ServerState>>) ->
 
     log!("server: websocket client {} connected", client_host_id);
 
+    let (outgoing_tx, outgoing_rx) = mpsc::channel::<Message>(256);
+    {
+        let mut state = state.write().await;
+        state.routes.insert(local_client_id.clone(), outgoing_tx);
+    }
+
     let ctx = WebSocketClientContext {
         state: state.clone(),
         client_host_id: client_host_id.clone(),
         our_host,
     };
 
-    let result = websocket_client_loop(transport, ctx).await;
+    let result = websocket_client_loop(transport, outgoing_rx, ctx).await;
+
+    // Clean up route on disconnect
+    {
+        let mut state = state.write().await;
+        state.routes.remove(&local_client_id);
+        log!("server: removed route to {}", local_client_id);
+    }
 
     log!("server: websocket client {} disconnected", client_host_id);
     result
@@ -248,24 +261,42 @@ struct WebSocketClientContext {
 /// WebSocket client message loop
 async fn websocket_client_loop(
     mut transport: WebSocketTransport,
+    mut outgoing_rx: mpsc::Receiver<Message>,
     ctx: WebSocketClientContext,
 ) -> Result<()> {
     loop {
-        let msg = match transport.read_message().await {
-            Ok(msg) => msg,
-            Err(AmuxError::Io(e)) if e.kind() == std::io::ErrorKind::UnexpectedEof => {
-                return Ok(());
-            }
-            Err(e) => {
-                log!("server: websocket read error: {}", e);
-                return Err(e);
-            }
-        };
+        tokio::select! {
+            // Incoming message from WebSocket client
+            msg = transport.read_message() => {
+                let msg = match msg {
+                    Ok(msg) => msg,
+                    Err(AmuxError::Io(e)) if e.kind() == std::io::ErrorKind::UnexpectedEof => {
+                        log!("server: websocket client {} disconnected", ctx.client_host_id);
+                        return Ok(());
+                    }
+                    Err(e) => {
+                        log!("server: websocket {} read error: {}", ctx.client_host_id, e);
+                        return Err(e);
+                    }
+                };
 
-        if let Err(e) = websocket_handle_message(&mut transport, msg, &ctx).await {
-            log!("server: websocket message error: {}", e);
+                if let Err(e) = websocket_handle_message(&mut transport, msg, &ctx).await {
+                    log!("server: websocket message error: {}", e);
+                }
+            }
+
+            // Outgoing message from routing (StructuredOutput, AgentEnded, etc.)
+            Some(msg) = outgoing_rx.recv() => {
+                log!("server: routing message to websocket {}: {:?}", ctx.client_host_id, msg);
+                if transport.write_message(&msg).await.is_err() {
+                    log!("server: failed to send routed message to websocket {}", ctx.client_host_id);
+                    break;
+                }
+            }
         }
     }
+
+    Ok(())
 }
 
 /// Handle a message from a WebSocket client
@@ -296,16 +327,18 @@ async fn websocket_handle_message(
             Ok(())
         }
 
-        // Subscribe for WebSocket clients uses structured logs
+        // Subscribe for WebSocket clients uses structured logs (mirrors unix_handle_message pattern)
         Message::Subscribe {
             dst_host, agent_id, ..
         } => {
-            // Only support local agents for now
+            // Rewrite src_host to client's full hierarchical ID
+            let src_host = ctx.client_host_id.clone();
+
             if dst_host != ctx.our_host {
                 transport
                     .write_message(&Message::SubscribeResult {
                         src_host: dst_host.clone(),
-                        dst_host: ctx.client_host_id.clone(),
+                        dst_host: src_host,
                         agent_id,
                         success: false,
                         error: Some("Remote agents not supported via WebSocket".to_string()),
@@ -330,34 +363,60 @@ async fn websocket_handle_message(
                     transport
                         .write_message(&Message::SubscribeResult {
                             src_host: ctx.our_host.clone(),
-                            dst_host: ctx.client_host_id.clone(),
+                            dst_host: src_host.clone(),
                             agent_id: agent_id.clone(),
                             success: true,
                             error: None,
                         })
                         .await?;
 
-                    // Stream structured log entries
-                    while let Some(entry) = reader.read().await {
-                        transport
-                            .write_message(&Message::StructuredOutput {
-                                src_host: ctx.our_host.clone(),
-                                dst_host: ctx.client_host_id.clone(),
-                                agent_id: agent_id.clone(),
-                                entry,
-                            })
-                            .await?;
+                    log!(
+                        "server: websocket client {} subscribed to agent {}",
+                        ctx.client_host_id,
+                        agent_id
+                    );
+
+                    // Get outgoing_tx for this client (stored in routes as local_client_id)
+                    let outgoing_tx = {
+                        let state = ctx.state.read().await;
+                        // local_client_id = last segment of client_host_id
+                        let local_id = ctx.client_host_id.rsplit('/').next().unwrap();
+                        state.routes.get(local_id).cloned()
+                    };
+
+                    // Spawn structured log streaming task (non-blocking, like unix_handle_message)
+                    if let Some(tx) = outgoing_tx {
+                        let our_host = ctx.our_host.clone();
+                        let client_host = ctx.client_host_id.clone();
+                        let agent_id_clone = agent_id.clone();
+                        tokio::spawn(async move {
+                            while let Some(entry) = reader.read().await {
+                                if tx
+                                    .send(Message::StructuredOutput {
+                                        src_host: our_host.clone(),
+                                        dst_host: client_host.clone(),
+                                        agent_id: agent_id_clone.clone(),
+                                        entry,
+                                    })
+                                    .await
+                                    .is_err()
+                                {
+                                    break;
+                                }
+                            }
+                            // Agent ended - send via same channel
+                            let _ = tx.send(Message::AgentEnded).await;
+                            log!("server: structured log stream to {} ended", client_host);
+                        });
                     }
 
-                    // Session ended
-                    transport.write_message(&Message::AgentEnded).await?;
                     Ok(())
                 }
                 None => {
                     transport
                         .write_message(&Message::SubscribeResult {
                             src_host: ctx.our_host.clone(),
-                            dst_host: ctx.client_host_id.clone(),
+                            dst_host: src_host,
                             agent_id,
                             success: false,
                             error: Some("Agent not found or ended".to_string()),
@@ -366,6 +425,42 @@ async fn websocket_handle_message(
                     Ok(())
                 }
             }
+        }
+
+        // Submit input from WebSocket client - write data then Enter with delay
+        Message::SubmitInput {
+            dst_host,
+            agent_id,
+            data,
+            ..
+        } => {
+            if dst_host == ctx.our_host {
+                // Local agent - send data, wait, then send Enter
+                // The delay ensures Claude Code interprets Enter as "submit" not "newline"
+                let state = ctx.state.read().await;
+                if let Some(session) = resolve_agent(&state.agents, &agent_id) {
+                    let _ = session.send_input(data).await;
+                    tokio::time::sleep(std::time::Duration::from_millis(20)).await;
+                    let _ = session.send_input(vec![b'\r']).await;
+                }
+            } else {
+                // Remote agent - forward via route (remote server will handle the delay)
+                let route = {
+                    let state = ctx.state.read().await;
+                    state.routes.get(&dst_host).cloned()
+                };
+                if let Some(route) = route {
+                    let _ = route
+                        .send(Message::SubmitInput {
+                            src_host: ctx.client_host_id.clone(),
+                            dst_host,
+                            agent_id,
+                            data,
+                        })
+                        .await;
+                }
+            }
+            Ok(())
         }
 
         _ => {
@@ -646,8 +741,8 @@ async fn unix_handle_message(
             Ok(())
         }
 
-        // Input from client - forward to local agent or remote host
-        Message::Input {
+        // Raw input bytes from client - forward to local agent or remote host
+        Message::InputBytes {
             dst_host,
             agent_id,
             data,
@@ -668,7 +763,7 @@ async fn unix_handle_message(
                 };
                 if let Some(route) = route {
                     let _ = route
-                        .send(Message::Input {
+                        .send(Message::InputBytes {
                             src_host: ctx.client_host_id.clone(),
                             dst_host,
                             agent_id,
@@ -1181,7 +1276,7 @@ async fn tcp_handle_message(msg: Message, state: &Arc<RwLock<ServerState>>) -> R
             }
         }
 
-        Message::Input {
+        Message::InputBytes {
             src_host,
             dst_host,
             agent_id,
@@ -1208,7 +1303,47 @@ async fn tcp_handle_message(msg: Message, state: &Arc<RwLock<ServerState>>) -> R
                 };
                 if let Some(route) = route {
                     let _ = route
-                        .send(Message::Input {
+                        .send(Message::InputBytes {
+                            src_host: prefixed_src,
+                            dst_host,
+                            agent_id,
+                            data,
+                        })
+                        .await;
+                }
+            }
+        }
+
+        Message::SubmitInput {
+            src_host,
+            dst_host,
+            agent_id,
+            data,
+        } => {
+            let our_host = {
+                let state = state.read().await;
+                state.config.host_id.clone()
+            };
+
+            if dst_host == our_host {
+                // Send input to local agent with delay then Enter
+                let state = state.read().await;
+                let agent_id_str = agent_id.to_string();
+                if let Some(session) = resolve_agent(&state.agents, &agent_id_str) {
+                    let _ = session.send_input(data).await;
+                    tokio::time::sleep(std::time::Duration::from_millis(20)).await;
+                    let _ = session.send_input(vec![b'\r']).await;
+                }
+            } else {
+                // Forward to destination, prefixing src_host with our host_id
+                let prefixed_src = format!("{}/{}", our_host, src_host);
+                let route = {
+                    let state = state.read().await;
+                    state.routes.get(&dst_host).cloned()
+                };
+                if let Some(route) = route {
+                    let _ = route
+                        .send(Message::SubmitInput {
                             src_host: prefixed_src,
                             dst_host,
                             agent_id,

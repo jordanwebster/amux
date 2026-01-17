@@ -266,7 +266,7 @@ mod tests {
 
         let (mut client, mut server) = create_socket_pair().await;
 
-        let msg = Message::Input {
+        let msg = Message::InputBytes {
             src_host: "host-a".to_string(),
             dst_host: "host-b".to_string(),
             agent_id: Uuid::new_v4().to_string(),
@@ -276,10 +276,10 @@ mod tests {
         client.write_message(&msg).await.unwrap();
 
         let received = server.read_message().await.unwrap();
-        if let Message::Input { data, .. } = received {
+        if let Message::InputBytes { data, .. } = received {
             assert_eq!(data, b"user input");
         } else {
-            panic!("Expected Input");
+            panic!("Expected InputBytes");
         }
     }
 }

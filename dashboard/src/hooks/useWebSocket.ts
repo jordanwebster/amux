@@ -98,5 +98,26 @@ export function useWebSocket() {
     send("ListAgents")
   }, [send])
 
-  return { subscribeToAgent, refreshAgents }
+  // Send input to agent
+  const sendInput = useCallback(
+    (agentId: string, text: string) => {
+      if (!serverHostId) return
+
+      // Convert text to bytes (UTF-8 encoded as number array)
+      // Don't append newline - server will send Enter separately after the input
+      const data = Array.from(new TextEncoder().encode(text))
+
+      send({
+        SubmitInput: {
+          src_host: clientHostId,
+          dst_host: serverHostId,
+          agent_id: agentId,
+          data,
+        },
+      })
+    },
+    [send, clientHostId, serverHostId]
+  )
+
+  return { subscribeToAgent, refreshAgents, sendInput }
 }

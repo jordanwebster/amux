@@ -60,9 +60,20 @@ pub enum Message {
     /// Unsubscribe from the current agent
     Unsubscribe,
 
-    /// Send input bytes to the subscribed agent (routable)
+    /// Send raw input bytes to the subscribed agent (routable)
     /// agent_id can be a UUID string or an alias
-    Input {
+    /// No automatic Enter - bytes are written directly to PTY
+    InputBytes {
+        src_host: String,
+        dst_host: String,
+        agent_id: String,
+        data: Vec<u8>,
+    },
+
+    /// Send input text and submit (WebSocket only)
+    /// Writes data bytes, waits briefly, then sends Enter
+    /// This ensures Claude Code interprets Enter as "submit" not "newline"
+    SubmitInput {
         src_host: String,
         dst_host: String,
         agent_id: String,

@@ -40,6 +40,7 @@ export type ClientMessage =
   | "ListAgents"
   | { Connect: { host_id: string } }
   | { Subscribe: { src_host: string; dst_host: string; agent_id: string; rows: number; cols: number } }
+  | { SubmitInput: { src_host: string; dst_host: string; agent_id: string; data: number[] } }
 
 // Server -> Client messages
 export type ServerMessage =

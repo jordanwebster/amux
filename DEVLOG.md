@@ -38,6 +38,49 @@ One paragraph describing what was done.
 
 ---
 
+## 2025-01-17: Enable dashboard input with SubmitInput message
+
+### Summary
+
+Added the ability to send input from the React dashboard to Claude agents. This required refactoring WebSocket handling to match the Unix/TCP patterns (using `tokio::select!` with outgoing channels) and creating a new `SubmitInput` message type that handles the timing requirements for Claude Code to interpret Enter as "submit" rather than "newline".
+
+### Changes
+
+**Backend (src/):**
+- `message.rs` - Renamed `Input` to `InputBytes` (raw bytes, no auto-enter) and added `SubmitInput` (writes data, waits 20ms, sends `\r`)
+- `server.rs` - Refactored `websocket_accept` and `websocket_client_loop` to use outgoing channels and `tokio::select!` (matching Unix/TCP pattern); Subscribe handler now spawns streaming task instead of blocking; Added `SubmitInput` handling for WebSocket/TCP
+- `client.rs` - Updated to use `InputBytes`
+- `transport.rs` - Updated tests to use `InputBytes`
+
+**Frontend (dashboard/src/):**
+- `types/protocol.ts` - Added `SubmitInput` message type
+- `contexts/WebSocketContext.tsx` - New file: context provider for sharing WebSocket connection
+- `hooks/useWebSocket.ts` - Added `sendInput` callback using `SubmitInput`
+- `components/InputArea.tsx` - Enabled input with state management and submit handlers
+- `components/AgentSidebar.tsx` - Updated to use context
+- `App.tsx` - Wrapped with `WebSocketProvider`
+
+### Decisions Made
+
+1. **Two message types (InputBytes vs SubmitInput)**: Raw terminal clients use `InputBytes` for direct byte passthrough. The dashboard uses `SubmitInput` which adds a 20ms delay between text and Enter to ensure Claude Code interprets them as separate events.
+
+2. **20ms delay with `\r`**: Claude Code distinguishes submit vs newline based on PTY read boundaries. The delay ensures text and Enter arrive as separate reads. Started with 100ms, reduced to 20ms after testing.
+
+3. **WebSocket only supports SubmitInput**: Removed `InputBytes` from WebSocket handler since rich clients should use the higher-level submit semantics.
+
+### Verification
+
+- Backend: `cargo check && cargo fmt && cargo clippy && cargo test` - all pass
+- Frontend: `npm run build` - builds successfully
+- Manual test with Playwright: sent message from dashboard, Claude responded correctly
+
+### Next Steps
+
+- Consider if 20ms delay is optimal or if there's a better approach
+- Add reconnection logic to dashboard WebSocket
+
+---
+
 ## 2025-01-17: Use Uuid type for agent identifiers
 
 ### Summary
