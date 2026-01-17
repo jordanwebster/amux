@@ -25,6 +25,17 @@ pub enum ClaudeHook {
     },
 }
 
+/// Request to create a new agent
+#[derive(Serialize, Deserialize, Debug, Clone)]
+pub struct CreateAgentRequest {
+    pub agent_id: String,
+    pub alias: Option<String>,
+    pub agent_type: AgentType,
+    pub working_dir: PathBuf,
+    pub rows: u16,
+    pub cols: u16,
+}
+
 /// All protocol messages between client and server
 #[derive(Serialize, Deserialize, Debug, Clone)]
 pub enum Message {
@@ -33,13 +44,7 @@ pub enum Message {
     ListAgents,
 
     /// Create a new agent with the given type
-    CreateAgent {
-        agent_id: String,
-        agent_type: AgentType,
-        working_dir: PathBuf,
-        rows: u16,
-        cols: u16,
-    },
+    CreateAgent(CreateAgentRequest),
 
     /// Subscribe to an agent's output stream (routable)
     Subscribe {
@@ -142,6 +147,7 @@ pub enum Message {
 #[derive(Serialize, Deserialize, Debug, Clone)]
 pub struct AgentInfo {
     pub agent_id: String,
+    pub alias: Option<String>,
     pub command: String,
     pub working_dir: PathBuf,
 }
@@ -172,28 +178,23 @@ mod tests {
 
     #[test]
     fn test_message_roundtrip_create_agent() {
-        let msg = Message::CreateAgent {
-            agent_id: "test".to_string(),
+        let msg = Message::CreateAgent(CreateAgentRequest {
+            agent_id: "test-uuid".to_string(),
+            alias: Some("test".to_string()),
             agent_type: AgentType::Claude,
             working_dir: PathBuf::from("/home/user/project"),
             rows: 24,
             cols: 80,
-        };
+        });
         let encoded = msg.encode().unwrap();
         let decoded = Message::decode(&encoded).unwrap();
-        if let Message::CreateAgent {
-            agent_id,
-            agent_type,
-            working_dir,
-            rows,
-            cols,
-        } = decoded
-        {
-            assert_eq!(agent_id, "test");
-            assert_eq!(agent_type, AgentType::Claude);
-            assert_eq!(working_dir, PathBuf::from("/home/user/project"));
-            assert_eq!(rows, 24);
-            assert_eq!(cols, 80);
+        if let Message::CreateAgent(req) = decoded {
+            assert_eq!(req.agent_id, "test-uuid");
+            assert_eq!(req.alias, Some("test".to_string()));
+            assert_eq!(req.agent_type, AgentType::Claude);
+            assert_eq!(req.working_dir, PathBuf::from("/home/user/project"));
+            assert_eq!(req.rows, 24);
+            assert_eq!(req.cols, 80);
         } else {
             panic!("Expected CreateAgent");
         }
@@ -221,13 +222,15 @@ mod tests {
     #[test]
     fn test_agent_info_roundtrip() {
         let info = AgentInfo {
-            agent_id: "claude-1".to_string(),
+            agent_id: "uuid-123".to_string(),
+            alias: Some("claude-1".to_string()),
             command: "claude".to_string(),
             working_dir: PathBuf::from("/tmp"),
         };
         let encoded = bincode::serialize(&info).unwrap();
         let decoded: AgentInfo = bincode::deserialize(&encoded).unwrap();
-        assert_eq!(decoded.agent_id, "claude-1");
+        assert_eq!(decoded.agent_id, "uuid-123");
+        assert_eq!(decoded.alias, Some("claude-1".to_string()));
         assert_eq!(decoded.command, "claude");
         assert_eq!(decoded.working_dir, PathBuf::from("/tmp"));
     }

@@ -207,34 +207,29 @@ mod tests {
 
     #[tokio::test]
     async fn test_message_roundtrip() {
-        use crate::message::AgentType;
+        use crate::message::{AgentType, CreateAgentRequest};
 
         let (mut client, mut server) = create_socket_pair().await;
 
-        let msg = Message::CreateAgent {
-            agent_id: "test".to_string(),
+        let msg = Message::CreateAgent(CreateAgentRequest {
+            agent_id: "test-uuid".to_string(),
+            alias: Some("test".to_string()),
             agent_type: AgentType::Claude,
             working_dir: std::path::PathBuf::from("/tmp"),
             rows: 24,
             cols: 80,
-        };
+        });
 
         client.write_message(&msg).await.unwrap();
 
         let received = server.read_message().await.unwrap();
-        if let Message::CreateAgent {
-            agent_id,
-            agent_type,
-            working_dir,
-            rows,
-            cols,
-        } = received
-        {
-            assert_eq!(agent_id, "test");
-            assert_eq!(agent_type, AgentType::Claude);
-            assert_eq!(working_dir, std::path::PathBuf::from("/tmp"));
-            assert_eq!(rows, 24);
-            assert_eq!(cols, 80);
+        if let Message::CreateAgent(req) = received {
+            assert_eq!(req.agent_id, "test-uuid");
+            assert_eq!(req.alias, Some("test".to_string()));
+            assert_eq!(req.agent_type, AgentType::Claude);
+            assert_eq!(req.working_dir, std::path::PathBuf::from("/tmp"));
+            assert_eq!(req.rows, 24);
+            assert_eq!(req.cols, 80);
         } else {
             panic!("Expected CreateAgent");
         }

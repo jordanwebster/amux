@@ -55,8 +55,11 @@ pub enum SessionEvent {
 
 /// A local agent session with PTY
 pub struct LocalAgentSession {
-    /// Unique identifier
+    /// Unique identifier (agent_id is a UUID)
     pub id: AgentId,
+
+    /// Human-readable alias (from -t flag)
+    pub alias: Option<String>,
 
     /// Command used to spawn this agent
     pub command: String,
@@ -87,6 +90,7 @@ impl LocalAgentSession {
     /// Create a new agent session
     pub fn new(
         id: AgentId,
+        alias: Option<String>,
         agent_type: AgentType,
         working_dir: PathBuf,
         rows: u16,
@@ -212,6 +216,7 @@ impl LocalAgentSession {
 
         Ok(Self {
             id,
+            alias,
             command: command.to_string(),
             working_dir,
             pty_master: master,
@@ -317,6 +322,7 @@ impl LocalAgentSession {
     pub fn to_agent_info(&self) -> AgentInfo {
         AgentInfo {
             agent_id: self.id.agent_id.clone(),
+            alias: self.alias.clone(),
             command: self.command.clone(),
             working_dir: self.working_dir.clone(),
         }

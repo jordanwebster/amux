@@ -44,9 +44,9 @@ enum Commands {
         /// Agent type: claude or test-agent (test-agent only in dev builds)
         agent_type: String,
 
-        /// Session name
-        #[arg(short = 't', long, default_value = "default")]
-        target: String,
+        /// Session alias (optional human-readable name)
+        #[arg(short = 't', long)]
+        target: Option<String>,
     },
 
     /// Attach to an existing agent session
@@ -146,7 +146,7 @@ async fn main() {
                 }
             };
             ensure_server_running(&config, cli.config.as_deref()).await;
-            client::new_agent(&target, agent_type, &config).await
+            client::new_agent(target.as_deref(), agent_type, &config).await
         }
         Some(Commands::Attach { target }) => {
             ensure_server_running(&config, cli.config.as_deref()).await;

@@ -1,7 +1,7 @@
 use crate::buffer::MultiplexReader;
 use crate::config::{Config, DEFAULT_TCP_PORT, DEFAULT_WEBSOCKET_PORT};
 use crate::error::{AmuxError, Result};
-use crate::message::{AgentType, ClaudeHook, Hook, Message};
+use crate::message::{ClaudeHook, CreateAgentRequest, Hook, Message};
 use crate::session::{AgentId, LocalAgentSession, SessionEvent};
 use crate::transport::{TcpTransport, Transport, UnixTransport, WebSocketTransport};
 use std::collections::HashMap;
@@ -463,23 +463,8 @@ async fn unix_handle_message(
             Ok(())
         }
 
-        Message::CreateAgent {
-            agent_id,
-            agent_type,
-            working_dir,
-            rows,
-            cols,
-        } => {
-            let result = create_agent(
-                &ctx.state,
-                &ctx.event_tx,
-                &agent_id,
-                agent_type,
-                working_dir,
-                rows,
-                cols,
-            )
-            .await;
+        Message::CreateAgent(req) => {
+            let result = create_agent(&ctx.state, &ctx.event_tx, req).await;
 
             let response = match result {
                 Ok(()) => Message::CreateAgentResult {
@@ -665,9 +650,9 @@ async fn unix_handle_message(
             ..
         } => {
             if dst_host == ctx.our_host {
-                // Local agent - send directly
+                // Local agent - send directly (agent_id can be UUID or alias)
                 let state = ctx.state.read().await;
-                if let Some(session) = state.agents.get(&agent_id) {
+                if let Some(session) = resolve_agent(&state.agents, &agent_id) {
                     let _ = session.send_input(data).await;
                 }
             } else {
@@ -784,49 +769,76 @@ async fn unix_client_loop(
     Ok(())
 }
 
+/// Resolve an agent by UUID or alias
+fn resolve_agent<'a>(
+    agents: &'a HashMap<String, Arc<LocalAgentSession>>,
+    identifier: &str,
+) -> Option<&'a Arc<LocalAgentSession>> {
+    // First try direct UUID lookup
+    if let Some(agent) = agents.get(identifier) {
+        return Some(agent);
+    }
+    // Fall back to alias lookup
+    agents
+        .values()
+        .find(|a| a.alias.as_deref() == Some(identifier))
+}
+
 /// Create a new agent
 async fn create_agent(
     state: &Arc<RwLock<ServerState>>,
     event_tx: &mpsc::Sender<SessionEvent>,
-    agent_id: &str,
-    agent_type: AgentType,
-    working_dir: PathBuf,
-    rows: u16,
-    cols: u16,
+    req: CreateAgentRequest,
 ) -> Result<()> {
     let mut state = state.write().await;
 
-    // Check if agent already exists
-    if state.agents.contains_key(agent_id) {
-        return Err(AmuxError::AgentAlreadyExists(agent_id.to_string()));
+    // Check if agent with this UUID already exists
+    if state.agents.contains_key(&req.agent_id) {
+        return Err(AmuxError::AgentAlreadyExists(req.agent_id.clone()));
     }
 
-    // Create agent ID
-    let id = AgentId::local(&state.config, agent_id);
+    // Check if alias is already in use
+    if let Some(ref a) = req.alias {
+        if state.agents.values().any(|s| s.alias.as_deref() == Some(a)) {
+            return Err(AmuxError::AgentAlreadyExists(a.clone()));
+        }
+    }
+
+    // Create agent ID (agent_id is now a UUID)
+    let id = AgentId::local(&state.config, &req.agent_id);
 
     // Create session
-    let session =
-        LocalAgentSession::new(id, agent_type, working_dir, rows, cols, event_tx.clone())?;
+    let session = LocalAgentSession::new(
+        id,
+        req.alias.clone(),
+        req.agent_type,
+        req.working_dir,
+        req.rows,
+        req.cols,
+        event_tx.clone(),
+    )?;
 
-    state.agents.insert(agent_id.to_string(), Arc::new(session));
+    state.agents.insert(req.agent_id.clone(), Arc::new(session));
 
-    log!("server: created agent {}", agent_id);
+    log!(
+        "server: created agent {} (alias={:?})",
+        req.agent_id,
+        req.alias
+    );
     Ok(())
 }
 
-/// Handle subscribe request
+/// Handle subscribe request (identifier can be UUID or alias)
 async fn handle_subscribe(
     state: &Arc<RwLock<ServerState>>,
-    agent_id: &str,
+    identifier: &str,
     rows: u16,
     cols: u16,
 ) -> Result<(MultiplexReader, mpsc::Sender<Vec<u8>>)> {
     let state_guard = state.read().await;
 
-    let session = state_guard
-        .agents
-        .get(agent_id)
-        .ok_or_else(|| AmuxError::AgentNotFound(agent_id.to_string()))?
+    let session = resolve_agent(&state_guard.agents, identifier)
+        .ok_or_else(|| AmuxError::AgentNotFound(identifier.to_string()))?
         .clone();
 
     // Resize PTY if needed
@@ -837,7 +849,7 @@ async fn handle_subscribe(
     session
         .subscribe()
         .await
-        .ok_or_else(|| AmuxError::AgentNotFound(agent_id.to_string()))
+        .ok_or_else(|| AmuxError::AgentNotFound(identifier.to_string()))
 }
 
 /// Shutdown the server
@@ -1184,9 +1196,9 @@ async fn tcp_handle_message(msg: Message, state: &Arc<RwLock<ServerState>>) -> R
             };
 
             if dst_host == our_host {
-                // Send input to local agent
+                // Send input to local agent (agent_id can be UUID or alias)
                 let state = state.read().await;
-                if let Some(session) = state.agents.get(&agent_id) {
+                if let Some(session) = resolve_agent(&state.agents, &agent_id) {
                     let _ = session.send_input(data).await;
                 }
             } else {

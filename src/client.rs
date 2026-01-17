@@ -1,6 +1,6 @@
 use crate::config::Config;
 use crate::error::{AmuxError, Result};
-use crate::message::{AgentType, Message};
+use crate::message::{AgentType, CreateAgentRequest, Message};
 use crate::transport::{Transport, UnixTransport};
 use std::io::{self, Read, Write};
 use std::os::unix::io::AsRawFd;
@@ -59,14 +59,18 @@ pub fn get_terminal_size() -> (u16, u16) {
 }
 
 /// Create a new agent and attach to it
-pub async fn new_agent(agent_id: &str, agent_type: AgentType, config: &Config) -> Result<()> {
+pub async fn new_agent(alias: Option<&str>, agent_type: AgentType, config: &Config) -> Result<()> {
     let (mut transport, server_host_id) = connect_and_handshake(config).await?;
     let (rows, cols) = get_terminal_size();
     let working_dir = std::env::current_dir()?;
 
+    // Generate UUID for agent_id
+    let agent_id = Uuid::new_v4().to_string();
+
     log!(
-        "client: CREATE {} type={:?} dir={:?} ({}x{}) on server {}",
+        "client: CREATE {} (alias={:?}) type={:?} dir={:?} ({}x{}) on server {}",
         agent_id,
+        alias,
         agent_type,
         working_dir,
         cols,
@@ -76,13 +80,14 @@ pub async fn new_agent(agent_id: &str, agent_type: AgentType, config: &Config) -
 
     // Send CreateAgent
     transport
-        .write_message(&Message::CreateAgent {
-            agent_id: agent_id.to_string(),
+        .write_message(&Message::CreateAgent(CreateAgentRequest {
+            agent_id: agent_id.clone(),
+            alias: alias.map(|s| s.to_string()),
             agent_type,
             working_dir: working_dir.clone(),
             rows,
             cols,
-        })
+        }))
         .await?;
 
     // Read response
@@ -104,8 +109,10 @@ pub async fn new_agent(agent_id: &str, agent_type: AgentType, config: &Config) -
         }
     }
 
-    // Now subscribe (local agent, so dst_host is this server)
-    subscribe_and_stream(transport, agent_id, rows, cols, &server_host_id).await
+    // Now subscribe using alias if provided, else UUID
+    // (server supports lookup by either)
+    let subscribe_id = alias.unwrap_or(&agent_id);
+    subscribe_and_stream(transport, subscribe_id, rows, cols, &server_host_id).await
 }
 
 /// Attach to an existing agent
@@ -225,10 +232,17 @@ pub async fn list_agents(config: &Config) -> Result<()> {
             if agents.is_empty() {
                 println!("No agents running.");
             } else {
-                agents.sort_by(|a, b| a.agent_id.cmp(&b.agent_id));
+                // Sort by alias if present, else by agent_id
+                agents.sort_by(|a, b| {
+                    let a_name = a.alias.as_deref().unwrap_or(&a.agent_id);
+                    let b_name = b.alias.as_deref().unwrap_or(&b.agent_id);
+                    a_name.cmp(b_name)
+                });
                 println!("Running agents:");
                 for agent in agents {
-                    println!("  {} - {}", agent.agent_id, agent.working_dir.display());
+                    // Display alias if present, else UUID
+                    let display_name = agent.alias.as_deref().unwrap_or(&agent.agent_id);
+                    println!("  {} - {}", display_name, agent.working_dir.display());
                 }
             }
         }
