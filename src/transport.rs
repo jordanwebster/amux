@@ -208,11 +208,13 @@ mod tests {
     #[tokio::test]
     async fn test_message_roundtrip() {
         use crate::message::{AgentType, CreateAgentRequest};
+        use uuid::Uuid;
 
         let (mut client, mut server) = create_socket_pair().await;
 
+        let test_uuid = Uuid::new_v4();
         let msg = Message::CreateAgent(CreateAgentRequest {
-            agent_id: "test-uuid".to_string(),
+            agent_id: test_uuid,
             alias: Some("test".to_string()),
             agent_type: AgentType::Claude,
             working_dir: std::path::PathBuf::from("/tmp"),
@@ -224,7 +226,7 @@ mod tests {
 
         let received = server.read_message().await.unwrap();
         if let Message::CreateAgent(req) = received {
-            assert_eq!(req.agent_id, "test-uuid");
+            assert_eq!(req.agent_id, test_uuid);
             assert_eq!(req.alias, Some("test".to_string()));
             assert_eq!(req.agent_type, AgentType::Claude);
             assert_eq!(req.working_dir, std::path::PathBuf::from("/tmp"));
@@ -237,12 +239,14 @@ mod tests {
 
     #[tokio::test]
     async fn test_output_message_roundtrip() {
+        use uuid::Uuid;
+
         let (mut client, mut server) = create_socket_pair().await;
 
         let msg = Message::Output {
             src_host: "host-a".to_string(),
             dst_host: "host-b".to_string(),
-            agent_id: "test".to_string(),
+            agent_id: Uuid::new_v4().to_string(),
             data: b"hello world".to_vec(),
         };
 
@@ -258,12 +262,14 @@ mod tests {
 
     #[tokio::test]
     async fn test_input_message_roundtrip() {
+        use uuid::Uuid;
+
         let (mut client, mut server) = create_socket_pair().await;
 
         let msg = Message::Input {
             src_host: "host-a".to_string(),
             dst_host: "host-b".to_string(),
-            agent_id: "test".to_string(),
+            agent_id: Uuid::new_v4().to_string(),
             data: b"user input".to_vec(),
         };
 

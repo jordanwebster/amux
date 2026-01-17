@@ -2,7 +2,7 @@ use crate::buffer::MultiplexReader;
 use crate::config::{Config, DEFAULT_TCP_PORT, DEFAULT_WEBSOCKET_PORT};
 use crate::error::{AmuxError, Result};
 use crate::message::{ClaudeHook, CreateAgentRequest, Hook, Message};
-use crate::session::{AgentId, LocalAgentSession, SessionEvent};
+use crate::session::{LocalAgentSession, SessionEvent};
 use crate::transport::{TcpTransport, Transport, UnixTransport, WebSocketTransport};
 use std::collections::HashMap;
 use std::net::SocketAddr;
@@ -11,6 +11,7 @@ use std::sync::Arc;
 use tokio::net::{TcpListener, TcpStream, UnixListener, UnixStream};
 use tokio::sync::{mpsc, RwLock};
 use tokio_tungstenite::accept_async;
+use uuid::Uuid;
 
 /// Determine how to route a message based on dst_host.
 ///
@@ -42,7 +43,7 @@ fn resolve_route(dst_host: &str, our_host: &str) -> (String, String) {
 /// Server state shared across connection handlers
 struct ServerState {
     config: Config,
-    agents: HashMap<String, Arc<LocalAgentSession>>,
+    agents: HashMap<Uuid, Arc<LocalAgentSession>>,
     /// Routes to other hosts. Each route is a channel sender for outgoing messages.
     /// The actual transport is owned by the connection handler task.
     routes: HashMap<String, mpsc::Sender<Message>>,
@@ -119,9 +120,9 @@ impl Server {
             while let Some(event) = event_rx.recv().await {
                 match event {
                     SessionEvent::Ended(agent_id) => {
-                        log!("server: session {} ended, removing", agent_id.agent_id);
+                        log!("server: session {} ended, removing", agent_id);
                         let mut state = state.write().await;
-                        state.agents.remove(&agent_id.agent_id);
+                        state.agents.remove(&agent_id);
                     }
                 }
             }
@@ -313,10 +314,10 @@ async fn websocket_handle_message(
                 return Ok(());
             }
 
-            // Get log reader from session
+            // Get log reader from session (agent_id can be UUID or alias)
             let log_reader = {
                 let state = ctx.state.read().await;
-                if let Some(session) = state.agents.get(&agent_id) {
+                if let Some(session) = resolve_agent(&state.agents, &agent_id) {
                     session.subscribe_logs().await
                 } else {
                     None
@@ -531,7 +532,8 @@ async fn unix_handle_message(
             }
 
             // Local subscribe - spawn output streaming task
-            let result = handle_subscribe(&ctx.state, &agent_id, rows, cols).await;
+            let agent_id_str = agent_id.to_string();
+            let result = handle_subscribe(&ctx.state, &agent_id_str, rows, cols).await;
 
             match result {
                 Ok((mut buffer_reader, input_tx)) => {
@@ -652,7 +654,8 @@ async fn unix_handle_message(
             if dst_host == ctx.our_host {
                 // Local agent - send directly (agent_id can be UUID or alias)
                 let state = ctx.state.read().await;
-                if let Some(session) = resolve_agent(&state.agents, &agent_id) {
+                let agent_id_str = agent_id.to_string();
+                if let Some(session) = resolve_agent(&state.agents, &agent_id_str) {
                     let _ = session.send_input(data).await;
                 }
             } else {
@@ -771,12 +774,14 @@ async fn unix_client_loop(
 
 /// Resolve an agent by UUID or alias
 fn resolve_agent<'a>(
-    agents: &'a HashMap<String, Arc<LocalAgentSession>>,
+    agents: &'a HashMap<Uuid, Arc<LocalAgentSession>>,
     identifier: &str,
 ) -> Option<&'a Arc<LocalAgentSession>> {
-    // First try direct UUID lookup
-    if let Some(agent) = agents.get(identifier) {
-        return Some(agent);
+    // First try parsing as UUID for direct lookup
+    if let Ok(uuid) = Uuid::parse_str(identifier) {
+        if let Some(agent) = agents.get(&uuid) {
+            return Some(agent);
+        }
     }
     // Fall back to alias lookup
     agents
@@ -794,7 +799,7 @@ async fn create_agent(
 
     // Check if agent with this UUID already exists
     if state.agents.contains_key(&req.agent_id) {
-        return Err(AmuxError::AgentAlreadyExists(req.agent_id.clone()));
+        return Err(AmuxError::AgentAlreadyExists(req.agent_id.to_string()));
     }
 
     // Check if alias is already in use
@@ -804,21 +809,10 @@ async fn create_agent(
         }
     }
 
-    // Create agent ID (agent_id is now a UUID)
-    let id = AgentId::local(&state.config, &req.agent_id);
-
     // Create session
-    let session = LocalAgentSession::new(
-        id,
-        req.alias.clone(),
-        req.agent_type,
-        req.working_dir,
-        req.rows,
-        req.cols,
-        event_tx.clone(),
-    )?;
+    let session = LocalAgentSession::new(&req, event_tx.clone())?;
 
-    state.agents.insert(req.agent_id.clone(), Arc::new(session));
+    state.agents.insert(req.agent_id, Arc::new(session));
 
     log!(
         "server: created agent {} (alias={:?})",
@@ -1052,7 +1046,8 @@ async fn tcp_handle_message(msg: Message, state: &Arc<RwLock<ServerState>>) -> R
 
             if dst_host == our_host {
                 // Subscribe to local agent
-                let result = handle_subscribe(state, &agent_id, rows, cols).await;
+                let agent_id_str = agent_id.to_string();
+                let result = handle_subscribe(state, &agent_id_str, rows, cols).await;
 
                 match result {
                     Ok((mut buffer_reader, input_tx)) => {
@@ -1198,7 +1193,8 @@ async fn tcp_handle_message(msg: Message, state: &Arc<RwLock<ServerState>>) -> R
             if dst_host == our_host {
                 // Send input to local agent (agent_id can be UUID or alias)
                 let state = state.read().await;
-                if let Some(session) = resolve_agent(&state.agents, &agent_id) {
+                let agent_id_str = agent_id.to_string();
+                if let Some(session) = resolve_agent(&state.agents, &agent_id_str) {
                     let _ = session.send_input(data).await;
                 }
             } else {

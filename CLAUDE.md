@@ -32,7 +32,7 @@ This file provides guidance for AI assistants working on the amux codebase.
 - `src/main.rs` - CLI (new-agent, attach, list-agents, kill-server, connect)
 - `src/message.rs` - Protocol messages with serde
 - `src/transport.rs` - Transport trait, UnixTransport, TcpTransport
-- `src/session.rs` - AgentId and LocalAgentSession with PTY
+- `src/session.rs` - LocalAgentSession with PTY
 - `src/server.rs` - Server with symmetric Unix/TCP handlers (unix_accept, tcp_accept, etc.)
 - `src/client.rs` - Client protocol implementation
 - `src/config.rs` - Server configuration
@@ -86,7 +86,7 @@ Terminal ──Unix socket──> Local amux server ──TCP──> Cloud amux 
 ```
 
 **Core types:**
-- `AgentId` - tuple of (host_id, user_id, agent_id)
+- `agent_id` - UUID string identifying an agent (optional alias for human-friendly names)
 - `Connection` - enum of Local (Unix) or Remote (TCP/WebSocket)
 - `LocalAgentSession` - a running agent with PTY and replay buffers
 - `Route` - either Local or Remote { via: ConnectionId }

@@ -1,6 +1,7 @@
 use crate::structured_log::StructuredLog;
 use serde::{Deserialize, Serialize};
 use std::path::PathBuf;
+use uuid::Uuid;
 
 /// Type of agent to spawn
 #[derive(Serialize, Deserialize, Debug, Clone, PartialEq)]
@@ -20,7 +21,7 @@ pub enum Hook {
 #[derive(Serialize, Deserialize, Debug, Clone)]
 pub enum ClaudeHook {
     SessionStart {
-        session_id: String,
+        session_id: Uuid,
         transcript_path: String,
     },
 }
@@ -28,7 +29,7 @@ pub enum ClaudeHook {
 /// Request to create a new agent
 #[derive(Serialize, Deserialize, Debug, Clone)]
 pub struct CreateAgentRequest {
-    pub agent_id: String,
+    pub agent_id: Uuid,
     pub alias: Option<String>,
     pub agent_type: AgentType,
     pub working_dir: PathBuf,
@@ -47,6 +48,7 @@ pub enum Message {
     CreateAgent(CreateAgentRequest),
 
     /// Subscribe to an agent's output stream (routable)
+    /// agent_id can be a UUID string or an alias
     Subscribe {
         src_host: String,
         dst_host: String,
@@ -59,6 +61,7 @@ pub enum Message {
     Unsubscribe,
 
     /// Send input bytes to the subscribed agent (routable)
+    /// agent_id can be a UUID string or an alias
     Input {
         src_host: String,
         dst_host: String,
@@ -146,7 +149,7 @@ pub enum Message {
 /// Information about a running agent
 #[derive(Serialize, Deserialize, Debug, Clone)]
 pub struct AgentInfo {
-    pub agent_id: String,
+    pub agent_id: Uuid,
     pub alias: Option<String>,
     pub command: String,
     pub working_dir: PathBuf,
@@ -178,8 +181,9 @@ mod tests {
 
     #[test]
     fn test_message_roundtrip_create_agent() {
+        let test_uuid = Uuid::new_v4();
         let msg = Message::CreateAgent(CreateAgentRequest {
-            agent_id: "test-uuid".to_string(),
+            agent_id: test_uuid,
             alias: Some("test".to_string()),
             agent_type: AgentType::Claude,
             working_dir: PathBuf::from("/home/user/project"),
@@ -189,7 +193,7 @@ mod tests {
         let encoded = msg.encode().unwrap();
         let decoded = Message::decode(&encoded).unwrap();
         if let Message::CreateAgent(req) = decoded {
-            assert_eq!(req.agent_id, "test-uuid");
+            assert_eq!(req.agent_id, test_uuid);
             assert_eq!(req.alias, Some("test".to_string()));
             assert_eq!(req.agent_type, AgentType::Claude);
             assert_eq!(req.working_dir, PathBuf::from("/home/user/project"));
@@ -205,7 +209,7 @@ mod tests {
         let msg = Message::SubscribeResult {
             src_host: "host-a".to_string(),
             dst_host: "host-b".to_string(),
-            agent_id: "test".to_string(),
+            agent_id: Uuid::new_v4().to_string(),
             success: true,
             error: None,
         };
@@ -221,15 +225,16 @@ mod tests {
 
     #[test]
     fn test_agent_info_roundtrip() {
+        let test_uuid = Uuid::new_v4();
         let info = AgentInfo {
-            agent_id: "uuid-123".to_string(),
+            agent_id: test_uuid,
             alias: Some("claude-1".to_string()),
             command: "claude".to_string(),
             working_dir: PathBuf::from("/tmp"),
         };
         let encoded = bincode::serialize(&info).unwrap();
         let decoded: AgentInfo = bincode::deserialize(&encoded).unwrap();
-        assert_eq!(decoded.agent_id, "uuid-123");
+        assert_eq!(decoded.agent_id, test_uuid);
         assert_eq!(decoded.alias, Some("claude-1".to_string()));
         assert_eq!(decoded.command, "claude");
         assert_eq!(decoded.working_dir, PathBuf::from("/tmp"));
@@ -237,8 +242,9 @@ mod tests {
 
     #[test]
     fn test_message_roundtrip_hook_event() {
+        let test_uuid = Uuid::new_v4();
         let hook = Hook::Claude(ClaudeHook::SessionStart {
-            session_id: "my-session".to_string(),
+            session_id: test_uuid,
             transcript_path: "/tmp/transcript.jsonl".to_string(),
         });
         let msg = Message::HookEvent { hook };
@@ -251,7 +257,7 @@ mod tests {
             session_id,
             transcript_path,
         }) = decoded_hook;
-        assert_eq!(session_id, "my-session");
+        assert_eq!(session_id, test_uuid);
         assert_eq!(transcript_path, "/tmp/transcript.jsonl");
     }
 }

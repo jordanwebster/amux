@@ -65,7 +65,7 @@ pub async fn new_agent(alias: Option<&str>, agent_type: AgentType, config: &Conf
     let working_dir = std::env::current_dir()?;
 
     // Generate UUID for agent_id
-    let agent_id = Uuid::new_v4().to_string();
+    let agent_id = Uuid::new_v4();
 
     log!(
         "client: CREATE {} (alias={:?}) type={:?} dir={:?} ({}x{}) on server {}",
@@ -81,7 +81,7 @@ pub async fn new_agent(alias: Option<&str>, agent_type: AgentType, config: &Conf
     // Send CreateAgent
     transport
         .write_message(&Message::CreateAgent(CreateAgentRequest {
-            agent_id: agent_id.clone(),
+            agent_id,
             alias: alias.map(|s| s.to_string()),
             agent_type,
             working_dir: working_dir.clone(),
@@ -111,7 +111,8 @@ pub async fn new_agent(alias: Option<&str>, agent_type: AgentType, config: &Conf
 
     // Now subscribe using alias if provided, else UUID
     // (server supports lookup by either)
-    let subscribe_id = alias.unwrap_or(&agent_id);
+    let agent_id_str = agent_id.to_string();
+    let subscribe_id = alias.unwrap_or(&agent_id_str);
     subscribe_and_stream(transport, subscribe_id, rows, cols, &server_host_id).await
 }
 
@@ -129,7 +130,7 @@ pub async fn attach(agent_id: Option<&str>, config: &Config) -> Result<()> {
             let response = transport.read_message().await?;
             match response {
                 Message::ListAgentsResult { agents } if !agents.is_empty() => {
-                    agents[0].agent_id.clone()
+                    agents[0].agent_id.to_string()
                 }
                 Message::ListAgentsResult { .. } => {
                     eprintln!("No agents running. Use 'amux new-agent' to create one.");
@@ -234,14 +235,17 @@ pub async fn list_agents(config: &Config) -> Result<()> {
             } else {
                 // Sort by alias if present, else by agent_id
                 agents.sort_by(|a, b| {
-                    let a_name = a.alias.as_deref().unwrap_or(&a.agent_id);
-                    let b_name = b.alias.as_deref().unwrap_or(&b.agent_id);
+                    let a_id = a.agent_id.to_string();
+                    let b_id = b.agent_id.to_string();
+                    let a_name = a.alias.as_deref().unwrap_or(&a_id);
+                    let b_name = b.alias.as_deref().unwrap_or(&b_id);
                     a_name.cmp(b_name)
                 });
                 println!("Running agents:");
                 for agent in agents {
                     // Display alias if present, else UUID
-                    let display_name = agent.alias.as_deref().unwrap_or(&agent.agent_id);
+                    let agent_id_str = agent.agent_id.to_string();
+                    let display_name = agent.alias.as_deref().unwrap_or(&agent_id_str);
                     println!("  {} - {}", display_name, agent.working_dir.display());
                 }
             }

@@ -38,6 +38,71 @@ One paragraph describing what was done.
 
 ---
 
+## 2025-01-17: Use Uuid type for agent identifiers
+
+### Summary
+
+Changed `agent_id` from `String` to `uuid::Uuid` type for type safety. This ensures agent IDs are always valid UUIDs at compile time. The change affects `CreateAgentRequest`, `AgentInfo`, `LocalAgentSession`, `SessionEvent`, and the agents `HashMap` key.
+
+Routable protocol messages (`Subscribe`, `Input`, `Output`, `SubscribeResult`, `StructuredOutput`) keep `agent_id` as `String` to support both UUID and alias lookups.
+
+### Changes
+
+**Modified files:**
+- `Cargo.toml` - Added `serde` feature to uuid dependency
+- `src/message.rs` - `CreateAgentRequest.agent_id` and `AgentInfo.agent_id` now `Uuid`; `ClaudeHook::SessionStart.session_id` now `Uuid`
+- `src/session.rs` - `LocalAgentSession.agent_id` and `SessionEvent::Ended` now use `Uuid`
+- `src/server.rs` - `ServerState.agents` HashMap keyed by `Uuid`; updated lookups
+- `src/client.rs` - Generate `Uuid` directly, convert to string for display
+- `src/hooks.rs` - `TryFrom` conversion to parse session_id as UUID
+- `src/transport.rs` - Updated tests to use `Uuid::new_v4()`
+
+### Decisions Made
+
+1. **Uuid for creation/storage, String for lookups**: `CreateAgentRequest` and internal storage use `Uuid` for type safety. Protocol messages for subscribe/input use `String` to support alias-based lookups.
+
+2. **Future consideration**: Could move alias resolution to the client side, making all protocol messages use `Uuid` exclusively. This would require adding alias resolution to the protocol (e.g., a ResolveAlias message).
+
+### Verification
+
+```
+cargo check && cargo fmt && cargo clippy  # OK
+cargo test                                 # 31 tests pass
+cargo run -p e2e-runner -- run             # 6 E2E tests pass
+```
+
+---
+
+## 2025-01-17: Remove AgentId struct, simplify to UUID
+
+### Summary
+
+Removed the `AgentId` struct (which contained `host_id`, `user_id`, `agent_id`) and replaced it with a plain UUID string. The struct's `host_id`/`user_id` fields were vestigial - routing uses `src_host`/`dst_host` message fields, and agents are keyed by UUID only. Also simplified `LocalAgentSession::new()` to take `&CreateAgentRequest` directly.
+
+### Changes
+
+**Modified files:**
+- `src/session.rs` - Removed `AgentId` struct; changed `LocalAgentSession.id` to `agent_id: String`; simplified `new()` to take `&CreateAgentRequest`
+- `src/server.rs` - Updated `create_agent()` to use new API; updated `SessionEvent::Ended` handling
+- `ARCHITECTURE.md` - Added implementation note explaining the simplification
+- `CLAUDE.md` - Updated core types section
+
+### Decisions Made
+
+1. **AgentId struct removed**: The tuple was designed for global uniqueness, but routing evolved to use `src_host`/`dst_host` message fields. Keeping the struct added complexity without benefit.
+
+2. **LocalAgentSession::new() takes &CreateAgentRequest**: Reduces parameter count and keeps request data together.
+
+### Verification
+
+```
+cargo check && cargo fmt && cargo clippy  # OK
+cargo test                                 # 31 tests pass
+cargo run -p e2e-runner -- run             # 6 E2E tests pass
+```
+
+---
+
 ## 2025-01-17: UUID-based Agent IDs with Alias Support
 
 ### Summary

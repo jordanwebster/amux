@@ -33,14 +33,17 @@ pub struct ClaudeSessionStart {
 ///   Claude Code's JSON input format
 /// - `message::ClaudeHook` is untagged for bincode compatibility (bincode doesn't
 ///   support internally tagged enums - fails with `DeserializeAnyNotSupported`)
-impl From<ClaudeHook> for message::Hook {
-    fn from(hook: ClaudeHook) -> Self {
+impl TryFrom<ClaudeHook> for message::Hook {
+    type Error = uuid::Error;
+
+    fn try_from(hook: ClaudeHook) -> Result<Self, Self::Error> {
         match hook {
             ClaudeHook::SessionStart(session) => {
-                message::Hook::Claude(message::ClaudeHook::SessionStart {
-                    session_id: session.session_id,
+                let session_id = Uuid::parse_str(&session.session_id)?;
+                Ok(message::Hook::Claude(message::ClaudeHook::SessionStart {
+                    session_id,
                     transcript_path: session.transcript_path,
-                })
+                }))
             }
         }
     }
@@ -85,8 +88,10 @@ fn handle_claude_session_start_inner(config: &Config) -> io::Result<()> {
     };
     let _ = append_to_log(&entry);
 
-    // Convert to wire protocol type
-    let hook: message::Hook = claude_hook.into();
+    // Convert to wire protocol type (session_id must be valid UUID)
+    let hook: message::Hook = claude_hook
+        .try_into()
+        .map_err(|e| io::Error::new(io::ErrorKind::InvalidData, e))?;
 
     if config.socket_path.exists() {
         let socket_path = config.socket_path.clone();

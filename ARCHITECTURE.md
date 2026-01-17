@@ -27,23 +27,20 @@ A detailed design for the amux server internals, combining both architectural ap
 |------|-------------|
 | **host_id** | Unique identifier for an amux server instance. Generated on first run (UUID) and persisted in config. |
 | **user_id** | Identifies the user/owner. In cloud mode, extracted from token. In local mode, hardcoded (e.g., `"local"`). |
-| **agent_id** | Name of an agent session (e.g., `"claude-1"`, `"codex-main"`). Unique per host+user. |
-| **AgentId** | The canonical tuple `(host_id, user_id, agent_id)` that uniquely identifies an agent globally. |
+| **agent_id** | UUID identifying an agent session. Unique globally. Optional human-readable alias can be set via `-t` flag. |
 | **PTY** | Pseudo-terminal - the interface used to run interactive CLI agents like Claude. |
 | **Child** | The OS process handle for a running agent (from `std::process::Child` or `portable_pty`). |
+
+> **Implementation Note:** The original design used an `AgentId` tuple `(host_id, user_id, agent_id)` for global uniqueness. The current implementation simplifies this: agents are identified by UUID (`agent_id`), and routing uses `src_host`/`dst_host` fields in protocol messages. The `AgentId` struct has been removed.
 
 ---
 
 ## Core Identity Types
 
 ```rust
-/// Agent identifier - the canonical tuple
-#[derive(Clone, Hash, Eq, PartialEq)]
-struct AgentId {
-    host_id: String,
-    user_id: String,
-    agent_id: String,
-}
+/// Agents are identified by UUID string
+/// Optional alias provides human-readable name
+type AgentId = String;  // UUID
 
 /// Unique connection identifier
 #[derive(Clone, Copy, Hash, Eq, PartialEq)]
