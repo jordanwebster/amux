@@ -274,6 +274,10 @@ pub async fn kill_server(config: &Config) -> Result<()> {
 
     transport.write_message(&Message::Shutdown).await?;
 
+    // Wait for server acknowledgment before closing connection
+    // TODO: Server should gracefully end agent sessions (send Ctrl+C) before exiting
+    let _ = transport.read_message().await;
+
     println!("Server shutting down.");
     Ok(())
 }

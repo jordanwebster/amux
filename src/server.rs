@@ -611,14 +611,16 @@ async fn unix_handle_message(
         Message::Shutdown => {
             log!("server: shutdown requested by {}", ctx.client_host_id);
             shutdown_server(&ctx.state).await;
-            transport
+
+            // Try to send response, but don't fail if client disconnected
+            let _ = transport
                 .write_message(&Message::Error {
                     code: 0,
                     message: "Server shutting down".to_string(),
                 })
-                .await?;
+                .await;
 
-            // Handle shutdown directly
+            // Clean up and exit (always reached now)
             let socket_path = {
                 let state = ctx.state.read().await;
                 state.config.socket_path.clone()
