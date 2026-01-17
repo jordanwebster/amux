@@ -13,6 +13,9 @@ interface AppState {
   agents: AgentInfo[]
   selectedAgentId: string | null
 
+  // Subscriptions - tracks which agents we've already subscribed to
+  subscribedAgents: Set<string>
+
   // Messages per agent (keyed by agent_id)
   messagesByAgent: Record<string, StructuredLog[]>
 
@@ -23,14 +26,17 @@ interface AppState {
   selectAgent: (agentId: string | null) => void
   addMessage: (agentId: string, message: StructuredLog) => void
   clearMessages: (agentId: string) => void
+  markSubscribed: (agentId: string) => void
+  isSubscribed: (agentId: string) => boolean
 }
 
-export const useAppStore = create<AppState>((set) => ({
+export const useAppStore = create<AppState>((set, get) => ({
   connectionStatus: "disconnected",
   serverHostId: null,
   clientHostId: `dashboard-${Date.now()}`,
   agents: [],
   selectedAgentId: null,
+  subscribedAgents: new Set(),
   messagesByAgent: {},
 
   setConnectionStatus: (status) => set({ connectionStatus: status }),
@@ -51,4 +57,9 @@ export const useAppStore = create<AppState>((set) => ({
         [agentId]: [],
       },
     })),
+  markSubscribed: (agentId) =>
+    set((state) => ({
+      subscribedAgents: new Set(state.subscribedAgents).add(agentId),
+    })),
+  isSubscribed: (agentId) => get().subscribedAgents.has(agentId),
 }))

@@ -4,15 +4,17 @@ import { useWebSocketContext } from "../contexts/WebSocketContext"
 import { cn } from "@/lib/utils"
 
 export function AgentSidebar() {
-  const { agents, selectedAgentId, connectionStatus, selectAgent, clearMessages } =
+  const { agents, selectedAgentId, connectionStatus, selectAgent, clearMessages, isSubscribed, markSubscribed } =
     useAppStore()
   const { subscribeToAgent, refreshAgents } = useWebSocketContext()
 
   const handleSelectAgent = (agentId: string) => {
-    if (agentId !== selectedAgentId) {
-      selectAgent(agentId)
+    selectAgent(agentId)
+    // Only subscribe if we haven't already
+    if (!isSubscribed(agentId)) {
       clearMessages(agentId)
       subscribeToAgent(agentId)
+      markSubscribed(agentId)
     }
   }
 
