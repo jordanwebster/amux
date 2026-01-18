@@ -38,6 +38,37 @@ One paragraph describing what was done.
 
 ---
 
+## 2025-01-18: Fix agent detach (Ctrl-b d)
+
+### Summary
+
+Fixed the broken Ctrl-b d detach functionality. Two issues were addressed:
+
+1. The client would get stuck because the stdin task set an `AtomicBool` flag and exited, but the main `select!` loop was blocked waiting for server messages and never checked the flag.
+
+2. Modern terminal emulators (iTerm2, kitty, WezTerm) use the CSI u / kitty keyboard protocol which sends `ESC[98;5u` for Ctrl-b instead of the raw byte `0x02`. The code only checked for raw `0x02`, so Ctrl-b was never detected outside of tmux.
+
+### Changes
+
+**Modified files:**
+- `src/client.rs` - Added `StdinEvent` enum (`Data(Vec<u8>)` or `Detach`); stdin task detects both raw Ctrl-b (`0x02`) and CSI u Ctrl-b (`ESC[98;5u`); sends `StdinEvent::Detach` through channel; main loop handles detach by breaking and closing connection
+
+### Decisions Made
+
+1. **StdinEvent enum over AtomicBool flag**: Using an enum through the channel lets the main loop react immediately when it receives the detach event, rather than polling a flag at the start of each iteration (which never happened because the loop was blocked in `select!`).
+
+2. **Support both keyboard protocols**: Traditional terminals and tmux send raw `0x02` for Ctrl-b. Modern terminals use CSI u format (`ESC[98;5u`). The code now handles both.
+
+3. **Connection close is sufficient**: For local terminal clients, simply closing the connection triggers automatic cleanup - the server's streaming task detects the closed channel and exits, dead subscribers are removed on next buffer write. No explicit protocol handshake needed.
+
+### Verification
+
+- `cargo check && cargo fmt && cargo clippy && cargo test` - 31 tests pass
+- `cargo run -p e2e-runner -- run` - 6 E2E tests pass
+- Manual testing: Ctrl-b d works both inside tmux and in native terminal (iTerm2)
+
+---
+
 ## 2025-01-18: Add permission request handling for Claude Code
 
 ### Summary

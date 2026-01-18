@@ -72,9 +72,6 @@ pub enum Message {
         cols: u16,
     },
 
-    /// Unsubscribe from the current agent
-    Unsubscribe,
-
     /// Send raw input bytes to the subscribed agent (routable)
     /// agent_id can be a UUID string or an alias
     /// No automatic Enter - bytes are written directly to PTY

@@ -4,14 +4,31 @@ use crate::message::{AgentType, CreateAgentRequest, Message};
 use crate::transport::{Transport, UnixTransport};
 use std::io::{self, Read, Write};
 use std::os::unix::io::AsRawFd;
-use std::sync::atomic::{AtomicBool, Ordering};
-use std::sync::Arc;
 use tokio::net::UnixStream;
 use tokio::sync::mpsc;
 use uuid::Uuid;
 
 /// Control key prefix (Ctrl-b = 0x02)
 const CTRL_B: u8 = 0x02;
+
+/// CSI u sequence for Ctrl-b: ESC[98;5u
+/// Modern terminals (iTerm2, kitty, WezTerm) use this instead of raw 0x02
+const CSI_U_CTRL_B: &[u8] = &[27, b'[', b'9', b'8', b';', b'5', b'u'];
+
+/// Events from stdin reading task
+enum StdinEvent {
+    /// Raw input data to send to agent
+    Data(Vec<u8>),
+    /// User requested detach (Ctrl-b d)
+    Detach,
+}
+
+/// Find a subsequence within a slice, returns the starting index if found
+fn find_subsequence(haystack: &[u8], needle: &[u8]) -> Option<usize> {
+    haystack
+        .windows(needle.len())
+        .position(|window| window == needle)
+}
 
 /// Connect to server and perform handshake, returns (transport, server_host_id)
 async fn connect_and_handshake(config: &Config) -> Result<(UnixTransport, String)> {
@@ -318,88 +335,145 @@ async fn run_attached(mut transport: UnixTransport, dst_host: &str, agent_id: &s
     let _raw_guard = RawModeGuard::new()?;
 
     // Channel to bridge blocking stdin to async loop
-    let (input_tx, mut input_rx) = mpsc::channel::<Vec<u8>>(256);
+    let (input_tx, mut input_rx) = mpsc::channel::<StdinEvent>(256);
 
-    // Flag to signal detach
-    let detach_flag = Arc::new(AtomicBool::new(false));
-    let detach_flag_clone = detach_flag.clone();
-
-    // Task: Read stdin, handle Ctrl-b, send to channel
+    // Task: Read stdin, handle Ctrl-b (both raw 0x02 and CSI u format), send events to channel
     tokio::task::spawn_blocking(move || {
         let mut stdin = io::stdin();
         let mut buffer = [0u8; 1024];
+        let mut pending_ctrl_b = false; // True if we saw Ctrl-b and are waiting for next key
 
         loop {
             match stdin.read(&mut buffer) {
                 Ok(0) => break,
                 Ok(n) => {
-                    let mut i = 0;
-                    while i < n {
-                        if buffer[i] == CTRL_B {
-                            let next_byte = if i + 1 < n {
-                                i += 1;
-                                buffer[i]
-                            } else {
-                                let mut next = [0u8; 1];
-                                match stdin.read_exact(&mut next) {
-                                    Ok(_) => next[0],
-                                    Err(_) => break,
-                                }
-                            };
+                    let data = &buffer[..n];
 
-                            match next_byte {
-                                b'd' => {
-                                    log!("client: detaching (Ctrl-b d)");
-                                    detach_flag_clone.store(true, Ordering::SeqCst);
-                                    return;
-                                }
-                                CTRL_B => {
-                                    // Send literal Ctrl-b
-                                    if input_tx.blocking_send(vec![CTRL_B]).is_err() {
-                                        return;
-                                    }
-                                }
-                                _ => {
-                                    // Send Ctrl-b + next byte
-                                    if input_tx.blocking_send(vec![CTRL_B, next_byte]).is_err() {
-                                        return;
-                                    }
-                                }
-                            }
-                            i += 1;
-                        } else {
-                            let start = i;
-                            while i < n && buffer[i] != CTRL_B {
-                                i += 1;
-                            }
-                            if input_tx.blocking_send(buffer[start..i].to_vec()).is_err() {
+                    // Check if this read contains CSI u Ctrl-b sequence
+                    if let Some(pos) = find_subsequence(data, CSI_U_CTRL_B) {
+                        // Send data before the sequence
+                        if pos > 0
+                            && input_tx
+                                .blocking_send(StdinEvent::Data(data[..pos].to_vec()))
+                                .is_err()
+                        {
+                            return;
+                        }
+                        // Now we're waiting for 'd'
+                        let after = pos + CSI_U_CTRL_B.len();
+                        if after < n {
+                            // There's data after the Ctrl-b sequence
+                            if data[after] == b'd' {
+                                log!("client: detaching (Ctrl-b d)");
+                                let _ = input_tx.blocking_send(StdinEvent::Detach);
                                 return;
                             }
+                            // Not 'd' - send Ctrl-b + remaining data
+                            let mut remaining = vec![CTRL_B];
+                            remaining.extend_from_slice(&data[after..]);
+                            if input_tx.blocking_send(StdinEvent::Data(remaining)).is_err() {
+                                return;
+                            }
+                        } else {
+                            // Ctrl-b was at end, wait for next read
+                            pending_ctrl_b = true;
+                        }
+                        continue;
+                    }
+
+                    // Process byte by byte for raw Ctrl-b
+                    let mut i = 0;
+                    while i < n {
+                        if pending_ctrl_b {
+                            pending_ctrl_b = false;
+                            if data[i] == b'd' {
+                                log!("client: detaching (Ctrl-b d)");
+                                let _ = input_tx.blocking_send(StdinEvent::Detach);
+                                return;
+                            }
+                            // Not 'd' - send Ctrl-b + this byte
+                            if input_tx
+                                .blocking_send(StdinEvent::Data(vec![CTRL_B, data[i]]))
+                                .is_err()
+                            {
+                                return;
+                            }
+                            i += 1;
+                            continue;
+                        }
+
+                        if data[i] == CTRL_B {
+                            pending_ctrl_b = true;
+                            i += 1;
+                            continue;
+                        }
+
+                        // Regular data - collect until we hit raw Ctrl-b
+                        let start = i;
+                        while i < n && data[i] != CTRL_B {
+                            i += 1;
+                        }
+                        if input_tx
+                            .blocking_send(StdinEvent::Data(data[start..i].to_vec()))
+                            .is_err()
+                        {
+                            return;
                         }
                     }
                 }
                 Err(_) => break,
             }
+
+            // If we ended with pending Ctrl-b, wait for next byte
+            if pending_ctrl_b {
+                let mut next = [0u8; 1];
+                match stdin.read_exact(&mut next) {
+                    Ok(_) => {
+                        pending_ctrl_b = false;
+                        if next[0] == b'd' {
+                            log!("client: detaching (Ctrl-b d)");
+                            let _ = input_tx.blocking_send(StdinEvent::Detach);
+                            return;
+                        }
+                        if input_tx
+                            .blocking_send(StdinEvent::Data(vec![CTRL_B, next[0]]))
+                            .is_err()
+                        {
+                            return;
+                        }
+                    }
+                    Err(_) => break,
+                }
+            }
         }
     });
 
+    let mut detached = false;
+
     // Main loop: select on stdin channel and server messages
     loop {
-        if detach_flag.load(Ordering::SeqCst) {
-            break;
-        }
-
         tokio::select! {
-            // Input from stdin ready to send
-            // Note: src_host is set by server, we send empty and server rewrites
-            Some(data) = input_rx.recv() => {
-                if transport.write_message(&Message::InputBytes {
-                    src_host: String::new(),
-                    dst_host: dst_host.clone(),
-                    agent_id: agent_id.clone(),
-                    data,
-                }).await.is_err() {
-                    break;
+            // Event from stdin
+            event = input_rx.recv() => {
+                match event {
+                    Some(StdinEvent::Data(data)) => {
+                        if transport.write_message(&Message::InputBytes {
+                            src_host: String::new(),
+                            dst_host: dst_host.clone(),
+                            agent_id: agent_id.clone(),
+                            data,
+                        }).await.is_err() {
+                            break;
+                        }
+                    }
+                    Some(StdinEvent::Detach) => {
+                        detached = true;
+                        break;
+                    }
+                    None => {
+                        // Channel closed (stdin task exited unexpectedly)
+                        break;
+                    }
                 }
             }
             // Message from server
@@ -419,8 +493,6 @@ async fn run_attached(mut transport: UnixTransport, dst_host: &str, agent_id: &s
             }
         }
     }
-
-    let detached = detach_flag.load(Ordering::SeqCst);
 
     // Drop raw mode guard before printing message
     drop(_raw_guard);
