@@ -38,6 +38,44 @@ One paragraph describing what was done.
 
 ---
 
+## 2025-01-18: Migrate from bincode to msgpack (rmp-serde)
+
+### Summary
+
+Replaced bincode with rmp-serde (MessagePack) for binary serialization over Unix/TCP transports. This provides protocol robustness (msgpack handles field additions/removals gracefully across versions), tagged enum support (bincode fails with `DeserializeAnyNotSupported` on `#[serde(tag = "...")]`), and allows type unification by merging the duplicate `ClaudeHook` types that existed only as a bincode workaround.
+
+### Changes
+
+**Modified files:**
+- `Cargo.toml` - Replaced `bincode = "1"` with `rmp-serde = "1"`
+- `src/error.rs` - Split `Serialization` error variant into `SerializationEncode` and `SerializationDecode` (rmp-serde has separate encode/decode error types)
+- `src/message.rs` - Updated `encode()`/`decode()` to use `rmp_serde::to_vec_named`/`from_slice` (named map format for forward/backward compatibility); merged `ClaudeHook` types with tagged serialization format; added `ClaudeSessionStart`, `ClaudePermissionRequest`, `ClaudePermissionTool` structs
+- `src/transport.rs` - Updated error mappings from `AmuxError::Serialization` to `AmuxError::SerializationEncode`/`SerializationDecode`
+- `src/hooks.rs` - Removed duplicate type definitions (moved to message.rs); removed `TryFrom` conversion (no longer needed); simplified to direct use of unified `ClaudeHook` type
+- `src/server.rs` - Updated `ClaudeHook` pattern matching to use tuple variants with structs; added UUID parsing for session_id String→Uuid conversion
+
+### Decisions Made
+
+1. **Named map format:** Using `to_vec_named` instead of `to_vec` serializes structs as maps with field names rather than positional arrays. This makes the protocol robust to field additions, removals, and reordering - servers with different versions can communicate as long as they share common fields.
+
+2. **Unified ClaudeHook type:** Previously had two separate `ClaudeHook` enums - one in `hooks.rs` with `#[serde(tag = "hook_event_name")]` for parsing Claude's JSON, and one in `message.rs` untagged for bincode. Msgpack supports tagged enums, so we can use a single type with Claude's tagged format.
+
+3. **Uuid session_id with serde:** Using `Uuid` type directly in `ClaudeSessionStart` and `ClaudePermissionRequest` - serde handles string↔UUID conversion automatically during serialization. Invalid UUIDs fail at deserialization time rather than requiring manual parsing in server.rs.
+
+4. **Drop unused fields:** Removed `cwd` and `source` fields from `ClaudeSessionStart` - they were never used. Serde ignores unknown fields by default, so Claude's JSON with those fields still deserializes correctly.
+
+5. **Split error variants:** rmp-serde has separate `encode::Error` and `decode::Error` types, so we split the error variant to get proper `From` impls.
+
+### Verification
+
+```
+cargo check && cargo fmt && cargo clippy  # OK
+cargo test                                 # 31 tests pass
+cargo run -p e2e-runner -- run             # 6 E2E tests pass
+```
+
+---
+
 ## 2025-01-18: Fix agent detach (Ctrl-b d)
 
 ### Summary

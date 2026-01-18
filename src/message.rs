@@ -1,4 +1,4 @@
-use crate::structured_log::{PermissionTool, StructuredLog};
+use crate::structured_log::StructuredLog;
 use serde::{Deserialize, Serialize};
 use std::path::PathBuf;
 use uuid::Uuid;
@@ -18,15 +18,40 @@ pub enum Hook {
     Claude(ClaudeHook),
 }
 
+/// Claude Code hook event - uses Claude's tagged JSON format
 #[derive(Serialize, Deserialize, Debug, Clone)]
+#[serde(tag = "hook_event_name")]
 pub enum ClaudeHook {
-    SessionStart {
-        session_id: Uuid,
-        transcript_path: String,
-    },
-    PermissionRequest {
-        session_id: Uuid,
-        tool: PermissionTool,
+    SessionStart(ClaudeSessionStart),
+    PermissionRequest(ClaudePermissionRequest),
+}
+
+/// SessionStart hook data from Claude Code
+#[derive(Debug, Clone, Deserialize, Serialize)]
+pub struct ClaudeSessionStart {
+    pub session_id: Uuid,
+    pub transcript_path: String,
+}
+
+/// PermissionRequest hook data from Claude Code
+#[derive(Debug, Clone, Deserialize, Serialize)]
+pub struct ClaudePermissionRequest {
+    pub session_id: Uuid,
+    #[serde(flatten)]
+    pub tool: ClaudePermissionTool,
+}
+
+/// Tool data from Claude Code permission requests.
+/// Uses adjacently-tagged format: tool_name determines variant, tool_input is content.
+#[derive(Debug, Clone, Deserialize, Serialize)]
+#[serde(tag = "tool_name", content = "tool_input")]
+pub enum ClaudePermissionTool {
+    Edit {
+        file_path: String,
+        old_string: String,
+        new_string: String,
+        #[serde(default)]
+        replace_all: bool,
     },
 }
 
@@ -188,14 +213,14 @@ pub struct AgentInfo {
 }
 
 impl Message {
-    /// Encode message to bytes using bincode
-    pub fn encode(&self) -> Result<Vec<u8>, bincode::Error> {
-        bincode::serialize(self)
+    /// Encode message to bytes using MessagePack (named/map format for compatibility)
+    pub fn encode(&self) -> Result<Vec<u8>, rmp_serde::encode::Error> {
+        rmp_serde::to_vec_named(self)
     }
 
-    /// Decode message from bytes using bincode
-    pub fn decode(data: &[u8]) -> Result<Self, bincode::Error> {
-        bincode::deserialize(data)
+    /// Decode message from bytes using MessagePack
+    pub fn decode(data: &[u8]) -> Result<Self, rmp_serde::decode::Error> {
+        rmp_serde::from_slice(data)
     }
 }
 
@@ -264,8 +289,8 @@ mod tests {
             command: "claude".to_string(),
             working_dir: PathBuf::from("/tmp"),
         };
-        let encoded = bincode::serialize(&info).unwrap();
-        let decoded: AgentInfo = bincode::deserialize(&encoded).unwrap();
+        let encoded = rmp_serde::to_vec(&info).unwrap();
+        let decoded: AgentInfo = rmp_serde::from_slice(&encoded).unwrap();
         assert_eq!(decoded.agent_id, test_uuid);
         assert_eq!(decoded.alias, Some("claude-1".to_string()));
         assert_eq!(decoded.command, "claude");
@@ -275,10 +300,10 @@ mod tests {
     #[test]
     fn test_message_roundtrip_hook_event() {
         let test_uuid = Uuid::new_v4();
-        let hook = Hook::Claude(ClaudeHook::SessionStart {
+        let hook = Hook::Claude(ClaudeHook::SessionStart(ClaudeSessionStart {
             session_id: test_uuid,
             transcript_path: "/tmp/transcript.jsonl".to_string(),
-        });
+        }));
         let msg = Message::HookEvent { hook };
         let encoded = msg.encode().unwrap();
         let decoded = Message::decode(&encoded).unwrap();
@@ -286,12 +311,9 @@ mod tests {
             panic!("Expected HookEvent");
         };
         match decoded_hook {
-            Hook::Claude(ClaudeHook::SessionStart {
-                session_id,
-                transcript_path,
-            }) => {
-                assert_eq!(session_id, test_uuid);
-                assert_eq!(transcript_path, "/tmp/transcript.jsonl");
+            Hook::Claude(ClaudeHook::SessionStart(session)) => {
+                assert_eq!(session.session_id, test_uuid);
+                assert_eq!(session.transcript_path, "/tmp/transcript.jsonl");
             }
             _ => panic!("Expected SessionStart hook"),
         }

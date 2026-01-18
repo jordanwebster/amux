@@ -821,49 +821,55 @@ async fn unix_handle_message(
 
             // Look up agent by session_id and process hook
             let result = match &hook {
-                Hook::Claude(ClaudeHook::SessionStart {
-                    session_id,
-                    transcript_path,
-                }) => {
+                Hook::Claude(ClaudeHook::SessionStart(session_start)) => {
                     let state = ctx.state.read().await;
                     // session_id is the agent_id we passed to claude --session-id
-                    if let Some(session) = state.agents.get(session_id) {
-                        log!("server: linking transcript to agent {}", session_id);
+                    if let Some(session) = state.agents.get(&session_start.session_id) {
+                        log!(
+                            "server: linking transcript to agent {}",
+                            session_start.session_id
+                        );
                         session
-                            .link_transcript(PathBuf::from(transcript_path))
+                            .link_transcript(PathBuf::from(&session_start.transcript_path))
                             .await;
                         Ok(())
                     } else {
                         log!(
                             "server: no agent with session_id {}, agents: {:?}",
-                            session_id,
+                            session_start.session_id,
                             state.agents.keys().collect::<Vec<_>>()
                         );
-                        Err(format!("No agent found with session_id: {}", session_id))
+                        Err(format!(
+                            "No agent found with session_id: {}",
+                            session_start.session_id
+                        ))
                     }
                 }
-                Hook::Claude(ClaudeHook::PermissionRequest { session_id, tool }) => {
+                Hook::Claude(ClaudeHook::PermissionRequest(perm_req)) => {
                     let state = ctx.state.read().await;
-                    if let Some(session) = state.agents.get(session_id) {
+                    if let Some(session) = state.agents.get(&perm_req.session_id) {
                         log!(
                             "server: permission request for agent {}: {:?}",
-                            session_id,
-                            tool
+                            perm_req.session_id,
+                            perm_req.tool
                         );
                         // Write permission request to log buffer for WebSocket subscribers
                         session
                             .write_log(crate::structured_log::StructuredLog::PermissionRequest {
-                                tool: tool.clone(),
+                                tool: perm_req.tool.clone().into(),
                             })
                             .await;
                         Ok(())
                     } else {
                         log!(
                             "server: no agent with session_id {}, agents: {:?}",
-                            session_id,
+                            perm_req.session_id,
                             state.agents.keys().collect::<Vec<_>>()
                         );
-                        Err(format!("No agent found with session_id: {}", session_id))
+                        Err(format!(
+                            "No agent found with session_id: {}",
+                            perm_req.session_id
+                        ))
                     }
                 }
             };

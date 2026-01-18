@@ -70,11 +70,11 @@ impl UnixTransport {
 impl Transport for UnixTransport {
     async fn read_message(&mut self) -> Result<Message> {
         let data = self.read_frame().await?;
-        Message::decode(&data).map_err(AmuxError::Serialization)
+        Message::decode(&data).map_err(AmuxError::SerializationDecode)
     }
 
     async fn write_message(&mut self, msg: &Message) -> Result<()> {
-        let data = msg.encode().map_err(AmuxError::Serialization)?;
+        let data = msg.encode().map_err(AmuxError::SerializationEncode)?;
         self.write_frame(&data).await
     }
 }
@@ -119,11 +119,11 @@ impl TcpTransport {
 impl Transport for TcpTransport {
     async fn read_message(&mut self) -> Result<Message> {
         let data = self.read_frame().await?;
-        Message::decode(&data).map_err(AmuxError::Serialization)
+        Message::decode(&data).map_err(AmuxError::SerializationDecode)
     }
 
     async fn write_message(&mut self, msg: &Message) -> Result<()> {
-        let data = msg.encode().map_err(AmuxError::Serialization)?;
+        let data = msg.encode().map_err(AmuxError::SerializationEncode)?;
         self.write_frame(&data).await
     }
 }

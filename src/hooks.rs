@@ -1,105 +1,13 @@
 use crate::config::Config;
-use crate::message;
-use crate::message::Message;
+use crate::message::{ClaudeHook, ClaudePermissionTool, Hook, Message};
 use crate::transport::{Transport, UnixTransport};
-use serde::{Deserialize, Serialize};
+use serde::Serialize;
 use std::fs::OpenOptions;
 use std::io::{self, BufRead, Write};
 use tokio::net::UnixStream;
 use uuid::Uuid;
 
 const HOOKS_LOG_FILE: &str = "claude_hooks.jsonl";
-
-/// Claude Code hook event data (for parsing JSON from stdin)
-#[derive(Debug, Clone, Deserialize, Serialize)]
-#[serde(tag = "hook_event_name")]
-pub enum ClaudeHook {
-    SessionStart(ClaudeSessionStart),
-    PermissionRequest(ClaudePermissionRequest),
-}
-
-/// SessionStart hook data from Claude Code
-#[derive(Debug, Clone, Deserialize, Serialize)]
-pub struct ClaudeSessionStart {
-    pub cwd: String,
-    pub session_id: String,
-    pub source: String,
-    pub transcript_path: String,
-}
-
-/// Tool data from Claude Code permission requests.
-/// Uses adjacently-tagged format: tool_name determines variant, tool_input is content.
-#[derive(Debug, Clone, Deserialize, Serialize)]
-#[serde(tag = "tool_name", content = "tool_input")]
-pub enum ClaudePermissionTool {
-    Edit {
-        file_path: String,
-        old_string: String,
-        new_string: String,
-        #[serde(default)]
-        replace_all: bool,
-    },
-}
-
-/// PermissionRequest hook data from Claude Code
-#[derive(Debug, Clone, Deserialize, Serialize)]
-pub struct ClaudePermissionRequest {
-    pub session_id: String,
-    #[serde(flatten)]
-    pub tool: ClaudePermissionTool,
-}
-
-/// Convert from JSON input types to wire protocol types.
-///
-/// We maintain separate enums because:
-/// - `hooks::ClaudeHook` uses `#[serde(tag = "hook_event_name")]` for parsing
-///   Claude Code's JSON input format
-/// - `message::ClaudeHook` is untagged for bincode compatibility (bincode doesn't
-///   support internally tagged enums - fails with `DeserializeAnyNotSupported`)
-impl TryFrom<ClaudeHook> for message::Hook {
-    type Error = HookConversionError;
-
-    fn try_from(hook: ClaudeHook) -> Result<Self, Self::Error> {
-        match hook {
-            ClaudeHook::SessionStart(session) => {
-                let session_id = Uuid::parse_str(&session.session_id)?;
-                Ok(message::Hook::Claude(message::ClaudeHook::SessionStart {
-                    session_id,
-                    transcript_path: session.transcript_path,
-                }))
-            }
-            ClaudeHook::PermissionRequest(req) => {
-                let session_id = Uuid::parse_str(&req.session_id)?;
-                let tool = req.tool.into();
-                Ok(message::Hook::Claude(
-                    message::ClaudeHook::PermissionRequest { session_id, tool },
-                ))
-            }
-        }
-    }
-}
-
-/// Error type for hook conversion
-#[derive(Debug)]
-pub enum HookConversionError {
-    InvalidUuid(uuid::Error),
-}
-
-impl std::fmt::Display for HookConversionError {
-    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        match self {
-            Self::InvalidUuid(e) => write!(f, "invalid UUID: {}", e),
-        }
-    }
-}
-
-impl std::error::Error for HookConversionError {}
-
-impl From<uuid::Error> for HookConversionError {
-    fn from(e: uuid::Error) -> Self {
-        Self::InvalidUuid(e)
-    }
-}
 
 impl From<ClaudePermissionTool> for crate::structured_log::PermissionTool {
     fn from(tool: ClaudePermissionTool) -> Self {
@@ -144,7 +52,7 @@ fn handle_claude_hook_inner(config: &Config, event_name: &str) -> io::Result<()>
         input.push_str(&line?);
     }
 
-    // Parse into typed struct
+    // Parse into typed struct (unified type, no conversion needed)
     let claude_hook: ClaudeHook =
         serde_json::from_str(&input).map_err(|e| io::Error::new(io::ErrorKind::InvalidData, e))?;
 
@@ -157,10 +65,8 @@ fn handle_claude_hook_inner(config: &Config, event_name: &str) -> io::Result<()>
     };
     let _ = append_to_log(&entry);
 
-    // Convert to wire protocol type (session_id must be valid UUID)
-    let hook: message::Hook = claude_hook.try_into().map_err(|e: HookConversionError| {
-        io::Error::new(io::ErrorKind::InvalidData, e.to_string())
-    })?;
+    // Wrap in Hook::Claude for wire protocol
+    let hook = Hook::Claude(claude_hook);
 
     if config.socket_path.exists() {
         let socket_path = config.socket_path.clone();
@@ -180,7 +86,7 @@ fn handle_claude_hook_inner(config: &Config, event_name: &str) -> io::Result<()>
 
 async fn send_hook_event_to_server_inner(
     socket_path: &std::path::Path,
-    hook: message::Hook,
+    hook: Hook,
 ) -> io::Result<()> {
     let stream = UnixStream::connect(socket_path)
         .await

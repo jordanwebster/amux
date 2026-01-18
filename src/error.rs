@@ -8,7 +8,10 @@ pub enum AmuxError {
     Io(#[from] std::io::Error),
 
     #[error("Serialization error: {0}")]
-    Serialization(#[from] bincode::Error),
+    SerializationEncode(#[from] rmp_serde::encode::Error),
+
+    #[error("Deserialization error: {0}")]
+    SerializationDecode(#[from] rmp_serde::decode::Error),
 
     #[error("Agent not found: {0}")]
     AgentNotFound(String),
