@@ -16,4 +16,16 @@ pub enum StructuredLog {
         timestamp: String,
         uuid: String,
     },
+    /// Permission request from agent
+    PermissionRequest { tool: PermissionTool },
+}
+
+/// The specific tool being requested permission for
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
+pub enum PermissionTool {
+    Edit {
+        file_path: String,
+        old_string: String,
+        new_string: String,
+    },
 }

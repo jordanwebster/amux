@@ -1,6 +1,6 @@
 import { useEffect, useRef, useCallback } from "react"
 import { useAppStore } from "../store/appStore"
-import type { ClientMessage, ServerMessage } from "../types/protocol"
+import type { ClientMessage, ServerMessage, PermissionResponse } from "../types/protocol"
 import {
   isConnectResponse,
   isListAgentsResult,
@@ -119,5 +119,22 @@ export function useWebSocket() {
     [send, clientHostId, serverHostId]
   )
 
-  return { subscribeToAgent, refreshAgents, sendInput }
+  // Send permission response to agent
+  const sendPermissionResponse = useCallback(
+    (agentId: string, response: PermissionResponse) => {
+      if (!serverHostId) return
+
+      send({
+        PermissionRequestResponse: {
+          src_host: clientHostId,
+          dst_host: serverHostId,
+          agent_id: agentId,
+          response,
+        },
+      })
+    },
+    [send, clientHostId, serverHostId]
+  )
+
+  return { subscribeToAgent, refreshAgents, sendInput, sendPermissionResponse }
 }

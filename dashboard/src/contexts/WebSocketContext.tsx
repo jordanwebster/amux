@@ -1,10 +1,12 @@
 import { createContext, useContext, type ReactNode } from "react"
 import { useWebSocket } from "../hooks/useWebSocket"
+import type { PermissionResponse } from "../types/protocol"
 
 interface WebSocketContextType {
   subscribeToAgent: (agentId: string) => void
   refreshAgents: () => void
   sendInput: (agentId: string, text: string) => void
+  sendPermissionResponse: (agentId: string, response: PermissionResponse) => void
 }
 
 const WebSocketContext = createContext<WebSocketContextType | null>(null)

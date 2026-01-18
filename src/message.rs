@@ -1,4 +1,4 @@
-use crate::structured_log::StructuredLog;
+use crate::structured_log::{PermissionTool, StructuredLog};
 use serde::{Deserialize, Serialize};
 use std::path::PathBuf;
 use uuid::Uuid;
@@ -24,6 +24,21 @@ pub enum ClaudeHook {
         session_id: Uuid,
         transcript_path: String,
     },
+    PermissionRequest {
+        session_id: Uuid,
+        tool: PermissionTool,
+    },
+}
+
+/// Response to a permission request (sent from dashboard to server)
+#[derive(Serialize, Deserialize, Debug, Clone, PartialEq)]
+pub enum PermissionResponse {
+    /// Press "1" - accept this edit
+    Yes,
+    /// Press "2" - accept all edits
+    YesAll,
+    /// Press "3" - deny
+    No,
 }
 
 /// Request to create a new agent
@@ -155,6 +170,15 @@ pub enum Message {
         agent_id: String,
         entry: StructuredLog,
     },
+
+    // Permission request response (from dashboard to server, routable)
+    /// Response to a permission request - sends keystroke to agent
+    PermissionRequestResponse {
+        src_host: String,
+        dst_host: String,
+        agent_id: String,
+        response: PermissionResponse,
+    },
 }
 
 /// Information about a running agent
@@ -264,11 +288,15 @@ mod tests {
         let Message::HookEvent { hook: decoded_hook } = decoded else {
             panic!("Expected HookEvent");
         };
-        let Hook::Claude(ClaudeHook::SessionStart {
-            session_id,
-            transcript_path,
-        }) = decoded_hook;
-        assert_eq!(session_id, test_uuid);
-        assert_eq!(transcript_path, "/tmp/transcript.jsonl");
+        match decoded_hook {
+            Hook::Claude(ClaudeHook::SessionStart {
+                session_id,
+                transcript_path,
+            }) => {
+                assert_eq!(session_id, test_uuid);
+                assert_eq!(transcript_path, "/tmp/transcript.jsonl");
+            }
+            _ => panic!("Expected SessionStart hook"),
+        }
     }
 }

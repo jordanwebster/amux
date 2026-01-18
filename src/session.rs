@@ -268,6 +268,12 @@ impl LocalAgentSession {
         self.log_buffer.subscribe().await
     }
 
+    /// Write a structured log entry directly (not from transcript).
+    /// Used for permission requests and other events that don't come from the transcript.
+    pub async fn write_log(&self, entry: crate::structured_log::StructuredLog) {
+        self.log_buffer.write(entry).await;
+    }
+
     /// Convert to AgentInfo for listing
     pub fn to_agent_info(&self) -> AgentInfo {
         AgentInfo {

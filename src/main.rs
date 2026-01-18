@@ -89,6 +89,8 @@ enum HooksProvider {
 enum ClaudeHookEvent {
     /// Called when a Claude Code session starts
     SessionStart,
+    /// Called when Claude Code requests permission for a tool
+    PermissionRequest,
 }
 
 #[tokio::main]
@@ -114,7 +116,11 @@ async fn main() {
         match provider {
             HooksProvider::Claude { event } => match event {
                 ClaudeHookEvent::SessionStart => {
-                    hooks::handle_claude_session_start(&config);
+                    hooks::handle_claude_hook(&config, "SessionStart");
+                    return;
+                }
+                ClaudeHookEvent::PermissionRequest => {
+                    hooks::handle_claude_hook(&config, "PermissionRequest");
                     return;
                 }
             },

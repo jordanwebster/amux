@@ -1,7 +1,7 @@
 use crate::buffer::MultiplexReader;
 use crate::config::{Config, DEFAULT_TCP_PORT, DEFAULT_WEBSOCKET_PORT};
 use crate::error::{AmuxError, Result};
-use crate::message::{ClaudeHook, CreateAgentRequest, Hook, Message};
+use crate::message::{ClaudeHook, CreateAgentRequest, Hook, Message, PermissionResponse};
 use crate::session::{LocalAgentSession, SessionEvent};
 use crate::transport::{TcpTransport, Transport, UnixTransport, WebSocketTransport};
 use std::collections::HashMap;
@@ -463,6 +463,46 @@ async fn websocket_handle_message(
             Ok(())
         }
 
+        // Permission request response from WebSocket client - send keystroke to agent
+        Message::PermissionRequestResponse {
+            dst_host,
+            agent_id,
+            response,
+            ..
+        } => {
+            if dst_host == ctx.our_host {
+                // Local agent - send keystroke
+                let state = ctx.state.read().await;
+                if let Some(session) = resolve_agent(&state.agents, &agent_id) {
+                    let keystroke = permission_response_keystroke(&response);
+                    log!(
+                        "server: sending permission response {:?} to agent {} (keystroke: {:?})",
+                        response,
+                        agent_id,
+                        keystroke
+                    );
+                    let _ = session.send_input(keystroke.to_vec()).await;
+                }
+            } else {
+                // Remote agent - forward via route
+                let route = {
+                    let state = ctx.state.read().await;
+                    state.routes.get(&dst_host).cloned()
+                };
+                if let Some(route) = route {
+                    let _ = route
+                        .send(Message::PermissionRequestResponse {
+                            src_host: ctx.client_host_id.clone(),
+                            dst_host,
+                            agent_id,
+                            response,
+                        })
+                        .await;
+                }
+            }
+            Ok(())
+        }
+
         _ => {
             transport
                 .write_message(&Message::Error {
@@ -779,7 +819,7 @@ async fn unix_handle_message(
         Message::HookEvent { hook } => {
             log!("server: HookEvent from {}: {:?}", ctx.client_host_id, hook);
 
-            // Look up agent by session_id and link transcript
+            // Look up agent by session_id and process hook
             let result = match &hook {
                 Hook::Claude(ClaudeHook::SessionStart {
                     session_id,
@@ -791,6 +831,30 @@ async fn unix_handle_message(
                         log!("server: linking transcript to agent {}", session_id);
                         session
                             .link_transcript(PathBuf::from(transcript_path))
+                            .await;
+                        Ok(())
+                    } else {
+                        log!(
+                            "server: no agent with session_id {}, agents: {:?}",
+                            session_id,
+                            state.agents.keys().collect::<Vec<_>>()
+                        );
+                        Err(format!("No agent found with session_id: {}", session_id))
+                    }
+                }
+                Hook::Claude(ClaudeHook::PermissionRequest { session_id, tool }) => {
+                    let state = ctx.state.read().await;
+                    if let Some(session) = state.agents.get(session_id) {
+                        log!(
+                            "server: permission request for agent {}: {:?}",
+                            session_id,
+                            tool
+                        );
+                        // Write permission request to log buffer for WebSocket subscribers
+                        session
+                            .write_log(crate::structured_log::StructuredLog::PermissionRequest {
+                                tool: tool.clone(),
+                            })
                             .await;
                         Ok(())
                     } else {
@@ -1389,4 +1453,17 @@ async fn tcp_handle_message(msg: Message, state: &Arc<RwLock<ServerState>>) -> R
     }
 
     Ok(())
+}
+
+/// Convert a permission response to the keystroke to send to Claude Code's TUI.
+/// Claude Code's permission UI accepts:
+/// - 1: Yes (accept this edit)
+/// - 2: Yes (accept all edits)
+/// - 3: No (deny)
+fn permission_response_keystroke(response: &PermissionResponse) -> &'static [u8] {
+    match response {
+        PermissionResponse::Yes => b"1",
+        PermissionResponse::YesAll => b"2",
+        PermissionResponse::No => b"3",
+    }
 }

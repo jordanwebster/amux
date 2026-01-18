@@ -1,10 +1,14 @@
-import { useEffect, useRef } from "react"
+import { useEffect, useRef, useCallback } from "react"
 import { useAppStore } from "../store/appStore"
+import { useWebSocketContext } from "../contexts/WebSocketContext"
 import { ScrollArea } from "./ui/scroll-area"
 import { Message } from "./Message"
+import { isPermissionRequest } from "../types/protocol"
+import type { PermissionResponse } from "../types/protocol"
 
 export function ChatWindow() {
   const { selectedAgentId, messagesByAgent } = useAppStore()
+  const { sendPermissionResponse } = useWebSocketContext()
   const bottomRef = useRef<HTMLDivElement>(null)
 
   const messages = selectedAgentId ? messagesByAgent[selectedAgentId] || [] : []
@@ -13,6 +17,16 @@ export function ChatWindow() {
   useEffect(() => {
     bottomRef.current?.scrollIntoView({ behavior: "smooth" })
   }, [messages])
+
+  // Handler for permission responses
+  const handlePermissionResponse = useCallback(
+    (response: PermissionResponse) => {
+      if (selectedAgentId) {
+        sendPermissionResponse(selectedAgentId, response)
+      }
+    },
+    [selectedAgentId, sendPermissionResponse]
+  )
 
   if (!selectedAgentId) {
     return (
@@ -30,11 +44,23 @@ export function ChatWindow() {
     )
   }
 
+  // Generate stable keys - use uuid for messages, index-based for permission requests
+  const getMessageKey = (msg: typeof messages[number], index: number) => {
+    if (isPermissionRequest(msg)) {
+      return `permission-${index}`
+    }
+    return msg.uuid
+  }
+
   return (
     <ScrollArea className="flex-1">
       <div className="max-w-3xl mx-auto p-6">
-        {messages.map((msg) => (
-          <Message key={msg.uuid} message={msg} />
+        {messages.map((msg, index) => (
+          <Message
+            key={getMessageKey(msg, index)}
+            message={msg}
+            onPermissionResponse={handlePermissionResponse}
+          />
         ))}
         <div ref={bottomRef} />
       </div>

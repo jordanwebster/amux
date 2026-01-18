@@ -38,6 +38,53 @@ One paragraph describing what was done.
 
 ---
 
+## 2025-01-18: Add permission request handling for Claude Code
+
+### Summary
+
+Implemented permission request handling allowing the dashboard to display Edit permission requests from Claude Code and send approve/deny responses back to the agent via keystroke emulation. When Claude Code wants to edit a file, the PermissionRequest hook sends the request to the server, which forwards it to WebSocket subscribers. The dashboard displays a card with a diff view and Yes/Yes(all)/No buttons. User responses are converted to keystrokes (1/2/3) and sent to the agent's PTY.
+
+### Changes
+
+**Rust (amux core):**
+- `src/structured_log.rs` - Added `PermissionRequest` variant to `StructuredLog` and `PermissionTool` enum with `Edit` variant
+- `src/message.rs` - Added `PermissionResponse` enum (Yes/YesAll/No), `ClaudeHook::PermissionRequest` variant, and `Message::PermissionRequestResponse`
+- `src/hooks.rs` - Added `ClaudePermissionTool` enum with `#[serde(tag = "tool_name", content = "tool_input")]` for direct deserialization of Claude's JSON format; `ClaudePermissionRequest` uses `#[serde(flatten)]` to pull tool fields from parent object; simple `From` conversion to wire protocol types
+- `src/main.rs` - Added `PermissionRequest` CLI subcommand under hooks
+- `src/server.rs` - Handle `PermissionRequest` hook (writes to log buffer) and `PermissionRequestResponse` message (sends keystroke to agent)
+- `src/session.rs` - Added `write_log()` method for direct log entry injection
+
+**Dashboard (React):**
+- `src/types/protocol.ts` - Added `PermissionTool`, `PermissionRequest`, `PermissionResponse` types and type guard
+- `src/components/DiffView.tsx` - New component showing old vs new text with red/green styling
+- `src/components/PermissionRequestCard.tsx` - New component with file path, diff view, and response buttons
+- `src/components/Message.tsx` - Handle `PermissionRequest` rendering
+- `src/components/ChatWindow.tsx` - Pass permission response callback to Message
+- `src/hooks/useWebSocket.ts` - Added `sendPermissionResponse()` function
+- `src/contexts/WebSocketContext.tsx` - Exposed `sendPermissionResponse` in context
+
+### Decisions Made
+
+- **Use serde's full power for Claude JSON parsing**: Claude sends `tool_name` + `tool_input` as separate fields. Instead of manual parsing with `serde_json::Value`, we use `#[serde(tag = "tool_name", content = "tool_input")]` (adjacently-tagged) with `#[serde(flatten)]` to deserialize directly into typed structs. No custom parsing code needed.
+- **Keystroke-based response**: Claude Code's TUI accepts 1/2/3 for Yes/Yes(all)/No - simple single character responses, no complex sequences needed.
+- **Permission request in log buffer**: Permission requests are written to the structured log buffer alongside messages, allowing WebSocket clients to receive them in the message stream.
+
+### Verification
+
+- `cargo check` - No errors
+- `cargo fmt` - Clean
+- `cargo clippy` - No warnings
+- `cargo test` - 31 tests pass
+- `cargo run -p e2e-runner -- run` - 6 e2e tests pass
+- `npm run build` (dashboard) - TypeScript compiles successfully
+- **Playwright MCP e2e test** - Verified full flow: send message → Claude responds → Edit permission request displays with diff → click "No" → response sent
+
+### Next Steps
+
+- Consider adding support for other permission tool types beyond Edit
+
+---
+
 ## 2025-01-17: Fix subscriber leak in MultiplexBuffer and MultiplexLogBuffer
 
 ### Summary
