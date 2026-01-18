@@ -238,13 +238,18 @@ async fn websocket_accept(stream: TcpStream, state: Arc<RwLock<ServerState>>) ->
         our_host,
     };
 
-    let result = websocket_client_loop(transport, outgoing_rx, ctx).await;
+    let result = websocket_client_loop(&mut transport, outgoing_rx, ctx).await;
+
+    // Log and send error to client before disconnecting
+    if let Err(ref e) = result {
+        log!("server: websocket client {} error: {}", client_host_id, e);
+        let _ = transport.write_message(&error_to_message(e)).await;
+    }
 
     // Clean up route on disconnect
     {
         let mut state = state.write().await;
         state.routes.remove(&local_client_id);
-        log!("server: removed route to {}", local_client_id);
     }
 
     log!("server: websocket client {} disconnected", client_host_id);
@@ -260,36 +265,29 @@ struct WebSocketClientContext {
 
 /// WebSocket client message loop
 async fn websocket_client_loop(
-    mut transport: WebSocketTransport,
+    transport: &mut WebSocketTransport,
     mut outgoing_rx: mpsc::Receiver<Message>,
     ctx: WebSocketClientContext,
 ) -> Result<()> {
     loop {
         tokio::select! {
             // Incoming message from WebSocket client
-            msg = transport.read_message() => {
-                let msg = match msg {
+            result = transport.read_message() => {
+                let msg = match result {
                     Ok(msg) => msg,
                     Err(AmuxError::Io(e)) if e.kind() == std::io::ErrorKind::UnexpectedEof => {
-                        log!("server: websocket client {} disconnected", ctx.client_host_id);
                         return Ok(());
                     }
-                    Err(e) => {
-                        log!("server: websocket {} read error: {}", ctx.client_host_id, e);
-                        return Err(e);
-                    }
+                    Err(e) => return Err(e),
                 };
 
-                if let Err(e) = websocket_handle_message(&mut transport, msg, &ctx).await {
-                    log!("server: websocket message error: {}", e);
-                }
+                websocket_handle_message(transport, msg, &ctx).await?;
             }
 
             // Outgoing message from routing (StructuredOutput, AgentEnded, etc.)
             Some(msg) = outgoing_rx.recv() => {
                 log!("server: routing message to websocket {}: {:?}", ctx.client_host_id, msg);
                 if transport.write_message(&msg).await.is_err() {
-                    log!("server: failed to send routed message to websocket {}", ctx.client_host_id);
                     break;
                 }
             }
@@ -506,7 +504,6 @@ async fn websocket_handle_message(
         _ => {
             transport
                 .write_message(&Message::Error {
-                    code: 1,
                     message: "Unsupported message for WebSocket clients".to_string(),
                 })
                 .await?;
@@ -560,16 +557,21 @@ async fn unix_accept(
     let ctx = UnixClientContext {
         state: state.clone(),
         event_tx,
-        client_host_id,
+        client_host_id: client_host_id.clone(),
         our_host,
     };
 
-    let result = unix_client_loop(transport, outgoing_rx, ctx).await;
+    let result = unix_client_loop(&mut transport, outgoing_rx, ctx).await;
+
+    // Log and send error to client before disconnecting
+    if let Err(ref e) = result {
+        log!("server: client {} error: {}", client_host_id, e);
+        let _ = transport.write_message(&error_to_message(e)).await;
+    }
 
     {
         let mut state = state.write().await;
         state.routes.remove(&local_client_id);
-        log!("server: removed route to {}", local_client_id);
     }
 
     result
@@ -750,7 +752,6 @@ async fn unix_handle_message(
             // Try to send response, but don't fail if client disconnected
             let _ = transport
                 .write_message(&Message::Error {
-                    code: 0,
                     message: "Server shutting down".to_string(),
                 })
                 .await;
@@ -891,7 +892,6 @@ async fn unix_handle_message(
         _ => {
             transport
                 .write_message(&Message::Error {
-                    code: 1,
                     message: "Unexpected message".to_string(),
                 })
                 .await?;
@@ -900,36 +900,38 @@ async fn unix_handle_message(
     }
 }
 
+/// Convert an error to an Error message for sending to client
+fn error_to_message(e: &AmuxError) -> Message {
+    Message::Error {
+        message: e.to_string(),
+    }
+}
+
 /// Unix client message loop
 async fn unix_client_loop(
-    mut transport: UnixTransport,
+    transport: &mut UnixTransport,
     mut outgoing_rx: mpsc::Receiver<Message>,
     ctx: UnixClientContext,
 ) -> Result<()> {
     loop {
         tokio::select! {
             // Incoming message from client
-            msg = transport.read_message() => {
-                let msg = match msg {
+            result = transport.read_message() => {
+                let msg = match result {
                     Ok(msg) => msg,
                     Err(AmuxError::Io(e)) if e.kind() == std::io::ErrorKind::UnexpectedEof => {
-                        log!("server: client {} disconnected", ctx.client_host_id);
                         return Ok(());
                     }
-                    Err(e) => {
-                        log!("server: client {} read error: {}", ctx.client_host_id, e);
-                        return Err(e);
-                    }
+                    Err(e) => return Err(e),
                 };
 
-                unix_handle_message(&mut transport, msg, &ctx).await?;
+                unix_handle_message(transport, msg, &ctx).await?;
             }
 
             // Outgoing message from routing (e.g., SubscribeResult, Output from local/remote)
             Some(msg) = outgoing_rx.recv() => {
                 log!("server: routing message to {}: {:?}", ctx.client_host_id, msg);
                 if transport.write_message(&msg).await.is_err() {
-                    log!("server: failed to send routed message to {}", ctx.client_host_id);
                     break;
                 }
             }
@@ -1082,14 +1084,23 @@ async fn tcp_connect(address: &str, state: &Arc<RwLock<ServerState>>) -> Result<
 
     let state = state.clone();
     tokio::spawn(async move {
-        if let Err(e) =
-            tcp_peer_loop(transport, outgoing_rx, remote_host.clone(), state.clone()).await
-        {
-            log!("server: TCP connection error: {}", e);
+        let mut transport = transport;
+        let result = tcp_peer_loop(
+            &mut transport,
+            outgoing_rx,
+            remote_host.clone(),
+            state.clone(),
+        )
+        .await;
+
+        // Log and send error to peer before disconnecting
+        if let Err(ref e) = result {
+            log!("server: tcp peer {} error: {}", remote_host, e);
+            let _ = transport.write_message(&error_to_message(e)).await;
         }
+
         let mut state = state.write().await;
         state.routes.remove(&remote_host);
-        log!("server: removed route to {}", remote_host);
     });
 
     Ok(())
@@ -1136,12 +1147,23 @@ async fn tcp_accept(stream: TcpStream, state: Arc<RwLock<ServerState>>) -> Resul
         state.routes.insert(remote_host.clone(), outgoing_tx);
     }
 
-    let result = tcp_peer_loop(transport, outgoing_rx, remote_host.clone(), state.clone()).await;
+    let result = tcp_peer_loop(
+        &mut transport,
+        outgoing_rx,
+        remote_host.clone(),
+        state.clone(),
+    )
+    .await;
+
+    // Log and send error to peer before disconnecting
+    if let Err(ref e) = result {
+        log!("server: tcp peer {} error: {}", remote_host, e);
+        let _ = transport.write_message(&error_to_message(e)).await;
+    }
 
     {
         let mut state = state.write().await;
         state.routes.remove(&remote_host);
-        log!("server: removed route to {}", remote_host);
     }
 
     result
@@ -1152,7 +1174,7 @@ async fn tcp_accept(stream: TcpStream, state: Arc<RwLock<ServerState>>) -> Resul
 /// This is called after the handshake is complete, on both the initiator
 /// and receiver sides. It routes messages between this server and the remote.
 async fn tcp_peer_loop(
-    mut transport: TcpTransport,
+    transport: &mut TcpTransport,
     mut outgoing_rx: mpsc::Receiver<Message>,
     remote_host: String,
     state: Arc<RwLock<ServerState>>,
@@ -1162,38 +1184,29 @@ async fn tcp_peer_loop(
     loop {
         tokio::select! {
             // Read message from remote
-            msg = transport.read_message() => {
-                let msg = match msg {
+            result = transport.read_message() => {
+                let msg = match result {
                     Ok(msg) => msg,
                     Err(AmuxError::Io(e)) if e.kind() == std::io::ErrorKind::UnexpectedEof => {
-                        log!("server: {} disconnected", remote_host);
-                        break;
+                        return Ok(());
                     }
-                    Err(e) => {
-                        log!("server: {} read error: {}", remote_host, e);
-                        break;
-                    }
+                    Err(e) => return Err(e),
                 };
 
                 log!("server: received from {}: {:?}", remote_host, msg);
 
-                if let Err(e) = tcp_handle_message(msg, &state).await {
-                    log!("server: error handling message from {}: {}", remote_host, e);
-                }
+                tcp_handle_message(msg, &state).await?;
             }
 
             // Outgoing message to send to remote
             Some(msg) = outgoing_rx.recv() => {
                 log!("server: sending to {}: {:?}", remote_host, msg);
                 if transport.write_message(&msg).await.is_err() {
-                    log!("server: failed to send to {}", remote_host);
-                    break;
+                    return Ok(());
                 }
             }
         }
     }
-
-    Ok(())
 }
 
 /// Handle a single message from TCP peer

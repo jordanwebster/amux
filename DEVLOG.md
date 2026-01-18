@@ -38,6 +38,42 @@ One paragraph describing what was done.
 
 ---
 
+## 2025-01-18: Server-to-client error propagation
+
+### Summary
+
+Implemented server-to-client error propagation so clients receive meaningful error messages instead of opaque EOF errors when the server encounters issues. Previously, when the server hit an error processing a client message (particularly serialization mismatches after protocol changes), it would close the connection silently. Now the server sends a `Message::Error` with a description before closing, and the client returns this as `AmuxError::ServerError` to be handled uniformly in main.
+
+### Changes
+
+**Modified files:**
+- `src/error.rs` - Added `ServerError(String)` variant to `AmuxError` for server-reported errors
+- `src/message.rs` - Simplified `Message::Error` to just contain a `message: String` (removed unused `code: u32` field)
+- `src/server.rs` - Added `error_to_message()` helper; loop functions now take `&mut transport` and return errors; accept/connect functions send error to client before cleanup
+- `src/client.rs` - Added `Message::Error` handling in `run_attached()`, `subscribe_and_stream()`, and `list_agents()` that returns `AmuxError::ServerError` (handled by main like other errors)
+
+### Decisions Made
+
+1. **Simplified Error type:** Removed the `code` field from `Message::Error` since it was unused and added no value. A string message provides sufficient context.
+
+2. **Canonical error handling:** Loop functions (`unix_client_loop`, `tcp_peer_loop`, `websocket_client_loop`) take `&mut transport` and use `?` to propagate errors without logging. The caller (accept/connect functions) logs the error and sends it to the client before cleanup. This centralizes both logging and error-to-client communication in one place per connection type.
+
+3. **Best-effort error sending:** Error messages are sent with `let _ =` to ignore failures - if the connection is already broken, there's nothing more we can do.
+
+4. **Error handling scope:** Errors are propagated for read errors and message handling errors, but not for clean disconnections (UnexpectedEof).
+
+5. **Unified client error handling:** Client functions return `AmuxError::ServerError` instead of printing errors directly, allowing main to handle all errors uniformly (print to stderr and exit with code 1).
+
+### Verification
+
+```
+cargo check && cargo fmt && cargo clippy  # OK
+cargo test                                 # 31 tests pass
+cargo run -p e2e-runner -- run             # 6 E2E tests pass
+```
+
+---
+
 ## 2025-01-18: Migrate from bincode to msgpack (rmp-serde)
 
 ### Summary

@@ -218,6 +218,9 @@ async fn subscribe_and_stream(
             );
             return Ok(());
         }
+        Message::Error { message } => {
+            return Err(AmuxError::ServerError(message));
+        }
         _ => {
             return Err(AmuxError::InvalidMessage);
         }
@@ -266,6 +269,9 @@ pub async fn list_agents(config: &Config) -> Result<()> {
                     println!("  {} - {}", display_name, agent.working_dir.display());
                 }
             }
+        }
+        Message::Error { message } => {
+            return Err(AmuxError::ServerError(message));
         }
         _ => {
             return Err(AmuxError::InvalidMessage);
@@ -449,6 +455,7 @@ async fn run_attached(mut transport: UnixTransport, dst_host: &str, agent_id: &s
     });
 
     let mut detached = false;
+    let mut error: Option<AmuxError> = None;
 
     // Main loop: select on stdin channel and server messages
     loop {
@@ -487,7 +494,16 @@ async fn run_attached(mut transport: UnixTransport, dst_host: &str, agent_id: &s
                         log!("client: agent ended");
                         break;
                     }
-                    Err(_) => break,
+                    Ok(Message::Error { message }) => {
+                        log!("client: server error: {}", message);
+                        error = Some(AmuxError::ServerError(message));
+                        break;
+                    }
+                    Err(e) => {
+                        log!("client: read error: {}", e);
+                        error = Some(e);
+                        break;
+                    }
                     _ => {} // Ignore unexpected messages
                 }
             }
@@ -496,6 +512,10 @@ async fn run_attached(mut transport: UnixTransport, dst_host: &str, agent_id: &s
 
     // Drop raw mode guard before printing message
     drop(_raw_guard);
+
+    if let Some(e) = error {
+        return Err(e);
+    }
 
     if detached {
         log!("client: detached from session");

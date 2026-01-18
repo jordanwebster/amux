@@ -151,7 +151,7 @@ pub enum Message {
     AgentEnded,
 
     /// Generic error response
-    Error { code: u32, message: String },
+    Error { message: String },
 
     // Client -> Server: remote connection management
     /// Request local server to connect to a remote amux server

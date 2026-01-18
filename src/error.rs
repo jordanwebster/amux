@@ -27,4 +27,7 @@ pub enum AmuxError {
 
     #[error("Config error: {0}")]
     Config(String),
+
+    #[error("Server error: {0}")]
+    ServerError(String),
 }
