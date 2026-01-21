@@ -1,6 +1,7 @@
 use crate::config::Config;
 use crate::error::{AmuxError, Result};
-use crate::message::{AgentType, CreateAgentRequest, Message};
+use crate::message::{AgentType, CreateAgentRequest, Message, ProtocolError};
+use crate::route::{generate_terminal_link, Route};
 use crate::transport::{Transport, UnixTransport};
 use std::io::{self, Read, Write};
 use std::os::unix::io::AsRawFd;
@@ -30,37 +31,58 @@ fn find_subsequence(haystack: &[u8], needle: &[u8]) -> Option<usize> {
         .position(|window| window == needle)
 }
 
-/// Connect to server and perform handshake, returns (transport, server_host_id)
+/// Connect to server and perform handshake, returns (transport, link_name)
 async fn connect_and_handshake(config: &Config) -> Result<(UnixTransport, String)> {
     let stream = UnixStream::connect(&config.socket_path).await?;
     let mut transport = UnixTransport::new(stream);
 
-    // Generate unique client ID and send Connect
-    let client_id = Uuid::new_v4().to_string();
-    transport
-        .write_message(&Message::Connect { host_id: client_id })
-        .await?;
+    // Retry up to 5 times on same connection in case of link name collision
+    for attempt in 0..5 {
+        // Generate terminal link name: "term-{rand}"
+        let link_name = generate_terminal_link();
+        transport
+            .write_message(&Message::Connect {
+                link_name: link_name.clone(),
+            })
+            .await?;
 
-    // Receive ConnectResponse with server's host_id
-    let response = transport.read_message().await?;
-    match response {
-        Message::ConnectResponse {
-            success: true,
-            host_id: server_host_id,
-            ..
-        } => {
-            log!("client: connected to server {}", server_host_id);
-            Ok((transport, server_host_id))
+        // Receive ConnectResponse
+        let response = transport.read_message().await?;
+        match response {
+            Message::ConnectResponse { success: true, .. } => {
+                log!("client: connected with link {}", link_name);
+                return Ok((transport, link_name));
+            }
+            Message::ConnectResponse {
+                success: false,
+                error: Some(ProtocolError::LinkNameTaken),
+            } => {
+                log!(
+                    "client: link name {} taken, retrying (attempt {})",
+                    link_name,
+                    attempt + 1
+                );
+                continue;
+            }
+            Message::ConnectResponse {
+                success: false,
+                error,
+            } => {
+                let msg = error
+                    .map(|e| e.to_string())
+                    .unwrap_or_else(|| "Connection rejected".to_string());
+                return Err(AmuxError::Config(msg));
+            }
+            Message::Error { message } => {
+                return Err(AmuxError::ServerError(message));
+            }
+            _ => return Err(AmuxError::InvalidMessage),
         }
-        Message::ConnectResponse {
-            success: false,
-            error,
-            ..
-        } => Err(AmuxError::Config(
-            error.unwrap_or_else(|| "Connection rejected".to_string()),
-        )),
-        _ => Err(AmuxError::InvalidMessage),
     }
+
+    Err(AmuxError::Config(
+        "Failed to connect after 5 attempts".to_string(),
+    ))
 }
 
 /// Get terminal size (rows, cols)
@@ -77,7 +99,7 @@ pub fn get_terminal_size() -> (u16, u16) {
 
 /// Create a new agent and attach to it
 pub async fn new_agent(alias: Option<&str>, agent_type: AgentType, config: &Config) -> Result<()> {
-    let (mut transport, server_host_id) = connect_and_handshake(config).await?;
+    let (mut transport, link_name) = connect_and_handshake(config).await?;
     let (rows, cols) = get_terminal_size();
     let working_dir = std::env::current_dir()?;
 
@@ -85,14 +107,14 @@ pub async fn new_agent(alias: Option<&str>, agent_type: AgentType, config: &Conf
     let agent_id = Uuid::new_v4();
 
     log!(
-        "client: CREATE {} (alias={:?}) type={:?} dir={:?} ({}x{}) on server {}",
+        "client: CREATE {} (alias={:?}) type={:?} dir={:?} ({}x{}) via {}",
         agent_id,
         alias,
         agent_type,
         working_dir,
         cols,
         rows,
-        server_host_id
+        link_name
     );
 
     // Send CreateAgent
@@ -117,9 +139,10 @@ pub async fn new_agent(alias: Option<&str>, agent_type: AgentType, config: &Conf
             success: false,
             error,
         } => {
-            return Err(AmuxError::Pty(
-                error.unwrap_or_else(|| "Unknown error".to_string()),
-            ));
+            let msg = error
+                .map(|e| e.to_string())
+                .unwrap_or_else(|| "Unknown error".to_string());
+            return Err(AmuxError::Pty(msg));
         }
         _ => {
             return Err(AmuxError::InvalidMessage);
@@ -130,12 +153,12 @@ pub async fn new_agent(alias: Option<&str>, agent_type: AgentType, config: &Conf
     // (server supports lookup by either)
     let agent_id_str = agent_id.to_string();
     let subscribe_id = alias.unwrap_or(&agent_id_str);
-    subscribe_and_stream(transport, subscribe_id, rows, cols, &server_host_id).await
+    subscribe_and_stream(transport, subscribe_id, rows, cols, &link_name).await
 }
 
 /// Attach to an existing agent
 pub async fn attach(agent_id: Option<&str>, config: &Config) -> Result<()> {
-    let (mut transport, server_host_id) = connect_and_handshake(config).await?;
+    let (mut transport, link_name) = connect_and_handshake(config).await?;
     let (rows, cols) = get_terminal_size();
 
     // If no agent_id specified, list agents and pick the first one
@@ -162,39 +185,25 @@ pub async fn attach(agent_id: Option<&str>, config: &Config) -> Result<()> {
 
     log!("client: ATTACH {} ({}x{})", agent_id, cols, rows);
 
-    subscribe_and_stream(transport, &agent_id, rows, cols, &server_host_id).await
-}
-
-/// Parse agent specifier which can be "agent" or "host/agent"
-fn parse_agent_specifier(specifier: &str) -> (Option<&str>, &str) {
-    if let Some(pos) = specifier.find('/') {
-        (Some(&specifier[..pos]), &specifier[pos + 1..])
-    } else {
-        (None, specifier)
-    }
+    subscribe_and_stream(transport, &agent_id, rows, cols, &link_name).await
 }
 
 /// Subscribe to an agent and stream I/O
 async fn subscribe_and_stream(
     mut transport: UnixTransport,
-    agent_specifier: &str,
+    agent_id: &str,
     rows: u16,
     cols: u16,
-    server_host_id: &str,
+    _link_name: &str,
 ) -> Result<()> {
-    // Parse agent specifier to extract optional host and agent_id
-    let (target_host, agent_id) = parse_agent_specifier(agent_specifier);
-
-    // dst_host is target (or local server if not specified)
-    // src_host will be set by the server (it knows our full hierarchical ID)
-    let src_host = String::new(); // Server will rewrite this
-    let dst_host = target_host.unwrap_or(server_host_id).to_string();
+    // For local agents, dst is empty (no routing needed)
+    // For remote agents, we'd build a route here, but that's not implemented yet
 
     // Send Subscribe
     transport
         .write_message(&Message::Subscribe {
-            src_host: src_host.clone(),
-            dst_host: dst_host.clone(),
+            src: Route::new(),
+            dst: Route::new(), // Empty = local
             agent_id: agent_id.to_string(),
             rows,
             cols,
@@ -212,10 +221,10 @@ async fn subscribe_and_stream(
             error,
             ..
         } => {
-            eprintln!(
-                "Failed to subscribe: {}",
-                error.unwrap_or_else(|| "Unknown error".to_string())
-            );
+            let msg = error
+                .map(|e| e.to_string())
+                .unwrap_or_else(|| "Unknown error".to_string());
+            eprintln!("Failed to subscribe: {}", msg);
             return Ok(());
         }
         Message::Error { message } => {
@@ -227,13 +236,12 @@ async fn subscribe_and_stream(
     }
 
     // Now enter raw mode and stream
-    // Note: src_host for Input messages is set by server, we just pass dst_host and agent_id
-    run_attached(transport, &dst_host, agent_id).await
+    run_attached(transport, agent_id).await
 }
 
 /// List all running agents
 pub async fn list_agents(config: &Config) -> Result<()> {
-    let (mut transport, _server_host_id) = match connect_and_handshake(config).await {
+    let (mut transport, _link_name) = match connect_and_handshake(config).await {
         Ok(info) => info,
         Err(AmuxError::Io(e))
             if e.kind() == io::ErrorKind::NotFound
@@ -283,7 +291,7 @@ pub async fn list_agents(config: &Config) -> Result<()> {
 
 /// Kill all agents and shut down the server
 pub async fn kill_server(config: &Config) -> Result<()> {
-    let (mut transport, _server_host_id) = match connect_and_handshake(config).await {
+    let (mut transport, _link_name) = match connect_and_handshake(config).await {
         Ok(info) => info,
         Err(AmuxError::Io(e))
             if e.kind() == io::ErrorKind::NotFound
@@ -307,7 +315,7 @@ pub async fn kill_server(config: &Config) -> Result<()> {
 
 /// Connect to a remote amux server
 pub async fn connect(address: &str, config: &Config) -> Result<()> {
-    let (mut transport, _server_host_id) = connect_and_handshake(config).await?;
+    let (mut transport, _link_name) = connect_and_handshake(config).await?;
 
     // Send ConnectToServer message to local server
     transport
@@ -326,16 +334,18 @@ pub async fn connect(address: &str, config: &Config) -> Result<()> {
         Message::ConnectToServerResult {
             success: false,
             error,
-        } => Err(AmuxError::Config(
-            error.unwrap_or_else(|| "Connection failed".to_string()),
-        )),
+        } => {
+            let msg = error
+                .map(|e| e.to_string())
+                .unwrap_or_else(|| "Connection failed".to_string());
+            Err(AmuxError::Config(msg))
+        }
         _ => Err(AmuxError::InvalidMessage),
     }
 }
 
 /// Run the attached session (streaming mode with Ctrl-b handling)
-async fn run_attached(mut transport: UnixTransport, dst_host: &str, agent_id: &str) -> Result<()> {
-    let dst_host = dst_host.to_string();
+async fn run_attached(mut transport: UnixTransport, agent_id: &str) -> Result<()> {
     let agent_id = agent_id.to_string();
     // Put terminal in raw mode
     let _raw_guard = RawModeGuard::new()?;
@@ -465,8 +475,8 @@ async fn run_attached(mut transport: UnixTransport, dst_host: &str, agent_id: &s
                 match event {
                     Some(StdinEvent::Data(data)) => {
                         if transport.write_message(&Message::InputBytes {
-                            src_host: String::new(),
-                            dst_host: dst_host.clone(),
+                            src: Route::new(),
+                            dst: Route::new(), // Empty = local
                             agent_id: agent_id.clone(),
                             data,
                         }).await.is_err() {

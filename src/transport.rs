@@ -239,13 +239,14 @@ mod tests {
 
     #[tokio::test]
     async fn test_output_message_roundtrip() {
+        use crate::route::Route;
         use uuid::Uuid;
 
         let (mut client, mut server) = create_socket_pair().await;
 
         let msg = Message::Output {
-            src_host: "host-a".to_string(),
-            dst_host: "host-b".to_string(),
+            src: Route::from_link("host-a"),
+            dst: Route::from_link("host-b"),
             agent_id: Uuid::new_v4().to_string(),
             data: b"hello world".to_vec(),
         };
@@ -262,13 +263,14 @@ mod tests {
 
     #[tokio::test]
     async fn test_input_message_roundtrip() {
+        use crate::route::Route;
         use uuid::Uuid;
 
         let (mut client, mut server) = create_socket_pair().await;
 
         let msg = Message::InputBytes {
-            src_host: "host-a".to_string(),
-            dst_host: "host-b".to_string(),
+            src: Route::from_link("host-a"),
+            dst: Route::from_link("host-b"),
             agent_id: Uuid::new_v4().to_string(),
             data: b"user input".to_vec(),
         };

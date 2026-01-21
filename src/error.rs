@@ -30,4 +30,7 @@ pub enum AmuxError {
 
     #[error("Server error: {0}")]
     ServerError(String),
+
+    #[error("Too many handshake attempts")]
+    TooManyHandshakeAttempts,
 }

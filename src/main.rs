@@ -7,6 +7,7 @@ mod error;
 mod hooks;
 mod message;
 mod multiplex_log_buffer;
+mod route;
 mod server;
 mod session;
 mod structured_log;

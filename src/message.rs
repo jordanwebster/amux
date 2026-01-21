@@ -1,3 +1,4 @@
+use crate::route::Route;
 use crate::structured_log::StructuredLog;
 use serde::{Deserialize, Serialize};
 use std::path::PathBuf;
@@ -66,6 +67,24 @@ pub enum PermissionResponse {
     No,
 }
 
+/// Protocol-level errors that can be returned in response messages
+#[derive(Serialize, Deserialize, Debug, Clone, PartialEq)]
+pub enum ProtocolError {
+    /// Generic server error with message
+    ServerError(String),
+    /// The proposed link name is already in use
+    LinkNameTaken,
+}
+
+impl std::fmt::Display for ProtocolError {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            ProtocolError::ServerError(msg) => write!(f, "{}", msg),
+            ProtocolError::LinkNameTaken => write!(f, "Link name already in use"),
+        }
+    }
+}
+
 /// Request to create a new agent
 #[derive(Serialize, Deserialize, Debug, Clone)]
 pub struct CreateAgentRequest {
@@ -90,8 +109,8 @@ pub enum Message {
     /// Subscribe to an agent's output stream (routable)
     /// agent_id can be a UUID string or an alias
     Subscribe {
-        src_host: String,
-        dst_host: String,
+        src: Route,
+        dst: Route,
         agent_id: String,
         rows: u16,
         cols: u16,
@@ -101,8 +120,8 @@ pub enum Message {
     /// agent_id can be a UUID string or an alias
     /// No automatic Enter - bytes are written directly to PTY
     InputBytes {
-        src_host: String,
-        dst_host: String,
+        src: Route,
+        dst: Route,
         agent_id: String,
         data: Vec<u8>,
     },
@@ -111,8 +130,8 @@ pub enum Message {
     /// Writes data bytes, waits briefly, then sends Enter
     /// This ensures Claude Code interprets Enter as "submit" not "newline"
     SubmitInput {
-        src_host: String,
-        dst_host: String,
+        src: Route,
+        dst: Route,
         agent_id: String,
         data: Vec<u8>,
     },
@@ -127,22 +146,22 @@ pub enum Message {
     /// Response to CreateAgent
     CreateAgentResult {
         success: bool,
-        error: Option<String>,
+        error: Option<ProtocolError>,
     },
 
     /// Response to Subscribe (routable)
     SubscribeResult {
-        src_host: String,
-        dst_host: String,
+        src: Route,
+        dst: Route,
         agent_id: String,
         success: bool,
-        error: Option<String>,
+        error: Option<ProtocolError>,
     },
 
     /// Output bytes from the agent (routable)
     Output {
-        src_host: String,
-        dst_host: String,
+        src: Route,
+        dst: Route,
         agent_id: String,
         data: Vec<u8>,
     },
@@ -160,18 +179,17 @@ pub enum Message {
     /// Response to ConnectToServer
     ConnectToServerResult {
         success: bool,
-        error: Option<String>,
+        error: Option<ProtocolError>,
     },
 
     // Handshake (unified for client-server and server-server)
-    /// Sent to initiate connection handshake
-    Connect { host_id: String },
+    /// Sent to initiate connection handshake with proposed link name
+    Connect { link_name: String },
 
     /// Response to Connect
     ConnectResponse {
         success: bool,
-        error: Option<String>,
-        host_id: String,
+        error: Option<ProtocolError>,
     },
 
     // Hook events
@@ -181,14 +199,14 @@ pub enum Message {
     /// Acknowledgement of HookEvent
     HookEventResult {
         success: bool,
-        error: Option<String>,
+        error: Option<ProtocolError>,
     },
 
     // Structured output for WebSocket clients
     /// Structured log entry from agent (for WebSocket subscribers)
     StructuredOutput {
-        src_host: String,
-        dst_host: String,
+        src: Route,
+        dst: Route,
         agent_id: String,
         entry: StructuredLog,
     },
@@ -196,8 +214,8 @@ pub enum Message {
     // Permission request response (from dashboard to server, routable)
     /// Response to a permission request - sends keystroke to agent
     PermissionRequestResponse {
-        src_host: String,
-        dst_host: String,
+        src: Route,
+        dst: Route,
         agent_id: String,
         response: PermissionResponse,
     },
@@ -264,8 +282,8 @@ mod tests {
     #[test]
     fn test_message_roundtrip_subscribe_result() {
         let msg = Message::SubscribeResult {
-            src_host: "host-a".to_string(),
-            dst_host: "host-b".to_string(),
+            src: Route::from_link("host-a"),
+            dst: Route::from_link("host-b"),
             agent_id: Uuid::new_v4().to_string(),
             success: true,
             error: None,

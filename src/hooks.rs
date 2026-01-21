@@ -1,11 +1,11 @@
 use crate::config::Config;
-use crate::message::{ClaudeHook, ClaudePermissionTool, Hook, Message};
+use crate::message::{ClaudeHook, ClaudePermissionTool, Hook, Message, ProtocolError};
+use crate::route::generate_hook_link;
 use crate::transport::{Transport, UnixTransport};
 use serde::Serialize;
 use std::fs::OpenOptions;
 use std::io::{self, BufRead, Write};
 use tokio::net::UnixStream;
-use uuid::Uuid;
 
 const HOOKS_LOG_FILE: &str = "claude_hooks.jsonl";
 
@@ -93,12 +93,10 @@ async fn send_hook_event_to_server_inner(
         .map_err(|e| io::Error::new(io::ErrorKind::ConnectionRefused, e))?;
     let mut transport = UnixTransport::new(stream);
 
-    // Send Connect handshake
-    let client_id = format!("hook-{}", Uuid::new_v4());
+    // Send Connect handshake with hook link name
+    let link_name = generate_hook_link();
     transport
-        .write_message(&Message::Connect {
-            host_id: client_id.clone(),
-        })
+        .write_message(&Message::Connect { link_name })
         .await
         .map_err(io::Error::other)?;
 
@@ -107,6 +105,16 @@ async fn send_hook_event_to_server_inner(
 
     match response {
         Message::ConnectResponse { success: true, .. } => {}
+        Message::ConnectResponse {
+            success: false,
+            error: Some(ProtocolError::LinkNameTaken),
+        } => {
+            // Unlikely but possible - just fail
+            return Err(io::Error::new(
+                io::ErrorKind::AddrInUse,
+                "Hook link name taken",
+            ));
+        }
         _ => {
             return Err(io::Error::new(
                 io::ErrorKind::ConnectionRefused,
@@ -132,9 +140,12 @@ async fn send_hook_event_to_server_inner(
         Message::HookEventResult {
             success: false,
             error,
-        } => Err(io::Error::other(
-            error.unwrap_or_else(|| "Unknown error".to_string()),
-        )),
+        } => {
+            let msg = error
+                .map(|e| e.to_string())
+                .unwrap_or_else(|| "Unknown error".to_string());
+            Err(io::Error::other(msg))
+        }
         _ => Err(io::Error::new(
             io::ErrorKind::InvalidData,
             "Unexpected response",

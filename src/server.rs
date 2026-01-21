@@ -1,7 +1,10 @@
 use crate::buffer::MultiplexReader;
 use crate::config::{Config, DEFAULT_TCP_PORT, DEFAULT_WEBSOCKET_PORT};
 use crate::error::{AmuxError, Result};
-use crate::message::{ClaudeHook, CreateAgentRequest, Hook, Message, PermissionResponse};
+use crate::message::{
+    ClaudeHook, CreateAgentRequest, Hook, Message, PermissionResponse, ProtocolError,
+};
+use crate::route::{generate_server_link, Route};
 use crate::session::{LocalAgentSession, SessionEvent};
 use crate::transport::{TcpTransport, Transport, UnixTransport, WebSocketTransport};
 use std::collections::HashMap;
@@ -12,33 +15,6 @@ use tokio::net::{TcpListener, TcpStream, UnixListener, UnixStream};
 use tokio::sync::{mpsc, RwLock};
 use tokio_tungstenite::accept_async;
 use uuid::Uuid;
-
-/// Determine how to route a message based on dst_host.
-///
-/// Route map only contains single-layer entries (no "/" in keys).
-/// When routing downstream (responding):
-/// - If dst_host starts with our_host/, strip that prefix
-/// - Then find the next hop (first segment before any "/")
-///
-/// Returns (route_key, new_dst_host)
-fn resolve_route(dst_host: &str, our_host: &str) -> (String, String) {
-    // First, strip our prefix if present
-    let our_prefix = format!("{}/", our_host);
-    let remainder = if dst_host.starts_with(&our_prefix) {
-        &dst_host[our_prefix.len()..]
-    } else {
-        dst_host
-    };
-
-    // Now find the next hop (first segment)
-    if let Some(pos) = remainder.find('/') {
-        let next_hop = &remainder[..pos];
-        (next_hop.to_string(), remainder.to_string())
-    } else {
-        // No "/" means this is the final destination
-        (remainder.to_string(), remainder.to_string())
-    }
-}
 
 /// Server state shared across connection handlers
 struct ServerState {
@@ -63,8 +39,8 @@ impl ServerState {
 struct UnixClientContext {
     state: Arc<RwLock<ServerState>>,
     event_tx: mpsc::Sender<SessionEvent>,
-    client_host_id: String,
-    our_host: String,
+    /// The link name for this client connection
+    link_name: String,
 }
 
 /// The amux server
@@ -191,6 +167,99 @@ impl Server {
     }
 }
 
+/// Accept-side handshake: client proposes link name, we validate against routes.
+/// Returns the accepted link name on success.
+async fn accept_handshake<T: Transport>(
+    transport: &mut T,
+    state: &Arc<RwLock<ServerState>>,
+) -> Result<String> {
+    for _attempt in 0..5 {
+        let msg = transport.read_message().await?;
+        let proposed_link = match msg {
+            Message::Connect { link_name } => link_name,
+            _ => return Err(AmuxError::InvalidMessage),
+        };
+
+        // Check if link name is already taken
+        {
+            let state = state.read().await;
+            if state.routes.contains_key(&proposed_link) {
+                transport
+                    .write_message(&Message::ConnectResponse {
+                        success: false,
+                        error: Some(ProtocolError::LinkNameTaken),
+                    })
+                    .await?;
+                continue;
+            }
+        }
+
+        transport
+            .write_message(&Message::ConnectResponse {
+                success: true,
+                error: None,
+            })
+            .await?;
+
+        return Ok(proposed_link);
+    }
+
+    Err(AmuxError::TooManyHandshakeAttempts)
+}
+
+/// Connect-side handshake: we propose link name, remote validates.
+/// Returns the accepted link name on success.
+async fn connect_handshake<T, F>(transport: &mut T, generate_link: F) -> Result<String>
+where
+    T: Transport,
+    F: Fn() -> String,
+{
+    for attempt in 0..5 {
+        let proposed_link = generate_link();
+
+        transport
+            .write_message(&Message::Connect {
+                link_name: proposed_link.clone(),
+            })
+            .await?;
+
+        let response = transport.read_message().await?;
+        match response {
+            Message::ConnectResponse { success: true, .. } => {
+                return Ok(proposed_link);
+            }
+            Message::ConnectResponse {
+                success: false,
+                error: Some(ProtocolError::LinkNameTaken),
+            } => {
+                log!(
+                    "link name {} taken, retrying (attempt {})",
+                    proposed_link,
+                    attempt + 1
+                );
+                continue;
+            }
+            Message::ConnectResponse {
+                success: false,
+                error,
+            } => {
+                let msg = error
+                    .map(|e| e.to_string())
+                    .unwrap_or_else(|| "Connection rejected".to_string());
+                return Err(AmuxError::Config(msg));
+            }
+            Message::Error { message } => {
+                return Err(AmuxError::ServerError(message));
+            }
+            _ => return Err(AmuxError::InvalidMessage),
+        }
+    }
+
+    Err(AmuxError::Config(
+        "Failed to connect after 5 attempts".to_string(),
+    ))
+}
+
 /// WebSocket client bootstrap - accept, upgrade, and handshake
 async fn websocket_accept(stream: TcpStream, state: Arc<RwLock<ServerState>>) -> Result<()> {
     let ws_stream = accept_async(stream)
@@ -199,68 +268,49 @@ async fn websocket_accept(stream: TcpStream, state: Arc<RwLock<ServerState>>) ->
 
     let mut transport = WebSocketTransport::new(ws_stream);
 
-    let msg = transport.read_message().await?;
-    let local_client_id = match msg {
-        Message::Connect { host_id } => host_id,
-        _ => {
-            log!("server: websocket expected Connect, got {:?}", msg);
-            return Err(AmuxError::InvalidMessage);
+    let link_name = match accept_handshake(&mut transport, &state).await {
+        Ok(name) => name,
+        Err(e) => {
+            let _ = transport.write_message(&error_to_message(&e)).await;
+            return Err(e);
         }
     };
 
-    // Construct hierarchical client ID: our_host/client_id
-    let (our_host, client_host_id) = {
-        let state = state.read().await;
-        let our_host = state.config.host_id.clone();
-        let client_host_id = format!("{}/{}", our_host, local_client_id);
-        (our_host, client_host_id)
-    };
-
-    transport
-        .write_message(&Message::ConnectResponse {
-            success: true,
-            error: None,
-            host_id: our_host.clone(),
-        })
-        .await?;
-
-    log!("server: websocket client {} connected", client_host_id);
+    log!("server: websocket client {} connected", link_name);
 
     let (outgoing_tx, outgoing_rx) = mpsc::channel::<Message>(256);
     {
         let mut state = state.write().await;
-        state.routes.insert(local_client_id.clone(), outgoing_tx);
+        state.routes.insert(link_name.clone(), outgoing_tx);
     }
 
     let ctx = WebSocketClientContext {
         state: state.clone(),
-        client_host_id: client_host_id.clone(),
-        our_host,
+        link_name: link_name.clone(),
     };
 
     let result = websocket_client_loop(&mut transport, outgoing_rx, ctx).await;
 
     // Log and send error to client before disconnecting
     if let Err(ref e) = result {
-        log!("server: websocket client {} error: {}", client_host_id, e);
+        log!("server: websocket client {} error: {}", link_name, e);
         let _ = transport.write_message(&error_to_message(e)).await;
     }
 
     // Clean up route on disconnect
     {
         let mut state = state.write().await;
-        state.routes.remove(&local_client_id);
+        state.routes.remove(&link_name);
     }
 
-    log!("server: websocket client {} disconnected", client_host_id);
+    log!("server: websocket client {} disconnected", link_name);
     result
 }
 
 /// Context for WebSocket client message handling
 struct WebSocketClientContext {
     state: Arc<RwLock<ServerState>>,
-    client_host_id: String,
-    our_host: String,
+    link_name: String,
 }
 
 /// WebSocket client message loop
@@ -286,7 +336,7 @@ async fn websocket_client_loop(
 
             // Outgoing message from routing (StructuredOutput, AgentEnded, etc.)
             Some(msg) = outgoing_rx.recv() => {
-                log!("server: routing message to websocket {}: {:?}", ctx.client_host_id, msg);
+                log!("server: routing message to websocket {}: {:?}", ctx.link_name, msg);
                 if transport.write_message(&msg).await.is_err() {
                     break;
                 }
@@ -303,11 +353,7 @@ async fn websocket_handle_message(
     msg: Message,
     ctx: &WebSocketClientContext,
 ) -> Result<()> {
-    log!(
-        "server: websocket {} received {:?}",
-        ctx.client_host_id,
-        msg
-    );
+    log!("server: websocket {} received {:?}", ctx.link_name, msg);
 
     match msg {
         Message::ListAgents => {
@@ -325,21 +371,19 @@ async fn websocket_handle_message(
             Ok(())
         }
 
-        // Subscribe for WebSocket clients uses structured logs (mirrors unix_handle_message pattern)
-        Message::Subscribe {
-            dst_host, agent_id, ..
-        } => {
-            // Rewrite src_host to client's full hierarchical ID
-            let src_host = ctx.client_host_id.clone();
-
-            if dst_host != ctx.our_host {
+        // Subscribe for WebSocket clients uses structured logs (local only)
+        Message::Subscribe { dst, agent_id, .. } => {
+            // Check if destination is local (empty route = local)
+            if !dst.is_empty() {
                 transport
                     .write_message(&Message::SubscribeResult {
-                        src_host: dst_host.clone(),
-                        dst_host: src_host,
+                        src: Route::new(),
+                        dst: Route::from_link(&ctx.link_name),
                         agent_id,
                         success: false,
-                        error: Some("Remote agents not supported via WebSocket".to_string()),
+                        error: Some(ProtocolError::ServerError(
+                            "Remote agents not supported via WebSocket".to_string(),
+                        )),
                     })
                     .await?;
                 return Ok(());
@@ -360,8 +404,8 @@ async fn websocket_handle_message(
                     // Send success response
                     transport
                         .write_message(&Message::SubscribeResult {
-                            src_host: ctx.our_host.clone(),
-                            dst_host: src_host.clone(),
+                            src: Route::new(),
+                            dst: Route::from_link(&ctx.link_name),
                             agent_id: agent_id.clone(),
                             success: true,
                             error: None,
@@ -370,29 +414,26 @@ async fn websocket_handle_message(
 
                     log!(
                         "server: websocket client {} subscribed to agent {}",
-                        ctx.client_host_id,
+                        ctx.link_name,
                         agent_id
                     );
 
-                    // Get outgoing_tx for this client (stored in routes as local_client_id)
+                    // Get outgoing_tx for this client
                     let outgoing_tx = {
                         let state = ctx.state.read().await;
-                        // local_client_id = last segment of client_host_id
-                        let local_id = ctx.client_host_id.rsplit('/').next().unwrap();
-                        state.routes.get(local_id).cloned()
+                        state.routes.get(&ctx.link_name).cloned()
                     };
 
-                    // Spawn structured log streaming task (non-blocking, like unix_handle_message)
+                    // Spawn structured log streaming task
                     if let Some(tx) = outgoing_tx {
-                        let our_host = ctx.our_host.clone();
-                        let client_host = ctx.client_host_id.clone();
+                        let link_name = ctx.link_name.clone();
                         let agent_id_clone = agent_id.clone();
                         tokio::spawn(async move {
                             while let Some(entry) = reader.read().await {
                                 if tx
                                     .send(Message::StructuredOutput {
-                                        src_host: our_host.clone(),
-                                        dst_host: client_host.clone(),
+                                        src: Route::new(),
+                                        dst: Route::from_link(&link_name),
                                         agent_id: agent_id_clone.clone(),
                                         entry,
                                     })
@@ -404,7 +445,7 @@ async fn websocket_handle_message(
                             }
                             // Agent ended - send via same channel
                             let _ = tx.send(Message::AgentEnded).await;
-                            log!("server: structured log stream to {} ended", client_host);
+                            log!("server: structured log stream to {} ended", link_name);
                         });
                     }
 
@@ -413,11 +454,13 @@ async fn websocket_handle_message(
                 None => {
                     transport
                         .write_message(&Message::SubscribeResult {
-                            src_host: ctx.our_host.clone(),
-                            dst_host: src_host,
+                            src: Route::new(),
+                            dst: Route::from_link(&ctx.link_name),
                             agent_id,
                             success: false,
-                            error: Some("Agent not found or ended".to_string()),
+                            error: Some(ProtocolError::ServerError(
+                                "Agent not found or ended".to_string(),
+                            )),
                         })
                         .await?;
                     Ok(())
@@ -427,35 +470,39 @@ async fn websocket_handle_message(
 
         // Submit input from WebSocket client - write data then Enter with delay
         Message::SubmitInput {
-            dst_host,
+            mut dst,
             agent_id,
             data,
             ..
         } => {
-            if dst_host == ctx.our_host {
-                // Local agent - send data, wait, then send Enter
-                // The delay ensures Claude Code interprets Enter as "submit" not "newline"
-                let state = ctx.state.read().await;
-                if let Some(session) = resolve_agent(&state.agents, &agent_id) {
-                    let _ = session.send_input(data).await;
-                    tokio::time::sleep(std::time::Duration::from_millis(20)).await;
-                    let _ = session.send_input(vec![b'\r']).await;
-                }
-            } else {
-                // Remote agent - forward via route (remote server will handle the delay)
-                let route = {
+            match dst.pop() {
+                None => {
+                    // Local agent - send data, wait, then send Enter
                     let state = ctx.state.read().await;
-                    state.routes.get(&dst_host).cloned()
-                };
-                if let Some(route) = route {
-                    let _ = route
-                        .send(Message::SubmitInput {
-                            src_host: ctx.client_host_id.clone(),
-                            dst_host,
-                            agent_id,
-                            data,
-                        })
-                        .await;
+                    if let Some(session) = resolve_agent(&state.agents, &agent_id) {
+                        let _ = session.send_input(data).await;
+                        tokio::time::sleep(std::time::Duration::from_millis(20)).await;
+                        let _ = session.send_input(vec![b'\r']).await;
+                    }
+                }
+                Some(next_hop) => {
+                    // Remote agent - forward via route
+                    let route = {
+                        let state = ctx.state.read().await;
+                        state.routes.get(&next_hop).cloned()
+                    };
+                    if let Some(route) = route {
+                        let mut src = Route::new();
+                        src.push(&ctx.link_name);
+                        let _ = route
+                            .send(Message::SubmitInput {
+                                src,
+                                dst,
+                                agent_id,
+                                data,
+                            })
+                            .await;
+                    }
                 }
             }
             Ok(())
@@ -463,39 +510,44 @@ async fn websocket_handle_message(
 
         // Permission request response from WebSocket client - send keystroke to agent
         Message::PermissionRequestResponse {
-            dst_host,
+            mut dst,
             agent_id,
             response,
             ..
         } => {
-            if dst_host == ctx.our_host {
-                // Local agent - send keystroke
-                let state = ctx.state.read().await;
-                if let Some(session) = resolve_agent(&state.agents, &agent_id) {
-                    let keystroke = permission_response_keystroke(&response);
-                    log!(
-                        "server: sending permission response {:?} to agent {} (keystroke: {:?})",
-                        response,
-                        agent_id,
-                        keystroke
-                    );
-                    let _ = session.send_input(keystroke.to_vec()).await;
-                }
-            } else {
-                // Remote agent - forward via route
-                let route = {
+            match dst.pop() {
+                None => {
+                    // Local agent - send keystroke
                     let state = ctx.state.read().await;
-                    state.routes.get(&dst_host).cloned()
-                };
-                if let Some(route) = route {
-                    let _ = route
-                        .send(Message::PermissionRequestResponse {
-                            src_host: ctx.client_host_id.clone(),
-                            dst_host,
-                            agent_id,
+                    if let Some(session) = resolve_agent(&state.agents, &agent_id) {
+                        let keystroke = permission_response_keystroke(&response);
+                        log!(
+                            "server: sending permission response {:?} to agent {} (keystroke: {:?})",
                             response,
-                        })
-                        .await;
+                            agent_id,
+                            keystroke
+                        );
+                        let _ = session.send_input(keystroke.to_vec()).await;
+                    }
+                }
+                Some(next_hop) => {
+                    // Remote agent - forward via route
+                    let route = {
+                        let state = ctx.state.read().await;
+                        state.routes.get(&next_hop).cloned()
+                    };
+                    if let Some(route) = route {
+                        let mut src = Route::new();
+                        src.push(&ctx.link_name);
+                        let _ = route
+                            .send(Message::PermissionRequestResponse {
+                                src,
+                                dst,
+                                agent_id,
+                                response,
+                            })
+                            .await;
+                    }
                 }
             }
             Ok(())
@@ -520,58 +572,39 @@ async fn unix_accept(
 ) -> Result<()> {
     let mut transport = UnixTransport::new(stream);
 
-    let msg = transport.read_message().await?;
-    let local_client_id = match msg {
-        Message::Connect { host_id } => host_id,
-        _ => {
-            log!("server: expected Connect, got {:?}", msg);
-            return Err(AmuxError::InvalidMessage);
+    let link_name = match accept_handshake(&mut transport, &state).await {
+        Ok(name) => name,
+        Err(e) => {
+            let _ = transport.write_message(&error_to_message(&e)).await;
+            return Err(e);
         }
     };
 
-    // Construct hierarchical client ID: our_host/client_id
-    let (our_host, client_host_id) = {
-        let state = state.read().await;
-        let our_host = state.config.host_id.clone();
-        let client_host_id = format!("{}/{}", our_host, local_client_id);
-        (our_host, client_host_id)
-    };
+    log!("server: client {} connected", link_name);
 
-    transport
-        .write_message(&Message::ConnectResponse {
-            success: true,
-            error: None,
-            host_id: our_host.clone(),
-        })
-        .await?;
-
-    log!("server: client {} connected", client_host_id);
-
-    // Routes table uses single-layer keys only (no "/" in keys)
     let (outgoing_tx, outgoing_rx) = mpsc::channel::<Message>(256);
     {
         let mut state = state.write().await;
-        state.routes.insert(local_client_id.clone(), outgoing_tx);
+        state.routes.insert(link_name.clone(), outgoing_tx);
     }
 
     let ctx = UnixClientContext {
         state: state.clone(),
         event_tx,
-        client_host_id: client_host_id.clone(),
-        our_host,
+        link_name: link_name.clone(),
     };
 
     let result = unix_client_loop(&mut transport, outgoing_rx, ctx).await;
 
     // Log and send error to client before disconnecting
     if let Err(ref e) = result {
-        log!("server: client {} error: {}", client_host_id, e);
+        log!("server: client {} error: {}", link_name, e);
         let _ = transport.write_message(&error_to_message(e)).await;
     }
 
     {
         let mut state = state.write().await;
-        state.routes.remove(&local_client_id);
+        state.routes.remove(&link_name);
     }
 
     result
@@ -583,7 +616,7 @@ async fn unix_handle_message(
     msg: Message,
     ctx: &UnixClientContext,
 ) -> Result<()> {
-    log!("server: client {} received {:?}", ctx.client_host_id, msg);
+    log!("server: client {} received {:?}", ctx.link_name, msg);
 
     match msg {
         Message::ListAgents => {
@@ -611,7 +644,7 @@ async fn unix_handle_message(
                 },
                 Err(e) => Message::CreateAgentResult {
                     success: false,
-                    error: Some(e.to_string()),
+                    error: Some(ProtocolError::ServerError(e.to_string())),
                 },
             };
             transport.write_message(&response).await?;
@@ -619,33 +652,32 @@ async fn unix_handle_message(
         }
 
         Message::Subscribe {
-            src_host: _,
-            dst_host,
+            mut src,
+            mut dst,
             agent_id,
             rows,
             cols,
         } => {
-            // Rewrite src_host to client's full hierarchical ID
-            let src_host = ctx.client_host_id.clone();
-
             // Check if this subscribe is for a local agent or needs routing
-            if dst_host != ctx.our_host {
-                // Forward to remote host with client's host_id as src
+            if let Some(next_hop) = dst.pop() {
+                // Forward to next hop
                 log!(
-                    "server: forwarding Subscribe from {} to {}",
-                    src_host,
-                    dst_host
+                    "server: forwarding Subscribe to {} via {}",
+                    agent_id,
+                    next_hop
                 );
                 let route = {
                     let state = ctx.state.read().await;
-                    state.routes.get(&dst_host).cloned()
+                    state.routes.get(&next_hop).cloned()
                 };
 
                 if let Some(route) = route {
+                    // Push our link to src before forwarding
+                    src.push(&ctx.link_name);
                     let _ = route
                         .send(Message::Subscribe {
-                            src_host,
-                            dst_host: dst_host.clone(),
+                            src,
+                            dst,
                             agent_id,
                             rows,
                             cols,
@@ -654,14 +686,14 @@ async fn unix_handle_message(
                     // Response will come back through tcp_peer_loop
                     // and be routed to this client via outgoing_rx
                 } else {
-                    log!("server: no route to {}", dst_host);
+                    log!("server: no route to {}", next_hop);
                     transport
                         .write_message(&Message::SubscribeResult {
-                            src_host: dst_host.clone(),
-                            dst_host: src_host,
+                            src: Route::new(),
+                            dst: Route::from_link(&ctx.link_name),
                             agent_id,
                             success: false,
-                            error: Some("No route to host".to_string()),
+                            error: Some(ProtocolError::ServerError("No route to host".to_string())),
                         })
                         .await?;
                 }
@@ -677,8 +709,8 @@ async fn unix_handle_message(
                     // Send success response
                     transport
                         .write_message(&Message::SubscribeResult {
-                            src_host: ctx.our_host.clone(),
-                            dst_host: src_host.clone(),
+                            src: Route::new(),
+                            dst: Route::from_link(&ctx.link_name),
                             agent_id: agent_id.clone(),
                             success: true,
                             error: None,
@@ -687,29 +719,26 @@ async fn unix_handle_message(
 
                     log!(
                         "server: client {} subscribed to agent {}",
-                        ctx.client_host_id,
+                        ctx.link_name,
                         agent_id
                     );
 
-                    // Get outgoing_tx for this client (stored in routes as local_client_id)
+                    // Get outgoing_tx for this client
                     let outgoing_tx = {
                         let state = ctx.state.read().await;
-                        // local_client_id = last segment of client_host_id
-                        let local_id = ctx.client_host_id.rsplit('/').next().unwrap();
-                        state.routes.get(local_id).cloned()
+                        state.routes.get(&ctx.link_name).cloned()
                     };
 
                     // Spawn output streaming task
                     if let Some(tx) = outgoing_tx {
-                        let our_host = ctx.our_host.clone();
-                        let client_host = ctx.client_host_id.clone();
+                        let link_name = ctx.link_name.clone();
                         let agent_id_clone = agent_id.clone();
                         tokio::spawn(async move {
                             while let Some(data) = buffer_reader.read().await {
                                 if tx
                                     .send(Message::Output {
-                                        src_host: our_host.clone(),
-                                        dst_host: client_host.clone(),
+                                        src: Route::new(),
+                                        dst: Route::from_link(&link_name),
                                         agent_id: agent_id_clone.clone(),
                                         data,
                                     })
@@ -721,7 +750,7 @@ async fn unix_handle_message(
                             }
                             // Agent ended - send via same channel
                             let _ = tx.send(Message::AgentEnded).await;
-                            log!("server: output stream to {} ended", client_host);
+                            log!("server: output stream to {} ended", link_name);
                         });
                     }
 
@@ -733,11 +762,11 @@ async fn unix_handle_message(
                 Err(e) => {
                     transport
                         .write_message(&Message::SubscribeResult {
-                            src_host: ctx.our_host.clone(),
-                            dst_host: src_host,
+                            src: Route::new(),
+                            dst: Route::from_link(&ctx.link_name),
                             agent_id,
                             success: false,
-                            error: Some(e.to_string()),
+                            error: Some(ProtocolError::ServerError(e.to_string())),
                         })
                         .await?;
                     Ok(())
@@ -746,7 +775,7 @@ async fn unix_handle_message(
         }
 
         Message::Shutdown => {
-            log!("server: shutdown requested by {}", ctx.client_host_id);
+            log!("server: shutdown requested by {}", ctx.link_name);
             shutdown_server(&ctx.state).await;
 
             // Try to send response, but don't fail if client disconnected
@@ -775,7 +804,7 @@ async fn unix_handle_message(
                 },
                 Err(e) => Message::ConnectToServerResult {
                     success: false,
-                    error: Some(e.to_string()),
+                    error: Some(ProtocolError::ServerError(e.to_string())),
                 },
             };
             transport.write_message(&response).await?;
@@ -784,33 +813,37 @@ async fn unix_handle_message(
 
         // Raw input bytes from client - forward to local agent or remote host
         Message::InputBytes {
-            dst_host,
+            mut src,
+            mut dst,
             agent_id,
             data,
-            ..
         } => {
-            if dst_host == ctx.our_host {
-                // Local agent - send directly (agent_id can be UUID or alias)
-                let state = ctx.state.read().await;
-                let agent_id_str = agent_id.to_string();
-                if let Some(session) = resolve_agent(&state.agents, &agent_id_str) {
-                    let _ = session.send_input(data).await;
-                }
-            } else {
-                // Remote agent - forward via route
-                let route = {
+            match dst.pop() {
+                None => {
+                    // Local agent - send directly (agent_id can be UUID or alias)
                     let state = ctx.state.read().await;
-                    state.routes.get(&dst_host).cloned()
-                };
-                if let Some(route) = route {
-                    let _ = route
-                        .send(Message::InputBytes {
-                            src_host: ctx.client_host_id.clone(),
-                            dst_host,
-                            agent_id,
-                            data,
-                        })
-                        .await;
+                    let agent_id_str = agent_id.to_string();
+                    if let Some(session) = resolve_agent(&state.agents, &agent_id_str) {
+                        let _ = session.send_input(data).await;
+                    }
+                }
+                Some(next_hop) => {
+                    // Remote agent - forward via route
+                    let route = {
+                        let state = ctx.state.read().await;
+                        state.routes.get(&next_hop).cloned()
+                    };
+                    if let Some(route) = route {
+                        src.push(&ctx.link_name);
+                        let _ = route
+                            .send(Message::InputBytes {
+                                src,
+                                dst,
+                                agent_id,
+                                data,
+                            })
+                            .await;
+                    }
                 }
             }
             Ok(())
@@ -818,7 +851,7 @@ async fn unix_handle_message(
 
         // Hook event from CLI hook handler - link transcript by session_id
         Message::HookEvent { hook } => {
-            log!("server: HookEvent from {}: {:?}", ctx.client_host_id, hook);
+            log!("server: HookEvent from {}: {:?}", ctx.link_name, hook);
 
             // Look up agent by session_id and process hook
             let result = match &hook {
@@ -840,10 +873,10 @@ async fn unix_handle_message(
                             session_start.session_id,
                             state.agents.keys().collect::<Vec<_>>()
                         );
-                        Err(format!(
+                        Err(ProtocolError::ServerError(format!(
                             "No agent found with session_id: {}",
                             session_start.session_id
-                        ))
+                        )))
                     }
                 }
                 Hook::Claude(ClaudeHook::PermissionRequest(perm_req)) => {
@@ -867,10 +900,10 @@ async fn unix_handle_message(
                             perm_req.session_id,
                             state.agents.keys().collect::<Vec<_>>()
                         );
-                        Err(format!(
+                        Err(ProtocolError::ServerError(format!(
                             "No agent found with session_id: {}",
                             perm_req.session_id
-                        ))
+                        )))
                     }
                 }
             };
@@ -930,7 +963,7 @@ async fn unix_client_loop(
 
             // Outgoing message from routing (e.g., SubscribeResult, Output from local/remote)
             Some(msg) = outgoing_rx.recv() => {
-                log!("server: routing message to {}: {:?}", ctx.client_host_id, msg);
+                log!("server: routing message to {}: {:?}", ctx.link_name, msg);
                 if transport.write_message(&msg).await.is_err() {
                     break;
                 }
@@ -998,9 +1031,9 @@ async fn handle_subscribe(
     rows: u16,
     cols: u16,
 ) -> Result<(MultiplexReader, mpsc::Sender<Vec<u8>>)> {
-    let state_guard = state.read().await;
+    let state = state.read().await;
 
-    let session = resolve_agent(&state_guard.agents, identifier)
+    let session = resolve_agent(&state.agents, identifier)
         .ok_or_else(|| AmuxError::AgentNotFound(identifier.to_string()))?
         .clone();
 
@@ -1037,70 +1070,45 @@ async fn tcp_connect(address: &str, state: &Arc<RwLock<ServerState>>) -> Result<
     log!("server: connected to remote server at {}", addr);
 
     let mut transport = TcpTransport::new(stream);
-    let our_host = {
+
+    let hostname = {
         let state = state.read().await;
-        state.config.host_id.clone()
+        state.config.get_host_name()
     };
 
-    transport
-        .write_message(&Message::Connect {
-            host_id: our_host.clone(),
-        })
-        .await?;
-
-    let response = transport.read_message().await?;
-    let remote_host = match response {
-        Message::ConnectResponse {
-            success: true,
-            host_id,
-            ..
-        } => host_id,
-        Message::ConnectResponse {
-            success: false,
-            error,
-            ..
-        } => {
-            log!("server: remote rejected connection: {:?}", error);
-            return Err(AmuxError::Config(
-                error.unwrap_or_else(|| "Connection rejected".to_string()),
-            ));
-        }
-        _ => {
-            log!("server: unexpected message during handshake, closing");
-            return Err(AmuxError::InvalidMessage);
-        }
-    };
+    let link_name = connect_handshake(&mut transport, || generate_server_link(&hostname)).await?;
 
     log!(
-        "server: handshake complete with remote server (host: {})",
-        remote_host
+        "server: handshake complete with remote server (link: {})",
+        link_name
     );
 
     let (outgoing_tx, outgoing_rx) = mpsc::channel::<Message>(256);
     {
         let mut state = state.write().await;
-        state.routes.insert(remote_host.clone(), outgoing_tx);
+        state.routes.insert(link_name.clone(), outgoing_tx);
     }
 
     let state = state.clone();
+    let link_name_clone = link_name.clone();
     tokio::spawn(async move {
         let mut transport = transport;
         let result = tcp_peer_loop(
             &mut transport,
             outgoing_rx,
-            remote_host.clone(),
+            link_name_clone.clone(),
             state.clone(),
         )
         .await;
 
         // Log and send error to peer before disconnecting
         if let Err(ref e) = result {
-            log!("server: tcp peer {} error: {}", remote_host, e);
+            log!("server: tcp peer {} error: {}", link_name_clone, e);
             let _ = transport.write_message(&error_to_message(e)).await;
         }
 
         let mut state = state.write().await;
-        state.routes.remove(&remote_host);
+        state.routes.remove(&link_name_clone);
     });
 
     Ok(())
@@ -1113,57 +1121,44 @@ async fn tcp_accept(stream: TcpStream, state: Arc<RwLock<ServerState>>) -> Resul
     log!("server: inbound TCP from {:?}", peer_addr);
 
     let mut transport = TcpTransport::new(stream);
-    let our_host = {
-        let state = state.read().await;
-        state.config.host_id.clone()
-    };
 
-    let msg = transport.read_message().await?;
-    let remote_host = match msg {
-        Message::Connect { host_id } => host_id,
-        _ => {
-            log!("server: expected Connect, got {:?}, closing", msg);
-            return Err(AmuxError::InvalidMessage);
+    let link_name = match accept_handshake(&mut transport, &state).await {
+        Ok(name) => name,
+        Err(e) => {
+            let _ = transport.write_message(&error_to_message(&e)).await;
+            return Err(e);
         }
     };
 
-    transport
-        .write_message(&Message::ConnectResponse {
-            success: true,
-            error: None,
-            host_id: our_host,
-        })
-        .await?;
-
     log!(
-        "server: handshake complete with {:?} (host: {})",
+        "server: handshake complete with {:?} (link: {})",
         peer_addr,
-        remote_host
+        link_name
     );
 
     let (outgoing_tx, outgoing_rx) = mpsc::channel::<Message>(256);
     {
         let mut state = state.write().await;
-        state.routes.insert(remote_host.clone(), outgoing_tx);
+        state.routes.insert(link_name.clone(), outgoing_tx);
     }
 
     let result = tcp_peer_loop(
         &mut transport,
         outgoing_rx,
-        remote_host.clone(),
+        link_name.clone(),
         state.clone(),
     )
     .await;
 
     // Log and send error to peer before disconnecting
     if let Err(ref e) = result {
-        log!("server: tcp peer {} error: {}", remote_host, e);
+        log!("server: tcp peer {} error: {}", link_name, e);
         let _ = transport.write_message(&error_to_message(e)).await;
     }
 
     {
         let mut state = state.write().await;
-        state.routes.remove(&remote_host);
+        state.routes.remove(&link_name);
     }
 
     result
@@ -1176,10 +1171,10 @@ async fn tcp_accept(stream: TcpStream, state: Arc<RwLock<ServerState>>) -> Resul
 async fn tcp_peer_loop(
     transport: &mut TcpTransport,
     mut outgoing_rx: mpsc::Receiver<Message>,
-    remote_host: String,
+    link_name: String,
     state: Arc<RwLock<ServerState>>,
 ) -> Result<()> {
-    log!("server: handling TCP connection with {}", remote_host);
+    log!("server: handling TCP connection with {}", link_name);
 
     loop {
         tokio::select! {
@@ -1193,14 +1188,14 @@ async fn tcp_peer_loop(
                     Err(e) => return Err(e),
                 };
 
-                log!("server: received from {}: {:?}", remote_host, msg);
+                log!("server: received from {}: {:?}", link_name, msg);
 
-                tcp_handle_message(msg, &state).await?;
+                tcp_handle_message(msg, &link_name, &state).await?;
             }
 
             // Outgoing message to send to remote
             Some(msg) = outgoing_rx.recv() => {
-                log!("server: sending to {}: {:?}", remote_host, msg);
+                log!("server: sending to {}: {:?}", link_name, msg);
                 if transport.write_message(&msg).await.is_err() {
                     return Ok(());
                 }
@@ -1210,259 +1205,261 @@ async fn tcp_peer_loop(
 }
 
 /// Handle a single message from TCP peer
-async fn tcp_handle_message(msg: Message, state: &Arc<RwLock<ServerState>>) -> Result<()> {
+async fn tcp_handle_message(
+    msg: Message,
+    incoming_link: &str,
+    state: &Arc<RwLock<ServerState>>,
+) -> Result<()> {
     match msg {
         Message::Subscribe {
-            src_host,
-            dst_host,
+            mut src,
+            mut dst,
             agent_id,
             rows,
             cols,
         } => {
-            let our_host = {
-                let state = state.read().await;
-                state.config.host_id.clone()
-            };
+            match dst.pop() {
+                None => {
+                    // Subscribe to local agent
+                    let agent_id_str = agent_id.to_string();
+                    let result = handle_subscribe(state, &agent_id_str, rows, cols).await;
 
-            if dst_host == our_host {
-                // Subscribe to local agent
-                let agent_id_str = agent_id.to_string();
-                let result = handle_subscribe(state, &agent_id_str, rows, cols).await;
-
-                match result {
-                    Ok((mut buffer_reader, input_tx)) => {
-                        // Send success response back via the route to src_host
-                        // Use resolve_route to extract the next hop
-                        let (route_to, _) = resolve_route(&src_host, &our_host);
-                        let route = {
-                            let state = state.read().await;
-                            state.routes.get(&route_to).cloned()
-                        };
-                        if let Some(route) = route {
-                            let _ = route
-                                .send(Message::SubscribeResult {
-                                    src_host: our_host.clone(),
-                                    dst_host: src_host.clone(),
-                                    agent_id: agent_id.clone(),
-                                    success: true,
-                                    error: None,
-                                })
-                                .await;
-                        }
-
-                        // Spawn task to stream output to the subscriber
-                        let state_clone = state.clone();
-                        let src_host_clone = src_host.clone();
-                        let agent_id_clone = agent_id.clone();
-                        let our_host_clone = our_host.clone();
-                        tokio::spawn(async move {
-                            while let Some(data) = buffer_reader.read().await {
-                                // Use resolve_route to extract the next hop
-                                let (route_to, _) = resolve_route(&src_host_clone, &our_host_clone);
+                    match result {
+                        Ok((mut buffer_reader, input_tx)) => {
+                            // Send success response back via src route
+                            // Pop next hop from src for routing reply
+                            if let Some(next_hop) = src.pop() {
                                 let route = {
-                                    let state = state_clone.read().await;
-                                    state.routes.get(&route_to).cloned()
+                                    let state = state.read().await;
+                                    state.routes.get(&next_hop).cloned()
                                 };
                                 if let Some(route) = route {
-                                    if route
-                                        .send(Message::Output {
-                                            src_host: our_host_clone.clone(),
-                                            dst_host: src_host_clone.clone(),
-                                            agent_id: agent_id_clone.clone(),
-                                            data,
+                                    let reply_dst = src.clone();
+                                    // Push incoming link to become new src for reply
+                                    let mut reply_src = Route::new();
+                                    reply_src.push(incoming_link);
+
+                                    let _ = route
+                                        .send(Message::SubscribeResult {
+                                            src: reply_src,
+                                            dst: reply_dst.clone(),
+                                            agent_id: agent_id.clone(),
+                                            success: true,
+                                            error: None,
                                         })
-                                        .await
-                                        .is_err()
-                                    {
-                                        break;
-                                    }
-                                } else {
-                                    break;
+                                        .await;
+
+                                    // Spawn task to stream output to the subscriber
+                                    let state_clone = state.clone();
+                                    let agent_id_clone = agent_id.clone();
+                                    let next_hop_clone = next_hop.clone();
+                                    let incoming_link = incoming_link.to_string();
+                                    tokio::spawn(async move {
+                                        while let Some(data) = buffer_reader.read().await {
+                                            let route = {
+                                                let state = state_clone.read().await;
+                                                state.routes.get(&next_hop_clone).cloned()
+                                            };
+                                            if let Some(route) = route {
+                                                let mut output_src = Route::new();
+                                                output_src.push(&incoming_link);
+                                                if route
+                                                    .send(Message::Output {
+                                                        src: output_src,
+                                                        dst: reply_dst.clone(),
+                                                        agent_id: agent_id_clone.clone(),
+                                                        data,
+                                                    })
+                                                    .await
+                                                    .is_err()
+                                                {
+                                                    break;
+                                                }
+                                            } else {
+                                                break;
+                                            }
+                                        }
+                                        log!("server: output stream ended");
+                                    });
                                 }
                             }
-                            log!("server: output stream to {} ended", src_host_clone);
-                        });
 
-                        // Store input_tx for forwarding input later
-                        // For now, we'll look up the agent directly on Input
-                        let _ = input_tx; // Will retrieve via agent on Input
-                    }
-                    Err(e) => {
-                        // Use resolve_route to extract the next hop
-                        let (route_to, _) = resolve_route(&src_host, &our_host);
-                        let route = {
-                            let state = state.read().await;
-                            state.routes.get(&route_to).cloned()
-                        };
-                        if let Some(route) = route {
-                            let _ = route
-                                .send(Message::SubscribeResult {
-                                    src_host: our_host,
-                                    dst_host: src_host,
-                                    agent_id,
-                                    success: false,
-                                    error: Some(e.to_string()),
-                                })
-                                .await;
+                            // Drop input_tx - we look up the agent directly on Input
+                            let _ = input_tx;
+                        }
+                        Err(e) => {
+                            // Send error response back via src route
+                            if let Some(next_hop) = src.pop() {
+                                let route = {
+                                    let state = state.read().await;
+                                    state.routes.get(&next_hop).cloned()
+                                };
+                                if let Some(route) = route {
+                                    let mut reply_src = Route::new();
+                                    reply_src.push(incoming_link);
+                                    let _ = route
+                                        .send(Message::SubscribeResult {
+                                            src: reply_src,
+                                            dst: src,
+                                            agent_id,
+                                            success: false,
+                                            error: Some(ProtocolError::ServerError(e.to_string())),
+                                        })
+                                        .await;
+                                }
+                            }
                         }
                     }
                 }
-            } else {
-                // Forward to the destination host, prefixing src_host with our host_id
-                let prefixed_src = format!("{}/{}", our_host, src_host);
-                let route = {
-                    let state = state.read().await;
-                    state.routes.get(&dst_host).cloned()
-                };
-                if let Some(route) = route {
-                    let _ = route
-                        .send(Message::Subscribe {
-                            src_host: prefixed_src,
-                            dst_host,
-                            agent_id,
-                            rows,
-                            cols,
-                        })
-                        .await;
+                Some(next_hop) => {
+                    // Forward to next hop
+                    let route = {
+                        let state = state.read().await;
+                        state.routes.get(&next_hop).cloned()
+                    };
+                    if let Some(route) = route {
+                        // Push incoming link to src before forwarding
+                        src.push(incoming_link);
+                        let _ = route
+                            .send(Message::Subscribe {
+                                src,
+                                dst,
+                                agent_id,
+                                rows,
+                                cols,
+                            })
+                            .await;
+                    }
                 }
             }
         }
 
         Message::SubscribeResult {
-            src_host,
-            dst_host,
+            mut src,
+            mut dst,
             agent_id,
             success,
             error,
         } => {
-            let our_host = {
-                let state = state.read().await;
-                state.config.host_id.clone()
-            };
-
-            let (route_to, new_dst) = resolve_route(&dst_host, &our_host);
-
-            let route = {
-                let state = state.read().await;
-                state.routes.get(&route_to).cloned()
-            };
-            if let Some(route) = route {
-                let _ = route
-                    .send(Message::SubscribeResult {
-                        src_host,
-                        dst_host: new_dst,
-                        agent_id,
-                        success,
-                        error,
-                    })
-                    .await;
+            // Pop next hop from dst for routing
+            if let Some(next_hop) = dst.pop() {
+                let route = {
+                    let state = state.read().await;
+                    state.routes.get(&next_hop).cloned()
+                };
+                if let Some(route) = route {
+                    // Push incoming link to src before forwarding
+                    src.push(incoming_link);
+                    let _ = route
+                        .send(Message::SubscribeResult {
+                            src,
+                            dst,
+                            agent_id,
+                            success,
+                            error,
+                        })
+                        .await;
+                }
             }
         }
 
         Message::InputBytes {
-            src_host,
-            dst_host,
+            mut src,
+            mut dst,
             agent_id,
             data,
         } => {
-            let our_host = {
-                let state = state.read().await;
-                state.config.host_id.clone()
-            };
-
-            if dst_host == our_host {
-                // Send input to local agent (agent_id can be UUID or alias)
-                let state = state.read().await;
-                let agent_id_str = agent_id.to_string();
-                if let Some(session) = resolve_agent(&state.agents, &agent_id_str) {
-                    let _ = session.send_input(data).await;
-                }
-            } else {
-                // Forward to destination, prefixing src_host with our host_id
-                let prefixed_src = format!("{}/{}", our_host, src_host);
-                let route = {
+            match dst.pop() {
+                None => {
+                    // Send input to local agent
                     let state = state.read().await;
-                    state.routes.get(&dst_host).cloned()
-                };
-                if let Some(route) = route {
-                    let _ = route
-                        .send(Message::InputBytes {
-                            src_host: prefixed_src,
-                            dst_host,
-                            agent_id,
-                            data,
-                        })
-                        .await;
+                    let agent_id_str = agent_id.to_string();
+                    if let Some(session) = resolve_agent(&state.agents, &agent_id_str) {
+                        let _ = session.send_input(data).await;
+                    }
+                }
+                Some(next_hop) => {
+                    // Forward to next hop
+                    let route = {
+                        let state = state.read().await;
+                        state.routes.get(&next_hop).cloned()
+                    };
+                    if let Some(route) = route {
+                        src.push(incoming_link);
+                        let _ = route
+                            .send(Message::InputBytes {
+                                src,
+                                dst,
+                                agent_id,
+                                data,
+                            })
+                            .await;
+                    }
                 }
             }
         }
 
         Message::SubmitInput {
-            src_host,
-            dst_host,
+            mut src,
+            mut dst,
             agent_id,
             data,
         } => {
-            let our_host = {
-                let state = state.read().await;
-                state.config.host_id.clone()
-            };
-
-            if dst_host == our_host {
-                // Send input to local agent with delay then Enter
-                let state = state.read().await;
-                let agent_id_str = agent_id.to_string();
-                if let Some(session) = resolve_agent(&state.agents, &agent_id_str) {
-                    let _ = session.send_input(data).await;
-                    tokio::time::sleep(std::time::Duration::from_millis(20)).await;
-                    let _ = session.send_input(vec![b'\r']).await;
-                }
-            } else {
-                // Forward to destination, prefixing src_host with our host_id
-                let prefixed_src = format!("{}/{}", our_host, src_host);
-                let route = {
+            match dst.pop() {
+                None => {
+                    // Send input to local agent with delay then Enter
                     let state = state.read().await;
-                    state.routes.get(&dst_host).cloned()
-                };
-                if let Some(route) = route {
-                    let _ = route
-                        .send(Message::SubmitInput {
-                            src_host: prefixed_src,
-                            dst_host,
-                            agent_id,
-                            data,
-                        })
-                        .await;
+                    let agent_id_str = agent_id.to_string();
+                    if let Some(session) = resolve_agent(&state.agents, &agent_id_str) {
+                        let _ = session.send_input(data).await;
+                        tokio::time::sleep(std::time::Duration::from_millis(20)).await;
+                        let _ = session.send_input(vec![b'\r']).await;
+                    }
+                }
+                Some(next_hop) => {
+                    // Forward to next hop
+                    let route = {
+                        let state = state.read().await;
+                        state.routes.get(&next_hop).cloned()
+                    };
+                    if let Some(route) = route {
+                        src.push(incoming_link);
+                        let _ = route
+                            .send(Message::SubmitInput {
+                                src,
+                                dst,
+                                agent_id,
+                                data,
+                            })
+                            .await;
+                    }
                 }
             }
         }
 
         Message::Output {
-            src_host,
-            dst_host,
+            mut src,
+            mut dst,
             agent_id,
             data,
         } => {
-            let our_host = {
-                let state = state.read().await;
-                state.config.host_id.clone()
-            };
-
-            let (route_to, new_dst) = resolve_route(&dst_host, &our_host);
-
-            let route = {
-                let state = state.read().await;
-                state.routes.get(&route_to).cloned()
-            };
-            if let Some(route) = route {
-                let _ = route
-                    .send(Message::Output {
-                        src_host,
-                        dst_host: new_dst,
-                        agent_id,
-                        data,
-                    })
-                    .await;
+            // Pop next hop from dst for routing
+            if let Some(next_hop) = dst.pop() {
+                let route = {
+                    let state = state.read().await;
+                    state.routes.get(&next_hop).cloned()
+                };
+                if let Some(route) = route {
+                    src.push(incoming_link);
+                    let _ = route
+                        .send(Message::Output {
+                            src,
+                            dst,
+                            agent_id,
+                            data,
+                        })
+                        .await;
+                }
             }
         }
 

@@ -38,6 +38,139 @@ One paragraph describing what was done.
 
 ---
 
+## 2025-01-21: Refactor handshake retry logic
+
+### Summary
+
+Replaced labeled blocks with `break 'handshake` statements in handshake code with separate handshake helper functions that use normal control flow and error propagation. All transport types (WebSocket, Unix, TCP) now follow the same clean structure: call handshake helper, handle error by sending Error message, proceed with connection loop.
+
+### Changes
+
+**Modified files:**
+- `src/error.rs` - Added `TooManyHandshakeAttempts` variant to `AmuxError`
+- `src/server.rs` - Added `accept_handshake<T: Transport>()` and `connect_handshake<T, F>()` helper functions; refactored `websocket_accept`, `unix_accept`, `tcp_accept` to use `accept_handshake`; refactored `tcp_connect` to use `connect_handshake`
+- `src/client.rs` - Updated `connect_and_handshake()` to handle `Message::Error` from server (for when server exhausts handshake attempts)
+
+### New Functions
+
+```rust
+/// Accept-side handshake: client proposes link name, we validate against routes.
+async fn accept_handshake<T: Transport>(
+    transport: &mut T,
+    state: &Arc<RwLock<ServerState>>,
+) -> Result<String>
+
+/// Connect-side handshake: we propose link name, remote validates.
+async fn connect_handshake<T, F>(
+    transport: &mut T,
+    generate_link: F,
+) -> Result<String>
+where
+    T: Transport,
+    F: Fn() -> String,
+```
+
+### Before/After
+
+**Before (labeled block):**
+```rust
+let link_name = 'handshake: {
+    for _attempt in 0..5 {
+        // ... handshake logic ...
+        break 'handshake proposed_link;
+    }
+    return Err(AmuxError::Config("Too many link name collisions".to_string()));
+};
+```
+
+**After (clean function call):**
+```rust
+let link_name = match accept_handshake(&mut transport, &state).await {
+    Ok(name) => name,
+    Err(e) => {
+        let _ = transport.write_message(&error_to_message(&e)).await;
+        return Err(e);
+    }
+};
+```
+
+### Error Handling Flow
+
+When server exhausts 5 handshake attempts:
+1. 5 Connects → 5 ConnectResponses (each with `error: LinkNameTaken`)
+2. `accept_handshake` returns `Err(AmuxError::TooManyHandshakeAttempts)`
+3. Accept function sends `Message::Error { message: "Too many handshake attempts" }`
+4. Connection closes
+
+This maintains 1:1 relationship between Connect and ConnectResponse.
+
+### Verification
+
+```
+cargo check && cargo fmt && cargo clippy  # OK
+cargo test                                 # 42 tests pass
+cargo run -p e2e-runner -- run             # 6 E2E tests pass
+```
+
+---
+
+## 2025-01-21: Link-based stack routing
+
+### Summary
+
+Converted amux from hierarchical host_id routing (using "/" separator) to link-based stack routing where connections have names, not endpoints. Routes are now stacks that get popped/pushed at each hop. Before sending through link X: pop X from dst, push X to src. On receive: if dst is empty, process locally; otherwise route to next hop. Replies automatically reverse by swapping src↔dst.
+
+### Changes
+
+**New files:**
+- `src/route.rs` - `Route` struct with `VecDeque<String>`, stack operations (push/pop), custom serde (dot-separated), and link generation helpers (`generate_terminal_link`, `generate_hook_link`, `generate_server_link`)
+
+**Modified files:**
+- `Cargo.toml` - Added `nanoid = "0.4"` and `gethostname = "0.5"` dependencies
+- `src/main.rs` - Added `mod route` declaration
+- `src/message.rs` - Added `ProtocolError` enum (ServerError, LinkNameTaken); updated all routable messages from `src_host: String, dst_host: String` to `src: Route, dst: Route`; changed `Connect` to use `link_name` instead of `host_id`; updated result messages to use `Option<ProtocolError>`
+- `src/config.rs` - Removed `host_id`, added `host_name: Option<String>` with `get_host_name()` method using gethostname crate
+- `src/server.rs` - Removed `resolve_route()` function; added link name collision detection in handshake; updated all message handlers to use Route stack operations
+- `src/client.rs` - Added retry logic for `LinkNameTaken` errors; updated message construction to use `Route`
+- `src/hooks.rs` - Updated handshake to use `generate_hook_link()` and handle `LinkNameTaken`
+- `src/transport.rs` - Updated tests to use `Route`
+
+### Decisions Made
+
+1. **VecDeque for stack:** `Route` uses `VecDeque<String>` with `push_front`/`pop_front` for efficient stack operations. Top of stack is the front (first element).
+
+2. **Dot-separated serialization:** Routes serialize as "AB.BC.CD" with top on left. Empty route serializes as empty string. This is compact and readable in logs.
+
+3. **Link name generation:** Uses nanoid with lowercase alphanumeric alphabet (36 chars). Terminal links are `term-{4 chars}`, hook links are `hook-{4 chars}`, server links are `{hostname}-{4 chars}`.
+
+4. **Collision detection with retry:** Clients retry up to 5 times with new random link names if they get `LinkNameTaken` error. With 36^4 = 1.6M possible suffixes, collisions are rare.
+
+5. **ProtocolError enum:** Typed errors instead of `Option<String>` for better handling. Currently has `ServerError(String)` and `LinkNameTaken`.
+
+6. **Breaking protocol change:** Old clients won't work with new servers. Link names are locally unique per server, not globally unique.
+
+### Verification
+
+```
+cargo check && cargo fmt && cargo clippy  # OK (no warnings)
+cargo test                                 # 42 tests pass
+cargo run -p e2e-runner -- run             # 6 E2E tests pass
+```
+
+### Message Flow (Stack Routing Example)
+
+```
+A creates:      dst=[AB,BC,CD]  src=[]
+A sends via AB: dst=[BC,CD]    src=[AB]      → B
+B sends via BC: dst=[CD]       src=[BC,AB]   → C
+C sends via CD: dst=[]         src=[CD,BC,AB]→ D
+D receives:     dst=[]         → process locally (src has full return path)
+```
+
+Reply: swap src↔dst, route automatically reversed.
+
+---
+
 ## 2025-01-18: Server-to-client error propagation
 
 ### Summary
