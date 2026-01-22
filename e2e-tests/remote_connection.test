@@ -5,11 +5,11 @@
 
 config:
   name: server_a
-  host_id: host-a
+  host_name: host-a
 
 config:
   name: server_b
-  host_id: host-b
+  host_name: host-b
 
 terminal:
   name: Ta
@@ -33,9 +33,10 @@ echo: hello from server A
 > amux connect 127.0.0.1:$server_a.tcp_port
 Connected to 127.0.0.1:$server_a.tcp_port
 
-# Subscribe to remote agent from server B (combined format: host-id/agent-name)
+# Subscribe to remote agent from server B (route:agent_id format)
+# Server B's link name is "host-b" (its host_name, no random suffix in tests)
 @Tb
-> amux attach -t host-a/remote-test
+> amux attach -t host-b:remote-test
 hello from server A
 echo: hello from server A
 > hello from server B

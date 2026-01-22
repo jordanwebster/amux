@@ -372,13 +372,19 @@ async fn websocket_handle_message(
         }
 
         // Subscribe for WebSocket clients uses structured logs (local only)
-        Message::Subscribe { dst, agent_id, .. } => {
+        Message::Subscribe {
+            src, dst, agent_id, ..
+        } => {
+            // Compute reply routes from incoming src
+            let (reply_src, reply_dst) =
+                Route::reply(src).expect("incoming message must have valid src");
+
             // Check if destination is local (empty route = local)
             if !dst.is_empty() {
                 transport
                     .write_message(&Message::SubscribeResult {
-                        src: Route::new(),
-                        dst: Route::from_link(&ctx.link_name),
+                        src: reply_src,
+                        dst: reply_dst,
                         agent_id,
                         success: false,
                         error: Some(ProtocolError::ServerError(
@@ -404,8 +410,8 @@ async fn websocket_handle_message(
                     // Send success response
                     transport
                         .write_message(&Message::SubscribeResult {
-                            src: Route::new(),
-                            dst: Route::from_link(&ctx.link_name),
+                            src: reply_src.clone(),
+                            dst: reply_dst.clone(),
                             agent_id: agent_id.clone(),
                             success: true,
                             error: None,
@@ -426,14 +432,13 @@ async fn websocket_handle_message(
 
                     // Spawn structured log streaming task
                     if let Some(tx) = outgoing_tx {
-                        let link_name = ctx.link_name.clone();
                         let agent_id_clone = agent_id.clone();
                         tokio::spawn(async move {
                             while let Some(entry) = reader.read().await {
                                 if tx
                                     .send(Message::StructuredOutput {
-                                        src: Route::new(),
-                                        dst: Route::from_link(&link_name),
+                                        src: reply_src.clone(),
+                                        dst: reply_dst.clone(),
                                         agent_id: agent_id_clone.clone(),
                                         entry,
                                     })
@@ -445,7 +450,7 @@ async fn websocket_handle_message(
                             }
                             // Agent ended - send via same channel
                             let _ = tx.send(Message::AgentEnded).await;
-                            log!("server: structured log stream to {} ended", link_name);
+                            log!("server: structured log stream ended");
                         });
                     }
 
@@ -454,8 +459,8 @@ async fn websocket_handle_message(
                 None => {
                     transport
                         .write_message(&Message::SubscribeResult {
-                            src: Route::new(),
-                            dst: Route::from_link(&ctx.link_name),
+                            src: reply_src,
+                            dst: reply_dst,
                             agent_id,
                             success: false,
                             error: Some(ProtocolError::ServerError(
@@ -470,10 +475,10 @@ async fn websocket_handle_message(
 
         // Submit input from WebSocket client - write data then Enter with delay
         Message::SubmitInput {
+            mut src,
             mut dst,
             agent_id,
             data,
-            ..
         } => {
             match dst.pop() {
                 None => {
@@ -492,8 +497,7 @@ async fn websocket_handle_message(
                         state.routes.get(&next_hop).cloned()
                     };
                     if let Some(route) = route {
-                        let mut src = Route::new();
-                        src.push(&ctx.link_name);
+                        src.push(&next_hop);
                         let _ = route
                             .send(Message::SubmitInput {
                                 src,
@@ -510,10 +514,10 @@ async fn websocket_handle_message(
 
         // Permission request response from WebSocket client - send keystroke to agent
         Message::PermissionRequestResponse {
+            mut src,
             mut dst,
             agent_id,
             response,
-            ..
         } => {
             match dst.pop() {
                 None => {
@@ -537,8 +541,7 @@ async fn websocket_handle_message(
                         state.routes.get(&next_hop).cloned()
                     };
                     if let Some(route) = route {
-                        let mut src = Route::new();
-                        src.push(&ctx.link_name);
+                        src.push(&next_hop);
                         let _ = route
                             .send(Message::PermissionRequestResponse {
                                 src,
@@ -652,7 +655,7 @@ async fn unix_handle_message(
         }
 
         Message::Subscribe {
-            mut src,
+            src,
             mut dst,
             agent_id,
             rows,
@@ -672,8 +675,9 @@ async fn unix_handle_message(
                 };
 
                 if let Some(route) = route {
-                    // Push our link to src before forwarding
-                    src.push(&ctx.link_name);
+                    // Push outgoing link to src before forwarding
+                    let mut src = src;
+                    src.push(&next_hop);
                     let _ = route
                         .send(Message::Subscribe {
                             src,
@@ -687,10 +691,12 @@ async fn unix_handle_message(
                     // and be routed to this client via outgoing_rx
                 } else {
                     log!("server: no route to {}", next_hop);
+                    let (reply_src, reply_dst) =
+                        Route::reply(src).expect("incoming message must have valid src");
                     transport
                         .write_message(&Message::SubscribeResult {
-                            src: Route::new(),
-                            dst: Route::from_link(&ctx.link_name),
+                            src: reply_src,
+                            dst: reply_dst,
                             agent_id,
                             success: false,
                             error: Some(ProtocolError::ServerError("No route to host".to_string())),
@@ -699,6 +705,10 @@ async fn unix_handle_message(
                 }
                 return Ok(());
             }
+
+            // Compute reply routes from incoming src for local responses
+            let (reply_src, reply_dst) =
+                Route::reply(src).expect("incoming message must have valid src");
 
             // Local subscribe - spawn output streaming task
             let agent_id_str = agent_id.to_string();
@@ -709,8 +719,8 @@ async fn unix_handle_message(
                     // Send success response
                     transport
                         .write_message(&Message::SubscribeResult {
-                            src: Route::new(),
-                            dst: Route::from_link(&ctx.link_name),
+                            src: reply_src.clone(),
+                            dst: reply_dst.clone(),
                             agent_id: agent_id.clone(),
                             success: true,
                             error: None,
@@ -731,14 +741,13 @@ async fn unix_handle_message(
 
                     // Spawn output streaming task
                     if let Some(tx) = outgoing_tx {
-                        let link_name = ctx.link_name.clone();
                         let agent_id_clone = agent_id.clone();
                         tokio::spawn(async move {
                             while let Some(data) = buffer_reader.read().await {
                                 if tx
                                     .send(Message::Output {
-                                        src: Route::new(),
-                                        dst: Route::from_link(&link_name),
+                                        src: reply_src.clone(),
+                                        dst: reply_dst.clone(),
                                         agent_id: agent_id_clone.clone(),
                                         data,
                                     })
@@ -750,7 +759,7 @@ async fn unix_handle_message(
                             }
                             // Agent ended - send via same channel
                             let _ = tx.send(Message::AgentEnded).await;
-                            log!("server: output stream to {} ended", link_name);
+                            log!("server: output stream ended");
                         });
                     }
 
@@ -762,8 +771,8 @@ async fn unix_handle_message(
                 Err(e) => {
                     transport
                         .write_message(&Message::SubscribeResult {
-                            src: Route::new(),
-                            dst: Route::from_link(&ctx.link_name),
+                            src: reply_src,
+                            dst: reply_dst,
                             agent_id,
                             success: false,
                             error: Some(ProtocolError::ServerError(e.to_string())),
@@ -834,7 +843,7 @@ async fn unix_handle_message(
                         state.routes.get(&next_hop).cloned()
                     };
                     if let Some(route) = route {
-                        src.push(&ctx.link_name);
+                        src.push(&next_hop);
                         let _ = route
                             .send(Message::InputBytes {
                                 src,
@@ -1071,12 +1080,18 @@ async fn tcp_connect(address: &str, state: &Arc<RwLock<ServerState>>) -> Result<
 
     let mut transport = TcpTransport::new(stream);
 
-    let hostname = {
+    let (hostname, randomise) = {
         let state = state.read().await;
-        state.config.get_host_name()
+        (
+            state.config.get_host_name(),
+            state.config.randomise_link_name.unwrap_or(true),
+        )
     };
 
-    let link_name = connect_handshake(&mut transport, || generate_server_link(&hostname)).await?;
+    let link_name = connect_handshake(&mut transport, || {
+        generate_server_link(&hostname, randomise)
+    })
+    .await?;
 
     log!(
         "server: handshake complete with remote server (link: {})",
@@ -1207,7 +1222,7 @@ async fn tcp_peer_loop(
 /// Handle a single message from TCP peer
 async fn tcp_handle_message(
     msg: Message,
-    incoming_link: &str,
+    _incoming_link: &str,
     state: &Arc<RwLock<ServerState>>,
 ) -> Result<()> {
     match msg {
@@ -1235,13 +1250,12 @@ async fn tcp_handle_message(
                                 };
                                 if let Some(route) = route {
                                     let reply_dst = src.clone();
-                                    // Push incoming link to become new src for reply
-                                    let mut reply_src = Route::new();
-                                    reply_src.push(incoming_link);
+                                    // Push outgoing link to become new src for reply
+                                    let reply_src = Route::from_link(&next_hop);
 
                                     let _ = route
                                         .send(Message::SubscribeResult {
-                                            src: reply_src,
+                                            src: reply_src.clone(),
                                             dst: reply_dst.clone(),
                                             agent_id: agent_id.clone(),
                                             success: true,
@@ -1253,7 +1267,6 @@ async fn tcp_handle_message(
                                     let state_clone = state.clone();
                                     let agent_id_clone = agent_id.clone();
                                     let next_hop_clone = next_hop.clone();
-                                    let incoming_link = incoming_link.to_string();
                                     tokio::spawn(async move {
                                         while let Some(data) = buffer_reader.read().await {
                                             let route = {
@@ -1261,11 +1274,9 @@ async fn tcp_handle_message(
                                                 state.routes.get(&next_hop_clone).cloned()
                                             };
                                             if let Some(route) = route {
-                                                let mut output_src = Route::new();
-                                                output_src.push(&incoming_link);
                                                 if route
                                                     .send(Message::Output {
-                                                        src: output_src,
+                                                        src: reply_src.clone(),
                                                         dst: reply_dst.clone(),
                                                         agent_id: agent_id_clone.clone(),
                                                         data,
@@ -1295,8 +1306,7 @@ async fn tcp_handle_message(
                                     state.routes.get(&next_hop).cloned()
                                 };
                                 if let Some(route) = route {
-                                    let mut reply_src = Route::new();
-                                    reply_src.push(incoming_link);
+                                    let reply_src = Route::from_link(&next_hop);
                                     let _ = route
                                         .send(Message::SubscribeResult {
                                             src: reply_src,
@@ -1318,8 +1328,8 @@ async fn tcp_handle_message(
                         state.routes.get(&next_hop).cloned()
                     };
                     if let Some(route) = route {
-                        // Push incoming link to src before forwarding
-                        src.push(incoming_link);
+                        // Push outgoing link to src before forwarding
+                        src.push(&next_hop);
                         let _ = route
                             .send(Message::Subscribe {
                                 src,
@@ -1348,8 +1358,8 @@ async fn tcp_handle_message(
                     state.routes.get(&next_hop).cloned()
                 };
                 if let Some(route) = route {
-                    // Push incoming link to src before forwarding
-                    src.push(incoming_link);
+                    // Push outgoing link to src before forwarding
+                    src.push(&next_hop);
                     let _ = route
                         .send(Message::SubscribeResult {
                             src,
@@ -1385,7 +1395,7 @@ async fn tcp_handle_message(
                         state.routes.get(&next_hop).cloned()
                     };
                     if let Some(route) = route {
-                        src.push(incoming_link);
+                        src.push(&next_hop);
                         let _ = route
                             .send(Message::InputBytes {
                                 src,
@@ -1423,7 +1433,7 @@ async fn tcp_handle_message(
                         state.routes.get(&next_hop).cloned()
                     };
                     if let Some(route) = route {
-                        src.push(incoming_link);
+                        src.push(&next_hop);
                         let _ = route
                             .send(Message::SubmitInput {
                                 src,
@@ -1450,7 +1460,7 @@ async fn tcp_handle_message(
                     state.routes.get(&next_hop).cloned()
                 };
                 if let Some(route) = route {
-                    src.push(incoming_link);
+                    src.push(&next_hop);
                     let _ = route
                         .send(Message::Output {
                             src,

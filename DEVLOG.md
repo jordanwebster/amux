@@ -38,6 +38,56 @@ One paragraph describing what was done.
 
 ---
 
+## 2025-01-22: Fix server.rs protocol compliance bugs
+
+### Summary
+
+Fixed multiple protocol compliance bugs in server.rs related to stack-based routing. The main issues were: (1) forwarding messages pushed the wrong link (incoming instead of outgoing) to src, (2) Route::new() was called but didn't exist, (3) WebSocket handlers ignored the src field when forwarding, and (4) generate_server_link was called with missing randomise argument.
+
+### Changes
+
+**Modified files:**
+- `src/server.rs` - Fixed all protocol compliance issues
+
+**Bug 1: Forwarding pushes wrong link**
+- When forwarding a message through link X (next_hop), the code was pushing the incoming link instead of X to src
+- Fixed in unix_handle_message (Subscribe, InputBytes forwarding) and tcp_handle_message (Subscribe, SubscribeResult, InputBytes, SubmitInput, Output forwarding)
+
+**Bug 2: Route::new() doesn't exist**
+- Replaced Route::new() calls with Route::reply(src) for local responses in WebSocket and Unix Subscribe handlers
+- For TCP handler local replies, used Route::from_link(&next_hop) which is what Route::reply does internally
+- Used `.expect()` rather than fallback routes since incoming messages must have valid src (protocol invariant)
+
+**Bug 3: WebSocket handlers ignore src field**
+- Changed SubmitInput and PermissionRequestResponse handlers to capture `mut src` instead of ignoring with `..`
+- Now properly push next_hop to src when forwarding
+
+**Bug 4: Missing randomise flag**
+- Fixed generate_server_link call in tcp_connect to pass the randomise config value
+
+### Protocol Rules Followed
+
+1. Before sending through link X: pop X from dst, push X to src
+2. src must never be empty: it's the return path for replies
+3. For responses: use Route::reply(incoming_src) to prepare reply routes
+4. For forwarding: manipulate the incoming src/dst, push the outgoing link
+
+### Verification
+
+```
+cargo check && cargo fmt && cargo clippy && cargo test
+# All 43 unit tests pass
+
+cargo run -p e2e-runner -- run
+# All 6 E2E tests pass
+```
+
+### Next Steps
+
+- Continue with remaining protocol implementation work
+
+---
+
 ## 2025-01-21: Refactor handshake retry logic
 
 ### Summary

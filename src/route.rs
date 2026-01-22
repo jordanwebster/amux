@@ -17,19 +17,12 @@ const LINK_ALPHABET: [char; 36] = [
 ///
 /// The top of the stack (front of deque) is the next hop.
 /// Serializes as "AB.BC.CD" where AB is the top (first hop).
-#[derive(Debug, Clone, PartialEq, Eq, Default)]
+#[derive(Debug, Clone, PartialEq, Eq)]
 pub struct Route {
     links: VecDeque<String>,
 }
 
 impl Route {
-    /// Create an empty route (local destination).
-    pub fn new() -> Self {
-        Self {
-            links: VecDeque::new(),
-        }
-    }
-
     /// Create a route with a single link.
     pub fn from_link(link: impl Into<String>) -> Self {
         let mut links = VecDeque::new();
@@ -50,6 +43,22 @@ impl Route {
     /// Check if the route is empty (destination is local).
     pub fn is_empty(&self) -> bool {
         self.links.is_empty()
+    }
+
+    /// Prepare to send a new message. Pops from dst, creates src from the popped link.
+    /// Returns (src, dst) ready to include in the message.
+    /// Returns None if dst is empty.
+    pub fn send(mut dst: Route) -> Option<(Route, Route)> {
+        let next_hop = dst.pop()?;
+        let src = Route::from_link(next_hop);
+        Some((src, dst))
+    }
+
+    /// Prepare a reply. Sends back through the path the message came from (src).
+    /// Returns (reply_src, reply_dst) ready to include in the response.
+    /// Returns None if src is empty (no return path).
+    pub fn reply(src: Route) -> Option<(Route, Route)> {
+        Route::send(src)
     }
 }
 
@@ -76,7 +85,10 @@ impl<'de> Deserialize<'de> for Route {
     {
         let s = String::deserialize(deserializer)?;
         if s.is_empty() {
-            return Ok(Route::new());
+            // Empty routes only arise from popping, but we need to accept them on the wire
+            return Ok(Route {
+                links: VecDeque::new(),
+            });
         }
         let links: VecDeque<String> = s.split('.').map(|s| s.to_string()).collect();
         Ok(Route { links })
@@ -88,9 +100,14 @@ pub fn generate_link_suffix() -> String {
     nanoid::nanoid!(4, &LINK_ALPHABET)
 }
 
-/// Generate a server link name: "{hostname}-{rand}".
-pub fn generate_server_link(host_name: &str) -> String {
-    format!("{}-{}", host_name, generate_link_suffix())
+/// Generate a server link name: "{hostname}" or "{hostname}-{rand}".
+/// If randomise is true, appends a random suffix for uniqueness.
+pub fn generate_server_link(host_name: &str, randomise: bool) -> String {
+    if randomise {
+        format!("{}-{}", host_name, generate_link_suffix())
+    } else {
+        host_name.to_string()
+    }
 }
 
 /// Generate a terminal link name: "term-{rand}".
@@ -109,10 +126,8 @@ mod tests {
 
     #[test]
     fn test_route_push_pop() {
-        let mut route = Route::new();
-        assert!(route.is_empty());
-
-        route.push("CD");
+        // Build route AB.BC.CD by starting with CD and pushing
+        let mut route = Route::from_link("CD");
         route.push("BC");
         route.push("AB");
 
@@ -120,6 +135,7 @@ mod tests {
         assert_eq!(route.pop(), Some("BC".to_string()));
         assert_eq!(route.pop(), Some("CD".to_string()));
         assert_eq!(route.pop(), None);
+        assert!(route.is_empty());
     }
 
     #[test]
@@ -131,8 +147,7 @@ mod tests {
 
     #[test]
     fn test_route_serialize() {
-        let mut route = Route::new();
-        route.push("CD");
+        let mut route = Route::from_link("CD");
         route.push("BC");
         route.push("AB");
 
@@ -141,10 +156,10 @@ mod tests {
     }
 
     #[test]
-    fn test_route_serialize_empty() {
-        let route = Route::new();
+    fn test_route_serialize_single() {
+        let route = Route::from_link("AB");
         let serialized = serde_json::to_string(&route).unwrap();
-        assert_eq!(serialized, "\"\"");
+        assert_eq!(serialized, "\"AB\"");
     }
 
     #[test]
@@ -164,8 +179,7 @@ mod tests {
 
     #[test]
     fn test_route_roundtrip() {
-        let mut original = Route::new();
-        original.push("CD");
+        let mut original = Route::from_link("CD");
         original.push("BC");
         original.push("AB");
 
@@ -185,10 +199,16 @@ mod tests {
     }
 
     #[test]
-    fn test_generate_server_link() {
-        let link = generate_server_link("myhost");
+    fn test_generate_server_link_randomised() {
+        let link = generate_server_link("myhost", true);
         assert!(link.starts_with("myhost-"));
         assert_eq!(link.len(), "myhost-".len() + 4);
+    }
+
+    #[test]
+    fn test_generate_server_link_deterministic() {
+        let link = generate_server_link("myhost", false);
+        assert_eq!(link, "myhost");
     }
 
     #[test]

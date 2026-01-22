@@ -74,6 +74,9 @@ pub enum ProtocolError {
     ServerError(String),
     /// The proposed link name is already in use
     LinkNameTaken,
+    /// No route found to reach the destination. Contains the path traversed
+    /// up to and including the hop that couldn't be resolved.
+    NoRouteFound(Route),
 }
 
 impl std::fmt::Display for ProtocolError {
@@ -81,6 +84,7 @@ impl std::fmt::Display for ProtocolError {
         match self {
             ProtocolError::ServerError(msg) => write!(f, "{}", msg),
             ProtocolError::LinkNameTaken => write!(f, "Link name already in use"),
+            ProtocolError::NoRouteFound(route) => write!(f, "No route found: {:?}", route),
         }
     }
 }

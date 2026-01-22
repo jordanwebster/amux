@@ -14,7 +14,7 @@ pub struct Directory {
 pub struct TestConfig {
     pub name: String,
     #[serde(default)]
-    pub host_id: Option<String>,
+    pub host_name: Option<String>,
     #[serde(default)]
     pub socket_path: Option<String>,
     #[serde(default)]
@@ -347,7 +347,7 @@ hello world
         assert_eq!(test_case.name, "simple_echo");
         assert_eq!(test_case.configs.len(), 1);
         assert_eq!(test_case.configs[0].name, "local");
-        assert!(test_case.configs[0].host_id.is_none());
+        assert!(test_case.configs[0].host_name.is_none());
         assert_eq!(test_case.terminals.len(), 1);
         assert_eq!(test_case.terminals[0].name, "T1");
         assert_eq!(test_case.terminals[0].config, Some("local".to_string()));
@@ -375,7 +375,7 @@ hello world
 
 config:
   name: local
-  host_id: host-a
+  host_name: host-a
 
 terminal:
   name: T1
@@ -402,7 +402,7 @@ second
         let test_case = parse_test_content(content).unwrap();
 
         assert_eq!(test_case.configs.len(), 1);
-        assert_eq!(test_case.configs[0].host_id, Some("host-a".to_string()));
+        assert_eq!(test_case.configs[0].host_name, Some("host-a".to_string()));
         assert_eq!(test_case.terminals.len(), 2);
         assert_eq!(test_case.terminals[0].name, "T1");
         assert_eq!(test_case.terminals[1].name, "T2");

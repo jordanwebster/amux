@@ -196,19 +196,20 @@ impl Executor {
             };
 
             // Generate YAML config file
-            let host_id = cfg
-                .host_id
+            let host_name = cfg
+                .host_name
                 .clone()
                 .unwrap_or_else(|| test_case.name.clone());
             let yaml_content = format!(
-                r#"host_id: "{}"
+                r#"host_name: "{}"
 user_id: "test"
 socket_path: "{}"
 max_replay_buffer: 10485760
 tcp_port: {}
 websocket_port: {}
+randomise_link_name: false
 "#,
-                host_id,
+                host_name,
                 socket_path.display(),
                 tcp_port,
                 ws_port
@@ -394,7 +395,7 @@ websocket_port: {}
         if configs.is_empty() {
             configs.push(TestConfig {
                 name: "local".to_string(),
-                host_id: None,
+                host_name: None,
                 socket_path: None,
                 tcp_port: None,
                 websocket_port: None,

@@ -41,6 +41,11 @@ pub struct Config {
     /// Defaults to 9002
     #[serde(default)]
     pub websocket_port: Option<u16>,
+
+    /// Whether to add random suffixes to link names (default: true).
+    /// Set to false in tests for deterministic link names.
+    #[serde(default)]
+    pub randomise_link_name: Option<bool>,
 }
 
 impl Config {
@@ -53,6 +58,7 @@ impl Config {
             max_replay_buffer: DEFAULT_MAX_REPLAY_BUFFER,
             tcp_port: None,
             websocket_port: None,
+            randomise_link_name: None,
         }
     }
 
