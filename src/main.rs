@@ -115,16 +115,10 @@ async fn main() {
     // Handle hooks commands first (no server needed)
     if let Some(Commands::Hooks { provider }) = &cli.command {
         match provider {
-            HooksProvider::Claude { event } => match event {
-                ClaudeHookEvent::SessionStart => {
-                    hooks::handle_claude_hook(&config, "SessionStart");
-                    return;
-                }
-                ClaudeHookEvent::PermissionRequest => {
-                    hooks::handle_claude_hook(&config, "PermissionRequest");
-                    return;
-                }
-            },
+            HooksProvider::Claude { .. } => {
+                hooks::handle_claude_hook(&config);
+                return;
+            }
         }
     }
 

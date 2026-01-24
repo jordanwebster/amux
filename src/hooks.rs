@@ -2,12 +2,8 @@ use crate::config::Config;
 use crate::message::{ClaudeHook, ClaudePermissionTool, Hook, Message, ProtocolError};
 use crate::route::generate_hook_link;
 use crate::transport::{Transport, UnixTransport};
-use serde::Serialize;
-use std::fs::OpenOptions;
-use std::io::{self, BufRead, Write};
+use std::io::{self, BufRead};
 use tokio::net::UnixStream;
-
-const HOOKS_LOG_FILE: &str = "claude_hooks.jsonl";
 
 impl From<ClaudePermissionTool> for crate::structured_log::PermissionTool {
     fn from(tool: ClaudePermissionTool) -> Self {
@@ -26,24 +22,16 @@ impl From<ClaudePermissionTool> for crate::structured_log::PermissionTool {
     }
 }
 
-#[derive(Serialize)]
-struct HookLogEntry {
-    timestamp: u64,
-    provider: String,
-    event: String,
-    data: ClaudeHook,
-}
-
 /// Handle Claude Code hook event.
-/// Reads JSON from stdin, sends HookEvent to server, and logs to file.
+/// Reads JSON from stdin and sends HookEvent to server.
 /// Fails silently (logs errors but returns 0) to not block Claude Code.
-pub fn handle_claude_hook(config: &Config, event_name: &str) {
-    if let Err(e) = handle_claude_hook_inner(config, event_name) {
-        log!("hooks: claude {} error: {}", event_name, e);
+pub fn handle_claude_hook(config: &Config) {
+    if let Err(e) = handle_claude_hook_inner(config) {
+        log!("hooks: error: {}", e);
     }
 }
 
-fn handle_claude_hook_inner(config: &Config, event_name: &str) -> io::Result<()> {
+fn handle_claude_hook_inner(config: &Config) -> io::Result<()> {
     // Read all input from stdin
     let stdin = io::stdin();
     let mut input = String::new();
@@ -52,20 +40,17 @@ fn handle_claude_hook_inner(config: &Config, event_name: &str) -> io::Result<()>
         input.push_str(&line?);
     }
 
-    // Parse into typed struct (unified type, no conversion needed)
-    let claude_hook: ClaudeHook =
-        serde_json::from_str(&input).map_err(|e| io::Error::new(io::ErrorKind::InvalidData, e))?;
-
-    // Log to file (for debugging)
-    let entry = HookLogEntry {
-        timestamp: get_unix_timestamp(),
-        provider: "claude".to_string(),
-        event: event_name.to_string(),
-        data: claude_hook.clone(),
+    // Parse into typed struct
+    let claude_hook: ClaudeHook = match serde_json::from_str(&input) {
+        Ok(hook) => hook,
+        Err(e) => {
+            log!("hooks: failed to parse: {} - raw input: {}", e, input);
+            return Err(io::Error::new(io::ErrorKind::InvalidData, e));
+        }
     };
-    let _ = append_to_log(&entry);
 
-    // Wrap in Hook::Claude for wire protocol
+    log!("hooks: claude {}", describe_hook(&claude_hook));
+
     let hook = Hook::Claude(claude_hook);
 
     if config.socket_path.exists() {
@@ -153,24 +138,15 @@ async fn send_hook_event_to_server_inner(
     }
 }
 
-fn get_unix_timestamp() -> u64 {
-    std::time::SystemTime::now()
-        .duration_since(std::time::UNIX_EPOCH)
-        .map(|d| d.as_secs())
-        .unwrap_or(0)
-}
-
-fn append_to_log(entry: &HookLogEntry) -> io::Result<()> {
-    let mut file = OpenOptions::new()
-        .create(true)
-        .append(true)
-        .open(HOOKS_LOG_FILE)?;
-
-    let json =
-        serde_json::to_string(entry).map_err(|e| io::Error::new(io::ErrorKind::InvalidData, e))?;
-
-    writeln!(file, "{}", json)?;
-    file.flush()?;
-
-    Ok(())
+fn describe_hook(hook: &ClaudeHook) -> String {
+    match hook {
+        ClaudeHook::SessionStart(s) => {
+            format!("session {} at {}", s.session_id, s.transcript_path)
+        }
+        ClaudeHook::PermissionRequest(p) => match &p.tool {
+            ClaudePermissionTool::Edit { file_path, .. } => {
+                format!("session {} Edit {}", p.session_id, file_path)
+            }
+        },
+    }
 }
