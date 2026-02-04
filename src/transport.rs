@@ -10,10 +10,13 @@ use crate::error::{AmuxError, Result};
 use crate::message::Message;
 use async_trait::async_trait;
 use futures_util::{SinkExt, StreamExt};
-use tokio::io::{AsyncReadExt, AsyncWriteExt};
-use tokio::net::tcp::{OwnedReadHalf as TcpReadHalf, OwnedWriteHalf as TcpWriteHalf};
+use rustls::pki_types::ServerName;
+use std::sync::Arc;
+use tokio::io::{AsyncRead, AsyncReadExt, AsyncWrite, AsyncWriteExt, ReadHalf, WriteHalf};
 use tokio::net::unix::{OwnedReadHalf, OwnedWriteHalf};
 use tokio::net::{TcpStream, UnixStream};
+use tokio_rustls::client::TlsStream as ClientTlsStream;
+use tokio_rustls::{TlsAcceptor, TlsConnector};
 use tokio_tungstenite::tungstenite::protocol::Message as WsMessage;
 use tokio_tungstenite::WebSocketStream;
 
@@ -79,16 +82,23 @@ impl Transport for UnixTransport {
     }
 }
 
-/// TCP transport with length-prefixed framing (for server-to-server connections)
-pub struct TcpTransport {
-    reader: TcpReadHalf,
-    writer: TcpWriteHalf,
+/// TCP transport with length-prefixed framing (for server-to-server connections).
+///
+/// Generic over stream type to support both plain TCP and TLS streams.
+pub struct TcpTransport<S>
+where
+    S: AsyncRead + AsyncWrite + Unpin + Send,
+{
+    reader: ReadHalf<S>,
+    writer: WriteHalf<S>,
 }
 
-impl TcpTransport {
-    /// Create a new transport from a TCP stream
-    pub fn new(stream: TcpStream) -> Self {
-        let (reader, writer) = stream.into_split();
+impl<S> TcpTransport<S>
+where
+    S: AsyncRead + AsyncWrite + Unpin + Send,
+{
+    pub fn new(stream: S) -> Self {
+        let (reader, writer) = tokio::io::split(stream);
         Self { reader, writer }
     }
 
@@ -111,12 +121,16 @@ impl TcpTransport {
         let len = data.len() as u32;
         self.writer.write_all(&len.to_be_bytes()).await?;
         self.writer.write_all(data).await?;
+        self.writer.flush().await?;
         Ok(())
     }
 }
 
 #[async_trait]
-impl Transport for TcpTransport {
+impl<S> Transport for TcpTransport<S>
+where
+    S: AsyncRead + AsyncWrite + Unpin + Send + Sync,
+{
     async fn read_message(&mut self) -> Result<Message> {
         let data = self.read_frame().await?;
         Message::decode(&data).map_err(AmuxError::SerializationDecode)
@@ -126,6 +140,63 @@ impl Transport for TcpTransport {
         let data = msg.encode().map_err(AmuxError::SerializationEncode)?;
         self.write_frame(&data).await
     }
+}
+
+/// Connect to a TLS-enabled server and return a transport
+pub async fn tls_connect(
+    host: &str,
+    port: u16,
+) -> Result<TcpTransport<ClientTlsStream<TcpStream>>> {
+    // Build TLS config with system root certificates
+    let root_store =
+        rustls::RootCertStore::from_iter(webpki_roots::TLS_SERVER_ROOTS.iter().cloned());
+
+    let config = rustls::ClientConfig::builder()
+        .with_root_certificates(root_store)
+        .with_no_client_auth();
+
+    let connector = TlsConnector::from(Arc::new(config));
+
+    // Connect TCP
+    let addr = format!("{}:{}", host, port);
+    let stream = TcpStream::connect(&addr).await?;
+    stream.set_nodelay(true)?;
+
+    // Upgrade to TLS
+    let domain = ServerName::try_from(host.to_string())
+        .map_err(|_| AmuxError::Config(format!("Invalid DNS name: {}", host)))?;
+    let tls_stream = connector.connect(domain, stream).await?;
+
+    Ok(TcpTransport::new(tls_stream))
+}
+
+/// Create a TLS acceptor for cloud server mode.
+/// Requires TLS certificate and private key files.
+pub fn create_tls_acceptor(cert_pem: &[u8], key_pem: &[u8]) -> Result<TlsAcceptor> {
+    use rustls::pki_types::CertificateDer;
+    use rustls_pemfile::{certs, private_key};
+    use std::io::BufReader;
+
+    let certs: Vec<CertificateDer<'static>> = certs(&mut BufReader::new(cert_pem))
+        .filter_map(|r| r.ok())
+        .collect();
+
+    if certs.is_empty() {
+        return Err(AmuxError::Config(
+            "No certificates found in PEM".to_string(),
+        ));
+    }
+
+    let key = private_key(&mut BufReader::new(key_pem))
+        .map_err(|e| AmuxError::Config(format!("Failed to parse private key: {}", e)))?
+        .ok_or_else(|| AmuxError::Config("No private key found in PEM".to_string()))?;
+
+    let config = rustls::ServerConfig::builder()
+        .with_no_client_auth()
+        .with_single_cert(certs, key)
+        .map_err(|e| AmuxError::Config(format!("TLS config error: {}", e)))?;
+
+    Ok(TlsAcceptor::from(Arc::new(config)))
 }
 
 /// WebSocket transport with JSON serialization (for rich clients)

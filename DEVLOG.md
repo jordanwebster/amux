@@ -38,6 +38,152 @@ One paragraph describing what was done.
 
 ---
 
+## 2025-02-04: Code Review Feedback - Cloud Mode Cleanup
+
+### Summary
+
+Addressed 7 code review feedback items for the cloud mode implementation. Key changes: Unix socket now works in cloud mode (for CLI commands), removed polling loop that waited for cloud mode to be enabled, added distinction between retriable and non-retriable errors for cloud connections, made TcpTransport generic to eliminate TLS-specific transport types, and added `verify_token` parameter to decouple TLS from token validation.
+
+### Changes
+
+**Modified files:**
+- `src/transport.rs` - Made `TcpTransport` generic over stream type (`TcpTransport<S>` where `S: AsyncRead + AsyncWrite`); single `new(stream)` constructor works for both plain TCP and TLS; removed `TlsTcpClientTransport` and `TlsTcpServerTransport` structs and `TlsClientTransport` type alias; added `tls_connect()` helper function
+- `src/server.rs` - Renamed `cloud_mode` parameter to `is_cloud_server` in `Server::run()`; restored unconditional Unix socket creation (always available even in cloud mode); replaced polling loop with `establish_cloud_connection()` that spawns its own task and handles retry logic; added `CloudConnectionError` enum to distinguish retriable vs non-retriable errors; added `verify_token` parameter to `accept_handshake()` and removed `cloud_accept_handshake()` function; unified `tcp_accept` and `tls_tcp_accept` into a single generic `tcp_accept<T: Transport>` function; moved TCP_NODELAY setting before TLS handshake so it applies to both plain and TLS connections
+- `src/cloud.rs` - Updated to use `tls_connect()` and concrete `TcpTransport<TlsStream<TcpStream>>` type
+- `src/main.rs` - Added `ensure_initialized()` function and call it before `ensure_server_running()` for commands that need the server (new-agent, attach, connect, default)
+- `src/init.rs` - Removed `#[allow(dead_code)]` attributes; removed `ensure_initialized()` (moved to main.rs)
+- `src/jwt.rs` - Removed unused `InvalidJwks` variant and `exp` field
+- `src/state.rs` - Removed unused `save()` method; updated test to use `State::update()`
+
+### Decisions Made
+
+1. **Unix socket always available:** Even cloud servers need Unix socket for local management commands (`list-agents`, `kill-server`). The socket is now created unconditionally.
+
+2. **No polling for cloud mode:** Instead of polling every 60 seconds waiting for cloud mode to be enabled, `establish_cloud_connection` checks once at startup. If not enabled, it returns immediately. Users must restart the server after running `amux init`.
+
+3. **Retriable vs non-retriable errors:** Auth failures (`NotAuthenticated`, `Auth`, `CloudDisabled`, `InvalidCredentials`) stop reconnection attempts immediately. Connection errors and host changes trigger exponential backoff retry.
+
+4. **Generic TcpTransport:** TLS is an implementation detail of the connection setup, not the transport layer. Using `TcpTransport<R, W>` generic over reader/writer types allows the same transport code to work with both plain TCP and TLS streams.
+
+5. **verify_token parameter:** Token validation is decoupled from TLS. The `accept_handshake()` function takes a `verify_token: bool` parameter. Cloud servers pass `true` (via TLS), local servers pass `false`. This keeps the handshake logic unified.
+
+### Verification
+
+- `cargo check && cargo fmt && cargo clippy` - All pass with only pre-existing warnings (unused jwt fields, unused save method)
+- `cargo test` - 50 tests pass
+- `cargo run -p e2e-runner -- run` - 6 E2E tests pass
+
+### Next Steps
+
+- Manual testing of cloud mode scenarios (credential rejection, connection loss)
+- Consider adding E2E tests for cloud mode error handling
+
+---
+
+## 2025-02-03: Cloud Connection Integration
+
+### Summary
+
+Integrated outbound cloud connections into the server using the unified `tcp_peer_loop` pattern with optional token refresh. The server now automatically connects to the cloud when cloud mode is enabled in state, with exponential backoff reconnection. Removed the flawed channel-based `run_cloud_loop` approach in favor of direct integration with the server's routing system.
+
+### Changes
+
+**Modified files:**
+- `src/cloud.rs` - Added `TokenRefreshState` struct with `refresh_deadline()` and `refresh_and_reconnect()` methods; added `CloudConnection::into_parts()` to extract transport and refresh state; removed unused methods (`link_name`, `read_message`, `write_message`, `needs_token_refresh`, `refresh_token`, `time_until_refresh`) and `run_cloud_loop` function
+- `src/server.rs` - Added `maybe_sleep_until()` helper for optional async sleep; unified `tcp_peer_loop` and `tls_tcp_peer_loop` into generic `tcp_peer_loop<T: Transport>` with optional `TokenRefreshState`; added `cloud_connect()` function; added auto-connect task spawn in `Server::run()` for local mode with reconnection logic and exponential backoff
+- `src/main.rs` - Removed `#[allow(dead_code)]` annotations from cloud, state, and transport modules
+
+### Decisions Made
+
+1. **Unified peer loop:** Instead of separate `tcp_peer_loop` and `tls_tcp_peer_loop` functions, unified into a single generic function over `T: Transport`. This avoids code duplication and makes it easy to add cloud connections.
+
+2. **Optional token refresh via parameter:** Rather than having separate functions for connections with/without token refresh, we pass `Option<TokenRefreshState>`. The `maybe_sleep_until` helper uses `std::future::pending()` when None, so the token refresh branch never fires for non-cloud connections.
+
+3. **Auto-connect spawn pattern:** The cloud connection task checks state on a loop rather than blocking startup if cloud mode isn't configured. This allows users to run `amux init` after the server starts.
+
+4. **Exponential backoff:** Starting at 1 second, doubling up to 5 minutes max. Resets on clean disconnect or when cloud mode is disabled/re-enabled.
+
+5. **HostChanged triggers reconnection:** When token refresh indicates the cloud assigned a different server, the peer loop returns an error which triggers full reconnection (handled by the auto-connect task).
+
+### Verification
+
+```
+cargo check && cargo fmt && cargo clippy  # OK (only pre-existing dead code warnings in jwt.rs, state.rs)
+cargo test                                 # 50 tests pass
+cargo run -p e2e-runner -- run             # 6 E2E tests pass
+```
+
+### Next Steps
+
+- Set up cloud infrastructure to test full end-to-end cloud connectivity
+- Add WebSocket transport for rich clients via cloud relay
+- Consider adding status messages for cloud connection state
+
+---
+
+## 2025-02-02: Cloud Initialization Flow Infrastructure
+
+### Summary
+
+Implemented the foundational infrastructure for amux cloud mode, including configuration refactoring, persistent state management, OAuth device flow authentication, TLS transport, JWT validation, and server-side cloud mode support. This prepares amux for cloud relay functionality where local servers can connect to cloud servers for remote access.
+
+### Changes
+
+**New files:**
+- `src/state.rs` - Persistent state management (`~/.local/state/amux/state.yaml`) with file locking for cloud auth tokens and preferences
+- `src/init.rs` - Initialization flow with cloud mode prompt and OAuth device flow integration
+- `src/oauth.rs` - OAuth 2.0 device flow for authentication against cloud service
+- `src/jwt.rs` - JWT validation with JWKS caching for server-side token verification
+- `src/cloud.rs` - Cloud connection manager for outbound connections to cloud servers with automatic token refresh
+
+**Modified files:**
+- `Cargo.toml` - Added dependencies: oauth2, tokio-rustls, rustls, webpki-roots, rustls-pemfile, jsonwebtoken, reqwest, dirs, fs2, chrono
+- `src/config.rs` - Refactored to use `#[serde(default)]` for all fields; added `cloud_url` and `state_path`; removed unused `user_id` and `max_replay_buffer` fields; test-only fields use `#[cfg_attr(not(any(debug_assertions, test)), serde(skip_deserializing))]` for compile-time field visibility control
+- `src/message.rs` - Added `token` field to `Message::Connect`; added `InvalidCredentials` to `ProtocolError`
+- `src/transport.rs` - Added `TlsTcpClientTransport` and `TlsTcpServerTransport` for TLS connections; added `create_tls_acceptor()` for server-side TLS
+- `src/server.rs` - Added `cloud_mode` and `jwt_validator` to `ServerState`; added TLS TCP listener for cloud mode; added `tls_tcp_accept`, `tls_tcp_peer_loop`, `cloud_accept_handshake` for cloud mode connections with JWT validation
+- `src/error.rs` - Added `InvalidCredentials` variant
+- `src/client.rs` - Added `InvalidCredentials` handling in handshake
+- `src/main.rs` - Added `init` and `serve` commands; added module declarations for new modules
+- `e2e-runner/src/executor.rs` - Updated to generate state file with `use_cloud_mode: false` for tests
+
+### Decisions Made
+
+1. **Serde defaults for Config:** Used `#[serde(default)]` at struct level with default functions for each field. This allows partial YAML configs while ensuring all fields have values at runtime.
+
+2. **Test-only field semantics:** Fields like `randomise_link_name` and `state_path` use `#[cfg_attr(not(any(debug_assertions, test)), serde(skip_deserializing))]` - readable in all builds but only settable via config in debug/test builds.
+
+3. **State file with file locking:** State uses `fs2::FileExt` for file locking to handle concurrent access from multiple processes (e.g., hook handlers and server).
+
+4. **Cloud mode server behavior:** `amux serve --cloud` requires TLS (via AMUX_TLS_CERT/AMUX_TLS_KEY env vars) and validates JWT tokens on ALL connections (TCP and WebSocket).
+
+5. **TLS for cloud TCP only:** Local mode uses plain TCP; cloud mode uses TLS. The server determines which based on the `--cloud` flag.
+
+6. **JWT validation with JWKS caching:** Tokens are validated using RS256 keys fetched from the cloud service's JWKS endpoint, cached for 1 hour.
+
+### Remaining Work
+
+The cloud infrastructure is complete. Remaining work is to integrate the cloud connection manager into the local server startup flow so that servers automatically connect to the cloud when cloud mode is enabled.
+
+### Verification
+
+```
+cargo check && cargo fmt && cargo clippy  # OK
+cargo test                                 # 50 tests pass
+cargo run -p e2e-runner -- run             # 6 E2E tests pass
+```
+
+### New CLI Commands
+
+```bash
+amux init              # Configure cloud mode and authenticate
+amux init --reset      # Clear state and reconfigure
+amux serve             # Start server in local mode
+amux serve --cloud     # Start server in cloud mode (TLS + tokens required)
+```
+
+---
+
 ## 2025-01-22: Fix server.rs protocol compliance bugs
 
 ### Summary

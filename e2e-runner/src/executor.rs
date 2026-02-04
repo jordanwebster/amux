@@ -195,6 +195,14 @@ impl Executor {
                 }
             };
 
+            // Generate state file with cloud mode disabled
+            let state_dir = temp_dir.path().join(format!("{}_state", cfg.name));
+            std::fs::create_dir_all(&state_dir)
+                .map_err(|e| format!("Failed to create state dir: {}", e))?;
+            let state_path = state_dir.join("state.yaml");
+            std::fs::write(&state_path, "cloud:\n  use_cloud_mode: false\n")
+                .map_err(|e| format!("Failed to write state file: {}", e))?;
+
             // Generate YAML config file
             let host_name = cfg
                 .host_name
@@ -202,17 +210,17 @@ impl Executor {
                 .unwrap_or_else(|| test_case.name.clone());
             let yaml_content = format!(
                 r#"host_name: "{}"
-user_id: "test"
 socket_path: "{}"
-max_replay_buffer: 10485760
 tcp_port: {}
 websocket_port: {}
 randomise_link_name: false
+state_path: "{}"
 "#,
                 host_name,
                 socket_path.display(),
                 tcp_port,
-                ws_port
+                ws_port,
+                state_path.display()
             );
 
             let config_file_path = temp_dir.path().join(format!("{}.yaml", cfg.name));

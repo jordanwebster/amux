@@ -60,6 +60,7 @@ async fn connect_and_handshake(config: &Config) -> Result<(UnixTransport, String
         transport
             .write_message(&Message::Connect {
                 link_name: link_name.clone(),
+                token: None,
             })
             .await?;
 
@@ -80,6 +81,13 @@ async fn connect_and_handshake(config: &Config) -> Result<(UnixTransport, String
                     attempt + 1
                 );
                 continue;
+            }
+            Message::ConnectResponse {
+                success: false,
+                error: Some(ProtocolError::InvalidCredentials),
+            } => {
+                log!("client: invalid credentials - authentication failed");
+                return Err(AmuxError::InvalidCredentials);
             }
             Message::ConnectResponse {
                 success: false,

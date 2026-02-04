@@ -81,7 +81,10 @@ async fn send_hook_event_to_server_inner(
     // Send Connect handshake with hook link name
     let link_name = generate_hook_link();
     transport
-        .write_message(&Message::Connect { link_name })
+        .write_message(&Message::Connect {
+            link_name,
+            token: None,
+        })
         .await
         .map_err(io::Error::other)?;
 

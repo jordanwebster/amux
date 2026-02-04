@@ -2,14 +2,19 @@
 mod log;
 mod buffer;
 mod client;
+mod cloud;
 mod config;
 mod error;
 mod hooks;
+mod init;
+mod jwt;
 mod message;
 mod multiplex_log_buffer;
+mod oauth;
 mod route;
 mod server;
 mod session;
+mod state;
 mod structured_log;
 mod transcript;
 mod transport;
@@ -31,10 +36,6 @@ struct Cli {
     /// Path to config file (YAML format)
     #[arg(long, global = true)]
     config: Option<PathBuf>,
-
-    /// Hidden server mode (used internally for forking)
-    #[arg(long, hide = true)]
-    server: bool,
 }
 
 #[derive(Subcommand)]
@@ -67,6 +68,20 @@ enum Commands {
     Connect {
         /// Remote server address (host:port)
         address: String,
+    },
+
+    /// Initialize amux (cloud mode, authentication)
+    Init {
+        /// Clear existing state and re-initialize
+        #[arg(long)]
+        reset: bool,
+    },
+
+    /// Start the amux server directly (usually auto-started)
+    Serve {
+        /// Run as cloud server (requires TLS, validates tokens)
+        #[arg(long)]
+        cloud: bool,
     },
 
     /// Internal: Handle hooks from AI coding assistants
@@ -122,19 +137,10 @@ async fn main() {
         }
     }
 
-    // Hidden server mode
-    if cli.server {
-        let mut server = server::Server::with_config(config);
-        if let Err(e) = server.run().await {
-            log!("server error: {}", e);
-            std::process::exit(1);
-        }
-        return;
-    }
-
     let result = match cli.command {
         None => {
             // Default: attach to first available agent
+            ensure_initialized(&config).await;
             ensure_server_running(&config, cli.config.as_deref()).await;
             client::attach(None, &config).await
         }
@@ -146,18 +152,36 @@ async fn main() {
                     std::process::exit(1);
                 }
             };
+            ensure_initialized(&config).await;
             ensure_server_running(&config, cli.config.as_deref()).await;
             client::new_agent(target.as_deref(), agent_type, &config).await
         }
         Some(Commands::Attach { target }) => {
+            ensure_initialized(&config).await;
             ensure_server_running(&config, cli.config.as_deref()).await;
             client::attach(target.as_deref(), &config).await
         }
         Some(Commands::ListAgents) => client::list_agents(&config).await,
         Some(Commands::KillServer) => client::kill_server(&config).await,
         Some(Commands::Connect { address }) => {
+            ensure_initialized(&config).await;
             ensure_server_running(&config, cli.config.as_deref()).await;
             client::connect(&address, &config).await
+        }
+        Some(Commands::Init { reset }) => {
+            if let Err(e) = init::run_init(&config, reset).await {
+                eprintln!("error: {}", e);
+                std::process::exit(1);
+            }
+            return;
+        }
+        Some(Commands::Serve { cloud }) => {
+            let mut server = server::Server::with_config(config);
+            if let Err(e) = server.run(cloud).await {
+                log!("server error: {}", e);
+                std::process::exit(1);
+            }
+            return;
         }
         Some(Commands::Hooks { .. }) => unreachable!("hooks handled above"),
     };
@@ -165,6 +189,17 @@ async fn main() {
     if let Err(e) = result {
         eprintln!("error: {}", e);
         std::process::exit(1);
+    }
+}
+
+/// Ensure initialization is complete (cloud mode, authentication)
+async fn ensure_initialized(config: &Config) {
+    if init::needs_init(config) {
+        println!("First-time setup required.\n");
+        if let Err(e) = init::run_init(config, false).await {
+            eprintln!("error: initialization failed: {}", e);
+            std::process::exit(1);
+        }
     }
 }
 
@@ -190,7 +225,7 @@ async fn ensure_server_running(config: &Config, config_path: Option<&Path>) {
     // Spawn server as background process
     let exe = std::env::current_exe().expect("Failed to get current exe");
     let mut cmd = Command::new(&exe);
-    cmd.arg("--server");
+    cmd.arg("serve");
 
     // Pass config file path if we have one
     if let Some(path) = config_path {

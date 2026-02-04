@@ -1,0 +1,274 @@
+//! Cloud connection manager for amux.
+//!
+//! Manages the lifecycle of outbound connections to cloud servers, including:
+//! - Initial TLS connection with token authentication
+//! - Automatic token refresh before expiry
+//! - Message forwarding between local server and cloud
+
+use crate::config::Config;
+use crate::error::AmuxError;
+use crate::message::{Message, ProtocolError};
+use crate::oauth;
+use crate::route::generate_server_link;
+use crate::state::State;
+use crate::transport::{tls_connect, TcpTransport, Transport};
+use chrono::{DateTime, Duration, Utc};
+use thiserror::Error;
+use tokio::net::TcpStream;
+use tokio_rustls::client::TlsStream;
+
+#[derive(Debug, Error)]
+pub enum CloudError {
+    #[error("Not authenticated - run 'amux init' to authenticate")]
+    NotAuthenticated,
+    #[error("Cloud mode is disabled")]
+    CloudDisabled,
+    #[error("Connection failed: {0}")]
+    Connection(String),
+    #[error("Authentication failed: {0}")]
+    Auth(String),
+    #[error("Cloud server host changed - reconnection required")]
+    HostChanged,
+    #[error("OAuth error: {0}")]
+    OAuth(#[from] oauth::OAuthError),
+    #[error("Transport error: {0}")]
+    Transport(#[from] AmuxError),
+    #[error("State error: {0}")]
+    State(#[from] crate::state::StateError),
+}
+
+/// Cloud connection state
+pub struct CloudConnection {
+    config: Config,
+    transport: TcpTransport<TlsStream<TcpStream>>,
+    link_name: String,
+    current_host: String,
+    current_port: u16,
+    token_expires_at: DateTime<Utc>,
+}
+
+impl CloudConnection {
+    /// Establish a new cloud connection.
+    ///
+    /// This will:
+    /// 1. Load refresh token from state
+    /// 2. Exchange it for an access token
+    /// 3. Get connection details from cloud API
+    /// 4. Connect via TLS and send Connect message with JWT
+    pub async fn connect(config: &Config) -> std::result::Result<Self, CloudError> {
+        let state = State::load(&config.state_path)?;
+
+        // Check if cloud mode is enabled
+        if state.cloud.use_cloud_mode != Some(true) {
+            return Err(CloudError::CloudDisabled);
+        }
+
+        // Get refresh token
+        let refresh_token = state
+            .cloud
+            .refresh_token
+            .ok_or(CloudError::NotAuthenticated)?;
+
+        // Exchange for access token
+        let (access_token, new_refresh) =
+            oauth::refresh_access_token(&config.cloud_url, &refresh_token).await?;
+
+        // Update refresh token if rotated
+        if let Some(new_token) = new_refresh {
+            State::update(&config.state_path, |s| {
+                s.cloud.refresh_token = Some(new_token);
+            })?;
+        }
+
+        // Get connection details
+        let conn = oauth::get_connection(&config.cloud_url, &access_token).await?;
+
+        // Connect via TLS
+        let mut transport = tls_connect(&conn.host, conn.port)
+            .await
+            .map_err(|e| CloudError::Connection(e.to_string()))?;
+
+        // Generate link name for this server
+        let link_name = generate_server_link(&config.host_name, config.randomise_link_name);
+
+        // Send Connect with token
+        transport
+            .write_message(&Message::Connect {
+                link_name: link_name.clone(),
+                token: Some(conn.token),
+            })
+            .await?;
+
+        // Wait for response
+        let response = transport.read_message().await?;
+        match response {
+            Message::ConnectResponse { success: true, .. } => {
+                log!("cloud: connected to {} as {}", conn.host, link_name);
+            }
+            Message::ConnectResponse {
+                success: false,
+                error: Some(ProtocolError::InvalidCredentials),
+            } => {
+                // Clear refresh token since it's invalid
+                let _ = State::update(&config.state_path, |s| {
+                    s.cloud.refresh_token = None;
+                });
+                return Err(CloudError::Auth(
+                    "Invalid credentials - please run 'amux init' to re-authenticate".to_string(),
+                ));
+            }
+            Message::ConnectResponse {
+                success: false,
+                error,
+            } => {
+                return Err(CloudError::Connection(format!(
+                    "Connect failed: {:?}",
+                    error
+                )));
+            }
+            _ => {
+                return Err(CloudError::Connection(
+                    "Unexpected response to Connect".to_string(),
+                ));
+            }
+        }
+
+        Ok(Self {
+            config: config.clone(),
+            transport,
+            link_name,
+            current_host: conn.host,
+            current_port: conn.port,
+            token_expires_at: conn.expires_at,
+        })
+    }
+
+    /// Extract the underlying transport and token refresh state.
+    /// This consumes the CloudConnection, allowing the transport to be
+    /// used directly by the server's peer loop with token refresh.
+    pub fn into_parts(self) -> (TcpTransport<TlsStream<TcpStream>>, TokenRefreshState) {
+        let refresh_state = TokenRefreshState {
+            config: self.config.clone(),
+            link_name: self.link_name.clone(),
+            current_host: self.current_host,
+            current_port: self.current_port,
+            token_expires_at: self.token_expires_at,
+        };
+        (self.transport, refresh_state)
+    }
+}
+
+/// Token refresh state for cloud connections.
+///
+/// This is passed to tcp_peer_loop to enable automatic token refresh
+/// on cloud connections. For non-cloud connections, None is passed.
+pub struct TokenRefreshState {
+    config: Config,
+    pub link_name: String,
+    current_host: String,
+    current_port: u16,
+    token_expires_at: DateTime<Utc>,
+}
+
+impl TokenRefreshState {
+    /// Calculate when the token refresh should occur (as tokio Instant).
+    /// Refresh happens 5 minutes before expiry.
+    pub fn refresh_deadline(&self) -> tokio::time::Instant {
+        let refresh_at = self.token_expires_at - Duration::minutes(5);
+        let now = Utc::now();
+
+        if refresh_at <= now {
+            // Already past refresh time - refresh immediately
+            tokio::time::Instant::now()
+        } else {
+            let duration = (refresh_at - now).to_std().unwrap_or_default();
+            tokio::time::Instant::now() + duration
+        }
+    }
+
+    /// Refresh the token and re-authenticate on the existing connection.
+    ///
+    /// Returns Err(CloudError::HostChanged) if the cloud server assigns
+    /// a different host/port, requiring full reconnection.
+    pub async fn refresh_and_reconnect<T: Transport>(
+        &mut self,
+        transport: &mut T,
+    ) -> std::result::Result<(), CloudError> {
+        let state = State::load(&self.config.state_path)?;
+
+        let refresh_token = state
+            .cloud
+            .refresh_token
+            .ok_or(CloudError::NotAuthenticated)?;
+
+        // Get new access token
+        let (access_token, new_refresh) =
+            oauth::refresh_access_token(&self.config.cloud_url, &refresh_token).await?;
+
+        // Update refresh token if rotated
+        if let Some(new_token) = new_refresh {
+            State::update(&self.config.state_path, |s| {
+                s.cloud.refresh_token = Some(new_token);
+            })?;
+        }
+
+        // Get new connection details
+        let conn = oauth::get_connection(&self.config.cloud_url, &access_token).await?;
+
+        // Check if host changed - requires full reconnection
+        if conn.host != self.current_host || conn.port != self.current_port {
+            return Err(CloudError::HostChanged);
+        }
+
+        // Send new Connect with fresh token (reuse link name)
+        transport
+            .write_message(&Message::Connect {
+                link_name: self.link_name.clone(),
+                token: Some(conn.token),
+            })
+            .await?;
+
+        // Wait for response
+        let response = transport.read_message().await?;
+        match response {
+            Message::ConnectResponse { success: true, .. } => {
+                log!("cloud: token refreshed successfully");
+                self.token_expires_at = conn.expires_at;
+                Ok(())
+            }
+            Message::ConnectResponse {
+                success: false,
+                error: Some(ProtocolError::InvalidCredentials),
+            } => {
+                let _ = State::update(&self.config.state_path, |s| {
+                    s.cloud.refresh_token = None;
+                });
+                Err(CloudError::Auth("Token refresh failed".to_string()))
+            }
+            Message::ConnectResponse {
+                success: false,
+                error,
+            } => Err(CloudError::Connection(format!(
+                "Token refresh failed: {:?}",
+                error
+            ))),
+            _ => Err(CloudError::Connection(
+                "Unexpected response to token refresh".to_string(),
+            )),
+        }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn test_cloud_error_display() {
+        let err = CloudError::NotAuthenticated;
+        assert!(err.to_string().contains("amux init"));
+
+        let err = CloudError::CloudDisabled;
+        assert!(err.to_string().contains("disabled"));
+    }
+}

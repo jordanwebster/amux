@@ -33,4 +33,7 @@ pub enum AmuxError {
 
     #[error("Too many handshake attempts")]
     TooManyHandshakeAttempts,
+
+    #[error("Invalid or missing credentials")]
+    InvalidCredentials,
 }

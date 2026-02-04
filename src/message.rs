@@ -77,6 +77,8 @@ pub enum ProtocolError {
     /// No route found to reach the destination. Contains the path traversed
     /// up to and including the hop that couldn't be resolved.
     NoRouteFound(Route),
+    /// Invalid or missing authentication credentials
+    InvalidCredentials,
 }
 
 impl std::fmt::Display for ProtocolError {
@@ -85,6 +87,7 @@ impl std::fmt::Display for ProtocolError {
             ProtocolError::ServerError(msg) => write!(f, "{}", msg),
             ProtocolError::LinkNameTaken => write!(f, "Link name already in use"),
             ProtocolError::NoRouteFound(route) => write!(f, "No route found: {:?}", route),
+            ProtocolError::InvalidCredentials => write!(f, "Invalid or missing credentials"),
         }
     }
 }
@@ -187,8 +190,13 @@ pub enum Message {
     },
 
     // Handshake (unified for client-server and server-server)
-    /// Sent to initiate connection handshake with proposed link name
-    Connect { link_name: String },
+    /// Sent to initiate connection handshake with proposed link name.
+    /// Token is optional - required when connecting to cloud servers.
+    Connect {
+        link_name: String,
+        #[serde(skip_serializing_if = "Option::is_none", default)]
+        token: Option<String>,
+    },
 
     /// Response to Connect
     ConnectResponse {

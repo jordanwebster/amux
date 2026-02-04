@@ -1,36 +1,49 @@
 use crate::buffer::MultiplexReader;
-use crate::config::{Config, DEFAULT_TCP_PORT, DEFAULT_WEBSOCKET_PORT};
+use crate::cloud::{CloudConnection, CloudError, TokenRefreshState};
+use crate::config::Config;
 use crate::error::{AmuxError, Result};
+use crate::jwt::JwtValidator;
 use crate::message::{
     ClaudeHook, CreateAgentRequest, Hook, Message, PermissionResponse, ProtocolError,
 };
 use crate::route::{generate_server_link, Route};
 use crate::session::{LocalAgentSession, SessionEvent};
-use crate::transport::{TcpTransport, Transport, UnixTransport, WebSocketTransport};
+use crate::state::State;
+use crate::transport::{
+    create_tls_acceptor, TcpTransport, Transport, UnixTransport, WebSocketTransport,
+};
 use std::collections::HashMap;
 use std::net::SocketAddr;
 use std::path::PathBuf;
 use std::sync::Arc;
+use std::time::Duration;
 use tokio::net::{TcpListener, TcpStream, UnixListener, UnixStream};
 use tokio::sync::{mpsc, RwLock};
+use tokio_rustls::TlsAcceptor;
 use tokio_tungstenite::accept_async;
 use uuid::Uuid;
 
 /// Server state shared across connection handlers
 struct ServerState {
     config: Config,
+    /// Whether running in cloud mode (TLS + token auth required)
+    cloud_mode: bool,
     agents: HashMap<Uuid, Arc<LocalAgentSession>>,
     /// Routes to other hosts. Each route is a channel sender for outgoing messages.
     /// The actual transport is owned by the connection handler task.
     routes: HashMap<String, mpsc::Sender<Message>>,
+    /// JWT validator for cloud mode (validates incoming tokens)
+    jwt_validator: Option<Arc<JwtValidator>>,
 }
 
 impl ServerState {
     fn new(config: Config) -> Self {
         Self {
             config,
+            cloud_mode: false,
             agents: HashMap::new(),
             routes: HashMap::new(),
+            jwt_validator: None,
         }
     }
 }
@@ -62,27 +75,65 @@ impl Server {
     }
 
     /// Run the server
-    pub async fn run(&mut self) -> Result<()> {
-        let (socket_path, tcp_port, ws_port) = {
+    ///
+    /// If `is_cloud_server` is true, the server runs as a cloud relay:
+    /// - TCP connections use TLS
+    /// - All connections require valid JWT tokens
+    pub async fn run(&mut self, is_cloud_server: bool) -> Result<()> {
+        let (socket_path, tcp_port, ws_port, cloud_url) = {
             let state = self.state.read().await;
             (
                 state.config.socket_path.clone(),
-                state.config.tcp_port.unwrap_or(DEFAULT_TCP_PORT),
-                state
-                    .config
-                    .websocket_port
-                    .unwrap_or(DEFAULT_WEBSOCKET_PORT),
+                state.config.tcp_port,
+                state.config.websocket_port,
+                state.config.cloud_url.clone(),
             )
         };
 
-        let _ = std::fs::remove_file(&socket_path);
+        // Set cloud mode and create JWT validator if needed
+        let tls_acceptor: Option<TlsAcceptor> = if is_cloud_server {
+            let mut state = self.state.write().await;
+            state.cloud_mode = true;
+            state.jwt_validator = Some(Arc::new(JwtValidator::new(&cloud_url)));
 
+            // Cloud mode requires TLS certificates via environment variables
+            let cert_path = std::env::var("AMUX_TLS_CERT").map_err(|_| {
+                AmuxError::Config(
+                    "AMUX_TLS_CERT environment variable required for cloud mode".into(),
+                )
+            })?;
+            let key_path = std::env::var("AMUX_TLS_KEY").map_err(|_| {
+                AmuxError::Config(
+                    "AMUX_TLS_KEY environment variable required for cloud mode".into(),
+                )
+            })?;
+
+            let cert_pem = std::fs::read(&cert_path).map_err(|e| {
+                AmuxError::Config(format!("Failed to read TLS cert from {}: {}", cert_path, e))
+            })?;
+            let key_pem = std::fs::read(&key_path).map_err(|e| {
+                AmuxError::Config(format!("Failed to read TLS key from {}: {}", key_path, e))
+            })?;
+
+            let acceptor = create_tls_acceptor(&cert_pem, &key_pem)?;
+            log!("server: TLS configured for cloud mode");
+            Some(acceptor)
+        } else {
+            None
+        };
+
+        // Unix socket - always available (for CLI commands like list-agents, kill-server)
+        let _ = std::fs::remove_file(&socket_path);
         let unix_listener = UnixListener::bind(&socket_path)?;
         log!("server: listening on {:?}", socket_path);
 
         let tcp_addr = SocketAddr::from(([0, 0, 0, 0], tcp_port));
         let tcp_listener = TcpListener::bind(tcp_addr).await?;
-        log!("server: listening on TCP {}", tcp_addr);
+        if is_cloud_server {
+            log!("server: listening on TLS TCP {}", tcp_addr);
+        } else {
+            log!("server: listening on TCP {}", tcp_addr);
+        }
 
         let ws_addr = SocketAddr::from(([0, 0, 0, 0], ws_port));
         let ws_listener = TcpListener::bind(ws_addr).await?;
@@ -103,6 +154,15 @@ impl Server {
                 }
             }
         });
+
+        // Auto-connect to cloud (local server only, not cloud server)
+        if !is_cloud_server {
+            let config = {
+                let state = self.state.read().await;
+                state.config.clone()
+            };
+            establish_cloud_connection(config, self.state.clone());
+        }
 
         loop {
             tokio::select! {
@@ -125,16 +185,41 @@ impl Server {
                         }
                     }
                 }
-                // TCP connection (remote servers)
+                // TCP connection (remote servers) - TLS in cloud mode, plain in local mode
                 result = tcp_listener.accept() => {
                     match result {
-                        Ok((stream, _)) => {
+                        Ok((stream, addr)) => {
+                            // Set nodelay before any handshake (TLS or protocol)
+                            if let Err(e) = stream.set_nodelay(true) {
+                                log!("server: failed to set TCP_NODELAY: {}", e);
+                            }
+
                             let state = self.state.clone();
-                            tokio::spawn(async move {
-                                if let Err(e) = tcp_accept(stream, state).await {
-                                    log!("server: tcp connection error: {}", e);
-                                }
-                            });
+                            if let Some(ref acceptor) = tls_acceptor {
+                                // Cloud server: TLS with token validation
+                                let acceptor = acceptor.clone();
+                                tokio::spawn(async move {
+                                    match acceptor.accept(stream).await {
+                                        Ok(tls_stream) => {
+                                            let transport = TcpTransport::new(tls_stream);
+                                            if let Err(e) = tcp_accept(transport, state, true).await {
+                                                log!("server: tls tcp connection error: {}", e);
+                                            }
+                                        }
+                                        Err(e) => {
+                                            log!("server: tls handshake error from {}: {}", addr, e);
+                                        }
+                                    }
+                                });
+                            } else {
+                                // Local server: plain TCP
+                                tokio::spawn(async move {
+                                    let transport = TcpTransport::new(stream);
+                                    if let Err(e) = tcp_accept(transport, state, false).await {
+                                        log!("server: tcp connection error: {}", e);
+                                    }
+                                });
+                            }
                         }
                         Err(e) => {
                             log!("server: tcp accept error: {}", e);
@@ -169,16 +254,57 @@ impl Server {
 
 /// Accept-side handshake: client proposes link name, we validate against routes.
 /// Returns the accepted link name on success.
+///
+/// If `verify_token` is true (cloud server mode), the token in the Connect message
+/// is validated via JWT. If validation fails, InvalidCredentials is returned.
 async fn accept_handshake<T: Transport>(
     transport: &mut T,
     state: &Arc<RwLock<ServerState>>,
+    verify_token: bool,
 ) -> Result<String> {
     for _attempt in 0..5 {
         let msg = transport.read_message().await?;
-        let proposed_link = match msg {
-            Message::Connect { link_name } => link_name,
+        let (proposed_link, token) = match msg {
+            Message::Connect { link_name, token } => (link_name, token),
             _ => return Err(AmuxError::InvalidMessage),
         };
+
+        // Validate token if required (cloud server mode)
+        if verify_token {
+            let (validator, host, tcp_port) = {
+                let state = state.read().await;
+                let validator = state
+                    .jwt_validator
+                    .clone()
+                    .expect("verify_token=true requires jwt_validator");
+                (
+                    validator,
+                    state.config.host_name.clone(),
+                    state.config.tcp_port,
+                )
+            };
+
+            let token = token.ok_or_else(|| {
+                log!("server: token required but none provided");
+                AmuxError::InvalidCredentials
+            })?;
+
+            match validator.validate(&token, &host, tcp_port).await {
+                Ok(claims) => {
+                    log!("server: authenticated connection from user {}", claims.sub);
+                }
+                Err(e) => {
+                    log!("server: token validation failed: {}", e);
+                    transport
+                        .write_message(&Message::ConnectResponse {
+                            success: false,
+                            error: Some(ProtocolError::InvalidCredentials),
+                        })
+                        .await?;
+                    return Err(AmuxError::InvalidCredentials);
+                }
+            }
+        }
 
         // Check if link name is already taken
         {
@@ -220,6 +346,7 @@ where
         transport
             .write_message(&Message::Connect {
                 link_name: proposed_link.clone(),
+                token: None,
             })
             .await?;
 
@@ -238,6 +365,13 @@ where
                     attempt + 1
                 );
                 continue;
+            }
+            Message::ConnectResponse {
+                success: false,
+                error: Some(ProtocolError::InvalidCredentials),
+            } => {
+                log!("server: invalid credentials - authentication failed");
+                return Err(AmuxError::InvalidCredentials);
             }
             Message::ConnectResponse {
                 success: false,
@@ -268,7 +402,7 @@ async fn websocket_accept(stream: TcpStream, state: Arc<RwLock<ServerState>>) ->
 
     let mut transport = WebSocketTransport::new(ws_stream);
 
-    let link_name = match accept_handshake(&mut transport, &state).await {
+    let link_name = match accept_handshake(&mut transport, &state, false).await {
         Ok(name) => name,
         Err(e) => {
             let _ = transport.write_message(&error_to_message(&e)).await;
@@ -575,7 +709,7 @@ async fn unix_accept(
 ) -> Result<()> {
     let mut transport = UnixTransport::new(stream);
 
-    let link_name = match accept_handshake(&mut transport, &state).await {
+    let link_name = match accept_handshake(&mut transport, &state, false).await {
         Ok(name) => name,
         Err(e) => {
             let _ = transport.write_message(&error_to_message(&e)).await;
@@ -1083,8 +1217,8 @@ async fn tcp_connect(address: &str, state: &Arc<RwLock<ServerState>>) -> Result<
     let (hostname, randomise) = {
         let state = state.read().await;
         (
-            state.config.get_host_name(),
-            state.config.randomise_link_name.unwrap_or(true),
+            state.config.host_name.clone(),
+            state.config.randomise_link_name,
         )
     };
 
@@ -1113,6 +1247,7 @@ async fn tcp_connect(address: &str, state: &Arc<RwLock<ServerState>>) -> Result<
             outgoing_rx,
             link_name_clone.clone(),
             state.clone(),
+            None, // No token refresh for regular TCP connections
         )
         .await;
 
@@ -1129,15 +1264,18 @@ async fn tcp_connect(address: &str, state: &Arc<RwLock<ServerState>>) -> Result<
     Ok(())
 }
 
-/// TCP peer bootstrap - accept inbound and handshake
-async fn tcp_accept(stream: TcpStream, state: Arc<RwLock<ServerState>>) -> Result<()> {
-    stream.set_nodelay(true)?;
-    let peer_addr = stream.peer_addr().ok();
-    log!("server: inbound TCP from {:?}", peer_addr);
+/// TCP peer bootstrap - accept inbound connection and run handshake.
+///
+/// Generic over transport type to support both plain TCP and TLS connections.
+/// Set `verify_token` to true for cloud server mode (validates JWT in Connect message).
+async fn tcp_accept<T: Transport>(
+    mut transport: T,
+    state: Arc<RwLock<ServerState>>,
+    verify_token: bool,
+) -> Result<()> {
+    log!("server: inbound TCP connection");
 
-    let mut transport = TcpTransport::new(stream);
-
-    let link_name = match accept_handshake(&mut transport, &state).await {
+    let link_name = match accept_handshake(&mut transport, &state, verify_token).await {
         Ok(name) => name,
         Err(e) => {
             let _ = transport.write_message(&error_to_message(&e)).await;
@@ -1145,11 +1283,7 @@ async fn tcp_accept(stream: TcpStream, state: Arc<RwLock<ServerState>>) -> Resul
         }
     };
 
-    log!(
-        "server: handshake complete with {:?} (link: {})",
-        peer_addr,
-        link_name
-    );
+    log!("server: handshake complete (link: {})", link_name);
 
     let (outgoing_tx, outgoing_rx) = mpsc::channel::<Message>(256);
     {
@@ -1162,6 +1296,7 @@ async fn tcp_accept(stream: TcpStream, state: Arc<RwLock<ServerState>>) -> Resul
         outgoing_rx,
         link_name.clone(),
         state.clone(),
+        None, // No token refresh for inbound connections
     )
     .await;
 
@@ -1179,17 +1314,158 @@ async fn tcp_accept(stream: TcpStream, state: Arc<RwLock<ServerState>>) -> Resul
     result
 }
 
+/// Establish and maintain a cloud connection with automatic reconnection.
+///
+/// This function spawns a background task that:
+/// 1. Checks if cloud mode is enabled in state
+/// 2. Connects to the cloud server with exponential backoff on retriable errors
+/// 3. Stops retrying on non-retriable errors (auth failures)
+fn establish_cloud_connection(config: Config, state: Arc<RwLock<ServerState>>) {
+    tokio::spawn(async move {
+        // Check if cloud mode is enabled before attempting connection
+        let should_connect = State::load(&config.state_path)
+            .map(|s| s.cloud.use_cloud_mode == Some(true))
+            .unwrap_or(false);
+
+        if !should_connect {
+            log!("cloud: cloud mode not enabled, skipping connection");
+            return;
+        }
+
+        let mut backoff = Duration::from_secs(1);
+        const MAX_BACKOFF: Duration = Duration::from_secs(300);
+
+        loop {
+            log!("cloud: attempting connection");
+            match run_cloud_connection(&config, state.clone()).await {
+                Ok(()) => {
+                    log!("cloud: connection closed cleanly");
+                    backoff = Duration::from_secs(1);
+                }
+                Err(CloudConnectionError::NonRetriable(msg)) => {
+                    log!("cloud: non-retriable error, stopping: {}", msg);
+                    return;
+                }
+                Err(CloudConnectionError::Retriable(msg)) => {
+                    log!("cloud: retriable error: {}", msg);
+                }
+            }
+
+            // Check if still enabled before reconnecting
+            let should_reconnect = State::load(&config.state_path)
+                .map(|s| s.cloud.use_cloud_mode == Some(true))
+                .unwrap_or(false);
+
+            if !should_reconnect {
+                log!("cloud: cloud mode disabled, stopping reconnection");
+                return;
+            }
+
+            log!("cloud: reconnecting in {:?}", backoff);
+            tokio::time::sleep(backoff).await;
+            backoff = std::cmp::min(backoff * 2, MAX_BACKOFF);
+        }
+    });
+}
+
+/// Error type for cloud connection attempts
+enum CloudConnectionError {
+    /// Error that should trigger reconnection (connection lost, host changed)
+    Retriable(String),
+    /// Error that should stop reconnection attempts (auth failure)
+    NonRetriable(String),
+}
+
+/// Run a single cloud connection attempt.
+///
+/// Returns Ok(()) on clean disconnect, or an error indicating whether to retry.
+async fn run_cloud_connection(
+    config: &Config,
+    state: Arc<RwLock<ServerState>>,
+) -> std::result::Result<(), CloudConnectionError> {
+    // Establish cloud connection (handles OAuth token exchange)
+    let conn = match CloudConnection::connect(config).await {
+        Ok(conn) => conn,
+        Err(CloudError::NotAuthenticated) | Err(CloudError::Auth(_)) => {
+            return Err(CloudConnectionError::NonRetriable(
+                "Authentication failed - run 'amux init' to re-authenticate".to_string(),
+            ));
+        }
+        Err(CloudError::CloudDisabled) => {
+            return Err(CloudConnectionError::NonRetriable(
+                "Cloud mode disabled".to_string(),
+            ));
+        }
+        Err(e) => {
+            return Err(CloudConnectionError::Retriable(format!(
+                "Connection failed: {}",
+                e
+            )));
+        }
+    };
+
+    let (mut transport, token_refresh) = conn.into_parts();
+    let link_name = token_refresh.link_name.clone();
+
+    // Register route for outgoing messages
+    let (outgoing_tx, outgoing_rx) = mpsc::channel::<Message>(256);
+    {
+        let mut state = state.write().await;
+        state.routes.insert(link_name.clone(), outgoing_tx);
+    }
+
+    // Run peer loop with token refresh
+    let result = tcp_peer_loop(
+        &mut transport,
+        outgoing_rx,
+        link_name.clone(),
+        state.clone(),
+        Some(token_refresh),
+    )
+    .await;
+
+    // Cleanup route on disconnect
+    {
+        let mut state = state.write().await;
+        state.routes.remove(&link_name);
+    }
+
+    // Map result to retriable/non-retriable
+    match result {
+        Ok(()) => Ok(()),
+        Err(AmuxError::InvalidCredentials) => Err(CloudConnectionError::NonRetriable(
+            "Invalid credentials".to_string(),
+        )),
+        Err(e) => Err(CloudConnectionError::Retriable(e.to_string())),
+    }
+}
+
+/// Sleep until the deadline, or wait forever if None.
+/// This is used for optional token refresh in tcp_peer_loop.
+async fn maybe_sleep_until(deadline: Option<tokio::time::Instant>) {
+    match deadline {
+        Some(d) => tokio::time::sleep_until(d).await,
+        None => std::future::pending().await,
+    }
+}
+
 /// TCP peer message loop
 ///
 /// This is called after the handshake is complete, on both the initiator
 /// and receiver sides. It routes messages between this server and the remote.
-async fn tcp_peer_loop(
-    transport: &mut TcpTransport,
+///
+/// If `token_refresh` is provided, the loop will automatically refresh the
+/// cloud connection token before it expires.
+async fn tcp_peer_loop<T: Transport>(
+    transport: &mut T,
     mut outgoing_rx: mpsc::Receiver<Message>,
     link_name: String,
     state: Arc<RwLock<ServerState>>,
+    mut token_refresh: Option<TokenRefreshState>,
 ) -> Result<()> {
     log!("server: handling TCP connection with {}", link_name);
+
+    let mut refresh_deadline = token_refresh.as_ref().map(|t| t.refresh_deadline());
 
     loop {
         tokio::select! {
@@ -1213,6 +1489,26 @@ async fn tcp_peer_loop(
                 log!("server: sending to {}: {:?}", link_name, msg);
                 if transport.write_message(&msg).await.is_err() {
                     return Ok(());
+                }
+            }
+
+            // Token refresh (only fires if token_refresh is Some)
+            _ = maybe_sleep_until(refresh_deadline) => {
+                if let Some(ref mut rs) = token_refresh {
+                    log!("cloud: refreshing token");
+                    match rs.refresh_and_reconnect(transport).await {
+                        Ok(()) => {
+                            refresh_deadline = Some(rs.refresh_deadline());
+                        }
+                        Err(CloudError::HostChanged) => {
+                            log!("cloud: host changed, reconnection required");
+                            return Err(AmuxError::Config("Cloud host changed".to_string()));
+                        }
+                        Err(e) => {
+                            log!("cloud: token refresh failed: {}", e);
+                            return Err(AmuxError::Config(format!("Token refresh failed: {}", e)));
+                        }
+                    }
                 }
             }
         }
