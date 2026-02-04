@@ -74,7 +74,6 @@ impl State {
         serde_yaml::from_str(&contents).map_err(StateError::Parse)
     }
 
-
     /// Atomic load-modify-save with exclusive lock held throughout
     pub fn update<F, T>(path: &Path, f: F) -> Result<T, StateError>
     where

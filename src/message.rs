@@ -1,3 +1,4 @@
+use crate::config::Config;
 use crate::route::Route;
 use crate::structured_log::StructuredLog;
 use serde::{Deserialize, Serialize};
@@ -231,6 +232,13 @@ pub enum Message {
         agent_id: String,
         response: PermissionResponse,
     },
+
+    // Debug
+    /// Request server debug information (local only)
+    Debug,
+
+    /// Response to Debug
+    DebugResult { info: ServerDebugInfo },
 }
 
 /// Information about a running agent
@@ -240,6 +248,41 @@ pub struct AgentInfo {
     pub alias: Option<String>,
     pub command: String,
     pub working_dir: PathBuf,
+}
+
+/// Debug information about server state
+#[derive(Serialize, Deserialize, Debug, Clone)]
+pub struct ServerDebugInfo {
+    /// Whether this server is running as a cloud server (TLS + token auth)
+    pub is_cloud_server: bool,
+    /// Whether cloud mode is enabled in state (connect to cloud)
+    pub use_cloud_mode: bool,
+    pub agent_count: usize,
+    pub route_count: usize,
+    pub routes: Vec<String>,
+    pub config: ConfigDebugInfo,
+}
+
+/// Debug information about server config
+#[derive(Serialize, Deserialize, Debug, Clone)]
+pub struct ConfigDebugInfo {
+    pub host_name: String,
+    pub socket_path: PathBuf,
+    pub tcp_port: u16,
+    pub websocket_port: u16,
+    pub cloud_url: String,
+}
+
+impl From<&Config> for ConfigDebugInfo {
+    fn from(config: &Config) -> Self {
+        Self {
+            host_name: config.host_name.clone(),
+            socket_path: config.socket_path.clone(),
+            tcp_port: config.tcp_port,
+            websocket_port: config.websocket_port,
+            cloud_url: config.cloud_url.clone(),
+        }
+    }
 }
 
 impl Message {

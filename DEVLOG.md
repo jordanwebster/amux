@@ -38,6 +38,49 @@ One paragraph describing what was done.
 
 ---
 
+## 2025-02-04: Add Hidden Debug Command
+
+### Summary
+
+Added a hidden `debug` command that exposes internal server state for troubleshooting. The command shows cloud server status, cloud mode enabled setting, agent count, route count with link names, and configuration details.
+
+### Changes
+
+**Modified files:**
+- `src/message.rs` - Added `Debug` and `DebugResult { info: ServerDebugInfo }` message variants; added `ServerDebugInfo` struct with `is_cloud_server` (running as cloud server) and `use_cloud_mode` (cloud enabled in state) fields; added `ConfigDebugInfo` struct; added `From<&Config>` impl for `ConfigDebugInfo`
+- `src/server.rs` - Added handler for `Message::Debug` in `unix_handle_message()` that reads server state and state file, returns `DebugResult`
+- `src/client.rs` - Added `debug()` function that sends `Debug` message and returns `ServerDebugInfo`
+- `src/main.rs` - Added hidden `Debug` subcommand; added handler that calls `client::debug()` and prints results
+
+### Decisions Made
+
+1. **Two separate cloud fields:** `is_cloud_server` (whether running as a cloud relay with TLS+auth) vs `use_cloud_mode` (whether cloud mode is enabled in state.yaml). These are different concepts that were initially confusing when combined into a single field.
+
+### Verification
+
+- `cargo check && cargo fmt && cargo clippy && cargo test` - all pass
+- `cargo run -p e2e-runner -- run` - all 6 E2E tests pass
+- Manual test: `amux debug` shows expected output
+
+### Example Output
+
+```
+Server Debug Info:
+  is_cloud_server: false
+  use_cloud_mode: true
+  agent_count: 1
+  route_count: 2
+  routes: ["term-abc1", "term-xyz2"]
+Config:
+  host_name: my-laptop
+  socket_path: /tmp/amux.sock
+  tcp_port: 9001
+  websocket_port: 9002
+  cloud_url: https://amux.sh
+```
+
+---
+
 ## 2025-02-04: Code Review Feedback - Cloud Mode Cleanup
 
 ### Summary

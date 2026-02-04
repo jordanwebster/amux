@@ -4,7 +4,8 @@ use crate::config::Config;
 use crate::error::{AmuxError, Result};
 use crate::jwt::JwtValidator;
 use crate::message::{
-    ClaudeHook, CreateAgentRequest, Hook, Message, PermissionResponse, ProtocolError,
+    ClaudeHook, ConfigDebugInfo, CreateAgentRequest, Hook, Message, PermissionResponse,
+    ProtocolError, ServerDebugInfo,
 };
 use crate::route::{generate_server_link, Route};
 use crate::session::{LocalAgentSession, SessionEvent};
@@ -989,6 +990,25 @@ async fn unix_handle_message(
                     }
                 }
             }
+            Ok(())
+        }
+
+        Message::Debug => {
+            let state = ctx.state.read().await;
+            let use_cloud_mode = State::load(&state.config.state_path)
+                .map(|s| s.cloud.use_cloud_mode == Some(true))
+                .unwrap_or(false);
+            let info = ServerDebugInfo {
+                is_cloud_server: state.cloud_mode,
+                use_cloud_mode,
+                agent_count: state.agents.len(),
+                route_count: state.routes.len(),
+                routes: state.routes.keys().cloned().collect(),
+                config: ConfigDebugInfo::from(&state.config),
+            };
+            transport
+                .write_message(&Message::DebugResult { info })
+                .await?;
             Ok(())
         }
 

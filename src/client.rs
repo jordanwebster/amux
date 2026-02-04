@@ -1,6 +1,6 @@
 use crate::config::Config;
 use crate::error::{AmuxError, Result};
-use crate::message::{AgentType, CreateAgentRequest, Message, ProtocolError};
+use crate::message::{AgentType, CreateAgentRequest, Message, ProtocolError, ServerDebugInfo};
 use crate::route::{generate_terminal_link, Route};
 use crate::transport::{Transport, UnixTransport};
 use serde::Deserialize;
@@ -385,6 +385,29 @@ pub async fn connect(address: &str, config: &Config) -> Result<()> {
                 .unwrap_or_else(|| "Connection failed".to_string());
             Err(AmuxError::Config(msg))
         }
+        _ => Err(AmuxError::InvalidMessage),
+    }
+}
+
+/// Get server debug information
+pub async fn debug(config: &Config) -> Result<ServerDebugInfo> {
+    let (mut transport, _link_name) = match connect_and_handshake(config).await {
+        Ok(info) => info,
+        Err(AmuxError::Io(e))
+            if e.kind() == io::ErrorKind::NotFound
+                || e.kind() == io::ErrorKind::ConnectionRefused =>
+        {
+            return Err(AmuxError::ServerError("No server running".to_string()));
+        }
+        Err(e) => return Err(e),
+    };
+
+    transport.write_message(&Message::Debug).await?;
+
+    let response = transport.read_message().await?;
+    match response {
+        Message::DebugResult { info } => Ok(info),
+        Message::Error { message } => Err(AmuxError::ServerError(message)),
         _ => Err(AmuxError::InvalidMessage),
     }
 }

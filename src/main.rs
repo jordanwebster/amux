@@ -90,6 +90,10 @@ enum Commands {
         #[command(subcommand)]
         provider: HooksProvider,
     },
+
+    /// Internal: Show server debug information
+    #[command(hide = true)]
+    Debug,
 }
 
 #[derive(Subcommand)]
@@ -180,6 +184,29 @@ async fn main() {
             if let Err(e) = server.run(cloud).await {
                 log!("server error: {}", e);
                 std::process::exit(1);
+            }
+            return;
+        }
+        Some(Commands::Debug) => {
+            match client::debug(&config).await {
+                Ok(info) => {
+                    println!("Server Debug Info:");
+                    println!("  is_cloud_server: {}", info.is_cloud_server);
+                    println!("  use_cloud_mode: {}", info.use_cloud_mode);
+                    println!("  agent_count: {}", info.agent_count);
+                    println!("  route_count: {}", info.route_count);
+                    println!("  routes: {:?}", info.routes);
+                    println!("Config:");
+                    println!("  host_name: {}", info.config.host_name);
+                    println!("  socket_path: {}", info.config.socket_path.display());
+                    println!("  tcp_port: {}", info.config.tcp_port);
+                    println!("  websocket_port: {}", info.config.websocket_port);
+                    println!("  cloud_url: {}", info.config.cloud_url);
+                }
+                Err(e) => {
+                    eprintln!("error: {}", e);
+                    std::process::exit(1);
+                }
             }
             return;
         }
