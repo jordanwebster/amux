@@ -40,11 +40,6 @@ impl Route {
         self.links.pop_front()
     }
 
-    /// Check if the route is empty (destination is local).
-    pub fn is_empty(&self) -> bool {
-        self.links.is_empty()
-    }
-
     /// Prepare to send a new message. Pops from dst, creates src from the popped link.
     /// Returns (src, dst) ready to include in the message.
     /// Returns None if dst is empty.
@@ -59,6 +54,18 @@ impl Route {
     /// Returns None if src is empty (no return path).
     pub fn reply(src: Route) -> Option<(Route, Route)> {
         Route::send(src)
+    }
+}
+
+impl std::fmt::Display for Route {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        let s: String = self
+            .links
+            .iter()
+            .map(|s| s.as_str())
+            .collect::<Vec<_>>()
+            .join(".");
+        f.write_str(&s)
     }
 }
 
@@ -135,14 +142,13 @@ mod tests {
         assert_eq!(route.pop(), Some("BC".to_string()));
         assert_eq!(route.pop(), Some("CD".to_string()));
         assert_eq!(route.pop(), None);
-        assert!(route.is_empty());
     }
 
     #[test]
     fn test_route_from_link() {
         let mut route = Route::from_link("single");
         assert_eq!(route.pop(), Some("single".to_string()));
-        assert!(route.is_empty());
+        assert_eq!(route.pop(), None);
     }
 
     #[test]
@@ -173,8 +179,8 @@ mod tests {
 
     #[test]
     fn test_route_deserialize_empty() {
-        let route: Route = serde_json::from_str("\"\"").unwrap();
-        assert!(route.is_empty());
+        let mut route: Route = serde_json::from_str("\"\"").unwrap();
+        assert_eq!(route.pop(), None);
     }
 
     #[test]

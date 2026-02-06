@@ -82,12 +82,22 @@ pub enum ProtocolError {
     InvalidCredentials,
 }
 
+/// Subscribe output mode
+#[derive(Serialize, Deserialize, Debug, Clone, Copy, PartialEq, Eq, Default)]
+pub enum SubscribeMode {
+    /// Stream raw terminal bytes as Output messages
+    #[default]
+    Raw,
+    /// Stream structured logs as StructuredOutput messages
+    Structured,
+}
+
 impl std::fmt::Display for ProtocolError {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         match self {
             ProtocolError::ServerError(msg) => write!(f, "{}", msg),
             ProtocolError::LinkNameTaken => write!(f, "Link name already in use"),
-            ProtocolError::NoRouteFound(route) => write!(f, "No route found: {:?}", route),
+            ProtocolError::NoRouteFound(route) => write!(f, "No route found: {}", route),
             ProtocolError::InvalidCredentials => write!(f, "Invalid or missing credentials"),
         }
     }
@@ -104,141 +114,99 @@ pub struct CreateAgentRequest {
     pub cols: u16,
 }
 
-/// All protocol messages between client and server
+/// Messages that carry src/dst routing information and can be forwarded across hops.
 #[derive(Serialize, Deserialize, Debug, Clone)]
-pub enum Message {
-    // Client -> Server
-    /// List all running agents
-    ListAgents,
-
-    /// Create a new agent with the given type
-    CreateAgent(CreateAgentRequest),
-
-    /// Subscribe to an agent's output stream (routable)
-    /// agent_id can be a UUID string or an alias
+pub enum RoutableMessage {
     Subscribe {
-        src: Route,
-        dst: Route,
         agent_id: String,
         rows: u16,
         cols: u16,
+        #[serde(default)]
+        mode: SubscribeMode,
     },
-
-    /// Send raw input bytes to the subscribed agent (routable)
-    /// agent_id can be a UUID string or an alias
-    /// No automatic Enter - bytes are written directly to PTY
+    SubscribeResult {
+        agent_id: String,
+        success: bool,
+        error: Option<ProtocolError>,
+    },
     InputBytes {
-        src: Route,
-        dst: Route,
         agent_id: String,
         data: Vec<u8>,
     },
-
-    /// Send input text and submit (WebSocket only)
-    /// Writes data bytes, waits briefly, then sends Enter
-    /// This ensures Claude Code interprets Enter as "submit" not "newline"
     SubmitInput {
-        src: Route,
-        dst: Route,
         agent_id: String,
         data: Vec<u8>,
     },
+    Output {
+        agent_id: String,
+        data: Vec<u8>,
+    },
+    StructuredOutput {
+        agent_id: String,
+        entry: StructuredLog,
+    },
+    PermissionRequestResponse {
+        agent_id: String,
+        response: PermissionResponse,
+    },
+    Error(ProtocolError),
+}
 
-    /// Shutdown the server
-    Shutdown,
-
-    // Server -> Client
-    /// Response to ListAgents
-    ListAgentsResult { agents: Vec<AgentInfo> },
-
-    /// Response to CreateAgent
+/// Messages that are handled locally on the receiving server (no routing).
+#[derive(Serialize, Deserialize, Debug, Clone)]
+pub enum LocalMessage {
+    ListAgents,
+    CreateAgent(CreateAgentRequest),
+    ListAgentsResult {
+        agents: Vec<AgentInfo>,
+    },
     CreateAgentResult {
         success: bool,
         error: Option<ProtocolError>,
     },
-
-    /// Response to Subscribe (routable)
-    SubscribeResult {
-        src: Route,
-        dst: Route,
-        agent_id: String,
-        success: bool,
-        error: Option<ProtocolError>,
-    },
-
-    /// Output bytes from the agent (routable)
-    Output {
-        src: Route,
-        dst: Route,
-        agent_id: String,
-        data: Vec<u8>,
-    },
-
-    /// Agent session has ended
     AgentEnded,
-
-    /// Generic error response
-    Error { message: String },
-
-    // Client -> Server: remote connection management
-    /// Request local server to connect to a remote amux server
-    ConnectToServer { address: String },
-
-    /// Response to ConnectToServer
+    Error {
+        message: String,
+    },
+    Shutdown,
+    Debug,
+    ConnectToServer {
+        address: String,
+    },
     ConnectToServerResult {
         success: bool,
         error: Option<ProtocolError>,
     },
-
-    // Handshake (unified for client-server and server-server)
-    /// Sent to initiate connection handshake with proposed link name.
-    /// Token is optional - required when connecting to cloud servers.
     Connect {
         link_name: String,
         #[serde(skip_serializing_if = "Option::is_none", default)]
         token: Option<String>,
     },
-
-    /// Response to Connect
     ConnectResponse {
         success: bool,
         error: Option<ProtocolError>,
     },
-
-    // Hook events
-    /// Hook event from CLI hook handler (e.g., Claude Code SessionStart)
-    HookEvent { hook: Hook },
-
-    /// Acknowledgement of HookEvent
+    HookEvent {
+        hook: Hook,
+    },
     HookEventResult {
         success: bool,
         error: Option<ProtocolError>,
     },
+    DebugResult {
+        info: ServerDebugInfo,
+    },
+}
 
-    // Structured output for WebSocket clients
-    /// Structured log entry from agent (for WebSocket subscribers)
-    StructuredOutput {
+/// All protocol messages between client and server
+#[derive(Serialize, Deserialize, Debug, Clone)]
+pub enum Message {
+    Routable {
         src: Route,
         dst: Route,
-        agent_id: String,
-        entry: StructuredLog,
+        message: RoutableMessage,
     },
-
-    // Permission request response (from dashboard to server, routable)
-    /// Response to a permission request - sends keystroke to agent
-    PermissionRequestResponse {
-        src: Route,
-        dst: Route,
-        agent_id: String,
-        response: PermissionResponse,
-    },
-
-    // Debug
-    /// Request server debug information (local only)
-    Debug,
-
-    /// Response to Debug
-    DebugResult { info: ServerDebugInfo },
+    Local(LocalMessage),
 }
 
 /// Information about a running agent
@@ -297,32 +265,40 @@ impl Message {
     }
 }
 
+impl From<&crate::error::AmuxError> for Message {
+    fn from(e: &crate::error::AmuxError) -> Self {
+        Message::Local(LocalMessage::Error {
+            message: e.to_string(),
+        })
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
 
     #[test]
     fn test_message_roundtrip_list_agents() {
-        let msg = Message::ListAgents;
+        let msg = Message::Local(LocalMessage::ListAgents);
         let encoded = msg.encode().unwrap();
         let decoded = Message::decode(&encoded).unwrap();
-        assert!(matches!(decoded, Message::ListAgents));
+        assert!(matches!(decoded, Message::Local(LocalMessage::ListAgents)));
     }
 
     #[test]
     fn test_message_roundtrip_create_agent() {
         let test_uuid = Uuid::new_v4();
-        let msg = Message::CreateAgent(CreateAgentRequest {
+        let msg = Message::Local(LocalMessage::CreateAgent(CreateAgentRequest {
             agent_id: test_uuid,
             alias: Some("test".to_string()),
             agent_type: AgentType::Claude,
             working_dir: PathBuf::from("/home/user/project"),
             rows: 24,
             cols: 80,
-        });
+        }));
         let encoded = msg.encode().unwrap();
         let decoded = Message::decode(&encoded).unwrap();
-        if let Message::CreateAgent(req) = decoded {
+        if let Message::Local(LocalMessage::CreateAgent(req)) = decoded {
             assert_eq!(req.agent_id, test_uuid);
             assert_eq!(req.alias, Some("test".to_string()));
             assert_eq!(req.agent_type, AgentType::Claude);
@@ -336,16 +312,22 @@ mod tests {
 
     #[test]
     fn test_message_roundtrip_subscribe_result() {
-        let msg = Message::SubscribeResult {
+        let msg = Message::Routable {
             src: Route::from_link("host-a"),
             dst: Route::from_link("host-b"),
-            agent_id: Uuid::new_v4().to_string(),
-            success: true,
-            error: None,
+            message: RoutableMessage::SubscribeResult {
+                agent_id: Uuid::new_v4().to_string(),
+                success: true,
+                error: None,
+            },
         };
         let encoded = msg.encode().unwrap();
         let decoded = Message::decode(&encoded).unwrap();
-        if let Message::SubscribeResult { success, error, .. } = decoded {
+        if let Message::Routable {
+            message: RoutableMessage::SubscribeResult { success, error, .. },
+            ..
+        } = decoded
+        {
             assert!(success);
             assert!(error.is_none());
         } else {
@@ -377,10 +359,10 @@ mod tests {
             session_id: test_uuid,
             transcript_path: "/tmp/transcript.jsonl".to_string(),
         }));
-        let msg = Message::HookEvent { hook };
+        let msg = Message::Local(LocalMessage::HookEvent { hook });
         let encoded = msg.encode().unwrap();
         let decoded = Message::decode(&encoded).unwrap();
-        let Message::HookEvent { hook: decoded_hook } = decoded else {
+        let Message::Local(LocalMessage::HookEvent { hook: decoded_hook }) = decoded else {
             panic!("Expected HookEvent");
         };
         match decoded_hook {

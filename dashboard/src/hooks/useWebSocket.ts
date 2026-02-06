@@ -2,11 +2,14 @@ import { useEffect, useRef, useCallback } from "react"
 import { useAppStore } from "../store/appStore"
 import type { ClientMessage, ServerMessage, PermissionResponse } from "../types/protocol"
 import {
+  isRoutable,
+  isLocal,
   isConnectResponse,
   isListAgentsResult,
+  isLocalError,
   isSubscribeResult,
   isStructuredOutput,
-  isError,
+  isRoutableError,
 } from "../types/protocol"
 
 const WS_URL = "ws://localhost:9002"
@@ -37,35 +40,45 @@ export function useWebSocket() {
     wsRef.current = ws
 
     ws.onopen = () => {
-      // Send Connect handshake (serde format: {"Connect": {"host_id": "..."}})
-      send({ Connect: { host_id: clientHostId } })
+      // Send Connect handshake: { Local: { Connect: { link_name: "..." } } }
+      send({ Local: { Connect: { link_name: clientHostId } } })
     }
 
     ws.onmessage = (event) => {
       const msg: ServerMessage = JSON.parse(event.data)
 
-      if (isConnectResponse(msg)) {
-        if (msg.ConnectResponse.success) {
-          setConnectionStatus("connected")
-          setServerHostId(msg.ConnectResponse.host_id)
-          // Request agent list
-          send("ListAgents")
-        } else {
-          console.error("Connect failed:", msg.ConnectResponse.error)
-          setConnectionStatus("error")
+      if (isLocal(msg)) {
+        const local = msg.Local
+
+        if (isConnectResponse(local)) {
+          if (local.ConnectResponse.success) {
+            setConnectionStatus("connected")
+            setServerHostId(clientHostId)
+            // Request agent list
+            send({ Local: "ListAgents" })
+          } else {
+            console.error("Connect failed:", local.ConnectResponse.error)
+            setConnectionStatus("error")
+          }
+        } else if (isListAgentsResult(local)) {
+          setAgents(local.ListAgentsResult.agents)
+        } else if (local === "AgentEnded") {
+          console.log("Agent session ended")
+        } else if (isLocalError(local)) {
+          console.error("Server error:", local.Error.message)
         }
-      } else if (isListAgentsResult(msg)) {
-        setAgents(msg.ListAgentsResult.agents)
-      } else if (isSubscribeResult(msg)) {
-        if (!msg.SubscribeResult.success) {
-          console.error("Subscribe failed:", msg.SubscribeResult.error)
+      } else if (isRoutable(msg)) {
+        const routable = msg.Routable.message
+
+        if (isSubscribeResult(routable)) {
+          if (!routable.SubscribeResult.success) {
+            console.error("Subscribe failed:", routable.SubscribeResult.error)
+          }
+        } else if (isStructuredOutput(routable)) {
+          addMessage(routable.StructuredOutput.agent_id, routable.StructuredOutput.entry)
+        } else if (isRoutableError(routable)) {
+          console.error("Route error:", routable.Error)
         }
-      } else if (isStructuredOutput(msg)) {
-        addMessage(msg.StructuredOutput.agent_id, msg.StructuredOutput.entry)
-      } else if (msg === "AgentEnded") {
-        console.log("Agent session ended")
-      } else if (isError(msg)) {
-        console.error("Server error:", msg.Error.message)
       }
     }
 
@@ -81,12 +94,17 @@ export function useWebSocket() {
       if (!serverHostId) return
 
       send({
-        Subscribe: {
-          src_host: clientHostId,
-          dst_host: serverHostId,
-          agent_id: agentId,
-          rows: 24,
-          cols: 80,
+        Routable: {
+          src: clientHostId,
+          dst: "",
+          message: {
+            Subscribe: {
+              agent_id: agentId,
+              rows: 24,
+              cols: 80,
+              mode: "Structured",
+            },
+          },
         },
       })
     },
@@ -95,7 +113,7 @@ export function useWebSocket() {
 
   // Refresh agent list
   const refreshAgents = useCallback(() => {
-    send("ListAgents")
+    send({ Local: "ListAgents" })
   }, [send])
 
   // Send input to agent
@@ -108,11 +126,15 @@ export function useWebSocket() {
       const data = Array.from(new TextEncoder().encode(text))
 
       send({
-        SubmitInput: {
-          src_host: clientHostId,
-          dst_host: serverHostId,
-          agent_id: agentId,
-          data,
+        Routable: {
+          src: clientHostId,
+          dst: "",
+          message: {
+            SubmitInput: {
+              agent_id: agentId,
+              data,
+            },
+          },
         },
       })
     },
@@ -125,11 +147,15 @@ export function useWebSocket() {
       if (!serverHostId) return
 
       send({
-        PermissionRequestResponse: {
-          src_host: clientHostId,
-          dst_host: serverHostId,
-          agent_id: agentId,
-          response,
+        Routable: {
+          src: clientHostId,
+          dst: "",
+          message: {
+            PermissionRequestResponse: {
+              agent_id: agentId,
+              response,
+            },
+          },
         },
       })
     },

@@ -1,0 +1,144 @@
+use super::{LengthPrefixed, Transport, MAX_FRAME_SIZE};
+use crate::error::{AmuxError, Result};
+use crate::message::Message;
+use async_trait::async_trait;
+use tokio::net::UnixStream;
+
+/// Unix socket transport with length-prefixed framing
+pub struct UnixTransport {
+    framed: LengthPrefixed<tokio::net::unix::OwnedReadHalf, tokio::net::unix::OwnedWriteHalf>,
+}
+
+impl UnixTransport {
+    /// Create a new transport from a Unix stream
+    pub fn new(stream: UnixStream) -> Self {
+        let (reader, writer) = stream.into_split();
+        Self {
+            framed: LengthPrefixed::new(reader, writer, false),
+        }
+    }
+}
+
+#[async_trait]
+impl Transport for UnixTransport {
+    async fn read_message(&mut self) -> Result<Message> {
+        let data = self.framed.read_frame(MAX_FRAME_SIZE).await?;
+        Message::decode(&data).map_err(AmuxError::SerializationDecode)
+    }
+
+    async fn write_message(&mut self, msg: &Message) -> Result<()> {
+        let data = msg.encode().map_err(AmuxError::SerializationEncode)?;
+        self.framed.write_frame(&data).await
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::message::{AgentType, CreateAgentRequest, LocalMessage, RoutableMessage};
+    use crate::route::Route;
+    use tokio::net::UnixListener;
+    use uuid::Uuid;
+
+    async fn create_socket_pair() -> (UnixTransport, UnixTransport) {
+        let dir = tempfile::tempdir().unwrap();
+        let socket_path = dir.path().join("test.sock");
+
+        let listener = UnixListener::bind(&socket_path).unwrap();
+
+        let client_future = UnixStream::connect(&socket_path);
+        let server_future = listener.accept();
+
+        let (client_result, server_result) = tokio::join!(client_future, server_future);
+        let client_stream = client_result.unwrap();
+        let (server_stream, _) = server_result.unwrap();
+
+        (
+            UnixTransport::new(client_stream),
+            UnixTransport::new(server_stream),
+        )
+    }
+
+    #[tokio::test]
+    async fn test_message_roundtrip() {
+        let (mut client, mut server) = create_socket_pair().await;
+
+        let test_uuid = Uuid::new_v4();
+        let msg = Message::Local(LocalMessage::CreateAgent(CreateAgentRequest {
+            agent_id: test_uuid,
+            alias: Some("test".to_string()),
+            agent_type: AgentType::Claude,
+            working_dir: std::path::PathBuf::from("/tmp"),
+            rows: 24,
+            cols: 80,
+        }));
+
+        client.write_message(&msg).await.unwrap();
+
+        let received = server.read_message().await.unwrap();
+        if let Message::Local(LocalMessage::CreateAgent(req)) = received {
+            assert_eq!(req.agent_id, test_uuid);
+            assert_eq!(req.alias, Some("test".to_string()));
+            assert_eq!(req.agent_type, AgentType::Claude);
+            assert_eq!(req.working_dir, std::path::PathBuf::from("/tmp"));
+            assert_eq!(req.rows, 24);
+            assert_eq!(req.cols, 80);
+        } else {
+            panic!("Expected CreateAgent");
+        }
+    }
+
+    #[tokio::test]
+    async fn test_output_message_roundtrip() {
+        let (mut client, mut server) = create_socket_pair().await;
+
+        let msg = Message::Routable {
+            src: Route::from_link("host-a"),
+            dst: Route::from_link("host-b"),
+            message: RoutableMessage::Output {
+                agent_id: Uuid::new_v4().to_string(),
+                data: b"hello world".to_vec(),
+            },
+        };
+
+        client.write_message(&msg).await.unwrap();
+
+        let received = server.read_message().await.unwrap();
+        if let Message::Routable {
+            message: RoutableMessage::Output { data, .. },
+            ..
+        } = received
+        {
+            assert_eq!(data, b"hello world");
+        } else {
+            panic!("Expected Output");
+        }
+    }
+
+    #[tokio::test]
+    async fn test_input_message_roundtrip() {
+        let (mut client, mut server) = create_socket_pair().await;
+
+        let msg = Message::Routable {
+            src: Route::from_link("host-a"),
+            dst: Route::from_link("host-b"),
+            message: RoutableMessage::InputBytes {
+                agent_id: Uuid::new_v4().to_string(),
+                data: b"user input".to_vec(),
+            },
+        };
+
+        client.write_message(&msg).await.unwrap();
+
+        let received = server.read_message().await.unwrap();
+        if let Message::Routable {
+            message: RoutableMessage::InputBytes { data, .. },
+            ..
+        } = received
+        {
+            assert_eq!(data, b"user input");
+        } else {
+            panic!("Expected InputBytes");
+        }
+    }
+}

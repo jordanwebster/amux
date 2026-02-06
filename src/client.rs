@@ -1,6 +1,9 @@
 use crate::config::Config;
 use crate::error::{AmuxError, Result};
-use crate::message::{AgentType, CreateAgentRequest, Message, ProtocolError, ServerDebugInfo};
+use crate::message::{
+    AgentType, CreateAgentRequest, LocalMessage, Message, ProtocolError, RoutableMessage,
+    ServerDebugInfo, SubscribeMode,
+};
 use crate::route::{generate_terminal_link, Route};
 use crate::transport::{Transport, UnixTransport};
 use serde::Deserialize;
@@ -58,23 +61,23 @@ async fn connect_and_handshake(config: &Config) -> Result<(UnixTransport, String
         // Generate terminal link name: "term-{rand}"
         let link_name = generate_terminal_link();
         transport
-            .write_message(&Message::Connect {
+            .write_message(&Message::Local(LocalMessage::Connect {
                 link_name: link_name.clone(),
                 token: None,
-            })
+            }))
             .await?;
 
         // Receive ConnectResponse
         let response = transport.read_message().await?;
         match response {
-            Message::ConnectResponse { success: true, .. } => {
+            Message::Local(LocalMessage::ConnectResponse { success: true, .. }) => {
                 log!("client: connected with link {}", link_name);
                 return Ok((transport, link_name));
             }
-            Message::ConnectResponse {
+            Message::Local(LocalMessage::ConnectResponse {
                 success: false,
                 error: Some(ProtocolError::LinkNameTaken),
-            } => {
+            }) => {
                 log!(
                     "client: link name {} taken, retrying (attempt {})",
                     link_name,
@@ -82,23 +85,23 @@ async fn connect_and_handshake(config: &Config) -> Result<(UnixTransport, String
                 );
                 continue;
             }
-            Message::ConnectResponse {
+            Message::Local(LocalMessage::ConnectResponse {
                 success: false,
                 error: Some(ProtocolError::InvalidCredentials),
-            } => {
+            }) => {
                 log!("client: invalid credentials - authentication failed");
                 return Err(AmuxError::InvalidCredentials);
             }
-            Message::ConnectResponse {
+            Message::Local(LocalMessage::ConnectResponse {
                 success: false,
                 error,
-            } => {
+            }) => {
                 let msg = error
                     .map(|e| e.to_string())
                     .unwrap_or_else(|| "Connection rejected".to_string());
                 return Err(AmuxError::Config(msg));
             }
-            Message::Error { message } => {
+            Message::Local(LocalMessage::Error { message }) => {
                 return Err(AmuxError::ServerError(message));
             }
             _ => return Err(AmuxError::InvalidMessage),
@@ -144,26 +147,28 @@ pub async fn new_agent(alias: Option<&str>, agent_type: AgentType, config: &Conf
 
     // Send CreateAgent
     transport
-        .write_message(&Message::CreateAgent(CreateAgentRequest {
-            agent_id,
-            alias: alias.map(|s| s.to_string()),
-            agent_type,
-            working_dir: working_dir.clone(),
-            rows,
-            cols,
-        }))
+        .write_message(&Message::Local(LocalMessage::CreateAgent(
+            CreateAgentRequest {
+                agent_id,
+                alias: alias.map(|s| s.to_string()),
+                agent_type,
+                working_dir: working_dir.clone(),
+                rows,
+                cols,
+            },
+        )))
         .await?;
 
     // Read response
     let response = transport.read_message().await?;
     match response {
-        Message::CreateAgentResult { success: true, .. } => {
+        Message::Local(LocalMessage::CreateAgentResult { success: true, .. }) => {
             log!("client: agent created successfully");
         }
-        Message::CreateAgentResult {
+        Message::Local(LocalMessage::CreateAgentResult {
             success: false,
             error,
-        } => {
+        }) => {
             let msg = error
                 .map(|e| e.to_string())
                 .unwrap_or_else(|| "Unknown error".to_string());
@@ -194,14 +199,16 @@ pub async fn attach(target: Option<&str>, config: &Config) -> Result<()> {
     let (route_suffix, agent_id) = match target {
         Some(t) => parse_target(t),
         None => {
-            transport.write_message(&Message::ListAgents).await?;
+            transport
+                .write_message(&Message::Local(LocalMessage::ListAgents))
+                .await?;
 
             let response = transport.read_message().await?;
             match response {
-                Message::ListAgentsResult { agents } if !agents.is_empty() => {
+                Message::Local(LocalMessage::ListAgentsResult { agents }) if !agents.is_empty() => {
                     (None, agents[0].agent_id.to_string())
                 }
-                Message::ListAgentsResult { .. } => {
+                Message::Local(LocalMessage::ListAgentsResult { .. }) => {
                     eprintln!("No agents running. Use 'amux new-agent' to create one.");
                     return Ok(());
                 }
@@ -246,24 +253,34 @@ async fn subscribe_and_stream(
 
     // Send Subscribe
     transport
-        .write_message(&Message::Subscribe {
+        .write_message(&Message::Routable {
             src,
             dst,
-            agent_id: agent_id.to_string(),
-            rows,
-            cols,
+            message: RoutableMessage::Subscribe {
+                agent_id: agent_id.to_string(),
+                rows,
+                cols,
+                mode: SubscribeMode::Raw,
+            },
         })
         .await?;
 
     // Read SubscribeResult
     let response = transport.read_message().await?;
     match response {
-        Message::SubscribeResult { success: true, .. } => {
+        Message::Routable {
+            message: RoutableMessage::SubscribeResult { success: true, .. },
+            ..
+        } => {
             log!("client: subscribed successfully");
         }
-        Message::SubscribeResult {
-            success: false,
-            error,
+        Message::Routable {
+            message:
+                RoutableMessage::SubscribeResult {
+                    success: false,
+                    error,
+                    ..
+                },
             ..
         } => {
             let msg = error
@@ -272,7 +289,14 @@ async fn subscribe_and_stream(
             eprintln!("Failed to subscribe: {}", msg);
             return Ok(());
         }
-        Message::Error { message } => {
+        Message::Routable {
+            message: RoutableMessage::Error(error),
+            ..
+        } => {
+            eprintln!("Failed to subscribe: {}", error);
+            return Ok(());
+        }
+        Message::Local(LocalMessage::Error { message }) => {
             return Err(AmuxError::ServerError(message));
         }
         _ => {
@@ -298,11 +322,13 @@ pub async fn list_agents(config: &Config) -> Result<()> {
         Err(e) => return Err(e),
     };
 
-    transport.write_message(&Message::ListAgents).await?;
+    transport
+        .write_message(&Message::Local(LocalMessage::ListAgents))
+        .await?;
 
     let response = transport.read_message().await?;
     match response {
-        Message::ListAgentsResult { mut agents } => {
+        Message::Local(LocalMessage::ListAgentsResult { mut agents }) => {
             if agents.is_empty() {
                 println!("No agents running.");
             } else {
@@ -323,7 +349,7 @@ pub async fn list_agents(config: &Config) -> Result<()> {
                 }
             }
         }
-        Message::Error { message } => {
+        Message::Local(LocalMessage::Error { message }) => {
             return Err(AmuxError::ServerError(message));
         }
         _ => {
@@ -348,7 +374,9 @@ pub async fn kill_server(config: &Config) -> Result<()> {
         Err(e) => return Err(e),
     };
 
-    transport.write_message(&Message::Shutdown).await?;
+    transport
+        .write_message(&Message::Local(LocalMessage::Shutdown))
+        .await?;
 
     // Wait for server acknowledgment before closing connection
     // TODO: Server should gracefully end agent sessions (send Ctrl+C) before exiting
@@ -364,22 +392,22 @@ pub async fn connect(address: &str, config: &Config) -> Result<()> {
 
     // Send ConnectToServer message to local server
     transport
-        .write_message(&Message::ConnectToServer {
+        .write_message(&Message::Local(LocalMessage::ConnectToServer {
             address: address.to_string(),
-        })
+        }))
         .await?;
 
     // Wait for result
     let response = transport.read_message().await?;
     match response {
-        Message::ConnectToServerResult { success: true, .. } => {
+        Message::Local(LocalMessage::ConnectToServerResult { success: true, .. }) => {
             println!("Connected to {}", address);
             Ok(())
         }
-        Message::ConnectToServerResult {
+        Message::Local(LocalMessage::ConnectToServerResult {
             success: false,
             error,
-        } => {
+        }) => {
             let msg = error
                 .map(|e| e.to_string())
                 .unwrap_or_else(|| "Connection failed".to_string());
@@ -402,12 +430,14 @@ pub async fn debug(config: &Config) -> Result<ServerDebugInfo> {
         Err(e) => return Err(e),
     };
 
-    transport.write_message(&Message::Debug).await?;
+    transport
+        .write_message(&Message::Local(LocalMessage::Debug))
+        .await?;
 
     let response = transport.read_message().await?;
     match response {
-        Message::DebugResult { info } => Ok(info),
-        Message::Error { message } => Err(AmuxError::ServerError(message)),
+        Message::Local(LocalMessage::DebugResult { info }) => Ok(info),
+        Message::Local(LocalMessage::Error { message }) => Err(AmuxError::ServerError(message)),
         _ => Err(AmuxError::InvalidMessage),
     }
 }
@@ -548,11 +578,13 @@ async fn run_attached(
                     Some(StdinEvent::Data(data)) => {
                         let (src, dst) = Route::send(full_route.clone())
                             .expect("full_route should have at least one link");
-                        if transport.write_message(&Message::InputBytes {
+                        if transport.write_message(&Message::Routable {
                             src,
                             dst,
-                            agent_id: agent_id.clone(),
-                            data,
+                            message: RoutableMessage::InputBytes {
+                                agent_id: agent_id.clone(),
+                                data,
+                            },
                         }).await.is_err() {
                             break;
                         }
@@ -570,15 +602,20 @@ async fn run_attached(
             // Message from server
             msg = transport.read_message() => {
                 match msg {
-                    Ok(Message::Output { data, .. }) => {
+                    Ok(Message::Routable { message: RoutableMessage::Output { data, .. }, .. }) => {
                         io::stdout().write_all(&data).ok();
                         io::stdout().flush().ok();
                     }
-                    Ok(Message::AgentEnded) => {
+                    Ok(Message::Local(LocalMessage::AgentEnded)) => {
                         log!("client: agent ended");
                         break;
                     }
-                    Ok(Message::Error { message }) => {
+                    Ok(Message::Routable { message: RoutableMessage::Error(route_error), .. }) => {
+                        log!("client: route error: {}", route_error);
+                        error = Some(AmuxError::ServerError(route_error.to_string()));
+                        break;
+                    }
+                    Ok(Message::Local(LocalMessage::Error { message })) => {
                         log!("client: server error: {}", message);
                         error = Some(AmuxError::ServerError(message));
                         break;

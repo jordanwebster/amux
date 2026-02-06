@@ -63,40 +63,84 @@ export function isPermissionRequest(log: StructuredLog): log is PermissionReques
 // Permission response values (sent to server to respond to permission request)
 export type PermissionResponse = "Yes" | "YesAll" | "No"
 
-// Client -> Server messages
-export type ClientMessage =
+export type SubscribeMode = "Raw" | "Structured"
+
+// Protocol-level errors (matches Rust ProtocolError serde format)
+export type ProtocolError =
+  | { ServerError: string }
+  | "LinkNameTaken"
+  | { NoRouteFound: string }
+  | "InvalidCredentials"
+
+// --- Routable message payloads (without src/dst, those are in the wrapper) ---
+export type RoutableMessage =
+  | { Subscribe: { agent_id: string; rows: number; cols: number; mode?: SubscribeMode } }
+  | { SubscribeResult: { agent_id: string; success: boolean; error: ProtocolError | null } }
+  | { InputBytes: { agent_id: string; data: number[] } }
+  | { SubmitInput: { agent_id: string; data: number[] } }
+  | { Output: { agent_id: string; data: number[] } }
+  | { StructuredOutput: { agent_id: string; entry: StructuredLog } }
+  | { PermissionRequestResponse: { agent_id: string; response: PermissionResponse } }
+  | { Error: ProtocolError }
+
+// --- Local message payloads (no routing) ---
+export type LocalMessage =
   | "ListAgents"
-  | { Connect: { host_id: string } }
-  | { Subscribe: { src_host: string; dst_host: string; agent_id: string; rows: number; cols: number } }
-  | { SubmitInput: { src_host: string; dst_host: string; agent_id: string; data: number[] } }
-  | { PermissionRequestResponse: { src_host: string; dst_host: string; agent_id: string; response: PermissionResponse } }
-
-// Server -> Client messages
-export type ServerMessage =
-  | { ConnectResponse: { success: boolean; error: string | null; host_id: string } }
+  | { Connect: { link_name: string; token?: string | null } }
   | { ListAgentsResult: { agents: AgentInfo[] } }
-  | { SubscribeResult: { src_host: string; dst_host: string; agent_id: string; success: boolean; error: string | null } }
-  | { StructuredOutput: { src_host: string; dst_host: string; agent_id: string; entry: StructuredLog } }
+  | { CreateAgentResult: { success: boolean; error: ProtocolError | null } }
   | "AgentEnded"
-  | { Error: { code: number; message: string } }
+  | { Error: { message: string } }
+  | "Shutdown"
+  | "Debug"
+  | { ConnectResponse: { success: boolean; error: ProtocolError | null } }
+  | { HookEvent: { hook: unknown } }
+  | { HookEventResult: { success: boolean; error: ProtocolError | null } }
+  | { DebugResult: { info: unknown } }
 
-// Type guards for server messages
-export function isConnectResponse(msg: ServerMessage): msg is { ConnectResponse: { success: boolean; error: string | null; host_id: string } } {
-  return typeof msg === "object" && "ConnectResponse" in msg
+// --- Top-level Message type ---
+// Wire format: { Routable: { src, dst, message: RoutableMessage } } | { Local: LocalMessage }
+export type ClientMessage =
+  | { Local: LocalMessage }
+  | { Routable: { src: string; dst: string; message: RoutableMessage } }
+
+export type ServerMessage =
+  | { Local: LocalMessage }
+  | { Routable: { src: string; dst: string; message: RoutableMessage } }
+
+// --- Type guards ---
+
+// Top-level: Routable vs Local
+export function isRoutable(msg: ServerMessage): msg is { Routable: { src: string; dst: string; message: RoutableMessage } } {
+  return typeof msg === "object" && msg !== null && "Routable" in msg
 }
 
-export function isListAgentsResult(msg: ServerMessage): msg is { ListAgentsResult: { agents: AgentInfo[] } } {
-  return typeof msg === "object" && "ListAgentsResult" in msg
+export function isLocal(msg: ServerMessage): msg is { Local: LocalMessage } {
+  return typeof msg === "object" && msg !== null && "Local" in msg
 }
 
-export function isSubscribeResult(msg: ServerMessage): msg is { SubscribeResult: { src_host: string; dst_host: string; agent_id: string; success: boolean; error: string | null } } {
-  return typeof msg === "object" && "SubscribeResult" in msg
+// Local message guards
+export function isConnectResponse(local: LocalMessage): local is { ConnectResponse: { success: boolean; error: ProtocolError | null } } {
+  return typeof local === "object" && local !== null && "ConnectResponse" in local
 }
 
-export function isStructuredOutput(msg: ServerMessage): msg is { StructuredOutput: { src_host: string; dst_host: string; agent_id: string; entry: StructuredLog } } {
-  return typeof msg === "object" && "StructuredOutput" in msg
+export function isListAgentsResult(local: LocalMessage): local is { ListAgentsResult: { agents: AgentInfo[] } } {
+  return typeof local === "object" && local !== null && "ListAgentsResult" in local
 }
 
-export function isError(msg: ServerMessage): msg is { Error: { code: number; message: string } } {
-  return typeof msg === "object" && "Error" in msg
+export function isLocalError(local: LocalMessage): local is { Error: { message: string } } {
+  return typeof local === "object" && local !== null && "Error" in local
+}
+
+// Routable message guards
+export function isSubscribeResult(msg: RoutableMessage): msg is { SubscribeResult: { agent_id: string; success: boolean; error: ProtocolError | null } } {
+  return typeof msg === "object" && msg !== null && "SubscribeResult" in msg
+}
+
+export function isStructuredOutput(msg: RoutableMessage): msg is { StructuredOutput: { agent_id: string; entry: StructuredLog } } {
+  return typeof msg === "object" && msg !== null && "StructuredOutput" in msg
+}
+
+export function isRoutableError(msg: RoutableMessage): msg is { Error: ProtocolError } {
+  return typeof msg === "object" && msg !== null && "Error" in msg
 }

@@ -7,7 +7,7 @@
 
 use crate::config::Config;
 use crate::error::AmuxError;
-use crate::message::{Message, ProtocolError};
+use crate::message::{LocalMessage, Message, ProtocolError};
 use crate::oauth;
 use crate::route::generate_server_link;
 use crate::state::State;
@@ -93,22 +93,22 @@ impl CloudConnection {
 
         // Send Connect with token
         transport
-            .write_message(&Message::Connect {
+            .write_message(&Message::Local(LocalMessage::Connect {
                 link_name: link_name.clone(),
                 token: Some(conn.token),
-            })
+            }))
             .await?;
 
         // Wait for response
         let response = transport.read_message().await?;
         match response {
-            Message::ConnectResponse { success: true, .. } => {
+            Message::Local(LocalMessage::ConnectResponse { success: true, .. }) => {
                 log!("cloud: connected to {} as {}", conn.host, link_name);
             }
-            Message::ConnectResponse {
+            Message::Local(LocalMessage::ConnectResponse {
                 success: false,
                 error: Some(ProtocolError::InvalidCredentials),
-            } => {
+            }) => {
                 // Clear refresh token since it's invalid
                 let _ = State::update(&config.state_path, |s| {
                     s.cloud.refresh_token = None;
@@ -117,10 +117,10 @@ impl CloudConnection {
                     "Invalid credentials - please run 'amux init' to re-authenticate".to_string(),
                 ));
             }
-            Message::ConnectResponse {
+            Message::Local(LocalMessage::ConnectResponse {
                 success: false,
                 error,
-            } => {
+            }) => {
                 return Err(CloudError::Connection(format!(
                     "Connect failed: {:?}",
                     error
@@ -222,33 +222,33 @@ impl TokenRefreshState {
 
         // Send new Connect with fresh token (reuse link name)
         transport
-            .write_message(&Message::Connect {
+            .write_message(&Message::Local(LocalMessage::Connect {
                 link_name: self.link_name.clone(),
                 token: Some(conn.token),
-            })
+            }))
             .await?;
 
         // Wait for response
         let response = transport.read_message().await?;
         match response {
-            Message::ConnectResponse { success: true, .. } => {
+            Message::Local(LocalMessage::ConnectResponse { success: true, .. }) => {
                 log!("cloud: token refreshed successfully");
                 self.token_expires_at = conn.expires_at;
                 Ok(())
             }
-            Message::ConnectResponse {
+            Message::Local(LocalMessage::ConnectResponse {
                 success: false,
                 error: Some(ProtocolError::InvalidCredentials),
-            } => {
+            }) => {
                 let _ = State::update(&self.config.state_path, |s| {
                     s.cloud.refresh_token = None;
                 });
                 Err(CloudError::Auth("Token refresh failed".to_string()))
             }
-            Message::ConnectResponse {
+            Message::Local(LocalMessage::ConnectResponse {
                 success: false,
                 error,
-            } => Err(CloudError::Connection(format!(
+            }) => Err(CloudError::Connection(format!(
                 "Token refresh failed: {:?}",
                 error
             ))),

@@ -38,6 +38,159 @@ One paragraph describing what was done.
 
 ---
 
+## 2026-02-06: Generic routable error for all forwarding failures
+
+### Summary
+
+Replaced the Subscribe-specific error handling in `handle_routable` forwarding with a generic `RoutableMessage::Error(ProtocolError)` variant. Any routable message that can't be forwarded (missing route or closed channel) now gets a `RoutableMessage::Error(NoRouteFound)` sent back to the source via normal routing. Stale routes are cleaned up when channel sends fail.
+
+### Changes
+
+- `src/message.rs` — Added `Error(ProtocolError)` variant to `RoutableMessage` enum
+- `src/server/connection.rs` — Replaced Subscribe-specific forwarding block with unified logic: saves original src before mutation, tries to forward, cleans up stale routes on closed channels, sends `RoutableMessage::Error` back on failure. Added amplification prevention (failed Error messages are logged and dropped, not re-errored). Added `Error(_)` to the local-delivery catch-all. Added 3 unit tests with `MockTransport`.
+- `src/client.rs` — Added `RoutableMessage::Error` match arms in `subscribe_and_stream` (prints error and returns) and `run_attached` (logs and breaks with error)
+- `dashboard/src/types/protocol.ts` — Added `ProtocolError` type union, `Error` variant to `RoutableMessage`, and `isRoutableError` type guard
+- `dashboard/src/hooks/useWebSocket.ts` — Imported `isRoutableError` and added handler in routable branch
+
+### Decisions Made
+
+- **Generic error over per-message-type handling**: Instead of special-casing Subscribe with SubscribeResult errors, all forwarding failures use the same Error variant. This means future routable messages automatically get error handling.
+- **Amplification prevention**: If a `RoutableMessage::Error` itself fails to forward, it's logged and dropped rather than generating another error.
+- **Conditional stale route cleanup**: When a channel send fails, we check `is_closed()` before removing — a new connection may have already replaced the route.
+- **Original src for replies**: Clone src before `push(&next_hop)` to preserve the correct return path for error replies.
+
+### Verification
+
+- `cargo check` — clean
+- `cargo fmt` — clean
+- `cargo clippy` — clean
+- `cargo test` — 53 tests passed (3 new: missing_route_sends_error_back, closed_channel_cleans_stale_route_and_sends_error, failed_error_message_not_amplified)
+- `cargo run -p e2e-runner -- run` — 6 E2E tests passed
+
+### Review fixes (same session)
+
+Post-review fixes addressing 7 findings:
+
+- **In-band Connect re-auth** (high): Added `LocalMessage::Connect` arm in `handle_local` so cloud token refresh works on established connections. Validates link_name matches, validates JWT in cloud mode, returns ConnectResponse. Does not mutate routes.
+- **WebSocket cloud token validation** (high, deferred): Added TODO at `websocket_accept` in `accept.rs` noting that `verify_token` should be true for cloud mode. Intentionally deferred — current PR scope is too large.
+- **NoRouteFound payload** (medium): Error now includes full traversed path (original_src + failed hop) instead of just the failed hop. Added `Display` impl to `Route` (dot-separated format). Fixed `ProtocolError::NoRouteFound` Display to use `{}` instead of `{:?}`.
+- **Stream message error suppression** (medium): Output/StructuredOutput forwarding failures no longer send routable errors back. These are high-frequency stream messages; errors would cause churn without triggering teardown. Logged and dropped alongside Error amplification prevention.
+- **Handshake link-name uniqueness race** (medium): Moved route insertion into `accept_handshake` so uniqueness check and insert happen atomically under one write lock. `accept_handshake` now returns `(String, mpsc::Receiver<Message>)`. Updated `accept_connection` to use the pre-created receiver.
+- **TS protocol error typing** (medium): Updated `SubscribeResult.error`, `CreateAgentResult.error`, `ConnectResponse.error`, and `HookEventResult.error` from `string | null` to `ProtocolError | null` in `protocol.ts`. Updated corresponding type guards.
+- **NoRouteFound display** (low): Fixed in the Route Display impl above.
+
+Added 4 new unit tests: `stream_message_forwarding_failure_suppressed`, `no_route_found_includes_traversed_path`, `connect_reauth_matching_link_succeeds`, `connect_reauth_mismatched_link_rejected`.
+
+### Second review fixes (same session)
+
+Post-review fixes addressing 3 findings on the accept_handshake and re-auth changes:
+
+- **Route leak on handshake write failure** (high): If ConnectResponse success write fails after the route is inserted, the stale route is now cleaned up before returning the error. Uses explicit error handling around the write instead of `?`.
+- **Write lock held across .await in collision path** (medium): Restructured `accept_handshake` to use a read lock for the initial `contains_key` check (fast path), drop it before I/O, then re-check under a write lock only for the insert. The collision-path `write_message` for LinkNameTaken now happens with no lock held.
+- **Read lock held across .await in non-cloud re-auth** (low): In the Connect re-auth handler, extracted `cloud_mode` into a local bool in a scoped read lock, so no lock is held across the final `write_message` in either path.
+
+### Verification
+
+- `cargo check` — clean
+- `cargo fmt` — clean
+- `cargo clippy` — clean
+- `cargo test` — 57 tests passed (7 new total)
+- `cargo run -p e2e-runner -- run` — 6 E2E tests passed
+
+### Future
+
+- **Agent propagation + route-based cleanup**: Currently `list-agents` only returns local agents. When an `AdvertiseAgent` message is added for peers to propagate agent availability, the server will need to track agent→route mappings and purge remote agents when their route dies (NoRouteFound or stale cleanup).
+- **Local delivery failures**: InputBytes/SubmitInput/PermissionRequestResponse currently silently ignore missing agents. Sending routable errors for these is a reasonable follow-up.
+- **WebSocket token validation**: In cloud mode, WebSocket connections currently bypass authentication. Needs to pass `verify_token=true` when `state.cloud_mode` is true.
+
+---
+
+## 2026-02-06: Split Message Enum into Routable and Local
+
+### Summary
+
+Restructured the flat `Message` enum into `Message::Routable { src, dst, message }` and `Message::Local(LocalMessage)` to encode routing capability in the type system. This collapses six separate forwarding arms in `handle_message` into one generic forwarding path in `handle_routable`, and separates local-only messages (handshake, agent management, hooks) from routable messages (subscribe, input, output) at the type level.
+
+### Changes
+
+- `src/message.rs` - Added `RoutableMessage` enum (Subscribe, SubscribeResult, InputBytes, SubmitInput, Output, StructuredOutput, PermissionRequestResponse) and `LocalMessage` enum (ListAgents, CreateAgent, Connect, Shutdown, Debug, HookEvent, etc.). `Message` is now a two-variant enum: `Routable { src, dst, message }` and `Local(LocalMessage)`. Updated `From<&AmuxError>` to wrap in `Local`. Updated all tests.
+- `src/server/connection.rs` - Major refactor: `handle_message` now dispatches to `handle_routable` or `handle_local`. `handle_routable` does ONE generic forwarding check (pop dst, push src, forward), then dispatches locally for Subscribe/InputBytes/SubmitInput/PermissionRequestResponse. Subscribe has special no-route error handling. All output task constructions updated.
+- `src/server/routing.rs` - Removed `forward_to_next_hop` (forwarding is now inline in `handle_routable`).
+- `src/server/accept.rs` - Updated all Connect/ConnectResponse/Error messages to use `Local` wrapper.
+- `src/client.rs` - Updated all message construction and pattern matching to use `Routable`/`Local` wrappers.
+- `src/cloud.rs` - Updated Connect/ConnectResponse pattern matching to use `Local` wrapper.
+- `src/hooks.rs` - Updated Connect/ConnectResponse/HookEvent/HookEventResult to use `Local` wrapper.
+- `src/transport/unix.rs` - Updated 3 test functions to use new nesting.
+- `dashboard/src/types/protocol.ts` - Added `RoutableMessage` and `LocalMessage` types. `ClientMessage` and `ServerMessage` now use `{ Routable: ... } | { Local: ... }` format. Updated type guards.
+- `dashboard/src/hooks/useWebSocket.ts` - Updated all message construction and handling for new wrapper format.
+
+### Decisions Made
+
+- **Two-variant top-level enum**: Rather than three variants or a trait, the `Routable`/`Local` split cleanly captures the routing distinction while keeping the wire format simple.
+- **Removed forward_to_next_hop**: With generic forwarding collapsed to one site in `handle_routable`, the helper became a one-liner called from one place. Inlined it.
+- **Breaking wire format**: This is intentional — the old format mixed routing fields (src/dst) into individual variants. The new format makes routing orthogonal to message content.
+- **AgentEnded stays Local**: Per design, each server decides how to propagate end-of-session semantics to its own subscribers. The symmetric counterpart (agent advertisement/withdrawal) will be a separate local message for peer propagation.
+
+### Review fixes (same session)
+
+Post-review fixes addressing 4 findings:
+- **AgentEnded on peer links** (high): Added explicit `AgentEnded` arm to `handle_local` that logs and accepts silently, instead of falling through to "Unexpected message" error response.
+- **NoRouteFound not used** (medium): Subscribe no-route error now returns `ProtocolError::NoRouteFound(Route::from_link(next_hop))` instead of generic `ServerError("No route to host")`.
+- **handle_subscribe return type** (low): Changed to return only `MultiplexReader` since `input_tx` was always discarded. Input goes through `resolve_agent().send_input()`.
+- **connect_handshake signature** (low): Relaxed from `Fn() -> String + Send + Sync` to `FnMut() -> String`.
+
+### Verification
+
+- `cargo check` - clean
+- `cargo fmt` - clean
+- `cargo clippy` - clean
+- `cargo test` - 50 tests passed
+- `cargo run -p e2e-runner -- run` - 6 E2E tests passed
+
+### Next Steps
+
+- WebSocket transport (dashboard) should be tested end-to-end with the new wire format
+- Cloud mode needs integration testing with updated protocol
+
+---
+
+## 2025-02-06: Review & Cleanup of Transport/Server Refactoring
+
+### Summary
+
+Cleaned up the server/transport module split from the prior refactoring. Flattened the `LocalControl` wrapper enum back into top-level `Message` variants, removed `ConnectionKind` gating (all directly connected clients are equally trusted), added missing forwarding arms for multi-hop routing of response messages, and extracted a `forward_to_next_hop` helper.
+
+### Changes
+
+**Modified files:**
+- `src/message.rs` - Removed `LocalControl` enum; restored `Shutdown`, `Debug`, `ConnectToServer` as top-level Message variants; added `From<&AmuxError> for Message` impl
+- `src/client.rs` - Updated to use flat message variants instead of `LocalControl` wrapper
+- `src/server/connection.rs` - Flattened `LocalControl` match arms; removed `ConnectionKind` enum and gating; added forwarding arms for `SubscribeResult`, `Output`, `StructuredOutput`; removed `error_to_message` function; added explanatory comment on `block_in_place`
+- `src/server/accept.rs` - Removed `ConnectionKind` parameter from `accept_connection` and callers; replaced `error_to_message` calls with `Message::from()`
+- `src/server/cloud.rs` - Removed `ConnectionKind` usage
+- `src/server/routing.rs` - Added `forward_to_next_hop` helper
+- `src/route.rs` - Removed unused `is_empty` method; updated tests
+
+### Decisions Made
+
+- **Kept `block_in_place`** for `ConnectToServer`: The async type recursion cycle (handle_message → tcp_connect → connection_loop → handle_message) requires breaking the cycle at the type level. `block_in_place` + `block_on` is the simplest way to do this without boxing or major refactoring.
+- **Removed `ConnectionKind` entirely**: Since all directly connected clients are equally trusted UIs and non-routable messages can't be forwarded anyway, the enum served no purpose.
+- **Added forwarding for response messages**: `SubscribeResult`, `Output`, and `StructuredOutput` now forward through routes, fixing multi-hop routing that was lost during the handler unification.
+
+### Verification
+
+- `cargo check` — clean, no warnings
+- `cargo fmt` — no changes
+- `cargo clippy` — clean, no warnings
+- `cargo test` — 50/50 passed
+- `cargo run -p e2e-runner -- run` — 6/6 passed
+
+### Next Steps
+
+- None — cleanup complete
+
+---
+
 ## 2025-02-04: Add Hidden Debug Command
 
 ### Summary

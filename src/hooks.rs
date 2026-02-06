@@ -1,5 +1,7 @@
 use crate::config::Config;
-use crate::message::{ClaudeHook, ClaudePermissionTool, Hook, Message, ProtocolError};
+use crate::message::{
+    ClaudeHook, ClaudePermissionTool, Hook, LocalMessage, Message, ProtocolError,
+};
 use crate::route::generate_hook_link;
 use crate::transport::{Transport, UnixTransport};
 use std::io::{self, BufRead};
@@ -81,10 +83,10 @@ async fn send_hook_event_to_server_inner(
     // Send Connect handshake with hook link name
     let link_name = generate_hook_link();
     transport
-        .write_message(&Message::Connect {
+        .write_message(&Message::Local(LocalMessage::Connect {
             link_name,
             token: None,
-        })
+        }))
         .await
         .map_err(io::Error::other)?;
 
@@ -92,11 +94,11 @@ async fn send_hook_event_to_server_inner(
     let response = transport.read_message().await.map_err(io::Error::other)?;
 
     match response {
-        Message::ConnectResponse { success: true, .. } => {}
-        Message::ConnectResponse {
+        Message::Local(LocalMessage::ConnectResponse { success: true, .. }) => {}
+        Message::Local(LocalMessage::ConnectResponse {
             success: false,
             error: Some(ProtocolError::LinkNameTaken),
-        } => {
+        }) => {
             // Unlikely but possible - just fail
             return Err(io::Error::new(
                 io::ErrorKind::AddrInUse,
@@ -113,7 +115,7 @@ async fn send_hook_event_to_server_inner(
 
     // Send HookEvent
     transport
-        .write_message(&Message::HookEvent { hook })
+        .write_message(&Message::Local(LocalMessage::HookEvent { hook }))
         .await
         .map_err(io::Error::other)?;
 
@@ -121,14 +123,14 @@ async fn send_hook_event_to_server_inner(
     let ack = transport.read_message().await.map_err(io::Error::other)?;
 
     match ack {
-        Message::HookEventResult { success: true, .. } => {
+        Message::Local(LocalMessage::HookEventResult { success: true, .. }) => {
             log!("hooks: server acknowledged HookEvent");
             Ok(())
         }
-        Message::HookEventResult {
+        Message::Local(LocalMessage::HookEventResult {
             success: false,
             error,
-        } => {
+        }) => {
             let msg = error
                 .map(|e| e.to_string())
                 .unwrap_or_else(|| "Unknown error".to_string());
