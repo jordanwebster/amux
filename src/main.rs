@@ -213,18 +213,10 @@ async fn main() {
         Some(Commands::Debug) => {
             match client::debug(&config).await {
                 Ok(info) => {
-                    println!("Server Debug Info:");
-                    println!("  is_cloud_server: {}", info.is_cloud_server);
-                    println!("  use_cloud_mode: {}", info.use_cloud_mode);
-                    println!("  agent_count: {}", info.agent_count);
-                    println!("  route_count: {}", info.route_count);
-                    println!("  routes: {:?}", info.routes);
-                    println!("Config:");
-                    println!("  host_name: {}", info.config.host_name);
-                    println!("  socket_path: {}", info.config.socket_path.display());
-                    println!("  tcp_port: {}", info.config.tcp_port);
-                    println!("  websocket_port: {}", info.config.websocket_port);
-                    println!("  cloud_url: {}", info.config.cloud_url);
+                    print!(
+                        "{}",
+                        serde_yaml::to_string(&info).unwrap_or_else(|e| format!("error: {}", e))
+                    );
                 }
                 Err(e) => {
                     eprintln!("error: {}", e);

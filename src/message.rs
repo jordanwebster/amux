@@ -228,29 +228,7 @@ pub struct ServerDebugInfo {
     pub agent_count: usize,
     pub route_count: usize,
     pub routes: Vec<String>,
-    pub config: ConfigDebugInfo,
-}
-
-/// Debug information about server config
-#[derive(Serialize, Deserialize, Debug, Clone)]
-pub struct ConfigDebugInfo {
-    pub host_name: String,
-    pub socket_path: PathBuf,
-    pub tcp_port: u16,
-    pub websocket_port: u16,
-    pub cloud_url: String,
-}
-
-impl From<&Config> for ConfigDebugInfo {
-    fn from(config: &Config) -> Self {
-        Self {
-            host_name: config.host_name.clone(),
-            socket_path: config.socket_path.clone(),
-            tcp_port: config.tcp_port,
-            websocket_port: config.websocket_port,
-            cloud_url: config.cloud_url.clone(),
-        }
-    }
+    pub config: Config,
 }
 
 impl Message {

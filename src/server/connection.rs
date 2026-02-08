@@ -6,8 +6,8 @@ use super::ServerState;
 use crate::cloud::TokenRefreshState;
 use crate::error::{AmuxError, Result};
 use crate::message::{
-    ClaudeHook, ConfigDebugInfo, Hook, LocalMessage, Message, ProtocolError, RoutableMessage,
-    ServerDebugInfo, SubscribeMode,
+    ClaudeHook, Hook, LocalMessage, Message, ProtocolError, RoutableMessage, ServerDebugInfo,
+    SubscribeMode,
 };
 use crate::route::Route;
 use crate::session::SessionEvent;
@@ -468,7 +468,7 @@ async fn handle_local<T: Transport>(
                 agent_count: state.agents.len(),
                 route_count: state.routes.len(),
                 routes: state.routes.keys().cloned().collect(),
-                config: ConfigDebugInfo::from(&state.config),
+                config: state.config.clone(),
             };
             transport
                 .write_message(&Message::Local(LocalMessage::DebugResult { info }))
