@@ -24,7 +24,10 @@ pub(super) async fn accept_handshake<T: Transport>(
         let msg = transport.read_message().await?;
         let (proposed_link, token) = match msg {
             Message::Local(LocalMessage::Connect { link_name, token }) => (link_name, token),
-            _ => return Err(AmuxError::InvalidMessage),
+            other => {
+                log!("server: expected Connect message, got {:?}", other);
+                return Err(AmuxError::InvalidMessage);
+            }
         };
 
         if verify_token {

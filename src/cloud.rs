@@ -110,10 +110,7 @@ impl CloudConnection {
                 success: false,
                 error: Some(ProtocolError::InvalidCredentials),
             }) => {
-                // Clear refresh token since it's invalid
-                let _ = State::update(&config.state_path, |s| {
-                    s.cloud.refresh_token = None;
-                });
+                // TODO: clear refresh token once connection flow is stable
                 return Err(CloudError::Auth(
                     "Invalid credentials - please run 'amux init' to re-authenticate".to_string(),
                 ));
@@ -241,9 +238,7 @@ impl TokenRefreshState {
                 success: false,
                 error: Some(ProtocolError::InvalidCredentials),
             }) => {
-                let _ = State::update(&self.config.state_path, |s| {
-                    s.cloud.refresh_token = None;
-                });
+                // TODO: clear refresh token once connection flow is stable
                 Err(CloudError::Auth("Token refresh failed".to_string()))
             }
             Message::Local(LocalMessage::ConnectResponse {

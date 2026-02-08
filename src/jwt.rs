@@ -101,6 +101,13 @@ impl JwtValidator {
 
         // Verify host/port match
         if claims.host != expected_host || claims.port != expected_port {
+            log!(
+                "server: token host/port mismatch: token has {}:{}, expected {}:{}",
+                claims.host,
+                claims.port,
+                expected_host,
+                expected_port
+            );
             return Err(JwtError::HostMismatch);
         }
 

@@ -109,6 +109,7 @@ async fn run_cloud_connection(
         let mut state = state.write().await;
         state.routes.insert(link_name.clone(), outgoing_tx);
     }
+    log!("cloud: route established as {}", link_name);
 
     let ctx = ConnectionContext {
         state: state.clone(),
@@ -123,6 +124,7 @@ async fn run_cloud_connection(
         let mut state = state.write().await;
         state.routes.remove(&link_name);
     }
+    log!("cloud: route {} removed", link_name);
 
     match result {
         Ok(()) => Ok(()),
