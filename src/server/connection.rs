@@ -47,6 +47,7 @@ pub(super) async fn connection_loop_with_refresh<T: Transport>(
                 let msg = match result {
                     Ok(msg) => msg,
                     Err(AmuxError::Io(e)) if e.kind() == std::io::ErrorKind::UnexpectedEof => {
+                        log!("server: {} disconnected", ctx.link_name);
                         return Ok(());
                     }
                     Err(e) => return Err(e),
@@ -57,7 +58,8 @@ pub(super) async fn connection_loop_with_refresh<T: Transport>(
 
             Some(msg) = outgoing_rx.recv() => {
                 log!("server: routing message to {}: {:?}", ctx.link_name, msg);
-                if transport.write_message(&msg).await.is_err() {
+                if let Err(e) = transport.write_message(&msg).await {
+                    log!("server: {} write failed: {}", ctx.link_name, e);
                     return Ok(());
                 }
             }

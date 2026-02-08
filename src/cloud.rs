@@ -84,6 +84,7 @@ impl CloudConnection {
         let conn = oauth::get_connection(&config.cloud_url, &access_token).await?;
 
         // Connect via TLS
+        log!("cloud: connecting to {}:{}", conn.host, conn.port);
         let mut transport = tls_connect(&conn.host, conn.port)
             .await
             .map_err(|e| CloudError::Connection(e.to_string()))?;

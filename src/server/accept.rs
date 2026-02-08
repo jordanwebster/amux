@@ -217,6 +217,7 @@ pub(super) async fn accept_connection<T: Transport>(
         let mut state = state.write().await;
         state.routes.remove(&link_name);
     }
+    log!("server: {} connection {} closed", log_label, link_name);
 
     result
 }
@@ -319,6 +320,7 @@ pub(super) async fn tcp_connect(
 
         let mut state = state.write().await;
         state.routes.remove(&link_name_clone);
+        log!("server: tcp peer {} closed", link_name_clone);
     });
 
     Ok(())
