@@ -12,198 +12,259 @@ amux is a federated network of servers that enable remote access to AI agent ses
 
 ## Cloud Design
 
-- Cloud runs a pool of vanilla amux servers (no special cloud-specific logic in amux itself)
-- amux servers are **stateless** and run in **token-required mode**
+- Cloud runs a pool of vanilla amux servers using `amux serve --cloud`
+- Cloud servers are **stateless** and run with TLS + JWT token validation
 - A separate **application server** handles:
-  - User login/authentication
-  - The `/connect` endpoint (not part of amux)
-  - Token signing
+  - User login/authentication (OAuth 2.0)
+  - The `/api/connect` endpoint (returns server host, port, JWT token)
+  - JWKS key publishing for JWT verification
   - Push notifications
 - Server allocation is a **hash of user information modulo number of servers** (ensures consistent routing without state)
-- Allocation responses include a **TTL**; when expired, clients MUST re-query and reconnect if the target host changed
-- TTL-based reallocation enables **gradual rebalancing** when servers are added/removed, avoiding thundering herd
-
-### Token-based Authentication
-
-The application server issues signed tokens that:
-- Prove the user is authenticated (identity)
-- Encode `user_id`, `expiry`, and resource quotas (e.g., `max_agents`)
-- Are verified by amux servers (signature check, no shared state needed)
-
-This provides DOS protection: no valid token = connection rejected.
-
-## Connection Protocol
-
-When connecting via cloud, the client first authenticates with the application server and calls `/connect`. The response contains:
-- Target host and port
-- TTL
-- Signed token (encodes user_id, expiry, quotas)
-- Encryption mode
-
-On TTL expiry, the client MUST re-query. If the host has changed, the client MUST drop the existing connection and connect to the new host.
-
-## Transport Layers
-
-| Client Type | Transport | Characteristics |
-|-------------|-----------|-----------------|
-| Terminal clients | Unix socket | Framed messages, then raw bytes after subscribe |
-| amux server → amux server | TCP with `TCP_NODELAY` | Framed messages (multiplexed) |
-| Rich clients (mobile, web) | WebSocket | JSON messages (structured logs) |
-
-**Serialization:** TCP/Unix use `bincode` (binary, compact). WebSocket uses `serde_json` (human readable).
-
-## Local Network (Future)
-
-V1 focuses on single-user local mode and cloud connectivity. The following are deferred:
-
-- **Multi-user local networks**: Security considerations for multiple users on the same LAN
-- **Broadcast discovery**: Automatic discovery of amux servers on the local network
-- **Server-to-server LAN connections**: Direct connections between local servers without cloud relay
-
-When implemented, security will likely use mutual HMAC challenge-response for key verification:
-
-```
-A (connector)                           B (connectee)
-     |                                       |
-     |────────── connect ───────────────────>|
-     |                                       |
-     |<─────── challenge: nonce_B ───────────|
-     |                                       |
-     |─── HMAC(key, "client" || nonce_B) ───>|
-     |─── challenge: nonce_A ───────────────>|
-     |                                       |
-     |       [B verifies A's HMAC]           |
-     |                                       |
-     |<── HMAC(key, "server" || nonce_A) ────|
-     |                                       |
-     | [A verifies B's HMAC]                 |
-     |                                       |
-     |══════ mutually authenticated ═════════|
-```
-
-## Session Identity
-
-Agent sessions are uniquely identified by a tuple:
-
-```
-(host_id, user_id, agent_id)
-```
-
-- **host_id**: UUID identifying the amux server instance (generated on first run, persisted)
-- **user_id**: In cloud mode, extracted from token. In local mode, hardcoded (e.g., `"local"`)
-- **agent_id**: Name of the agent session (e.g., `"claude-1"`)
-
-## Session Propagation
-
-- amux servers propagate all `(host_id, user_id, agent_id)` tuples they know about to connected amux servers
-- Each amux server maintains a **routing table**: how to reach any given `(host_id, user_id, agent_id)` on the network
+- Allocation responses include an **expiry time**; when expired, clients must re-authenticate and may be directed to a different server
+- `enforce_tls_in_cloud_mode` config option allows cloud servers behind a reverse proxy (e.g. nginx) to skip TLS setup while still validating JWT tokens
 
 ---
 
-## API
+## Authentication
 
-### Server Modes
+### OAuth 2.0 Device Flow
 
-amux servers can run in two modes:
+amux uses the OAuth 2.0 Device Authorization Grant (RFC 8628) for initial authentication. This allows CLI users to authenticate via a browser without needing the browser on the same machine.
 
-- **Token mode** (cloud): Requires a valid signed token. The `user_id` is extracted from the token.
-- **Local mode**: No token required. A hardcoded `user_id` (e.g., `"local"`) is used for all connections.
-
-Internal data models always include `user_id` for uniformity; local mode simply uses a constant value.
-
-All agent data is multiplexed over a single connection (TCP or WebSocket).
-
-### Connection Lifecycle
-
-Connections must be **established** before any other API calls are allowed. The `establish_connection` call is an application-level message (the first message on the wire), uniform across all transports.
+**Initial setup (`amux init`):**
 
 ```
-1. Open socket (Unix, TCP, or WebSocket)
-2. Send establish_connection(token?) as first message
-   - Token provided → validate signature, extract user_id
-   - No token + local mode → use hardcoded user_id
-   - No token + token mode → reject, close connection
-3. Connection is now "established"
-4. Other API calls are now permitted
-5. Any API call before establish → close connection immediately
+1. User runs `amux init`
+2. amux requests device code from cloud
+   POST {cloud_url}/connect/deviceauthorization
+3. Cloud returns: verification_uri, user_code, device_code
+4. User visits verification_uri and enters user_code
+5. amux polls for token completion
+   POST {cloud_url}/connect/token (device_code grant)
+6. Cloud returns: access_token + refresh_token
+7. amux stores refresh_token in persistent state
 ```
 
-### Routing Table
+### JWT Token Lifecycle
 
-Each amux server maintains an internal lookup table:
-
-```
-(host_id, user_id, agent_id) -> Route
-
-where Route is:
-  - Local                    // We own this agent's PTY
-  - Remote { via: ConnectionId }  // Forward through this connection
-```
-
-This determines how to forward data for any given agent. See [ARCHITECTURE.md](ARCHITECTURE.md) for implementation details.
-
-### Core Methods
-
-#### Connection establishment (must be first)
-
-##### `establish_connection(token?) -> ok | error`
-
-Must be the first message on any connection. Establishes the connection's `user_id`:
-- Token provided: validate and extract `user_id`
-- No token (local mode): use hardcoded `user_id`
-
-#### Server-level (no agent_id required)
-
-These methods query or update the server's routing knowledge. The `user_id` is implicit from the established connection.
-
-##### `list_agents() -> list[Agent]`
-
-Query the server for all agents it knows about (scoped to connection's `user_id`). Returns a single payload.
+After initial OAuth setup, cloud connections use JWT tokens:
 
 ```
-Agent:
-  host_id
-  user_id
-  agent_id
+1. Local server loads refresh_token from state
+2. Exchange refresh_token for access_token
+   POST {cloud_url}/connect/token (refresh_token grant)
+3. Call GET {cloud_url}/api/connect with access_token
+   Returns: { host, port, token (JWT), expires_at }
+4. Connect via TLS to host:port
+5. Send Connect { link_name, token: JWT }
+6. Cloud server validates JWT via JWKS
+   - Fetches keys from {cloud_url}/.well-known/openid-configuration/jwks
+   - Caches keys for 1 hour
+   - Validates signature, audience ("amux_token"), expiry
+   - Verifies host/port in claims match the receiving server
+7. Cloud server responds with ConnectResponse { success: true }
 ```
 
-##### `add_agents(agents: list[Agent])`
+### Token Refresh
 
-Client notifies the server of agents it knows about (e.g., local agents, or agents learned from another server).
+Tokens are refreshed automatically before expiry (5 minutes before `expires_at`):
 
-##### `disconnect()`
+1. The `connection_loop` has a third `select!` branch on a refresh deadline
+2. When triggered: exchange refresh_token for new access_token
+3. Call `/api/connect` for new JWT
+4. If same host/port: send in-band `Connect { link_name, token }` re-authentication
+5. If host/port changed: return `CloudError::HostChanged`, requiring full reconnection
 
-Signals the client is disconnecting. Server removes any agents associated with this connection from its routing table.
+The refresh token itself may be rotated by the OAuth server; if a new refresh token is returned, it is persisted to state.
 
-#### Agent-level (requires agent_id)
+### JWT Claims
 
-These methods operate on specific agents. The `user_id` is implicit from the established connection.
+```rust
+struct ConnectionClaims {
+    sub: String,   // User ID
+    host: String,  // Expected server hostname
+    port: u16,     // Expected server port
+}
+```
 
-##### `subscribe(host_id, agent_id) -> History`
+The `host` and `port` claims bind the token to a specific cloud server, preventing token replay across servers.
 
-Subscribe to an agent's output stream. Returns history then streams live updates.
+See `src/jwt.rs`, `src/oauth.rs`, `src/cloud.rs`.
 
-**History format differs by transport:**
-- **WebSocket**: Past N structured log entries, then live logs
-- **TCP**: Full replay buffer (for terminal UI correctness), then live bytes
+---
 
-##### `unsubscribe(host_id, agent_id)`
+## Connection Protocol
 
-Stop receiving data for this agent. Conceptually, "detaching" is just an unsubscribe.
+### Local Server → Cloud
 
-##### `send_message(host_id, agent_id, message)`
+When a local server starts with cloud mode enabled:
 
-Send input to an agent. For terminal clients, `message` is raw bytes (keystrokes). For rich clients, `message` could be structured (e.g., user prompt text).
+```
+1. Load state (refresh_token, use_cloud_mode)
+2. Exchange refresh_token for access_token (OAuth)
+3. Call /api/connect → { host, port, token, expires_at }
+4. TLS connect to host:port (rustls, webpki root certs)
+5. Send LocalMessage::Connect { link_name: "{hostname}-{rand}", token: JWT }
+6. Cloud validates JWT (JWKS), checks link_name uniqueness
+7. Cloud responds with ConnectResponse { success: true }
+8. Enter connection_loop with token refresh enabled
+```
 
-### Terminal Clients
+On authentication failure (`InvalidCredentials`), the user is prompted to re-run `amux init`.
 
-Local terminal clients use the same API over Unix socket:
-- Call `establish_connection()` with no token (local mode)
-- Assign themselves a unique `host_id` on startup (UUID)
-- Use `subscribe`/`unsubscribe`/`send_message` to interact with agents
-- Skip `add_agents` (human uses CLI to specify which agent to attach to)
+On connection failure, the server uses exponential backoff before retrying.
 
-**Optimization:** After a successful `subscribe`, local Unix socket connections switch to "raw mode" - both sides exchange raw bytes without message framing. This minimizes latency for terminal I/O. See [ARCHITECTURE.md](ARCHITECTURE.md) for details.
+On `HostChanged` during token refresh, the connection is dropped and re-established from scratch.
+
+### Client → Cloud
+
+Rich clients (mobile, web dashboard) connect via WebSocket to the cloud server:
+
+```
+1. WebSocket upgrade to ws://cloud:9002/
+2. Send LocalMessage::Connect { link_name, token: null }
+3. Cloud responds with ConnectResponse
+4. Enter connection_loop (JSON messages over WebSocket)
+```
+
+Note: WebSocket cloud authentication is not yet implemented (tracked as future work). Currently WebSocket connections bypass token validation.
+
+### Terminal → Local Server
+
+Terminal clients connect via Unix socket:
+
+```
+1. Connect to /tmp/amux.sock
+2. Send LocalMessage::Connect { link_name: "term-{rand}", token: null }
+3. Server checks link_name uniqueness, inserts route
+4. Server responds with ConnectResponse { success: true }
+5. Enter connection_loop (MessagePack over length-prefixed frames)
+```
+
+No token validation for Unix socket connections (local trust).
+
+---
+
+## Transport Layers
+
+| Client Type | Transport | Serialization | Framing |
+|-------------|-----------|---------------|---------|
+| Terminal clients | Unix socket | MessagePack (rmp-serde, named format) | Length-prefixed (4-byte BE) |
+| amux server → amux server | TCP with TLS + `TCP_NODELAY` | MessagePack (rmp-serde, named format) | Length-prefixed (4-byte BE) |
+| Rich clients (mobile, web) | WebSocket | JSON (serde_json) | WebSocket native |
+
+All transports use the same `Transport` trait (`read_message`/`write_message`) and the same `Message` enum. The serialization format is encapsulated in the transport implementation.
+
+---
+
+## Session Identity
+
+Agent sessions are identified by:
+
+```
+agent_id: Uuid           // Globally unique
+alias: Option<String>    // Human-readable name (optional, via -t flag)
+```
+
+Connections are identified by link names:
+
+```
+link_name: String        // e.g. "term-abc1", "myhost-xyz2"
+```
+
+Routes are stacks of link names representing multi-hop paths:
+
+```
+Route: VecDeque<String>  // Serializes as "AB.BC.CD" (dot-separated)
+```
+
+---
+
+## Session Propagation
+
+Currently, only local agents are visible in `list-agents`. Remote agent propagation is future work.
+
+Routing uses the link-name routes table: `HashMap<String, mpsc::Sender<Message>>`. When a client wants to reach an agent on a remote server, it constructs a multi-hop route (e.g. `"cloud-server.local-host"`) and the message is forwarded hop-by-hop using the stack-based routing algorithm described in [ARCHITECTURE.md](ARCHITECTURE.md).
+
+---
+
+## State Management
+
+Persistent state is stored at `~/.local/state/amux/state.yaml` (configurable via `state_path` in config). Uses file locking (shared for reads, exclusive for writes) to prevent corruption from concurrent access.
+
+```rust
+struct State {
+    cloud: CloudState,
+    claude: ClaudeState,
+}
+
+struct CloudState {
+    use_cloud_mode: Option<bool>,      // None = not configured, Some(true/false)
+    refresh_token: Option<String>,     // OAuth refresh token
+}
+
+struct ClaudeState {
+    is_plugin_installed: Option<String>, // Version of amux plugin in Claude
+}
+```
+
+`State::update()` provides atomic load-modify-save with an exclusive lock held throughout, preventing TOCTOU races.
+
+See `src/state.rs`.
+
+---
+
+## CLI Commands for Cloud
+
+### `amux init`
+
+First-time setup. Asks whether to enable cloud mode, then runs OAuth device flow if yes:
+
+```
+$ amux init
+amux can connect your local machine to the cloud...
+Do you want to enable cloud mode?
+  1. Yes (recommended)
+  2. No (local only)
+Choice [1]:
+
+Starting authentication...
+To authenticate, visit:
+  https://amux.sh/device
+And enter code: ABCD-1234
+Waiting for authentication...
+Authentication successful!
+```
+
+Use `amux init --reset` to clear existing state and re-configure.
+
+### `amux serve --cloud`
+
+Starts the server in cloud mode:
+- Loads TLS certificate and key from `AMUX_TLS_CERT` and `AMUX_TLS_KEY` environment variables (unless `enforce_tls_in_cloud_mode` is false)
+- Creates `JwtValidator` pointing at `{cloud_url}/.well-known/openid-configuration/jwks`
+- All TCP connections require valid JWT tokens
+- Unix socket still works without tokens (for local CLI commands like `amux debug`)
+
+### `amux debug`
+
+Shows internal server state including cloud connection status:
+
+```yaml
+is_cloud_server: false
+use_cloud_mode: true
+agent_count: 1
+route_count: 2
+routes:
+  - term-abc1
+  - myhost-xyz2
+config:
+  host_name: my-laptop
+  cloud_url: https://amux.sh
+  socket_path: /tmp/amux.sock
+  tcp_port: 9001
+  websocket_port: 9002
+```
 
 ---
 
@@ -215,13 +276,13 @@ The architecture avoids distributed systems complexity through deliberate constr
 
 **Star topology through cloud:**
 - Local servers connect TO cloud, not to each other (initially)
-- Cloud server's "routing table" is simply "which connected client owns which agents"
+- Cloud server's routing table is simply link-name → channel mappings
 - No server-to-server gossip, no mesh, no complex propagation protocols
 
 **Clients are the source of truth:**
 - Cloud servers are stateless routers, not databases
 - Agent ownership lives on the local server running the agent
-- On reconnect, clients re-advertise their agents - state is rebuilt, not recovered
+- On reconnect, the local server re-establishes its cloud connection and re-advertises
 
 **Hash routing contains blast radius:**
 - All of a user's traffic (local servers, terminals, mobile) routes to the same cloud server
@@ -231,15 +292,16 @@ The architecture avoids distributed systems complexity through deliberate constr
 **Failure handling is straightforward:**
 1. Cloud server dies
 2. Application server health-checks, stops routing to it
-3. Clients reconnect (TTL expiry or connection drop)
+3. Clients reconnect (token expiry or connection drop)
 4. Application server directs them to healthy server
-5. Clients re-advertise agents, re-subscribe
+5. Clients re-establish connections
 6. Done - no complex recovery
 
 **Deferred complexity:**
-- Cross-user collaboration (user A accessing user B's agents) - not yet needed
-- Server-to-server LAN connections without cloud - optimization for later
-- Stale entry cleanup - simple heartbeat + periodic cleanup is sufficient
+- Agent propagation to peers (remote agent discovery)
+- WebSocket cloud authentication
+- Cross-user collaboration (user A accessing user B's agents)
+- Server-to-server LAN connections without cloud
+- Local network discovery
 
 ---
-

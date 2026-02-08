@@ -1,23 +1,25 @@
-# Interface Sketch
+# Architecture
 
-A detailed design for the amux server internals, combining both architectural approaches with preferences for transport abstraction and local socket optimization.
+A detailed design for the amux server internals covering data structures, message flow, routing, and the task model.
 
 ## Quick Overview
 
 **What is amux?** A multiplexer for AI agent sessions (Claude, Codex, etc.) that enables:
 - Multiple terminals attaching to the same agent
 - Remote access via cloud relay
-- Rich clients (mobile/web) receiving structured logs
+- Rich clients (mobile/web) receiving structured logs via WebSocket
 
 **Core concepts:**
 - **Server** - manages connections, agents, and routing
-- **Connection** - Unix socket (local) or TCP/WebSocket (remote)
-- **LocalAgentSession** - a running agent with PTY, replay buffers
-- **Routing Table** - maps agent IDs to how to reach them (local or via which connection)
+- **Connection** - Unix socket, TCP, or WebSocket; all use the same framed message protocol
+- **LocalAgentSession** - a running agent with PTY, replay buffers, and structured log buffers
+- **Routing Table** - maps link names to channels for forwarding messages
 
-**Key optimizations:**
-- Local Unix sockets switch to raw byte mode after subscribe (zero framing overhead)
-- Remote connections stay framed (multiplexed, need headers)
+**Key design choices:**
+- All connections (local and remote) use framed messages with length-prefixed encoding
+- Connections are identified by link names (e.g. `"term-abc1"`, `"myhost-xyz2"`)
+- Messages are either `Routable` (carry src/dst routes, can be forwarded) or `Local` (handled on the receiving server only)
+- Serialization uses MessagePack for binary transports (Unix/TCP) and JSON for WebSocket
 
 ---
 
@@ -25,380 +27,262 @@ A detailed design for the amux server internals, combining both architectural ap
 
 | Term | Description |
 |------|-------------|
-| **host_id** | Unique identifier for an amux server instance. Generated on first run (UUID) and persisted in config. |
-| **user_id** | Identifies the user/owner. In cloud mode, extracted from token. In local mode, hardcoded (e.g., `"local"`). |
-| **agent_id** | UUID identifying an agent session. Unique globally. Optional human-readable alias can be set via `-t` flag. |
+| **agent_id** | UUID identifying an agent session. Optional human-readable alias can be set via `-t` flag. |
+| **link_name** | String identifying a connection (e.g. `"term-abc1"`, `"myhost"`, `"hook-xy12"`). Used as keys in the routing table. |
+| **Route** | A stack of link names (`VecDeque<String>`) representing a multi-hop path. Serializes as `"AB.BC.CD"` (dot-separated). |
+| **RoutableMessage** | A message that carries `src` and `dst` routes and can be forwarded across hops. |
+| **LocalMessage** | A message handled only by the directly connected server (no routing). |
 | **PTY** | Pseudo-terminal - the interface used to run interactive CLI agents like Claude. |
-| **Child** | The OS process handle for a running agent (from `std::process::Child` or `portable_pty`). |
-
-> **Implementation Note:** The original design used an `AgentId` tuple `(host_id, user_id, agent_id)` for global uniqueness. The current implementation simplifies this: agents are identified by UUID (`agent_id`), and routing uses `src_host`/`dst_host` fields in protocol messages. The `AgentId` struct has been removed.
 
 ---
 
 ## Core Identity Types
 
 ```rust
-/// Agents are identified by UUID string
-/// Optional alias provides human-readable name
-type AgentId = String;  // UUID
+// Agents are identified by UUID, with an optional human-readable alias
+agent_id: Uuid           // e.g. 550e8400-e29b-41d4-a716-446655440000
+alias: Option<String>    // e.g. "my-session" (set via -t flag)
 
-/// Unique connection identifier
-#[derive(Clone, Copy, Hash, Eq, PartialEq)]
-struct ConnectionId(u64);
+// Connections are identified by link name strings
+link_name: String        // e.g. "term-abc1", "myhost-xyz2", "hook-ab12"
 ```
+
+### Route
+
+A route is a stack of link names representing a path through the network. The top of the stack (front of deque) is the next hop.
+
+```rust
+/// Serializes as "AB.BC.CD" where AB is the first hop.
+struct Route {
+    links: VecDeque<String>,
+}
+
+impl Route {
+    fn from_link(link: impl Into<String>) -> Self;  // Single-hop route
+    fn push(&mut self, link: impl Into<String>);     // Push link to front (new next hop)
+    fn pop(&mut self) -> Option<String>;             // Pop next hop
+
+    /// Prepare to send: pops from dst, creates src from the popped link.
+    /// Returns (src, dst) for the message.
+    fn send(dst: Route) -> Option<(Route, Route)>;
+
+    /// Prepare a reply: sends back through the src path.
+    /// Returns (reply_src, reply_dst).
+    fn reply(src: Route) -> Option<(Route, Route)>;
+}
+```
+
+Link names are generated with random suffixes for uniqueness:
+- Terminal connections: `"term-{rand}"` (4 alphanumeric chars)
+- Server connections: `"{hostname}-{rand}"` or just `"{hostname}"` if `randomise_link_name` is false
+- Hook connections: `"hook-{rand}"`
+
+See `src/route.rs`.
 
 ---
 
 ## Transport Abstraction
 
-The key insight: abstract over how bytes get read/written, but let connection types define their own behavior.
+All transports implement a simple two-method trait:
 
 ```rust
-/// Low-level transport - just reads and writes bytes/frames
-trait Transport: Send {
-    // Framed I/O - for messages during handshake
-    /// Read the next frame/message bytes from the wire
-    async fn read_frame(&mut self) -> Result<Vec<u8>, TransportError>;
-    /// Write a frame/message bytes to the wire
-    async fn write_frame(&mut self, data: &[u8]) -> Result<(), TransportError>;
-
-    // Raw I/O - for byte streaming after subscribe (local optimization)
-    /// Read raw bytes (no framing) - returns bytes available
-    async fn read_raw(&mut self, buf: &mut [u8]) -> Result<usize, TransportError>;
-    /// Write raw bytes (no framing)
-    async fn write_raw(&mut self, data: &[u8]) -> Result<(), TransportError>;
-
-    /// Close the transport
-    async fn close(&mut self);
+#[async_trait]
+trait Transport: Send + Sync {
+    async fn read_message(&mut self) -> Result<Message>;
+    async fn write_message(&mut self, msg: &Message) -> Result<()>;
 }
-
-/// Implemented by each transport type
-struct UnixTransport { socket: UnixStream }
-struct TcpTransport { socket: TcpStream }  // with TCP_NODELAY
-struct WebSocketTransport { socket: WebSocketStream }
-
-impl Transport for UnixTransport { ... }
-impl Transport for TcpTransport { ... }
-impl Transport for WebSocketTransport { ... }
 ```
+
+Three implementations:
+
+| Transport | Stream | Serialization | Framing | Flush |
+|-----------|--------|---------------|---------|-------|
+| `UnixTransport` | `UnixStream` (split into read/write halves) | MessagePack | Length-prefixed | No |
+| `TcpTransport<S>` | Generic over `AsyncRead + AsyncWrite` (plain TCP or TLS) | MessagePack | Length-prefixed | Yes |
+| `WebSocketTransport` | `WebSocketStream<TcpStream>` | JSON | WebSocket native | N/A |
+
+`TcpTransport` is generic over the stream type, allowing it to wrap both plain TCP and TLS streams (e.g. `TcpTransport<ClientTlsStream<TcpStream>>`).
+
+See `src/transport/`.
 
 ---
 
 ## Message Types
 
-Using serde for serialization - the canonical Rust approach.
+The protocol uses a two-variant top-level enum that separates routable messages (forwarded across hops) from local messages (handled by the directly connected server):
 
 ```rust
-use serde::{Serialize, Deserialize};
-
-/// All API messages - same enum, different serialization formats
-#[derive(Serialize, Deserialize, Debug, Clone)]
-#[serde(tag = "type")]  // Creates {"type": "ListAgents", ...} in JSON
 enum Message {
-    // Connection establishment
-    EstablishConnection { token: Option<String> },
-    EstablishConnectionResult { success: bool, error: Option<String> },
+    Routable {
+        src: Route,      // Return path (built up as message travels)
+        dst: Route,      // Forward path (consumed as message travels)
+        message: RoutableMessage,
+    },
+    Local(LocalMessage),
+}
+```
 
-    // Server-level
+### RoutableMessage
+
+Messages that carry routing information and can be forwarded across server hops:
+
+```rust
+enum RoutableMessage {
+    // Subscribing to agent output
+    Subscribe { agent_id: String, rows: u16, cols: u16, mode: SubscribeMode },
+    SubscribeResult { agent_id: String, success: bool, error: Option<ProtocolError> },
+
+    // Input to agents
+    InputBytes { agent_id: String, data: Vec<u8> },     // Raw keystroke bytes
+    SubmitInput { agent_id: String, data: Vec<u8> },     // Structured input (adds delay + CR)
+
+    // Output from agents
+    Output { agent_id: String, data: Vec<u8> },          // Raw terminal bytes
+    StructuredOutput { agent_id: String, entry: StructuredLog },
+
+    // Permission handling (Claude Code integration)
+    PermissionRequestResponse { agent_id: String, response: PermissionResponse },
+
+    // Routing errors
+    Error(ProtocolError),
+}
+```
+
+### LocalMessage
+
+Messages handled only by the directly connected server:
+
+```rust
+enum LocalMessage {
+    // Agent management
     ListAgents,
-    ListAgentsResult { agents: Vec<AgentId> },
-    AddAgents { agents: Vec<AgentId> },
-    Disconnect,
+    ListAgentsResult { agents: Vec<AgentInfo> },
+    CreateAgent(CreateAgentRequest),
+    CreateAgentResult { success: bool, error: Option<ProtocolError> },
+    AgentEnded,
 
-    // Agent-level
-    Subscribe { host_id: String, agent_id: String },
-    SubscribeResult { success: bool, error: Option<String> },
-    Unsubscribe { host_id: String, agent_id: String },
-    SendMessage { host_id: String, agent_id: String, data: Vec<u8> },
+    // Connection handshake
+    Connect { link_name: String, token: Option<String> },
+    ConnectResponse { success: bool, error: Option<ProtocolError> },
 
-    // Data (output from agents)
-    Output { host_id: String, agent_id: String, data: Vec<u8> },
-    LogEntry { host_id: String, agent_id: String, entry: StructuredLog },
+    // Server operations
+    Shutdown,
+    Debug,
+    DebugResult { info: ServerDebugInfo },
+    ConnectToServer { address: String },
+    ConnectToServerResult { success: bool, error: Option<ProtocolError> },
 
-    // Replay (response to subscribe)
-    ReplayBytes { data: Vec<u8> },
-    ReplayLogs { entries: Vec<StructuredLog> },
+    // Hooks (Claude Code integration)
+    HookEvent { hook: Hook },
+    HookEventResult { success: bool, error: Option<ProtocolError> },
 
     // Errors
-    Error { code: u32, message: String },
-    AgentEnded { host_id: String, agent_id: String },
+    Error { message: String },
+}
+```
+
+### Supporting Types
+
+```rust
+enum ProtocolError {
+    ServerError(String),
+    LinkNameTaken,
+    NoRouteFound(Route),       // Includes the path traversed before failure
+    InvalidCredentials,
 }
 
-/// Format selection - not a trait, just an enum
-#[derive(Clone, Copy)]
-enum SerdeFormat {
-    Binary,  // bincode - for TCP/Unix (compact, fast)
-    Json,    // serde_json - for WebSocket (human readable)
+enum SubscribeMode {
+    Raw,         // Stream raw terminal bytes as Output messages (default)
+    Structured,  // Stream structured logs as StructuredOutput messages
 }
+```
 
-impl SerdeFormat {
-    fn encode(&self, msg: &Message) -> Vec<u8> {
-        match self {
-            SerdeFormat::Binary => bincode::serialize(msg).unwrap(),
-            SerdeFormat::Json => serde_json::to_vec(msg).unwrap(),
-        }
+### Serialization
+
+Messages are serialized using MessagePack (rmp-serde) in named/map format for binary transports, and JSON for WebSocket:
+
+```rust
+impl Message {
+    fn encode(&self) -> Result<Vec<u8>> {
+        rmp_serde::to_vec_named(self)
     }
-
-    fn decode(&self, data: &[u8]) -> Result<Message, DecodeError> {
-        match self {
-            SerdeFormat::Binary => bincode::deserialize(data).map_err(Into::into),
-            SerdeFormat::Json => serde_json::from_slice(data).map_err(Into::into),
-        }
+    fn decode(data: &[u8]) -> Result<Self> {
+        rmp_serde::from_slice(data)
     }
 }
 ```
+
+See `src/message.rs`.
 
 ---
 
-## Connection Types
+## Connection Handling
+
+All connections (Unix, TCP, WebSocket) use the same unified `connection_loop`:
 
 ```rust
-/// Connection wraps transport + state + behavior
-enum Connection {
-    Local(LocalConnection),
-    Remote(RemoteConnection),
-}
+async fn connection_loop<T: Transport>(
+    transport: &mut T,
+    outgoing_rx: mpsc::Receiver<Message>,  // Messages to send to this connection
+    ctx: ConnectionContext,                 // Shared server state + link name
+)
+```
 
-/// Local Unix socket connection - always established, single user
-struct LocalConnection {
-    id: ConnectionId,
-    transport: UnixTransport,
-    subscribed_agent: Option<AgentId>,  // At most one
-    raw_mode: bool,  // After subscribe, skip framing
-}
+The loop uses `tokio::select!` on two sources:
+1. **`transport.read_message()`** - Incoming messages from the connection
+2. **`outgoing_rx.recv()`** - Messages queued by other parts of the server to send to this connection
 
-/// Remote connection (TCP or WebSocket)
-struct RemoteConnection {
-    id: ConnectionId,
-    transport: Box<dyn Transport>,
-    format: SerdeFormat,  // Binary for TCP, Json for WebSocket
-    state: RemoteConnectionState,
-    user_id: Option<String>,  // Set after establish
-    subscriptions: HashSet<AgentId>,
-}
+Incoming messages are dispatched by `handle_message`:
+- `Message::Routable { src, dst, message }` → `handle_routable()` (routing + local delivery)
+- `Message::Local(msg)` → `handle_local()` (direct handling)
 
-enum RemoteConnectionState {
-    Pending,      // Awaiting establish_connection
-    Established,  // Ready for API calls
+### Per-Connection State
+
+```rust
+struct ConnectionContext {
+    state: Arc<RwLock<ServerState>>,       // Shared server state
+    event_tx: mpsc::Sender<SessionEvent>,  // Channel to notify server of session events
+    link_name: String,                     // This connection's link name
 }
 ```
 
----
+Each connection has a dedicated `mpsc::Sender<Message>` stored in the routes table. Other tasks send messages to a connection by looking up its link name in the routes table and sending through the channel.
 
-## Local Connection - Optimized Path
+For cloud connections, the loop extends with token refresh support: a third `select!` branch fires when the JWT token is nearing expiry, triggering in-band re-authentication via `LocalMessage::Connect`.
 
-```rust
-impl LocalConnection {
-    /// Local connections are immediately established with hardcoded user_id
-    fn new(id: ConnectionId, socket: UnixStream, user_id: &str) -> Self {
-        Self {
-            id,
-            transport: UnixTransport { socket },
-            subscribed_agent: None,
-            raw_mode: false,
-        }
-    }
-
-    async fn handle_message(&mut self, msg: Message, server: &Server) -> Result<()> {
-        match msg {
-            Message::EstablishConnection { .. } => {
-                // Error: local connections don't need this
-                self.send(Message::Error {
-                    code: 1,
-                    message: "Local connections are pre-established".into()
-                }).await
-            }
-
-            Message::Subscribe { host_id, agent_id } => {
-                let agent_id = AgentId { host_id, user_id: server.config.user_id.clone(), agent_id };
-
-                // Subscribe and get replay buffer
-                let replay = server.subscribe(self.id, &agent_id).await?;
-
-                self.subscribed_agent = Some(agent_id);
-                self.send(Message::SubscribeResult { success: true, error: None }).await?;
-                self.send(Message::ReplayBytes { data: replay }).await?;
-
-                // Transition to raw mode - no more message framing
-                self.raw_mode = true;
-                Ok(())
-            }
-
-            Message::SendMessage { data, .. } => {
-                if let Some(ref agent) = self.subscribed_agent {
-                    server.send_input(agent, data).await
-                } else {
-                    Err(Error::NotSubscribed)
-                }
-            }
-
-            _ => Err(Error::InvalidMessage)
-        }
-    }
-
-    /// In raw mode, just forward bytes directly - no framing overhead
-    async fn write_output(&mut self, data: &[u8]) -> Result<()> {
-        if self.raw_mode {
-            self.transport.write_raw(data).await
-        } else {
-            let msg = Message::Output {
-                host_id: "".into(),  // Not needed, only one subscription
-                agent_id: "".into(),
-                data: data.to_vec()
-            };
-            self.send(msg).await
-        }
-    }
-
-    /// In raw mode, read input bytes directly - no framing overhead
-    async fn read_input(&mut self, buf: &mut [u8]) -> Result<usize> {
-        if self.raw_mode {
-            self.transport.read_raw(buf).await
-        } else {
-            // Would need to parse framed SendMessage, but in practice
-            // we switch to raw mode immediately after subscribe
-            unimplemented!("framed input not used for local connections")
-        }
-    }
-}
-```
-
----
-
-## Remote Connection - Full Protocol
-
-```rust
-impl RemoteConnection {
-    fn new(id: ConnectionId, transport: Box<dyn Transport>, format: SerdeFormat) -> Self {
-        Self {
-            id,
-            transport,
-            format,
-            state: RemoteConnectionState::Pending,
-            user_id: None,
-            subscriptions: HashSet::new(),
-        }
-    }
-
-    async fn send(&mut self, msg: Message) -> Result<()> {
-        let bytes = self.format.encode(&msg);
-        self.transport.write_frame(&bytes).await
-    }
-
-    async fn recv(&mut self) -> Result<Message> {
-        let bytes = self.transport.read_frame().await?;
-        self.format.decode(&bytes)
-    }
-
-    async fn handle_message(&mut self, msg: Message, server: &Server) -> Result<()> {
-        // Must establish first
-        if self.state == RemoteConnectionState::Pending {
-            match msg {
-                Message::EstablishConnection { token } => {
-                    let user_id = server.validate_token(token)?;
-                    self.user_id = Some(user_id);
-                    self.state = RemoteConnectionState::Established;
-                    self.send(Message::EstablishConnectionResult { success: true, error: None }).await
-                }
-                _ => {
-                    self.close().await;
-                    Err(Error::NotEstablished)
-                }
-            }
-        } else {
-            // Established - handle all messages
-            match msg {
-                Message::ListAgents => {
-                    let agents = server.list_agents(&self.user_id.as_ref().unwrap()).await;
-                    self.send(Message::ListAgentsResult { agents }).await
-                }
-
-                Message::AddAgents { agents } => {
-                    server.add_agents(self.id, agents).await
-                }
-
-                Message::Subscribe { host_id, agent_id } => {
-                    let agent_id = AgentId {
-                        host_id,
-                        user_id: self.user_id.clone().unwrap(),
-                        agent_id
-                    };
-                    let result = server.subscribe(self.id, &agent_id).await;
-                    // ... handle result, send replay
-                }
-
-                // ... other messages
-            }
-        }
-    }
-
-    /// Remote connections always use framed messages
-    async fn write_output(&mut self, agent: &AgentId, data: &[u8]) -> Result<()> {
-        let msg = Message::Output {
-            host_id: agent.host_id.clone(),
-            agent_id: agent.agent_id.clone(),
-            data: data.to_vec(),
-        };
-        self.send(msg).await
-    }
-}
-```
+See `src/server/connection.rs`.
 
 ---
 
 ## Server
 
 ```rust
-struct Server {
+struct ServerState {
     config: Config,
-
-    // Connections
-    connections: HashMap<ConnectionId, Connection>,
-    next_connection_id: u64,
-
-    // Agents
-    local_agents: HashMap<AgentId, LocalAgentSession>,
-    routing_table: HashMap<AgentId, Route>,
-
-    // Subscriptions: who wants data from which agent
-    subscriptions: HashMap<AgentId, Vec<ConnectionId>>,
+    cloud_mode: bool,
+    agents: HashMap<Uuid, Arc<LocalAgentSession>>,
+    routes: HashMap<String, mpsc::Sender<Message>>,
+    jwt_validator: Option<Arc<JwtValidator>>,
 }
 
-enum Route {
-    Local,                        // We own this agent
-    Remote { via: ConnectionId }, // Forward through this connection
-}
-
-impl Server {
-    /// Subscribe a connection to an agent's output
-    async fn subscribe(&mut self, conn_id: ConnectionId, agent: &AgentId) -> Result<Vec<u8>> {
-        match self.routing_table.get(agent) {
-            Some(Route::Local) => {
-                let session = self.local_agents.get(agent).unwrap();
-                let replay = session.get_replay_buffer();
-                self.subscriptions.entry(agent.clone()).or_default().push(conn_id);
-                Ok(replay)
-            }
-            Some(Route::Remote { via }) => {
-                // Forward subscribe upstream, bridge when data arrives
-                self.forward_subscribe(*via, agent).await
-            }
-            None => Err(Error::AgentNotFound)
-        }
-    }
-
-    /// Called when agent produces output - fan out to subscribers
-    async fn broadcast_output(&self, agent: &AgentId, data: &[u8]) {
-        if let Some(subscribers) = self.subscriptions.get(agent) {
-            for &conn_id in subscribers {
-                if let Some(conn) = self.connections.get_mut(&conn_id) {
-                    let _ = conn.write_output(agent, data).await;
-                }
-            }
-        }
-    }
+struct Server {
+    state: Arc<RwLock<ServerState>>,
+    event_tx: mpsc::Sender<SessionEvent>,
+    event_rx: Option<mpsc::Receiver<SessionEvent>>,
 }
 ```
+
+The server's `run()` method:
+1. Binds Unix socket, TCP, and WebSocket listeners
+2. Optionally sets up TLS (cloud mode, using `AMUX_TLS_CERT`/`AMUX_TLS_KEY` env vars)
+3. Optionally establishes cloud connection (local mode with cloud enabled)
+4. Enters main `select!` loop handling: listener accepts, session events, shutdown signal
+
+**Routes table:** `HashMap<String, mpsc::Sender<Message>>` keyed by link name. Each entry is the send-half of a channel to a connection's `connection_loop`. When a connection disconnects, its route is removed.
+
+**Subscriptions:** Unlike the original design, there is no explicit subscriptions HashMap. When a client subscribes to an agent, a dedicated output-streaming task is spawned that reads from the agent's `MultiplexBuffer` and writes `Output` messages to the subscriber's channel. The subscription is implicit in the lifetime of this task.
+
+See `src/server/mod.rs`.
 
 ---
 
@@ -406,34 +290,59 @@ impl Server {
 
 ```rust
 struct LocalAgentSession {
-    id: AgentId,
-
-    // PTY
-    pty_master: Box<dyn MasterPty + Send>,
-    child: Child,
-
-    // Buffers
-    byte_replay_buffer: Vec<u8>,        // For terminal clients
-    log_replay_buffer: Vec<StructuredLog>,  // For rich clients
-
-    // Input channel
+    agent_id: Uuid,
+    alias: Option<String>,
+    command: String,
+    working_dir: PathBuf,
+    pty_master: Arc<Mutex<Option<Box<dyn MasterPty + Send>>>>,
+    buffer: Arc<MultiplexBuffer>,                              // PTY output replay + broadcast
+    log_buffer: Arc<MultiplexLogBuffer>,                       // Structured log replay + broadcast
+    transcript_tailer: Mutex<Option<(TranscriptTailer, JoinHandle<()>)>>,
     input_tx: mpsc::Sender<Vec<u8>>,
-}
-
-impl LocalAgentSession {
-    fn get_replay_buffer(&self) -> Vec<u8> {
-        self.byte_replay_buffer.clone()
-    }
-
-    fn get_log_replay(&self) -> Vec<StructuredLog> {
-        self.log_replay_buffer.clone()
-    }
-
-    async fn send_input(&self, data: Vec<u8>) -> Result<()> {
-        self.input_tx.send(data).await.map_err(|_| Error::AgentDead)
-    }
+    current_size: Arc<Mutex<(u16, u16)>>,                      // Terminal rows, cols
 }
 ```
+
+### Key Methods
+
+```rust
+impl LocalAgentSession {
+    fn new(req: &CreateAgentRequest, event_tx: mpsc::Sender<SessionEvent>) -> Result<Self>;
+
+    /// Atomic subscribe: returns (MultiplexReader, input_sender).
+    /// MultiplexReader receives all existing output (replay) then live output.
+    async fn subscribe(&self) -> Option<(MultiplexReader, mpsc::Sender<Vec<u8>>)>;
+
+    /// Subscribe to structured logs (for dashboard/rich clients).
+    async fn subscribe_logs(&self) -> Option<MultiplexLogReader>;
+
+    async fn send_input(&self, data: Vec<u8>) -> Result<()>;
+    async fn resize(&self, rows: u16, cols: u16) -> Result<()>;
+    async fn shutdown(&self);
+    async fn link_transcript(&self, path: PathBuf);   // Connect Claude Code transcript file
+    async fn write_log(&self, entry: StructuredLog);   // Write log entry directly (e.g. permission request)
+}
+```
+
+### CreateAgentRequest
+
+```rust
+struct CreateAgentRequest {
+    agent_id: Uuid,
+    alias: Option<String>,
+    agent_type: AgentType,
+    working_dir: PathBuf,
+    rows: u16,
+    cols: u16,
+}
+
+enum AgentType {
+    Claude,                          // Passes --session-id to claude command
+    TestAgent(String),               // Dev/test only
+}
+```
+
+See `src/session.rs`.
 
 ---
 
@@ -441,367 +350,281 @@ impl LocalAgentSession {
 
 ```rust
 struct Config {
-    // Identity
-    host_id: String,              // UUID, generated on first run, persisted
-    user_id: String,              // Hardcoded for local mode, or from token
-
-    // Server mode
-    token_required: bool,         // Cloud mode requires tokens
-    token_public_key: Option<String>,  // For verifying signed tokens
-
-    // Listeners (None = disabled)
-    unix_socket_path: Option<PathBuf>,    // e.g., /tmp/amux.sock
-    tcp_bind_addr: Option<SocketAddr>,    // e.g., 0.0.0.0:9001
-    websocket_bind_addr: Option<SocketAddr>,
-
-    // Limits
-    max_replay_buffer_bytes: usize,   // e.g., 10MB
-    max_log_buffer_entries: usize,    // e.g., 1000
+    host_name: String,               // Hostname for generating link names (default: system hostname)
+    cloud_url: String,               // Cloud API URL (default: "https://amux.sh")
+    socket_path: PathBuf,            // Unix socket path (default: /tmp/amux.sock)
+    tcp_port: u16,                   // TCP port for server-to-server (default: 9001)
+    websocket_port: u16,             // WebSocket port for rich clients (default: 9002)
+    randomise_link_name: bool,       // Add random suffix to link names (default: true, test-only override)
+    state_path: PathBuf,             // Path to persistent state file
+    enforce_tls_in_cloud_mode: bool, // Whether cloud server handles TLS itself (default: true)
 }
 ```
+
+Config is loaded from YAML file at `~/.config/amux/config.yaml` (auto-detected) or via `--config` flag. All fields have serde defaults.
+
+See `src/config.rs`.
 
 ---
 
 ## StructuredLog
 
-For rich clients (mobile, web), we parse agent output into structured entries:
+Structured log entries for rich clients (dashboard, mobile). Populated by parsing Claude Code transcript files via `TranscriptTailer`:
 
 ```rust
-#[derive(Serialize, Deserialize, Clone, Debug)]
 #[serde(tag = "type")]
 enum StructuredLog {
-    /// User sent a message to the agent
-    UserMessage { content: String },
+    UserMessage { content: String, timestamp: String, uuid: String },
+    AssistantMessage { content: String, timestamp: String, uuid: String },
+    PermissionRequest { tool: PermissionTool },
+}
 
-    /// Agent is producing text output
-    AssistantMessage { content: String },
-
-    /// Agent is calling a tool
-    ToolCall { tool: String, args: serde_json::Value },
-
-    /// Tool returned a result
-    ToolResult { tool: String, result: String },
-
-    /// Agent is thinking/processing (for streaming indicators)
-    Thinking,
-
-    /// Session ended
-    SessionEnded { exit_code: Option<i32> },
+enum PermissionTool {
+    Edit { file_path: String, old_string: String, new_string: String },
 }
 ```
 
-The `log_replay_buffer` stores these for rich clients, while `byte_replay_buffer` stores raw PTY output for terminals.
+`TranscriptTailer` watches a Claude Code transcript JSONL file and parses new entries into `StructuredLog` variants, writing them to the session's `MultiplexLogBuffer`. Permission requests are also written directly to the log buffer when received as hook events.
+
+See `src/structured_log.rs`, `src/transcript.rs`.
+
+---
+
+## MultiplexBuffer
+
+The core abstraction for agent output replay and broadcast. Supports multiple concurrent readers with atomic subscribe (no data loss or duplication between replay and live output).
+
+```rust
+struct MultiplexBuffer {
+    buffer: RwLock<Vec<u8>>,                           // All bytes (up to max_size)
+    subscribers: RwLock<Vec<mpsc::UnboundedSender<Vec<u8>>>>,
+    max_size: usize,                                    // 10MB default
+    closed: RwLock<bool>,
+}
+
+impl MultiplexBuffer {
+    /// Write bytes: appends to buffer, broadcasts to all subscribers.
+    /// Holds write lock during both operations for atomicity.
+    async fn write(&self, bytes: &[u8]);
+
+    /// Subscribe: returns MultiplexReader that receives all existing bytes
+    /// then live updates. Holds read lock during subscribe for atomicity with write.
+    /// Returns None if closed.
+    async fn subscribe(&self) -> Option<MultiplexReader>;
+
+    /// Close: drops all subscriber channels, prevents new subscriptions.
+    async fn close(&self);
+}
+
+struct MultiplexReader {
+    rx: mpsc::UnboundedReceiver<Vec<u8>>,
+}
+```
+
+The key invariant: `write()` and `subscribe()` are mutually exclusive via the buffer lock. This ensures a new subscriber sees exactly all bytes written before it subscribed, with no gaps and no duplicates in the transition to live data.
+
+`MultiplexLogBuffer` follows the same pattern for `StructuredLog` entries (with entry count limit instead of byte size limit).
+
+See `src/buffer.rs`, `src/multiplex_log_buffer.rs`.
 
 ---
 
 ## Routing Table
 
-The routing table maps agent identifiers to how to reach them:
+The routing table is a `HashMap<String, mpsc::Sender<Message>>` keyed by link name. Each entry is the send-half of a per-connection channel.
 
-```rust
-struct Server {
-    // ...
-    routing_table: HashMap<AgentId, Route>,
-}
+### Forwarding Algorithm
 
-enum Route {
-    Local,                        // We own this agent's PTY
-    Remote { via: ConnectionId }, // Forward through this connection
-}
-```
+When a `Routable` message arrives at `handle_routable`:
 
-### Population
+1. **Pop** the next hop from `dst`
+2. **If `Some(next_hop)`:** This message needs forwarding
+   - Push `next_hop` onto `src` (building the return path)
+   - Look up `next_hop` in `state.routes`
+   - Send the message through the channel
+   - On channel send failure:
+     - Remove stale route if channel is closed
+     - Send `RoutableMessage::Error(NoRouteFound(...))` back via `Route::reply(src)`
+3. **If `None`:** This message has arrived at its destination
+   - Deliver locally (subscribe, input, output, etc.)
 
-**Local agents:** Added when agent is spawned
-```rust
-fn spawn_agent(&mut self, agent_id: String, command: &str) -> Result<()> {
-    let id = AgentId {
-        host_id: self.config.host_id.clone(),
-        user_id: self.config.user_id.clone(),
-        agent_id,
-    };
+### Reply Routing
 
-    let session = LocalAgentSession::new(&id, command)?;
-    self.local_agents.insert(id.clone(), session);
-    self.routing_table.insert(id.clone(), Route::Local);
+Replies use `Route::reply(src)`, which pops the first link from `src` to determine the next hop and creates the reply's `src` from that link. This naturally reverses the path.
 
-    // Notify connected servers about new agent
-    self.broadcast_add_agents(vec![id]).await;
-    Ok(())
-}
-```
+### Error Handling
 
-**Remote agents:** Added when `AddAgents` message received
-```rust
-fn handle_add_agents(&mut self, from_conn: ConnectionId, agents: Vec<AgentId>) {
-    for agent in agents {
-        // Don't overwrite local agents
-        if !self.local_agents.contains_key(&agent) {
-            self.routing_table.insert(agent, Route::Remote { via: from_conn });
-        }
-    }
-}
-```
+- **Request messages** (Subscribe, InputBytes, etc.): forwarding failure sends `RoutableMessage::Error(NoRouteFound)` back to the source
+- **Stream messages** (Output, StructuredOutput): forwarding failure is logged and dropped silently to prevent churn
+- **Error messages**: forwarding failure is logged and dropped to prevent amplification
 
-### Cleanup
+### Route Cleanup
 
-When a connection drops, remove all routes that went through it:
-```rust
-fn handle_connection_closed(&mut self, conn_id: ConnectionId) {
-    // Remove routes via this connection
-    self.routing_table.retain(|_, route| {
-        !matches!(route, Route::Remote { via } if *via == conn_id)
-    });
+When a connection disconnects, its route is removed from `state.routes`. Stale routes (where the channel has closed but the route hasn't been cleaned up yet) are detected during forwarding and cleaned up opportunistically.
 
-    // Remove subscriptions from this connection
-    for subscribers in self.subscriptions.values_mut() {
-        subscribers.retain(|&id| id != conn_id);
-    }
-
-    // Remove the connection itself
-    self.connections.remove(&conn_id);
-}
-```
+See `src/route.rs`, `src/server/connection.rs`.
 
 ---
 
 ## Agent Lifecycle
 
-### Spawning a Local Agent
+### Spawning
 
-```rust
-impl LocalAgentSession {
-    fn new(id: &AgentId, command: &str) -> Result<Self> {
-        // Create PTY
-        let pty_system = native_pty_system();
-        let pair = pty_system.openpty(PtySize {
-            rows: 24,
-            cols: 80,
-            ..Default::default()
-        })?;
+`LocalAgentSession::new()` creates a PTY and spawns three background tasks:
 
-        // Spawn the agent process (e.g., "claude", "codex")
-        let child = pair.slave.spawn_command(CommandBuilder::new(command))?;
+```
+Task 1: PTY Reader (spawn_blocking)
+  - Reads PTY stdout in a blocking loop
+  - Writes bytes to MultiplexBuffer (which broadcasts to all subscribers)
 
-        // Create input channel for sending keystrokes to agent
-        let (input_tx, input_rx) = mpsc::channel(256);
+Task 2: Input Forwarder (spawn)
+  - Reads from input_rx channel
+  - Writes to PTY stdin
 
-        let session = Self {
-            id: id.clone(),
-            pty_master: pair.master,
-            child,
-            byte_replay_buffer: Vec::new(),
-            log_replay_buffer: Vec::new(),
-            input_tx,
-        };
-
-        // Start background tasks for PTY I/O (see Task Model)
-        session.start_pty_tasks(input_rx);
-
-        Ok(session)
-    }
-}
+Task 3: Child Waiter (spawn_blocking)
+  - Waits for child process to exit
+  - Drops PTY master
+  - Closes MultiplexBuffer (disconnects all subscribers)
+  - Sends SessionEvent::Ended to server
 ```
 
-### Agent Termination
+The agent type determines the command and arguments:
+- `AgentType::Claude` → runs `claude --session-id={agent_id}`
+- `AgentType::TestAgent(cmd)` → runs the given command (dev/test only)
 
-When the child process exits:
-1. PTY reader task detects EOF
-2. Server is notified via channel
-3. Server broadcasts `AgentEnded` to all subscribers
-4. Server removes agent from `local_agents` and `routing_table`
-5. Server broadcasts `RemoveAgent` to connected servers (so they update their routing tables)
+### Termination
 
-```rust
-// Pseudo-code for cleanup
-fn handle_agent_ended(&mut self, agent: &AgentId) {
-    // Notify subscribers
-    if let Some(subscribers) = self.subscriptions.remove(agent) {
-        for conn_id in subscribers {
-            if let Some(conn) = self.connections.get_mut(&conn_id) {
-                let _ = conn.send(Message::AgentEnded {
-                    host_id: agent.host_id.clone(),
-                    agent_id: agent.agent_id.clone(),
-                });
-            }
-        }
-    }
+1. Child process exits
+2. Child waiter task detects exit, drops PTY master, closes buffers
+3. `SessionEvent::Ended(agent_id)` sent to server via event channel
+4. Server removes agent from `state.agents`
+5. Output streaming tasks detect buffer closure and send `LocalMessage::AgentEnded` to their subscribers
 
-    // Remove from routing
-    self.local_agents.remove(agent);
-    self.routing_table.remove(agent);
-
-    // Tell connected servers
-    self.broadcast_remove_agent(agent).await;
-}
-```
+See `src/session.rs`.
 
 ---
 
 ## Connection Lifecycle
 
-### Accepting Connections
+### Accepting Connections (Server-Side)
 
-```rust
-// Unix socket listener
-async fn accept_unix_connections(listener: UnixListener, server: Arc<Mutex<Server>>) {
-    loop {
-        let (socket, _) = listener.accept().await.unwrap();
-        let server = server.clone();
+`accept_handshake()` handles the initial handshake:
 
-        tokio::spawn(async move {
-            let conn_id = server.lock().await.register_connection(
-                Connection::Local(LocalConnection::new(socket))
-            );
+1. Read first message, expect `LocalMessage::Connect { link_name, token }`
+2. If `verify_token` (cloud mode): validate JWT token via JWKS
+3. Check link name uniqueness in `state.routes` (read lock fast path, write lock for insert)
+4. Create `mpsc::channel` for the connection, insert sender into `state.routes`
+5. Send `LocalMessage::ConnectResponse { success: true }`
+6. Return `(link_name, outgoing_rx)` for use in `connection_loop`
 
-            handle_local_connection(conn_id, socket, server).await;
+On link name collision, the server responds with `ConnectResponse { error: LinkNameTaken }`. The client retries with a new random suffix (up to 5 attempts).
 
-            server.lock().await.handle_connection_closed(conn_id);
-        });
-    }
-}
+After handshake, `accept_connection()` runs `connection_loop()` until disconnection, then removes the route from `state.routes`.
 
-// TCP listener (similar pattern)
-async fn accept_tcp_connections(listener: TcpListener, server: Arc<Mutex<Server>>) {
-    loop {
-        let (socket, _) = listener.accept().await.unwrap();
-        socket.set_nodelay(true).unwrap();  // TCP_NODELAY for low latency
+### Connecting to Peers (Client-Side)
 
-        let server = server.clone();
+`connect_handshake()` sends `LocalMessage::Connect { link_name, token: None }` and waits for `ConnectResponse`. On `LinkNameTaken`, it regenerates the link name and retries (up to 5 attempts).
 
-        tokio::spawn(async move {
-            let conn_id = server.lock().await.register_connection(
-                Connection::Remote(RemoteConnection::new(
-                    Box::new(TcpTransport { socket }),
-                    SerdeFormat::Binary,
-                ))
-            );
+### Cleanup
 
-            handle_remote_connection(conn_id, server).await;
+When a connection drops:
+1. Route is removed from `state.routes`
+2. Any output streaming tasks for this connection detect the closed channel and stop
 
-            server.lock().await.handle_connection_closed(conn_id);
-        });
-    }
-}
-```
-
-### Connection Cleanup
-
-When a connection drops (client disconnects, network error, etc.):
-1. Remove all routing table entries that go via this connection
-2. Remove this connection from all subscription lists
-3. If this was a server connection, its agents become unreachable
-
-See `handle_connection_closed()` above.
+See `src/server/accept.rs`.
 
 ---
 
 ## Framing (TCP/Unix)
 
-For binary transports, messages are length-prefixed:
+Binary transports use length-prefixed framing via the `LengthPrefixed<R, W>` helper:
 
 ```
-+----------------+------------------+
++---------------------------+-------------------+
 | length (4 bytes, big-endian) | payload (N bytes) |
-+----------------+------------------+
++---------------------------+-------------------+
 ```
 
-```rust
-impl TcpTransport {
-    async fn write_frame(&mut self, data: &[u8]) -> Result<()> {
-        let len = (data.len() as u32).to_be_bytes();
-        self.socket.write_all(&len).await?;
-        self.socket.write_all(data).await?;
-        Ok(())
-    }
+- Maximum frame size: 16MB (prevents DoS)
+- TCP transports flush after each write (for TCP_NODELAY latency)
+- Unix transports do not flush (not applicable)
+- Payload is MessagePack-encoded `Message`
 
-    async fn read_frame(&mut self) -> Result<Vec<u8>> {
-        let mut len_buf = [0u8; 4];
-        self.socket.read_exact(&mut len_buf).await?;
-        let len = u32::from_be_bytes(len_buf) as usize;
+WebSocket handles framing natively; `WebSocketTransport` reads/writes JSON text messages directly.
 
-        let mut buf = vec![0u8; len];
-        self.socket.read_exact(&mut buf).await?;
-        Ok(buf)
-    }
-}
-```
-
-WebSocket handles framing natively, so `WebSocketTransport` just reads/writes messages directly.
+See `src/transport/framing.rs`.
 
 ---
 
-## Input Forwarding (SendMessage)
+## Input Forwarding
 
-When a client sends input to a remote agent:
+Two input message types, both routable:
 
-```rust
-fn handle_send_message(&mut self, from_conn: ConnectionId, agent: &AgentId, data: Vec<u8>) {
-    match self.routing_table.get(agent) {
-        Some(Route::Local) => {
-            // Deliver to local PTY
-            if let Some(session) = self.local_agents.get(agent) {
-                let _ = session.input_tx.send(data);
-            }
-        }
+- **`InputBytes`** - Raw keystroke bytes, delivered directly to PTY stdin
+- **`SubmitInput`** - Structured input from rich clients (e.g. dashboard text field). Adds a 20ms delay then appends carriage return (`\r`)
 
-        Some(Route::Remote { via }) => {
-            // Forward upstream
-            if let Some(conn) = self.connections.get_mut(via) {
-                let _ = conn.send(Message::SendMessage {
-                    host_id: agent.host_id.clone(),
-                    agent_id: agent.agent_id.clone(),
-                    data,
-                });
-            }
-        }
-
-        None => {
-            // Agent not found - could send error back
-        }
-    }
-}
-```
+Input messages are forwarded via generic `handle_routable` routing. When delivered locally, the agent is resolved by UUID or alias and `send_input()` is called.
 
 ---
 
 ## Task Model
 
-How concurrent tasks work together:
-
 ```
-┌─────────────────────────────────────────────────────────────────────┐
-│                           Server                                     │
-│                                                                      │
-│  ┌──────────────────┐  ┌──────────────────┐  ┌──────────────────┐  │
-│  │ Unix Listener    │  │ TCP Listener     │  │ WebSocket        │  │
-│  │ Task             │  │ Task             │  │ Listener Task    │  │
-│  └────────┬─────────┘  └────────┬─────────┘  └────────┬─────────┘  │
-│           │                     │                     │             │
-│           └─────────────────────┼─────────────────────┘             │
-│                                 │                                    │
-│                    spawns per connection                             │
-│                                 ▼                                    │
-│           ┌─────────────────────────────────────────┐               │
-│           │         Connection Handler Task          │               │
-│           │                                         │               │
-│           │  - Reads messages from socket           │               │
-│           │  - Dispatches to Server methods         │               │
-│           │  - Writes responses back                │               │
-│           │  - In raw mode: bridges PTY ↔ socket    │               │
-│           └─────────────────────────────────────────┘               │
-│                                                                      │
-│  Per Local Agent:                                                    │
-│  ┌──────────────────┐  ┌──────────────────┐  ┌──────────────────┐  │
-│  │ PTY Reader Task  │  │ PTY Writer Task  │  │ Child Waiter     │  │
-│  │                  │  │                  │  │ Task             │  │
-│  │ Reads PTY stdout │  │ Reads input_rx   │  │                  │  │
-│  │ → replay buffer  │  │ → PTY stdin      │  │ Waits for exit   │  │
-│  │ → broadcast to   │  │                  │  │ → triggers       │  │
-│  │   subscribers    │  │                  │  │   cleanup        │  │
-│  └──────────────────┘  └──────────────────┘  └──────────────────┘  │
-│                                                                      │
-└─────────────────────────────────────────────────────────────────────┘
+┌────────────────────────────────────────────────────────────────────────┐
+│                              Server                                    │
+│                                                                        │
+│  ┌──────────────────┐  ┌──────────────────┐  ┌──────────────────────┐ │
+│  │ Unix Listener    │  │ TCP Listener     │  │ WebSocket Listener   │ │
+│  └────────┬─────────┘  └────────┬─────────┘  └──────────┬───────────┘ │
+│           │                     │                        │             │
+│           └─────────────────────┼────────────────────────┘             │
+│                                 │                                      │
+│                    spawns per connection                                │
+│                                 ▼                                      │
+│           ┌─────────────────────────────────────────┐                  │
+│           │       Connection Handler Task            │                  │
+│           │                                          │                  │
+│           │  tokio::select! {                        │                  │
+│           │    transport.read_message() => dispatch   │                  │
+│           │    outgoing_rx.recv() => write to socket  │                  │
+│           │    token_refresh => re-authenticate       │                  │
+│           │  }                                        │                  │
+│           └─────────────────────────────────────────┘                  │
+│                                                                        │
+│  Per Subscribe (spawned on subscribe):                                 │
+│  ┌──────────────────────────────────────────────────────────────────┐  │
+│  │ Output Stream Task                                                │  │
+│  │ Reads MultiplexBuffer/MultiplexLogBuffer → sends Output/          │  │
+│  │ StructuredOutput routable messages to subscriber's channel        │  │
+│  └──────────────────────────────────────────────────────────────────┘  │
+│                                                                        │
+│  Per Local Agent:                                                      │
+│  ┌──────────────────┐  ┌──────────────────┐  ┌──────────────────────┐ │
+│  │ PTY Reader       │  │ Input Forwarder  │  │ Child Waiter         │ │
+│  │ (spawn_blocking) │  │ (spawn)          │  │ (spawn_blocking)     │ │
+│  │                  │  │                  │  │                      │ │
+│  │ PTY stdout →     │  │ input_rx →       │  │ Waits for exit →    │ │
+│  │ MultiplexBuffer  │  │ PTY stdin        │  │ SessionEvent::Ended  │ │
+│  └──────────────────┘  └──────────────────┘  └──────────────────────┘ │
+│                                                                        │
+│  Optional:                                                             │
+│  ┌──────────────────────────────────────────────────────────────────┐  │
+│  │ Cloud Connection Task (local servers only)                        │  │
+│  │ TLS connect → handshake → connection_loop with token refresh      │  │
+│  └──────────────────────────────────────────────────────────────────┘  │
+│                                                                        │
+│  ┌──────────────────────────────────────────────────────────────────┐  │
+│  │ Session Event Handler                                             │  │
+│  │ Receives SessionEvent::Ended → removes agent from state          │  │
+│  └──────────────────────────────────────────────────────────────────┘  │
+│                                                                        │
+│  Per Agent with Transcript:                                            │
+│  ┌──────────────────────────────────────────────────────────────────┐  │
+│  │ Transcript Tailer                                                 │  │
+│  │ Watches JSONL file → parses → writes to MultiplexLogBuffer        │  │
+│  └──────────────────────────────────────────────────────────────────┘  │
+│                                                                        │
+└────────────────────────────────────────────────────────────────────────┘
 ```
 
 **Data flow for local terminal subscription:**
@@ -809,172 +632,142 @@ How concurrent tasks work together:
 Terminal ──Subscribe──> Connection Handler
                               │
                               ▼
-                        Server.subscribe()
+                       handle_routable → local delivery
                               │
-                              ├─> Add to subscriptions
-                              ├─> Send replay buffer
-                              └─> Switch to raw mode
+                              ├─> agent.subscribe() → MultiplexReader
+                              ├─> Send SubscribeResult
+                              └─> Spawn output stream task
+                                    │
+                                    └─> MultiplexReader.read() → Output msg → subscriber channel
 
-PTY Reader ──bytes──> broadcast_output() ──> Connection Handler ──raw──> Terminal
-Terminal ──raw──> Connection Handler ──> input_tx ──> PTY Writer ──> PTY stdin
+Terminal ──InputBytes──> Connection Handler → agent.send_input() → PTY stdin
 ```
 
 **Data flow for proxied subscription:**
 ```
 App ──Subscribe──> Cloud Handler ──Subscribe──> Local Handler
-                        │                            │
-                        ▼                            ▼
-                  Cloud.subscribe()            Local.subscribe()
-                        │                            │
-                        ├─> Route::Remote            ├─> Route::Local
-                        ├─> Forward upstream         ├─> Send replay
-                        └─> Add to subscriptions     └─> Add to subscriptions
+                        │                           │
+                   (pops dst,                  (dst empty,
+                    pushes src,                 local delivery)
+                    forwards)                       │
+                                               Subscribe agent
+                                               Spawn output task
 
-Local PTY ──Output──> Local Handler ──Output──> Cloud Handler ──Output──> App
+Local PTY → MultiplexBuffer → Output Stream Task → Output msg
+    → Cloud routes table → Cloud connection → App
 ```
+
+---
+
+## Hooks System
+
+amux integrates with Claude Code via hooks - shell commands that Claude Code calls on specific events.
+
+### Hook Events
+
+```rust
+enum Hook {
+    Claude(ClaudeHook),
+}
+
+enum ClaudeHook {
+    SessionStart(ClaudeSessionStart),         // Claude Code session started
+    PermissionRequest(ClaudePermissionRequest), // Claude Code requesting tool permission
+}
+```
+
+### Hook Connection Flow
+
+1. Claude Code calls `amux hooks claude session-start` (reads JSON from stdin)
+2. `amux` connects to server via Unix socket with a `"hook-{rand}"` link name
+3. Sends `HookEvent { hook }` message
+4. Server handles: for `SessionStart`, links the transcript file to the agent session
+5. For `PermissionRequest`, writes to the agent's log buffer and waits for a `PermissionRequestResponse` from a dashboard client
+
+### Permission Request Flow
+
+```
+Claude Code → amux hooks → HookEvent(PermissionRequest) → server
+    → agent.write_log(PermissionRequest) → MultiplexLogBuffer
+    → dashboard (via StructuredOutput) → user sees permission UI
+    → PermissionRequestResponse (routable) → server → writes keystroke to PTY
+```
+
+See `src/hooks.rs`, `src/message.rs`.
 
 ---
 
 ## Key Design Decisions
 
-### 1. Transport trait vs Connection enum
+### 1. Unified connection_loop for all transports
 
-We use **both**:
-- `Transport` trait for low-level byte I/O (read_frame, write_frame, write_raw)
-- `Connection` enum for high-level behavior differences (Local vs Remote)
+Rather than separate `LocalConnection` and `RemoteConnection` types with different behavior, all connections use the same `connection_loop`. The `Transport` trait abstracts away the underlying stream. This eliminates code duplication and ensures protocol consistency across transports.
 
-This lets us share the byte-shuffling code while having different message handling.
+### 2. MultiplexBuffer atomic subscribe
 
-### 2. Local socket optimization
+The original design had a race condition window between getting the replay buffer and starting to receive live data. `MultiplexBuffer` solves this by holding a lock during both the snapshot and subscriber registration, ensuring zero gaps or duplicates. This is the core correctness guarantee for late-joining terminals.
 
-`LocalConnection` has:
-- `raw_mode: bool` - after subscribe, skip message framing
-- `subscribed_agent: Option<AgentId>` - at most one
-- `read_raw()` / `write_raw()` for symmetric byte streaming
+### 3. MessagePack serialization
 
-After subscribe completes, both sides transition to raw mode:
-- Server: `write_raw()` for PTY output, `read_raw()` for client input
-- Client: `read_raw()` for PTY output, `write_raw()` for keystrokes
+MessagePack (rmp-serde with named/map format) replaced bincode for binary transports. Named format provides forward/backward compatibility when fields are added, unlike bincode's positional encoding. JSON is used for WebSocket (human readable, web client friendly).
 
-The socket becomes a bidirectional byte pipe with zero framing overhead.
+### 4. Handshake-based connection establishment
 
-### 3. Serde for serialization
+Connections start with a `Connect { link_name, token }` / `ConnectResponse` handshake instead of the original `EstablishConnection`. This:
+- Assigns link names at connect time (used for routing)
+- Carries JWT tokens for cloud authentication
+- Supports link name collision retry
 
-Using serde with format selection via `SerdeFormat` enum:
-- TCP/Unix: `bincode` (compact, fast, Rust-native)
-- WebSocket: `serde_json` (human readable, rich client friendly)
+### 5. Implicit subscriptions via spawned tasks
 
-The `Message` enum is the same; derive macros do the work. Standard ecosystem approach.
+Instead of a centralized `subscriptions: HashMap<AgentId, Vec<ConnectionId>>`, subscriptions are implicit in spawned output-streaming tasks. When a client subscribes, a task is spawned that reads from `MultiplexBuffer` and sends to the subscriber's channel. The subscription dies when either the buffer closes or the subscriber disconnects.
 
-### 4. Explicit connection states
+### 6. Routable/Local message split
 
-`RemoteConnectionState::Pending` vs `Established` makes the state machine clear. Any message before establish → close connection.
+The `Message` enum has two variants that encode routing capability in the type system:
+- `Routable { src, dst, message }` - Can be forwarded across hops. Generic forwarding logic handles all routable message types uniformly.
+- `Local(message)` - Handled only by the directly connected server. Cannot be forwarded.
 
-### 5. Centralized subscription tracking
+This collapses six separate forwarding code paths into one generic forwarding path in `handle_routable`.
 
-`Server.subscriptions: HashMap<AgentId, Vec<ConnectionId>>` keeps fan-out simple. When agent outputs, iterate subscribers and write.
+### 7. Stack-based routing
 
-**Why not a Subscription struct?** A first-class `Subscription` object could provide API ergonomics (a "handle" pre-scoped to an agent), but the HashMap is simpler and equally capable. Per-subscriber state (backpressure, sequence numbers) could be added by changing `Vec<ConnectionId>` to `Vec<SubscriberState>` without restructuring.
-
-**Decoupled from multiplexing:** This design is independent of transport strategy. Whether ConnectionIds represent multiplexed connections (one socket, many agents) or dedicated connections (one socket per agent), the subscription logic doesn't change. You could switch transport strategies without touching this code.
+Routes are stacks (VecDeque) of link names rather than flat `Route::Remote { via }` entries. At each hop, the next link is popped from `dst` and pushed to `src`. This naturally:
+- Builds the return path as the message travels
+- Supports multi-hop forwarding without each intermediate server needing full topology knowledge
+- Enables reply routing by simply swapping src/dst
 
 ---
 
 ## Proxying / Multi-hop Subscriptions
 
-When a client subscribes to an agent on a remote server, the intermediate server proxies:
+When a client subscribes to an agent on a remote server, messages are forwarded through intermediate servers:
 
 ```
 App ──Subscribe──> Cloud Server ──Subscribe──> Local Server
                         │                          │
                         │                     (owns agent)
                         │                          │
-App <──ReplayBytes─── Cloud <───ReplayBytes────────┘
-App <──Output──────── Cloud <───Output─────────────┘ (ongoing)
-App ──SendMessage──> Cloud ───SendMessage─────────>│
+App <──Output──────── Cloud <────Output────────────┘ (ongoing)
+App ──InputBytes───> Cloud ────InputBytes──────────>│
 ```
 
-**Key: Raw mode is only for direct terminal connections**
+All forwarding is handled by generic `handle_routable`:
+1. Pop next hop from `dst`
+2. Push it to `src`
+3. Look up in routes table
+4. Send through channel
 
-| Connection Type | Raw Mode? | Why |
-|-----------------|-----------|-----|
-| Terminal → Local (Unix) | Yes | Single agent, direct path, optimize latency |
-| App → Cloud (TCP/WS) | No | Multiplexed, needs agent_id in headers |
-| Cloud → Local (TCP) | No | Multiplexed, needs agent_id in headers |
-
-**Server behavior on Subscribe:**
-
-```rust
-async fn handle_subscribe(&mut self, conn_id: ConnectionId, agent: &AgentId) -> Result<()> {
-    match self.routing_table.get(agent) {
-        Some(Route::Local) => {
-            // We own this agent - send replay, add to subscribers
-            let session = self.local_agents.get(agent).unwrap();
-            let replay = session.get_replay_buffer();
-
-            self.subscriptions.entry(agent.clone()).or_default().push(conn_id);
-
-            let conn = self.connections.get_mut(&conn_id).unwrap();
-            conn.send(Message::SubscribeResult { success: true, error: None }).await?;
-            conn.send(Message::ReplayBytes { data: replay }).await?;
-
-            // If local Unix connection, transition to raw mode
-            if let Connection::Local(local) = conn {
-                local.raw_mode = true;
-            }
-            Ok(())
-        }
-
-        Some(Route::Remote { via }) => {
-            // Forward subscribe upstream
-            let upstream = self.connections.get_mut(via).unwrap();
-            upstream.send(Message::Subscribe {
-                host_id: agent.host_id.clone(),
-                agent_id: agent.agent_id.clone(),
-            }).await?;
-
-            // Track that this connection wants data from this agent
-            self.subscriptions.entry(agent.clone()).or_default().push(conn_id);
-
-            // Response will come async via handle_subscribe_result / handle_output
-            Ok(())
-        }
-
-        None => {
-            let conn = self.connections.get_mut(&conn_id).unwrap();
-            conn.send(Message::SubscribeResult {
-                success: false,
-                error: Some("Agent not found".into()),
-            }).await
-        }
-    }
-}
-
-/// Called when Output arrives (from local PTY or upstream connection)
-async fn handle_output(&mut self, agent: &AgentId, data: &[u8]) {
-    if let Some(subscribers) = self.subscriptions.get(agent) {
-        for &conn_id in subscribers {
-            if let Some(conn) = self.connections.get_mut(&conn_id) {
-                let _ = conn.write_output(agent, data).await;
-            }
-        }
-    }
-}
-```
-
-The `subscriptions` HashMap serves both local and proxy cases:
-- Local agent: subscribers are terminals/apps connected to this server
-- Remote agent: subscribers are connections that want proxied data
+The same code forwards Subscribe, SubscribeResult, InputBytes, Output, StructuredOutput, PermissionRequestResponse, and Error messages. No message-type-specific forwarding logic needed.
 
 ---
 
-## What's NOT here (intentionally deferred)
+## What's NOT Here (intentionally deferred)
 
-- **Error types** - flesh out during implementation
-- **Graceful shutdown** - drain connections, kill agents cleanly
-- **Metrics/logging** - add observability later
-- **Terminal resize handling** - PTY window size updates
-- **Reconnection logic** - client reconnect after disconnect
-- **Rate limiting** - beyond token quotas
+- **Agent propagation to peers** - Remote servers don't yet advertise their agents to connected peers. `list-agents` only returns local agents.
+- **Multi-user access** - Cross-user collaboration (user A accessing user B's agents)
+- **Local network discovery** - Automatic discovery of amux servers on LAN
+- **Reconnection logic** - Client-side reconnect after disconnect
+- **Rate limiting** - Beyond token quotas
 
 ---
