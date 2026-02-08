@@ -38,6 +38,62 @@ One paragraph describing what was done.
 
 ---
 
+## 2026-02-08: Load default config from `~/.config/amux/config.yaml`
+
+### Summary
+
+When no `--config` flag is passed, amux now automatically checks for a config file at the platform's config directory (`~/.config/amux/config.yaml` on macOS/Linux). If the file exists, it is loaded; if it doesn't exist, defaults are used as before. Failure to parse an auto-discovered config file produces a warning and falls back to defaults, while an explicit `--config` failure remains fatal.
+
+### Changes
+
+- `src/config.rs` — Added `Config::default_path()` method using `dirs::config_dir()`, following the same pattern as `State::default_path()`
+- `src/main.rs` — Resolved config path once (from `--config` or default), used for both loading and passing to spawned server via `ensure_server_running`
+
+### Decisions Made
+
+- Default config failure is a warning (not fatal): the file may be partially written or temporarily broken, so falling back to defaults is safer than crashing
+- Explicit `--config` failure remains fatal: the user explicitly pointed at a file, so it should work
+- Config path is resolved once and reused: the spawned server process gets the same config path, whether it came from `--config` or auto-detection
+
+### Verification
+
+- `cargo check`, `cargo fmt`, `cargo clippy`, `cargo test` — all pass (57 tests)
+- `cargo run -p e2e-runner -- run` — all 6 E2E tests pass
+
+### Next Steps
+
+- None; this is a self-contained change
+
+---
+
+## 2026-02-08: Add `enforce_tls_in_cloud_mode` config parameter
+
+### Summary
+
+Added a config field that lets cloud servers skip TLS setup when TLS is terminated by a reverse proxy (e.g. nginx), while still enforcing JWT token auth on incoming connections.
+
+### Changes
+
+- `src/config.rs` — Added `enforce_tls_in_cloud_mode: bool` field (default `true`) with serde default function, added to `Default` impl
+- `src/server/mod.rs` — Conditionally skip TLS cert loading when `enforce_tls_in_cloud_mode` is false; derive `verify_token` from `is_cloud_server` rather than from presence of `tls_acceptor`; updated log lines to distinguish "TLS terminated externally" from local mode
+
+### Decisions Made
+
+- **`verify_token` decoupled from TLS**: Previously `verify_token` was `true` only when `tls_acceptor` was `Some`. Now it's derived from `is_cloud_server`, so cloud mode without TLS still validates JWT tokens.
+- **Default true**: Existing cloud deployments are unaffected — TLS is still required unless explicitly disabled in config.
+
+### Verification
+
+- `cargo check && cargo fmt && cargo clippy` — clean
+- `cargo test` — 57 tests pass
+- `cargo run -p e2e-runner -- run` — 6 E2E tests pass
+
+### Next Steps
+
+- Manual verification with actual cloud deployment behind nginx
+
+---
+
 ## 2026-02-06: Generic routable error for all forwarding failures
 
 ### Summary

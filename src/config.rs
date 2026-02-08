@@ -42,6 +42,10 @@ fn default_randomise_link_name() -> bool {
     true
 }
 
+fn default_enforce_tls_in_cloud_mode() -> bool {
+    true
+}
+
 fn default_state_path() -> PathBuf {
     State::default_path()
 }
@@ -82,6 +86,11 @@ pub struct Config {
     #[serde(default = "default_state_path")]
     #[cfg_attr(not(any(debug_assertions, test)), serde(skip_deserializing))]
     pub state_path: PathBuf,
+
+    /// Whether the cloud server should handle TLS itself (default: true).
+    /// Set to false when TLS is terminated by a reverse proxy (e.g. nginx).
+    #[serde(default = "default_enforce_tls_in_cloud_mode")]
+    pub enforce_tls_in_cloud_mode: bool,
 }
 
 impl Default for Config {
@@ -94,6 +103,7 @@ impl Default for Config {
             websocket_port: default_websocket_port(),
             randomise_link_name: default_randomise_link_name(),
             state_path: default_state_path(),
+            enforce_tls_in_cloud_mode: default_enforce_tls_in_cloud_mode(),
         }
     }
 }
@@ -102,6 +112,17 @@ impl Config {
     /// Create a new config with defaults
     pub fn new() -> Self {
         Self::default()
+    }
+
+    /// Default config file path: `~/.config/amux/config.yaml`
+    pub fn default_path() -> PathBuf {
+        dirs::config_dir()
+            .unwrap_or_else(|| {
+                dirs::home_dir()
+                    .map(|h| h.join(".config"))
+                    .unwrap_or_else(|| PathBuf::from("."))
+            })
+            .join("amux/config.yaml")
     }
 
     /// Load config from a YAML file

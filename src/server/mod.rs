@@ -69,13 +69,14 @@ impl Server {
     /// - TCP connections use TLS
     /// - All connections require valid JWT tokens
     pub async fn run(&mut self, is_cloud_server: bool) -> Result<()> {
-        let (socket_path, tcp_port, ws_port, cloud_url) = {
+        let (socket_path, tcp_port, ws_port, cloud_url, enforce_tls) = {
             let state = self.state.read().await;
             (
                 state.config.socket_path.clone(),
                 state.config.tcp_port,
                 state.config.websocket_port,
                 state.config.cloud_url.clone(),
+                state.config.enforce_tls_in_cloud_mode,
             )
         };
 
@@ -85,28 +86,33 @@ impl Server {
             state.cloud_mode = true;
             state.jwt_validator = Some(Arc::new(JwtValidator::new(&cloud_url)));
 
-            // Cloud mode requires TLS certificates via environment variables
-            let cert_path = std::env::var("AMUX_TLS_CERT").map_err(|_| {
-                AmuxError::Config(
-                    "AMUX_TLS_CERT environment variable required for cloud mode".into(),
-                )
-            })?;
-            let key_path = std::env::var("AMUX_TLS_KEY").map_err(|_| {
-                AmuxError::Config(
-                    "AMUX_TLS_KEY environment variable required for cloud mode".into(),
-                )
-            })?;
+            if enforce_tls {
+                // Cloud mode requires TLS certificates via environment variables
+                let cert_path = std::env::var("AMUX_TLS_CERT").map_err(|_| {
+                    AmuxError::Config(
+                        "AMUX_TLS_CERT environment variable required for cloud mode".into(),
+                    )
+                })?;
+                let key_path = std::env::var("AMUX_TLS_KEY").map_err(|_| {
+                    AmuxError::Config(
+                        "AMUX_TLS_KEY environment variable required for cloud mode".into(),
+                    )
+                })?;
 
-            let cert_pem = std::fs::read(&cert_path).map_err(|e| {
-                AmuxError::Config(format!("Failed to read TLS cert from {}: {}", cert_path, e))
-            })?;
-            let key_pem = std::fs::read(&key_path).map_err(|e| {
-                AmuxError::Config(format!("Failed to read TLS key from {}: {}", key_path, e))
-            })?;
+                let cert_pem = std::fs::read(&cert_path).map_err(|e| {
+                    AmuxError::Config(format!("Failed to read TLS cert from {}: {}", cert_path, e))
+                })?;
+                let key_pem = std::fs::read(&key_path).map_err(|e| {
+                    AmuxError::Config(format!("Failed to read TLS key from {}: {}", key_path, e))
+                })?;
 
-            let acceptor = create_tls_acceptor(&cert_pem, &key_pem)?;
-            log!("server: TLS configured for cloud mode");
-            Some(acceptor)
+                let acceptor = create_tls_acceptor(&cert_pem, &key_pem)?;
+                log!("server: TLS configured for cloud mode");
+                Some(acceptor)
+            } else {
+                log!("server: cloud mode with external TLS termination (token auth enabled)");
+                None
+            }
         } else {
             None
         };
@@ -118,8 +124,13 @@ impl Server {
 
         let tcp_addr = SocketAddr::from(([0, 0, 0, 0], tcp_port));
         let tcp_listener = TcpListener::bind(tcp_addr).await?;
-        if is_cloud_server {
+        if is_cloud_server && enforce_tls {
             log!("server: listening on TLS TCP {}", tcp_addr);
+        } else if is_cloud_server {
+            log!(
+                "server: listening on TCP {} (TLS terminated externally)",
+                tcp_addr
+            );
         } else {
             log!("server: listening on TCP {}", tcp_addr);
         }
@@ -184,13 +195,14 @@ impl Server {
 
                             let state = self.state.clone();
                             let event_tx = self.event_tx.clone();
+                            let verify_token = is_cloud_server;
                             if let Some(ref acceptor) = tls_acceptor {
                                 let acceptor = acceptor.clone();
                                 tokio::spawn(async move {
                                     match acceptor.accept(stream).await {
                                         Ok(tls_stream) => {
                                             let transport = TcpTransport::new(tls_stream);
-                                            if let Err(e) = tcp_accept(transport, state, event_tx, true).await {
+                                            if let Err(e) = tcp_accept(transport, state, event_tx, verify_token).await {
                                                 log!("server: tls tcp connection error: {}", e);
                                             }
                                         }
@@ -202,7 +214,7 @@ impl Server {
                             } else {
                                 tokio::spawn(async move {
                                     let transport = TcpTransport::new(stream);
-                                    if let Err(e) = tcp_accept(transport, state, event_tx, false).await {
+                                    if let Err(e) = tcp_accept(transport, state, event_tx, verify_token).await {
                                         log!("server: tcp connection error: {}", e);
                                     }
                                 });

@@ -119,13 +119,36 @@ async fn main() {
 
     let cli = Cli::parse();
 
+    // Resolve config path: explicit --config flag, or default path if it exists
+    let config_path: Option<PathBuf> = match &cli.config {
+        Some(path) => Some(path.clone()),
+        None => {
+            let default_path = Config::default_path();
+            if default_path.exists() {
+                Some(default_path)
+            } else {
+                None
+            }
+        }
+    };
+
     // Load config from file or use defaults
-    let config = match &cli.config {
+    let config = match &config_path {
         Some(path) => match Config::from_file(path) {
             Ok(c) => c,
             Err(e) => {
-                eprintln!("error: failed to load config from {:?}: {}", path, e);
-                std::process::exit(1);
+                if cli.config.is_some() {
+                    // Explicit --config: failure is fatal
+                    eprintln!("error: failed to load config from {:?}: {}", path, e);
+                    std::process::exit(1);
+                } else {
+                    // Default path: failure is a warning, fall back to defaults
+                    eprintln!(
+                        "warning: failed to load config from {:?}: {}, using defaults",
+                        path, e
+                    );
+                    Config::new()
+                }
             }
         },
         None => Config::new(),
@@ -145,7 +168,7 @@ async fn main() {
         None => {
             // Default: attach to first available agent
             ensure_initialized(&config).await;
-            ensure_server_running(&config, cli.config.as_deref()).await;
+            ensure_server_running(&config, config_path.as_deref()).await;
             client::attach(None, &config).await
         }
         Some(Commands::NewAgent { agent_type, target }) => {
@@ -157,19 +180,19 @@ async fn main() {
                 }
             };
             ensure_initialized(&config).await;
-            ensure_server_running(&config, cli.config.as_deref()).await;
+            ensure_server_running(&config, config_path.as_deref()).await;
             client::new_agent(target.as_deref(), agent_type, &config).await
         }
         Some(Commands::Attach { target }) => {
             ensure_initialized(&config).await;
-            ensure_server_running(&config, cli.config.as_deref()).await;
+            ensure_server_running(&config, config_path.as_deref()).await;
             client::attach(target.as_deref(), &config).await
         }
         Some(Commands::ListAgents) => client::list_agents(&config).await,
         Some(Commands::KillServer) => client::kill_server(&config).await,
         Some(Commands::Connect { address }) => {
             ensure_initialized(&config).await;
-            ensure_server_running(&config, cli.config.as_deref()).await;
+            ensure_server_running(&config, config_path.as_deref()).await;
             client::connect(&address, &config).await
         }
         Some(Commands::Init { reset }) => {
