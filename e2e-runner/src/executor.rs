@@ -268,6 +268,9 @@ state_path: "{}"
                 TestStep::SwitchTerminal(name) => {
                     current_terminal = Some(name.clone());
                 }
+                TestStep::Sleep(ms) => {
+                    std::thread::sleep(Duration::from_millis(*ms));
+                }
                 TestStep::Input(input) => {
                     let term_name = current_terminal.as_ref().ok_or("No terminal selected")?;
                     let (config_name, cwd) = terminal_configs

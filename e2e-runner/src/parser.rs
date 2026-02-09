@@ -42,6 +42,8 @@ pub enum TestStep {
     Input(String),
     /// Expect output (may be multiple lines, joined with \n)
     ExpectOutput(String),
+    /// Sleep for a given number of milliseconds
+    Sleep(u64),
 }
 
 /// A parsed test case
@@ -260,6 +262,16 @@ pub fn parse_test_content(content: &str) -> Result<TestCase, ParseError> {
             Section::Test => {
                 // Skip empty lines and comments
                 if trimmed.is_empty() || trimmed.starts_with('#') {
+                    continue;
+                }
+
+                // Sleep directive: @@sleep <ms>
+                if let Some(rest) = trimmed.strip_prefix("@@sleep ") {
+                    flush_pending_output(&mut pending_output_lines, &mut steps);
+                    let ms: u64 = rest.trim().parse().unwrap_or_else(|_| {
+                        panic!("Invalid sleep duration: {}", rest);
+                    });
+                    steps.push(TestStep::Sleep(ms));
                     continue;
                 }
 

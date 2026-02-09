@@ -1,4 +1,5 @@
 use super::connection::{connection_loop, ConnectionContext};
+use super::routing::{handle_peer_disconnect, send_initial_announcements};
 use super::ServerState;
 use crate::error::{AmuxError, Result};
 use crate::message::{LocalMessage, Message, ProtocolError};
@@ -190,6 +191,7 @@ pub(super) async fn accept_connection<T: Transport>(
     state: Arc<RwLock<ServerState>>,
     event_tx: mpsc::Sender<super::SessionEvent>,
     verify_token: bool,
+    is_local: bool,
     log_label: &str,
 ) -> Result<()> {
     let (link_name, outgoing_rx) =
@@ -202,6 +204,12 @@ pub(super) async fn accept_connection<T: Transport>(
         };
 
     log!("server: {} connection {} established", log_label, link_name);
+
+    if !is_local {
+        let mut s = state.write().await;
+        s.peer_links.insert(link_name.clone());
+        send_initial_announcements(&s, &link_name);
+    }
 
     let ctx = ConnectionContext {
         state: state.clone(),
@@ -217,8 +225,12 @@ pub(super) async fn accept_connection<T: Transport>(
     }
 
     {
-        let mut state = state.write().await;
-        state.routes.remove(&link_name);
+        let mut s = state.write().await;
+        if !is_local {
+            handle_peer_disconnect(&mut s, &link_name);
+        } else {
+            s.routes.remove(&link_name);
+        }
     }
     log!("server: {} connection {} closed", log_label, link_name);
 
@@ -238,7 +250,7 @@ pub(super) async fn websocket_accept(
         .await
         .map_err(|e| AmuxError::Io(std::io::Error::other(e.to_string())))?;
     let transport = WebSocketTransport::new(ws_stream);
-    accept_connection(transport, state, event_tx, false, "websocket").await
+    accept_connection(transport, state, event_tx, false, false, "websocket").await
 }
 
 /// Unix socket connection bootstrap - accept and handshake
@@ -248,7 +260,7 @@ pub(super) async fn unix_accept(
     event_tx: mpsc::Sender<super::SessionEvent>,
 ) -> Result<()> {
     let transport = UnixTransport::new(stream);
-    accept_connection(transport, state, event_tx, false, "unix").await
+    accept_connection(transport, state, event_tx, false, true, "unix").await
 }
 
 /// TCP peer bootstrap - accept inbound connection and run handshake.
@@ -261,7 +273,7 @@ pub(super) async fn tcp_accept<T: Transport>(
     event_tx: mpsc::Sender<super::SessionEvent>,
     verify_token: bool,
 ) -> Result<()> {
-    accept_connection(transport, state, event_tx, verify_token, "tcp").await
+    accept_connection(transport, state, event_tx, verify_token, false, "tcp").await
 }
 
 /// TCP outbound connection - connect and handshake
@@ -303,6 +315,8 @@ pub(super) async fn tcp_connect(
     {
         let mut state = state.write().await;
         state.routes.insert(link_name.clone(), outgoing_tx);
+        state.peer_links.insert(link_name.clone());
+        send_initial_announcements(&state, &link_name);
     }
 
     let state = state.clone();
@@ -322,7 +336,7 @@ pub(super) async fn tcp_connect(
         }
 
         let mut state = state.write().await;
-        state.routes.remove(&link_name_clone);
+        handle_peer_disconnect(&mut state, &link_name_clone);
         log!("server: tcp peer {} closed", link_name_clone);
     });
 

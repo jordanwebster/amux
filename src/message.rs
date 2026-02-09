@@ -165,6 +165,16 @@ pub enum LocalMessage {
         error: Option<ProtocolError>,
     },
     AgentEnded,
+    AnnounceAgent {
+        agent_id: Uuid,
+        alias: Option<String>,
+        command: String,
+        working_dir: PathBuf,
+        route: Route,
+    },
+    WithdrawAgent {
+        agent_id: Uuid,
+    },
     Error {
         message: String,
     },
@@ -216,6 +226,8 @@ pub struct AgentInfo {
     pub alias: Option<String>,
     pub command: String,
     pub working_dir: PathBuf,
+    #[serde(skip_serializing_if = "Option::is_none", default)]
+    pub route: Option<Route>,
 }
 
 /// Debug information about server state
@@ -226,8 +238,10 @@ pub struct ServerDebugInfo {
     /// Whether cloud mode is enabled in state (connect to cloud)
     pub use_cloud_mode: bool,
     pub agent_count: usize,
+    pub remote_agent_count: usize,
     pub route_count: usize,
     pub routes: Vec<String>,
+    pub peer_links: Vec<String>,
     pub config: Config,
 }
 
@@ -321,6 +335,7 @@ mod tests {
             alias: Some("claude-1".to_string()),
             command: "claude".to_string(),
             working_dir: PathBuf::from("/tmp"),
+            route: None,
         };
         let encoded = rmp_serde::to_vec(&info).unwrap();
         let decoded: AgentInfo = rmp_serde::from_slice(&encoded).unwrap();
@@ -350,5 +365,104 @@ mod tests {
             }
             _ => panic!("Expected SessionStart hook"),
         }
+    }
+
+    #[test]
+    fn test_message_roundtrip_announce_agent() {
+        let test_uuid = Uuid::new_v4();
+        let msg = Message::Local(LocalMessage::AnnounceAgent {
+            agent_id: test_uuid,
+            alias: Some("my-agent".to_string()),
+            command: "claude".to_string(),
+            working_dir: PathBuf::from("/home/user"),
+            route: Route::empty(),
+        });
+        let encoded = msg.encode().unwrap();
+        let decoded = Message::decode(&encoded).unwrap();
+        if let Message::Local(LocalMessage::AnnounceAgent {
+            agent_id,
+            alias,
+            command,
+            working_dir,
+            route,
+        }) = decoded
+        {
+            assert_eq!(agent_id, test_uuid);
+            assert_eq!(alias, Some("my-agent".to_string()));
+            assert_eq!(command, "claude");
+            assert_eq!(working_dir, PathBuf::from("/home/user"));
+            assert_eq!(route, Route::empty());
+        } else {
+            panic!("Expected AnnounceAgent");
+        }
+    }
+
+    #[test]
+    fn test_message_roundtrip_announce_agent_with_route() {
+        let test_uuid = Uuid::new_v4();
+        let msg = Message::Local(LocalMessage::AnnounceAgent {
+            agent_id: test_uuid,
+            alias: None,
+            command: "bash".to_string(),
+            working_dir: PathBuf::from("/tmp"),
+            route: Route::from_link("host-a"),
+        });
+        let encoded = msg.encode().unwrap();
+        let decoded = Message::decode(&encoded).unwrap();
+        if let Message::Local(LocalMessage::AnnounceAgent { route, .. }) = decoded {
+            let mut route = route;
+            assert_eq!(route.pop(), Some("host-a".to_string()));
+            assert_eq!(route.pop(), None);
+        } else {
+            panic!("Expected AnnounceAgent");
+        }
+    }
+
+    #[test]
+    fn test_message_roundtrip_withdraw_agent() {
+        let test_uuid = Uuid::new_v4();
+        let msg = Message::Local(LocalMessage::WithdrawAgent {
+            agent_id: test_uuid,
+        });
+        let encoded = msg.encode().unwrap();
+        let decoded = Message::decode(&encoded).unwrap();
+        if let Message::Local(LocalMessage::WithdrawAgent { agent_id }) = decoded {
+            assert_eq!(agent_id, test_uuid);
+        } else {
+            panic!("Expected WithdrawAgent");
+        }
+    }
+
+    #[test]
+    fn test_agent_info_with_route_roundtrip() {
+        let test_uuid = Uuid::new_v4();
+        let info = AgentInfo {
+            agent_id: test_uuid,
+            alias: Some("remote-agent".to_string()),
+            command: "claude".to_string(),
+            working_dir: PathBuf::from("/tmp"),
+            route: Some(Route::from_link("host-a")),
+        };
+        let encoded = rmp_serde::to_vec_named(&info).unwrap();
+        let decoded: AgentInfo = rmp_serde::from_slice(&encoded).unwrap();
+        assert_eq!(decoded.agent_id, test_uuid);
+        assert!(decoded.route.is_some());
+    }
+
+    #[test]
+    fn test_agent_info_without_route_backward_compat() {
+        let test_uuid = Uuid::new_v4();
+        // Encode without route field (simulating old format)
+        let info = AgentInfo {
+            agent_id: test_uuid,
+            alias: None,
+            command: "bash".to_string(),
+            working_dir: PathBuf::from("/tmp"),
+            route: None,
+        };
+        let encoded = rmp_serde::to_vec_named(&info).unwrap();
+        let decoded: AgentInfo = rmp_serde::from_slice(&encoded).unwrap();
+        assert_eq!(decoded.agent_id, test_uuid);
+        assert!(decoded.route.is_none());
     }
 }

@@ -281,6 +281,7 @@ impl LocalAgentSession {
             alias: self.alias.clone(),
             command: self.command.clone(),
             working_dir: self.working_dir.clone(),
+            route: None,
         }
     }
 }

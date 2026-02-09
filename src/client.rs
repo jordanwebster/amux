@@ -345,7 +345,16 @@ pub async fn list_agents(config: &Config) -> Result<()> {
                     // Display alias if present, else UUID
                     let agent_id_str = agent.agent_id.to_string();
                     let display_name = agent.alias.as_deref().unwrap_or(&agent_id_str);
-                    println!("  {} - {}", display_name, agent.working_dir.display());
+                    if let Some(ref route) = agent.route {
+                        println!(
+                            "  {} - {} (via {})",
+                            display_name,
+                            agent.working_dir.display(),
+                            route
+                        );
+                    } else {
+                        println!("  {} - {}", display_name, agent.working_dir.display());
+                    }
                 }
             }
         }

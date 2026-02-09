@@ -38,6 +38,44 @@ One paragraph describing what was done.
 
 ---
 
+## 2026-02-09: AnnounceAgent / WithdrawAgent — remote agent discovery
+
+### Summary
+
+Added agent propagation between peer connections. When a non-local (peer) connection is established, both sides announce all known agents via `AnnounceAgent` messages. When a peer disconnects, its agents are withdrawn and propagated to remaining peers via `WithdrawAgent`. This enables `list-agents` on one server to show agents running on connected peers.
+
+### Changes
+
+- `src/route.rs` — Added `Route::empty()` for local agent announcements
+- `src/message.rs` — Added `AnnounceAgent` and `WithdrawAgent` variants to `LocalMessage`; added optional `route` field to `AgentInfo`; added `remote_agent_count` and `peer_links` to `ServerDebugInfo`
+- `src/server/mod.rs` — Added `RemoteAgent` struct, `remote_agents` HashMap and `peer_links` HashSet to `ServerState`; broadcast `WithdrawAgent` on `SessionEvent::Ended`
+- `src/server/routing.rs` — Added `broadcast_to_peers`, `send_initial_announcements`, `remove_agents_for_link`, `handle_peer_disconnect` helpers; `create_agent` now broadcasts `AnnounceAgent` to peers
+- `src/server/connection.rs` — Added `AnnounceAgent` handler (prepends link, stores in remote_agents, propagates); added `WithdrawAgent` handler (link-match guard, propagates); `ListAgents` now includes remote agents with route; `Debug` includes new fields
+- `src/server/accept.rs` — `accept_connection` takes `is_local` parameter; peer connections register in `peer_links` and receive initial announcements; cleanup uses `handle_peer_disconnect`; `tcp_connect` registers as peer
+- `src/server/cloud.rs` — `run_cloud_connection` registers as peer and uses `handle_peer_disconnect`
+- `src/client.rs` — `list_agents` shows `(via {route})` for remote agents
+- `e2e-runner/src/parser.rs` — Added `@@sleep <ms>` directive
+- `e2e-runner/src/executor.rs` — Handle `TestStep::Sleep`
+- `e2e-tests/remote_list_agents.test` — New E2E test
+
+### Decisions Made
+
+- **`is_local` parameter on `accept_connection`**: Determined by caller context — Unix = local (ephemeral client, no announcements), TCP/WebSocket = not local (peer, gets announcements). Clean separation without transport-type coupling.
+- **Last-write-wins for duplicate announces**: `remote_agents` HashMap overwrites on same agent_id. Simple and correct for the current topology.
+- **Link-match guard on WithdrawAgent**: Only remove if `stored.link == sender_link`. Prevents stale withdrawals from wrong paths.
+- **Local agent takes precedence**: AnnounceAgent for an agent_id that exists locally is silently ignored.
+- **`try_send` for peer broadcasts**: Non-blocking send avoids holding the write lock across async operations. Acceptable since peer channels have 256-slot buffers.
+- **`@@sleep` E2E directive**: Simple `@@sleep <ms>` syntax for timing-sensitive tests. Needed because async announcement propagation has no synchronization point visible to the test.
+
+### Verification
+
+- 70 unit tests pass (including 6 new: Route::empty, AnnounceAgent/WithdrawAgent serialization, handler tests for store/prepend/skip-local/withdraw-match/withdraw-mismatch/overwrite)
+- 7 E2E tests pass (including new `remote_list_agents`)
+- `cargo check && cargo fmt && cargo clippy && cargo test` clean
+- Manual test: two servers connected via TCP, agent on A visible via `list-agents` on B with `(via host-b)` suffix
+
+---
+
 ## 2026-02-08: Architecture docs rewrite + config improvements
 
 ### Summary

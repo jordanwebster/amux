@@ -23,6 +23,14 @@ pub struct Route {
 }
 
 impl Route {
+    /// Create an empty route (no hops).
+    /// Used in AnnounceAgent to indicate the agent is local to the sender.
+    pub(crate) fn empty() -> Self {
+        Self {
+            links: VecDeque::new(),
+        }
+    }
+
     /// Create a route with a single link.
     pub fn from_link(link: impl Into<String>) -> Self {
         let mut links = VecDeque::new();
@@ -130,6 +138,24 @@ pub fn generate_hook_link() -> String {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn test_route_empty() {
+        let mut route = Route::empty();
+        assert_eq!(route.pop(), None);
+
+        // Push onto empty produces single-link route
+        route.push("host-a");
+        assert_eq!(route.pop(), Some("host-a".to_string()));
+        assert_eq!(route.pop(), None);
+    }
+
+    #[test]
+    fn test_route_empty_serialize() {
+        let route = Route::empty();
+        let serialized = serde_json::to_string(&route).unwrap();
+        assert_eq!(serialized, "\"\"");
+    }
 
     #[test]
     fn test_route_push_pop() {

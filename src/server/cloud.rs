@@ -1,4 +1,5 @@
 use super::connection::{connection_loop_with_refresh, ConnectionContext};
+use super::routing::{handle_peer_disconnect, send_initial_announcements};
 use super::ServerState;
 use crate::cloud::{CloudConnection, CloudError};
 use crate::config::Config;
@@ -108,6 +109,8 @@ async fn run_cloud_connection(
     {
         let mut state = state.write().await;
         state.routes.insert(link_name.clone(), outgoing_tx);
+        state.peer_links.insert(link_name.clone());
+        send_initial_announcements(&state, &link_name);
     }
     log!("cloud: route established as {}", link_name);
 
@@ -122,7 +125,7 @@ async fn run_cloud_connection(
 
     {
         let mut state = state.write().await;
-        state.routes.remove(&link_name);
+        handle_peer_disconnect(&mut state, &link_name);
     }
     log!("cloud: route {} removed", link_name);
 

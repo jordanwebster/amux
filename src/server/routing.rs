@@ -1,7 +1,8 @@
 use super::ServerState;
 use crate::buffer::MultiplexReader;
 use crate::error::{AmuxError, Result};
-use crate::message::{CreateAgentRequest, PermissionResponse};
+use crate::message::{CreateAgentRequest, LocalMessage, Message, PermissionResponse};
+use crate::route::Route;
 use crate::session::{LocalAgentSession, SessionEvent};
 use std::collections::HashMap;
 use std::sync::Arc;
@@ -50,7 +51,22 @@ pub(super) async fn create_agent(
     }
 
     let session = LocalAgentSession::new(&req, event_tx.clone())?;
+    let alias = req.alias.clone();
+    let command = session.command.clone();
+    let working_dir = session.working_dir.clone();
     state.agents.insert(req.agent_id, Arc::new(session));
+
+    broadcast_to_peers(
+        &mut state,
+        &LocalMessage::AnnounceAgent {
+            agent_id: req.agent_id,
+            alias,
+            command,
+            working_dir,
+            route: Route::empty(),
+        },
+        None,
+    );
 
     log!(
         "server: created agent {} (alias={:?})",
@@ -91,6 +107,104 @@ pub(super) async fn shutdown_server(state: &Arc<RwLock<ServerState>>) {
         session.shutdown().await;
     }
     state.agents.clear();
+}
+
+/// Send a LocalMessage to all peer links, optionally excluding one.
+pub(super) fn broadcast_to_peers(
+    state: &mut ServerState,
+    msg: &LocalMessage,
+    exclude_link: Option<&str>,
+) {
+    let wire_msg = Message::Local(msg.clone());
+    for link in &state.peer_links {
+        if exclude_link == Some(link.as_str()) {
+            continue;
+        }
+        if let Some(tx) = state.routes.get(link) {
+            if tx.try_send(wire_msg.clone()).is_err() {
+                log!("server: failed to send to peer {}", link);
+            }
+        }
+    }
+}
+
+/// Announce all known agents (local + remote) to a newly connected peer.
+/// Filters out agents that were learned from this same peer (no echo-back).
+pub(super) fn send_initial_announcements(state: &ServerState, peer_link: &str) {
+    let Some(tx) = state.routes.get(peer_link) else {
+        return;
+    };
+
+    // Announce local agents with empty route
+    for session in state.agents.values() {
+        let msg = Message::Local(LocalMessage::AnnounceAgent {
+            agent_id: session.agent_id,
+            alias: session.alias.clone(),
+            command: session.command.clone(),
+            working_dir: session.working_dir.clone(),
+            route: Route::empty(),
+        });
+        if tx.try_send(msg).is_err() {
+            log!(
+                "server: failed to announce local agent {} to {}",
+                session.agent_id,
+                peer_link
+            );
+        }
+    }
+
+    // Announce remote agents with our stored route
+    for (agent_id, remote) in &state.remote_agents {
+        // Don't echo back agents learned from this same peer
+        if remote.link == peer_link {
+            continue;
+        }
+        let msg = Message::Local(LocalMessage::AnnounceAgent {
+            agent_id: *agent_id,
+            alias: remote.info.alias.clone(),
+            command: remote.info.command.clone(),
+            working_dir: remote.info.working_dir.clone(),
+            route: remote.route.clone(),
+        });
+        if tx.try_send(msg).is_err() {
+            log!(
+                "server: failed to announce remote agent {} to {}",
+                agent_id,
+                peer_link
+            );
+        }
+    }
+}
+
+/// Remove all remote agents learned from a dead link. Returns removed agent IDs.
+pub(super) fn remove_agents_for_link(state: &mut ServerState, dead_link: &str) -> Vec<Uuid> {
+    let removed: Vec<Uuid> = state
+        .remote_agents
+        .iter()
+        .filter(|(_, ra)| ra.link == dead_link)
+        .map(|(id, _)| *id)
+        .collect();
+    for id in &removed {
+        state.remote_agents.remove(id);
+    }
+    removed
+}
+
+/// Handle a peer disconnecting: remove route, peer_links entry, remote agents,
+/// and propagate withdrawals to remaining peers.
+pub(super) fn handle_peer_disconnect(state: &mut ServerState, link_name: &str) {
+    state.routes.remove(link_name);
+    state.peer_links.remove(link_name);
+
+    let removed_ids = remove_agents_for_link(state, link_name);
+    for agent_id in removed_ids {
+        log!(
+            "server: withdrawing agent {} (peer {} disconnected)",
+            agent_id,
+            link_name
+        );
+        broadcast_to_peers(state, &LocalMessage::WithdrawAgent { agent_id }, None);
+    }
 }
 
 /// Convert a permission response to the keystroke to send to Claude Code's TUI.
