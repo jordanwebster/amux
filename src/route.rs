@@ -32,15 +32,31 @@ impl Route {
     }
 
     /// Create a route with a single link.
+    ///
+    /// # Panics
+    /// Debug-asserts that the link name does not contain "." (the route separator).
     pub fn from_link(link: impl Into<String>) -> Self {
+        let link = link.into();
+        debug_assert!(
+            !link.contains('.'),
+            "link name must not contain '.': {link}"
+        );
         let mut links = VecDeque::new();
-        links.push_back(link.into());
+        links.push_back(link);
         Self { links }
     }
 
     /// Push a link onto the front of the route (becomes the new top).
+    ///
+    /// # Panics
+    /// Debug-asserts that the link name does not contain "." (the route separator).
     pub fn push(&mut self, link: impl Into<String>) {
-        self.links.push_front(link.into());
+        let link = link.into();
+        debug_assert!(
+            !link.contains('.'),
+            "link name must not contain '.': {link}"
+        );
+        self.links.push_front(link);
     }
 
     /// Pop the top link from the route (the next hop).
@@ -115,13 +131,21 @@ pub fn generate_link_suffix() -> String {
     nanoid::nanoid!(4, &LINK_ALPHABET)
 }
 
+/// Sanitize a hostname for use in link names.
+/// Replaces periods with hyphens since "." is the route separator.
+pub fn sanitize_host_name(host_name: &str) -> String {
+    host_name.replace('.', "-")
+}
+
 /// Generate a server link name: "{hostname}" or "{hostname}-{rand}".
 /// If randomise is true, appends a random suffix for uniqueness.
+/// The hostname is sanitized (periods replaced with hyphens).
 pub fn generate_server_link(host_name: &str, randomise: bool) -> String {
+    let sanitized = sanitize_host_name(host_name);
     if randomise {
-        format!("{}-{}", host_name, generate_link_suffix())
+        format!("{}-{}", sanitized, generate_link_suffix())
     } else {
-        host_name.to_string()
+        sanitized
     }
 }
 
@@ -255,5 +279,44 @@ mod tests {
         let link = generate_hook_link();
         assert!(link.starts_with("hook-"));
         assert_eq!(link.len(), "hook-".len() + 4);
+    }
+
+    #[test]
+    fn test_sanitize_host_name_with_periods() {
+        assert_eq!(sanitize_host_name("my.laptop.local"), "my-laptop-local");
+        assert_eq!(
+            sanitize_host_name("server.example.com"),
+            "server-example-com"
+        );
+    }
+
+    #[test]
+    fn test_sanitize_host_name_no_periods() {
+        assert_eq!(sanitize_host_name("myhost"), "myhost");
+        assert_eq!(sanitize_host_name("my-host"), "my-host");
+    }
+
+    #[test]
+    fn test_generate_server_link_sanitizes_periods() {
+        let link = generate_server_link("my.laptop.local", false);
+        assert_eq!(link, "my-laptop-local");
+        assert!(!link.contains('.'));
+
+        let link = generate_server_link("my.laptop.local", true);
+        assert!(link.starts_with("my-laptop-local-"));
+        assert!(!link.contains('.'));
+    }
+
+    #[test]
+    #[should_panic(expected = "link name must not contain '.'")]
+    fn test_from_link_rejects_period() {
+        Route::from_link("bad.link");
+    }
+
+    #[test]
+    #[should_panic(expected = "link name must not contain '.'")]
+    fn test_push_rejects_period() {
+        let mut route = Route::from_link("good");
+        route.push("bad.link");
     }
 }

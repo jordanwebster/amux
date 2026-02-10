@@ -44,15 +44,10 @@ pub struct ClaudeState {
 }
 
 impl State {
-    /// Default state path: ~/.local/state/amux/state.yaml
+    /// Default state path: `$XDG_STATE_HOME/amux/state.yaml`,
+    /// falling back to `~/.local/state/amux/state.yaml`.
     pub fn default_path() -> PathBuf {
-        dirs::state_dir()
-            .unwrap_or_else(|| {
-                dirs::home_dir()
-                    .map(|h| h.join(".local/state"))
-                    .unwrap_or_else(|| PathBuf::from("."))
-            })
-            .join("amux/state.yaml")
+        crate::config::xdg_dir("XDG_STATE_HOME", ".local/state").join("amux/state.yaml")
     }
 
     /// Load state with shared lock (allows concurrent reads)

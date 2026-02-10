@@ -77,6 +77,14 @@ async fn connect_and_handshake(config: &Config) -> Result<(UnixTransport, String
             }
             Message::Local(LocalMessage::ConnectResponse {
                 success: false,
+                error: Some(ProtocolError::InvalidLinkName),
+            }) => {
+                return Err(AmuxError::Config(
+                    ProtocolError::InvalidLinkName.to_string(),
+                ));
+            }
+            Message::Local(LocalMessage::ConnectResponse {
+                success: false,
                 error,
             }) => {
                 let msg = error

@@ -31,6 +31,23 @@ pub(super) async fn accept_handshake<T: Transport>(
             }
         };
 
+        if proposed_link.contains('.') {
+            log!(
+                "server: rejecting invalid link name '{}' (contains '.')",
+                proposed_link
+            );
+            transport
+                .write_message(&Message::Local(LocalMessage::ConnectResponse {
+                    success: false,
+                    error: Some(ProtocolError::InvalidLinkName),
+                }))
+                .await?;
+            return Err(AmuxError::Config(format!(
+                "Invalid link name '{}': must not contain '.'",
+                proposed_link
+            )));
+        }
+
         if verify_token {
             let (validator, host, tcp_port) = {
                 let state = state.read().await;
@@ -164,6 +181,14 @@ where
             }) => {
                 log!("server: invalid credentials - authentication failed");
                 return Err(AmuxError::InvalidCredentials);
+            }
+            Message::Local(LocalMessage::ConnectResponse {
+                success: false,
+                error: Some(ProtocolError::InvalidLinkName),
+            }) => {
+                return Err(AmuxError::Config(
+                    ProtocolError::InvalidLinkName.to_string(),
+                ));
             }
             Message::Local(LocalMessage::ConnectResponse {
                 success: false,

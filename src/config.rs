@@ -4,6 +4,21 @@ use gethostname::gethostname;
 use serde::{Deserialize, Serialize};
 use std::path::{Path, PathBuf};
 
+/// Resolve an XDG base directory: `$env_var` if set, otherwise `$HOME/{default_suffix}`.
+pub(crate) fn xdg_dir(env_var: &str, default_suffix: &str) -> PathBuf {
+    if let Ok(val) = std::env::var(env_var) {
+        return PathBuf::from(val);
+    }
+    home_dir().join(default_suffix)
+}
+
+/// Resolve `$HOME`, panics if unset (same as `dirs::home_dir`).
+fn home_dir() -> PathBuf {
+    std::env::var("HOME")
+        .map(PathBuf::from)
+        .expect("$HOME is not set")
+}
+
 /// Default Unix socket path
 pub const DEFAULT_SOCKET_PATH: &str = "/tmp/amux.sock";
 
@@ -114,15 +129,10 @@ impl Config {
         Self::default()
     }
 
-    /// Default config file path: `~/.config/amux/config.yaml`
+    /// Default config file path: `$XDG_CONFIG_HOME/amux/config.yaml`,
+    /// falling back to `~/.config/amux/config.yaml`.
     pub fn default_path() -> PathBuf {
-        dirs::config_dir()
-            .unwrap_or_else(|| {
-                dirs::home_dir()
-                    .map(|h| h.join(".config"))
-                    .unwrap_or_else(|| PathBuf::from("."))
-            })
-            .join("amux/config.yaml")
+        xdg_dir("XDG_CONFIG_HOME", ".config").join("amux/config.yaml")
     }
 
     /// Load config from a YAML file

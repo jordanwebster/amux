@@ -80,6 +80,8 @@ pub enum ProtocolError {
     NoRouteFound(Route),
     /// Invalid or missing authentication credentials
     InvalidCredentials,
+    /// The proposed link name is invalid (e.g., contains "." which is the route separator)
+    InvalidLinkName,
 }
 
 /// Subscribe output mode
@@ -99,6 +101,9 @@ impl std::fmt::Display for ProtocolError {
             ProtocolError::LinkNameTaken => write!(f, "Link name already in use"),
             ProtocolError::NoRouteFound(route) => write!(f, "No route found: {}", route),
             ProtocolError::InvalidCredentials => write!(f, "Invalid or missing credentials"),
+            ProtocolError::InvalidLinkName => {
+                write!(f, "Invalid link name (must not contain '.')")
+            }
         }
     }
 }

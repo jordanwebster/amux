@@ -38,6 +38,37 @@ One paragraph describing what was done.
 
 ---
 
+## 2026-02-10: Fix config default path and sanitize hostnames in link names
+
+### Summary
+
+Fixed two bugs and hardened period validation: (1) config file at `~/.config/amux/config.yaml` was not being read on macOS because the `dirs` crate returns `~/Library/Application Support` as the config dir, bypassing the `~/.config` fallback; (2) periods in hostnames (e.g., `my.laptop.local`) broke route serialization since `.` is the route separator; (3) server now validates proposed link names during handshake, rejecting any containing `.` with an `InvalidLinkName` protocol error.
+
+### Changes
+
+- `src/config.rs` — Replaced `dirs::config_dir()` with explicit XDG logic: check `$XDG_CONFIG_HOME` first, fall back to `~/.config`. Added `xdg_dir()` helper used by both config and state paths.
+- `src/state.rs` — Replaced `dirs::state_dir()` with `xdg_dir("XDG_STATE_HOME", ".local/state")` for consistency.
+- `src/route.rs` — Added `sanitize_host_name()` that replaces `.` with `-`. `generate_server_link()` now sanitizes the hostname. Added `debug_assert` in `from_link()`/`push()` to catch periods in link names. Added 5 new tests.
+- `src/message.rs` — Added `InvalidLinkName` variant to `ProtocolError`.
+- `src/server/accept.rs` — `accept_handshake` validates proposed link name for `.` before any other checks, returns `InvalidLinkName` error (fatal, not retried). `connect_handshake` handles `InvalidLinkName` as a fatal error.
+- `src/client.rs` — `connect_and_handshake` handles `InvalidLinkName` as a fatal error (no retry).
+- `Cargo.toml` — Removed `dirs` dependency (no longer needed).
+
+### Decisions Made
+
+- Use XDG env vars with `~/.config` / `~/.local/state` defaults: matches what we document and what users expect, works cross-platform without platform-specific crate behavior.
+- Replace `.` with `-` in hostnames: simple, preserves readability (e.g., `my-laptop-local`), avoids route separator collision.
+- `debug_assert` (not hard error) for period validation in `from_link`/`push`: defense in depth without changing public API signatures.
+- Server-side `InvalidLinkName` validation is fatal (returns error immediately, no retry loop): a period in a link name is a bug in the client, not a transient condition.
+
+### Verification
+
+- `cargo check`, `cargo fmt`, `cargo clippy` — clean
+- 92 unit tests pass (including 5 new route/sanitization tests)
+- 8 E2E tests pass
+
+---
+
 ## 2026-02-10: AgentRegistry + ResolveAgent + typed agent_id
 
 ### Summary
