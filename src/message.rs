@@ -115,38 +115,39 @@ pub struct CreateAgentRequest {
 }
 
 /// Messages that carry src/dst routing information and can be forwarded across hops.
+/// agent_id is Uuid — callers must resolve aliases to UUIDs before constructing.
 #[derive(Serialize, Deserialize, Debug, Clone)]
 pub enum RoutableMessage {
     Subscribe {
-        agent_id: String,
+        agent_id: Uuid,
         rows: u16,
         cols: u16,
         #[serde(default)]
         mode: SubscribeMode,
     },
     SubscribeResult {
-        agent_id: String,
+        agent_id: Uuid,
         success: bool,
         error: Option<ProtocolError>,
     },
     InputBytes {
-        agent_id: String,
+        agent_id: Uuid,
         data: Vec<u8>,
     },
     SubmitInput {
-        agent_id: String,
+        agent_id: Uuid,
         data: Vec<u8>,
     },
     Output {
-        agent_id: String,
+        agent_id: Uuid,
         data: Vec<u8>,
     },
     StructuredOutput {
-        agent_id: String,
+        agent_id: Uuid,
         entry: StructuredLog,
     },
     PermissionRequestResponse {
-        agent_id: String,
+        agent_id: Uuid,
         response: PermissionResponse,
     },
     Error(ProtocolError),
@@ -201,6 +202,13 @@ pub enum LocalMessage {
     },
     HookEventResult {
         success: bool,
+        error: Option<ProtocolError>,
+    },
+    ResolveAgent {
+        identifier: String,
+    },
+    ResolveAgentResult {
+        agent: Option<AgentInfo>,
         error: Option<ProtocolError>,
     },
     DebugResult {
@@ -308,7 +316,7 @@ mod tests {
             src: Route::from_link("host-a"),
             dst: Route::from_link("host-b"),
             message: RoutableMessage::SubscribeResult {
-                agent_id: Uuid::new_v4().to_string(),
+                agent_id: Uuid::new_v4(),
                 success: true,
                 error: None,
             },

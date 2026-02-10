@@ -6,28 +6,11 @@ use crate::message::{
 };
 use crate::route::{generate_terminal_link, Route};
 use crate::transport::{Transport, UnixTransport};
-use serde::Deserialize;
 use std::io::{self, Read, Write};
 use std::os::unix::io::AsRawFd;
 use tokio::net::UnixStream;
 use tokio::sync::mpsc;
 use uuid::Uuid;
-
-/// Parse target string: "route:agent_id" or just "agent_id" for local.
-/// Route is serialized as dot-separated link names (e.g., "linkA.linkB").
-/// Returns (Some(route), agent_id) for remote targets, (None, agent_id) for local.
-fn parse_target(target: &str) -> (Option<Route>, String) {
-    match target.rsplit_once(':') {
-        Some((route_str, agent_id)) => {
-            let deserializer =
-                serde::de::value::StrDeserializer::<serde::de::value::Error>::new(route_str);
-            let route: Route =
-                Route::deserialize(deserializer).expect("Route deserialization cannot fail");
-            (Some(route), agent_id.to_string())
-        }
-        None => (None, target.to_string()),
-    }
-}
 
 /// Control key prefix (Ctrl-b = 0x02)
 const CTRL_B: u8 = 0x02;
@@ -179,15 +162,10 @@ pub async fn new_agent(alias: Option<&str>, agent_type: AgentType, config: &Conf
         }
     }
 
-    // Now subscribe using alias if provided, else UUID
-    // (server supports lookup by either)
-    let agent_id_str = agent_id.to_string();
-    let subscribe_id = alias.unwrap_or(&agent_id_str);
-
     // Create route with just our link (local agent)
     let full_route = Route::from_link(&link_name);
 
-    subscribe_and_stream(transport, subscribe_id, full_route, rows, cols).await
+    subscribe_and_stream(transport, agent_id, full_route, rows, cols).await
 }
 
 /// Attach to an existing agent
@@ -195,10 +173,38 @@ pub async fn attach(target: Option<&str>, config: &Config) -> Result<()> {
     let (mut transport, link_name) = connect_and_handshake(config).await?;
     let (rows, cols) = get_terminal_size();
 
-    // If no target specified, list agents and pick the first one (local only)
+    // Resolve the target to (route, agent_id)
     let (route_suffix, agent_id) = match target {
-        Some(t) => parse_target(t),
+        Some(identifier) => {
+            // Use ResolveAgent to resolve the identifier server-side
+            transport
+                .write_message(&Message::Local(LocalMessage::ResolveAgent {
+                    identifier: identifier.to_string(),
+                }))
+                .await?;
+
+            let response = transport.read_message().await?;
+            match response {
+                Message::Local(LocalMessage::ResolveAgentResult {
+                    agent: Some(info), ..
+                }) => (info.route, info.agent_id),
+                Message::Local(LocalMessage::ResolveAgentResult { agent: None, error }) => {
+                    let msg = error
+                        .map(|e| e.to_string())
+                        .unwrap_or_else(|| format!("Agent not found: {}", identifier));
+                    eprintln!("{}", msg);
+                    return Ok(());
+                }
+                Message::Local(LocalMessage::Error { message }) => {
+                    return Err(AmuxError::ServerError(message));
+                }
+                _ => {
+                    return Err(AmuxError::InvalidMessage);
+                }
+            }
+        }
         None => {
+            // No target — list agents and pick the first one
             transport
                 .write_message(&Message::Local(LocalMessage::ListAgents))
                 .await?;
@@ -206,7 +212,7 @@ pub async fn attach(target: Option<&str>, config: &Config) -> Result<()> {
             let response = transport.read_message().await?;
             match response {
                 Message::Local(LocalMessage::ListAgentsResult { agents }) if !agents.is_empty() => {
-                    (None, agents[0].agent_id.to_string())
+                    (agents[0].route.clone(), agents[0].agent_id)
                 }
                 Message::Local(LocalMessage::ListAgentsResult { .. }) => {
                     eprintln!("No agents running. Use 'amux new-agent' to create one.");
@@ -236,13 +242,13 @@ pub async fn attach(target: Option<&str>, config: &Config) -> Result<()> {
         rows
     );
 
-    subscribe_and_stream(transport, &agent_id, full_route, rows, cols).await
+    subscribe_and_stream(transport, agent_id, full_route, rows, cols).await
 }
 
 /// Subscribe to an agent and stream I/O
 async fn subscribe_and_stream(
     mut transport: UnixTransport,
-    agent_id: &str,
+    agent_id: Uuid,
     full_route: Route,
     rows: u16,
     cols: u16,
@@ -257,7 +263,7 @@ async fn subscribe_and_stream(
             src,
             dst,
             message: RoutableMessage::Subscribe {
-                agent_id: agent_id.to_string(),
+                agent_id,
                 rows,
                 cols,
                 mode: SubscribeMode::Raw,
@@ -454,10 +460,9 @@ pub async fn debug(config: &Config) -> Result<ServerDebugInfo> {
 /// Run the attached session (streaming mode with Ctrl-b handling)
 async fn run_attached(
     mut transport: UnixTransport,
-    agent_id: &str,
+    agent_id: Uuid,
     full_route: Route,
 ) -> Result<()> {
-    let agent_id = agent_id.to_string();
     // Put terminal in raw mode
     let _raw_guard = RawModeGuard::new()?;
 
@@ -591,7 +596,7 @@ async fn run_attached(
                             src,
                             dst,
                             message: RoutableMessage::InputBytes {
-                                agent_id: agent_id.clone(),
+                                agent_id,
                                 data,
                             },
                         }).await.is_err() {

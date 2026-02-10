@@ -1,0 +1,51 @@
+# test: remote_attach_by_alias
+# description: Attach to remote agent by alias only (ResolveAgent resolves the route)
+
+## Environment
+
+config:
+  name: server_a
+  host_name: host-a
+
+config:
+  name: server_b
+  host_name: host-b
+
+terminal:
+  name: Ta
+  config: server_a
+
+terminal:
+  name: Tb
+  config: server_b
+
+## Test
+
+# Create agent on server A
+@Ta
+> amux new-agent -t remote-test test-agent
+> hello from server A
+hello from server A
+echo: hello from server A
+
+# Server B connects to server A
+@Tb
+> amux connect 127.0.0.1:$server_a.tcp_port
+Connected to 127.0.0.1:$server_a.tcp_port
+
+@@sleep 20
+
+# Attach by alias only — no route prefix needed
+# ResolveAgent on server B resolves "remote-test" to the remote agent with route
+@Tb
+> amux attach -t remote-test
+hello from server A
+echo: hello from server A
+> hello from server B
+hello from server B
+echo: hello from server B
+
+# Verify server A sees the message from B (broadcast works through remote)
+@Ta
+hello from server B
+echo: hello from server B

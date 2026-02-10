@@ -1,5 +1,6 @@
 #[macro_use]
 mod log;
+mod agent_registry;
 mod buffer;
 mod client;
 mod cloud;

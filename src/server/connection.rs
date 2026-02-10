@@ -1,9 +1,9 @@
 use super::accept::tcp_connect;
 use super::routing::{
-    broadcast_to_peers, connection_tx, create_agent, handle_subscribe, resolve_agent,
-    shutdown_server,
+    broadcast_to_peers, connection_tx, create_agent, handle_subscribe, shutdown_server,
 };
-use super::{RemoteAgent, ServerState};
+use super::ServerState;
+use crate::agent_registry::AgentKind;
 use crate::cloud::TokenRefreshState;
 use crate::error::{AmuxError, Result};
 use crate::message::{
@@ -209,7 +209,7 @@ async fn handle_routable<T: Transport>(
                 SubscribeMode::Structured => {
                     let session = {
                         let state = ctx.state.read().await;
-                        resolve_agent(&state.agents, &agent_id).cloned()
+                        state.agents.get(&agent_id).cloned()
                     };
 
                     let Some(session) = session else {
@@ -254,7 +254,7 @@ async fn handle_routable<T: Transport>(
                             src: reply_src.clone(),
                             dst: reply_dst.clone(),
                             message: RoutableMessage::SubscribeResult {
-                                agent_id: agent_id.clone(),
+                                agent_id,
                                 success: true,
                                 error: None,
                             },
@@ -269,7 +269,6 @@ async fn handle_routable<T: Transport>(
 
                     let outgoing_tx = connection_tx(&ctx.state, &ctx.link_name).await;
                     if let Some(tx) = outgoing_tx {
-                        let agent_id_clone = agent_id.clone();
                         tokio::spawn(async move {
                             while let Some(entry) = reader.read().await {
                                 if tx
@@ -277,7 +276,7 @@ async fn handle_routable<T: Transport>(
                                         src: reply_src.clone(),
                                         dst: reply_dst.clone(),
                                         message: RoutableMessage::StructuredOutput {
-                                            agent_id: agent_id_clone.clone(),
+                                            agent_id,
                                             entry,
                                         },
                                     })
@@ -295,8 +294,7 @@ async fn handle_routable<T: Transport>(
                     Ok(())
                 }
                 SubscribeMode::Raw => {
-                    let agent_id_str = agent_id.to_string();
-                    let result = handle_subscribe(&ctx.state, &agent_id_str, rows, cols).await;
+                    let result = handle_subscribe(&ctx.state, &agent_id, rows, cols).await;
 
                     match result {
                         Ok(mut buffer_reader) => {
@@ -305,7 +303,7 @@ async fn handle_routable<T: Transport>(
                                     src: reply_src.clone(),
                                     dst: reply_dst.clone(),
                                     message: RoutableMessage::SubscribeResult {
-                                        agent_id: agent_id.clone(),
+                                        agent_id,
                                         success: true,
                                         error: None,
                                     },
@@ -320,17 +318,13 @@ async fn handle_routable<T: Transport>(
 
                             let outgoing_tx = connection_tx(&ctx.state, &ctx.link_name).await;
                             if let Some(tx) = outgoing_tx {
-                                let agent_id_clone = agent_id.clone();
                                 tokio::spawn(async move {
                                     while let Some(data) = buffer_reader.read().await {
                                         if tx
                                             .send(Message::Routable {
                                                 src: reply_src.clone(),
                                                 dst: reply_dst.clone(),
-                                                message: RoutableMessage::Output {
-                                                    agent_id: agent_id_clone.clone(),
-                                                    data,
-                                                },
+                                                message: RoutableMessage::Output { agent_id, data },
                                             })
                                             .await
                                             .is_err()
@@ -366,7 +360,7 @@ async fn handle_routable<T: Transport>(
 
         RoutableMessage::InputBytes { agent_id, data } => {
             let state = ctx.state.read().await;
-            if let Some(session) = resolve_agent(&state.agents, &agent_id) {
+            if let Some(session) = state.agents.get(&agent_id) {
                 let _ = session.send_input(data).await;
             }
             Ok(())
@@ -374,7 +368,7 @@ async fn handle_routable<T: Transport>(
 
         RoutableMessage::SubmitInput { agent_id, data } => {
             let state = ctx.state.read().await;
-            if let Some(session) = resolve_agent(&state.agents, &agent_id) {
+            if let Some(session) = state.agents.get(&agent_id) {
                 let _ = session.send_input(data).await;
                 tokio::time::sleep(std::time::Duration::from_millis(20)).await;
                 let _ = session.send_input(vec![b'\r']).await;
@@ -384,7 +378,7 @@ async fn handle_routable<T: Transport>(
 
         RoutableMessage::PermissionRequestResponse { agent_id, response } => {
             let state = ctx.state.read().await;
-            if let Some(session) = resolve_agent(&state.agents, &agent_id) {
+            if let Some(session) = state.agents.get(&agent_id) {
                 let keystroke = super::routing::permission_response_keystroke(&response);
                 log!(
                     "server: sending permission response {:?} to agent {} (keystroke: {:?})",
@@ -469,7 +463,7 @@ async fn handle_local<T: Transport>(
                 is_cloud_server: state.cloud_mode,
                 use_cloud_mode,
                 agent_count: state.agents.len(),
-                remote_agent_count: state.remote_agents.len(),
+                remote_agent_count: state.registry.count_remote(),
                 route_count: state.routes.len(),
                 routes: state.routes.keys().cloned().collect(),
                 peer_links: state.peer_links.iter().cloned().collect(),
@@ -484,14 +478,7 @@ async fn handle_local<T: Transport>(
         LocalMessage::ListAgents => {
             let agents = {
                 let state = ctx.state.read().await;
-                let mut agents: Vec<AgentInfo> =
-                    state.agents.values().map(|s| s.to_agent_info()).collect();
-                for remote in state.remote_agents.values() {
-                    let mut info = remote.info.clone();
-                    info.route = Some(remote.route.clone());
-                    agents.push(info);
-                }
-                agents
+                state.registry.list_all()
             };
             transport
                 .write_message(&Message::Local(LocalMessage::ListAgentsResult { agents }))
@@ -692,14 +679,9 @@ async fn handle_local<T: Transport>(
                 route: None,
             };
 
-            state.remote_agents.insert(
-                agent_id,
-                RemoteAgent {
-                    info,
-                    route: our_route.clone(),
-                    link: ctx.link_name.clone(),
-                },
-            );
+            state
+                .registry
+                .register_remote(info, our_route.clone(), ctx.link_name.clone());
 
             log!(
                 "server: stored remote agent {} (alias={:?}) via {} route={}",
@@ -729,13 +711,12 @@ async fn handle_local<T: Transport>(
             let mut state = ctx.state.write().await;
 
             // Only remove if the stored link matches the sender
-            let should_remove = state
-                .remote_agents
-                .get(&agent_id)
-                .is_some_and(|ra| ra.link == ctx.link_name);
+            let should_remove = state.registry.get(&agent_id).is_some_and(
+                |e| matches!(&e.kind, AgentKind::Remote { link, .. } if link == &ctx.link_name),
+            );
 
             if should_remove {
-                state.remote_agents.remove(&agent_id);
+                state.registry.remove(&agent_id);
                 log!(
                     "server: withdrew remote agent {} (from {})",
                     agent_id,
@@ -755,6 +736,25 @@ async fn handle_local<T: Transport>(
                 );
             }
 
+            Ok(())
+        }
+
+        LocalMessage::ResolveAgent { identifier } => {
+            let state = ctx.state.read().await;
+            let result = state.registry.resolve(&identifier);
+            transport
+                .write_message(&Message::Local(LocalMessage::ResolveAgentResult {
+                    error: if result.is_none() {
+                        Some(ProtocolError::ServerError(format!(
+                            "Agent not found: {}",
+                            identifier
+                        )))
+                    } else {
+                        None
+                    },
+                    agent: result,
+                }))
+                .await?;
             Ok(())
         }
 
@@ -842,13 +842,15 @@ mod tests {
         let ctx = test_ctx(state);
         let (mut transport, written) = MockTransport::new();
 
+        let agent_id = Uuid::new_v4();
+
         // Route through "nonexistent" link
         let src = Route::from_link("origin");
         let mut dst = Route::from_link("agent1");
         dst.push("nonexistent");
 
         let msg = RoutableMessage::Subscribe {
-            agent_id: "some-agent".to_string(),
+            agent_id,
             rows: 24,
             cols: 80,
             mode: SubscribeMode::Raw,
@@ -884,12 +886,14 @@ mod tests {
         let ctx = test_ctx(state.clone());
         let (mut transport, written) = MockTransport::new();
 
+        let agent_id = Uuid::new_v4();
+
         let src = Route::from_link("origin");
         let mut dst = Route::from_link("agent1");
         dst.push("stale-link");
 
         let msg = RoutableMessage::InputBytes {
-            agent_id: "some-agent".to_string(),
+            agent_id,
             data: vec![1, 2, 3],
         };
 
@@ -942,13 +946,15 @@ mod tests {
         let ctx = test_ctx(state);
         let (mut transport, written) = MockTransport::new();
 
+        let agent_id = Uuid::new_v4();
+
         // Try to forward Output through nonexistent route
         let src = Route::from_link("origin");
         let mut dst = Route::from_link("somewhere");
         dst.push("nonexistent");
 
         let msg = RoutableMessage::Output {
-            agent_id: "some-agent".to_string(),
+            agent_id,
             data: vec![1, 2, 3],
         };
 
@@ -967,13 +973,15 @@ mod tests {
         let ctx = test_ctx(state);
         let (mut transport, written) = MockTransport::new();
 
+        let agent_id = Uuid::new_v4();
+
         // Message traversed "origin" before arriving here, now fails at "nonexistent"
         let src = Route::from_link("origin");
         let mut dst = Route::from_link("final-dest");
         dst.push("nonexistent");
 
         let msg = RoutableMessage::Subscribe {
-            agent_id: "some-agent".to_string(),
+            agent_id,
             rows: 24,
             cols: 80,
             mode: SubscribeMode::Raw,
@@ -1052,7 +1060,7 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn announce_agent_stores_in_remote_agents() {
+    async fn announce_agent_stores_in_registry() {
         let state = test_state();
         let ctx = test_ctx(state.clone());
         let (mut transport, _written) = MockTransport::new();
@@ -1069,14 +1077,18 @@ mod tests {
         handle_local(&mut transport, msg, &ctx).await.unwrap();
 
         let s = state.read().await;
-        assert!(s.remote_agents.contains_key(&agent_id));
-        let ra = &s.remote_agents[&agent_id];
-        assert_eq!(ra.link, "test-link");
-        assert_eq!(ra.info.alias, Some("remote-test".to_string()));
-        // Route should have ctx.link_name prepended
-        let mut route = ra.route.clone();
-        assert_eq!(route.pop(), Some("test-link".to_string()));
-        assert_eq!(route.pop(), None);
+        assert!(s.registry.contains(&agent_id));
+        let entry = s.registry.get(&agent_id).unwrap();
+        assert_eq!(entry.info.alias, Some("remote-test".to_string()));
+        match &entry.kind {
+            AgentKind::Remote { route, link } => {
+                assert_eq!(link, "test-link");
+                let mut route = route.clone();
+                assert_eq!(route.pop(), Some("test-link".to_string()));
+                assert_eq!(route.pop(), None);
+            }
+            _ => panic!("expected Remote agent kind"),
+        }
     }
 
     #[tokio::test]
@@ -1097,19 +1109,24 @@ mod tests {
         handle_local(&mut transport, msg, &ctx).await.unwrap();
 
         let s = state.read().await;
-        let ra = &s.remote_agents[&agent_id];
-        let mut route = ra.route.clone();
-        // Should be test-link.host-a (test-link prepended)
-        assert_eq!(route.pop(), Some("test-link".to_string()));
-        assert_eq!(route.pop(), Some("host-a".to_string()));
-        assert_eq!(route.pop(), None);
+        let entry = s.registry.get(&agent_id).unwrap();
+        match &entry.kind {
+            AgentKind::Remote { route, .. } => {
+                let mut route = route.clone();
+                // Should be test-link.host-a (test-link prepended)
+                assert_eq!(route.pop(), Some("test-link".to_string()));
+                assert_eq!(route.pop(), Some("host-a".to_string()));
+                assert_eq!(route.pop(), None);
+            }
+            _ => panic!("expected Remote agent kind"),
+        }
     }
 
     #[tokio::test]
     async fn announce_agent_skips_local_agent() {
         let state = test_state();
 
-        // Insert a local agent
+        // Insert a local agent and register in registry
         let agent_id = Uuid::new_v4();
         {
             let mut s = state.write().await;
@@ -1123,7 +1140,9 @@ mod tests {
                 cols: 80,
             };
             let session = crate::session::LocalAgentSession::new(&req, event_tx).unwrap();
+            let info = session.to_agent_info();
             s.agents.insert(agent_id, Arc::new(session));
+            s.registry.register_local(info).unwrap();
         }
 
         let ctx = test_ctx(state.clone());
@@ -1140,9 +1159,10 @@ mod tests {
 
         handle_local(&mut transport, msg, &ctx).await.unwrap();
 
-        // Should NOT be in remote_agents (local takes precedence)
+        // Should still be local (not overwritten)
         let s = state.read().await;
-        assert!(!s.remote_agents.contains_key(&agent_id));
+        let entry = s.registry.get(&agent_id).unwrap();
+        assert!(matches!(entry.kind, AgentKind::Local));
     }
 
     #[tokio::test]
@@ -1152,19 +1172,16 @@ mod tests {
         let agent_id = Uuid::new_v4();
         {
             let mut s = state.write().await;
-            s.remote_agents.insert(
-                agent_id,
-                RemoteAgent {
-                    info: AgentInfo {
-                        agent_id,
-                        alias: None,
-                        command: "bash".to_string(),
-                        working_dir: PathBuf::from("/tmp"),
-                        route: None,
-                    },
-                    route: Route::from_link("test-link"),
-                    link: "test-link".to_string(),
+            s.registry.register_remote(
+                AgentInfo {
+                    agent_id,
+                    alias: None,
+                    command: "bash".to_string(),
+                    working_dir: PathBuf::from("/tmp"),
+                    route: None,
                 },
+                Route::from_link("test-link"),
+                "test-link".to_string(),
             );
         }
 
@@ -1175,7 +1192,7 @@ mod tests {
         handle_local(&mut transport, msg, &ctx).await.unwrap();
 
         let s = state.read().await;
-        assert!(!s.remote_agents.contains_key(&agent_id));
+        assert!(!s.registry.contains(&agent_id));
     }
 
     #[tokio::test]
@@ -1185,19 +1202,16 @@ mod tests {
         let agent_id = Uuid::new_v4();
         {
             let mut s = state.write().await;
-            s.remote_agents.insert(
-                agent_id,
-                RemoteAgent {
-                    info: AgentInfo {
-                        agent_id,
-                        alias: None,
-                        command: "bash".to_string(),
-                        working_dir: PathBuf::from("/tmp"),
-                        route: None,
-                    },
-                    route: Route::from_link("other-link"),
-                    link: "other-link".to_string(),
+            s.registry.register_remote(
+                AgentInfo {
+                    agent_id,
+                    alias: None,
+                    command: "bash".to_string(),
+                    working_dir: PathBuf::from("/tmp"),
+                    route: None,
                 },
+                Route::from_link("other-link"),
+                "other-link".to_string(),
             );
         }
 
@@ -1210,7 +1224,7 @@ mod tests {
 
         // Should still be there (link mismatch)
         let s = state.read().await;
-        assert!(s.remote_agents.contains_key(&agent_id));
+        assert!(s.registry.contains(&agent_id));
     }
 
     #[tokio::test]
@@ -1242,8 +1256,66 @@ mod tests {
         handle_local(&mut transport, msg, &ctx).await.unwrap();
 
         let s = state.read().await;
-        let ra = &s.remote_agents[&agent_id];
-        assert_eq!(ra.info.alias, Some("second".to_string()));
-        assert_eq!(ra.info.working_dir, PathBuf::from("/second"));
+        let entry = s.registry.get(&agent_id).unwrap();
+        assert_eq!(entry.info.alias, Some("second".to_string()));
+        assert_eq!(entry.info.working_dir, PathBuf::from("/second"));
+    }
+
+    #[tokio::test]
+    async fn resolve_agent_by_alias() {
+        let state = test_state();
+
+        let agent_id = Uuid::new_v4();
+        {
+            let mut s = state.write().await;
+            s.registry.register_remote(
+                AgentInfo {
+                    agent_id,
+                    alias: Some("my-agent".to_string()),
+                    command: "claude".to_string(),
+                    working_dir: PathBuf::from("/tmp"),
+                    route: None,
+                },
+                Route::from_link("peer-a"),
+                "peer-a".to_string(),
+            );
+        }
+
+        let ctx = test_ctx(state);
+        let (mut transport, written) = MockTransport::new();
+
+        let msg = LocalMessage::ResolveAgent {
+            identifier: "my-agent".to_string(),
+        };
+        handle_local(&mut transport, msg, &ctx).await.unwrap();
+
+        let msgs = written.lock().await;
+        assert_eq!(msgs.len(), 1);
+        let Message::Local(LocalMessage::ResolveAgentResult { agent, error }) = &msgs[0] else {
+            panic!("expected ResolveAgentResult, got {:?}", msgs[0]);
+        };
+        assert!(agent.is_some());
+        assert!(error.is_none());
+        assert_eq!(agent.as_ref().unwrap().agent_id, agent_id);
+    }
+
+    #[tokio::test]
+    async fn resolve_agent_not_found() {
+        let state = test_state();
+        let ctx = test_ctx(state);
+        let (mut transport, written) = MockTransport::new();
+
+        let msg = LocalMessage::ResolveAgent {
+            identifier: "nonexistent".to_string(),
+        };
+        handle_local(&mut transport, msg, &ctx).await.unwrap();
+
+        let msgs = written.lock().await;
+        assert_eq!(msgs.len(), 1);
+        let Message::Local(LocalMessage::ResolveAgentResult { agent, error }) = &msgs[0] else {
+            panic!("expected ResolveAgentResult, got {:?}", msgs[0]);
+        };
+        assert!(agent.is_none());
+        assert!(error.is_some());
     }
 }

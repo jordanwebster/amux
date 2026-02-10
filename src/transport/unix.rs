@@ -96,7 +96,7 @@ mod tests {
             src: Route::from_link("host-a"),
             dst: Route::from_link("host-b"),
             message: RoutableMessage::Output {
-                agent_id: Uuid::new_v4().to_string(),
+                agent_id: Uuid::new_v4(),
                 data: b"hello world".to_vec(),
             },
         };
@@ -123,7 +123,7 @@ mod tests {
             src: Route::from_link("host-a"),
             dst: Route::from_link("host-b"),
             message: RoutableMessage::InputBytes {
-                agent_id: Uuid::new_v4().to_string(),
+                agent_id: Uuid::new_v4(),
                 data: b"user input".to_vec(),
             },
         };

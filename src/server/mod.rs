@@ -1,8 +1,8 @@
+use crate::agent_registry::AgentRegistry;
 use crate::config::Config;
 use crate::error::{AmuxError, Result};
 use crate::jwt::JwtValidator;
-use crate::message::{AgentInfo, Message};
-use crate::route::Route;
+use crate::message::Message;
 use crate::session::{LocalAgentSession, SessionEvent};
 use crate::transport::{create_tls_acceptor, TcpTransport};
 use std::collections::{HashMap, HashSet};
@@ -22,15 +22,6 @@ use accept::{tcp_accept, unix_accept, websocket_accept};
 use cloud::establish_cloud_connection;
 use routing::broadcast_to_peers;
 
-/// A remote agent announced by a peer connection
-pub(super) struct RemoteAgent {
-    pub(super) info: AgentInfo,
-    /// Full route from this server to the agent
-    pub(super) route: Route,
-    /// Direct peer link that announced this agent (for cleanup on disconnect)
-    pub(super) link: String,
-}
-
 /// Server state shared across connection handlers
 pub(super) struct ServerState {
     pub(super) config: Config,
@@ -40,8 +31,8 @@ pub(super) struct ServerState {
     /// Routes keyed by link name. The actual transport is owned by the
     /// connection handler task; we only keep an outgoing message channel.
     pub(super) routes: HashMap<String, mpsc::Sender<Message>>,
-    /// Remote agents announced by peer connections
-    pub(super) remote_agents: HashMap<Uuid, RemoteAgent>,
+    /// Centralized agent registry (local + remote agents, alias mapping)
+    pub(super) registry: AgentRegistry,
     /// Link names of peer connections (non-local connections that receive announcements)
     pub(super) peer_links: HashSet<String>,
     /// JWT validator for cloud mode (validates incoming tokens)
@@ -55,7 +46,7 @@ impl ServerState {
             cloud_mode: false,
             agents: HashMap::new(),
             routes: HashMap::new(),
-            remote_agents: HashMap::new(),
+            registry: AgentRegistry::new(),
             peer_links: HashSet::new(),
             jwt_validator: None,
         }
@@ -166,6 +157,7 @@ impl Server {
                     SessionEvent::Ended(agent_id) => {
                         log!("server: session {} ended, removing", agent_id);
                         let mut state = state.write().await;
+                        state.registry.remove(&agent_id);
                         state.agents.remove(&agent_id);
                         broadcast_to_peers(
                             &mut state,

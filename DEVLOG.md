@@ -38,6 +38,45 @@ One paragraph describing what was done.
 
 ---
 
+## 2026-02-10: AgentRegistry + ResolveAgent + typed agent_id
+
+### Summary
+
+Introduced centralized agent tracking via `AgentRegistry`, added server-side agent resolution via `ResolveAgent` message, and changed `agent_id` from `String` to `Uuid` in all `RoutableMessage` variants. This consolidates scattered agent tracking (local `agents` + `remote_agents` maps) into a single registry with bidirectional alias-UUID mapping, moves identifier resolution from client to server, and enforces type-safe agent IDs throughout the protocol.
+
+### Changes
+
+- `src/agent_registry.rs` — **New.** `AgentRegistry` with `AgentEntry`/`AgentKind` types. Methods: `register_local`, `register_remote`, `remove`, `remove_for_link`, `resolve` (handles `route:id`, UUID, and alias formats), `list_all`, `count_remote`, `iter_entries`. 15 unit tests.
+- `src/main.rs` — Added `mod agent_registry;`
+- `src/message.rs` — Changed `agent_id: String` → `Uuid` in all 7 `RoutableMessage` variants. Added `ResolveAgent`/`ResolveAgentResult` to `LocalMessage`.
+- `src/server/mod.rs` — Added `registry: AgentRegistry` to `ServerState`. Removed `RemoteAgent` struct and `remote_agents` HashMap. `SessionEvent::Ended` removes from registry.
+- `src/server/routing.rs` — Removed `resolve_agent` and `remove_agents_for_link`. `create_agent` uses registry for uniqueness checks and registration. `handle_subscribe` takes `&Uuid` instead of `&str`. `handle_peer_disconnect` uses `registry.remove_for_link`. `send_initial_announcements` iterates `registry.iter_entries()`.
+- `src/server/connection.rs` — All handlers use `state.agents.get(&agent_id)` directly (Uuid). Added `ResolveAgent` handler. `AnnounceAgent`/`WithdrawAgent` use registry. Updated all tests to use `Uuid` and registry assertions.
+- `src/client.rs` — `attach()` sends `ResolveAgent` for server-side resolution. Removed `parse_target()`. `subscribe_and_stream`/`run_attached` take `Uuid` (Copy, no cloning needed).
+- `src/transport/unix.rs` — Updated test `agent_id` fields from `String` to `Uuid`.
+- `e2e-tests/remote_attach_by_alias.test` — **New.** Tests attaching to a remote agent by alias only (no route prefix), verifying server-side resolution works.
+
+### Decisions Made
+
+- **Server-side resolution**: Moved identifier parsing from client `parse_target()` to server `AgentRegistry::resolve()`. The server has complete knowledge of all agents (local + remote), making it the right place for resolution.
+- **First-one-wins for remote aliases**: Remote `register_remote` silently skips if alias is taken by another agent. Local `register_local` errors on conflict. This matches the existing last-write-wins semantics while giving local agents priority.
+- **`Uuid` instead of `String`**: Enforces resolve-before-subscribe at the type level. `Uuid` is `Copy`, eliminating many `.clone()` calls in spawned tasks.
+- **Re-announce clears old alias**: When the same UUID re-announces with a different alias, the old alias is freed. Prevents stale alias mappings.
+
+### Verification
+
+- `cargo check` — clean
+- `cargo fmt` — clean
+- `cargo clippy` — clean
+- `cargo test` — 87 tests passed (15 new registry tests, 2 new connection tests)
+- `cargo run -p e2e-runner -- run` — 8/8 E2E tests passed (including new `remote_attach_by_alias`)
+
+### Next Steps
+
+- Consider increasing the `@@sleep` in `remote_attach_by_alias.test` or adding a synchronization mechanism if the test proves flaky
+
+---
+
 ## 2026-02-09: AnnounceAgent / WithdrawAgent — remote agent discovery
 
 ### Summary

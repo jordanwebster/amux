@@ -1,10 +1,10 @@
 use super::ServerState;
+use crate::agent_registry::AgentKind;
 use crate::buffer::MultiplexReader;
 use crate::error::{AmuxError, Result};
 use crate::message::{CreateAgentRequest, LocalMessage, Message, PermissionResponse};
 use crate::route::Route;
 use crate::session::{LocalAgentSession, SessionEvent};
-use std::collections::HashMap;
 use std::sync::Arc;
 use tokio::sync::{mpsc, RwLock};
 use uuid::Uuid;
@@ -17,21 +17,6 @@ pub(super) async fn connection_tx(
     state.routes.get(link_name).cloned()
 }
 
-/// Resolve an agent by UUID or alias
-pub(super) fn resolve_agent<'a>(
-    agents: &'a HashMap<Uuid, Arc<LocalAgentSession>>,
-    identifier: &str,
-) -> Option<&'a Arc<LocalAgentSession>> {
-    if let Ok(uuid) = Uuid::parse_str(identifier) {
-        if let Some(agent) = agents.get(&uuid) {
-            return Some(agent);
-        }
-    }
-    agents
-        .values()
-        .find(|a| a.alias.as_deref() == Some(identifier))
-}
-
 /// Create a new agent
 pub(super) async fn create_agent(
     state: &Arc<RwLock<ServerState>>,
@@ -40,21 +25,26 @@ pub(super) async fn create_agent(
 ) -> Result<()> {
     let mut state = state.write().await;
 
-    if state.agents.contains_key(&req.agent_id) {
+    if state.registry.contains(&req.agent_id) {
         return Err(AmuxError::AgentAlreadyExists(req.agent_id.to_string()));
     }
 
     if let Some(ref a) = req.alias {
-        if state.agents.values().any(|s| s.alias.as_deref() == Some(a)) {
+        if state.registry.alias_taken(a) {
             return Err(AmuxError::AgentAlreadyExists(a.clone()));
         }
     }
 
     let session = LocalAgentSession::new(&req, event_tx.clone())?;
+    let info = session.to_agent_info();
     let alias = req.alias.clone();
     let command = session.command.clone();
     let working_dir = session.working_dir.clone();
     state.agents.insert(req.agent_id, Arc::new(session));
+    state
+        .registry
+        .register_local(info)
+        .expect("uniqueness already checked");
 
     broadcast_to_peers(
         &mut state,
@@ -76,18 +66,20 @@ pub(super) async fn create_agent(
     Ok(())
 }
 
-/// Handle subscribe request (identifier can be UUID or alias).
-/// Returns the output reader; input goes through resolve_agent().send_input().
+/// Handle subscribe request by UUID.
+/// Returns the output reader; input goes through state.agents.get().send_input().
 pub(super) async fn handle_subscribe(
     state: &Arc<RwLock<ServerState>>,
-    identifier: &str,
+    agent_id: &Uuid,
     rows: u16,
     cols: u16,
 ) -> Result<MultiplexReader> {
     let state = state.read().await;
 
-    let session = resolve_agent(&state.agents, identifier)
-        .ok_or_else(|| AmuxError::AgentNotFound(identifier.to_string()))?
+    let session = state
+        .agents
+        .get(agent_id)
+        .ok_or_else(|| AmuxError::AgentNotFound(agent_id.to_string()))?
         .clone();
 
     session.resize(rows, cols).await?;
@@ -95,7 +87,7 @@ pub(super) async fn handle_subscribe(
     let (reader, _input_tx) = session
         .subscribe()
         .await
-        .ok_or_else(|| AmuxError::AgentNotFound(identifier.to_string()))?;
+        .ok_or_else(|| AmuxError::AgentNotFound(agent_id.to_string()))?;
     Ok(reader)
 }
 
@@ -135,59 +127,45 @@ pub(super) fn send_initial_announcements(state: &ServerState, peer_link: &str) {
         return;
     };
 
-    // Announce local agents with empty route
-    for session in state.agents.values() {
-        let msg = Message::Local(LocalMessage::AnnounceAgent {
-            agent_id: session.agent_id,
-            alias: session.alias.clone(),
-            command: session.command.clone(),
-            working_dir: session.working_dir.clone(),
-            route: Route::empty(),
-        });
-        if tx.try_send(msg).is_err() {
-            log!(
-                "server: failed to announce local agent {} to {}",
-                session.agent_id,
-                peer_link
-            );
+    for (uuid, entry) in state.registry.iter_entries() {
+        match &entry.kind {
+            AgentKind::Local => {
+                let msg = Message::Local(LocalMessage::AnnounceAgent {
+                    agent_id: *uuid,
+                    alias: entry.info.alias.clone(),
+                    command: entry.info.command.clone(),
+                    working_dir: entry.info.working_dir.clone(),
+                    route: Route::empty(),
+                });
+                if tx.try_send(msg).is_err() {
+                    log!(
+                        "server: failed to announce local agent {} to {}",
+                        uuid,
+                        peer_link
+                    );
+                }
+            }
+            AgentKind::Remote { route, link } => {
+                if link == peer_link {
+                    continue;
+                }
+                let msg = Message::Local(LocalMessage::AnnounceAgent {
+                    agent_id: *uuid,
+                    alias: entry.info.alias.clone(),
+                    command: entry.info.command.clone(),
+                    working_dir: entry.info.working_dir.clone(),
+                    route: route.clone(),
+                });
+                if tx.try_send(msg).is_err() {
+                    log!(
+                        "server: failed to announce remote agent {} to {}",
+                        uuid,
+                        peer_link
+                    );
+                }
+            }
         }
     }
-
-    // Announce remote agents with our stored route
-    for (agent_id, remote) in &state.remote_agents {
-        // Don't echo back agents learned from this same peer
-        if remote.link == peer_link {
-            continue;
-        }
-        let msg = Message::Local(LocalMessage::AnnounceAgent {
-            agent_id: *agent_id,
-            alias: remote.info.alias.clone(),
-            command: remote.info.command.clone(),
-            working_dir: remote.info.working_dir.clone(),
-            route: remote.route.clone(),
-        });
-        if tx.try_send(msg).is_err() {
-            log!(
-                "server: failed to announce remote agent {} to {}",
-                agent_id,
-                peer_link
-            );
-        }
-    }
-}
-
-/// Remove all remote agents learned from a dead link. Returns removed agent IDs.
-pub(super) fn remove_agents_for_link(state: &mut ServerState, dead_link: &str) -> Vec<Uuid> {
-    let removed: Vec<Uuid> = state
-        .remote_agents
-        .iter()
-        .filter(|(_, ra)| ra.link == dead_link)
-        .map(|(id, _)| *id)
-        .collect();
-    for id in &removed {
-        state.remote_agents.remove(id);
-    }
-    removed
 }
 
 /// Handle a peer disconnecting: remove route, peer_links entry, remote agents,
@@ -196,7 +174,7 @@ pub(super) fn handle_peer_disconnect(state: &mut ServerState, link_name: &str) {
     state.routes.remove(link_name);
     state.peer_links.remove(link_name);
 
-    let removed_ids = remove_agents_for_link(state, link_name);
+    let removed_ids = state.registry.remove_for_link(link_name);
     for agent_id in removed_ids {
         log!(
             "server: withdrawing agent {} (peer {} disconnected)",
