@@ -1,0 +1,11 @@
+{
+  "name": "amux",
+  "owner": { "name": "Jordan Webster" },
+  "plugins": [
+    {
+      "name": "amux",
+      "source": "./claude-plugin",
+      "description": "Hooks for amux agent multiplexer integration with Claude Code"
+    }
+  ]
+}

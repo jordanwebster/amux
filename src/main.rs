@@ -12,6 +12,7 @@ mod jwt;
 mod message;
 mod multiplex_log_buffer;
 mod oauth;
+mod plugins;
 mod route;
 mod server;
 mod session;
@@ -108,10 +109,27 @@ enum HooksProvider {
 
 #[derive(Subcommand)]
 enum ClaudeHookEvent {
-    /// Called when a Claude Code session starts
     SessionStart,
-    /// Called when Claude Code requests permission for a tool
+    SessionEnd,
+    PreToolUse,
+    PostToolUse,
+    PostToolUseFailure,
     PermissionRequest,
+    UserPromptSubmit,
+    Notification,
+    Stop,
+    SubagentStart,
+    SubagentStop,
+    TeammateIdle,
+    TaskCompleted,
+    PreCompact,
+}
+
+fn is_handled_hook_event(event: &ClaudeHookEvent) -> bool {
+    matches!(
+        event,
+        ClaudeHookEvent::SessionStart | ClaudeHookEvent::PermissionRequest
+    )
 }
 
 #[tokio::main]
@@ -119,6 +137,16 @@ async fn main() {
     log::init();
 
     let cli = Cli::parse();
+
+    // Fast-path exit for unhandled hook events (no stdin, no config, no socket)
+    if let Some(Commands::Hooks {
+        provider: HooksProvider::Claude { event },
+    }) = &cli.command
+    {
+        if !is_handled_hook_event(event) {
+            return;
+        }
+    }
 
     // Resolve config path: explicit --config flag, or default path if it exists
     let config_path: Option<PathBuf> = match &cli.config {
@@ -181,6 +209,9 @@ async fn main() {
                 }
             };
             ensure_initialized(&config).await;
+            if let message::AgentType::Claude = agent_type {
+                plugins::claude::ensure_plugin_installed().await;
+            }
             ensure_server_running(&config, config_path.as_deref()).await;
             client::new_agent(target.as_deref(), agent_type, &config).await
         }

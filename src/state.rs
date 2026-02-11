@@ -39,8 +39,8 @@ pub struct CloudState {
 /// Claude-specific state
 #[derive(Debug, Clone, Serialize, Deserialize, Default)]
 pub struct ClaudeState {
-    /// Version of amux plugin installed in Claude (if any)
-    pub is_plugin_installed: Option<String>,
+    /// Installed plugin version (None = not installed, triggers install)
+    pub plugin_version: Option<u32>,
 }
 
 impl State {
@@ -169,6 +169,6 @@ mod tests {
         let loaded = State::load(&path).unwrap();
         assert_eq!(loaded.cloud.use_cloud_mode, Some(true));
         // Claude section should be default
-        assert!(loaded.claude.is_plugin_installed.is_none());
+        assert!(loaded.claude.plugin_version.is_none());
     }
 }

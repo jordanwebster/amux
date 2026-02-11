@@ -38,6 +38,39 @@ One paragraph describing what was done.
 
 ---
 
+## 2026-02-11: Claude Code plugin with auto-install and fast-path hooks
+
+### Summary
+
+Added an in-repo Claude Code plugin that registers all 14 hook events, with automatic install/update during `amux new-agent claude` and fast-path exit for unhandled events. Unhandled hooks exit after clap parse only (~5-8ms), avoiding stdin reads, config loading, and socket connections.
+
+### Changes
+
+- `.claude-plugin/marketplace.json` — Marketplace manifest pointing to `./claude-plugin`
+- `claude-plugin/.claude-plugin/plugin.json` — Plugin manifest with version 1.0.0
+- `claude-plugin/hooks/hooks.json` — Registers all 14 hook events, each calling `amux hooks claude <event-name>`
+- `src/state.rs` — Renamed `ClaudeState::is_plugin_installed: Option<String>` to `plugin_version: Option<u32>`
+- `src/plugins/mod.rs` + `src/plugins/claude.rs` — New module for Claude plugin install/update logic (`ensure_plugin_installed()`, `PLUGIN_VERSION` const, `run_install()`, `run_update()`, `run_claude_command()`)
+- `src/main.rs` — Expanded `ClaudeHookEvent` from 2 to 14 variants; added fast-path exit before config loading for unhandled events; added `is_handled_hook_event()`; wired `plugins::claude::ensure_plugin_installed()` into `NewAgent` path for Claude agent type only
+
+### Decisions Made
+
+- **Fast-path before config**: Unhandled hook events exit immediately after clap parse, no stdin/config/socket overhead
+- **Version as u32**: Simpler than semver string; bump the const to trigger re-install across all users
+- **Error propagation**: Plugin install failures exit 1; "command not found: claude" naturally tells users what's needed
+- **Only on `new-agent claude`**: Plugin install never blocks non-Claude workflows
+
+### Verification
+
+- `cargo check && cargo fmt && cargo clippy && cargo test` — all 95 tests pass
+
+### Next Steps
+
+- Handle additional hook events beyond SessionStart and PermissionRequest
+- Test plugin installation end-to-end with `claude` CLI
+
+---
+
 ## 2026-02-11: Cancellation-safe connection loop and stale stream cleanup
 
 ### Summary

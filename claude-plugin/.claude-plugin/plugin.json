@@ -1,0 +1,5 @@
+{
+  "name": "amux",
+  "description": "Hooks for amux agent multiplexer integration with Claude Code",
+  "version": "1.0.0"
+}
