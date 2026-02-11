@@ -1,3 +1,4 @@
+use super::connection::cancel_streams_matching;
 use super::ServerState;
 use crate::agent_registry::AgentKind;
 use crate::buffer::MultiplexReader;
@@ -169,10 +170,24 @@ pub(super) fn send_initial_announcements(state: &ServerState, peer_link: &str) {
 }
 
 /// Handle a peer disconnecting: remove route, peer_links entry, remote agents,
-/// and propagate withdrawals to remaining peers.
+/// cancel unreachable streams, and propagate withdrawals to remaining peers.
 pub(super) fn handle_peer_disconnect(state: &mut ServerState, link_name: &str) {
     state.routes.remove(link_name);
     state.peer_links.remove(link_name);
+
+    // Cancel streams spawned for subscribers on this link (they hold cloned senders
+    // to the link's outgoing channel — must be dropped for writer task to exit)
+    // and streams whose route passes through this link (unreachable).
+    let cancelled = cancel_streams_matching(state, |entry| {
+        entry.link == link_name || entry.dst.contains_link(link_name)
+    });
+    if cancelled > 0 {
+        log!(
+            "server: cancelled {} streams (peer {} disconnected)",
+            cancelled,
+            link_name
+        );
+    }
 
     let removed_ids = state.registry.remove_for_link(link_name);
     for agent_id in removed_ids {

@@ -38,6 +38,52 @@ One paragraph describing what was done.
 
 ---
 
+## 2026-02-11: Cancellation-safe connection loop and stale stream cleanup
+
+### Summary
+
+Fixed two bugs causing cloud relay disconnections: (1) `tokio::select!` cancellation unsafety — `read_exact()` inside `read_frame()` is not cancellation-safe; when `select!` cancels a partially-completed read, bytes are lost from the TCP stream, desynchronizing length-prefixed framing and triggering `InvalidMessage`; (2) stale stream flooding — when a subscriber disconnects at a downstream hop, streaming tasks never learn about it, causing thousands of "no route" log messages per second.
+
+### Changes
+
+**Phase 1: Transport Split Infrastructure**
+- `src/transport/mod.rs` — Added `MessageReader`, `MessageWriter` (with `background()` for idle pong handling), `TransportSplit` traits
+- `src/transport/framing.rs` — Added `FrameReader<R>`, `FrameWriter<W>`, `into_split()` method; deduplicated read/write logic into shared `read_frame_impl`/`write_frame_impl` free functions
+- `src/transport/tcp.rs` — Added `TcpMessageReader<S>`, `TcpMessageWriter<S>`, `TransportSplit` impl
+- `src/transport/unix.rs` — Added `UnixMessageReader`, `UnixMessageWriter`, `TransportSplit` impl
+- `src/transport/websocket.rs` — Added `WsMessageReader`, `WsMessageWriter` with pong forwarding via `mpsc::channel(4)`, `TransportSplit` impl; `background()` sends pongs during idle periods
+
+**Phase 2: Cancellation-Safe Connection Loop**
+- `src/server/connection.rs` — Restructured: added `Incoming` enum, `reader_loop`, `writer_loop` (selects on `background()` for pong handling); `connection_loop` now uses pure channel I/O (no transport generics); all handlers take `&mpsc::Sender<Message>` instead of `&mut T: Transport`; token refresh split into `send_connect`/`handle_response` with ConnectResponse interception and 30s timeout
+- `src/server/accept.rs` — Orchestrates transport split + reader/writer task spawning; cancels streams on local connection teardown
+- `src/server/cloud.rs` — Same pattern for cloud connections
+- `src/cloud.rs` — Split `refresh_and_reconnect` into `send_connect` and `handle_response`; fixed token refresh to use actual `expires_at` from OAuth instead of hardcoded 55 minutes
+
+**Phase 3: Stale Stream Cleanup**
+- `src/server/mod.rs` — Added `StreamEntry` struct with `oneshot::Sender<()>` cancellation, `link` field for teardown, `active_streams` and `next_stream_id` fields in `ServerState`
+- `src/server/connection.rs` — Extracted `register_stream`, `cleanup_stream`, `cancel_streams_matching` helpers; subscribe handlers register `StreamEntry` with cancellation tokens and link name; spawned tasks `select!` between buffer read and `cancel_rx`; dead route tracking with `HashSet<String>` (first Output failure sends `NoRouteFound`, subsequent suppressed); `NoRouteFound` handler cancels streams via `contains_link` matching (not exact route equality)
+- `src/server/routing.rs` — `handle_peer_disconnect` cancels streams by link name and `contains_link`
+- `src/route.rs` — Added `first_hop()` and `contains_link()` methods
+
+### Decisions Made
+
+- **Typed `Incoming` enum over encoding errors as Messages**: Avoids conflating transport errors with protocol errors; `Eof` preserves clean-disconnect semantics
+- **No generics in connection handlers**: All handlers take `&mpsc::Sender<Message>`, making the code simpler and testable with `mock_tx()`
+- **dead_routes HashSet for rate-limiting**: First Output/StructuredOutput failure per route sends NoRouteFound back; subsequent failures suppressed silently. Naturally bounded since dead link names never revive (connections reconnect with new randomised names)
+- **Stream cancellation via oneshot drop**: Dropping the `oneshot::Sender` in `StreamEntry` triggers `cancel_rx` in the streaming task — clean, zero-cost signal
+- **NoRouteFound matching by `contains_link`**: The dead_route's first_hop is the failed hop name; `entry.dst.contains_link(dead_hop)` catches streams at any depth. Exact route equality was wrong because NoRouteFound carries the traversed src path, not the stream's reply dst
+- **Stream link tracking for teardown**: `StreamEntry.link` records which connection spawned the stream. On teardown, all streams for that link are cancelled, ensuring their sender clones are dropped so the writer task can exit
+- **WebSocket `background()` for idle pong handling**: `writer_loop` selects on `writer.background()` alongside messages. Default impl pends forever (no-op for TCP/Unix). `WsMessageWriter` awaits pong_rx, sending pongs even when no messages are flowing
+- **Token refresh uses actual `expires_at`**: `send_connect` stores `pending_expires_at` from the OAuth connection info; `handle_response` applies it on success
+
+### Verification
+
+- `cargo check`, `cargo fmt`, `cargo clippy` — clean
+- 95 unit tests pass (including 2 new route tests for `contains_link`)
+- 8 E2E tests pass
+
+---
+
 ## 2026-02-10: Fix config default path and sanitize hostnames in link names
 
 ### Summary

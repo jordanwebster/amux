@@ -3,13 +3,14 @@ use crate::config::Config;
 use crate::error::{AmuxError, Result};
 use crate::jwt::JwtValidator;
 use crate::message::Message;
+use crate::route::Route;
 use crate::session::{LocalAgentSession, SessionEvent};
 use crate::transport::{create_tls_acceptor, TcpTransport};
 use std::collections::{HashMap, HashSet};
 use std::net::SocketAddr;
 use std::sync::Arc;
 use tokio::net::{TcpListener, UnixListener};
-use tokio::sync::{mpsc, RwLock};
+use tokio::sync::{mpsc, oneshot, RwLock};
 use tokio_rustls::TlsAcceptor;
 use uuid::Uuid;
 
@@ -21,6 +22,18 @@ mod routing;
 use accept::{tcp_accept, unix_accept, websocket_accept};
 use cloud::establish_cloud_connection;
 use routing::broadcast_to_peers;
+
+/// An active stream (Output or StructuredOutput) that can be cancelled.
+/// Dropping the entry drops `cancel`, which signals the stream task via `oneshot::Receiver`.
+pub(super) struct StreamEntry {
+    pub stream_id: u64,
+    #[allow(dead_code)] // Held for drop: dropping Sender cancels the oneshot Receiver
+    pub cancel: oneshot::Sender<()>,
+    /// Destination route for this stream (used for matching NoRouteFound errors)
+    pub dst: Route,
+    /// Link name this stream sends through (used for teardown cancellation)
+    pub link: String,
+}
 
 /// Server state shared across connection handlers
 pub(super) struct ServerState {
@@ -37,6 +50,9 @@ pub(super) struct ServerState {
     pub(super) peer_links: HashSet<String>,
     /// JWT validator for cloud mode (validates incoming tokens)
     pub(super) jwt_validator: Option<Arc<JwtValidator>>,
+    /// Active streaming tasks keyed by agent_id, with cancellation tokens
+    pub(super) active_streams: HashMap<Uuid, Vec<StreamEntry>>,
+    pub(super) next_stream_id: u64,
 }
 
 impl ServerState {
@@ -49,6 +65,8 @@ impl ServerState {
             registry: AgentRegistry::new(),
             peer_links: HashSet::new(),
             jwt_validator: None,
+            active_streams: HashMap::new(),
+            next_stream_id: 0,
         }
     }
 }
@@ -159,6 +177,8 @@ impl Server {
                         let mut state = state.write().await;
                         state.registry.remove(&agent_id);
                         state.agents.remove(&agent_id);
+                        // Cancel all active streams for this agent (dropping cancel_tx triggers shutdown)
+                        state.active_streams.remove(&agent_id);
                         broadcast_to_peers(
                             &mut state,
                             &crate::message::LocalMessage::WithdrawAgent { agent_id },

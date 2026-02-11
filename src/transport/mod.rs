@@ -34,4 +34,30 @@ pub trait Transport: Send + Sync {
     async fn write_message(&mut self, msg: &Message) -> Result<()>;
 }
 
+/// Read half of a split transport
+#[async_trait]
+pub trait MessageReader: Send {
+    async fn read_message(&mut self) -> Result<Message>;
+}
+
+/// Write half of a split transport
+#[async_trait]
+pub trait MessageWriter: Send {
+    async fn write_message(&mut self, msg: &Message) -> Result<()>;
+
+    /// Perform background I/O (e.g., WebSocket pong responses).
+    /// Called in select! alongside message writes. Default pends forever (no-op).
+    async fn background(&mut self) {
+        std::future::pending().await
+    }
+}
+
+/// A transport that can be split into independent reader/writer halves.
+/// The reader can live in a dedicated task that is never cancelled by select!.
+pub trait TransportSplit: Transport {
+    type Reader: MessageReader + 'static;
+    type Writer: MessageWriter + 'static;
+    fn into_split(self) -> (Self::Reader, Self::Writer);
+}
+
 pub(crate) use framing::LengthPrefixed;

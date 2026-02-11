@@ -15,6 +15,7 @@ use crate::transport::{tls_connect, TcpTransport, Transport};
 use chrono::{DateTime, Duration, Utc};
 use thiserror::Error;
 use tokio::net::TcpStream;
+use tokio::sync::mpsc;
 use tokio_rustls::client::TlsStream;
 
 #[derive(Debug, Error)]
@@ -151,6 +152,7 @@ impl CloudConnection {
             current_host: self.current_host,
             current_port: self.current_port,
             token_expires_at: self.token_expires_at,
+            pending_expires_at: None,
         };
         (self.transport, refresh_state)
     }
@@ -158,7 +160,7 @@ impl CloudConnection {
 
 /// Token refresh state for cloud connections.
 ///
-/// This is passed to tcp_peer_loop to enable automatic token refresh
+/// This is passed to connection_loop to enable automatic token refresh
 /// on cloud connections. For non-cloud connections, None is passed.
 pub struct TokenRefreshState {
     config: Config,
@@ -166,6 +168,8 @@ pub struct TokenRefreshState {
     current_host: String,
     current_port: u16,
     token_expires_at: DateTime<Utc>,
+    /// Pending expires_at from the most recent send_connect, applied on success
+    pending_expires_at: Option<DateTime<Utc>>,
 }
 
 impl TokenRefreshState {
@@ -184,13 +188,11 @@ impl TokenRefreshState {
         }
     }
 
-    /// Refresh the token and re-authenticate on the existing connection.
-    ///
-    /// Returns Err(CloudError::HostChanged) if the cloud server assigns
-    /// a different host/port, requiring full reconnection.
-    pub async fn refresh_and_reconnect<T: Transport>(
+    /// Refresh the OAuth token and send a Connect message through the outgoing channel.
+    /// The ConnectResponse will be intercepted by connection_loop.
+    pub async fn send_connect(
         &mut self,
-        transport: &mut T,
+        tx: &mpsc::Sender<Message>,
     ) -> std::result::Result<(), CloudError> {
         let state = State::load(&self.config.state_path)?;
 
@@ -218,29 +220,37 @@ impl TokenRefreshState {
             return Err(CloudError::HostChanged);
         }
 
-        // Send new Connect with fresh token (reuse link name)
-        transport
-            .write_message(&Message::Local(LocalMessage::Connect {
-                link_name: self.link_name.clone(),
-                token: Some(conn.token),
-            }))
-            .await?;
+        // Store pending expires_at for use in handle_response
+        self.pending_expires_at = Some(conn.expires_at);
 
-        // Wait for response
-        let response = transport.read_message().await?;
-        match response {
+        // Send new Connect with fresh token through the outgoing channel
+        tx.send(Message::Local(LocalMessage::Connect {
+            link_name: self.link_name.clone(),
+            token: Some(conn.token),
+        }))
+        .await
+        .map_err(|_| {
+            CloudError::Connection("Outgoing channel closed during token refresh".to_string())
+        })?;
+
+        Ok(())
+    }
+
+    /// Handle a ConnectResponse received after send_connect.
+    /// Updates token_expires_at on success using the expires_at stored during send_connect.
+    pub fn handle_response(&mut self, msg: &Message) -> std::result::Result<(), CloudError> {
+        match msg {
             Message::Local(LocalMessage::ConnectResponse { success: true, .. }) => {
                 log!("cloud: token refreshed successfully");
-                self.token_expires_at = conn.expires_at;
+                if let Some(expires_at) = self.pending_expires_at.take() {
+                    self.token_expires_at = expires_at;
+                }
                 Ok(())
             }
             Message::Local(LocalMessage::ConnectResponse {
                 success: false,
                 error: Some(ProtocolError::InvalidCredentials),
-            }) => {
-                // TODO: clear refresh token once connection flow is stable
-                Err(CloudError::Auth("Token refresh failed".to_string()))
-            }
+            }) => Err(CloudError::Auth("Token refresh failed".to_string())),
             Message::Local(LocalMessage::ConnectResponse {
                 success: false,
                 error,

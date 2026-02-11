@@ -64,6 +64,16 @@ impl Route {
         self.links.pop_front()
     }
 
+    /// Peek at the first hop without consuming it.
+    pub fn first_hop(&self) -> Option<&str> {
+        self.links.front().map(|s| s.as_str())
+    }
+
+    /// Check if this route passes through a given link name.
+    pub fn contains_link(&self, link: &str) -> bool {
+        self.links.iter().any(|l| l == link)
+    }
+
     /// Prepare to send a new message. Pops from dst, creates src from the popped link.
     /// Returns (src, dst) ready to include in the message.
     /// Returns None if dst is empty.
@@ -318,5 +328,23 @@ mod tests {
     fn test_push_rejects_period() {
         let mut route = Route::from_link("good");
         route.push("bad.link");
+    }
+
+    #[test]
+    fn test_contains_link() {
+        let mut route = Route::from_link("CD");
+        route.push("BC");
+        route.push("AB");
+
+        assert!(route.contains_link("AB"));
+        assert!(route.contains_link("BC"));
+        assert!(route.contains_link("CD"));
+        assert!(!route.contains_link("XX"));
+    }
+
+    #[test]
+    fn test_contains_link_empty() {
+        let route = Route::empty();
+        assert!(!route.contains_link("any"));
     }
 }

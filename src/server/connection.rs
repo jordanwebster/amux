@@ -2,7 +2,7 @@ use super::accept::tcp_connect;
 use super::routing::{
     broadcast_to_peers, connection_tx, create_agent, handle_subscribe, shutdown_server,
 };
-use super::ServerState;
+use super::{ServerState, StreamEntry};
 use crate::agent_registry::AgentKind;
 use crate::cloud::TokenRefreshState;
 use crate::error::{AmuxError, Result};
@@ -13,10 +13,12 @@ use crate::message::{
 use crate::route::Route;
 use crate::session::SessionEvent;
 use crate::state::State;
-use crate::transport::Transport;
+use crate::transport::MessageReader;
+use std::collections::HashSet;
 use std::path::PathBuf;
 use std::sync::Arc;
-use tokio::sync::{mpsc, RwLock};
+use std::time::Duration;
+use tokio::sync::{mpsc, oneshot, RwLock};
 
 /// Context for connection handlers.
 pub(super) struct ConnectionContext {
@@ -25,52 +27,116 @@ pub(super) struct ConnectionContext {
     pub(super) link_name: String,
 }
 
-/// Shared connection loop for Unix/TCP/WebSocket transports.
-pub(super) async fn connection_loop<T: Transport>(
-    transport: &mut T,
-    outgoing_rx: mpsc::Receiver<Message>,
-    ctx: ConnectionContext,
-) -> Result<()> {
-    connection_loop_with_refresh(transport, outgoing_rx, ctx, None).await
+/// Typed enum for reader task output — avoids encoding transport errors as protocol messages.
+pub(super) enum Incoming {
+    Msg(Message),
+    ReadErr(AmuxError),
+    Eof,
 }
 
-pub(super) async fn connection_loop_with_refresh<T: Transport>(
-    transport: &mut T,
-    mut outgoing_rx: mpsc::Receiver<Message>,
+/// Reader task: reads from transport, sends to channel. Never cancelled.
+pub(super) async fn reader_loop<R: MessageReader>(mut reader: R, tx: mpsc::Sender<Incoming>) {
+    loop {
+        match reader.read_message().await {
+            Ok(msg) => {
+                if tx.send(Incoming::Msg(msg)).await.is_err() {
+                    break;
+                }
+            }
+            Err(AmuxError::Io(e)) if e.kind() == std::io::ErrorKind::UnexpectedEof => {
+                let _ = tx.send(Incoming::Eof).await;
+                break;
+            }
+            Err(e) => {
+                let _ = tx.send(Incoming::ReadErr(e)).await;
+                break;
+            }
+        }
+    }
+}
+
+/// Writer task: drains message channel, writes to transport.
+/// Also handles transport-specific background I/O (e.g., WebSocket pong responses).
+pub(super) async fn writer_loop<W: crate::transport::MessageWriter>(
+    mut writer: W,
+    mut rx: mpsc::Receiver<Message>,
+) {
+    loop {
+        tokio::select! {
+            msg = rx.recv() => {
+                match msg {
+                    Some(msg) => {
+                        if writer.write_message(&msg).await.is_err() { break; }
+                    }
+                    None => break,
+                }
+            }
+            _ = writer.background() => {}
+        }
+    }
+}
+
+/// Shared connection loop for all transports. Pure channel I/O — cancellation-safe.
+pub(super) async fn connection_loop(
+    mut incoming_rx: mpsc::Receiver<Incoming>,
+    response_tx: mpsc::Sender<Message>,
     ctx: ConnectionContext,
     mut token_refresh: Option<TokenRefreshState>,
 ) -> Result<()> {
     let mut refresh_deadline = token_refresh.as_ref().map(|t| t.refresh_deadline());
+    let mut awaiting_refresh: Option<tokio::time::Instant> = None;
+    // Tracks routes that already got a NoRouteFound error sent back for stream messages.
+    // Naturally bounded: link names include random suffixes and are never reused after disconnect.
+    let mut dead_routes: HashSet<String> = HashSet::new();
 
     loop {
+        let refresh_timeout = awaiting_refresh.map(|t| t + Duration::from_secs(30));
+
         tokio::select! {
-            result = transport.read_message() => {
-                let msg = match result {
-                    Ok(msg) => msg,
-                    Err(AmuxError::Io(e)) if e.kind() == std::io::ErrorKind::UnexpectedEof => {
+            incoming = incoming_rx.recv() => {
+                match incoming {
+                    Some(Incoming::Msg(msg)) => {
+                        // Intercept ConnectResponse for token refresh
+                        if let Message::Local(LocalMessage::ConnectResponse { .. }) = &msg {
+                            if awaiting_refresh.is_some() {
+                                if let Some(ref mut rs) = token_refresh {
+                                    match rs.handle_response(&msg) {
+                                        Ok(()) => {
+                                            refresh_deadline = Some(rs.refresh_deadline());
+                                        }
+                                        Err(crate::cloud::CloudError::HostChanged) => {
+                                            log!("cloud: host changed, reconnection required");
+                                            return Err(AmuxError::Config("Cloud host changed".to_string()));
+                                        }
+                                        Err(e) => {
+                                            log!("cloud: token refresh response error: {}", e);
+                                            return Err(AmuxError::Config(format!("Token refresh failed: {}", e)));
+                                        }
+                                    }
+                                }
+                                awaiting_refresh = None;
+                                continue;
+                            }
+                            log!("server: unexpected ConnectResponse on {}", ctx.link_name);
+                            continue;
+                        }
+                        handle_message(&response_tx, msg, &ctx, &mut dead_routes).await?;
+                    }
+                    Some(Incoming::Eof) | None => {
                         log!("server: {} disconnected", ctx.link_name);
                         return Ok(());
                     }
-                    Err(e) => return Err(e),
-                };
-
-                handle_message(transport, msg, &ctx).await?;
-            }
-
-            Some(msg) = outgoing_rx.recv() => {
-                log!("server: routing message to {}: {:?}", ctx.link_name, msg);
-                if let Err(e) = transport.write_message(&msg).await {
-                    log!("server: {} write failed: {}", ctx.link_name, e);
-                    return Ok(());
+                    Some(Incoming::ReadErr(e)) => {
+                        return Err(e);
+                    }
                 }
             }
-
-            _ = maybe_sleep_until(refresh_deadline) => {
+            _ = maybe_sleep_until(refresh_deadline), if awaiting_refresh.is_none() && refresh_deadline.is_some() => {
                 if let Some(ref mut rs) = token_refresh {
                     log!("cloud: refreshing token");
-                    match rs.refresh_and_reconnect(transport).await {
+                    match rs.send_connect(&response_tx).await {
                         Ok(()) => {
-                            refresh_deadline = Some(rs.refresh_deadline());
+                            awaiting_refresh = Some(tokio::time::Instant::now());
                         }
                         Err(crate::cloud::CloudError::HostChanged) => {
                             log!("cloud: host changed, reconnection required");
@@ -83,6 +149,10 @@ pub(super) async fn connection_loop_with_refresh<T: Transport>(
                     }
                 }
             }
+            _ = maybe_sleep_until(refresh_timeout), if awaiting_refresh.is_some() => {
+                log!("server: refresh response timeout on {}", ctx.link_name);
+                return Err(AmuxError::Config("Token refresh timed out".to_string()));
+            }
         }
     }
 }
@@ -94,27 +164,83 @@ async fn maybe_sleep_until(deadline: Option<tokio::time::Instant>) {
     }
 }
 
-pub(super) async fn handle_message<T: Transport>(
-    transport: &mut T,
+/// Register a stream entry in active_streams. Returns the assigned stream_id.
+fn register_stream(
+    state: &mut ServerState,
+    agent_id: uuid::Uuid,
+    cancel_tx: oneshot::Sender<()>,
+    dst: Route,
+    link: String,
+) -> u64 {
+    let sid = state.next_stream_id;
+    state.next_stream_id += 1;
+    state
+        .active_streams
+        .entry(agent_id)
+        .or_default()
+        .push(StreamEntry {
+            stream_id: sid,
+            cancel: cancel_tx,
+            dst,
+            link,
+        });
+    sid
+}
+
+/// Remove a stream entry by stream_id after the task exits.
+async fn cleanup_stream(state: &Arc<RwLock<ServerState>>, agent_id: uuid::Uuid, stream_id: u64) {
+    let mut s = state.write().await;
+    if let Some(entries) = s.active_streams.get_mut(&agent_id) {
+        entries.retain(|e| e.stream_id != stream_id);
+        if entries.is_empty() {
+            s.active_streams.remove(&agent_id);
+        }
+    }
+}
+
+/// Cancel all active streams matching a predicate. Returns count cancelled.
+pub(super) fn cancel_streams_matching(
+    state: &mut ServerState,
+    predicate: impl Fn(&StreamEntry) -> bool,
+) -> usize {
+    let mut cancelled = 0usize;
+    for entries in state.active_streams.values_mut() {
+        entries.retain(|entry| {
+            if predicate(entry) {
+                cancelled += 1;
+                false
+            } else {
+                true
+            }
+        });
+    }
+    state.active_streams.retain(|_, v| !v.is_empty());
+    cancelled
+}
+
+pub(super) async fn handle_message(
+    tx: &mpsc::Sender<Message>,
     msg: Message,
     ctx: &ConnectionContext,
+    dead_routes: &mut HashSet<String>,
 ) -> Result<()> {
     log!("server: {} received {:?}", ctx.link_name, msg);
 
     match msg {
         Message::Routable { src, dst, message } => {
-            handle_routable(transport, src, dst, message, ctx).await
+            handle_routable(tx, src, dst, message, ctx, dead_routes).await
         }
-        Message::Local(local) => handle_local(transport, local, ctx).await,
+        Message::Local(local) => handle_local(tx, local, ctx).await,
     }
 }
 
-async fn handle_routable<T: Transport>(
-    transport: &mut T,
+async fn handle_routable(
+    tx: &mpsc::Sender<Message>,
     mut src: Route,
     mut dst: Route,
     message: RoutableMessage,
     ctx: &ConnectionContext,
+    dead_routes: &mut HashSet<String>,
 ) -> Result<()> {
     // Check if this message needs forwarding
     if let Some(next_hop) = dst.pop() {
@@ -161,15 +287,31 @@ async fn handle_routable<T: Transport>(
         };
 
         // Send error back to source for request-type messages only.
-        // Suppress errors for: Error (amplification), Output/StructuredOutput (high-frequency
-        // stream data — errors would cause churn without triggering teardown).
+        // For Output/StructuredOutput: first failure sends NoRouteFound back,
+        // subsequent failures for same route are suppressed silently.
         if let Some(failed_msg) = failed_msg {
             match failed_msg {
                 RoutableMessage::Error(_) => {
                     log!("server: dropping failed routable error to avoid amplification");
                 }
                 RoutableMessage::Output { .. } | RoutableMessage::StructuredOutput { .. } => {
-                    log!("server: dropping failed stream message to {}", next_hop);
+                    if dead_routes.insert(next_hop.to_string()) {
+                        // First failure for this route — notify source
+                        let mut traversed = original_src.clone();
+                        traversed.push(&next_hop);
+                        if let Some((reply_src, reply_dst)) = Route::reply(original_src) {
+                            let _ = tx
+                                .send(Message::Routable {
+                                    src: reply_src,
+                                    dst: reply_dst,
+                                    message: RoutableMessage::Error(ProtocolError::NoRouteFound(
+                                        traversed,
+                                    )),
+                                })
+                                .await;
+                        }
+                    }
+                    // else: already notified, suppress silently
                 }
                 _ => {
                     // Build traversed path: original_src + the failed hop
@@ -177,15 +319,15 @@ async fn handle_routable<T: Transport>(
                     traversed.push(&next_hop);
 
                     if let Some((reply_src, reply_dst)) = Route::reply(original_src) {
-                        transport
-                            .write_message(&Message::Routable {
+                        let _ = tx
+                            .send(Message::Routable {
                                 src: reply_src,
                                 dst: reply_dst,
                                 message: RoutableMessage::Error(ProtocolError::NoRouteFound(
                                     traversed,
                                 )),
                             })
-                            .await?;
+                            .await;
                     }
                 }
             }
@@ -213,8 +355,8 @@ async fn handle_routable<T: Transport>(
                     };
 
                     let Some(session) = session else {
-                        transport
-                            .write_message(&Message::Routable {
+                        let _ = tx
+                            .send(Message::Routable {
                                 src: reply_src,
                                 dst: reply_dst,
                                 message: RoutableMessage::SubscribeResult {
@@ -225,7 +367,7 @@ async fn handle_routable<T: Transport>(
                                     )),
                                 },
                             })
-                            .await?;
+                            .await;
                         return Ok(());
                     };
 
@@ -233,8 +375,8 @@ async fn handle_routable<T: Transport>(
                     let log_reader = session.subscribe_logs().await;
 
                     let Some(mut reader) = log_reader else {
-                        transport
-                            .write_message(&Message::Routable {
+                        let _ = tx
+                            .send(Message::Routable {
                                 src: reply_src,
                                 dst: reply_dst,
                                 message: RoutableMessage::SubscribeResult {
@@ -245,12 +387,12 @@ async fn handle_routable<T: Transport>(
                                     )),
                                 },
                             })
-                            .await?;
+                            .await;
                         return Ok(());
                     };
 
-                    transport
-                        .write_message(&Message::Routable {
+                    let _ = tx
+                        .send(Message::Routable {
                             src: reply_src.clone(),
                             dst: reply_dst.clone(),
                             message: RoutableMessage::SubscribeResult {
@@ -259,7 +401,7 @@ async fn handle_routable<T: Transport>(
                                 error: None,
                             },
                         })
-                        .await?;
+                        .await;
 
                     log!(
                         "server: {} subscribed to agent {} (structured)",
@@ -269,24 +411,45 @@ async fn handle_routable<T: Transport>(
 
                     let outgoing_tx = connection_tx(&ctx.state, &ctx.link_name).await;
                     if let Some(tx) = outgoing_tx {
+                        let (cancel_tx, cancel_rx) = oneshot::channel::<()>();
+                        let stream_id = {
+                            let mut s = ctx.state.write().await;
+                            register_stream(
+                                &mut s,
+                                agent_id,
+                                cancel_tx,
+                                reply_dst.clone(),
+                                ctx.link_name.clone(),
+                            )
+                        };
+
+                        let stream_state = ctx.state.clone();
                         tokio::spawn(async move {
-                            while let Some(entry) = reader.read().await {
-                                if tx
-                                    .send(Message::Routable {
-                                        src: reply_src.clone(),
-                                        dst: reply_dst.clone(),
-                                        message: RoutableMessage::StructuredOutput {
-                                            agent_id,
-                                            entry,
-                                        },
-                                    })
-                                    .await
-                                    .is_err()
-                                {
-                                    break;
+                            tokio::select! {
+                                _ = async {
+                                    while let Some(entry) = reader.read().await {
+                                        if tx
+                                            .send(Message::Routable {
+                                                src: reply_src.clone(),
+                                                dst: reply_dst.clone(),
+                                                message: RoutableMessage::StructuredOutput {
+                                                    agent_id,
+                                                    entry,
+                                                },
+                                            })
+                                            .await
+                                            .is_err()
+                                        {
+                                            return;
+                                        }
+                                    }
+                                    let _ = tx.send(Message::Local(LocalMessage::AgentEnded)).await;
+                                } => {}
+                                _ = cancel_rx => {
+                                    log!("server: structured stream {} cancelled", stream_id);
                                 }
                             }
-                            let _ = tx.send(Message::Local(LocalMessage::AgentEnded)).await;
+                            cleanup_stream(&stream_state, agent_id, stream_id).await;
                             log!("server: structured log stream ended");
                         });
                     }
@@ -298,8 +461,8 @@ async fn handle_routable<T: Transport>(
 
                     match result {
                         Ok(mut buffer_reader) => {
-                            transport
-                                .write_message(&Message::Routable {
+                            let _ = tx
+                                .send(Message::Routable {
                                     src: reply_src.clone(),
                                     dst: reply_dst.clone(),
                                     message: RoutableMessage::SubscribeResult {
@@ -308,7 +471,7 @@ async fn handle_routable<T: Transport>(
                                         error: None,
                                     },
                                 })
-                                .await?;
+                                .await;
 
                             log!(
                                 "server: {} subscribed to agent {} (raw)",
@@ -318,21 +481,42 @@ async fn handle_routable<T: Transport>(
 
                             let outgoing_tx = connection_tx(&ctx.state, &ctx.link_name).await;
                             if let Some(tx) = outgoing_tx {
+                                let (cancel_tx, cancel_rx) = oneshot::channel::<()>();
+                                let stream_id = {
+                                    let mut s = ctx.state.write().await;
+                                    register_stream(
+                                        &mut s,
+                                        agent_id,
+                                        cancel_tx,
+                                        reply_dst.clone(),
+                                        ctx.link_name.clone(),
+                                    )
+                                };
+
+                                let stream_state = ctx.state.clone();
                                 tokio::spawn(async move {
-                                    while let Some(data) = buffer_reader.read().await {
-                                        if tx
-                                            .send(Message::Routable {
-                                                src: reply_src.clone(),
-                                                dst: reply_dst.clone(),
-                                                message: RoutableMessage::Output { agent_id, data },
-                                            })
-                                            .await
-                                            .is_err()
-                                        {
-                                            break;
+                                    tokio::select! {
+                                        _ = async {
+                                            while let Some(data) = buffer_reader.read().await {
+                                                if tx
+                                                    .send(Message::Routable {
+                                                        src: reply_src.clone(),
+                                                        dst: reply_dst.clone(),
+                                                        message: RoutableMessage::Output { agent_id, data },
+                                                    })
+                                                    .await
+                                                    .is_err()
+                                                {
+                                                    return;
+                                                }
+                                            }
+                                            let _ = tx.send(Message::Local(LocalMessage::AgentEnded)).await;
+                                        } => {}
+                                        _ = cancel_rx => {
+                                            log!("server: raw stream {} cancelled", stream_id);
                                         }
                                     }
-                                    let _ = tx.send(Message::Local(LocalMessage::AgentEnded)).await;
+                                    cleanup_stream(&stream_state, agent_id, stream_id).await;
                                     log!("server: output stream ended");
                                 });
                             }
@@ -340,8 +524,8 @@ async fn handle_routable<T: Transport>(
                             Ok(())
                         }
                         Err(e) => {
-                            transport
-                                .write_message(&Message::Routable {
+                            let _ = tx
+                                .send(Message::Routable {
                                     src: reply_src,
                                     dst: reply_dst,
                                     message: RoutableMessage::SubscribeResult {
@@ -350,7 +534,7 @@ async fn handle_routable<T: Transport>(
                                         error: Some(ProtocolError::ServerError(e.to_string())),
                                     },
                                 })
-                                .await?;
+                                .await;
                             Ok(())
                         }
                     }
@@ -391,6 +575,25 @@ async fn handle_routable<T: Transport>(
             Ok(())
         }
 
+        // NoRouteFound arrived at destination — cancel streams whose route passes
+        // through the dead link. The dead_route's first_hop is the failed next_hop
+        // (pushed last via push_front during traversal).
+        RoutableMessage::Error(ProtocolError::NoRouteFound(ref dead_route)) => {
+            if let Some(dead_hop) = dead_route.first_hop() {
+                let mut state = ctx.state.write().await;
+                let cancelled =
+                    cancel_streams_matching(&mut state, |entry| entry.dst.contains_link(dead_hop));
+                if cancelled > 0 {
+                    log!(
+                        "server: cancelled {} streams targeting dead hop {}",
+                        cancelled,
+                        dead_hop
+                    );
+                }
+            }
+            Ok(())
+        }
+
         // Response messages that arrived at their destination (empty dst)
         RoutableMessage::SubscribeResult { .. }
         | RoutableMessage::Output { .. }
@@ -405,8 +608,8 @@ async fn handle_routable<T: Transport>(
     }
 }
 
-async fn handle_local<T: Transport>(
-    transport: &mut T,
+async fn handle_local(
+    tx: &mpsc::Sender<Message>,
     message: LocalMessage,
     ctx: &ConnectionContext,
 ) -> Result<()> {
@@ -415,8 +618,8 @@ async fn handle_local<T: Transport>(
             log!("server: shutdown requested by {}", ctx.link_name);
             shutdown_server(&ctx.state).await;
 
-            let _ = transport
-                .write_message(&Message::Local(LocalMessage::Error {
+            let _ = tx
+                .send(Message::Local(LocalMessage::Error {
                     message: "Server shutting down".to_string(),
                 }))
                 .await;
@@ -450,7 +653,7 @@ async fn handle_local<T: Transport>(
                     error: Some(ProtocolError::ServerError(e.to_string())),
                 }),
             };
-            transport.write_message(&response).await?;
+            let _ = tx.send(response).await;
             Ok(())
         }
 
@@ -469,9 +672,9 @@ async fn handle_local<T: Transport>(
                 peer_links: state.peer_links.iter().cloned().collect(),
                 config: state.config.clone(),
             };
-            transport
-                .write_message(&Message::Local(LocalMessage::DebugResult { info }))
-                .await?;
+            let _ = tx
+                .send(Message::Local(LocalMessage::DebugResult { info }))
+                .await;
             Ok(())
         }
 
@@ -480,9 +683,9 @@ async fn handle_local<T: Transport>(
                 let state = ctx.state.read().await;
                 state.registry.list_all()
             };
-            transport
-                .write_message(&Message::Local(LocalMessage::ListAgentsResult { agents }))
-                .await?;
+            let _ = tx
+                .send(Message::Local(LocalMessage::ListAgentsResult { agents }))
+                .await;
             Ok(())
         }
 
@@ -499,7 +702,7 @@ async fn handle_local<T: Transport>(
                     error: Some(ProtocolError::ServerError(e.to_string())),
                 }),
             };
-            transport.write_message(&response).await?;
+            let _ = tx.send(response).await;
             Ok(())
         }
 
@@ -568,7 +771,7 @@ async fn handle_local<T: Transport>(
                     error: Some(e),
                 }),
             };
-            transport.write_message(&response).await?;
+            let _ = tx.send(response).await;
             Ok(())
         }
 
@@ -576,14 +779,14 @@ async fn handle_local<T: Transport>(
         // The peer sends Connect with the same link_name and a fresh token.
         LocalMessage::Connect { link_name, token } => {
             if link_name != ctx.link_name {
-                transport
-                    .write_message(&Message::Local(LocalMessage::ConnectResponse {
+                let _ = tx
+                    .send(Message::Local(LocalMessage::ConnectResponse {
                         success: false,
                         error: Some(ProtocolError::ServerError(
                             "Link name mismatch on re-auth".to_string(),
                         )),
                     }))
-                    .await?;
+                    .await;
                 return Ok(());
             }
 
@@ -609,12 +812,12 @@ async fn handle_local<T: Transport>(
                 let token = match token {
                     Some(t) => t,
                     None => {
-                        transport
-                            .write_message(&Message::Local(LocalMessage::ConnectResponse {
+                        let _ = tx
+                            .send(Message::Local(LocalMessage::ConnectResponse {
                                 success: false,
                                 error: Some(ProtocolError::InvalidCredentials),
                             }))
-                            .await?;
+                            .await;
                         return Ok(());
                     }
                 };
@@ -629,23 +832,23 @@ async fn handle_local<T: Transport>(
                     }
                     Err(e) => {
                         log!("server: re-auth token validation failed: {}", e);
-                        transport
-                            .write_message(&Message::Local(LocalMessage::ConnectResponse {
+                        let _ = tx
+                            .send(Message::Local(LocalMessage::ConnectResponse {
                                 success: false,
                                 error: Some(ProtocolError::InvalidCredentials),
                             }))
-                            .await?;
+                            .await;
                         return Ok(());
                     }
                 }
             }
 
-            transport
-                .write_message(&Message::Local(LocalMessage::ConnectResponse {
+            let _ = tx
+                .send(Message::Local(LocalMessage::ConnectResponse {
                     success: true,
                     error: None,
                 }))
-                .await?;
+                .await;
             Ok(())
         }
 
@@ -742,8 +945,8 @@ async fn handle_local<T: Transport>(
         LocalMessage::ResolveAgent { identifier } => {
             let state = ctx.state.read().await;
             let result = state.registry.resolve(&identifier);
-            transport
-                .write_message(&Message::Local(LocalMessage::ResolveAgentResult {
+            let _ = tx
+                .send(Message::Local(LocalMessage::ResolveAgentResult {
                     error: if result.is_none() {
                         Some(ProtocolError::ServerError(format!(
                             "Agent not found: {}",
@@ -754,7 +957,7 @@ async fn handle_local<T: Transport>(
                     },
                     agent: result,
                 }))
-                .await?;
+                .await;
             Ok(())
         }
 
@@ -770,11 +973,11 @@ async fn handle_local<T: Transport>(
         }
 
         _ => {
-            transport
-                .write_message(&Message::Local(LocalMessage::Error {
+            let _ = tx
+                .send(Message::Local(LocalMessage::Error {
                     message: "Unexpected message".to_string(),
                 }))
-                .await?;
+                .await;
             Ok(())
         }
     }
@@ -785,42 +988,22 @@ mod tests {
     use super::*;
     use crate::config::Config;
     use crate::route::Route;
-    use async_trait::async_trait;
     use std::path::PathBuf;
     use std::sync::Arc;
-    use tokio::sync::{mpsc, Mutex, RwLock};
+    use tokio::sync::{mpsc, RwLock};
     use uuid::Uuid;
 
-    /// Mock transport that captures written messages
-    struct MockTransport {
-        written: Arc<Mutex<Vec<Message>>>,
-    }
-
-    impl MockTransport {
-        fn new() -> (Self, Arc<Mutex<Vec<Message>>>) {
-            let written = Arc::new(Mutex::new(Vec::new()));
-            (
-                Self {
-                    written: written.clone(),
-                },
-                written,
-            )
-        }
-    }
-
-    #[async_trait]
-    impl Transport for MockTransport {
-        async fn read_message(&mut self) -> crate::error::Result<Message> {
-            Err(AmuxError::Io(std::io::Error::new(
-                std::io::ErrorKind::UnexpectedEof,
-                "mock",
-            )))
-        }
-
-        async fn write_message(&mut self, msg: &Message) -> crate::error::Result<()> {
-            self.written.lock().await.push(msg.clone());
-            Ok(())
-        }
+    /// Create a response channel and collect written messages
+    fn mock_tx() -> (mpsc::Sender<Message>, Arc<tokio::sync::Mutex<Vec<Message>>>) {
+        let (tx, mut rx) = mpsc::channel::<Message>(16);
+        let written = Arc::new(tokio::sync::Mutex::new(Vec::new()));
+        let written_clone = written.clone();
+        tokio::spawn(async move {
+            while let Some(msg) = rx.recv().await {
+                written_clone.lock().await.push(msg);
+            }
+        });
+        (tx, written)
     }
 
     fn test_ctx(state: Arc<RwLock<ServerState>>) -> ConnectionContext {
@@ -840,7 +1023,8 @@ mod tests {
     async fn missing_route_sends_error_back() {
         let state = test_state();
         let ctx = test_ctx(state);
-        let (mut transport, written) = MockTransport::new();
+        let (tx, written) = mock_tx();
+        let mut dead_routes = HashSet::new();
 
         let agent_id = Uuid::new_v4();
 
@@ -856,9 +1040,12 @@ mod tests {
             mode: SubscribeMode::Raw,
         };
 
-        handle_routable(&mut transport, src, dst, msg, &ctx)
+        handle_routable(&tx, src, dst, msg, &ctx, &mut dead_routes)
             .await
             .unwrap();
+
+        // Give the collector task a moment
+        tokio::task::yield_now().await;
 
         let msgs = written.lock().await;
         assert_eq!(msgs.len(), 1);
@@ -875,16 +1062,17 @@ mod tests {
         let state = test_state();
 
         // Create a channel and immediately drop the receiver to close it
-        let (tx, rx) = mpsc::channel::<Message>(1);
+        let (route_tx, rx) = mpsc::channel::<Message>(1);
         drop(rx);
 
         {
             let mut s = state.write().await;
-            s.routes.insert("stale-link".to_string(), tx);
+            s.routes.insert("stale-link".to_string(), route_tx);
         }
 
         let ctx = test_ctx(state.clone());
-        let (mut transport, written) = MockTransport::new();
+        let (tx, written) = mock_tx();
+        let mut dead_routes = HashSet::new();
 
         let agent_id = Uuid::new_v4();
 
@@ -897,7 +1085,7 @@ mod tests {
             data: vec![1, 2, 3],
         };
 
-        handle_routable(&mut transport, src, dst, msg, &ctx)
+        handle_routable(&tx, src, dst, msg, &ctx, &mut dead_routes)
             .await
             .unwrap();
 
@@ -906,6 +1094,9 @@ mod tests {
             let s = state.read().await;
             assert!(!s.routes.contains_key("stale-link"));
         }
+
+        // Give the collector task a moment
+        tokio::task::yield_now().await;
 
         // Error should be sent back
         let msgs = written.lock().await;
@@ -922,7 +1113,8 @@ mod tests {
     async fn failed_error_message_not_amplified() {
         let state = test_state();
         let ctx = test_ctx(state);
-        let (mut transport, written) = MockTransport::new();
+        let (tx, written) = mock_tx();
+        let mut dead_routes = HashSet::new();
 
         // Try to forward an Error message through a nonexistent route
         let src = Route::from_link("origin");
@@ -931,9 +1123,11 @@ mod tests {
 
         let msg = RoutableMessage::Error(ProtocolError::NoRouteFound(Route::from_link("x")));
 
-        handle_routable(&mut transport, src, dst, msg, &ctx)
+        handle_routable(&tx, src, dst, msg, &ctx, &mut dead_routes)
             .await
             .unwrap();
+
+        tokio::task::yield_now().await;
 
         // No error should be sent back (amplification prevention)
         let msgs = written.lock().await;
@@ -941,14 +1135,15 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn stream_message_forwarding_failure_suppressed() {
+    async fn stream_message_first_failure_sends_error() {
         let state = test_state();
         let ctx = test_ctx(state);
-        let (mut transport, written) = MockTransport::new();
+        let (tx, written) = mock_tx();
+        let mut dead_routes = HashSet::new();
 
         let agent_id = Uuid::new_v4();
 
-        // Try to forward Output through nonexistent route
+        // First Output failure should send NoRouteFound back
         let src = Route::from_link("origin");
         let mut dst = Route::from_link("somewhere");
         dst.push("nonexistent");
@@ -958,20 +1153,74 @@ mod tests {
             data: vec![1, 2, 3],
         };
 
-        handle_routable(&mut transport, src, dst, msg, &ctx)
+        handle_routable(&tx, src, dst, msg, &ctx, &mut dead_routes)
             .await
             .unwrap();
 
-        // No error should be sent back (stream message suppression)
+        tokio::task::yield_now().await;
+
         let msgs = written.lock().await;
-        assert!(msgs.is_empty(), "expected no messages, got {:?}", *msgs);
+        assert_eq!(msgs.len(), 1, "first failure should send error");
+        let Message::Routable { message, .. } = &msgs[0] else {
+            panic!("expected Routable message");
+        };
+        assert!(matches!(
+            message,
+            RoutableMessage::Error(ProtocolError::NoRouteFound(_))
+        ));
+    }
+
+    #[tokio::test]
+    async fn stream_message_second_failure_suppressed() {
+        let state = test_state();
+        let ctx = test_ctx(state);
+        let (tx, written) = mock_tx();
+        let mut dead_routes = HashSet::new();
+
+        let agent_id = Uuid::new_v4();
+
+        // First failure
+        let src = Route::from_link("origin");
+        let mut dst = Route::from_link("somewhere");
+        dst.push("nonexistent");
+        let msg = RoutableMessage::Output {
+            agent_id,
+            data: vec![1],
+        };
+        handle_routable(&tx, src, dst, msg, &ctx, &mut dead_routes)
+            .await
+            .unwrap();
+
+        // Second failure — same route
+        let src = Route::from_link("origin");
+        let mut dst = Route::from_link("somewhere");
+        dst.push("nonexistent");
+        let msg = RoutableMessage::Output {
+            agent_id,
+            data: vec![2],
+        };
+        handle_routable(&tx, src, dst, msg, &ctx, &mut dead_routes)
+            .await
+            .unwrap();
+
+        tokio::task::yield_now().await;
+
+        // Only one error should have been sent (the first)
+        let msgs = written.lock().await;
+        assert_eq!(
+            msgs.len(),
+            1,
+            "second failure should be suppressed, got {:?}",
+            *msgs
+        );
     }
 
     #[tokio::test]
     async fn no_route_found_includes_traversed_path() {
         let state = test_state();
         let ctx = test_ctx(state);
-        let (mut transport, written) = MockTransport::new();
+        let (tx, written) = mock_tx();
+        let mut dead_routes = HashSet::new();
 
         let agent_id = Uuid::new_v4();
 
@@ -987,9 +1236,11 @@ mod tests {
             mode: SubscribeMode::Raw,
         };
 
-        handle_routable(&mut transport, src, dst, msg, &ctx)
+        handle_routable(&tx, src, dst, msg, &ctx, &mut dead_routes)
             .await
             .unwrap();
+
+        tokio::task::yield_now().await;
 
         let msgs = written.lock().await;
         assert_eq!(msgs.len(), 1);
@@ -1017,7 +1268,7 @@ mod tests {
     async fn connect_reauth_matching_link_succeeds() {
         let state = test_state();
         let ctx = test_ctx(state);
-        let (mut transport, written) = MockTransport::new();
+        let (tx, written) = mock_tx();
 
         // Re-auth with matching link name (non-cloud mode = no token needed)
         let msg = LocalMessage::Connect {
@@ -1025,7 +1276,9 @@ mod tests {
             token: None,
         };
 
-        handle_local(&mut transport, msg, &ctx).await.unwrap();
+        handle_local(&tx, msg, &ctx).await.unwrap();
+
+        tokio::task::yield_now().await;
 
         let msgs = written.lock().await;
         assert_eq!(msgs.len(), 1);
@@ -1040,7 +1293,7 @@ mod tests {
     async fn connect_reauth_mismatched_link_rejected() {
         let state = test_state();
         let ctx = test_ctx(state);
-        let (mut transport, written) = MockTransport::new();
+        let (tx, written) = mock_tx();
 
         // Re-auth with wrong link name
         let msg = LocalMessage::Connect {
@@ -1048,7 +1301,9 @@ mod tests {
             token: None,
         };
 
-        handle_local(&mut transport, msg, &ctx).await.unwrap();
+        handle_local(&tx, msg, &ctx).await.unwrap();
+
+        tokio::task::yield_now().await;
 
         let msgs = written.lock().await;
         assert_eq!(msgs.len(), 1);
@@ -1063,7 +1318,7 @@ mod tests {
     async fn announce_agent_stores_in_registry() {
         let state = test_state();
         let ctx = test_ctx(state.clone());
-        let (mut transport, _written) = MockTransport::new();
+        let (tx, _written) = mock_tx();
 
         let agent_id = Uuid::new_v4();
         let msg = LocalMessage::AnnounceAgent {
@@ -1074,7 +1329,7 @@ mod tests {
             route: Route::empty(),
         };
 
-        handle_local(&mut transport, msg, &ctx).await.unwrap();
+        handle_local(&tx, msg, &ctx).await.unwrap();
 
         let s = state.read().await;
         assert!(s.registry.contains(&agent_id));
@@ -1095,7 +1350,7 @@ mod tests {
     async fn announce_agent_with_route_prepends_link() {
         let state = test_state();
         let ctx = test_ctx(state.clone());
-        let (mut transport, _written) = MockTransport::new();
+        let (tx, _written) = mock_tx();
 
         let agent_id = Uuid::new_v4();
         let msg = LocalMessage::AnnounceAgent {
@@ -1106,7 +1361,7 @@ mod tests {
             route: Route::from_link("host-a"),
         };
 
-        handle_local(&mut transport, msg, &ctx).await.unwrap();
+        handle_local(&tx, msg, &ctx).await.unwrap();
 
         let s = state.read().await;
         let entry = s.registry.get(&agent_id).unwrap();
@@ -1146,7 +1401,7 @@ mod tests {
         }
 
         let ctx = test_ctx(state.clone());
-        let (mut transport, _written) = MockTransport::new();
+        let (tx, _written) = mock_tx();
 
         // Try to announce same agent_id from remote
         let msg = LocalMessage::AnnounceAgent {
@@ -1157,7 +1412,7 @@ mod tests {
             route: Route::empty(),
         };
 
-        handle_local(&mut transport, msg, &ctx).await.unwrap();
+        handle_local(&tx, msg, &ctx).await.unwrap();
 
         // Should still be local (not overwritten)
         let s = state.read().await;
@@ -1186,10 +1441,10 @@ mod tests {
         }
 
         let ctx = test_ctx(state.clone());
-        let (mut transport, _written) = MockTransport::new();
+        let (tx, _written) = mock_tx();
 
         let msg = LocalMessage::WithdrawAgent { agent_id };
-        handle_local(&mut transport, msg, &ctx).await.unwrap();
+        handle_local(&tx, msg, &ctx).await.unwrap();
 
         let s = state.read().await;
         assert!(!s.registry.contains(&agent_id));
@@ -1216,11 +1471,11 @@ mod tests {
         }
 
         let ctx = test_ctx(state.clone());
-        let (mut transport, _written) = MockTransport::new();
+        let (tx, _written) = mock_tx();
 
         // Withdraw from "test-link" but agent is stored from "other-link"
         let msg = LocalMessage::WithdrawAgent { agent_id };
-        handle_local(&mut transport, msg, &ctx).await.unwrap();
+        handle_local(&tx, msg, &ctx).await.unwrap();
 
         // Should still be there (link mismatch)
         let s = state.read().await;
@@ -1231,7 +1486,7 @@ mod tests {
     async fn duplicate_announce_overwrites() {
         let state = test_state();
         let ctx = test_ctx(state.clone());
-        let (mut transport, _written) = MockTransport::new();
+        let (tx, _written) = mock_tx();
 
         let agent_id = Uuid::new_v4();
 
@@ -1243,7 +1498,7 @@ mod tests {
             working_dir: PathBuf::from("/first"),
             route: Route::empty(),
         };
-        handle_local(&mut transport, msg, &ctx).await.unwrap();
+        handle_local(&tx, msg, &ctx).await.unwrap();
 
         // Second announce with same agent_id
         let msg = LocalMessage::AnnounceAgent {
@@ -1253,7 +1508,7 @@ mod tests {
             working_dir: PathBuf::from("/second"),
             route: Route::empty(),
         };
-        handle_local(&mut transport, msg, &ctx).await.unwrap();
+        handle_local(&tx, msg, &ctx).await.unwrap();
 
         let s = state.read().await;
         let entry = s.registry.get(&agent_id).unwrap();
@@ -1282,12 +1537,14 @@ mod tests {
         }
 
         let ctx = test_ctx(state);
-        let (mut transport, written) = MockTransport::new();
+        let (tx, written) = mock_tx();
 
         let msg = LocalMessage::ResolveAgent {
             identifier: "my-agent".to_string(),
         };
-        handle_local(&mut transport, msg, &ctx).await.unwrap();
+        handle_local(&tx, msg, &ctx).await.unwrap();
+
+        tokio::task::yield_now().await;
 
         let msgs = written.lock().await;
         assert_eq!(msgs.len(), 1);
@@ -1303,12 +1560,14 @@ mod tests {
     async fn resolve_agent_not_found() {
         let state = test_state();
         let ctx = test_ctx(state);
-        let (mut transport, written) = MockTransport::new();
+        let (tx, written) = mock_tx();
 
         let msg = LocalMessage::ResolveAgent {
             identifier: "nonexistent".to_string(),
         };
-        handle_local(&mut transport, msg, &ctx).await.unwrap();
+        handle_local(&tx, msg, &ctx).await.unwrap();
+
+        tokio::task::yield_now().await;
 
         let msgs = written.lock().await;
         assert_eq!(msgs.len(), 1);

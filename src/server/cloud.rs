@@ -1,4 +1,4 @@
-use super::connection::{connection_loop_with_refresh, ConnectionContext};
+use super::connection::{connection_loop, reader_loop, writer_loop, ConnectionContext};
 use super::routing::{handle_peer_disconnect, send_initial_announcements};
 use super::ServerState;
 use crate::cloud::{CloudConnection, CloudError};
@@ -6,6 +6,7 @@ use crate::config::Config;
 use crate::error::AmuxError;
 use crate::message::Message;
 use crate::state::State;
+use crate::transport::TransportSplit;
 use std::sync::Arc;
 use std::time::Duration;
 use tokio::sync::{mpsc, RwLock};
@@ -102,17 +103,25 @@ async fn run_cloud_connection(
         }
     };
 
-    let (mut transport, token_refresh) = conn.into_parts();
+    let (transport, token_refresh) = conn.into_parts();
     let link_name = token_refresh.link_name.clone();
 
     let (outgoing_tx, outgoing_rx) = mpsc::channel::<Message>(256);
     {
         let mut state = state.write().await;
-        state.routes.insert(link_name.clone(), outgoing_tx);
+        state.routes.insert(link_name.clone(), outgoing_tx.clone());
         state.peer_links.insert(link_name.clone());
         send_initial_announcements(&state, &link_name);
     }
     log!("cloud: route established as {}", link_name);
+
+    // Split transport into reader/writer halves
+    let (reader, writer) = transport.into_split();
+
+    // Spawn reader and writer tasks
+    let (incoming_tx, incoming_rx) = mpsc::channel(256);
+    let reader_handle = tokio::spawn(reader_loop(reader, incoming_tx));
+    let writer_handle = tokio::spawn(writer_loop(writer, outgoing_rx));
 
     let ctx = ConnectionContext {
         state: state.clone(),
@@ -120,13 +129,17 @@ async fn run_cloud_connection(
         link_name: link_name.clone(),
     };
 
-    let result =
-        connection_loop_with_refresh(&mut transport, outgoing_rx, ctx, Some(token_refresh)).await;
+    let result = connection_loop(incoming_rx, outgoing_tx, ctx, Some(token_refresh)).await;
 
     {
         let mut state = state.write().await;
         handle_peer_disconnect(&mut state, &link_name);
     }
+
+    // Let writer drain, then abort reader
+    let _ = writer_handle.await;
+    reader_handle.abort();
+
     log!("cloud: route {} removed", link_name);
 
     match result {

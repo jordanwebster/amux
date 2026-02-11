@@ -1,4 +1,7 @@
-use super::{LengthPrefixed, Transport, MAX_FRAME_SIZE};
+use super::framing::{FrameReader, FrameWriter};
+use super::{
+    LengthPrefixed, MessageReader, MessageWriter, Transport, TransportSplit, MAX_FRAME_SIZE,
+};
 use crate::error::{AmuxError, Result};
 use crate::message::Message;
 use async_trait::async_trait;
@@ -39,5 +42,44 @@ where
     async fn write_message(&mut self, msg: &Message) -> Result<()> {
         let data = msg.encode().map_err(AmuxError::SerializationEncode)?;
         self.framed.write_frame(&data).await
+    }
+}
+
+/// Read half of a split TCP transport
+pub struct TcpMessageReader<S> {
+    reader: FrameReader<tokio::io::ReadHalf<S>>,
+}
+
+#[async_trait]
+impl<S: AsyncRead + Unpin + Send> MessageReader for TcpMessageReader<S> {
+    async fn read_message(&mut self) -> Result<Message> {
+        let data = self.reader.read_frame(MAX_FRAME_SIZE).await?;
+        Message::decode(&data).map_err(AmuxError::SerializationDecode)
+    }
+}
+
+/// Write half of a split TCP transport
+pub struct TcpMessageWriter<S> {
+    writer: FrameWriter<tokio::io::WriteHalf<S>>,
+}
+
+#[async_trait]
+impl<S: AsyncWrite + Unpin + Send> MessageWriter for TcpMessageWriter<S> {
+    async fn write_message(&mut self, msg: &Message) -> Result<()> {
+        let data = msg.encode().map_err(AmuxError::SerializationEncode)?;
+        self.writer.write_frame(&data).await
+    }
+}
+
+impl<S> TransportSplit for TcpTransport<S>
+where
+    S: AsyncRead + AsyncWrite + Unpin + Send + Sync + 'static,
+{
+    type Reader = TcpMessageReader<S>;
+    type Writer = TcpMessageWriter<S>;
+
+    fn into_split(self) -> (Self::Reader, Self::Writer) {
+        let (reader, writer) = self.framed.into_split();
+        (TcpMessageReader { reader }, TcpMessageWriter { writer })
     }
 }

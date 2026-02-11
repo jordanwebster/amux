@@ -1,10 +1,14 @@
-use super::connection::{connection_loop, ConnectionContext};
+use super::connection::{
+    cancel_streams_matching, connection_loop, reader_loop, writer_loop, ConnectionContext,
+};
 use super::routing::{handle_peer_disconnect, send_initial_announcements};
 use super::ServerState;
 use crate::error::{AmuxError, Result};
 use crate::message::{LocalMessage, Message, ProtocolError};
 use crate::route::generate_server_link;
-use crate::transport::{TcpTransport, Transport, UnixTransport, WebSocketTransport};
+use crate::transport::{
+    TcpTransport, Transport, TransportSplit, UnixTransport, WebSocketTransport,
+};
 use std::sync::Arc;
 use tokio::net::{TcpStream, UnixStream};
 use tokio::sync::{mpsc, RwLock};
@@ -211,7 +215,9 @@ where
     ))
 }
 
-pub(super) async fn accept_connection<T: Transport>(
+/// Accept a connection with transport split: handshake, then spawn reader/writer tasks
+/// and run the connection loop on channels only.
+pub(super) async fn accept_connection<T: TransportSplit>(
     mut transport: T,
     state: Arc<RwLock<ServerState>>,
     event_tx: mpsc::Sender<super::SessionEvent>,
@@ -219,6 +225,7 @@ pub(super) async fn accept_connection<T: Transport>(
     is_local: bool,
     log_label: &str,
 ) -> Result<()> {
+    // Handshake uses the transport directly (safe — no select! involved)
     let (link_name, outgoing_rx) =
         match accept_handshake(&mut transport, &state, verify_token).await {
             Ok(result) => result,
@@ -236,27 +243,54 @@ pub(super) async fn accept_connection<T: Transport>(
         send_initial_announcements(&s, &link_name);
     }
 
+    // Split transport into reader/writer halves
+    let (reader, writer) = transport.into_split();
+
+    // Get the route's tx for the response channel
+    let response_tx = {
+        let s = state.read().await;
+        s.routes.get(&link_name).unwrap().clone()
+    };
+
+    // Spawn reader and writer tasks
+    let (incoming_tx, incoming_rx) = mpsc::channel(256);
+    let reader_handle = tokio::spawn(reader_loop(reader, incoming_tx));
+    let writer_handle = tokio::spawn(writer_loop(writer, outgoing_rx));
+
     let ctx = ConnectionContext {
         state: state.clone(),
         event_tx,
         link_name: link_name.clone(),
     };
 
-    let result = connection_loop(&mut transport, outgoing_rx, ctx).await;
+    let response_tx_cleanup = response_tx.clone();
+    let result = connection_loop(incoming_rx, response_tx, ctx, None).await;
 
+    // Error write-back through the channel (writer task may still be alive)
     if let Err(ref e) = result {
         log!("server: {} {} error: {}", log_label, link_name, e);
-        let _ = transport.write_message(&Message::from(e)).await;
+        let _ = response_tx_cleanup.send(Message::from(e)).await;
     }
 
+    // Cleanup: remove route, cancel streams, drop sender clones so writer task exits
     {
         let mut s = state.write().await;
         if !is_local {
             handle_peer_disconnect(&mut s, &link_name);
         } else {
             s.routes.remove(&link_name);
+            // Cancel streams spawned for this local connection so their sender
+            // clones are dropped and the writer task can exit
+            cancel_streams_matching(&mut s, |entry| entry.link == link_name);
         }
     }
+    // Drop last sender clone → writer rx returns None → writer exits
+    drop(response_tx_cleanup);
+
+    // Await writer (let it drain), then abort reader
+    let _ = writer_handle.await;
+    reader_handle.abort();
+
     log!("server: {} connection {} closed", log_label, link_name);
 
     result
@@ -292,7 +326,7 @@ pub(super) async fn unix_accept(
 ///
 /// Generic over transport type to support both plain TCP and TLS connections.
 /// Set `verify_token` to true for cloud server mode (validates JWT in Connect message).
-pub(super) async fn tcp_accept<T: Transport>(
+pub(super) async fn tcp_accept<T: TransportSplit>(
     transport: T,
     state: Arc<RwLock<ServerState>>,
     event_tx: mpsc::Sender<super::SessionEvent>,
@@ -339,29 +373,44 @@ pub(super) async fn tcp_connect(
     let (outgoing_tx, outgoing_rx) = mpsc::channel::<Message>(256);
     {
         let mut state = state.write().await;
-        state.routes.insert(link_name.clone(), outgoing_tx);
+        state.routes.insert(link_name.clone(), outgoing_tx.clone());
         state.peer_links.insert(link_name.clone());
         send_initial_announcements(&state, &link_name);
     }
 
+    // Split transport into reader/writer halves
+    let (reader, writer) = transport.into_split();
+
     let state = state.clone();
     let link_name_clone = link_name.clone();
     tokio::spawn(async move {
-        let mut transport = transport;
+        // Spawn reader and writer tasks
+        let (incoming_tx, incoming_rx) = mpsc::channel(256);
+        let reader_handle = tokio::spawn(reader_loop(reader, incoming_tx));
+        let writer_handle = tokio::spawn(writer_loop(writer, outgoing_rx));
+
         let ctx = ConnectionContext {
             state: state.clone(),
             event_tx,
             link_name: link_name_clone.clone(),
         };
-        let result = connection_loop(&mut transport, outgoing_rx, ctx).await;
+        let result = connection_loop(incoming_rx, outgoing_tx.clone(), ctx, None).await;
 
         if let Err(ref e) = result {
             log!("server: tcp peer {} error: {}", link_name_clone, e);
-            let _ = transport.write_message(&Message::from(e)).await;
+            let _ = outgoing_tx.send(Message::from(e)).await;
         }
 
         let mut state = state.write().await;
         handle_peer_disconnect(&mut state, &link_name_clone);
+
+        // Drop all sender clones so writer drains and exits
+        drop(outgoing_tx);
+        drop(state);
+
+        let _ = writer_handle.await;
+        reader_handle.abort();
+
         log!("server: tcp peer {} closed", link_name_clone);
     });
 
