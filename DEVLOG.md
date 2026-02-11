@@ -38,6 +38,39 @@ One paragraph describing what was done.
 
 ---
 
+## 2026-02-11: Fix remote attach hang when agent process exits
+
+### Summary
+
+Fixed a bug where clients attached to a remote agent (through a TCP peer connection) would hang indefinitely when the agent process died. The root cause was that `AgentEnded` was a `LocalMessage` with no routing information, so it could not be forwarded across server hops. Additionally, a race condition in the `SessionEvent::Ended` handler could cancel streaming tasks before they had a chance to send `AgentEnded` at all.
+
+### Changes
+
+- `src/message.rs` — Moved `AgentEnded { agent_id }` from `LocalMessage` to `RoutableMessage`
+- `src/server/connection.rs` — Streaming tasks now send `Routable AgentEnded` with src/dst routing; added `AgentEnded` to route-failure suppression and empty-dst drop arms; removed dead `LocalMessage::AgentEnded` handler
+- `src/server/mod.rs` — Removed `active_streams.remove(&agent_id)` from `SessionEvent::Ended` handler to eliminate race with buffer close
+- `src/session.rs` — Close `log_buffer` alongside `buffer` in child waiter task so structured stream tasks see EOF
+- `src/client.rs` — Match on `RoutableMessage::AgentEnded` instead of `LocalMessage::AgentEnded`
+- `test-agent/src/main.rs` — Added `exit` command (process exits cleanly after echoing)
+- `e2e-runner/src/parser.rs` — Preserve blank lines within output groups; strip trailing blank lines
+- `e2e-tests/local_agent_ended.test` — New E2E test: local attach receives `[session ended]` when agent exits
+- `e2e-tests/remote_agent_ended.test` — New E2E test: remote attach receives `[session ended]` when agent exits
+
+### Decisions Made
+
+- AgentEnded is semantically an in-band stream EOF, so it belongs in `RoutableMessage` alongside `Output` and `StructuredOutput`
+- Only streaming tasks emit AgentEnded (after draining all output); subscriber disconnect via `cancel_rx` does not emit it
+- Stream cleanup is task-local via `cleanup_stream` rather than centralized in the event handler
+- E2E test uses `exit` command in test-agent rather than signal-based killing, keeping the test framework simple
+
+### Verification
+
+- `cargo check && cargo fmt && cargo clippy` — clean
+- `cargo test` — 95 tests pass
+- `cargo run -p e2e-runner -- run` — 10 E2E tests pass (8 existing + 2 new)
+
+---
+
 ## 2026-02-11: Claude Code plugin with auto-install and fast-path hooks
 
 ### Summary

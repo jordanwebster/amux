@@ -628,7 +628,7 @@ async fn run_attached(
                         io::stdout().write_all(&data).ok();
                         io::stdout().flush().ok();
                     }
-                    Ok(Message::Local(LocalMessage::AgentEnded)) => {
+                    Ok(Message::Routable { message: RoutableMessage::AgentEnded { .. }, .. }) => {
                         log!("client: agent ended");
                         break;
                     }

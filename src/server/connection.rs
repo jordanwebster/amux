@@ -294,7 +294,9 @@ async fn handle_routable(
                 RoutableMessage::Error(_) => {
                     log!("server: dropping failed routable error to avoid amplification");
                 }
-                RoutableMessage::Output { .. } | RoutableMessage::StructuredOutput { .. } => {
+                RoutableMessage::Output { .. }
+                | RoutableMessage::StructuredOutput { .. }
+                | RoutableMessage::AgentEnded { .. } => {
                     if dead_routes.insert(next_hop.to_string()) {
                         // First failure for this route — notify source
                         let mut traversed = original_src.clone();
@@ -443,7 +445,11 @@ async fn handle_routable(
                                             return;
                                         }
                                     }
-                                    let _ = tx.send(Message::Local(LocalMessage::AgentEnded)).await;
+                                    let _ = tx.send(Message::Routable {
+                                        src: reply_src.clone(),
+                                        dst: reply_dst.clone(),
+                                        message: RoutableMessage::AgentEnded { agent_id },
+                                    }).await;
                                 } => {}
                                 _ = cancel_rx => {
                                     log!("server: structured stream {} cancelled", stream_id);
@@ -510,7 +516,11 @@ async fn handle_routable(
                                                     return;
                                                 }
                                             }
-                                            let _ = tx.send(Message::Local(LocalMessage::AgentEnded)).await;
+                                            let _ = tx.send(Message::Routable {
+                                                src: reply_src.clone(),
+                                                dst: reply_dst.clone(),
+                                                message: RoutableMessage::AgentEnded { agent_id },
+                                            }).await;
                                         } => {}
                                         _ = cancel_rx => {
                                             log!("server: raw stream {} cancelled", stream_id);
@@ -598,6 +608,7 @@ async fn handle_routable(
         RoutableMessage::SubscribeResult { .. }
         | RoutableMessage::Output { .. }
         | RoutableMessage::StructuredOutput { .. }
+        | RoutableMessage::AgentEnded { .. }
         | RoutableMessage::Error(_) => {
             log!(
                 "server: routable response arrived with empty dst, dropping: {:?}",
@@ -958,17 +969,6 @@ async fn handle_local(
                     agent: result,
                 }))
                 .await;
-            Ok(())
-        }
-
-        // AgentEnded is sent by stream tasks to the subscribing link's outgoing channel.
-        // On direct clients this signals session end. On peer links it's harmless — the peer
-        // will propagate end-of-session to its own subscribers independently.
-        LocalMessage::AgentEnded => {
-            log!(
-                "server: received AgentEnded on link {} (no-op on peer)",
-                ctx.link_name
-            );
             Ok(())
         }
 

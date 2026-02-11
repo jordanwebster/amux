@@ -115,6 +115,7 @@ impl LocalAgentSession {
             Arc::new(Mutex::new(Some(master)));
         let current_size: Arc<Mutex<(u16, u16)>> = Arc::new(Mutex::new((req.rows, req.cols)));
         let buffer = Arc::new(MultiplexBuffer::new(MAX_REPLAY_BUFFER));
+        let log_buffer = Arc::new(MultiplexLogBuffer::new(MAX_LOG_ENTRIES));
         let (input_tx, mut input_rx) = mpsc::channel::<Vec<u8>>(256);
 
         // Task: Read from PTY, write to multiplex buffer
@@ -151,6 +152,7 @@ impl LocalAgentSession {
         let session_id = req.agent_id;
         let master_clone = master.clone();
         let buffer_clone = buffer.clone();
+        let log_buffer_clone = log_buffer.clone();
         tokio::task::spawn_blocking(move || {
             let status = child.wait();
             log!("session [{}]: command exited: {:?}", session_id, status);
@@ -164,9 +166,10 @@ impl LocalAgentSession {
                     log!("session [{}]: PTY master dropped", session_id);
                 }
 
-                // Close the multiplex buffer to disconnect all clients
+                // Close the multiplex buffers to disconnect all clients
                 buffer_clone.close().await;
-                log!("session [{}]: multiplex buffer closed", session_id);
+                log_buffer_clone.close().await;
+                log!("session [{}]: multiplex buffers closed", session_id);
 
                 // Notify server
                 let _ = event_tx.send(SessionEvent::Ended(session_id)).await;
@@ -180,7 +183,7 @@ impl LocalAgentSession {
             working_dir: req.working_dir.clone(),
             pty_master: master,
             buffer,
-            log_buffer: Arc::new(MultiplexLogBuffer::new(MAX_LOG_ENTRIES)),
+            log_buffer,
             transcript_tailer: Mutex::new(None),
             input_tx,
             current_size,

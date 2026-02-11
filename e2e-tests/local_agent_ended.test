@@ -1,0 +1,20 @@
+# test: local_agent_ended
+# description: Local attach receives [session ended] when agent process exits
+
+## Environment
+
+terminal:
+  name: T1
+
+## Test
+
+@T1
+> amux new-agent -t exit-test test-agent
+> hello
+hello
+echo: hello
+> exit
+exit
+echo: exit
+
+[session ended]

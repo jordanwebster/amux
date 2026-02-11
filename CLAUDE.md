@@ -203,7 +203,7 @@ cargo check             # Fast type-check
 cargo fmt               # Format code
 cargo clippy            # Lint (fix any warnings)
 cargo test              # Run all tests
-cargo run -p e2e-runner -- run   # Run E2E tests
+cargo build --workspace && cargo run -p e2e-runner -- run   # Build all binaries then run E2E tests (workspace build avoids stale amux/test-agent binaries)
 ```
 
 **After completing a chunk of work:**

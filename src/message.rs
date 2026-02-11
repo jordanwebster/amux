@@ -155,6 +155,9 @@ pub enum RoutableMessage {
         agent_id: Uuid,
         response: PermissionResponse,
     },
+    AgentEnded {
+        agent_id: Uuid,
+    },
     Error(ProtocolError),
 }
 
@@ -170,7 +173,6 @@ pub enum LocalMessage {
         success: bool,
         error: Option<ProtocolError>,
     },
-    AgentEnded,
     AnnounceAgent {
         agent_id: Uuid,
         alias: Option<String>,

@@ -1,0 +1,59 @@
+# test: remote_agent_ended
+# description: Remote attach receives [session ended] when agent process exits
+
+## Environment
+
+config:
+  name: server_a
+  host_name: host-a
+
+config:
+  name: server_b
+  host_name: host-b
+
+terminal:
+  name: Ta
+  config: server_a
+
+terminal:
+  name: Tb
+  config: server_b
+
+## Test
+
+# Create agent on server A
+@Ta
+> amux new-agent -t ended-test test-agent
+> hello
+hello
+echo: hello
+
+# Server B connects to server A
+@Tb
+> amux connect 127.0.0.1:$server_a.tcp_port
+Connected to 127.0.0.1:$server_a.tcp_port
+
+@@sleep 20
+
+# Attach from server B to the remote agent
+@Tb
+> amux attach -t ended-test
+hello
+echo: hello
+
+# Kill the agent by sending "exit" command (from local terminal)
+@Ta
+> exit
+exit
+echo: exit
+
+[session ended]
+
+# Remote terminal should also see session ended
+@@sleep 50
+
+@Tb
+exit
+echo: exit
+
+[session ended]

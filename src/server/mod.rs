@@ -177,8 +177,6 @@ impl Server {
                         let mut state = state.write().await;
                         state.registry.remove(&agent_id);
                         state.agents.remove(&agent_id);
-                        // Cancel all active streams for this agent (dropping cancel_tx triggers shutdown)
-                        state.active_streams.remove(&agent_id);
                         broadcast_to_peers(
                             &mut state,
                             &crate::message::LocalMessage::WithdrawAgent { agent_id },

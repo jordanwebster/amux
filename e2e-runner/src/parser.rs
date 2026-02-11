@@ -151,8 +151,14 @@ pub fn parse_test_content(content: &str) -> Result<TestCase, ParseError> {
     let flush_pending_output = |pending_output_lines: &mut Vec<String>,
                                 steps: &mut Vec<TestStep>| {
         if !pending_output_lines.is_empty() {
-            let output = pending_output_lines.join("\n");
-            steps.push(TestStep::ExpectOutput(output));
+            // Strip trailing blank lines (they're group separators, not content)
+            while pending_output_lines.last().is_some_and(|s| s.is_empty()) {
+                pending_output_lines.pop();
+            }
+            if !pending_output_lines.is_empty() {
+                let output = pending_output_lines.join("\n");
+                steps.push(TestStep::ExpectOutput(output));
+            }
             pending_output_lines.clear();
         }
     };
@@ -260,8 +266,14 @@ pub fn parse_test_content(content: &str) -> Result<TestCase, ParseError> {
                 }
             }
             Section::Test => {
-                // Skip empty lines and comments
-                if trimmed.is_empty() || trimmed.starts_with('#') {
+                if trimmed.starts_with('#') {
+                    continue;
+                }
+                // Blank lines: preserve within output groups, skip otherwise
+                if trimmed.is_empty() {
+                    if !pending_output_lines.is_empty() {
+                        pending_output_lines.push(String::new());
+                    }
                     continue;
                 }
 
