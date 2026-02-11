@@ -224,7 +224,18 @@ pub(super) async fn handle_message(
     ctx: &ConnectionContext,
     dead_routes: &mut HashSet<String>,
 ) -> Result<()> {
-    log!("server: {} received {:?}", ctx.link_name, msg);
+    if !matches!(
+        &msg,
+        Message::Routable {
+            message: RoutableMessage::InputBytes { .. }
+                | RoutableMessage::SubmitInput { .. }
+                | RoutableMessage::Output { .. }
+                | RoutableMessage::StructuredOutput { .. },
+            ..
+        }
+    ) {
+        log!("server: {} received {:?}", ctx.link_name, msg);
+    }
 
     match msg {
         Message::Routable { src, dst, message } => {
