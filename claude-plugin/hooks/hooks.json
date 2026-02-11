@@ -1,16 +1,18 @@
 {
-  "SessionStart": [{ "hooks": [{ "type": "command", "command": "amux hooks claude session-start" }] }],
-  "SessionEnd": [{ "hooks": [{ "type": "command", "command": "amux hooks claude session-end" }] }],
-  "PreToolUse": [{ "hooks": [{ "type": "command", "command": "amux hooks claude pre-tool-use" }] }],
-  "PostToolUse": [{ "hooks": [{ "type": "command", "command": "amux hooks claude post-tool-use" }] }],
-  "PostToolUseFailure": [{ "hooks": [{ "type": "command", "command": "amux hooks claude post-tool-use-failure" }] }],
-  "PermissionRequest": [{ "hooks": [{ "type": "command", "command": "amux hooks claude permission-request" }] }],
-  "UserPromptSubmit": [{ "hooks": [{ "type": "command", "command": "amux hooks claude user-prompt-submit" }] }],
-  "Notification": [{ "hooks": [{ "type": "command", "command": "amux hooks claude notification" }] }],
-  "Stop": [{ "hooks": [{ "type": "command", "command": "amux hooks claude stop" }] }],
-  "SubagentStart": [{ "hooks": [{ "type": "command", "command": "amux hooks claude subagent-start" }] }],
-  "SubagentStop": [{ "hooks": [{ "type": "command", "command": "amux hooks claude subagent-stop" }] }],
-  "TeammateIdle": [{ "hooks": [{ "type": "command", "command": "amux hooks claude teammate-idle" }] }],
-  "TaskCompleted": [{ "hooks": [{ "type": "command", "command": "amux hooks claude task-completed" }] }],
-  "PreCompact": [{ "hooks": [{ "type": "command", "command": "amux hooks claude pre-compact" }] }]
+  "hooks": {
+    "SessionStart": [{ "hooks": [{ "type": "command", "command": "amux hooks claude session-start" }] }],
+    "SessionEnd": [{ "hooks": [{ "type": "command", "command": "amux hooks claude session-end" }] }],
+    "PreToolUse": [{ "hooks": [{ "type": "command", "command": "amux hooks claude pre-tool-use" }] }],
+    "PostToolUse": [{ "hooks": [{ "type": "command", "command": "amux hooks claude post-tool-use" }] }],
+    "PostToolUseFailure": [{ "hooks": [{ "type": "command", "command": "amux hooks claude post-tool-use-failure" }] }],
+    "PermissionRequest": [{ "hooks": [{ "type": "command", "command": "amux hooks claude permission-request" }] }],
+    "UserPromptSubmit": [{ "hooks": [{ "type": "command", "command": "amux hooks claude user-prompt-submit" }] }],
+    "Notification": [{ "hooks": [{ "type": "command", "command": "amux hooks claude notification" }] }],
+    "Stop": [{ "hooks": [{ "type": "command", "command": "amux hooks claude stop" }] }],
+    "SubagentStart": [{ "hooks": [{ "type": "command", "command": "amux hooks claude subagent-start" }] }],
+    "SubagentStop": [{ "hooks": [{ "type": "command", "command": "amux hooks claude subagent-stop" }] }],
+    "TeammateIdle": [{ "hooks": [{ "type": "command", "command": "amux hooks claude teammate-idle" }] }],
+    "TaskCompleted": [{ "hooks": [{ "type": "command", "command": "amux hooks claude task-completed" }] }],
+    "PreCompact": [{ "hooks": [{ "type": "command", "command": "amux hooks claude pre-compact" }] }]
+  }
 }
