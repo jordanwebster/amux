@@ -120,9 +120,8 @@ enum ClaudeHookEvent {
     Stop,
     SubagentStart,
     SubagentStop,
-    TeammateIdle,
-    TaskCompleted,
     PreCompact,
+    Setup,
 }
 
 fn is_handled_hook_event(event: &ClaudeHookEvent) -> bool {

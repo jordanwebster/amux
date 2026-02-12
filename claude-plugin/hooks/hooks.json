@@ -11,8 +11,7 @@
     "Stop": [{ "hooks": [{ "type": "command", "command": "amux hooks claude stop" }] }],
     "SubagentStart": [{ "hooks": [{ "type": "command", "command": "amux hooks claude subagent-start" }] }],
     "SubagentStop": [{ "hooks": [{ "type": "command", "command": "amux hooks claude subagent-stop" }] }],
-    "TeammateIdle": [{ "hooks": [{ "type": "command", "command": "amux hooks claude teammate-idle" }] }],
-    "TaskCompleted": [{ "hooks": [{ "type": "command", "command": "amux hooks claude task-completed" }] }],
-    "PreCompact": [{ "hooks": [{ "type": "command", "command": "amux hooks claude pre-compact" }] }]
+    "PreCompact": [{ "hooks": [{ "type": "command", "command": "amux hooks claude pre-compact" }] }],
+    "Setup": [{ "hooks": [{ "type": "command", "command": "amux hooks claude setup" }] }]
   }
 }
