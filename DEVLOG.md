@@ -38,6 +38,25 @@ One paragraph describing what was done.
 
 ---
 
+## 2026-02-12: Fix debug command to show global state after multi-tenancy
+
+### Summary
+
+The `amux debug` command was broken on cloud servers after multi-user tenancy was added. It read from `ctx.user_state` (per-user state), so it only showed agents/routes/peers for the requesting user instead of global server state. Fixed by iterating all users in `state.users` and aggregating counts. Also removed per-route/per-link name lists (not useful for debugging) and added `user_count` and `peer_link_count` fields.
+
+### Changes
+
+- `src/message.rs` — `ServerDebugInfo`: removed `routes: Vec<String>` and `peer_links: Vec<String>`, added `user_count: usize` and `peer_link_count: usize`
+- `src/server/connection.rs` — `Debug` handler now iterates all users in `state.users` to produce global aggregates instead of reading a single user's state
+
+### Verification
+
+- `cargo check && cargo fmt && cargo clippy` — clean
+- `cargo test` — 100 tests pass
+- E2E tests — 10/10 pass
+
+---
+
 ## 2026-02-12: Fix e2e test server cleanup
 
 ### Summary

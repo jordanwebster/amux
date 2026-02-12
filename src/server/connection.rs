@@ -688,25 +688,30 @@ async fn handle_local(
         }
 
         LocalMessage::Debug => {
-            let (cloud_mode, use_cloud_mode, config) = {
-                let state = ctx.state.read().await;
-                let use_cloud_mode = State::load(&state.config.state_path)
-                    .map(|s| s.cloud.use_cloud_mode == Some(true))
-                    .unwrap_or(false);
-                (state.cloud_mode, use_cloud_mode, state.config.clone())
-            };
-            let info = {
-                let us = ctx.user_state.read().await;
-                ServerDebugInfo {
-                    is_cloud_server: cloud_mode,
-                    use_cloud_mode,
-                    agent_count: us.agents.len(),
-                    remote_agent_count: us.registry.count_remote(),
-                    route_count: us.routes.len(),
-                    routes: us.routes.keys().cloned().collect(),
-                    peer_links: us.peer_links.iter().cloned().collect(),
-                    config,
-                }
+            let state = ctx.state.read().await;
+            let use_cloud_mode = State::load(&state.config.state_path)
+                .map(|s| s.cloud.use_cloud_mode == Some(true))
+                .unwrap_or(false);
+            let mut agent_count = 0;
+            let mut remote_agent_count = 0;
+            let mut route_count = 0;
+            let mut peer_link_count = 0;
+            for us in state.users.values() {
+                let us = us.read().await;
+                agent_count += us.agents.len();
+                remote_agent_count += us.registry.count_remote();
+                route_count += us.routes.len();
+                peer_link_count += us.peer_links.len();
+            }
+            let info = ServerDebugInfo {
+                is_cloud_server: state.cloud_mode,
+                use_cloud_mode,
+                user_count: state.users.len(),
+                agent_count,
+                remote_agent_count,
+                route_count,
+                peer_link_count,
+                config: state.config.clone(),
             };
             let _ = tx
                 .send(Message::Local(LocalMessage::DebugResult { info }))

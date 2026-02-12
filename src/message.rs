@@ -268,18 +268,18 @@ pub struct AgentInfo {
     pub route: Option<Route>,
 }
 
-/// Debug information about server state
+/// Debug information about server state (aggregated across all users)
 #[derive(Serialize, Deserialize, Debug, Clone)]
 pub struct ServerDebugInfo {
     /// Whether this server is running as a cloud server (TLS + token auth)
     pub is_cloud_server: bool,
     /// Whether cloud mode is enabled in state (connect to cloud)
     pub use_cloud_mode: bool,
+    pub user_count: usize,
     pub agent_count: usize,
     pub remote_agent_count: usize,
     pub route_count: usize,
-    pub routes: Vec<String>,
-    pub peer_links: Vec<String>,
+    pub peer_link_count: usize,
     pub config: Config,
 }
 
