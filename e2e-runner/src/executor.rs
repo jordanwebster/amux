@@ -256,14 +256,35 @@ state_path: "{}"
             })
             .collect();
 
-        // Active terminals (interactive sessions)
+        // Execute test steps, then clean up servers regardless of result
+        let result =
+            self.execute_steps(&test_case.steps, &terminal_configs, &config_paths, &var_ctx);
+
+        // Cleanup: kill background servers spawned by `ensure_server_running`
+        for config_path in config_paths.values() {
+            let _ = Command::new(&self.config.amux_binary)
+                .args(["--config", &config_path.to_string_lossy(), "kill-server"])
+                .output();
+        }
+        for socket_path in var_ctx.configs.values() {
+            let _ = std::fs::remove_file(socket_path);
+        }
+
+        result
+    }
+
+    fn execute_steps(
+        &self,
+        steps: &[TestStep],
+        terminal_configs: &HashMap<String, (String, PathBuf)>,
+        config_paths: &HashMap<String, PathBuf>,
+        var_ctx: &VariableContext,
+    ) -> Result<(), String> {
         let mut active_terminals: HashMap<String, TestTerminal> = HashMap::new();
-        // Output from oneshot commands (keyed by terminal name)
         let mut oneshot_outputs: HashMap<String, String> = HashMap::new();
         let mut current_terminal: Option<String> = None;
 
-        // Execute test steps
-        for step in &test_case.steps {
+        for step in steps {
             match step {
                 TestStep::SwitchTerminal(name) => {
                     current_terminal = Some(name.clone());
@@ -280,19 +301,13 @@ state_path: "{}"
                         .get(config_name)
                         .ok_or(format!("Unknown config: {}", config_name))?;
 
-                    // Apply variable substitution to input
                     let input_substituted = var_ctx.substitute(input);
-
-                    // Check if this is an amux command
                     let is_amux_command = input_substituted.starts_with("amux ");
 
                     if is_amux_command && !active_terminals.contains_key(term_name) {
-                        // Transform the command: inject --config and replace test-agent
                         let transformed = self.transform_command(&input_substituted, config_path);
 
-                        // Check if this is a oneshot command (runs and exits)
                         if is_oneshot_amux_command(&transformed) {
-                            // Run synchronously and capture output
                             let parts: Vec<&str> = transformed.split_whitespace().collect();
                             let output = Command::new(parts[0])
                                 .args(&parts[1..])
@@ -303,7 +318,6 @@ state_path: "{}"
                             let stdout = String::from_utf8_lossy(&output.stdout).to_string();
                             let stderr = String::from_utf8_lossy(&output.stderr).to_string();
 
-                            // Store output for next ExpectOutput
                             let combined = if stderr.is_empty() {
                                 stdout
                             } else if stdout.is_empty() {
@@ -313,19 +327,13 @@ state_path: "{}"
                             };
                             oneshot_outputs.insert(term_name.clone(), combined);
                         } else {
-                            // Interactive command - spawn PTY
                             let parts: Vec<&str> = transformed.split_whitespace().collect();
 
-                            // Start a new terminal for this amux session
-                            let terminal = TestTerminal::spawn(
-                                parts[0], // amux binary path
-                                &parts[1..],
-                                cwd,
-                                &HashMap::new(),
-                            )
-                            .map_err(|e| {
-                                format!("Failed to spawn terminal {}: {}", term_name, e)
-                            })?;
+                            let terminal =
+                                TestTerminal::spawn(parts[0], &parts[1..], cwd, &HashMap::new())
+                                    .map_err(|e| {
+                                        format!("Failed to spawn terminal {}: {}", term_name, e)
+                                    })?;
 
                             active_terminals.insert(term_name.clone(), terminal);
 
@@ -333,7 +341,6 @@ state_path: "{}"
                             std::thread::sleep(Duration::from_millis(500));
                         }
                     } else if let Some(terminal) = active_terminals.get_mut(term_name) {
-                        // Send input to existing terminal
                         terminal
                             .send_line(&input_substituted)
                             .map_err(|e| format!("Failed to send input: {}", e))?;
@@ -347,29 +354,21 @@ state_path: "{}"
                 TestStep::ExpectOutput(expected) => {
                     let term_name = current_terminal.as_ref().ok_or("No terminal selected")?;
 
-                    // Apply variable substitution to expected output
                     let expected_substituted = var_ctx.substitute(expected);
-
-                    // test-agent sends "{message}\n" for each line
                     let expected_with_newline = format!("{}\n", expected_substituted);
 
-                    // Check if we have oneshot output for this terminal
                     let actual = if let Some(output) = oneshot_outputs.remove(term_name) {
-                        // Use stored oneshot output
                         output
                     } else {
-                        // Read from terminal
                         let terminal = active_terminals
                             .get_mut(term_name)
                             .ok_or(format!("Terminal {} not initialized", term_name))?;
 
-                        // Read and normalize output (handles \r\n vs \n from nested PTYs)
                         terminal
                             .read_expected(&expected_with_newline, self.config.timeout)
                             .map_err(|e| format!("Failed to read output: {}", e))?
                     };
 
-                    // Compare
                     if actual != expected_with_newline {
                         return Err(format!(
                             "Output mismatch in terminal {}:\n  Expected: {:?}\n  Actual:   {:?}",

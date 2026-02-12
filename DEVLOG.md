@@ -38,6 +38,24 @@ One paragraph describing what was done.
 
 ---
 
+## 2026-02-12: Fix e2e test server cleanup
+
+### Summary
+
+E2E tests were leaking background `amux serve` processes. Each test spawns servers via `ensure_server_running` (a detached background process), but the executor never killed them after the test completed. Over time this accumulated ~90 zombie server processes holding open TCP/WebSocket ports, causing test failures due to resource exhaustion (the 500ms init window became insufficient).
+
+### Changes
+
+- `e2e-runner/src/executor.rs` — Extracted step execution into `execute_steps()` method; `run_test_inner` now runs `kill-server` for each test config after steps complete (pass or fail), then removes socket files
+
+### Verification
+
+- `cargo check && cargo fmt && cargo clippy` — clean
+- `cargo test` — 100 tests pass
+- E2E tests — 10/10 pass, zero leaked `amux serve` processes after run
+
+---
+
 ## 2026-02-12: Protocol version checking on Connect handshake
 
 ### Summary
