@@ -38,6 +38,45 @@ One paragraph describing what was done.
 
 ---
 
+## 2026-02-12: Protocol version checking on Connect handshake
+
+### Summary
+
+Added `PROTOCOL_VERSION` (starting at 1) to the Connect handshake. The server rejects version mismatches with `ProtocolError::VersionMismatch`. Old clients without the version field default to version 0 via `#[serde(default)]` and are rejected. When a cloud server rejects a local server due to version mismatch, all attached terminals receive a `ServerShutdown` message for a clean exit.
+
+### Changes
+
+- `src/message.rs` — Added `PROTOCOL_VERSION: u32 = 1` const; added `version: u32` field with `#[serde(default)]` to `LocalMessage::Connect`; added `VersionMismatch` variant to `ProtocolError`; added `LocalMessage::ServerShutdown`; added roundtrip tests for new fields/messages
+- `src/error.rs` — Added `AmuxError::VersionMismatch(String)`
+- `src/client.rs` — Added `version: PROTOCOL_VERSION` to Connect; handle `VersionMismatch` in handshake; handle `ServerShutdown` in `run_attached` select loop (clean exit with reason message)
+- `src/server/accept.rs` — Version check in `accept_handshake` (before link name/token validation); added `version: PROTOCOL_VERSION` to `connect_handshake`; handle `VersionMismatch` response
+- `src/cloud.rs` — Added `CloudError::VersionMismatch`; added version to both Connect sends; handle `VersionMismatch` in `connect()` and `handle_response()`
+- `src/server/cloud.rs` — Added `CloudConnectionError::VersionMismatch`; map from `CloudError` and `AmuxError`; on version mismatch, send `ServerShutdown` to all terminal routes then `process::exit(1)`
+- `src/hooks.rs` — Added `version: PROTOCOL_VERSION` to Connect
+- `src/server/connection.rs` — Use `..` in re-auth Connect pattern (no version check on established connections); updated tests with version field
+
+### Decisions Made
+
+- **Version 0 = old client**: `#[serde(default)]` on `version: u32` means old clients without the field get version=0, which is rejected
+- **Check only on accept side**: `accept_handshake` is the single enforcement point for new connections
+- **No check on re-auth**: Token refresh Connect doesn't re-check version (already established)
+- **ServerShutdown for clean terminal exit**: New message type gives terminals a clean exit path similar to `AgentEnded`
+- **Hard exit on version mismatch**: `process::exit(1)` after notifying terminals — appropriate for alpha
+
+### Verification
+
+- `cargo check` — clean
+- `cargo fmt && cargo clippy` — clean
+- `cargo test` — 100 tests pass (including 5 new roundtrip/display tests)
+- E2E tests — 10/10 pass (prior `attach` failure was caused by leaked server processes from previous runs)
+
+### Next Steps
+
+- Increment `PROTOCOL_VERSION` when making breaking protocol changes
+- Consider graceful degradation or negotiation for future versions
+
+---
+
 ## 2026-02-12: User multi-tenancy via ServerUserState
 
 ### Summary

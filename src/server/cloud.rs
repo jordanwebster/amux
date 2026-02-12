@@ -4,7 +4,7 @@ use super::{get_or_create_user_state, ServerState, ServerUserState, LOCAL_USER_I
 use crate::cloud::{CloudConnection, CloudError};
 use crate::config::Config;
 use crate::error::AmuxError;
-use crate::message::Message;
+use crate::message::{LocalMessage, Message};
 use crate::state::State;
 use crate::transport::TransportSplit;
 use std::sync::Arc;
@@ -47,6 +47,27 @@ pub(super) fn establish_cloud_connection(
                     log!("cloud: connection closed cleanly");
                     backoff = Duration::from_secs(1);
                 }
+                Err(CloudConnectionError::VersionMismatch {
+                    server_version,
+                    client_version,
+                }) => {
+                    let reason = format!(
+                        "amux upgrade required (protocol v{}, client v{})",
+                        server_version, client_version
+                    );
+                    log!("cloud: {}", reason);
+                    // Notify all attached terminals to exit cleanly
+                    let us = user_state.read().await;
+                    for (link, tx) in &us.routes {
+                        if !us.peer_links.contains(link) {
+                            let _ = tx.try_send(Message::Local(LocalMessage::ServerShutdown {
+                                reason: reason.clone(),
+                            }));
+                        }
+                    }
+                    drop(us);
+                    std::process::exit(1);
+                }
                 Err(CloudConnectionError::NonRetriable(msg)) => {
                     log!("cloud: non-retriable error, stopping: {}", msg);
                     return;
@@ -78,6 +99,11 @@ enum CloudConnectionError {
     Retriable(String),
     /// Error that should stop reconnection attempts (auth failure)
     NonRetriable(String),
+    /// Protocol version mismatch — notify terminals and exit
+    VersionMismatch {
+        server_version: u32,
+        client_version: u32,
+    },
 }
 
 /// Run a single cloud connection attempt.
@@ -100,6 +126,15 @@ async fn run_cloud_connection(
             return Err(CloudConnectionError::NonRetriable(
                 "Cloud mode disabled".to_string(),
             ));
+        }
+        Err(CloudError::VersionMismatch {
+            server_version,
+            client_version,
+        }) => {
+            return Err(CloudConnectionError::VersionMismatch {
+                server_version,
+                client_version,
+            });
         }
         Err(e) => {
             return Err(CloudConnectionError::Retriable(format!(
@@ -155,6 +190,10 @@ async fn run_cloud_connection(
         Err(AmuxError::InvalidCredentials) => Err(CloudConnectionError::NonRetriable(
             "Invalid credentials".to_string(),
         )),
+        Err(AmuxError::VersionMismatch(_)) => Err(CloudConnectionError::VersionMismatch {
+            server_version: 0,
+            client_version: crate::message::PROTOCOL_VERSION,
+        }),
         Err(e) => Err(CloudConnectionError::Retriable(e.to_string())),
     }
 }

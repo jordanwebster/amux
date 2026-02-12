@@ -1,6 +1,6 @@
 use crate::config::Config;
 use crate::message::{
-    ClaudeHook, ClaudePermissionTool, Hook, LocalMessage, Message, ProtocolError,
+    ClaudeHook, ClaudePermissionTool, Hook, LocalMessage, Message, ProtocolError, PROTOCOL_VERSION,
 };
 use crate::route::generate_hook_link;
 use crate::transport::{Transport, UnixTransport};
@@ -86,6 +86,7 @@ async fn send_hook_event_to_server_inner(
         .write_message(&Message::Local(LocalMessage::Connect {
             link_name,
             token: None,
+            version: PROTOCOL_VERSION,
         }))
         .await
         .map_err(io::Error::other)?;

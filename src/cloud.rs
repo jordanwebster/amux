@@ -7,7 +7,7 @@
 
 use crate::config::Config;
 use crate::error::AmuxError;
-use crate::message::{LocalMessage, Message, ProtocolError};
+use crate::message::{LocalMessage, Message, ProtocolError, PROTOCOL_VERSION};
 use crate::oauth;
 use crate::route::generate_server_link;
 use crate::state::State;
@@ -36,6 +36,11 @@ pub enum CloudError {
     Transport(#[from] AmuxError),
     #[error("State error: {0}")]
     State(#[from] crate::state::StateError),
+    #[error("amux upgrade required (protocol v{server_version}, client v{client_version})")]
+    VersionMismatch {
+        server_version: u32,
+        client_version: u32,
+    },
 }
 
 /// Cloud connection state
@@ -98,6 +103,7 @@ impl CloudConnection {
             .write_message(&Message::Local(LocalMessage::Connect {
                 link_name: link_name.clone(),
                 token: Some(conn.token),
+                version: PROTOCOL_VERSION,
             }))
             .await?;
 
@@ -115,6 +121,19 @@ impl CloudConnection {
                 return Err(CloudError::Auth(
                     "Invalid credentials - please run 'amux init' to re-authenticate".to_string(),
                 ));
+            }
+            Message::Local(LocalMessage::ConnectResponse {
+                success: false,
+                error:
+                    Some(ProtocolError::VersionMismatch {
+                        server_version,
+                        client_version,
+                    }),
+            }) => {
+                return Err(CloudError::VersionMismatch {
+                    server_version,
+                    client_version,
+                });
             }
             Message::Local(LocalMessage::ConnectResponse {
                 success: false,
@@ -227,6 +246,7 @@ impl TokenRefreshState {
         tx.send(Message::Local(LocalMessage::Connect {
             link_name: self.link_name.clone(),
             token: Some(conn.token),
+            version: PROTOCOL_VERSION,
         }))
         .await
         .map_err(|_| {
@@ -251,6 +271,17 @@ impl TokenRefreshState {
                 success: false,
                 error: Some(ProtocolError::InvalidCredentials),
             }) => Err(CloudError::Auth("Token refresh failed".to_string())),
+            Message::Local(LocalMessage::ConnectResponse {
+                success: false,
+                error:
+                    Some(ProtocolError::VersionMismatch {
+                        server_version,
+                        client_version,
+                    }),
+            }) => Err(CloudError::VersionMismatch {
+                server_version: *server_version,
+                client_version: *client_version,
+            }),
             Message::Local(LocalMessage::ConnectResponse {
                 success: false,
                 error,

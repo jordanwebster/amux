@@ -4,7 +4,7 @@ use super::connection::{
 use super::routing::{handle_peer_disconnect, send_initial_announcements};
 use super::{get_or_create_user_state, ServerState, ServerUserState, LOCAL_USER_ID};
 use crate::error::{AmuxError, Result};
-use crate::message::{LocalMessage, Message, ProtocolError};
+use crate::message::{LocalMessage, Message, ProtocolError, PROTOCOL_VERSION};
 use crate::route::generate_server_link;
 use crate::transport::{
     TcpTransport, Transport, TransportSplit, UnixTransport, WebSocketTransport,
@@ -34,13 +34,38 @@ pub(super) async fn accept_handshake<T: Transport>(
 )> {
     for _attempt in 0..5 {
         let msg = transport.read_message().await?;
-        let (proposed_link, token) = match msg {
-            Message::Local(LocalMessage::Connect { link_name, token }) => (link_name, token),
+        let (proposed_link, token, version) = match msg {
+            Message::Local(LocalMessage::Connect {
+                link_name,
+                token,
+                version,
+            }) => (link_name, token, version),
             other => {
                 log!("server: expected Connect message, got {:?}", other);
                 return Err(AmuxError::InvalidMessage);
             }
         };
+
+        if version != PROTOCOL_VERSION {
+            log!(
+                "server: version mismatch: client v{}, server v{}",
+                version,
+                PROTOCOL_VERSION
+            );
+            transport
+                .write_message(&Message::Local(LocalMessage::ConnectResponse {
+                    success: false,
+                    error: Some(ProtocolError::VersionMismatch {
+                        server_version: PROTOCOL_VERSION,
+                        client_version: version,
+                    }),
+                }))
+                .await?;
+            return Err(AmuxError::VersionMismatch(format!(
+                "protocol v{}, client v{}",
+                PROTOCOL_VERSION, version
+            )));
+        }
 
         if proposed_link.contains('.') {
             log!(
@@ -184,6 +209,7 @@ where
             .write_message(&Message::Local(LocalMessage::Connect {
                 link_name: proposed_link.clone(),
                 token: None,
+                version: PROTOCOL_VERSION,
             }))
             .await?;
 
@@ -217,6 +243,19 @@ where
                 return Err(AmuxError::Config(
                     ProtocolError::InvalidLinkName.to_string(),
                 ));
+            }
+            Message::Local(LocalMessage::ConnectResponse {
+                success: false,
+                error:
+                    Some(ProtocolError::VersionMismatch {
+                        server_version,
+                        client_version,
+                    }),
+            }) => {
+                return Err(AmuxError::VersionMismatch(format!(
+                    "protocol v{}, client v{}",
+                    server_version, client_version
+                )));
             }
             Message::Local(LocalMessage::ConnectResponse {
                 success: false,

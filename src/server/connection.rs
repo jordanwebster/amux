@@ -814,7 +814,9 @@ async fn handle_local(
 
         // In-band re-authentication for token refresh on established connections.
         // The peer sends Connect with the same link_name and a fresh token.
-        LocalMessage::Connect { link_name, token } => {
+        LocalMessage::Connect {
+            link_name, token, ..
+        } => {
             if link_name != ctx.link_name {
                 let _ = tx
                     .send(Message::Local(LocalMessage::ConnectResponse {
@@ -1329,6 +1331,7 @@ mod tests {
         let msg = LocalMessage::Connect {
             link_name: "test-link".to_string(),
             token: None,
+            version: crate::message::PROTOCOL_VERSION,
         };
 
         handle_local(&tx, msg, &ctx).await.unwrap();
@@ -1354,6 +1357,7 @@ mod tests {
         let msg = LocalMessage::Connect {
             link_name: "wrong-link".to_string(),
             token: None,
+            version: crate::message::PROTOCOL_VERSION,
         };
 
         handle_local(&tx, msg, &ctx).await.unwrap();

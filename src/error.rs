@@ -36,4 +36,7 @@ pub enum AmuxError {
 
     #[error("Invalid or missing credentials")]
     InvalidCredentials,
+
+    #[error("amux upgrade required: {0}")]
+    VersionMismatch(String),
 }

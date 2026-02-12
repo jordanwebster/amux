@@ -5,6 +5,9 @@ use serde::{Deserialize, Serialize};
 use std::path::PathBuf;
 use uuid::Uuid;
 
+/// Protocol version for Connect handshake. Increment on breaking changes.
+pub const PROTOCOL_VERSION: u32 = 1;
+
 /// Type of agent to spawn
 #[derive(Serialize, Deserialize, Debug, Clone, PartialEq)]
 pub enum AgentType {
@@ -82,6 +85,11 @@ pub enum ProtocolError {
     InvalidCredentials,
     /// The proposed link name is invalid (e.g., contains "." which is the route separator)
     InvalidLinkName,
+    /// Protocol version mismatch between client and server
+    VersionMismatch {
+        server_version: u32,
+        client_version: u32,
+    },
 }
 
 /// Subscribe output mode
@@ -103,6 +111,16 @@ impl std::fmt::Display for ProtocolError {
             ProtocolError::InvalidCredentials => write!(f, "Invalid or missing credentials"),
             ProtocolError::InvalidLinkName => {
                 write!(f, "Invalid link name (must not contain '.')")
+            }
+            ProtocolError::VersionMismatch {
+                server_version,
+                client_version,
+            } => {
+                write!(
+                    f,
+                    "amux upgrade required (protocol v{}, client v{})",
+                    server_version, client_version
+                )
             }
         }
     }
@@ -199,6 +217,8 @@ pub enum LocalMessage {
         link_name: String,
         #[serde(skip_serializing_if = "Option::is_none", default)]
         token: Option<String>,
+        #[serde(default)]
+        version: u32,
     },
     ConnectResponse {
         success: bool,
@@ -220,6 +240,9 @@ pub enum LocalMessage {
     },
     DebugResult {
         info: ServerDebugInfo,
+    },
+    ServerShutdown {
+        reason: String,
     },
 }
 
@@ -479,5 +502,115 @@ mod tests {
         let decoded: AgentInfo = rmp_serde::from_slice(&encoded).unwrap();
         assert_eq!(decoded.agent_id, test_uuid);
         assert!(decoded.route.is_none());
+    }
+
+    #[test]
+    fn test_message_roundtrip_connect_with_version() {
+        let msg = Message::Local(LocalMessage::Connect {
+            link_name: "test-link".to_string(),
+            token: None,
+            version: PROTOCOL_VERSION,
+        });
+        let encoded = msg.encode().unwrap();
+        let decoded = Message::decode(&encoded).unwrap();
+        if let Message::Local(LocalMessage::Connect {
+            link_name, version, ..
+        }) = decoded
+        {
+            assert_eq!(link_name, "test-link");
+            assert_eq!(version, PROTOCOL_VERSION);
+        } else {
+            panic!("Expected Connect");
+        }
+    }
+
+    #[test]
+    fn test_connect_without_version_defaults_to_zero() {
+        // Simulate old client: encode Connect without version field
+        // by encoding a struct that lacks the version field, then decoding
+        // with the new format. The #[serde(default)] should give version=0.
+        #[derive(Serialize)]
+        enum OldLocalMessage {
+            Connect {
+                link_name: String,
+                #[serde(skip_serializing_if = "Option::is_none")]
+                token: Option<String>,
+            },
+        }
+        #[derive(Serialize)]
+        enum OldMessage {
+            Local(OldLocalMessage),
+        }
+        let old_msg = OldMessage::Local(OldLocalMessage::Connect {
+            link_name: "old-client".to_string(),
+            token: None,
+        });
+        let encoded = rmp_serde::to_vec_named(&old_msg).unwrap();
+        let decoded = Message::decode(&encoded).unwrap();
+        if let Message::Local(LocalMessage::Connect {
+            link_name, version, ..
+        }) = decoded
+        {
+            assert_eq!(link_name, "old-client");
+            assert_eq!(
+                version, 0,
+                "old client without version field should default to 0"
+            );
+        } else {
+            panic!("Expected Connect");
+        }
+    }
+
+    #[test]
+    fn test_message_roundtrip_version_mismatch() {
+        let msg = Message::Local(LocalMessage::ConnectResponse {
+            success: false,
+            error: Some(ProtocolError::VersionMismatch {
+                server_version: 2,
+                client_version: 1,
+            }),
+        });
+        let encoded = msg.encode().unwrap();
+        let decoded = Message::decode(&encoded).unwrap();
+        if let Message::Local(LocalMessage::ConnectResponse {
+            success: false,
+            error:
+                Some(ProtocolError::VersionMismatch {
+                    server_version,
+                    client_version,
+                }),
+        }) = decoded
+        {
+            assert_eq!(server_version, 2);
+            assert_eq!(client_version, 1);
+        } else {
+            panic!("Expected ConnectResponse with VersionMismatch");
+        }
+    }
+
+    #[test]
+    fn test_message_roundtrip_server_shutdown() {
+        let msg = Message::Local(LocalMessage::ServerShutdown {
+            reason: "amux upgrade required".to_string(),
+        });
+        let encoded = msg.encode().unwrap();
+        let decoded = Message::decode(&encoded).unwrap();
+        if let Message::Local(LocalMessage::ServerShutdown { reason }) = decoded {
+            assert_eq!(reason, "amux upgrade required");
+        } else {
+            panic!("Expected ServerShutdown");
+        }
+    }
+
+    #[test]
+    fn test_version_mismatch_display() {
+        let err = ProtocolError::VersionMismatch {
+            server_version: 2,
+            client_version: 1,
+        };
+        assert_eq!(
+            err.to_string(),
+            "amux upgrade required (protocol v2, client v1)"
+        );
     }
 }

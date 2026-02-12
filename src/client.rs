@@ -2,7 +2,7 @@ use crate::config::Config;
 use crate::error::{AmuxError, Result};
 use crate::message::{
     AgentType, CreateAgentRequest, LocalMessage, Message, ProtocolError, RoutableMessage,
-    ServerDebugInfo, SubscribeMode,
+    ServerDebugInfo, SubscribeMode, PROTOCOL_VERSION,
 };
 use crate::route::{generate_terminal_link, Route};
 use crate::transport::{Transport, UnixTransport};
@@ -47,6 +47,7 @@ async fn connect_and_handshake(config: &Config) -> Result<(UnixTransport, String
             .write_message(&Message::Local(LocalMessage::Connect {
                 link_name: link_name.clone(),
                 token: None,
+                version: PROTOCOL_VERSION,
             }))
             .await?;
 
@@ -82,6 +83,19 @@ async fn connect_and_handshake(config: &Config) -> Result<(UnixTransport, String
                 return Err(AmuxError::Config(
                     ProtocolError::InvalidLinkName.to_string(),
                 ));
+            }
+            Message::Local(LocalMessage::ConnectResponse {
+                success: false,
+                error:
+                    Some(ProtocolError::VersionMismatch {
+                        server_version,
+                        client_version,
+                    }),
+            }) => {
+                return Err(AmuxError::VersionMismatch(format!(
+                    "protocol v{}, client v{}",
+                    server_version, client_version
+                )));
             }
             Message::Local(LocalMessage::ConnectResponse {
                 success: false,
@@ -590,6 +604,7 @@ async fn run_attached(
 
     let mut detached = false;
     let mut error: Option<AmuxError> = None;
+    let mut shutdown_reason: Option<String> = None;
 
     // Main loop: select on stdin channel and server messages
     loop {
@@ -637,6 +652,11 @@ async fn run_attached(
                         error = Some(AmuxError::ServerError(route_error.to_string()));
                         break;
                     }
+                    Ok(Message::Local(LocalMessage::ServerShutdown { reason })) => {
+                        log!("client: server shutdown: {}", reason);
+                        shutdown_reason = Some(reason);
+                        break;
+                    }
                     Ok(Message::Local(LocalMessage::Error { message })) => {
                         log!("client: server error: {}", message);
                         error = Some(AmuxError::ServerError(message));
@@ -658,6 +678,11 @@ async fn run_attached(
 
     if let Some(e) = error {
         return Err(e);
+    }
+
+    if let Some(reason) = shutdown_reason {
+        println!("\n[{}]", reason);
+        std::process::exit(1);
     }
 
     if detached {
