@@ -2,7 +2,7 @@ use super::accept::tcp_connect;
 use super::routing::{
     broadcast_to_peers, connection_tx, create_agent, handle_subscribe, shutdown_server,
 };
-use super::{ServerState, StreamEntry};
+use super::{ServerState, ServerUserState, StreamEntry};
 use crate::agent_registry::AgentKind;
 use crate::cloud::TokenRefreshState;
 use crate::error::{AmuxError, Result};
@@ -19,10 +19,13 @@ use std::path::PathBuf;
 use std::sync::Arc;
 use std::time::Duration;
 use tokio::sync::{mpsc, oneshot, RwLock};
+use uuid::Uuid;
 
 /// Context for connection handlers.
 pub(super) struct ConnectionContext {
     pub(super) state: Arc<RwLock<ServerState>>,
+    pub(super) user_state: Arc<RwLock<ServerUserState>>,
+    pub(super) user_id: Uuid,
     pub(super) event_tx: mpsc::Sender<SessionEvent>,
     pub(super) link_name: String,
 }
@@ -166,16 +169,15 @@ async fn maybe_sleep_until(deadline: Option<tokio::time::Instant>) {
 
 /// Register a stream entry in active_streams. Returns the assigned stream_id.
 fn register_stream(
-    state: &mut ServerState,
+    us: &mut ServerUserState,
     agent_id: uuid::Uuid,
     cancel_tx: oneshot::Sender<()>,
     dst: Route,
     link: String,
 ) -> u64 {
-    let sid = state.next_stream_id;
-    state.next_stream_id += 1;
-    state
-        .active_streams
+    let sid = us.next_stream_id;
+    us.next_stream_id += 1;
+    us.active_streams
         .entry(agent_id)
         .or_default()
         .push(StreamEntry {
@@ -188,23 +190,27 @@ fn register_stream(
 }
 
 /// Remove a stream entry by stream_id after the task exits.
-async fn cleanup_stream(state: &Arc<RwLock<ServerState>>, agent_id: uuid::Uuid, stream_id: u64) {
-    let mut s = state.write().await;
-    if let Some(entries) = s.active_streams.get_mut(&agent_id) {
+async fn cleanup_stream(
+    user_state: &Arc<RwLock<ServerUserState>>,
+    agent_id: uuid::Uuid,
+    stream_id: u64,
+) {
+    let mut us = user_state.write().await;
+    if let Some(entries) = us.active_streams.get_mut(&agent_id) {
         entries.retain(|e| e.stream_id != stream_id);
         if entries.is_empty() {
-            s.active_streams.remove(&agent_id);
+            us.active_streams.remove(&agent_id);
         }
     }
 }
 
 /// Cancel all active streams matching a predicate. Returns count cancelled.
 pub(super) fn cancel_streams_matching(
-    state: &mut ServerState,
+    us: &mut ServerUserState,
     predicate: impl Fn(&StreamEntry) -> bool,
 ) -> usize {
     let mut cancelled = 0usize;
-    for entries in state.active_streams.values_mut() {
+    for entries in us.active_streams.values_mut() {
         entries.retain(|entry| {
             if predicate(entry) {
                 cancelled += 1;
@@ -214,7 +220,7 @@ pub(super) fn cancel_streams_matching(
             }
         });
     }
-    state.active_streams.retain(|_, v| !v.is_empty());
+    us.active_streams.retain(|_, v| !v.is_empty());
     cancelled
 }
 
@@ -260,8 +266,8 @@ async fn handle_routable(
         src.push(&next_hop);
 
         let route_tx = {
-            let state = ctx.state.read().await;
-            state.routes.get(&next_hop).cloned()
+            let us = ctx.user_state.read().await;
+            us.routes.get(&next_hop).cloned()
         };
 
         // Try to forward; on failure, get the failed message back
@@ -272,10 +278,10 @@ async fn handle_routable(
                     Err(send_error) => {
                         // Channel closed — conditionally clean up stale route
                         {
-                            let mut state = ctx.state.write().await;
-                            if let Some(current_tx) = state.routes.get(&next_hop) {
+                            let mut us = ctx.user_state.write().await;
+                            if let Some(current_tx) = us.routes.get(&next_hop) {
                                 if current_tx.is_closed() {
-                                    state.routes.remove(&next_hop);
+                                    us.routes.remove(&next_hop);
                                     log!("server: removed stale route {}", next_hop);
                                 }
                             }
@@ -363,8 +369,8 @@ async fn handle_routable(
             match mode {
                 SubscribeMode::Structured => {
                     let session = {
-                        let state = ctx.state.read().await;
-                        state.agents.get(&agent_id).cloned()
+                        let us = ctx.user_state.read().await;
+                        us.agents.get(&agent_id).cloned()
                     };
 
                     let Some(session) = session else {
@@ -422,13 +428,13 @@ async fn handle_routable(
                         agent_id
                     );
 
-                    let outgoing_tx = connection_tx(&ctx.state, &ctx.link_name).await;
+                    let outgoing_tx = connection_tx(&ctx.user_state, &ctx.link_name).await;
                     if let Some(tx) = outgoing_tx {
                         let (cancel_tx, cancel_rx) = oneshot::channel::<()>();
                         let stream_id = {
-                            let mut s = ctx.state.write().await;
+                            let mut us = ctx.user_state.write().await;
                             register_stream(
-                                &mut s,
+                                &mut us,
                                 agent_id,
                                 cancel_tx,
                                 reply_dst.clone(),
@@ -436,7 +442,7 @@ async fn handle_routable(
                             )
                         };
 
-                        let stream_state = ctx.state.clone();
+                        let stream_user_state = ctx.user_state.clone();
                         tokio::spawn(async move {
                             tokio::select! {
                                 _ = async {
@@ -466,7 +472,7 @@ async fn handle_routable(
                                     log!("server: structured stream {} cancelled", stream_id);
                                 }
                             }
-                            cleanup_stream(&stream_state, agent_id, stream_id).await;
+                            cleanup_stream(&stream_user_state, agent_id, stream_id).await;
                             log!("server: structured log stream ended");
                         });
                     }
@@ -474,7 +480,7 @@ async fn handle_routable(
                     Ok(())
                 }
                 SubscribeMode::Raw => {
-                    let result = handle_subscribe(&ctx.state, &agent_id, rows, cols).await;
+                    let result = handle_subscribe(&ctx.user_state, &agent_id, rows, cols).await;
 
                     match result {
                         Ok(mut buffer_reader) => {
@@ -496,13 +502,13 @@ async fn handle_routable(
                                 agent_id
                             );
 
-                            let outgoing_tx = connection_tx(&ctx.state, &ctx.link_name).await;
+                            let outgoing_tx = connection_tx(&ctx.user_state, &ctx.link_name).await;
                             if let Some(tx) = outgoing_tx {
                                 let (cancel_tx, cancel_rx) = oneshot::channel::<()>();
                                 let stream_id = {
-                                    let mut s = ctx.state.write().await;
+                                    let mut us = ctx.user_state.write().await;
                                     register_stream(
-                                        &mut s,
+                                        &mut us,
                                         agent_id,
                                         cancel_tx,
                                         reply_dst.clone(),
@@ -510,7 +516,7 @@ async fn handle_routable(
                                     )
                                 };
 
-                                let stream_state = ctx.state.clone();
+                                let stream_user_state = ctx.user_state.clone();
                                 tokio::spawn(async move {
                                     tokio::select! {
                                         _ = async {
@@ -537,7 +543,7 @@ async fn handle_routable(
                                             log!("server: raw stream {} cancelled", stream_id);
                                         }
                                     }
-                                    cleanup_stream(&stream_state, agent_id, stream_id).await;
+                                    cleanup_stream(&stream_user_state, agent_id, stream_id).await;
                                     log!("server: output stream ended");
                                 });
                             }
@@ -564,16 +570,16 @@ async fn handle_routable(
         }
 
         RoutableMessage::InputBytes { agent_id, data } => {
-            let state = ctx.state.read().await;
-            if let Some(session) = state.agents.get(&agent_id) {
+            let us = ctx.user_state.read().await;
+            if let Some(session) = us.agents.get(&agent_id) {
                 let _ = session.send_input(data).await;
             }
             Ok(())
         }
 
         RoutableMessage::SubmitInput { agent_id, data } => {
-            let state = ctx.state.read().await;
-            if let Some(session) = state.agents.get(&agent_id) {
+            let us = ctx.user_state.read().await;
+            if let Some(session) = us.agents.get(&agent_id) {
                 let _ = session.send_input(data).await;
                 tokio::time::sleep(std::time::Duration::from_millis(20)).await;
                 let _ = session.send_input(vec![b'\r']).await;
@@ -582,8 +588,8 @@ async fn handle_routable(
         }
 
         RoutableMessage::PermissionRequestResponse { agent_id, response } => {
-            let state = ctx.state.read().await;
-            if let Some(session) = state.agents.get(&agent_id) {
+            let us = ctx.user_state.read().await;
+            if let Some(session) = us.agents.get(&agent_id) {
                 let keystroke = super::routing::permission_response_keystroke(&response);
                 log!(
                     "server: sending permission response {:?} to agent {} (keystroke: {:?})",
@@ -601,9 +607,9 @@ async fn handle_routable(
         // (pushed last via push_front during traversal).
         RoutableMessage::Error(ProtocolError::NoRouteFound(ref dead_route)) => {
             if let Some(dead_hop) = dead_route.first_hop() {
-                let mut state = ctx.state.write().await;
+                let mut us = ctx.user_state.write().await;
                 let cancelled =
-                    cancel_streams_matching(&mut state, |entry| entry.dst.contains_link(dead_hop));
+                    cancel_streams_matching(&mut us, |entry| entry.dst.contains_link(dead_hop));
                 if cancelled > 0 {
                     log!(
                         "server: cancelled {} streams targeting dead hop {}",
@@ -638,7 +644,7 @@ async fn handle_local(
     match message {
         LocalMessage::Shutdown => {
             log!("server: shutdown requested by {}", ctx.link_name);
-            shutdown_server(&ctx.state).await;
+            shutdown_server(&ctx.user_state).await;
 
             let _ = tx
                 .send(Message::Local(LocalMessage::Error {
@@ -662,6 +668,8 @@ async fn handle_local(
                 tokio::runtime::Handle::current().block_on(tcp_connect(
                     &address,
                     &ctx.state,
+                    &ctx.user_state,
+                    ctx.user_id,
                     ctx.event_tx.clone(),
                 ))
             });
@@ -680,19 +688,25 @@ async fn handle_local(
         }
 
         LocalMessage::Debug => {
-            let state = ctx.state.read().await;
-            let use_cloud_mode = State::load(&state.config.state_path)
-                .map(|s| s.cloud.use_cloud_mode == Some(true))
-                .unwrap_or(false);
-            let info = ServerDebugInfo {
-                is_cloud_server: state.cloud_mode,
-                use_cloud_mode,
-                agent_count: state.agents.len(),
-                remote_agent_count: state.registry.count_remote(),
-                route_count: state.routes.len(),
-                routes: state.routes.keys().cloned().collect(),
-                peer_links: state.peer_links.iter().cloned().collect(),
-                config: state.config.clone(),
+            let (cloud_mode, use_cloud_mode, config) = {
+                let state = ctx.state.read().await;
+                let use_cloud_mode = State::load(&state.config.state_path)
+                    .map(|s| s.cloud.use_cloud_mode == Some(true))
+                    .unwrap_or(false);
+                (state.cloud_mode, use_cloud_mode, state.config.clone())
+            };
+            let info = {
+                let us = ctx.user_state.read().await;
+                ServerDebugInfo {
+                    is_cloud_server: cloud_mode,
+                    use_cloud_mode,
+                    agent_count: us.agents.len(),
+                    remote_agent_count: us.registry.count_remote(),
+                    route_count: us.routes.len(),
+                    routes: us.routes.keys().cloned().collect(),
+                    peer_links: us.peer_links.iter().cloned().collect(),
+                    config,
+                }
             };
             let _ = tx
                 .send(Message::Local(LocalMessage::DebugResult { info }))
@@ -702,8 +716,8 @@ async fn handle_local(
 
         LocalMessage::ListAgents => {
             let agents = {
-                let state = ctx.state.read().await;
-                state.registry.list_all()
+                let us = ctx.user_state.read().await;
+                us.registry.list_all()
             };
             let _ = tx
                 .send(Message::Local(LocalMessage::ListAgentsResult { agents }))
@@ -712,7 +726,7 @@ async fn handle_local(
         }
 
         LocalMessage::CreateAgent(req) => {
-            let result = create_agent(&ctx.state, &ctx.event_tx, req).await;
+            let result = create_agent(&ctx.user_state, &ctx.event_tx, req, ctx.user_id).await;
 
             let response = match result {
                 Ok(()) => Message::Local(LocalMessage::CreateAgentResult {
@@ -733,8 +747,11 @@ async fn handle_local(
 
             let result = match &hook {
                 Hook::Claude(ClaudeHook::SessionStart(session_start)) => {
-                    let state = ctx.state.read().await;
-                    if let Some(session) = state.agents.get(&session_start.session_id) {
+                    let session = {
+                        let us = ctx.user_state.read().await;
+                        us.agents.get(&session_start.session_id).cloned()
+                    };
+                    if let Some(session) = session {
                         log!(
                             "server: linking transcript to agent {}",
                             session_start.session_id
@@ -745,9 +762,8 @@ async fn handle_local(
                         Ok(())
                     } else {
                         log!(
-                            "server: no agent with session_id {}, agents: {:?}",
-                            session_start.session_id,
-                            state.agents.keys().collect::<Vec<_>>()
+                            "server: no agent with session_id {}",
+                            session_start.session_id
                         );
                         Err(ProtocolError::ServerError(format!(
                             "No agent found with session_id: {}",
@@ -756,8 +772,11 @@ async fn handle_local(
                     }
                 }
                 Hook::Claude(ClaudeHook::PermissionRequest(perm_req)) => {
-                    let state = ctx.state.read().await;
-                    if let Some(session) = state.agents.get(&perm_req.session_id) {
+                    let session = {
+                        let us = ctx.user_state.read().await;
+                        us.agents.get(&perm_req.session_id).cloned()
+                    };
+                    if let Some(session) = session {
                         log!(
                             "server: permission request for agent {}: {:?}",
                             perm_req.session_id,
@@ -770,11 +789,7 @@ async fn handle_local(
                             .await;
                         Ok(())
                     } else {
-                        log!(
-                            "server: no agent with session_id {}, agents: {:?}",
-                            perm_req.session_id,
-                            state.agents.keys().collect::<Vec<_>>()
-                        );
+                        log!("server: no agent with session_id {}", perm_req.session_id);
                         Err(ProtocolError::ServerError(format!(
                             "No agent found with session_id: {}",
                             perm_req.session_id
@@ -846,10 +861,29 @@ async fn handle_local(
 
                 match validator.validate(&token, &host, tcp_port).await {
                     Ok(claims) => {
+                        let token_user_id = claims.sub.parse::<uuid::Uuid>().map_err(|_| {
+                            log!("server: re-auth invalid user_id in token: {}", claims.sub);
+                            AmuxError::InvalidCredentials
+                        })?;
+                        if token_user_id != ctx.user_id {
+                            log!(
+                                "server: re-auth user_id mismatch on {}: token={} connection={}",
+                                ctx.link_name,
+                                token_user_id,
+                                ctx.user_id
+                            );
+                            let _ = tx
+                                .send(Message::Local(LocalMessage::ConnectResponse {
+                                    success: false,
+                                    error: Some(ProtocolError::InvalidCredentials),
+                                }))
+                                .await;
+                            return Err(AmuxError::InvalidCredentials);
+                        }
                         log!(
                             "server: re-authenticated {} (user {})",
                             ctx.link_name,
-                            claims.sub
+                            ctx.user_id
                         );
                     }
                     Err(e) => {
@@ -881,10 +915,10 @@ async fn handle_local(
             working_dir,
             route: received_route,
         } => {
-            let mut state = ctx.state.write().await;
+            let mut us = ctx.user_state.write().await;
 
             // Local agent takes precedence — skip if we own this agent
-            if state.agents.contains_key(&agent_id) {
+            if us.agents.contains_key(&agent_id) {
                 log!(
                     "server: ignoring AnnounceAgent for local agent {}",
                     agent_id
@@ -904,8 +938,7 @@ async fn handle_local(
                 route: None,
             };
 
-            state
-                .registry
+            us.registry
                 .register_remote(info, our_route.clone(), ctx.link_name.clone());
 
             log!(
@@ -918,7 +951,7 @@ async fn handle_local(
 
             // Propagate to other peers with our stored route
             broadcast_to_peers(
-                &mut state,
+                &mut us,
                 &LocalMessage::AnnounceAgent {
                     agent_id,
                     alias,
@@ -933,15 +966,15 @@ async fn handle_local(
         }
 
         LocalMessage::WithdrawAgent { agent_id } => {
-            let mut state = ctx.state.write().await;
+            let mut us = ctx.user_state.write().await;
 
             // Only remove if the stored link matches the sender
-            let should_remove = state.registry.get(&agent_id).is_some_and(
+            let should_remove = us.registry.get(&agent_id).is_some_and(
                 |e| matches!(&e.kind, AgentKind::Remote { link, .. } if link == &ctx.link_name),
             );
 
             if should_remove {
-                state.registry.remove(&agent_id);
+                us.registry.remove(&agent_id);
                 log!(
                     "server: withdrew remote agent {} (from {})",
                     agent_id,
@@ -950,7 +983,7 @@ async fn handle_local(
 
                 // Propagate to other peers
                 broadcast_to_peers(
-                    &mut state,
+                    &mut us,
                     &LocalMessage::WithdrawAgent { agent_id },
                     Some(&ctx.link_name),
                 );
@@ -965,8 +998,8 @@ async fn handle_local(
         }
 
         LocalMessage::ResolveAgent { identifier } => {
-            let state = ctx.state.read().await;
-            let result = state.registry.resolve(&identifier);
+            let us = ctx.user_state.read().await;
+            let result = us.registry.resolve(&identifier);
             let _ = tx
                 .send(Message::Local(LocalMessage::ResolveAgentResult {
                     error: if result.is_none() {
@@ -999,6 +1032,7 @@ mod tests {
     use super::*;
     use crate::config::Config;
     use crate::route::Route;
+    use crate::server::LOCAL_USER_ID;
     use std::path::PathBuf;
     use std::sync::Arc;
     use tokio::sync::{mpsc, RwLock};
@@ -1017,23 +1051,33 @@ mod tests {
         (tx, written)
     }
 
-    fn test_ctx(state: Arc<RwLock<ServerState>>) -> ConnectionContext {
+    fn test_ctx(
+        state: Arc<RwLock<ServerState>>,
+        user_state: Arc<RwLock<ServerUserState>>,
+    ) -> ConnectionContext {
         let (event_tx, _event_rx) = mpsc::channel(16);
         ConnectionContext {
             state,
+            user_state,
+            user_id: LOCAL_USER_ID,
             event_tx,
             link_name: "test-link".to_string(),
         }
     }
 
-    fn test_state() -> Arc<RwLock<ServerState>> {
-        Arc::new(RwLock::new(ServerState::new(Config::default())))
+    async fn test_state() -> (Arc<RwLock<ServerState>>, Arc<RwLock<ServerUserState>>) {
+        let state = Arc::new(RwLock::new(ServerState::new(Config::default())));
+        let user_state = {
+            let s = state.read().await;
+            s.get_user_state(&LOCAL_USER_ID).unwrap()
+        };
+        (state, user_state)
     }
 
     #[tokio::test]
     async fn missing_route_sends_error_back() {
-        let state = test_state();
-        let ctx = test_ctx(state);
+        let (state, user_state) = test_state().await;
+        let ctx = test_ctx(state, user_state);
         let (tx, written) = mock_tx();
         let mut dead_routes = HashSet::new();
 
@@ -1070,18 +1114,18 @@ mod tests {
 
     #[tokio::test]
     async fn closed_channel_cleans_stale_route_and_sends_error() {
-        let state = test_state();
+        let (state, user_state) = test_state().await;
 
         // Create a channel and immediately drop the receiver to close it
         let (route_tx, rx) = mpsc::channel::<Message>(1);
         drop(rx);
 
         {
-            let mut s = state.write().await;
-            s.routes.insert("stale-link".to_string(), route_tx);
+            let mut us = user_state.write().await;
+            us.routes.insert("stale-link".to_string(), route_tx);
         }
 
-        let ctx = test_ctx(state.clone());
+        let ctx = test_ctx(state, user_state.clone());
         let (tx, written) = mock_tx();
         let mut dead_routes = HashSet::new();
 
@@ -1102,8 +1146,8 @@ mod tests {
 
         // Route should be removed
         {
-            let s = state.read().await;
-            assert!(!s.routes.contains_key("stale-link"));
+            let us = user_state.read().await;
+            assert!(!us.routes.contains_key("stale-link"));
         }
 
         // Give the collector task a moment
@@ -1122,8 +1166,8 @@ mod tests {
 
     #[tokio::test]
     async fn failed_error_message_not_amplified() {
-        let state = test_state();
-        let ctx = test_ctx(state);
+        let (state, user_state) = test_state().await;
+        let ctx = test_ctx(state, user_state);
         let (tx, written) = mock_tx();
         let mut dead_routes = HashSet::new();
 
@@ -1147,8 +1191,8 @@ mod tests {
 
     #[tokio::test]
     async fn stream_message_first_failure_sends_error() {
-        let state = test_state();
-        let ctx = test_ctx(state);
+        let (state, user_state) = test_state().await;
+        let ctx = test_ctx(state, user_state);
         let (tx, written) = mock_tx();
         let mut dead_routes = HashSet::new();
 
@@ -1183,8 +1227,8 @@ mod tests {
 
     #[tokio::test]
     async fn stream_message_second_failure_suppressed() {
-        let state = test_state();
-        let ctx = test_ctx(state);
+        let (state, user_state) = test_state().await;
+        let ctx = test_ctx(state, user_state);
         let (tx, written) = mock_tx();
         let mut dead_routes = HashSet::new();
 
@@ -1228,8 +1272,8 @@ mod tests {
 
     #[tokio::test]
     async fn no_route_found_includes_traversed_path() {
-        let state = test_state();
-        let ctx = test_ctx(state);
+        let (state, user_state) = test_state().await;
+        let ctx = test_ctx(state, user_state);
         let (tx, written) = mock_tx();
         let mut dead_routes = HashSet::new();
 
@@ -1277,8 +1321,8 @@ mod tests {
 
     #[tokio::test]
     async fn connect_reauth_matching_link_succeeds() {
-        let state = test_state();
-        let ctx = test_ctx(state);
+        let (state, user_state) = test_state().await;
+        let ctx = test_ctx(state, user_state);
         let (tx, written) = mock_tx();
 
         // Re-auth with matching link name (non-cloud mode = no token needed)
@@ -1302,8 +1346,8 @@ mod tests {
 
     #[tokio::test]
     async fn connect_reauth_mismatched_link_rejected() {
-        let state = test_state();
-        let ctx = test_ctx(state);
+        let (state, user_state) = test_state().await;
+        let ctx = test_ctx(state, user_state);
         let (tx, written) = mock_tx();
 
         // Re-auth with wrong link name
@@ -1327,8 +1371,8 @@ mod tests {
 
     #[tokio::test]
     async fn announce_agent_stores_in_registry() {
-        let state = test_state();
-        let ctx = test_ctx(state.clone());
+        let (state, user_state) = test_state().await;
+        let ctx = test_ctx(state, user_state.clone());
         let (tx, _written) = mock_tx();
 
         let agent_id = Uuid::new_v4();
@@ -1342,9 +1386,9 @@ mod tests {
 
         handle_local(&tx, msg, &ctx).await.unwrap();
 
-        let s = state.read().await;
-        assert!(s.registry.contains(&agent_id));
-        let entry = s.registry.get(&agent_id).unwrap();
+        let us = user_state.read().await;
+        assert!(us.registry.contains(&agent_id));
+        let entry = us.registry.get(&agent_id).unwrap();
         assert_eq!(entry.info.alias, Some("remote-test".to_string()));
         match &entry.kind {
             AgentKind::Remote { route, link } => {
@@ -1359,8 +1403,8 @@ mod tests {
 
     #[tokio::test]
     async fn announce_agent_with_route_prepends_link() {
-        let state = test_state();
-        let ctx = test_ctx(state.clone());
+        let (state, user_state) = test_state().await;
+        let ctx = test_ctx(state, user_state.clone());
         let (tx, _written) = mock_tx();
 
         let agent_id = Uuid::new_v4();
@@ -1374,8 +1418,8 @@ mod tests {
 
         handle_local(&tx, msg, &ctx).await.unwrap();
 
-        let s = state.read().await;
-        let entry = s.registry.get(&agent_id).unwrap();
+        let us = user_state.read().await;
+        let entry = us.registry.get(&agent_id).unwrap();
         match &entry.kind {
             AgentKind::Remote { route, .. } => {
                 let mut route = route.clone();
@@ -1390,12 +1434,12 @@ mod tests {
 
     #[tokio::test]
     async fn announce_agent_skips_local_agent() {
-        let state = test_state();
+        let (state, user_state) = test_state().await;
 
         // Insert a local agent and register in registry
         let agent_id = Uuid::new_v4();
         {
-            let mut s = state.write().await;
+            let mut us = user_state.write().await;
             let (event_tx, _rx) = mpsc::channel(16);
             let req = crate::message::CreateAgentRequest {
                 agent_id,
@@ -1405,13 +1449,14 @@ mod tests {
                 rows: 24,
                 cols: 80,
             };
-            let session = crate::session::LocalAgentSession::new(&req, event_tx).unwrap();
+            let session =
+                crate::session::LocalAgentSession::new(&req, event_tx, LOCAL_USER_ID).unwrap();
             let info = session.to_agent_info();
-            s.agents.insert(agent_id, Arc::new(session));
-            s.registry.register_local(info).unwrap();
+            us.agents.insert(agent_id, Arc::new(session));
+            us.registry.register_local(info).unwrap();
         }
 
-        let ctx = test_ctx(state.clone());
+        let ctx = test_ctx(state, user_state.clone());
         let (tx, _written) = mock_tx();
 
         // Try to announce same agent_id from remote
@@ -1426,19 +1471,19 @@ mod tests {
         handle_local(&tx, msg, &ctx).await.unwrap();
 
         // Should still be local (not overwritten)
-        let s = state.read().await;
-        let entry = s.registry.get(&agent_id).unwrap();
+        let us = user_state.read().await;
+        let entry = us.registry.get(&agent_id).unwrap();
         assert!(matches!(entry.kind, AgentKind::Local));
     }
 
     #[tokio::test]
     async fn withdraw_agent_removes_matching_link() {
-        let state = test_state();
+        let (state, user_state) = test_state().await;
 
         let agent_id = Uuid::new_v4();
         {
-            let mut s = state.write().await;
-            s.registry.register_remote(
+            let mut us = user_state.write().await;
+            us.registry.register_remote(
                 AgentInfo {
                     agent_id,
                     alias: None,
@@ -1451,24 +1496,24 @@ mod tests {
             );
         }
 
-        let ctx = test_ctx(state.clone());
+        let ctx = test_ctx(state, user_state.clone());
         let (tx, _written) = mock_tx();
 
         let msg = LocalMessage::WithdrawAgent { agent_id };
         handle_local(&tx, msg, &ctx).await.unwrap();
 
-        let s = state.read().await;
-        assert!(!s.registry.contains(&agent_id));
+        let us = user_state.read().await;
+        assert!(!us.registry.contains(&agent_id));
     }
 
     #[tokio::test]
     async fn withdraw_agent_ignores_link_mismatch() {
-        let state = test_state();
+        let (state, user_state) = test_state().await;
 
         let agent_id = Uuid::new_v4();
         {
-            let mut s = state.write().await;
-            s.registry.register_remote(
+            let mut us = user_state.write().await;
+            us.registry.register_remote(
                 AgentInfo {
                     agent_id,
                     alias: None,
@@ -1481,7 +1526,7 @@ mod tests {
             );
         }
 
-        let ctx = test_ctx(state.clone());
+        let ctx = test_ctx(state, user_state.clone());
         let (tx, _written) = mock_tx();
 
         // Withdraw from "test-link" but agent is stored from "other-link"
@@ -1489,14 +1534,14 @@ mod tests {
         handle_local(&tx, msg, &ctx).await.unwrap();
 
         // Should still be there (link mismatch)
-        let s = state.read().await;
-        assert!(s.registry.contains(&agent_id));
+        let us = user_state.read().await;
+        assert!(us.registry.contains(&agent_id));
     }
 
     #[tokio::test]
     async fn duplicate_announce_overwrites() {
-        let state = test_state();
-        let ctx = test_ctx(state.clone());
+        let (state, user_state) = test_state().await;
+        let ctx = test_ctx(state, user_state.clone());
         let (tx, _written) = mock_tx();
 
         let agent_id = Uuid::new_v4();
@@ -1521,20 +1566,20 @@ mod tests {
         };
         handle_local(&tx, msg, &ctx).await.unwrap();
 
-        let s = state.read().await;
-        let entry = s.registry.get(&agent_id).unwrap();
+        let us = user_state.read().await;
+        let entry = us.registry.get(&agent_id).unwrap();
         assert_eq!(entry.info.alias, Some("second".to_string()));
         assert_eq!(entry.info.working_dir, PathBuf::from("/second"));
     }
 
     #[tokio::test]
     async fn resolve_agent_by_alias() {
-        let state = test_state();
+        let (state, user_state) = test_state().await;
 
         let agent_id = Uuid::new_v4();
         {
-            let mut s = state.write().await;
-            s.registry.register_remote(
+            let mut us = user_state.write().await;
+            us.registry.register_remote(
                 AgentInfo {
                     agent_id,
                     alias: Some("my-agent".to_string()),
@@ -1547,7 +1592,7 @@ mod tests {
             );
         }
 
-        let ctx = test_ctx(state);
+        let ctx = test_ctx(state, user_state);
         let (tx, written) = mock_tx();
 
         let msg = LocalMessage::ResolveAgent {
@@ -1569,8 +1614,8 @@ mod tests {
 
     #[tokio::test]
     async fn resolve_agent_not_found() {
-        let state = test_state();
-        let ctx = test_ctx(state);
+        let (state, user_state) = test_state().await;
+        let ctx = test_ctx(state, user_state);
         let (tx, written) = mock_tx();
 
         let msg = LocalMessage::ResolveAgent {

@@ -21,7 +21,7 @@ const MAX_LOG_ENTRIES: usize = 1000;
 #[derive(Clone)]
 pub enum SessionEvent {
     /// Session ended (agent exited)
-    Ended(Uuid),
+    Ended { agent_id: Uuid, user_id: Uuid },
 }
 
 /// A local agent session with PTY
@@ -59,7 +59,11 @@ pub struct LocalAgentSession {
 
 impl LocalAgentSession {
     /// Create a new agent session from a CreateAgentRequest
-    pub fn new(req: &CreateAgentRequest, event_tx: mpsc::Sender<SessionEvent>) -> Result<Self> {
+    pub fn new(
+        req: &CreateAgentRequest,
+        event_tx: mpsc::Sender<SessionEvent>,
+        user_id: Uuid,
+    ) -> Result<Self> {
         // Build command and args based on agent type
         let (command, args): (String, Vec<String>) = match &req.agent_type {
             AgentType::Claude => (
@@ -172,7 +176,12 @@ impl LocalAgentSession {
                 log!("session [{}]: multiplex buffers closed", session_id);
 
                 // Notify server
-                let _ = event_tx.send(SessionEvent::Ended(session_id)).await;
+                let _ = event_tx
+                    .send(SessionEvent::Ended {
+                        agent_id: session_id,
+                        user_id,
+                    })
+                    .await;
             });
         });
 

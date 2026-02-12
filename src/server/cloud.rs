@@ -1,6 +1,6 @@
 use super::connection::{connection_loop, reader_loop, writer_loop, ConnectionContext};
 use super::routing::{handle_peer_disconnect, send_initial_announcements};
-use super::ServerState;
+use super::{get_or_create_user_state, ServerState, ServerUserState, LOCAL_USER_ID};
 use crate::cloud::{CloudConnection, CloudError};
 use crate::config::Config;
 use crate::error::AmuxError;
@@ -32,12 +32,17 @@ pub(super) fn establish_cloud_connection(
             return;
         }
 
+        // Get the default user state for cloud connections
+        let user_state = get_or_create_user_state(&state, LOCAL_USER_ID).await;
+
         let mut backoff = Duration::from_secs(1);
         const MAX_BACKOFF: Duration = Duration::from_secs(300);
 
         loop {
             log!("cloud: attempting connection");
-            match run_cloud_connection(&config, state.clone(), event_tx.clone()).await {
+            match run_cloud_connection(&config, state.clone(), user_state.clone(), event_tx.clone())
+                .await
+            {
                 Ok(()) => {
                     log!("cloud: connection closed cleanly");
                     backoff = Duration::from_secs(1);
@@ -81,6 +86,7 @@ enum CloudConnectionError {
 async fn run_cloud_connection(
     config: &Config,
     state: Arc<RwLock<ServerState>>,
+    user_state: Arc<RwLock<ServerUserState>>,
     event_tx: mpsc::Sender<super::SessionEvent>,
 ) -> std::result::Result<(), CloudConnectionError> {
     let conn = match CloudConnection::connect(config).await {
@@ -108,10 +114,10 @@ async fn run_cloud_connection(
 
     let (outgoing_tx, outgoing_rx) = mpsc::channel::<Message>(256);
     {
-        let mut state = state.write().await;
-        state.routes.insert(link_name.clone(), outgoing_tx.clone());
-        state.peer_links.insert(link_name.clone());
-        send_initial_announcements(&state, &link_name);
+        let mut us = user_state.write().await;
+        us.routes.insert(link_name.clone(), outgoing_tx.clone());
+        us.peer_links.insert(link_name.clone());
+        send_initial_announcements(&us, &link_name);
     }
     log!("cloud: route established as {}", link_name);
 
@@ -125,6 +131,8 @@ async fn run_cloud_connection(
 
     let ctx = ConnectionContext {
         state: state.clone(),
+        user_state: user_state.clone(),
+        user_id: LOCAL_USER_ID,
         event_tx,
         link_name: link_name.clone(),
     };
@@ -132,8 +140,8 @@ async fn run_cloud_connection(
     let result = connection_loop(incoming_rx, outgoing_tx, ctx, Some(token_refresh)).await;
 
     {
-        let mut state = state.write().await;
-        handle_peer_disconnect(&mut state, &link_name);
+        let mut us = user_state.write().await;
+        handle_peer_disconnect(&mut us, &link_name);
     }
 
     // Let writer drain, then abort reader

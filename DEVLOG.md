@@ -38,6 +38,38 @@ One paragraph describing what was done.
 
 ---
 
+## 2026-02-12: User multi-tenancy via ServerUserState
+
+### Summary
+
+Split `ServerState` into global state and per-user state (`ServerUserState`). Each authenticated user gets fully isolated state: agents, routes, registry, peer links, and active streams. Non-authenticated (local) connections share a default user (`LOCAL_USER_ID = Uuid::nil()`). The wire protocol is unchanged, and local mode is behaviorally identical to before.
+
+### Changes
+
+- `src/session.rs` — Changed `SessionEvent::Ended(Uuid)` to `SessionEvent::Ended { agent_id: Uuid, user_id: Uuid }`; added `user_id: Uuid` parameter to `LocalAgentSession::new()`
+- `src/server/mod.rs` — Added `LOCAL_USER_ID` constant; extracted per-user fields into `ServerUserState` struct; `ServerState` retains only global fields (config, cloud_mode, jwt_validator) plus `users: HashMap<Uuid, Arc<RwLock<ServerUserState>>>`; added `user_state()` (get-or-create) and `get_user_state()` (read-only) helpers; updated event handler to look up user state by user_id
+- `src/server/routing.rs` — All functions changed from `ServerState` to `ServerUserState` parameters; `create_agent` takes additional `user_id` for session creation
+- `src/server/connection.rs` — `ConnectionContext` now holds both `state` (global) and `user_state` (per-user) plus `user_id`; `handle_routable` and `handle_local` use `ctx.user_state` for per-user operations (routes, agents, registry, streams) and `ctx.state` for global operations (config, cloud_mode, jwt_validator); stream helpers (`register_stream`, `cleanup_stream`, `cancel_streams_matching`) operate on `ServerUserState`; all 16 unit tests updated
+- `src/server/accept.rs` — `accept_handshake` returns user_id and user state; parses `claims.sub` as Uuid after JWT validation; gets/creates user state from global state with proper lock ordering (drop global lock before acquiring user lock); `tcp_connect` takes additional `user_state` parameter
+- `src/server/cloud.rs` — `establish_cloud_connection` gets default user state before reconnection loop; `run_cloud_connection` takes `user_state` parameter; routes/peer_links/announcements operate on user state
+
+### Decisions Made
+
+- **Per-user routes for security:** Global routes would expose per-user connection context globally. If User B discovered User A's link name and agent_id, B could craft a routable message that forwards through A's link to A's agent. Per-user routes make this structurally impossible — B's handler can only access B's route table.
+- **Announcement isolation:** Per-user `peer_links` ensures agent announcements only reach the owning user's connections. Without this, `broadcast_to_peers` would leak agent_ids, aliases, and routes to all connected users.
+- **No runtime auth checks needed:** Authentication happens once at connection time via signed JWT. The `user_id` maps to a `ServerUserState`. All operations are scoped to that user's state, providing complete isolation without per-message authorization checks.
+- **Agent sharing is a future concern:** Per-user state provides complete isolation. If agent sharing is needed later, the design is TBD (could be cross-user forwarding, injecting shared routes into recipient state, etc.). Any sharing mechanism must include explicit authorization checks.
+- **Easily reversible:** This is a pure implementation detail, contained to `src/server/` files and `src/session.rs`. No protocol or client changes. Local mode behaves identically since everything runs under `LOCAL_USER_ID`.
+- **Lock ordering:** Always acquire global state lock to get/create `Arc<RwLock<ServerUserState>>`, then drop global lock before acquiring user lock. This prevents deadlocks.
+
+### Verification
+
+- `cargo check && cargo fmt && cargo clippy` — clean
+- `cargo test` — 95 tests pass
+- `cargo run -p e2e-runner -- run` — 10 E2E tests pass
+
+---
+
 ## 2026-02-11: Fix remote attach hang when agent process exits
 
 ### Summary

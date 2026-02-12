@@ -23,6 +23,11 @@ use accept::{tcp_accept, unix_accept, websocket_accept};
 use cloud::establish_cloud_connection;
 use routing::broadcast_to_peers;
 
+/// Default user for non-authenticated connections. Local amux servers are
+/// single-user: all state (agents, routes, registry) lives under this ID.
+/// User isolation is enforced on the cloud server via JWT authentication.
+pub(crate) const LOCAL_USER_ID: Uuid = Uuid::nil();
+
 /// An active stream (Output or StructuredOutput) that can be cancelled.
 /// Dropping the entry drops `cancel`, which signals the stream task via `oneshot::Receiver`.
 pub(super) struct StreamEntry {
@@ -35,40 +40,88 @@ pub(super) struct StreamEntry {
     pub link: String,
 }
 
-/// Server state shared across connection handlers
-pub(super) struct ServerState {
-    pub(super) config: Config,
-    /// Whether running in cloud mode (TLS + token auth required)
-    pub(super) cloud_mode: bool,
+/// Per-user state. Each authenticated user gets isolated agents, routes,
+/// registry, peer links, and streams. JWT authentication at connection time
+/// determines the user_id; all operations are scoped to that user's state.
+/// This provides complete user isolation without per-message authorization checks.
+pub(super) struct ServerUserState {
     pub(super) agents: HashMap<Uuid, Arc<LocalAgentSession>>,
-    /// Routes keyed by link name. The actual transport is owned by the
-    /// connection handler task; we only keep an outgoing message channel.
+    /// Per-user routing table. Link names are globally unique (random suffixes).
+    /// Per-user for security: prevents cross-user message forwarding without
+    /// explicit authorization.
     pub(super) routes: HashMap<String, mpsc::Sender<Message>>,
     /// Centralized agent registry (local + remote agents, alias mapping)
     pub(super) registry: AgentRegistry,
     /// Link names of peer connections (non-local connections that receive announcements)
     pub(super) peer_links: HashSet<String>,
-    /// JWT validator for cloud mode (validates incoming tokens)
-    pub(super) jwt_validator: Option<Arc<JwtValidator>>,
     /// Active streaming tasks keyed by agent_id, with cancellation tokens
     pub(super) active_streams: HashMap<Uuid, Vec<StreamEntry>>,
     pub(super) next_stream_id: u64,
 }
 
-impl ServerState {
-    fn new(config: Config) -> Self {
+impl ServerUserState {
+    fn new() -> Self {
         Self {
-            config,
-            cloud_mode: false,
             agents: HashMap::new(),
             routes: HashMap::new(),
             registry: AgentRegistry::new(),
             peer_links: HashSet::new(),
-            jwt_validator: None,
             active_streams: HashMap::new(),
             next_stream_id: 0,
         }
     }
+}
+
+/// Global server state. Per-user state (agents, routes, registry, streams, peer_links)
+/// lives in `ServerUserState`, providing user isolation via JWT authentication.
+pub(super) struct ServerState {
+    pub(super) config: Config,
+    /// Whether running in cloud mode (TLS + token auth required)
+    pub(super) cloud_mode: bool,
+    /// JWT validator for cloud mode (validates incoming tokens)
+    pub(super) jwt_validator: Option<Arc<JwtValidator>>,
+    /// Per-user state map. Each authenticated user gets isolated state.
+    pub(super) users: HashMap<Uuid, Arc<RwLock<ServerUserState>>>,
+}
+
+impl ServerState {
+    fn new(config: Config) -> Self {
+        let mut users = HashMap::new();
+        users.insert(LOCAL_USER_ID, Arc::new(RwLock::new(ServerUserState::new())));
+        Self {
+            config,
+            cloud_mode: false,
+            jwt_validator: None,
+            users,
+        }
+    }
+
+    /// Look up existing user state (read-only, no creation).
+    pub(super) fn get_user_state(&self, user_id: &Uuid) -> Option<Arc<RwLock<ServerUserState>>> {
+        self.users.get(user_id).cloned()
+    }
+}
+
+/// Get or create per-user state. Tries a read lock first (fast path for existing
+/// users), falling back to a write lock only when the user_id is seen for the
+/// first time.
+pub(super) async fn get_or_create_user_state(
+    state: &Arc<RwLock<ServerState>>,
+    user_id: Uuid,
+) -> Arc<RwLock<ServerUserState>> {
+    // Fast path: user already exists
+    {
+        let s = state.read().await;
+        if let Some(us) = s.users.get(&user_id) {
+            return us.clone();
+        }
+    }
+    // Slow path: create under write lock, re-check for races
+    let mut s = state.write().await;
+    s.users
+        .entry(user_id)
+        .or_insert_with(|| Arc::new(RwLock::new(ServerUserState::new())))
+        .clone()
 }
 
 /// The amux server
@@ -172,16 +225,22 @@ impl Server {
         tokio::spawn(async move {
             while let Some(event) = event_rx.recv().await {
                 match event {
-                    SessionEvent::Ended(agent_id) => {
+                    SessionEvent::Ended { agent_id, user_id } => {
                         log!("server: session {} ended, removing", agent_id);
-                        let mut state = state.write().await;
-                        state.registry.remove(&agent_id);
-                        state.agents.remove(&agent_id);
-                        broadcast_to_peers(
-                            &mut state,
-                            &crate::message::LocalMessage::WithdrawAgent { agent_id },
-                            None,
-                        );
+                        let user_state = {
+                            let s = state.read().await;
+                            s.get_user_state(&user_id)
+                        };
+                        if let Some(user_state) = user_state {
+                            let mut us = user_state.write().await;
+                            us.registry.remove(&agent_id);
+                            us.agents.remove(&agent_id);
+                            broadcast_to_peers(
+                                &mut us,
+                                &crate::message::LocalMessage::WithdrawAgent { agent_id },
+                                None,
+                            );
+                        }
                     }
                 }
             }

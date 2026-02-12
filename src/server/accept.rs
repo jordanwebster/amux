@@ -2,7 +2,7 @@ use super::connection::{
     cancel_streams_matching, connection_loop, reader_loop, writer_loop, ConnectionContext,
 };
 use super::routing::{handle_peer_disconnect, send_initial_announcements};
-use super::ServerState;
+use super::{get_or_create_user_state, ServerState, ServerUserState, LOCAL_USER_ID};
 use crate::error::{AmuxError, Result};
 use crate::message::{LocalMessage, Message, ProtocolError};
 use crate::route::generate_server_link;
@@ -13,10 +13,12 @@ use std::sync::Arc;
 use tokio::net::{TcpStream, UnixStream};
 use tokio::sync::{mpsc, RwLock};
 use tokio_tungstenite::accept_async;
+use uuid::Uuid;
 
 /// Accept-side handshake: client proposes link name, we validate against routes.
 /// Atomically checks uniqueness and inserts the route under a write lock.
-/// Returns the accepted link name and the outgoing message receiver on success.
+/// Returns the accepted link name, the outgoing message receiver, the user_id,
+/// and the per-user state on success.
 ///
 /// If `verify_token` is true (cloud server mode), the token in the Connect message
 /// is validated via JWT. If validation fails, InvalidCredentials is returned.
@@ -24,7 +26,12 @@ pub(super) async fn accept_handshake<T: Transport>(
     transport: &mut T,
     state: &Arc<RwLock<ServerState>>,
     verify_token: bool,
-) -> Result<(String, mpsc::Receiver<Message>)> {
+) -> Result<(
+    String,
+    mpsc::Receiver<Message>,
+    Uuid,
+    Arc<RwLock<ServerUserState>>,
+)> {
     for _attempt in 0..5 {
         let msg = transport.read_message().await?;
         let (proposed_link, token) = match msg {
@@ -52,7 +59,7 @@ pub(super) async fn accept_handshake<T: Transport>(
             )));
         }
 
-        if verify_token {
+        let user_id = if verify_token {
             let (validator, host, tcp_port) = {
                 let state = state.read().await;
                 let validator = state
@@ -74,6 +81,19 @@ pub(super) async fn accept_handshake<T: Transport>(
             match validator.validate(&token, &host, tcp_port).await {
                 Ok(claims) => {
                     log!("server: authenticated connection from user {}", claims.sub);
+                    match claims.sub.parse::<Uuid>() {
+                        Ok(user_id) => user_id,
+                        Err(_) => {
+                            log!("server: invalid user_id in token: {}", claims.sub);
+                            transport
+                                .write_message(&Message::Local(LocalMessage::ConnectResponse {
+                                    success: false,
+                                    error: Some(ProtocolError::InvalidCredentials),
+                                }))
+                                .await?;
+                            return Err(AmuxError::InvalidCredentials);
+                        }
+                    }
                 }
                 Err(e) => {
                     log!("server: token validation failed: {}", e);
@@ -86,13 +106,17 @@ pub(super) async fn accept_handshake<T: Transport>(
                     return Err(AmuxError::InvalidCredentials);
                 }
             }
-        }
+        } else {
+            LOCAL_USER_ID
+        };
 
-        // Atomically check uniqueness and insert route under write lock.
-        // The lock is dropped before any I/O to avoid stalling other tasks.
+        // Get or create user state (read lock fast path, write lock only on first connection)
+        let user_state = get_or_create_user_state(state, user_id).await;
+
+        // Check uniqueness under user state lock
         let link_taken = {
-            let state = state.read().await;
-            state.routes.contains_key(&proposed_link)
+            let us = user_state.read().await;
+            us.routes.contains_key(&proposed_link)
         };
 
         if link_taken {
@@ -106,10 +130,10 @@ pub(super) async fn accept_handshake<T: Transport>(
         }
 
         let outgoing_rx = {
-            let mut state = state.write().await;
+            let mut us = user_state.write().await;
             // Re-check under write lock to close the race window
-            if state.routes.contains_key(&proposed_link) {
-                drop(state);
+            if us.routes.contains_key(&proposed_link) {
+                drop(us);
                 transport
                     .write_message(&Message::Local(LocalMessage::ConnectResponse {
                         success: false,
@@ -120,7 +144,7 @@ pub(super) async fn accept_handshake<T: Transport>(
             }
 
             let (outgoing_tx, outgoing_rx) = mpsc::channel::<Message>(256);
-            state.routes.insert(proposed_link.clone(), outgoing_tx);
+            us.routes.insert(proposed_link.clone(), outgoing_tx);
             outgoing_rx
         };
 
@@ -132,12 +156,12 @@ pub(super) async fn accept_handshake<T: Transport>(
             }))
             .await
         {
-            let mut state = state.write().await;
-            state.routes.remove(&proposed_link);
+            let mut us = user_state.write().await;
+            us.routes.remove(&proposed_link);
             return Err(e);
         }
 
-        return Ok((proposed_link, outgoing_rx));
+        return Ok((proposed_link, outgoing_rx, user_id, user_state));
     }
 
     Err(AmuxError::TooManyHandshakeAttempts)
@@ -226,7 +250,7 @@ pub(super) async fn accept_connection<T: TransportSplit>(
     log_label: &str,
 ) -> Result<()> {
     // Handshake uses the transport directly (safe — no select! involved)
-    let (link_name, outgoing_rx) =
+    let (link_name, outgoing_rx, user_id, user_state) =
         match accept_handshake(&mut transport, &state, verify_token).await {
             Ok(result) => result,
             Err(e) => {
@@ -238,9 +262,9 @@ pub(super) async fn accept_connection<T: TransportSplit>(
     log!("server: {} connection {} established", log_label, link_name);
 
     if !is_local {
-        let mut s = state.write().await;
-        s.peer_links.insert(link_name.clone());
-        send_initial_announcements(&s, &link_name);
+        let mut us = user_state.write().await;
+        us.peer_links.insert(link_name.clone());
+        send_initial_announcements(&us, &link_name);
     }
 
     // Split transport into reader/writer halves
@@ -248,8 +272,8 @@ pub(super) async fn accept_connection<T: TransportSplit>(
 
     // Get the route's tx for the response channel
     let response_tx = {
-        let s = state.read().await;
-        s.routes.get(&link_name).unwrap().clone()
+        let us = user_state.read().await;
+        us.routes.get(&link_name).unwrap().clone()
     };
 
     // Spawn reader and writer tasks
@@ -259,6 +283,8 @@ pub(super) async fn accept_connection<T: TransportSplit>(
 
     let ctx = ConnectionContext {
         state: state.clone(),
+        user_state: user_state.clone(),
+        user_id,
         event_tx,
         link_name: link_name.clone(),
     };
@@ -274,14 +300,14 @@ pub(super) async fn accept_connection<T: TransportSplit>(
 
     // Cleanup: remove route, cancel streams, drop sender clones so writer task exits
     {
-        let mut s = state.write().await;
+        let mut us = user_state.write().await;
         if !is_local {
-            handle_peer_disconnect(&mut s, &link_name);
+            handle_peer_disconnect(&mut us, &link_name);
         } else {
-            s.routes.remove(&link_name);
+            us.routes.remove(&link_name);
             // Cancel streams spawned for this local connection so their sender
             // clones are dropped and the writer task can exit
-            cancel_streams_matching(&mut s, |entry| entry.link == link_name);
+            cancel_streams_matching(&mut us, |entry| entry.link == link_name);
         }
     }
     // Drop last sender clone → writer rx returns None → writer exits
@@ -339,6 +365,8 @@ pub(super) async fn tcp_accept<T: TransportSplit>(
 pub(super) async fn tcp_connect(
     address: &str,
     state: &Arc<RwLock<ServerState>>,
+    user_state: &Arc<RwLock<ServerUserState>>,
+    user_id: Uuid,
     event_tx: mpsc::Sender<super::SessionEvent>,
 ) -> Result<()> {
     let addr: std::net::SocketAddr = address
@@ -372,16 +400,17 @@ pub(super) async fn tcp_connect(
 
     let (outgoing_tx, outgoing_rx) = mpsc::channel::<Message>(256);
     {
-        let mut state = state.write().await;
-        state.routes.insert(link_name.clone(), outgoing_tx.clone());
-        state.peer_links.insert(link_name.clone());
-        send_initial_announcements(&state, &link_name);
+        let mut us = user_state.write().await;
+        us.routes.insert(link_name.clone(), outgoing_tx.clone());
+        us.peer_links.insert(link_name.clone());
+        send_initial_announcements(&us, &link_name);
     }
 
     // Split transport into reader/writer halves
     let (reader, writer) = transport.into_split();
 
     let state = state.clone();
+    let user_state = user_state.clone();
     let link_name_clone = link_name.clone();
     tokio::spawn(async move {
         // Spawn reader and writer tasks
@@ -391,6 +420,8 @@ pub(super) async fn tcp_connect(
 
         let ctx = ConnectionContext {
             state: state.clone(),
+            user_state: user_state.clone(),
+            user_id,
             event_tx,
             link_name: link_name_clone.clone(),
         };
@@ -401,12 +432,12 @@ pub(super) async fn tcp_connect(
             let _ = outgoing_tx.send(Message::from(e)).await;
         }
 
-        let mut state = state.write().await;
-        handle_peer_disconnect(&mut state, &link_name_clone);
+        let mut us = user_state.write().await;
+        handle_peer_disconnect(&mut us, &link_name_clone);
 
         // Drop all sender clones so writer drains and exits
         drop(outgoing_tx);
-        drop(state);
+        drop(us);
 
         let _ = writer_handle.await;
         reader_handle.abort();
