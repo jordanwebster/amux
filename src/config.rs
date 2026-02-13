@@ -106,6 +106,9 @@ pub struct Config {
     /// Set to false when TLS is terminated by a reverse proxy (e.g. nginx).
     #[serde(default = "default_enforce_tls_in_cloud_mode")]
     pub enforce_tls_in_cloud_mode: bool,
+
+    #[serde(skip)]
+    pub path: Option<PathBuf>,
 }
 
 impl Default for Config {
@@ -119,6 +122,7 @@ impl Default for Config {
             randomise_link_name: default_randomise_link_name(),
             state_path: default_state_path(),
             enforce_tls_in_cloud_mode: default_enforce_tls_in_cloud_mode(),
+            path: None,
         }
     }
 }
@@ -138,6 +142,9 @@ impl Config {
     /// Load config from a YAML file
     pub fn from_file(path: &Path) -> Result<Self> {
         let contents = std::fs::read_to_string(path)?;
-        serde_yaml::from_str(&contents).map_err(|e| AmuxError::Config(e.to_string()))
+        let mut config: Config =
+            serde_yaml::from_str(&contents).map_err(|e| AmuxError::Config(e.to_string()))?;
+        config.path = Some(path.to_path_buf());
+        Ok(config)
     }
 }
