@@ -1,4 +1,6 @@
 use crate::parser::{Directory, Terminal, TestCase, TestConfig, TestStep};
+
+type PreparedEnvironment = (Vec<Directory>, Vec<TestConfig>, Vec<Terminal>);
 use crate::terminal::TestTerminal;
 use std::collections::HashMap;
 use std::path::{Path, PathBuf};
@@ -383,12 +385,11 @@ state_path: "{}"
     }
 
     /// Prepare environment by auto-injecting missing fields
-    #[allow(clippy::type_complexity)]
     fn prepare_environment(
         &self,
         test_case: &TestCase,
         _temp_dir: &Path,
-    ) -> Result<(Vec<Directory>, Vec<TestConfig>, Vec<Terminal>), String> {
+    ) -> Result<PreparedEnvironment, String> {
         let mut directories = test_case.directories.clone();
         let mut configs = test_case.configs.clone();
         let terminals = test_case.terminals.clone();

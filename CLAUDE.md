@@ -10,7 +10,7 @@ This file provides guidance for AI assistants working on the amux codebase.
 
 ## After Completing Work
 
-1. Run `cargo check && cargo fmt && cargo clippy && cargo test`
+1. Run `cargo check && cargo fmt && cargo clippy --workspace --all-targets -- -D warnings && cargo test`
 2. **Update DEVLOG.md** - Add an entry describing what was done (see template in DEVLOG.md)
 
 ## Git Commits
@@ -201,10 +201,12 @@ tokio::task::spawn_blocking(move || { ... });
 ```bash
 cargo check             # Fast type-check
 cargo fmt               # Format code
-cargo clippy            # Lint (fix any warnings)
+cargo clippy --workspace --all-targets -- -D warnings   # Lint (warnings are errors — zero tolerance)
 cargo test              # Run all tests
 cargo build --workspace && cargo run -p e2e-runner -- run   # Build all binaries then run E2E tests (workspace build avoids stale amux/test-agent binaries)
 ```
+
+**Clippy policy:** All clippy warnings must be fixed, not suppressed. Do not add `#[allow(clippy::...)]` attributes — fix the underlying issue instead.
 
 **After completing a chunk of work:**
 - Update DEVLOG.md with a new entry (see template in that file)

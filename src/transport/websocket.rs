@@ -5,8 +5,8 @@ use async_trait::async_trait;
 use futures_util::{SinkExt, StreamExt};
 use tokio::net::TcpStream;
 use tokio::sync::mpsc;
-use tokio_tungstenite::tungstenite::protocol::Message as WsMessage;
 use tokio_tungstenite::WebSocketStream;
+use tokio_tungstenite::tungstenite::protocol::Message as WsMessage;
 
 /// WebSocket transport with JSON serialization
 pub struct WebSocketTransport {

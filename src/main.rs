@@ -132,10 +132,9 @@ async fn main() -> Result<()> {
     if let Some(Commands::Hooks {
         provider: HooksProvider::Claude { event },
     }) = &cli.command
+        && !is_handled_hook_event(event)
     {
-        if !is_handled_hook_event(event) {
-            return Ok(());
-        }
+        return Ok(());
     }
 
     let config = load_config(cli.config)?;

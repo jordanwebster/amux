@@ -110,10 +110,10 @@ impl JwtValidator {
 
     async fn ensure_jwks_fresh(&self) -> Result<(), JwtError> {
         let last = self.last_fetch.read().await;
-        if let Some(t) = *last {
-            if t.elapsed() < Duration::from_secs(3600) {
-                return Ok(()); // Cache still valid
-            }
+        if let Some(t) = *last
+            && t.elapsed() < Duration::from_secs(3600)
+        {
+            return Ok(()); // Cache still valid
         }
         drop(last);
 
@@ -126,12 +126,11 @@ impl JwtValidator {
         keys.clear();
 
         for jwk in jwks.keys {
-            if let (Some(kid), Some(n), Some(e)) = (&jwk.kid, &jwk.n, &jwk.e) {
-                if jwk.kty == "RSA" {
-                    if let Ok(key) = DecodingKey::from_rsa_components(n, e) {
-                        keys.insert(kid.clone(), key);
-                    }
-                }
+            if let (Some(kid), Some(n), Some(e)) = (&jwk.kid, &jwk.n, &jwk.e)
+                && jwk.kty == "RSA"
+                && let Ok(key) = DecodingKey::from_rsa_components(n, e)
+            {
+                keys.insert(kid.clone(), key);
             }
         }
 

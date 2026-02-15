@@ -38,6 +38,47 @@ One paragraph describing what was done.
 
 ---
 
+## 2026-02-15: Enforce zero clippy warnings in CLAUDE.md and CI
+
+### Summary
+
+Updated CLAUDE.md to use `cargo clippy --workspace --all-targets -- -D warnings` (warnings are errors) and added an explicit "no `#[allow(clippy::...)]`" policy. Updated CI to add `--workspace` to the clippy job so all workspace members are checked, not just the root crate.
+
+### Changes
+
+- `CLAUDE.md` — updated clippy commands to use `-D warnings` and `--workspace --all-targets`, added clippy policy note
+- `.github/workflows/ci.yml` — added `--workspace` to clippy step
+
+### Verification
+
+- `cargo clippy --workspace --all-targets -- -D warnings` — zero warnings across all crates
+
+---
+
+## 2026-02-15: Fix all clippy warnings and remove clippy exceptions
+
+### Summary
+
+Fixed all 10 clippy warnings (9 `collapsible_if`, 1 `clone_on_copy`) and removed the one `#[allow(clippy::type_complexity)]` exception by introducing a `PreparedEnvironment` type alias.
+
+### Changes
+
+- `src/agent_registry.rs` — collapsed 2 nested ifs, replaced `.clone()` with `*` dereference on `Copy` type `Uuid`
+- `src/jwt.rs` — collapsed 2 nested ifs (cache check, JWK parsing)
+- `src/server/connection.rs` — collapsed 1 nested if (stale route cleanup)
+- `src/server/routing.rs` — collapsed 2 nested ifs (alias check, peer broadcast)
+- `src/main.rs` — collapsed 1 nested if (hook event fast-path)
+- `e2e-runner/src/executor.rs` — replaced `#[allow(clippy::type_complexity)]` with `PreparedEnvironment` type alias
+
+### Verification
+
+- `cargo check` — clean
+- `cargo fmt` — no changes
+- `cargo clippy --workspace` — zero warnings
+- `cargo test` — 101 tests pass
+
+---
+
 ## 2026-02-15: Replace custom log! macro with tracing
 
 ### Summary

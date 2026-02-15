@@ -7,7 +7,7 @@
 //! - No race conditions between subscribe and write operations
 
 use std::sync::Arc;
-use tokio::sync::{mpsc, RwLock};
+use tokio::sync::{RwLock, mpsc};
 
 /// A buffer that supports multiple concurrent readers.
 ///

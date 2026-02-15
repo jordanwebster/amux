@@ -1,6 +1,6 @@
 use super::framing::{FrameReader, FrameWriter};
 use super::{
-    LengthPrefixed, MessageReader, MessageWriter, Transport, TransportSplit, MAX_FRAME_SIZE,
+    LengthPrefixed, MAX_FRAME_SIZE, MessageReader, MessageWriter, Transport, TransportSplit,
 };
 use crate::error::{AmuxError, Result};
 use crate::message::Message;

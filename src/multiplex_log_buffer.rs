@@ -8,7 +8,7 @@
 
 use crate::structured_log::StructuredLog;
 use std::sync::Arc;
-use tokio::sync::{mpsc, RwLock};
+use tokio::sync::{RwLock, mpsc};
 
 /// A buffer that supports multiple concurrent readers for structured log entries.
 ///

@@ -30,10 +30,10 @@ pub(super) async fn create_agent(
         return Err(anyhow!("Agent already exists: {}", &req.agent_id));
     }
 
-    if let Some(ref a) = req.alias {
-        if us.registry.alias_taken(a) {
-            return Err(anyhow!("Agent already exists: {}", a));
-        }
+    if let Some(ref a) = req.alias
+        && us.registry.alias_taken(a)
+    {
+        return Err(anyhow!("Agent already exists: {}", a));
     }
 
     let session = LocalAgentSession::new(&req, event_tx.clone(), user_id)?;
@@ -111,10 +111,10 @@ pub(super) fn broadcast_to_peers(
         if exclude_link == Some(link.as_str()) {
             continue;
         }
-        if let Some(tx) = us.routes.get(link) {
-            if tx.try_send(wire_msg.clone()).is_err() {
-                tracing::warn!(peer = %link, "failed to send to peer");
-            }
+        if let Some(tx) = us.routes.get(link)
+            && tx.try_send(wire_msg.clone()).is_err()
+        {
+            tracing::warn!(peer = %link, "failed to send to peer");
         }
     }
 }

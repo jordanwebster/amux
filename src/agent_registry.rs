@@ -84,13 +84,13 @@ impl AgentRegistry {
         }
 
         // Try to claim the new alias (first-one-wins)
-        if let Some(ref alias) = info.alias {
-            if !self.alias_to_uuid.contains_key(alias) {
-                self.alias_to_uuid.insert(alias.clone(), info.agent_id);
-                self.uuid_to_alias.insert(info.agent_id, alias.clone());
-            }
-            // else: silently skip — alias is taken by another agent
+        if let Some(ref alias) = info.alias
+            && !self.alias_to_uuid.contains_key(alias)
+        {
+            self.alias_to_uuid.insert(alias.clone(), info.agent_id);
+            self.uuid_to_alias.insert(info.agent_id, alias.clone());
         }
+        // else: silently skip — alias is taken by another agent
 
         self.entries.insert(info.agent_id, info);
         Ok(())
@@ -99,10 +99,10 @@ impl AgentRegistry {
     /// Remove an agent by UUID. Returns the removed entry if found.
     pub fn remove(&mut self, uuid: &Uuid) -> Option<AgentInfo> {
         let info = self.entries.remove(uuid)?;
-        if let Some(alias) = self.uuid_to_alias.remove(uuid) {
-            if self.alias_to_uuid.get(&alias) == Some(uuid) {
-                self.alias_to_uuid.remove(&alias);
-            }
+        if let Some(alias) = self.uuid_to_alias.remove(uuid)
+            && self.alias_to_uuid.get(&alias) == Some(uuid)
+        {
+            self.alias_to_uuid.remove(&alias);
         }
         Some(info)
     }
@@ -150,7 +150,7 @@ impl AgentRegistry {
     fn resolve_inner(&self, identifier: &str) -> Option<AgentInfo> {
         let uuid = match Uuid::parse_str(identifier) {
             Ok(uuid) => uuid,
-            Err(_) => self.alias_to_uuid.get(identifier)?.clone(),
+            Err(_) => *self.alias_to_uuid.get(identifier)?,
         };
 
         self.entries.get(&uuid).cloned()

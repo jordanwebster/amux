@@ -316,11 +316,11 @@ async fn handle_routable(
                         // Channel closed — conditionally clean up stale route
                         {
                             let mut us = ctx.user_state.write().await;
-                            if let Some(current_tx) = us.routes.get(&next_hop) {
-                                if current_tx.is_closed() {
-                                    us.routes.remove(&next_hop);
-                                    tracing::warn!(route = %next_hop, "removed stale route");
-                                }
+                            if let Some(current_tx) = us.routes.get(&next_hop)
+                                && current_tx.is_closed()
+                            {
+                                us.routes.remove(&next_hop);
+                                tracing::warn!(route = %next_hop, "removed stale route");
                             }
                         }
                         let Message::Routable {
