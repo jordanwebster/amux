@@ -1,13 +1,12 @@
-use super::connection::cancel_streams_matching;
 use super::ServerUserState;
-use crate::agent_registry::AgentKind;
+use super::connection::cancel_streams_matching;
 use crate::buffer::MultiplexReader;
-use crate::error::{AmuxError, Result};
 use crate::message::{CreateAgentRequest, LocalMessage, Message, PermissionResponse};
 use crate::route::Route;
 use crate::session::{LocalAgentSession, SessionEvent};
+use anyhow::{Result, anyhow};
 use std::sync::Arc;
-use tokio::sync::{mpsc, RwLock};
+use tokio::sync::{RwLock, mpsc};
 use uuid::Uuid;
 
 pub(super) async fn connection_tx(
@@ -28,12 +27,12 @@ pub(super) async fn create_agent(
     let mut us = user_state.write().await;
 
     if us.registry.contains(&req.agent_id) {
-        return Err(AmuxError::AgentAlreadyExists(req.agent_id.to_string()));
+        return Err(anyhow!("Agent already exists: {}", &req.agent_id));
     }
 
     if let Some(ref a) = req.alias {
         if us.registry.alias_taken(a) {
-            return Err(AmuxError::AgentAlreadyExists(a.clone()));
+            return Err(anyhow!("Agent already exists: {}", a));
         }
     }
 
@@ -78,7 +77,7 @@ pub(super) async fn handle_subscribe(
         let us = user_state.read().await;
         us.agents
             .get(agent_id)
-            .ok_or_else(|| AmuxError::AgentNotFound(agent_id.to_string()))?
+            .ok_or(anyhow!("Agent not found: {}", &agent_id))?
             .clone()
     };
 
@@ -87,7 +86,7 @@ pub(super) async fn handle_subscribe(
     let (reader, _input_tx) = session
         .subscribe()
         .await
-        .ok_or_else(|| AmuxError::AgentNotFound(agent_id.to_string()))?;
+        .ok_or(anyhow!("Agent not found: {}", &agent_id))?;
     Ok(reader)
 }
 
@@ -131,43 +130,21 @@ pub(super) fn send_initial_announcements(us: &ServerUserState, peer_link: &str) 
         return;
     };
 
-    for (uuid, entry) in us.registry.iter_entries() {
-        match &entry.kind {
-            AgentKind::Local => {
-                let msg = Message::Local(LocalMessage::AnnounceAgent {
-                    agent_id: *uuid,
-                    alias: entry.info.alias.clone(),
-                    command: entry.info.command.clone(),
-                    working_dir: entry.info.working_dir.clone(),
-                    route: Route::empty(),
-                });
-                if tx.try_send(msg).is_err() {
-                    log!(
-                        "server: failed to announce local agent {} to {}",
-                        uuid,
-                        peer_link
-                    );
-                }
-            }
-            AgentKind::Remote { route, link } => {
-                if link == peer_link {
-                    continue;
-                }
-                let msg = Message::Local(LocalMessage::AnnounceAgent {
-                    agent_id: *uuid,
-                    alias: entry.info.alias.clone(),
-                    command: entry.info.command.clone(),
-                    working_dir: entry.info.working_dir.clone(),
-                    route: route.clone(),
-                });
-                if tx.try_send(msg).is_err() {
-                    log!(
-                        "server: failed to announce remote agent {} to {}",
-                        uuid,
-                        peer_link
-                    );
-                }
-            }
+    for (uuid, info) in us.registry.iter_entries() {
+        if let Some(link) = info.route.peek()
+            && link == peer_link
+        {
+            continue;
+        }
+        let msg = Message::Local(LocalMessage::AnnounceAgent {
+            agent_id: *uuid,
+            alias: info.alias.clone(),
+            command: info.command.clone(),
+            working_dir: info.working_dir.clone(),
+            route: info.route.clone(),
+        });
+        if tx.try_send(msg).is_err() {
+            log!("server: failed to announce agent {} to {}", uuid, peer_link);
         }
     }
 }

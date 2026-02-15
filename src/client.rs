@@ -1,10 +1,11 @@
 use crate::config::Config;
+use crate::error::AmuxError::AgentNotFound;
 use crate::error::{AmuxError, Result};
 use crate::message::{
-    AgentType, CreateAgentRequest, LocalMessage, Message, ProtocolError, RoutableMessage,
-    ServerDebugInfo, SubscribeMode, PROTOCOL_VERSION,
+    AgentType, CreateAgentRequest, LocalMessage, Message, PROTOCOL_VERSION, ProtocolError,
+    RoutableMessage, ServerDebugInfo, SubscribeMode,
 };
-use crate::route::{generate_terminal_link, Route};
+use crate::route::{Route, generate_terminal_link};
 use crate::transport::{Transport, UnixTransport};
 use std::io::{self, Read, Write};
 use std::os::unix::io::AsRawFd;
@@ -196,7 +197,7 @@ pub async fn attach(target: Option<&str>, config: &Config) -> Result<()> {
     let (rows, cols) = get_terminal_size();
 
     // Resolve the target to (route, agent_id)
-    let (route_suffix, agent_id) = match target {
+    let (mut route_suffix, agent_id) = match target {
         Some(identifier) => {
             // Use ResolveAgent to resolve the identifier server-side
             transport
@@ -210,12 +211,8 @@ pub async fn attach(target: Option<&str>, config: &Config) -> Result<()> {
                 Message::Local(LocalMessage::ResolveAgentResult {
                     agent: Some(info), ..
                 }) => (info.route, info.agent_id),
-                Message::Local(LocalMessage::ResolveAgentResult { agent: None, error }) => {
-                    let msg = error
-                        .map(|e| e.to_string())
-                        .unwrap_or_else(|| format!("Agent not found: {}", identifier));
-                    eprintln!("{}", msg);
-                    return Ok(());
+                Message::Local(LocalMessage::ResolveAgentResult { agent: None }) => {
+                    return Err(AgentNotFound(identifier.to_string()));
                 }
                 Message::Local(LocalMessage::Error { message }) => {
                     return Err(AmuxError::ServerError(message));
@@ -248,14 +245,10 @@ pub async fn attach(target: Option<&str>, config: &Config) -> Result<()> {
     };
 
     // Build full route: our link first, then any additional route
-    let full_route = match route_suffix {
-        Some(mut suffix) => {
-            suffix.push(&link_name);
-            suffix
-        }
-        None => Route::from_link(&link_name),
+    let full_route = {
+        route_suffix.push(&link_name);
+        route_suffix
     };
-
     log!(
         "client: ATTACH {} route={:?} ({}x{})",
         agent_id,
@@ -373,12 +366,12 @@ pub async fn list_agents(config: &Config) -> Result<()> {
                     // Display alias if present, else UUID
                     let agent_id_str = agent.agent_id.to_string();
                     let display_name = agent.alias.as_deref().unwrap_or(&agent_id_str);
-                    if let Some(ref route) = agent.route {
+                    if agent.is_remote() {
                         println!(
                             "  {} - {} (via {})",
                             display_name,
                             agent.working_dir.display(),
-                            route
+                            agent.route
                         );
                     } else {
                         println!("  {} - {}", display_name, agent.working_dir.display());

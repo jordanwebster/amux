@@ -31,6 +31,10 @@ impl Route {
         }
     }
 
+    pub(crate) fn is_empty(&self) -> bool {
+        self.links.is_empty()
+    }
+
     /// Create a route with a single link.
     ///
     /// # Panics
@@ -65,7 +69,7 @@ impl Route {
     }
 
     /// Peek at the first hop without consuming it.
-    pub fn first_hop(&self) -> Option<&str> {
+    pub fn peek(&self) -> Option<&str> {
         self.links.front().map(|s| s.as_str())
     }
 

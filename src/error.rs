@@ -16,9 +16,6 @@ pub enum AmuxError {
     #[error("Agent not found: {0}")]
     AgentNotFound(String),
 
-    #[error("Agent already exists: {0}")]
-    AgentAlreadyExists(String),
-
     #[error("Invalid message")]
     InvalidMessage,
 

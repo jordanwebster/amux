@@ -1,3 +1,4 @@
+use crate::agent_registry::AgentInfo;
 use crate::config::Config;
 use crate::route::Route;
 use crate::structured_log::StructuredLog;
@@ -236,7 +237,6 @@ pub enum LocalMessage {
     },
     ResolveAgentResult {
         agent: Option<AgentInfo>,
-        error: Option<ProtocolError>,
     },
     DebugResult {
         info: ServerDebugInfo,
@@ -255,17 +255,6 @@ pub enum Message {
         message: RoutableMessage,
     },
     Local(LocalMessage),
-}
-
-/// Information about a running agent
-#[derive(Serialize, Deserialize, Debug, Clone)]
-pub struct AgentInfo {
-    pub agent_id: Uuid,
-    pub alias: Option<String>,
-    pub command: String,
-    pub working_dir: PathBuf,
-    #[serde(skip_serializing_if = "Option::is_none", default)]
-    pub route: Option<Route>,
 }
 
 /// Debug information about server state (aggregated across all users)
@@ -373,7 +362,7 @@ mod tests {
             alias: Some("claude-1".to_string()),
             command: "claude".to_string(),
             working_dir: PathBuf::from("/tmp"),
-            route: None,
+            route: Route::empty(),
         };
         let encoded = rmp_serde::to_vec(&info).unwrap();
         let decoded: AgentInfo = rmp_serde::from_slice(&encoded).unwrap();
@@ -479,29 +468,28 @@ mod tests {
             alias: Some("remote-agent".to_string()),
             command: "claude".to_string(),
             working_dir: PathBuf::from("/tmp"),
-            route: Some(Route::from_link("host-a")),
+            route: Route::from_link("host-a"),
         };
         let encoded = rmp_serde::to_vec_named(&info).unwrap();
         let decoded: AgentInfo = rmp_serde::from_slice(&encoded).unwrap();
         assert_eq!(decoded.agent_id, test_uuid);
-        assert!(decoded.route.is_some());
+        assert!(decoded.is_remote());
     }
 
     #[test]
-    fn test_agent_info_without_route_backward_compat() {
+    fn test_agent_info_local_route_roundtrip() {
         let test_uuid = Uuid::new_v4();
-        // Encode without route field (simulating old format)
         let info = AgentInfo {
             agent_id: test_uuid,
             alias: None,
             command: "bash".to_string(),
             working_dir: PathBuf::from("/tmp"),
-            route: None,
+            route: Route::empty(),
         };
         let encoded = rmp_serde::to_vec_named(&info).unwrap();
         let decoded: AgentInfo = rmp_serde::from_slice(&encoded).unwrap();
         assert_eq!(decoded.agent_id, test_uuid);
-        assert!(decoded.route.is_none());
+        assert!(decoded.route.is_empty());
     }
 
     #[test]

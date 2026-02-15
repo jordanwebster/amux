@@ -3,12 +3,12 @@ use super::routing::{
     broadcast_to_peers, connection_tx, create_agent, handle_subscribe, shutdown_server,
 };
 use super::{ServerState, ServerUserState, StreamEntry};
-use crate::agent_registry::AgentKind;
+use crate::agent_registry::AgentInfo;
 use crate::cloud::TokenRefreshState;
 use crate::error::{AmuxError, Result};
 use crate::message::{
-    AgentInfo, ClaudeHook, Hook, LocalMessage, Message, ProtocolError, RoutableMessage,
-    ServerDebugInfo, SubscribeMode,
+    ClaudeHook, Hook, LocalMessage, Message, ProtocolError, RoutableMessage, ServerDebugInfo,
+    SubscribeMode,
 };
 use crate::route::Route;
 use crate::session::SessionEvent;
@@ -18,7 +18,7 @@ use std::collections::HashSet;
 use std::path::PathBuf;
 use std::sync::Arc;
 use std::time::Duration;
-use tokio::sync::{mpsc, oneshot, RwLock};
+use tokio::sync::{RwLock, mpsc, oneshot};
 use uuid::Uuid;
 
 /// Context for connection handlers.
@@ -606,7 +606,7 @@ async fn handle_routable(
         // through the dead link. The dead_route's first_hop is the failed next_hop
         // (pushed last via push_front during traversal).
         RoutableMessage::Error(ProtocolError::NoRouteFound(ref dead_route)) => {
-            if let Some(dead_hop) = dead_route.first_hop() {
+            if let Some(dead_hop) = dead_route.peek() {
                 let mut us = ctx.user_state.write().await;
                 let cancelled =
                     cancel_streams_matching(&mut us, |entry| entry.dst.contains_link(dead_hop));
@@ -725,7 +725,9 @@ async fn handle_local(
                 us.registry.list_all()
             };
             let _ = tx
-                .send(Message::Local(LocalMessage::ListAgentsResult { agents }))
+                .send(Message::Local(LocalMessage::ListAgentsResult {
+                    agents: agents.into_iter().collect(),
+                }))
                 .await;
             Ok(())
         }
@@ -942,11 +944,10 @@ async fn handle_local(
                 alias: alias.clone(),
                 command: command.clone(),
                 working_dir: working_dir.clone(),
-                route: None,
+                route: our_route.clone(),
             };
 
-            us.registry
-                .register_remote(info, our_route.clone(), ctx.link_name.clone());
+            us.registry.register_remote(info).unwrap();
 
             log!(
                 "server: stored remote agent {} (alias={:?}) via {} route={}",
@@ -976,9 +977,10 @@ async fn handle_local(
             let mut us = ctx.user_state.write().await;
 
             // Only remove if the stored link matches the sender
-            let should_remove = us.registry.get(&agent_id).is_some_and(
-                |e| matches!(&e.kind, AgentKind::Remote { link, .. } if link == &ctx.link_name),
-            );
+            let should_remove = us
+                .registry
+                .get(&agent_id)
+                .is_some_and(|e| matches!(&e.route.peek(), Some(link) if link == &ctx.link_name));
 
             if should_remove {
                 us.registry.remove(&agent_id);
@@ -1006,19 +1008,9 @@ async fn handle_local(
 
         LocalMessage::ResolveAgent { identifier } => {
             let us = ctx.user_state.read().await;
-            let result = us.registry.resolve(&identifier);
+            let agent = us.registry.resolve(&identifier);
             let _ = tx
-                .send(Message::Local(LocalMessage::ResolveAgentResult {
-                    error: if result.is_none() {
-                        Some(ProtocolError::ServerError(format!(
-                            "Agent not found: {}",
-                            identifier
-                        )))
-                    } else {
-                        None
-                    },
-                    agent: result,
-                }))
+                .send(Message::Local(LocalMessage::ResolveAgentResult { agent }))
                 .await;
             Ok(())
         }
@@ -1042,7 +1034,7 @@ mod tests {
     use crate::server::LOCAL_USER_ID;
     use std::path::PathBuf;
     use std::sync::Arc;
-    use tokio::sync::{mpsc, RwLock};
+    use tokio::sync::{RwLock, mpsc};
     use uuid::Uuid;
 
     /// Create a response channel and collect written messages
@@ -1398,16 +1390,11 @@ mod tests {
         let us = user_state.read().await;
         assert!(us.registry.contains(&agent_id));
         let entry = us.registry.get(&agent_id).unwrap();
-        assert_eq!(entry.info.alias, Some("remote-test".to_string()));
-        match &entry.kind {
-            AgentKind::Remote { route, link } => {
-                assert_eq!(link, "test-link");
-                let mut route = route.clone();
-                assert_eq!(route.pop(), Some("test-link".to_string()));
-                assert_eq!(route.pop(), None);
-            }
-            _ => panic!("expected Remote agent kind"),
-        }
+        assert_eq!(entry.alias, Some("remote-test".to_string()));
+        assert!(entry.is_remote());
+        let mut route = entry.route.clone();
+        assert_eq!(route.pop(), Some("test-link".to_string()));
+        assert_eq!(route.pop(), None);
     }
 
     #[tokio::test]
@@ -1429,16 +1416,12 @@ mod tests {
 
         let us = user_state.read().await;
         let entry = us.registry.get(&agent_id).unwrap();
-        match &entry.kind {
-            AgentKind::Remote { route, .. } => {
-                let mut route = route.clone();
-                // Should be test-link.host-a (test-link prepended)
-                assert_eq!(route.pop(), Some("test-link".to_string()));
-                assert_eq!(route.pop(), Some("host-a".to_string()));
-                assert_eq!(route.pop(), None);
-            }
-            _ => panic!("expected Remote agent kind"),
-        }
+        assert!(entry.is_remote());
+        let mut route = entry.route.clone();
+        // Should be test-link.host-a (test-link prepended)
+        assert_eq!(route.pop(), Some("test-link".to_string()));
+        assert_eq!(route.pop(), Some("host-a".to_string()));
+        assert_eq!(route.pop(), None);
     }
 
     #[tokio::test]
@@ -1482,7 +1465,7 @@ mod tests {
         // Should still be local (not overwritten)
         let us = user_state.read().await;
         let entry = us.registry.get(&agent_id).unwrap();
-        assert!(matches!(entry.kind, AgentKind::Local));
+        assert!(!entry.is_remote());
     }
 
     #[tokio::test]
@@ -1492,17 +1475,15 @@ mod tests {
         let agent_id = Uuid::new_v4();
         {
             let mut us = user_state.write().await;
-            us.registry.register_remote(
-                AgentInfo {
+            us.registry
+                .register_remote(AgentInfo {
                     agent_id,
                     alias: None,
                     command: "bash".to_string(),
                     working_dir: PathBuf::from("/tmp"),
-                    route: None,
-                },
-                Route::from_link("test-link"),
-                "test-link".to_string(),
-            );
+                    route: Route::from_link("test-link"),
+                })
+                .unwrap();
         }
 
         let ctx = test_ctx(state, user_state.clone());
@@ -1522,17 +1503,15 @@ mod tests {
         let agent_id = Uuid::new_v4();
         {
             let mut us = user_state.write().await;
-            us.registry.register_remote(
-                AgentInfo {
+            us.registry
+                .register_remote(AgentInfo {
                     agent_id,
                     alias: None,
                     command: "bash".to_string(),
                     working_dir: PathBuf::from("/tmp"),
-                    route: None,
-                },
-                Route::from_link("other-link"),
-                "other-link".to_string(),
-            );
+                    route: Route::from_link("other-link"),
+                })
+                .unwrap();
         }
 
         let ctx = test_ctx(state, user_state.clone());
@@ -1577,8 +1556,8 @@ mod tests {
 
         let us = user_state.read().await;
         let entry = us.registry.get(&agent_id).unwrap();
-        assert_eq!(entry.info.alias, Some("second".to_string()));
-        assert_eq!(entry.info.working_dir, PathBuf::from("/second"));
+        assert_eq!(entry.alias, Some("second".to_string()));
+        assert_eq!(entry.working_dir, PathBuf::from("/second"));
     }
 
     #[tokio::test]
@@ -1588,17 +1567,15 @@ mod tests {
         let agent_id = Uuid::new_v4();
         {
             let mut us = user_state.write().await;
-            us.registry.register_remote(
-                AgentInfo {
+            us.registry
+                .register_remote(AgentInfo {
                     agent_id,
                     alias: Some("my-agent".to_string()),
                     command: "claude".to_string(),
                     working_dir: PathBuf::from("/tmp"),
-                    route: None,
-                },
-                Route::from_link("peer-a"),
-                "peer-a".to_string(),
-            );
+                    route: Route::from_link("peer-a"),
+                })
+                .unwrap();
         }
 
         let ctx = test_ctx(state, user_state);
@@ -1613,11 +1590,10 @@ mod tests {
 
         let msgs = written.lock().await;
         assert_eq!(msgs.len(), 1);
-        let Message::Local(LocalMessage::ResolveAgentResult { agent, error }) = &msgs[0] else {
+        let Message::Local(LocalMessage::ResolveAgentResult { agent }) = &msgs[0] else {
             panic!("expected ResolveAgentResult, got {:?}", msgs[0]);
         };
         assert!(agent.is_some());
-        assert!(error.is_none());
         assert_eq!(agent.as_ref().unwrap().agent_id, agent_id);
     }
 
@@ -1636,10 +1612,9 @@ mod tests {
 
         let msgs = written.lock().await;
         assert_eq!(msgs.len(), 1);
-        let Message::Local(LocalMessage::ResolveAgentResult { agent, error }) = &msgs[0] else {
+        let Message::Local(LocalMessage::ResolveAgentResult { agent }) = &msgs[0] else {
             panic!("expected ResolveAgentResult, got {:?}", msgs[0]);
         };
         assert!(agent.is_none());
-        assert!(error.is_some());
     }
 }

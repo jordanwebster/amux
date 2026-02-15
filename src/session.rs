@@ -1,13 +1,15 @@
+use crate::agent_registry::AgentInfo;
 use crate::buffer::{MultiplexBuffer, MultiplexReader};
 use crate::error::{AmuxError, Result};
-use crate::message::{AgentInfo, AgentType, CreateAgentRequest};
+use crate::message::{AgentType, CreateAgentRequest};
 use crate::multiplex_log_buffer::{MultiplexLogBuffer, MultiplexLogReader};
+use crate::route::Route;
 use crate::transcript::TranscriptTailer;
-use portable_pty::{native_pty_system, CommandBuilder, MasterPty, PtySize};
+use portable_pty::{CommandBuilder, MasterPty, PtySize, native_pty_system};
 use std::io::{Read, Write};
 use std::path::PathBuf;
 use std::sync::Arc;
-use tokio::sync::{mpsc, Mutex};
+use tokio::sync::{Mutex, mpsc};
 use tokio::task::JoinHandle;
 use uuid::Uuid;
 
@@ -293,7 +295,7 @@ impl LocalAgentSession {
             alias: self.alias.clone(),
             command: self.command.clone(),
             working_dir: self.working_dir.clone(),
-            route: None,
+            route: Route::empty(),
         }
     }
 }
