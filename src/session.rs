@@ -11,6 +11,7 @@ use std::path::PathBuf;
 use std::sync::Arc;
 use tokio::sync::{Mutex, mpsc};
 use tokio::task::JoinHandle;
+use tracing::Instrument;
 use uuid::Uuid;
 
 /// Maximum replay buffer size for PTY bytes
@@ -76,7 +77,9 @@ impl LocalAgentSession {
             AgentType::TestAgent(cmd) => (cmd.clone(), vec![]),
         };
 
-        tracing::info!(agent_id = %req.agent_id, command = %command, dir = %req.working_dir.display(), "creating session");
+        let session_span =
+            tracing::info_span!("session", agent_id = %req.agent_id, command = %command);
+        tracing::info!(parent: &session_span, dir = %req.working_dir.display(), "creating session");
 
         // Create PTY
         let pty_system = native_pty_system();
@@ -118,8 +121,9 @@ impl LocalAgentSession {
 
         // Task: Read from PTY, write to multiplex buffer
         let buffer_clone = buffer.clone();
-        let session_id = req.agent_id;
+        let span = session_span.clone();
         tokio::task::spawn_blocking(move || {
+            let _guard = span.enter();
             let rt = tokio::runtime::Handle::current();
             let mut read_buf = [0u8; 4096];
             loop {
@@ -131,29 +135,33 @@ impl LocalAgentSession {
                     Err(_) => break,
                 }
             }
-            tracing::debug!(agent_id = %session_id, "pty reader ended");
+            tracing::debug!("pty reader ended");
         });
 
         // Task: Forward input to PTY
-        let session_id = req.agent_id;
-        tokio::spawn(async move {
-            while let Some(data) = input_rx.recv().await {
-                if pty_writer.write_all(&data).is_err() {
-                    break;
+        tokio::spawn(
+            async move {
+                while let Some(data) = input_rx.recv().await {
+                    if pty_writer.write_all(&data).is_err() {
+                        break;
+                    }
+                    let _ = pty_writer.flush();
                 }
-                let _ = pty_writer.flush();
+                tracing::debug!("pty writer ended");
             }
-            tracing::debug!(agent_id = %session_id, "pty writer ended");
-        });
+            .instrument(session_span.clone()),
+        );
 
         // Task: Wait for child to exit, then clean up and notify server
         let session_id = req.agent_id;
         let master_clone = master.clone();
         let buffer_clone = buffer.clone();
         let log_buffer_clone = log_buffer.clone();
+        let span = session_span;
         tokio::task::spawn_blocking(move || {
+            let _guard = span.enter();
             let status = child.wait();
-            tracing::info!(agent_id = %session_id, ?status, "agent exited");
+            tracing::info!(?status, "agent exited");
 
             let rt = tokio::runtime::Handle::current();
             rt.block_on(async {

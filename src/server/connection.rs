@@ -19,6 +19,7 @@ use std::path::PathBuf;
 use std::sync::Arc;
 use std::time::Duration;
 use tokio::sync::{RwLock, mpsc, oneshot};
+use tracing::Instrument;
 use uuid::Uuid;
 
 fn msg_type_label(msg: &Message) -> &'static str {
@@ -157,13 +158,13 @@ pub(super) async fn connection_loop(
                                 awaiting_refresh = None;
                                 continue;
                             }
-                            tracing::warn!(link = %ctx.link_name, "unexpected ConnectResponse");
+                            tracing::warn!("unexpected ConnectResponse");
                             continue;
                         }
                         handle_message(&response_tx, msg, &ctx, &mut dead_routes).await?;
                     }
                     Some(Incoming::Eof) | None => {
-                        tracing::debug!(link = %ctx.link_name, "disconnected");
+                        tracing::debug!("disconnected");
                         return Ok(());
                     }
                     Some(Incoming::ReadErr(e)) => {
@@ -190,7 +191,7 @@ pub(super) async fn connection_loop(
                 }
             }
             _ = maybe_sleep_until(refresh_timeout), if awaiting_refresh.is_some() => {
-                tracing::error!(link = %ctx.link_name, "token refresh response timeout");
+                tracing::error!("token refresh response timeout");
                 return Err(AmuxError::Config("Token refresh timed out".to_string()));
             }
         }
@@ -277,7 +278,7 @@ pub(super) async fn handle_message(
             ..
         }
     ) {
-        tracing::debug!(link = %ctx.link_name, msg_type = msg_type_label(&msg), "received message");
+        tracing::debug!(msg_type = msg_type_label(&msg), "received message");
     }
 
     match msg {
@@ -459,7 +460,7 @@ async fn handle_routable(
                         })
                         .await;
 
-                    tracing::info!(link = %ctx.link_name, agent_id = %agent_id, mode = "structured", "subscribed");
+                    tracing::info!(agent_id = %agent_id, mode = "structured", "subscribed");
 
                     let outgoing_tx = connection_tx(&ctx.user_state, &ctx.link_name).await;
                     if let Some(tx) = outgoing_tx {
@@ -475,39 +476,43 @@ async fn handle_routable(
                             )
                         };
 
+                        let stream_span = tracing::info_span!("stream", stream_id, agent_id = %agent_id, mode = "structured");
                         let stream_user_state = ctx.user_state.clone();
-                        tokio::spawn(async move {
-                            tokio::select! {
-                                _ = async {
-                                    while let Some(entry) = reader.read().await {
-                                        if tx
-                                            .send(Message::Routable {
-                                                src: reply_src.clone(),
-                                                dst: reply_dst.clone(),
-                                                message: RoutableMessage::StructuredOutput {
-                                                    agent_id,
-                                                    entry,
-                                                },
-                                            })
-                                            .await
-                                            .is_err()
-                                        {
-                                            return;
+                        tokio::spawn(
+                            async move {
+                                tokio::select! {
+                                    _ = async {
+                                        while let Some(entry) = reader.read().await {
+                                            if tx
+                                                .send(Message::Routable {
+                                                    src: reply_src.clone(),
+                                                    dst: reply_dst.clone(),
+                                                    message: RoutableMessage::StructuredOutput {
+                                                        agent_id,
+                                                        entry,
+                                                    },
+                                                })
+                                                .await
+                                                .is_err()
+                                            {
+                                                return;
+                                            }
                                         }
+                                        let _ = tx.send(Message::Routable {
+                                            src: reply_src.clone(),
+                                            dst: reply_dst.clone(),
+                                            message: RoutableMessage::AgentEnded { agent_id },
+                                        }).await;
+                                    } => {}
+                                    _ = cancel_rx => {
+                                        tracing::debug!("stream cancelled");
                                     }
-                                    let _ = tx.send(Message::Routable {
-                                        src: reply_src.clone(),
-                                        dst: reply_dst.clone(),
-                                        message: RoutableMessage::AgentEnded { agent_id },
-                                    }).await;
-                                } => {}
-                                _ = cancel_rx => {
-                                    tracing::debug!(stream_id, "structured stream cancelled");
                                 }
+                                cleanup_stream(&stream_user_state, agent_id, stream_id).await;
+                                tracing::debug!("stream ended");
                             }
-                            cleanup_stream(&stream_user_state, agent_id, stream_id).await;
-                            tracing::debug!("structured stream ended");
-                        });
+                            .instrument(stream_span),
+                        );
                     }
 
                     Ok(())
@@ -529,7 +534,7 @@ async fn handle_routable(
                                 })
                                 .await;
 
-                            tracing::info!(link = %ctx.link_name, agent_id = %agent_id, mode = "raw", "subscribed");
+                            tracing::info!(agent_id = %agent_id, mode = "raw", "subscribed");
 
                             let outgoing_tx = connection_tx(&ctx.user_state, &ctx.link_name).await;
                             if let Some(tx) = outgoing_tx {
@@ -545,6 +550,7 @@ async fn handle_routable(
                                     )
                                 };
 
+                                let stream_span = tracing::info_span!("stream", stream_id, agent_id = %agent_id, mode = "raw");
                                 let stream_user_state = ctx.user_state.clone();
                                 tokio::spawn(async move {
                                     tokio::select! {
@@ -569,12 +575,12 @@ async fn handle_routable(
                                             }).await;
                                         } => {}
                                         _ = cancel_rx => {
-                                            tracing::debug!(stream_id, "raw stream cancelled");
+                                            tracing::debug!("stream cancelled");
                                         }
                                     }
                                     cleanup_stream(&stream_user_state, agent_id, stream_id).await;
-                                    tracing::debug!("output stream ended");
-                                });
+                                    tracing::debug!("stream ended");
+                                }.instrument(stream_span));
                             }
 
                             Ok(())
@@ -657,7 +663,7 @@ async fn handle_local(
 ) -> Result<()> {
     match message {
         LocalMessage::Shutdown => {
-            tracing::info!(link = %ctx.link_name, "shutdown requested");
+            tracing::info!("shutdown requested");
             shutdown_server(&ctx.user_state).await;
 
             let _ = tx
@@ -764,7 +770,7 @@ async fn handle_local(
         }
 
         LocalMessage::HookEvent { hook } => {
-            tracing::debug!(link = %ctx.link_name, "received hook event");
+            tracing::debug!("received hook event");
 
             let result = match &hook {
                 Hook::Claude(ClaudeHook::SessionStart(session_start)) => {
@@ -879,7 +885,7 @@ async fn handle_local(
                             AmuxError::InvalidCredentials
                         })?;
                         if token_user_id != ctx.user_id {
-                            tracing::error!(link = %ctx.link_name, "re-auth user_id mismatch");
+                            tracing::error!("re-auth user_id mismatch");
                             let _ = tx
                                 .send(Message::Local(LocalMessage::ConnectResponse {
                                     success: false,
@@ -888,7 +894,7 @@ async fn handle_local(
                                 .await;
                             return Err(AmuxError::InvalidCredentials);
                         }
-                        tracing::debug!(link = %ctx.link_name, "re-authenticated");
+                        tracing::debug!("re-authenticated");
                     }
                     Err(e) => {
                         tracing::warn!(error = %e, "re-auth token validation failed");
@@ -941,7 +947,7 @@ async fn handle_local(
 
             us.registry.register_remote(info).unwrap();
 
-            tracing::info!(agent_id = %agent_id, alias = ?alias, link = %ctx.link_name, "stored remote agent");
+            tracing::info!(agent_id = %agent_id, alias = ?alias, "stored remote agent");
 
             // Propagate to other peers with our stored route
             broadcast_to_peers(
@@ -970,7 +976,7 @@ async fn handle_local(
 
             if should_remove {
                 us.registry.remove(&agent_id);
-                tracing::info!(agent_id = %agent_id, link = %ctx.link_name, "withdrew remote agent");
+                tracing::info!(agent_id = %agent_id, "withdrew remote agent");
 
                 // Propagate to other peers
                 broadcast_to_peers(

@@ -13,6 +13,7 @@ use std::sync::Arc;
 use tokio::net::{TcpStream, UnixStream};
 use tokio::sync::{RwLock, mpsc};
 use tokio_tungstenite::accept_async;
+use tracing::Instrument;
 use uuid::Uuid;
 
 /// Accept-side handshake: client proposes link name, we validate against routes.
@@ -292,7 +293,8 @@ pub(super) async fn accept_connection<T: TransportSplit>(
             }
         };
 
-    tracing::info!(transport = log_label, link = %link_name, "connection established");
+    let conn_span = tracing::info_span!("connection", link = %link_name, transport = log_label);
+    tracing::info!(parent: &conn_span, "connection established");
 
     if !is_local {
         let mut us = user_state.write().await;
@@ -311,8 +313,10 @@ pub(super) async fn accept_connection<T: TransportSplit>(
 
     // Spawn reader and writer tasks
     let (incoming_tx, incoming_rx) = mpsc::channel(256);
-    let reader_handle = tokio::spawn(reader_loop(reader, incoming_tx));
-    let writer_handle = tokio::spawn(writer_loop(writer, outgoing_rx));
+    let reader_handle =
+        tokio::spawn(reader_loop(reader, incoming_tx).instrument(conn_span.clone()));
+    let writer_handle =
+        tokio::spawn(writer_loop(writer, outgoing_rx).instrument(conn_span.clone()));
 
     let ctx = ConnectionContext {
         state: state.clone(),
@@ -323,11 +327,13 @@ pub(super) async fn accept_connection<T: TransportSplit>(
     };
 
     let response_tx_cleanup = response_tx.clone();
-    let result = connection_loop(incoming_rx, response_tx, ctx, None).await;
+    let result = connection_loop(incoming_rx, response_tx, ctx, None)
+        .instrument(conn_span.clone())
+        .await;
 
     // Error write-back through the channel (writer task may still be alive)
     if let Err(ref e) = result {
-        tracing::debug!(transport = log_label, link = %link_name, error = %e, "connection error");
+        tracing::debug!(parent: &conn_span, error = %e, "connection error");
         let _ = response_tx_cleanup.send(Message::from(e)).await;
     }
 
@@ -350,7 +356,7 @@ pub(super) async fn accept_connection<T: TransportSplit>(
     let _ = writer_handle.await;
     reader_handle.abort();
 
-    tracing::info!(transport = log_label, link = %link_name, "connection closed");
+    tracing::info!(parent: &conn_span, "connection closed");
 
     result
 }
@@ -426,7 +432,8 @@ pub(super) async fn tcp_connect(
     })
     .await?;
 
-    tracing::info!(link = %link_name, "peer handshake complete");
+    let conn_span = tracing::info_span!("connection", link = %link_name, transport = "tcp");
+    tracing::info!(parent: &conn_span, "peer handshake complete");
 
     let (outgoing_tx, outgoing_rx) = mpsc::channel::<Message>(256);
     {
@@ -442,38 +449,44 @@ pub(super) async fn tcp_connect(
     let state = state.clone();
     let user_state = user_state.clone();
     let link_name_clone = link_name.clone();
-    tokio::spawn(async move {
-        // Spawn reader and writer tasks
-        let (incoming_tx, incoming_rx) = mpsc::channel(256);
-        let reader_handle = tokio::spawn(reader_loop(reader, incoming_tx));
-        let writer_handle = tokio::spawn(writer_loop(writer, outgoing_rx));
+    let task_span = conn_span.clone();
+    tokio::spawn(
+        async move {
+            // Spawn reader and writer tasks
+            let (incoming_tx, incoming_rx) = mpsc::channel(256);
+            let reader_handle =
+                tokio::spawn(reader_loop(reader, incoming_tx).instrument(task_span.clone()));
+            let writer_handle =
+                tokio::spawn(writer_loop(writer, outgoing_rx).instrument(task_span.clone()));
 
-        let ctx = ConnectionContext {
-            state: state.clone(),
-            user_state: user_state.clone(),
-            user_id,
-            event_tx,
-            link_name: link_name_clone.clone(),
-        };
-        let result = connection_loop(incoming_rx, outgoing_tx.clone(), ctx, None).await;
+            let ctx = ConnectionContext {
+                state: state.clone(),
+                user_state: user_state.clone(),
+                user_id,
+                event_tx,
+                link_name: link_name_clone.clone(),
+            };
+            let result = connection_loop(incoming_rx, outgoing_tx.clone(), ctx, None).await;
 
-        if let Err(ref e) = result {
-            tracing::debug!(link = %link_name_clone, error = %e, "peer connection error");
-            let _ = outgoing_tx.send(Message::from(e)).await;
+            if let Err(ref e) = result {
+                tracing::debug!(error = %e, "peer connection error");
+                let _ = outgoing_tx.send(Message::from(e)).await;
+            }
+
+            let mut us = user_state.write().await;
+            handle_peer_disconnect(&mut us, &link_name_clone);
+
+            // Drop all sender clones so writer drains and exits
+            drop(outgoing_tx);
+            drop(us);
+
+            let _ = writer_handle.await;
+            reader_handle.abort();
+
+            tracing::info!("peer connection closed");
         }
-
-        let mut us = user_state.write().await;
-        handle_peer_disconnect(&mut us, &link_name_clone);
-
-        // Drop all sender clones so writer drains and exits
-        drop(outgoing_tx);
-        drop(us);
-
-        let _ = writer_handle.await;
-        reader_handle.abort();
-
-        tracing::info!(link = %link_name_clone, "peer connection closed");
-    });
+        .instrument(conn_span),
+    );
 
     Ok(())
 }

@@ -38,6 +38,34 @@ One paragraph describing what was done.
 
 ---
 
+## 2026-02-15: Add targeted tracing spans (connection, session, stream)
+
+### Summary
+
+Added three tracing spans to eliminate repeated log fields and correlate all log lines within a lifecycle. The `connection` span carries `link` and `transport`, the `session` span carries `agent_id` and `command`, and the `stream` span carries `stream_id`, `agent_id`, and `mode`. Removed ~18 manually repeated field arguments from tracing calls that are now inherited from parent spans.
+
+### Changes
+
+- `src/server/accept.rs` — added `connection` span in `accept_connection` and `tcp_connect`; instrumented reader/writer/connection_loop tasks
+- `src/server/cloud.rs` — added `connection` span in `run_cloud_connection`; instrumented reader/writer/connection_loop tasks
+- `src/server/connection.rs` — removed `link = %ctx.link_name` from ~12 tracing calls; added `stream` span for both structured and raw subscribe handlers
+- `src/session.rs` — added `session` span in `LocalAgentSession::new()`; instrumented 3 spawned tasks (PTY reader, input writer, child wait)
+
+### Decisions Made
+
+- Used manual `info_span!` + `.instrument()` instead of `#[tracing::instrument]` because key fields are derived after function entry, functions take complex generic/Arc args, and spans don't align with function boundaries
+- Used `span.enter()` guard for `spawn_blocking` closures since spans don't auto-propagate into blocking contexts
+- No per-message spans (Output/InputBytes fire thousands of times per second)
+- No client-side or cloud-reconnect spans (short-lived, low value)
+
+### Verification
+
+- `cargo check && cargo fmt && cargo clippy --workspace --all-targets -- -D warnings` — clean
+- `cargo test` — 101 tests pass
+- `cargo build --workspace && cargo run -p e2e-runner -- run` — 10 E2E tests pass
+
+---
+
 ## 2026-02-15: Enforce zero clippy warnings in CLAUDE.md and CI
 
 ### Summary

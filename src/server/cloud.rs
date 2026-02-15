@@ -10,6 +10,7 @@ use crate::transport::TransportSplit;
 use std::sync::Arc;
 use std::time::Duration;
 use tokio::sync::{RwLock, mpsc};
+use tracing::Instrument;
 
 /// Establish and maintain a cloud connection with automatic reconnection.
 ///
@@ -154,15 +155,18 @@ async fn run_cloud_connection(
         us.peer_links.insert(link_name.clone());
         send_initial_announcements(&us, &link_name);
     }
-    tracing::info!(link = %link_name, "cloud route established");
+    let conn_span = tracing::info_span!("connection", link = %link_name, transport = "cloud");
+    tracing::info!(parent: &conn_span, "cloud route established");
 
     // Split transport into reader/writer halves
     let (reader, writer) = transport.into_split();
 
     // Spawn reader and writer tasks
     let (incoming_tx, incoming_rx) = mpsc::channel(256);
-    let reader_handle = tokio::spawn(reader_loop(reader, incoming_tx));
-    let writer_handle = tokio::spawn(writer_loop(writer, outgoing_rx));
+    let reader_handle =
+        tokio::spawn(reader_loop(reader, incoming_tx).instrument(conn_span.clone()));
+    let writer_handle =
+        tokio::spawn(writer_loop(writer, outgoing_rx).instrument(conn_span.clone()));
 
     let ctx = ConnectionContext {
         state: state.clone(),
@@ -172,7 +176,9 @@ async fn run_cloud_connection(
         link_name: link_name.clone(),
     };
 
-    let result = connection_loop(incoming_rx, outgoing_tx, ctx, Some(token_refresh)).await;
+    let result = connection_loop(incoming_rx, outgoing_tx, ctx, Some(token_refresh))
+        .instrument(conn_span.clone())
+        .await;
 
     {
         let mut us = user_state.write().await;
@@ -183,7 +189,7 @@ async fn run_cloud_connection(
     let _ = writer_handle.await;
     reader_handle.abort();
 
-    tracing::info!(link = %link_name, "cloud route removed");
+    tracing::info!(parent: &conn_span, "cloud route removed");
 
     match result {
         Ok(()) => Ok(()),
