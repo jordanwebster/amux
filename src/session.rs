@@ -76,15 +76,7 @@ impl LocalAgentSession {
             AgentType::TestAgent(cmd) => (cmd.clone(), vec![]),
         };
 
-        log!(
-            "session [{}]: creating with command '{}' args={:?} in {:?} ({}x{})",
-            req.agent_id,
-            command,
-            args,
-            req.working_dir,
-            req.cols,
-            req.rows
-        );
+        tracing::info!(agent_id = %req.agent_id, command = %command, dir = %req.working_dir.display(), "creating session");
 
         // Create PTY
         let pty_system = native_pty_system();
@@ -139,7 +131,7 @@ impl LocalAgentSession {
                     Err(_) => break,
                 }
             }
-            log!("session [{}]: PTY reader ended", session_id);
+            tracing::debug!(agent_id = %session_id, "pty reader ended");
         });
 
         // Task: Forward input to PTY
@@ -151,7 +143,7 @@ impl LocalAgentSession {
                 }
                 let _ = pty_writer.flush();
             }
-            log!("session [{}]: PTY writer ended", session_id);
+            tracing::debug!(agent_id = %session_id, "pty writer ended");
         });
 
         // Task: Wait for child to exit, then clean up and notify server
@@ -161,7 +153,7 @@ impl LocalAgentSession {
         let log_buffer_clone = log_buffer.clone();
         tokio::task::spawn_blocking(move || {
             let status = child.wait();
-            log!("session [{}]: command exited: {:?}", session_id, status);
+            tracing::info!(agent_id = %session_id, ?status, "agent exited");
 
             let rt = tokio::runtime::Handle::current();
             rt.block_on(async {
@@ -169,13 +161,11 @@ impl LocalAgentSession {
                 {
                     let mut master = master_clone.lock().await;
                     master.take();
-                    log!("session [{}]: PTY master dropped", session_id);
                 }
 
                 // Close the multiplex buffers to disconnect all clients
                 buffer_clone.close().await;
                 log_buffer_clone.close().await;
-                log!("session [{}]: multiplex buffers closed", session_id);
 
                 // Notify server
                 let _ = event_tx
@@ -239,7 +229,7 @@ impl LocalAgentSession {
                         pixel_height: 0,
                     })
                     .map_err(|e| AmuxError::Pty(e.to_string()))?;
-                log!("session [{}]: resized to {}x{}", self.agent_id, cols, rows);
+                tracing::debug!(agent_id = %self.agent_id, cols, rows, "pty resized");
                 *current = (rows, cols);
             }
         }
@@ -248,7 +238,7 @@ impl LocalAgentSession {
 
     /// Shutdown the session
     pub async fn shutdown(&self) {
-        log!("session [{}]: shutting down", self.agent_id);
+        tracing::info!(agent_id = %self.agent_id, "shutting down session");
         // Stop transcript tailer if running
         if let Some((tailer, _handle)) = self.transcript_tailer.lock().await.take() {
             tailer.stop();
@@ -266,7 +256,7 @@ impl LocalAgentSession {
     /// Starts a background task that tails the transcript file and writes
     /// parsed log entries to the log buffer.
     pub async fn link_transcript(&self, path: PathBuf) {
-        log!("session [{}]: linking transcript {:?}", self.agent_id, path);
+        tracing::debug!(agent_id = %self.agent_id, path = %path.display(), "linking transcript");
         let tailer = TranscriptTailer::new(path, self.log_buffer.clone());
         let handle = tailer.start();
         *self.transcript_tailer.lock().await = Some((tailer, handle));

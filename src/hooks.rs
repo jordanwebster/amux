@@ -1,6 +1,6 @@
 use crate::config::Config;
 use crate::message::{
-    ClaudeHook, ClaudePermissionTool, Hook, LocalMessage, Message, ProtocolError, PROTOCOL_VERSION,
+    ClaudeHook, ClaudePermissionTool, Hook, LocalMessage, Message, PROTOCOL_VERSION, ProtocolError,
 };
 use crate::route::generate_hook_link;
 use crate::transport::{Transport, UnixTransport};
@@ -29,7 +29,7 @@ impl From<ClaudePermissionTool> for crate::structured_log::PermissionTool {
 /// Fails silently (logs errors but returns 0) to not block Claude Code.
 pub fn handle_claude_hook(config: &Config) {
     if let Err(e) = handle_claude_hook_inner(config) {
-        log!("hooks: error: {}", e);
+        tracing::warn!(error = %e, "hook handling failed");
     }
 }
 
@@ -46,12 +46,12 @@ fn handle_claude_hook_inner(config: &Config) -> io::Result<()> {
     let claude_hook: ClaudeHook = match serde_json::from_str(&input) {
         Ok(hook) => hook,
         Err(e) => {
-            log!("hooks: failed to parse: {} - raw input: {}", e, input);
+            tracing::error!(error = %e, "hook parse failed");
             return Err(io::Error::new(io::ErrorKind::InvalidData, e));
         }
     };
 
-    log!("hooks: claude {}", describe_hook(&claude_hook));
+    tracing::debug!(hook = %describe_hook(&claude_hook), "received hook");
 
     let hook = Hook::Claude(claude_hook);
 
@@ -60,12 +60,12 @@ fn handle_claude_hook_inner(config: &Config) -> io::Result<()> {
         tokio::task::block_in_place(|| {
             tokio::runtime::Handle::current().block_on(async {
                 if let Err(e) = send_hook_event_to_server_inner(&socket_path, hook).await {
-                    log!("hooks: failed to send to server: {}", e);
+                    tracing::warn!(error = %e, "failed to send hook to server");
                 }
             });
         });
     } else {
-        log!("hooks: server not running, skipping HookEvent");
+        tracing::debug!("server not running, skipping hook");
     }
 
     Ok(())
@@ -125,7 +125,7 @@ async fn send_hook_event_to_server_inner(
 
     match ack {
         Message::Local(LocalMessage::HookEventResult { success: true, .. }) => {
-            log!("hooks: server acknowledged HookEvent");
+            tracing::debug!("hook acknowledged");
             Ok(())
         }
         Message::Local(LocalMessage::HookEventResult {

@@ -2,7 +2,7 @@
 //!
 //! Validates connection tokens using JWKS from the cloud service.
 
-use jsonwebtoken::{decode, decode_header, DecodingKey, Validation};
+use jsonwebtoken::{DecodingKey, Validation, decode, decode_header};
 use reqwest::Client;
 use serde::Deserialize;
 use std::collections::HashMap;
@@ -101,13 +101,7 @@ impl JwtValidator {
 
         // Verify host/port match
         if claims.host != expected_host || claims.port != expected_port {
-            log!(
-                "server: token host/port mismatch: token has {}:{}, expected {}:{}",
-                claims.host,
-                claims.port,
-                expected_host,
-                expected_port
-            );
+            tracing::warn!(token_host = %claims.host, token_port = claims.port, expected_host, expected_port, "token host/port mismatch");
             return Err(JwtError::HostMismatch);
         }
 
@@ -124,6 +118,7 @@ impl JwtValidator {
         drop(last);
 
         // Fetch JWKS
+        tracing::debug!("fetching JWKS");
         let response = self.http_client.get(&self.jwks_url).send().await?;
         let jwks: JwkSet = response.json().await?;
 

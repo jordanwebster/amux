@@ -145,7 +145,7 @@ impl TranscriptTailer {
 
         tokio::spawn(async move {
             if let Err(e) = tail_transcript(path, buffer, &mut shutdown_rx).await {
-                log!("transcript tailer error: {}", e);
+                tracing::warn!(error = %e, "transcript tailer error");
             }
         })
     }

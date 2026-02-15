@@ -21,6 +21,43 @@ use std::time::Duration;
 use tokio::sync::{RwLock, mpsc, oneshot};
 use uuid::Uuid;
 
+fn msg_type_label(msg: &Message) -> &'static str {
+    match msg {
+        Message::Routable { message, .. } => match message {
+            RoutableMessage::Subscribe { .. } => "Subscribe",
+            RoutableMessage::SubscribeResult { .. } => "SubscribeResult",
+            RoutableMessage::InputBytes { .. } => "InputBytes",
+            RoutableMessage::SubmitInput { .. } => "SubmitInput",
+            RoutableMessage::Output { .. } => "Output",
+            RoutableMessage::StructuredOutput { .. } => "StructuredOutput",
+            RoutableMessage::AgentEnded { .. } => "AgentEnded",
+            RoutableMessage::PermissionRequestResponse { .. } => "PermissionRequestResponse",
+            RoutableMessage::Error(_) => "Error",
+        },
+        Message::Local(local) => match local {
+            LocalMessage::Connect { .. } => "Connect",
+            LocalMessage::ConnectResponse { .. } => "ConnectResponse",
+            LocalMessage::CreateAgent(_) => "CreateAgent",
+            LocalMessage::CreateAgentResult { .. } => "CreateAgentResult",
+            LocalMessage::ListAgents => "ListAgents",
+            LocalMessage::ListAgentsResult { .. } => "ListAgentsResult",
+            LocalMessage::Shutdown => "Shutdown",
+            LocalMessage::HookEvent { .. } => "HookEvent",
+            LocalMessage::HookEventResult { .. } => "HookEventResult",
+            LocalMessage::ConnectToServer { .. } => "ConnectToServer",
+            LocalMessage::ConnectToServerResult { .. } => "ConnectToServerResult",
+            LocalMessage::Debug => "Debug",
+            LocalMessage::DebugResult { .. } => "DebugResult",
+            LocalMessage::AnnounceAgent { .. } => "AnnounceAgent",
+            LocalMessage::WithdrawAgent { .. } => "WithdrawAgent",
+            LocalMessage::ResolveAgent { .. } => "ResolveAgent",
+            LocalMessage::ResolveAgentResult { .. } => "ResolveAgentResult",
+            LocalMessage::Error { .. } => "Error",
+            LocalMessage::ServerShutdown { .. } => "ServerShutdown",
+        },
+    }
+}
+
 /// Context for connection handlers.
 pub(super) struct ConnectionContext {
     pub(super) state: Arc<RwLock<ServerState>>,
@@ -108,11 +145,11 @@ pub(super) async fn connection_loop(
                                             refresh_deadline = Some(rs.refresh_deadline());
                                         }
                                         Err(crate::cloud::CloudError::HostChanged) => {
-                                            log!("cloud: host changed, reconnection required");
+                                            tracing::warn!("cloud host changed, reconnection required");
                                             return Err(AmuxError::Config("Cloud host changed".to_string()));
                                         }
                                         Err(e) => {
-                                            log!("cloud: token refresh response error: {}", e);
+                                            tracing::error!(error = %e, "token refresh response error");
                                             return Err(AmuxError::Config(format!("Token refresh failed: {}", e)));
                                         }
                                     }
@@ -120,13 +157,13 @@ pub(super) async fn connection_loop(
                                 awaiting_refresh = None;
                                 continue;
                             }
-                            log!("server: unexpected ConnectResponse on {}", ctx.link_name);
+                            tracing::warn!(link = %ctx.link_name, "unexpected ConnectResponse");
                             continue;
                         }
                         handle_message(&response_tx, msg, &ctx, &mut dead_routes).await?;
                     }
                     Some(Incoming::Eof) | None => {
-                        log!("server: {} disconnected", ctx.link_name);
+                        tracing::debug!(link = %ctx.link_name, "disconnected");
                         return Ok(());
                     }
                     Some(Incoming::ReadErr(e)) => {
@@ -136,24 +173,24 @@ pub(super) async fn connection_loop(
             }
             _ = maybe_sleep_until(refresh_deadline), if awaiting_refresh.is_none() && refresh_deadline.is_some() => {
                 if let Some(ref mut rs) = token_refresh {
-                    log!("cloud: refreshing token");
+                    tracing::debug!("refreshing cloud token");
                     match rs.send_connect(&response_tx).await {
                         Ok(()) => {
                             awaiting_refresh = Some(tokio::time::Instant::now());
                         }
                         Err(crate::cloud::CloudError::HostChanged) => {
-                            log!("cloud: host changed, reconnection required");
+                            tracing::warn!("cloud host changed, reconnection required");
                             return Err(AmuxError::Config("Cloud host changed".to_string()));
                         }
                         Err(e) => {
-                            log!("cloud: token refresh failed: {}", e);
+                            tracing::error!(error = %e, "token refresh failed");
                             return Err(AmuxError::Config(format!("Token refresh failed: {}", e)));
                         }
                     }
                 }
             }
             _ = maybe_sleep_until(refresh_timeout), if awaiting_refresh.is_some() => {
-                log!("server: refresh response timeout on {}", ctx.link_name);
+                tracing::error!(link = %ctx.link_name, "token refresh response timeout");
                 return Err(AmuxError::Config("Token refresh timed out".to_string()));
             }
         }
@@ -240,7 +277,7 @@ pub(super) async fn handle_message(
             ..
         }
     ) {
-        log!("server: {} received {:?}", ctx.link_name, msg);
+        tracing::debug!(link = %ctx.link_name, msg_type = msg_type_label(&msg), "received message");
     }
 
     match msg {
@@ -282,7 +319,7 @@ async fn handle_routable(
                             if let Some(current_tx) = us.routes.get(&next_hop) {
                                 if current_tx.is_closed() {
                                     us.routes.remove(&next_hop);
-                                    log!("server: removed stale route {}", next_hop);
+                                    tracing::warn!(route = %next_hop, "removed stale route");
                                 }
                             }
                         }
@@ -298,7 +335,7 @@ async fn handle_routable(
                 }
             }
             None => {
-                log!("server: no route to {}", next_hop);
+                tracing::debug!(next_hop = %next_hop, "no route");
                 Some(message)
             }
         };
@@ -309,7 +346,7 @@ async fn handle_routable(
         if let Some(failed_msg) = failed_msg {
             match failed_msg {
                 RoutableMessage::Error(_) => {
-                    log!("server: dropping failed routable error to avoid amplification");
+                    tracing::debug!("dropping failed error to avoid amplification");
                 }
                 RoutableMessage::Output { .. }
                 | RoutableMessage::StructuredOutput { .. }
@@ -422,11 +459,7 @@ async fn handle_routable(
                         })
                         .await;
 
-                    log!(
-                        "server: {} subscribed to agent {} (structured)",
-                        ctx.link_name,
-                        agent_id
-                    );
+                    tracing::info!(link = %ctx.link_name, agent_id = %agent_id, mode = "structured", "subscribed");
 
                     let outgoing_tx = connection_tx(&ctx.user_state, &ctx.link_name).await;
                     if let Some(tx) = outgoing_tx {
@@ -469,11 +502,11 @@ async fn handle_routable(
                                     }).await;
                                 } => {}
                                 _ = cancel_rx => {
-                                    log!("server: structured stream {} cancelled", stream_id);
+                                    tracing::debug!(stream_id, "structured stream cancelled");
                                 }
                             }
                             cleanup_stream(&stream_user_state, agent_id, stream_id).await;
-                            log!("server: structured log stream ended");
+                            tracing::debug!("structured stream ended");
                         });
                     }
 
@@ -496,11 +529,7 @@ async fn handle_routable(
                                 })
                                 .await;
 
-                            log!(
-                                "server: {} subscribed to agent {} (raw)",
-                                ctx.link_name,
-                                agent_id
-                            );
+                            tracing::info!(link = %ctx.link_name, agent_id = %agent_id, mode = "raw", "subscribed");
 
                             let outgoing_tx = connection_tx(&ctx.user_state, &ctx.link_name).await;
                             if let Some(tx) = outgoing_tx {
@@ -540,11 +569,11 @@ async fn handle_routable(
                                             }).await;
                                         } => {}
                                         _ = cancel_rx => {
-                                            log!("server: raw stream {} cancelled", stream_id);
+                                            tracing::debug!(stream_id, "raw stream cancelled");
                                         }
                                     }
                                     cleanup_stream(&stream_user_state, agent_id, stream_id).await;
-                                    log!("server: output stream ended");
+                                    tracing::debug!("output stream ended");
                                 });
                             }
 
@@ -591,12 +620,7 @@ async fn handle_routable(
             let us = ctx.user_state.read().await;
             if let Some(session) = us.agents.get(&agent_id) {
                 let keystroke = super::routing::permission_response_keystroke(&response);
-                log!(
-                    "server: sending permission response {:?} to agent {} (keystroke: {:?})",
-                    response,
-                    agent_id,
-                    keystroke
-                );
+                tracing::info!(agent_id = %agent_id, ?response, "sending permission response");
                 let _ = session.send_input(keystroke.to_vec()).await;
             }
             Ok(())
@@ -611,11 +635,7 @@ async fn handle_routable(
                 let cancelled =
                     cancel_streams_matching(&mut us, |entry| entry.dst.contains_link(dead_hop));
                 if cancelled > 0 {
-                    log!(
-                        "server: cancelled {} streams targeting dead hop {}",
-                        cancelled,
-                        dead_hop
-                    );
+                    tracing::info!(count = cancelled, dead_hop = %dead_hop, "cancelled streams for dead hop");
                 }
             }
             Ok(())
@@ -626,13 +646,7 @@ async fn handle_routable(
         | RoutableMessage::Output { .. }
         | RoutableMessage::StructuredOutput { .. }
         | RoutableMessage::AgentEnded { .. }
-        | RoutableMessage::Error(_) => {
-            log!(
-                "server: routable response arrived with empty dst, dropping: {:?}",
-                message
-            );
-            Ok(())
-        }
+        | RoutableMessage::Error(_) => Ok(()),
     }
 }
 
@@ -643,7 +657,7 @@ async fn handle_local(
 ) -> Result<()> {
     match message {
         LocalMessage::Shutdown => {
-            log!("server: shutdown requested by {}", ctx.link_name);
+            tracing::info!(link = %ctx.link_name, "shutdown requested");
             shutdown_server(&ctx.user_state).await;
 
             let _ = tx
@@ -657,7 +671,7 @@ async fn handle_local(
                 state.config.socket_path.clone()
             };
             let _ = std::fs::remove_file(socket_path);
-            log!("server: exiting");
+            tracing::info!("server exiting");
             std::process::exit(0);
         }
 
@@ -750,7 +764,7 @@ async fn handle_local(
         }
 
         LocalMessage::HookEvent { hook } => {
-            log!("server: HookEvent from {}: {:?}", ctx.link_name, hook);
+            tracing::debug!(link = %ctx.link_name, "received hook event");
 
             let result = match &hook {
                 Hook::Claude(ClaudeHook::SessionStart(session_start)) => {
@@ -759,19 +773,13 @@ async fn handle_local(
                         us.agents.get(&session_start.session_id).cloned()
                     };
                     if let Some(session) = session {
-                        log!(
-                            "server: linking transcript to agent {}",
-                            session_start.session_id
-                        );
+                        tracing::debug!(agent_id = %session_start.session_id, "linking transcript");
                         session
                             .link_transcript(PathBuf::from(&session_start.transcript_path))
                             .await;
                         Ok(())
                     } else {
-                        log!(
-                            "server: no agent with session_id {}",
-                            session_start.session_id
-                        );
+                        tracing::warn!(session_id = %session_start.session_id, "no agent found for hook");
                         Err(ProtocolError::ServerError(format!(
                             "No agent found with session_id: {}",
                             session_start.session_id
@@ -784,11 +792,7 @@ async fn handle_local(
                         us.agents.get(&perm_req.session_id).cloned()
                     };
                     if let Some(session) = session {
-                        log!(
-                            "server: permission request for agent {}: {:?}",
-                            perm_req.session_id,
-                            perm_req.tool
-                        );
+                        tracing::debug!(agent_id = %perm_req.session_id, "permission request");
                         session
                             .write_log(crate::structured_log::StructuredLog::PermissionRequest {
                                 tool: perm_req.tool.clone().into(),
@@ -796,7 +800,7 @@ async fn handle_local(
                             .await;
                         Ok(())
                     } else {
-                        log!("server: no agent with session_id {}", perm_req.session_id);
+                        tracing::warn!(session_id = %perm_req.session_id, "no agent found for hook");
                         Err(ProtocolError::ServerError(format!(
                             "No agent found with session_id: {}",
                             perm_req.session_id
@@ -871,16 +875,11 @@ async fn handle_local(
                 match validator.validate(&token, &host, tcp_port).await {
                     Ok(claims) => {
                         let token_user_id = claims.sub.parse::<uuid::Uuid>().map_err(|_| {
-                            log!("server: re-auth invalid user_id in token: {}", claims.sub);
+                            tracing::error!(sub = %claims.sub, "re-auth invalid user_id");
                             AmuxError::InvalidCredentials
                         })?;
                         if token_user_id != ctx.user_id {
-                            log!(
-                                "server: re-auth user_id mismatch on {}: token={} connection={}",
-                                ctx.link_name,
-                                token_user_id,
-                                ctx.user_id
-                            );
+                            tracing::error!(link = %ctx.link_name, "re-auth user_id mismatch");
                             let _ = tx
                                 .send(Message::Local(LocalMessage::ConnectResponse {
                                     success: false,
@@ -889,14 +888,10 @@ async fn handle_local(
                                 .await;
                             return Err(AmuxError::InvalidCredentials);
                         }
-                        log!(
-                            "server: re-authenticated {} (user {})",
-                            ctx.link_name,
-                            ctx.user_id
-                        );
+                        tracing::debug!(link = %ctx.link_name, "re-authenticated");
                     }
                     Err(e) => {
-                        log!("server: re-auth token validation failed: {}", e);
+                        tracing::warn!(error = %e, "re-auth token validation failed");
                         let _ = tx
                             .send(Message::Local(LocalMessage::ConnectResponse {
                                 success: false,
@@ -928,10 +923,7 @@ async fn handle_local(
 
             // Local agent takes precedence — skip if we own this agent
             if us.agents.contains_key(&agent_id) {
-                log!(
-                    "server: ignoring AnnounceAgent for local agent {}",
-                    agent_id
-                );
+                tracing::debug!(agent_id = %agent_id, "ignoring announce for local agent");
                 return Ok(());
             }
 
@@ -949,13 +941,7 @@ async fn handle_local(
 
             us.registry.register_remote(info).unwrap();
 
-            log!(
-                "server: stored remote agent {} (alias={:?}) via {} route={}",
-                agent_id,
-                alias,
-                ctx.link_name,
-                our_route
-            );
+            tracing::info!(agent_id = %agent_id, alias = ?alias, link = %ctx.link_name, "stored remote agent");
 
             // Propagate to other peers with our stored route
             broadcast_to_peers(
@@ -984,11 +970,7 @@ async fn handle_local(
 
             if should_remove {
                 us.registry.remove(&agent_id);
-                log!(
-                    "server: withdrew remote agent {} (from {})",
-                    agent_id,
-                    ctx.link_name
-                );
+                tracing::info!(agent_id = %agent_id, link = %ctx.link_name, "withdrew remote agent");
 
                 // Propagate to other peers
                 broadcast_to_peers(
@@ -997,10 +979,7 @@ async fn handle_local(
                     Some(&ctx.link_name),
                 );
             } else {
-                log!(
-                    "server: ignoring WithdrawAgent {} (link mismatch or unknown)",
-                    agent_id
-                );
+                tracing::debug!(agent_id = %agent_id, "ignoring withdraw (link mismatch)");
             }
 
             Ok(())

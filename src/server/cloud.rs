@@ -1,6 +1,6 @@
-use super::connection::{connection_loop, reader_loop, writer_loop, ConnectionContext};
+use super::connection::{ConnectionContext, connection_loop, reader_loop, writer_loop};
 use super::routing::{handle_peer_disconnect, send_initial_announcements};
-use super::{get_or_create_user_state, ServerState, ServerUserState, LOCAL_USER_ID};
+use super::{LOCAL_USER_ID, ServerState, ServerUserState, get_or_create_user_state};
 use crate::cloud::{CloudConnection, CloudError};
 use crate::config::Config;
 use crate::error::AmuxError;
@@ -9,7 +9,7 @@ use crate::state::State;
 use crate::transport::TransportSplit;
 use std::sync::Arc;
 use std::time::Duration;
-use tokio::sync::{mpsc, RwLock};
+use tokio::sync::{RwLock, mpsc};
 
 /// Establish and maintain a cloud connection with automatic reconnection.
 ///
@@ -28,7 +28,7 @@ pub(super) fn establish_cloud_connection(
             .unwrap_or(false);
 
         if !should_connect {
-            log!("cloud: cloud mode not enabled, skipping connection");
+            tracing::info!("cloud mode not enabled");
             return;
         }
 
@@ -39,12 +39,12 @@ pub(super) fn establish_cloud_connection(
         const MAX_BACKOFF: Duration = Duration::from_secs(300);
 
         loop {
-            log!("cloud: attempting connection");
+            tracing::info!("attempting cloud connection");
             match run_cloud_connection(&config, state.clone(), user_state.clone(), event_tx.clone())
                 .await
             {
                 Ok(()) => {
-                    log!("cloud: connection closed cleanly");
+                    tracing::info!("cloud connection closed cleanly");
                     backoff = Duration::from_secs(1);
                 }
                 Err(CloudConnectionError::VersionMismatch {
@@ -55,7 +55,7 @@ pub(super) fn establish_cloud_connection(
                         "amux upgrade required (protocol v{}, client v{})",
                         server_version, client_version
                     );
-                    log!("cloud: {}", reason);
+                    tracing::error!(reason = %reason, "cloud version mismatch");
                     // Notify all attached terminals to exit cleanly
                     let us = user_state.read().await;
                     for (link, tx) in &us.routes {
@@ -69,11 +69,11 @@ pub(super) fn establish_cloud_connection(
                     std::process::exit(1);
                 }
                 Err(CloudConnectionError::NonRetriable(msg)) => {
-                    log!("cloud: non-retriable error, stopping: {}", msg);
+                    tracing::error!(error = %msg, "cloud non-retriable error, stopping");
                     return;
                 }
                 Err(CloudConnectionError::Retriable(msg)) => {
-                    log!("cloud: retriable error: {}", msg);
+                    tracing::warn!(error = %msg, "cloud connection error, will retry");
                 }
             }
 
@@ -82,11 +82,11 @@ pub(super) fn establish_cloud_connection(
                 .unwrap_or(false);
 
             if !should_reconnect {
-                log!("cloud: cloud mode disabled, stopping reconnection");
+                tracing::info!("cloud mode disabled, stopping reconnection");
                 return;
             }
 
-            log!("cloud: reconnecting in {:?}", backoff);
+            tracing::info!(backoff = ?backoff, "reconnecting to cloud");
             tokio::time::sleep(backoff).await;
             backoff = std::cmp::min(backoff * 2, MAX_BACKOFF);
         }
@@ -154,7 +154,7 @@ async fn run_cloud_connection(
         us.peer_links.insert(link_name.clone());
         send_initial_announcements(&us, &link_name);
     }
-    log!("cloud: route established as {}", link_name);
+    tracing::info!(link = %link_name, "cloud route established");
 
     // Split transport into reader/writer halves
     let (reader, writer) = transport.into_split();
@@ -183,7 +183,7 @@ async fn run_cloud_connection(
     let _ = writer_handle.await;
     reader_handle.abort();
 
-    log!("cloud: route {} removed", link_name);
+    tracing::info!(link = %link_name, "cloud route removed");
 
     match result {
         Ok(()) => Ok(()),

@@ -5,12 +5,12 @@ use crate::jwt::JwtValidator;
 use crate::message::Message;
 use crate::route::Route;
 use crate::session::{LocalAgentSession, SessionEvent};
-use crate::transport::{create_tls_acceptor, TcpTransport};
+use crate::transport::{TcpTransport, create_tls_acceptor};
 use std::collections::{HashMap, HashSet};
 use std::net::SocketAddr;
 use std::sync::Arc;
 use tokio::net::{TcpListener, UnixListener};
-use tokio::sync::{mpsc, oneshot, RwLock};
+use tokio::sync::{RwLock, mpsc, oneshot};
 use tokio_rustls::TlsAcceptor;
 use uuid::Uuid;
 
@@ -186,10 +186,10 @@ impl Server {
                 })?;
 
                 let acceptor = create_tls_acceptor(&cert_pem, &key_pem)?;
-                log!("server: TLS configured for cloud mode");
+                tracing::info!("TLS configured for cloud mode");
                 Some(acceptor)
             } else {
-                log!("server: cloud mode with external TLS termination (token auth enabled)");
+                tracing::info!("cloud mode with external TLS termination");
                 None
             }
         } else {
@@ -199,24 +199,21 @@ impl Server {
         // Unix socket - always available (for CLI commands like list-agents, kill-server)
         let _ = std::fs::remove_file(&socket_path);
         let unix_listener = UnixListener::bind(&socket_path)?;
-        log!("server: listening on {:?}", socket_path);
+        tracing::info!(path = %socket_path.display(), "listening on unix socket");
 
         let tcp_addr = SocketAddr::from(([0, 0, 0, 0], tcp_port));
         let tcp_listener = TcpListener::bind(tcp_addr).await?;
         if is_cloud_server && enforce_tls {
-            log!("server: listening on TLS TCP {}", tcp_addr);
+            tracing::info!(addr = %tcp_addr, "listening on TLS TCP");
         } else if is_cloud_server {
-            log!(
-                "server: listening on TCP {} (TLS terminated externally)",
-                tcp_addr
-            );
+            tracing::info!(addr = %tcp_addr, "listening on TCP (external TLS)");
         } else {
-            log!("server: listening on TCP {}", tcp_addr);
+            tracing::info!(addr = %tcp_addr, "listening on TCP");
         }
 
         let ws_addr = SocketAddr::from(([0, 0, 0, 0], ws_port));
         let ws_listener = TcpListener::bind(ws_addr).await?;
-        log!("server: listening on WebSocket {}", ws_addr);
+        tracing::info!(addr = %ws_addr, "listening on WebSocket");
 
         let mut event_rx = self.event_rx.take().expect("run() called twice");
 
@@ -226,7 +223,7 @@ impl Server {
             while let Some(event) = event_rx.recv().await {
                 match event {
                     SessionEvent::Ended { agent_id, user_id } => {
-                        log!("server: session {} ended, removing", agent_id);
+                        tracing::info!(agent_id = %agent_id, "session ended");
                         let user_state = {
                             let s = state.read().await;
                             s.get_user_state(&user_id)
@@ -261,17 +258,16 @@ impl Server {
                 result = unix_listener.accept() => {
                     match result {
                         Ok((stream, _)) => {
-                            log!("server: client connected");
                             let state = self.state.clone();
                             let event_tx = self.event_tx.clone();
                             tokio::spawn(async move {
                                 if let Err(e) = unix_accept(stream, state, event_tx).await {
-                                    log!("server: unix connection error: {}", e);
+                                    tracing::debug!(error = %e, "unix connection error");
                                 }
                             });
                         }
                         Err(e) => {
-                            log!("server: unix accept error: {}", e);
+                            tracing::error!(error = %e, "unix accept error");
                             break;
                         }
                     }
@@ -281,7 +277,7 @@ impl Server {
                     match result {
                         Ok((stream, addr)) => {
                             if let Err(e) = stream.set_nodelay(true) {
-                                log!("server: failed to set TCP_NODELAY: {}", e);
+                                tracing::warn!(error = %e, "failed to set TCP_NODELAY");
                             }
 
                             let state = self.state.clone();
@@ -294,11 +290,11 @@ impl Server {
                                         Ok(tls_stream) => {
                                             let transport = TcpTransport::new(tls_stream);
                                             if let Err(e) = tcp_accept(transport, state, event_tx, verify_token).await {
-                                                log!("server: tls tcp connection error: {}", e);
+                                                tracing::debug!(error = %e, "TLS TCP connection error");
                                             }
                                         }
                                         Err(e) => {
-                                            log!("server: tls handshake error from {}: {}", addr, e);
+                                            tracing::warn!(peer = %addr, error = %e, "TLS handshake failed");
                                         }
                                     }
                                 });
@@ -306,13 +302,13 @@ impl Server {
                                 tokio::spawn(async move {
                                     let transport = TcpTransport::new(stream);
                                     if let Err(e) = tcp_accept(transport, state, event_tx, verify_token).await {
-                                        log!("server: tcp connection error: {}", e);
+                                        tracing::debug!(error = %e, "TCP connection error");
                                     }
                                 });
                             }
                         }
                         Err(e) => {
-                            log!("server: tcp accept error: {}", e);
+                            tracing::error!(error = %e, "TCP accept error");
                             break;
                         }
                     }
@@ -320,18 +316,17 @@ impl Server {
                 // WebSocket connection
                 result = ws_listener.accept() => {
                     match result {
-                        Ok((stream, addr)) => {
-                            log!("server: websocket client connected from {}", addr);
+                        Ok((stream, _addr)) => {
                             let state = self.state.clone();
                             let event_tx = self.event_tx.clone();
                             tokio::spawn(async move {
                                 if let Err(e) = websocket_accept(stream, state, event_tx).await {
-                                    log!("server: websocket connection error: {}", e);
+                                    tracing::debug!(error = %e, "websocket connection error");
                                 }
                             });
                         }
                         Err(e) => {
-                            log!("server: websocket accept error: {}", e);
+                            tracing::error!(error = %e, "websocket accept error");
                             break;
                         }
                     }

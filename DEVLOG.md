@@ -38,6 +38,46 @@ One paragraph describing what was done.
 
 ---
 
+## 2026-02-15: Replace custom log! macro with tracing
+
+### Summary
+
+Replaced the custom `log!` macro (hardcoded to `/tmp/amux.log`, no levels, no structured fields) with the `tracing` crate. Overhauled all ~150 log sites: removed noise, added missing instrumentation, used proper levels (`info`, `warn`, `error`, `debug`) and structured fields. Output goes to file only (configurable via `AMUX_LOG` env var, default `/tmp/amux.log`). Default level is `info`, overridable via `RUST_LOG`.
+
+### Changes
+
+- `Cargo.toml` — added `tracing`, `tracing-subscriber` (env-filter, fmt), `tracing-appender`
+- `src/log.rs` — deleted entirely
+- `src/lib.rs` — removed `#[macro_use] pub mod log`
+- `src/main.rs` — replaced `log::init()` with `init_tracing()` using non-blocking file writer and `EnvFilter`; `WorkerGuard` held in `main()`
+- `src/session.rs` — 8 log sites replaced; removed 2 redundant cleanup logs
+- `src/client.rs` — 14 log sites replaced; removed 3 redundant logs
+- `src/hooks.rs` — 6 log sites replaced; removed raw input from parse error log
+- `src/cloud.rs` — 3 log sites replaced
+- `src/jwt.rs` — 1 log site replaced; added `debug!("fetching JWKS")` instrumentation
+- `src/transcript.rs` — 1 log site replaced
+- `src/server/mod.rs` — 19 log sites replaced; removed 2 redundant "client connected" logs
+- `src/server/accept.rs` — 16 log sites replaced
+- `src/server/cloud.rs` — 10 log sites replaced
+- `src/server/connection.rs` — 30 log sites replaced; added `msg_type_label()` helper; removed empty-dst drop log
+- `src/server/routing.rs` — 6 log sites replaced
+
+### Decisions Made
+
+- **File-only output**: No stdout/stderr logging — amux controls the terminal, so all tracing goes to file
+- **`amux=info` default filter**: Matches the most useful level for scanning logs; `debug` available via `RUST_LOG=amux=debug`
+- **`msg_type_label` helper**: Avoids logging full `Debug` representations of messages (which can be large); logs just the variant name
+- **Removed redundant logs**: "PTY master dropped", "multiplex buffers closed" (implied by "agent exited"); "agent created successfully" (immediately followed by subscribe); "client connected" (immediately followed by "connection established")
+- **Connection errors at `debug`**: Client disconnects are normal operation, not worth `warn`
+
+### Verification
+
+- `cargo check && cargo fmt && cargo clippy` — clean (pre-existing warnings only)
+- `cargo test` — 101 tests pass
+- E2E tests — 10/10 pass
+
+---
+
 ## 2026-02-12: Fix debug command to show global state after multi-tenancy
 
 ### Summary

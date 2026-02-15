@@ -2,19 +2,21 @@ use amux::client;
 use amux::config::Config;
 use amux::hooks;
 use amux::init;
-use amux::log;
 use amux::message;
 use amux::plugins;
 use amux::server;
-use anyhow::anyhow;
 use anyhow::Context;
 use anyhow::Result;
+use anyhow::anyhow;
 use clap::Parser;
 use clap::Subcommand;
+use std::fs::OpenOptions;
 use std::path::PathBuf;
 use std::process::Command;
 use std::process::Stdio;
 use std::time::Duration;
+use tracing_appender::non_blocking::WorkerGuard;
+use tracing_subscriber::{EnvFilter, fmt, prelude::*};
 
 /// Agent multiplexer - terminal multiplexer for AI agents
 #[derive(Parser)]
@@ -122,7 +124,7 @@ fn is_handled_hook_event(event: &ClaudeHookEvent) -> bool {
 
 #[tokio::main]
 async fn main() -> Result<()> {
-    log::init();
+    let _log_guard = init_tracing();
 
     let cli = Cli::parse();
 
@@ -211,13 +213,13 @@ async fn ensure_server_running(config: &Config) -> Result<()> {
             Ok(_) => return Ok(()), // Server is running
             Err(e) => {
                 // Stale socket - server died without cleanup
-                log!("stale socket detected ({}), removing", e);
+                tracing::warn!(error = %e, "stale socket detected, removing");
                 let _ = std::fs::remove_file(socket_path);
             }
         }
     }
 
-    log!("starting server");
+    tracing::info!("starting server");
 
     // Spawn server as background process
     let exe = std::env::current_exe().context("failed to get current exe")?;
@@ -269,6 +271,25 @@ fn parse_agent_type(s: &str) -> Result<message::AgentType> {
             s
         )),
     }
+}
+
+fn init_tracing() -> WorkerGuard {
+    let log_path = std::env::var("AMUX_LOG").unwrap_or_else(|_| "/tmp/amux.log".to_string());
+    let file = OpenOptions::new()
+        .create(true)
+        .append(true)
+        .open(&log_path)
+        .expect("failed to open log file");
+    let (writer, guard) = tracing_appender::non_blocking(file);
+
+    let filter = EnvFilter::try_from_default_env().unwrap_or_else(|_| EnvFilter::new("amux=info"));
+
+    tracing_subscriber::registry()
+        .with(fmt::layer().with_writer(writer).with_ansi(false))
+        .with(filter)
+        .init();
+
+    guard
 }
 
 fn load_config(input_path: Option<PathBuf>) -> Result<Config> {

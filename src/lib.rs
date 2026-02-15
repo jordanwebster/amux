@@ -1,5 +1,3 @@
-#[macro_use]
-pub mod log;
 pub mod agent_registry;
 pub mod buffer;
 pub mod client;

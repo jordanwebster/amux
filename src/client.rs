@@ -56,25 +56,21 @@ async fn connect_and_handshake(config: &Config) -> Result<(UnixTransport, String
         let response = transport.read_message().await?;
         match response {
             Message::Local(LocalMessage::ConnectResponse { success: true, .. }) => {
-                log!("client: connected with link {}", link_name);
+                tracing::info!(link = %link_name, "connected");
                 return Ok((transport, link_name));
             }
             Message::Local(LocalMessage::ConnectResponse {
                 success: false,
                 error: Some(ProtocolError::LinkNameTaken),
             }) => {
-                log!(
-                    "client: link name {} taken, retrying (attempt {})",
-                    link_name,
-                    attempt + 1
-                );
+                tracing::debug!(link = %link_name, attempt = attempt + 1, "link name taken, retrying");
                 continue;
             }
             Message::Local(LocalMessage::ConnectResponse {
                 success: false,
                 error: Some(ProtocolError::InvalidCredentials),
             }) => {
-                log!("client: invalid credentials - authentication failed");
+                tracing::error!("invalid credentials");
                 return Err(AmuxError::InvalidCredentials);
             }
             Message::Local(LocalMessage::ConnectResponse {
@@ -140,16 +136,7 @@ pub async fn new_agent(alias: Option<&str>, agent_type: AgentType, config: &Conf
     // Generate UUID for agent_id
     let agent_id = Uuid::new_v4();
 
-    log!(
-        "client: CREATE {} (alias={:?}) type={:?} dir={:?} ({}x{}) via {}",
-        agent_id,
-        alias,
-        agent_type,
-        working_dir,
-        cols,
-        rows,
-        link_name
-    );
+    tracing::info!(agent_id = %agent_id, ?alias, "creating agent");
 
     // Send CreateAgent
     transport
@@ -169,7 +156,7 @@ pub async fn new_agent(alias: Option<&str>, agent_type: AgentType, config: &Conf
     let response = transport.read_message().await?;
     match response {
         Message::Local(LocalMessage::CreateAgentResult { success: true, .. }) => {
-            log!("client: agent created successfully");
+            // Agent created, now subscribe
         }
         Message::Local(LocalMessage::CreateAgentResult {
             success: false,
@@ -249,13 +236,7 @@ pub async fn attach(target: Option<&str>, config: &Config) -> Result<()> {
         route_suffix.push(&link_name);
         route_suffix
     };
-    log!(
-        "client: ATTACH {} route={:?} ({}x{})",
-        agent_id,
-        full_route,
-        cols,
-        rows
-    );
+    tracing::info!(agent_id = %agent_id, route = %full_route, "attaching");
 
     subscribe_and_stream(transport, agent_id, full_route, rows, cols).await
 }
@@ -293,7 +274,7 @@ async fn subscribe_and_stream(
             message: RoutableMessage::SubscribeResult { success: true, .. },
             ..
         } => {
-            log!("client: subscribed successfully");
+            tracing::info!(agent_id = %agent_id, "subscribed");
         }
         Message::Routable {
             message:
@@ -511,7 +492,7 @@ async fn run_attached(
                         if after < n {
                             // There's data after the Ctrl-b sequence
                             if data[after] == b'd' {
-                                log!("client: detaching (Ctrl-b d)");
+                                tracing::info!("detaching");
                                 let _ = input_tx.blocking_send(StdinEvent::Detach);
                                 return;
                             }
@@ -534,7 +515,7 @@ async fn run_attached(
                         if pending_ctrl_b {
                             pending_ctrl_b = false;
                             if data[i] == b'd' {
-                                log!("client: detaching (Ctrl-b d)");
+                                tracing::info!("detaching");
                                 let _ = input_tx.blocking_send(StdinEvent::Detach);
                                 return;
                             }
@@ -578,7 +559,7 @@ async fn run_attached(
                     Ok(_) => {
                         pending_ctrl_b = false;
                         if next[0] == b'd' {
-                            log!("client: detaching (Ctrl-b d)");
+                            tracing::info!("detaching");
                             let _ = input_tx.blocking_send(StdinEvent::Detach);
                             return;
                         }
@@ -637,26 +618,26 @@ async fn run_attached(
                         io::stdout().flush().ok();
                     }
                     Ok(Message::Routable { message: RoutableMessage::AgentEnded { .. }, .. }) => {
-                        log!("client: agent ended");
+                        tracing::info!("agent ended");
                         break;
                     }
                     Ok(Message::Routable { message: RoutableMessage::Error(route_error), .. }) => {
-                        log!("client: route error: {}", route_error);
+                        tracing::warn!(error = %route_error, "route error");
                         error = Some(AmuxError::ServerError(route_error.to_string()));
                         break;
                     }
                     Ok(Message::Local(LocalMessage::ServerShutdown { reason })) => {
-                        log!("client: server shutdown: {}", reason);
+                        tracing::info!(reason = %reason, "server shutdown");
                         shutdown_reason = Some(reason);
                         break;
                     }
                     Ok(Message::Local(LocalMessage::Error { message })) => {
-                        log!("client: server error: {}", message);
+                        tracing::error!(error = %message, "server error");
                         error = Some(AmuxError::ServerError(message));
                         break;
                     }
                     Err(e) => {
-                        log!("client: read error: {}", e);
+                        tracing::warn!(error = %e, "read error");
                         error = Some(e);
                         break;
                     }
@@ -679,10 +660,8 @@ async fn run_attached(
     }
 
     if detached {
-        log!("client: detached from session");
         println!("\n[detached from session]");
     } else {
-        log!("client: session ended");
         println!("\n[session ended]");
         // Force exit because stdin blocking read in spawn_blocking won't terminate
         std::process::exit(0);

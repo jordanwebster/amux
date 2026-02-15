@@ -58,11 +58,7 @@ pub(super) async fn create_agent(
         None,
     );
 
-    log!(
-        "server: created agent {} (alias={:?})",
-        req.agent_id,
-        req.alias
-    );
+    tracing::info!(agent_id = %req.agent_id, alias = ?req.alias, "agent created");
     Ok(())
 }
 
@@ -97,7 +93,7 @@ pub(super) async fn shutdown_server(user_state: &Arc<RwLock<ServerUserState>>) {
         us.agents.iter().map(|(id, s)| (*id, s.clone())).collect()
     };
     for (id, session) in &sessions {
-        log!("server: shutting down agent {}", id);
+        tracing::info!(agent_id = %id, "shutting down agent");
         session.shutdown().await;
     }
     let mut us = user_state.write().await;
@@ -117,7 +113,7 @@ pub(super) fn broadcast_to_peers(
         }
         if let Some(tx) = us.routes.get(link) {
             if tx.try_send(wire_msg.clone()).is_err() {
-                log!("server: failed to send to peer {}", link);
+                tracing::warn!(peer = %link, "failed to send to peer");
             }
         }
     }
@@ -144,7 +140,7 @@ pub(super) fn send_initial_announcements(us: &ServerUserState, peer_link: &str) 
             route: info.route.clone(),
         });
         if tx.try_send(msg).is_err() {
-            log!("server: failed to announce agent {} to {}", uuid, peer_link);
+            tracing::warn!(agent_id = %uuid, peer = %peer_link, "failed to announce agent");
         }
     }
 }
@@ -162,20 +158,12 @@ pub(super) fn handle_peer_disconnect(us: &mut ServerUserState, link_name: &str) 
         entry.link == link_name || entry.dst.contains_link(link_name)
     });
     if cancelled > 0 {
-        log!(
-            "server: cancelled {} streams (peer {} disconnected)",
-            cancelled,
-            link_name
-        );
+        tracing::info!(count = cancelled, peer = %link_name, "cancelled streams for disconnected peer");
     }
 
     let removed_ids = us.registry.remove_for_link(link_name);
     for agent_id in removed_ids {
-        log!(
-            "server: withdrawing agent {} (peer {} disconnected)",
-            agent_id,
-            link_name
-        );
+        tracing::info!(agent_id = %agent_id, peer = %link_name, "withdrawing agent");
         broadcast_to_peers(us, &LocalMessage::WithdrawAgent { agent_id }, None);
     }
 }

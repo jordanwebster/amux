@@ -7,11 +7,11 @@
 
 use crate::config::Config;
 use crate::error::AmuxError;
-use crate::message::{LocalMessage, Message, ProtocolError, PROTOCOL_VERSION};
+use crate::message::{LocalMessage, Message, PROTOCOL_VERSION, ProtocolError};
 use crate::oauth;
 use crate::route::generate_server_link;
 use crate::state::State;
-use crate::transport::{tls_connect, TcpTransport, Transport};
+use crate::transport::{TcpTransport, Transport, tls_connect};
 use chrono::{DateTime, Duration, Utc};
 use thiserror::Error;
 use tokio::net::TcpStream;
@@ -90,7 +90,7 @@ impl CloudConnection {
         let conn = oauth::get_connection(&config.cloud_url, &access_token).await?;
 
         // Connect via TLS
-        log!("cloud: connecting to {}:{}", conn.host, conn.port);
+        tracing::info!(host = %conn.host, port = conn.port, "connecting to cloud");
         let mut transport = tls_connect(&conn.host, conn.port)
             .await
             .map_err(|e| CloudError::Connection(e.to_string()))?;
@@ -111,7 +111,7 @@ impl CloudConnection {
         let response = transport.read_message().await?;
         match response {
             Message::Local(LocalMessage::ConnectResponse { success: true, .. }) => {
-                log!("cloud: connected to {} as {}", conn.host, link_name);
+                tracing::info!(host = %conn.host, link = %link_name, "cloud connected");
             }
             Message::Local(LocalMessage::ConnectResponse {
                 success: false,
@@ -261,7 +261,7 @@ impl TokenRefreshState {
     pub fn handle_response(&mut self, msg: &Message) -> std::result::Result<(), CloudError> {
         match msg {
             Message::Local(LocalMessage::ConnectResponse { success: true, .. }) => {
-                log!("cloud: token refreshed successfully");
+                tracing::debug!("token refreshed");
                 if let Some(expires_at) = self.pending_expires_at.take() {
                     self.token_expires_at = expires_at;
                 }

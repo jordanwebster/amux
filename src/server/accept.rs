@@ -1,17 +1,17 @@
 use super::connection::{
-    cancel_streams_matching, connection_loop, reader_loop, writer_loop, ConnectionContext,
+    ConnectionContext, cancel_streams_matching, connection_loop, reader_loop, writer_loop,
 };
 use super::routing::{handle_peer_disconnect, send_initial_announcements};
-use super::{get_or_create_user_state, ServerState, ServerUserState, LOCAL_USER_ID};
+use super::{LOCAL_USER_ID, ServerState, ServerUserState, get_or_create_user_state};
 use crate::error::{AmuxError, Result};
-use crate::message::{LocalMessage, Message, ProtocolError, PROTOCOL_VERSION};
+use crate::message::{LocalMessage, Message, PROTOCOL_VERSION, ProtocolError};
 use crate::route::generate_server_link;
 use crate::transport::{
     TcpTransport, Transport, TransportSplit, UnixTransport, WebSocketTransport,
 };
 use std::sync::Arc;
 use tokio::net::{TcpStream, UnixStream};
-use tokio::sync::{mpsc, RwLock};
+use tokio::sync::{RwLock, mpsc};
 use tokio_tungstenite::accept_async;
 use uuid::Uuid;
 
@@ -41,16 +41,17 @@ pub(super) async fn accept_handshake<T: Transport>(
                 version,
             }) => (link_name, token, version),
             other => {
-                log!("server: expected Connect message, got {:?}", other);
+                tracing::error!("expected Connect, got unexpected message");
+                drop(other);
                 return Err(AmuxError::InvalidMessage);
             }
         };
 
         if version != PROTOCOL_VERSION {
-            log!(
-                "server: version mismatch: client v{}, server v{}",
-                version,
-                PROTOCOL_VERSION
+            tracing::warn!(
+                client_version = version,
+                server_version = PROTOCOL_VERSION,
+                "version mismatch"
             );
             transport
                 .write_message(&Message::Local(LocalMessage::ConnectResponse {
@@ -68,10 +69,7 @@ pub(super) async fn accept_handshake<T: Transport>(
         }
 
         if proposed_link.contains('.') {
-            log!(
-                "server: rejecting invalid link name '{}' (contains '.')",
-                proposed_link
-            );
+            tracing::warn!(link = %proposed_link, "rejecting invalid link name (contains '.')");
             transport
                 .write_message(&Message::Local(LocalMessage::ConnectResponse {
                     success: false,
@@ -99,17 +97,17 @@ pub(super) async fn accept_handshake<T: Transport>(
             };
 
             let token = token.ok_or_else(|| {
-                log!("server: token required but none provided");
+                tracing::warn!("token required but none provided");
                 AmuxError::InvalidCredentials
             })?;
 
             match validator.validate(&token, &host, tcp_port).await {
                 Ok(claims) => {
-                    log!("server: authenticated connection from user {}", claims.sub);
+                    tracing::info!(user_id = %claims.sub, "authenticated");
                     match claims.sub.parse::<Uuid>() {
                         Ok(user_id) => user_id,
                         Err(_) => {
-                            log!("server: invalid user_id in token: {}", claims.sub);
+                            tracing::error!(sub = %claims.sub, "invalid user_id in token");
                             transport
                                 .write_message(&Message::Local(LocalMessage::ConnectResponse {
                                     success: false,
@@ -121,7 +119,7 @@ pub(super) async fn accept_handshake<T: Transport>(
                     }
                 }
                 Err(e) => {
-                    log!("server: token validation failed: {}", e);
+                    tracing::warn!(error = %e, "token validation failed");
                     transport
                         .write_message(&Message::Local(LocalMessage::ConnectResponse {
                             success: false,
@@ -222,18 +220,14 @@ where
                 success: false,
                 error: Some(ProtocolError::LinkNameTaken),
             }) => {
-                log!(
-                    "link name {} taken, retrying (attempt {})",
-                    proposed_link,
-                    attempt + 1
-                );
+                tracing::debug!(link = %proposed_link, attempt = attempt + 1, "link name taken, retrying");
                 continue;
             }
             Message::Local(LocalMessage::ConnectResponse {
                 success: false,
                 error: Some(ProtocolError::InvalidCredentials),
             }) => {
-                log!("server: invalid credentials - authentication failed");
+                tracing::error!("authentication failed");
                 return Err(AmuxError::InvalidCredentials);
             }
             Message::Local(LocalMessage::ConnectResponse {
@@ -298,7 +292,7 @@ pub(super) async fn accept_connection<T: TransportSplit>(
             }
         };
 
-    log!("server: {} connection {} established", log_label, link_name);
+    tracing::info!(transport = log_label, link = %link_name, "connection established");
 
     if !is_local {
         let mut us = user_state.write().await;
@@ -333,7 +327,7 @@ pub(super) async fn accept_connection<T: TransportSplit>(
 
     // Error write-back through the channel (writer task may still be alive)
     if let Err(ref e) = result {
-        log!("server: {} {} error: {}", log_label, link_name, e);
+        tracing::debug!(transport = log_label, link = %link_name, error = %e, "connection error");
         let _ = response_tx_cleanup.send(Message::from(e)).await;
     }
 
@@ -356,7 +350,7 @@ pub(super) async fn accept_connection<T: TransportSplit>(
     let _ = writer_handle.await;
     reader_handle.abort();
 
-    log!("server: {} connection {} closed", log_label, link_name);
+    tracing::info!(transport = log_label, link = %link_name, "connection closed");
 
     result
 }
@@ -415,7 +409,7 @@ pub(super) async fn tcp_connect(
     let stream = TcpStream::connect(addr).await?;
     stream.set_nodelay(true)?;
 
-    log!("server: connected to remote server at {}", addr);
+    tracing::info!(addr = %addr, "connected to remote server");
 
     let mut transport = TcpTransport::new(stream);
 
@@ -432,10 +426,7 @@ pub(super) async fn tcp_connect(
     })
     .await?;
 
-    log!(
-        "server: handshake complete with remote server (link: {})",
-        link_name
-    );
+    tracing::info!(link = %link_name, "peer handshake complete");
 
     let (outgoing_tx, outgoing_rx) = mpsc::channel::<Message>(256);
     {
@@ -467,7 +458,7 @@ pub(super) async fn tcp_connect(
         let result = connection_loop(incoming_rx, outgoing_tx.clone(), ctx, None).await;
 
         if let Err(ref e) = result {
-            log!("server: tcp peer {} error: {}", link_name_clone, e);
+            tracing::debug!(link = %link_name_clone, error = %e, "peer connection error");
             let _ = outgoing_tx.send(Message::from(e)).await;
         }
 
@@ -481,7 +472,7 @@ pub(super) async fn tcp_connect(
         let _ = writer_handle.await;
         reader_handle.abort();
 
-        log!("server: tcp peer {} closed", link_name_clone);
+        tracing::info!(link = %link_name_clone, "peer connection closed");
     });
 
     Ok(())
