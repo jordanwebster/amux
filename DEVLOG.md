@@ -38,24 +38,23 @@ One paragraph describing what was done.
 
 ---
 
-## 2026-02-18: Enable WebSocket token verification in cloud mode
+## 2026-02-18: Fix WebSocket cloud mode authentication and peer registration
 
 ### Summary
-WebSocket connections were bypassing JWT authentication because `websocket_accept` hardcoded `verify_token=false`. This caused WebSocket clients to get `LOCAL_USER_ID` instead of their real user UUID, placing them in a separate user state namespace from authenticated TCP peers. As a result, WebSocket clients saw an empty agent registry.
+WebSocket connections in cloud mode had two bugs:
+1. `websocket_accept` hardcoded `verify_token=false` instead of passing `is_cloud_server` (fixed in v0.1.10)
+2. The arguments to `accept_connection` were swapped: `(false, verify_token)` instead of `(verify_token, false)`, meaning `verify_token` was passed as `is_local` and vice versa. This caused WebSocket clients to skip authentication AND be treated as local/terminal connections (skipping `peer_links` insertion and `send_initial_announcements`).
 
 ### Changes
-- `src/server/mod.rs` — Pass `is_cloud_server` to `websocket_accept`, mirroring the TCP pattern
-- `src/server/accept.rs` — Add `verify_token: bool` parameter to `websocket_accept`, pass it to `accept_connection`, remove resolved TODO comment
+- `src/server/mod.rs` — Pass `is_cloud_server` to `websocket_accept` (v0.1.10)
+- `src/server/accept.rs` — Add `verify_token: bool` parameter to `websocket_accept`, fix argument order in `accept_connection` call from `(false, verify_token)` to `(verify_token, false)`
 
 ### Decisions Made
-- Mirrored the existing TCP pattern exactly (line 285) rather than reading `cloud_mode` from state inside `websocket_accept`, keeping the function signature consistent with `tcp_accept`
+- The swapped arguments were a positional boolean trap — both params are `bool` so the compiler couldn't catch it. Verified all other callers (`tcp_accept`, `unix_accept`) have the correct order.
 
 ### Verification
 - `cargo check && cargo fmt && cargo clippy --workspace --all-targets -- -D warnings && cargo test` — all 101 tests pass
-- `cargo build --workspace && cargo run -p e2e-runner -- run` — all 10 E2E tests pass (attach test is flaky due to pre-existing port/cleanup race)
-
-### Next Steps
-- Deploy to cloud server and verify WebSocket client receives AnnounceAgent messages after authenticating
+- Confirmed argument order matches for all three callers: tcp_accept `(verify_token, false)`, unix_accept `(false, true)`, websocket_accept `(verify_token, false)`
 
 ---
 

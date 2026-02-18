@@ -372,7 +372,7 @@ pub(super) async fn websocket_accept(
         .await
         .map_err(|e| AmuxError::Io(std::io::Error::other(e.to_string())))?;
     let transport = WebSocketTransport::new(ws_stream);
-    accept_connection(transport, state, event_tx, false, verify_token, "websocket").await
+    accept_connection(transport, state, event_tx, verify_token, false, "websocket").await
 }
 
 /// Unix socket connection bootstrap - accept and handshake
