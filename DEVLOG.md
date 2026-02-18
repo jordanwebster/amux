@@ -38,6 +38,27 @@ One paragraph describing what was done.
 
 ---
 
+## 2026-02-18: Enable WebSocket token verification in cloud mode
+
+### Summary
+WebSocket connections were bypassing JWT authentication because `websocket_accept` hardcoded `verify_token=false`. This caused WebSocket clients to get `LOCAL_USER_ID` instead of their real user UUID, placing them in a separate user state namespace from authenticated TCP peers. As a result, WebSocket clients saw an empty agent registry.
+
+### Changes
+- `src/server/mod.rs` — Pass `is_cloud_server` to `websocket_accept`, mirroring the TCP pattern
+- `src/server/accept.rs` — Add `verify_token: bool` parameter to `websocket_accept`, pass it to `accept_connection`, remove resolved TODO comment
+
+### Decisions Made
+- Mirrored the existing TCP pattern exactly (line 285) rather than reading `cloud_mode` from state inside `websocket_accept`, keeping the function signature consistent with `tcp_accept`
+
+### Verification
+- `cargo check && cargo fmt && cargo clippy --workspace --all-targets -- -D warnings && cargo test` — all 101 tests pass
+- `cargo build --workspace && cargo run -p e2e-runner -- run` — all 10 E2E tests pass (attach test is flaky due to pre-existing port/cleanup race)
+
+### Next Steps
+- Deploy to cloud server and verify WebSocket client receives AnnounceAgent messages after authenticating
+
+---
+
 ## 2026-02-15: Add targeted tracing spans (connection, session, stream)
 
 ### Summary

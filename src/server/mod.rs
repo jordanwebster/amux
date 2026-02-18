@@ -319,8 +319,9 @@ impl Server {
                         Ok((stream, _addr)) => {
                             let state = self.state.clone();
                             let event_tx = self.event_tx.clone();
+                            let verify_token = is_cloud_server;
                             tokio::spawn(async move {
-                                if let Err(e) = websocket_accept(stream, state, event_tx).await {
+                                if let Err(e) = websocket_accept(stream, state, event_tx, verify_token).await {
                                     tracing::debug!(error = %e, "websocket connection error");
                                 }
                             });

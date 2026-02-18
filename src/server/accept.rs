@@ -362,19 +362,17 @@ pub(super) async fn accept_connection<T: TransportSplit>(
 }
 
 /// WebSocket connection bootstrap - accept, upgrade, and handshake
-// TODO: In cloud mode, WebSocket connections should require token validation
-// (verify_token should be true when state.cloud_mode is true). Currently all
-// WebSocket connections bypass authentication.
 pub(super) async fn websocket_accept(
     stream: TcpStream,
     state: Arc<RwLock<ServerState>>,
     event_tx: mpsc::Sender<super::SessionEvent>,
+    verify_token: bool,
 ) -> Result<()> {
     let ws_stream = accept_async(stream)
         .await
         .map_err(|e| AmuxError::Io(std::io::Error::other(e.to_string())))?;
     let transport = WebSocketTransport::new(ws_stream);
-    accept_connection(transport, state, event_tx, false, false, "websocket").await
+    accept_connection(transport, state, event_tx, false, verify_token, "websocket").await
 }
 
 /// Unix socket connection bootstrap - accept and handshake
