@@ -1,4 +1,4 @@
-use super::TcpTransport;
+use super::{TcpTransport, configure_tcp_keepalive};
 use crate::error::{AmuxError, Result};
 use rustls::pki_types::ServerName;
 use std::sync::Arc;
@@ -23,6 +23,7 @@ pub async fn tls_connect(
     let addr = format!("{}:{}", host, port);
     let stream = TcpStream::connect(&addr).await?;
     stream.set_nodelay(true)?;
+    configure_tcp_keepalive(&stream);
 
     let domain = ServerName::try_from(host.to_string())
         .map_err(|_| AmuxError::Config(format!("Invalid DNS name: {}", host)))?;

@@ -34,6 +34,7 @@ dependencies = [
  "serde",
  "serde_json",
  "serde_yaml",
+ "socket2 0.5.10",
  "tempfile",
  "thiserror 1.0.69",
  "tokio",

@@ -38,6 +38,29 @@ One paragraph describing what was done.
 
 ---
 
+## 2026-02-18: Add TCP keepalives to all TCP connections
+
+### Summary
+When the cloud server restarts, connected local servers couldn't detect the dead TCP connection — the reader blocks indefinitely on a read that never returns, and OS defaults are too slow (macOS: ~2 hours). Added TCP keepalive configuration (30s idle, 10s probe interval) to all 4 TCP socket creation points so dead connections are detected within ~60s.
+
+### Changes
+- `Cargo.toml` — Added `socket2 = "0.5"` dependency (already a transitive dep via tokio)
+- `src/transport/mod.rs` — Added `configure_tcp_keepalive` helper function
+- `src/server/mod.rs` — Called helper after TCP accept (line 282) and WebSocket accept (line 320)
+- `src/server/accept.rs` — Called helper in `tcp_connect` after `set_nodelay` (line 416)
+- `src/transport/tls.rs` — Called helper in `tls_connect` after `set_nodelay` (line 26)
+
+### Decisions Made
+- 30s idle / 10s interval chosen as reasonable defaults — fast enough to detect cloud restarts, not so aggressive as to waste bandwidth
+- Warn-and-continue on failure (matching existing `set_nodelay` pattern) rather than hard error, since keepalive is an optimization
+- Used `socket2::SockRef` to configure keepalive on tokio's `TcpStream` without taking ownership
+
+### Verification
+- `cargo check && cargo fmt && cargo clippy --workspace --all-targets -- -D warnings && cargo test` — all 101 tests pass
+- 9/10 E2E tests pass (`attach` failure is pre-existing)
+
+---
+
 ## 2026-02-18: Fix WebSocket cloud mode authentication and peer registration
 
 ### Summary

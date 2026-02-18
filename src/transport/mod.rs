@@ -61,3 +61,17 @@ pub trait TransportSplit: Transport {
 }
 
 pub(crate) use framing::LengthPrefixed;
+
+/// Configure TCP keepalive on a stream: 30s idle before first probe, 10s between probes.
+pub(crate) fn configure_tcp_keepalive(stream: &tokio::net::TcpStream) {
+    use socket2::SockRef;
+    use std::time::Duration;
+
+    let sock = SockRef::from(stream);
+    let keepalive = socket2::TcpKeepalive::new()
+        .with_time(Duration::from_secs(30))
+        .with_interval(Duration::from_secs(10));
+    if let Err(e) = sock.set_tcp_keepalive(&keepalive) {
+        tracing::warn!(error = %e, "failed to set TCP keepalive");
+    }
+}

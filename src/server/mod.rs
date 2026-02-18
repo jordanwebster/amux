@@ -279,6 +279,7 @@ impl Server {
                             if let Err(e) = stream.set_nodelay(true) {
                                 tracing::warn!(error = %e, "failed to set TCP_NODELAY");
                             }
+                            crate::transport::configure_tcp_keepalive(&stream);
 
                             let state = self.state.clone();
                             let event_tx = self.event_tx.clone();
@@ -317,6 +318,7 @@ impl Server {
                 result = ws_listener.accept() => {
                     match result {
                         Ok((stream, _addr)) => {
+                            crate::transport::configure_tcp_keepalive(&stream);
                             let state = self.state.clone();
                             let event_tx = self.event_tx.clone();
                             let verify_token = is_cloud_server;

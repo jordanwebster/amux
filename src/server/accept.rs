@@ -412,6 +412,7 @@ pub(super) async fn tcp_connect(
 
     let stream = TcpStream::connect(addr).await?;
     stream.set_nodelay(true)?;
+    crate::transport::configure_tcp_keepalive(&stream);
 
     tracing::info!(addr = %addr, "connected to remote server");
 
