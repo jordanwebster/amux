@@ -281,7 +281,13 @@ fn init_tracing() -> WorkerGuard {
         .expect("failed to open log file");
     let (writer, guard) = tracing_appender::non_blocking(file);
 
-    let filter = EnvFilter::try_from_default_env().unwrap_or_else(|_| EnvFilter::new("amux=info"));
+    let default_level = if cfg!(debug_assertions) {
+        "amux=debug"
+    } else {
+        "amux=info"
+    };
+    let filter =
+        EnvFilter::try_from_default_env().unwrap_or_else(|_| EnvFilter::new(default_level));
 
     tracing_subscriber::registry()
         .with(fmt::layer().with_writer(writer).with_ansi(false))
