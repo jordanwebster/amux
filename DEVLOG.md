@@ -38,6 +38,29 @@ One paragraph describing what was done.
 
 ---
 
+## 2026-02-20: Handle unknown ClaudePermissionTool variants gracefully
+
+### Summary
+When Claude Code sends a PermissionRequest hook with a `tool_name` that isn't `Edit` (e.g., `AskUserQuestion`), deserialization would fail because `ClaudePermissionTool` only had the `Edit` variant. Added an `Unknown` fallback variant using `#[serde(other)]` so parsing succeeds, then return early in the hook handler (log the raw input at info level, don't forward to the server).
+
+### Changes
+- `src/message.rs` — Added `#[serde(other)] Unknown` variant to `ClaudePermissionTool`
+- `src/hooks.rs` — Early return for Unknown tools with info log, added match arm in `describe_hook`, added arm in `From<ClaudePermissionTool> for PermissionTool`
+- `src/structured_log.rs` — Added `Unknown` variant to `PermissionTool`
+
+### Decisions Made
+- Early return before sending to server: unknown tools have no useful data to forward
+- Log at warn level: signals that amux needs updating to handle new tools
+- Added `Unknown` to `structured_log::PermissionTool` defensively even though the conversion is unreachable for Unknown tools
+
+### Verification
+- `cargo check && cargo fmt && cargo clippy --workspace --all-targets -- -D warnings && cargo test` — all 101 tests pass, zero warnings
+
+### Next Steps
+- Add specific tool variants as needed when Claude Code adds new permission tools
+
+---
+
 ## 2026-02-18: Add TCP keepalives to all TCP connections
 
 ### Summary

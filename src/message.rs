@@ -59,6 +59,8 @@ pub enum ClaudePermissionTool {
         #[serde(default)]
         replace_all: bool,
     },
+    #[serde(other)]
+    Unknown,
 }
 
 /// Response to a permission request (sent from dashboard to server)

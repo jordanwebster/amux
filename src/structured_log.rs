@@ -28,4 +28,5 @@ pub enum PermissionTool {
         old_string: String,
         new_string: String,
     },
+    Unknown,
 }

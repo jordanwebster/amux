@@ -20,6 +20,7 @@ impl From<ClaudePermissionTool> for crate::structured_log::PermissionTool {
                 old_string,
                 new_string,
             },
+            ClaudePermissionTool::Unknown => Self::Unknown,
         }
     }
 }
@@ -50,6 +51,14 @@ fn handle_claude_hook_inner(config: &Config) -> io::Result<()> {
             return Err(io::Error::new(io::ErrorKind::InvalidData, e));
         }
     };
+
+    // Unknown tools: log and return early (don't send to server)
+    if let ClaudeHook::PermissionRequest(ref p) = claude_hook
+        && matches!(p.tool, ClaudePermissionTool::Unknown)
+    {
+        tracing::warn!(input = %input, "unrecognized permission request tool");
+        return Ok(());
+    }
 
     tracing::debug!(hook = %describe_hook(&claude_hook), "received hook");
 
@@ -152,6 +161,9 @@ fn describe_hook(hook: &ClaudeHook) -> String {
         ClaudeHook::PermissionRequest(p) => match &p.tool {
             ClaudePermissionTool::Edit { file_path, .. } => {
                 format!("session {} Edit {}", p.session_id, file_path)
+            }
+            ClaudePermissionTool::Unknown => {
+                format!("session {} Unknown tool", p.session_id)
             }
         },
     }
