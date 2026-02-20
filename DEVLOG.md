@@ -38,6 +38,48 @@ One paragraph describing what was done.
 
 ---
 
+## 2026-02-20: Add all Claude Code permission tool variants
+
+### Summary
+Added typed parsing for all 8 Claude Code tools that require permissions: Bash, Edit, Write, WebFetch, WebSearch, NotebookEdit, Skill, and ExitPlanMode. (Edit and AskUserQuestion were already handled.) Previously unrecognized tools fell through to the `Unknown` catch-all, got warned, and dropped. Now they are properly deserialized with full tool input data, converted to `PermissionTool` for structured logs, and described in hook debug logging.
+
+### Changes
+- `src/message.rs` — Added 8 tool input structs (`BashToolInput`, `WriteToolInput`, `WebFetchToolInput`, `WebSearchToolInput`, `NotebookEditToolInput`, `SkillToolInput`, `ExitPlanModeToolInput`, `ExitPlanModePrompt`) and 8 corresponding `ClaudePermissionTool` variants. Added 7 new deserialization tests.
+- `src/structured_log.rs` — Added 8 `PermissionTool` variants carrying all fields from the tool input structs.
+- `src/hooks.rs` — Added 8 conversion arms in `From<ClaudePermissionTool> for PermissionTool` and 8 `describe_hook` arms.
+
+### Decisions Made
+- Tool set based on Claude Code docs listing tools that require permissions (not read-only tools like Read/Grep/Glob)
+- `PermissionTool` variants carry all fields from the corresponding tool input (matching Edit/AskUserQuestion pattern) so dashboard clients have the full data
+- `ExitPlanMode` has structured `allowed_prompts` vec rather than flattening
+
+### Verification
+- `cargo check && cargo fmt && cargo clippy --workspace --all-targets -- -D warnings && cargo test` — all 111 tests pass, zero warnings
+
+---
+
+## 2026-02-20: Add AskUserQuestion parsing to hooks
+
+### Summary
+Added `AskUserQuestion` as a recognized variant of `ClaudePermissionTool`, parsing the full question/option/multiSelect structure from Claude Code's JSON. Previously this tool was caught by the `Unknown` fallback and logged but dropped.
+
+### Changes
+- `src/message.rs` — Added `AskUserQuestionToolInput`, `AskUserQuestionItem`, `AskUserQuestionOption` structs and `AskUserQuestion` variant to `ClaudePermissionTool`. Updated existing unknown-tool test to use a truly unknown tool name. Added two new tests for single-select and multi-select deserialization.
+- `src/structured_log.rs` — Added `AskUserQuestion { questions }` variant to `PermissionTool`, reusing `AskUserQuestionItem` from message.rs.
+- `src/hooks.rs` — Added conversion arm in `From<ClaudePermissionTool> for PermissionTool` and `describe_hook` arm showing question count.
+
+### Decisions Made
+- Reuse `AskUserQuestionItem` type in structured_log rather than duplicating: it already derives all needed traits
+- `multiSelect` uses `#[serde(default, rename = "multiSelect")]` to match Claude Code's camelCase JSON
+
+### Verification
+- `cargo check && cargo fmt && cargo clippy --workspace --all-targets -- -D warnings && cargo test` — all 105 tests pass, zero warnings
+
+### Next Steps
+- Forward AskUserQuestion to dashboard clients for interactive answering
+
+---
+
 ## 2026-02-20: Handle unknown ClaudePermissionTool variants gracefully
 
 ### Summary

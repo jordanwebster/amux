@@ -10,15 +10,42 @@ use tokio::net::UnixStream;
 impl From<ClaudePermissionTool> for crate::structured_log::PermissionTool {
     fn from(tool: ClaudePermissionTool) -> Self {
         match tool {
-            ClaudePermissionTool::Edit {
-                file_path,
-                old_string,
-                new_string,
-                ..
-            } => Self::Edit {
-                file_path,
-                old_string,
-                new_string,
+            ClaudePermissionTool::Edit { tool_input } => Self::Edit {
+                file_path: tool_input.file_path,
+                old_string: tool_input.old_string,
+                new_string: tool_input.new_string,
+            },
+            ClaudePermissionTool::AskUserQuestion { tool_input } => Self::AskUserQuestion {
+                questions: tool_input.questions,
+            },
+            ClaudePermissionTool::Bash { tool_input } => Self::Bash {
+                command: tool_input.command,
+                description: tool_input.description,
+                timeout: tool_input.timeout,
+            },
+            ClaudePermissionTool::Write { tool_input } => Self::Write {
+                file_path: tool_input.file_path,
+                content: tool_input.content,
+            },
+            ClaudePermissionTool::WebFetch { tool_input } => Self::WebFetch {
+                url: tool_input.url,
+                prompt: tool_input.prompt,
+            },
+            ClaudePermissionTool::WebSearch { tool_input } => Self::WebSearch {
+                query: tool_input.query,
+            },
+            ClaudePermissionTool::NotebookEdit { tool_input } => Self::NotebookEdit {
+                notebook_path: tool_input.notebook_path,
+                new_source: tool_input.new_source,
+                cell_type: tool_input.cell_type,
+                edit_mode: tool_input.edit_mode,
+            },
+            ClaudePermissionTool::Skill { tool_input } => Self::Skill {
+                skill: tool_input.skill,
+                args: tool_input.args,
+            },
+            ClaudePermissionTool::ExitPlanMode { tool_input } => Self::ExitPlanMode {
+                allowed_prompts: tool_input.allowed_prompts,
             },
             ClaudePermissionTool::Unknown => Self::Unknown,
         }
@@ -159,8 +186,39 @@ fn describe_hook(hook: &ClaudeHook) -> String {
             format!("session {} at {}", s.session_id, s.transcript_path)
         }
         ClaudeHook::PermissionRequest(p) => match &p.tool {
-            ClaudePermissionTool::Edit { file_path, .. } => {
-                format!("session {} Edit {}", p.session_id, file_path)
+            ClaudePermissionTool::Edit { tool_input } => {
+                format!("session {} Edit {}", p.session_id, tool_input.file_path)
+            }
+            ClaudePermissionTool::AskUserQuestion { tool_input } => {
+                let count = tool_input.questions.len();
+                format!(
+                    "session {} AskUserQuestion ({count} question(s))",
+                    p.session_id
+                )
+            }
+            ClaudePermissionTool::Bash { tool_input } => {
+                format!("session {} Bash `{}`", p.session_id, tool_input.command)
+            }
+            ClaudePermissionTool::Write { tool_input } => {
+                format!("session {} Write {}", p.session_id, tool_input.file_path)
+            }
+            ClaudePermissionTool::WebFetch { tool_input } => {
+                format!("session {} WebFetch {}", p.session_id, tool_input.url)
+            }
+            ClaudePermissionTool::WebSearch { tool_input } => {
+                format!("session {} WebSearch {}", p.session_id, tool_input.query)
+            }
+            ClaudePermissionTool::NotebookEdit { tool_input } => {
+                format!(
+                    "session {} NotebookEdit {}",
+                    p.session_id, tool_input.notebook_path
+                )
+            }
+            ClaudePermissionTool::Skill { tool_input } => {
+                format!("session {} Skill {}", p.session_id, tool_input.skill)
+            }
+            ClaudePermissionTool::ExitPlanMode { .. } => {
+                format!("session {} ExitPlanMode", p.session_id)
             }
             ClaudePermissionTool::Unknown => {
                 format!("session {} Unknown tool", p.session_id)
