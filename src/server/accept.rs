@@ -56,7 +56,6 @@ pub(super) async fn accept_handshake<T: Transport>(
             );
             transport
                 .write_message(&Message::Direct(DirectMessage::ConnectResult {
-                    success: false,
                     error: Some(ProtocolError::VersionMismatch {
                         server_version: PROTOCOL_VERSION,
                         client_version: version,
@@ -73,7 +72,6 @@ pub(super) async fn accept_handshake<T: Transport>(
             tracing::warn!(link = %proposed_link, "rejecting invalid link name (contains '.')");
             transport
                 .write_message(&Message::Direct(DirectMessage::ConnectResult {
-                    success: false,
                     error: Some(ProtocolError::InvalidLinkName),
                 }))
                 .await?;
@@ -111,7 +109,6 @@ pub(super) async fn accept_handshake<T: Transport>(
                             tracing::error!(sub = %claims.sub, "invalid user_id in token");
                             transport
                                 .write_message(&Message::Direct(DirectMessage::ConnectResult {
-                                    success: false,
                                     error: Some(ProtocolError::InvalidCredentials),
                                 }))
                                 .await?;
@@ -123,7 +120,6 @@ pub(super) async fn accept_handshake<T: Transport>(
                     tracing::warn!(error = %e, "token validation failed");
                     transport
                         .write_message(&Message::Direct(DirectMessage::ConnectResult {
-                            success: false,
                             error: Some(ProtocolError::InvalidCredentials),
                         }))
                         .await?;
@@ -146,7 +142,6 @@ pub(super) async fn accept_handshake<T: Transport>(
         if link_taken {
             transport
                 .write_message(&Message::Direct(DirectMessage::ConnectResult {
-                    success: false,
                     error: Some(ProtocolError::LinkNameTaken),
                 }))
                 .await?;
@@ -160,7 +155,6 @@ pub(super) async fn accept_handshake<T: Transport>(
                 drop(us);
                 transport
                     .write_message(&Message::Direct(DirectMessage::ConnectResult {
-                        success: false,
                         error: Some(ProtocolError::LinkNameTaken),
                     }))
                     .await?;
@@ -175,7 +169,6 @@ pub(super) async fn accept_handshake<T: Transport>(
         // Route is inserted — if the success write fails, clean up the stale route
         if let Err(e) = transport
             .write_message(&Message::Direct(DirectMessage::ConnectResult {
-                success: true,
                 error: None,
             }))
             .await
@@ -214,25 +207,22 @@ where
 
         let response = transport.read_message().await?;
         match response {
-            Message::Direct(DirectMessage::ConnectResult { success: true, .. }) => {
+            Message::Direct(DirectMessage::ConnectResult { error: None }) => {
                 return Ok(proposed_link);
             }
             Message::Direct(DirectMessage::ConnectResult {
-                success: false,
                 error: Some(ProtocolError::LinkNameTaken),
             }) => {
                 tracing::debug!(link = %proposed_link, attempt = attempt + 1, "link name taken, retrying");
                 continue;
             }
             Message::Direct(DirectMessage::ConnectResult {
-                success: false,
                 error: Some(ProtocolError::InvalidCredentials),
             }) => {
                 tracing::error!("authentication failed");
                 return Err(AmuxError::InvalidCredentials);
             }
             Message::Direct(DirectMessage::ConnectResult {
-                success: false,
                 error: Some(ProtocolError::InvalidLinkName),
             }) => {
                 return Err(AmuxError::Config(
@@ -240,7 +230,6 @@ where
                 ));
             }
             Message::Direct(DirectMessage::ConnectResult {
-                success: false,
                 error:
                     Some(ProtocolError::VersionMismatch {
                         server_version,
@@ -252,17 +241,11 @@ where
                     server_version, client_version
                 )));
             }
-            Message::Direct(DirectMessage::ConnectResult {
-                success: false,
-                error,
-            }) => {
+            Message::Direct(DirectMessage::ConnectResult { error }) => {
                 let msg = error
                     .map(|e| e.to_string())
                     .unwrap_or_else(|| "Connection rejected".to_string());
                 return Err(AmuxError::Config(msg));
-            }
-            Message::Direct(DirectMessage::Error { message }) => {
-                return Err(AmuxError::ServerError(message));
             }
             _ => return Err(AmuxError::InvalidMessage),
         }
@@ -288,7 +271,6 @@ pub(super) async fn accept_connection<T: TransportSplit>(
         match accept_handshake(&mut transport, &state, verify_token).await {
             Ok(result) => result,
             Err(e) => {
-                let _ = transport.write_message(&Message::from(&e)).await;
                 return Err(e);
             }
         };
@@ -336,10 +318,8 @@ pub(super) async fn accept_connection<T: TransportSplit>(
         .instrument(conn_span.clone())
         .await;
 
-    // Error write-back through the channel (writer task may still be alive)
     if let Err(ref e) = result {
         tracing::debug!(parent: &conn_span, error = %e, "connection error");
-        let _ = response_tx_cleanup.send(Message::from(e)).await;
     }
 
     // Cleanup: remove route, cancel streams, drop sender clones so writer task exits
@@ -479,7 +459,6 @@ pub(super) async fn tcp_connect(
 
             if let Err(ref e) = result {
                 tracing::debug!(error = %e, "peer connection error");
-                let _ = outgoing_tx.send(Message::from(e)).await;
             }
 
             let mut us = user_state.write().await;

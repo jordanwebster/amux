@@ -55,26 +55,23 @@ async fn connect_and_handshake(config: &Config) -> Result<(UnixTransport, String
         // Receive ConnectResult
         let response = transport.read_message().await?;
         match response {
-            Message::Direct(DirectMessage::ConnectResult { success: true, .. }) => {
+            Message::Direct(DirectMessage::ConnectResult { error: None }) => {
                 tracing::info!(link = %link_name, "connected");
                 return Ok((transport, link_name));
             }
             Message::Direct(DirectMessage::ConnectResult {
-                success: false,
                 error: Some(ProtocolError::LinkNameTaken),
             }) => {
                 tracing::debug!(link = %link_name, attempt = attempt + 1, "link name taken, retrying");
                 continue;
             }
             Message::Direct(DirectMessage::ConnectResult {
-                success: false,
                 error: Some(ProtocolError::InvalidCredentials),
             }) => {
                 tracing::error!("invalid credentials");
                 return Err(AmuxError::InvalidCredentials);
             }
             Message::Direct(DirectMessage::ConnectResult {
-                success: false,
                 error: Some(ProtocolError::InvalidLinkName),
             }) => {
                 return Err(AmuxError::Config(
@@ -82,7 +79,6 @@ async fn connect_and_handshake(config: &Config) -> Result<(UnixTransport, String
                 ));
             }
             Message::Direct(DirectMessage::ConnectResult {
-                success: false,
                 error:
                     Some(ProtocolError::VersionMismatch {
                         server_version,
@@ -94,17 +90,11 @@ async fn connect_and_handshake(config: &Config) -> Result<(UnixTransport, String
                     server_version, client_version
                 )));
             }
-            Message::Direct(DirectMessage::ConnectResult {
-                success: false,
-                error,
-            }) => {
+            Message::Direct(DirectMessage::ConnectResult { error }) => {
                 let msg = error
                     .map(|e| e.to_string())
                     .unwrap_or_else(|| "Connection rejected".to_string());
                 return Err(AmuxError::Config(msg));
-            }
-            Message::Direct(DirectMessage::Error { message }) => {
-                return Err(AmuxError::ServerError(message));
             }
             _ => return Err(AmuxError::InvalidMessage),
         }
@@ -163,27 +153,13 @@ pub async fn new_agent(name: Option<&str>, agent_type: AgentType, config: &Confi
 
     match transport.read_message().await? {
         Message::Routable {
-            message: RoutableMessage::CreateAgentResult { success: true, .. },
+            message: RoutableMessage::CreateAgentResult { error: None, .. },
             ..
         } => subscribe_and_stream(transport, agent_id, full_route, Some(terminal_size)).await,
         Message::Routable {
-            message:
-                RoutableMessage::CreateAgentResult {
-                    success: false,
-                    error,
-                    ..
-                },
+            message: RoutableMessage::CreateAgentResult { error: Some(e), .. },
             ..
-        } => {
-            let msg = error
-                .map(|e| e.to_string())
-                .unwrap_or_else(|| "Unknown error".to_string());
-            Err(AmuxError::Pty(msg))
-        }
-        Message::Routable {
-            message: RoutableMessage::Error(error),
-            ..
-        } => Err(AmuxError::ServerError(error.to_string())),
+        } => Err(AmuxError::Pty(e.to_string())),
         _ => Err(AmuxError::InvalidMessage),
     }
 }
@@ -210,9 +186,6 @@ pub async fn attach(target: Option<&str>, config: &Config) -> Result<()> {
                 }) => (info.route, info.id),
                 Message::Command(Command::ResolveAgentResult { agent: None }) => {
                     return Err(AgentNotFound(identifier.to_string()));
-                }
-                Message::Direct(DirectMessage::Error { message }) => {
-                    return Err(AmuxError::ServerError(message));
                 }
                 _ => {
                     return Err(AmuxError::InvalidMessage);
@@ -278,35 +251,17 @@ async fn subscribe_and_stream(
     let response = transport.read_message().await?;
     match response {
         Message::Routable {
-            message: RoutableMessage::SubscribeRawResult { success: true, .. },
+            message: RoutableMessage::SubscribeRawResult { error: None, .. },
             ..
         } => {
             tracing::info!(agent_id = %agent_id, "subscribed");
         }
         Message::Routable {
-            message:
-                RoutableMessage::SubscribeRawResult {
-                    success: false,
-                    error,
-                    ..
-                },
+            message: RoutableMessage::SubscribeRawResult { error: Some(e), .. },
             ..
         } => {
-            let msg = error
-                .map(|e| e.to_string())
-                .unwrap_or_else(|| "Unknown error".to_string());
-            eprintln!("Failed to subscribe: {}", msg);
+            eprintln!("Failed to subscribe: {}", e);
             return Ok(());
-        }
-        Message::Routable {
-            message: RoutableMessage::Error(error),
-            ..
-        } => {
-            eprintln!("Failed to subscribe: {}", error);
-            return Ok(());
-        }
-        Message::Direct(DirectMessage::Error { message }) => {
-            return Err(AmuxError::ServerError(message));
         }
         _ => {
             return Err(AmuxError::InvalidMessage);
@@ -367,9 +322,6 @@ pub async fn list_agents(config: &Config) -> Result<()> {
                 }
             }
         }
-        Message::Direct(DirectMessage::Error { message }) => {
-            return Err(AmuxError::ServerError(message));
-        }
         _ => {
             return Err(AmuxError::InvalidMessage);
         }
@@ -425,18 +377,12 @@ pub async fn connect(address: &str, config: &Config) -> Result<()> {
     // Wait for result
     let response = transport.read_message().await?;
     match response {
-        Message::Command(Command::ConnectToServerResult { success: true, .. }) => {
+        Message::Command(Command::ConnectToServerResult { error: None }) => {
             println!("Connected to {}", address);
             Ok(())
         }
-        Message::Command(Command::ConnectToServerResult {
-            success: false,
-            error,
-        }) => {
-            let msg = error
-                .map(|e| e.to_string())
-                .unwrap_or_else(|| "Connection failed".to_string());
-            Err(AmuxError::Config(msg))
+        Message::Command(Command::ConnectToServerResult { error: Some(e) }) => {
+            Err(AmuxError::Config(e.to_string()))
         }
         _ => Err(AmuxError::InvalidMessage),
     }
@@ -462,7 +408,6 @@ pub async fn debug(config: &Config) -> Result<ServerDebugInfo> {
     let response = transport.read_message().await?;
     match response {
         Message::Command(Command::DebugResult { info }) => Ok(info),
-        Message::Direct(DirectMessage::Error { message }) => Err(AmuxError::ServerError(message)),
         _ => Err(AmuxError::InvalidMessage),
     }
 }
@@ -635,19 +580,9 @@ async fn run_attached(
                         tracing::info!("agent ended");
                         break;
                     }
-                    Ok(Message::Routable { message: RoutableMessage::Error(route_error), .. }) => {
-                        tracing::warn!(error = %route_error, "route error");
-                        error = Some(AmuxError::ServerError(route_error.to_string()));
-                        break;
-                    }
                     Ok(Message::Command(Command::ShutdownNotification(reason))) => {
                         tracing::info!(reason = %reason, "server shutdown");
                         shutdown_reason = Some(reason);
-                        break;
-                    }
-                    Ok(Message::Direct(DirectMessage::Error { message })) => {
-                        tracing::error!(error = %message, "server error");
-                        error = Some(AmuxError::ServerError(message));
                         break;
                     }
                     Err(e) => {

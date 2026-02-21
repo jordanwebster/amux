@@ -38,6 +38,35 @@ One paragraph describing what was done.
 
 ---
 
+## 2026-02-22: Result cleanup, error removal, PermissionTool dedup (protocol v3 continued)
+
+### Summary
+Phase 2 of protocol cleanup. Removed the duplicate `PermissionTool` enum (promoting `ClaudePermissionTool` as the canonical type). Removed `ProtocolError::NoRouteFound`, `RoutableMessage::Error`, `DirectMessage::Error`, and `impl From<&AmuxError> for Message`. Dropped the redundant `success: bool` field from all 6 result variants — `error: None` now means success, `error: Some(e)` means failure. Deleted 6 NoRouteFound tests that referenced removed types. Kept `dead_routes` insert-only tracking as planned.
+
+### Changes
+- `src/message.rs` — Deleted `PermissionTool` enum and 3 variants (`RoutableMessage::Error`, `DirectMessage::Error`, `ProtocolError::NoRouteFound`). Removed `success: bool` from `SubscribeRawResult`, `SubscribeStructuredResult`, `CreateAgentResult`, `ConnectResult`, `ConnectToServerResult`, `HandleHookResult`. Deleted `impl From<&AmuxError> for Message`. Changed `ClaudeStructuredOutput::PermissionRequest` to use `ClaudePermissionTool` directly. Added `PartialEq` derive to `ClaudePermissionTool` and 8 tool input structs. Updated 2 tests.
+- `src/hooks.rs` — Deleted `impl From<ClaudePermissionTool> for PermissionTool`. Updated ConnectResult and HandleHookResult match arms.
+- `src/server/connection.rs` — Simplified routing failure block to dead_routes-only tracking. Removed Error match arms from `msg_type_label`, local delivery, and `handle_direct`. Changed `perm_req.tool.clone().into()` to `.clone()`. Deleted 6 NoRouteFound tests. Updated 2 surviving connect_reauth tests.
+- `src/server/accept.rs` — Removed 3 `Message::from(&e)` error-send sites. Removed `DirectMessage::Error` match arm. Updated ConnectResult constructions and matches.
+- `src/client.rs` — Updated all result match arms. Removed `DirectMessage::Error` and `RoutableMessage::Error` arms.
+- `src/cloud.rs` — Updated ConnectResult match arms in `connect()` and `handle_response()`.
+
+### Decisions Made
+- `ClaudePermissionTool` promoted as the single permission tool enum (was duplicated as `PermissionTool` with a lossy From impl). Required adding `PartialEq` derive cascading through 8 tool input structs.
+- `success: bool` removed since it was always redundant with `error: Option<ProtocolError>`.
+- `dead_routes` tracking kept as insert-only per plan spec (no reads, no error messages sent back). Will be removed in Phase 3.
+- 6 NoRouteFound tests deleted (they tested error construction for a removed variant). Net test count: 119 → 113.
+
+### Verification
+- `cargo check && cargo fmt && cargo clippy --workspace --all-targets -- -D warnings && cargo test` — all 113 tests pass, zero warnings.
+- `cargo build --workspace && cargo run -p e2e-runner -- run` — 9/10 pass (attach test is a pre-existing flaky failure).
+- Grep verified: no remaining `success: bool`, `NoRouteFound`, `RoutableMessage::Error`, `DirectMessage::Error`, `enum PermissionTool`, or `impl From<&.*AmuxError` in src/.
+
+### Next Steps
+- Phase 3: Routing restructure (remove dead_routes, simplify routing logic)
+
+---
+
 ## 2026-02-21: Command enum + ShutdownNotification (protocol v3)
 
 ### Summary

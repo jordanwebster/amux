@@ -8,51 +8,6 @@ use crate::transport::{Transport, UnixTransport};
 use std::io::{self, BufRead};
 use tokio::net::UnixStream;
 
-impl From<ClaudePermissionTool> for crate::message::PermissionTool {
-    fn from(tool: ClaudePermissionTool) -> Self {
-        match tool {
-            ClaudePermissionTool::Edit { tool_input } => Self::Edit {
-                file_path: tool_input.file_path,
-                old_string: tool_input.old_string,
-                new_string: tool_input.new_string,
-            },
-            ClaudePermissionTool::AskUserQuestion { tool_input } => Self::AskUserQuestion {
-                questions: tool_input.questions,
-            },
-            ClaudePermissionTool::Bash { tool_input } => Self::Bash {
-                command: tool_input.command,
-                description: tool_input.description,
-                timeout: tool_input.timeout,
-            },
-            ClaudePermissionTool::Write { tool_input } => Self::Write {
-                file_path: tool_input.file_path,
-                content: tool_input.content,
-            },
-            ClaudePermissionTool::WebFetch { tool_input } => Self::WebFetch {
-                url: tool_input.url,
-                prompt: tool_input.prompt,
-            },
-            ClaudePermissionTool::WebSearch { tool_input } => Self::WebSearch {
-                query: tool_input.query,
-            },
-            ClaudePermissionTool::NotebookEdit { tool_input } => Self::NotebookEdit {
-                notebook_path: tool_input.notebook_path,
-                new_source: tool_input.new_source,
-                cell_type: tool_input.cell_type,
-                edit_mode: tool_input.edit_mode,
-            },
-            ClaudePermissionTool::Skill { tool_input } => Self::Skill {
-                skill: tool_input.skill,
-                args: tool_input.args,
-            },
-            ClaudePermissionTool::ExitPlanMode { tool_input } => Self::ExitPlanMode {
-                allowed_prompts: tool_input.allowed_prompts,
-            },
-            ClaudePermissionTool::Unknown => Self::Unknown,
-        }
-    }
-}
-
 /// Handle Claude Code hook event.
 /// Reads JSON from stdin and sends HookEvent to server.
 /// Fails silently (logs errors but returns 0) to not block Claude Code.
@@ -132,9 +87,8 @@ async fn send_hook_event_to_server_inner(
     let response = transport.read_message().await.map_err(io::Error::other)?;
 
     match response {
-        Message::Direct(DirectMessage::ConnectResult { success: true, .. }) => {}
+        Message::Direct(DirectMessage::ConnectResult { error: None }) => {}
         Message::Direct(DirectMessage::ConnectResult {
-            success: false,
             error: Some(ProtocolError::LinkNameTaken),
         }) => {
             // Unlikely but possible - just fail
@@ -161,18 +115,12 @@ async fn send_hook_event_to_server_inner(
     let ack = transport.read_message().await.map_err(io::Error::other)?;
 
     match ack {
-        Message::Command(Command::HandleHookResult { success: true, .. }) => {
+        Message::Command(Command::HandleHookResult { error: None }) => {
             tracing::debug!("hook acknowledged");
             Ok(())
         }
-        Message::Command(Command::HandleHookResult {
-            success: false,
-            error,
-        }) => {
-            let msg = error
-                .map(|e| e.to_string())
-                .unwrap_or_else(|| "Unknown error".to_string());
-            Err(io::Error::other(msg))
+        Message::Command(Command::HandleHookResult { error: Some(e) }) => {
+            Err(io::Error::other(e.to_string()))
         }
         _ => Err(io::Error::new(
             io::ErrorKind::InvalidData,

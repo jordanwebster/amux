@@ -110,11 +110,10 @@ impl CloudConnection {
         // Wait for response
         let response = transport.read_message().await?;
         match response {
-            Message::Direct(DirectMessage::ConnectResult { success: true, .. }) => {
+            Message::Direct(DirectMessage::ConnectResult { error: None }) => {
                 tracing::info!(host = %conn.host, link = %link_name, "cloud connected");
             }
             Message::Direct(DirectMessage::ConnectResult {
-                success: false,
                 error: Some(ProtocolError::InvalidCredentials),
             }) => {
                 // TODO: clear refresh token once connection flow is stable
@@ -123,7 +122,6 @@ impl CloudConnection {
                 ));
             }
             Message::Direct(DirectMessage::ConnectResult {
-                success: false,
                 error:
                     Some(ProtocolError::VersionMismatch {
                         server_version,
@@ -135,10 +133,7 @@ impl CloudConnection {
                     client_version,
                 });
             }
-            Message::Direct(DirectMessage::ConnectResult {
-                success: false,
-                error,
-            }) => {
+            Message::Direct(DirectMessage::ConnectResult { error }) => {
                 return Err(CloudError::Connection(format!(
                     "Connect failed: {:?}",
                     error
@@ -260,7 +255,7 @@ impl TokenRefreshState {
     /// Updates token_expires_at on success using the expires_at stored during send_connect.
     pub fn handle_response(&mut self, msg: &Message) -> std::result::Result<(), CloudError> {
         match msg {
-            Message::Direct(DirectMessage::ConnectResult { success: true, .. }) => {
+            Message::Direct(DirectMessage::ConnectResult { error: None }) => {
                 tracing::debug!("token refreshed");
                 if let Some(expires_at) = self.pending_expires_at.take() {
                     self.token_expires_at = expires_at;
@@ -268,11 +263,9 @@ impl TokenRefreshState {
                 Ok(())
             }
             Message::Direct(DirectMessage::ConnectResult {
-                success: false,
                 error: Some(ProtocolError::InvalidCredentials),
             }) => Err(CloudError::Auth("Token refresh failed".to_string())),
             Message::Direct(DirectMessage::ConnectResult {
-                success: false,
                 error:
                     Some(ProtocolError::VersionMismatch {
                         server_version,
@@ -282,13 +275,9 @@ impl TokenRefreshState {
                 server_version: *server_version,
                 client_version: *client_version,
             }),
-            Message::Direct(DirectMessage::ConnectResult {
-                success: false,
-                error,
-            }) => Err(CloudError::Connection(format!(
-                "Token refresh failed: {:?}",
-                error
-            ))),
+            Message::Direct(DirectMessage::ConnectResult { error }) => Err(CloudError::Connection(
+                format!("Token refresh failed: {:?}", error),
+            )),
             _ => Err(CloudError::Connection(
                 "Unexpected response to token refresh".to_string(),
             )),

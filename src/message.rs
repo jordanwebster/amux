@@ -61,7 +61,7 @@ pub struct ClaudePermissionRequest {
 }
 
 /// Tool input fields for the Edit tool
-#[derive(Debug, Clone, Deserialize, Serialize)]
+#[derive(Debug, Clone, Deserialize, Serialize, PartialEq)]
 pub struct EditToolInput {
     pub file_path: String,
     pub old_string: String,
@@ -94,7 +94,7 @@ pub struct AskUserQuestionOption {
 }
 
 /// Tool input fields for the Bash tool
-#[derive(Debug, Clone, Deserialize, Serialize)]
+#[derive(Debug, Clone, Deserialize, Serialize, PartialEq)]
 pub struct BashToolInput {
     pub command: String,
     #[serde(default)]
@@ -104,27 +104,27 @@ pub struct BashToolInput {
 }
 
 /// Tool input fields for the Write tool
-#[derive(Debug, Clone, Deserialize, Serialize)]
+#[derive(Debug, Clone, Deserialize, Serialize, PartialEq)]
 pub struct WriteToolInput {
     pub file_path: String,
     pub content: String,
 }
 
 /// Tool input fields for the WebFetch tool
-#[derive(Debug, Clone, Deserialize, Serialize)]
+#[derive(Debug, Clone, Deserialize, Serialize, PartialEq)]
 pub struct WebFetchToolInput {
     pub url: String,
     pub prompt: String,
 }
 
 /// Tool input fields for the WebSearch tool
-#[derive(Debug, Clone, Deserialize, Serialize)]
+#[derive(Debug, Clone, Deserialize, Serialize, PartialEq)]
 pub struct WebSearchToolInput {
     pub query: String,
 }
 
 /// Tool input fields for the NotebookEdit tool
-#[derive(Debug, Clone, Deserialize, Serialize)]
+#[derive(Debug, Clone, Deserialize, Serialize, PartialEq)]
 pub struct NotebookEditToolInput {
     pub notebook_path: String,
     pub new_source: String,
@@ -135,7 +135,7 @@ pub struct NotebookEditToolInput {
 }
 
 /// Tool input fields for the Skill tool
-#[derive(Debug, Clone, Deserialize, Serialize)]
+#[derive(Debug, Clone, Deserialize, Serialize, PartialEq)]
 pub struct SkillToolInput {
     pub skill: String,
     #[serde(default)]
@@ -143,7 +143,7 @@ pub struct SkillToolInput {
 }
 
 /// Tool input fields for the ExitPlanMode tool
-#[derive(Debug, Clone, Deserialize, Serialize)]
+#[derive(Debug, Clone, Deserialize, Serialize, PartialEq)]
 pub struct ExitPlanModeToolInput {
     #[serde(default, rename = "allowedPrompts")]
     pub allowed_prompts: Vec<ExitPlanModePrompt>,
@@ -158,7 +158,7 @@ pub struct ExitPlanModePrompt {
 
 /// Tool data from Claude Code permission requests.
 /// Uses internally-tagged format so #[serde(other)] can ignore unknown tool_input.
-#[derive(Debug, Clone, Deserialize, Serialize)]
+#[derive(Debug, Clone, Deserialize, Serialize, PartialEq)]
 #[serde(tag = "tool_name")]
 pub enum ClaudePermissionTool {
     Edit {
@@ -203,49 +203,6 @@ pub enum PermissionResponse {
     No,
 }
 
-/// The specific tool being requested permission for (dashboard display)
-#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
-pub enum PermissionTool {
-    Edit {
-        file_path: String,
-        old_string: String,
-        new_string: String,
-    },
-    AskUserQuestion {
-        questions: Vec<AskUserQuestionItem>,
-    },
-    Bash {
-        command: String,
-        description: Option<String>,
-        timeout: Option<u64>,
-    },
-    Write {
-        file_path: String,
-        content: String,
-    },
-    WebFetch {
-        url: String,
-        prompt: String,
-    },
-    WebSearch {
-        query: String,
-    },
-    NotebookEdit {
-        notebook_path: String,
-        new_source: String,
-        cell_type: Option<String>,
-        edit_mode: Option<String>,
-    },
-    Skill {
-        skill: String,
-        args: Option<String>,
-    },
-    ExitPlanMode {
-        allowed_prompts: Vec<ExitPlanModePrompt>,
-    },
-    Unknown,
-}
-
 /// Claude-specific structured output (internally tagged by "type")
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
 #[serde(tag = "type")]
@@ -263,7 +220,7 @@ pub enum ClaudeStructuredOutput {
         uuid: String,
     },
     /// Permission request from agent
-    PermissionRequest { tool: PermissionTool },
+    PermissionRequest { tool: ClaudePermissionTool },
     /// Unknown entry type (forward-compatibility)
     #[serde(other)]
     Unknown,
@@ -297,9 +254,6 @@ pub enum ProtocolError {
     ServerError(String),
     /// The proposed link name is already in use
     LinkNameTaken,
-    /// No route found to reach the destination. Contains the path traversed
-    /// up to and including the hop that couldn't be resolved.
-    NoRouteFound(Route),
     /// Invalid or missing authentication credentials
     InvalidCredentials,
     /// The proposed link name is invalid (e.g., contains "." which is the route separator)
@@ -316,7 +270,6 @@ impl std::fmt::Display for ProtocolError {
         match self {
             ProtocolError::ServerError(msg) => write!(f, "{}", msg),
             ProtocolError::LinkNameTaken => write!(f, "Link name already in use"),
-            ProtocolError::NoRouteFound(route) => write!(f, "No route found: {}", route),
             ProtocolError::InvalidCredentials => write!(f, "Invalid or missing credentials"),
             ProtocolError::InvalidLinkName => {
                 write!(f, "Invalid link name (must not contain '.')")
@@ -391,18 +344,15 @@ pub enum RoutableMessage {
     },
     SubscribeRawResult {
         agent_id: Uuid,
-        success: bool,
         error: Option<ProtocolError>,
     },
     SubscribeStructuredResult {
         agent_id: Uuid,
-        success: bool,
         error: Option<ProtocolError>,
     },
     CreateAgent(CreateAgentRequest),
     CreateAgentResult {
         agent_id: Uuid,
-        success: bool,
         error: Option<ProtocolError>,
     },
     RawInput {
@@ -424,7 +374,6 @@ pub enum RoutableMessage {
     AgentEnded {
         agent_id: Uuid,
     },
-    Error(ProtocolError),
 }
 
 /// Messages that are handled directly by the receiving server (no routing).
@@ -439,7 +388,6 @@ pub enum DirectMessage {
         version: u32,
     },
     ConnectResult {
-        success: bool,
         error: Option<ProtocolError>,
     },
     AnnounceAgent {
@@ -461,44 +409,23 @@ pub enum DirectMessage {
     WithdrawHost {
         id: Uuid,
     },
-    Error {
-        message: String,
-    },
 }
 
 /// CLI-only commands that must not be accepted from remote peers.
 #[derive(Serialize, Deserialize, Debug, Clone)]
 pub enum Command {
     ListAgents,
-    ListAgentsResult {
-        agents: Vec<Agent>,
-    },
-    ResolveAgent {
-        identifier: String,
-    },
-    ResolveAgentResult {
-        agent: Option<Agent>,
-    },
+    ListAgentsResult { agents: Vec<Agent> },
+    ResolveAgent { identifier: String },
+    ResolveAgentResult { agent: Option<Agent> },
     Shutdown,
     ShutdownNotification(ShutdownReason),
     Debug,
-    DebugResult {
-        info: ServerDebugInfo,
-    },
-    ConnectToServer {
-        address: String,
-    },
-    ConnectToServerResult {
-        success: bool,
-        error: Option<ProtocolError>,
-    },
-    HandleHook {
-        hook: Hook,
-    },
-    HandleHookResult {
-        success: bool,
-        error: Option<ProtocolError>,
-    },
+    DebugResult { info: ServerDebugInfo },
+    ConnectToServer { address: String },
+    ConnectToServerResult { error: Option<ProtocolError> },
+    HandleHook { hook: Hook },
+    HandleHookResult { error: Option<ProtocolError> },
 }
 
 /// All protocol messages between client and server
@@ -538,14 +465,6 @@ impl Message {
     /// Decode message from bytes using MessagePack
     pub fn decode(data: &[u8]) -> Result<Self, rmp_serde::decode::Error> {
         rmp_serde::from_slice(data)
-    }
-}
-
-impl From<&crate::error::AmuxError> for Message {
-    fn from(e: &crate::error::AmuxError) -> Self {
-        Message::Direct(DirectMessage::Error {
-            message: e.to_string(),
-        })
     }
 }
 
@@ -599,18 +518,16 @@ mod tests {
             dst: Route::from_link("host-b"),
             message: RoutableMessage::SubscribeRawResult {
                 agent_id: Uuid::new_v4(),
-                success: true,
                 error: None,
             },
         };
         let encoded = msg.encode().unwrap();
         let decoded = Message::decode(&encoded).unwrap();
         if let Message::Routable {
-            message: RoutableMessage::SubscribeRawResult { success, error, .. },
+            message: RoutableMessage::SubscribeRawResult { error, .. },
             ..
         } = decoded
         {
-            assert!(success);
             assert!(error.is_none());
         } else {
             panic!("Expected SubscribeRawResult");
@@ -815,7 +732,6 @@ mod tests {
     #[test]
     fn test_message_roundtrip_version_mismatch() {
         let msg = Message::Direct(DirectMessage::ConnectResult {
-            success: false,
             error: Some(ProtocolError::VersionMismatch {
                 server_version: 2,
                 client_version: 1,
@@ -824,7 +740,6 @@ mod tests {
         let encoded = msg.encode().unwrap();
         let decoded = Message::decode(&encoded).unwrap();
         if let Message::Direct(DirectMessage::ConnectResult {
-            success: false,
             error:
                 Some(ProtocolError::VersionMismatch {
                     server_version,

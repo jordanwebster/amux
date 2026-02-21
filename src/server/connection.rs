@@ -36,7 +36,6 @@ fn msg_type_label(msg: &Message) -> &'static str {
             RoutableMessage::StructuredOutput { .. } => "StructuredOutput",
             RoutableMessage::StructuredInput { .. } => "StructuredInput",
             RoutableMessage::AgentEnded { .. } => "AgentEnded",
-            RoutableMessage::Error(_) => "Error",
         },
         Message::Direct(direct) => match direct {
             DirectMessage::Connect { .. } => "Connect",
@@ -45,7 +44,6 @@ fn msg_type_label(msg: &Message) -> &'static str {
             DirectMessage::WithdrawAgent { .. } => "WithdrawAgent",
             DirectMessage::AnnounceHost { .. } => "AnnounceHost",
             DirectMessage::WithdrawHost { .. } => "WithdrawHost",
-            DirectMessage::Error { .. } => "Error",
         },
         Message::Command(cmd) => match cmd {
             Command::ListAgents => "ListAgents",
@@ -132,7 +130,7 @@ pub(super) async fn connection_loop(
 ) -> Result<()> {
     let mut refresh_deadline = token_refresh.as_ref().map(|t| t.refresh_deadline());
     let mut awaiting_refresh: Option<tokio::time::Instant> = None;
-    // Tracks routes that already got a NoRouteFound error sent back for stream messages.
+    // Tracks routes where forwarding failed (insert-only; no error sent back).
     // Naturally bounded: link names include random suffixes and are never reused after disconnect.
     let mut dead_routes: HashSet<String> = HashSet::new();
 
@@ -315,8 +313,6 @@ async fn handle_routable(
 ) -> Result<()> {
     // Check if this message needs forwarding
     if let Some(next_hop) = dst.pop() {
-        // Save original src BEFORE mutation — used for error replies
-        let original_src = src.clone();
         src.push(&next_hop);
 
         let route_tx = {
@@ -357,53 +353,14 @@ async fn handle_routable(
             }
         };
 
-        // Send error back to source for request-type messages only.
-        // For Output/StructuredOutput: first failure sends NoRouteFound back,
-        // subsequent failures for same route are suppressed silently.
-        if let Some(failed_msg) = failed_msg {
-            match failed_msg {
-                RoutableMessage::Error(_) => {
-                    tracing::debug!("dropping failed error to avoid amplification");
-                }
-                RoutableMessage::RawOutput { .. }
-                | RoutableMessage::StructuredOutput { .. }
-                | RoutableMessage::AgentEnded { .. } => {
-                    if dead_routes.insert(next_hop.to_string()) {
-                        // First failure for this route — notify source
-                        let mut traversed = original_src.clone();
-                        traversed.push(&next_hop);
-                        if let Some((reply_src, reply_dst)) = Route::reply(original_src) {
-                            let _ = tx
-                                .send(Message::Routable {
-                                    src: reply_src,
-                                    dst: reply_dst,
-                                    message: RoutableMessage::Error(ProtocolError::NoRouteFound(
-                                        traversed,
-                                    )),
-                                })
-                                .await;
-                        }
-                    }
-                    // else: already notified, suppress silently
-                }
-                _ => {
-                    // Build traversed path: original_src + the failed hop
-                    let mut traversed = original_src.clone();
-                    traversed.push(&next_hop);
-
-                    if let Some((reply_src, reply_dst)) = Route::reply(original_src) {
-                        let _ = tx
-                            .send(Message::Routable {
-                                src: reply_src,
-                                dst: reply_dst,
-                                message: RoutableMessage::Error(ProtocolError::NoRouteFound(
-                                    traversed,
-                                )),
-                            })
-                            .await;
-                    }
-                }
-            }
+        // Track dead routes for stream messages (insert-only, no error sent back)
+        if let Some(
+            RoutableMessage::RawOutput { .. }
+            | RoutableMessage::StructuredOutput { .. }
+            | RoutableMessage::AgentEnded { .. },
+        ) = failed_msg
+        {
+            dead_routes.insert(next_hop.to_string());
         }
 
         return Ok(());
@@ -427,7 +384,6 @@ async fn handle_routable(
                             dst: reply_dst.clone(),
                             message: RoutableMessage::SubscribeRawResult {
                                 agent_id,
-                                success: true,
                                 error: None,
                             },
                         })
@@ -491,7 +447,6 @@ async fn handle_routable(
                             dst: reply_dst,
                             message: RoutableMessage::SubscribeRawResult {
                                 agent_id,
-                                success: false,
                                 error: Some(ProtocolError::ServerError(e.to_string())),
                             },
                         })
@@ -516,7 +471,6 @@ async fn handle_routable(
                         dst: reply_dst,
                         message: RoutableMessage::SubscribeStructuredResult {
                             agent_id,
-                            success: false,
                             error: Some(ProtocolError::ServerError(
                                 "Agent not found or ended".to_string(),
                             )),
@@ -535,7 +489,6 @@ async fn handle_routable(
                         dst: reply_dst,
                         message: RoutableMessage::SubscribeStructuredResult {
                             agent_id,
-                            success: false,
                             error: Some(ProtocolError::ServerError(
                                 "Agent not found or ended".to_string(),
                             )),
@@ -551,7 +504,6 @@ async fn handle_routable(
                     dst: reply_dst.clone(),
                     message: RoutableMessage::SubscribeStructuredResult {
                         agent_id,
-                        success: true,
                         error: None,
                     },
                 })
@@ -623,12 +575,10 @@ async fn handle_routable(
             let response_message = match result {
                 Ok(()) => RoutableMessage::CreateAgentResult {
                     agent_id,
-                    success: true,
                     error: None,
                 },
                 Err(e) => RoutableMessage::CreateAgentResult {
                     agent_id,
-                    success: false,
                     error: Some(ProtocolError::ServerError(e.to_string())),
                 },
             };
@@ -672,29 +622,13 @@ async fn handle_routable(
             Ok(())
         }
 
-        // NoRouteFound arrived at destination — cancel streams whose route passes
-        // through the dead link. The dead_route's first_hop is the failed next_hop
-        // (pushed last via push_front during traversal).
-        RoutableMessage::Error(ProtocolError::NoRouteFound(ref dead_route)) => {
-            if let Some(dead_hop) = dead_route.peek() {
-                let mut us = ctx.user_state.write().await;
-                let cancelled =
-                    cancel_streams_matching(&mut us, |entry| entry.dst.contains_link(dead_hop));
-                if cancelled > 0 {
-                    tracing::info!(count = cancelled, dead_hop = %dead_hop, "cancelled streams for dead hop");
-                }
-            }
-            Ok(())
-        }
-
         // Response messages that arrived at their destination (empty dst)
         RoutableMessage::SubscribeRawResult { .. }
         | RoutableMessage::SubscribeStructuredResult { .. }
         | RoutableMessage::CreateAgentResult { .. }
         | RoutableMessage::RawOutput { .. }
         | RoutableMessage::StructuredOutput { .. }
-        | RoutableMessage::AgentEnded { .. }
-        | RoutableMessage::Error(_) => Ok(()),
+        | RoutableMessage::AgentEnded { .. } => Ok(()),
     }
 }
 
@@ -739,12 +673,8 @@ async fn handle_command(
                 ))
             });
             let response = match result {
-                Ok(()) => Message::Command(Command::ConnectToServerResult {
-                    success: true,
-                    error: None,
-                }),
+                Ok(()) => Message::Command(Command::ConnectToServerResult { error: None }),
                 Err(e) => Message::Command(Command::ConnectToServerResult {
-                    success: false,
                     error: Some(ProtocolError::ServerError(e.to_string())),
                 }),
             };
@@ -833,7 +763,7 @@ async fn handle_command(
                         session
                             .write_log(crate::message::StructuredOutput::Claude(
                                 crate::message::ClaudeStructuredOutput::PermissionRequest {
-                                    tool: perm_req.tool.clone().into(),
+                                    tool: perm_req.tool.clone(),
                                 },
                             ))
                             .await;
@@ -849,14 +779,8 @@ async fn handle_command(
             };
 
             let response = match result {
-                Ok(()) => Message::Command(Command::HandleHookResult {
-                    success: true,
-                    error: None,
-                }),
-                Err(e) => Message::Command(Command::HandleHookResult {
-                    success: false,
-                    error: Some(e),
-                }),
+                Ok(()) => Message::Command(Command::HandleHookResult { error: None }),
+                Err(e) => Message::Command(Command::HandleHookResult { error: Some(e) }),
             };
             let _ = tx.send(response).await;
             Ok(())
@@ -898,7 +822,6 @@ async fn handle_direct(
             if link_name != ctx.link_name {
                 let _ = tx
                     .send(Message::Direct(DirectMessage::ConnectResult {
-                        success: false,
                         error: Some(ProtocolError::ServerError(
                             "Link name mismatch on re-auth".to_string(),
                         )),
@@ -931,7 +854,6 @@ async fn handle_direct(
                     None => {
                         let _ = tx
                             .send(Message::Direct(DirectMessage::ConnectResult {
-                                success: false,
                                 error: Some(ProtocolError::InvalidCredentials),
                             }))
                             .await;
@@ -949,7 +871,6 @@ async fn handle_direct(
                             tracing::error!("re-auth user_id mismatch");
                             let _ = tx
                                 .send(Message::Direct(DirectMessage::ConnectResult {
-                                    success: false,
                                     error: Some(ProtocolError::InvalidCredentials),
                                 }))
                                 .await;
@@ -961,7 +882,6 @@ async fn handle_direct(
                         tracing::warn!(error = %e, "re-auth token validation failed");
                         let _ = tx
                             .send(Message::Direct(DirectMessage::ConnectResult {
-                                success: false,
                                 error: Some(ProtocolError::InvalidCredentials),
                             }))
                             .await;
@@ -972,7 +892,6 @@ async fn handle_direct(
 
             let _ = tx
                 .send(Message::Direct(DirectMessage::ConnectResult {
-                    success: true,
                     error: None,
                 }))
                 .await;
@@ -1122,7 +1041,7 @@ async fn handle_direct(
             Ok(())
         }
 
-        DirectMessage::ConnectResult { .. } | DirectMessage::Error { .. } => {
+        DirectMessage::ConnectResult { .. } => {
             tracing::warn!("unexpected direct message");
             Ok(())
         }
@@ -1178,247 +1097,6 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn missing_route_sends_error_back() {
-        let (state, user_state) = test_state().await;
-        let ctx = test_ctx(state, user_state);
-        let (tx, written) = mock_tx();
-        let mut dead_routes = HashSet::new();
-
-        let agent_id = Uuid::new_v4();
-
-        // Route through "nonexistent" link
-        let src = Route::from_link("origin");
-        let mut dst = Route::from_link("agent1");
-        dst.push("nonexistent");
-
-        let msg = RoutableMessage::SubscribeRaw {
-            agent_id,
-            terminal_size: Some(crate::message::TerminalSize { rows: 24, cols: 80 }),
-        };
-
-        handle_routable(&tx, src, dst, msg, &ctx, &mut dead_routes)
-            .await
-            .unwrap();
-
-        // Give the collector task a moment
-        tokio::task::yield_now().await;
-
-        let msgs = written.lock().await;
-        assert_eq!(msgs.len(), 1);
-        let Message::Routable { message, .. } = &msgs[0] else {
-            panic!("expected Routable message");
-        };
-        let RoutableMessage::Error(ProtocolError::NoRouteFound(_)) = message else {
-            panic!("expected Error(NoRouteFound), got {:?}", message);
-        };
-    }
-
-    #[tokio::test]
-    async fn closed_channel_cleans_stale_route_and_sends_error() {
-        let (state, user_state) = test_state().await;
-
-        // Create a channel and immediately drop the receiver to close it
-        let (route_tx, rx) = mpsc::channel::<Message>(1);
-        drop(rx);
-
-        {
-            let mut us = user_state.write().await;
-            us.routes.insert("stale-link".to_string(), route_tx);
-        }
-
-        let ctx = test_ctx(state, user_state.clone());
-        let (tx, written) = mock_tx();
-        let mut dead_routes = HashSet::new();
-
-        let agent_id = Uuid::new_v4();
-
-        let src = Route::from_link("origin");
-        let mut dst = Route::from_link("agent1");
-        dst.push("stale-link");
-
-        let msg = RoutableMessage::RawInput {
-            agent_id,
-            data: vec![1, 2, 3],
-        };
-
-        handle_routable(&tx, src, dst, msg, &ctx, &mut dead_routes)
-            .await
-            .unwrap();
-
-        // Route should be removed
-        {
-            let us = user_state.read().await;
-            assert!(!us.routes.contains_key("stale-link"));
-        }
-
-        // Give the collector task a moment
-        tokio::task::yield_now().await;
-
-        // Error should be sent back
-        let msgs = written.lock().await;
-        assert_eq!(msgs.len(), 1);
-        let Message::Routable { message, .. } = &msgs[0] else {
-            panic!("expected Routable message");
-        };
-        let RoutableMessage::Error(ProtocolError::NoRouteFound(_)) = message else {
-            panic!("expected Error(NoRouteFound), got {:?}", message);
-        };
-    }
-
-    #[tokio::test]
-    async fn failed_error_message_not_amplified() {
-        let (state, user_state) = test_state().await;
-        let ctx = test_ctx(state, user_state);
-        let (tx, written) = mock_tx();
-        let mut dead_routes = HashSet::new();
-
-        // Try to forward an Error message through a nonexistent route
-        let src = Route::from_link("origin");
-        let mut dst = Route::from_link("somewhere");
-        dst.push("nonexistent");
-
-        let msg = RoutableMessage::Error(ProtocolError::NoRouteFound(Route::from_link("x")));
-
-        handle_routable(&tx, src, dst, msg, &ctx, &mut dead_routes)
-            .await
-            .unwrap();
-
-        tokio::task::yield_now().await;
-
-        // No error should be sent back (amplification prevention)
-        let msgs = written.lock().await;
-        assert!(msgs.is_empty(), "expected no messages, got {:?}", *msgs);
-    }
-
-    #[tokio::test]
-    async fn stream_message_first_failure_sends_error() {
-        let (state, user_state) = test_state().await;
-        let ctx = test_ctx(state, user_state);
-        let (tx, written) = mock_tx();
-        let mut dead_routes = HashSet::new();
-
-        let agent_id = Uuid::new_v4();
-
-        // First Output failure should send NoRouteFound back
-        let src = Route::from_link("origin");
-        let mut dst = Route::from_link("somewhere");
-        dst.push("nonexistent");
-
-        let msg = RoutableMessage::RawOutput {
-            agent_id,
-            data: vec![1, 2, 3],
-        };
-
-        handle_routable(&tx, src, dst, msg, &ctx, &mut dead_routes)
-            .await
-            .unwrap();
-
-        tokio::task::yield_now().await;
-
-        let msgs = written.lock().await;
-        assert_eq!(msgs.len(), 1, "first failure should send error");
-        let Message::Routable { message, .. } = &msgs[0] else {
-            panic!("expected Routable message");
-        };
-        assert!(matches!(
-            message,
-            RoutableMessage::Error(ProtocolError::NoRouteFound(_))
-        ));
-    }
-
-    #[tokio::test]
-    async fn stream_message_second_failure_suppressed() {
-        let (state, user_state) = test_state().await;
-        let ctx = test_ctx(state, user_state);
-        let (tx, written) = mock_tx();
-        let mut dead_routes = HashSet::new();
-
-        let agent_id = Uuid::new_v4();
-
-        // First failure
-        let src = Route::from_link("origin");
-        let mut dst = Route::from_link("somewhere");
-        dst.push("nonexistent");
-        let msg = RoutableMessage::RawOutput {
-            agent_id,
-            data: vec![1],
-        };
-        handle_routable(&tx, src, dst, msg, &ctx, &mut dead_routes)
-            .await
-            .unwrap();
-
-        // Second failure — same route
-        let src = Route::from_link("origin");
-        let mut dst = Route::from_link("somewhere");
-        dst.push("nonexistent");
-        let msg = RoutableMessage::RawOutput {
-            agent_id,
-            data: vec![2],
-        };
-        handle_routable(&tx, src, dst, msg, &ctx, &mut dead_routes)
-            .await
-            .unwrap();
-
-        tokio::task::yield_now().await;
-
-        // Only one error should have been sent (the first)
-        let msgs = written.lock().await;
-        assert_eq!(
-            msgs.len(),
-            1,
-            "second failure should be suppressed, got {:?}",
-            *msgs
-        );
-    }
-
-    #[tokio::test]
-    async fn no_route_found_includes_traversed_path() {
-        let (state, user_state) = test_state().await;
-        let ctx = test_ctx(state, user_state);
-        let (tx, written) = mock_tx();
-        let mut dead_routes = HashSet::new();
-
-        let agent_id = Uuid::new_v4();
-
-        // Message traversed "origin" before arriving here, now fails at "nonexistent"
-        let src = Route::from_link("origin");
-        let mut dst = Route::from_link("final-dest");
-        dst.push("nonexistent");
-
-        let msg = RoutableMessage::SubscribeRaw {
-            agent_id,
-            terminal_size: Some(crate::message::TerminalSize { rows: 24, cols: 80 }),
-        };
-
-        handle_routable(&tx, src, dst, msg, &ctx, &mut dead_routes)
-            .await
-            .unwrap();
-
-        tokio::task::yield_now().await;
-
-        let msgs = written.lock().await;
-        assert_eq!(msgs.len(), 1);
-        let Message::Routable { message, .. } = &msgs[0] else {
-            panic!("expected Routable message");
-        };
-        let RoutableMessage::Error(ProtocolError::NoRouteFound(route)) = message else {
-            panic!("expected Error(NoRouteFound), got {:?}", message);
-        };
-        // Traversed path should include the failed hop ("nonexistent") and the prior path ("origin")
-        let route_str = format!("{}", route);
-        assert!(
-            route_str.contains("nonexistent"),
-            "route should contain failed hop, got: {}",
-            route_str
-        );
-        assert!(
-            route_str.contains("origin"),
-            "route should contain prior path, got: {}",
-            route_str
-        );
-    }
-
-    #[tokio::test]
     async fn connect_reauth_matching_link_succeeds() {
         let (state, user_state) = test_state().await;
         let ctx = test_ctx(state, user_state);
@@ -1437,10 +1115,9 @@ mod tests {
 
         let msgs = written.lock().await;
         assert_eq!(msgs.len(), 1);
-        let Message::Direct(DirectMessage::ConnectResult { success, error }) = &msgs[0] else {
+        let Message::Direct(DirectMessage::ConnectResult { error }) = &msgs[0] else {
             panic!("expected ConnectResult, got {:?}", msgs[0]);
         };
-        assert!(success);
         assert!(error.is_none());
     }
 
@@ -1463,10 +1140,9 @@ mod tests {
 
         let msgs = written.lock().await;
         assert_eq!(msgs.len(), 1);
-        let Message::Direct(DirectMessage::ConnectResult { success, error, .. }) = &msgs[0] else {
+        let Message::Direct(DirectMessage::ConnectResult { error }) = &msgs[0] else {
             panic!("expected ConnectResult, got {:?}", msgs[0]);
         };
-        assert!(!success);
         assert!(error.is_some());
     }
 
