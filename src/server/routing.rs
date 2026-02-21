@@ -1,7 +1,7 @@
 use super::ServerUserState;
 use super::connection::cancel_streams_matching;
 use crate::buffer::MultiplexReader;
-use crate::message::{CreateAgentRequest, LocalMessage, Message, PermissionResponse};
+use crate::message::{CreateAgentRequest, LocalMessage, Message, PermissionResponse, TerminalSize};
 use crate::route::Route;
 use crate::session::{LocalAgentSession, SessionEvent};
 use anyhow::{Result, anyhow};
@@ -66,8 +66,7 @@ pub(super) async fn create_agent(
 pub(super) async fn handle_subscribe(
     user_state: &Arc<RwLock<ServerUserState>>,
     agent_id: &Uuid,
-    rows: u16,
-    cols: u16,
+    terminal_size: Option<TerminalSize>,
 ) -> Result<MultiplexReader> {
     let session = {
         let us = user_state.read().await;
@@ -77,7 +76,9 @@ pub(super) async fn handle_subscribe(
             .clone()
     };
 
-    session.resize(rows, cols).await?;
+    if let Some(size) = terminal_size {
+        session.resize(size.rows, size.cols).await?;
+    }
 
     let (reader, _input_tx) = session
         .subscribe()

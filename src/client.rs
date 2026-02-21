@@ -3,7 +3,7 @@ use crate::error::AmuxError::AgentNotFound;
 use crate::error::{AmuxError, Result};
 use crate::message::{
     AgentType, CreateAgentRequest, LocalMessage, Message, PROTOCOL_VERSION, ProtocolError,
-    RoutableMessage, ServerDebugInfo, SubscribeMode,
+    RoutableMessage, ServerDebugInfo, SubscribeMode, TerminalSize,
 };
 use crate::route::{Route, generate_terminal_link};
 use crate::transport::{Transport, UnixTransport};
@@ -115,22 +115,25 @@ async fn connect_and_handshake(config: &Config) -> Result<(UnixTransport, String
     ))
 }
 
-/// Get terminal size (rows, cols)
-pub fn get_terminal_size() -> (u16, u16) {
+/// Get terminal size, falling back to 24x80 if the ioctl fails
+pub fn get_terminal_size() -> TerminalSize {
     let mut size: libc::winsize = unsafe { std::mem::zeroed() };
     let fd = io::stdout().as_raw_fd();
 
     if unsafe { libc::ioctl(fd, libc::TIOCGWINSZ, &mut size) } == 0 {
-        (size.ws_row, size.ws_col)
+        TerminalSize {
+            rows: size.ws_row,
+            cols: size.ws_col,
+        }
     } else {
-        (24, 80) // fallback
+        TerminalSize::default()
     }
 }
 
 /// Create a new agent and attach to it
 pub async fn new_agent(alias: Option<&str>, agent_type: AgentType, config: &Config) -> Result<()> {
     let (mut transport, link_name) = connect_and_handshake(config).await?;
-    let (rows, cols) = get_terminal_size();
+    let terminal_size = get_terminal_size();
     let working_dir = std::env::current_dir()?;
 
     // Generate UUID for agent_id
@@ -138,50 +141,57 @@ pub async fn new_agent(alias: Option<&str>, agent_type: AgentType, config: &Conf
 
     tracing::info!(agent_id = %agent_id, ?alias, "creating agent");
 
+    // Create route with just our link (local agent)
+    let full_route = Route::from_link(&link_name);
+    let (src, dst) =
+        Route::send(full_route.clone()).expect("full_route should have at least one link");
+
     // Send CreateAgent
     transport
-        .write_message(&Message::Local(LocalMessage::CreateAgent(
-            CreateAgentRequest {
+        .write_message(&Message::Routable {
+            src,
+            dst,
+            message: RoutableMessage::CreateAgent(CreateAgentRequest {
                 agent_id,
                 alias: alias.map(|s| s.to_string()),
                 agent_type,
                 working_dir: working_dir.clone(),
-                rows,
-                cols,
-            },
-        )))
+                terminal_size: Some(terminal_size),
+            }),
+        })
         .await?;
 
-    // Read response
-    let response = transport.read_message().await?;
-    match response {
-        Message::Local(LocalMessage::CreateAgentResult { success: true, .. }) => {
-            // Agent created, now subscribe
-        }
-        Message::Local(LocalMessage::CreateAgentResult {
-            success: false,
-            error,
-        }) => {
+    match transport.read_message().await? {
+        Message::Routable {
+            message: RoutableMessage::CreateAgentResult { success: true, .. },
+            ..
+        } => subscribe_and_stream(transport, agent_id, full_route, Some(terminal_size)).await,
+        Message::Routable {
+            message:
+                RoutableMessage::CreateAgentResult {
+                    success: false,
+                    error,
+                    ..
+                },
+            ..
+        } => {
             let msg = error
                 .map(|e| e.to_string())
                 .unwrap_or_else(|| "Unknown error".to_string());
-            return Err(AmuxError::Pty(msg));
+            Err(AmuxError::Pty(msg))
         }
-        _ => {
-            return Err(AmuxError::InvalidMessage);
-        }
+        Message::Routable {
+            message: RoutableMessage::Error(error),
+            ..
+        } => Err(AmuxError::ServerError(error.to_string())),
+        _ => Err(AmuxError::InvalidMessage),
     }
-
-    // Create route with just our link (local agent)
-    let full_route = Route::from_link(&link_name);
-
-    subscribe_and_stream(transport, agent_id, full_route, rows, cols).await
 }
 
 /// Attach to an existing agent
 pub async fn attach(target: Option<&str>, config: &Config) -> Result<()> {
     let (mut transport, link_name) = connect_and_handshake(config).await?;
-    let (rows, cols) = get_terminal_size();
+    let terminal_size = get_terminal_size();
 
     // Resolve the target to (route, agent_id)
     let (mut route_suffix, agent_id) = match target {
@@ -238,7 +248,7 @@ pub async fn attach(target: Option<&str>, config: &Config) -> Result<()> {
     };
     tracing::info!(agent_id = %agent_id, route = %full_route, "attaching");
 
-    subscribe_and_stream(transport, agent_id, full_route, rows, cols).await
+    subscribe_and_stream(transport, agent_id, full_route, Some(terminal_size)).await
 }
 
 /// Subscribe to an agent and stream I/O
@@ -246,8 +256,7 @@ async fn subscribe_and_stream(
     mut transport: UnixTransport,
     agent_id: Uuid,
     full_route: Route,
-    rows: u16,
-    cols: u16,
+    terminal_size: Option<TerminalSize>,
 ) -> Result<()> {
     // Prepare to send: pop first hop, create src for return path
     let (src, dst) =
@@ -260,8 +269,7 @@ async fn subscribe_and_stream(
             dst,
             message: RoutableMessage::Subscribe {
                 agent_id,
-                rows,
-                cols,
+                terminal_size,
                 mode: SubscribeMode::Raw,
             },
         })

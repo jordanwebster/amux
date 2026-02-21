@@ -83,10 +83,11 @@ impl LocalAgentSession {
 
         // Create PTY
         let pty_system = native_pty_system();
+        let size = req.terminal_size.unwrap_or_default();
         let pair = pty_system
             .openpty(PtySize {
-                rows: req.rows,
-                cols: req.cols,
+                rows: size.rows,
+                cols: size.cols,
                 pixel_width: 0,
                 pixel_height: 0,
             })
@@ -114,7 +115,7 @@ impl LocalAgentSession {
 
         let master: Arc<Mutex<Option<Box<dyn MasterPty + Send>>>> =
             Arc::new(Mutex::new(Some(master)));
-        let current_size: Arc<Mutex<(u16, u16)>> = Arc::new(Mutex::new((req.rows, req.cols)));
+        let current_size: Arc<Mutex<(u16, u16)>> = Arc::new(Mutex::new((size.rows, size.cols)));
         let buffer = Arc::new(MultiplexBuffer::new(MAX_REPLAY_BUFFER));
         let log_buffer = Arc::new(MultiplexLogBuffer::new(MAX_LOG_ENTRIES));
         let (input_tx, mut input_rx) = mpsc::channel::<Vec<u8>>(256);

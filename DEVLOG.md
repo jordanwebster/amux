@@ -38,6 +38,63 @@ One paragraph describing what was done.
 
 ---
 
+## 2026-02-21: Replace rows/cols with Option\<TerminalSize\>
+
+### Summary
+Replaced bare `rows: u16, cols: u16` fields with `Option<TerminalSize>` in `CreateAgentRequest` and `RoutableMessage::Subscribe`. `TerminalSize` is a small struct with `Default` impl (24x80). `None` means "use defaults" (and in the future, headless/no-PTY mode). The server only resizes the PTY when `Some(size)` is provided.
+
+### Changes
+- `src/message.rs` — Added `TerminalSize` struct with `Default` (24x80), `PartialEq`, `Eq`, `Copy`. Changed `CreateAgentRequest` to `terminal_size: Option<TerminalSize>` with `#[serde(default)]`. Changed `Subscribe` to `terminal_size: Option<TerminalSize>` with `#[serde(default)]`. Updated tests.
+- `src/client.rs` — `get_terminal_size()` now returns `TerminalSize`. `new_agent()` and `attach()` pass `Some(terminal_size)`. `subscribe_and_stream()` takes `Option<TerminalSize>`.
+- `src/session.rs` — `LocalAgentSession::new()` uses `req.terminal_size.unwrap_or_default()` for PTY creation.
+- `src/server/routing.rs` — `handle_subscribe()` takes `Option<TerminalSize>`, only resizes when `Some`.
+- `src/server/connection.rs` — Subscribe handler passes `terminal_size` through. Structured subscribe only resizes when `Some`. Updated tests.
+- `src/transport/unix.rs` — Updated test.
+
+### Decisions Made
+- `Option<TerminalSize>` rather than sentinel values — `None` is unambiguous "no preference"
+- Applied to both `CreateAgentRequest` and `Subscribe` for consistency
+- `#[serde(default)]` on both fields for wire compatibility with older clients (deserializes as `None`)
+- `Default` impl on `TerminalSize` (24x80) keeps unwrap sites clean
+
+### Verification
+- `cargo check` — passes
+- `cargo fmt` — clean
+- `cargo clippy --workspace --all-targets -- -D warnings` — passes
+- `cargo test` — 119 tests pass
+- E2E tests — 10/10 pass (attach test flakiness was caused by stale amux processes from prior runs; `pkill -f amux` before running fixes it — not flaky in CI)
+
+---
+
+## 2026-02-21: Move CreateAgent/CreateAgentResult to RoutableMessage
+
+### Summary
+Moved `CreateAgent` and `CreateAgentResult` from `LocalMessage` to `RoutableMessage`, enabling remote agent creation. A mobile app or remote client can now send `CreateAgent` with a dst route pointing to a host, the cloud relay forwards it, and the local server creates the agent and routes the result back. For local CLI usage, the behavior is identical (dst is empty, message is handled locally).
+
+### Changes
+- `src/message.rs` — Moved `CreateAgent(CreateAgentRequest)` and `CreateAgentResult` from `LocalMessage` to `RoutableMessage`. Added `agent_id: Uuid` field to `CreateAgentResult` for consistency with `SubscribeResult`. Updated `test_message_roundtrip_create_agent` to use `Message::Routable`.
+- `src/server/connection.rs` — Moved `CreateAgent`/`CreateAgentResult` labels from `LocalMessage` to `RoutableMessage` branch in `msg_type_label`. Removed `CreateAgent` handler from `handle_local`. Added `CreateAgent` handler to `handle_routable` local delivery section (follows same pattern as `Subscribe`: compute reply route, call `create_agent`, send result back). Added `CreateAgentResult` to the silent-ignore arm for response messages at destination.
+- `src/client.rs` — Updated `new_agent()` to send `Message::Routable` with `RoutableMessage::CreateAgent` instead of `Message::Local`. Moved `full_route` construction before the send. Added `RoutableMessage::Error` arm for routing failures. Response matching now uses `Message::Routable { message: RoutableMessage::CreateAgentResult { .. }, .. }`.
+- `src/transport/unix.rs` — Updated `test_message_roundtrip` to use `Message::Routable` with `RoutableMessage::CreateAgent`. Removed unused `LocalMessage` import.
+
+### Decisions Made
+- Added `agent_id` to `CreateAgentResult` for consistency with other routable responses (`SubscribeResult`)
+- Client builds route before sending CreateAgent (moved `Route::from_link` up) so the same route is used for both CreateAgent and Subscribe
+- Added `RoutableMessage::Error` match in client for future remote creation failures (routing errors)
+
+### Verification
+- `cargo check` — passes
+- `cargo fmt` — clean
+- `cargo clippy --workspace --all-targets -- -D warnings` — passes
+- `cargo test` — 119 tests pass
+- E2E tests — 10/10 pass (kill stale amux processes first)
+
+### Next Steps
+- Remote agent creation from mobile/web clients via cloud relay
+- ListAgents could also move to RoutableMessage for remote listing
+
+---
+
 ## 2026-02-21: Implement AnnounceHost / WithdrawHost host discovery
 
 ### Summary

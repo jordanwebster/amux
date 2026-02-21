@@ -74,7 +74,7 @@ impl TransportSplit for UnixTransport {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::message::{AgentType, CreateAgentRequest, LocalMessage, RoutableMessage};
+    use crate::message::{AgentType, CreateAgentRequest, RoutableMessage, TerminalSize};
     use crate::route::Route;
     use tokio::net::UnixListener;
     use uuid::Uuid;
@@ -103,25 +103,31 @@ mod tests {
         let (mut client, mut server) = create_socket_pair().await;
 
         let test_uuid = Uuid::new_v4();
-        let msg = Message::Local(LocalMessage::CreateAgent(CreateAgentRequest {
-            agent_id: test_uuid,
-            alias: Some("test".to_string()),
-            agent_type: AgentType::Claude,
-            working_dir: std::path::PathBuf::from("/tmp"),
-            rows: 24,
-            cols: 80,
-        }));
+        let msg = Message::Routable {
+            src: Route::from_link("term-abc"),
+            dst: Route::empty(),
+            message: RoutableMessage::CreateAgent(CreateAgentRequest {
+                agent_id: test_uuid,
+                alias: Some("test".to_string()),
+                agent_type: AgentType::Claude,
+                working_dir: std::path::PathBuf::from("/tmp"),
+                terminal_size: Some(TerminalSize { rows: 24, cols: 80 }),
+            }),
+        };
 
         client.write_message(&msg).await.unwrap();
 
         let received = server.read_message().await.unwrap();
-        if let Message::Local(LocalMessage::CreateAgent(req)) = received {
+        if let Message::Routable {
+            message: RoutableMessage::CreateAgent(req),
+            ..
+        } = received
+        {
             assert_eq!(req.agent_id, test_uuid);
             assert_eq!(req.alias, Some("test".to_string()));
             assert_eq!(req.agent_type, AgentType::Claude);
             assert_eq!(req.working_dir, std::path::PathBuf::from("/tmp"));
-            assert_eq!(req.rows, 24);
-            assert_eq!(req.cols, 80);
+            assert_eq!(req.terminal_size, Some(TerminalSize { rows: 24, cols: 80 }));
         } else {
             panic!("Expected CreateAgent");
         }

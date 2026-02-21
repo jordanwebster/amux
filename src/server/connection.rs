@@ -27,6 +27,8 @@ fn msg_type_label(msg: &Message) -> &'static str {
         Message::Routable { message, .. } => match message {
             RoutableMessage::Subscribe { .. } => "Subscribe",
             RoutableMessage::SubscribeResult { .. } => "SubscribeResult",
+            RoutableMessage::CreateAgent(_) => "CreateAgent",
+            RoutableMessage::CreateAgentResult { .. } => "CreateAgentResult",
             RoutableMessage::InputBytes { .. } => "InputBytes",
             RoutableMessage::SubmitInput { .. } => "SubmitInput",
             RoutableMessage::Output { .. } => "Output",
@@ -38,8 +40,6 @@ fn msg_type_label(msg: &Message) -> &'static str {
         Message::Local(local) => match local {
             LocalMessage::Connect { .. } => "Connect",
             LocalMessage::ConnectResponse { .. } => "ConnectResponse",
-            LocalMessage::CreateAgent(_) => "CreateAgent",
-            LocalMessage::CreateAgentResult { .. } => "CreateAgentResult",
             LocalMessage::ListAgents => "ListAgents",
             LocalMessage::ListAgentsResult { .. } => "ListAgentsResult",
             LocalMessage::Shutdown => "Shutdown",
@@ -399,8 +399,7 @@ async fn handle_routable(
     match message {
         RoutableMessage::Subscribe {
             agent_id,
-            rows,
-            cols,
+            terminal_size,
             mode,
         } => {
             let (reply_src, reply_dst) =
@@ -430,7 +429,9 @@ async fn handle_routable(
                         return Ok(());
                     };
 
-                    session.resize(rows, cols).await?;
+                    if let Some(size) = terminal_size {
+                        session.resize(size.rows, size.cols).await?;
+                    }
                     let log_reader = session.subscribe_logs().await;
 
                     let Some(mut reader) = log_reader else {
@@ -520,7 +521,7 @@ async fn handle_routable(
                     Ok(())
                 }
                 SubscribeMode::Raw => {
-                    let result = handle_subscribe(&ctx.user_state, &agent_id, rows, cols).await;
+                    let result = handle_subscribe(&ctx.user_state, &agent_id, terminal_size).await;
 
                     match result {
                         Ok(mut buffer_reader) => {
@@ -606,6 +607,33 @@ async fn handle_routable(
             }
         }
 
+        RoutableMessage::CreateAgent(req) => {
+            let (reply_src, reply_dst) =
+                Route::reply(src).expect("incoming message must have valid src");
+            let agent_id = req.agent_id;
+            let result = create_agent(&ctx.user_state, &ctx.event_tx, req, ctx.user_id).await;
+            let response_message = match result {
+                Ok(()) => RoutableMessage::CreateAgentResult {
+                    agent_id,
+                    success: true,
+                    error: None,
+                },
+                Err(e) => RoutableMessage::CreateAgentResult {
+                    agent_id,
+                    success: false,
+                    error: Some(ProtocolError::ServerError(e.to_string())),
+                },
+            };
+            let _ = tx
+                .send(Message::Routable {
+                    src: reply_src,
+                    dst: reply_dst,
+                    message: response_message,
+                })
+                .await;
+            Ok(())
+        }
+
         RoutableMessage::InputBytes { agent_id, data } => {
             let us = ctx.user_state.read().await;
             if let Some(session) = us.agents.get(&agent_id) {
@@ -651,6 +679,7 @@ async fn handle_routable(
 
         // Response messages that arrived at their destination (empty dst)
         RoutableMessage::SubscribeResult { .. }
+        | RoutableMessage::CreateAgentResult { .. }
         | RoutableMessage::Output { .. }
         | RoutableMessage::StructuredOutput { .. }
         | RoutableMessage::AgentEnded { .. }
@@ -754,23 +783,6 @@ async fn handle_local(
                     agents: agents.into_iter().collect(),
                 }))
                 .await;
-            Ok(())
-        }
-
-        LocalMessage::CreateAgent(req) => {
-            let result = create_agent(&ctx.user_state, &ctx.event_tx, req, ctx.user_id).await;
-
-            let response = match result {
-                Ok(()) => Message::Local(LocalMessage::CreateAgentResult {
-                    success: true,
-                    error: None,
-                }),
-                Err(e) => Message::Local(LocalMessage::CreateAgentResult {
-                    success: false,
-                    error: Some(ProtocolError::ServerError(e.to_string())),
-                }),
-            };
-            let _ = tx.send(response).await;
             Ok(())
         }
 
@@ -1149,8 +1161,7 @@ mod tests {
 
         let msg = RoutableMessage::Subscribe {
             agent_id,
-            rows: 24,
-            cols: 80,
+            terminal_size: Some(crate::message::TerminalSize { rows: 24, cols: 80 }),
             mode: SubscribeMode::Raw,
         };
 
@@ -1345,8 +1356,7 @@ mod tests {
 
         let msg = RoutableMessage::Subscribe {
             agent_id,
-            rows: 24,
-            cols: 80,
+            terminal_size: Some(crate::message::TerminalSize { rows: 24, cols: 80 }),
             mode: SubscribeMode::Raw,
         };
 
@@ -1498,8 +1508,7 @@ mod tests {
                 alias: Some("local".to_string()),
                 agent_type: crate::message::AgentType::TestAgent("/bin/cat".to_string()),
                 working_dir: PathBuf::from("/tmp"),
-                rows: 24,
-                cols: 80,
+                terminal_size: Some(crate::message::TerminalSize { rows: 24, cols: 80 }),
             };
             let session =
                 crate::session::LocalAgentSession::new(&req, event_tx, LOCAL_USER_ID).unwrap();

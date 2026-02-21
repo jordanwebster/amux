@@ -259,6 +259,19 @@ impl std::fmt::Display for ProtocolError {
     }
 }
 
+/// Terminal dimensions for PTY creation and resizing
+#[derive(Serialize, Deserialize, Debug, Clone, Copy, PartialEq, Eq)]
+pub struct TerminalSize {
+    pub rows: u16,
+    pub cols: u16,
+}
+
+impl Default for TerminalSize {
+    fn default() -> Self {
+        Self { rows: 24, cols: 80 }
+    }
+}
+
 /// Request to create a new agent
 #[derive(Serialize, Deserialize, Debug, Clone)]
 pub struct CreateAgentRequest {
@@ -266,8 +279,9 @@ pub struct CreateAgentRequest {
     pub alias: Option<String>,
     pub agent_type: AgentType,
     pub working_dir: PathBuf,
-    pub rows: u16,
-    pub cols: u16,
+    /// Terminal dimensions. None means use defaults (future: headless mode).
+    #[serde(default)]
+    pub terminal_size: Option<TerminalSize>,
 }
 
 /// Messages that carry src/dst routing information and can be forwarded across hops.
@@ -276,12 +290,19 @@ pub struct CreateAgentRequest {
 pub enum RoutableMessage {
     Subscribe {
         agent_id: Uuid,
-        rows: u16,
-        cols: u16,
+        /// Terminal dimensions for PTY resize. None means don't resize.
+        #[serde(default)]
+        terminal_size: Option<TerminalSize>,
         #[serde(default)]
         mode: SubscribeMode,
     },
     SubscribeResult {
+        agent_id: Uuid,
+        success: bool,
+        error: Option<ProtocolError>,
+    },
+    CreateAgent(CreateAgentRequest),
+    CreateAgentResult {
         agent_id: Uuid,
         success: bool,
         error: Option<ProtocolError>,
@@ -316,13 +337,8 @@ pub enum RoutableMessage {
 #[derive(Serialize, Deserialize, Debug, Clone)]
 pub enum LocalMessage {
     ListAgents,
-    CreateAgent(CreateAgentRequest),
     ListAgentsResult {
         agents: Vec<AgentInfo>,
-    },
-    CreateAgentResult {
-        success: bool,
-        error: Option<ProtocolError>,
     },
     AnnounceAgent {
         agent_id: Uuid,
@@ -449,23 +465,29 @@ mod tests {
     #[test]
     fn test_message_roundtrip_create_agent() {
         let test_uuid = Uuid::new_v4();
-        let msg = Message::Local(LocalMessage::CreateAgent(CreateAgentRequest {
-            agent_id: test_uuid,
-            alias: Some("test".to_string()),
-            agent_type: AgentType::Claude,
-            working_dir: PathBuf::from("/home/user/project"),
-            rows: 24,
-            cols: 80,
-        }));
+        let msg = Message::Routable {
+            src: Route::from_link("term-abc"),
+            dst: Route::empty(),
+            message: RoutableMessage::CreateAgent(CreateAgentRequest {
+                agent_id: test_uuid,
+                alias: Some("test".to_string()),
+                agent_type: AgentType::Claude,
+                working_dir: PathBuf::from("/home/user/project"),
+                terminal_size: Some(TerminalSize { rows: 24, cols: 80 }),
+            }),
+        };
         let encoded = msg.encode().unwrap();
         let decoded = Message::decode(&encoded).unwrap();
-        if let Message::Local(LocalMessage::CreateAgent(req)) = decoded {
+        if let Message::Routable {
+            message: RoutableMessage::CreateAgent(req),
+            ..
+        } = decoded
+        {
             assert_eq!(req.agent_id, test_uuid);
             assert_eq!(req.alias, Some("test".to_string()));
             assert_eq!(req.agent_type, AgentType::Claude);
             assert_eq!(req.working_dir, PathBuf::from("/home/user/project"));
-            assert_eq!(req.rows, 24);
-            assert_eq!(req.cols, 80);
+            assert_eq!(req.terminal_size, Some(TerminalSize { rows: 24, cols: 80 }));
         } else {
             panic!("Expected CreateAgent");
         }
