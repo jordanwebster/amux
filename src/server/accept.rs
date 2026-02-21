@@ -297,9 +297,13 @@ pub(super) async fn accept_connection<T: TransportSplit>(
     tracing::info!(parent: &conn_span, "connection established");
 
     if !is_local {
+        let (host_id, host_name, is_cloud_server) = {
+            let s = state.read().await;
+            (s.host_id, s.config.host_name.clone(), s.is_cloud_server)
+        };
         let mut us = user_state.write().await;
         us.peer_links.insert(link_name.clone());
-        send_initial_announcements(&us, &link_name);
+        send_initial_announcements(&us, host_id, &host_name, is_cloud_server, &link_name);
     }
 
     // Split transport into reader/writer halves
@@ -436,10 +440,14 @@ pub(super) async fn tcp_connect(
 
     let (outgoing_tx, outgoing_rx) = mpsc::channel::<Message>(256);
     {
+        let (host_id, host_name, is_cloud_server) = {
+            let s = state.read().await;
+            (s.host_id, s.config.host_name.clone(), s.is_cloud_server)
+        };
         let mut us = user_state.write().await;
         us.routes.insert(link_name.clone(), outgoing_tx.clone());
         us.peer_links.insert(link_name.clone());
-        send_initial_announcements(&us, &link_name);
+        send_initial_announcements(&us, host_id, &host_name, is_cloud_server, &link_name);
     }
 
     // Split transport into reader/writer halves

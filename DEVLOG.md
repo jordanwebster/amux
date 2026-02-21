@@ -38,6 +38,39 @@ One paragraph describing what was done.
 
 ---
 
+## 2026-02-21: Implement AnnounceHost / WithdrawHost host discovery
+
+### Summary
+Added host discovery messages so local amux servers announce themselves as hosts when connecting to peers (cloud or direct TCP). This follows the existing AnnounceAgent/WithdrawAgent pattern exactly — hop-by-hop propagation with link-match guards to prevent message explosion.
+
+### Changes
+- `src/message.rs` — Added `HostInfo` struct with `id`, `name`, `route`, `version` fields. Added `AnnounceHost` and `WithdrawHost` variants to `LocalMessage`. Added `host_count` to `ServerDebugInfo`. Added 3 serialization roundtrip tests.
+- `src/server/mod.rs` — Added `host_id: Uuid` to `ServerState` (generated at startup). Added `hosts: HashMap<Uuid, HostInfo>` to `ServerUserState`.
+- `src/server/connection.rs` — Added `AnnounceHost`/`WithdrawHost` to `msg_type_label`. Added handlers mirroring AnnounceAgent/WithdrawAgent (skip own host_id, prepend link to route, link-match guard on withdraw). Updated Debug handler to include `host_count`. Added 5 unit tests.
+- `src/server/routing.rs` — Renamed `send_initial_announcements` to `send_initial_agent_announcements` (now private). Added `send_initial_host_announcements`. Added unified `send_initial_announcements` that calls both plus sends own AnnounceHost for non-cloud servers. Updated `handle_peer_disconnect` to withdraw hosts learned from the dead link.
+- `src/server/accept.rs` — Updated `accept_connection` and `tcp_connect` to read global state (host_id, host_name, cloud_mode) and pass to unified `send_initial_announcements`.
+- `src/server/cloud.rs` — Same pattern for cloud connections.
+
+### Decisions Made
+- Cloud servers don't announce themselves as hosts — they're stateless relays
+- `host_id` is ephemeral (Uuid::new_v4() at startup), not persisted — reconnection generates a new one
+- No host registry/alias resolution — a simple `HashMap<Uuid, HostInfo>` suffices
+- Lock ordering: callers read global state first, drop the lock, then pass extracted values alongside the user state write lock to avoid holding both locks simultaneously
+- `version` uses `env!("CARGO_PKG_VERSION")` at compile time
+
+### Verification
+- `cargo check` — passes
+- `cargo fmt` — clean
+- `cargo clippy --workspace --all-targets -- -D warnings` — passes (fixed collapsible_if)
+- `cargo test` — 119 tests pass (8 new: 3 roundtrip + 5 handler tests)
+- E2E tests — all 10 pass
+
+### Next Steps
+- Wire host info into list/display commands (e.g., `amux list-hosts`)
+- Mobile client host selection UI
+
+---
+
 ## 2026-02-20: Add all Claude Code permission tool variants
 
 ### Summary

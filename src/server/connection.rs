@@ -51,6 +51,8 @@ fn msg_type_label(msg: &Message) -> &'static str {
             LocalMessage::DebugResult { .. } => "DebugResult",
             LocalMessage::AnnounceAgent { .. } => "AnnounceAgent",
             LocalMessage::WithdrawAgent { .. } => "WithdrawAgent",
+            LocalMessage::AnnounceHost { .. } => "AnnounceHost",
+            LocalMessage::WithdrawHost { .. } => "WithdrawHost",
             LocalMessage::ResolveAgent { .. } => "ResolveAgent",
             LocalMessage::ResolveAgentResult { .. } => "ResolveAgentResult",
             LocalMessage::Error { .. } => "Error",
@@ -714,21 +716,24 @@ async fn handle_local(
                 .unwrap_or(false);
             let mut agent_count = 0;
             let mut remote_agent_count = 0;
+            let mut host_count = 0;
             let mut route_count = 0;
             let mut peer_link_count = 0;
             for us in state.users.values() {
                 let us = us.read().await;
                 agent_count += us.agents.len();
                 remote_agent_count += us.registry.count_remote();
+                host_count += us.hosts.len();
                 route_count += us.routes.len();
                 peer_link_count += us.peer_links.len();
             }
             let info = ServerDebugInfo {
-                is_cloud_server: state.cloud_mode,
+                is_cloud_server: state.is_cloud_server,
                 use_cloud_mode,
                 user_count: state.users.len(),
                 agent_count,
                 remote_agent_count,
+                host_count,
                 route_count,
                 peer_link_count,
                 config: state.config.clone(),
@@ -848,7 +853,7 @@ async fn handle_local(
 
             let is_cloud = {
                 let state = ctx.state.read().await;
-                state.cloud_mode
+                state.is_cloud_server
             };
 
             if is_cloud {
@@ -857,7 +862,7 @@ async fn handle_local(
                     let validator = state
                         .jwt_validator
                         .clone()
-                        .expect("cloud_mode requires jwt_validator");
+                        .expect("is_cloud_server requires jwt_validator");
                     (
                         validator,
                         state.config.host_name.clone(),
@@ -986,6 +991,76 @@ async fn handle_local(
                 );
             } else {
                 tracing::debug!(agent_id = %agent_id, "ignoring withdraw (link mismatch)");
+            }
+
+            Ok(())
+        }
+
+        LocalMessage::AnnounceHost {
+            id,
+            name,
+            route: received_route,
+            version,
+        } => {
+            let host_id = {
+                let state = ctx.state.read().await;
+                state.host_id
+            };
+
+            // Skip our own host announcement
+            if id == host_id {
+                tracing::debug!("ignoring announce for own host");
+                return Ok(());
+            }
+
+            let mut us = ctx.user_state.write().await;
+
+            let mut our_route = received_route;
+            our_route.push(&ctx.link_name);
+
+            let info = crate::message::HostInfo {
+                id,
+                name: name.clone(),
+                route: our_route.clone(),
+                version: version.clone(),
+            };
+
+            us.hosts.insert(id, info);
+            tracing::info!(host_id = %id, name = %name, "stored remote host");
+
+            broadcast_to_peers(
+                &mut us,
+                &LocalMessage::AnnounceHost {
+                    id,
+                    name,
+                    route: our_route,
+                    version,
+                },
+                Some(&ctx.link_name),
+            );
+
+            Ok(())
+        }
+
+        LocalMessage::WithdrawHost { id } => {
+            let mut us = ctx.user_state.write().await;
+
+            let should_remove = us
+                .hosts
+                .get(&id)
+                .is_some_and(|h| matches!(h.route.peek(), Some(link) if link == ctx.link_name));
+
+            if should_remove {
+                us.hosts.remove(&id);
+                tracing::info!(host_id = %id, "withdrew remote host");
+
+                broadcast_to_peers(
+                    &mut us,
+                    &LocalMessage::WithdrawHost { id },
+                    Some(&ctx.link_name),
+                );
+            } else {
+                tracing::debug!(host_id = %id, "ignoring withdraw host (link mismatch)");
             }
 
             Ok(())
@@ -1601,5 +1676,140 @@ mod tests {
             panic!("expected ResolveAgentResult, got {:?}", msgs[0]);
         };
         assert!(agent.is_none());
+    }
+
+    #[tokio::test]
+    async fn announce_host_stores_in_hosts() {
+        let (state, user_state) = test_state().await;
+        let ctx = test_ctx(state, user_state.clone());
+        let (tx, _written) = mock_tx();
+
+        let host_id = Uuid::new_v4();
+        let msg = LocalMessage::AnnounceHost {
+            id: host_id,
+            name: "remote-laptop".to_string(),
+            route: Route::empty(),
+            version: "0.1.0".to_string(),
+        };
+
+        handle_local(&tx, msg, &ctx).await.unwrap();
+
+        let us = user_state.read().await;
+        assert!(us.hosts.contains_key(&host_id));
+        let info = &us.hosts[&host_id];
+        assert_eq!(info.name, "remote-laptop");
+        assert_eq!(info.version, "0.1.0");
+        // Route should have ctx.link_name prepended
+        let mut route = info.route.clone();
+        assert_eq!(route.pop(), Some("test-link".to_string()));
+        assert_eq!(route.pop(), None);
+    }
+
+    #[tokio::test]
+    async fn announce_host_with_route_prepends_link() {
+        let (state, user_state) = test_state().await;
+        let ctx = test_ctx(state, user_state.clone());
+        let (tx, _written) = mock_tx();
+
+        let host_id = Uuid::new_v4();
+        let msg = LocalMessage::AnnounceHost {
+            id: host_id,
+            name: "far-server".to_string(),
+            route: Route::from_link("peer-a"),
+            version: "0.2.0".to_string(),
+        };
+
+        handle_local(&tx, msg, &ctx).await.unwrap();
+
+        let us = user_state.read().await;
+        let info = &us.hosts[&host_id];
+        let mut route = info.route.clone();
+        // Should be test-link.peer-a (test-link prepended)
+        assert_eq!(route.pop(), Some("test-link".to_string()));
+        assert_eq!(route.pop(), Some("peer-a".to_string()));
+        assert_eq!(route.pop(), None);
+    }
+
+    #[tokio::test]
+    async fn announce_host_skips_own_host_id() {
+        let (state, user_state) = test_state().await;
+
+        let host_id = {
+            let s = state.read().await;
+            s.host_id
+        };
+
+        let ctx = test_ctx(state, user_state.clone());
+        let (tx, _written) = mock_tx();
+
+        let msg = LocalMessage::AnnounceHost {
+            id: host_id,
+            name: "myself".to_string(),
+            route: Route::from_link("cloud"),
+            version: "0.1.0".to_string(),
+        };
+
+        handle_local(&tx, msg, &ctx).await.unwrap();
+
+        let us = user_state.read().await;
+        assert!(!us.hosts.contains_key(&host_id));
+    }
+
+    #[tokio::test]
+    async fn withdraw_host_removes_matching_link() {
+        let (state, user_state) = test_state().await;
+
+        let host_id = Uuid::new_v4();
+        {
+            let mut us = user_state.write().await;
+            us.hosts.insert(
+                host_id,
+                crate::message::HostInfo {
+                    id: host_id,
+                    name: "remote".to_string(),
+                    route: Route::from_link("test-link"),
+                    version: "0.1.0".to_string(),
+                },
+            );
+        }
+
+        let ctx = test_ctx(state, user_state.clone());
+        let (tx, _written) = mock_tx();
+
+        let msg = LocalMessage::WithdrawHost { id: host_id };
+        handle_local(&tx, msg, &ctx).await.unwrap();
+
+        let us = user_state.read().await;
+        assert!(!us.hosts.contains_key(&host_id));
+    }
+
+    #[tokio::test]
+    async fn withdraw_host_ignores_link_mismatch() {
+        let (state, user_state) = test_state().await;
+
+        let host_id = Uuid::new_v4();
+        {
+            let mut us = user_state.write().await;
+            us.hosts.insert(
+                host_id,
+                crate::message::HostInfo {
+                    id: host_id,
+                    name: "remote".to_string(),
+                    route: Route::from_link("other-link"),
+                    version: "0.1.0".to_string(),
+                },
+            );
+        }
+
+        let ctx = test_ctx(state, user_state.clone());
+        let (tx, _written) = mock_tx();
+
+        // Withdraw from "test-link" but host is stored from "other-link"
+        let msg = LocalMessage::WithdrawHost { id: host_id };
+        handle_local(&tx, msg, &ctx).await.unwrap();
+
+        // Should still be there (link mismatch)
+        let us = user_state.read().await;
+        assert!(us.hosts.contains_key(&host_id));
     }
 }

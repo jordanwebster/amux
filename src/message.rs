@@ -6,6 +6,20 @@ use serde::{Deserialize, Serialize};
 use std::path::PathBuf;
 use uuid::Uuid;
 
+/// Information about a connected host (machine running amux server).
+/// Propagated via AnnounceHost/WithdrawHost between peers.
+#[derive(Serialize, Deserialize, Debug, Clone)]
+pub struct HostInfo {
+    /// Ephemeral ID generated at server startup (not persisted)
+    pub id: Uuid,
+    /// Human-readable hostname from config
+    pub name: String,
+    /// Route to reach this host (built up as it propagates)
+    pub route: Route,
+    /// amux version of the host
+    pub version: String,
+}
+
 /// Protocol version for Connect handshake. Increment on breaking changes.
 pub const PROTOCOL_VERSION: u32 = 1;
 
@@ -320,6 +334,15 @@ pub enum LocalMessage {
     WithdrawAgent {
         agent_id: Uuid,
     },
+    AnnounceHost {
+        id: Uuid,
+        name: String,
+        route: Route,
+        version: String,
+    },
+    WithdrawHost {
+        id: Uuid,
+    },
     Error {
         message: String,
     },
@@ -385,6 +408,7 @@ pub struct ServerDebugInfo {
     pub user_count: usize,
     pub agent_count: usize,
     pub remote_agent_count: usize,
+    pub host_count: usize,
     pub route_count: usize,
     pub peer_link_count: usize,
     pub config: Config,
@@ -943,6 +967,66 @@ mod tests {
         assert_eq!(tool_input.allowed_prompts.len(), 1);
         assert_eq!(tool_input.allowed_prompts[0].tool, "Bash");
         assert_eq!(tool_input.allowed_prompts[0].prompt, "run tests");
+    }
+
+    #[test]
+    fn test_message_roundtrip_announce_host() {
+        let host_id = Uuid::new_v4();
+        let msg = Message::Local(LocalMessage::AnnounceHost {
+            id: host_id,
+            name: "my-laptop".to_string(),
+            route: Route::empty(),
+            version: "0.1.0".to_string(),
+        });
+        let encoded = msg.encode().unwrap();
+        let decoded = Message::decode(&encoded).unwrap();
+        if let Message::Local(LocalMessage::AnnounceHost {
+            id,
+            name,
+            route,
+            version,
+        }) = decoded
+        {
+            assert_eq!(id, host_id);
+            assert_eq!(name, "my-laptop");
+            assert_eq!(route, Route::empty());
+            assert_eq!(version, "0.1.0");
+        } else {
+            panic!("Expected AnnounceHost");
+        }
+    }
+
+    #[test]
+    fn test_message_roundtrip_announce_host_with_route() {
+        let host_id = Uuid::new_v4();
+        let msg = Message::Local(LocalMessage::AnnounceHost {
+            id: host_id,
+            name: "remote-server".to_string(),
+            route: Route::from_link("peer-a"),
+            version: "0.2.0".to_string(),
+        });
+        let encoded = msg.encode().unwrap();
+        let decoded = Message::decode(&encoded).unwrap();
+        if let Message::Local(LocalMessage::AnnounceHost { route, .. }) = decoded {
+            let mut route = route;
+            assert_eq!(route.pop(), Some("peer-a".to_string()));
+            assert_eq!(route.pop(), None);
+        } else {
+            panic!("Expected AnnounceHost");
+        }
+    }
+
+    #[test]
+    fn test_message_roundtrip_withdraw_host() {
+        let host_id = Uuid::new_v4();
+        let msg = Message::Local(LocalMessage::WithdrawHost { id: host_id });
+        let encoded = msg.encode().unwrap();
+        let decoded = Message::decode(&encoded).unwrap();
+        if let Message::Local(LocalMessage::WithdrawHost { id }) = decoded {
+            assert_eq!(id, host_id);
+        } else {
+            panic!("Expected WithdrawHost");
+        }
     }
 
     #[test]

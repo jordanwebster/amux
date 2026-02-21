@@ -121,7 +121,7 @@ pub(super) fn broadcast_to_peers(
 
 /// Announce all known agents (local + remote) to a newly connected peer.
 /// Filters out agents that were learned from this same peer (no echo-back).
-pub(super) fn send_initial_announcements(us: &ServerUserState, peer_link: &str) {
+fn send_initial_agent_announcements(us: &ServerUserState, peer_link: &str) {
     let Some(tx) = us.routes.get(peer_link) else {
         return;
     };
@@ -145,6 +145,64 @@ pub(super) fn send_initial_announcements(us: &ServerUserState, peer_link: &str) 
     }
 }
 
+/// Announce all known hosts (remote + own) to a newly connected peer.
+/// Filters out hosts that were learned from this same peer (no echo-back).
+/// Cloud servers are stateless relays and don't announce themselves as hosts.
+fn send_initial_host_announcements(
+    us: &ServerUserState,
+    host_id: Uuid,
+    host_name: &str,
+    is_cloud_server: bool,
+    peer_link: &str,
+) {
+    let Some(tx) = us.routes.get(peer_link) else {
+        return;
+    };
+
+    for info in us.hosts.values() {
+        if let Some(link) = info.route.peek()
+            && link == peer_link
+        {
+            continue;
+        }
+        let msg = Message::Local(LocalMessage::AnnounceHost {
+            id: info.id,
+            name: info.name.clone(),
+            route: info.route.clone(),
+            version: info.version.clone(),
+        });
+        if tx.try_send(msg).is_err() {
+            tracing::warn!(host_id = %info.id, peer = %peer_link, "failed to announce host");
+        }
+    }
+
+    if !is_cloud_server {
+        let msg = Message::Local(LocalMessage::AnnounceHost {
+            id: host_id,
+            name: host_name.to_string(),
+            route: crate::route::Route::empty(),
+            version: env!("CARGO_PKG_VERSION").to_string(),
+        });
+        if tx.try_send(msg).is_err() {
+            tracing::warn!(peer = %peer_link, "failed to announce own host");
+        }
+    }
+}
+
+/// Send all initial announcements (agents + hosts) to a newly connected peer.
+/// `host_id`, `host_name`, and `is_cloud_server` are extracted from global state by the caller
+/// to avoid holding both locks simultaneously.
+pub(super) fn send_initial_announcements(
+    us: &ServerUserState,
+    host_id: Uuid,
+    host_name: &str,
+    is_cloud_server: bool,
+    peer_link: &str,
+) {
+    send_initial_agent_announcements(us, peer_link);
+    send_initial_host_announcements(us, host_id, host_name, is_cloud_server, peer_link);
+}
+
 /// Handle a peer disconnecting: remove route, peer_links entry, remote agents,
 /// cancel unreachable streams, and propagate withdrawals to remaining peers.
 pub(super) fn handle_peer_disconnect(us: &mut ServerUserState, link_name: &str) {
@@ -165,6 +223,19 @@ pub(super) fn handle_peer_disconnect(us: &mut ServerUserState, link_name: &str) 
     for agent_id in removed_ids {
         tracing::info!(agent_id = %agent_id, peer = %link_name, "withdrawing agent");
         broadcast_to_peers(us, &LocalMessage::WithdrawAgent { agent_id }, None);
+    }
+
+    // Withdraw hosts learned from the dead link
+    let removed_host_ids: Vec<Uuid> = us
+        .hosts
+        .iter()
+        .filter(|(_, info)| matches!(info.route.peek(), Some(link) if link == link_name))
+        .map(|(id, _)| *id)
+        .collect();
+    for id in removed_host_ids {
+        tracing::info!(host_id = %id, peer = %link_name, "withdrawing host");
+        us.hosts.remove(&id);
+        broadcast_to_peers(us, &LocalMessage::WithdrawHost { id }, None);
     }
 }
 

@@ -2,7 +2,7 @@ use crate::agent_registry::AgentRegistry;
 use crate::config::Config;
 use crate::error::{AmuxError, Result};
 use crate::jwt::JwtValidator;
-use crate::message::Message;
+use crate::message::{HostInfo, Message};
 use crate::route::Route;
 use crate::session::{LocalAgentSession, SessionEvent};
 use crate::transport::{TcpTransport, create_tls_acceptor};
@@ -54,6 +54,8 @@ pub(super) struct ServerUserState {
     pub(super) registry: AgentRegistry,
     /// Link names of peer connections (non-local connections that receive announcements)
     pub(super) peer_links: HashSet<String>,
+    /// Known remote hosts (announced via AnnounceHost)
+    pub(super) hosts: HashMap<Uuid, HostInfo>,
     /// Active streaming tasks keyed by agent_id, with cancellation tokens
     pub(super) active_streams: HashMap<Uuid, Vec<StreamEntry>>,
     pub(super) next_stream_id: u64,
@@ -66,6 +68,7 @@ impl ServerUserState {
             routes: HashMap::new(),
             registry: AgentRegistry::new(),
             peer_links: HashSet::new(),
+            hosts: HashMap::new(),
             active_streams: HashMap::new(),
             next_stream_id: 0,
         }
@@ -76,8 +79,10 @@ impl ServerUserState {
 /// lives in `ServerUserState`, providing user isolation via JWT authentication.
 pub(super) struct ServerState {
     pub(super) config: Config,
-    /// Whether running in cloud mode (TLS + token auth required)
-    pub(super) cloud_mode: bool,
+    /// Ephemeral host ID generated at startup (not persisted)
+    pub(super) host_id: Uuid,
+    /// Whether this server is a cloud relay (`amux serve --cloud`)
+    pub(super) is_cloud_server: bool,
     /// JWT validator for cloud mode (validates incoming tokens)
     pub(super) jwt_validator: Option<Arc<JwtValidator>>,
     /// Per-user state map. Each authenticated user gets isolated state.
@@ -90,7 +95,8 @@ impl ServerState {
         users.insert(LOCAL_USER_ID, Arc::new(RwLock::new(ServerUserState::new())));
         Self {
             config,
-            cloud_mode: false,
+            host_id: Uuid::new_v4(),
+            is_cloud_server: false,
             jwt_validator: None,
             users,
         }
@@ -159,10 +165,10 @@ impl Server {
             )
         };
 
-        // Set cloud mode and create JWT validator if needed
+        // Configure cloud server: enable JWT validation (and optionally TLS)
         let tls_acceptor: Option<TlsAcceptor> = if is_cloud_server {
             let mut state = self.state.write().await;
-            state.cloud_mode = true;
+            state.is_cloud_server = true;
             state.jwt_validator = Some(Arc::new(JwtValidator::new(&cloud_url)));
 
             if enforce_tls {
