@@ -1,15 +1,16 @@
 // Serde default enum serialization format: {"VariantName": data} or "VariantName" for unit variants
-// Exception: StructuredLog uses #[serde(tag = "type")] so it's {type: "VariantName", ...fields}
+// Exception: ClaudeStructuredOutput uses #[serde(tag = "type")] so it's {type: "VariantName", ...fields}
+// Wrapper enums use serde's default (externally tagged): {"Claude": {type: "...", ...}}
 
-// Agent info returned in list
-export interface AgentInfo {
-  agent_id: string
-  alias: string | null
+// Agent returned in list
+export interface Agent {
+  id: string
+  name: string | null
   command: string
   working_dir: string
 }
 
-// Structured log entries - uses tag-based format: {type: "UserMessage", content: "...", ...}
+// Claude structured output entries - uses tag-based format: {type: "UserMessage", content: "...", ...}
 export interface UserMessage {
   type: "UserMessage"
   content: string
@@ -34,7 +35,7 @@ export interface EditPermissionToolData {
 
 export type PermissionTool = { Edit: EditPermissionToolData }
 
-// Permission request - nested inside StructuredLog
+// Permission request - nested inside ClaudeStructuredOutput
 export interface PermissionRequest {
   type: "PermissionRequest"
   tool: PermissionTool
@@ -45,25 +46,23 @@ export function isEditTool(tool: PermissionTool): tool is { Edit: EditPermission
   return "Edit" in tool
 }
 
-export type StructuredLog = UserMessage | AssistantMessage | PermissionRequest
+export type ClaudeStructuredOutput = UserMessage | AssistantMessage | PermissionRequest
 
 // Helper to extract message type
-export function isUserMessage(log: StructuredLog): log is UserMessage {
+export function isUserMessage(log: ClaudeStructuredOutput): log is UserMessage {
   return log.type === "UserMessage"
 }
 
-export function isAssistantMessage(log: StructuredLog): log is AssistantMessage {
+export function isAssistantMessage(log: ClaudeStructuredOutput): log is AssistantMessage {
   return log.type === "AssistantMessage"
 }
 
-export function isPermissionRequest(log: StructuredLog): log is PermissionRequest {
+export function isPermissionRequest(log: ClaudeStructuredOutput): log is PermissionRequest {
   return log.type === "PermissionRequest"
 }
 
 // Permission response values (sent to server to respond to permission request)
 export type PermissionResponse = "Yes" | "YesAll" | "No"
-
-export type SubscribeMode = "Raw" | "Structured"
 
 // Protocol-level errors (matches Rust ProtocolError serde format)
 export type ProtocolError =
@@ -74,70 +73,80 @@ export type ProtocolError =
 
 // --- Routable message payloads (without src/dst, those are in the wrapper) ---
 export type RoutableMessage =
-  | { Subscribe: { agent_id: string; rows: number; cols: number; mode?: SubscribeMode } }
-  | { SubscribeResult: { agent_id: string; success: boolean; error: ProtocolError | null } }
-  | { InputBytes: { agent_id: string; data: number[] } }
-  | { SubmitInput: { agent_id: string; data: number[] } }
-  | { Output: { agent_id: string; data: number[] } }
-  | { StructuredOutput: { agent_id: string; entry: StructuredLog } }
-  | { PermissionRequestResponse: { agent_id: string; response: PermissionResponse } }
+  | { SubscribeRaw: { agent_id: string; terminal_size: { rows: number; cols: number } | null } }
+  | { SubscribeStructured: { agent_id: string } }
+  | { SubscribeRawResult: { agent_id: string; success: boolean; error: ProtocolError | null } }
+  | { SubscribeStructuredResult: { agent_id: string; success: boolean; error: ProtocolError | null } }
+  | { RawInput: { agent_id: string; data: number[] } }
+  | { StructuredInput: { agent_id: string; data: StructuredInput } }
+  | { RawOutput: { agent_id: string; data: number[] } }
+  | { StructuredOutput: { agent_id: string; data: StructuredOutputWrapper } }
   | { Error: ProtocolError }
 
-// --- Local message payloads (no routing) ---
-export type LocalMessage =
+// Wrapper enums matching Rust's externally-tagged serde format
+export type StructuredOutputWrapper = { Claude: ClaudeStructuredOutput }
+export type StructuredInput = { Claude: ClaudeStructuredInput }
+
+// Claude-specific structured input (matches Rust ClaudeStructuredInput)
+export type ClaudeStructuredInput =
+  | { PermissionResponse: PermissionResponse }
+  | { SubmitMessage: { data: number[] } }
+
+// --- Direct message payloads (no routing) ---
+export type DirectMessage =
   | "ListAgents"
   | { Connect: { link_name: string; token?: string | null } }
-  | { ListAgentsResult: { agents: AgentInfo[] } }
+  | { ListAgentsResult: { agents: Agent[] } }
   | { CreateAgentResult: { success: boolean; error: ProtocolError | null } }
   | "AgentEnded"
   | { Error: { message: string } }
   | "Shutdown"
   | "Debug"
-  | { ConnectResponse: { success: boolean; error: ProtocolError | null } }
+  | { ConnectResult: { success: boolean; error: ProtocolError | null } }
   | { HookEvent: { hook: unknown } }
   | { HookEventResult: { success: boolean; error: ProtocolError | null } }
   | { DebugResult: { info: unknown } }
 
 // --- Top-level Message type ---
-// Wire format: { Routable: { src, dst, message: RoutableMessage } } | { Local: LocalMessage }
+// Wire format: { Routable: { src, dst, message: RoutableMessage } } | { Direct: DirectMessage }
 export type ClientMessage =
-  | { Local: LocalMessage }
+  | { Direct: DirectMessage }
   | { Routable: { src: string; dst: string; message: RoutableMessage } }
 
 export type ServerMessage =
-  | { Local: LocalMessage }
+  | { Direct: DirectMessage }
   | { Routable: { src: string; dst: string; message: RoutableMessage } }
 
 // --- Type guards ---
 
-// Top-level: Routable vs Local
+// Top-level: Routable vs Direct
 export function isRoutable(msg: ServerMessage): msg is { Routable: { src: string; dst: string; message: RoutableMessage } } {
   return typeof msg === "object" && msg !== null && "Routable" in msg
 }
 
-export function isLocal(msg: ServerMessage): msg is { Local: LocalMessage } {
-  return typeof msg === "object" && msg !== null && "Local" in msg
+export function isDirect(msg: ServerMessage): msg is { Direct: DirectMessage } {
+  return typeof msg === "object" && msg !== null && "Direct" in msg
 }
 
-// Local message guards
-export function isConnectResponse(local: LocalMessage): local is { ConnectResponse: { success: boolean; error: ProtocolError | null } } {
-  return typeof local === "object" && local !== null && "ConnectResponse" in local
+// Direct message guards
+export function isConnectResult(direct: DirectMessage): direct is { ConnectResult: { success: boolean; error: ProtocolError | null } } {
+  return typeof direct === "object" && direct !== null && "ConnectResult" in direct
 }
 
-export function isListAgentsResult(local: LocalMessage): local is { ListAgentsResult: { agents: AgentInfo[] } } {
-  return typeof local === "object" && local !== null && "ListAgentsResult" in local
+export function isListAgentsResult(direct: DirectMessage): direct is { ListAgentsResult: { agents: Agent[] } } {
+  return typeof direct === "object" && direct !== null && "ListAgentsResult" in direct
 }
 
-export function isLocalError(local: LocalMessage): local is { Error: { message: string } } {
-  return typeof local === "object" && local !== null && "Error" in local
+export function isDirectError(direct: DirectMessage): direct is { Error: { message: string } } {
+  return typeof direct === "object" && direct !== null && "Error" in direct
 }
 
 // Routable message guards
-export function isSubscribeResult(msg: RoutableMessage): msg is { SubscribeResult: { agent_id: string; success: boolean; error: ProtocolError | null } } {
-  return typeof msg === "object" && msg !== null && "SubscribeResult" in msg
+export function isSubscribeStructuredResult(msg: RoutableMessage): msg is { SubscribeStructuredResult: { agent_id: string; success: boolean; error: ProtocolError | null } } {
+  return typeof msg === "object" && msg !== null && "SubscribeStructuredResult" in msg
 }
 
-export function isStructuredOutput(msg: RoutableMessage): msg is { StructuredOutput: { agent_id: string; entry: StructuredLog } } {
+export function isStructuredOutput(msg: RoutableMessage): msg is { StructuredOutput: { agent_id: string; data: StructuredOutputWrapper } } {
   return typeof msg === "object" && msg !== null && "StructuredOutput" in msg
 }
 

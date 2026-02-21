@@ -39,7 +39,7 @@ enum Commands {
         /// Agent type: claude or test-agent (test-agent only in dev builds)
         agent_type: String,
 
-        /// Session alias (optional human-readable name)
+        /// Session name (optional human-readable name)
         #[arg(short = 't', long)]
         target: Option<String>,
     },

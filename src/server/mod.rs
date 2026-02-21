@@ -2,7 +2,7 @@ use crate::agent_registry::AgentRegistry;
 use crate::config::Config;
 use crate::error::{AmuxError, Result};
 use crate::jwt::JwtValidator;
-use crate::message::{HostInfo, Message};
+use crate::message::{Host, Message};
 use crate::route::Route;
 use crate::session::{LocalAgentSession, SessionEvent};
 use crate::transport::{TcpTransport, create_tls_acceptor};
@@ -50,12 +50,12 @@ pub(super) struct ServerUserState {
     /// Per-user for security: prevents cross-user message forwarding without
     /// explicit authorization.
     pub(super) routes: HashMap<String, mpsc::Sender<Message>>,
-    /// Centralized agent registry (local + remote agents, alias mapping)
+    /// Centralized agent registry (local + remote agents, name mapping)
     pub(super) registry: AgentRegistry,
     /// Link names of peer connections (non-local connections that receive announcements)
     pub(super) peer_links: HashSet<String>,
     /// Known remote hosts (announced via AnnounceHost)
-    pub(super) hosts: HashMap<Uuid, HostInfo>,
+    pub(super) hosts: HashMap<Uuid, Host>,
     /// Active streaming tasks keyed by agent_id, with cancellation tokens
     pub(super) active_streams: HashMap<Uuid, Vec<StreamEntry>>,
     pub(super) next_stream_id: u64,
@@ -240,7 +240,7 @@ impl Server {
                             us.agents.remove(&agent_id);
                             broadcast_to_peers(
                                 &mut us,
-                                &crate::message::LocalMessage::WithdrawAgent { agent_id },
+                                &crate::message::DirectMessage::WithdrawAgent { agent_id },
                                 None,
                             );
                         }

@@ -18,7 +18,7 @@ A detailed design for the amux server internals covering data structures, messag
 **Key design choices:**
 - All connections (local and remote) use framed messages with length-prefixed encoding
 - Connections are identified by link names (e.g. `"term-abc1"`, `"myhost-xyz2"`)
-- Messages are either `Routable` (carry src/dst routes, can be forwarded) or `Local` (handled on the receiving server only)
+- Messages are either `Routable` (carry src/dst routes, can be forwarded) or `Direct` (handled on the receiving server only)
 - Serialization uses MessagePack for binary transports (Unix/TCP) and JSON for WebSocket
 
 ---
@@ -27,11 +27,11 @@ A detailed design for the amux server internals covering data structures, messag
 
 | Term | Description |
 |------|-------------|
-| **agent_id** | UUID identifying an agent session. Optional human-readable alias can be set via `-t` flag. |
+| **agent_id** | UUID identifying an agent session. Optional human-readable name can be set via `-t` flag. |
 | **link_name** | String identifying a connection (e.g. `"term-abc1"`, `"myhost"`, `"hook-xy12"`). Used as keys in the routing table. |
 | **Route** | A stack of link names (`VecDeque<String>`) representing a multi-hop path. Serializes as `"AB.BC.CD"` (dot-separated). |
 | **RoutableMessage** | A message that carries `src` and `dst` routes and can be forwarded across hops. |
-| **LocalMessage** | A message handled only by the directly connected server (no routing). |
+| **DirectMessage** | A message handled only by the directly connected server (no routing). |
 | **PTY** | Pseudo-terminal - the interface used to run interactive CLI agents like Claude. |
 
 ---
@@ -39,9 +39,9 @@ A detailed design for the amux server internals covering data structures, messag
 ## Core Identity Types
 
 ```rust
-// Agents are identified by UUID, with an optional human-readable alias
+// Agents are identified by UUID, with an optional human-readable name
 agent_id: Uuid           // e.g. 550e8400-e29b-41d4-a716-446655440000
-alias: Option<String>    // e.g. "my-session" (set via -t flag)
+name: Option<String>     // e.g. "my-session" (set via -t flag)
 
 // Connections are identified by link name strings
 link_name: String        // e.g. "term-abc1", "myhost-xyz2", "hook-ab12"
@@ -118,7 +118,7 @@ enum Message {
         dst: Route,      // Forward path (consumed as message travels)
         message: RoutableMessage,
     },
-    Local(LocalMessage),
+    Direct(DirectMessage),
 }
 ```
 
@@ -129,41 +129,45 @@ Messages that carry routing information and can be forwarded across server hops:
 ```rust
 enum RoutableMessage {
     // Subscribing to agent output
-    Subscribe { agent_id: String, rows: u16, cols: u16, mode: SubscribeMode },
-    SubscribeResult { agent_id: String, success: bool, error: Option<ProtocolError> },
+    SubscribeRaw { agent_id: Uuid, terminal_size: Option<TerminalSize> },
+    SubscribeStructured { agent_id: Uuid },
+    SubscribeRawResult { agent_id: Uuid, success: bool, error: Option<ProtocolError> },
+    SubscribeStructuredResult { agent_id: Uuid, success: bool, error: Option<ProtocolError> },
 
     // Input to agents
-    InputBytes { agent_id: String, data: Vec<u8> },     // Raw keystroke bytes
-    SubmitInput { agent_id: String, data: Vec<u8> },     // Structured input (adds delay + CR)
+    RawInput { agent_id: Uuid, data: Vec<u8> },           // Raw keystroke bytes
+    StructuredInput { agent_id: Uuid, data: StructuredInput }, // Agent-type-keyed input
 
     // Output from agents
-    Output { agent_id: String, data: Vec<u8> },          // Raw terminal bytes
-    StructuredOutput { agent_id: String, entry: StructuredLog },
+    RawOutput { agent_id: Uuid, data: Vec<u8> },           // Raw terminal bytes
+    StructuredOutput { agent_id: Uuid, data: StructuredOutput }, // Agent-type-keyed output
 
-    // Permission handling (Claude Code integration)
-    PermissionRequestResponse { agent_id: String, response: PermissionResponse },
+    // Agent lifecycle
+    CreateAgent(CreateAgentRequest),
+    CreateAgentResult { agent_id: Uuid, success: bool, error: Option<ProtocolError> },
+    AgentEnded { agent_id: Uuid },
 
     // Routing errors
     Error(ProtocolError),
 }
 ```
 
-### LocalMessage
+### DirectMessage
 
 Messages handled only by the directly connected server:
 
 ```rust
-enum LocalMessage {
+enum DirectMessage {
     // Agent management
     ListAgents,
-    ListAgentsResult { agents: Vec<AgentInfo> },
+    ListAgentsResult { agents: Vec<Agent> },
     CreateAgent(CreateAgentRequest),
     CreateAgentResult { success: bool, error: Option<ProtocolError> },
     AgentEnded,
 
     // Connection handshake
     Connect { link_name: String, token: Option<String> },
-    ConnectResponse { success: bool, error: Option<ProtocolError> },
+    ConnectResult { success: bool, error: Option<ProtocolError> },
 
     // Server operations
     Shutdown,
@@ -181,6 +185,24 @@ enum LocalMessage {
 }
 ```
 
+### Structured Wrapper Types
+
+Agent-type-keyed wrappers for structured input/output. The outer enum is externally tagged (serde default), the inner enums are internally tagged:
+
+```rust
+// Output wrapper (externally tagged)
+enum StructuredOutput {
+    Claude(ClaudeStructuredOutput),
+}
+
+// Input wrapper (externally tagged)
+enum StructuredInput {
+    Claude(ClaudeStructuredInput),
+}
+```
+
+See the [StructuredOutput / StructuredInput](#structuredoutput--structuredinput) section for the Claude-specific inner types.
+
 ### Supporting Types
 
 ```rust
@@ -189,11 +211,6 @@ enum ProtocolError {
     LinkNameTaken,
     NoRouteFound(Route),       // Includes the path traversed before failure
     InvalidCredentials,
-}
-
-enum SubscribeMode {
-    Raw,         // Stream raw terminal bytes as Output messages (default)
-    Structured,  // Stream structured logs as StructuredOutput messages
 }
 ```
 
@@ -234,7 +251,7 @@ The loop uses `tokio::select!` on two sources:
 
 Incoming messages are dispatched by `handle_message`:
 - `Message::Routable { src, dst, message }` → `handle_routable()` (routing + local delivery)
-- `Message::Local(msg)` → `handle_local()` (direct handling)
+- `Message::Direct(msg)` → `handle_local()` (direct handling)
 
 ### Per-Connection State
 
@@ -248,7 +265,7 @@ struct ConnectionContext {
 
 Each connection has a dedicated `mpsc::Sender<Message>` stored in the routes table. Other tasks send messages to a connection by looking up its link name in the routes table and sending through the channel.
 
-For cloud connections, the loop extends with token refresh support: a third `select!` branch fires when the JWT token is nearing expiry, triggering in-band re-authentication via `LocalMessage::Connect`.
+For cloud connections, the loop extends with token refresh support: a third `select!` branch fires when the JWT token is nearing expiry, triggering in-band re-authentication via `DirectMessage::Connect`.
 
 See `src/server/connection.rs`.
 
@@ -280,7 +297,7 @@ The server's `run()` method:
 
 **Routes table:** `HashMap<String, mpsc::Sender<Message>>` keyed by link name. Each entry is the send-half of a channel to a connection's `connection_loop`. When a connection disconnects, its route is removed.
 
-**Subscriptions:** Unlike the original design, there is no explicit subscriptions HashMap. When a client subscribes to an agent, a dedicated output-streaming task is spawned that reads from the agent's `MultiplexBuffer` and writes `Output` messages to the subscriber's channel. The subscription is implicit in the lifetime of this task.
+**Subscriptions:** Unlike the original design, there is no explicit subscriptions HashMap. When a client subscribes to an agent, a dedicated output-streaming task is spawned that reads from the agent's `MultiplexBuffer` and writes `RawOutput` messages to the subscriber's channel. The subscription is implicit in the lifetime of this task.
 
 See `src/server/mod.rs`.
 
@@ -291,7 +308,7 @@ See `src/server/mod.rs`.
 ```rust
 struct LocalAgentSession {
     agent_id: Uuid,
-    alias: Option<String>,
+    name: Option<String>,
     command: String,
     working_dir: PathBuf,
     pty_master: Arc<Mutex<Option<Box<dyn MasterPty + Send>>>>,
@@ -320,7 +337,7 @@ impl LocalAgentSession {
     async fn resize(&self, rows: u16, cols: u16) -> Result<()>;
     async fn shutdown(&self);
     async fn link_transcript(&self, path: PathBuf);   // Connect Claude Code transcript file
-    async fn write_log(&self, entry: StructuredLog);   // Write log entry directly (e.g. permission request)
+    async fn write_log(&self, entry: StructuredOutput);   // Write log entry directly (e.g. permission request)
 }
 ```
 
@@ -329,7 +346,7 @@ impl LocalAgentSession {
 ```rust
 struct CreateAgentRequest {
     agent_id: Uuid,
-    alias: Option<String>,
+    name: Option<String>,
     agent_type: AgentType,
     working_dir: PathBuf,
     rows: u16,
@@ -367,16 +384,25 @@ See `src/config.rs`.
 
 ---
 
-## StructuredLog
+## StructuredOutput / StructuredInput
 
-Structured log entries for rich clients (dashboard, mobile). Populated by parsing Claude Code transcript files via `TranscriptTailer`:
+Agent-type-keyed wrapper enums for structured data. The outer enum uses serde's default externally-tagged format; the inner Claude-specific enums use internal tagging.
+
+### StructuredOutput
 
 ```rust
-#[serde(tag = "type")]
-enum StructuredLog {
+// Outer wrapper (externally tagged): {"Claude": {type: "UserMessage", ...}}
+enum StructuredOutput {
+    Claude(ClaudeStructuredOutput),
+}
+
+// Claude-specific output (internally tagged with #[serde(tag = "type")])
+enum ClaudeStructuredOutput {
     UserMessage { content: String, timestamp: String, uuid: String },
     AssistantMessage { content: String, timestamp: String, uuid: String },
     PermissionRequest { tool: PermissionTool },
+    #[serde(other)]
+    Unknown,     // Forward-compatible: unknown types deserialize to this
 }
 
 enum PermissionTool {
@@ -384,9 +410,24 @@ enum PermissionTool {
 }
 ```
 
-`TranscriptTailer` watches a Claude Code transcript JSONL file and parses new entries into `StructuredLog` variants, writing them to the session's `MultiplexLogBuffer`. Permission requests are also written directly to the log buffer when received as hook events.
+### StructuredInput
 
-See `src/structured_log.rs`, `src/transcript.rs`.
+```rust
+// Outer wrapper (externally tagged): {"Claude": {"SubmitMessage": {data: [...]}}}
+enum StructuredInput {
+    Claude(ClaudeStructuredInput),
+}
+
+// Claude-specific input
+enum ClaudeStructuredInput {
+    PermissionResponse(PermissionResponse),   // User's response to a permission request
+    SubmitMessage { data: Vec<u8> },          // Rich client text input (adds delay + CR)
+}
+```
+
+`TranscriptTailer` watches a Claude Code transcript JSONL file and parses new entries into `ClaudeStructuredOutput` variants (wrapped in `StructuredOutput::Claude(...)`), writing them to the session's `MultiplexLogBuffer`. Permission requests are also written directly to the log buffer when received as hook events.
+
+See `src/message.rs`, `src/transcript.rs`.
 
 ---
 
@@ -423,7 +464,7 @@ struct MultiplexReader {
 
 The key invariant: `write()` and `subscribe()` are mutually exclusive via the buffer lock. This ensures a new subscriber sees exactly all bytes written before it subscribed, with no gaps and no duplicates in the transition to live data.
 
-`MultiplexLogBuffer` follows the same pattern for `StructuredLog` entries (with entry count limit instead of byte size limit).
+`MultiplexLogBuffer` follows the same pattern for `StructuredOutput` entries (with entry count limit instead of byte size limit).
 
 See `src/buffer.rs`, `src/multiplex_log_buffer.rs`.
 
@@ -454,8 +495,8 @@ Replies use `Route::reply(src)`, which pops the first link from `src` to determi
 
 ### Error Handling
 
-- **Request messages** (Subscribe, InputBytes, etc.): forwarding failure sends `RoutableMessage::Error(NoRouteFound)` back to the source
-- **Stream messages** (Output, StructuredOutput): forwarding failure is logged and dropped silently to prevent churn
+- **Request messages** (SubscribeRaw, SubscribeStructured, RawInput, etc.): forwarding failure sends `RoutableMessage::Error(NoRouteFound)` back to the source
+- **Stream messages** (RawOutput, StructuredOutput): forwarding failure is logged and dropped silently to prevent churn
 - **Error messages**: forwarding failure is logged and dropped to prevent amplification
 
 ### Route Cleanup
@@ -498,7 +539,7 @@ The agent type determines the command and arguments:
 2. Child waiter task detects exit, drops PTY master, closes buffers
 3. `SessionEvent::Ended(agent_id)` sent to server via event channel
 4. Server removes agent from `state.agents`
-5. Output streaming tasks detect buffer closure and send `LocalMessage::AgentEnded` to their subscribers
+5. Output streaming tasks detect buffer closure and send `DirectMessage::AgentEnded` to their subscribers
 
 See `src/session.rs`.
 
@@ -510,20 +551,20 @@ See `src/session.rs`.
 
 `accept_handshake()` handles the initial handshake:
 
-1. Read first message, expect `LocalMessage::Connect { link_name, token }`
+1. Read first message, expect `DirectMessage::Connect { link_name, token }`
 2. If `verify_token` (cloud mode): validate JWT token via JWKS
 3. Check link name uniqueness in `state.routes` (read lock fast path, write lock for insert)
 4. Create `mpsc::channel` for the connection, insert sender into `state.routes`
-5. Send `LocalMessage::ConnectResponse { success: true }`
+5. Send `DirectMessage::ConnectResult { success: true }`
 6. Return `(link_name, outgoing_rx)` for use in `connection_loop`
 
-On link name collision, the server responds with `ConnectResponse { error: LinkNameTaken }`. The client retries with a new random suffix (up to 5 attempts).
+On link name collision, the server responds with `ConnectResult { error: LinkNameTaken }`. The client retries with a new random suffix (up to 5 attempts).
 
 After handshake, `accept_connection()` runs `connection_loop()` until disconnection, then removes the route from `state.routes`.
 
 ### Connecting to Peers (Client-Side)
 
-`connect_handshake()` sends `LocalMessage::Connect { link_name, token: None }` and waits for `ConnectResponse`. On `LinkNameTaken`, it regenerates the link name and retries (up to 5 attempts).
+`connect_handshake()` sends `DirectMessage::Connect { link_name, token: None }` and waits for `ConnectResult`. On `LinkNameTaken`, it regenerates the link name and retries (up to 5 attempts).
 
 ### Cleanup
 
@@ -558,12 +599,14 @@ See `src/transport/framing.rs`.
 
 ## Input Forwarding
 
-Two input message types, both routable:
+Two input paths, both routable:
 
-- **`InputBytes`** - Raw keystroke bytes, delivered directly to PTY stdin
-- **`SubmitInput`** - Structured input from rich clients (e.g. dashboard text field). Adds a 20ms delay then appends carriage return (`\r`)
+- **`RawInput`** - Raw keystroke bytes from terminals, delivered directly to PTY stdin
+- **`StructuredInput`** - Agent-type-keyed input from rich clients. For Claude, this includes:
+  - `ClaudeStructuredInput::SubmitMessage` - Text input from dashboard. Adds a 20ms delay then appends carriage return (`\r`)
+  - `ClaudeStructuredInput::PermissionResponse` - User's response to a permission request. Translated to a keystroke and written to PTY
 
-Input messages are forwarded via generic `handle_routable` routing. When delivered locally, the agent is resolved by UUID or alias and `send_input()` is called.
+Input messages are forwarded via generic `handle_routable` routing. When delivered locally, the agent is resolved by UUID or name and `send_input()` is called.
 
 ---
 
@@ -594,7 +637,7 @@ Input messages are forwarded via generic `handle_routable` routing. When deliver
 │  Per Subscribe (spawned on subscribe):                                 │
 │  ┌──────────────────────────────────────────────────────────────────┐  │
 │  │ Output Stream Task                                                │  │
-│  │ Reads MultiplexBuffer/MultiplexLogBuffer → sends Output/          │  │
+│  │ Reads MultiplexBuffer/MultiplexLogBuffer → sends RawOutput/       │  │
 │  │ StructuredOutput routable messages to subscriber's channel        │  │
 │  └──────────────────────────────────────────────────────────────────┘  │
 │                                                                        │
@@ -629,31 +672,31 @@ Input messages are forwarded via generic `handle_routable` routing. When deliver
 
 **Data flow for local terminal subscription:**
 ```
-Terminal ──Subscribe──> Connection Handler
-                              │
-                              ▼
-                       handle_routable → local delivery
-                              │
-                              ├─> agent.subscribe() → MultiplexReader
-                              ├─> Send SubscribeResult
-                              └─> Spawn output stream task
-                                    │
-                                    └─> MultiplexReader.read() → Output msg → subscriber channel
+Terminal ──SubscribeRaw──> Connection Handler
+                                │
+                                ▼
+                         handle_routable → local delivery
+                                │
+                                ├─> agent.subscribe() → MultiplexReader
+                                ├─> Send SubscribeRawResult
+                                └─> Spawn output stream task
+                                      │
+                                      └─> MultiplexReader.read() → RawOutput msg → subscriber channel
 
-Terminal ──InputBytes──> Connection Handler → agent.send_input() → PTY stdin
+Terminal ──RawInput──> Connection Handler → agent.send_input() → PTY stdin
 ```
 
 **Data flow for proxied subscription:**
 ```
-App ──Subscribe──> Cloud Handler ──Subscribe──> Local Handler
-                        │                           │
-                   (pops dst,                  (dst empty,
-                    pushes src,                 local delivery)
-                    forwards)                       │
-                                               Subscribe agent
-                                               Spawn output task
+App ──SubscribeRaw──> Cloud Handler ──SubscribeRaw──> Local Handler
+                           │                              │
+                      (pops dst,                     (dst empty,
+                       pushes src,                    local delivery)
+                       forwards)                          │
+                                                     Subscribe agent
+                                                     Spawn output task
 
-Local PTY → MultiplexBuffer → Output Stream Task → Output msg
+Local PTY → MultiplexBuffer → Output Stream Task → RawOutput msg
     → Cloud routes table → Cloud connection → App
 ```
 
@@ -682,15 +725,15 @@ enum ClaudeHook {
 2. `amux` connects to server via Unix socket with a `"hook-{rand}"` link name
 3. Sends `HookEvent { hook }` message
 4. Server handles: for `SessionStart`, links the transcript file to the agent session
-5. For `PermissionRequest`, writes to the agent's log buffer and waits for a `PermissionRequestResponse` from a dashboard client
+5. For `PermissionRequest`, writes to the agent's log buffer and waits for a `StructuredInput` containing `ClaudeStructuredInput::PermissionResponse` from a dashboard client
 
 ### Permission Request Flow
 
 ```
 Claude Code → amux hooks → HookEvent(PermissionRequest) → server
-    → agent.write_log(PermissionRequest) → MultiplexLogBuffer
+    → agent.write_log(StructuredOutput::Claude(PermissionRequest)) → MultiplexLogBuffer
     → dashboard (via StructuredOutput) → user sees permission UI
-    → PermissionRequestResponse (routable) → server → writes keystroke to PTY
+    → StructuredInput(Claude(PermissionResponse)) (routable) → server → writes keystroke to PTY
 ```
 
 See `src/hooks.rs`, `src/message.rs`.
@@ -713,7 +756,7 @@ MessagePack (rmp-serde with named/map format) replaced bincode for binary transp
 
 ### 4. Handshake-based connection establishment
 
-Connections start with a `Connect { link_name, token }` / `ConnectResponse` handshake instead of the original `EstablishConnection`. This:
+Connections start with a `Connect { link_name, token }` / `ConnectResult` handshake instead of the original `EstablishConnection`. This:
 - Assigns link names at connect time (used for routing)
 - Carries JWT tokens for cloud authentication
 - Supports link name collision retry
@@ -722,11 +765,11 @@ Connections start with a `Connect { link_name, token }` / `ConnectResponse` hand
 
 Instead of a centralized `subscriptions: HashMap<AgentId, Vec<ConnectionId>>`, subscriptions are implicit in spawned output-streaming tasks. When a client subscribes, a task is spawned that reads from `MultiplexBuffer` and sends to the subscriber's channel. The subscription dies when either the buffer closes or the subscriber disconnects.
 
-### 6. Routable/Local message split
+### 6. Routable/Direct message split
 
 The `Message` enum has two variants that encode routing capability in the type system:
 - `Routable { src, dst, message }` - Can be forwarded across hops. Generic forwarding logic handles all routable message types uniformly.
-- `Local(message)` - Handled only by the directly connected server. Cannot be forwarded.
+- `Direct(message)` - Handled only by the directly connected server. Cannot be forwarded.
 
 This collapses six separate forwarding code paths into one generic forwarding path in `handle_routable`.
 
@@ -744,12 +787,12 @@ Routes are stacks (VecDeque) of link names rather than flat `Route::Remote { via
 When a client subscribes to an agent on a remote server, messages are forwarded through intermediate servers:
 
 ```
-App ──Subscribe──> Cloud Server ──Subscribe──> Local Server
-                        │                          │
-                        │                     (owns agent)
-                        │                          │
-App <──Output──────── Cloud <────Output────────────┘ (ongoing)
-App ──InputBytes───> Cloud ────InputBytes──────────>│
+App ──SubscribeRaw──> Cloud Server ──SubscribeRaw──> Local Server
+                           │                              │
+                           │                         (owns agent)
+                           │                              │
+App <──RawOutput──────── Cloud <────RawOutput──────────── ┘ (ongoing)
+App ──RawInput─────────> Cloud ────RawInput──────────────>│
 ```
 
 All forwarding is handled by generic `handle_routable`:
@@ -758,7 +801,7 @@ All forwarding is handled by generic `handle_routable`:
 3. Look up in routes table
 4. Send through channel
 
-The same code forwards Subscribe, SubscribeResult, InputBytes, Output, StructuredOutput, PermissionRequestResponse, and Error messages. No message-type-specific forwarding logic needed.
+The same code forwards SubscribeRaw, SubscribeStructured, RawInput, StructuredInput, RawOutput, StructuredOutput, and Error messages. No message-type-specific forwarding logic needed.
 
 ---
 

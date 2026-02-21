@@ -62,7 +62,7 @@ After initial OAuth setup, cloud connections use JWT tokens:
    - Caches keys for 1 hour
    - Validates signature, audience ("amux_token"), expiry
    - Verifies host/port in claims match the receiving server
-7. Cloud server responds with ConnectResponse { success: true }
+7. Cloud server responds with ConnectResult { success: true }
 ```
 
 ### Token Refresh
@@ -106,7 +106,7 @@ When a local server starts with cloud mode enabled:
 4. TLS connect to host:port (rustls, webpki root certs)
 5. Send LocalMessage::Connect { link_name: "{hostname}-{rand}", token: JWT }
 6. Cloud validates JWT (JWKS), checks link_name uniqueness
-7. Cloud responds with ConnectResponse { success: true }
+7. Cloud responds with ConnectResult { success: true }
 8. Enter connection_loop with token refresh enabled
 ```
 
@@ -123,7 +123,7 @@ Rich clients (mobile, web dashboard) connect via WebSocket to the cloud server:
 ```
 1. WebSocket upgrade to ws://cloud:9002/
 2. Send LocalMessage::Connect { link_name, token: null }
-3. Cloud responds with ConnectResponse
+3. Cloud responds with ConnectResult
 4. Enter connection_loop (JSON messages over WebSocket)
 ```
 
@@ -137,7 +137,7 @@ Terminal clients connect via Unix socket:
 1. Connect to /tmp/amux.sock
 2. Send LocalMessage::Connect { link_name: "term-{rand}", token: null }
 3. Server checks link_name uniqueness, inserts route
-4. Server responds with ConnectResponse { success: true }
+4. Server responds with ConnectResult { success: true }
 5. Enter connection_loop (MessagePack over length-prefixed frames)
 ```
 

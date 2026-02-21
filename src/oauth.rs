@@ -29,7 +29,7 @@ pub enum OAuthError {
 
 /// Response from /api/connect endpoint
 #[derive(Debug, Deserialize)]
-pub struct ConnectResponse {
+pub struct ConnectResult {
     /// Cloud server hostname to connect to
     pub host: String,
     /// Cloud server port
@@ -138,7 +138,7 @@ pub async fn refresh_access_token(
 pub async fn get_connection(
     cloud_url: &str,
     access_token: &str,
-) -> Result<ConnectResponse, OAuthError> {
+) -> Result<ConnectResult, OAuthError> {
     let client = reqwest::Client::new();
     let response = client
         .get(format!("{}/api/connect", cloud_url))

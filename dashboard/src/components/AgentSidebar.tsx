@@ -46,17 +46,17 @@ export function AgentSidebar() {
         ) : (
           agents.map((agent) => (
             <button
-              key={agent.agent_id}
-              onClick={() => handleSelectAgent(agent.agent_id)}
+              key={agent.id}
+              onClick={() => handleSelectAgent(agent.id)}
               className={cn(
                 "w-full text-left p-3 rounded-lg mb-1 transition-colors",
-                selectedAgentId === agent.agent_id
+                selectedAgentId === agent.id
                   ? "bg-[var(--color-sidebar-muted)]"
                   : "hover:bg-[var(--color-sidebar-muted)]/50"
               )}
             >
               <div className="font-medium text-sm truncate">
-                {agent.alias || agent.agent_id}
+                {agent.name || agent.id}
               </div>
               <div className="text-xs text-zinc-500 truncate mt-0.5">
                 {agent.working_dir}

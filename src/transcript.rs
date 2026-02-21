@@ -3,8 +3,8 @@
 //! This module watches a Claude Code transcript JSONL file and parses
 //! user/assistant messages into StructuredLog entries.
 
+use crate::message::{ClaudeStructuredOutput, StructuredOutput};
 use crate::multiplex_log_buffer::MultiplexLogBuffer;
-use crate::structured_log::StructuredLog;
 use serde::Deserialize;
 use std::path::PathBuf;
 use std::sync::Arc;
@@ -64,29 +64,33 @@ enum ContentBlock {
 }
 
 impl TranscriptEntry {
-    /// Convert transcript entry to StructuredLog if applicable.
-    fn into_structured_log(self) -> Option<StructuredLog> {
+    /// Convert transcript entry to StructuredOutput if applicable.
+    fn into_structured_output(self) -> Option<StructuredOutput> {
         match self {
             TranscriptEntry::User {
                 message,
                 uuid,
                 timestamp,
-            } => Some(StructuredLog::UserMessage {
-                content: message.content,
-                timestamp: timestamp.unwrap_or_default(),
-                uuid: uuid.unwrap_or_default(),
-            }),
+            } => Some(StructuredOutput::Claude(
+                ClaudeStructuredOutput::UserMessage {
+                    content: message.content,
+                    timestamp: timestamp.unwrap_or_default(),
+                    uuid: uuid.unwrap_or_default(),
+                },
+            )),
             TranscriptEntry::Assistant {
                 message,
                 uuid,
                 timestamp,
             } => {
                 let text = message.extract_text()?;
-                Some(StructuredLog::AssistantMessage {
-                    content: text,
-                    timestamp: timestamp.unwrap_or_default(),
-                    uuid: uuid.unwrap_or_default(),
-                })
+                Some(StructuredOutput::Claude(
+                    ClaudeStructuredOutput::AssistantMessage {
+                        content: text,
+                        timestamp: timestamp.unwrap_or_default(),
+                        uuid: uuid.unwrap_or_default(),
+                    },
+                ))
             }
             TranscriptEntry::Other => None,
         }
@@ -219,7 +223,7 @@ async fn tail_transcript(
 }
 
 /// Parse a single line from the transcript JSONL file.
-fn parse_transcript_line(line: &str) -> Option<StructuredLog> {
+fn parse_transcript_line(line: &str) -> Option<StructuredOutput> {
     let line = line.trim();
     if line.is_empty() {
         return None;
@@ -227,7 +231,7 @@ fn parse_transcript_line(line: &str) -> Option<StructuredLog> {
 
     serde_json::from_str::<TranscriptEntry>(line)
         .ok()
-        .and_then(TranscriptEntry::into_structured_log)
+        .and_then(TranscriptEntry::into_structured_output)
 }
 
 #[cfg(test)]
@@ -239,8 +243,9 @@ mod tests {
         let line = r#"{"type":"user","message":{"role":"user","content":"Hello world"},"uuid":"abc123","timestamp":"2025-01-15T12:00:00Z"}"#;
         let entry = parse_transcript_line(line).unwrap();
 
-        match entry {
-            StructuredLog::UserMessage {
+        let StructuredOutput::Claude(inner) = entry;
+        match inner {
+            ClaudeStructuredOutput::UserMessage {
                 content,
                 timestamp,
                 uuid,
@@ -258,8 +263,9 @@ mod tests {
         let line = r#"{"type":"assistant","message":{"role":"assistant","content":[{"type":"text","text":"Hi there!"}]},"uuid":"def456","timestamp":"2025-01-15T12:00:01Z"}"#;
         let entry = parse_transcript_line(line).unwrap();
 
-        match entry {
-            StructuredLog::AssistantMessage {
+        let StructuredOutput::Claude(inner) = entry;
+        match inner {
+            ClaudeStructuredOutput::AssistantMessage {
                 content,
                 timestamp,
                 uuid,
@@ -278,8 +284,9 @@ mod tests {
         let line = r#"{"type":"assistant","message":{"role":"assistant","content":[{"type":"thinking","thinking":"Let me think..."},{"type":"text","text":"Here is my answer"}]},"uuid":"ghi789","timestamp":"2025-01-15T12:00:02Z"}"#;
         let entry = parse_transcript_line(line).unwrap();
 
-        match entry {
-            StructuredLog::AssistantMessage { content, .. } => {
+        let StructuredOutput::Claude(inner) = entry;
+        match inner {
+            ClaudeStructuredOutput::AssistantMessage { content, .. } => {
                 assert_eq!(content, "Here is my answer");
             }
             _ => panic!("Expected AssistantMessage"),

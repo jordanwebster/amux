@@ -1,7 +1,6 @@
-use crate::agent_registry::AgentInfo;
+use crate::agent_registry::Agent;
 use crate::config::Config;
 use crate::route::Route;
-use crate::structured_log::StructuredLog;
 use serde::{Deserialize, Serialize};
 use std::path::PathBuf;
 use uuid::Uuid;
@@ -9,7 +8,7 @@ use uuid::Uuid;
 /// Information about a connected host (machine running amux server).
 /// Propagated via AnnounceHost/WithdrawHost between peers.
 #[derive(Serialize, Deserialize, Debug, Clone)]
-pub struct HostInfo {
+pub struct Host {
     /// Ephemeral ID generated at server startup (not persisted)
     pub id: Uuid,
     /// Human-readable hostname from config
@@ -21,7 +20,7 @@ pub struct HostInfo {
 }
 
 /// Protocol version for Connect handshake. Increment on breaking changes.
-pub const PROTOCOL_VERSION: u32 = 1;
+pub const PROTOCOL_VERSION: u32 = 2;
 
 /// Type of agent to spawn
 #[derive(Serialize, Deserialize, Debug, Clone, PartialEq)]
@@ -204,6 +203,93 @@ pub enum PermissionResponse {
     No,
 }
 
+/// The specific tool being requested permission for (dashboard display)
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
+pub enum PermissionTool {
+    Edit {
+        file_path: String,
+        old_string: String,
+        new_string: String,
+    },
+    AskUserQuestion {
+        questions: Vec<AskUserQuestionItem>,
+    },
+    Bash {
+        command: String,
+        description: Option<String>,
+        timeout: Option<u64>,
+    },
+    Write {
+        file_path: String,
+        content: String,
+    },
+    WebFetch {
+        url: String,
+        prompt: String,
+    },
+    WebSearch {
+        query: String,
+    },
+    NotebookEdit {
+        notebook_path: String,
+        new_source: String,
+        cell_type: Option<String>,
+        edit_mode: Option<String>,
+    },
+    Skill {
+        skill: String,
+        args: Option<String>,
+    },
+    ExitPlanMode {
+        allowed_prompts: Vec<ExitPlanModePrompt>,
+    },
+    Unknown,
+}
+
+/// Claude-specific structured output (internally tagged by "type")
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
+#[serde(tag = "type")]
+pub enum ClaudeStructuredOutput {
+    /// User message to the agent
+    UserMessage {
+        content: String,
+        timestamp: String,
+        uuid: String,
+    },
+    /// Assistant response (text content)
+    AssistantMessage {
+        content: String,
+        timestamp: String,
+        uuid: String,
+    },
+    /// Permission request from agent
+    PermissionRequest { tool: PermissionTool },
+    /// Unknown entry type (forward-compatibility)
+    #[serde(other)]
+    Unknown,
+}
+
+/// Wrapper enum for structured output, keyed by agent type
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
+pub enum StructuredOutput {
+    Claude(ClaudeStructuredOutput),
+}
+
+/// Claude-specific structured input
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
+pub enum ClaudeStructuredInput {
+    /// Response to a permission request
+    PermissionResponse(PermissionResponse),
+    /// Submit a message (text input with trailing carriage return)
+    SubmitMessage { data: Vec<u8> },
+}
+
+/// Wrapper enum for structured input, keyed by agent type
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
+pub enum StructuredInput {
+    Claude(ClaudeStructuredInput),
+}
+
 /// Protocol-level errors that can be returned in response messages
 #[derive(Serialize, Deserialize, Debug, Clone, PartialEq)]
 pub enum ProtocolError {
@@ -223,16 +309,6 @@ pub enum ProtocolError {
         server_version: u32,
         client_version: u32,
     },
-}
-
-/// Subscribe output mode
-#[derive(Serialize, Deserialize, Debug, Clone, Copy, PartialEq, Eq, Default)]
-pub enum SubscribeMode {
-    /// Stream raw terminal bytes as Output messages
-    #[default]
-    Raw,
-    /// Stream structured logs as StructuredOutput messages
-    Structured,
 }
 
 impl std::fmt::Display for ProtocolError {
@@ -276,7 +352,7 @@ impl Default for TerminalSize {
 #[derive(Serialize, Deserialize, Debug, Clone)]
 pub struct CreateAgentRequest {
     pub agent_id: Uuid,
-    pub alias: Option<String>,
+    pub name: Option<String>,
     pub agent_type: AgentType,
     pub working_dir: PathBuf,
     /// Terminal dimensions. None means use defaults (future: headless mode).
@@ -285,18 +361,24 @@ pub struct CreateAgentRequest {
 }
 
 /// Messages that carry src/dst routing information and can be forwarded across hops.
-/// agent_id is Uuid — callers must resolve aliases to UUIDs before constructing.
+/// agent_id is Uuid — callers must resolve names to UUIDs before constructing.
 #[derive(Serialize, Deserialize, Debug, Clone)]
 pub enum RoutableMessage {
-    Subscribe {
+    SubscribeRaw {
         agent_id: Uuid,
         /// Terminal dimensions for PTY resize. None means don't resize.
         #[serde(default)]
         terminal_size: Option<TerminalSize>,
-        #[serde(default)]
-        mode: SubscribeMode,
     },
-    SubscribeResult {
+    SubscribeStructured {
+        agent_id: Uuid,
+    },
+    SubscribeRawResult {
+        agent_id: Uuid,
+        success: bool,
+        error: Option<ProtocolError>,
+    },
+    SubscribeStructuredResult {
         agent_id: Uuid,
         success: bool,
         error: Option<ProtocolError>,
@@ -307,25 +389,21 @@ pub enum RoutableMessage {
         success: bool,
         error: Option<ProtocolError>,
     },
-    InputBytes {
+    RawInput {
         agent_id: Uuid,
         data: Vec<u8>,
     },
-    SubmitInput {
-        agent_id: Uuid,
-        data: Vec<u8>,
-    },
-    Output {
+    RawOutput {
         agent_id: Uuid,
         data: Vec<u8>,
     },
     StructuredOutput {
         agent_id: Uuid,
-        entry: StructuredLog,
+        data: StructuredOutput,
     },
-    PermissionRequestResponse {
+    StructuredInput {
         agent_id: Uuid,
-        response: PermissionResponse,
+        data: StructuredInput,
     },
     AgentEnded {
         agent_id: Uuid,
@@ -333,16 +411,16 @@ pub enum RoutableMessage {
     Error(ProtocolError),
 }
 
-/// Messages that are handled locally on the receiving server (no routing).
+/// Messages that are handled directly by the receiving server (no routing).
 #[derive(Serialize, Deserialize, Debug, Clone)]
-pub enum LocalMessage {
+pub enum DirectMessage {
     ListAgents,
     ListAgentsResult {
-        agents: Vec<AgentInfo>,
+        agents: Vec<Agent>,
     },
     AnnounceAgent {
         agent_id: Uuid,
-        alias: Option<String>,
+        name: Option<String>,
         command: String,
         working_dir: PathBuf,
         route: Route,
@@ -378,7 +456,7 @@ pub enum LocalMessage {
         #[serde(default)]
         version: u32,
     },
-    ConnectResponse {
+    ConnectResult {
         success: bool,
         error: Option<ProtocolError>,
     },
@@ -393,7 +471,7 @@ pub enum LocalMessage {
         identifier: String,
     },
     ResolveAgentResult {
-        agent: Option<AgentInfo>,
+        agent: Option<Agent>,
     },
     DebugResult {
         info: ServerDebugInfo,
@@ -411,7 +489,7 @@ pub enum Message {
         dst: Route,
         message: RoutableMessage,
     },
-    Local(LocalMessage),
+    Direct(DirectMessage),
 }
 
 /// Debug information about server state (aggregated across all users)
@@ -444,7 +522,7 @@ impl Message {
 
 impl From<&crate::error::AmuxError> for Message {
     fn from(e: &crate::error::AmuxError) -> Self {
-        Message::Local(LocalMessage::Error {
+        Message::Direct(DirectMessage::Error {
             message: e.to_string(),
         })
     }
@@ -456,10 +534,13 @@ mod tests {
 
     #[test]
     fn test_message_roundtrip_list_agents() {
-        let msg = Message::Local(LocalMessage::ListAgents);
+        let msg = Message::Direct(DirectMessage::ListAgents);
         let encoded = msg.encode().unwrap();
         let decoded = Message::decode(&encoded).unwrap();
-        assert!(matches!(decoded, Message::Local(LocalMessage::ListAgents)));
+        assert!(matches!(
+            decoded,
+            Message::Direct(DirectMessage::ListAgents)
+        ));
     }
 
     #[test]
@@ -470,7 +551,7 @@ mod tests {
             dst: Route::empty(),
             message: RoutableMessage::CreateAgent(CreateAgentRequest {
                 agent_id: test_uuid,
-                alias: Some("test".to_string()),
+                name: Some("test".to_string()),
                 agent_type: AgentType::Claude,
                 working_dir: PathBuf::from("/home/user/project"),
                 terminal_size: Some(TerminalSize { rows: 24, cols: 80 }),
@@ -484,7 +565,7 @@ mod tests {
         } = decoded
         {
             assert_eq!(req.agent_id, test_uuid);
-            assert_eq!(req.alias, Some("test".to_string()));
+            assert_eq!(req.name, Some("test".to_string()));
             assert_eq!(req.agent_type, AgentType::Claude);
             assert_eq!(req.working_dir, PathBuf::from("/home/user/project"));
             assert_eq!(req.terminal_size, Some(TerminalSize { rows: 24, cols: 80 }));
@@ -494,11 +575,11 @@ mod tests {
     }
 
     #[test]
-    fn test_message_roundtrip_subscribe_result() {
+    fn test_message_roundtrip_subscribe_raw_result() {
         let msg = Message::Routable {
             src: Route::from_link("host-a"),
             dst: Route::from_link("host-b"),
-            message: RoutableMessage::SubscribeResult {
+            message: RoutableMessage::SubscribeRawResult {
                 agent_id: Uuid::new_v4(),
                 success: true,
                 error: None,
@@ -507,31 +588,31 @@ mod tests {
         let encoded = msg.encode().unwrap();
         let decoded = Message::decode(&encoded).unwrap();
         if let Message::Routable {
-            message: RoutableMessage::SubscribeResult { success, error, .. },
+            message: RoutableMessage::SubscribeRawResult { success, error, .. },
             ..
         } = decoded
         {
             assert!(success);
             assert!(error.is_none());
         } else {
-            panic!("Expected SubscribeResult");
+            panic!("Expected SubscribeRawResult");
         }
     }
 
     #[test]
     fn test_agent_info_roundtrip() {
         let test_uuid = Uuid::new_v4();
-        let info = AgentInfo {
-            agent_id: test_uuid,
-            alias: Some("claude-1".to_string()),
+        let info = Agent {
+            id: test_uuid,
+            name: Some("claude-1".to_string()),
             command: "claude".to_string(),
             working_dir: PathBuf::from("/tmp"),
             route: Route::empty(),
         };
         let encoded = rmp_serde::to_vec(&info).unwrap();
-        let decoded: AgentInfo = rmp_serde::from_slice(&encoded).unwrap();
-        assert_eq!(decoded.agent_id, test_uuid);
-        assert_eq!(decoded.alias, Some("claude-1".to_string()));
+        let decoded: Agent = rmp_serde::from_slice(&encoded).unwrap();
+        assert_eq!(decoded.id, test_uuid);
+        assert_eq!(decoded.name, Some("claude-1".to_string()));
         assert_eq!(decoded.command, "claude");
         assert_eq!(decoded.working_dir, PathBuf::from("/tmp"));
     }
@@ -543,10 +624,10 @@ mod tests {
             session_id: test_uuid,
             transcript_path: "/tmp/transcript.jsonl".to_string(),
         }));
-        let msg = Message::Local(LocalMessage::HookEvent { hook });
+        let msg = Message::Direct(DirectMessage::HookEvent { hook });
         let encoded = msg.encode().unwrap();
         let decoded = Message::decode(&encoded).unwrap();
-        let Message::Local(LocalMessage::HookEvent { hook: decoded_hook }) = decoded else {
+        let Message::Direct(DirectMessage::HookEvent { hook: decoded_hook }) = decoded else {
             panic!("Expected HookEvent");
         };
         match decoded_hook {
@@ -561,25 +642,25 @@ mod tests {
     #[test]
     fn test_message_roundtrip_announce_agent() {
         let test_uuid = Uuid::new_v4();
-        let msg = Message::Local(LocalMessage::AnnounceAgent {
+        let msg = Message::Direct(DirectMessage::AnnounceAgent {
             agent_id: test_uuid,
-            alias: Some("my-agent".to_string()),
+            name: Some("my-agent".to_string()),
             command: "claude".to_string(),
             working_dir: PathBuf::from("/home/user"),
             route: Route::empty(),
         });
         let encoded = msg.encode().unwrap();
         let decoded = Message::decode(&encoded).unwrap();
-        if let Message::Local(LocalMessage::AnnounceAgent {
+        if let Message::Direct(DirectMessage::AnnounceAgent {
             agent_id,
-            alias,
+            name,
             command,
             working_dir,
             route,
         }) = decoded
         {
             assert_eq!(agent_id, test_uuid);
-            assert_eq!(alias, Some("my-agent".to_string()));
+            assert_eq!(name, Some("my-agent".to_string()));
             assert_eq!(command, "claude");
             assert_eq!(working_dir, PathBuf::from("/home/user"));
             assert_eq!(route, Route::empty());
@@ -591,16 +672,16 @@ mod tests {
     #[test]
     fn test_message_roundtrip_announce_agent_with_route() {
         let test_uuid = Uuid::new_v4();
-        let msg = Message::Local(LocalMessage::AnnounceAgent {
+        let msg = Message::Direct(DirectMessage::AnnounceAgent {
             agent_id: test_uuid,
-            alias: None,
+            name: None,
             command: "bash".to_string(),
             working_dir: PathBuf::from("/tmp"),
             route: Route::from_link("host-a"),
         });
         let encoded = msg.encode().unwrap();
         let decoded = Message::decode(&encoded).unwrap();
-        if let Message::Local(LocalMessage::AnnounceAgent { route, .. }) = decoded {
+        if let Message::Direct(DirectMessage::AnnounceAgent { route, .. }) = decoded {
             let mut route = route;
             assert_eq!(route.pop(), Some("host-a".to_string()));
             assert_eq!(route.pop(), None);
@@ -612,12 +693,12 @@ mod tests {
     #[test]
     fn test_message_roundtrip_withdraw_agent() {
         let test_uuid = Uuid::new_v4();
-        let msg = Message::Local(LocalMessage::WithdrawAgent {
+        let msg = Message::Direct(DirectMessage::WithdrawAgent {
             agent_id: test_uuid,
         });
         let encoded = msg.encode().unwrap();
         let decoded = Message::decode(&encoded).unwrap();
-        if let Message::Local(LocalMessage::WithdrawAgent { agent_id }) = decoded {
+        if let Message::Direct(DirectMessage::WithdrawAgent { agent_id }) = decoded {
             assert_eq!(agent_id, test_uuid);
         } else {
             panic!("Expected WithdrawAgent");
@@ -627,45 +708,45 @@ mod tests {
     #[test]
     fn test_agent_info_with_route_roundtrip() {
         let test_uuid = Uuid::new_v4();
-        let info = AgentInfo {
-            agent_id: test_uuid,
-            alias: Some("remote-agent".to_string()),
+        let info = Agent {
+            id: test_uuid,
+            name: Some("remote-agent".to_string()),
             command: "claude".to_string(),
             working_dir: PathBuf::from("/tmp"),
             route: Route::from_link("host-a"),
         };
         let encoded = rmp_serde::to_vec_named(&info).unwrap();
-        let decoded: AgentInfo = rmp_serde::from_slice(&encoded).unwrap();
-        assert_eq!(decoded.agent_id, test_uuid);
+        let decoded: Agent = rmp_serde::from_slice(&encoded).unwrap();
+        assert_eq!(decoded.id, test_uuid);
         assert!(decoded.is_remote());
     }
 
     #[test]
     fn test_agent_info_local_route_roundtrip() {
         let test_uuid = Uuid::new_v4();
-        let info = AgentInfo {
-            agent_id: test_uuid,
-            alias: None,
+        let info = Agent {
+            id: test_uuid,
+            name: None,
             command: "bash".to_string(),
             working_dir: PathBuf::from("/tmp"),
             route: Route::empty(),
         };
         let encoded = rmp_serde::to_vec_named(&info).unwrap();
-        let decoded: AgentInfo = rmp_serde::from_slice(&encoded).unwrap();
-        assert_eq!(decoded.agent_id, test_uuid);
+        let decoded: Agent = rmp_serde::from_slice(&encoded).unwrap();
+        assert_eq!(decoded.id, test_uuid);
         assert!(decoded.route.is_empty());
     }
 
     #[test]
     fn test_message_roundtrip_connect_with_version() {
-        let msg = Message::Local(LocalMessage::Connect {
+        let msg = Message::Direct(DirectMessage::Connect {
             link_name: "test-link".to_string(),
             token: None,
             version: PROTOCOL_VERSION,
         });
         let encoded = msg.encode().unwrap();
         let decoded = Message::decode(&encoded).unwrap();
-        if let Message::Local(LocalMessage::Connect {
+        if let Message::Direct(DirectMessage::Connect {
             link_name, version, ..
         }) = decoded
         {
@@ -682,7 +763,7 @@ mod tests {
         // by encoding a struct that lacks the version field, then decoding
         // with the new format. The #[serde(default)] should give version=0.
         #[derive(Serialize)]
-        enum OldLocalMessage {
+        enum OldDirectMessage {
             Connect {
                 link_name: String,
                 #[serde(skip_serializing_if = "Option::is_none")]
@@ -691,15 +772,15 @@ mod tests {
         }
         #[derive(Serialize)]
         enum OldMessage {
-            Local(OldLocalMessage),
+            Direct(OldDirectMessage),
         }
-        let old_msg = OldMessage::Local(OldLocalMessage::Connect {
+        let old_msg = OldMessage::Direct(OldDirectMessage::Connect {
             link_name: "old-client".to_string(),
             token: None,
         });
         let encoded = rmp_serde::to_vec_named(&old_msg).unwrap();
         let decoded = Message::decode(&encoded).unwrap();
-        if let Message::Local(LocalMessage::Connect {
+        if let Message::Direct(DirectMessage::Connect {
             link_name, version, ..
         }) = decoded
         {
@@ -715,7 +796,7 @@ mod tests {
 
     #[test]
     fn test_message_roundtrip_version_mismatch() {
-        let msg = Message::Local(LocalMessage::ConnectResponse {
+        let msg = Message::Direct(DirectMessage::ConnectResult {
             success: false,
             error: Some(ProtocolError::VersionMismatch {
                 server_version: 2,
@@ -724,7 +805,7 @@ mod tests {
         });
         let encoded = msg.encode().unwrap();
         let decoded = Message::decode(&encoded).unwrap();
-        if let Message::Local(LocalMessage::ConnectResponse {
+        if let Message::Direct(DirectMessage::ConnectResult {
             success: false,
             error:
                 Some(ProtocolError::VersionMismatch {
@@ -736,18 +817,18 @@ mod tests {
             assert_eq!(server_version, 2);
             assert_eq!(client_version, 1);
         } else {
-            panic!("Expected ConnectResponse with VersionMismatch");
+            panic!("Expected ConnectResult with VersionMismatch");
         }
     }
 
     #[test]
     fn test_message_roundtrip_server_shutdown() {
-        let msg = Message::Local(LocalMessage::ServerShutdown {
+        let msg = Message::Direct(DirectMessage::ServerShutdown {
             reason: "amux upgrade required".to_string(),
         });
         let encoded = msg.encode().unwrap();
         let decoded = Message::decode(&encoded).unwrap();
-        if let Message::Local(LocalMessage::ServerShutdown { reason }) = decoded {
+        if let Message::Direct(DirectMessage::ServerShutdown { reason }) = decoded {
             assert_eq!(reason, "amux upgrade required");
         } else {
             panic!("Expected ServerShutdown");
@@ -994,7 +1075,7 @@ mod tests {
     #[test]
     fn test_message_roundtrip_announce_host() {
         let host_id = Uuid::new_v4();
-        let msg = Message::Local(LocalMessage::AnnounceHost {
+        let msg = Message::Direct(DirectMessage::AnnounceHost {
             id: host_id,
             name: "my-laptop".to_string(),
             route: Route::empty(),
@@ -1002,7 +1083,7 @@ mod tests {
         });
         let encoded = msg.encode().unwrap();
         let decoded = Message::decode(&encoded).unwrap();
-        if let Message::Local(LocalMessage::AnnounceHost {
+        if let Message::Direct(DirectMessage::AnnounceHost {
             id,
             name,
             route,
@@ -1021,7 +1102,7 @@ mod tests {
     #[test]
     fn test_message_roundtrip_announce_host_with_route() {
         let host_id = Uuid::new_v4();
-        let msg = Message::Local(LocalMessage::AnnounceHost {
+        let msg = Message::Direct(DirectMessage::AnnounceHost {
             id: host_id,
             name: "remote-server".to_string(),
             route: Route::from_link("peer-a"),
@@ -1029,7 +1110,7 @@ mod tests {
         });
         let encoded = msg.encode().unwrap();
         let decoded = Message::decode(&encoded).unwrap();
-        if let Message::Local(LocalMessage::AnnounceHost { route, .. }) = decoded {
+        if let Message::Direct(DirectMessage::AnnounceHost { route, .. }) = decoded {
             let mut route = route;
             assert_eq!(route.pop(), Some("peer-a".to_string()));
             assert_eq!(route.pop(), None);
@@ -1041,10 +1122,10 @@ mod tests {
     #[test]
     fn test_message_roundtrip_withdraw_host() {
         let host_id = Uuid::new_v4();
-        let msg = Message::Local(LocalMessage::WithdrawHost { id: host_id });
+        let msg = Message::Direct(DirectMessage::WithdrawHost { id: host_id });
         let encoded = msg.encode().unwrap();
         let decoded = Message::decode(&encoded).unwrap();
-        if let Message::Local(LocalMessage::WithdrawHost { id }) = decoded {
+        if let Message::Direct(DirectMessage::WithdrawHost { id }) = decoded {
             assert_eq!(id, host_id);
         } else {
             panic!("Expected WithdrawHost");

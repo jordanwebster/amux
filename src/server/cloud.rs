@@ -4,7 +4,7 @@ use super::{LOCAL_USER_ID, ServerState, ServerUserState, get_or_create_user_stat
 use crate::cloud::{CloudConnection, CloudError};
 use crate::config::Config;
 use crate::error::AmuxError;
-use crate::message::{LocalMessage, Message};
+use crate::message::{DirectMessage, Message};
 use crate::state::State;
 use crate::transport::TransportSplit;
 use std::sync::Arc;
@@ -61,7 +61,7 @@ pub(super) fn establish_cloud_connection(
                     let us = user_state.read().await;
                     for (link, tx) in &us.routes {
                         if !us.peer_links.contains(link) {
-                            let _ = tx.try_send(Message::Local(LocalMessage::ServerShutdown {
+                            let _ = tx.try_send(Message::Direct(DirectMessage::ServerShutdown {
                                 reason: reason.clone(),
                             }));
                         }

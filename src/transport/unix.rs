@@ -108,7 +108,7 @@ mod tests {
             dst: Route::empty(),
             message: RoutableMessage::CreateAgent(CreateAgentRequest {
                 agent_id: test_uuid,
-                alias: Some("test".to_string()),
+                name: Some("test".to_string()),
                 agent_type: AgentType::Claude,
                 working_dir: std::path::PathBuf::from("/tmp"),
                 terminal_size: Some(TerminalSize { rows: 24, cols: 80 }),
@@ -124,7 +124,7 @@ mod tests {
         } = received
         {
             assert_eq!(req.agent_id, test_uuid);
-            assert_eq!(req.alias, Some("test".to_string()));
+            assert_eq!(req.name, Some("test".to_string()));
             assert_eq!(req.agent_type, AgentType::Claude);
             assert_eq!(req.working_dir, std::path::PathBuf::from("/tmp"));
             assert_eq!(req.terminal_size, Some(TerminalSize { rows: 24, cols: 80 }));
@@ -140,7 +140,7 @@ mod tests {
         let msg = Message::Routable {
             src: Route::from_link("host-a"),
             dst: Route::from_link("host-b"),
-            message: RoutableMessage::Output {
+            message: RoutableMessage::RawOutput {
                 agent_id: Uuid::new_v4(),
                 data: b"hello world".to_vec(),
             },
@@ -150,7 +150,7 @@ mod tests {
 
         let received = server.read_message().await.unwrap();
         if let Message::Routable {
-            message: RoutableMessage::Output { data, .. },
+            message: RoutableMessage::RawOutput { data, .. },
             ..
         } = received
         {
@@ -167,7 +167,7 @@ mod tests {
         let msg = Message::Routable {
             src: Route::from_link("host-a"),
             dst: Route::from_link("host-b"),
-            message: RoutableMessage::InputBytes {
+            message: RoutableMessage::RawInput {
                 agent_id: Uuid::new_v4(),
                 data: b"user input".to_vec(),
             },
@@ -177,7 +177,7 @@ mod tests {
 
         let received = server.read_message().await.unwrap();
         if let Message::Routable {
-            message: RoutableMessage::InputBytes { data, .. },
+            message: RoutableMessage::RawInput { data, .. },
             ..
         } = received
         {

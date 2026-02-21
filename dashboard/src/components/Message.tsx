@@ -1,10 +1,10 @@
-import type { StructuredLog, PermissionResponse } from "../types/protocol"
+import type { ClaudeStructuredOutput, PermissionResponse } from "../types/protocol"
 import { isUserMessage, isPermissionRequest } from "../types/protocol"
 import { MarkdownContent } from "./MarkdownContent"
 import { PermissionRequestCard } from "./PermissionRequestCard"
 
 interface MessageProps {
-  message: StructuredLog
+  message: ClaudeStructuredOutput
   onPermissionResponse?: (response: PermissionResponse) => void
 }
 

@@ -1,13 +1,13 @@
 use crate::config::Config;
 use crate::message::{
-    ClaudeHook, ClaudePermissionTool, Hook, LocalMessage, Message, PROTOCOL_VERSION, ProtocolError,
+    ClaudeHook, ClaudePermissionTool, DirectMessage, Hook, Message, PROTOCOL_VERSION, ProtocolError,
 };
 use crate::route::generate_hook_link;
 use crate::transport::{Transport, UnixTransport};
 use std::io::{self, BufRead};
 use tokio::net::UnixStream;
 
-impl From<ClaudePermissionTool> for crate::structured_log::PermissionTool {
+impl From<ClaudePermissionTool> for crate::message::PermissionTool {
     fn from(tool: ClaudePermissionTool) -> Self {
         match tool {
             ClaudePermissionTool::Edit { tool_input } => Self::Edit {
@@ -119,7 +119,7 @@ async fn send_hook_event_to_server_inner(
     // Send Connect handshake with hook link name
     let link_name = generate_hook_link();
     transport
-        .write_message(&Message::Local(LocalMessage::Connect {
+        .write_message(&Message::Direct(DirectMessage::Connect {
             link_name,
             token: None,
             version: PROTOCOL_VERSION,
@@ -127,12 +127,12 @@ async fn send_hook_event_to_server_inner(
         .await
         .map_err(io::Error::other)?;
 
-    // Wait for ConnectResponse
+    // Wait for ConnectResult
     let response = transport.read_message().await.map_err(io::Error::other)?;
 
     match response {
-        Message::Local(LocalMessage::ConnectResponse { success: true, .. }) => {}
-        Message::Local(LocalMessage::ConnectResponse {
+        Message::Direct(DirectMessage::ConnectResult { success: true, .. }) => {}
+        Message::Direct(DirectMessage::ConnectResult {
             success: false,
             error: Some(ProtocolError::LinkNameTaken),
         }) => {
@@ -152,7 +152,7 @@ async fn send_hook_event_to_server_inner(
 
     // Send HookEvent
     transport
-        .write_message(&Message::Local(LocalMessage::HookEvent { hook }))
+        .write_message(&Message::Direct(DirectMessage::HookEvent { hook }))
         .await
         .map_err(io::Error::other)?;
 
@@ -160,11 +160,11 @@ async fn send_hook_event_to_server_inner(
     let ack = transport.read_message().await.map_err(io::Error::other)?;
 
     match ack {
-        Message::Local(LocalMessage::HookEventResult { success: true, .. }) => {
+        Message::Direct(DirectMessage::HookEventResult { success: true, .. }) => {
             tracing::debug!("hook acknowledged");
             Ok(())
         }
-        Message::Local(LocalMessage::HookEventResult {
+        Message::Direct(DirectMessage::HookEventResult {
             success: false,
             error,
         }) => {

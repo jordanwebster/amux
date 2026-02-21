@@ -7,7 +7,7 @@
 
 use crate::config::Config;
 use crate::error::AmuxError;
-use crate::message::{LocalMessage, Message, PROTOCOL_VERSION, ProtocolError};
+use crate::message::{DirectMessage, Message, PROTOCOL_VERSION, ProtocolError};
 use crate::oauth;
 use crate::route::generate_server_link;
 use crate::state::State;
@@ -100,7 +100,7 @@ impl CloudConnection {
 
         // Send Connect with token
         transport
-            .write_message(&Message::Local(LocalMessage::Connect {
+            .write_message(&Message::Direct(DirectMessage::Connect {
                 link_name: link_name.clone(),
                 token: Some(conn.token),
                 version: PROTOCOL_VERSION,
@@ -110,10 +110,10 @@ impl CloudConnection {
         // Wait for response
         let response = transport.read_message().await?;
         match response {
-            Message::Local(LocalMessage::ConnectResponse { success: true, .. }) => {
+            Message::Direct(DirectMessage::ConnectResult { success: true, .. }) => {
                 tracing::info!(host = %conn.host, link = %link_name, "cloud connected");
             }
-            Message::Local(LocalMessage::ConnectResponse {
+            Message::Direct(DirectMessage::ConnectResult {
                 success: false,
                 error: Some(ProtocolError::InvalidCredentials),
             }) => {
@@ -122,7 +122,7 @@ impl CloudConnection {
                     "Invalid credentials - please run 'amux init' to re-authenticate".to_string(),
                 ));
             }
-            Message::Local(LocalMessage::ConnectResponse {
+            Message::Direct(DirectMessage::ConnectResult {
                 success: false,
                 error:
                     Some(ProtocolError::VersionMismatch {
@@ -135,7 +135,7 @@ impl CloudConnection {
                     client_version,
                 });
             }
-            Message::Local(LocalMessage::ConnectResponse {
+            Message::Direct(DirectMessage::ConnectResult {
                 success: false,
                 error,
             }) => {
@@ -208,7 +208,7 @@ impl TokenRefreshState {
     }
 
     /// Refresh the OAuth token and send a Connect message through the outgoing channel.
-    /// The ConnectResponse will be intercepted by connection_loop.
+    /// The ConnectResult will be intercepted by connection_loop.
     pub async fn send_connect(
         &mut self,
         tx: &mpsc::Sender<Message>,
@@ -243,7 +243,7 @@ impl TokenRefreshState {
         self.pending_expires_at = Some(conn.expires_at);
 
         // Send new Connect with fresh token through the outgoing channel
-        tx.send(Message::Local(LocalMessage::Connect {
+        tx.send(Message::Direct(DirectMessage::Connect {
             link_name: self.link_name.clone(),
             token: Some(conn.token),
             version: PROTOCOL_VERSION,
@@ -256,22 +256,22 @@ impl TokenRefreshState {
         Ok(())
     }
 
-    /// Handle a ConnectResponse received after send_connect.
+    /// Handle a ConnectResult received after send_connect.
     /// Updates token_expires_at on success using the expires_at stored during send_connect.
     pub fn handle_response(&mut self, msg: &Message) -> std::result::Result<(), CloudError> {
         match msg {
-            Message::Local(LocalMessage::ConnectResponse { success: true, .. }) => {
+            Message::Direct(DirectMessage::ConnectResult { success: true, .. }) => {
                 tracing::debug!("token refreshed");
                 if let Some(expires_at) = self.pending_expires_at.take() {
                     self.token_expires_at = expires_at;
                 }
                 Ok(())
             }
-            Message::Local(LocalMessage::ConnectResponse {
+            Message::Direct(DirectMessage::ConnectResult {
                 success: false,
                 error: Some(ProtocolError::InvalidCredentials),
             }) => Err(CloudError::Auth("Token refresh failed".to_string())),
-            Message::Local(LocalMessage::ConnectResponse {
+            Message::Direct(DirectMessage::ConnectResult {
                 success: false,
                 error:
                     Some(ProtocolError::VersionMismatch {
@@ -282,7 +282,7 @@ impl TokenRefreshState {
                 server_version: *server_version,
                 client_version: *client_version,
             }),
-            Message::Local(LocalMessage::ConnectResponse {
+            Message::Direct(DirectMessage::ConnectResult {
                 success: false,
                 error,
             }) => Err(CloudError::Connection(format!(

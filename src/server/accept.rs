@@ -4,7 +4,7 @@ use super::connection::{
 use super::routing::{handle_peer_disconnect, send_initial_announcements};
 use super::{LOCAL_USER_ID, ServerState, ServerUserState, get_or_create_user_state};
 use crate::error::{AmuxError, Result};
-use crate::message::{LocalMessage, Message, PROTOCOL_VERSION, ProtocolError};
+use crate::message::{DirectMessage, Message, PROTOCOL_VERSION, ProtocolError};
 use crate::route::generate_server_link;
 use crate::transport::{
     TcpTransport, Transport, TransportSplit, UnixTransport, WebSocketTransport,
@@ -36,7 +36,7 @@ pub(super) async fn accept_handshake<T: Transport>(
     for _attempt in 0..5 {
         let msg = transport.read_message().await?;
         let (proposed_link, token, version) = match msg {
-            Message::Local(LocalMessage::Connect {
+            Message::Direct(DirectMessage::Connect {
                 link_name,
                 token,
                 version,
@@ -55,7 +55,7 @@ pub(super) async fn accept_handshake<T: Transport>(
                 "version mismatch"
             );
             transport
-                .write_message(&Message::Local(LocalMessage::ConnectResponse {
+                .write_message(&Message::Direct(DirectMessage::ConnectResult {
                     success: false,
                     error: Some(ProtocolError::VersionMismatch {
                         server_version: PROTOCOL_VERSION,
@@ -72,7 +72,7 @@ pub(super) async fn accept_handshake<T: Transport>(
         if proposed_link.contains('.') {
             tracing::warn!(link = %proposed_link, "rejecting invalid link name (contains '.')");
             transport
-                .write_message(&Message::Local(LocalMessage::ConnectResponse {
+                .write_message(&Message::Direct(DirectMessage::ConnectResult {
                     success: false,
                     error: Some(ProtocolError::InvalidLinkName),
                 }))
@@ -110,7 +110,7 @@ pub(super) async fn accept_handshake<T: Transport>(
                         Err(_) => {
                             tracing::error!(sub = %claims.sub, "invalid user_id in token");
                             transport
-                                .write_message(&Message::Local(LocalMessage::ConnectResponse {
+                                .write_message(&Message::Direct(DirectMessage::ConnectResult {
                                     success: false,
                                     error: Some(ProtocolError::InvalidCredentials),
                                 }))
@@ -122,7 +122,7 @@ pub(super) async fn accept_handshake<T: Transport>(
                 Err(e) => {
                     tracing::warn!(error = %e, "token validation failed");
                     transport
-                        .write_message(&Message::Local(LocalMessage::ConnectResponse {
+                        .write_message(&Message::Direct(DirectMessage::ConnectResult {
                             success: false,
                             error: Some(ProtocolError::InvalidCredentials),
                         }))
@@ -145,7 +145,7 @@ pub(super) async fn accept_handshake<T: Transport>(
 
         if link_taken {
             transport
-                .write_message(&Message::Local(LocalMessage::ConnectResponse {
+                .write_message(&Message::Direct(DirectMessage::ConnectResult {
                     success: false,
                     error: Some(ProtocolError::LinkNameTaken),
                 }))
@@ -159,7 +159,7 @@ pub(super) async fn accept_handshake<T: Transport>(
             if us.routes.contains_key(&proposed_link) {
                 drop(us);
                 transport
-                    .write_message(&Message::Local(LocalMessage::ConnectResponse {
+                    .write_message(&Message::Direct(DirectMessage::ConnectResult {
                         success: false,
                         error: Some(ProtocolError::LinkNameTaken),
                     }))
@@ -174,7 +174,7 @@ pub(super) async fn accept_handshake<T: Transport>(
 
         // Route is inserted — if the success write fails, clean up the stale route
         if let Err(e) = transport
-            .write_message(&Message::Local(LocalMessage::ConnectResponse {
+            .write_message(&Message::Direct(DirectMessage::ConnectResult {
                 success: true,
                 error: None,
             }))
@@ -205,7 +205,7 @@ where
         let proposed_link = generate_link();
 
         transport
-            .write_message(&Message::Local(LocalMessage::Connect {
+            .write_message(&Message::Direct(DirectMessage::Connect {
                 link_name: proposed_link.clone(),
                 token: None,
                 version: PROTOCOL_VERSION,
@@ -214,24 +214,24 @@ where
 
         let response = transport.read_message().await?;
         match response {
-            Message::Local(LocalMessage::ConnectResponse { success: true, .. }) => {
+            Message::Direct(DirectMessage::ConnectResult { success: true, .. }) => {
                 return Ok(proposed_link);
             }
-            Message::Local(LocalMessage::ConnectResponse {
+            Message::Direct(DirectMessage::ConnectResult {
                 success: false,
                 error: Some(ProtocolError::LinkNameTaken),
             }) => {
                 tracing::debug!(link = %proposed_link, attempt = attempt + 1, "link name taken, retrying");
                 continue;
             }
-            Message::Local(LocalMessage::ConnectResponse {
+            Message::Direct(DirectMessage::ConnectResult {
                 success: false,
                 error: Some(ProtocolError::InvalidCredentials),
             }) => {
                 tracing::error!("authentication failed");
                 return Err(AmuxError::InvalidCredentials);
             }
-            Message::Local(LocalMessage::ConnectResponse {
+            Message::Direct(DirectMessage::ConnectResult {
                 success: false,
                 error: Some(ProtocolError::InvalidLinkName),
             }) => {
@@ -239,7 +239,7 @@ where
                     ProtocolError::InvalidLinkName.to_string(),
                 ));
             }
-            Message::Local(LocalMessage::ConnectResponse {
+            Message::Direct(DirectMessage::ConnectResult {
                 success: false,
                 error:
                     Some(ProtocolError::VersionMismatch {
@@ -252,7 +252,7 @@ where
                     server_version, client_version
                 )));
             }
-            Message::Local(LocalMessage::ConnectResponse {
+            Message::Direct(DirectMessage::ConnectResult {
                 success: false,
                 error,
             }) => {
@@ -261,7 +261,7 @@ where
                     .unwrap_or_else(|| "Connection rejected".to_string());
                 return Err(AmuxError::Config(msg));
             }
-            Message::Local(LocalMessage::Error { message }) => {
+            Message::Direct(DirectMessage::Error { message }) => {
                 return Err(AmuxError::ServerError(message));
             }
             _ => return Err(AmuxError::InvalidMessage),

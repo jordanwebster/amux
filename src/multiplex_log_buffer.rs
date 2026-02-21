@@ -6,7 +6,7 @@
 //! - New subscribers receive all existing entries, then live updates
 //! - No race conditions between subscribe and write operations
 
-use crate::structured_log::StructuredLog;
+use crate::message::StructuredOutput;
 use std::sync::Arc;
 use tokio::sync::{RwLock, mpsc};
 
@@ -23,9 +23,9 @@ pub struct MultiplexLogBuffer {
 
 struct MultiplexLogBufferInner {
     /// Main buffer storing all log entries (up to max_entries)
-    entries: RwLock<Vec<StructuredLog>>,
+    entries: RwLock<Vec<StructuredOutput>>,
     /// Per-subscriber channels for sending new entries
-    subscribers: RwLock<Vec<mpsc::UnboundedSender<StructuredLog>>>,
+    subscribers: RwLock<Vec<mpsc::UnboundedSender<StructuredOutput>>>,
     /// Maximum number of entries before truncation
     max_entries: usize,
     /// Whether the buffer has been closed
@@ -53,7 +53,7 @@ impl MultiplexLogBuffer {
     /// broadcast operations, ensuring atomicity with `subscribe()`.
     /// Dead subscribers (where the receiver has been dropped) are automatically
     /// cleaned up during each write.
-    pub async fn write(&self, entry: StructuredLog) {
+    pub async fn write(&self, entry: StructuredOutput) {
         // Hold buffer write lock during append AND broadcast
         let mut entries = self.inner.entries.write().await;
         entries.push(entry.clone());
@@ -117,7 +117,7 @@ impl Clone for MultiplexLogBuffer {
 /// the reader first receives all existing buffer contents, then any new entries
 /// written after subscription.
 pub struct MultiplexLogReader {
-    rx: mpsc::UnboundedReceiver<StructuredLog>,
+    rx: mpsc::UnboundedReceiver<StructuredOutput>,
 }
 
 impl MultiplexLogReader {
@@ -125,7 +125,7 @@ impl MultiplexLogReader {
     ///
     /// Returns `Some(entry)` when data is available, or `None` when the
     /// buffer has been closed and no more data will arrive.
-    pub async fn read(&mut self) -> Option<StructuredLog> {
+    pub async fn read(&mut self) -> Option<StructuredOutput> {
         self.rx.recv().await
     }
 }
@@ -136,20 +136,20 @@ mod tests {
     use std::time::Duration;
     use tokio::time::timeout;
 
-    fn user_msg(content: &str, uuid: &str) -> StructuredLog {
-        StructuredLog::UserMessage {
+    fn user_msg(content: &str, uuid: &str) -> StructuredOutput {
+        StructuredOutput::Claude(crate::message::ClaudeStructuredOutput::UserMessage {
             content: content.to_string(),
             timestamp: "2025-01-15T12:00:00Z".to_string(),
             uuid: uuid.to_string(),
-        }
+        })
     }
 
-    fn assistant_msg(content: &str, uuid: &str) -> StructuredLog {
-        StructuredLog::AssistantMessage {
+    fn assistant_msg(content: &str, uuid: &str) -> StructuredOutput {
+        StructuredOutput::Claude(crate::message::ClaudeStructuredOutput::AssistantMessage {
             content: content.to_string(),
             timestamp: "2025-01-15T12:00:01Z".to_string(),
             uuid: uuid.to_string(),
-        }
+        })
     }
 
     #[tokio::test]

@@ -2,8 +2,8 @@ use crate::config::Config;
 use crate::error::AmuxError::AgentNotFound;
 use crate::error::{AmuxError, Result};
 use crate::message::{
-    AgentType, CreateAgentRequest, LocalMessage, Message, PROTOCOL_VERSION, ProtocolError,
-    RoutableMessage, ServerDebugInfo, SubscribeMode, TerminalSize,
+    AgentType, CreateAgentRequest, DirectMessage, Message, PROTOCOL_VERSION, ProtocolError,
+    RoutableMessage, ServerDebugInfo, TerminalSize,
 };
 use crate::route::{Route, generate_terminal_link};
 use crate::transport::{Transport, UnixTransport};
@@ -45,35 +45,35 @@ async fn connect_and_handshake(config: &Config) -> Result<(UnixTransport, String
         // Generate terminal link name: "term-{rand}"
         let link_name = generate_terminal_link();
         transport
-            .write_message(&Message::Local(LocalMessage::Connect {
+            .write_message(&Message::Direct(DirectMessage::Connect {
                 link_name: link_name.clone(),
                 token: None,
                 version: PROTOCOL_VERSION,
             }))
             .await?;
 
-        // Receive ConnectResponse
+        // Receive ConnectResult
         let response = transport.read_message().await?;
         match response {
-            Message::Local(LocalMessage::ConnectResponse { success: true, .. }) => {
+            Message::Direct(DirectMessage::ConnectResult { success: true, .. }) => {
                 tracing::info!(link = %link_name, "connected");
                 return Ok((transport, link_name));
             }
-            Message::Local(LocalMessage::ConnectResponse {
+            Message::Direct(DirectMessage::ConnectResult {
                 success: false,
                 error: Some(ProtocolError::LinkNameTaken),
             }) => {
                 tracing::debug!(link = %link_name, attempt = attempt + 1, "link name taken, retrying");
                 continue;
             }
-            Message::Local(LocalMessage::ConnectResponse {
+            Message::Direct(DirectMessage::ConnectResult {
                 success: false,
                 error: Some(ProtocolError::InvalidCredentials),
             }) => {
                 tracing::error!("invalid credentials");
                 return Err(AmuxError::InvalidCredentials);
             }
-            Message::Local(LocalMessage::ConnectResponse {
+            Message::Direct(DirectMessage::ConnectResult {
                 success: false,
                 error: Some(ProtocolError::InvalidLinkName),
             }) => {
@@ -81,7 +81,7 @@ async fn connect_and_handshake(config: &Config) -> Result<(UnixTransport, String
                     ProtocolError::InvalidLinkName.to_string(),
                 ));
             }
-            Message::Local(LocalMessage::ConnectResponse {
+            Message::Direct(DirectMessage::ConnectResult {
                 success: false,
                 error:
                     Some(ProtocolError::VersionMismatch {
@@ -94,7 +94,7 @@ async fn connect_and_handshake(config: &Config) -> Result<(UnixTransport, String
                     server_version, client_version
                 )));
             }
-            Message::Local(LocalMessage::ConnectResponse {
+            Message::Direct(DirectMessage::ConnectResult {
                 success: false,
                 error,
             }) => {
@@ -103,7 +103,7 @@ async fn connect_and_handshake(config: &Config) -> Result<(UnixTransport, String
                     .unwrap_or_else(|| "Connection rejected".to_string());
                 return Err(AmuxError::Config(msg));
             }
-            Message::Local(LocalMessage::Error { message }) => {
+            Message::Direct(DirectMessage::Error { message }) => {
                 return Err(AmuxError::ServerError(message));
             }
             _ => return Err(AmuxError::InvalidMessage),
@@ -131,7 +131,7 @@ pub fn get_terminal_size() -> TerminalSize {
 }
 
 /// Create a new agent and attach to it
-pub async fn new_agent(alias: Option<&str>, agent_type: AgentType, config: &Config) -> Result<()> {
+pub async fn new_agent(name: Option<&str>, agent_type: AgentType, config: &Config) -> Result<()> {
     let (mut transport, link_name) = connect_and_handshake(config).await?;
     let terminal_size = get_terminal_size();
     let working_dir = std::env::current_dir()?;
@@ -139,7 +139,7 @@ pub async fn new_agent(alias: Option<&str>, agent_type: AgentType, config: &Conf
     // Generate UUID for agent_id
     let agent_id = Uuid::new_v4();
 
-    tracing::info!(agent_id = %agent_id, ?alias, "creating agent");
+    tracing::info!(agent_id = %agent_id, ?name, "creating agent");
 
     // Create route with just our link (local agent)
     let full_route = Route::from_link(&link_name);
@@ -153,7 +153,7 @@ pub async fn new_agent(alias: Option<&str>, agent_type: AgentType, config: &Conf
             dst,
             message: RoutableMessage::CreateAgent(CreateAgentRequest {
                 agent_id,
-                alias: alias.map(|s| s.to_string()),
+                name: name.map(|s| s.to_string()),
                 agent_type,
                 working_dir: working_dir.clone(),
                 terminal_size: Some(terminal_size),
@@ -198,20 +198,20 @@ pub async fn attach(target: Option<&str>, config: &Config) -> Result<()> {
         Some(identifier) => {
             // Use ResolveAgent to resolve the identifier server-side
             transport
-                .write_message(&Message::Local(LocalMessage::ResolveAgent {
+                .write_message(&Message::Direct(DirectMessage::ResolveAgent {
                     identifier: identifier.to_string(),
                 }))
                 .await?;
 
             let response = transport.read_message().await?;
             match response {
-                Message::Local(LocalMessage::ResolveAgentResult {
+                Message::Direct(DirectMessage::ResolveAgentResult {
                     agent: Some(info), ..
-                }) => (info.route, info.agent_id),
-                Message::Local(LocalMessage::ResolveAgentResult { agent: None }) => {
+                }) => (info.route, info.id),
+                Message::Direct(DirectMessage::ResolveAgentResult { agent: None }) => {
                     return Err(AgentNotFound(identifier.to_string()));
                 }
-                Message::Local(LocalMessage::Error { message }) => {
+                Message::Direct(DirectMessage::Error { message }) => {
                     return Err(AmuxError::ServerError(message));
                 }
                 _ => {
@@ -222,15 +222,17 @@ pub async fn attach(target: Option<&str>, config: &Config) -> Result<()> {
         None => {
             // No target — list agents and pick the first one
             transport
-                .write_message(&Message::Local(LocalMessage::ListAgents))
+                .write_message(&Message::Direct(DirectMessage::ListAgents))
                 .await?;
 
             let response = transport.read_message().await?;
             match response {
-                Message::Local(LocalMessage::ListAgentsResult { agents }) if !agents.is_empty() => {
-                    (agents[0].route.clone(), agents[0].agent_id)
+                Message::Direct(DirectMessage::ListAgentsResult { agents })
+                    if !agents.is_empty() =>
+                {
+                    (agents[0].route.clone(), agents[0].id)
                 }
-                Message::Local(LocalMessage::ListAgentsResult { .. }) => {
+                Message::Direct(DirectMessage::ListAgentsResult { .. }) => {
                     eprintln!("No agents running. Use 'amux new-agent' to create one.");
                     return Ok(());
                 }
@@ -267,10 +269,9 @@ async fn subscribe_and_stream(
         .write_message(&Message::Routable {
             src,
             dst,
-            message: RoutableMessage::Subscribe {
+            message: RoutableMessage::SubscribeRaw {
                 agent_id,
                 terminal_size,
-                mode: SubscribeMode::Raw,
             },
         })
         .await?;
@@ -279,14 +280,14 @@ async fn subscribe_and_stream(
     let response = transport.read_message().await?;
     match response {
         Message::Routable {
-            message: RoutableMessage::SubscribeResult { success: true, .. },
+            message: RoutableMessage::SubscribeRawResult { success: true, .. },
             ..
         } => {
             tracing::info!(agent_id = %agent_id, "subscribed");
         }
         Message::Routable {
             message:
-                RoutableMessage::SubscribeResult {
+                RoutableMessage::SubscribeRawResult {
                     success: false,
                     error,
                     ..
@@ -306,7 +307,7 @@ async fn subscribe_and_stream(
             eprintln!("Failed to subscribe: {}", error);
             return Ok(());
         }
-        Message::Local(LocalMessage::Error { message }) => {
+        Message::Direct(DirectMessage::Error { message }) => {
             return Err(AmuxError::ServerError(message));
         }
         _ => {
@@ -333,28 +334,28 @@ pub async fn list_agents(config: &Config) -> Result<()> {
     };
 
     transport
-        .write_message(&Message::Local(LocalMessage::ListAgents))
+        .write_message(&Message::Direct(DirectMessage::ListAgents))
         .await?;
 
     let response = transport.read_message().await?;
     match response {
-        Message::Local(LocalMessage::ListAgentsResult { mut agents }) => {
+        Message::Direct(DirectMessage::ListAgentsResult { mut agents }) => {
             if agents.is_empty() {
                 println!("No agents running.");
             } else {
-                // Sort by alias if present, else by agent_id
+                // Sort by name if present, else by id
                 agents.sort_by(|a, b| {
-                    let a_id = a.agent_id.to_string();
-                    let b_id = b.agent_id.to_string();
-                    let a_name = a.alias.as_deref().unwrap_or(&a_id);
-                    let b_name = b.alias.as_deref().unwrap_or(&b_id);
+                    let a_id = a.id.to_string();
+                    let b_id = b.id.to_string();
+                    let a_name = a.name.as_deref().unwrap_or(&a_id);
+                    let b_name = b.name.as_deref().unwrap_or(&b_id);
                     a_name.cmp(b_name)
                 });
                 println!("Running agents:");
                 for agent in agents {
-                    // Display alias if present, else UUID
-                    let agent_id_str = agent.agent_id.to_string();
-                    let display_name = agent.alias.as_deref().unwrap_or(&agent_id_str);
+                    // Display name if present, else UUID
+                    let agent_id_str = agent.id.to_string();
+                    let display_name = agent.name.as_deref().unwrap_or(&agent_id_str);
                     if agent.is_remote() {
                         println!(
                             "  {} - {} (via {})",
@@ -368,7 +369,7 @@ pub async fn list_agents(config: &Config) -> Result<()> {
                 }
             }
         }
-        Message::Local(LocalMessage::Error { message }) => {
+        Message::Direct(DirectMessage::Error { message }) => {
             return Err(AmuxError::ServerError(message));
         }
         _ => {
@@ -394,7 +395,7 @@ pub async fn kill_server(config: &Config) -> Result<()> {
     };
 
     transport
-        .write_message(&Message::Local(LocalMessage::Shutdown))
+        .write_message(&Message::Direct(DirectMessage::Shutdown))
         .await?;
 
     // Wait for server acknowledgment before closing connection
@@ -411,7 +412,7 @@ pub async fn connect(address: &str, config: &Config) -> Result<()> {
 
     // Send ConnectToServer message to local server
     transport
-        .write_message(&Message::Local(LocalMessage::ConnectToServer {
+        .write_message(&Message::Direct(DirectMessage::ConnectToServer {
             address: address.to_string(),
         }))
         .await?;
@@ -419,11 +420,11 @@ pub async fn connect(address: &str, config: &Config) -> Result<()> {
     // Wait for result
     let response = transport.read_message().await?;
     match response {
-        Message::Local(LocalMessage::ConnectToServerResult { success: true, .. }) => {
+        Message::Direct(DirectMessage::ConnectToServerResult { success: true, .. }) => {
             println!("Connected to {}", address);
             Ok(())
         }
-        Message::Local(LocalMessage::ConnectToServerResult {
+        Message::Direct(DirectMessage::ConnectToServerResult {
             success: false,
             error,
         }) => {
@@ -450,13 +451,13 @@ pub async fn debug(config: &Config) -> Result<ServerDebugInfo> {
     };
 
     transport
-        .write_message(&Message::Local(LocalMessage::Debug))
+        .write_message(&Message::Direct(DirectMessage::Debug))
         .await?;
 
     let response = transport.read_message().await?;
     match response {
-        Message::Local(LocalMessage::DebugResult { info }) => Ok(info),
-        Message::Local(LocalMessage::Error { message }) => Err(AmuxError::ServerError(message)),
+        Message::Direct(DirectMessage::DebugResult { info }) => Ok(info),
+        Message::Direct(DirectMessage::Error { message }) => Err(AmuxError::ServerError(message)),
         _ => Err(AmuxError::InvalidMessage),
     }
 }
@@ -600,7 +601,7 @@ async fn run_attached(
                         if transport.write_message(&Message::Routable {
                             src,
                             dst,
-                            message: RoutableMessage::InputBytes {
+                            message: RoutableMessage::RawInput {
                                 agent_id,
                                 data,
                             },
@@ -621,7 +622,7 @@ async fn run_attached(
             // Message from server
             msg = transport.read_message() => {
                 match msg {
-                    Ok(Message::Routable { message: RoutableMessage::Output { data, .. }, .. }) => {
+                    Ok(Message::Routable { message: RoutableMessage::RawOutput { data, .. }, .. }) => {
                         io::stdout().write_all(&data).ok();
                         io::stdout().flush().ok();
                     }
@@ -634,12 +635,12 @@ async fn run_attached(
                         error = Some(AmuxError::ServerError(route_error.to_string()));
                         break;
                     }
-                    Ok(Message::Local(LocalMessage::ServerShutdown { reason })) => {
+                    Ok(Message::Direct(DirectMessage::ServerShutdown { reason })) => {
                         tracing::info!(reason = %reason, "server shutdown");
                         shutdown_reason = Some(reason);
                         break;
                     }
-                    Ok(Message::Local(LocalMessage::Error { message })) => {
+                    Ok(Message::Direct(DirectMessage::Error { message })) => {
                         tracing::error!(error = %message, "server error");
                         error = Some(AmuxError::ServerError(message));
                         break;

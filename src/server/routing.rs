@@ -1,7 +1,9 @@
 use super::ServerUserState;
 use super::connection::cancel_streams_matching;
 use crate::buffer::MultiplexReader;
-use crate::message::{CreateAgentRequest, LocalMessage, Message, PermissionResponse, TerminalSize};
+use crate::message::{
+    CreateAgentRequest, DirectMessage, Message, PermissionResponse, TerminalSize,
+};
 use crate::route::Route;
 use crate::session::{LocalAgentSession, SessionEvent};
 use anyhow::{Result, anyhow};
@@ -30,15 +32,15 @@ pub(super) async fn create_agent(
         return Err(anyhow!("Agent already exists: {}", &req.agent_id));
     }
 
-    if let Some(ref a) = req.alias
-        && us.registry.alias_taken(a)
+    if let Some(ref a) = req.name
+        && us.registry.name_taken(a)
     {
         return Err(anyhow!("Agent already exists: {}", a));
     }
 
     let session = LocalAgentSession::new(&req, event_tx.clone(), user_id)?;
-    let info = session.to_agent_info();
-    let alias = req.alias.clone();
+    let info = session.to_agent();
+    let name = req.name.clone();
     let command = session.command.clone();
     let working_dir = session.working_dir.clone();
     us.agents.insert(req.agent_id, Arc::new(session));
@@ -48,9 +50,9 @@ pub(super) async fn create_agent(
 
     broadcast_to_peers(
         &mut us,
-        &LocalMessage::AnnounceAgent {
+        &DirectMessage::AnnounceAgent {
             agent_id: req.agent_id,
-            alias,
+            name,
             command,
             working_dir,
             route: Route::empty(),
@@ -58,7 +60,7 @@ pub(super) async fn create_agent(
         None,
     );
 
-    tracing::info!(agent_id = %req.agent_id, alias = ?req.alias, "agent created");
+    tracing::info!(agent_id = %req.agent_id, name = ?req.name, "agent created");
     Ok(())
 }
 
@@ -101,13 +103,13 @@ pub(super) async fn shutdown_server(user_state: &Arc<RwLock<ServerUserState>>) {
     us.agents.clear();
 }
 
-/// Send a LocalMessage to all peer links, optionally excluding one.
+/// Send a DirectMessage to all peer links, optionally excluding one.
 pub(super) fn broadcast_to_peers(
     us: &mut ServerUserState,
-    msg: &LocalMessage,
+    msg: &DirectMessage,
     exclude_link: Option<&str>,
 ) {
-    let wire_msg = Message::Local(msg.clone());
+    let wire_msg = Message::Direct(msg.clone());
     for link in &us.peer_links {
         if exclude_link == Some(link.as_str()) {
             continue;
@@ -133,9 +135,9 @@ fn send_initial_agent_announcements(us: &ServerUserState, peer_link: &str) {
         {
             continue;
         }
-        let msg = Message::Local(LocalMessage::AnnounceAgent {
+        let msg = Message::Direct(DirectMessage::AnnounceAgent {
             agent_id: *uuid,
-            alias: info.alias.clone(),
+            name: info.name.clone(),
             command: info.command.clone(),
             working_dir: info.working_dir.clone(),
             route: info.route.clone(),
@@ -166,7 +168,7 @@ fn send_initial_host_announcements(
         {
             continue;
         }
-        let msg = Message::Local(LocalMessage::AnnounceHost {
+        let msg = Message::Direct(DirectMessage::AnnounceHost {
             id: info.id,
             name: info.name.clone(),
             route: info.route.clone(),
@@ -178,7 +180,7 @@ fn send_initial_host_announcements(
     }
 
     if !is_cloud_server {
-        let msg = Message::Local(LocalMessage::AnnounceHost {
+        let msg = Message::Direct(DirectMessage::AnnounceHost {
             id: host_id,
             name: host_name.to_string(),
             route: crate::route::Route::empty(),
@@ -223,7 +225,7 @@ pub(super) fn handle_peer_disconnect(us: &mut ServerUserState, link_name: &str) 
     let removed_ids = us.registry.remove_for_link(link_name);
     for agent_id in removed_ids {
         tracing::info!(agent_id = %agent_id, peer = %link_name, "withdrawing agent");
-        broadcast_to_peers(us, &LocalMessage::WithdrawAgent { agent_id }, None);
+        broadcast_to_peers(us, &DirectMessage::WithdrawAgent { agent_id }, None);
     }
 
     // Withdraw hosts learned from the dead link
@@ -236,7 +238,7 @@ pub(super) fn handle_peer_disconnect(us: &mut ServerUserState, link_name: &str) 
     for id in removed_host_ids {
         tracing::info!(host_id = %id, peer = %link_name, "withdrawing host");
         us.hosts.remove(&id);
-        broadcast_to_peers(us, &LocalMessage::WithdrawHost { id }, None);
+        broadcast_to_peers(us, &DirectMessage::WithdrawHost { id }, None);
     }
 }
 

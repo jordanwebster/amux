@@ -7,26 +7,26 @@ use uuid::Uuid;
 
 /// Information about a running agent
 #[derive(Serialize, Deserialize, Debug, Clone)]
-pub struct AgentInfo {
-    pub agent_id: Uuid,
-    pub alias: Option<String>,
+pub struct Agent {
+    pub id: Uuid,
+    pub name: Option<String>,
     pub command: String,
     pub working_dir: PathBuf,
     pub route: Route,
 }
 
-impl AgentInfo {
+impl Agent {
     pub fn is_remote(&self) -> bool {
         self.route.peek().is_some()
     }
 }
 
-/// Centralized agent tracking with bidirectional alias<->UUID mapping.
+/// Centralized agent tracking with bidirectional name<->UUID mapping.
 /// Tracks both local and remote agents with route information.
 pub(crate) struct AgentRegistry {
-    alias_to_uuid: HashMap<String, Uuid>,
-    uuid_to_alias: HashMap<Uuid, String>,
-    entries: HashMap<Uuid, AgentInfo>,
+    name_to_uuid: HashMap<String, Uuid>,
+    uuid_to_name: HashMap<Uuid, String>,
+    entries: HashMap<Uuid, Agent>,
 }
 
 #[derive(Debug, Error)]
@@ -42,67 +42,65 @@ pub enum AgentRegistryError {
 impl AgentRegistry {
     pub fn new() -> Self {
         Self {
-            alias_to_uuid: HashMap::new(),
-            uuid_to_alias: HashMap::new(),
+            name_to_uuid: HashMap::new(),
+            uuid_to_name: HashMap::new(),
             entries: HashMap::new(),
         }
     }
 
-    /// Register a local agent. Errors if UUID exists or alias is taken.
-    pub fn register_local(&mut self, info: AgentInfo) -> Result<(), AgentRegistryError> {
+    /// Register a local agent. Errors if UUID exists or name is taken.
+    pub fn register_local(&mut self, info: Agent) -> Result<(), AgentRegistryError> {
         if !info.route.is_empty() {
             return Err(AgentRegistryError::AgentNotLocal);
         }
-        if self.entries.contains_key(&info.agent_id) {
-            return Err(AgentRegistryError::AgentAlreadyExists(
-                info.agent_id.to_string(),
-            ));
+        if self.entries.contains_key(&info.id) {
+            return Err(AgentRegistryError::AgentAlreadyExists(info.id.to_string()));
         }
-        if let Some(ref alias) = info.alias {
-            if self.alias_to_uuid.contains_key(alias) {
-                return Err(AgentRegistryError::AgentAlreadyExists(alias.clone()));
+        if let Some(ref name) = info.name {
+            if self.name_to_uuid.contains_key(name) {
+                return Err(AgentRegistryError::AgentAlreadyExists(name.clone()));
             }
-            self.alias_to_uuid.insert(alias.clone(), info.agent_id);
-            self.uuid_to_alias.insert(info.agent_id, alias.clone());
+            self.name_to_uuid.insert(name.clone(), info.id);
+            self.uuid_to_name.insert(info.id, name.clone());
         }
-        self.entries.insert(info.agent_id, info);
+        self.entries.insert(info.id, info);
         Ok(())
     }
 
-    /// Register a remote agent. Upserts by UUID; clears old alias on re-announce.
-    /// First-one-wins for alias (silently skips if taken by another agent).
-    pub fn register_remote(&mut self, info: AgentInfo) -> Result<(), AgentRegistryError> {
+    /// Register a remote agent. Upserts by UUID; clears old name on re-announce.
+    /// First-one-wins for name (silently skips if taken by another agent).
+    pub fn register_remote(&mut self, info: Agent) -> Result<(), AgentRegistryError> {
         if info.route.is_empty() {
             return Err(AgentRegistryError::AgentNotRemote);
         }
-        // On re-announce (same UUID), clear the old alias mapping
-        if let Some(old_alias) = self.uuid_to_alias.remove(&info.agent_id) {
-            // Only remove from alias_to_uuid if it still points to this UUID
-            if self.alias_to_uuid.get(&old_alias) == Some(&info.agent_id) {
-                self.alias_to_uuid.remove(&old_alias);
+        // On re-announce (same UUID), clear the old name mapping
+        if let Some(old_name) = self.uuid_to_name.remove(&info.id) {
+            // Only remove from name_to_uuid if it still points to this UUID
+            if self.name_to_uuid.get(&old_name) == Some(&info.id) {
+                self.name_to_uuid.remove(&old_name);
             }
         }
 
-        // Try to claim the new alias (first-one-wins)
-        if let Some(ref alias) = info.alias
-            && !self.alias_to_uuid.contains_key(alias)
+        // Try to claim the new name (first-one-wins)
+        if let Some(ref name) = info.name
+            && !self.name_to_uuid.contains_key(name)
         {
-            self.alias_to_uuid.insert(alias.clone(), info.agent_id);
-            self.uuid_to_alias.insert(info.agent_id, alias.clone());
+            self.name_to_uuid.insert(name.clone(), info.id);
+            self.uuid_to_name.insert(info.id, name.clone());
         }
-        // else: silently skip — alias is taken by another agent
+        // else: silently skip — name is taken by another agent
 
-        self.entries.insert(info.agent_id, info);
+        self.entries.insert(info.id, info);
         Ok(())
     }
 
     /// Remove an agent by UUID. Returns the removed entry if found.
-    pub fn remove(&mut self, uuid: &Uuid) -> Option<AgentInfo> {
+    pub fn remove(&mut self, uuid: &Uuid) -> Option<Agent> {
         let info = self.entries.remove(uuid)?;
-        if let Some(alias) = self.uuid_to_alias.remove(uuid)
-            && self.alias_to_uuid.get(&alias) == Some(uuid)
+        if let Some(name) = self.uuid_to_name.remove(uuid)
+            && self.name_to_uuid.get(&name) == Some(uuid)
         {
-            self.alias_to_uuid.remove(&alias);
+            self.name_to_uuid.remove(&name);
         }
         Some(info)
     }
@@ -121,13 +119,13 @@ impl AgentRegistry {
         removed
     }
 
-    /// Resolve an identifier to an AgentInfo.
+    /// Resolve an identifier to an Agent.
     ///
     /// Resolution order:
     /// 1. "route:id" — parse route, resolve id recursively, return with explicit route
     /// 2. UUID — look up directly
-    /// 3. Alias — look up via alias_to_uuid
-    pub fn resolve(&self, identifier: &str) -> Option<AgentInfo> {
+    /// 3. Name — look up via name_to_uuid
+    pub fn resolve(&self, identifier: &str) -> Option<Agent> {
         // Try splitting on last ':' for route:id format
         match identifier.rsplit_once(':') {
             Some((route_str, id)) => {
@@ -146,18 +144,18 @@ impl AgentRegistry {
         }
     }
 
-    /// Resolve by UUID or alias (no route: prefix handling)
-    fn resolve_inner(&self, identifier: &str) -> Option<AgentInfo> {
+    /// Resolve by UUID or name (no route: prefix handling)
+    fn resolve_inner(&self, identifier: &str) -> Option<Agent> {
         let uuid = match Uuid::parse_str(identifier) {
             Ok(uuid) => uuid,
-            Err(_) => *self.alias_to_uuid.get(identifier)?,
+            Err(_) => *self.name_to_uuid.get(identifier)?,
         };
 
         self.entries.get(&uuid).cloned()
     }
 
     /// Get an entry by UUID
-    pub fn get(&self, uuid: &Uuid) -> Option<&AgentInfo> {
+    pub fn get(&self, uuid: &Uuid) -> Option<&Agent> {
         self.entries.get(uuid)
     }
 
@@ -166,13 +164,13 @@ impl AgentRegistry {
         self.entries.contains_key(uuid)
     }
 
-    /// Check if an alias is taken
-    pub fn alias_taken(&self, alias: &str) -> bool {
-        self.alias_to_uuid.contains_key(alias)
+    /// Check if an name is taken
+    pub fn name_taken(&self, name: &str) -> bool {
+        self.name_to_uuid.contains_key(name)
     }
 
     /// List all agents with route populated
-    pub fn list_all(&self) -> Vec<AgentInfo> {
+    pub fn list_all(&self) -> Vec<Agent> {
         self.entries.values().cloned().collect()
     }
 
@@ -182,7 +180,7 @@ impl AgentRegistry {
     }
 
     /// Iterate over all entries (for send_initial_announcements)
-    pub fn iter_entries(&self) -> impl Iterator<Item = (&Uuid, &AgentInfo)> {
+    pub fn iter_entries(&self) -> impl Iterator<Item = (&Uuid, &Agent)> {
         self.entries.iter()
     }
 }
@@ -192,20 +190,20 @@ mod tests {
     use super::*;
     use std::path::PathBuf;
 
-    fn make_info(uuid: Uuid, alias: Option<&str>) -> AgentInfo {
-        AgentInfo {
-            agent_id: uuid,
-            alias: alias.map(|s| s.to_string()),
+    fn make_info(uuid: Uuid, name: Option<&str>) -> Agent {
+        Agent {
+            id: uuid,
+            name: name.map(|s| s.to_string()),
             command: "test".to_string(),
             working_dir: PathBuf::from("/tmp"),
             route: Route::empty(),
         }
     }
 
-    fn make_remote_info(uuid: Uuid, alias: Option<&str>, route: Route) -> AgentInfo {
-        AgentInfo {
-            agent_id: uuid,
-            alias: alias.map(|s| s.to_string()),
+    fn make_remote_info(uuid: Uuid, name: Option<&str>, route: Route) -> Agent {
+        Agent {
+            id: uuid,
+            name: name.map(|s| s.to_string()),
             command: "test".to_string(),
             working_dir: PathBuf::from("/tmp"),
             route,
@@ -219,18 +217,18 @@ mod tests {
         reg.register_local(make_info(id, Some("myagent"))).unwrap();
 
         let info = reg.resolve(&id.to_string()).unwrap();
-        assert_eq!(info.agent_id, id);
+        assert_eq!(info.id, id);
         assert!(info.route.is_empty());
     }
 
     #[test]
-    fn register_local_and_resolve_by_alias() {
+    fn register_local_and_resolve_by_name() {
         let mut reg = AgentRegistry::new();
         let id = Uuid::new_v4();
         reg.register_local(make_info(id, Some("myagent"))).unwrap();
 
         let info = reg.resolve("myagent").unwrap();
-        assert_eq!(info.agent_id, id);
+        assert_eq!(info.id, id);
     }
 
     #[test]
@@ -242,7 +240,7 @@ mod tests {
     }
 
     #[test]
-    fn register_local_duplicate_alias_errors() {
+    fn register_local_duplicate_name_errors() {
         let mut reg = AgentRegistry::new();
         let id1 = Uuid::new_v4();
         let id2 = Uuid::new_v4();
@@ -262,12 +260,12 @@ mod tests {
         .unwrap();
 
         let info = reg.resolve("remote1").unwrap();
-        assert_eq!(info.agent_id, id);
+        assert_eq!(info.id, id);
         assert!(info.is_remote());
     }
 
     #[test]
-    fn register_remote_alias_first_one_wins() {
+    fn register_remote_name_first_one_wins() {
         let mut reg = AgentRegistry::new();
         let id1 = Uuid::new_v4();
         let id2 = Uuid::new_v4();
@@ -278,15 +276,15 @@ mod tests {
 
         // Alias resolves to first one
         let info = reg.resolve("shared").unwrap();
-        assert_eq!(info.agent_id, id1);
+        assert_eq!(info.id, id1);
 
         // Second is still accessible by UUID
         let info2 = reg.resolve(&id2.to_string()).unwrap();
-        assert_eq!(info2.agent_id, id2);
+        assert_eq!(info2.id, id2);
     }
 
     #[test]
-    fn reannounce_frees_old_alias() {
+    fn reannounce_frees_old_name() {
         let mut reg = AgentRegistry::new();
         let id = Uuid::new_v4();
         reg.register_remote(make_remote_info(
@@ -304,18 +302,18 @@ mod tests {
 
         assert!(reg.resolve("old-name").is_none());
         let info = reg.resolve("new-name").unwrap();
-        assert_eq!(info.agent_id, id);
+        assert_eq!(info.id, id);
     }
 
     #[test]
-    fn remove_cleans_up_alias() {
+    fn remove_cleans_up_name() {
         let mut reg = AgentRegistry::new();
         let id = Uuid::new_v4();
         reg.register_local(make_info(id, Some("cleanup"))).unwrap();
 
         reg.remove(&id);
         assert!(!reg.contains(&id));
-        assert!(!reg.alias_taken("cleanup"));
+        assert!(!reg.name_taken("cleanup"));
         assert!(reg.resolve("cleanup").is_none());
     }
 
@@ -352,7 +350,7 @@ mod tests {
 
         // "host-b:myagent" should resolve when route matches
         let info = reg.resolve("host-b:myagent").unwrap();
-        assert_eq!(info.agent_id, id);
+        assert_eq!(info.id, id);
         assert_eq!(info.route.peek(), Some("host-b"));
     }
 
@@ -381,7 +379,7 @@ mod tests {
             .unwrap();
 
         let info = reg.resolve("host-a.host-b:agent1").unwrap();
-        assert_eq!(info.agent_id, id);
+        assert_eq!(info.id, id);
         let mut route = info.route;
         assert_eq!(route.pop(), Some("host-a".to_string()));
         assert_eq!(route.pop(), Some("host-b".to_string()));
@@ -410,10 +408,10 @@ mod tests {
         let all = reg.list_all();
         assert_eq!(all.len(), 2);
 
-        let local = all.iter().find(|a| a.agent_id == local_id).unwrap();
+        let local = all.iter().find(|a| a.id == local_id).unwrap();
         assert!(local.route.is_empty());
 
-        let remote = all.iter().find(|a| a.agent_id == remote_id).unwrap();
+        let remote = all.iter().find(|a| a.id == remote_id).unwrap();
         assert!(remote.is_remote());
     }
 
@@ -429,14 +427,14 @@ mod tests {
     }
 
     #[test]
-    fn contains_and_alias_taken() {
+    fn contains_and_name_taken() {
         let mut reg = AgentRegistry::new();
         let id = Uuid::new_v4();
         assert!(!reg.contains(&id));
-        assert!(!reg.alias_taken("test"));
+        assert!(!reg.name_taken("test"));
 
         reg.register_local(make_info(id, Some("test"))).unwrap();
         assert!(reg.contains(&id));
-        assert!(reg.alias_taken("test"));
+        assert!(reg.name_taken("test"));
     }
 }

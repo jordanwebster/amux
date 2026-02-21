@@ -38,6 +38,71 @@ One paragraph describing what was done.
 
 ---
 
+## 2026-02-21: Protocol restructure — clean naming and agent-type-keyed messages
+
+### Summary
+Pre-launch protocol restructure establishing clean naming conventions and agent-type-keyed message structure before the wire format is locked in. Bumps `PROTOCOL_VERSION` from 1 to 2.
+
+### Changes
+
+**Renames (Phase 1):**
+- `LocalMessage` → `DirectMessage`, `Message::Local(...)` → `Message::Direct(...)`
+- `RoutableMessage::InputBytes` → `RawInput`, `RoutableMessage::Output` → `RawOutput`
+- `DirectMessage::ConnectResponse` → `ConnectResult` (consistency with other `*Result` variants)
+- `AgentInfo` → `Agent`, `HostInfo` → `Host`
+- `Agent.agent_id` → `Agent.id`, `Agent.alias` → `Agent.name`
+- `alias` → `name` everywhere (struct fields, variables, method names, registry internals)
+- `to_agent_info()` → `to_agent()`, `alias_taken()` → `name_taken()`
+- Updated all match arms, type guards, and `msg_type_label` strings across all Rust files
+
+**Restructured StructuredOutput (Phase 2):**
+- Moved `StructuredLog` and `PermissionTool` from `src/structured_log.rs` into `src/message.rs`
+- Renamed `StructuredLog` → `ClaudeStructuredOutput`, added `#[serde(other)] Unknown` for forward compatibility
+- Added `StructuredOutput` wrapper enum: `enum StructuredOutput { Claude(ClaudeStructuredOutput) }`
+- Changed `RoutableMessage::StructuredOutput` field from `entry: StructuredLog` to `data: StructuredOutput`
+- Deleted `src/structured_log.rs`
+
+**Added StructuredInput (Phase 3):**
+- Added `ClaudeStructuredInput` enum with `PermissionResponse(PermissionResponse)` and `SubmitMessage { data: Vec<u8> }`
+- Added `StructuredInput` wrapper enum: `enum StructuredInput { Claude(ClaudeStructuredInput) }`
+- Replaced `RoutableMessage::SubmitInput` and `RoutableMessage::PermissionRequestResponse` with single `RoutableMessage::StructuredInput { agent_id, data: StructuredInput }`
+- Single handler in `connection.rs` replaces two separate handlers
+
+**Split Subscribe (Phase 4):**
+- `Subscribe` → `SubscribeRaw` / `SubscribeStructured` (two separate variants)
+- `SubscribeResult` → `SubscribeRawResult` / `SubscribeStructuredResult`
+- Removed `SubscribeMode` enum
+- Split subscribe handler into two match arms in `connection.rs`
+
+**Finalize (Phase 5):**
+- Bumped `PROTOCOL_VERSION` from 1 to 2
+- Updated all tests in `message.rs`, `connection.rs`, `multiplex_log_buffer.rs`, `transcript.rs`
+- Updated dashboard TypeScript (`protocol.ts`, `appStore.ts`, `useWebSocket.ts`, `Message.tsx`)
+- Updated `ARCHITECTURE.md` with new type names and descriptions
+
+**Files modified:** `src/message.rs`, `src/server/connection.rs`, `src/server/accept.rs`, `src/server/routing.rs`, `src/server/cloud.rs`, `src/server/mod.rs`, `src/client.rs`, `src/hooks.rs`, `src/session.rs`, `src/transcript.rs`, `src/multiplex_log_buffer.rs`, `src/cloud.rs`, `src/transport/unix.rs`, `src/lib.rs`, `dashboard/src/types/protocol.ts`, `dashboard/src/store/appStore.ts`, `dashboard/src/hooks/useWebSocket.ts`, `dashboard/src/components/Message.tsx`, `ARCHITECTURE.md`
+
+**Files deleted:** `src/structured_log.rs`
+
+### Decisions Made
+- Wrapper enums (`StructuredOutput`, `StructuredInput`) use serde's default externally-tagged format for the outer key (e.g. `{"Claude": {...}}`), while inner Claude-specific enums use internally-tagged format (`#[serde(tag = "type")]`)
+- `#[serde(other)] Unknown` on `ClaudeStructuredOutput` for forward compatibility with new output types
+- Split Subscribe into two variants (instead of keeping `SubscribeMode`) — cleaner handler code, each variant carries only the fields it needs (`SubscribeRaw` has `terminal_size`, `SubscribeStructured` does not)
+- Wire format for dashboard: `StructuredOutput.data.Claude` to unwrap, `{Claude: {PermissionResponse: "Yes"}}` for structured input
+
+### Verification
+- `cargo check` — passes
+- `cargo fmt` — clean
+- `cargo clippy --workspace --all-targets -- -D warnings` — passes
+- `cargo test` — 119 tests pass
+- `npx tsc --noEmit` (dashboard) — passes
+
+### Next Steps
+- Run E2E tests (`cargo build --workspace && cargo run -p e2e-runner -- run`)
+- Update `dashboard/CLAUDE.md` protocol notes
+
+---
+
 ## 2026-02-21: Replace rows/cols with Option\<TerminalSize\>
 
 ### Summary

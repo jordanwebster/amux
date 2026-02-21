@@ -1,5 +1,5 @@
 import { create } from "zustand"
-import type { AgentInfo, StructuredLog } from "../types/protocol"
+import type { Agent, ClaudeStructuredOutput } from "../types/protocol"
 
 export type ConnectionStatus = "disconnected" | "connecting" | "connected" | "error"
 
@@ -10,21 +10,21 @@ interface AppState {
   clientHostId: string
 
   // Agents
-  agents: AgentInfo[]
+  agents: Agent[]
   selectedAgentId: string | null
 
   // Subscriptions - tracks which agents we've already subscribed to
   subscribedAgents: Set<string>
 
   // Messages per agent (keyed by agent_id)
-  messagesByAgent: Record<string, StructuredLog[]>
+  messagesByAgent: Record<string, ClaudeStructuredOutput[]>
 
   // Actions
   setConnectionStatus: (status: ConnectionStatus) => void
   setServerHostId: (hostId: string) => void
-  setAgents: (agents: AgentInfo[]) => void
+  setAgents: (agents: Agent[]) => void
   selectAgent: (agentId: string | null) => void
-  addMessage: (agentId: string, message: StructuredLog) => void
+  addMessage: (agentId: string, message: ClaudeStructuredOutput) => void
   clearMessages: (agentId: string) => void
   markSubscribed: (agentId: string) => void
   isSubscribed: (agentId: string) => boolean

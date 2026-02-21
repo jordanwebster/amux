@@ -15,6 +15,5 @@ pub mod route;
 pub mod server;
 pub mod session;
 pub mod state;
-pub mod structured_log;
 pub mod transcript;
 pub mod transport;

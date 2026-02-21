@@ -3,12 +3,11 @@ use super::routing::{
     broadcast_to_peers, connection_tx, create_agent, handle_subscribe, shutdown_server,
 };
 use super::{ServerState, ServerUserState, StreamEntry};
-use crate::agent_registry::AgentInfo;
+use crate::agent_registry::Agent;
 use crate::cloud::TokenRefreshState;
 use crate::error::{AmuxError, Result};
 use crate::message::{
-    ClaudeHook, Hook, LocalMessage, Message, ProtocolError, RoutableMessage, ServerDebugInfo,
-    SubscribeMode,
+    ClaudeHook, DirectMessage, Hook, Message, ProtocolError, RoutableMessage, ServerDebugInfo,
 };
 use crate::route::Route;
 use crate::session::SessionEvent;
@@ -25,38 +24,39 @@ use uuid::Uuid;
 fn msg_type_label(msg: &Message) -> &'static str {
     match msg {
         Message::Routable { message, .. } => match message {
-            RoutableMessage::Subscribe { .. } => "Subscribe",
-            RoutableMessage::SubscribeResult { .. } => "SubscribeResult",
+            RoutableMessage::SubscribeRaw { .. } => "SubscribeRaw",
+            RoutableMessage::SubscribeStructured { .. } => "SubscribeStructured",
+            RoutableMessage::SubscribeRawResult { .. } => "SubscribeRawResult",
+            RoutableMessage::SubscribeStructuredResult { .. } => "SubscribeStructuredResult",
             RoutableMessage::CreateAgent(_) => "CreateAgent",
             RoutableMessage::CreateAgentResult { .. } => "CreateAgentResult",
-            RoutableMessage::InputBytes { .. } => "InputBytes",
-            RoutableMessage::SubmitInput { .. } => "SubmitInput",
-            RoutableMessage::Output { .. } => "Output",
+            RoutableMessage::RawInput { .. } => "RawInput",
+            RoutableMessage::RawOutput { .. } => "RawOutput",
             RoutableMessage::StructuredOutput { .. } => "StructuredOutput",
+            RoutableMessage::StructuredInput { .. } => "StructuredInput",
             RoutableMessage::AgentEnded { .. } => "AgentEnded",
-            RoutableMessage::PermissionRequestResponse { .. } => "PermissionRequestResponse",
             RoutableMessage::Error(_) => "Error",
         },
-        Message::Local(local) => match local {
-            LocalMessage::Connect { .. } => "Connect",
-            LocalMessage::ConnectResponse { .. } => "ConnectResponse",
-            LocalMessage::ListAgents => "ListAgents",
-            LocalMessage::ListAgentsResult { .. } => "ListAgentsResult",
-            LocalMessage::Shutdown => "Shutdown",
-            LocalMessage::HookEvent { .. } => "HookEvent",
-            LocalMessage::HookEventResult { .. } => "HookEventResult",
-            LocalMessage::ConnectToServer { .. } => "ConnectToServer",
-            LocalMessage::ConnectToServerResult { .. } => "ConnectToServerResult",
-            LocalMessage::Debug => "Debug",
-            LocalMessage::DebugResult { .. } => "DebugResult",
-            LocalMessage::AnnounceAgent { .. } => "AnnounceAgent",
-            LocalMessage::WithdrawAgent { .. } => "WithdrawAgent",
-            LocalMessage::AnnounceHost { .. } => "AnnounceHost",
-            LocalMessage::WithdrawHost { .. } => "WithdrawHost",
-            LocalMessage::ResolveAgent { .. } => "ResolveAgent",
-            LocalMessage::ResolveAgentResult { .. } => "ResolveAgentResult",
-            LocalMessage::Error { .. } => "Error",
-            LocalMessage::ServerShutdown { .. } => "ServerShutdown",
+        Message::Direct(local) => match local {
+            DirectMessage::Connect { .. } => "Connect",
+            DirectMessage::ConnectResult { .. } => "ConnectResult",
+            DirectMessage::ListAgents => "ListAgents",
+            DirectMessage::ListAgentsResult { .. } => "ListAgentsResult",
+            DirectMessage::Shutdown => "Shutdown",
+            DirectMessage::HookEvent { .. } => "HookEvent",
+            DirectMessage::HookEventResult { .. } => "HookEventResult",
+            DirectMessage::ConnectToServer { .. } => "ConnectToServer",
+            DirectMessage::ConnectToServerResult { .. } => "ConnectToServerResult",
+            DirectMessage::Debug => "Debug",
+            DirectMessage::DebugResult { .. } => "DebugResult",
+            DirectMessage::AnnounceAgent { .. } => "AnnounceAgent",
+            DirectMessage::WithdrawAgent { .. } => "WithdrawAgent",
+            DirectMessage::AnnounceHost { .. } => "AnnounceHost",
+            DirectMessage::WithdrawHost { .. } => "WithdrawHost",
+            DirectMessage::ResolveAgent { .. } => "ResolveAgent",
+            DirectMessage::ResolveAgentResult { .. } => "ResolveAgentResult",
+            DirectMessage::Error { .. } => "Error",
+            DirectMessage::ServerShutdown { .. } => "ServerShutdown",
         },
     }
 }
@@ -139,8 +139,8 @@ pub(super) async fn connection_loop(
             incoming = incoming_rx.recv() => {
                 match incoming {
                     Some(Incoming::Msg(msg)) => {
-                        // Intercept ConnectResponse for token refresh
-                        if let Message::Local(LocalMessage::ConnectResponse { .. }) = &msg {
+                        // Intercept ConnectResult for token refresh
+                        if let Message::Direct(DirectMessage::ConnectResult { .. }) = &msg {
                             if awaiting_refresh.is_some() {
                                 if let Some(ref mut rs) = token_refresh {
                                     match rs.handle_response(&msg) {
@@ -160,7 +160,7 @@ pub(super) async fn connection_loop(
                                 awaiting_refresh = None;
                                 continue;
                             }
-                            tracing::warn!("unexpected ConnectResponse");
+                            tracing::warn!("unexpected ConnectResult");
                             continue;
                         }
                         handle_message(&response_tx, msg, &ctx, &mut dead_routes).await?;
@@ -273,10 +273,10 @@ pub(super) async fn handle_message(
     if !matches!(
         &msg,
         Message::Routable {
-            message: RoutableMessage::InputBytes { .. }
-                | RoutableMessage::SubmitInput { .. }
-                | RoutableMessage::Output { .. }
-                | RoutableMessage::StructuredOutput { .. },
+            message: RoutableMessage::RawInput { .. }
+                | RoutableMessage::RawOutput { .. }
+                | RoutableMessage::StructuredOutput { .. }
+                | RoutableMessage::StructuredInput { .. },
             ..
         }
     ) {
@@ -287,7 +287,7 @@ pub(super) async fn handle_message(
         Message::Routable { src, dst, message } => {
             handle_routable(tx, src, dst, message, ctx, dead_routes).await
         }
-        Message::Local(local) => handle_local(tx, local, ctx).await,
+        Message::Direct(local) => handle_local(tx, local, ctx).await,
     }
 }
 
@@ -351,7 +351,7 @@ async fn handle_routable(
                 RoutableMessage::Error(_) => {
                     tracing::debug!("dropping failed error to avoid amplification");
                 }
-                RoutableMessage::Output { .. }
+                RoutableMessage::RawOutput { .. }
                 | RoutableMessage::StructuredOutput { .. }
                 | RoutableMessage::AgentEnded { .. } => {
                     if dead_routes.insert(next_hop.to_string()) {
@@ -397,65 +397,21 @@ async fn handle_routable(
 
     // Local delivery — dst is empty, we are the final destination
     match message {
-        RoutableMessage::Subscribe {
+        RoutableMessage::SubscribeRaw {
             agent_id,
             terminal_size,
-            mode,
         } => {
             let (reply_src, reply_dst) =
                 Route::reply(src).expect("incoming message must have valid src");
+            let result = handle_subscribe(&ctx.user_state, &agent_id, terminal_size).await;
 
-            match mode {
-                SubscribeMode::Structured => {
-                    let session = {
-                        let us = ctx.user_state.read().await;
-                        us.agents.get(&agent_id).cloned()
-                    };
-
-                    let Some(session) = session else {
-                        let _ = tx
-                            .send(Message::Routable {
-                                src: reply_src,
-                                dst: reply_dst,
-                                message: RoutableMessage::SubscribeResult {
-                                    agent_id,
-                                    success: false,
-                                    error: Some(ProtocolError::ServerError(
-                                        "Agent not found or ended".to_string(),
-                                    )),
-                                },
-                            })
-                            .await;
-                        return Ok(());
-                    };
-
-                    if let Some(size) = terminal_size {
-                        session.resize(size.rows, size.cols).await?;
-                    }
-                    let log_reader = session.subscribe_logs().await;
-
-                    let Some(mut reader) = log_reader else {
-                        let _ = tx
-                            .send(Message::Routable {
-                                src: reply_src,
-                                dst: reply_dst,
-                                message: RoutableMessage::SubscribeResult {
-                                    agent_id,
-                                    success: false,
-                                    error: Some(ProtocolError::ServerError(
-                                        "Agent not found or ended".to_string(),
-                                    )),
-                                },
-                            })
-                            .await;
-                        return Ok(());
-                    };
-
+            match result {
+                Ok(mut buffer_reader) => {
                     let _ = tx
                         .send(Message::Routable {
                             src: reply_src.clone(),
                             dst: reply_dst.clone(),
-                            message: RoutableMessage::SubscribeResult {
+                            message: RoutableMessage::SubscribeRawResult {
                                 agent_id,
                                 success: true,
                                 error: None,
@@ -463,7 +419,7 @@ async fn handle_routable(
                         })
                         .await;
 
-                    tracing::info!(agent_id = %agent_id, mode = "structured", "subscribed");
+                    tracing::info!(agent_id = %agent_id, mode = "raw", "subscribed");
 
                     let outgoing_tx = connection_tx(&ctx.user_state, &ctx.link_name).await;
                     if let Some(tx) = outgoing_tx {
@@ -479,132 +435,170 @@ async fn handle_routable(
                             )
                         };
 
-                        let stream_span = tracing::info_span!("stream", stream_id, agent_id = %agent_id, mode = "structured");
+                        let stream_span = tracing::info_span!("stream", stream_id, agent_id = %agent_id, mode = "raw");
                         let stream_user_state = ctx.user_state.clone();
-                        tokio::spawn(
-                            async move {
-                                tokio::select! {
-                                    _ = async {
-                                        while let Some(entry) = reader.read().await {
-                                            if tx
-                                                .send(Message::Routable {
-                                                    src: reply_src.clone(),
-                                                    dst: reply_dst.clone(),
-                                                    message: RoutableMessage::StructuredOutput {
-                                                        agent_id,
-                                                        entry,
-                                                    },
-                                                })
-                                                .await
-                                                .is_err()
-                                            {
-                                                return;
-                                            }
+                        tokio::spawn(async move {
+                            tokio::select! {
+                                _ = async {
+                                    while let Some(data) = buffer_reader.read().await {
+                                        if tx
+                                            .send(Message::Routable {
+                                                src: reply_src.clone(),
+                                                dst: reply_dst.clone(),
+                                                message: RoutableMessage::RawOutput { agent_id, data },
+                                            })
+                                            .await
+                                            .is_err()
+                                        {
+                                            return;
                                         }
-                                        let _ = tx.send(Message::Routable {
-                                            src: reply_src.clone(),
-                                            dst: reply_dst.clone(),
-                                            message: RoutableMessage::AgentEnded { agent_id },
-                                        }).await;
-                                    } => {}
-                                    _ = cancel_rx => {
-                                        tracing::debug!("stream cancelled");
                                     }
+                                    let _ = tx.send(Message::Routable {
+                                        src: reply_src.clone(),
+                                        dst: reply_dst.clone(),
+                                        message: RoutableMessage::AgentEnded { agent_id },
+                                    }).await;
+                                } => {}
+                                _ = cancel_rx => {
+                                    tracing::debug!("stream cancelled");
                                 }
-                                cleanup_stream(&stream_user_state, agent_id, stream_id).await;
-                                tracing::debug!("stream ended");
                             }
-                            .instrument(stream_span),
-                        );
+                            cleanup_stream(&stream_user_state, agent_id, stream_id).await;
+                            tracing::debug!("stream ended");
+                        }.instrument(stream_span));
                     }
 
                     Ok(())
                 }
-                SubscribeMode::Raw => {
-                    let result = handle_subscribe(&ctx.user_state, &agent_id, terminal_size).await;
-
-                    match result {
-                        Ok(mut buffer_reader) => {
-                            let _ = tx
-                                .send(Message::Routable {
-                                    src: reply_src.clone(),
-                                    dst: reply_dst.clone(),
-                                    message: RoutableMessage::SubscribeResult {
-                                        agent_id,
-                                        success: true,
-                                        error: None,
-                                    },
-                                })
-                                .await;
-
-                            tracing::info!(agent_id = %agent_id, mode = "raw", "subscribed");
-
-                            let outgoing_tx = connection_tx(&ctx.user_state, &ctx.link_name).await;
-                            if let Some(tx) = outgoing_tx {
-                                let (cancel_tx, cancel_rx) = oneshot::channel::<()>();
-                                let stream_id = {
-                                    let mut us = ctx.user_state.write().await;
-                                    register_stream(
-                                        &mut us,
-                                        agent_id,
-                                        cancel_tx,
-                                        reply_dst.clone(),
-                                        ctx.link_name.clone(),
-                                    )
-                                };
-
-                                let stream_span = tracing::info_span!("stream", stream_id, agent_id = %agent_id, mode = "raw");
-                                let stream_user_state = ctx.user_state.clone();
-                                tokio::spawn(async move {
-                                    tokio::select! {
-                                        _ = async {
-                                            while let Some(data) = buffer_reader.read().await {
-                                                if tx
-                                                    .send(Message::Routable {
-                                                        src: reply_src.clone(),
-                                                        dst: reply_dst.clone(),
-                                                        message: RoutableMessage::Output { agent_id, data },
-                                                    })
-                                                    .await
-                                                    .is_err()
-                                                {
-                                                    return;
-                                                }
-                                            }
-                                            let _ = tx.send(Message::Routable {
-                                                src: reply_src.clone(),
-                                                dst: reply_dst.clone(),
-                                                message: RoutableMessage::AgentEnded { agent_id },
-                                            }).await;
-                                        } => {}
-                                        _ = cancel_rx => {
-                                            tracing::debug!("stream cancelled");
-                                        }
-                                    }
-                                    cleanup_stream(&stream_user_state, agent_id, stream_id).await;
-                                    tracing::debug!("stream ended");
-                                }.instrument(stream_span));
-                            }
-
-                            Ok(())
-                        }
-                        Err(e) => {
-                            let _ = tx
-                                .send(Message::Routable {
-                                    src: reply_src,
-                                    dst: reply_dst,
-                                    message: RoutableMessage::SubscribeResult {
-                                        agent_id,
-                                        success: false,
-                                        error: Some(ProtocolError::ServerError(e.to_string())),
-                                    },
-                                })
-                                .await;
-                            Ok(())
-                        }
-                    }
+                Err(e) => {
+                    let _ = tx
+                        .send(Message::Routable {
+                            src: reply_src,
+                            dst: reply_dst,
+                            message: RoutableMessage::SubscribeRawResult {
+                                agent_id,
+                                success: false,
+                                error: Some(ProtocolError::ServerError(e.to_string())),
+                            },
+                        })
+                        .await;
+                    Ok(())
                 }
             }
+        }
+
+        RoutableMessage::SubscribeStructured { agent_id } => {
+            let (reply_src, reply_dst) =
+                Route::reply(src).expect("incoming message must have valid src");
+            let session = {
+                let us = ctx.user_state.read().await;
+                us.agents.get(&agent_id).cloned()
+            };
+
+            let Some(session) = session else {
+                let _ = tx
+                    .send(Message::Routable {
+                        src: reply_src,
+                        dst: reply_dst,
+                        message: RoutableMessage::SubscribeStructuredResult {
+                            agent_id,
+                            success: false,
+                            error: Some(ProtocolError::ServerError(
+                                "Agent not found or ended".to_string(),
+                            )),
+                        },
+                    })
+                    .await;
+                return Ok(());
+            };
+
+            let log_reader = session.subscribe_logs().await;
+
+            let Some(mut reader) = log_reader else {
+                let _ = tx
+                    .send(Message::Routable {
+                        src: reply_src,
+                        dst: reply_dst,
+                        message: RoutableMessage::SubscribeStructuredResult {
+                            agent_id,
+                            success: false,
+                            error: Some(ProtocolError::ServerError(
+                                "Agent not found or ended".to_string(),
+                            )),
+                        },
+                    })
+                    .await;
+                return Ok(());
+            };
+
+            let _ = tx
+                .send(Message::Routable {
+                    src: reply_src.clone(),
+                    dst: reply_dst.clone(),
+                    message: RoutableMessage::SubscribeStructuredResult {
+                        agent_id,
+                        success: true,
+                        error: None,
+                    },
+                })
+                .await;
+
+            tracing::info!(agent_id = %agent_id, mode = "structured", "subscribed");
+
+            let outgoing_tx = connection_tx(&ctx.user_state, &ctx.link_name).await;
+            if let Some(tx) = outgoing_tx {
+                let (cancel_tx, cancel_rx) = oneshot::channel::<()>();
+                let stream_id = {
+                    let mut us = ctx.user_state.write().await;
+                    register_stream(
+                        &mut us,
+                        agent_id,
+                        cancel_tx,
+                        reply_dst.clone(),
+                        ctx.link_name.clone(),
+                    )
+                };
+
+                let stream_span = tracing::info_span!("stream", stream_id, agent_id = %agent_id, mode = "structured");
+                let stream_user_state = ctx.user_state.clone();
+                tokio::spawn(
+                    async move {
+                        tokio::select! {
+                            _ = async {
+                                while let Some(data) = reader.read().await {
+                                    if tx
+                                        .send(Message::Routable {
+                                            src: reply_src.clone(),
+                                            dst: reply_dst.clone(),
+                                            message: RoutableMessage::StructuredOutput {
+                                                agent_id,
+                                                data,
+                                            },
+                                        })
+                                        .await
+                                        .is_err()
+                                    {
+                                        return;
+                                    }
+                                }
+                                let _ = tx.send(Message::Routable {
+                                    src: reply_src.clone(),
+                                    dst: reply_dst.clone(),
+                                    message: RoutableMessage::AgentEnded { agent_id },
+                                }).await;
+                            } => {}
+                            _ = cancel_rx => {
+                                tracing::debug!("stream cancelled");
+                            }
+                        }
+                        cleanup_stream(&stream_user_state, agent_id, stream_id).await;
+                        tracing::debug!("stream ended");
+                    }
+                    .instrument(stream_span),
+                );
+            }
+
+            Ok(())
         }
 
         RoutableMessage::CreateAgent(req) => {
@@ -634,7 +628,7 @@ async fn handle_routable(
             Ok(())
         }
 
-        RoutableMessage::InputBytes { agent_id, data } => {
+        RoutableMessage::RawInput { agent_id, data } => {
             let us = ctx.user_state.read().await;
             if let Some(session) = us.agents.get(&agent_id) {
                 let _ = session.send_input(data).await;
@@ -642,22 +636,24 @@ async fn handle_routable(
             Ok(())
         }
 
-        RoutableMessage::SubmitInput { agent_id, data } => {
+        RoutableMessage::StructuredInput { agent_id, data } => {
             let us = ctx.user_state.read().await;
             if let Some(session) = us.agents.get(&agent_id) {
-                let _ = session.send_input(data).await;
-                tokio::time::sleep(std::time::Duration::from_millis(20)).await;
-                let _ = session.send_input(vec![b'\r']).await;
-            }
-            Ok(())
-        }
-
-        RoutableMessage::PermissionRequestResponse { agent_id, response } => {
-            let us = ctx.user_state.read().await;
-            if let Some(session) = us.agents.get(&agent_id) {
-                let keystroke = super::routing::permission_response_keystroke(&response);
-                tracing::info!(agent_id = %agent_id, ?response, "sending permission response");
-                let _ = session.send_input(keystroke.to_vec()).await;
+                match data {
+                    crate::message::StructuredInput::Claude(claude_input) => match claude_input {
+                        crate::message::ClaudeStructuredInput::SubmitMessage { data } => {
+                            let _ = session.send_input(data).await;
+                            tokio::time::sleep(Duration::from_millis(20)).await;
+                            let _ = session.send_input(vec![b'\r']).await;
+                        }
+                        crate::message::ClaudeStructuredInput::PermissionResponse(response) => {
+                            let keystroke =
+                                super::routing::permission_response_keystroke(&response);
+                            tracing::info!(agent_id = %agent_id, ?response, "sending permission response");
+                            let _ = session.send_input(keystroke.to_vec()).await;
+                        }
+                    },
+                }
             }
             Ok(())
         }
@@ -678,9 +674,10 @@ async fn handle_routable(
         }
 
         // Response messages that arrived at their destination (empty dst)
-        RoutableMessage::SubscribeResult { .. }
+        RoutableMessage::SubscribeRawResult { .. }
+        | RoutableMessage::SubscribeStructuredResult { .. }
         | RoutableMessage::CreateAgentResult { .. }
-        | RoutableMessage::Output { .. }
+        | RoutableMessage::RawOutput { .. }
         | RoutableMessage::StructuredOutput { .. }
         | RoutableMessage::AgentEnded { .. }
         | RoutableMessage::Error(_) => Ok(()),
@@ -689,16 +686,16 @@ async fn handle_routable(
 
 async fn handle_local(
     tx: &mpsc::Sender<Message>,
-    message: LocalMessage,
+    message: DirectMessage,
     ctx: &ConnectionContext,
 ) -> Result<()> {
     match message {
-        LocalMessage::Shutdown => {
+        DirectMessage::Shutdown => {
             tracing::info!("shutdown requested");
             shutdown_server(&ctx.user_state).await;
 
             let _ = tx
-                .send(Message::Local(LocalMessage::Error {
+                .send(Message::Direct(DirectMessage::Error {
                     message: "Server shutting down".to_string(),
                 }))
                 .await;
@@ -712,7 +709,7 @@ async fn handle_local(
             std::process::exit(0);
         }
 
-        LocalMessage::ConnectToServer { address } => {
+        DirectMessage::ConnectToServer { address } => {
             // block_in_place + block_on breaks the async type recursion cycle:
             // handle_message -> tcp_connect -> connection_loop -> handle_message
             let result = tokio::task::block_in_place(|| {
@@ -725,11 +722,11 @@ async fn handle_local(
                 ))
             });
             let response = match result {
-                Ok(()) => Message::Local(LocalMessage::ConnectToServerResult {
+                Ok(()) => Message::Direct(DirectMessage::ConnectToServerResult {
                     success: true,
                     error: None,
                 }),
-                Err(e) => Message::Local(LocalMessage::ConnectToServerResult {
+                Err(e) => Message::Direct(DirectMessage::ConnectToServerResult {
                     success: false,
                     error: Some(ProtocolError::ServerError(e.to_string())),
                 }),
@@ -738,7 +735,7 @@ async fn handle_local(
             Ok(())
         }
 
-        LocalMessage::Debug => {
+        DirectMessage::Debug => {
             let state = ctx.state.read().await;
             let use_cloud_mode = State::load(&state.config.state_path)
                 .map(|s| s.cloud.use_cloud_mode == Some(true))
@@ -768,25 +765,25 @@ async fn handle_local(
                 config: state.config.clone(),
             };
             let _ = tx
-                .send(Message::Local(LocalMessage::DebugResult { info }))
+                .send(Message::Direct(DirectMessage::DebugResult { info }))
                 .await;
             Ok(())
         }
 
-        LocalMessage::ListAgents => {
+        DirectMessage::ListAgents => {
             let agents = {
                 let us = ctx.user_state.read().await;
                 us.registry.list_all()
             };
             let _ = tx
-                .send(Message::Local(LocalMessage::ListAgentsResult {
+                .send(Message::Direct(DirectMessage::ListAgentsResult {
                     agents: agents.into_iter().collect(),
                 }))
                 .await;
             Ok(())
         }
 
-        LocalMessage::HookEvent { hook } => {
+        DirectMessage::HookEvent { hook } => {
             tracing::debug!("received hook event");
 
             let result = match &hook {
@@ -817,9 +814,11 @@ async fn handle_local(
                     if let Some(session) = session {
                         tracing::debug!(agent_id = %perm_req.session_id, "permission request");
                         session
-                            .write_log(crate::structured_log::StructuredLog::PermissionRequest {
-                                tool: perm_req.tool.clone().into(),
-                            })
+                            .write_log(crate::message::StructuredOutput::Claude(
+                                crate::message::ClaudeStructuredOutput::PermissionRequest {
+                                    tool: perm_req.tool.clone().into(),
+                                },
+                            ))
                             .await;
                         Ok(())
                     } else {
@@ -833,11 +832,11 @@ async fn handle_local(
             };
 
             let response = match result {
-                Ok(()) => Message::Local(LocalMessage::HookEventResult {
+                Ok(()) => Message::Direct(DirectMessage::HookEventResult {
                     success: true,
                     error: None,
                 }),
-                Err(e) => Message::Local(LocalMessage::HookEventResult {
+                Err(e) => Message::Direct(DirectMessage::HookEventResult {
                     success: false,
                     error: Some(e),
                 }),
@@ -848,12 +847,12 @@ async fn handle_local(
 
         // In-band re-authentication for token refresh on established connections.
         // The peer sends Connect with the same link_name and a fresh token.
-        LocalMessage::Connect {
+        DirectMessage::Connect {
             link_name, token, ..
         } => {
             if link_name != ctx.link_name {
                 let _ = tx
-                    .send(Message::Local(LocalMessage::ConnectResponse {
+                    .send(Message::Direct(DirectMessage::ConnectResult {
                         success: false,
                         error: Some(ProtocolError::ServerError(
                             "Link name mismatch on re-auth".to_string(),
@@ -886,7 +885,7 @@ async fn handle_local(
                     Some(t) => t,
                     None => {
                         let _ = tx
-                            .send(Message::Local(LocalMessage::ConnectResponse {
+                            .send(Message::Direct(DirectMessage::ConnectResult {
                                 success: false,
                                 error: Some(ProtocolError::InvalidCredentials),
                             }))
@@ -904,7 +903,7 @@ async fn handle_local(
                         if token_user_id != ctx.user_id {
                             tracing::error!("re-auth user_id mismatch");
                             let _ = tx
-                                .send(Message::Local(LocalMessage::ConnectResponse {
+                                .send(Message::Direct(DirectMessage::ConnectResult {
                                     success: false,
                                     error: Some(ProtocolError::InvalidCredentials),
                                 }))
@@ -916,7 +915,7 @@ async fn handle_local(
                     Err(e) => {
                         tracing::warn!(error = %e, "re-auth token validation failed");
                         let _ = tx
-                            .send(Message::Local(LocalMessage::ConnectResponse {
+                            .send(Message::Direct(DirectMessage::ConnectResult {
                                 success: false,
                                 error: Some(ProtocolError::InvalidCredentials),
                             }))
@@ -927,7 +926,7 @@ async fn handle_local(
             }
 
             let _ = tx
-                .send(Message::Local(LocalMessage::ConnectResponse {
+                .send(Message::Direct(DirectMessage::ConnectResult {
                     success: true,
                     error: None,
                 }))
@@ -935,9 +934,9 @@ async fn handle_local(
             Ok(())
         }
 
-        LocalMessage::AnnounceAgent {
+        DirectMessage::AnnounceAgent {
             agent_id,
-            alias,
+            name,
             command,
             working_dir,
             route: received_route,
@@ -954,9 +953,9 @@ async fn handle_local(
             let mut our_route = received_route.clone();
             our_route.push(&ctx.link_name);
 
-            let info = AgentInfo {
-                agent_id,
-                alias: alias.clone(),
+            let info = Agent {
+                id: agent_id,
+                name: name.clone(),
                 command: command.clone(),
                 working_dir: working_dir.clone(),
                 route: our_route.clone(),
@@ -964,14 +963,14 @@ async fn handle_local(
 
             us.registry.register_remote(info).unwrap();
 
-            tracing::info!(agent_id = %agent_id, alias = ?alias, "stored remote agent");
+            tracing::info!(agent_id = %agent_id, name = ?name, "stored remote agent");
 
             // Propagate to other peers with our stored route
             broadcast_to_peers(
                 &mut us,
-                &LocalMessage::AnnounceAgent {
+                &DirectMessage::AnnounceAgent {
                     agent_id,
-                    alias,
+                    name,
                     command,
                     working_dir,
                     route: our_route,
@@ -982,7 +981,7 @@ async fn handle_local(
             Ok(())
         }
 
-        LocalMessage::WithdrawAgent { agent_id } => {
+        DirectMessage::WithdrawAgent { agent_id } => {
             let mut us = ctx.user_state.write().await;
 
             // Only remove if the stored link matches the sender
@@ -998,7 +997,7 @@ async fn handle_local(
                 // Propagate to other peers
                 broadcast_to_peers(
                     &mut us,
-                    &LocalMessage::WithdrawAgent { agent_id },
+                    &DirectMessage::WithdrawAgent { agent_id },
                     Some(&ctx.link_name),
                 );
             } else {
@@ -1008,7 +1007,7 @@ async fn handle_local(
             Ok(())
         }
 
-        LocalMessage::AnnounceHost {
+        DirectMessage::AnnounceHost {
             id,
             name,
             route: received_route,
@@ -1030,7 +1029,7 @@ async fn handle_local(
             let mut our_route = received_route;
             our_route.push(&ctx.link_name);
 
-            let info = crate::message::HostInfo {
+            let info = crate::message::Host {
                 id,
                 name: name.clone(),
                 route: our_route.clone(),
@@ -1042,7 +1041,7 @@ async fn handle_local(
 
             broadcast_to_peers(
                 &mut us,
-                &LocalMessage::AnnounceHost {
+                &DirectMessage::AnnounceHost {
                     id,
                     name,
                     route: our_route,
@@ -1054,7 +1053,7 @@ async fn handle_local(
             Ok(())
         }
 
-        LocalMessage::WithdrawHost { id } => {
+        DirectMessage::WithdrawHost { id } => {
             let mut us = ctx.user_state.write().await;
 
             let should_remove = us
@@ -1068,7 +1067,7 @@ async fn handle_local(
 
                 broadcast_to_peers(
                     &mut us,
-                    &LocalMessage::WithdrawHost { id },
+                    &DirectMessage::WithdrawHost { id },
                     Some(&ctx.link_name),
                 );
             } else {
@@ -1078,18 +1077,18 @@ async fn handle_local(
             Ok(())
         }
 
-        LocalMessage::ResolveAgent { identifier } => {
+        DirectMessage::ResolveAgent { identifier } => {
             let us = ctx.user_state.read().await;
             let agent = us.registry.resolve(&identifier);
             let _ = tx
-                .send(Message::Local(LocalMessage::ResolveAgentResult { agent }))
+                .send(Message::Direct(DirectMessage::ResolveAgentResult { agent }))
                 .await;
             Ok(())
         }
 
         _ => {
             let _ = tx
-                .send(Message::Local(LocalMessage::Error {
+                .send(Message::Direct(DirectMessage::Error {
                     message: "Unexpected message".to_string(),
                 }))
                 .await;
@@ -1159,10 +1158,9 @@ mod tests {
         let mut dst = Route::from_link("agent1");
         dst.push("nonexistent");
 
-        let msg = RoutableMessage::Subscribe {
+        let msg = RoutableMessage::SubscribeRaw {
             agent_id,
             terminal_size: Some(crate::message::TerminalSize { rows: 24, cols: 80 }),
-            mode: SubscribeMode::Raw,
         };
 
         handle_routable(&tx, src, dst, msg, &ctx, &mut dead_routes)
@@ -1205,7 +1203,7 @@ mod tests {
         let mut dst = Route::from_link("agent1");
         dst.push("stale-link");
 
-        let msg = RoutableMessage::InputBytes {
+        let msg = RoutableMessage::RawInput {
             agent_id,
             data: vec![1, 2, 3],
         };
@@ -1273,7 +1271,7 @@ mod tests {
         let mut dst = Route::from_link("somewhere");
         dst.push("nonexistent");
 
-        let msg = RoutableMessage::Output {
+        let msg = RoutableMessage::RawOutput {
             agent_id,
             data: vec![1, 2, 3],
         };
@@ -1308,7 +1306,7 @@ mod tests {
         let src = Route::from_link("origin");
         let mut dst = Route::from_link("somewhere");
         dst.push("nonexistent");
-        let msg = RoutableMessage::Output {
+        let msg = RoutableMessage::RawOutput {
             agent_id,
             data: vec![1],
         };
@@ -1320,7 +1318,7 @@ mod tests {
         let src = Route::from_link("origin");
         let mut dst = Route::from_link("somewhere");
         dst.push("nonexistent");
-        let msg = RoutableMessage::Output {
+        let msg = RoutableMessage::RawOutput {
             agent_id,
             data: vec![2],
         };
@@ -1354,10 +1352,9 @@ mod tests {
         let mut dst = Route::from_link("final-dest");
         dst.push("nonexistent");
 
-        let msg = RoutableMessage::Subscribe {
+        let msg = RoutableMessage::SubscribeRaw {
             agent_id,
             terminal_size: Some(crate::message::TerminalSize { rows: 24, cols: 80 }),
-            mode: SubscribeMode::Raw,
         };
 
         handle_routable(&tx, src, dst, msg, &ctx, &mut dead_routes)
@@ -1395,7 +1392,7 @@ mod tests {
         let (tx, written) = mock_tx();
 
         // Re-auth with matching link name (non-cloud mode = no token needed)
-        let msg = LocalMessage::Connect {
+        let msg = DirectMessage::Connect {
             link_name: "test-link".to_string(),
             token: None,
             version: crate::message::PROTOCOL_VERSION,
@@ -1407,8 +1404,8 @@ mod tests {
 
         let msgs = written.lock().await;
         assert_eq!(msgs.len(), 1);
-        let Message::Local(LocalMessage::ConnectResponse { success, error }) = &msgs[0] else {
-            panic!("expected ConnectResponse, got {:?}", msgs[0]);
+        let Message::Direct(DirectMessage::ConnectResult { success, error }) = &msgs[0] else {
+            panic!("expected ConnectResult, got {:?}", msgs[0]);
         };
         assert!(success);
         assert!(error.is_none());
@@ -1421,7 +1418,7 @@ mod tests {
         let (tx, written) = mock_tx();
 
         // Re-auth with wrong link name
-        let msg = LocalMessage::Connect {
+        let msg = DirectMessage::Connect {
             link_name: "wrong-link".to_string(),
             token: None,
             version: crate::message::PROTOCOL_VERSION,
@@ -1433,8 +1430,8 @@ mod tests {
 
         let msgs = written.lock().await;
         assert_eq!(msgs.len(), 1);
-        let Message::Local(LocalMessage::ConnectResponse { success, error, .. }) = &msgs[0] else {
-            panic!("expected ConnectResponse, got {:?}", msgs[0]);
+        let Message::Direct(DirectMessage::ConnectResult { success, error, .. }) = &msgs[0] else {
+            panic!("expected ConnectResult, got {:?}", msgs[0]);
         };
         assert!(!success);
         assert!(error.is_some());
@@ -1447,9 +1444,9 @@ mod tests {
         let (tx, _written) = mock_tx();
 
         let agent_id = Uuid::new_v4();
-        let msg = LocalMessage::AnnounceAgent {
+        let msg = DirectMessage::AnnounceAgent {
             agent_id,
-            alias: Some("remote-test".to_string()),
+            name: Some("remote-test".to_string()),
             command: "claude".to_string(),
             working_dir: PathBuf::from("/tmp"),
             route: Route::empty(),
@@ -1460,7 +1457,7 @@ mod tests {
         let us = user_state.read().await;
         assert!(us.registry.contains(&agent_id));
         let entry = us.registry.get(&agent_id).unwrap();
-        assert_eq!(entry.alias, Some("remote-test".to_string()));
+        assert_eq!(entry.name, Some("remote-test".to_string()));
         assert!(entry.is_remote());
         let mut route = entry.route.clone();
         assert_eq!(route.pop(), Some("test-link".to_string()));
@@ -1474,9 +1471,9 @@ mod tests {
         let (tx, _written) = mock_tx();
 
         let agent_id = Uuid::new_v4();
-        let msg = LocalMessage::AnnounceAgent {
+        let msg = DirectMessage::AnnounceAgent {
             agent_id,
-            alias: None,
+            name: None,
             command: "bash".to_string(),
             working_dir: PathBuf::from("/home"),
             route: Route::from_link("host-a"),
@@ -1505,14 +1502,14 @@ mod tests {
             let (event_tx, _rx) = mpsc::channel(16);
             let req = crate::message::CreateAgentRequest {
                 agent_id,
-                alias: Some("local".to_string()),
+                name: Some("local".to_string()),
                 agent_type: crate::message::AgentType::TestAgent("/bin/cat".to_string()),
                 working_dir: PathBuf::from("/tmp"),
                 terminal_size: Some(crate::message::TerminalSize { rows: 24, cols: 80 }),
             };
             let session =
                 crate::session::LocalAgentSession::new(&req, event_tx, LOCAL_USER_ID).unwrap();
-            let info = session.to_agent_info();
+            let info = session.to_agent();
             us.agents.insert(agent_id, Arc::new(session));
             us.registry.register_local(info).unwrap();
         }
@@ -1521,9 +1518,9 @@ mod tests {
         let (tx, _written) = mock_tx();
 
         // Try to announce same agent_id from remote
-        let msg = LocalMessage::AnnounceAgent {
+        let msg = DirectMessage::AnnounceAgent {
             agent_id,
-            alias: Some("remote".to_string()),
+            name: Some("remote".to_string()),
             command: "claude".to_string(),
             working_dir: PathBuf::from("/remote"),
             route: Route::empty(),
@@ -1545,9 +1542,9 @@ mod tests {
         {
             let mut us = user_state.write().await;
             us.registry
-                .register_remote(AgentInfo {
-                    agent_id,
-                    alias: None,
+                .register_remote(Agent {
+                    id: agent_id,
+                    name: None,
                     command: "bash".to_string(),
                     working_dir: PathBuf::from("/tmp"),
                     route: Route::from_link("test-link"),
@@ -1558,7 +1555,7 @@ mod tests {
         let ctx = test_ctx(state, user_state.clone());
         let (tx, _written) = mock_tx();
 
-        let msg = LocalMessage::WithdrawAgent { agent_id };
+        let msg = DirectMessage::WithdrawAgent { agent_id };
         handle_local(&tx, msg, &ctx).await.unwrap();
 
         let us = user_state.read().await;
@@ -1573,9 +1570,9 @@ mod tests {
         {
             let mut us = user_state.write().await;
             us.registry
-                .register_remote(AgentInfo {
-                    agent_id,
-                    alias: None,
+                .register_remote(Agent {
+                    id: agent_id,
+                    name: None,
                     command: "bash".to_string(),
                     working_dir: PathBuf::from("/tmp"),
                     route: Route::from_link("other-link"),
@@ -1587,7 +1584,7 @@ mod tests {
         let (tx, _written) = mock_tx();
 
         // Withdraw from "test-link" but agent is stored from "other-link"
-        let msg = LocalMessage::WithdrawAgent { agent_id };
+        let msg = DirectMessage::WithdrawAgent { agent_id };
         handle_local(&tx, msg, &ctx).await.unwrap();
 
         // Should still be there (link mismatch)
@@ -1604,9 +1601,9 @@ mod tests {
         let agent_id = Uuid::new_v4();
 
         // First announce
-        let msg = LocalMessage::AnnounceAgent {
+        let msg = DirectMessage::AnnounceAgent {
             agent_id,
-            alias: Some("first".to_string()),
+            name: Some("first".to_string()),
             command: "bash".to_string(),
             working_dir: PathBuf::from("/first"),
             route: Route::empty(),
@@ -1614,9 +1611,9 @@ mod tests {
         handle_local(&tx, msg, &ctx).await.unwrap();
 
         // Second announce with same agent_id
-        let msg = LocalMessage::AnnounceAgent {
+        let msg = DirectMessage::AnnounceAgent {
             agent_id,
-            alias: Some("second".to_string()),
+            name: Some("second".to_string()),
             command: "claude".to_string(),
             working_dir: PathBuf::from("/second"),
             route: Route::empty(),
@@ -1625,21 +1622,21 @@ mod tests {
 
         let us = user_state.read().await;
         let entry = us.registry.get(&agent_id).unwrap();
-        assert_eq!(entry.alias, Some("second".to_string()));
+        assert_eq!(entry.name, Some("second".to_string()));
         assert_eq!(entry.working_dir, PathBuf::from("/second"));
     }
 
     #[tokio::test]
-    async fn resolve_agent_by_alias() {
+    async fn resolve_agent_by_name() {
         let (state, user_state) = test_state().await;
 
         let agent_id = Uuid::new_v4();
         {
             let mut us = user_state.write().await;
             us.registry
-                .register_remote(AgentInfo {
-                    agent_id,
-                    alias: Some("my-agent".to_string()),
+                .register_remote(Agent {
+                    id: agent_id,
+                    name: Some("my-agent".to_string()),
                     command: "claude".to_string(),
                     working_dir: PathBuf::from("/tmp"),
                     route: Route::from_link("peer-a"),
@@ -1650,7 +1647,7 @@ mod tests {
         let ctx = test_ctx(state, user_state);
         let (tx, written) = mock_tx();
 
-        let msg = LocalMessage::ResolveAgent {
+        let msg = DirectMessage::ResolveAgent {
             identifier: "my-agent".to_string(),
         };
         handle_local(&tx, msg, &ctx).await.unwrap();
@@ -1659,11 +1656,11 @@ mod tests {
 
         let msgs = written.lock().await;
         assert_eq!(msgs.len(), 1);
-        let Message::Local(LocalMessage::ResolveAgentResult { agent }) = &msgs[0] else {
+        let Message::Direct(DirectMessage::ResolveAgentResult { agent }) = &msgs[0] else {
             panic!("expected ResolveAgentResult, got {:?}", msgs[0]);
         };
         assert!(agent.is_some());
-        assert_eq!(agent.as_ref().unwrap().agent_id, agent_id);
+        assert_eq!(agent.as_ref().unwrap().id, agent_id);
     }
 
     #[tokio::test]
@@ -1672,7 +1669,7 @@ mod tests {
         let ctx = test_ctx(state, user_state);
         let (tx, written) = mock_tx();
 
-        let msg = LocalMessage::ResolveAgent {
+        let msg = DirectMessage::ResolveAgent {
             identifier: "nonexistent".to_string(),
         };
         handle_local(&tx, msg, &ctx).await.unwrap();
@@ -1681,7 +1678,7 @@ mod tests {
 
         let msgs = written.lock().await;
         assert_eq!(msgs.len(), 1);
-        let Message::Local(LocalMessage::ResolveAgentResult { agent }) = &msgs[0] else {
+        let Message::Direct(DirectMessage::ResolveAgentResult { agent }) = &msgs[0] else {
             panic!("expected ResolveAgentResult, got {:?}", msgs[0]);
         };
         assert!(agent.is_none());
@@ -1694,7 +1691,7 @@ mod tests {
         let (tx, _written) = mock_tx();
 
         let host_id = Uuid::new_v4();
-        let msg = LocalMessage::AnnounceHost {
+        let msg = DirectMessage::AnnounceHost {
             id: host_id,
             name: "remote-laptop".to_string(),
             route: Route::empty(),
@@ -1721,7 +1718,7 @@ mod tests {
         let (tx, _written) = mock_tx();
 
         let host_id = Uuid::new_v4();
-        let msg = LocalMessage::AnnounceHost {
+        let msg = DirectMessage::AnnounceHost {
             id: host_id,
             name: "far-server".to_string(),
             route: Route::from_link("peer-a"),
@@ -1751,7 +1748,7 @@ mod tests {
         let ctx = test_ctx(state, user_state.clone());
         let (tx, _written) = mock_tx();
 
-        let msg = LocalMessage::AnnounceHost {
+        let msg = DirectMessage::AnnounceHost {
             id: host_id,
             name: "myself".to_string(),
             route: Route::from_link("cloud"),
@@ -1773,7 +1770,7 @@ mod tests {
             let mut us = user_state.write().await;
             us.hosts.insert(
                 host_id,
-                crate::message::HostInfo {
+                crate::message::Host {
                     id: host_id,
                     name: "remote".to_string(),
                     route: Route::from_link("test-link"),
@@ -1785,7 +1782,7 @@ mod tests {
         let ctx = test_ctx(state, user_state.clone());
         let (tx, _written) = mock_tx();
 
-        let msg = LocalMessage::WithdrawHost { id: host_id };
+        let msg = DirectMessage::WithdrawHost { id: host_id };
         handle_local(&tx, msg, &ctx).await.unwrap();
 
         let us = user_state.read().await;
@@ -1801,7 +1798,7 @@ mod tests {
             let mut us = user_state.write().await;
             us.hosts.insert(
                 host_id,
-                crate::message::HostInfo {
+                crate::message::Host {
                     id: host_id,
                     name: "remote".to_string(),
                     route: Route::from_link("other-link"),
@@ -1814,7 +1811,7 @@ mod tests {
         let (tx, _written) = mock_tx();
 
         // Withdraw from "test-link" but host is stored from "other-link"
-        let msg = LocalMessage::WithdrawHost { id: host_id };
+        let msg = DirectMessage::WithdrawHost { id: host_id };
         handle_local(&tx, msg, &ctx).await.unwrap();
 
         // Should still be there (link mismatch)

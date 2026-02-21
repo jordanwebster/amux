@@ -1,4 +1,4 @@
-use crate::agent_registry::AgentInfo;
+use crate::agent_registry::Agent;
 use crate::buffer::{MultiplexBuffer, MultiplexReader};
 use crate::error::{AmuxError, Result};
 use crate::message::{AgentType, CreateAgentRequest};
@@ -32,8 +32,8 @@ pub struct LocalAgentSession {
     /// Unique identifier (UUID)
     pub agent_id: Uuid,
 
-    /// Human-readable alias (from -t flag)
-    pub alias: Option<String>,
+    /// Human-readable name (from -t flag)
+    pub name: Option<String>,
 
     /// Command used to spawn this agent
     pub command: String,
@@ -188,7 +188,7 @@ impl LocalAgentSession {
 
         Ok(Self {
             agent_id: req.agent_id,
-            alias: req.alias.clone(),
+            name: req.name.clone(),
             command: command.to_string(),
             working_dir: req.working_dir.clone(),
             pty_master: master,
@@ -281,17 +281,17 @@ impl LocalAgentSession {
         self.log_buffer.subscribe().await
     }
 
-    /// Write a structured log entry directly (not from transcript).
+    /// Write a structured output entry directly (not from transcript).
     /// Used for permission requests and other events that don't come from the transcript.
-    pub async fn write_log(&self, entry: crate::structured_log::StructuredLog) {
+    pub async fn write_log(&self, entry: crate::message::StructuredOutput) {
         self.log_buffer.write(entry).await;
     }
 
-    /// Convert to AgentInfo for listing
-    pub fn to_agent_info(&self) -> AgentInfo {
-        AgentInfo {
-            agent_id: self.agent_id,
-            alias: self.alias.clone(),
+    /// Convert to Agent for listing
+    pub fn to_agent(&self) -> Agent {
+        Agent {
+            id: self.agent_id,
+            name: self.name.clone(),
             command: self.command.clone(),
             working_dir: self.working_dir.clone(),
             route: Route::empty(),
