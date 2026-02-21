@@ -4,7 +4,7 @@ use super::{LOCAL_USER_ID, ServerState, ServerUserState, get_or_create_user_stat
 use crate::cloud::{CloudConnection, CloudError};
 use crate::config::Config;
 use crate::error::AmuxError;
-use crate::message::{DirectMessage, Message};
+use crate::message::{Command, Message, ShutdownReason};
 use crate::state::State;
 use crate::transport::TransportSplit;
 use std::sync::Arc;
@@ -52,18 +52,14 @@ pub(super) fn establish_cloud_connection(
                     server_version,
                     client_version,
                 }) => {
-                    let reason = format!(
-                        "amux upgrade required (protocol v{}, client v{})",
-                        server_version, client_version
-                    );
-                    tracing::error!(reason = %reason, "cloud version mismatch");
+                    tracing::error!(server_version, client_version, "cloud version mismatch");
                     // Notify all attached terminals to exit cleanly
                     let us = user_state.read().await;
                     for (link, tx) in &us.routes {
                         if !us.peer_links.contains(link) {
-                            let _ = tx.try_send(Message::Direct(DirectMessage::ServerShutdown {
-                                reason: reason.clone(),
-                            }));
+                            let _ = tx.try_send(Message::Command(Command::ShutdownNotification(
+                                ShutdownReason::ProtocolMismatch,
+                            )));
                         }
                     }
                     drop(us);
@@ -178,6 +174,7 @@ async fn run_cloud_connection(
         user_id: LOCAL_USER_ID,
         event_tx,
         link_name: link_name.clone(),
+        is_local: false,
     };
 
     let result = connection_loop(incoming_rx, outgoing_tx, ctx, Some(token_refresh))

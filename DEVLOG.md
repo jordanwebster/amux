@@ -38,6 +38,34 @@ One paragraph describing what was done.
 
 ---
 
+## 2026-02-21: Command enum + ShutdownNotification (protocol v3)
+
+### Summary
+Separated CLI-only messages from peer-to-peer protocol messages. Added `Command` enum for CLI commands (ListAgents, Shutdown, Debug, etc.) that must not be accepted from remote peers. Added structured `ShutdownNotification(ShutdownReason)` replacing the string-based `ServerShutdown`. Bumped `PROTOCOL_VERSION` from 2 to 3.
+
+### Changes
+- `src/message.rs` — Added `ShutdownReason` enum (ProtocolMismatch, UserRequested) with Display impl. Added `Command` enum with all CLI-only variants. Added `Message::Command(Command)` variant. Trimmed `DirectMessage` to only peer-to-peer messages (Connect, ConnectResult, Announce*, Withdraw*, Error). Bumped PROTOCOL_VERSION to 3. Updated 3 tests.
+- `src/server/connection.rs` — Added `is_local: bool` to `ConnectionContext`. Added `Message::Command` arm to `msg_type_label` and `handle_message` (rejects remote commands). Created `handle_command` function (extracted from `handle_local`). Simplified `handle_local` catch-all. Updated 3 tests.
+- `src/server/accept.rs` — Passed `is_local` to `ConnectionContext` in `accept_connection` and `tcp_connect`.
+- `src/server/cloud.rs` — Passed `is_local: false` to `ConnectionContext`. Replaced `DirectMessage::ServerShutdown` with `Command::ShutdownNotification(ShutdownReason::ProtocolMismatch)`.
+- `src/client.rs` — All CLI sends/receives changed from `DirectMessage` to `Command` variants. Changed `shutdown_reason` from `Option<String>` to `Option<ShutdownReason>`.
+- `src/hooks.rs` — Changed `HookEvent`/`HookEventResult` to `Command::HandleHook`/`Command::HandleHookResult`.
+
+### Decisions Made
+- CLI commands in `Command` enum are rejected at the `handle_message` level for remote connections (is_local=false), providing defense-in-depth against protocol abuse.
+- `ShutdownReason` uses an enum rather than strings for type safety and Display impl.
+- Dashboard TypeScript files left as-is (will be updated separately).
+
+### Verification
+- `cargo check && cargo fmt && cargo clippy --workspace --all-targets -- -D warnings && cargo test` — all 119 tests pass, zero warnings.
+- `cargo build --workspace && cargo run -p e2e-runner -- run` — all 10 E2E tests pass (attach test has pre-existing flakiness under parallel load).
+
+### Next Steps
+- Phase 2: Error reporting cleanup (DirectMessage::Error migration)
+- Dashboard TypeScript alignment with new protocol
+
+---
+
 ## 2026-02-21: Protocol restructure — clean naming and agent-type-keyed messages
 
 ### Summary

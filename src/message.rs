@@ -20,7 +20,7 @@ pub struct Host {
 }
 
 /// Protocol version for Connect handshake. Increment on breaking changes.
-pub const PROTOCOL_VERSION: u32 = 2;
+pub const PROTOCOL_VERSION: u32 = 3;
 
 /// Type of agent to spawn
 #[derive(Serialize, Deserialize, Debug, Clone, PartialEq)]
@@ -335,6 +335,22 @@ impl std::fmt::Display for ProtocolError {
     }
 }
 
+/// Reason for server shutdown notification
+#[derive(Serialize, Deserialize, Debug, Clone, PartialEq)]
+pub enum ShutdownReason {
+    ProtocolMismatch,
+    UserRequested,
+}
+
+impl std::fmt::Display for ShutdownReason {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            ShutdownReason::ProtocolMismatch => write!(f, "amux upgrade required"),
+            ShutdownReason::UserRequested => write!(f, "server shutting down"),
+        }
+    }
+}
+
 /// Terminal dimensions for PTY creation and resizing
 #[derive(Serialize, Deserialize, Debug, Clone, Copy, PartialEq, Eq)]
 pub struct TerminalSize {
@@ -412,11 +428,19 @@ pub enum RoutableMessage {
 }
 
 /// Messages that are handled directly by the receiving server (no routing).
+/// Used for peer-to-peer protocol messages (Connect, Announce, Withdraw).
 #[derive(Serialize, Deserialize, Debug, Clone)]
 pub enum DirectMessage {
-    ListAgents,
-    ListAgentsResult {
-        agents: Vec<Agent>,
+    Connect {
+        link_name: String,
+        #[serde(skip_serializing_if = "Option::is_none", default)]
+        token: Option<String>,
+        #[serde(default)]
+        version: u32,
+    },
+    ConnectResult {
+        success: bool,
+        error: Option<ProtocolError>,
     },
     AnnounceAgent {
         agent_id: Uuid,
@@ -440,32 +464,14 @@ pub enum DirectMessage {
     Error {
         message: String,
     },
-    Shutdown,
-    Debug,
-    ConnectToServer {
-        address: String,
-    },
-    ConnectToServerResult {
-        success: bool,
-        error: Option<ProtocolError>,
-    },
-    Connect {
-        link_name: String,
-        #[serde(skip_serializing_if = "Option::is_none", default)]
-        token: Option<String>,
-        #[serde(default)]
-        version: u32,
-    },
-    ConnectResult {
-        success: bool,
-        error: Option<ProtocolError>,
-    },
-    HookEvent {
-        hook: Hook,
-    },
-    HookEventResult {
-        success: bool,
-        error: Option<ProtocolError>,
+}
+
+/// CLI-only commands that must not be accepted from remote peers.
+#[derive(Serialize, Deserialize, Debug, Clone)]
+pub enum Command {
+    ListAgents,
+    ListAgentsResult {
+        agents: Vec<Agent>,
     },
     ResolveAgent {
         identifier: String,
@@ -473,11 +479,25 @@ pub enum DirectMessage {
     ResolveAgentResult {
         agent: Option<Agent>,
     },
+    Shutdown,
+    ShutdownNotification(ShutdownReason),
+    Debug,
     DebugResult {
         info: ServerDebugInfo,
     },
-    ServerShutdown {
-        reason: String,
+    ConnectToServer {
+        address: String,
+    },
+    ConnectToServerResult {
+        success: bool,
+        error: Option<ProtocolError>,
+    },
+    HandleHook {
+        hook: Hook,
+    },
+    HandleHookResult {
+        success: bool,
+        error: Option<ProtocolError>,
     },
 }
 
@@ -490,6 +510,7 @@ pub enum Message {
         message: RoutableMessage,
     },
     Direct(DirectMessage),
+    Command(Command),
 }
 
 /// Debug information about server state (aggregated across all users)
@@ -534,13 +555,10 @@ mod tests {
 
     #[test]
     fn test_message_roundtrip_list_agents() {
-        let msg = Message::Direct(DirectMessage::ListAgents);
+        let msg = Message::Command(Command::ListAgents);
         let encoded = msg.encode().unwrap();
         let decoded = Message::decode(&encoded).unwrap();
-        assert!(matches!(
-            decoded,
-            Message::Direct(DirectMessage::ListAgents)
-        ));
+        assert!(matches!(decoded, Message::Command(Command::ListAgents)));
     }
 
     #[test]
@@ -624,11 +642,11 @@ mod tests {
             session_id: test_uuid,
             transcript_path: "/tmp/transcript.jsonl".to_string(),
         }));
-        let msg = Message::Direct(DirectMessage::HookEvent { hook });
+        let msg = Message::Command(Command::HandleHook { hook });
         let encoded = msg.encode().unwrap();
         let decoded = Message::decode(&encoded).unwrap();
-        let Message::Direct(DirectMessage::HookEvent { hook: decoded_hook }) = decoded else {
-            panic!("Expected HookEvent");
+        let Message::Command(Command::HandleHook { hook: decoded_hook }) = decoded else {
+            panic!("Expected HandleHook");
         };
         match decoded_hook {
             Hook::Claude(ClaudeHook::SessionStart(session)) => {
@@ -822,17 +840,28 @@ mod tests {
     }
 
     #[test]
-    fn test_message_roundtrip_server_shutdown() {
-        let msg = Message::Direct(DirectMessage::ServerShutdown {
-            reason: "amux upgrade required".to_string(),
-        });
+    fn test_message_roundtrip_shutdown_notification() {
+        // Test ProtocolMismatch reason
+        let msg = Message::Command(Command::ShutdownNotification(
+            ShutdownReason::ProtocolMismatch,
+        ));
         let encoded = msg.encode().unwrap();
         let decoded = Message::decode(&encoded).unwrap();
-        if let Message::Direct(DirectMessage::ServerShutdown { reason }) = decoded {
-            assert_eq!(reason, "amux upgrade required");
-        } else {
-            panic!("Expected ServerShutdown");
-        }
+        let Message::Command(Command::ShutdownNotification(reason)) = decoded else {
+            panic!("Expected ShutdownNotification");
+        };
+        assert_eq!(reason, ShutdownReason::ProtocolMismatch);
+        assert_eq!(reason.to_string(), "amux upgrade required");
+
+        // Test UserRequested reason
+        let msg = Message::Command(Command::ShutdownNotification(ShutdownReason::UserRequested));
+        let encoded = msg.encode().unwrap();
+        let decoded = Message::decode(&encoded).unwrap();
+        let Message::Command(Command::ShutdownNotification(reason)) = decoded else {
+            panic!("Expected ShutdownNotification");
+        };
+        assert_eq!(reason, ShutdownReason::UserRequested);
+        assert_eq!(reason.to_string(), "server shutting down");
     }
 
     #[test]

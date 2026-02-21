@@ -1,6 +1,7 @@
 use crate::config::Config;
 use crate::message::{
-    ClaudeHook, ClaudePermissionTool, DirectMessage, Hook, Message, PROTOCOL_VERSION, ProtocolError,
+    ClaudeHook, ClaudePermissionTool, Command, DirectMessage, Hook, Message, PROTOCOL_VERSION,
+    ProtocolError,
 };
 use crate::route::generate_hook_link;
 use crate::transport::{Transport, UnixTransport};
@@ -150,9 +151,9 @@ async fn send_hook_event_to_server_inner(
         }
     }
 
-    // Send HookEvent
+    // Send HandleHook command
     transport
-        .write_message(&Message::Direct(DirectMessage::HookEvent { hook }))
+        .write_message(&Message::Command(Command::HandleHook { hook }))
         .await
         .map_err(io::Error::other)?;
 
@@ -160,11 +161,11 @@ async fn send_hook_event_to_server_inner(
     let ack = transport.read_message().await.map_err(io::Error::other)?;
 
     match ack {
-        Message::Direct(DirectMessage::HookEventResult { success: true, .. }) => {
+        Message::Command(Command::HandleHookResult { success: true, .. }) => {
             tracing::debug!("hook acknowledged");
             Ok(())
         }
-        Message::Direct(DirectMessage::HookEventResult {
+        Message::Command(Command::HandleHookResult {
             success: false,
             error,
         }) => {

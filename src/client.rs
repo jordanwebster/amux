@@ -2,8 +2,8 @@ use crate::config::Config;
 use crate::error::AmuxError::AgentNotFound;
 use crate::error::{AmuxError, Result};
 use crate::message::{
-    AgentType, CreateAgentRequest, DirectMessage, Message, PROTOCOL_VERSION, ProtocolError,
-    RoutableMessage, ServerDebugInfo, TerminalSize,
+    AgentType, Command, CreateAgentRequest, DirectMessage, Message, PROTOCOL_VERSION,
+    ProtocolError, RoutableMessage, ServerDebugInfo, ShutdownReason, TerminalSize,
 };
 use crate::route::{Route, generate_terminal_link};
 use crate::transport::{Transport, UnixTransport};
@@ -198,17 +198,17 @@ pub async fn attach(target: Option<&str>, config: &Config) -> Result<()> {
         Some(identifier) => {
             // Use ResolveAgent to resolve the identifier server-side
             transport
-                .write_message(&Message::Direct(DirectMessage::ResolveAgent {
+                .write_message(&Message::Command(Command::ResolveAgent {
                     identifier: identifier.to_string(),
                 }))
                 .await?;
 
             let response = transport.read_message().await?;
             match response {
-                Message::Direct(DirectMessage::ResolveAgentResult {
+                Message::Command(Command::ResolveAgentResult {
                     agent: Some(info), ..
                 }) => (info.route, info.id),
-                Message::Direct(DirectMessage::ResolveAgentResult { agent: None }) => {
+                Message::Command(Command::ResolveAgentResult { agent: None }) => {
                     return Err(AgentNotFound(identifier.to_string()));
                 }
                 Message::Direct(DirectMessage::Error { message }) => {
@@ -222,17 +222,15 @@ pub async fn attach(target: Option<&str>, config: &Config) -> Result<()> {
         None => {
             // No target — list agents and pick the first one
             transport
-                .write_message(&Message::Direct(DirectMessage::ListAgents))
+                .write_message(&Message::Command(Command::ListAgents))
                 .await?;
 
             let response = transport.read_message().await?;
             match response {
-                Message::Direct(DirectMessage::ListAgentsResult { agents })
-                    if !agents.is_empty() =>
-                {
+                Message::Command(Command::ListAgentsResult { agents }) if !agents.is_empty() => {
                     (agents[0].route.clone(), agents[0].id)
                 }
-                Message::Direct(DirectMessage::ListAgentsResult { .. }) => {
+                Message::Command(Command::ListAgentsResult { .. }) => {
                     eprintln!("No agents running. Use 'amux new-agent' to create one.");
                     return Ok(());
                 }
@@ -334,12 +332,12 @@ pub async fn list_agents(config: &Config) -> Result<()> {
     };
 
     transport
-        .write_message(&Message::Direct(DirectMessage::ListAgents))
+        .write_message(&Message::Command(Command::ListAgents))
         .await?;
 
     let response = transport.read_message().await?;
     match response {
-        Message::Direct(DirectMessage::ListAgentsResult { mut agents }) => {
+        Message::Command(Command::ListAgentsResult { mut agents }) => {
             if agents.is_empty() {
                 println!("No agents running.");
             } else {
@@ -395,12 +393,19 @@ pub async fn kill_server(config: &Config) -> Result<()> {
     };
 
     transport
-        .write_message(&Message::Direct(DirectMessage::Shutdown))
+        .write_message(&Message::Command(Command::Shutdown))
         .await?;
 
     // Wait for server acknowledgment before closing connection
-    // TODO: Server should gracefully end agent sessions (send Ctrl+C) before exiting
-    let _ = transport.read_message().await;
+    match transport.read_message().await {
+        Ok(Message::Command(Command::ShutdownNotification(ShutdownReason::UserRequested))) => {}
+        Ok(other) => {
+            tracing::warn!(?other, "unexpected shutdown response");
+        }
+        Err(e) => {
+            tracing::warn!(error = %e, "error reading shutdown response");
+        }
+    }
 
     println!("Server shutting down.");
     Ok(())
@@ -412,7 +417,7 @@ pub async fn connect(address: &str, config: &Config) -> Result<()> {
 
     // Send ConnectToServer message to local server
     transport
-        .write_message(&Message::Direct(DirectMessage::ConnectToServer {
+        .write_message(&Message::Command(Command::ConnectToServer {
             address: address.to_string(),
         }))
         .await?;
@@ -420,11 +425,11 @@ pub async fn connect(address: &str, config: &Config) -> Result<()> {
     // Wait for result
     let response = transport.read_message().await?;
     match response {
-        Message::Direct(DirectMessage::ConnectToServerResult { success: true, .. }) => {
+        Message::Command(Command::ConnectToServerResult { success: true, .. }) => {
             println!("Connected to {}", address);
             Ok(())
         }
-        Message::Direct(DirectMessage::ConnectToServerResult {
+        Message::Command(Command::ConnectToServerResult {
             success: false,
             error,
         }) => {
@@ -451,12 +456,12 @@ pub async fn debug(config: &Config) -> Result<ServerDebugInfo> {
     };
 
     transport
-        .write_message(&Message::Direct(DirectMessage::Debug))
+        .write_message(&Message::Command(Command::Debug))
         .await?;
 
     let response = transport.read_message().await?;
     match response {
-        Message::Direct(DirectMessage::DebugResult { info }) => Ok(info),
+        Message::Command(Command::DebugResult { info }) => Ok(info),
         Message::Direct(DirectMessage::Error { message }) => Err(AmuxError::ServerError(message)),
         _ => Err(AmuxError::InvalidMessage),
     }
@@ -587,7 +592,7 @@ async fn run_attached(
 
     let mut detached = false;
     let mut error: Option<AmuxError> = None;
-    let mut shutdown_reason: Option<String> = None;
+    let mut shutdown_reason: Option<ShutdownReason> = None;
 
     // Main loop: select on stdin channel and server messages
     loop {
@@ -635,7 +640,7 @@ async fn run_attached(
                         error = Some(AmuxError::ServerError(route_error.to_string()));
                         break;
                     }
-                    Ok(Message::Direct(DirectMessage::ServerShutdown { reason })) => {
+                    Ok(Message::Command(Command::ShutdownNotification(reason))) => {
                         tracing::info!(reason = %reason, "server shutdown");
                         shutdown_reason = Some(reason);
                         break;

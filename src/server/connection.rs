@@ -7,7 +7,8 @@ use crate::agent_registry::Agent;
 use crate::cloud::TokenRefreshState;
 use crate::error::{AmuxError, Result};
 use crate::message::{
-    ClaudeHook, DirectMessage, Hook, Message, ProtocolError, RoutableMessage, ServerDebugInfo,
+    ClaudeHook, Command, DirectMessage, Hook, Message, ProtocolError, RoutableMessage,
+    ServerDebugInfo, ShutdownReason,
 };
 use crate::route::Route;
 use crate::session::SessionEvent;
@@ -37,26 +38,28 @@ fn msg_type_label(msg: &Message) -> &'static str {
             RoutableMessage::AgentEnded { .. } => "AgentEnded",
             RoutableMessage::Error(_) => "Error",
         },
-        Message::Direct(local) => match local {
+        Message::Direct(direct) => match direct {
             DirectMessage::Connect { .. } => "Connect",
             DirectMessage::ConnectResult { .. } => "ConnectResult",
-            DirectMessage::ListAgents => "ListAgents",
-            DirectMessage::ListAgentsResult { .. } => "ListAgentsResult",
-            DirectMessage::Shutdown => "Shutdown",
-            DirectMessage::HookEvent { .. } => "HookEvent",
-            DirectMessage::HookEventResult { .. } => "HookEventResult",
-            DirectMessage::ConnectToServer { .. } => "ConnectToServer",
-            DirectMessage::ConnectToServerResult { .. } => "ConnectToServerResult",
-            DirectMessage::Debug => "Debug",
-            DirectMessage::DebugResult { .. } => "DebugResult",
             DirectMessage::AnnounceAgent { .. } => "AnnounceAgent",
             DirectMessage::WithdrawAgent { .. } => "WithdrawAgent",
             DirectMessage::AnnounceHost { .. } => "AnnounceHost",
             DirectMessage::WithdrawHost { .. } => "WithdrawHost",
-            DirectMessage::ResolveAgent { .. } => "ResolveAgent",
-            DirectMessage::ResolveAgentResult { .. } => "ResolveAgentResult",
             DirectMessage::Error { .. } => "Error",
-            DirectMessage::ServerShutdown { .. } => "ServerShutdown",
+        },
+        Message::Command(cmd) => match cmd {
+            Command::ListAgents => "ListAgents",
+            Command::ListAgentsResult { .. } => "ListAgentsResult",
+            Command::ResolveAgent { .. } => "ResolveAgent",
+            Command::ResolveAgentResult { .. } => "ResolveAgentResult",
+            Command::Shutdown => "Shutdown",
+            Command::ShutdownNotification(_) => "ShutdownNotification",
+            Command::Debug => "Debug",
+            Command::DebugResult { .. } => "DebugResult",
+            Command::ConnectToServer { .. } => "ConnectToServer",
+            Command::ConnectToServerResult { .. } => "ConnectToServerResult",
+            Command::HandleHook { .. } => "HandleHook",
+            Command::HandleHookResult { .. } => "HandleHookResult",
         },
     }
 }
@@ -68,6 +71,7 @@ pub(super) struct ConnectionContext {
     pub(super) user_id: Uuid,
     pub(super) event_tx: mpsc::Sender<SessionEvent>,
     pub(super) link_name: String,
+    pub(super) is_local: bool,
 }
 
 /// Typed enum for reader task output — avoids encoding transport errors as protocol messages.
@@ -287,7 +291,17 @@ pub(super) async fn handle_message(
         Message::Routable { src, dst, message } => {
             handle_routable(tx, src, dst, message, ctx, dead_routes).await
         }
-        Message::Direct(local) => handle_local(tx, local, ctx).await,
+        Message::Direct(direct) => handle_direct(tx, direct, ctx).await,
+        Message::Command(cmd) => {
+            if !ctx.is_local {
+                tracing::warn!(
+                    cmd = msg_type_label(&Message::Command(cmd)),
+                    "rejecting command from remote peer"
+                );
+                return Ok(());
+            }
+            handle_command(tx, cmd, ctx).await
+        }
     }
 }
 
@@ -684,20 +698,23 @@ async fn handle_routable(
     }
 }
 
-async fn handle_local(
+/// Handle CLI-only commands (only accepted from local connections).
+async fn handle_command(
     tx: &mpsc::Sender<Message>,
-    message: DirectMessage,
+    command: Command,
     ctx: &ConnectionContext,
 ) -> Result<()> {
-    match message {
-        DirectMessage::Shutdown => {
+    match command {
+        Command::Shutdown => {
             tracing::info!("shutdown requested");
             shutdown_server(&ctx.user_state).await;
+            // Let agents handle SIGHUP from PTY master drop before exiting
+            tokio::time::sleep(Duration::from_millis(200)).await;
 
             let _ = tx
-                .send(Message::Direct(DirectMessage::Error {
-                    message: "Server shutting down".to_string(),
-                }))
+                .send(Message::Command(Command::ShutdownNotification(
+                    ShutdownReason::UserRequested,
+                )))
                 .await;
 
             let socket_path = {
@@ -709,7 +726,7 @@ async fn handle_local(
             std::process::exit(0);
         }
 
-        DirectMessage::ConnectToServer { address } => {
+        Command::ConnectToServer { address } => {
             // block_in_place + block_on breaks the async type recursion cycle:
             // handle_message -> tcp_connect -> connection_loop -> handle_message
             let result = tokio::task::block_in_place(|| {
@@ -722,11 +739,11 @@ async fn handle_local(
                 ))
             });
             let response = match result {
-                Ok(()) => Message::Direct(DirectMessage::ConnectToServerResult {
+                Ok(()) => Message::Command(Command::ConnectToServerResult {
                     success: true,
                     error: None,
                 }),
-                Err(e) => Message::Direct(DirectMessage::ConnectToServerResult {
+                Err(e) => Message::Command(Command::ConnectToServerResult {
                     success: false,
                     error: Some(ProtocolError::ServerError(e.to_string())),
                 }),
@@ -735,7 +752,7 @@ async fn handle_local(
             Ok(())
         }
 
-        DirectMessage::Debug => {
+        Command::Debug => {
             let state = ctx.state.read().await;
             let use_cloud_mode = State::load(&state.config.state_path)
                 .map(|s| s.cloud.use_cloud_mode == Some(true))
@@ -765,25 +782,25 @@ async fn handle_local(
                 config: state.config.clone(),
             };
             let _ = tx
-                .send(Message::Direct(DirectMessage::DebugResult { info }))
+                .send(Message::Command(Command::DebugResult { info }))
                 .await;
             Ok(())
         }
 
-        DirectMessage::ListAgents => {
+        Command::ListAgents => {
             let agents = {
                 let us = ctx.user_state.read().await;
                 us.registry.list_all()
             };
             let _ = tx
-                .send(Message::Direct(DirectMessage::ListAgentsResult {
+                .send(Message::Command(Command::ListAgentsResult {
                     agents: agents.into_iter().collect(),
                 }))
                 .await;
             Ok(())
         }
 
-        DirectMessage::HookEvent { hook } => {
+        Command::HandleHook { hook } => {
             tracing::debug!("received hook event");
 
             let result = match &hook {
@@ -832,11 +849,11 @@ async fn handle_local(
             };
 
             let response = match result {
-                Ok(()) => Message::Direct(DirectMessage::HookEventResult {
+                Ok(()) => Message::Command(Command::HandleHookResult {
                     success: true,
                     error: None,
                 }),
-                Err(e) => Message::Direct(DirectMessage::HookEventResult {
+                Err(e) => Message::Command(Command::HandleHookResult {
                     success: false,
                     error: Some(e),
                 }),
@@ -845,6 +862,34 @@ async fn handle_local(
             Ok(())
         }
 
+        Command::ResolveAgent { identifier } => {
+            let us = ctx.user_state.read().await;
+            let agent = us.registry.resolve(&identifier);
+            let _ = tx
+                .send(Message::Command(Command::ResolveAgentResult { agent }))
+                .await;
+            Ok(())
+        }
+
+        // Response variants — should not arrive at the server
+        Command::ListAgentsResult { .. }
+        | Command::ResolveAgentResult { .. }
+        | Command::ShutdownNotification(_)
+        | Command::DebugResult { .. }
+        | Command::ConnectToServerResult { .. }
+        | Command::HandleHookResult { .. } => {
+            tracing::warn!("unexpected command response variant");
+            Ok(())
+        }
+    }
+}
+
+async fn handle_direct(
+    tx: &mpsc::Sender<Message>,
+    message: DirectMessage,
+    ctx: &ConnectionContext,
+) -> Result<()> {
+    match message {
         // In-band re-authentication for token refresh on established connections.
         // The peer sends Connect with the same link_name and a fresh token.
         DirectMessage::Connect {
@@ -1077,21 +1122,8 @@ async fn handle_local(
             Ok(())
         }
 
-        DirectMessage::ResolveAgent { identifier } => {
-            let us = ctx.user_state.read().await;
-            let agent = us.registry.resolve(&identifier);
-            let _ = tx
-                .send(Message::Direct(DirectMessage::ResolveAgentResult { agent }))
-                .await;
-            Ok(())
-        }
-
-        _ => {
-            let _ = tx
-                .send(Message::Direct(DirectMessage::Error {
-                    message: "Unexpected message".to_string(),
-                }))
-                .await;
+        DirectMessage::ConnectResult { .. } | DirectMessage::Error { .. } => {
+            tracing::warn!("unexpected direct message");
             Ok(())
         }
     }
@@ -1132,6 +1164,7 @@ mod tests {
             user_id: LOCAL_USER_ID,
             event_tx,
             link_name: "test-link".to_string(),
+            is_local: true,
         }
     }
 
@@ -1398,7 +1431,7 @@ mod tests {
             version: crate::message::PROTOCOL_VERSION,
         };
 
-        handle_local(&tx, msg, &ctx).await.unwrap();
+        handle_direct(&tx, msg, &ctx).await.unwrap();
 
         tokio::task::yield_now().await;
 
@@ -1424,7 +1457,7 @@ mod tests {
             version: crate::message::PROTOCOL_VERSION,
         };
 
-        handle_local(&tx, msg, &ctx).await.unwrap();
+        handle_direct(&tx, msg, &ctx).await.unwrap();
 
         tokio::task::yield_now().await;
 
@@ -1452,7 +1485,7 @@ mod tests {
             route: Route::empty(),
         };
 
-        handle_local(&tx, msg, &ctx).await.unwrap();
+        handle_direct(&tx, msg, &ctx).await.unwrap();
 
         let us = user_state.read().await;
         assert!(us.registry.contains(&agent_id));
@@ -1479,7 +1512,7 @@ mod tests {
             route: Route::from_link("host-a"),
         };
 
-        handle_local(&tx, msg, &ctx).await.unwrap();
+        handle_direct(&tx, msg, &ctx).await.unwrap();
 
         let us = user_state.read().await;
         let entry = us.registry.get(&agent_id).unwrap();
@@ -1526,7 +1559,7 @@ mod tests {
             route: Route::empty(),
         };
 
-        handle_local(&tx, msg, &ctx).await.unwrap();
+        handle_direct(&tx, msg, &ctx).await.unwrap();
 
         // Should still be local (not overwritten)
         let us = user_state.read().await;
@@ -1556,7 +1589,7 @@ mod tests {
         let (tx, _written) = mock_tx();
 
         let msg = DirectMessage::WithdrawAgent { agent_id };
-        handle_local(&tx, msg, &ctx).await.unwrap();
+        handle_direct(&tx, msg, &ctx).await.unwrap();
 
         let us = user_state.read().await;
         assert!(!us.registry.contains(&agent_id));
@@ -1585,7 +1618,7 @@ mod tests {
 
         // Withdraw from "test-link" but agent is stored from "other-link"
         let msg = DirectMessage::WithdrawAgent { agent_id };
-        handle_local(&tx, msg, &ctx).await.unwrap();
+        handle_direct(&tx, msg, &ctx).await.unwrap();
 
         // Should still be there (link mismatch)
         let us = user_state.read().await;
@@ -1608,7 +1641,7 @@ mod tests {
             working_dir: PathBuf::from("/first"),
             route: Route::empty(),
         };
-        handle_local(&tx, msg, &ctx).await.unwrap();
+        handle_direct(&tx, msg, &ctx).await.unwrap();
 
         // Second announce with same agent_id
         let msg = DirectMessage::AnnounceAgent {
@@ -1618,7 +1651,7 @@ mod tests {
             working_dir: PathBuf::from("/second"),
             route: Route::empty(),
         };
-        handle_local(&tx, msg, &ctx).await.unwrap();
+        handle_direct(&tx, msg, &ctx).await.unwrap();
 
         let us = user_state.read().await;
         let entry = us.registry.get(&agent_id).unwrap();
@@ -1647,16 +1680,16 @@ mod tests {
         let ctx = test_ctx(state, user_state);
         let (tx, written) = mock_tx();
 
-        let msg = DirectMessage::ResolveAgent {
+        let cmd = Command::ResolveAgent {
             identifier: "my-agent".to_string(),
         };
-        handle_local(&tx, msg, &ctx).await.unwrap();
+        handle_command(&tx, cmd, &ctx).await.unwrap();
 
         tokio::task::yield_now().await;
 
         let msgs = written.lock().await;
         assert_eq!(msgs.len(), 1);
-        let Message::Direct(DirectMessage::ResolveAgentResult { agent }) = &msgs[0] else {
+        let Message::Command(Command::ResolveAgentResult { agent }) = &msgs[0] else {
             panic!("expected ResolveAgentResult, got {:?}", msgs[0]);
         };
         assert!(agent.is_some());
@@ -1669,16 +1702,16 @@ mod tests {
         let ctx = test_ctx(state, user_state);
         let (tx, written) = mock_tx();
 
-        let msg = DirectMessage::ResolveAgent {
+        let cmd = Command::ResolveAgent {
             identifier: "nonexistent".to_string(),
         };
-        handle_local(&tx, msg, &ctx).await.unwrap();
+        handle_command(&tx, cmd, &ctx).await.unwrap();
 
         tokio::task::yield_now().await;
 
         let msgs = written.lock().await;
         assert_eq!(msgs.len(), 1);
-        let Message::Direct(DirectMessage::ResolveAgentResult { agent }) = &msgs[0] else {
+        let Message::Command(Command::ResolveAgentResult { agent }) = &msgs[0] else {
             panic!("expected ResolveAgentResult, got {:?}", msgs[0]);
         };
         assert!(agent.is_none());
@@ -1698,7 +1731,7 @@ mod tests {
             version: "0.1.0".to_string(),
         };
 
-        handle_local(&tx, msg, &ctx).await.unwrap();
+        handle_direct(&tx, msg, &ctx).await.unwrap();
 
         let us = user_state.read().await;
         assert!(us.hosts.contains_key(&host_id));
@@ -1725,7 +1758,7 @@ mod tests {
             version: "0.2.0".to_string(),
         };
 
-        handle_local(&tx, msg, &ctx).await.unwrap();
+        handle_direct(&tx, msg, &ctx).await.unwrap();
 
         let us = user_state.read().await;
         let info = &us.hosts[&host_id];
@@ -1755,7 +1788,7 @@ mod tests {
             version: "0.1.0".to_string(),
         };
 
-        handle_local(&tx, msg, &ctx).await.unwrap();
+        handle_direct(&tx, msg, &ctx).await.unwrap();
 
         let us = user_state.read().await;
         assert!(!us.hosts.contains_key(&host_id));
@@ -1783,7 +1816,7 @@ mod tests {
         let (tx, _written) = mock_tx();
 
         let msg = DirectMessage::WithdrawHost { id: host_id };
-        handle_local(&tx, msg, &ctx).await.unwrap();
+        handle_direct(&tx, msg, &ctx).await.unwrap();
 
         let us = user_state.read().await;
         assert!(!us.hosts.contains_key(&host_id));
@@ -1812,7 +1845,7 @@ mod tests {
 
         // Withdraw from "test-link" but host is stored from "other-link"
         let msg = DirectMessage::WithdrawHost { id: host_id };
-        handle_local(&tx, msg, &ctx).await.unwrap();
+        handle_direct(&tx, msg, &ctx).await.unwrap();
 
         // Should still be there (link mismatch)
         let us = user_state.read().await;

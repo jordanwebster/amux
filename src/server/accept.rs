@@ -328,6 +328,7 @@ pub(super) async fn accept_connection<T: TransportSplit>(
         user_id,
         event_tx,
         link_name: link_name.clone(),
+        is_local,
     };
 
     let response_tx_cleanup = response_tx.clone();
@@ -472,6 +473,7 @@ pub(super) async fn tcp_connect(
                 user_id,
                 event_tx,
                 link_name: link_name_clone.clone(),
+                is_local: false,
             };
             let result = connection_loop(incoming_rx, outgoing_tx.clone(), ctx, None).await;
 
