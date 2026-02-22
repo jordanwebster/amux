@@ -4,7 +4,7 @@
 //! - 4-byte big-endian length prefix
 //! - Followed by payload bytes
 //!
-//! WebSocket transport uses JSON-encoded messages.
+//! WebSocket transport uses binary MessagePack frames.
 
 mod framing;
 mod tcp;

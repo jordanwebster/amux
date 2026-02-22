@@ -125,7 +125,7 @@ Rich clients (mobile, web) connect via WebSocket to the cloud server:
 1. WebSocket upgrade to ws://cloud:9002/
 2. Send DirectMessage::Connect { link_name, token: null, version: PROTOCOL_VERSION }
 3. Cloud responds with ConnectResult
-4. Enter connection_loop (JSON messages over WebSocket)
+4. Enter connection_loop (MessagePack binary frames over WebSocket)
 ```
 
 Note: WebSocket cloud authentication is not yet implemented (tracked as future work). Currently WebSocket connections bypass token validation.
@@ -152,7 +152,7 @@ No token validation for Unix socket connections (local trust).
 |-------------|-----------|---------------|---------|
 | Terminal clients | Unix socket | MessagePack (rmp-serde, named format) | Length-prefixed (4-byte BE) |
 | amux server → amux server | TCP with TLS + `TCP_NODELAY` | MessagePack (rmp-serde, named format) | Length-prefixed (4-byte BE) |
-| Rich clients (mobile, web) | WebSocket | JSON (serde_json) | WebSocket native |
+| Rich clients (mobile, web) | WebSocket | MessagePack (rmp-serde, named format) | WebSocket native (binary frames) |
 
 All transports use the same `Transport` trait (`read_message`/`write_message`) and the same `Message` enum. The serialization format is encapsulated in the transport implementation.
 

@@ -19,7 +19,7 @@ A detailed design for the amux server internals covering data structures, messag
 - All connections (local and remote) use framed messages with length-prefixed encoding
 - Connections are identified by link names (e.g. `"term-abc1"`, `"myhost-xyz2"`)
 - Messages are `Routable` (carry src/dst routes + opaque payload, forwarded across hops), `Direct` (peer-to-peer, handled by directly connected server), or `Command` (CLI-only, rejected from remote peers)
-- Serialization uses MessagePack for binary transports (Unix/TCP) and JSON for WebSocket
+- Serialization uses MessagePack for all transports (Unix, TCP, WebSocket)
 
 ---
 
@@ -114,7 +114,7 @@ Three implementations:
 |-----------|--------|---------------|---------|-------|
 | `UnixTransport` | `UnixStream` (split into read/write halves) | MessagePack | Length-prefixed | No |
 | `TcpTransport<S>` | Generic over `AsyncRead + AsyncWrite` (plain TCP or TLS) | MessagePack | Length-prefixed | Yes |
-| `WebSocketTransport` | `WebSocketStream<TcpStream>` | JSON | WebSocket native | N/A |
+| `WebSocketTransport` | `WebSocketStream<TcpStream>` | MessagePack | WebSocket native (binary frames) | N/A |
 
 `TcpTransport` is generic over the stream type, allowing it to wrap both plain TCP and TLS streams (e.g. `TcpTransport<ClientTlsStream<TcpStream>>`).
 
@@ -257,7 +257,7 @@ enum ProtocolError {
 
 ### Serialization
 
-Messages are serialized using MessagePack (rmp-serde) in named/map format for binary transports, and JSON for WebSocket:
+Messages are serialized using MessagePack (rmp-serde) in named/map format for all transports:
 
 ```rust
 impl Message {
@@ -662,7 +662,7 @@ Binary transports use length-prefixed framing via the `LengthPrefixed<R, W>` hel
 - Unix transports do not flush (not applicable)
 - Payload is MessagePack-encoded `Message`
 
-WebSocket handles framing natively; `WebSocketTransport` reads/writes JSON text messages directly.
+WebSocket handles framing natively; `WebSocketTransport` reads/writes binary MessagePack frames directly.
 
 See `src/transport/framing.rs`.
 
@@ -823,7 +823,7 @@ The original design had a race condition window between getting the replay buffe
 
 ### 3. MessagePack serialization
 
-MessagePack (rmp-serde with named/map format) replaced bincode for binary transports. Named format provides forward/backward compatibility when fields are added, unlike bincode's positional encoding. JSON is used for WebSocket (human readable, web client friendly).
+MessagePack (rmp-serde with named/map format) replaced bincode for all transports. Named format provides forward/backward compatibility when fields are added, unlike bincode's positional encoding. Binary frames handle byte blobs cleanly without base64 encoding.
 
 ### 4. Handshake-based connection establishment
 

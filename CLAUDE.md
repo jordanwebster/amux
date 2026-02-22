@@ -72,7 +72,7 @@ Terminal ──Unix socket──> Local amux server ──TCP──> Cloud amux 
 
 - Use `thiserror` for error types
 - Use `tokio` for async runtime
-- Use `serde` with `rmp-serde` / MessagePack (TCP/Unix) and `serde_json` (WebSocket) for serialization
+- Use `serde` with `rmp-serde` / MessagePack for all transports (Unix, TCP, WebSocket)
 - Prefer `Arc<Mutex<T>>` or `Arc<RwLock<T>>` for shared state
 - Use channels (`mpsc`, `broadcast`) for task communication
 

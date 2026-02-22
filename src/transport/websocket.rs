@@ -8,7 +8,7 @@ use tokio::sync::mpsc;
 use tokio_tungstenite::WebSocketStream;
 use tokio_tungstenite::tungstenite::protocol::Message as WsMessage;
 
-/// WebSocket transport with JSON serialization
+/// WebSocket transport with binary MessagePack serialization
 pub struct WebSocketTransport {
     stream: WebSocketStream<TcpStream>,
 }
@@ -25,9 +25,8 @@ impl Transport for WebSocketTransport {
     async fn read_message(&mut self) -> Result<Message> {
         loop {
             match self.stream.next().await {
-                Some(Ok(WsMessage::Text(text))) => {
-                    return serde_json::from_str(&text)
-                        .map_err(|e| AmuxError::Config(format!("JSON parse error: {}", e)));
+                Some(Ok(WsMessage::Binary(data))) => {
+                    return Message::decode(&data).map_err(AmuxError::SerializationDecode);
                 }
                 Some(Ok(WsMessage::Close(_))) | None => {
                     return Err(AmuxError::Io(std::io::Error::new(
@@ -49,10 +48,9 @@ impl Transport for WebSocketTransport {
     }
 
     async fn write_message(&mut self, msg: &Message) -> Result<()> {
-        let json = serde_json::to_string(msg)
-            .map_err(|e| AmuxError::Config(format!("JSON serialize error: {}", e)))?;
+        let data = msg.encode().map_err(AmuxError::SerializationEncode)?;
         self.stream
-            .send(WsMessage::Text(json))
+            .send(WsMessage::Binary(data))
             .await
             .map_err(|e| AmuxError::Io(std::io::Error::other(e.to_string())))?;
         Ok(())
@@ -74,9 +72,8 @@ impl MessageReader for WsMessageReader {
     async fn read_message(&mut self) -> Result<Message> {
         loop {
             match self.stream.next().await {
-                Some(Ok(WsMessage::Text(text))) => {
-                    return serde_json::from_str(&text)
-                        .map_err(|e| AmuxError::Config(format!("JSON parse error: {}", e)));
+                Some(Ok(WsMessage::Binary(data))) => {
+                    return Message::decode(&data).map_err(AmuxError::SerializationDecode);
                 }
                 Some(Ok(WsMessage::Close(_))) | None => {
                     return Err(AmuxError::Io(std::io::Error::new(
@@ -114,10 +111,9 @@ impl MessageWriter for WsMessageWriter {
             let _ = self.sink.send(WsMessage::Pong(data)).await;
         }
 
-        let json = serde_json::to_string(msg)
-            .map_err(|e| AmuxError::Config(format!("JSON serialize error: {}", e)))?;
+        let data = msg.encode().map_err(AmuxError::SerializationEncode)?;
         self.sink
-            .send(WsMessage::Text(json))
+            .send(WsMessage::Binary(data))
             .await
             .map_err(|e| AmuxError::Io(std::io::Error::other(e.to_string())))?;
         Ok(())

@@ -38,6 +38,29 @@ One paragraph describing what was done.
 
 ---
 
+## 2026-02-22: Switch WebSocket transport to MessagePack binary frames
+
+### Summary
+Replaced JSON text frames with MessagePack binary frames in the WebSocket transport, unifying serialization across all transports (Unix, TCP, WebSocket). Binary frames handle byte blobs cleanly without base64 encoding needed for opaque payloads.
+
+### Changes
+- `src/transport/websocket.rs` — Replaced all 4 `serde_json` call sites with `Message::encode()`/`decode()` + `WsMessage::Binary` (matching the TCP/Unix pattern). Updated doc comment.
+- `src/transport/mod.rs` — Updated module doc comment.
+- `ARCHITECTURE.md` — Updated 5 references from JSON/WebSocket to MessagePack everywhere.
+- `CLOUD_ARCHITECTURE.md` — Updated 2 references (connection flow description, transport table).
+- `CLAUDE.md` — Updated serialization reference in Rust Idioms section.
+
+### Decisions Made
+- Keep `serde_json` in `Cargo.toml`: still needed for Claude Code hook JSON (`hooks.rs`) and transcript JSONL (`transcript.rs`) — those are external formats we don't control.
+- Use `AmuxError::SerializationEncode`/`SerializationDecode` error variants (same as TCP/Unix) instead of the previous `AmuxError::Config` wrapper.
+
+### Verification
+- `cargo check && cargo fmt && cargo clippy --workspace --all-targets -- -D warnings` — clean
+- `cargo test` — 125/125 tests pass
+- E2E tests — 9/10 pass (1 known flaky `attach` test, pre-existing)
+
+---
+
 ## 2026-02-22: Documentation update for protocol v3
 
 ### Summary
