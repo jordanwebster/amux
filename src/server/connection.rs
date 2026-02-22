@@ -14,7 +14,6 @@ use crate::route::Route;
 use crate::session::SessionEvent;
 use crate::state::State;
 use crate::transport::MessageReader;
-use std::collections::HashSet;
 use std::path::PathBuf;
 use std::sync::Arc;
 use std::time::Duration;
@@ -35,7 +34,7 @@ fn msg_type_label(msg: &Message) -> &'static str {
             RoutableMessage::RawOutput { .. } => "RawOutput",
             RoutableMessage::StructuredOutput { .. } => "StructuredOutput",
             RoutableMessage::StructuredInput { .. } => "StructuredInput",
-            RoutableMessage::AgentEnded { .. } => "AgentEnded",
+            RoutableMessage::SubscriptionClosed { .. } => "SubscriptionClosed",
         },
         Message::Direct(direct) => match direct {
             DirectMessage::Connect { .. } => "Connect",
@@ -130,9 +129,6 @@ pub(super) async fn connection_loop(
 ) -> Result<()> {
     let mut refresh_deadline = token_refresh.as_ref().map(|t| t.refresh_deadline());
     let mut awaiting_refresh: Option<tokio::time::Instant> = None;
-    // Tracks routes where forwarding failed (insert-only; no error sent back).
-    // Naturally bounded: link names include random suffixes and are never reused after disconnect.
-    let mut dead_routes: HashSet<String> = HashSet::new();
 
     loop {
         let refresh_timeout = awaiting_refresh.map(|t| t + Duration::from_secs(30));
@@ -165,7 +161,7 @@ pub(super) async fn connection_loop(
                             tracing::warn!("unexpected ConnectResult");
                             continue;
                         }
-                        handle_message(&response_tx, msg, &ctx, &mut dead_routes).await?;
+                        handle_message(&response_tx, msg, &ctx).await?;
                     }
                     Some(Incoming::Eof) | None => {
                         tracing::debug!("disconnected");
@@ -270,7 +266,6 @@ pub(super) async fn handle_message(
     tx: &mpsc::Sender<Message>,
     msg: Message,
     ctx: &ConnectionContext,
-    dead_routes: &mut HashSet<String>,
 ) -> Result<()> {
     if !matches!(
         &msg,
@@ -287,7 +282,7 @@ pub(super) async fn handle_message(
 
     match msg {
         Message::Routable { src, dst, message } => {
-            handle_routable(tx, src, dst, message, ctx, dead_routes).await
+            handle_routable(tx, src, dst, message, ctx).await
         }
         Message::Direct(direct) => handle_direct(tx, direct, ctx).await,
         Message::Command(cmd) => {
@@ -309,7 +304,6 @@ async fn handle_routable(
     mut dst: Route,
     message: RoutableMessage,
     ctx: &ConnectionContext,
-    dead_routes: &mut HashSet<String>,
 ) -> Result<()> {
     // Check if this message needs forwarding
     if let Some(next_hop) = dst.pop() {
@@ -320,47 +314,19 @@ async fn handle_routable(
             us.routes.get(&next_hop).cloned()
         };
 
-        // Try to forward; on failure, get the failed message back
-        let failed_msg = match route_tx {
+        match route_tx {
             Some(route_tx) => {
-                match route_tx.send(Message::Routable { src, dst, message }).await {
-                    Ok(()) => None,
-                    Err(send_error) => {
-                        // Channel closed — conditionally clean up stale route
-                        {
-                            let mut us = ctx.user_state.write().await;
-                            if let Some(current_tx) = us.routes.get(&next_hop)
-                                && current_tx.is_closed()
-                            {
-                                us.routes.remove(&next_hop);
-                                tracing::warn!(route = %next_hop, "removed stale route");
-                            }
-                        }
-                        let Message::Routable {
-                            message: failed_msg,
-                            ..
-                        } = send_error.0
-                        else {
-                            unreachable!()
-                        };
-                        Some(failed_msg)
-                    }
+                if route_tx
+                    .send(Message::Routable { src, dst, message })
+                    .await
+                    .is_err()
+                {
+                    tracing::debug!(next_hop = %next_hop, "forwarding failed (channel closed)");
                 }
             }
             None => {
                 tracing::debug!(next_hop = %next_hop, "no route");
-                Some(message)
             }
-        };
-
-        // Track dead routes for stream messages (insert-only, no error sent back)
-        if let Some(
-            RoutableMessage::RawOutput { .. }
-            | RoutableMessage::StructuredOutput { .. }
-            | RoutableMessage::AgentEnded { .. },
-        ) = failed_msg
-        {
-            dead_routes.insert(next_hop.to_string());
         }
 
         return Ok(());
@@ -426,7 +392,7 @@ async fn handle_routable(
                                     let _ = tx.send(Message::Routable {
                                         src: reply_src.clone(),
                                         dst: reply_dst.clone(),
-                                        message: RoutableMessage::AgentEnded { agent_id },
+                                        message: RoutableMessage::SubscriptionClosed { agent_id },
                                     }).await;
                                 } => {}
                                 _ = cancel_rx => {
@@ -550,7 +516,7 @@ async fn handle_routable(
                                 let _ = tx.send(Message::Routable {
                                     src: reply_src.clone(),
                                     dst: reply_dst.clone(),
-                                    message: RoutableMessage::AgentEnded { agent_id },
+                                    message: RoutableMessage::SubscriptionClosed { agent_id },
                                 }).await;
                             } => {}
                             _ = cancel_rx => {
@@ -628,7 +594,7 @@ async fn handle_routable(
         | RoutableMessage::CreateAgentResult { .. }
         | RoutableMessage::RawOutput { .. }
         | RoutableMessage::StructuredOutput { .. }
-        | RoutableMessage::AgentEnded { .. } => Ok(()),
+        | RoutableMessage::SubscriptionClosed { .. } => Ok(()),
     }
 }
 
@@ -1026,8 +992,23 @@ async fn handle_direct(
                 .is_some_and(|h| matches!(h.route.peek(), Some(link) if link == ctx.link_name));
 
             if should_remove {
+                let host_route = us.hosts.get(&id).map(|h| h.route.clone());
                 us.hosts.remove(&id);
                 tracing::info!(host_id = %id, "withdrew remote host");
+
+                if let Some(ref host_route) = host_route {
+                    let removed = us.registry.remove_for_route_prefix(host_route);
+                    if !removed.is_empty() {
+                        tracing::info!(count = removed.len(), host_id = %id, "removed agents for withdrawn host");
+                    }
+
+                    let cancelled = cancel_streams_matching(&mut us, |entry| {
+                        entry.dst.starts_with_route(host_route)
+                    });
+                    if cancelled > 0 {
+                        tracing::info!(count = cancelled, host_id = %id, "cancelled streams for withdrawn host");
+                    }
+                }
 
                 broadcast_to_peers(
                     &mut us,
@@ -1526,5 +1507,70 @@ mod tests {
         // Should still be there (link mismatch)
         let us = user_state.read().await;
         assert!(us.hosts.contains_key(&host_id));
+    }
+
+    #[tokio::test]
+    async fn withdraw_host_removes_agents_with_matching_route() {
+        let (state, user_state) = test_state().await;
+
+        let host_id = Uuid::new_v4();
+        let agent1 = Uuid::new_v4();
+        let agent2 = Uuid::new_v4();
+        let agent3 = Uuid::new_v4();
+        {
+            let mut us = user_state.write().await;
+            us.hosts.insert(
+                host_id,
+                crate::message::Host {
+                    id: host_id,
+                    name: "remote".to_string(),
+                    route: Route::from_link("test-link"),
+                    version: "0.1.0".to_string(),
+                },
+            );
+            // Agents reachable via test-link (should be removed)
+            us.registry
+                .register_remote(Agent {
+                    id: agent1,
+                    name: Some("a1".to_string()),
+                    command: "claude".to_string(),
+                    working_dir: PathBuf::from("/tmp"),
+                    route: Route::from_link("test-link"),
+                })
+                .unwrap();
+            let mut deep_route = Route::from_link("host-b");
+            deep_route.push("test-link");
+            us.registry
+                .register_remote(Agent {
+                    id: agent2,
+                    name: Some("a2".to_string()),
+                    command: "claude".to_string(),
+                    working_dir: PathBuf::from("/tmp"),
+                    route: deep_route,
+                })
+                .unwrap();
+            // Agent on different link (should survive)
+            us.registry
+                .register_remote(Agent {
+                    id: agent3,
+                    name: Some("a3".to_string()),
+                    command: "claude".to_string(),
+                    working_dir: PathBuf::from("/tmp"),
+                    route: Route::from_link("other-link"),
+                })
+                .unwrap();
+        }
+
+        let ctx = test_ctx(state, user_state.clone());
+        let (tx, _written) = mock_tx();
+
+        let msg = DirectMessage::WithdrawHost { id: host_id };
+        handle_direct(&tx, msg, &ctx).await.unwrap();
+
+        let us = user_state.read().await;
+        assert!(!us.hosts.contains_key(&host_id));
+        assert!(!us.registry.contains(&agent1));
+        assert!(!us.registry.contains(&agent2));
+        assert!(us.registry.contains(&agent3));
     }
 }

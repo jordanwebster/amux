@@ -119,6 +119,21 @@ impl AgentRegistry {
         removed
     }
 
+    /// Remove all remote agents whose route starts with the given prefix. Returns removed UUIDs.
+    /// Used when a host is withdrawn — all agents reachable via that host's route are removed.
+    pub fn remove_for_route_prefix(&mut self, prefix: &Route) -> Vec<Uuid> {
+        let removed: Vec<Uuid> = self
+            .entries
+            .iter()
+            .filter(|(_, e)| e.is_remote() && e.route.starts_with_route(prefix))
+            .map(|(id, _)| *id)
+            .collect();
+        for id in &removed {
+            self.remove(id);
+        }
+        removed
+    }
+
     /// Resolve an identifier to an Agent.
     ///
     /// Resolution order:
@@ -436,5 +451,85 @@ mod tests {
         reg.register_local(make_info(id, Some("test"))).unwrap();
         assert!(reg.contains(&id));
         assert!(reg.name_taken("test"));
+    }
+
+    #[test]
+    fn remove_for_route_prefix_single_hop() {
+        let mut reg = AgentRegistry::new();
+        let id1 = Uuid::new_v4();
+        let id2 = Uuid::new_v4();
+        let id3 = Uuid::new_v4();
+        reg.register_remote(make_remote_info(
+            id1,
+            Some("a1"),
+            Route::from_link("host-a"),
+        ))
+        .unwrap();
+        reg.register_remote(make_remote_info(
+            id2,
+            Some("a2"),
+            Route::from_link("host-a"),
+        ))
+        .unwrap();
+        reg.register_remote(make_remote_info(
+            id3,
+            Some("a3"),
+            Route::from_link("host-b"),
+        ))
+        .unwrap();
+
+        let removed = reg.remove_for_route_prefix(&Route::from_link("host-a"));
+        assert_eq!(removed.len(), 2);
+        assert!(!reg.contains(&id1));
+        assert!(!reg.contains(&id2));
+        assert!(reg.contains(&id3));
+        assert!(!reg.name_taken("a1"));
+        assert!(!reg.name_taken("a2"));
+    }
+
+    #[test]
+    fn remove_for_route_prefix_multi_hop() {
+        let mut reg = AgentRegistry::new();
+        let id1 = Uuid::new_v4();
+        let id2 = Uuid::new_v4();
+
+        let mut route1 = Route::from_link("host-b");
+        route1.push("host-a");
+        reg.register_remote(make_remote_info(id1, Some("deep"), route1))
+            .unwrap();
+
+        reg.register_remote(make_remote_info(
+            id2,
+            Some("shallow"),
+            Route::from_link("host-a"),
+        ))
+        .unwrap();
+
+        // Prefix "host-a" matches both (route starts with host-a)
+        let removed = reg.remove_for_route_prefix(&Route::from_link("host-a"));
+        assert_eq!(removed.len(), 2);
+        assert!(!reg.contains(&id1));
+        assert!(!reg.contains(&id2));
+    }
+
+    #[test]
+    fn remove_for_route_prefix_skips_local() {
+        let mut reg = AgentRegistry::new();
+        let local_id = Uuid::new_v4();
+        let remote_id = Uuid::new_v4();
+        reg.register_local(make_info(local_id, Some("local")))
+            .unwrap();
+        reg.register_remote(make_remote_info(
+            remote_id,
+            Some("remote"),
+            Route::from_link("host-a"),
+        ))
+        .unwrap();
+
+        let removed = reg.remove_for_route_prefix(&Route::empty());
+        // Empty prefix matches all remote agents but not local ones
+        assert_eq!(removed.len(), 1);
+        assert!(reg.contains(&local_id));
+        assert!(!reg.contains(&remote_id));
     }
 }

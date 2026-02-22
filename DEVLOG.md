@@ -38,6 +38,34 @@ One paragraph describing what was done.
 
 ---
 
+## 2026-02-22: Route management overhaul + SubscriptionClosed (protocol v3, phase 3)
+
+### Summary
+Phase 3 of protocol v3 upgrade. Made `AnnounceHost`/`WithdrawHost` the single source of routing truth. Renamed `AgentEnded` to `SubscriptionClosed` (semantic clarity: it signals subscription EOF, not agent death). Added `Route::starts_with_route` for prefix matching and `AgentRegistry::remove_for_route_prefix` for bulk agent removal by route. Enhanced `WithdrawHost` handler to cascade-remove agents and cancel streams for withdrawn hosts. Removed `dead_routes` HashSet and simplified forwarding failures to silent debug-level drops. Peer disconnect now only broadcasts `WithdrawHost` (no more per-agent `WithdrawAgent` broadcasts).
+
+### Changes
+- `src/message.rs` — Renamed `RoutableMessage::AgentEnded` to `SubscriptionClosed`
+- `src/route.rs` — Added `starts_with_route(&self, prefix: &Route) -> bool` with 5 unit tests
+- `src/agent_registry.rs` — Added `remove_for_route_prefix(&mut self, prefix: &Route) -> Vec<Uuid>` with 3 unit tests
+- `src/server/connection.rs` — Renamed all `AgentEnded` references. Enhanced `WithdrawHost` handler to call `remove_for_route_prefix` and `cancel_streams_matching`. Removed `dead_routes: HashSet<String>` and its parameter from `handle_message`/`handle_routable`. Simplified forwarding path to try-send-or-drop with debug logging. Removed `use std::collections::HashSet`. Added `withdraw_host_removes_agents_with_matching_route` test.
+- `src/server/routing.rs` — Removed per-agent `WithdrawAgent` broadcast loop from `handle_peer_disconnect`; kept `remove_for_link` for local cleanup
+- `src/client.rs` — Updated `AgentEnded` match arm to `SubscriptionClosed`
+
+### Decisions Made
+- `WithdrawHost` cascades to agents: when a host is withdrawn, all agents reachable through that host's route are bulk-removed, matching the spec that host discovery is the single source of routing truth
+- Silent drops on forwarding failure: instead of tracking dead routes, forwarding failures are logged at debug level and silently dropped — `WithdrawHost` propagation handles the cleanup
+- `SubscriptionClosed` name: clarifies that this message signals the end of a subscription stream (buffer EOF), not the death of the agent itself
+
+### Verification
+- `cargo check && cargo fmt && cargo clippy --workspace --all-targets -- -D warnings && cargo test` — 122 tests pass, zero warnings
+- `cargo build --workspace && cargo run -p e2e-runner -- run` — all 10 E2E tests pass
+- Grep confirms no `AgentEnded` or `dead_routes` in `src/`
+
+### Next Steps
+- Protocol v3 is complete; continue with remaining milestone 2 work
+
+---
+
 ## 2026-02-22: Result cleanup, error removal, PermissionTool dedup (protocol v3 continued)
 
 ### Summary

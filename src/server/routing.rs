@@ -223,9 +223,8 @@ pub(super) fn handle_peer_disconnect(us: &mut ServerUserState, link_name: &str) 
     }
 
     let removed_ids = us.registry.remove_for_link(link_name);
-    for agent_id in removed_ids {
-        tracing::info!(agent_id = %agent_id, peer = %link_name, "withdrawing agent");
-        broadcast_to_peers(us, &DirectMessage::WithdrawAgent { agent_id }, None);
+    if !removed_ids.is_empty() {
+        tracing::info!(count = removed_ids.len(), peer = %link_name, "removed agents for disconnected peer");
     }
 
     // Withdraw hosts learned from the dead link

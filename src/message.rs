@@ -371,7 +371,7 @@ pub enum RoutableMessage {
         agent_id: Uuid,
         data: StructuredInput,
     },
-    AgentEnded {
+    SubscriptionClosed {
         agent_id: Uuid,
     },
 }

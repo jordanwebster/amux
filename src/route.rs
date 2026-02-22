@@ -78,6 +78,18 @@ impl Route {
         self.links.iter().any(|l| l == link)
     }
 
+    /// Check if this route starts with all links from the given prefix route, in order.
+    /// An empty prefix matches any route.
+    pub fn starts_with_route(&self, prefix: &Route) -> bool {
+        if prefix.links.len() > self.links.len() {
+            return false;
+        }
+        self.links
+            .iter()
+            .zip(prefix.links.iter())
+            .all(|(a, b)| a == b)
+    }
+
     /// Prepare to send a new message. Pops from dst, creates src from the popped link.
     /// Returns (src, dst) ready to include in the message.
     /// Returns None if dst is empty.
@@ -350,5 +362,42 @@ mod tests {
     fn test_contains_link_empty() {
         let route = Route::empty();
         assert!(!route.contains_link("any"));
+    }
+
+    #[test]
+    fn test_starts_with_route_exact_match() {
+        let route = Route::from_link("AB");
+        let prefix = Route::from_link("AB");
+        assert!(route.starts_with_route(&prefix));
+    }
+
+    #[test]
+    fn test_starts_with_route_partial_prefix() {
+        let mut route = Route::from_link("CD");
+        route.push("BC");
+        route.push("AB");
+        let prefix = Route::from_link("AB");
+        assert!(route.starts_with_route(&prefix));
+    }
+
+    #[test]
+    fn test_starts_with_route_mismatch() {
+        let route = Route::from_link("AB");
+        let prefix = Route::from_link("XX");
+        assert!(!route.starts_with_route(&prefix));
+    }
+
+    #[test]
+    fn test_starts_with_route_empty_prefix() {
+        let route = Route::from_link("AB");
+        assert!(route.starts_with_route(&Route::empty()));
+    }
+
+    #[test]
+    fn test_starts_with_route_longer_prefix() {
+        let route = Route::from_link("AB");
+        let mut prefix = Route::from_link("CD");
+        prefix.push("AB");
+        assert!(!route.starts_with_route(&prefix));
     }
 }

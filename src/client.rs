@@ -576,7 +576,7 @@ async fn run_attached(
                         io::stdout().write_all(&data).ok();
                         io::stdout().flush().ok();
                     }
-                    Ok(Message::Routable { message: RoutableMessage::AgentEnded { .. }, .. }) => {
+                    Ok(Message::Routable { message: RoutableMessage::SubscriptionClosed { .. }, .. }) => {
                         tracing::info!("agent ended");
                         break;
                     }
