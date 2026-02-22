@@ -16,6 +16,7 @@ use crate::state::State;
 use crate::transport::MessageReader;
 use std::path::PathBuf;
 use std::sync::Arc;
+use std::sync::atomic::{AtomicU64, Ordering};
 use std::time::Duration;
 use tokio::sync::{RwLock, mpsc, oneshot};
 use tracing::Instrument;
@@ -23,19 +24,7 @@ use uuid::Uuid;
 
 fn msg_type_label(msg: &Message) -> &'static str {
     match msg {
-        Message::Routable { message, .. } => match message {
-            RoutableMessage::SubscribeRaw { .. } => "SubscribeRaw",
-            RoutableMessage::SubscribeStructured { .. } => "SubscribeStructured",
-            RoutableMessage::SubscribeRawResult { .. } => "SubscribeRawResult",
-            RoutableMessage::SubscribeStructuredResult { .. } => "SubscribeStructuredResult",
-            RoutableMessage::CreateAgent(_) => "CreateAgent",
-            RoutableMessage::CreateAgentResult { .. } => "CreateAgentResult",
-            RoutableMessage::RawInput { .. } => "RawInput",
-            RoutableMessage::RawOutput { .. } => "RawOutput",
-            RoutableMessage::StructuredOutput { .. } => "StructuredOutput",
-            RoutableMessage::StructuredInput { .. } => "StructuredInput",
-            RoutableMessage::SubscriptionClosed { .. } => "SubscriptionClosed",
-        },
+        Message::Routable { .. } => "Routable",
         Message::Direct(direct) => match direct {
             DirectMessage::Connect { .. } => "Connect",
             DirectMessage::ConnectResult { .. } => "ConnectResult",
@@ -69,6 +58,7 @@ pub(super) struct ConnectionContext {
     pub(super) event_tx: mpsc::Sender<SessionEvent>,
     pub(super) link_name: String,
     pub(super) is_local: bool,
+    pub(super) next_request_id: Arc<AtomicU64>,
 }
 
 /// Typed enum for reader task output — avoids encoding transport errors as protocol messages.
@@ -267,23 +257,18 @@ pub(super) async fn handle_message(
     msg: Message,
     ctx: &ConnectionContext,
 ) -> Result<()> {
-    if !matches!(
-        &msg,
-        Message::Routable {
-            message: RoutableMessage::RawInput { .. }
-                | RoutableMessage::RawOutput { .. }
-                | RoutableMessage::StructuredOutput { .. }
-                | RoutableMessage::StructuredInput { .. },
-            ..
-        }
-    ) {
-        tracing::debug!(msg_type = msg_type_label(&msg), "received message");
+    match &msg {
+        Message::Routable { .. } => tracing::trace!("received routable"),
+        _ => tracing::debug!(msg_type = msg_type_label(&msg), "received message"),
     }
 
     match msg {
-        Message::Routable { src, dst, message } => {
-            handle_routable(tx, src, dst, message, ctx).await
-        }
+        Message::Routable {
+            src,
+            dst,
+            request_id,
+            payload,
+        } => handle_routable(tx, src, dst, request_id, payload, ctx).await,
         Message::Direct(direct) => handle_direct(tx, direct, ctx).await,
         Message::Command(cmd) => {
             if !ctx.is_local {
@@ -302,10 +287,11 @@ async fn handle_routable(
     tx: &mpsc::Sender<Message>,
     mut src: Route,
     mut dst: Route,
-    message: RoutableMessage,
+    request_id: u64,
+    payload: Vec<u8>,
     ctx: &ConnectionContext,
 ) -> Result<()> {
-    // Check if this message needs forwarding
+    // Check if this message needs forwarding — payload forwarded verbatim
     if let Some(next_hop) = dst.pop() {
         src.push(&next_hop);
 
@@ -317,7 +303,12 @@ async fn handle_routable(
         match route_tx {
             Some(route_tx) => {
                 if route_tx
-                    .send(Message::Routable { src, dst, message })
+                    .send(Message::Routable {
+                        src,
+                        dst,
+                        request_id,
+                        payload,
+                    })
                     .await
                     .is_err()
                 {
@@ -332,7 +323,36 @@ async fn handle_routable(
         return Ok(());
     }
 
-    // Local delivery — dst is empty, we are the final destination
+    // Local delivery — two-step decode
+    let message = match RoutableMessage::decode(&payload) {
+        Ok(m) => m,
+        Err(e) => {
+            tracing::warn!(error = %e, "failed to decode routable payload");
+            let (reply_src, reply_dst) =
+                Route::reply(src).expect("incoming message must have valid src");
+            let _ = tx
+                .send(Message::routable(
+                    reply_src,
+                    reply_dst,
+                    request_id,
+                    &RoutableMessage::UnknownMessage,
+                ))
+                .await;
+            return Ok(());
+        }
+    };
+
+    match &message {
+        RoutableMessage::RawInput { .. }
+        | RoutableMessage::RawOutput { .. }
+        | RoutableMessage::StructuredOutput { .. }
+        | RoutableMessage::StructuredInput { .. } => {}
+        other => tracing::debug!(
+            msg_type = std::any::type_name_of_val(other),
+            "decoded routable"
+        ),
+    }
+
     match message {
         RoutableMessage::SubscribeRaw {
             agent_id,
@@ -345,14 +365,15 @@ async fn handle_routable(
             match result {
                 Ok(mut buffer_reader) => {
                     let _ = tx
-                        .send(Message::Routable {
-                            src: reply_src.clone(),
-                            dst: reply_dst.clone(),
-                            message: RoutableMessage::SubscribeRawResult {
+                        .send(Message::routable(
+                            reply_src.clone(),
+                            reply_dst.clone(),
+                            request_id,
+                            &RoutableMessage::SubscribeRawResult {
                                 agent_id,
                                 error: None,
                             },
-                        })
+                        ))
                         .await;
 
                     tracing::info!(agent_id = %agent_id, mode = "raw", "subscribed");
@@ -373,49 +394,58 @@ async fn handle_routable(
 
                         let stream_span = tracing::info_span!("stream", stream_id, agent_id = %agent_id, mode = "raw");
                         let stream_user_state = ctx.user_state.clone();
-                        tokio::spawn(async move {
-                            tokio::select! {
-                                _ = async {
-                                    while let Some(data) = buffer_reader.read().await {
-                                        if tx
-                                            .send(Message::Routable {
-                                                src: reply_src.clone(),
-                                                dst: reply_dst.clone(),
-                                                message: RoutableMessage::RawOutput { agent_id, data },
-                                            })
-                                            .await
-                                            .is_err()
-                                        {
-                                            return;
+                        let next_rid = ctx.next_request_id.clone();
+                        tokio::spawn(
+                            async move {
+                                tokio::select! {
+                                    _ = async {
+                                        while let Some(data) = buffer_reader.read().await {
+                                            let rid = next_rid.fetch_add(1, Ordering::Relaxed);
+                                            if tx
+                                                .send(Message::routable(
+                                                    reply_src.clone(),
+                                                    reply_dst.clone(),
+                                                    rid,
+                                                    &RoutableMessage::RawOutput { agent_id, data },
+                                                ))
+                                                .await
+                                                .is_err()
+                                            {
+                                                return;
+                                            }
                                         }
+                                        let rid = next_rid.fetch_add(1, Ordering::Relaxed);
+                                        let _ = tx.send(Message::routable(
+                                            reply_src.clone(),
+                                            reply_dst.clone(),
+                                            rid,
+                                            &RoutableMessage::SubscriptionClosed { agent_id },
+                                        )).await;
+                                    } => {}
+                                    _ = cancel_rx => {
+                                        tracing::debug!("stream cancelled");
                                     }
-                                    let _ = tx.send(Message::Routable {
-                                        src: reply_src.clone(),
-                                        dst: reply_dst.clone(),
-                                        message: RoutableMessage::SubscriptionClosed { agent_id },
-                                    }).await;
-                                } => {}
-                                _ = cancel_rx => {
-                                    tracing::debug!("stream cancelled");
                                 }
+                                cleanup_stream(&stream_user_state, agent_id, stream_id).await;
+                                tracing::debug!("stream ended");
                             }
-                            cleanup_stream(&stream_user_state, agent_id, stream_id).await;
-                            tracing::debug!("stream ended");
-                        }.instrument(stream_span));
+                            .instrument(stream_span),
+                        );
                     }
 
                     Ok(())
                 }
                 Err(e) => {
                     let _ = tx
-                        .send(Message::Routable {
-                            src: reply_src,
-                            dst: reply_dst,
-                            message: RoutableMessage::SubscribeRawResult {
+                        .send(Message::routable(
+                            reply_src,
+                            reply_dst,
+                            request_id,
+                            &RoutableMessage::SubscribeRawResult {
                                 agent_id,
                                 error: Some(ProtocolError::ServerError(e.to_string())),
                             },
-                        })
+                        ))
                         .await;
                     Ok(())
                 }
@@ -432,16 +462,17 @@ async fn handle_routable(
 
             let Some(session) = session else {
                 let _ = tx
-                    .send(Message::Routable {
-                        src: reply_src,
-                        dst: reply_dst,
-                        message: RoutableMessage::SubscribeStructuredResult {
+                    .send(Message::routable(
+                        reply_src,
+                        reply_dst,
+                        request_id,
+                        &RoutableMessage::SubscribeStructuredResult {
                             agent_id,
                             error: Some(ProtocolError::ServerError(
                                 "Agent not found or ended".to_string(),
                             )),
                         },
-                    })
+                    ))
                     .await;
                 return Ok(());
             };
@@ -450,29 +481,31 @@ async fn handle_routable(
 
             let Some(mut reader) = log_reader else {
                 let _ = tx
-                    .send(Message::Routable {
-                        src: reply_src,
-                        dst: reply_dst,
-                        message: RoutableMessage::SubscribeStructuredResult {
+                    .send(Message::routable(
+                        reply_src,
+                        reply_dst,
+                        request_id,
+                        &RoutableMessage::SubscribeStructuredResult {
                             agent_id,
                             error: Some(ProtocolError::ServerError(
                                 "Agent not found or ended".to_string(),
                             )),
                         },
-                    })
+                    ))
                     .await;
                 return Ok(());
             };
 
             let _ = tx
-                .send(Message::Routable {
-                    src: reply_src.clone(),
-                    dst: reply_dst.clone(),
-                    message: RoutableMessage::SubscribeStructuredResult {
+                .send(Message::routable(
+                    reply_src.clone(),
+                    reply_dst.clone(),
+                    request_id,
+                    &RoutableMessage::SubscribeStructuredResult {
                         agent_id,
                         error: None,
                     },
-                })
+                ))
                 .await;
 
             tracing::info!(agent_id = %agent_id, mode = "structured", "subscribed");
@@ -493,31 +526,36 @@ async fn handle_routable(
 
                 let stream_span = tracing::info_span!("stream", stream_id, agent_id = %agent_id, mode = "structured");
                 let stream_user_state = ctx.user_state.clone();
+                let next_rid = ctx.next_request_id.clone();
                 tokio::spawn(
                     async move {
                         tokio::select! {
                             _ = async {
                                 while let Some(data) = reader.read().await {
+                                    let rid = next_rid.fetch_add(1, Ordering::Relaxed);
                                     if tx
-                                        .send(Message::Routable {
-                                            src: reply_src.clone(),
-                                            dst: reply_dst.clone(),
-                                            message: RoutableMessage::StructuredOutput {
+                                        .send(Message::routable(
+                                            reply_src.clone(),
+                                            reply_dst.clone(),
+                                            rid,
+                                            &RoutableMessage::StructuredOutput {
                                                 agent_id,
                                                 data,
                                             },
-                                        })
+                                        ))
                                         .await
                                         .is_err()
                                     {
                                         return;
                                     }
                                 }
-                                let _ = tx.send(Message::Routable {
-                                    src: reply_src.clone(),
-                                    dst: reply_dst.clone(),
-                                    message: RoutableMessage::SubscriptionClosed { agent_id },
-                                }).await;
+                                let rid = next_rid.fetch_add(1, Ordering::Relaxed);
+                                let _ = tx.send(Message::routable(
+                                    reply_src.clone(),
+                                    reply_dst.clone(),
+                                    rid,
+                                    &RoutableMessage::SubscriptionClosed { agent_id },
+                                )).await;
                             } => {}
                             _ = cancel_rx => {
                                 tracing::debug!("stream cancelled");
@@ -549,11 +587,12 @@ async fn handle_routable(
                 },
             };
             let _ = tx
-                .send(Message::Routable {
-                    src: reply_src,
-                    dst: reply_dst,
-                    message: response_message,
-                })
+                .send(Message::routable(
+                    reply_src,
+                    reply_dst,
+                    request_id,
+                    &response_message,
+                ))
                 .await;
             Ok(())
         }
@@ -594,7 +633,8 @@ async fn handle_routable(
         | RoutableMessage::CreateAgentResult { .. }
         | RoutableMessage::RawOutput { .. }
         | RoutableMessage::StructuredOutput { .. }
-        | RoutableMessage::SubscriptionClosed { .. } => Ok(()),
+        | RoutableMessage::SubscriptionClosed { .. }
+        | RoutableMessage::UnknownMessage => Ok(()),
     }
 }
 
@@ -1065,6 +1105,7 @@ mod tests {
             event_tx,
             link_name: "test-link".to_string(),
             is_local: true,
+            next_request_id: Arc::new(AtomicU64::new(1)),
         }
     }
 

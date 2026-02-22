@@ -374,6 +374,19 @@ pub enum RoutableMessage {
     SubscriptionClosed {
         agent_id: Uuid,
     },
+    UnknownMessage,
+}
+
+impl RoutableMessage {
+    /// Encode routable message to bytes using MessagePack (named/map format)
+    pub fn encode(&self) -> Result<Vec<u8>, rmp_serde::encode::Error> {
+        rmp_serde::to_vec_named(self)
+    }
+
+    /// Decode routable message from bytes using MessagePack
+    pub fn decode(data: &[u8]) -> Result<Self, rmp_serde::decode::Error> {
+        rmp_serde::from_slice(data)
+    }
 }
 
 /// Messages that are handled directly by the receiving server (no routing).
@@ -434,10 +447,26 @@ pub enum Message {
     Routable {
         src: Route,
         dst: Route,
-        message: RoutableMessage,
+        request_id: u64,
+        payload: Vec<u8>,
     },
     Direct(DirectMessage),
     Command(Command),
+}
+
+impl Message {
+    /// Convenience constructor for Routable messages.
+    /// Encodes the RoutableMessage into the opaque payload.
+    pub fn routable(src: Route, dst: Route, request_id: u64, message: &RoutableMessage) -> Self {
+        Message::Routable {
+            src,
+            dst,
+            request_id,
+            payload: message
+                .encode()
+                .expect("RoutableMessage encode cannot fail"),
+        }
+    }
 }
 
 /// Debug information about server state (aggregated across all users)
@@ -483,55 +512,126 @@ mod tests {
     #[test]
     fn test_message_roundtrip_create_agent() {
         let test_uuid = Uuid::new_v4();
-        let msg = Message::Routable {
-            src: Route::from_link("term-abc"),
-            dst: Route::empty(),
-            message: RoutableMessage::CreateAgent(CreateAgentRequest {
+        let msg = Message::routable(
+            Route::from_link("term-abc"),
+            Route::empty(),
+            42,
+            &RoutableMessage::CreateAgent(CreateAgentRequest {
                 agent_id: test_uuid,
                 name: Some("test".to_string()),
                 agent_type: AgentType::Claude,
                 working_dir: PathBuf::from("/home/user/project"),
                 terminal_size: Some(TerminalSize { rows: 24, cols: 80 }),
             }),
-        };
+        );
         let encoded = msg.encode().unwrap();
         let decoded = Message::decode(&encoded).unwrap();
         if let Message::Routable {
-            message: RoutableMessage::CreateAgent(req),
+            payload,
+            request_id,
             ..
         } = decoded
         {
-            assert_eq!(req.agent_id, test_uuid);
-            assert_eq!(req.name, Some("test".to_string()));
-            assert_eq!(req.agent_type, AgentType::Claude);
-            assert_eq!(req.working_dir, PathBuf::from("/home/user/project"));
-            assert_eq!(req.terminal_size, Some(TerminalSize { rows: 24, cols: 80 }));
+            assert_eq!(request_id, 42);
+            let rm = RoutableMessage::decode(&payload).unwrap();
+            if let RoutableMessage::CreateAgent(req) = rm {
+                assert_eq!(req.agent_id, test_uuid);
+                assert_eq!(req.name, Some("test".to_string()));
+                assert_eq!(req.agent_type, AgentType::Claude);
+                assert_eq!(req.working_dir, PathBuf::from("/home/user/project"));
+                assert_eq!(req.terminal_size, Some(TerminalSize { rows: 24, cols: 80 }));
+            } else {
+                panic!("Expected CreateAgent");
+            }
         } else {
-            panic!("Expected CreateAgent");
+            panic!("Expected Routable");
         }
     }
 
     #[test]
     fn test_message_roundtrip_subscribe_raw_result() {
-        let msg = Message::Routable {
-            src: Route::from_link("host-a"),
-            dst: Route::from_link("host-b"),
-            message: RoutableMessage::SubscribeRawResult {
-                agent_id: Uuid::new_v4(),
+        let agent_id = Uuid::new_v4();
+        let msg = Message::routable(
+            Route::from_link("host-a"),
+            Route::from_link("host-b"),
+            7,
+            &RoutableMessage::SubscribeRawResult {
+                agent_id,
                 error: None,
             },
-        };
+        );
         let encoded = msg.encode().unwrap();
         let decoded = Message::decode(&encoded).unwrap();
-        if let Message::Routable {
-            message: RoutableMessage::SubscribeRawResult { error, .. },
-            ..
+        if let Message::Routable { payload, .. } = decoded {
+            if let RoutableMessage::SubscribeRawResult { error, .. } =
+                RoutableMessage::decode(&payload).unwrap()
+            {
+                assert!(error.is_none());
+            } else {
+                panic!("Expected SubscribeRawResult");
+            }
+        } else {
+            panic!("Expected Routable");
+        }
+    }
+
+    #[test]
+    fn test_routable_message_encode_decode_roundtrip() {
+        let agent_id = Uuid::new_v4();
+        let rm = RoutableMessage::RawOutput {
+            agent_id,
+            data: b"hello".to_vec(),
+        };
+        let encoded = rm.encode().unwrap();
+        let decoded = RoutableMessage::decode(&encoded).unwrap();
+        if let RoutableMessage::RawOutput {
+            agent_id: decoded_id,
+            data,
         } = decoded
         {
-            assert!(error.is_none());
+            assert_eq!(decoded_id, agent_id);
+            assert_eq!(data, b"hello");
         } else {
-            panic!("Expected SubscribeRawResult");
+            panic!("Expected RawOutput");
         }
+    }
+
+    #[test]
+    fn test_opaque_payload_two_step_roundtrip() {
+        let agent_id = Uuid::new_v4();
+        let rm = RoutableMessage::CreateAgentResult {
+            agent_id,
+            error: None,
+        };
+        // Step 1: encode RM → put in Message → encode Message
+        let msg = Message::routable(Route::from_link("src"), Route::from_link("dst"), 99, &rm);
+        let wire = msg.encode().unwrap();
+        // Step 2: decode Message → decode RM
+        let decoded_msg = Message::decode(&wire).unwrap();
+        if let Message::Routable {
+            payload,
+            request_id,
+            ..
+        } = decoded_msg
+        {
+            assert_eq!(request_id, 99);
+            let decoded_rm = RoutableMessage::decode(&payload).unwrap();
+            if let RoutableMessage::CreateAgentResult { error, .. } = decoded_rm {
+                assert!(error.is_none());
+            } else {
+                panic!("Expected CreateAgentResult");
+            }
+        } else {
+            panic!("Expected Routable");
+        }
+    }
+
+    #[test]
+    fn test_unknown_message_roundtrip() {
+        let rm = RoutableMessage::UnknownMessage;
+        let encoded = rm.encode().unwrap();
+        let decoded = RoutableMessage::decode(&encoded).unwrap();
+        assert!(matches!(decoded, RoutableMessage::UnknownMessage));
     }
 
     #[test]

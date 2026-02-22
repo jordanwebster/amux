@@ -10,6 +10,7 @@ use crate::transport::{
     TcpTransport, Transport, TransportSplit, UnixTransport, WebSocketTransport,
 };
 use std::sync::Arc;
+use std::sync::atomic::AtomicU64;
 use tokio::net::{TcpStream, UnixStream};
 use tokio::sync::{RwLock, mpsc};
 use tokio_tungstenite::accept_async;
@@ -311,6 +312,7 @@ pub(super) async fn accept_connection<T: TransportSplit>(
         event_tx,
         link_name: link_name.clone(),
         is_local,
+        next_request_id: Arc::new(AtomicU64::new(1)),
     };
 
     let response_tx_cleanup = response_tx.clone();
@@ -454,6 +456,7 @@ pub(super) async fn tcp_connect(
                 event_tx,
                 link_name: link_name_clone.clone(),
                 is_local: false,
+                next_request_id: Arc::new(AtomicU64::new(1)),
             };
             let result = connection_loop(incoming_rx, outgoing_tx.clone(), ctx, None).await;
 

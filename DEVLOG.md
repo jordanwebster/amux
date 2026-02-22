@@ -38,6 +38,34 @@ One paragraph describing what was done.
 
 ---
 
+## 2026-02-22: Opaque payload + request_id (protocol v3, phase 4)
+
+### Summary
+Phase 4 of protocol v3 upgrade. Changed `Message::Routable` from carrying a typed `message: RoutableMessage` field to an opaque `payload: Vec<u8>` + `request_id: u64`. Intermediate servers (cloud relays) can now forward routable messages without deserializing the payload — they just copy bytes. Only the final destination decodes the payload via a two-step process: decode `Message` (outer envelope), then decode `RoutableMessage` from the payload bytes. Added `RoutableMessage::UnknownMessage` variant for forward compatibility (returned when payload decode fails). Added `RoutableMessage::encode()`/`decode()` methods mirroring `Message::encode()`/`decode()`. Added `Message::routable()` convenience constructor to reduce boilerplate at ~20 construction sites. Added `next_request_id: Arc<AtomicU64>` to `ConnectionContext` for unique request IDs on stream messages. Client-side uses a local `AtomicU64` counter threaded through `new_agent`/`attach`/`subscribe_and_stream`/`run_attached`.
+
+### Changes
+- `src/message.rs` — Changed `Message::Routable` fields from `{ src, dst, message: RoutableMessage }` to `{ src, dst, request_id: u64, payload: Vec<u8> }`. Added `RoutableMessage::UnknownMessage` variant. Added `encode()`/`decode()` on `RoutableMessage`. Added `Message::routable()` convenience constructor. Updated 2 existing tests, added 3 new tests (encode/decode roundtrip, opaque two-step roundtrip, UnknownMessage roundtrip).
+- `src/server/connection.rs` — Added `next_request_id: Arc<AtomicU64>` to `ConnectionContext`. Changed `msg_type_label` Routable arm to return `"Routable"` (can't inspect opaque payload). Changed logging filter to trace-level for all Routable messages. Updated `handle_routable` signature to take `request_id: u64, payload: Vec<u8>`. Forwarding path passes payload verbatim (the key optimization). Local delivery uses two-step decode with `RoutableMessage::decode()`, returning `UnknownMessage` on decode failure. All ~15 response construction sites use `Message::routable()`. Stream tasks clone `Arc<AtomicU64>` and generate per-message request_ids. Updated test helper `test_ctx` with `next_request_id`.
+- `src/server/accept.rs` — Added `next_request_id: Arc::new(AtomicU64::new(1))` to both `ConnectionContext` construction sites (`accept_connection`, `tcp_connect`).
+- `src/server/cloud.rs` — Added `next_request_id: Arc::new(AtomicU64::new(1))` to `ConnectionContext` in `run_cloud_connection`.
+- `src/client.rs` — Added `AtomicU64` counter threaded through `new_agent`→`subscribe_and_stream`→`run_attached` and `attach`→`subscribe_and_stream`→`run_attached`. All construction sites use `Message::routable()`. All match sites use two-step decode (`Message::Routable { payload, .. }` then `RoutableMessage::decode(&payload)`).
+- `src/transport/unix.rs` — Updated 3 test construction sites to use `Message::routable()` and two-step decode.
+
+### Decisions Made
+- Opaque payload enables zero-copy forwarding at relay servers — intermediate hops never need to understand the routable message content
+- `request_id` is per-message (not per-request/response pair) — stream messages each get a unique ID, request/response messages echo the incoming ID
+- `UnknownMessage` returned on decode failure rather than dropping the message — gives the sender a signal that the destination couldn't understand the payload
+- Dashboard intentionally left untouched (deadweight per user)
+
+### Verification
+- `cargo check && cargo fmt && cargo clippy --workspace --all-targets -- -D warnings && cargo test` — 125 tests pass, zero warnings
+- `cargo build --workspace && cargo run -p e2e-runner -- run` — all 10 E2E tests pass
+
+### Next Steps
+- Protocol v3 phase 4 complete; all four phases done
+
+---
+
 ## 2026-02-22: Route management overhaul + SubscriptionClosed (protocol v3, phase 3)
 
 ### Summary

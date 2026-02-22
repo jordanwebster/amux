@@ -9,6 +9,7 @@ use crate::route::{Route, generate_terminal_link};
 use crate::transport::{Transport, UnixTransport};
 use std::io::{self, Read, Write};
 use std::os::unix::io::AsRawFd;
+use std::sync::atomic::{AtomicU64, Ordering};
 use tokio::net::UnixStream;
 use tokio::sync::mpsc;
 use uuid::Uuid;
@@ -136,30 +137,41 @@ pub async fn new_agent(name: Option<&str>, agent_type: AgentType, config: &Confi
     let (src, dst) =
         Route::send(full_route.clone()).expect("full_route should have at least one link");
 
+    let request_counter = AtomicU64::new(1);
+
     // Send CreateAgent
     transport
-        .write_message(&Message::Routable {
+        .write_message(&Message::routable(
             src,
             dst,
-            message: RoutableMessage::CreateAgent(CreateAgentRequest {
+            request_counter.fetch_add(1, Ordering::Relaxed),
+            &RoutableMessage::CreateAgent(CreateAgentRequest {
                 agent_id,
                 name: name.map(|s| s.to_string()),
                 agent_type,
                 working_dir: working_dir.clone(),
                 terminal_size: Some(terminal_size),
             }),
-        })
+        ))
         .await?;
 
     match transport.read_message().await? {
-        Message::Routable {
-            message: RoutableMessage::CreateAgentResult { error: None, .. },
-            ..
-        } => subscribe_and_stream(transport, agent_id, full_route, Some(terminal_size)).await,
-        Message::Routable {
-            message: RoutableMessage::CreateAgentResult { error: Some(e), .. },
-            ..
-        } => Err(AmuxError::Pty(e.to_string())),
+        Message::Routable { payload, .. } => match RoutableMessage::decode(&payload)? {
+            RoutableMessage::CreateAgentResult { error: None, .. } => {
+                subscribe_and_stream(
+                    transport,
+                    agent_id,
+                    full_route,
+                    Some(terminal_size),
+                    request_counter,
+                )
+                .await
+            }
+            RoutableMessage::CreateAgentResult { error: Some(e), .. } => {
+                Err(AmuxError::Pty(e.to_string()))
+            }
+            _ => Err(AmuxError::InvalidMessage),
+        },
         _ => Err(AmuxError::InvalidMessage),
     }
 }
@@ -221,7 +233,15 @@ pub async fn attach(target: Option<&str>, config: &Config) -> Result<()> {
     };
     tracing::info!(agent_id = %agent_id, route = %full_route, "attaching");
 
-    subscribe_and_stream(transport, agent_id, full_route, Some(terminal_size)).await
+    let request_counter = AtomicU64::new(1);
+    subscribe_and_stream(
+        transport,
+        agent_id,
+        full_route,
+        Some(terminal_size),
+        request_counter,
+    )
+    .await
 }
 
 /// Subscribe to an agent and stream I/O
@@ -230,6 +250,7 @@ async fn subscribe_and_stream(
     agent_id: Uuid,
     full_route: Route,
     terminal_size: Option<TerminalSize>,
+    request_counter: AtomicU64,
 ) -> Result<()> {
     // Prepare to send: pop first hop, create src for return path
     let (src, dst) =
@@ -237,39 +258,39 @@ async fn subscribe_and_stream(
 
     // Send Subscribe
     transport
-        .write_message(&Message::Routable {
+        .write_message(&Message::routable(
             src,
             dst,
-            message: RoutableMessage::SubscribeRaw {
+            request_counter.fetch_add(1, Ordering::Relaxed),
+            &RoutableMessage::SubscribeRaw {
                 agent_id,
                 terminal_size,
             },
-        })
+        ))
         .await?;
 
     // Read SubscribeResult
     let response = transport.read_message().await?;
     match response {
-        Message::Routable {
-            message: RoutableMessage::SubscribeRawResult { error: None, .. },
-            ..
-        } => {
-            tracing::info!(agent_id = %agent_id, "subscribed");
-        }
-        Message::Routable {
-            message: RoutableMessage::SubscribeRawResult { error: Some(e), .. },
-            ..
-        } => {
-            eprintln!("Failed to subscribe: {}", e);
-            return Ok(());
-        }
+        Message::Routable { payload, .. } => match RoutableMessage::decode(&payload)? {
+            RoutableMessage::SubscribeRawResult { error: None, .. } => {
+                tracing::info!(agent_id = %agent_id, "subscribed");
+            }
+            RoutableMessage::SubscribeRawResult { error: Some(e), .. } => {
+                eprintln!("Failed to subscribe: {}", e);
+                return Ok(());
+            }
+            _ => {
+                return Err(AmuxError::InvalidMessage);
+            }
+        },
         _ => {
             return Err(AmuxError::InvalidMessage);
         }
     }
 
     // Now enter raw mode and stream - pass full route so InputBytes can do pop/push
-    run_attached(transport, agent_id, full_route).await
+    run_attached(transport, agent_id, full_route, request_counter).await
 }
 
 /// List all running agents
@@ -417,6 +438,7 @@ async fn run_attached(
     mut transport: UnixTransport,
     agent_id: Uuid,
     full_route: Route,
+    request_counter: AtomicU64,
 ) -> Result<()> {
     // Put terminal in raw mode
     let _raw_guard = RawModeGuard::new()?;
@@ -548,14 +570,15 @@ async fn run_attached(
                     Some(StdinEvent::Data(data)) => {
                         let (src, dst) = Route::send(full_route.clone())
                             .expect("full_route should have at least one link");
-                        if transport.write_message(&Message::Routable {
+                        if transport.write_message(&Message::routable(
                             src,
                             dst,
-                            message: RoutableMessage::RawInput {
+                            request_counter.fetch_add(1, Ordering::Relaxed),
+                            &RoutableMessage::RawInput {
                                 agent_id,
                                 data,
                             },
-                        }).await.is_err() {
+                        )).await.is_err() {
                             break;
                         }
                     }
@@ -572,13 +595,18 @@ async fn run_attached(
             // Message from server
             msg = transport.read_message() => {
                 match msg {
-                    Ok(Message::Routable { message: RoutableMessage::RawOutput { data, .. }, .. }) => {
-                        io::stdout().write_all(&data).ok();
-                        io::stdout().flush().ok();
-                    }
-                    Ok(Message::Routable { message: RoutableMessage::SubscriptionClosed { .. }, .. }) => {
-                        tracing::info!("agent ended");
-                        break;
+                    Ok(Message::Routable { payload, .. }) => {
+                        match RoutableMessage::decode(&payload) {
+                            Ok(RoutableMessage::RawOutput { data, .. }) => {
+                                io::stdout().write_all(&data).ok();
+                                io::stdout().flush().ok();
+                            }
+                            Ok(RoutableMessage::SubscriptionClosed { .. }) => {
+                                tracing::info!("agent ended");
+                                break;
+                            }
+                            _ => {} // Ignore unexpected routable messages
+                        }
                     }
                     Ok(Message::Command(Command::ShutdownNotification(reason))) => {
                         tracing::info!(reason = %reason, "server shutdown");

@@ -8,6 +8,7 @@ use crate::message::{Command, Message, ShutdownReason};
 use crate::state::State;
 use crate::transport::TransportSplit;
 use std::sync::Arc;
+use std::sync::atomic::AtomicU64;
 use std::time::Duration;
 use tokio::sync::{RwLock, mpsc};
 use tracing::Instrument;
@@ -175,6 +176,7 @@ async fn run_cloud_connection(
         event_tx,
         link_name: link_name.clone(),
         is_local: false,
+        next_request_id: Arc::new(AtomicU64::new(1)),
     };
 
     let result = connection_loop(incoming_rx, outgoing_tx, ctx, Some(token_refresh))

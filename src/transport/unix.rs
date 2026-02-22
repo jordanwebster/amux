@@ -103,26 +103,27 @@ mod tests {
         let (mut client, mut server) = create_socket_pair().await;
 
         let test_uuid = Uuid::new_v4();
-        let msg = Message::Routable {
-            src: Route::from_link("term-abc"),
-            dst: Route::empty(),
-            message: RoutableMessage::CreateAgent(CreateAgentRequest {
+        let msg = Message::routable(
+            Route::from_link("term-abc"),
+            Route::empty(),
+            0,
+            &RoutableMessage::CreateAgent(CreateAgentRequest {
                 agent_id: test_uuid,
                 name: Some("test".to_string()),
                 agent_type: AgentType::Claude,
                 working_dir: std::path::PathBuf::from("/tmp"),
                 terminal_size: Some(TerminalSize { rows: 24, cols: 80 }),
             }),
-        };
+        );
 
         client.write_message(&msg).await.unwrap();
 
         let received = server.read_message().await.unwrap();
-        if let Message::Routable {
-            message: RoutableMessage::CreateAgent(req),
-            ..
-        } = received
-        {
+        if let Message::Routable { payload, .. } = received {
+            let RoutableMessage::CreateAgent(req) = RoutableMessage::decode(&payload).unwrap()
+            else {
+                panic!("Expected CreateAgent");
+            };
             assert_eq!(req.agent_id, test_uuid);
             assert_eq!(req.name, Some("test".to_string()));
             assert_eq!(req.agent_type, AgentType::Claude);
@@ -137,26 +138,29 @@ mod tests {
     async fn test_output_message_roundtrip() {
         let (mut client, mut server) = create_socket_pair().await;
 
-        let msg = Message::Routable {
-            src: Route::from_link("host-a"),
-            dst: Route::from_link("host-b"),
-            message: RoutableMessage::RawOutput {
+        let msg = Message::routable(
+            Route::from_link("host-a"),
+            Route::from_link("host-b"),
+            0,
+            &RoutableMessage::RawOutput {
                 agent_id: Uuid::new_v4(),
                 data: b"hello world".to_vec(),
             },
-        };
+        );
 
         client.write_message(&msg).await.unwrap();
 
         let received = server.read_message().await.unwrap();
-        if let Message::Routable {
-            message: RoutableMessage::RawOutput { data, .. },
-            ..
-        } = received
-        {
-            assert_eq!(data, b"hello world");
+        if let Message::Routable { payload, .. } = received {
+            if let RoutableMessage::RawOutput { data, .. } =
+                RoutableMessage::decode(&payload).unwrap()
+            {
+                assert_eq!(data, b"hello world");
+            } else {
+                panic!("Expected RawOutput");
+            }
         } else {
-            panic!("Expected Output");
+            panic!("Expected Routable");
         }
     }
 
@@ -164,26 +168,29 @@ mod tests {
     async fn test_input_message_roundtrip() {
         let (mut client, mut server) = create_socket_pair().await;
 
-        let msg = Message::Routable {
-            src: Route::from_link("host-a"),
-            dst: Route::from_link("host-b"),
-            message: RoutableMessage::RawInput {
+        let msg = Message::routable(
+            Route::from_link("host-a"),
+            Route::from_link("host-b"),
+            0,
+            &RoutableMessage::RawInput {
                 agent_id: Uuid::new_v4(),
                 data: b"user input".to_vec(),
             },
-        };
+        );
 
         client.write_message(&msg).await.unwrap();
 
         let received = server.read_message().await.unwrap();
-        if let Message::Routable {
-            message: RoutableMessage::RawInput { data, .. },
-            ..
-        } = received
-        {
-            assert_eq!(data, b"user input");
+        if let Message::Routable { payload, .. } = received {
+            if let RoutableMessage::RawInput { data, .. } =
+                RoutableMessage::decode(&payload).unwrap()
+            {
+                assert_eq!(data, b"user input");
+            } else {
+                panic!("Expected RawInput");
+            }
         } else {
-            panic!("Expected InputBytes");
+            panic!("Expected Routable");
         }
     }
 }
