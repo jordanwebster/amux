@@ -56,13 +56,14 @@ After initial OAuth setup, cloud connections use JWT tokens:
 3. Call GET {cloud_url}/api/connect with access_token
    Returns: { host, port, token (JWT), expires_at }
 4. Connect via TLS to host:port
-5. Send Connect { link_name, token: JWT }
-6. Cloud server validates JWT via JWKS
+5. Send Connect { link_name, token: JWT, version: PROTOCOL_VERSION }
+6. Cloud server validates protocol version and JWT via JWKS
+   - Checks version matches PROTOCOL_VERSION (rejects with VersionMismatch if not)
    - Fetches keys from {cloud_url}/.well-known/openid-configuration/jwks
    - Caches keys for 1 hour
    - Validates signature, audience ("amux_token"), expiry
    - Verifies host/port in claims match the receiving server
-7. Cloud server responds with ConnectResult { success: true }
+7. Cloud server responds with ConnectResult { error: None }
 ```
 
 ### Token Refresh
@@ -104,9 +105,9 @@ When a local server starts with cloud mode enabled:
 2. Exchange refresh_token for access_token (OAuth)
 3. Call /api/connect → { host, port, token, expires_at }
 4. TLS connect to host:port (rustls, webpki root certs)
-5. Send LocalMessage::Connect { link_name: "{hostname}-{rand}", token: JWT }
-6. Cloud validates JWT (JWKS), checks link_name uniqueness
-7. Cloud responds with ConnectResult { success: true }
+5. Send DirectMessage::Connect { link_name: "{hostname}-{rand}", token: JWT, version: PROTOCOL_VERSION }
+6. Cloud validates protocol version, JWT (JWKS), checks link_name uniqueness
+7. Cloud responds with ConnectResult { error: None }
 8. Enter connection_loop with token refresh enabled
 ```
 
@@ -118,11 +119,11 @@ On `HostChanged` during token refresh, the connection is dropped and re-establis
 
 ### Client → Cloud
 
-Rich clients (mobile, web dashboard) connect via WebSocket to the cloud server:
+Rich clients (mobile, web) connect via WebSocket to the cloud server:
 
 ```
 1. WebSocket upgrade to ws://cloud:9002/
-2. Send LocalMessage::Connect { link_name, token: null }
+2. Send DirectMessage::Connect { link_name, token: null, version: PROTOCOL_VERSION }
 3. Cloud responds with ConnectResult
 4. Enter connection_loop (JSON messages over WebSocket)
 ```
@@ -135,9 +136,9 @@ Terminal clients connect via Unix socket:
 
 ```
 1. Connect to /tmp/amux.sock
-2. Send LocalMessage::Connect { link_name: "term-{rand}", token: null }
+2. Send DirectMessage::Connect { link_name: "term-{rand}", token: null, version: PROTOCOL_VERSION }
 3. Server checks link_name uniqueness, inserts route
-4. Server responds with ConnectResult { success: true }
+4. Server responds with ConnectResult { error: None }
 5. Enter connection_loop (MessagePack over length-prefixed frames)
 ```
 
@@ -182,9 +183,11 @@ Route: VecDeque<String>  // Serializes as "AB.BC.CD" (dot-separated)
 
 ## Session Propagation
 
-Currently, only local agents are visible in `list-agents`. Remote agent propagation is future work.
+Agents are propagated to connected peers via `AnnounceAgent`/`WithdrawAgent` direct messages. `list-agents` returns both local and remote agents. Remote agents include their route for multi-hop routing.
 
-Routing uses the link-name routes table: `HashMap<String, mpsc::Sender<Message>>`. When a client wants to reach an agent on a remote server, it constructs a multi-hop route (e.g. `"cloud-server.local-host"`) and the message is forwarded hop-by-hop using the stack-based routing algorithm described in [ARCHITECTURE.md](ARCHITECTURE.md).
+Hosts are propagated via `AnnounceHost`/`WithdrawHost`. When a peer connection is lost, `WithdrawHost` propagates through the network and each server bulk-removes agents reachable via the withdrawn host.
+
+Routing uses the per-user routes table: `HashMap<String, mpsc::Sender<Message>>`. When a client wants to reach an agent on a remote server, the route is resolved from the agent registry (e.g. `"cloud-server.local-host"`) and the message is forwarded hop-by-hop using the stack-based routing algorithm described in [ARCHITECTURE.md](ARCHITECTURE.md).
 
 ---
 
@@ -298,7 +301,6 @@ The architecture avoids distributed systems complexity through deliberate constr
 6. Done - no complex recovery
 
 **Deferred complexity:**
-- Agent propagation to peers (remote agent discovery)
 - WebSocket cloud authentication
 - Cross-user collaboration (user A accessing user B's agents)
 - Server-to-server LAN connections without cloud

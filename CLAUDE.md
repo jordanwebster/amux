@@ -19,47 +19,21 @@ This file provides guidance for AI assistants working on the amux codebase.
 - Keep commit messages concise and descriptive
 - Use lowercase for commit message subjects
 
-## Current State (January 2025)
+## Current State
 
-**Milestone 1 is complete.** The codebase implements local terminal connections with the new architecture:
+**Milestones 1-3 are complete.** The codebase implements local terminal connections, server-to-server routing, cloud relay, and the v3 protocol:
 
-- Message-based protocol with serde/bincode serialization
-- Transport trait with length-prefixed framing (UnixTransport, TcpTransport)
-- Multi-client support via broadcast channels
-- Server-to-server TCP connections with hierarchical routing
+- Protocol v3 with three-variant Message enum (Routable/Direct/Command)
+- Opaque payload routing (intermediate hops don't deserialize)
+- Per-connection request_id counters
+- Per-user state isolation (for cloud multi-tenancy)
+- AnnounceHost/WithdrawHost as single source of routing truth
+- Agent discovery propagation via AnnounceAgent/WithdrawAgent
+- MessagePack serialization for binary transports, JSON for WebSocket
+- OAuth 2.0 device flow + JWT authentication for cloud
+- TLS for server-to-server connections
 
-**Files:**
-- `src/main.rs` - CLI (new-agent, attach, list-agents, kill-server, connect)
-- `src/message.rs` - Protocol messages with serde
-- `src/transport.rs` - Transport trait, UnixTransport, TcpTransport
-- `src/session.rs` - LocalAgentSession with PTY
-- `src/server.rs` - Server with symmetric Unix/TCP handlers (unix_accept, tcp_accept, etc.)
-- `src/client.rs` - Client protocol implementation
-- `src/config.rs` - Server configuration
-- `src/error.rs` - Error types with thiserror
-- `src/buffer.rs` - MultiplexBuffer for replay and broadcast
-- `src/log.rs` - Simple file-based logging
-
-**Source of truth:** ARCHITECTURE.md remains the canonical design for future work (TCP, WebSocket, cloud mode).
-
-## Suggested Implementation Order
-
-Start with the core types and local-only flow, then expand:
-
-1. **Message enum + serde** - Define all message types with `Serialize`/`Deserialize`
-2. **Transport trait + UnixTransport** - `read_frame`, `write_frame`, `read_raw`, `write_raw`
-3. **Config** - Server configuration struct
-4. **LocalAgentSession** - PTY spawning, replay buffers, input channel
-5. **Server + LocalConnection** - Get local terminal → agent flow working
-6. **TcpTransport + RemoteConnection** - Add TCP with `bincode` serialization
-7. **Routing table + AddAgents** - Server-to-server agent discovery
-8. **Proxy logic** - Subscribe/output forwarding through cloud
-9. **WebSocketTransport** - JSON serialization for rich clients
-10. **Token validation** - Cloud mode authentication
-
-**Milestone 1:** Local terminal can attach to local agent (steps 1-5)
-**Milestone 2:** Two servers can connect and route (steps 6-8)
-**Milestone 3:** Full cloud flow with mobile client (steps 9-10)
+**Source of truth:** ARCHITECTURE.md is the canonical design document for server internals. CLOUD_ARCHITECTURE.md covers the cloud deployment model.
 
 ## Getting Oriented
 
@@ -86,12 +60,11 @@ Terminal ──Unix socket──> Local amux server ──TCP──> Cloud amux 
 ```
 
 **Core types:**
-- `agent_id` - UUID string identifying an agent (optional alias for human-friendly names)
-- `Connection` - enum of Local (Unix) or Remote (TCP/WebSocket)
+- `agent_id` - UUID identifying an agent (optional name for human-friendly references)
+- `Route` - stack of link names (`VecDeque<String>`) for multi-hop routing
 - `LocalAgentSession` - a running agent with PTY and replay buffers
-- `Route` - either Local or Remote { via: ConnectionId }
-
-**Key optimization:** Local Unix sockets switch to raw byte mode after subscribe (zero framing overhead).
+- `AgentRegistry` - centralized tracking of local + remote agents with name mapping
+- `Host` - remote host info propagated via AnnounceHost/WithdrawHost
 
 ## Code Style
 
@@ -99,7 +72,7 @@ Terminal ──Unix socket──> Local amux server ──TCP──> Cloud amux 
 
 - Use `thiserror` for error types
 - Use `tokio` for async runtime
-- Use `serde` with `bincode` (TCP/Unix) and `serde_json` (WebSocket) for serialization
+- Use `serde` with `rmp-serde` / MessagePack (TCP/Unix) and `serde_json` (WebSocket) for serialization
 - Prefer `Arc<Mutex<T>>` or `Arc<RwLock<T>>` for shared state
 - Use channels (`mpsc`, `broadcast`) for task communication
 
@@ -114,16 +87,37 @@ Terminal ──Unix socket──> Local amux server ──TCP──> Cloud amux 
 
 ```
 src/
-├── main.rs           # CLI parsing, server startup
-├── server.rs         # Server struct, connection management
-├── session.rs        # LocalAgentSession, PTY management
-├── transport.rs      # Transport trait, Unix/TCP impls
-├── message.rs        # Message enum, serde setup
-├── client.rs         # Client-side protocol
-├── config.rs         # Config struct
-├── buffer.rs         # MultiplexBuffer for replay/broadcast
-├── error.rs          # Error types
-└── log.rs            # File-based logging
+├── main.rs                 # CLI parsing, server startup
+├── message.rs              # Protocol messages (Message, RoutableMessage, DirectMessage, Command)
+├── route.rs                # Route type (stack-based multi-hop routing)
+├── client.rs               # Client-side protocol (new-agent, attach, list-agents, etc.)
+├── config.rs               # Config struct
+├── session.rs              # LocalAgentSession, PTY management
+├── buffer.rs               # MultiplexBuffer for replay/broadcast
+├── multiplex_log_buffer.rs # MultiplexLogBuffer for structured output
+├── agent_registry.rs       # AgentRegistry (local + remote agent tracking)
+├── error.rs                # Error types with thiserror
+├── hooks.rs                # Claude Code hook integration
+├── transcript.rs           # TranscriptTailer for Claude Code JSONL
+├── cloud.rs                # Cloud connection management, token refresh
+├── oauth.rs                # OAuth 2.0 device flow
+├── jwt.rs                  # JWT validation (JWKS)
+├── init.rs                 # `amux init` command
+├── state.rs                # Persistent state (refresh tokens, etc.)
+├── lib.rs                  # Library root
+├── server/
+│   ├── mod.rs              # Server struct, ServerState, ServerUserState
+│   ├── accept.rs           # Connection acceptance, handshake
+│   ├── connection.rs       # Connection loop, message dispatch
+│   ├── routing.rs          # Route management, peer disconnect, agent creation
+│   └── cloud.rs            # Cloud connection establishment
+└── transport/
+    ├── mod.rs              # Transport trait, MessageReader/Writer, TransportSplit
+    ├── framing.rs          # Length-prefixed framing
+    ├── unix.rs             # UnixTransport
+    ├── tcp.rs              # TcpTransport (generic over stream type)
+    ├── tls.rs              # TLS support (rustls)
+    └── websocket.rs        # WebSocketTransport (JSON)
 ```
 
 ### Guidelines
@@ -176,23 +170,30 @@ tokio::task::spawn_blocking(move || { ... });
 
 ## Common Tasks
 
-### Adding a new message type
+### Adding a new routable message type
 
-1. Add variant to `Message` enum in `message.rs`
-2. Handle in `LocalConnection::handle_message` and/or `RemoteConnection::handle_message`
-3. Add corresponding server method if needed
+1. Add variant to `RoutableMessage` enum in `message.rs`
+2. Handle in `handle_routable()` in `server/connection.rs`
+3. Update client.rs if the client needs to send/receive it
+
+### Adding a new command
+
+1. Add variant to `Command` enum in `message.rs`
+2. Handle in `handle_command()` in `server/connection.rs`
+3. Update client.rs for the CLI side
+4. Update `msg_type_label()` in `server/connection.rs`
 
 ### Adding a new transport
 
-1. Implement `Transport` trait (read_frame, write_frame, read_raw, write_raw, close)
-2. Add to `RemoteConnection` or create new connection type
-3. Add listener in server startup
+1. Implement `Transport` + `TransportSplit` traits (`read_message`, `write_message`, `into_split`)
+2. Add listener in server startup (`server/mod.rs`)
+3. Add accept handler in `server/accept.rs`
 
-### Modifying the routing table
+### Modifying routing behavior
 
-1. Update `Route` enum if adding new route types
-2. Update `handle_connection_closed` for cleanup
-3. Update `handle_add_agents` for population
+1. Update `server/routing.rs` for route management
+2. Update `handle_routable()` in `server/connection.rs` for forwarding logic
+3. Update `WithdrawHost` handler for cleanup behavior
 
 ## Building and Testing
 

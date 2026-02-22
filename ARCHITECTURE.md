@@ -18,7 +18,7 @@ A detailed design for the amux server internals covering data structures, messag
 **Key design choices:**
 - All connections (local and remote) use framed messages with length-prefixed encoding
 - Connections are identified by link names (e.g. `"term-abc1"`, `"myhost-xyz2"`)
-- Messages are either `Routable` (carry src/dst routes, can be forwarded) or `Direct` (handled on the receiving server only)
+- Messages are `Routable` (carry src/dst routes + opaque payload, forwarded across hops), `Direct` (peer-to-peer, handled by directly connected server), or `Command` (CLI-only, rejected from remote peers)
 - Serialization uses MessagePack for binary transports (Unix/TCP) and JSON for WebSocket
 
 ---
@@ -83,13 +83,28 @@ See `src/route.rs`.
 
 ## Transport Abstraction
 
-All transports implement a simple two-method trait:
+All transports implement a simple two-method trait, with split support for the reader/writer task architecture:
 
 ```rust
 #[async_trait]
 trait Transport: Send + Sync {
     async fn read_message(&mut self) -> Result<Message>;
     async fn write_message(&mut self, msg: &Message) -> Result<()>;
+}
+
+trait MessageReader: Send {
+    async fn read_message(&mut self) -> Result<Message>;
+}
+
+trait MessageWriter: Send {
+    async fn write_message(&mut self, msg: &Message) -> Result<()>;
+    async fn background(&mut self) { /* e.g., WebSocket pong responses */ }
+}
+
+trait TransportSplit: Transport {
+    type Reader: MessageReader;
+    type Writer: MessageWriter;
+    fn into_split(self) -> (Self::Reader, Self::Writer);
 }
 ```
 
@@ -109,30 +124,38 @@ See `src/transport/`.
 
 ## Message Types
 
-The protocol uses a two-variant top-level enum that separates routable messages (forwarded across hops) from local messages (handled by the directly connected server):
+The protocol uses a three-variant top-level enum:
 
 ```rust
 enum Message {
+    /// Routed messages with opaque payload. Intermediate servers forward
+    /// the payload without deserializing it.
     Routable {
-        src: Route,      // Return path (built up as message travels)
-        dst: Route,      // Forward path (consumed as message travels)
-        message: RoutableMessage,
+        src: Route,          // Return path (built up as message travels)
+        dst: Route,          // Forward path (consumed as message travels)
+        request_id: u64,     // Monotonically increasing per-connection counter
+        payload: Vec<u8>,    // Serialized RoutableMessage (opaque to intermediate hops)
     },
+    /// Peer-to-peer messages handled by the directly connected server.
     Direct(DirectMessage),
+    /// CLI-only commands. MUST be rejected if received over TCP or WebSocket.
+    Command(Command),
 }
 ```
 
+`Message::routable(src, dst, request_id, &routable_message)` is a convenience constructor that encodes the `RoutableMessage` into the opaque payload.
+
 ### RoutableMessage
 
-Messages that carry routing information and can be forwarded across server hops:
+Messages that carry routing information and can be forwarded across server hops. Deserialized from `payload` at the final destination only:
 
 ```rust
 enum RoutableMessage {
     // Subscribing to agent output
     SubscribeRaw { agent_id: Uuid, terminal_size: Option<TerminalSize> },
     SubscribeStructured { agent_id: Uuid },
-    SubscribeRawResult { agent_id: Uuid, success: bool, error: Option<ProtocolError> },
-    SubscribeStructuredResult { agent_id: Uuid, success: bool, error: Option<ProtocolError> },
+    SubscribeRawResult { agent_id: Uuid, error: Option<ProtocolError> },
+    SubscribeStructuredResult { agent_id: Uuid, error: Option<ProtocolError> },
 
     // Input to agents
     RawInput { agent_id: Uuid, data: Vec<u8> },           // Raw keystroke bytes
@@ -142,46 +165,63 @@ enum RoutableMessage {
     RawOutput { agent_id: Uuid, data: Vec<u8> },           // Raw terminal bytes
     StructuredOutput { agent_id: Uuid, data: StructuredOutput }, // Agent-type-keyed output
 
-    // Agent lifecycle
+    // Agent creation
     CreateAgent(CreateAgentRequest),
-    CreateAgentResult { agent_id: Uuid, success: bool, error: Option<ProtocolError> },
-    AgentEnded { agent_id: Uuid },
+    CreateAgentResult { agent_id: Uuid, error: Option<ProtocolError> },
 
-    // Routing errors
-    Error(ProtocolError),
+    // Subscription lifecycle
+    SubscriptionClosed { agent_id: Uuid },  // Subscription EOF (agent ended or buffer closed)
+
+    // Error handling
+    UnknownMessage,  // Sent back when the endpoint can't deserialize the payload
 }
 ```
 
+`RoutableMessage` has its own `encode()`/`decode()` methods for the two-step serialization used with opaque payloads.
+
 ### DirectMessage
 
-Messages handled only by the directly connected server:
+Peer-to-peer messages between directly connected servers (no routing):
 
 ```rust
 enum DirectMessage {
-    // Agent management
+    // Connection handshake
+    Connect { link_name: String, token: Option<String>, version: u32 },
+    ConnectResult { error: Option<ProtocolError> },
+
+    // Agent discovery (pure registry, no routing side effects)
+    AnnounceAgent { agent_id: Uuid, name: Option<String>, command: String, working_dir: PathBuf, route: Route },
+    WithdrawAgent { agent_id: Uuid },
+
+    // Host/route management (single source of routing truth)
+    AnnounceHost { id: Uuid, name: String, route: Route, version: String },
+    WithdrawHost { id: Uuid },
+}
+```
+
+### Command
+
+CLI-only messages sent over Unix socket. Servers reject these if received over TCP or WebSocket:
+
+```rust
+enum Command {
     ListAgents,
     ListAgentsResult { agents: Vec<Agent> },
-    CreateAgent(CreateAgentRequest),
-    CreateAgentResult { success: bool, error: Option<ProtocolError> },
-    AgentEnded,
-
-    // Connection handshake
-    Connect { link_name: String, token: Option<String> },
-    ConnectResult { success: bool, error: Option<ProtocolError> },
-
-    // Server operations
+    ResolveAgent { identifier: String },
+    ResolveAgentResult { agent: Option<Agent> },
     Shutdown,
+    ShutdownNotification(ShutdownReason),
     Debug,
     DebugResult { info: ServerDebugInfo },
     ConnectToServer { address: String },
-    ConnectToServerResult { success: bool, error: Option<ProtocolError> },
+    ConnectToServerResult { error: Option<ProtocolError> },
+    HandleHook { hook: Hook },
+    HandleHookResult { error: Option<ProtocolError> },
+}
 
-    // Hooks (Claude Code integration)
-    HookEvent { hook: Hook },
-    HookEventResult { success: bool, error: Option<ProtocolError> },
-
-    // Errors
-    Error { message: String },
+enum ShutdownReason {
+    ProtocolMismatch,  // Server received version mismatch from cloud
+    UserRequested,     // User ran kill-server
 }
 ```
 
@@ -209,8 +249,9 @@ See the [StructuredOutput / StructuredInput](#structuredoutput--structuredinput)
 enum ProtocolError {
     ServerError(String),
     LinkNameTaken,
-    NoRouteFound(Route),       // Includes the path traversed before failure
     InvalidCredentials,
+    InvalidLinkName,
+    VersionMismatch { server_version: u32, client_version: u32 },
 }
 ```
 
@@ -235,37 +276,37 @@ See `src/message.rs`.
 
 ## Connection Handling
 
-All connections (Unix, TCP, WebSocket) use the same unified `connection_loop`:
+All connections (Unix, TCP, WebSocket) use a split transport architecture with three tasks:
 
-```rust
-async fn connection_loop<T: Transport>(
-    transport: &mut T,
-    outgoing_rx: mpsc::Receiver<Message>,  // Messages to send to this connection
-    ctx: ConnectionContext,                 // Shared server state + link name
-)
-```
-
-The loop uses `tokio::select!` on two sources:
-1. **`transport.read_message()`** - Incoming messages from the connection
-2. **`outgoing_rx.recv()`** - Messages queued by other parts of the server to send to this connection
+1. **Reader task** (`reader_loop`) — reads from transport, sends `Incoming` events to a channel. Never cancelled by `select!`.
+2. **Writer task** (`writer_loop`) — drains a message channel, writes to transport. Also handles transport-specific background I/O (e.g., WebSocket pong responses).
+3. **Connection loop** (`connection_loop`) — pure channel I/O, cancellation-safe. Uses `tokio::select!` on:
+   - `incoming_rx.recv()` — incoming messages from the reader task
+   - Token refresh deadline (cloud connections only)
+   - Token refresh response timeout
 
 Incoming messages are dispatched by `handle_message`:
-- `Message::Routable { src, dst, message }` → `handle_routable()` (routing + local delivery)
-- `Message::Direct(msg)` → `handle_local()` (direct handling)
+- `Message::Routable { src, dst, request_id, payload }` → `handle_routable()` (routing + local delivery)
+- `Message::Direct(msg)` → `handle_direct()` (peer-to-peer handling)
+- `Message::Command(cmd)` → `handle_command()` (CLI-only, rejected if `!is_local`)
 
 ### Per-Connection State
 
 ```rust
 struct ConnectionContext {
-    state: Arc<RwLock<ServerState>>,       // Shared server state
-    event_tx: mpsc::Sender<SessionEvent>,  // Channel to notify server of session events
-    link_name: String,                     // This connection's link name
+    state: Arc<RwLock<ServerState>>,           // Global server state
+    user_state: Arc<RwLock<ServerUserState>>,   // Per-user state (agents, routes, registry)
+    user_id: Uuid,                              // Authenticated user ID
+    event_tx: mpsc::Sender<SessionEvent>,       // Channel to notify server of session events
+    link_name: String,                          // This connection's link name
+    is_local: bool,                             // True for Unix socket connections
+    next_request_id: Arc<AtomicU64>,            // Monotonically increasing counter for outgoing messages
 }
 ```
 
 Each connection has a dedicated `mpsc::Sender<Message>` stored in the routes table. Other tasks send messages to a connection by looking up its link name in the routes table and sending through the channel.
 
-For cloud connections, the loop extends with token refresh support: a third `select!` branch fires when the JWT token is nearing expiry, triggering in-band re-authentication via `DirectMessage::Connect`.
+For cloud connections, the loop extends with token refresh support: a `select!` branch fires when the JWT token is nearing expiry, triggering in-band re-authentication via `DirectMessage::Connect`.
 
 See `src/server/connection.rs`.
 
@@ -274,18 +315,26 @@ See `src/server/connection.rs`.
 ## Server
 
 ```rust
+/// Global server state
 struct ServerState {
     config: Config,
-    cloud_mode: bool,
-    agents: HashMap<Uuid, Arc<LocalAgentSession>>,
-    routes: HashMap<String, mpsc::Sender<Message>>,
+    host_id: Uuid,                                          // Ephemeral, generated at startup
+    is_cloud_server: bool,
     jwt_validator: Option<Arc<JwtValidator>>,
+    users: HashMap<Uuid, Arc<RwLock<ServerUserState>>>,     // Per-user isolation
 }
 
-struct Server {
-    state: Arc<RwLock<ServerState>>,
-    event_tx: mpsc::Sender<SessionEvent>,
-    event_rx: Option<mpsc::Receiver<SessionEvent>>,
+/// Per-user state. Each authenticated user gets isolated agents, routes, registry,
+/// peer links, and streams. LOCAL_USER_ID (Uuid::nil()) is used for non-authenticated
+/// connections. User isolation is enforced on cloud servers via JWT authentication.
+struct ServerUserState {
+    agents: HashMap<Uuid, Arc<LocalAgentSession>>,
+    routes: HashMap<String, mpsc::Sender<Message>>,
+    registry: AgentRegistry,                                // Local + remote agents, name mapping
+    peer_links: HashSet<String>,                            // Links that receive announcements
+    hosts: HashMap<Uuid, Host>,                             // Known remote hosts
+    active_streams: HashMap<Uuid, Vec<StreamEntry>>,        // Cancellable output streams
+    next_stream_id: u64,
 }
 ```
 
@@ -295,9 +344,13 @@ The server's `run()` method:
 3. Optionally establishes cloud connection (local mode with cloud enabled)
 4. Enters main `select!` loop handling: listener accepts, session events, shutdown signal
 
-**Routes table:** `HashMap<String, mpsc::Sender<Message>>` keyed by link name. Each entry is the send-half of a channel to a connection's `connection_loop`. When a connection disconnects, its route is removed.
+**Routes table:** `HashMap<String, mpsc::Sender<Message>>` keyed by link name, per-user. Each entry is the send-half of a channel to a connection's writer task. When a connection disconnects, its route is removed.
 
-**Subscriptions:** Unlike the original design, there is no explicit subscriptions HashMap. When a client subscribes to an agent, a dedicated output-streaming task is spawned that reads from the agent's `MultiplexBuffer` and writes `RawOutput` messages to the subscriber's channel. The subscription is implicit in the lifetime of this task.
+**Subscriptions:** There is no explicit subscriptions HashMap. When a client subscribes to an agent, a dedicated output-streaming task is spawned that reads from the agent's `MultiplexBuffer` and writes `RawOutput` messages to the subscriber's channel. The subscription is implicit in the lifetime of this task. Active streams are tracked in `active_streams` with cancellation tokens for cleanup on host withdrawal.
+
+**Agent Registry:** `AgentRegistry` provides centralized tracking of both local and remote agents with bidirectional name-to-UUID mapping. Used for `ListAgents`, `ResolveAgent`, and agent discovery propagation.
+
+**Hosts:** `HashMap<Uuid, Host>` tracks known remote hosts announced via `AnnounceHost`. When a host is withdrawn, all agents reachable via that host's route are bulk-removed from the registry.
 
 See `src/server/mod.rs`.
 
@@ -330,7 +383,7 @@ impl LocalAgentSession {
     /// MultiplexReader receives all existing output (replay) then live output.
     async fn subscribe(&self) -> Option<(MultiplexReader, mpsc::Sender<Vec<u8>>)>;
 
-    /// Subscribe to structured logs (for dashboard/rich clients).
+    /// Subscribe to structured logs (for rich clients).
     async fn subscribe_logs(&self) -> Option<MultiplexLogReader>;
 
     async fn send_input(&self, data: Vec<u8>) -> Result<()>;
@@ -349,13 +402,17 @@ struct CreateAgentRequest {
     name: Option<String>,
     agent_type: AgentType,
     working_dir: PathBuf,
+    terminal_size: Option<TerminalSize>,  // None means use defaults
+}
+
+struct TerminalSize {
     rows: u16,
     cols: u16,
 }
 
 enum AgentType {
     Claude,                          // Passes --session-id to claude command
-    TestAgent(String),               // Dev/test only
+    TestAgent(String),               // Dev/test only (debug builds only)
 }
 ```
 
@@ -400,13 +457,24 @@ enum StructuredOutput {
 enum ClaudeStructuredOutput {
     UserMessage { content: String, timestamp: String, uuid: String },
     AssistantMessage { content: String, timestamp: String, uuid: String },
-    PermissionRequest { tool: PermissionTool },
+    PermissionRequest { tool: ClaudePermissionTool },
     #[serde(other)]
     Unknown,     // Forward-compatible: unknown types deserialize to this
 }
 
-enum PermissionTool {
-    Edit { file_path: String, old_string: String, new_string: String },
+// Tool data from Claude Code permission requests (internally tagged with #[serde(tag = "tool_name")])
+enum ClaudePermissionTool {
+    Edit { tool_input: EditToolInput },
+    AskUserQuestion { tool_input: AskUserQuestionToolInput },
+    Bash { tool_input: BashToolInput },
+    Write { tool_input: WriteToolInput },
+    WebFetch { tool_input: WebFetchToolInput },
+    WebSearch { tool_input: WebSearchToolInput },
+    NotebookEdit { tool_input: NotebookEditToolInput },
+    Skill { tool_input: SkillToolInput },
+    ExitPlanMode { tool_input: ExitPlanModeToolInput },
+    #[serde(other)]
+    Unknown,     // Forward-compatible: unknown tools deserialize to this
 }
 ```
 
@@ -481,27 +549,29 @@ When a `Routable` message arrives at `handle_routable`:
 1. **Pop** the next hop from `dst`
 2. **If `Some(next_hop)`:** This message needs forwarding
    - Push `next_hop` onto `src` (building the return path)
-   - Look up `next_hop` in `state.routes`
-   - Send the message through the channel
-   - On channel send failure:
-     - Remove stale route if channel is closed
-     - Send `RoutableMessage::Error(NoRouteFound(...))` back via `Route::reply(src)`
+   - Look up `next_hop` in `user_state.routes`
+   - Forward the `Message::Routable` with opaque `payload` verbatim (no deserialization)
+   - On channel send failure: log at debug level and drop silently
 3. **If `None`:** This message has arrived at its destination
+   - Deserialize `payload` into `RoutableMessage` (two-step deserialization)
    - Deliver locally (subscribe, input, output, etc.)
+   - On payload deserialization failure: send `RoutableMessage::UnknownMessage` response
 
 ### Reply Routing
 
 Replies use `Route::reply(src)`, which pops the first link from `src` to determine the next hop and creates the reply's `src` from that link. This naturally reverses the path.
 
-### Error Handling
+### Routing Failure Handling
 
-- **Request messages** (SubscribeRaw, SubscribeStructured, RawInput, etc.): forwarding failure sends `RoutableMessage::Error(NoRouteFound)` back to the source
-- **Stream messages** (RawOutput, StructuredOutput): forwarding failure is logged and dropped silently to prevent churn
-- **Error messages**: forwarding failure is logged and dropped to prevent amplification
+Routing failures are silent drops. When a message can't be forwarded (next hop not in routes table or channel closed), the message is logged at debug level and dropped. There are no error messages sent back. Route cleanup flows from `WithdrawHost`, which is the single source of routing truth.
 
-### Route Cleanup
+### Route Lifecycle
 
-When a connection disconnects, its route is removed from `state.routes`. Stale routes (where the channel has closed but the route hasn't been cleaned up yet) are detected during forwarding and cleaned up opportunistically.
+`AnnounceHost`/`WithdrawHost` are the single source of routing truth:
+
+- **Connection loss:** Server identifies hosts reachable via the dead link, broadcasts `WithdrawHost` per host. Upon receiving `WithdrawHost`, each server removes the host, bulk-removes agents whose route passes through that host, cancels active streams for those agents, and propagates the withdrawal.
+- **Agent death:** Server sends `SubscriptionClosed` to subscribers (subscription EOF), sends `WithdrawAgent` per peer (discovery cleanup only), removes agent from registry. No route changes.
+- `AnnounceAgent`/`WithdrawAgent` are pure discovery — they update the agent registry for `ListAgents`/`ResolveAgent` but have zero routing side effects.
 
 See `src/route.rs`, `src/server/connection.rs`.
 
@@ -538,8 +608,8 @@ The agent type determines the command and arguments:
 1. Child process exits
 2. Child waiter task detects exit, drops PTY master, closes buffers
 3. `SessionEvent::Ended(agent_id)` sent to server via event channel
-4. Server removes agent from `state.agents`
-5. Output streaming tasks detect buffer closure and send `DirectMessage::AgentEnded` to their subscribers
+4. Server removes agent from registry, broadcasts `WithdrawAgent` to peers
+5. Output streaming tasks detect buffer closure and send `RoutableMessage::SubscriptionClosed` to their subscribers
 
 See `src/session.rs`.
 
@@ -551,20 +621,21 @@ See `src/session.rs`.
 
 `accept_handshake()` handles the initial handshake:
 
-1. Read first message, expect `DirectMessage::Connect { link_name, token }`
-2. If `verify_token` (cloud mode): validate JWT token via JWKS
-3. Check link name uniqueness in `state.routes` (read lock fast path, write lock for insert)
-4. Create `mpsc::channel` for the connection, insert sender into `state.routes`
-5. Send `DirectMessage::ConnectResult { success: true }`
-6. Return `(link_name, outgoing_rx)` for use in `connection_loop`
+1. Read first message, expect `DirectMessage::Connect { link_name, token, version }`
+2. Check protocol version (`version` must match `PROTOCOL_VERSION`)
+3. If cloud mode: validate JWT token via JWKS, determine `user_id` from claims
+4. Check link name uniqueness in `user_state.routes` (read lock fast path, write lock for insert)
+5. Create `mpsc::channel` for the connection, insert sender into `user_state.routes`
+6. Send `DirectMessage::ConnectResult { error: None }`
+7. Return `(link_name, outgoing_rx)` for use in `connection_loop`
 
-On link name collision, the server responds with `ConnectResult { error: LinkNameTaken }`. The client retries with a new random suffix (up to 5 attempts).
+On link name collision, the server responds with `ConnectResult { error: Some(LinkNameTaken) }`. The client retries with a new random suffix (up to 5 attempts).
 
-After handshake, `accept_connection()` runs `connection_loop()` until disconnection, then removes the route from `state.routes`.
+After handshake, `accept_connection()` splits the transport into reader/writer halves, spawns the reader and writer tasks, runs `connection_loop()` until disconnection, then removes the route from `user_state.routes`.
 
 ### Connecting to Peers (Client-Side)
 
-`connect_handshake()` sends `DirectMessage::Connect { link_name, token: None }` and waits for `ConnectResult`. On `LinkNameTaken`, it regenerates the link name and retries (up to 5 attempts).
+`connect_handshake()` sends `DirectMessage::Connect { link_name, token: None, version: PROTOCOL_VERSION }` and waits for `ConnectResult`. On `LinkNameTaken`, it regenerates the link name and retries (up to 5 attempts).
 
 ### Cleanup
 
@@ -603,7 +674,7 @@ Two input paths, both routable:
 
 - **`RawInput`** - Raw keystroke bytes from terminals, delivered directly to PTY stdin
 - **`StructuredInput`** - Agent-type-keyed input from rich clients. For Claude, this includes:
-  - `ClaudeStructuredInput::SubmitMessage` - Text input from dashboard. Adds a 20ms delay then appends carriage return (`\r`)
+  - `ClaudeStructuredInput::SubmitMessage` - Text input from rich clients. Adds a 20ms delay then appends carriage return (`\r`)
   - `ClaudeStructuredInput::PermissionResponse` - User's response to a permission request. Translated to a keystroke and written to PTY
 
 Input messages are forwarded via generic `handle_routable` routing. When delivered locally, the agent is resolved by UUID or name and `send_input()` is called.
@@ -723,16 +794,16 @@ enum ClaudeHook {
 
 1. Claude Code calls `amux hooks claude session-start` (reads JSON from stdin)
 2. `amux` connects to server via Unix socket with a `"hook-{rand}"` link name
-3. Sends `HookEvent { hook }` message
+3. Sends `Command::HandleHook { hook }` message
 4. Server handles: for `SessionStart`, links the transcript file to the agent session
-5. For `PermissionRequest`, writes to the agent's log buffer and waits for a `StructuredInput` containing `ClaudeStructuredInput::PermissionResponse` from a dashboard client
+5. For `PermissionRequest`, writes to the agent's log buffer for structured subscribers
 
 ### Permission Request Flow
 
 ```
 Claude Code → amux hooks → HookEvent(PermissionRequest) → server
     → agent.write_log(StructuredOutput::Claude(PermissionRequest)) → MultiplexLogBuffer
-    → dashboard (via StructuredOutput) → user sees permission UI
+    → rich client (via StructuredOutput) → user sees permission UI
     → StructuredInput(Claude(PermissionResponse)) (routable) → server → writes keystroke to PTY
 ```
 
@@ -765,13 +836,14 @@ Connections start with a `Connect { link_name, token }` / `ConnectResult` handsh
 
 Instead of a centralized `subscriptions: HashMap<AgentId, Vec<ConnectionId>>`, subscriptions are implicit in spawned output-streaming tasks. When a client subscribes, a task is spawned that reads from `MultiplexBuffer` and sends to the subscriber's channel. The subscription dies when either the buffer closes or the subscriber disconnects.
 
-### 6. Routable/Direct message split
+### 6. Routable/Direct/Command message split
 
-The `Message` enum has two variants that encode routing capability in the type system:
-- `Routable { src, dst, message }` - Can be forwarded across hops. Generic forwarding logic handles all routable message types uniformly.
-- `Direct(message)` - Handled only by the directly connected server. Cannot be forwarded.
+The `Message` enum has three variants that encode routing capability and trust level in the type system:
+- `Routable { src, dst, request_id, payload }` - Can be forwarded across hops. Payload is opaque `Vec<u8>` that intermediate servers copy verbatim. Generic forwarding logic handles all routable message types uniformly.
+- `Direct(message)` - Peer-to-peer messages handled by the directly connected server. Cannot be forwarded. Used for handshake and discovery.
+- `Command(command)` - CLI-only messages from local Unix socket clients. Rejected if received over TCP or WebSocket. Prevents remote peers from sending privileged commands (Shutdown, Debug, etc.).
 
-This collapses six separate forwarding code paths into one generic forwarding path in `handle_routable`.
+This collapses forwarding into one generic path in `handle_routable` and provides security boundaries via the Command/Direct split.
 
 ### 7. Stack-based routing
 
@@ -801,13 +873,12 @@ All forwarding is handled by generic `handle_routable`:
 3. Look up in routes table
 4. Send through channel
 
-The same code forwards SubscribeRaw, SubscribeStructured, RawInput, StructuredInput, RawOutput, StructuredOutput, and Error messages. No message-type-specific forwarding logic needed.
+The same code forwards all routable messages by forwarding the opaque `payload` verbatim. No message-type-specific forwarding logic needed — intermediate hops never deserialize the payload.
 
 ---
 
 ## What's NOT Here (intentionally deferred)
 
-- **Agent propagation to peers** - Remote servers don't yet advertise their agents to connected peers. `list-agents` only returns local agents.
 - **Multi-user access** - Cross-user collaboration (user A accessing user B's agents)
 - **Local network discovery** - Automatic discovery of amux servers on LAN
 - **Reconnection logic** - Client-side reconnect after disconnect

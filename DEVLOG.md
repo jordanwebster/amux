@@ -38,6 +38,21 @@ One paragraph describing what was done.
 
 ---
 
+## 2026-02-22: Documentation update for protocol v3
+
+### Summary
+Updated ARCHITECTURE.md, CLOUD_ARCHITECTURE.md, and CLAUDE.md to match the current protocol v3 codebase. All three docs had significant drift from the v2→v3 migration.
+
+### Changes
+- `ARCHITECTURE.md` — Updated Message enum to three variants (Routable/Direct/Command) with opaque payload + request_id. Updated RoutableMessage (removed success/Error/AgentEnded, added SubscriptionClosed/UnknownMessage). Replaced DirectMessage (stripped to Connect/Announce/Withdraw only). Added Command enum docs. Updated ProtocolError (removed NoRouteFound, added InvalidLinkName/VersionMismatch). Updated ConnectionContext (user_state, user_id, is_local, next_request_id). Updated ServerState to multi-user model. Rewrote routing section (silent drops, WithdrawHost as routing truth). Updated Transport traits (MessageReader/MessageWriter/TransportSplit). Updated ClaudePermissionTool (full list of tools, removed PermissionTool). Updated CreateAgentRequest (terminal_size). Updated agent lifecycle (SubscriptionClosed). Replaced dashboard references with "rich clients".
+- `CLOUD_ARCHITECTURE.md` — Updated Connect messages (added version field, DirectMessage prefix). Updated ConnectResult patterns (error: None). Updated session propagation (agents now propagated to peers). Removed "agent propagation" from deferred complexity. Replaced dashboard reference.
+- `CLAUDE.md` — Updated current state section (milestones complete, v3 protocol). Updated core types (Route, AgentRegistry, Host). Fixed serialization reference (bincode→MessagePack). Replaced flat file structure with module structure. Updated common tasks (handle_routable, handle_command, TransportSplit). Removed stale suggested implementation order.
+
+### Verification
+- Grep-checked all three docs for 12 categories of outdated v2 references (success:bool, AgentEnded, NoRouteFound, PermissionTool, DirectMessage::Error, etc.) — all clean
+
+---
+
 ## 2026-02-22: Opaque payload + request_id (protocol v3, phase 4)
 
 ### Summary
