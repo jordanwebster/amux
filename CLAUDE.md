@@ -29,7 +29,7 @@ This file provides guidance for AI assistants working on the amux codebase.
 - Per-user state isolation (for cloud multi-tenancy)
 - AnnounceHost/WithdrawHost as single source of routing truth
 - Agent discovery propagation via AnnounceAgent/WithdrawAgent
-- MessagePack serialization for binary transports, JSON for WebSocket
+- MessagePack serialization for all transports (Unix, TCP, WebSocket)
 - OAuth 2.0 device flow + JWT authentication for cloud
 - TLS for server-to-server connections
 
@@ -78,8 +78,8 @@ Terminal ──Unix socket──> Local amux server ──TCP──> Cloud amux 
 
 ### Naming Conventions
 
-- Types: `PascalCase` (e.g., `LocalAgentSession`, `ConnectionId`)
-- Functions/methods: `snake_case` (e.g., `handle_subscribe`, `broadcast_output`)
+- Types: `PascalCase` (e.g., `LocalAgentSession`, `ConnectionContext`)
+- Functions/methods: `snake_case` (e.g., `handle_subscribe`, `broadcast_to_peers`)
 - Constants: `SCREAMING_SNAKE_CASE`
 - Modules: `snake_case`
 
@@ -93,22 +93,26 @@ src/
 ├── client.rs               # Client-side protocol (new-agent, attach, list-agents, etc.)
 ├── config.rs               # Config struct
 ├── session.rs              # LocalAgentSession, PTY management
-├── buffer.rs               # MultiplexBuffer for replay/broadcast
-├── multiplex_log_buffer.rs # MultiplexLogBuffer for structured output
+├── buffer.rs               # BroadcastBuffer<P> (generic byte + entry buffers)
 ├── agent_registry.rs       # AgentRegistry (local + remote agent tracking)
 ├── error.rs                # Error types with thiserror
-├── hooks.rs                # Claude Code hook integration
-├── transcript.rs           # TranscriptTailer for Claude Code JSONL
 ├── cloud.rs                # Cloud connection management, token refresh
 ├── oauth.rs                # OAuth 2.0 device flow
 ├── jwt.rs                  # JWT validation (JWKS)
 ├── init.rs                 # `amux init` command
 ├── state.rs                # Persistent state (refresh tokens, etc.)
 ├── lib.rs                  # Library root
+├── claude/
+│   ├── mod.rs              # Claude Code integration module root
+│   ├── types.rs            # Hook events, permissions, tool inputs, structured I/O
+│   ├── hooks.rs            # Client-side hook handler (`amux hook`)
+│   ├── transcript.rs       # TranscriptTailer for JSONL transcript files
+│   └── plugin.rs           # Plugin installation and update management
 ├── server/
 │   ├── mod.rs              # Server struct, ServerState, ServerUserState
 │   ├── accept.rs           # Connection acceptance, handshake
-│   ├── connection.rs       # Connection loop, message dispatch
+│   ├── connection.rs       # Connection loop, reader/writer tasks, stream management
+│   ├── handlers.rs         # Message dispatch (handle_routable, handle_command, handle_direct)
 │   ├── routing.rs          # Route management, peer disconnect, agent creation
 │   └── cloud.rs            # Cloud connection establishment
 └── transport/
@@ -117,7 +121,7 @@ src/
     ├── unix.rs             # UnixTransport
     ├── tcp.rs              # TcpTransport (generic over stream type)
     ├── tls.rs              # TLS support (rustls)
-    └── websocket.rs        # WebSocketTransport (JSON)
+    └── websocket.rs        # WebSocketTransport (MessagePack over binary frames)
 ```
 
 ### Guidelines
@@ -173,15 +177,15 @@ tokio::task::spawn_blocking(move || { ... });
 ### Adding a new routable message type
 
 1. Add variant to `RoutableMessage` enum in `message.rs`
-2. Handle in `handle_routable()` in `server/connection.rs`
+2. Handle in `handle_routable()` in `server/handlers.rs`
 3. Update client.rs if the client needs to send/receive it
 
 ### Adding a new command
 
 1. Add variant to `Command` enum in `message.rs`
-2. Handle in `handle_command()` in `server/connection.rs`
+2. Handle in `handle_command()` in `server/handlers.rs`
 3. Update client.rs for the CLI side
-4. Update `msg_type_label()` in `server/connection.rs`
+4. Update `Command::type_label()` and `Message::type_label()` in `message.rs`
 
 ### Adding a new transport
 
@@ -192,7 +196,7 @@ tokio::task::spawn_blocking(move || { ... });
 ### Modifying routing behavior
 
 1. Update `server/routing.rs` for route management
-2. Update `handle_routable()` in `server/connection.rs` for forwarding logic
+2. Update `handle_routable()` in `server/handlers.rs` for forwarding logic
 3. Update `WithdrawHost` handler for cleanup behavior
 
 ## Building and Testing

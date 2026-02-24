@@ -19,17 +19,10 @@ fn home_dir() -> PathBuf {
         .expect("$HOME is not set")
 }
 
-/// Default Unix socket path
-pub const DEFAULT_SOCKET_PATH: &str = "/tmp/amux.sock";
-
-/// Default TCP port for server-to-server connections
-pub const DEFAULT_TCP_PORT: u16 = 9001;
-
-/// Default WebSocket port for rich clients
-pub const DEFAULT_WEBSOCKET_PORT: u16 = 9002;
-
-/// Default cloud URL
-pub const DEFAULT_CLOUD_URL: &str = "https://amux.sh";
+const DEFAULT_SOCKET_PATH: &str = "/tmp/amux.sock";
+const DEFAULT_TCP_PORT: u16 = 9001;
+const DEFAULT_WEBSOCKET_PORT: u16 = 9002;
+const DEFAULT_CLOUD_URL: &str = "https://amux.sh";
 
 fn default_host_name() -> String {
     gethostname()
@@ -128,7 +121,6 @@ impl Default for Config {
 }
 
 impl Config {
-    /// Create a new config with defaults
     pub fn new() -> Self {
         Self::default()
     }

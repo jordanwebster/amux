@@ -1,3 +1,9 @@
+//! TLS helpers for server-to-server and cloud connections.
+//!
+//! [`tls_connect`] establishes an outbound TLS connection (used by cloud client).
+//! [`create_tls_acceptor`] builds a `TlsAcceptor` from PEM-encoded cert/key
+//! (used by cloud server mode).
+
 use super::{TcpTransport, configure_tcp_keepalive};
 use crate::error::{AmuxError, Result};
 use rustls::pki_types::ServerName;

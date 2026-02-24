@@ -1,3 +1,10 @@
+//! Server core: state management, listener orchestration, and session lifecycle.
+//!
+//! Starts Unix, TCP, and WebSocket listeners concurrently and spawns per-connection
+//! tasks via [`accept`]. Shared state is `Arc<RwLock<ServerState>>` with per-user
+//! isolation in [`ServerUserState`] (keyed by JWT-derived user ID, or [`LOCAL_USER_ID`]
+//! for unauthenticated local connections).
+
 use crate::agent_registry::AgentRegistry;
 use crate::config::Config;
 use crate::error::{AmuxError, Result};
@@ -9,16 +16,27 @@ use crate::transport::{TcpTransport, create_tls_acceptor};
 use std::collections::{HashMap, HashSet};
 use std::net::SocketAddr;
 use std::sync::Arc;
+use std::time::Duration;
 use tokio::net::{TcpListener, UnixListener};
-use tokio::sync::{RwLock, mpsc, oneshot};
+use tokio::sync::{RwLock, Semaphore, mpsc, oneshot};
 use tokio_rustls::TlsAcceptor;
 use uuid::Uuid;
+
+/// Maximum time allowed for a TLS handshake to complete.
+const TLS_HANDSHAKE_TIMEOUT: Duration = Duration::from_secs(10);
+
+/// Maximum concurrent network connections (TCP + WebSocket).
+/// Safety net against resource exhaustion. Each network connection holds a
+/// semaphore permit for its lifetime; new connections are rejected at capacity.
+const MAX_CONNECTIONS: usize = 16384;
 
 mod accept;
 mod cloud;
 mod connection;
+mod handlers;
 mod routing;
 
+pub(crate) use accept::connect_handshake;
 use accept::{tcp_accept, unix_accept, websocket_accept};
 use cloud::establish_cloud_connection;
 use routing::broadcast_to_peers;
@@ -138,7 +156,6 @@ pub struct Server {
 }
 
 impl Server {
-    /// Create a new server with custom config
     pub fn with_config(config: Config) -> Self {
         let (event_tx, event_rx) = mpsc::channel::<SessionEvent>(256);
         Self {
@@ -205,6 +222,12 @@ impl Server {
         // Unix socket - always available (for CLI commands like list-agents, kill-server)
         let _ = std::fs::remove_file(&socket_path);
         let unix_listener = UnixListener::bind(&socket_path)?;
+        // Restrict socket to owner-only (0600) to prevent other local users from
+        // issuing privileged commands (Shutdown, ConnectToServer, CreateAgent).
+        {
+            use std::os::unix::fs::PermissionsExt;
+            std::fs::set_permissions(&socket_path, std::fs::Permissions::from_mode(0o600))?;
+        }
         tracing::info!(path = %socket_path.display(), "listening on unix socket");
 
         let tcp_addr = SocketAddr::from(([0, 0, 0, 0], tcp_port));
@@ -229,15 +252,21 @@ impl Server {
             while let Some(event) = event_rx.recv().await {
                 match event {
                     SessionEvent::Ended { agent_id, user_id } => {
-                        tracing::info!(agent_id = %agent_id, "session ended");
                         let user_state = {
                             let s = state.read().await;
                             s.get_user_state(&user_id)
                         };
                         if let Some(user_state) = user_state {
                             let mut us = user_state.write().await;
+                            let name = us.registry.get(&agent_id).and_then(|a| a.name.clone());
                             us.registry.remove(&agent_id);
                             us.agents.remove(&agent_id);
+                            tracing::info!(
+                                agent_id = %agent_id,
+                                name = ?name,
+                                remaining_agents = us.agents.len(),
+                                "agent session ended"
+                            );
                             broadcast_to_peers(
                                 &mut us,
                                 &crate::message::DirectMessage::WithdrawAgent { agent_id },
@@ -258,6 +287,15 @@ impl Server {
             establish_cloud_connection(config, self.state.clone(), self.event_tx.clone());
         }
 
+        // Network connection limiter (TCP + WebSocket): each connection holds a
+        // permit for its lifetime. Unix socket control-path connections are not
+        // limited so local admin commands still work under network saturation.
+        let network_conn_limit = Arc::new(Semaphore::new(MAX_CONNECTIONS));
+        tracing::info!(
+            max_connections = MAX_CONNECTIONS,
+            "network connection limit active"
+        );
+
         loop {
             tokio::select! {
                 // Unix socket connection
@@ -267,9 +305,7 @@ impl Server {
                             let state = self.state.clone();
                             let event_tx = self.event_tx.clone();
                             tokio::spawn(async move {
-                                if let Err(e) = unix_accept(stream, state, event_tx).await {
-                                    tracing::debug!(error = %e, "unix connection error");
-                                }
+                                let _ = unix_accept(stream, state, event_tx).await;
                             });
                         }
                         Err(e) => {
@@ -282,6 +318,14 @@ impl Server {
                 result = tcp_listener.accept() => {
                     match result {
                         Ok((stream, addr)) => {
+                            let permit = match network_conn_limit.clone().try_acquire_owned() {
+                                Ok(p) => p,
+                                Err(_) => {
+                                    tracing::warn!("network connection limit reached, dropping TCP connection");
+                                    drop(stream);
+                                    continue;
+                                }
+                            };
                             if let Err(e) = stream.set_nodelay(true) {
                                 tracing::warn!(error = %e, "failed to set TCP_NODELAY");
                             }
@@ -293,24 +337,31 @@ impl Server {
                             if let Some(ref acceptor) = tls_acceptor {
                                 let acceptor = acceptor.clone();
                                 tokio::spawn(async move {
-                                    match acceptor.accept(stream).await {
-                                        Ok(tls_stream) => {
+                                    let tls_result = tokio::time::timeout(
+                                        TLS_HANDSHAKE_TIMEOUT,
+                                        acceptor.accept(stream),
+                                    ).await;
+                                    match tls_result {
+                                        Ok(Ok(tls_stream)) => {
                                             let transport = TcpTransport::new(tls_stream);
-                                            if let Err(e) = tcp_accept(transport, state, event_tx, verify_token).await {
-                                                tracing::debug!(error = %e, "TLS TCP connection error");
-                                            }
+                                            let _ = tcp_accept(transport, state, event_tx, verify_token).await;
+                                            drop(permit);
                                         }
-                                        Err(e) => {
+                                        Ok(Err(e)) => {
+                                            drop(permit);
                                             tracing::warn!(peer = %addr, error = %e, "TLS handshake failed");
+                                        }
+                                        Err(_) => {
+                                            drop(permit);
+                                            tracing::warn!(peer = %addr, "TLS handshake timed out");
                                         }
                                     }
                                 });
                             } else {
                                 tokio::spawn(async move {
                                     let transport = TcpTransport::new(stream);
-                                    if let Err(e) = tcp_accept(transport, state, event_tx, verify_token).await {
-                                        tracing::debug!(error = %e, "TCP connection error");
-                                    }
+                                    let _ = tcp_accept(transport, state, event_tx, verify_token).await;
+                                    drop(permit);
                                 });
                             }
                         }
@@ -324,14 +375,21 @@ impl Server {
                 result = ws_listener.accept() => {
                     match result {
                         Ok((stream, _addr)) => {
+                            let permit = match network_conn_limit.clone().try_acquire_owned() {
+                                Ok(p) => p,
+                                Err(_) => {
+                                    tracing::warn!("network connection limit reached, dropping WebSocket connection");
+                                    drop(stream);
+                                    continue;
+                                }
+                            };
                             crate::transport::configure_tcp_keepalive(&stream);
                             let state = self.state.clone();
                             let event_tx = self.event_tx.clone();
                             let verify_token = is_cloud_server;
                             tokio::spawn(async move {
-                                if let Err(e) = websocket_accept(stream, state, event_tx, verify_token).await {
-                                    tracing::debug!(error = %e, "websocket connection error");
-                                }
+                                let _ = websocket_accept(stream, state, event_tx, verify_token).await;
+                                drop(permit);
                             });
                         }
                         Err(e) => {
@@ -344,5 +402,40 @@ impl Server {
         }
 
         Ok(())
+    }
+}
+
+#[cfg(test)]
+pub(super) mod test_helpers {
+    use super::connection::ConnectionContext;
+    use super::{LOCAL_USER_ID, ServerState, ServerUserState};
+    use crate::config::Config;
+    use std::sync::Arc;
+    use std::sync::atomic::AtomicU64;
+    use tokio::sync::{RwLock, mpsc};
+
+    pub(super) fn test_ctx(
+        state: Arc<RwLock<ServerState>>,
+        user_state: Arc<RwLock<ServerUserState>>,
+    ) -> ConnectionContext {
+        let (event_tx, _event_rx) = mpsc::channel(16);
+        ConnectionContext {
+            state,
+            user_state,
+            user_id: LOCAL_USER_ID,
+            event_tx,
+            link_name: "test-link".to_string(),
+            is_local: true,
+            next_request_id: Arc::new(AtomicU64::new(1)),
+        }
+    }
+
+    pub(super) async fn test_state() -> (Arc<RwLock<ServerState>>, Arc<RwLock<ServerUserState>>) {
+        let state = Arc::new(RwLock::new(ServerState::new(Config::default())));
+        let user_state = {
+            let s = state.read().await;
+            s.get_user_state(&LOCAL_USER_ID).unwrap()
+        };
+        (state, user_state)
     }
 }

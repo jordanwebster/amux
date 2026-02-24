@@ -38,6 +38,31 @@ One paragraph describing what was done.
 
 ---
 
+## 2026-02-22: Consolidated branch cleanup and hardening
+
+### Summary
+Collapsed a long cleanup branch into a cohesive reliability and maintainability pass across transport, connection lifecycle, cloud reconnect/auth flows, and Claude integration structure. The work removes duplicated logic, tightens safety boundaries, improves logging context, and adds focused test coverage for critical connection and refresh paths.
+
+### Changes
+- Consolidated Claude integration under `src/claude/` and removed wildcard type re-exports in favor of explicit imports.
+- Hardened connection paths with handshake/connect timeouts, tighter Unix socket permissions, and guardrails for connection/agent fan-out limits.
+- Refactored shared lifecycle logic (`run_connection`, shared handshake/subscription helpers, token refresh state machine) to reduce repetition and drift.
+- Improved operational visibility by removing duplicate error logs, adding structured span fields (`user_id`, cloud URL, hook type), and improving decode/mismatch handling.
+- Expanded/modernized tests around connection loops, reader behavior, token refresh transitions, and removed low-signal roundtrip-only tests.
+
+### Decisions Made
+- Prefer explicit module boundaries/imports over compatibility re-export layers to reduce hidden coupling.
+- Centralize repeated connection/auth/subscription flows in shared helpers so behavior changes stay consistent.
+- Keep forward-compatible runtime behavior (for example, handling unknown/undecodable payloads safely) while improving diagnostics.
+
+### Verification
+- `cargo test` — 164 passed; 0 failed
+
+### Next Steps
+- None; this entry intentionally summarizes the full branch cleanup as a single change.
+
+---
+
 ## 2026-02-22: Switch WebSocket transport to MessagePack binary frames
 
 ### Summary

@@ -1,10 +1,12 @@
 use crate::agent_registry::Agent;
-use crate::buffer::{MultiplexBuffer, MultiplexReader};
+use crate::buffer::{
+    MultiplexByteBuffer, MultiplexByteReader, MultiplexStructuredBuffer, MultiplexStructuredReader,
+};
+use crate::claude::transcript::TranscriptTailer;
+use crate::claude::types::StructuredOutput;
 use crate::error::{AmuxError, Result};
 use crate::message::{AgentType, CreateAgentRequest};
-use crate::multiplex_log_buffer::{MultiplexLogBuffer, MultiplexLogReader};
 use crate::route::Route;
-use crate::transcript::TranscriptTailer;
 use portable_pty::{CommandBuilder, MasterPty, PtySize, native_pty_system};
 use std::io::{Read, Write};
 use std::path::PathBuf;
@@ -45,10 +47,10 @@ pub struct LocalAgentSession {
     pty_master: Arc<Mutex<Option<Box<dyn MasterPty + Send>>>>,
 
     /// Multiplex buffer for PTY output (handles both replay and broadcast)
-    buffer: Arc<MultiplexBuffer>,
+    buffer: Arc<MultiplexByteBuffer>,
 
     /// Multiplex buffer for structured logs (populated by transcript tailer)
-    log_buffer: Arc<MultiplexLogBuffer>,
+    log_buffer: Arc<MultiplexStructuredBuffer>,
 
     /// Transcript tailer handle (None if no transcript linked)
     transcript_tailer: Mutex<Option<(TranscriptTailer, JoinHandle<()>)>>,
@@ -91,7 +93,7 @@ impl LocalAgentSession {
                 pixel_width: 0,
                 pixel_height: 0,
             })
-            .map_err(|e| AmuxError::Pty(e.to_string()))?;
+            .map_err(|e| AmuxError::Pty(format!("failed to open pty: {e}")))?;
 
         // Spawn command with arguments
         let mut cmd = CommandBuilder::new(&command);
@@ -102,22 +104,22 @@ impl LocalAgentSession {
         let mut child = pair
             .slave
             .spawn_command(cmd)
-            .map_err(|e| AmuxError::Pty(e.to_string()))?;
+            .map_err(|e| AmuxError::Pty(format!("failed to spawn '{command}': {e}")))?;
         drop(pair.slave);
 
         let master = pair.master;
         let mut pty_reader = master
             .try_clone_reader()
-            .map_err(|e| AmuxError::Pty(e.to_string()))?;
+            .map_err(|e| AmuxError::Pty(format!("failed to clone pty reader: {e}")))?;
         let mut pty_writer = master
             .take_writer()
-            .map_err(|e| AmuxError::Pty(e.to_string()))?;
+            .map_err(|e| AmuxError::Pty(format!("failed to open pty writer: {e}")))?;
 
         let master: Arc<Mutex<Option<Box<dyn MasterPty + Send>>>> =
             Arc::new(Mutex::new(Some(master)));
         let current_size: Arc<Mutex<(u16, u16)>> = Arc::new(Mutex::new((size.rows, size.cols)));
-        let buffer = Arc::new(MultiplexBuffer::new(MAX_REPLAY_BUFFER));
-        let log_buffer = Arc::new(MultiplexLogBuffer::new(MAX_LOG_ENTRIES));
+        let buffer = Arc::new(MultiplexByteBuffer::new(MAX_REPLAY_BUFFER));
+        let log_buffer = Arc::new(MultiplexStructuredBuffer::new(MAX_LOG_ENTRIES));
         let (input_tx, mut input_rx) = mpsc::channel::<Vec<u8>>(256);
 
         // Task: Read from PTY, write to multiplex buffer
@@ -131,7 +133,7 @@ impl LocalAgentSession {
                 match pty_reader.read(&mut read_buf) {
                     Ok(0) => break,
                     Ok(n) => {
-                        rt.block_on(buffer_clone.write(&read_buf[..n]));
+                        rt.block_on(buffer_clone.write(read_buf[..n].to_vec()));
                     }
                     Err(_) => break,
                 }
@@ -189,7 +191,7 @@ impl LocalAgentSession {
         Ok(Self {
             agent_id: req.agent_id,
             name: req.name.clone(),
-            command: command.to_string(),
+            command,
             working_dir: req.working_dir.clone(),
             pty_master: master,
             buffer,
@@ -202,16 +204,16 @@ impl LocalAgentSession {
 
     /// Subscribe to the session.
     ///
-    /// Returns a tuple of (MultiplexReader, input_sender) for bidirectional
+    /// Returns a tuple of (MultiplexByteReader, input_sender) for bidirectional
     /// communication with the agent:
-    /// - MultiplexReader receives all existing output (replay) followed by new output
+    /// - MultiplexByteReader receives all existing output (replay) followed by new output
     /// - input_sender sends input bytes to the agent
     ///
     /// This operation is atomic - no data will be lost or duplicated between
     /// the replay and live output.
     ///
     /// Returns `None` if the session has ended.
-    pub async fn subscribe(&self) -> Option<(MultiplexReader, mpsc::Sender<Vec<u8>>)> {
+    pub async fn subscribe(&self) -> Option<(MultiplexByteReader, mpsc::Sender<Vec<u8>>)> {
         let output = self.buffer.subscribe().await?;
         Some((output, self.input_tx.clone()))
     }
@@ -221,7 +223,7 @@ impl LocalAgentSession {
         self.input_tx
             .send(data)
             .await
-            .map_err(|_| AmuxError::Pty("Session closed".to_string()))
+            .map_err(|_| AmuxError::Pty(format!("agent {} session closed", self.agent_id)))
     }
 
     /// Resize the PTY
@@ -237,7 +239,7 @@ impl LocalAgentSession {
                         pixel_width: 0,
                         pixel_height: 0,
                     })
-                    .map_err(|e| AmuxError::Pty(e.to_string()))?;
+                    .map_err(|e| AmuxError::Pty(format!("failed to resize pty: {e}")))?;
                 tracing::debug!(agent_id = %self.agent_id, cols, rows, "pty resized");
                 *current = (rows, cols);
             }
@@ -277,13 +279,13 @@ impl LocalAgentSession {
     /// by new entries as they are parsed from the transcript.
     ///
     /// Returns `None` if the log buffer has been closed.
-    pub async fn subscribe_logs(&self) -> Option<MultiplexLogReader> {
+    pub async fn subscribe_logs(&self) -> Option<MultiplexStructuredReader> {
         self.log_buffer.subscribe().await
     }
 
     /// Write a structured output entry directly (not from transcript).
     /// Used for permission requests and other events that don't come from the transcript.
-    pub async fn write_log(&self, entry: crate::message::StructuredOutput) {
+    pub async fn write_log(&self, entry: StructuredOutput) {
         self.log_buffer.write(entry).await;
     }
 

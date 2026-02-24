@@ -1,7 +1,14 @@
-use super::connection::{
-    ConnectionContext, cancel_streams_matching, connection_loop, reader_loop, writer_loop,
-};
-use super::routing::{handle_peer_disconnect, send_initial_announcements};
+//! Connection acceptance and handshake for all transport types.
+//!
+//! Each transport (Unix, TCP, TLS, WebSocket) has an `*_accept` entry point that
+//! bootstraps the connection: upgrade (WebSocket) or wrap (TLS), run the
+//! [`accept_handshake`] protocol, then hand off to
+//! [`run_connection`](super::connection::run_connection) for the connection
+//! lifecycle. [`tcp_connect`] handles the outbound (client-side) direction for
+//! server-to-server peering.
+
+use super::connection::{ConnectionContext, run_connection};
+use super::routing::send_initial_announcements;
 use super::{LOCAL_USER_ID, ServerState, ServerUserState, get_or_create_user_state};
 use crate::error::{AmuxError, Result};
 use crate::message::{DirectMessage, Message, PROTOCOL_VERSION, ProtocolError};
@@ -11,11 +18,17 @@ use crate::transport::{
 };
 use std::sync::Arc;
 use std::sync::atomic::AtomicU64;
+use std::time::Duration;
 use tokio::net::{TcpStream, UnixStream};
 use tokio::sync::{RwLock, mpsc};
 use tokio_tungstenite::accept_async;
 use tracing::Instrument;
 use uuid::Uuid;
+
+/// Maximum time allowed for a connection to complete its handshake.
+/// Prevents slow-loris attacks where a client connects but never sends
+/// (or slowly trickles) handshake data, holding a server task indefinitely.
+const HANDSHAKE_TIMEOUT: Duration = Duration::from_secs(10);
 
 /// Accept-side handshake: client proposes link name, we validate against routes.
 /// Atomically checks uniqueness and inserts the route under a write lock.
@@ -44,8 +57,10 @@ pub(super) async fn accept_handshake<T: Transport>(
             }) => (link_name, token, version),
             other => {
                 tracing::error!("expected Connect, got unexpected message");
-                drop(other);
-                return Err(AmuxError::InvalidMessage);
+                return Err(AmuxError::InvalidMessage(format!(
+                    "expected Connect during handshake, got {}",
+                    other.type_label()
+                )));
             }
         };
 
@@ -182,12 +197,16 @@ pub(super) async fn accept_handshake<T: Transport>(
         return Ok((proposed_link, outgoing_rx, user_id, user_state));
     }
 
+    tracing::warn!("handshake failed after 5 link-name retries");
     Err(AmuxError::TooManyHandshakeAttempts)
 }
 
 /// Connect-side handshake: we propose link name, remote validates.
 /// Returns the accepted link name on success.
-pub(super) async fn connect_handshake<T, F>(
+///
+/// Used by both the CLI client (Unix socket) and server-to-server peering (TCP).
+/// Retries up to 5 times on link name collision before giving up.
+pub(crate) async fn connect_handshake<T, F>(
     transport: &mut T,
     mut generate_link: F,
 ) -> Result<String>
@@ -206,7 +225,9 @@ where
             }))
             .await?;
 
-        let response = transport.read_message().await?;
+        let response = tokio::time::timeout(HANDSHAKE_TIMEOUT, transport.read_message())
+            .await
+            .map_err(|_| AmuxError::HandshakeTimeout)??;
         match response {
             Message::Direct(DirectMessage::ConnectResult { error: None }) => {
                 return Ok(proposed_link);
@@ -248,12 +269,17 @@ where
                     .unwrap_or_else(|| "Connection rejected".to_string());
                 return Err(AmuxError::Config(msg));
             }
-            _ => return Err(AmuxError::InvalidMessage),
+            other => {
+                return Err(AmuxError::InvalidMessage(format!(
+                    "expected ConnectResult during handshake, got {}",
+                    other.type_label()
+                )));
+            }
         }
     }
 
     Err(AmuxError::Config(
-        "Failed to connect after 5 attempts".to_string(),
+        "handshake failed after 5 link-name collisions — this is usually transient, retry the command".to_string(),
     ))
 }
 
@@ -267,16 +293,27 @@ pub(super) async fn accept_connection<T: TransportSplit>(
     is_local: bool,
     log_label: &str,
 ) -> Result<()> {
-    // Handshake uses the transport directly (safe — no select! involved)
-    let (link_name, outgoing_rx, user_id, user_state) =
-        match accept_handshake(&mut transport, &state, verify_token).await {
+    // Handshake uses the transport directly (safe — no select! involved).
+    // Timeout prevents slow-loris: clients that connect but never send handshake data.
+    // The span gives all handshake-phase logs transport context (before conn_span exists).
+    let (link_name, outgoing_rx, user_id, user_state) = async {
+        match tokio::time::timeout(
+            HANDSHAKE_TIMEOUT,
+            accept_handshake(&mut transport, &state, verify_token),
+        )
+        .await
+        {
             Ok(result) => result,
-            Err(e) => {
-                return Err(e);
+            Err(_) => {
+                tracing::warn!("handshake timed out");
+                Err(AmuxError::HandshakeTimeout)
             }
-        };
+        }
+    }
+    .instrument(tracing::info_span!("handshake", transport = log_label))
+    .await?;
 
-    let conn_span = tracing::info_span!("connection", link = %link_name, transport = log_label);
+    let conn_span = tracing::info_span!("connection", link = %link_name, transport = log_label, user_id = %user_id);
     tracing::info!(parent: &conn_span, "connection established");
 
     if !is_local {
@@ -289,21 +326,10 @@ pub(super) async fn accept_connection<T: TransportSplit>(
         send_initial_announcements(&us, host_id, &host_name, is_cloud_server, &link_name);
     }
 
-    // Split transport into reader/writer halves
-    let (reader, writer) = transport.into_split();
-
-    // Get the route's tx for the response channel
     let response_tx = {
         let us = user_state.read().await;
         us.routes.get(&link_name).unwrap().clone()
     };
-
-    // Spawn reader and writer tasks
-    let (incoming_tx, incoming_rx) = mpsc::channel(256);
-    let reader_handle =
-        tokio::spawn(reader_loop(reader, incoming_tx).instrument(conn_span.clone()));
-    let writer_handle =
-        tokio::spawn(writer_loop(writer, outgoing_rx).instrument(conn_span.clone()));
 
     let ctx = ConnectionContext {
         state: state.clone(),
@@ -315,37 +341,7 @@ pub(super) async fn accept_connection<T: TransportSplit>(
         next_request_id: Arc::new(AtomicU64::new(1)),
     };
 
-    let response_tx_cleanup = response_tx.clone();
-    let result = connection_loop(incoming_rx, response_tx, ctx, None)
-        .instrument(conn_span.clone())
-        .await;
-
-    if let Err(ref e) = result {
-        tracing::debug!(parent: &conn_span, error = %e, "connection error");
-    }
-
-    // Cleanup: remove route, cancel streams, drop sender clones so writer task exits
-    {
-        let mut us = user_state.write().await;
-        if !is_local {
-            handle_peer_disconnect(&mut us, &link_name);
-        } else {
-            us.routes.remove(&link_name);
-            // Cancel streams spawned for this local connection so their sender
-            // clones are dropped and the writer task can exit
-            cancel_streams_matching(&mut us, |entry| entry.link == link_name);
-        }
-    }
-    // Drop last sender clone → writer rx returns None → writer exits
-    drop(response_tx_cleanup);
-
-    // Await writer (let it drain), then abort reader
-    let _ = writer_handle.await;
-    reader_handle.abort();
-
-    tracing::info!(parent: &conn_span, "connection closed");
-
-    result
+    run_connection(transport, outgoing_rx, response_tx, ctx, None, conn_span).await
 }
 
 /// WebSocket connection bootstrap - accept, upgrade, and handshake
@@ -355,9 +351,16 @@ pub(super) async fn websocket_accept(
     event_tx: mpsc::Sender<super::SessionEvent>,
     verify_token: bool,
 ) -> Result<()> {
-    let ws_stream = accept_async(stream)
+    let ws_stream = tokio::time::timeout(HANDSHAKE_TIMEOUT, accept_async(stream))
         .await
-        .map_err(|e| AmuxError::Io(std::io::Error::other(e.to_string())))?;
+        .map_err(|_| {
+            tracing::warn!("WebSocket upgrade timed out");
+            AmuxError::HandshakeTimeout
+        })?
+        .map_err(|e| {
+            tracing::warn!(error = %e, "WebSocket upgrade failed");
+            AmuxError::Io(std::io::Error::other(e.to_string()))
+        })?;
     let transport = WebSocketTransport::new(ws_stream);
     accept_connection(transport, state, event_tx, verify_token, false, "websocket").await
 }
@@ -418,7 +421,8 @@ pub(super) async fn tcp_connect(
     })
     .await?;
 
-    let conn_span = tracing::info_span!("connection", link = %link_name, transport = "tcp");
+    let conn_span =
+        tracing::info_span!("connection", link = %link_name, transport = "tcp", user_id = %user_id);
     tracing::info!(parent: &conn_span, "peer handshake complete");
 
     let (outgoing_tx, outgoing_rx) = mpsc::channel::<Message>(256);
@@ -433,51 +437,20 @@ pub(super) async fn tcp_connect(
         send_initial_announcements(&us, host_id, &host_name, is_cloud_server, &link_name);
     }
 
-    // Split transport into reader/writer halves
-    let (reader, writer) = transport.into_split();
-
     let state = state.clone();
     let user_state = user_state.clone();
-    let link_name_clone = link_name.clone();
-    let task_span = conn_span.clone();
-    tokio::spawn(
-        async move {
-            // Spawn reader and writer tasks
-            let (incoming_tx, incoming_rx) = mpsc::channel(256);
-            let reader_handle =
-                tokio::spawn(reader_loop(reader, incoming_tx).instrument(task_span.clone()));
-            let writer_handle =
-                tokio::spawn(writer_loop(writer, outgoing_rx).instrument(task_span.clone()));
-
-            let ctx = ConnectionContext {
-                state: state.clone(),
-                user_state: user_state.clone(),
-                user_id,
-                event_tx,
-                link_name: link_name_clone.clone(),
-                is_local: false,
-                next_request_id: Arc::new(AtomicU64::new(1)),
-            };
-            let result = connection_loop(incoming_rx, outgoing_tx.clone(), ctx, None).await;
-
-            if let Err(ref e) = result {
-                tracing::debug!(error = %e, "peer connection error");
-            }
-
-            let mut us = user_state.write().await;
-            handle_peer_disconnect(&mut us, &link_name_clone);
-
-            // Drop all sender clones so writer drains and exits
-            drop(outgoing_tx);
-            drop(us);
-
-            let _ = writer_handle.await;
-            reader_handle.abort();
-
-            tracing::info!("peer connection closed");
-        }
-        .instrument(conn_span),
-    );
+    tokio::spawn(async move {
+        let ctx = ConnectionContext {
+            state,
+            user_state,
+            user_id,
+            event_tx,
+            link_name: link_name.clone(),
+            is_local: false,
+            next_request_id: Arc::new(AtomicU64::new(1)),
+        };
+        let _ = run_connection(transport, outgoing_rx, outgoing_tx, ctx, None, conn_span).await;
+    });
 
     Ok(())
 }

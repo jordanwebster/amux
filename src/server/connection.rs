@@ -1,54 +1,25 @@
-use super::accept::tcp_connect;
-use super::routing::{
-    broadcast_to_peers, connection_tx, create_agent, handle_subscribe, shutdown_server,
-};
+//! Per-connection message loop and stream lifecycle.
+//!
+//! Each connection runs a [`connection_loop`] that receives messages from the
+//! reader task and dispatches them via [`handle_message`](super::handlers::handle_message).
+//! Reader and writer tasks ([`reader_loop`], [`writer_loop`]) bridge the transport
+//! to channels. Stream management ([`register_stream`], [`cleanup_stream`],
+//! [`cancel_streams_matching`]) tracks active subscription streams per agent.
+
+use super::handlers::handle_message;
 use super::{ServerState, ServerUserState, StreamEntry};
-use crate::agent_registry::Agent;
-use crate::cloud::TokenRefreshState;
+use crate::cloud::{CloudError, TokenRefreshState};
 use crate::error::{AmuxError, Result};
-use crate::message::{
-    ClaudeHook, Command, DirectMessage, Hook, Message, ProtocolError, RoutableMessage,
-    ServerDebugInfo, ShutdownReason,
-};
+use crate::message::{DirectMessage, Message};
 use crate::route::Route;
 use crate::session::SessionEvent;
-use crate::state::State;
-use crate::transport::MessageReader;
-use std::path::PathBuf;
+use crate::transport::{MessageReader, TransportSplit};
 use std::sync::Arc;
-use std::sync::atomic::{AtomicU64, Ordering};
+use std::sync::atomic::AtomicU64;
 use std::time::Duration;
 use tokio::sync::{RwLock, mpsc, oneshot};
 use tracing::Instrument;
 use uuid::Uuid;
-
-fn msg_type_label(msg: &Message) -> &'static str {
-    match msg {
-        Message::Routable { .. } => "Routable",
-        Message::Direct(direct) => match direct {
-            DirectMessage::Connect { .. } => "Connect",
-            DirectMessage::ConnectResult { .. } => "ConnectResult",
-            DirectMessage::AnnounceAgent { .. } => "AnnounceAgent",
-            DirectMessage::WithdrawAgent { .. } => "WithdrawAgent",
-            DirectMessage::AnnounceHost { .. } => "AnnounceHost",
-            DirectMessage::WithdrawHost { .. } => "WithdrawHost",
-        },
-        Message::Command(cmd) => match cmd {
-            Command::ListAgents => "ListAgents",
-            Command::ListAgentsResult { .. } => "ListAgentsResult",
-            Command::ResolveAgent { .. } => "ResolveAgent",
-            Command::ResolveAgentResult { .. } => "ResolveAgentResult",
-            Command::Shutdown => "Shutdown",
-            Command::ShutdownNotification(_) => "ShutdownNotification",
-            Command::Debug => "Debug",
-            Command::DebugResult { .. } => "DebugResult",
-            Command::ConnectToServer { .. } => "ConnectToServer",
-            Command::ConnectToServerResult { .. } => "ConnectToServerResult",
-            Command::HandleHook { .. } => "HandleHook",
-            Command::HandleHookResult { .. } => "HandleHookResult",
-        },
-    }
-}
 
 /// Context for connection handlers.
 pub(super) struct ConnectionContext {
@@ -69,6 +40,11 @@ pub(super) enum Incoming {
 }
 
 /// Reader task: reads from transport, sends to channel. Never cancelled.
+///
+/// Decode errors (e.g. unknown message variant from a newer peer) are logged and
+/// skipped rather than killing the connection. This is safe because the framing
+/// layer reads the complete frame before decoding — a decode failure doesn't
+/// corrupt the stream position. I/O errors remain fatal.
 pub(super) async fn reader_loop<R: MessageReader>(mut reader: R, tx: mpsc::Sender<Incoming>) {
     loop {
         match reader.read_message().await {
@@ -80,6 +56,13 @@ pub(super) async fn reader_loop<R: MessageReader>(mut reader: R, tx: mpsc::Sende
             Err(AmuxError::Io(e)) if e.kind() == std::io::ErrorKind::UnexpectedEof => {
                 let _ = tx.send(Incoming::Eof).await;
                 break;
+            }
+            Err(AmuxError::SerializationDecode(e)) => {
+                // Unknown message variant or unrecognized field layout from a
+                // newer peer. The frame was fully consumed by the framing layer,
+                // so the stream position is correct for the next read. Skip this
+                // message to keep the connection alive during rolling upgrades.
+                tracing::debug!(error = %e, "skipping undecodable message");
             }
             Err(e) => {
                 let _ = tx.send(Incoming::ReadErr(e)).await;
@@ -110,45 +93,162 @@ pub(super) async fn writer_loop<W: crate::transport::MessageWriter>(
     }
 }
 
+/// Run a connection through its full lifecycle: split the transport into reader
+/// and writer tasks, run the connection loop, and shut down gracefully.
+///
+/// Handles the split → spawn → loop → cleanup → shutdown pattern that is common
+/// to all connection types (Unix, TCP, cloud). The caller sets up routes and
+/// peer state before calling this function. On exit, the route is removed,
+/// stream tasks are cancelled, and the writer task is allowed to drain.
+pub(super) async fn run_connection<T: TransportSplit>(
+    transport: T,
+    outgoing_rx: mpsc::Receiver<Message>,
+    response_tx: mpsc::Sender<Message>,
+    ctx: ConnectionContext,
+    token_refresh: Option<TokenRefreshState>,
+    span: tracing::Span,
+) -> Result<()> {
+    // Save fields needed for cleanup before ctx is consumed by connection_loop
+    let user_state = ctx.user_state.clone();
+    let link_name = ctx.link_name.clone();
+    let is_local = ctx.is_local;
+
+    let (reader, writer) = transport.into_split();
+    let (incoming_tx, incoming_rx) = mpsc::channel(256);
+    let reader_handle = tokio::spawn(reader_loop(reader, incoming_tx).instrument(span.clone()));
+    let writer_handle = tokio::spawn(writer_loop(writer, outgoing_rx).instrument(span.clone()));
+
+    let result = connection_loop(incoming_rx, response_tx, ctx, token_refresh)
+        .instrument(span.clone())
+        .await;
+
+    if let Err(ref e) = result {
+        tracing::warn!(parent: &span, error = %e, "connection error");
+    }
+
+    // Remove route and cancel streams so all sender clones are dropped,
+    // allowing the writer task to drain remaining messages and exit.
+    {
+        let mut us = user_state.write().await;
+        if !is_local {
+            super::routing::handle_peer_disconnect(&mut us, &link_name);
+        } else {
+            us.routes.remove(&link_name);
+            cancel_streams_matching(&mut us, |entry| entry.link == link_name);
+        }
+    }
+
+    // Let writer drain, then abort reader
+    let _ = writer_handle.await;
+    reader_handle.abort();
+
+    tracing::info!(parent: &span, "connection closed");
+
+    result
+}
+
+const REFRESH_RESPONSE_TIMEOUT: Duration = Duration::from_secs(30);
+
+/// Manages token refresh lifecycle within a connection loop.
+///
+/// Encapsulates the two-phase refresh protocol: wait for a deadline, send a
+/// Connect with a fresh token, then await the ConnectResult response (with a
+/// timeout). The connection loop uses [`deadlines`](Self::deadlines) for
+/// select! guards, [`send_refresh`](Self::send_refresh) to initiate, and
+/// [`try_intercept`](Self::try_intercept) to consume ConnectResult responses.
+struct TokenRefresher {
+    inner: TokenRefreshState,
+    deadline: tokio::time::Instant,
+    awaiting_since: Option<tokio::time::Instant>,
+}
+
+impl TokenRefresher {
+    fn new(state: TokenRefreshState) -> Self {
+        let deadline = state.refresh_deadline();
+        Self {
+            inner: state,
+            deadline,
+            awaiting_since: None,
+        }
+    }
+
+    /// Returns (refresh_deadline, refresh_timeout) for use in select! guards.
+    ///
+    /// When idle, returns `(Some(deadline), None)`.
+    /// When awaiting a response, returns `(None, Some(timeout))`.
+    fn deadlines(&self) -> (Option<tokio::time::Instant>, Option<tokio::time::Instant>) {
+        if let Some(since) = self.awaiting_since {
+            (None, Some(since + REFRESH_RESPONSE_TIMEOUT))
+        } else {
+            (Some(self.deadline), None)
+        }
+    }
+
+    /// Send the token refresh request. Call when refresh_deadline fires.
+    async fn send_refresh(&mut self, tx: &mpsc::Sender<Message>) -> Result<()> {
+        tracing::debug!("refreshing cloud token");
+        self.inner
+            .send_connect(tx)
+            .await
+            .map_err(cloud_err_to_amux)?;
+        self.awaiting_since = Some(tokio::time::Instant::now());
+        Ok(())
+    }
+
+    /// Try to consume an incoming ConnectResult as a refresh response.
+    /// Returns `true` if consumed, `false` if the message is not a ConnectResult.
+    fn try_intercept(&mut self, msg: &Message) -> Result<bool> {
+        if !matches!(msg, Message::Direct(DirectMessage::ConnectResult { .. })) {
+            return Ok(false);
+        }
+        if self.awaiting_since.is_none() {
+            tracing::warn!("unexpected ConnectResult");
+            return Ok(true);
+        }
+        self.inner.handle_response(msg).map_err(cloud_err_to_amux)?;
+        self.deadline = self.inner.refresh_deadline();
+        self.awaiting_since = None;
+        Ok(true)
+    }
+}
+
+fn cloud_err_to_amux(e: CloudError) -> AmuxError {
+    match e {
+        CloudError::HostChanged => {
+            tracing::warn!("cloud host changed, reconnection required");
+            AmuxError::Config(
+                "cloud host changed — will reconnect to new host automatically".to_string(),
+            )
+        }
+        other => {
+            tracing::error!(error = %other, "token refresh failed");
+            AmuxError::Config(format!("token refresh failed: {other}"))
+        }
+    }
+}
+
 /// Shared connection loop for all transports. Pure channel I/O — cancellation-safe.
 pub(super) async fn connection_loop(
     mut incoming_rx: mpsc::Receiver<Incoming>,
     response_tx: mpsc::Sender<Message>,
     ctx: ConnectionContext,
-    mut token_refresh: Option<TokenRefreshState>,
+    token_refresh: Option<TokenRefreshState>,
 ) -> Result<()> {
-    let mut refresh_deadline = token_refresh.as_ref().map(|t| t.refresh_deadline());
-    let mut awaiting_refresh: Option<tokio::time::Instant> = None;
+    let mut refresher = token_refresh.map(TokenRefresher::new);
 
     loop {
-        let refresh_timeout = awaiting_refresh.map(|t| t + Duration::from_secs(30));
+        let (refresh_deadline, refresh_timeout) = refresher
+            .as_ref()
+            .map(|r| r.deadlines())
+            .unwrap_or((None, None));
 
         tokio::select! {
             incoming = incoming_rx.recv() => {
                 match incoming {
                     Some(Incoming::Msg(msg)) => {
-                        // Intercept ConnectResult for token refresh
-                        if let Message::Direct(DirectMessage::ConnectResult { .. }) = &msg {
-                            if awaiting_refresh.is_some() {
-                                if let Some(ref mut rs) = token_refresh {
-                                    match rs.handle_response(&msg) {
-                                        Ok(()) => {
-                                            refresh_deadline = Some(rs.refresh_deadline());
-                                        }
-                                        Err(crate::cloud::CloudError::HostChanged) => {
-                                            tracing::warn!("cloud host changed, reconnection required");
-                                            return Err(AmuxError::Config("Cloud host changed".to_string()));
-                                        }
-                                        Err(e) => {
-                                            tracing::error!(error = %e, "token refresh response error");
-                                            return Err(AmuxError::Config(format!("Token refresh failed: {}", e)));
-                                        }
-                                    }
-                                }
-                                awaiting_refresh = None;
-                                continue;
-                            }
-                            tracing::warn!("unexpected ConnectResult");
+                        if let Some(ref mut r) = refresher
+                            && r.try_intercept(&msg)?
+                        {
                             continue;
                         }
                         handle_message(&response_tx, msg, &ctx).await?;
@@ -162,27 +262,15 @@ pub(super) async fn connection_loop(
                     }
                 }
             }
-            _ = maybe_sleep_until(refresh_deadline), if awaiting_refresh.is_none() && refresh_deadline.is_some() => {
-                if let Some(ref mut rs) = token_refresh {
-                    tracing::debug!("refreshing cloud token");
-                    match rs.send_connect(&response_tx).await {
-                        Ok(()) => {
-                            awaiting_refresh = Some(tokio::time::Instant::now());
-                        }
-                        Err(crate::cloud::CloudError::HostChanged) => {
-                            tracing::warn!("cloud host changed, reconnection required");
-                            return Err(AmuxError::Config("Cloud host changed".to_string()));
-                        }
-                        Err(e) => {
-                            tracing::error!(error = %e, "token refresh failed");
-                            return Err(AmuxError::Config(format!("Token refresh failed: {}", e)));
-                        }
-                    }
-                }
+            _ = maybe_sleep_until(refresh_deadline), if refresh_deadline.is_some() => {
+                refresher.as_mut().unwrap().send_refresh(&response_tx).await?;
             }
-            _ = maybe_sleep_until(refresh_timeout), if awaiting_refresh.is_some() => {
+            _ = maybe_sleep_until(refresh_timeout), if refresh_timeout.is_some() => {
                 tracing::error!("token refresh response timeout");
-                return Err(AmuxError::Config("Token refresh timed out".to_string()));
+                return Err(AmuxError::Config(format!(
+                    "cloud token refresh timed out after {}s — the cloud server may be unresponsive",
+                    REFRESH_RESPONSE_TIMEOUT.as_secs()
+                )));
             }
         }
     }
@@ -196,7 +284,7 @@ async fn maybe_sleep_until(deadline: Option<tokio::time::Instant>) {
 }
 
 /// Register a stream entry in active_streams. Returns the assigned stream_id.
-fn register_stream(
+pub(super) fn register_stream(
     us: &mut ServerUserState,
     agent_id: uuid::Uuid,
     cancel_tx: oneshot::Sender<()>,
@@ -218,7 +306,7 @@ fn register_stream(
 }
 
 /// Remove a stream entry by stream_id after the task exits.
-async fn cleanup_stream(
+pub(super) async fn cleanup_stream(
     user_state: &Arc<RwLock<ServerUserState>>,
     agent_id: uuid::Uuid,
     stream_id: u64,
@@ -230,6 +318,7 @@ async fn cleanup_stream(
             us.active_streams.remove(&agent_id);
         }
     }
+    tracing::trace!(stream_id, agent_id = %agent_id, "stream cleaned up");
 }
 
 /// Cancel all active streams matching a predicate. Returns count cancelled.
@@ -252,1366 +341,246 @@ pub(super) fn cancel_streams_matching(
     cancelled
 }
 
-pub(super) async fn handle_message(
-    tx: &mpsc::Sender<Message>,
-    msg: Message,
-    ctx: &ConnectionContext,
-) -> Result<()> {
-    match &msg {
-        Message::Routable { .. } => tracing::trace!("received routable"),
-        _ => tracing::debug!(msg_type = msg_type_label(&msg), "received message"),
-    }
-
-    match msg {
-        Message::Routable {
-            src,
-            dst,
-            request_id,
-            payload,
-        } => handle_routable(tx, src, dst, request_id, payload, ctx).await,
-        Message::Direct(direct) => handle_direct(tx, direct, ctx).await,
-        Message::Command(cmd) => {
-            if !ctx.is_local {
-                tracing::warn!(
-                    cmd = msg_type_label(&Message::Command(cmd)),
-                    "rejecting command from remote peer"
-                );
-                return Ok(());
-            }
-            handle_command(tx, cmd, ctx).await
-        }
-    }
-}
-
-async fn handle_routable(
-    tx: &mpsc::Sender<Message>,
-    mut src: Route,
-    mut dst: Route,
-    request_id: u64,
-    payload: Vec<u8>,
-    ctx: &ConnectionContext,
-) -> Result<()> {
-    // Check if this message needs forwarding — payload forwarded verbatim
-    if let Some(next_hop) = dst.pop() {
-        src.push(&next_hop);
-
-        let route_tx = {
-            let us = ctx.user_state.read().await;
-            us.routes.get(&next_hop).cloned()
-        };
-
-        match route_tx {
-            Some(route_tx) => {
-                if route_tx
-                    .send(Message::Routable {
-                        src,
-                        dst,
-                        request_id,
-                        payload,
-                    })
-                    .await
-                    .is_err()
-                {
-                    tracing::debug!(next_hop = %next_hop, "forwarding failed (channel closed)");
-                }
-            }
-            None => {
-                tracing::debug!(next_hop = %next_hop, "no route");
-            }
-        }
-
-        return Ok(());
-    }
-
-    // Local delivery — two-step decode
-    let message = match RoutableMessage::decode(&payload) {
-        Ok(m) => m,
-        Err(e) => {
-            tracing::warn!(error = %e, "failed to decode routable payload");
-            let (reply_src, reply_dst) =
-                Route::reply(src).expect("incoming message must have valid src");
-            let _ = tx
-                .send(Message::routable(
-                    reply_src,
-                    reply_dst,
-                    request_id,
-                    &RoutableMessage::UnknownMessage,
-                ))
-                .await;
-            return Ok(());
-        }
-    };
-
-    match &message {
-        RoutableMessage::RawInput { .. }
-        | RoutableMessage::RawOutput { .. }
-        | RoutableMessage::StructuredOutput { .. }
-        | RoutableMessage::StructuredInput { .. } => {}
-        other => tracing::debug!(
-            msg_type = std::any::type_name_of_val(other),
-            "decoded routable"
-        ),
-    }
-
-    match message {
-        RoutableMessage::SubscribeRaw {
-            agent_id,
-            terminal_size,
-        } => {
-            let (reply_src, reply_dst) =
-                Route::reply(src).expect("incoming message must have valid src");
-            let result = handle_subscribe(&ctx.user_state, &agent_id, terminal_size).await;
-
-            match result {
-                Ok(mut buffer_reader) => {
-                    let _ = tx
-                        .send(Message::routable(
-                            reply_src.clone(),
-                            reply_dst.clone(),
-                            request_id,
-                            &RoutableMessage::SubscribeRawResult {
-                                agent_id,
-                                error: None,
-                            },
-                        ))
-                        .await;
-
-                    tracing::info!(agent_id = %agent_id, mode = "raw", "subscribed");
-
-                    let outgoing_tx = connection_tx(&ctx.user_state, &ctx.link_name).await;
-                    if let Some(tx) = outgoing_tx {
-                        let (cancel_tx, cancel_rx) = oneshot::channel::<()>();
-                        let stream_id = {
-                            let mut us = ctx.user_state.write().await;
-                            register_stream(
-                                &mut us,
-                                agent_id,
-                                cancel_tx,
-                                reply_dst.clone(),
-                                ctx.link_name.clone(),
-                            )
-                        };
-
-                        let stream_span = tracing::info_span!("stream", stream_id, agent_id = %agent_id, mode = "raw");
-                        let stream_user_state = ctx.user_state.clone();
-                        let next_rid = ctx.next_request_id.clone();
-                        tokio::spawn(
-                            async move {
-                                tokio::select! {
-                                    _ = async {
-                                        while let Some(data) = buffer_reader.read().await {
-                                            let rid = next_rid.fetch_add(1, Ordering::Relaxed);
-                                            if tx
-                                                .send(Message::routable(
-                                                    reply_src.clone(),
-                                                    reply_dst.clone(),
-                                                    rid,
-                                                    &RoutableMessage::RawOutput { agent_id, data },
-                                                ))
-                                                .await
-                                                .is_err()
-                                            {
-                                                return;
-                                            }
-                                        }
-                                        let rid = next_rid.fetch_add(1, Ordering::Relaxed);
-                                        let _ = tx.send(Message::routable(
-                                            reply_src.clone(),
-                                            reply_dst.clone(),
-                                            rid,
-                                            &RoutableMessage::SubscriptionClosed { agent_id },
-                                        )).await;
-                                    } => {}
-                                    _ = cancel_rx => {
-                                        tracing::debug!("stream cancelled");
-                                    }
-                                }
-                                cleanup_stream(&stream_user_state, agent_id, stream_id).await;
-                                tracing::debug!("stream ended");
-                            }
-                            .instrument(stream_span),
-                        );
-                    }
-
-                    Ok(())
-                }
-                Err(e) => {
-                    let _ = tx
-                        .send(Message::routable(
-                            reply_src,
-                            reply_dst,
-                            request_id,
-                            &RoutableMessage::SubscribeRawResult {
-                                agent_id,
-                                error: Some(ProtocolError::ServerError(e.to_string())),
-                            },
-                        ))
-                        .await;
-                    Ok(())
-                }
-            }
-        }
-
-        RoutableMessage::SubscribeStructured { agent_id } => {
-            let (reply_src, reply_dst) =
-                Route::reply(src).expect("incoming message must have valid src");
-            let session = {
-                let us = ctx.user_state.read().await;
-                us.agents.get(&agent_id).cloned()
-            };
-
-            let Some(session) = session else {
-                let _ = tx
-                    .send(Message::routable(
-                        reply_src,
-                        reply_dst,
-                        request_id,
-                        &RoutableMessage::SubscribeStructuredResult {
-                            agent_id,
-                            error: Some(ProtocolError::ServerError(
-                                "Agent not found or ended".to_string(),
-                            )),
-                        },
-                    ))
-                    .await;
-                return Ok(());
-            };
-
-            let log_reader = session.subscribe_logs().await;
-
-            let Some(mut reader) = log_reader else {
-                let _ = tx
-                    .send(Message::routable(
-                        reply_src,
-                        reply_dst,
-                        request_id,
-                        &RoutableMessage::SubscribeStructuredResult {
-                            agent_id,
-                            error: Some(ProtocolError::ServerError(
-                                "Agent not found or ended".to_string(),
-                            )),
-                        },
-                    ))
-                    .await;
-                return Ok(());
-            };
-
-            let _ = tx
-                .send(Message::routable(
-                    reply_src.clone(),
-                    reply_dst.clone(),
-                    request_id,
-                    &RoutableMessage::SubscribeStructuredResult {
-                        agent_id,
-                        error: None,
-                    },
-                ))
-                .await;
-
-            tracing::info!(agent_id = %agent_id, mode = "structured", "subscribed");
-
-            let outgoing_tx = connection_tx(&ctx.user_state, &ctx.link_name).await;
-            if let Some(tx) = outgoing_tx {
-                let (cancel_tx, cancel_rx) = oneshot::channel::<()>();
-                let stream_id = {
-                    let mut us = ctx.user_state.write().await;
-                    register_stream(
-                        &mut us,
-                        agent_id,
-                        cancel_tx,
-                        reply_dst.clone(),
-                        ctx.link_name.clone(),
-                    )
-                };
-
-                let stream_span = tracing::info_span!("stream", stream_id, agent_id = %agent_id, mode = "structured");
-                let stream_user_state = ctx.user_state.clone();
-                let next_rid = ctx.next_request_id.clone();
-                tokio::spawn(
-                    async move {
-                        tokio::select! {
-                            _ = async {
-                                while let Some(data) = reader.read().await {
-                                    let rid = next_rid.fetch_add(1, Ordering::Relaxed);
-                                    if tx
-                                        .send(Message::routable(
-                                            reply_src.clone(),
-                                            reply_dst.clone(),
-                                            rid,
-                                            &RoutableMessage::StructuredOutput {
-                                                agent_id,
-                                                data,
-                                            },
-                                        ))
-                                        .await
-                                        .is_err()
-                                    {
-                                        return;
-                                    }
-                                }
-                                let rid = next_rid.fetch_add(1, Ordering::Relaxed);
-                                let _ = tx.send(Message::routable(
-                                    reply_src.clone(),
-                                    reply_dst.clone(),
-                                    rid,
-                                    &RoutableMessage::SubscriptionClosed { agent_id },
-                                )).await;
-                            } => {}
-                            _ = cancel_rx => {
-                                tracing::debug!("stream cancelled");
-                            }
-                        }
-                        cleanup_stream(&stream_user_state, agent_id, stream_id).await;
-                        tracing::debug!("stream ended");
-                    }
-                    .instrument(stream_span),
-                );
-            }
-
-            Ok(())
-        }
-
-        RoutableMessage::CreateAgent(req) => {
-            let (reply_src, reply_dst) =
-                Route::reply(src).expect("incoming message must have valid src");
-            let agent_id = req.agent_id;
-            let result = create_agent(&ctx.user_state, &ctx.event_tx, req, ctx.user_id).await;
-            let response_message = match result {
-                Ok(()) => RoutableMessage::CreateAgentResult {
-                    agent_id,
-                    error: None,
-                },
-                Err(e) => RoutableMessage::CreateAgentResult {
-                    agent_id,
-                    error: Some(ProtocolError::ServerError(e.to_string())),
-                },
-            };
-            let _ = tx
-                .send(Message::routable(
-                    reply_src,
-                    reply_dst,
-                    request_id,
-                    &response_message,
-                ))
-                .await;
-            Ok(())
-        }
-
-        RoutableMessage::RawInput { agent_id, data } => {
-            let us = ctx.user_state.read().await;
-            if let Some(session) = us.agents.get(&agent_id) {
-                let _ = session.send_input(data).await;
-            }
-            Ok(())
-        }
-
-        RoutableMessage::StructuredInput { agent_id, data } => {
-            let us = ctx.user_state.read().await;
-            if let Some(session) = us.agents.get(&agent_id) {
-                match data {
-                    crate::message::StructuredInput::Claude(claude_input) => match claude_input {
-                        crate::message::ClaudeStructuredInput::SubmitMessage { data } => {
-                            let _ = session.send_input(data).await;
-                            tokio::time::sleep(Duration::from_millis(20)).await;
-                            let _ = session.send_input(vec![b'\r']).await;
-                        }
-                        crate::message::ClaudeStructuredInput::PermissionResponse(response) => {
-                            let keystroke =
-                                super::routing::permission_response_keystroke(&response);
-                            tracing::info!(agent_id = %agent_id, ?response, "sending permission response");
-                            let _ = session.send_input(keystroke.to_vec()).await;
-                        }
-                    },
-                }
-            }
-            Ok(())
-        }
-
-        // Response messages that arrived at their destination (empty dst)
-        RoutableMessage::SubscribeRawResult { .. }
-        | RoutableMessage::SubscribeStructuredResult { .. }
-        | RoutableMessage::CreateAgentResult { .. }
-        | RoutableMessage::RawOutput { .. }
-        | RoutableMessage::StructuredOutput { .. }
-        | RoutableMessage::SubscriptionClosed { .. }
-        | RoutableMessage::UnknownMessage => Ok(()),
-    }
-}
-
-/// Handle CLI-only commands (only accepted from local connections).
-async fn handle_command(
-    tx: &mpsc::Sender<Message>,
-    command: Command,
-    ctx: &ConnectionContext,
-) -> Result<()> {
-    match command {
-        Command::Shutdown => {
-            tracing::info!("shutdown requested");
-            shutdown_server(&ctx.user_state).await;
-            // Let agents handle SIGHUP from PTY master drop before exiting
-            tokio::time::sleep(Duration::from_millis(200)).await;
-
-            let _ = tx
-                .send(Message::Command(Command::ShutdownNotification(
-                    ShutdownReason::UserRequested,
-                )))
-                .await;
-
-            let socket_path = {
-                let state = ctx.state.read().await;
-                state.config.socket_path.clone()
-            };
-            let _ = std::fs::remove_file(socket_path);
-            tracing::info!("server exiting");
-            std::process::exit(0);
-        }
-
-        Command::ConnectToServer { address } => {
-            // block_in_place + block_on breaks the async type recursion cycle:
-            // handle_message -> tcp_connect -> connection_loop -> handle_message
-            let result = tokio::task::block_in_place(|| {
-                tokio::runtime::Handle::current().block_on(tcp_connect(
-                    &address,
-                    &ctx.state,
-                    &ctx.user_state,
-                    ctx.user_id,
-                    ctx.event_tx.clone(),
-                ))
-            });
-            let response = match result {
-                Ok(()) => Message::Command(Command::ConnectToServerResult { error: None }),
-                Err(e) => Message::Command(Command::ConnectToServerResult {
-                    error: Some(ProtocolError::ServerError(e.to_string())),
-                }),
-            };
-            let _ = tx.send(response).await;
-            Ok(())
-        }
-
-        Command::Debug => {
-            let state = ctx.state.read().await;
-            let use_cloud_mode = State::load(&state.config.state_path)
-                .map(|s| s.cloud.use_cloud_mode == Some(true))
-                .unwrap_or(false);
-            let mut agent_count = 0;
-            let mut remote_agent_count = 0;
-            let mut host_count = 0;
-            let mut route_count = 0;
-            let mut peer_link_count = 0;
-            for us in state.users.values() {
-                let us = us.read().await;
-                agent_count += us.agents.len();
-                remote_agent_count += us.registry.count_remote();
-                host_count += us.hosts.len();
-                route_count += us.routes.len();
-                peer_link_count += us.peer_links.len();
-            }
-            let info = ServerDebugInfo {
-                is_cloud_server: state.is_cloud_server,
-                use_cloud_mode,
-                user_count: state.users.len(),
-                agent_count,
-                remote_agent_count,
-                host_count,
-                route_count,
-                peer_link_count,
-                config: state.config.clone(),
-            };
-            let _ = tx
-                .send(Message::Command(Command::DebugResult { info }))
-                .await;
-            Ok(())
-        }
-
-        Command::ListAgents => {
-            let agents = {
-                let us = ctx.user_state.read().await;
-                us.registry.list_all()
-            };
-            let _ = tx
-                .send(Message::Command(Command::ListAgentsResult {
-                    agents: agents.into_iter().collect(),
-                }))
-                .await;
-            Ok(())
-        }
-
-        Command::HandleHook { hook } => {
-            tracing::debug!("received hook event");
-
-            let result = match &hook {
-                Hook::Claude(ClaudeHook::SessionStart(session_start)) => {
-                    let session = {
-                        let us = ctx.user_state.read().await;
-                        us.agents.get(&session_start.session_id).cloned()
-                    };
-                    if let Some(session) = session {
-                        tracing::debug!(agent_id = %session_start.session_id, "linking transcript");
-                        session
-                            .link_transcript(PathBuf::from(&session_start.transcript_path))
-                            .await;
-                        Ok(())
-                    } else {
-                        tracing::warn!(session_id = %session_start.session_id, "no agent found for hook");
-                        Err(ProtocolError::ServerError(format!(
-                            "No agent found with session_id: {}",
-                            session_start.session_id
-                        )))
-                    }
-                }
-                Hook::Claude(ClaudeHook::PermissionRequest(perm_req)) => {
-                    let session = {
-                        let us = ctx.user_state.read().await;
-                        us.agents.get(&perm_req.session_id).cloned()
-                    };
-                    if let Some(session) = session {
-                        tracing::debug!(agent_id = %perm_req.session_id, "permission request");
-                        session
-                            .write_log(crate::message::StructuredOutput::Claude(
-                                crate::message::ClaudeStructuredOutput::PermissionRequest {
-                                    tool: perm_req.tool.clone(),
-                                },
-                            ))
-                            .await;
-                        Ok(())
-                    } else {
-                        tracing::warn!(session_id = %perm_req.session_id, "no agent found for hook");
-                        Err(ProtocolError::ServerError(format!(
-                            "No agent found with session_id: {}",
-                            perm_req.session_id
-                        )))
-                    }
-                }
-            };
-
-            let response = match result {
-                Ok(()) => Message::Command(Command::HandleHookResult { error: None }),
-                Err(e) => Message::Command(Command::HandleHookResult { error: Some(e) }),
-            };
-            let _ = tx.send(response).await;
-            Ok(())
-        }
-
-        Command::ResolveAgent { identifier } => {
-            let us = ctx.user_state.read().await;
-            let agent = us.registry.resolve(&identifier);
-            let _ = tx
-                .send(Message::Command(Command::ResolveAgentResult { agent }))
-                .await;
-            Ok(())
-        }
-
-        // Response variants — should not arrive at the server
-        Command::ListAgentsResult { .. }
-        | Command::ResolveAgentResult { .. }
-        | Command::ShutdownNotification(_)
-        | Command::DebugResult { .. }
-        | Command::ConnectToServerResult { .. }
-        | Command::HandleHookResult { .. } => {
-            tracing::warn!("unexpected command response variant");
-            Ok(())
-        }
-    }
-}
-
-async fn handle_direct(
-    tx: &mpsc::Sender<Message>,
-    message: DirectMessage,
-    ctx: &ConnectionContext,
-) -> Result<()> {
-    match message {
-        // In-band re-authentication for token refresh on established connections.
-        // The peer sends Connect with the same link_name and a fresh token.
-        DirectMessage::Connect {
-            link_name, token, ..
-        } => {
-            if link_name != ctx.link_name {
-                let _ = tx
-                    .send(Message::Direct(DirectMessage::ConnectResult {
-                        error: Some(ProtocolError::ServerError(
-                            "Link name mismatch on re-auth".to_string(),
-                        )),
-                    }))
-                    .await;
-                return Ok(());
-            }
-
-            let is_cloud = {
-                let state = ctx.state.read().await;
-                state.is_cloud_server
-            };
-
-            if is_cloud {
-                let (validator, host, tcp_port) = {
-                    let state = ctx.state.read().await;
-                    let validator = state
-                        .jwt_validator
-                        .clone()
-                        .expect("is_cloud_server requires jwt_validator");
-                    (
-                        validator,
-                        state.config.host_name.clone(),
-                        state.config.tcp_port,
-                    )
-                };
-
-                let token = match token {
-                    Some(t) => t,
-                    None => {
-                        let _ = tx
-                            .send(Message::Direct(DirectMessage::ConnectResult {
-                                error: Some(ProtocolError::InvalidCredentials),
-                            }))
-                            .await;
-                        return Ok(());
-                    }
-                };
-
-                match validator.validate(&token, &host, tcp_port).await {
-                    Ok(claims) => {
-                        let token_user_id = claims.sub.parse::<uuid::Uuid>().map_err(|_| {
-                            tracing::error!(sub = %claims.sub, "re-auth invalid user_id");
-                            AmuxError::InvalidCredentials
-                        })?;
-                        if token_user_id != ctx.user_id {
-                            tracing::error!("re-auth user_id mismatch");
-                            let _ = tx
-                                .send(Message::Direct(DirectMessage::ConnectResult {
-                                    error: Some(ProtocolError::InvalidCredentials),
-                                }))
-                                .await;
-                            return Err(AmuxError::InvalidCredentials);
-                        }
-                        tracing::debug!("re-authenticated");
-                    }
-                    Err(e) => {
-                        tracing::warn!(error = %e, "re-auth token validation failed");
-                        let _ = tx
-                            .send(Message::Direct(DirectMessage::ConnectResult {
-                                error: Some(ProtocolError::InvalidCredentials),
-                            }))
-                            .await;
-                        return Ok(());
-                    }
-                }
-            }
-
-            let _ = tx
-                .send(Message::Direct(DirectMessage::ConnectResult {
-                    error: None,
-                }))
-                .await;
-            Ok(())
-        }
-
-        DirectMessage::AnnounceAgent {
-            agent_id,
-            name,
-            command,
-            working_dir,
-            route: received_route,
-        } => {
-            let mut us = ctx.user_state.write().await;
-
-            // Local agent takes precedence — skip if we own this agent
-            if us.agents.contains_key(&agent_id) {
-                tracing::debug!(agent_id = %agent_id, "ignoring announce for local agent");
-                return Ok(());
-            }
-
-            // Compute our route: prepend the link this came from
-            let mut our_route = received_route.clone();
-            our_route.push(&ctx.link_name);
-
-            let info = Agent {
-                id: agent_id,
-                name: name.clone(),
-                command: command.clone(),
-                working_dir: working_dir.clone(),
-                route: our_route.clone(),
-            };
-
-            us.registry.register_remote(info).unwrap();
-
-            tracing::info!(agent_id = %agent_id, name = ?name, "stored remote agent");
-
-            // Propagate to other peers with our stored route
-            broadcast_to_peers(
-                &mut us,
-                &DirectMessage::AnnounceAgent {
-                    agent_id,
-                    name,
-                    command,
-                    working_dir,
-                    route: our_route,
-                },
-                Some(&ctx.link_name),
-            );
-
-            Ok(())
-        }
-
-        DirectMessage::WithdrawAgent { agent_id } => {
-            let mut us = ctx.user_state.write().await;
-
-            // Only remove if the stored link matches the sender
-            let should_remove = us
-                .registry
-                .get(&agent_id)
-                .is_some_and(|e| matches!(&e.route.peek(), Some(link) if link == &ctx.link_name));
-
-            if should_remove {
-                us.registry.remove(&agent_id);
-                tracing::info!(agent_id = %agent_id, "withdrew remote agent");
-
-                // Propagate to other peers
-                broadcast_to_peers(
-                    &mut us,
-                    &DirectMessage::WithdrawAgent { agent_id },
-                    Some(&ctx.link_name),
-                );
-            } else {
-                tracing::debug!(agent_id = %agent_id, "ignoring withdraw (link mismatch)");
-            }
-
-            Ok(())
-        }
-
-        DirectMessage::AnnounceHost {
-            id,
-            name,
-            route: received_route,
-            version,
-        } => {
-            let host_id = {
-                let state = ctx.state.read().await;
-                state.host_id
-            };
-
-            // Skip our own host announcement
-            if id == host_id {
-                tracing::debug!("ignoring announce for own host");
-                return Ok(());
-            }
-
-            let mut us = ctx.user_state.write().await;
-
-            let mut our_route = received_route;
-            our_route.push(&ctx.link_name);
-
-            let info = crate::message::Host {
-                id,
-                name: name.clone(),
-                route: our_route.clone(),
-                version: version.clone(),
-            };
-
-            us.hosts.insert(id, info);
-            tracing::info!(host_id = %id, name = %name, "stored remote host");
-
-            broadcast_to_peers(
-                &mut us,
-                &DirectMessage::AnnounceHost {
-                    id,
-                    name,
-                    route: our_route,
-                    version,
-                },
-                Some(&ctx.link_name),
-            );
-
-            Ok(())
-        }
-
-        DirectMessage::WithdrawHost { id } => {
-            let mut us = ctx.user_state.write().await;
-
-            let should_remove = us
-                .hosts
-                .get(&id)
-                .is_some_and(|h| matches!(h.route.peek(), Some(link) if link == ctx.link_name));
-
-            if should_remove {
-                let host_route = us.hosts.get(&id).map(|h| h.route.clone());
-                us.hosts.remove(&id);
-                tracing::info!(host_id = %id, "withdrew remote host");
-
-                if let Some(ref host_route) = host_route {
-                    let removed = us.registry.remove_for_route_prefix(host_route);
-                    if !removed.is_empty() {
-                        tracing::info!(count = removed.len(), host_id = %id, "removed agents for withdrawn host");
-                    }
-
-                    let cancelled = cancel_streams_matching(&mut us, |entry| {
-                        entry.dst.starts_with_route(host_route)
-                    });
-                    if cancelled > 0 {
-                        tracing::info!(count = cancelled, host_id = %id, "cancelled streams for withdrawn host");
-                    }
-                }
-
-                broadcast_to_peers(
-                    &mut us,
-                    &DirectMessage::WithdrawHost { id },
-                    Some(&ctx.link_name),
-                );
-            } else {
-                tracing::debug!(host_id = %id, "ignoring withdraw host (link mismatch)");
-            }
-
-            Ok(())
-        }
-
-        DirectMessage::ConnectResult { .. } => {
-            tracing::warn!("unexpected direct message");
-            Ok(())
-        }
-    }
-}
-
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::config::Config;
-    use crate::route::Route;
-    use crate::server::LOCAL_USER_ID;
-    use std::path::PathBuf;
-    use std::sync::Arc;
-    use tokio::sync::{RwLock, mpsc};
-    use uuid::Uuid;
+    use crate::message::{Command, DirectMessage, Message};
+    use crate::server::test_helpers::{test_ctx, test_state};
 
-    /// Create a response channel and collect written messages
-    fn mock_tx() -> (mpsc::Sender<Message>, Arc<tokio::sync::Mutex<Vec<Message>>>) {
-        let (tx, mut rx) = mpsc::channel::<Message>(16);
-        let written = Arc::new(tokio::sync::Mutex::new(Vec::new()));
-        let written_clone = written.clone();
-        tokio::spawn(async move {
-            while let Some(msg) = rx.recv().await {
-                written_clone.lock().await.push(msg);
+    // --- Mock MessageReader for reader_loop tests ---
+
+    /// A mock reader that yields a pre-configured sequence of results then EOF.
+    struct MockReader {
+        results: std::collections::VecDeque<crate::error::Result<Message>>,
+    }
+
+    impl MockReader {
+        fn new(results: Vec<crate::error::Result<Message>>) -> Self {
+            Self {
+                results: results.into(),
             }
-        });
-        (tx, written)
-    }
-
-    fn test_ctx(
-        state: Arc<RwLock<ServerState>>,
-        user_state: Arc<RwLock<ServerUserState>>,
-    ) -> ConnectionContext {
-        let (event_tx, _event_rx) = mpsc::channel(16);
-        ConnectionContext {
-            state,
-            user_state,
-            user_id: LOCAL_USER_ID,
-            event_tx,
-            link_name: "test-link".to_string(),
-            is_local: true,
-            next_request_id: Arc::new(AtomicU64::new(1)),
         }
     }
 
-    async fn test_state() -> (Arc<RwLock<ServerState>>, Arc<RwLock<ServerUserState>>) {
-        let state = Arc::new(RwLock::new(ServerState::new(Config::default())));
-        let user_state = {
-            let s = state.read().await;
-            s.get_user_state(&LOCAL_USER_ID).unwrap()
-        };
-        (state, user_state)
+    impl crate::transport::MessageReader for MockReader {
+        async fn read_message(&mut self) -> crate::error::Result<Message> {
+            match self.results.pop_front() {
+                Some(result) => result,
+                None => Err(AmuxError::Io(std::io::Error::new(
+                    std::io::ErrorKind::UnexpectedEof,
+                    "mock reader exhausted",
+                ))),
+            }
+        }
+    }
+
+    /// Drain all messages from an Incoming receiver without blocking.
+    async fn drain_incoming(rx: &mut mpsc::Receiver<Incoming>) -> Vec<String> {
+        let mut labels = Vec::new();
+        while let Ok(item) = rx.try_recv() {
+            labels.push(match item {
+                Incoming::Msg(_) => "Msg".to_string(),
+                Incoming::Eof => "Eof".to_string(),
+                Incoming::ReadErr(e) => format!("ReadErr({e})"),
+            });
+        }
+        labels
     }
 
     #[tokio::test]
-    async fn connect_reauth_matching_link_succeeds() {
+    async fn reader_loop_forwards_messages_then_eof() {
+        let reader = MockReader::new(vec![
+            Ok(Message::Command(Command::ListAgents)),
+            Ok(Message::Command(Command::Debug)),
+            // MockReader auto-sends EOF when exhausted
+        ]);
+        let (tx, mut rx) = mpsc::channel(16);
+
+        reader_loop(reader, tx).await;
+
+        let items = drain_incoming(&mut rx).await;
+        assert_eq!(items, vec!["Msg", "Msg", "Eof"]);
+    }
+
+    #[tokio::test]
+    async fn reader_loop_eof_sends_eof_variant() {
+        let reader = MockReader::new(vec![Err(AmuxError::Io(std::io::Error::new(
+            std::io::ErrorKind::UnexpectedEof,
+            "connection closed",
+        )))]);
+        let (tx, mut rx) = mpsc::channel(16);
+
+        reader_loop(reader, tx).await;
+
+        let items = drain_incoming(&mut rx).await;
+        assert_eq!(items, vec!["Eof"]);
+    }
+
+    #[tokio::test]
+    async fn reader_loop_skips_decode_errors_and_continues() {
+        // Simulate: good message → decode error → good message → EOF
+        let decode_err = rmp_serde::decode::Error::Syntax("unknown variant".to_string());
+        let reader = MockReader::new(vec![
+            Ok(Message::Command(Command::ListAgents)),
+            Err(AmuxError::SerializationDecode(decode_err)),
+            Ok(Message::Command(Command::Debug)),
+        ]);
+        let (tx, mut rx) = mpsc::channel(16);
+
+        reader_loop(reader, tx).await;
+
+        // Decode error should be skipped — two messages plus EOF
+        let items = drain_incoming(&mut rx).await;
+        assert_eq!(
+            items,
+            vec!["Msg", "Msg", "Eof"],
+            "decode error should be skipped, not forwarded"
+        );
+    }
+
+    #[tokio::test]
+    async fn reader_loop_fatal_io_error_sends_read_err() {
+        let reader = MockReader::new(vec![Err(AmuxError::Io(std::io::Error::new(
+            std::io::ErrorKind::ConnectionReset,
+            "peer reset",
+        )))]);
+        let (tx, mut rx) = mpsc::channel(16);
+
+        reader_loop(reader, tx).await;
+
+        let items = drain_incoming(&mut rx).await;
+        assert_eq!(items.len(), 1);
+        assert!(
+            items[0].starts_with("ReadErr("),
+            "fatal I/O error should produce ReadErr, got {:?}",
+            items[0]
+        );
+    }
+
+    #[tokio::test]
+    async fn reader_loop_stops_when_receiver_dropped() {
+        // If the receiver is dropped, reader_loop should exit on next send
+        let reader = MockReader::new(vec![
+            Ok(Message::Command(Command::ListAgents)),
+            Ok(Message::Command(Command::ListAgents)),
+            Ok(Message::Command(Command::ListAgents)),
+        ]);
+        let (tx, rx) = mpsc::channel(1);
+        drop(rx);
+
+        // Should not hang — exits because send fails
+        reader_loop(reader, tx).await;
+    }
+
+    #[tokio::test]
+    async fn connection_loop_eof_returns_ok() {
         let (state, user_state) = test_state().await;
         let ctx = test_ctx(state, user_state);
-        let (tx, written) = mock_tx();
+        let (incoming_tx, incoming_rx) = mpsc::channel(16);
+        let (response_tx, _response_rx) = mpsc::channel(16);
 
-        // Re-auth with matching link name (non-cloud mode = no token needed)
-        let msg = DirectMessage::Connect {
-            link_name: "test-link".to_string(),
-            token: None,
-            version: crate::message::PROTOCOL_VERSION,
-        };
+        incoming_tx.send(Incoming::Eof).await.unwrap();
 
-        handle_direct(&tx, msg, &ctx).await.unwrap();
-
-        tokio::task::yield_now().await;
-
-        let msgs = written.lock().await;
-        assert_eq!(msgs.len(), 1);
-        let Message::Direct(DirectMessage::ConnectResult { error }) = &msgs[0] else {
-            panic!("expected ConnectResult, got {:?}", msgs[0]);
-        };
-        assert!(error.is_none());
+        let result = connection_loop(incoming_rx, response_tx, ctx, None).await;
+        assert!(result.is_ok(), "EOF should return Ok, got {:?}", result);
     }
 
     #[tokio::test]
-    async fn connect_reauth_mismatched_link_rejected() {
+    async fn connection_loop_channel_close_returns_ok() {
         let (state, user_state) = test_state().await;
         let ctx = test_ctx(state, user_state);
-        let (tx, written) = mock_tx();
+        let (incoming_tx, incoming_rx) = mpsc::channel(16);
+        let (response_tx, _response_rx) = mpsc::channel(16);
 
-        // Re-auth with wrong link name
-        let msg = DirectMessage::Connect {
-            link_name: "wrong-link".to_string(),
-            token: None,
-            version: crate::message::PROTOCOL_VERSION,
-        };
+        // Dropping the sender closes the channel — acts like EOF
+        drop(incoming_tx);
 
-        handle_direct(&tx, msg, &ctx).await.unwrap();
-
-        tokio::task::yield_now().await;
-
-        let msgs = written.lock().await;
-        assert_eq!(msgs.len(), 1);
-        let Message::Direct(DirectMessage::ConnectResult { error }) = &msgs[0] else {
-            panic!("expected ConnectResult, got {:?}", msgs[0]);
-        };
-        assert!(error.is_some());
+        let result = connection_loop(incoming_rx, response_tx, ctx, None).await;
+        assert!(
+            result.is_ok(),
+            "channel close should return Ok, got {:?}",
+            result
+        );
     }
 
     #[tokio::test]
-    async fn announce_agent_stores_in_registry() {
-        let (state, user_state) = test_state().await;
-        let ctx = test_ctx(state, user_state.clone());
-        let (tx, _written) = mock_tx();
-
-        let agent_id = Uuid::new_v4();
-        let msg = DirectMessage::AnnounceAgent {
-            agent_id,
-            name: Some("remote-test".to_string()),
-            command: "claude".to_string(),
-            working_dir: PathBuf::from("/tmp"),
-            route: Route::empty(),
-        };
-
-        handle_direct(&tx, msg, &ctx).await.unwrap();
-
-        let us = user_state.read().await;
-        assert!(us.registry.contains(&agent_id));
-        let entry = us.registry.get(&agent_id).unwrap();
-        assert_eq!(entry.name, Some("remote-test".to_string()));
-        assert!(entry.is_remote());
-        let mut route = entry.route.clone();
-        assert_eq!(route.pop(), Some("test-link".to_string()));
-        assert_eq!(route.pop(), None);
-    }
-
-    #[tokio::test]
-    async fn announce_agent_with_route_prepends_link() {
-        let (state, user_state) = test_state().await;
-        let ctx = test_ctx(state, user_state.clone());
-        let (tx, _written) = mock_tx();
-
-        let agent_id = Uuid::new_v4();
-        let msg = DirectMessage::AnnounceAgent {
-            agent_id,
-            name: None,
-            command: "bash".to_string(),
-            working_dir: PathBuf::from("/home"),
-            route: Route::from_link("host-a"),
-        };
-
-        handle_direct(&tx, msg, &ctx).await.unwrap();
-
-        let us = user_state.read().await;
-        let entry = us.registry.get(&agent_id).unwrap();
-        assert!(entry.is_remote());
-        let mut route = entry.route.clone();
-        // Should be test-link.host-a (test-link prepended)
-        assert_eq!(route.pop(), Some("test-link".to_string()));
-        assert_eq!(route.pop(), Some("host-a".to_string()));
-        assert_eq!(route.pop(), None);
-    }
-
-    #[tokio::test]
-    async fn announce_agent_skips_local_agent() {
-        let (state, user_state) = test_state().await;
-
-        // Insert a local agent and register in registry
-        let agent_id = Uuid::new_v4();
-        {
-            let mut us = user_state.write().await;
-            let (event_tx, _rx) = mpsc::channel(16);
-            let req = crate::message::CreateAgentRequest {
-                agent_id,
-                name: Some("local".to_string()),
-                agent_type: crate::message::AgentType::TestAgent("/bin/cat".to_string()),
-                working_dir: PathBuf::from("/tmp"),
-                terminal_size: Some(crate::message::TerminalSize { rows: 24, cols: 80 }),
-            };
-            let session =
-                crate::session::LocalAgentSession::new(&req, event_tx, LOCAL_USER_ID).unwrap();
-            let info = session.to_agent();
-            us.agents.insert(agent_id, Arc::new(session));
-            us.registry.register_local(info).unwrap();
-        }
-
-        let ctx = test_ctx(state, user_state.clone());
-        let (tx, _written) = mock_tx();
-
-        // Try to announce same agent_id from remote
-        let msg = DirectMessage::AnnounceAgent {
-            agent_id,
-            name: Some("remote".to_string()),
-            command: "claude".to_string(),
-            working_dir: PathBuf::from("/remote"),
-            route: Route::empty(),
-        };
-
-        handle_direct(&tx, msg, &ctx).await.unwrap();
-
-        // Should still be local (not overwritten)
-        let us = user_state.read().await;
-        let entry = us.registry.get(&agent_id).unwrap();
-        assert!(!entry.is_remote());
-    }
-
-    #[tokio::test]
-    async fn withdraw_agent_removes_matching_link() {
-        let (state, user_state) = test_state().await;
-
-        let agent_id = Uuid::new_v4();
-        {
-            let mut us = user_state.write().await;
-            us.registry
-                .register_remote(Agent {
-                    id: agent_id,
-                    name: None,
-                    command: "bash".to_string(),
-                    working_dir: PathBuf::from("/tmp"),
-                    route: Route::from_link("test-link"),
-                })
-                .unwrap();
-        }
-
-        let ctx = test_ctx(state, user_state.clone());
-        let (tx, _written) = mock_tx();
-
-        let msg = DirectMessage::WithdrawAgent { agent_id };
-        handle_direct(&tx, msg, &ctx).await.unwrap();
-
-        let us = user_state.read().await;
-        assert!(!us.registry.contains(&agent_id));
-    }
-
-    #[tokio::test]
-    async fn withdraw_agent_ignores_link_mismatch() {
-        let (state, user_state) = test_state().await;
-
-        let agent_id = Uuid::new_v4();
-        {
-            let mut us = user_state.write().await;
-            us.registry
-                .register_remote(Agent {
-                    id: agent_id,
-                    name: None,
-                    command: "bash".to_string(),
-                    working_dir: PathBuf::from("/tmp"),
-                    route: Route::from_link("other-link"),
-                })
-                .unwrap();
-        }
-
-        let ctx = test_ctx(state, user_state.clone());
-        let (tx, _written) = mock_tx();
-
-        // Withdraw from "test-link" but agent is stored from "other-link"
-        let msg = DirectMessage::WithdrawAgent { agent_id };
-        handle_direct(&tx, msg, &ctx).await.unwrap();
-
-        // Should still be there (link mismatch)
-        let us = user_state.read().await;
-        assert!(us.registry.contains(&agent_id));
-    }
-
-    #[tokio::test]
-    async fn duplicate_announce_overwrites() {
-        let (state, user_state) = test_state().await;
-        let ctx = test_ctx(state, user_state.clone());
-        let (tx, _written) = mock_tx();
-
-        let agent_id = Uuid::new_v4();
-
-        // First announce
-        let msg = DirectMessage::AnnounceAgent {
-            agent_id,
-            name: Some("first".to_string()),
-            command: "bash".to_string(),
-            working_dir: PathBuf::from("/first"),
-            route: Route::empty(),
-        };
-        handle_direct(&tx, msg, &ctx).await.unwrap();
-
-        // Second announce with same agent_id
-        let msg = DirectMessage::AnnounceAgent {
-            agent_id,
-            name: Some("second".to_string()),
-            command: "claude".to_string(),
-            working_dir: PathBuf::from("/second"),
-            route: Route::empty(),
-        };
-        handle_direct(&tx, msg, &ctx).await.unwrap();
-
-        let us = user_state.read().await;
-        let entry = us.registry.get(&agent_id).unwrap();
-        assert_eq!(entry.name, Some("second".to_string()));
-        assert_eq!(entry.working_dir, PathBuf::from("/second"));
-    }
-
-    #[tokio::test]
-    async fn resolve_agent_by_name() {
-        let (state, user_state) = test_state().await;
-
-        let agent_id = Uuid::new_v4();
-        {
-            let mut us = user_state.write().await;
-            us.registry
-                .register_remote(Agent {
-                    id: agent_id,
-                    name: Some("my-agent".to_string()),
-                    command: "claude".to_string(),
-                    working_dir: PathBuf::from("/tmp"),
-                    route: Route::from_link("peer-a"),
-                })
-                .unwrap();
-        }
-
-        let ctx = test_ctx(state, user_state);
-        let (tx, written) = mock_tx();
-
-        let cmd = Command::ResolveAgent {
-            identifier: "my-agent".to_string(),
-        };
-        handle_command(&tx, cmd, &ctx).await.unwrap();
-
-        tokio::task::yield_now().await;
-
-        let msgs = written.lock().await;
-        assert_eq!(msgs.len(), 1);
-        let Message::Command(Command::ResolveAgentResult { agent }) = &msgs[0] else {
-            panic!("expected ResolveAgentResult, got {:?}", msgs[0]);
-        };
-        assert!(agent.is_some());
-        assert_eq!(agent.as_ref().unwrap().id, agent_id);
-    }
-
-    #[tokio::test]
-    async fn resolve_agent_not_found() {
+    async fn connection_loop_read_error_propagates() {
         let (state, user_state) = test_state().await;
         let ctx = test_ctx(state, user_state);
-        let (tx, written) = mock_tx();
+        let (incoming_tx, incoming_rx) = mpsc::channel(16);
+        let (response_tx, _response_rx) = mpsc::channel(16);
 
-        let cmd = Command::ResolveAgent {
-            identifier: "nonexistent".to_string(),
-        };
-        handle_command(&tx, cmd, &ctx).await.unwrap();
+        let io_err = std::io::Error::new(std::io::ErrorKind::ConnectionReset, "peer reset");
+        incoming_tx
+            .send(Incoming::ReadErr(AmuxError::Io(io_err)))
+            .await
+            .unwrap();
 
-        tokio::task::yield_now().await;
-
-        let msgs = written.lock().await;
-        assert_eq!(msgs.len(), 1);
-        let Message::Command(Command::ResolveAgentResult { agent }) = &msgs[0] else {
-            panic!("expected ResolveAgentResult, got {:?}", msgs[0]);
-        };
-        assert!(agent.is_none());
+        let result = connection_loop(incoming_rx, response_tx, ctx, None).await;
+        assert!(result.is_err(), "ReadErr should propagate as Err");
+        assert!(
+            matches!(result, Err(AmuxError::Io(_))),
+            "should preserve Io error variant"
+        );
     }
 
     #[tokio::test]
-    async fn announce_host_stores_in_hosts() {
+    async fn connection_loop_dispatches_command_and_returns_response() {
         let (state, user_state) = test_state().await;
-        let ctx = test_ctx(state, user_state.clone());
-        let (tx, _written) = mock_tx();
+        let ctx = test_ctx(state, user_state);
+        let (incoming_tx, incoming_rx) = mpsc::channel(16);
+        let (response_tx, mut response_rx) = mpsc::channel(16);
 
-        let host_id = Uuid::new_v4();
-        let msg = DirectMessage::AnnounceHost {
-            id: host_id,
-            name: "remote-laptop".to_string(),
-            route: Route::empty(),
-            version: "0.1.0".to_string(),
-        };
+        // Send a ListAgents command, then EOF to exit the loop
+        incoming_tx
+            .send(Incoming::Msg(Message::Command(Command::ListAgents)))
+            .await
+            .unwrap();
+        incoming_tx.send(Incoming::Eof).await.unwrap();
 
-        handle_direct(&tx, msg, &ctx).await.unwrap();
+        let result = connection_loop(incoming_rx, response_tx, ctx, None).await;
+        assert!(result.is_ok());
 
-        let us = user_state.read().await;
-        assert!(us.hosts.contains_key(&host_id));
-        let info = &us.hosts[&host_id];
-        assert_eq!(info.name, "remote-laptop");
-        assert_eq!(info.version, "0.1.0");
-        // Route should have ctx.link_name prepended
-        let mut route = info.route.clone();
-        assert_eq!(route.pop(), Some("test-link".to_string()));
-        assert_eq!(route.pop(), None);
+        // ListAgents should have produced a ListAgentsResult
+        let msg = response_rx.try_recv().expect("should have a response");
+        assert!(
+            matches!(msg, Message::Command(Command::ListAgentsResult { .. })),
+            "expected ListAgentsResult, got {:?}",
+            msg
+        );
     }
 
     #[tokio::test]
-    async fn announce_host_with_route_prepends_link() {
+    async fn connection_loop_skips_unexpected_connect_result() {
         let (state, user_state) = test_state().await;
-        let ctx = test_ctx(state, user_state.clone());
-        let (tx, _written) = mock_tx();
+        let ctx = test_ctx(state, user_state);
+        let (incoming_tx, incoming_rx) = mpsc::channel(16);
+        let (response_tx, mut response_rx) = mpsc::channel(16);
 
-        let host_id = Uuid::new_v4();
-        let msg = DirectMessage::AnnounceHost {
-            id: host_id,
-            name: "far-server".to_string(),
-            route: Route::from_link("peer-a"),
-            version: "0.2.0".to_string(),
-        };
+        // Send an unexpected ConnectResult (no refresh pending), then a real
+        // command, then EOF. The ConnectResult should be skipped and the
+        // command should still be dispatched.
+        incoming_tx
+            .send(Incoming::Msg(Message::Direct(
+                DirectMessage::ConnectResult { error: None },
+            )))
+            .await
+            .unwrap();
+        incoming_tx
+            .send(Incoming::Msg(Message::Command(Command::ListAgents)))
+            .await
+            .unwrap();
+        incoming_tx.send(Incoming::Eof).await.unwrap();
 
-        handle_direct(&tx, msg, &ctx).await.unwrap();
+        let result = connection_loop(incoming_rx, response_tx, ctx, None).await;
+        assert!(result.is_ok());
 
-        let us = user_state.read().await;
-        let info = &us.hosts[&host_id];
-        let mut route = info.route.clone();
-        // Should be test-link.peer-a (test-link prepended)
-        assert_eq!(route.pop(), Some("test-link".to_string()));
-        assert_eq!(route.pop(), Some("peer-a".to_string()));
-        assert_eq!(route.pop(), None);
-    }
-
-    #[tokio::test]
-    async fn announce_host_skips_own_host_id() {
-        let (state, user_state) = test_state().await;
-
-        let host_id = {
-            let s = state.read().await;
-            s.host_id
-        };
-
-        let ctx = test_ctx(state, user_state.clone());
-        let (tx, _written) = mock_tx();
-
-        let msg = DirectMessage::AnnounceHost {
-            id: host_id,
-            name: "myself".to_string(),
-            route: Route::from_link("cloud"),
-            version: "0.1.0".to_string(),
-        };
-
-        handle_direct(&tx, msg, &ctx).await.unwrap();
-
-        let us = user_state.read().await;
-        assert!(!us.hosts.contains_key(&host_id));
-    }
-
-    #[tokio::test]
-    async fn withdraw_host_removes_matching_link() {
-        let (state, user_state) = test_state().await;
-
-        let host_id = Uuid::new_v4();
-        {
-            let mut us = user_state.write().await;
-            us.hosts.insert(
-                host_id,
-                crate::message::Host {
-                    id: host_id,
-                    name: "remote".to_string(),
-                    route: Route::from_link("test-link"),
-                    version: "0.1.0".to_string(),
-                },
-            );
-        }
-
-        let ctx = test_ctx(state, user_state.clone());
-        let (tx, _written) = mock_tx();
-
-        let msg = DirectMessage::WithdrawHost { id: host_id };
-        handle_direct(&tx, msg, &ctx).await.unwrap();
-
-        let us = user_state.read().await;
-        assert!(!us.hosts.contains_key(&host_id));
-    }
-
-    #[tokio::test]
-    async fn withdraw_host_ignores_link_mismatch() {
-        let (state, user_state) = test_state().await;
-
-        let host_id = Uuid::new_v4();
-        {
-            let mut us = user_state.write().await;
-            us.hosts.insert(
-                host_id,
-                crate::message::Host {
-                    id: host_id,
-                    name: "remote".to_string(),
-                    route: Route::from_link("other-link"),
-                    version: "0.1.0".to_string(),
-                },
-            );
-        }
-
-        let ctx = test_ctx(state, user_state.clone());
-        let (tx, _written) = mock_tx();
-
-        // Withdraw from "test-link" but host is stored from "other-link"
-        let msg = DirectMessage::WithdrawHost { id: host_id };
-        handle_direct(&tx, msg, &ctx).await.unwrap();
-
-        // Should still be there (link mismatch)
-        let us = user_state.read().await;
-        assert!(us.hosts.contains_key(&host_id));
-    }
-
-    #[tokio::test]
-    async fn withdraw_host_removes_agents_with_matching_route() {
-        let (state, user_state) = test_state().await;
-
-        let host_id = Uuid::new_v4();
-        let agent1 = Uuid::new_v4();
-        let agent2 = Uuid::new_v4();
-        let agent3 = Uuid::new_v4();
-        {
-            let mut us = user_state.write().await;
-            us.hosts.insert(
-                host_id,
-                crate::message::Host {
-                    id: host_id,
-                    name: "remote".to_string(),
-                    route: Route::from_link("test-link"),
-                    version: "0.1.0".to_string(),
-                },
-            );
-            // Agents reachable via test-link (should be removed)
-            us.registry
-                .register_remote(Agent {
-                    id: agent1,
-                    name: Some("a1".to_string()),
-                    command: "claude".to_string(),
-                    working_dir: PathBuf::from("/tmp"),
-                    route: Route::from_link("test-link"),
-                })
-                .unwrap();
-            let mut deep_route = Route::from_link("host-b");
-            deep_route.push("test-link");
-            us.registry
-                .register_remote(Agent {
-                    id: agent2,
-                    name: Some("a2".to_string()),
-                    command: "claude".to_string(),
-                    working_dir: PathBuf::from("/tmp"),
-                    route: deep_route,
-                })
-                .unwrap();
-            // Agent on different link (should survive)
-            us.registry
-                .register_remote(Agent {
-                    id: agent3,
-                    name: Some("a3".to_string()),
-                    command: "claude".to_string(),
-                    working_dir: PathBuf::from("/tmp"),
-                    route: Route::from_link("other-link"),
-                })
-                .unwrap();
-        }
-
-        let ctx = test_ctx(state, user_state.clone());
-        let (tx, _written) = mock_tx();
-
-        let msg = DirectMessage::WithdrawHost { id: host_id };
-        handle_direct(&tx, msg, &ctx).await.unwrap();
-
-        let us = user_state.read().await;
-        assert!(!us.hosts.contains_key(&host_id));
-        assert!(!us.registry.contains(&agent1));
-        assert!(!us.registry.contains(&agent2));
-        assert!(us.registry.contains(&agent3));
+        // The ConnectResult should be skipped; only ListAgentsResult should appear
+        let msg = response_rx.try_recv().expect("should have a response");
+        assert!(
+            matches!(msg, Message::Command(Command::ListAgentsResult { .. })),
+            "expected ListAgentsResult after skipped ConnectResult, got {:?}",
+            msg
+        );
     }
 }

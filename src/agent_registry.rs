@@ -16,6 +16,8 @@ pub struct Agent {
 }
 
 impl Agent {
+    /// A remote agent has a non-empty route (at least one hop to reach it).
+    /// Local agents have an empty route — they live on this server.
     pub fn is_remote(&self) -> bool {
         self.route.peek().is_some()
     }
@@ -32,11 +34,11 @@ pub(crate) struct AgentRegistry {
 #[derive(Debug, Error)]
 pub enum AgentRegistryError {
     #[error("Agent must have empty route")]
-    AgentNotLocal,
+    NotLocal,
     #[error("Agent must not have empty route")]
-    AgentNotRemote,
+    NotRemote,
     #[error("Agent already exists: {0}")]
-    AgentAlreadyExists(String),
+    AlreadyExists(String),
 }
 
 impl AgentRegistry {
@@ -51,14 +53,14 @@ impl AgentRegistry {
     /// Register a local agent. Errors if UUID exists or name is taken.
     pub fn register_local(&mut self, info: Agent) -> Result<(), AgentRegistryError> {
         if !info.route.is_empty() {
-            return Err(AgentRegistryError::AgentNotLocal);
+            return Err(AgentRegistryError::NotLocal);
         }
         if self.entries.contains_key(&info.id) {
-            return Err(AgentRegistryError::AgentAlreadyExists(info.id.to_string()));
+            return Err(AgentRegistryError::AlreadyExists(info.id.to_string()));
         }
         if let Some(ref name) = info.name {
             if self.name_to_uuid.contains_key(name) {
-                return Err(AgentRegistryError::AgentAlreadyExists(name.clone()));
+                return Err(AgentRegistryError::AlreadyExists(name.clone()));
             }
             self.name_to_uuid.insert(name.clone(), info.id);
             self.uuid_to_name.insert(info.id, name.clone());
@@ -71,7 +73,7 @@ impl AgentRegistry {
     /// First-one-wins for name (silently skips if taken by another agent).
     pub fn register_remote(&mut self, info: Agent) -> Result<(), AgentRegistryError> {
         if info.route.is_empty() {
-            return Err(AgentRegistryError::AgentNotRemote);
+            return Err(AgentRegistryError::NotRemote);
         }
         // On re-announce (same UUID), clear the old name mapping
         if let Some(old_name) = self.uuid_to_name.remove(&info.id) {

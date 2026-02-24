@@ -1,8 +1,13 @@
+//! Claude Code hook handler (client-side).
+//!
+//! Invoked as `amux hook` by Claude Code's hook system. Reads hook event JSON
+//! from stdin, connects to the local server over Unix socket, sends a
+//! [`HandleHook`](crate::message::Command::HandleHook) command, and waits for
+//! acknowledgement. Fails silently to avoid blocking Claude Code.
+
+use crate::claude::types::{ClaudeHook, ClaudePermissionTool, Hook};
 use crate::config::Config;
-use crate::message::{
-    ClaudeHook, ClaudePermissionTool, Command, DirectMessage, Hook, Message, PROTOCOL_VERSION,
-    ProtocolError,
-};
+use crate::message::{Command, DirectMessage, Message, PROTOCOL_VERSION, ProtocolError};
 use crate::route::generate_hook_link;
 use crate::transport::{Transport, UnixTransport};
 use std::io::{self, BufRead};
@@ -43,7 +48,7 @@ fn handle_claude_hook_inner(config: &Config) -> io::Result<()> {
         return Ok(());
     }
 
-    tracing::debug!(hook = %describe_hook(&claude_hook), "received hook");
+    tracing::debug!(hook = %claude_hook, "received hook");
 
     let hook = Hook::Claude(claude_hook);
 
@@ -97,10 +102,13 @@ async fn send_hook_event_to_server_inner(
                 "Hook link name taken",
             ));
         }
-        _ => {
+        other => {
             return Err(io::Error::new(
                 io::ErrorKind::ConnectionRefused,
-                "Handshake failed",
+                format!(
+                    "handshake failed: expected ConnectResult(Ok), got {}",
+                    other.type_label()
+                ),
             ));
         }
     }
@@ -122,56 +130,9 @@ async fn send_hook_event_to_server_inner(
         Message::Command(Command::HandleHookResult { error: Some(e) }) => {
             Err(io::Error::other(e.to_string()))
         }
-        _ => Err(io::Error::new(
+        other => Err(io::Error::new(
             io::ErrorKind::InvalidData,
-            "Unexpected response",
+            format!("expected HandleHookResult, got {}", other.type_label()),
         )),
-    }
-}
-
-fn describe_hook(hook: &ClaudeHook) -> String {
-    match hook {
-        ClaudeHook::SessionStart(s) => {
-            format!("session {} at {}", s.session_id, s.transcript_path)
-        }
-        ClaudeHook::PermissionRequest(p) => match &p.tool {
-            ClaudePermissionTool::Edit { tool_input } => {
-                format!("session {} Edit {}", p.session_id, tool_input.file_path)
-            }
-            ClaudePermissionTool::AskUserQuestion { tool_input } => {
-                let count = tool_input.questions.len();
-                format!(
-                    "session {} AskUserQuestion ({count} question(s))",
-                    p.session_id
-                )
-            }
-            ClaudePermissionTool::Bash { tool_input } => {
-                format!("session {} Bash `{}`", p.session_id, tool_input.command)
-            }
-            ClaudePermissionTool::Write { tool_input } => {
-                format!("session {} Write {}", p.session_id, tool_input.file_path)
-            }
-            ClaudePermissionTool::WebFetch { tool_input } => {
-                format!("session {} WebFetch {}", p.session_id, tool_input.url)
-            }
-            ClaudePermissionTool::WebSearch { tool_input } => {
-                format!("session {} WebSearch {}", p.session_id, tool_input.query)
-            }
-            ClaudePermissionTool::NotebookEdit { tool_input } => {
-                format!(
-                    "session {} NotebookEdit {}",
-                    p.session_id, tool_input.notebook_path
-                )
-            }
-            ClaudePermissionTool::Skill { tool_input } => {
-                format!("session {} Skill {}", p.session_id, tool_input.skill)
-            }
-            ClaudePermissionTool::ExitPlanMode { .. } => {
-                format!("session {} ExitPlanMode", p.session_id)
-            }
-            ClaudePermissionTool::Unknown => {
-                format!("session {} Unknown tool", p.session_id)
-            }
-        },
     }
 }

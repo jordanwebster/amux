@@ -19,36 +19,33 @@ pub use websocket::WebSocketTransport;
 
 use crate::error::Result;
 use crate::message::Message;
-use async_trait::async_trait;
+use std::future::Future;
 
 /// 16MB limit to prevent DoS via huge length prefix
 const MAX_FRAME_SIZE: usize = 16 * 1024 * 1024;
 
 /// Transport trait for reading and writing messages
-#[async_trait]
 pub trait Transport: Send + Sync {
     /// Read and decode a Message from the transport
-    async fn read_message(&mut self) -> Result<Message>;
+    fn read_message(&mut self) -> impl Future<Output = Result<Message>> + Send;
 
     /// Encode and write a Message to the transport
-    async fn write_message(&mut self, msg: &Message) -> Result<()>;
+    fn write_message(&mut self, msg: &Message) -> impl Future<Output = Result<()>> + Send;
 }
 
 /// Read half of a split transport
-#[async_trait]
 pub trait MessageReader: Send {
-    async fn read_message(&mut self) -> Result<Message>;
+    fn read_message(&mut self) -> impl Future<Output = Result<Message>> + Send;
 }
 
 /// Write half of a split transport
-#[async_trait]
 pub trait MessageWriter: Send {
-    async fn write_message(&mut self, msg: &Message) -> Result<()>;
+    fn write_message(&mut self, msg: &Message) -> impl Future<Output = Result<()>> + Send;
 
     /// Perform background I/O (e.g., WebSocket pong responses).
     /// Called in select! alongside message writes. Default pends forever (no-op).
-    async fn background(&mut self) {
-        std::future::pending().await
+    fn background(&mut self) -> impl Future<Output = ()> + Send {
+        std::future::pending()
     }
 }
 

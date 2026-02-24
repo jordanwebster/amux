@@ -90,18 +90,28 @@ impl Route {
             .all(|(a, b)| a == b)
     }
 
-    /// Prepare to send a new message. Pops from dst, creates src from the popped link.
-    /// Returns (src, dst) ready to include in the message.
-    /// Returns None if dst is empty.
+    /// Prepare to send a message toward a destination. Pops the next hop from dst
+    /// and creates a single-link src from it. Returns (src, dst) ready for the message.
+    ///
+    /// At each forwarding hop, the server calls `send(remaining_dst)` to consume
+    /// one link from dst and record it in src. The receiver's src thus accumulates
+    /// the full return path.
+    ///
+    /// Returns None if dst is empty (message has arrived at its destination).
     pub fn send(mut dst: Route) -> Option<(Route, Route)> {
         let next_hop = dst.pop()?;
         let src = Route::from_link(next_hop);
         Some((src, dst))
     }
 
-    /// Prepare a reply. Sends back through the path the message came from (src).
-    /// Returns (reply_src, reply_dst) ready to include in the response.
-    /// Returns None if src is empty (no return path).
+    /// Prepare a reply by sending back through the path the message came from.
+    ///
+    /// This is literally `send(src)` — the same pop-and-push operation applied to
+    /// the incoming src route. It works because src accumulated each hop's link name
+    /// as the original message traveled inward, so "sending" through src naturally
+    /// reverses the path. This symmetry is the entire routing algorithm.
+    ///
+    /// Returns None if src is empty (no return path — the message originated locally).
     pub fn reply(src: Route) -> Option<(Route, Route)> {
         Route::send(src)
     }
@@ -124,14 +134,7 @@ impl Serialize for Route {
     where
         S: Serializer,
     {
-        // Join links with "." separator, top on left
-        let s: String = self
-            .links
-            .iter()
-            .map(|s| s.as_str())
-            .collect::<Vec<_>>()
-            .join(".");
-        serializer.serialize_str(&s)
+        serializer.collect_str(self)
     }
 }
 
@@ -153,13 +156,17 @@ impl<'de> Deserialize<'de> for Route {
 }
 
 /// Generate a random 4-character link suffix.
-pub fn generate_link_suffix() -> String {
-    nanoid::nanoid!(4, &LINK_ALPHABET)
+fn generate_link_suffix() -> String {
+    let bytes = uuid::Uuid::new_v4().into_bytes();
+    bytes[..4]
+        .iter()
+        .map(|b| LINK_ALPHABET[(*b as usize) % LINK_ALPHABET.len()])
+        .collect()
 }
 
 /// Sanitize a hostname for use in link names.
 /// Replaces periods with hyphens since "." is the route separator.
-pub fn sanitize_host_name(host_name: &str) -> String {
+fn sanitize_host_name(host_name: &str) -> String {
     host_name.replace('.', "-")
 }
 

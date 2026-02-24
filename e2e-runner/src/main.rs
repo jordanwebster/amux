@@ -138,6 +138,18 @@ fn run_tests(
 
     let executor = Executor::new(config);
 
+    // Warm the OS page cache so the first real test doesn't pay a cold-start penalty.
+    let _ = std::process::Command::new(&executor.config.amux_binary)
+        .arg("--help")
+        .stdout(std::process::Stdio::null())
+        .stderr(std::process::Stdio::null())
+        .status();
+    let _ = std::process::Command::new(&executor.config.test_agent_binary)
+        .arg("--help")
+        .stdout(std::process::Stdio::null())
+        .stderr(std::process::Stdio::null())
+        .status();
+
     let mut passed = 0;
     let mut failed = 0;
 

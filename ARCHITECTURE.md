@@ -66,8 +66,8 @@ impl Route {
     /// Returns (src, dst) for the message.
     fn send(dst: Route) -> Option<(Route, Route)>;
 
-    /// Prepare a reply: sends back through the src path.
-    /// Returns (reply_src, reply_dst).
+    /// Prepare a reply: literally just send(src). The src route accumulated
+    /// hop links on the way in, so sending through it reverses the path.
     fn reply(src: Route) -> Option<(Route, Route)>;
 }
 ```
@@ -86,24 +86,23 @@ See `src/route.rs`.
 All transports implement a simple two-method trait, with split support for the reader/writer task architecture:
 
 ```rust
-#[async_trait]
 trait Transport: Send + Sync {
-    async fn read_message(&mut self) -> Result<Message>;
-    async fn write_message(&mut self, msg: &Message) -> Result<()>;
+    fn read_message(&mut self) -> impl Future<Output = Result<Message>> + Send;
+    fn write_message(&mut self, msg: &Message) -> impl Future<Output = Result<()>> + Send;
 }
 
 trait MessageReader: Send {
-    async fn read_message(&mut self) -> Result<Message>;
+    fn read_message(&mut self) -> impl Future<Output = Result<Message>> + Send;
 }
 
 trait MessageWriter: Send {
-    async fn write_message(&mut self, msg: &Message) -> Result<()>;
-    async fn background(&mut self) { /* e.g., WebSocket pong responses */ }
+    fn write_message(&mut self, msg: &Message) -> impl Future<Output = Result<()>> + Send;
+    fn background(&mut self) -> impl Future<Output = ()> + Send { std::future::pending() }
 }
 
 trait TransportSplit: Transport {
-    type Reader: MessageReader;
-    type Writer: MessageWriter;
+    type Reader: MessageReader + 'static;
+    type Writer: MessageWriter + 'static;
     fn into_split(self) -> (Self::Reader, Self::Writer);
 }
 ```
@@ -346,7 +345,7 @@ The server's `run()` method:
 
 **Routes table:** `HashMap<String, mpsc::Sender<Message>>` keyed by link name, per-user. Each entry is the send-half of a channel to a connection's writer task. When a connection disconnects, its route is removed.
 
-**Subscriptions:** There is no explicit subscriptions HashMap. When a client subscribes to an agent, a dedicated output-streaming task is spawned that reads from the agent's `MultiplexBuffer` and writes `RawOutput` messages to the subscriber's channel. The subscription is implicit in the lifetime of this task. Active streams are tracked in `active_streams` with cancellation tokens for cleanup on host withdrawal.
+**Subscriptions:** There is no explicit subscriptions HashMap. When a client subscribes to an agent, a dedicated output-streaming task is spawned that reads from the agent's `MultiplexByteBuffer` and writes `RawOutput` messages to the subscriber's channel. The subscription is implicit in the lifetime of this task. Active streams are tracked in `active_streams` with cancellation tokens for cleanup on host withdrawal.
 
 **Agent Registry:** `AgentRegistry` provides centralized tracking of both local and remote agents with bidirectional name-to-UUID mapping. Used for `ListAgents`, `ResolveAgent`, and agent discovery propagation.
 
@@ -365,8 +364,8 @@ struct LocalAgentSession {
     command: String,
     working_dir: PathBuf,
     pty_master: Arc<Mutex<Option<Box<dyn MasterPty + Send>>>>,
-    buffer: Arc<MultiplexBuffer>,                              // PTY output replay + broadcast
-    log_buffer: Arc<MultiplexLogBuffer>,                       // Structured log replay + broadcast
+    buffer: Arc<MultiplexByteBuffer>,                           // PTY output replay + broadcast
+    log_buffer: Arc<MultiplexStructuredBuffer>,                 // Structured entry replay + broadcast
     transcript_tailer: Mutex<Option<(TranscriptTailer, JoinHandle<()>)>>,
     input_tx: mpsc::Sender<Vec<u8>>,
     current_size: Arc<Mutex<(u16, u16)>>,                      // Terminal rows, cols
@@ -379,12 +378,12 @@ struct LocalAgentSession {
 impl LocalAgentSession {
     fn new(req: &CreateAgentRequest, event_tx: mpsc::Sender<SessionEvent>) -> Result<Self>;
 
-    /// Atomic subscribe: returns (MultiplexReader, input_sender).
-    /// MultiplexReader receives all existing output (replay) then live output.
-    async fn subscribe(&self) -> Option<(MultiplexReader, mpsc::Sender<Vec<u8>>)>;
+    /// Atomic subscribe: returns (MultiplexByteReader, input_sender).
+    /// MultiplexByteReader receives all existing output (replay) then live output.
+    async fn subscribe(&self) -> Option<(MultiplexByteReader, mpsc::Sender<Vec<u8>>)>;
 
-    /// Subscribe to structured logs (for rich clients).
-    async fn subscribe_logs(&self) -> Option<MultiplexLogReader>;
+    /// Subscribe to structured entries (for rich clients).
+    async fn subscribe_logs(&self) -> Option<MultiplexStructuredReader>;
 
     async fn send_input(&self, data: Vec<u8>) -> Result<()>;
     async fn resize(&self, rows: u16, cols: u16) -> Result<()>;
@@ -493,48 +492,47 @@ enum ClaudeStructuredInput {
 }
 ```
 
-`TranscriptTailer` watches a Claude Code transcript JSONL file and parses new entries into `ClaudeStructuredOutput` variants (wrapped in `StructuredOutput::Claude(...)`), writing them to the session's `MultiplexLogBuffer`. Permission requests are also written directly to the log buffer when received as hook events.
+`TranscriptTailer` watches a Claude Code transcript JSONL file and parses new entries into `ClaudeStructuredOutput` variants (wrapped in `StructuredOutput::Claude(...)`), writing them to the session's `MultiplexStructuredBuffer`. Permission requests are also written directly to the log buffer when received as hook events.
 
 See `src/message.rs`, `src/transcript.rs`.
 
 ---
 
-## MultiplexBuffer
+## BroadcastBuffer
 
-The core abstraction for agent output replay and broadcast. Supports multiple concurrent readers with atomic subscribe (no data loss or duplication between replay and live output).
+The core abstraction for agent output replay and broadcast, parameterized by a `BufferPolicy` that controls storage, truncation, and replay semantics. Supports multiple concurrent readers with atomic subscribe (no data loss or duplication between replay and live output).
+
+Two concrete instantiations via type aliases:
+- `MultiplexByteBuffer` (`BroadcastBuffer<BytePolicy>`) — contiguous byte stream for PTY output
+- `MultiplexStructuredBuffer` (`BroadcastBuffer<StructuredPolicy>`) — discrete structured entries for Claude I/O
 
 ```rust
-struct MultiplexBuffer {
-    buffer: RwLock<Vec<u8>>,                           // All bytes (up to max_size)
-    subscribers: RwLock<Vec<mpsc::UnboundedSender<Vec<u8>>>>,
-    max_size: usize,                                    // 10MB default
+struct BroadcastBuffer<P: BufferPolicy> {
+    storage: RwLock<P::Storage>,
+    subscribers: RwLock<Vec<mpsc::Sender<P::Item>>>,   // Bounded channels
+    capacity: usize,
     closed: RwLock<bool>,
 }
 
-impl MultiplexBuffer {
-    /// Write bytes: appends to buffer, broadcasts to all subscribers.
+impl<P: BufferPolicy> BroadcastBuffer<P> {
+    /// Write: appends to storage, broadcasts to all subscribers.
     /// Holds write lock during both operations for atomicity.
-    async fn write(&self, bytes: &[u8]);
+    /// Slow subscribers that fall behind are disconnected (bounded backpressure).
+    async fn write(&self, item: P::Item);
 
-    /// Subscribe: returns MultiplexReader that receives all existing bytes
+    /// Subscribe: returns BroadcastReader that receives all existing items
     /// then live updates. Holds read lock during subscribe for atomicity with write.
     /// Returns None if closed.
-    async fn subscribe(&self) -> Option<MultiplexReader>;
+    async fn subscribe(&self) -> Option<BroadcastReader<P>>;
 
     /// Close: drops all subscriber channels, prevents new subscriptions.
     async fn close(&self);
 }
-
-struct MultiplexReader {
-    rx: mpsc::UnboundedReceiver<Vec<u8>>,
-}
 ```
 
-The key invariant: `write()` and `subscribe()` are mutually exclusive via the buffer lock. This ensures a new subscriber sees exactly all bytes written before it subscribed, with no gaps and no duplicates in the transition to live data.
+The key invariant: `write()` and `subscribe()` are mutually exclusive via the storage lock. This ensures a new subscriber sees exactly all items written before it subscribed, with no gaps and no duplicates in the transition to live data.
 
-`MultiplexLogBuffer` follows the same pattern for `StructuredOutput` entries (with entry count limit instead of byte size limit).
-
-See `src/buffer.rs`, `src/multiplex_log_buffer.rs`.
+See `src/buffer.rs`.
 
 ---
 
@@ -559,7 +557,7 @@ When a `Routable` message arrives at `handle_routable`:
 
 ### Reply Routing
 
-Replies use `Route::reply(src)`, which pops the first link from `src` to determine the next hop and creates the reply's `src` from that link. This naturally reverses the path.
+`Route::reply(src)` is literally `Route::send(src)` — the same pop-and-push operation applied to the incoming `src` route instead of `dst`. This works because `src` accumulated each hop's link name as the message traveled inward, so "sending" through `src` naturally reverses the path. This symmetry is the entire routing algorithm: there is no separate reply mechanism.
 
 ### Routing Failure Handling
 
@@ -573,7 +571,7 @@ Routing failures are silent drops. When a message can't be forwarded (next hop n
 - **Agent death:** Server sends `SubscriptionClosed` to subscribers (subscription EOF), sends `WithdrawAgent` per peer (discovery cleanup only), removes agent from registry. No route changes.
 - `AnnounceAgent`/`WithdrawAgent` are pure discovery — they update the agent registry for `ListAgents`/`ResolveAgent` but have zero routing side effects.
 
-See `src/route.rs`, `src/server/connection.rs`.
+See `src/route.rs`, `src/server/handlers.rs`, `src/server/routing.rs`.
 
 ---
 
@@ -586,7 +584,7 @@ See `src/route.rs`, `src/server/connection.rs`.
 ```
 Task 1: PTY Reader (spawn_blocking)
   - Reads PTY stdout in a blocking loop
-  - Writes bytes to MultiplexBuffer (which broadcasts to all subscribers)
+  - Writes bytes to MultiplexByteBuffer (which broadcasts to all subscribers)
 
 Task 2: Input Forwarder (spawn)
   - Reads from input_rx channel
@@ -595,7 +593,7 @@ Task 2: Input Forwarder (spawn)
 Task 3: Child Waiter (spawn_blocking)
   - Waits for child process to exit
   - Drops PTY master
-  - Closes MultiplexBuffer (disconnects all subscribers)
+  - Closes MultiplexByteBuffer (disconnects all subscribers)
   - Sends SessionEvent::Ended to server
 ```
 
@@ -708,7 +706,7 @@ Input messages are forwarded via generic `handle_routable` routing. When deliver
 │  Per Subscribe (spawned on subscribe):                                 │
 │  ┌──────────────────────────────────────────────────────────────────┐  │
 │  │ Output Stream Task                                                │  │
-│  │ Reads MultiplexBuffer/MultiplexLogBuffer → sends RawOutput/       │  │
+│  │ Reads MultiplexByteBuffer/MultiplexStructuredBuffer → sends RawOutput/       │  │
 │  │ StructuredOutput routable messages to subscriber's channel        │  │
 │  └──────────────────────────────────────────────────────────────────┘  │
 │                                                                        │
@@ -718,7 +716,7 @@ Input messages are forwarded via generic `handle_routable` routing. When deliver
 │  │ (spawn_blocking) │  │ (spawn)          │  │ (spawn_blocking)     │ │
 │  │                  │  │                  │  │                      │ │
 │  │ PTY stdout →     │  │ input_rx →       │  │ Waits for exit →    │ │
-│  │ MultiplexBuffer  │  │ PTY stdin        │  │ SessionEvent::Ended  │ │
+│  │ MultiplexByteBuffer  │  │ PTY stdin        │  │ SessionEvent::Ended  │ │
 │  └──────────────────┘  └──────────────────┘  └──────────────────────┘ │
 │                                                                        │
 │  Optional:                                                             │
@@ -735,7 +733,7 @@ Input messages are forwarded via generic `handle_routable` routing. When deliver
 │  Per Agent with Transcript:                                            │
 │  ┌──────────────────────────────────────────────────────────────────┐  │
 │  │ Transcript Tailer                                                 │  │
-│  │ Watches JSONL file → parses → writes to MultiplexLogBuffer        │  │
+│  │ Watches JSONL file → parses → writes to MultiplexStructuredBuffer        │  │
 │  └──────────────────────────────────────────────────────────────────┘  │
 │                                                                        │
 └────────────────────────────────────────────────────────────────────────┘
@@ -748,11 +746,11 @@ Terminal ──SubscribeRaw──> Connection Handler
                                 ▼
                          handle_routable → local delivery
                                 │
-                                ├─> agent.subscribe() → MultiplexReader
+                                ├─> agent.subscribe() → MultiplexByteReader
                                 ├─> Send SubscribeRawResult
                                 └─> Spawn output stream task
                                       │
-                                      └─> MultiplexReader.read() → RawOutput msg → subscriber channel
+                                      └─> MultiplexByteReader.read() → RawOutput msg → subscriber channel
 
 Terminal ──RawInput──> Connection Handler → agent.send_input() → PTY stdin
 ```
@@ -767,7 +765,7 @@ App ──SubscribeRaw──> Cloud Handler ──SubscribeRaw──> Local Hand
                                                      Subscribe agent
                                                      Spawn output task
 
-Local PTY → MultiplexBuffer → Output Stream Task → RawOutput msg
+Local PTY → MultiplexByteBuffer → Output Stream Task → RawOutput msg
     → Cloud routes table → Cloud connection → App
 ```
 
@@ -802,7 +800,7 @@ enum ClaudeHook {
 
 ```
 Claude Code → amux hooks → HookEvent(PermissionRequest) → server
-    → agent.write_log(StructuredOutput::Claude(PermissionRequest)) → MultiplexLogBuffer
+    → agent.write_log(StructuredOutput::Claude(PermissionRequest)) → MultiplexStructuredBuffer
     → rich client (via StructuredOutput) → user sees permission UI
     → StructuredInput(Claude(PermissionResponse)) (routable) → server → writes keystroke to PTY
 ```
@@ -817,9 +815,9 @@ See `src/hooks.rs`, `src/message.rs`.
 
 Rather than separate `LocalConnection` and `RemoteConnection` types with different behavior, all connections use the same `connection_loop`. The `Transport` trait abstracts away the underlying stream. This eliminates code duplication and ensures protocol consistency across transports.
 
-### 2. MultiplexBuffer atomic subscribe
+### 2. MultiplexByteBuffer atomic subscribe
 
-The original design had a race condition window between getting the replay buffer and starting to receive live data. `MultiplexBuffer` solves this by holding a lock during both the snapshot and subscriber registration, ensuring zero gaps or duplicates. This is the core correctness guarantee for late-joining terminals.
+The original design had a race condition window between getting the replay buffer and starting to receive live data. `MultiplexByteBuffer` solves this by holding a lock during both the snapshot and subscriber registration, ensuring zero gaps or duplicates. This is the core correctness guarantee for late-joining terminals.
 
 ### 3. MessagePack serialization
 
@@ -834,7 +832,7 @@ Connections start with a `Connect { link_name, token }` / `ConnectResult` handsh
 
 ### 5. Implicit subscriptions via spawned tasks
 
-Instead of a centralized `subscriptions: HashMap<AgentId, Vec<ConnectionId>>`, subscriptions are implicit in spawned output-streaming tasks. When a client subscribes, a task is spawned that reads from `MultiplexBuffer` and sends to the subscriber's channel. The subscription dies when either the buffer closes or the subscriber disconnects.
+Instead of a centralized `subscriptions: HashMap<AgentId, Vec<ConnectionId>>`, subscriptions are implicit in spawned output-streaming tasks. When a client subscribes, a task is spawned that reads from `MultiplexByteBuffer` and sends to the subscriber's channel. The subscription dies when either the buffer closes or the subscriber disconnects.
 
 ### 6. Routable/Direct/Command message split
 

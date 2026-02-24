@@ -1,10 +1,13 @@
+//! Unix domain socket transport.
+//!
+//! Used for local CLI-to-server communication (commands, hook events, terminal attach).
+
 use super::framing::{FrameReader, FrameWriter};
 use super::{
     LengthPrefixed, MAX_FRAME_SIZE, MessageReader, MessageWriter, Transport, TransportSplit,
 };
 use crate::error::{AmuxError, Result};
 use crate::message::Message;
-use async_trait::async_trait;
 use tokio::net::UnixStream;
 
 /// Unix socket transport with length-prefixed framing
@@ -13,7 +16,6 @@ pub struct UnixTransport {
 }
 
 impl UnixTransport {
-    /// Create a new transport from a Unix stream
     pub fn new(stream: UnixStream) -> Self {
         let (reader, writer) = stream.into_split();
         Self {
@@ -22,7 +24,6 @@ impl UnixTransport {
     }
 }
 
-#[async_trait]
 impl Transport for UnixTransport {
     async fn read_message(&mut self) -> Result<Message> {
         let data = self.framed.read_frame(MAX_FRAME_SIZE).await?;
@@ -40,7 +41,6 @@ pub struct UnixMessageReader {
     reader: FrameReader<tokio::net::unix::OwnedReadHalf>,
 }
 
-#[async_trait]
 impl MessageReader for UnixMessageReader {
     async fn read_message(&mut self) -> Result<Message> {
         let data = self.reader.read_frame(MAX_FRAME_SIZE).await?;
@@ -53,7 +53,6 @@ pub struct UnixMessageWriter {
     writer: FrameWriter<tokio::net::unix::OwnedWriteHalf>,
 }
 
-#[async_trait]
 impl MessageWriter for UnixMessageWriter {
     async fn write_message(&mut self, msg: &Message) -> Result<()> {
         let data = msg.encode().map_err(AmuxError::SerializationEncode)?;

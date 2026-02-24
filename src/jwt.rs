@@ -11,6 +11,9 @@ use std::time::{Duration, Instant};
 use thiserror::Error;
 use tokio::sync::RwLock;
 
+/// How long to cache JWKS keys before re-fetching.
+const JWKS_CACHE_TTL: Duration = Duration::from_secs(3600);
+
 #[derive(Debug, Error)]
 pub enum JwtError {
     #[error("HTTP error: {0}")]
@@ -111,7 +114,7 @@ impl JwtValidator {
     async fn ensure_jwks_fresh(&self) -> Result<(), JwtError> {
         let last = self.last_fetch.read().await;
         if let Some(t) = *last
-            && t.elapsed() < Duration::from_secs(3600)
+            && t.elapsed() < JWKS_CACHE_TTL
         {
             return Ok(()); // Cache still valid
         }
@@ -136,19 +139,5 @@ impl JwtValidator {
 
         *self.last_fetch.write().await = Some(Instant::now());
         Ok(())
-    }
-}
-
-#[cfg(test)]
-mod tests {
-    use super::*;
-
-    #[test]
-    fn test_validator_creation() {
-        let validator = JwtValidator::new("https://amux.sh");
-        assert_eq!(
-            validator.jwks_url,
-            "https://amux.sh/.well-known/openid-configuration/jwks"
-        );
     }
 }

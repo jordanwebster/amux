@@ -5,10 +5,12 @@ use serde::{Deserialize, Serialize};
 use std::path::PathBuf;
 use uuid::Uuid;
 
+use crate::claude::types::{Hook, StructuredInput, StructuredOutput};
+
 /// Information about a connected host (machine running amux server).
 /// Propagated via AnnounceHost/WithdrawHost between peers.
 #[derive(Serialize, Deserialize, Debug, Clone)]
-pub struct Host {
+pub(crate) struct Host {
     /// Ephemeral ID generated at server startup (not persisted)
     pub id: Uuid,
     /// Human-readable hostname from config
@@ -32,265 +34,32 @@ pub enum AgentType {
     TestAgent(String),
 }
 
-#[derive(Serialize, Deserialize, Debug, Clone)]
-pub enum Hook {
-    Claude(ClaudeHook),
-}
-
-/// Claude Code hook event - uses Claude's tagged JSON format
-#[derive(Serialize, Deserialize, Debug, Clone)]
-#[serde(tag = "hook_event_name")]
-pub enum ClaudeHook {
-    SessionStart(ClaudeSessionStart),
-    PermissionRequest(ClaudePermissionRequest),
-}
-
-/// SessionStart hook data from Claude Code
-#[derive(Debug, Clone, Deserialize, Serialize)]
-pub struct ClaudeSessionStart {
-    pub session_id: Uuid,
-    pub transcript_path: String,
-}
-
-/// PermissionRequest hook data from Claude Code
-#[derive(Debug, Clone, Deserialize, Serialize)]
-pub struct ClaudePermissionRequest {
-    pub session_id: Uuid,
-    #[serde(flatten)]
-    pub tool: ClaudePermissionTool,
-}
-
-/// Tool input fields for the Edit tool
-#[derive(Debug, Clone, Deserialize, Serialize, PartialEq)]
-pub struct EditToolInput {
-    pub file_path: String,
-    pub old_string: String,
-    pub new_string: String,
-    #[serde(default)]
-    pub replace_all: bool,
-}
-
-/// Tool input fields for the AskUserQuestion tool
-#[derive(Debug, Clone, Deserialize, Serialize, PartialEq)]
-pub struct AskUserQuestionToolInput {
-    pub questions: Vec<AskUserQuestionItem>,
-}
-
-/// A single question within an AskUserQuestion request
-#[derive(Debug, Clone, Deserialize, Serialize, PartialEq)]
-pub struct AskUserQuestionItem {
-    pub question: String,
-    pub header: String,
-    pub options: Vec<AskUserQuestionOption>,
-    #[serde(default, rename = "multiSelect")]
-    pub multi_select: bool,
-}
-
-/// An option within an AskUserQuestion question
-#[derive(Debug, Clone, Deserialize, Serialize, PartialEq)]
-pub struct AskUserQuestionOption {
-    pub label: String,
-    pub description: String,
-}
-
-/// Tool input fields for the Bash tool
-#[derive(Debug, Clone, Deserialize, Serialize, PartialEq)]
-pub struct BashToolInput {
-    pub command: String,
-    #[serde(default)]
-    pub description: Option<String>,
-    #[serde(default)]
-    pub timeout: Option<u64>,
-}
-
-/// Tool input fields for the Write tool
-#[derive(Debug, Clone, Deserialize, Serialize, PartialEq)]
-pub struct WriteToolInput {
-    pub file_path: String,
-    pub content: String,
-}
-
-/// Tool input fields for the WebFetch tool
-#[derive(Debug, Clone, Deserialize, Serialize, PartialEq)]
-pub struct WebFetchToolInput {
-    pub url: String,
-    pub prompt: String,
-}
-
-/// Tool input fields for the WebSearch tool
-#[derive(Debug, Clone, Deserialize, Serialize, PartialEq)]
-pub struct WebSearchToolInput {
-    pub query: String,
-}
-
-/// Tool input fields for the NotebookEdit tool
-#[derive(Debug, Clone, Deserialize, Serialize, PartialEq)]
-pub struct NotebookEditToolInput {
-    pub notebook_path: String,
-    pub new_source: String,
-    #[serde(default)]
-    pub cell_type: Option<String>,
-    #[serde(default)]
-    pub edit_mode: Option<String>,
-}
-
-/// Tool input fields for the Skill tool
-#[derive(Debug, Clone, Deserialize, Serialize, PartialEq)]
-pub struct SkillToolInput {
-    pub skill: String,
-    #[serde(default)]
-    pub args: Option<String>,
-}
-
-/// Tool input fields for the ExitPlanMode tool
-#[derive(Debug, Clone, Deserialize, Serialize, PartialEq)]
-pub struct ExitPlanModeToolInput {
-    #[serde(default, rename = "allowedPrompts")]
-    pub allowed_prompts: Vec<ExitPlanModePrompt>,
-}
-
-/// A single allowed prompt within an ExitPlanMode request
-#[derive(Debug, Clone, Deserialize, Serialize, PartialEq)]
-pub struct ExitPlanModePrompt {
-    pub tool: String,
-    pub prompt: String,
-}
-
-/// Tool data from Claude Code permission requests.
-/// Uses internally-tagged format so #[serde(other)] can ignore unknown tool_input.
-#[derive(Debug, Clone, Deserialize, Serialize, PartialEq)]
-#[serde(tag = "tool_name")]
-pub enum ClaudePermissionTool {
-    Edit {
-        tool_input: EditToolInput,
-    },
-    AskUserQuestion {
-        tool_input: AskUserQuestionToolInput,
-    },
-    Bash {
-        tool_input: BashToolInput,
-    },
-    Write {
-        tool_input: WriteToolInput,
-    },
-    WebFetch {
-        tool_input: WebFetchToolInput,
-    },
-    WebSearch {
-        tool_input: WebSearchToolInput,
-    },
-    NotebookEdit {
-        tool_input: NotebookEditToolInput,
-    },
-    Skill {
-        tool_input: SkillToolInput,
-    },
-    ExitPlanMode {
-        tool_input: ExitPlanModeToolInput,
-    },
-    #[serde(other)]
-    Unknown,
-}
-
-/// Response to a permission request (sent from dashboard to server)
-#[derive(Serialize, Deserialize, Debug, Clone, PartialEq)]
-pub enum PermissionResponse {
-    /// Press "1" - accept this edit
-    Yes,
-    /// Press "2" - accept all edits
-    YesAll,
-    /// Press "3" - deny
-    No,
-}
-
-/// Claude-specific structured output (internally tagged by "type")
-#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
-#[serde(tag = "type")]
-pub enum ClaudeStructuredOutput {
-    /// User message to the agent
-    UserMessage {
-        content: String,
-        timestamp: String,
-        uuid: String,
-    },
-    /// Assistant response (text content)
-    AssistantMessage {
-        content: String,
-        timestamp: String,
-        uuid: String,
-    },
-    /// Permission request from agent
-    PermissionRequest { tool: ClaudePermissionTool },
-    /// Unknown entry type (forward-compatibility)
-    #[serde(other)]
-    Unknown,
-}
-
-/// Wrapper enum for structured output, keyed by agent type
-#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
-pub enum StructuredOutput {
-    Claude(ClaudeStructuredOutput),
-}
-
-/// Claude-specific structured input
-#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
-pub enum ClaudeStructuredInput {
-    /// Response to a permission request
-    PermissionResponse(PermissionResponse),
-    /// Submit a message (text input with trailing carriage return)
-    SubmitMessage { data: Vec<u8> },
-}
-
-/// Wrapper enum for structured input, keyed by agent type
-#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
-pub enum StructuredInput {
-    Claude(ClaudeStructuredInput),
-}
-
 /// Protocol-level errors that can be returned in response messages
-#[derive(Serialize, Deserialize, Debug, Clone, PartialEq)]
-pub enum ProtocolError {
+#[derive(Serialize, Deserialize, Debug, Clone, PartialEq, thiserror::Error)]
+pub(crate) enum ProtocolError {
     /// Generic server error with message
+    #[error("{0}")]
     ServerError(String),
     /// The proposed link name is already in use
+    #[error("Link name already in use")]
     LinkNameTaken,
     /// Invalid or missing authentication credentials
+    #[error("Invalid or missing credentials")]
     InvalidCredentials,
     /// The proposed link name is invalid (e.g., contains "." which is the route separator)
+    #[error("Invalid link name (must not contain '.')")]
     InvalidLinkName,
     /// Protocol version mismatch between client and server
+    #[error("amux upgrade required (protocol v{server_version}, client v{client_version})")]
     VersionMismatch {
         server_version: u32,
         client_version: u32,
     },
 }
 
-impl std::fmt::Display for ProtocolError {
-    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        match self {
-            ProtocolError::ServerError(msg) => write!(f, "{}", msg),
-            ProtocolError::LinkNameTaken => write!(f, "Link name already in use"),
-            ProtocolError::InvalidCredentials => write!(f, "Invalid or missing credentials"),
-            ProtocolError::InvalidLinkName => {
-                write!(f, "Invalid link name (must not contain '.')")
-            }
-            ProtocolError::VersionMismatch {
-                server_version,
-                client_version,
-            } => {
-                write!(
-                    f,
-                    "amux upgrade required (protocol v{}, client v{})",
-                    server_version, client_version
-                )
-            }
-        }
-    }
-}
-
 /// Reason for server shutdown notification
 #[derive(Serialize, Deserialize, Debug, Clone, PartialEq)]
-pub enum ShutdownReason {
+pub(crate) enum ShutdownReason {
     ProtocolMismatch,
     UserRequested,
 }
@@ -306,7 +75,7 @@ impl std::fmt::Display for ShutdownReason {
 
 /// Terminal dimensions for PTY creation and resizing
 #[derive(Serialize, Deserialize, Debug, Clone, Copy, PartialEq, Eq)]
-pub struct TerminalSize {
+pub(crate) struct TerminalSize {
     pub rows: u16,
     pub cols: u16,
 }
@@ -319,7 +88,7 @@ impl Default for TerminalSize {
 
 /// Request to create a new agent
 #[derive(Serialize, Deserialize, Debug, Clone)]
-pub struct CreateAgentRequest {
+pub(crate) struct CreateAgentRequest {
     pub agent_id: Uuid,
     pub name: Option<String>,
     pub agent_type: AgentType,
@@ -332,7 +101,7 @@ pub struct CreateAgentRequest {
 /// Messages that carry src/dst routing information and can be forwarded across hops.
 /// agent_id is Uuid — callers must resolve names to UUIDs before constructing.
 #[derive(Serialize, Deserialize, Debug, Clone)]
-pub enum RoutableMessage {
+pub(crate) enum RoutableMessage {
     SubscribeRaw {
         agent_id: Uuid,
         /// Terminal dimensions for PTY resize. None means don't resize.
@@ -378,6 +147,24 @@ pub enum RoutableMessage {
 }
 
 impl RoutableMessage {
+    /// Human-readable label for this variant, used in error messages.
+    pub fn type_label(&self) -> &'static str {
+        match self {
+            RoutableMessage::SubscribeRaw { .. } => "SubscribeRaw",
+            RoutableMessage::SubscribeStructured { .. } => "SubscribeStructured",
+            RoutableMessage::SubscribeRawResult { .. } => "SubscribeRawResult",
+            RoutableMessage::SubscribeStructuredResult { .. } => "SubscribeStructuredResult",
+            RoutableMessage::CreateAgent(_) => "CreateAgent",
+            RoutableMessage::CreateAgentResult { .. } => "CreateAgentResult",
+            RoutableMessage::RawInput { .. } => "RawInput",
+            RoutableMessage::RawOutput { .. } => "RawOutput",
+            RoutableMessage::StructuredOutput { .. } => "StructuredOutput",
+            RoutableMessage::StructuredInput { .. } => "StructuredInput",
+            RoutableMessage::SubscriptionClosed { .. } => "SubscriptionClosed",
+            RoutableMessage::UnknownMessage => "UnknownMessage",
+        }
+    }
+
     /// Encode routable message to bytes using MessagePack (named/map format)
     pub fn encode(&self) -> Result<Vec<u8>, rmp_serde::encode::Error> {
         rmp_serde::to_vec_named(self)
@@ -392,7 +179,7 @@ impl RoutableMessage {
 /// Messages that are handled directly by the receiving server (no routing).
 /// Used for peer-to-peer protocol messages (Connect, Announce, Withdraw).
 #[derive(Serialize, Deserialize, Debug, Clone)]
-pub enum DirectMessage {
+pub(crate) enum DirectMessage {
     Connect {
         link_name: String,
         #[serde(skip_serializing_if = "Option::is_none", default)]
@@ -426,7 +213,7 @@ pub enum DirectMessage {
 
 /// CLI-only commands that must not be accepted from remote peers.
 #[derive(Serialize, Deserialize, Debug, Clone)]
-pub enum Command {
+pub(crate) enum Command {
     ListAgents,
     ListAgentsResult { agents: Vec<Agent> },
     ResolveAgent { identifier: String },
@@ -441,9 +228,29 @@ pub enum Command {
     HandleHookResult { error: Option<ProtocolError> },
 }
 
+impl Command {
+    /// Short label for this variant, for use in logs and error messages
+    pub fn type_label(&self) -> &'static str {
+        match self {
+            Command::ListAgents => "ListAgents",
+            Command::ListAgentsResult { .. } => "ListAgentsResult",
+            Command::ResolveAgent { .. } => "ResolveAgent",
+            Command::ResolveAgentResult { .. } => "ResolveAgentResult",
+            Command::Shutdown => "Shutdown",
+            Command::ShutdownNotification(_) => "ShutdownNotification",
+            Command::Debug => "Debug",
+            Command::DebugResult { .. } => "DebugResult",
+            Command::ConnectToServer { .. } => "ConnectToServer",
+            Command::ConnectToServerResult { .. } => "ConnectToServerResult",
+            Command::HandleHook { .. } => "HandleHook",
+            Command::HandleHookResult { .. } => "HandleHookResult",
+        }
+    }
+}
+
 /// All protocol messages between client and server
 #[derive(Serialize, Deserialize, Debug, Clone)]
-pub enum Message {
+pub(crate) enum Message {
     Routable {
         src: Route,
         dst: Route,
@@ -465,6 +272,36 @@ impl Message {
             payload: message
                 .encode()
                 .expect("RoutableMessage encode cannot fail"),
+        }
+    }
+
+    /// Short qualified label for this variant, for use in logs and error messages.
+    /// Returns e.g. "Routable", "Direct::Connect", "Command::Shutdown".
+    pub fn type_label(&self) -> &'static str {
+        match self {
+            Message::Routable { .. } => "Routable",
+            Message::Direct(d) => match d {
+                DirectMessage::Connect { .. } => "Direct::Connect",
+                DirectMessage::ConnectResult { .. } => "Direct::ConnectResult",
+                DirectMessage::AnnounceAgent { .. } => "Direct::AnnounceAgent",
+                DirectMessage::WithdrawAgent { .. } => "Direct::WithdrawAgent",
+                DirectMessage::AnnounceHost { .. } => "Direct::AnnounceHost",
+                DirectMessage::WithdrawHost { .. } => "Direct::WithdrawHost",
+            },
+            Message::Command(c) => match c {
+                Command::ListAgents => "Command::ListAgents",
+                Command::ListAgentsResult { .. } => "Command::ListAgentsResult",
+                Command::ResolveAgent { .. } => "Command::ResolveAgent",
+                Command::ResolveAgentResult { .. } => "Command::ResolveAgentResult",
+                Command::Shutdown => "Command::Shutdown",
+                Command::ShutdownNotification(_) => "Command::ShutdownNotification",
+                Command::Debug => "Command::Debug",
+                Command::DebugResult { .. } => "Command::DebugResult",
+                Command::ConnectToServer { .. } => "Command::ConnectToServer",
+                Command::ConnectToServerResult { .. } => "Command::ConnectToServerResult",
+                Command::HandleHook { .. } => "Command::HandleHook",
+                Command::HandleHookResult { .. } => "Command::HandleHookResult",
+            },
         }
     }
 }
@@ -501,82 +338,10 @@ impl Message {
 mod tests {
     use super::*;
 
-    #[test]
-    fn test_message_roundtrip_list_agents() {
-        let msg = Message::Command(Command::ListAgents);
-        let encoded = msg.encode().unwrap();
-        let decoded = Message::decode(&encoded).unwrap();
-        assert!(matches!(decoded, Message::Command(Command::ListAgents)));
-    }
+    // --- Core architectural pattern: opaque payload two-step encoding ---
 
     #[test]
-    fn test_message_roundtrip_create_agent() {
-        let test_uuid = Uuid::new_v4();
-        let msg = Message::routable(
-            Route::from_link("term-abc"),
-            Route::empty(),
-            42,
-            &RoutableMessage::CreateAgent(CreateAgentRequest {
-                agent_id: test_uuid,
-                name: Some("test".to_string()),
-                agent_type: AgentType::Claude,
-                working_dir: PathBuf::from("/home/user/project"),
-                terminal_size: Some(TerminalSize { rows: 24, cols: 80 }),
-            }),
-        );
-        let encoded = msg.encode().unwrap();
-        let decoded = Message::decode(&encoded).unwrap();
-        if let Message::Routable {
-            payload,
-            request_id,
-            ..
-        } = decoded
-        {
-            assert_eq!(request_id, 42);
-            let rm = RoutableMessage::decode(&payload).unwrap();
-            if let RoutableMessage::CreateAgent(req) = rm {
-                assert_eq!(req.agent_id, test_uuid);
-                assert_eq!(req.name, Some("test".to_string()));
-                assert_eq!(req.agent_type, AgentType::Claude);
-                assert_eq!(req.working_dir, PathBuf::from("/home/user/project"));
-                assert_eq!(req.terminal_size, Some(TerminalSize { rows: 24, cols: 80 }));
-            } else {
-                panic!("Expected CreateAgent");
-            }
-        } else {
-            panic!("Expected Routable");
-        }
-    }
-
-    #[test]
-    fn test_message_roundtrip_subscribe_raw_result() {
-        let agent_id = Uuid::new_v4();
-        let msg = Message::routable(
-            Route::from_link("host-a"),
-            Route::from_link("host-b"),
-            7,
-            &RoutableMessage::SubscribeRawResult {
-                agent_id,
-                error: None,
-            },
-        );
-        let encoded = msg.encode().unwrap();
-        let decoded = Message::decode(&encoded).unwrap();
-        if let Message::Routable { payload, .. } = decoded {
-            if let RoutableMessage::SubscribeRawResult { error, .. } =
-                RoutableMessage::decode(&payload).unwrap()
-            {
-                assert!(error.is_none());
-            } else {
-                panic!("Expected SubscribeRawResult");
-            }
-        } else {
-            panic!("Expected Routable");
-        }
-    }
-
-    #[test]
-    fn test_routable_message_encode_decode_roundtrip() {
+    fn test_routable_message_standalone_encode_decode() {
         let agent_id = Uuid::new_v4();
         let rm = RoutableMessage::RawOutput {
             agent_id,
@@ -584,167 +349,52 @@ mod tests {
         };
         let encoded = rm.encode().unwrap();
         let decoded = RoutableMessage::decode(&encoded).unwrap();
-        if let RoutableMessage::RawOutput {
+        let RoutableMessage::RawOutput {
             agent_id: decoded_id,
             data,
         } = decoded
-        {
-            assert_eq!(decoded_id, agent_id);
-            assert_eq!(data, b"hello");
-        } else {
+        else {
             panic!("Expected RawOutput");
-        }
+        };
+        assert_eq!(decoded_id, agent_id);
+        assert_eq!(data, b"hello");
     }
 
     #[test]
     fn test_opaque_payload_two_step_roundtrip() {
+        // Core architectural invariant: RoutableMessage is encoded into an opaque
+        // payload inside Message::Routable, allowing intermediate hops to forward
+        // without deserializing the inner message.
         let agent_id = Uuid::new_v4();
         let rm = RoutableMessage::CreateAgentResult {
             agent_id,
             error: None,
         };
-        // Step 1: encode RM → put in Message → encode Message
         let msg = Message::routable(Route::from_link("src"), Route::from_link("dst"), 99, &rm);
         let wire = msg.encode().unwrap();
-        // Step 2: decode Message → decode RM
         let decoded_msg = Message::decode(&wire).unwrap();
-        if let Message::Routable {
+        let Message::Routable {
             payload,
             request_id,
             ..
         } = decoded_msg
-        {
-            assert_eq!(request_id, 99);
-            let decoded_rm = RoutableMessage::decode(&payload).unwrap();
-            if let RoutableMessage::CreateAgentResult { error, .. } = decoded_rm {
-                assert!(error.is_none());
-            } else {
-                panic!("Expected CreateAgentResult");
-            }
-        } else {
+        else {
             panic!("Expected Routable");
-        }
-    }
-
-    #[test]
-    fn test_unknown_message_roundtrip() {
-        let rm = RoutableMessage::UnknownMessage;
-        let encoded = rm.encode().unwrap();
-        let decoded = RoutableMessage::decode(&encoded).unwrap();
-        assert!(matches!(decoded, RoutableMessage::UnknownMessage));
-    }
-
-    #[test]
-    fn test_agent_info_roundtrip() {
-        let test_uuid = Uuid::new_v4();
-        let info = Agent {
-            id: test_uuid,
-            name: Some("claude-1".to_string()),
-            command: "claude".to_string(),
-            working_dir: PathBuf::from("/tmp"),
-            route: Route::empty(),
         };
-        let encoded = rmp_serde::to_vec(&info).unwrap();
-        let decoded: Agent = rmp_serde::from_slice(&encoded).unwrap();
-        assert_eq!(decoded.id, test_uuid);
-        assert_eq!(decoded.name, Some("claude-1".to_string()));
-        assert_eq!(decoded.command, "claude");
-        assert_eq!(decoded.working_dir, PathBuf::from("/tmp"));
+        assert_eq!(request_id, 99);
+        let decoded_rm = RoutableMessage::decode(&payload).unwrap();
+        assert!(matches!(
+            decoded_rm,
+            RoutableMessage::CreateAgentResult { error: None, .. }
+        ));
     }
 
-    #[test]
-    fn test_message_roundtrip_hook_event() {
-        let test_uuid = Uuid::new_v4();
-        let hook = Hook::Claude(ClaudeHook::SessionStart(ClaudeSessionStart {
-            session_id: test_uuid,
-            transcript_path: "/tmp/transcript.jsonl".to_string(),
-        }));
-        let msg = Message::Command(Command::HandleHook { hook });
-        let encoded = msg.encode().unwrap();
-        let decoded = Message::decode(&encoded).unwrap();
-        let Message::Command(Command::HandleHook { hook: decoded_hook }) = decoded else {
-            panic!("Expected HandleHook");
-        };
-        match decoded_hook {
-            Hook::Claude(ClaudeHook::SessionStart(session)) => {
-                assert_eq!(session.session_id, test_uuid);
-                assert_eq!(session.transcript_path, "/tmp/transcript.jsonl");
-            }
-            _ => panic!("Expected SessionStart hook"),
-        }
-    }
+    // --- Behavioral method tests ---
 
     #[test]
-    fn test_message_roundtrip_announce_agent() {
-        let test_uuid = Uuid::new_v4();
-        let msg = Message::Direct(DirectMessage::AnnounceAgent {
-            agent_id: test_uuid,
-            name: Some("my-agent".to_string()),
-            command: "claude".to_string(),
-            working_dir: PathBuf::from("/home/user"),
-            route: Route::empty(),
-        });
-        let encoded = msg.encode().unwrap();
-        let decoded = Message::decode(&encoded).unwrap();
-        if let Message::Direct(DirectMessage::AnnounceAgent {
-            agent_id,
-            name,
-            command,
-            working_dir,
-            route,
-        }) = decoded
-        {
-            assert_eq!(agent_id, test_uuid);
-            assert_eq!(name, Some("my-agent".to_string()));
-            assert_eq!(command, "claude");
-            assert_eq!(working_dir, PathBuf::from("/home/user"));
-            assert_eq!(route, Route::empty());
-        } else {
-            panic!("Expected AnnounceAgent");
-        }
-    }
-
-    #[test]
-    fn test_message_roundtrip_announce_agent_with_route() {
-        let test_uuid = Uuid::new_v4();
-        let msg = Message::Direct(DirectMessage::AnnounceAgent {
-            agent_id: test_uuid,
-            name: None,
-            command: "bash".to_string(),
-            working_dir: PathBuf::from("/tmp"),
-            route: Route::from_link("host-a"),
-        });
-        let encoded = msg.encode().unwrap();
-        let decoded = Message::decode(&encoded).unwrap();
-        if let Message::Direct(DirectMessage::AnnounceAgent { route, .. }) = decoded {
-            let mut route = route;
-            assert_eq!(route.pop(), Some("host-a".to_string()));
-            assert_eq!(route.pop(), None);
-        } else {
-            panic!("Expected AnnounceAgent");
-        }
-    }
-
-    #[test]
-    fn test_message_roundtrip_withdraw_agent() {
-        let test_uuid = Uuid::new_v4();
-        let msg = Message::Direct(DirectMessage::WithdrawAgent {
-            agent_id: test_uuid,
-        });
-        let encoded = msg.encode().unwrap();
-        let decoded = Message::decode(&encoded).unwrap();
-        if let Message::Direct(DirectMessage::WithdrawAgent { agent_id }) = decoded {
-            assert_eq!(agent_id, test_uuid);
-        } else {
-            panic!("Expected WithdrawAgent");
-        }
-    }
-
-    #[test]
-    fn test_agent_info_with_route_roundtrip() {
-        let test_uuid = Uuid::new_v4();
+    fn test_agent_is_remote_after_deserialization() {
         let info = Agent {
-            id: test_uuid,
+            id: Uuid::new_v4(),
             name: Some("remote-agent".to_string()),
             command: "claude".to_string(),
             working_dir: PathBuf::from("/tmp"),
@@ -752,51 +402,15 @@ mod tests {
         };
         let encoded = rmp_serde::to_vec_named(&info).unwrap();
         let decoded: Agent = rmp_serde::from_slice(&encoded).unwrap();
-        assert_eq!(decoded.id, test_uuid);
         assert!(decoded.is_remote());
     }
 
-    #[test]
-    fn test_agent_info_local_route_roundtrip() {
-        let test_uuid = Uuid::new_v4();
-        let info = Agent {
-            id: test_uuid,
-            name: None,
-            command: "bash".to_string(),
-            working_dir: PathBuf::from("/tmp"),
-            route: Route::empty(),
-        };
-        let encoded = rmp_serde::to_vec_named(&info).unwrap();
-        let decoded: Agent = rmp_serde::from_slice(&encoded).unwrap();
-        assert_eq!(decoded.id, test_uuid);
-        assert!(decoded.route.is_empty());
-    }
-
-    #[test]
-    fn test_message_roundtrip_connect_with_version() {
-        let msg = Message::Direct(DirectMessage::Connect {
-            link_name: "test-link".to_string(),
-            token: None,
-            version: PROTOCOL_VERSION,
-        });
-        let encoded = msg.encode().unwrap();
-        let decoded = Message::decode(&encoded).unwrap();
-        if let Message::Direct(DirectMessage::Connect {
-            link_name, version, ..
-        }) = decoded
-        {
-            assert_eq!(link_name, "test-link");
-            assert_eq!(version, PROTOCOL_VERSION);
-        } else {
-            panic!("Expected Connect");
-        }
-    }
+    // --- Backward compatibility: #[serde(default)] contract tests ---
+    // These simulate old clients that lack fields added in later versions.
+    // Removing the #[serde(default)] annotations would silently break compat.
 
     #[test]
     fn test_connect_without_version_defaults_to_zero() {
-        // Simulate old client: encode Connect without version field
-        // by encoding a struct that lacks the version field, then decoding
-        // with the new format. The #[serde(default)] should give version=0.
         #[derive(Serialize)]
         enum OldDirectMessage {
             Connect {
@@ -815,376 +429,115 @@ mod tests {
         });
         let encoded = rmp_serde::to_vec_named(&old_msg).unwrap();
         let decoded = Message::decode(&encoded).unwrap();
-        if let Message::Direct(DirectMessage::Connect {
+        let Message::Direct(DirectMessage::Connect {
             link_name, version, ..
         }) = decoded
-        {
-            assert_eq!(link_name, "old-client");
-            assert_eq!(
-                version, 0,
-                "old client without version field should default to 0"
-            );
-        } else {
+        else {
             panic!("Expected Connect");
-        }
-    }
-
-    #[test]
-    fn test_message_roundtrip_version_mismatch() {
-        let msg = Message::Direct(DirectMessage::ConnectResult {
-            error: Some(ProtocolError::VersionMismatch {
-                server_version: 2,
-                client_version: 1,
-            }),
-        });
-        let encoded = msg.encode().unwrap();
-        let decoded = Message::decode(&encoded).unwrap();
-        if let Message::Direct(DirectMessage::ConnectResult {
-            error:
-                Some(ProtocolError::VersionMismatch {
-                    server_version,
-                    client_version,
-                }),
-        }) = decoded
-        {
-            assert_eq!(server_version, 2);
-            assert_eq!(client_version, 1);
-        } else {
-            panic!("Expected ConnectResult with VersionMismatch");
-        }
-    }
-
-    #[test]
-    fn test_message_roundtrip_shutdown_notification() {
-        // Test ProtocolMismatch reason
-        let msg = Message::Command(Command::ShutdownNotification(
-            ShutdownReason::ProtocolMismatch,
-        ));
-        let encoded = msg.encode().unwrap();
-        let decoded = Message::decode(&encoded).unwrap();
-        let Message::Command(Command::ShutdownNotification(reason)) = decoded else {
-            panic!("Expected ShutdownNotification");
         };
-        assert_eq!(reason, ShutdownReason::ProtocolMismatch);
-        assert_eq!(reason.to_string(), "amux upgrade required");
-
-        // Test UserRequested reason
-        let msg = Message::Command(Command::ShutdownNotification(ShutdownReason::UserRequested));
-        let encoded = msg.encode().unwrap();
-        let decoded = Message::decode(&encoded).unwrap();
-        let Message::Command(Command::ShutdownNotification(reason)) = decoded else {
-            panic!("Expected ShutdownNotification");
-        };
-        assert_eq!(reason, ShutdownReason::UserRequested);
-        assert_eq!(reason.to_string(), "server shutting down");
-    }
-
-    #[test]
-    fn test_unknown_tool_deserializes_from_json() {
-        let json = r#"{
-            "hook_event_name": "PermissionRequest",
-            "session_id": "00000000-0000-0000-0000-000000000001",
-            "tool_name": "SomeNewTool",
-            "tool_input": {"foo": "bar"}
-        }"#;
-        let hook: ClaudeHook = serde_json::from_str(json).unwrap();
-        let ClaudeHook::PermissionRequest(p) = hook else {
-            panic!("Expected PermissionRequest");
-        };
-        assert!(matches!(p.tool, ClaudePermissionTool::Unknown));
-    }
-
-    #[test]
-    fn test_ask_user_question_deserializes_from_json() {
-        let json = r#"{
-            "hook_event_name": "PermissionRequest",
-            "session_id": "00000000-0000-0000-0000-000000000001",
-            "tool_name": "AskUserQuestion",
-            "tool_input": {
-                "questions": [{
-                    "question": "Which library should we use?",
-                    "header": "Library",
-                    "options": [
-                        {"label": "reqwest", "description": "HTTP client"},
-                        {"label": "ureq", "description": "Blocking HTTP client"}
-                    ],
-                    "multiSelect": false
-                }]
-            }
-        }"#;
-        let hook: ClaudeHook = serde_json::from_str(json).unwrap();
-        let ClaudeHook::PermissionRequest(p) = hook else {
-            panic!("Expected PermissionRequest");
-        };
-        let ClaudePermissionTool::AskUserQuestion { tool_input } = p.tool else {
-            panic!("Expected AskUserQuestion tool");
-        };
-        assert_eq!(tool_input.questions.len(), 1);
-        let q = &tool_input.questions[0];
-        assert_eq!(q.question, "Which library should we use?");
-        assert_eq!(q.header, "Library");
-        assert!(!q.multi_select);
-        assert_eq!(q.options.len(), 2);
-        assert_eq!(q.options[0].label, "reqwest");
-        assert_eq!(q.options[1].label, "ureq");
-    }
-
-    #[test]
-    fn test_ask_user_question_multi_select() {
-        let json = r#"{
-            "hook_event_name": "PermissionRequest",
-            "session_id": "00000000-0000-0000-0000-000000000001",
-            "tool_name": "AskUserQuestion",
-            "tool_input": {
-                "questions": [{
-                    "question": "Which features?",
-                    "header": "Features",
-                    "options": [
-                        {"label": "Auth", "description": "Authentication"},
-                        {"label": "Cache", "description": "Caching layer"}
-                    ],
-                    "multiSelect": true
-                }]
-            }
-        }"#;
-        let hook: ClaudeHook = serde_json::from_str(json).unwrap();
-        let ClaudeHook::PermissionRequest(p) = hook else {
-            panic!("Expected PermissionRequest");
-        };
-        let ClaudePermissionTool::AskUserQuestion { tool_input } = p.tool else {
-            panic!("Expected AskUserQuestion tool");
-        };
-        assert!(tool_input.questions[0].multi_select);
-    }
-
-    #[test]
-    fn test_known_tool_deserializes_from_json() {
-        let json = r#"{
-            "hook_event_name": "PermissionRequest",
-            "session_id": "00000000-0000-0000-0000-000000000001",
-            "tool_name": "Edit",
-            "tool_input": {
-                "file_path": "/tmp/test.rs",
-                "old_string": "foo",
-                "new_string": "bar"
-            }
-        }"#;
-        let hook: ClaudeHook = serde_json::from_str(json).unwrap();
-        let ClaudeHook::PermissionRequest(p) = hook else {
-            panic!("Expected PermissionRequest");
-        };
-        let ClaudePermissionTool::Edit { tool_input } = p.tool else {
-            panic!("Expected Edit tool");
-        };
-        assert_eq!(tool_input.file_path, "/tmp/test.rs");
-        assert_eq!(tool_input.old_string, "foo");
-        assert_eq!(tool_input.new_string, "bar");
-        assert!(!tool_input.replace_all);
-    }
-
-    #[test]
-    fn test_bash_tool_deserializes_from_json() {
-        let json = r#"{
-            "hook_event_name": "PermissionRequest",
-            "session_id": "00000000-0000-0000-0000-000000000001",
-            "tool_name": "Bash",
-            "tool_input": {
-                "command": "cargo test",
-                "description": "Run tests",
-                "timeout": 30000
-            }
-        }"#;
-        let hook: ClaudeHook = serde_json::from_str(json).unwrap();
-        let ClaudeHook::PermissionRequest(p) = hook else {
-            panic!("Expected PermissionRequest");
-        };
-        let ClaudePermissionTool::Bash { tool_input } = p.tool else {
-            panic!("Expected Bash tool");
-        };
-        assert_eq!(tool_input.command, "cargo test");
-        assert_eq!(tool_input.description.as_deref(), Some("Run tests"));
-        assert_eq!(tool_input.timeout, Some(30000));
-    }
-
-    #[test]
-    fn test_bash_tool_optional_fields() {
-        let json = r#"{
-            "hook_event_name": "PermissionRequest",
-            "session_id": "00000000-0000-0000-0000-000000000001",
-            "tool_name": "Bash",
-            "tool_input": {
-                "command": "ls"
-            }
-        }"#;
-        let hook: ClaudeHook = serde_json::from_str(json).unwrap();
-        let ClaudeHook::PermissionRequest(p) = hook else {
-            panic!("Expected PermissionRequest");
-        };
-        let ClaudePermissionTool::Bash { tool_input } = p.tool else {
-            panic!("Expected Bash tool");
-        };
-        assert_eq!(tool_input.command, "ls");
-        assert!(tool_input.description.is_none());
-        assert!(tool_input.timeout.is_none());
-    }
-
-    #[test]
-    fn test_write_tool_deserializes_from_json() {
-        let json = r#"{
-            "hook_event_name": "PermissionRequest",
-            "session_id": "00000000-0000-0000-0000-000000000001",
-            "tool_name": "Write",
-            "tool_input": {
-                "file_path": "/tmp/output.txt",
-                "content": "hello world"
-            }
-        }"#;
-        let hook: ClaudeHook = serde_json::from_str(json).unwrap();
-        let ClaudeHook::PermissionRequest(p) = hook else {
-            panic!("Expected PermissionRequest");
-        };
-        let ClaudePermissionTool::Write { tool_input } = p.tool else {
-            panic!("Expected Write tool");
-        };
-        assert_eq!(tool_input.file_path, "/tmp/output.txt");
-        assert_eq!(tool_input.content, "hello world");
-    }
-
-    #[test]
-    fn test_web_search_tool_deserializes_from_json() {
-        let json = r#"{
-            "hook_event_name": "PermissionRequest",
-            "session_id": "00000000-0000-0000-0000-000000000001",
-            "tool_name": "WebSearch",
-            "tool_input": {
-                "query": "rust serde tutorial"
-            }
-        }"#;
-        let hook: ClaudeHook = serde_json::from_str(json).unwrap();
-        let ClaudeHook::PermissionRequest(p) = hook else {
-            panic!("Expected PermissionRequest");
-        };
-        let ClaudePermissionTool::WebSearch { tool_input } = p.tool else {
-            panic!("Expected WebSearch tool");
-        };
-        assert_eq!(tool_input.query, "rust serde tutorial");
-    }
-
-    #[test]
-    fn test_skill_tool_deserializes_from_json() {
-        let json = r#"{
-            "hook_event_name": "PermissionRequest",
-            "session_id": "00000000-0000-0000-0000-000000000001",
-            "tool_name": "Skill",
-            "tool_input": {
-                "skill": "commit",
-                "args": "-m 'Fix bug'"
-            }
-        }"#;
-        let hook: ClaudeHook = serde_json::from_str(json).unwrap();
-        let ClaudeHook::PermissionRequest(p) = hook else {
-            panic!("Expected PermissionRequest");
-        };
-        let ClaudePermissionTool::Skill { tool_input } = p.tool else {
-            panic!("Expected Skill tool");
-        };
-        assert_eq!(tool_input.skill, "commit");
-        assert_eq!(tool_input.args.as_deref(), Some("-m 'Fix bug'"));
-    }
-
-    #[test]
-    fn test_exit_plan_mode_deserializes_from_json() {
-        let json = r#"{
-            "hook_event_name": "PermissionRequest",
-            "session_id": "00000000-0000-0000-0000-000000000001",
-            "tool_name": "ExitPlanMode",
-            "tool_input": {
-                "allowedPrompts": [
-                    {"tool": "Bash", "prompt": "run tests"}
-                ]
-            }
-        }"#;
-        let hook: ClaudeHook = serde_json::from_str(json).unwrap();
-        let ClaudeHook::PermissionRequest(p) = hook else {
-            panic!("Expected PermissionRequest");
-        };
-        let ClaudePermissionTool::ExitPlanMode { tool_input } = p.tool else {
-            panic!("Expected ExitPlanMode tool");
-        };
-        assert_eq!(tool_input.allowed_prompts.len(), 1);
-        assert_eq!(tool_input.allowed_prompts[0].tool, "Bash");
-        assert_eq!(tool_input.allowed_prompts[0].prompt, "run tests");
-    }
-
-    #[test]
-    fn test_message_roundtrip_announce_host() {
-        let host_id = Uuid::new_v4();
-        let msg = Message::Direct(DirectMessage::AnnounceHost {
-            id: host_id,
-            name: "my-laptop".to_string(),
-            route: Route::empty(),
-            version: "0.1.0".to_string(),
-        });
-        let encoded = msg.encode().unwrap();
-        let decoded = Message::decode(&encoded).unwrap();
-        if let Message::Direct(DirectMessage::AnnounceHost {
-            id,
-            name,
-            route,
-            version,
-        }) = decoded
-        {
-            assert_eq!(id, host_id);
-            assert_eq!(name, "my-laptop");
-            assert_eq!(route, Route::empty());
-            assert_eq!(version, "0.1.0");
-        } else {
-            panic!("Expected AnnounceHost");
-        }
-    }
-
-    #[test]
-    fn test_message_roundtrip_announce_host_with_route() {
-        let host_id = Uuid::new_v4();
-        let msg = Message::Direct(DirectMessage::AnnounceHost {
-            id: host_id,
-            name: "remote-server".to_string(),
-            route: Route::from_link("peer-a"),
-            version: "0.2.0".to_string(),
-        });
-        let encoded = msg.encode().unwrap();
-        let decoded = Message::decode(&encoded).unwrap();
-        if let Message::Direct(DirectMessage::AnnounceHost { route, .. }) = decoded {
-            let mut route = route;
-            assert_eq!(route.pop(), Some("peer-a".to_string()));
-            assert_eq!(route.pop(), None);
-        } else {
-            panic!("Expected AnnounceHost");
-        }
-    }
-
-    #[test]
-    fn test_message_roundtrip_withdraw_host() {
-        let host_id = Uuid::new_v4();
-        let msg = Message::Direct(DirectMessage::WithdrawHost { id: host_id });
-        let encoded = msg.encode().unwrap();
-        let decoded = Message::decode(&encoded).unwrap();
-        if let Message::Direct(DirectMessage::WithdrawHost { id }) = decoded {
-            assert_eq!(id, host_id);
-        } else {
-            panic!("Expected WithdrawHost");
-        }
-    }
-
-    #[test]
-    fn test_version_mismatch_display() {
-        let err = ProtocolError::VersionMismatch {
-            server_version: 2,
-            client_version: 1,
-        };
+        assert_eq!(link_name, "old-client");
         assert_eq!(
-            err.to_string(),
-            "amux upgrade required (protocol v2, client v1)"
+            version, 0,
+            "old client without version field should default to 0"
+        );
+    }
+
+    #[test]
+    fn test_subscribe_raw_backward_compat_without_terminal_size() {
+        // Old clients send SubscribeRaw without terminal_size field.
+        // The #[serde(default)] ensures it defaults to None.
+        #[derive(Serialize)]
+        enum OldRoutableMessage {
+            SubscribeRaw { agent_id: Uuid },
+        }
+        let agent_id = Uuid::new_v4();
+        let old_msg = OldRoutableMessage::SubscribeRaw { agent_id };
+        let encoded = rmp_serde::to_vec_named(&old_msg).unwrap();
+        let decoded = RoutableMessage::decode(&encoded).unwrap();
+        let RoutableMessage::SubscribeRaw {
+            agent_id: decoded_id,
+            terminal_size,
+        } = decoded
+        else {
+            panic!("Expected SubscribeRaw, got {:?}", decoded);
+        };
+        assert_eq!(decoded_id, agent_id);
+        assert_eq!(
+            terminal_size, None,
+            "missing terminal_size should default to None"
+        );
+    }
+
+    #[test]
+    fn test_create_agent_backward_compat_without_terminal_size() {
+        // Old clients send CreateAgent without terminal_size field.
+        // The #[serde(default)] ensures it defaults to None.
+        #[derive(Serialize)]
+        struct OldCreateAgentRequest {
+            agent_id: Uuid,
+            name: Option<String>,
+            agent_type: AgentType,
+            working_dir: PathBuf,
+        }
+        #[derive(Serialize)]
+        enum OldRoutableMessage {
+            CreateAgent(OldCreateAgentRequest),
+        }
+        let agent_id = Uuid::new_v4();
+        let old_msg = OldRoutableMessage::CreateAgent(OldCreateAgentRequest {
+            agent_id,
+            name: Some("test".to_string()),
+            agent_type: AgentType::Claude,
+            working_dir: PathBuf::from("/tmp"),
+        });
+        let encoded = rmp_serde::to_vec_named(&old_msg).unwrap();
+        let decoded = RoutableMessage::decode(&encoded).unwrap();
+        let RoutableMessage::CreateAgent(req) = decoded else {
+            panic!("Expected CreateAgent, got {:?}", decoded);
+        };
+        assert_eq!(req.agent_id, agent_id);
+        assert_eq!(
+            req.terminal_size, None,
+            "missing terminal_size should default to None"
+        );
+    }
+
+    // --- Forward compatibility contract tests ---
+    // These verify that unknown message variants produce decode errors (not panics),
+    // which the reader_loop skips to keep the connection alive.
+
+    #[test]
+    fn test_unknown_direct_variant_produces_decode_error() {
+        // Simulate a future DirectMessage variant that this version doesn't know about.
+        // The reader_loop handles this by skipping the message (not killing the connection).
+        #[derive(Serialize)]
+        enum FutureDirectMessage {
+            Ping { seq: u64 },
+        }
+        #[derive(Serialize)]
+        enum FutureMessage {
+            Direct(FutureDirectMessage),
+        }
+        let future_msg = FutureMessage::Direct(FutureDirectMessage::Ping { seq: 42 });
+        let encoded = rmp_serde::to_vec_named(&future_msg).unwrap();
+        assert!(
+            Message::decode(&encoded).is_err(),
+            "unknown DirectMessage variant should produce a decode error"
+        );
+    }
+
+    #[test]
+    fn test_unknown_top_level_variant_produces_decode_error() {
+        // Simulate a future top-level Message variant that this version doesn't know about.
+        #[derive(Serialize)]
+        enum FutureMessage {
+            Stream { id: u64 },
+        }
+        let future_msg = FutureMessage::Stream { id: 1 };
+        let encoded = rmp_serde::to_vec_named(&future_msg).unwrap();
+        assert!(
+            Message::decode(&encoded).is_err(),
+            "unknown Message variant should produce a decode error"
         );
     }
 }

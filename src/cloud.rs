@@ -13,10 +13,15 @@ use crate::route::generate_server_link;
 use crate::state::State;
 use crate::transport::{TcpTransport, Transport, tls_connect};
 use chrono::{DateTime, Duration, Utc};
+use std::time::Duration as StdDuration;
 use thiserror::Error;
 use tokio::net::TcpStream;
 use tokio::sync::mpsc;
 use tokio_rustls::client::TlsStream;
+
+/// Maximum time to wait for a handshake response from a cloud server.
+/// Prevents hanging forever if the remote accepts TCP but never responds.
+const CONNECT_TIMEOUT: StdDuration = StdDuration::from_secs(10);
 
 #[derive(Debug, Error)]
 pub enum CloudError {
@@ -41,6 +46,55 @@ pub enum CloudError {
         server_version: u32,
         client_version: u32,
     },
+}
+
+/// Check a ConnectResult message, mapping protocol errors to CloudError.
+/// Returns Ok(()) on success, Err on any error or unexpected message.
+/// Used by both initial connection and token refresh to avoid duplicating
+/// the same ConnectResult → CloudError match arms.
+fn check_connect_result(msg: &Message) -> std::result::Result<(), CloudError> {
+    match msg {
+        Message::Direct(DirectMessage::ConnectResult { error: None }) => Ok(()),
+        Message::Direct(DirectMessage::ConnectResult {
+            error: Some(ProtocolError::InvalidCredentials),
+        }) => Err(CloudError::Auth("invalid credentials".to_string())),
+        Message::Direct(DirectMessage::ConnectResult {
+            error:
+                Some(ProtocolError::VersionMismatch {
+                    server_version,
+                    client_version,
+                }),
+        }) => Err(CloudError::VersionMismatch {
+            server_version: *server_version,
+            client_version: *client_version,
+        }),
+        Message::Direct(DirectMessage::ConnectResult { error: Some(e) }) => {
+            Err(CloudError::Connection(format!("server rejected: {e}")))
+        }
+        _ => Err(CloudError::Connection("expected ConnectResult".to_string())),
+    }
+}
+
+/// Refresh the OAuth token and get connection details from the cloud API.
+///
+/// Shared by both initial connection and token refresh to avoid duplicating
+/// the load-state → extract-token → refresh → rotate → get-connection sequence.
+async fn refresh_and_get_connection(
+    config: &Config,
+) -> std::result::Result<oauth::ConnectResult, CloudError> {
+    let state = State::load(&config.state_path)?;
+    let refresh_token = state
+        .cloud
+        .refresh_token
+        .ok_or(CloudError::NotAuthenticated)?;
+    let (access_token, new_refresh) =
+        oauth::refresh_access_token(&config.cloud_url, &refresh_token).await?;
+    if let Some(new_token) = new_refresh {
+        State::update(&config.state_path, |s| {
+            s.cloud.refresh_token = Some(new_token);
+        })?;
+    }
+    Ok(oauth::get_connection(&config.cloud_url, &access_token).await?)
 }
 
 /// Cloud connection state
@@ -69,25 +123,7 @@ impl CloudConnection {
             return Err(CloudError::CloudDisabled);
         }
 
-        // Get refresh token
-        let refresh_token = state
-            .cloud
-            .refresh_token
-            .ok_or(CloudError::NotAuthenticated)?;
-
-        // Exchange for access token
-        let (access_token, new_refresh) =
-            oauth::refresh_access_token(&config.cloud_url, &refresh_token).await?;
-
-        // Update refresh token if rotated
-        if let Some(new_token) = new_refresh {
-            State::update(&config.state_path, |s| {
-                s.cloud.refresh_token = Some(new_token);
-            })?;
-        }
-
-        // Get connection details
-        let conn = oauth::get_connection(&config.cloud_url, &access_token).await?;
+        let conn = refresh_and_get_connection(config).await?;
 
         // Connect via TLS
         tracing::info!(host = %conn.host, port = conn.port, "connecting to cloud");
@@ -107,44 +143,12 @@ impl CloudConnection {
             }))
             .await?;
 
-        // Wait for response
-        let response = transport.read_message().await?;
-        match response {
-            Message::Direct(DirectMessage::ConnectResult { error: None }) => {
-                tracing::info!(host = %conn.host, link = %link_name, "cloud connected");
-            }
-            Message::Direct(DirectMessage::ConnectResult {
-                error: Some(ProtocolError::InvalidCredentials),
-            }) => {
-                // TODO: clear refresh token once connection flow is stable
-                return Err(CloudError::Auth(
-                    "Invalid credentials - please run 'amux init' to re-authenticate".to_string(),
-                ));
-            }
-            Message::Direct(DirectMessage::ConnectResult {
-                error:
-                    Some(ProtocolError::VersionMismatch {
-                        server_version,
-                        client_version,
-                    }),
-            }) => {
-                return Err(CloudError::VersionMismatch {
-                    server_version,
-                    client_version,
-                });
-            }
-            Message::Direct(DirectMessage::ConnectResult { error }) => {
-                return Err(CloudError::Connection(format!(
-                    "Connect failed: {:?}",
-                    error
-                )));
-            }
-            _ => {
-                return Err(CloudError::Connection(
-                    "Unexpected response to Connect".to_string(),
-                ));
-            }
-        }
+        // Wait for response with timeout to prevent hanging on unresponsive peers
+        let response = tokio::time::timeout(CONNECT_TIMEOUT, transport.read_message())
+            .await
+            .map_err(|_| CloudError::Connection("handshake timed out".to_string()))??;
+        check_connect_result(&response)?;
+        tracing::info!(host = %conn.host, link = %link_name, "cloud connected");
 
         Ok(Self {
             config: config.clone(),
@@ -161,8 +165,8 @@ impl CloudConnection {
     /// used directly by the server's peer loop with token refresh.
     pub fn into_parts(self) -> (TcpTransport<TlsStream<TcpStream>>, TokenRefreshState) {
         let refresh_state = TokenRefreshState {
-            config: self.config.clone(),
-            link_name: self.link_name.clone(),
+            config: self.config,
+            link_name: self.link_name,
             current_host: self.current_host,
             current_port: self.current_port,
             token_expires_at: self.token_expires_at,
@@ -208,26 +212,7 @@ impl TokenRefreshState {
         &mut self,
         tx: &mpsc::Sender<Message>,
     ) -> std::result::Result<(), CloudError> {
-        let state = State::load(&self.config.state_path)?;
-
-        let refresh_token = state
-            .cloud
-            .refresh_token
-            .ok_or(CloudError::NotAuthenticated)?;
-
-        // Get new access token
-        let (access_token, new_refresh) =
-            oauth::refresh_access_token(&self.config.cloud_url, &refresh_token).await?;
-
-        // Update refresh token if rotated
-        if let Some(new_token) = new_refresh {
-            State::update(&self.config.state_path, |s| {
-                s.cloud.refresh_token = Some(new_token);
-            })?;
-        }
-
-        // Get new connection details
-        let conn = oauth::get_connection(&self.config.cloud_url, &access_token).await?;
+        let conn = refresh_and_get_connection(&self.config).await?;
 
         // Check if host changed - requires full reconnection
         if conn.host != self.current_host || conn.port != self.current_port {
@@ -254,47 +239,143 @@ impl TokenRefreshState {
     /// Handle a ConnectResult received after send_connect.
     /// Updates token_expires_at on success using the expires_at stored during send_connect.
     pub fn handle_response(&mut self, msg: &Message) -> std::result::Result<(), CloudError> {
-        match msg {
-            Message::Direct(DirectMessage::ConnectResult { error: None }) => {
-                tracing::debug!("token refreshed");
-                if let Some(expires_at) = self.pending_expires_at.take() {
-                    self.token_expires_at = expires_at;
-                }
-                Ok(())
-            }
-            Message::Direct(DirectMessage::ConnectResult {
-                error: Some(ProtocolError::InvalidCredentials),
-            }) => Err(CloudError::Auth("Token refresh failed".to_string())),
-            Message::Direct(DirectMessage::ConnectResult {
-                error:
-                    Some(ProtocolError::VersionMismatch {
-                        server_version,
-                        client_version,
-                    }),
-            }) => Err(CloudError::VersionMismatch {
-                server_version: *server_version,
-                client_version: *client_version,
-            }),
-            Message::Direct(DirectMessage::ConnectResult { error }) => Err(CloudError::Connection(
-                format!("Token refresh failed: {:?}", error),
-            )),
-            _ => Err(CloudError::Connection(
-                "Unexpected response to token refresh".to_string(),
-            )),
+        check_connect_result(msg)?;
+        tracing::debug!("token refreshed");
+        if let Some(expires_at) = self.pending_expires_at.take() {
+            self.token_expires_at = expires_at;
         }
+        Ok(())
     }
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::route::Route;
+
+    fn test_refresh_state(expires_at: DateTime<Utc>) -> TokenRefreshState {
+        TokenRefreshState {
+            config: Config::default(),
+            link_name: "test-link".to_string(),
+            current_host: "test-host".to_string(),
+            current_port: 9001,
+            token_expires_at: expires_at,
+            pending_expires_at: None,
+        }
+    }
 
     #[test]
-    fn test_cloud_error_display() {
-        let err = CloudError::NotAuthenticated;
-        assert!(err.to_string().contains("amux init"));
+    fn handle_response_success_updates_expiry() {
+        let initial_expiry = Utc::now() + Duration::hours(1);
+        let new_expiry = Utc::now() + Duration::hours(2);
+        let mut state = test_refresh_state(initial_expiry);
+        state.pending_expires_at = Some(new_expiry);
 
-        let err = CloudError::CloudDisabled;
-        assert!(err.to_string().contains("disabled"));
+        let msg = Message::Direct(DirectMessage::ConnectResult { error: None });
+        let result = state.handle_response(&msg);
+
+        assert!(result.is_ok());
+        assert_eq!(state.token_expires_at, new_expiry);
+        assert!(state.pending_expires_at.is_none());
+    }
+
+    #[test]
+    fn handle_response_success_without_pending_keeps_expiry() {
+        let initial_expiry = Utc::now() + Duration::hours(1);
+        let mut state = test_refresh_state(initial_expiry);
+
+        let msg = Message::Direct(DirectMessage::ConnectResult { error: None });
+        let result = state.handle_response(&msg);
+
+        assert!(result.is_ok());
+        assert_eq!(state.token_expires_at, initial_expiry);
+    }
+
+    #[test]
+    fn handle_response_invalid_credentials() {
+        let mut state = test_refresh_state(Utc::now() + Duration::hours(1));
+
+        let msg = Message::Direct(DirectMessage::ConnectResult {
+            error: Some(ProtocolError::InvalidCredentials),
+        });
+        let result = state.handle_response(&msg);
+
+        assert!(matches!(result, Err(CloudError::Auth(_))));
+    }
+
+    #[test]
+    fn handle_response_version_mismatch() {
+        let mut state = test_refresh_state(Utc::now() + Duration::hours(1));
+
+        let msg = Message::Direct(DirectMessage::ConnectResult {
+            error: Some(ProtocolError::VersionMismatch {
+                server_version: 4,
+                client_version: 3,
+            }),
+        });
+        let result = state.handle_response(&msg);
+
+        assert!(matches!(
+            result,
+            Err(CloudError::VersionMismatch {
+                server_version: 4,
+                client_version: 3,
+            })
+        ));
+    }
+
+    #[test]
+    fn handle_response_generic_server_error() {
+        let mut state = test_refresh_state(Utc::now() + Duration::hours(1));
+
+        let msg = Message::Direct(DirectMessage::ConnectResult {
+            error: Some(ProtocolError::ServerError("something broke".to_string())),
+        });
+        let result = state.handle_response(&msg);
+
+        assert!(matches!(result, Err(CloudError::Connection(_))));
+    }
+
+    #[test]
+    fn handle_response_non_connect_result_returns_error() {
+        let mut state = test_refresh_state(Utc::now() + Duration::hours(1));
+
+        // Not a ConnectResult at all — should be rejected
+        let msg = Message::Direct(DirectMessage::AnnounceHost {
+            id: uuid::Uuid::new_v4(),
+            name: "host".to_string(),
+            route: Route::empty(),
+            version: "0.1.0".to_string(),
+        });
+        let result = state.handle_response(&msg);
+
+        assert!(matches!(result, Err(CloudError::Connection(_))));
+    }
+
+    #[tokio::test]
+    async fn refresh_deadline_future_expiry() {
+        let state = test_refresh_state(Utc::now() + Duration::minutes(30));
+        let deadline = state.refresh_deadline();
+        let now = tokio::time::Instant::now();
+        // Should be ~25 minutes from now (30 min expiry - 5 min buffer)
+        let min_expected = now + std::time::Duration::from_secs(24 * 60);
+        let max_expected = now + std::time::Duration::from_secs(26 * 60);
+        assert!(
+            deadline >= min_expected && deadline <= max_expected,
+            "deadline should be ~25 minutes from now, got {:?} relative to now",
+            deadline.duration_since(now)
+        );
+    }
+
+    #[tokio::test]
+    async fn refresh_deadline_past_expiry_refreshes_immediately() {
+        let state = test_refresh_state(Utc::now() - Duration::minutes(10));
+        let deadline = state.refresh_deadline();
+        let now = tokio::time::Instant::now();
+        // Past expiry should trigger immediate refresh
+        assert!(
+            deadline <= now + std::time::Duration::from_secs(1),
+            "past expiry should return now"
+        );
     }
 }

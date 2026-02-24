@@ -1,9 +1,8 @@
+use amux::claude;
 use amux::client;
 use amux::config::Config;
-use amux::hooks;
 use amux::init;
 use amux::message;
-use amux::plugins;
 use amux::server;
 use anyhow::Context;
 use anyhow::Result;
@@ -151,7 +150,7 @@ async fn main() -> Result<()> {
             ensure_initialized(&config).await?;
             match agent_type {
                 message::AgentType::Claude => {
-                    plugins::claude::ensure_plugin_installed().await;
+                    claude::plugin::ensure_plugin_installed().await;
                 }
                 #[cfg(any(debug_assertions, test))]
                 message::AgentType::TestAgent(_) => {}
@@ -182,7 +181,7 @@ async fn main() -> Result<()> {
         }
         Some(Commands::Hooks { provider }) => match provider {
             HooksProvider::Claude { .. } => {
-                hooks::handle_claude_hook(&config);
+                claude::hooks::handle_claude_hook(&config);
             }
         },
     }
@@ -247,7 +246,11 @@ async fn ensure_server_running(config: &Config) -> Result<()> {
         tokio::time::sleep(Duration::from_millis(100)).await;
     }
 
-    Err(anyhow!("server failed to start"))
+    let log_path = std::env::var("AMUX_LOG").unwrap_or_else(|_| "/tmp/amux.log".to_string());
+    Err(anyhow!(
+        "server failed to start within 5s — check {} for details",
+        log_path
+    ))
 }
 
 // TODO: Once E2E executor can call amux/test-agent binaries directly (without
@@ -274,12 +277,16 @@ fn parse_agent_type(s: &str) -> Result<message::AgentType> {
 
 fn init_tracing() -> WorkerGuard {
     let log_path = std::env::var("AMUX_LOG").unwrap_or_else(|_| "/tmp/amux.log".to_string());
-    let file = OpenOptions::new()
-        .create(true)
-        .append(true)
-        .open(&log_path)
-        .expect("failed to open log file");
-    let (writer, guard) = tracing_appender::non_blocking(file);
+    let (writer, guard) = match OpenOptions::new().create(true).append(true).open(&log_path) {
+        Ok(file) => tracing_appender::non_blocking(file),
+        Err(e) => {
+            eprintln!(
+                "warning: failed to open log file {}: {}, falling back to stderr",
+                log_path, e
+            );
+            tracing_appender::non_blocking(std::io::stderr())
+        }
+    };
 
     let default_level = if cfg!(debug_assertions) {
         "amux=debug"

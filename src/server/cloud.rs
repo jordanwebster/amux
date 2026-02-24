@@ -1,12 +1,17 @@
-use super::connection::{ConnectionContext, connection_loop, reader_loop, writer_loop};
-use super::routing::{handle_peer_disconnect, send_initial_announcements};
+//! Cloud relay connection with automatic reconnection.
+//!
+//! Manages the outbound TLS connection from a local server to a cloud relay.
+//! Handles exponential backoff on retriable errors, stops on auth failures, and
+//! exits the process on protocol version mismatch (after notifying attached terminals).
+
+use super::connection::{ConnectionContext, run_connection};
+use super::routing::send_initial_announcements;
 use super::{LOCAL_USER_ID, ServerState, ServerUserState, get_or_create_user_state};
 use crate::cloud::{CloudConnection, CloudError};
 use crate::config::Config;
 use crate::error::AmuxError;
 use crate::message::{Command, Message, ShutdownReason};
 use crate::state::State;
-use crate::transport::TransportSplit;
 use std::sync::Arc;
 use std::sync::atomic::AtomicU64;
 use std::time::Duration;
@@ -24,71 +29,85 @@ pub(super) fn establish_cloud_connection(
     state: Arc<RwLock<ServerState>>,
     event_tx: mpsc::Sender<super::SessionEvent>,
 ) {
-    tokio::spawn(async move {
-        let should_connect = State::load(&config.state_path)
-            .map(|s| s.cloud.use_cloud_mode == Some(true))
-            .unwrap_or(false);
-
-        if !should_connect {
-            tracing::info!("cloud mode not enabled");
-            return;
-        }
-
-        // Get the default user state for cloud connections
-        let user_state = get_or_create_user_state(&state, LOCAL_USER_ID).await;
-
-        let mut backoff = Duration::from_secs(1);
-        const MAX_BACKOFF: Duration = Duration::from_secs(300);
-
-        loop {
-            tracing::info!("attempting cloud connection");
-            match run_cloud_connection(&config, state.clone(), user_state.clone(), event_tx.clone())
-                .await
-            {
-                Ok(()) => {
-                    tracing::info!("cloud connection closed cleanly");
-                    backoff = Duration::from_secs(1);
-                }
-                Err(CloudConnectionError::VersionMismatch {
-                    server_version,
-                    client_version,
-                }) => {
-                    tracing::error!(server_version, client_version, "cloud version mismatch");
-                    // Notify all attached terminals to exit cleanly
-                    let us = user_state.read().await;
-                    for (link, tx) in &us.routes {
-                        if !us.peer_links.contains(link) {
-                            let _ = tx.try_send(Message::Command(Command::ShutdownNotification(
-                                ShutdownReason::ProtocolMismatch,
-                            )));
-                        }
-                    }
-                    drop(us);
-                    std::process::exit(1);
-                }
-                Err(CloudConnectionError::NonRetriable(msg)) => {
-                    tracing::error!(error = %msg, "cloud non-retriable error, stopping");
-                    return;
-                }
-                Err(CloudConnectionError::Retriable(msg)) => {
-                    tracing::warn!(error = %msg, "cloud connection error, will retry");
-                }
-            }
-
-            let should_reconnect = State::load(&config.state_path)
+    let cloud_span = tracing::info_span!("cloud", url = %config.cloud_url);
+    tokio::spawn(
+        async move {
+            let should_connect = State::load(&config.state_path)
                 .map(|s| s.cloud.use_cloud_mode == Some(true))
                 .unwrap_or(false);
 
-            if !should_reconnect {
-                tracing::info!("cloud mode disabled, stopping reconnection");
+            if !should_connect {
+                tracing::info!("cloud mode not enabled");
                 return;
             }
 
-            tracing::info!(backoff = ?backoff, "reconnecting to cloud");
-            tokio::time::sleep(backoff).await;
-            backoff = std::cmp::min(backoff * 2, MAX_BACKOFF);
+            // Get the default user state for cloud connections
+            let user_state = get_or_create_user_state(&state, LOCAL_USER_ID).await;
+
+            let mut backoff = Duration::from_secs(1);
+            const MAX_BACKOFF: Duration = Duration::from_secs(300);
+
+            loop {
+                tracing::info!("attempting cloud connection");
+                match run_cloud_connection(
+                    &config,
+                    state.clone(),
+                    user_state.clone(),
+                    event_tx.clone(),
+                )
+                .await
+                {
+                    Ok(()) => {
+                        tracing::info!("cloud connection closed cleanly");
+                        backoff = Duration::from_secs(1);
+                    }
+                    Err(CloudConnectionError::VersionMismatch {
+                        server_version,
+                        client_version,
+                    }) => {
+                        tracing::error!(server_version, client_version, "cloud version mismatch");
+                        // Notify all attached terminals to exit cleanly
+                        let us = user_state.read().await;
+                        for (link, tx) in &us.routes {
+                            if !us.peer_links.contains(link) {
+                                let _ = tx.try_send(Message::Command(
+                                    Command::ShutdownNotification(ShutdownReason::ProtocolMismatch),
+                                ));
+                            }
+                        }
+                        drop(us);
+                        // Give writer tasks time to flush notifications to transports.
+                        // try_send only places messages in channel buffers; without this
+                        // yield, process::exit kills the runtime before writers can drain
+                        // them, so terminals see "connection reset" not "amux upgrade required".
+                        tokio::time::sleep(Duration::from_millis(100)).await;
+                        std::process::exit(1);
+                    }
+                    Err(CloudConnectionError::NonRetriable(msg)) => {
+                        tracing::error!(error = %msg, "cloud non-retriable error, stopping");
+                        return;
+                    }
+                    Err(CloudConnectionError::Retriable(msg)) => {
+                        tracing::warn!(error = %msg, "cloud connection error, will retry");
+                    }
+                }
+
+                let should_reconnect = State::load(&config.state_path)
+                    .map(|s| s.cloud.use_cloud_mode == Some(true))
+                    .unwrap_or(false);
+
+                if !should_reconnect {
+                    tracing::info!("cloud mode disabled, stopping reconnection");
+                    return;
+                }
+
+                tracing::info!(backoff = ?backoff, "reconnecting to cloud");
+                tokio::time::sleep(backoff).await;
+                backoff = std::cmp::min(backoff * 2, MAX_BACKOFF);
+            }
         }
-    });
+        .instrument(cloud_span),
+    );
 }
 
 /// Error type for cloud connection attempts
@@ -156,22 +175,12 @@ async fn run_cloud_connection(
         us.peer_links.insert(link_name.clone());
         send_initial_announcements(&us, host_id, &host_name, is_cloud_server, &link_name);
     }
-    let conn_span = tracing::info_span!("connection", link = %link_name, transport = "cloud");
+    let conn_span = tracing::info_span!("connection", link = %link_name, transport = "cloud", user_id = %LOCAL_USER_ID);
     tracing::info!(parent: &conn_span, "cloud route established");
 
-    // Split transport into reader/writer halves
-    let (reader, writer) = transport.into_split();
-
-    // Spawn reader and writer tasks
-    let (incoming_tx, incoming_rx) = mpsc::channel(256);
-    let reader_handle =
-        tokio::spawn(reader_loop(reader, incoming_tx).instrument(conn_span.clone()));
-    let writer_handle =
-        tokio::spawn(writer_loop(writer, outgoing_rx).instrument(conn_span.clone()));
-
     let ctx = ConnectionContext {
-        state: state.clone(),
-        user_state: user_state.clone(),
+        state,
+        user_state,
         user_id: LOCAL_USER_ID,
         event_tx,
         link_name: link_name.clone(),
@@ -179,25 +188,20 @@ async fn run_cloud_connection(
         next_request_id: Arc::new(AtomicU64::new(1)),
     };
 
-    let result = connection_loop(incoming_rx, outgoing_tx, ctx, Some(token_refresh))
-        .instrument(conn_span.clone())
-        .await;
-
-    {
-        let mut us = user_state.write().await;
-        handle_peer_disconnect(&mut us, &link_name);
-    }
-
-    // Let writer drain, then abort reader
-    let _ = writer_handle.await;
-    reader_handle.abort();
-
-    tracing::info!(parent: &conn_span, "cloud route removed");
+    let result = run_connection(
+        transport,
+        outgoing_rx,
+        outgoing_tx,
+        ctx,
+        Some(token_refresh),
+        conn_span,
+    )
+    .await;
 
     match result {
         Ok(()) => Ok(()),
         Err(AmuxError::InvalidCredentials) => Err(CloudConnectionError::NonRetriable(
-            "Invalid credentials".to_string(),
+            "Invalid credentials — run 'amux init' to re-authenticate".to_string(),
         )),
         Err(AmuxError::VersionMismatch(_)) => Err(CloudConnectionError::VersionMismatch {
             server_version: 0,

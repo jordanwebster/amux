@@ -1,112 +1,223 @@
-//! MultiplexBuffer - A buffer that supports multiple concurrent readers.
+//! Single-writer, multi-reader broadcast buffers for PTY output and structured logs.
 //!
-//! This module provides a buffer abstraction where:
-//! - A single writer appends bytes to the buffer
-//! - Multiple readers can subscribe and receive all bytes (past and future)
-//! - New subscribers receive all existing bytes, then live updates
-//! - No race conditions between subscribe and write operations
+//! Both [`MultiplexByteBuffer`] (byte stream) and [`MultiplexStructuredBuffer`] (structured
+//! entries) share the same generic core ([`BroadcastBuffer`]) parameterized
+//! by a [`BufferPolicy`] that controls storage, truncation, and replay semantics.
+//!
+//! Key invariant: `write()` and `subscribe()` are mutually exclusive via the
+//! storage lock, ensuring no data loss or duplication between replay and live data.
 
+use crate::claude::types::StructuredOutput;
 use std::sync::Arc;
 use tokio::sync::{RwLock, mpsc};
 
-/// A buffer that supports multiple concurrent readers.
+/// Extra channel capacity beyond the replay snapshot size.
 ///
-/// Writers append bytes to the buffer. When a reader subscribes, they receive
-/// all existing bytes followed by any new bytes written after subscription.
+/// When a new subscriber joins, the channel must hold both the replayed history
+/// and any new items written concurrently. For byte buffers the replay is a
+/// single chunk regardless of capacity, so headroom alone is sufficient. For
+/// structured buffers the channel needs `capacity + CHANNEL_HEADROOM` slots to
+/// hold the per-entry replay plus a margin for concurrent writes.
+const CHANNEL_HEADROOM: usize = 256;
+
+// ── Policy trait ─────────────────────────────────────────────────────────
+
+/// Defines how a broadcast buffer stores, truncates, and replays items.
 ///
-/// The key invariant is that `write()` and `subscribe()` are mutually exclusive
-/// via the buffer lock, ensuring no data loss or duplication.
-pub struct MultiplexBuffer {
-    inner: Arc<MultiplexBufferInner>,
+/// Two implementations are provided: [`BytePolicy`] for contiguous byte
+/// streams and [`StructuredPolicy`] for structured entries.
+pub trait BufferPolicy: Send + Sync + 'static {
+    /// The message type sent through subscriber channels.
+    type Item: Clone + Send + 'static;
+    /// Internal storage type.
+    type Storage: Send + Sync + Default;
+
+    /// Return `true` to skip a no-op write (e.g. empty byte slice).
+    fn should_skip(item: &Self::Item) -> bool;
+    /// Append an item to storage.
+    fn append(storage: &mut Self::Storage, item: &Self::Item);
+    /// Truncate storage to fit within `capacity`.
+    fn truncate(storage: &mut Self::Storage, capacity: usize);
+    /// Replay existing storage contents to a newly registered subscriber.
+    fn replay(storage: &Self::Storage, tx: &mpsc::Sender<Self::Item>);
+    /// Channel capacity for a buffer with the given max capacity.
+    fn channel_capacity(buffer_capacity: usize) -> usize;
 }
 
-struct MultiplexBufferInner {
-    /// Main buffer storing all bytes (up to max_size)
-    buffer: RwLock<Vec<u8>>,
-    /// Per-subscriber channels for sending new bytes
-    subscribers: RwLock<Vec<mpsc::UnboundedSender<Vec<u8>>>>,
-    /// Maximum buffer size before truncation
-    max_size: usize,
-    /// Whether the buffer has been closed
+// ── Byte buffer policy ──────────────────────────────────────────────────
+
+/// Policy for contiguous byte buffers (PTY output).
+///
+/// Bytes are appended to a single `Vec<u8>` and truncated by total byte
+/// count. Replay sends the entire buffer as one chunk.
+pub struct BytePolicy;
+
+impl BufferPolicy for BytePolicy {
+    type Item = Vec<u8>;
+    type Storage = Vec<u8>;
+
+    fn should_skip(item: &Vec<u8>) -> bool {
+        item.is_empty()
+    }
+
+    fn append(storage: &mut Vec<u8>, item: &Vec<u8>) {
+        storage.extend_from_slice(item);
+    }
+
+    fn truncate(storage: &mut Vec<u8>, capacity: usize) {
+        if storage.len() > capacity {
+            let excess = storage.len() - capacity;
+            storage.drain(..excess);
+        }
+    }
+
+    fn replay(storage: &Vec<u8>, tx: &mpsc::Sender<Vec<u8>>) {
+        if !storage.is_empty() {
+            let _ = tx.try_send(storage.clone());
+        }
+    }
+
+    fn channel_capacity(_buffer_capacity: usize) -> usize {
+        CHANNEL_HEADROOM
+    }
+}
+
+// ── Entry buffer policy ─────────────────────────────────────────────────
+
+/// Policy for structured entry buffers (Claude structured I/O).
+///
+/// Entries are stored in a `Vec` and truncated by entry count. Replay
+/// sends each entry individually to preserve message boundaries.
+pub struct StructuredPolicy;
+
+impl BufferPolicy for StructuredPolicy {
+    type Item = StructuredOutput;
+    type Storage = Vec<StructuredOutput>;
+
+    fn should_skip(_item: &StructuredOutput) -> bool {
+        false
+    }
+
+    fn append(storage: &mut Vec<StructuredOutput>, item: &StructuredOutput) {
+        storage.push(item.clone());
+    }
+
+    fn truncate(storage: &mut Vec<StructuredOutput>, capacity: usize) {
+        if storage.len() > capacity {
+            let excess = storage.len() - capacity;
+            storage.drain(..excess);
+        }
+    }
+
+    fn replay(storage: &Vec<StructuredOutput>, tx: &mpsc::Sender<StructuredOutput>) {
+        for entry in storage {
+            let _ = tx.try_send(entry.clone());
+        }
+    }
+
+    fn channel_capacity(buffer_capacity: usize) -> usize {
+        buffer_capacity + CHANNEL_HEADROOM
+    }
+}
+
+// ── Generic broadcast buffer ────────────────────────────────────────────
+
+/// A single-writer, multi-reader broadcast buffer.
+///
+/// Writers append items via [`write()`](Self::write). When a reader
+/// [`subscribe()`](Self::subscribe)s, they receive all existing items
+/// followed by any new items written after subscription.
+///
+/// Use via the type aliases [`MultiplexByteBuffer`] (bytes) or
+/// [`MultiplexStructuredBuffer`] (structured entries).
+pub struct BroadcastBuffer<P: BufferPolicy> {
+    inner: Arc<BroadcastInner<P>>,
+}
+
+struct BroadcastInner<P: BufferPolicy> {
+    storage: RwLock<P::Storage>,
+    /// Per-subscriber channels (bounded to prevent memory exhaustion)
+    subscribers: RwLock<Vec<mpsc::Sender<P::Item>>>,
+    capacity: usize,
     closed: RwLock<bool>,
 }
 
-impl MultiplexBuffer {
-    /// Create a new MultiplexBuffer with the given maximum size.
+impl<P: BufferPolicy> BroadcastBuffer<P> {
+    /// Create a new buffer with the given capacity.
     ///
-    /// When the buffer exceeds `max_size`, the oldest bytes are dropped.
-    pub fn new(max_size: usize) -> Self {
+    /// For byte buffers, capacity is the maximum byte count.
+    /// For entry buffers, capacity is the maximum entry count.
+    pub fn new(capacity: usize) -> Self {
         Self {
-            inner: Arc::new(MultiplexBufferInner {
-                buffer: RwLock::new(Vec::new()),
+            inner: Arc::new(BroadcastInner {
+                storage: RwLock::new(P::Storage::default()),
                 subscribers: RwLock::new(Vec::new()),
-                max_size,
+                capacity,
                 closed: RwLock::new(false),
             }),
         }
     }
 
-    /// Write bytes to the buffer and broadcast to all subscribers.
+    /// Write an item to the buffer and broadcast to all subscribers.
     ///
-    /// This method holds the buffer write lock during both the append and
-    /// broadcast operations, ensuring atomicity with `subscribe()`.
-    /// Dead subscribers (where the receiver has been dropped) are automatically
-    /// cleaned up during each write.
-    pub async fn write(&self, bytes: &[u8]) {
-        if bytes.is_empty() {
+    /// Holds the storage write lock during both append and broadcast,
+    /// ensuring atomicity with `subscribe()`. Dead or full subscribers
+    /// are automatically cleaned up.
+    pub async fn write(&self, item: P::Item) {
+        if P::should_skip(&item) {
             return;
         }
 
-        // Hold buffer write lock during append AND broadcast
-        let mut buf = self.inner.buffer.write().await;
-        buf.extend_from_slice(bytes);
+        let mut storage = self.inner.storage.write().await;
+        P::append(&mut storage, &item);
+        P::truncate(&mut storage, self.inner.capacity);
 
-        // Truncate if over max size
-        if buf.len() > self.inner.max_size {
-            let excess = buf.len() - self.inner.max_size;
-            buf.drain(..excess);
-        }
-
-        // Broadcast to subscribers, removing any whose receivers have dropped
+        // Broadcast to subscribers, removing any that are disconnected or full.
+        // Dropping full subscribers provides backpressure: a consumer that can't
+        // keep up gets disconnected rather than causing unbounded memory growth.
         let mut subs = self.inner.subscribers.write().await;
-        subs.retain(|tx| tx.send(bytes.to_vec()).is_ok());
+        subs.retain(|tx| tx.try_send(item.clone()).is_ok());
     }
 
-    /// Subscribe to the buffer, receiving all existing bytes and future writes.
+    /// Subscribe to the buffer, receiving all existing items and future writes.
     ///
-    /// This method holds the buffer read lock during both the snapshot and
-    /// subscription operations, ensuring atomicity with `write()`.
+    /// Holds the storage read lock during both the snapshot and subscription
+    /// registration, ensuring atomicity with `write()` and `close()`.
     ///
     /// Returns `None` if the buffer has been closed.
-    pub async fn subscribe(&self) -> Option<MultiplexReader> {
-        // Check if closed first
+    pub async fn subscribe(&self) -> Option<BroadcastReader<P>> {
+        let capacity = P::channel_capacity(self.inner.capacity);
+        let (tx, rx) = mpsc::channel(capacity);
+
+        // Acquire storage read lock FIRST to synchronize with both write() (which
+        // holds storage write lock) and close() (which also holds storage write lock).
+        // The closed check must be inside this lock to prevent a TOCTOU race where
+        // close() clears subscribers between our closed check and registration.
+        let storage = self.inner.storage.read().await;
+
         if *self.inner.closed.read().await {
             return None;
         }
 
-        let (tx, rx) = mpsc::unbounded_channel();
-
-        // Hold buffer read lock while subscribing (mutual exclusion with write)
-        let buf = self.inner.buffer.read().await;
         self.inner.subscribers.write().await.push(tx.clone());
+        P::replay(&storage, &tx);
 
-        // Send existing bytes to new subscriber
-        if !buf.is_empty() {
-            let _ = tx.send(buf.clone());
-        }
-
-        Some(MultiplexReader { rx })
+        Some(BroadcastReader { rx })
     }
 
-    /// Close the buffer, causing all readers to receive None on their next read.
+    /// Close the buffer, causing all readers to receive `None` on their next read.
+    ///
+    /// Acquires the storage write lock first to synchronize with subscribe(),
+    /// which holds the storage read lock. This prevents a race where subscribe()
+    /// registers a new subscriber after close() has already cleared the list.
     pub async fn close(&self) {
+        let _storage = self.inner.storage.write().await;
         *self.inner.closed.write().await = true;
-        // Clear subscribers to drop all senders, which closes the channels
         self.inner.subscribers.write().await.clear();
     }
 }
 
-impl Clone for MultiplexBuffer {
+impl<P: BufferPolicy> Clone for BroadcastBuffer<P> {
     fn clone(&self) -> Self {
         Self {
             inner: self.inner.clone(),
@@ -114,38 +225,55 @@ impl Clone for MultiplexBuffer {
     }
 }
 
-/// A reader handle for a MultiplexBuffer.
+// ── Generic reader ──────────────────────────────────────────────────────
+
+/// A reader handle for a [`BroadcastBuffer`].
 ///
-/// Each reader receives bytes independently. When created via `subscribe()`,
-/// the reader first receives all existing buffer contents, then any new bytes
+/// Each reader receives items independently. When created via `subscribe()`,
+/// the reader first receives all existing buffer contents, then any new items
 /// written after subscription.
-pub struct MultiplexReader {
-    rx: mpsc::UnboundedReceiver<Vec<u8>>,
+pub struct BroadcastReader<P: BufferPolicy> {
+    rx: mpsc::Receiver<P::Item>,
 }
 
-impl MultiplexReader {
-    /// Read the next chunk of bytes.
+impl<P: BufferPolicy> BroadcastReader<P> {
+    /// Read the next item.
     ///
-    /// Returns `Some(bytes)` when data is available, or `None` when the
+    /// Returns `Some(item)` when data is available, or `None` when the
     /// buffer has been closed and no more data will arrive.
-    pub async fn read(&mut self) -> Option<Vec<u8>> {
+    pub async fn read(&mut self) -> Option<P::Item> {
         self.rx.recv().await
     }
 }
 
+// ── Type aliases ────────────────────────────────────────────────────────
+
+/// Byte-stream broadcast buffer for PTY output (replay + broadcast).
+pub type MultiplexByteBuffer = BroadcastBuffer<BytePolicy>;
+/// Reader for [`MultiplexByteBuffer`].
+pub type MultiplexByteReader = BroadcastReader<BytePolicy>;
+
+/// Structured broadcast buffer for Claude structured I/O (replay + broadcast).
+pub type MultiplexStructuredBuffer = BroadcastBuffer<StructuredPolicy>;
+/// Reader for [`MultiplexStructuredBuffer`].
+pub type MultiplexStructuredReader = BroadcastReader<StructuredPolicy>;
+
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::claude::types::ClaudeStructuredOutput;
     use std::time::Duration;
     use tokio::time::timeout;
 
+    // ── Byte buffer tests ───────────────────────────────────────────
+
     #[tokio::test]
     async fn test_single_subscriber_receives_data() {
-        let buffer = MultiplexBuffer::new(1024);
+        let buffer = MultiplexByteBuffer::new(1024);
         let mut reader = buffer.subscribe().await.unwrap();
 
-        buffer.write(b"hello").await;
-        buffer.write(b" world").await;
+        buffer.write(b"hello".to_vec()).await;
+        buffer.write(b" world".to_vec()).await;
 
         let chunk1 = reader.read().await.unwrap();
         let chunk2 = reader.read().await.unwrap();
@@ -156,11 +284,11 @@ mod tests {
 
     #[tokio::test]
     async fn test_multiple_subscribers_receive_same_data() {
-        let buffer = MultiplexBuffer::new(1024);
+        let buffer = MultiplexByteBuffer::new(1024);
         let mut reader1 = buffer.subscribe().await.unwrap();
         let mut reader2 = buffer.subscribe().await.unwrap();
 
-        buffer.write(b"broadcast").await;
+        buffer.write(b"broadcast".to_vec()).await;
 
         let data1 = reader1.read().await.unwrap();
         let data2 = reader2.read().await.unwrap();
@@ -170,59 +298,32 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn test_late_subscriber_gets_replay() {
-        let buffer = MultiplexBuffer::new(1024);
-
-        // Write some data before anyone subscribes
-        buffer.write(b"existing").await;
-
-        // Now subscribe - should get existing data
-        let mut reader = buffer.subscribe().await.unwrap();
-        let replay = reader.read().await.unwrap();
-        assert_eq!(replay, b"existing");
-
-        // Write more data - should get it too
-        buffer.write(b" new").await;
-        let live = reader.read().await.unwrap();
-        assert_eq!(live, b" new");
-    }
-
-    #[tokio::test]
     async fn test_late_subscriber_gets_replay_plus_live() {
-        let buffer = MultiplexBuffer::new(1024);
+        let buffer = MultiplexByteBuffer::new(1024);
 
-        // Early subscriber
         let mut early = buffer.subscribe().await.unwrap();
 
-        // Write some data
-        buffer.write(b"first").await;
+        buffer.write(b"first".to_vec()).await;
         assert_eq!(early.read().await.unwrap(), b"first");
 
-        // Late subscriber joins
         let mut late = buffer.subscribe().await.unwrap();
-
-        // Late subscriber gets replay
         let replay = late.read().await.unwrap();
         assert_eq!(replay, b"first");
 
-        // Write more data
-        buffer.write(b"second").await;
+        buffer.write(b"second".to_vec()).await;
 
-        // Both get the new data
         assert_eq!(early.read().await.unwrap(), b"second");
         assert_eq!(late.read().await.unwrap(), b"second");
     }
 
     #[tokio::test]
-    async fn test_buffer_truncation() {
-        let buffer = MultiplexBuffer::new(10); // Only 10 bytes max
+    async fn test_byte_truncation() {
+        let buffer = MultiplexByteBuffer::new(10); // Only 10 bytes max
 
-        // Write 15 bytes total
-        buffer.write(b"12345").await; // buffer: "12345" (5 bytes)
-        buffer.write(b"67890").await; // buffer: "1234567890" (10 bytes)
-        buffer.write(b"ABCDE").await; // buffer: "67890ABCDE" (truncated to 10)
+        buffer.write(b"12345".to_vec()).await;
+        buffer.write(b"67890".to_vec()).await;
+        buffer.write(b"ABCDE".to_vec()).await; // truncated to "67890ABCDE"
 
-        // New subscriber should only see last 10 bytes
         let mut reader = buffer.subscribe().await.unwrap();
         let data = reader.read().await.unwrap();
         assert_eq!(data.len(), 10);
@@ -231,61 +332,54 @@ mod tests {
 
     #[tokio::test]
     async fn test_close_returns_none() {
-        let buffer = MultiplexBuffer::new(1024);
+        let buffer = MultiplexByteBuffer::new(1024);
         let mut reader = buffer.subscribe().await.unwrap();
 
-        buffer.write(b"data").await;
+        buffer.write(b"data".to_vec()).await;
         assert_eq!(reader.read().await.unwrap(), b"data");
 
         buffer.close().await;
-
-        // After close, read returns None
         assert!(reader.read().await.is_none());
     }
 
     #[tokio::test]
     async fn test_subscribe_after_close_returns_none() {
-        let buffer = MultiplexBuffer::new(1024);
-        buffer.write(b"data").await;
+        let buffer = MultiplexByteBuffer::new(1024);
+        buffer.write(b"data".to_vec()).await;
         buffer.close().await;
 
-        // Subscribe after close should return None
         assert!(buffer.subscribe().await.is_none());
     }
 
     #[tokio::test]
     async fn test_empty_write_is_noop() {
-        let buffer = MultiplexBuffer::new(1024);
+        let buffer = MultiplexByteBuffer::new(1024);
         let mut reader = buffer.subscribe().await.unwrap();
 
-        buffer.write(b"").await; // Empty write
-        buffer.write(b"data").await;
+        buffer.write(b"".to_vec()).await; // Empty write
+        buffer.write(b"data".to_vec()).await;
 
-        // Should only receive "data", not an empty chunk
         let data = reader.read().await.unwrap();
         assert_eq!(data, b"data");
     }
 
     #[tokio::test]
     async fn test_concurrent_subscribe_no_gaps() {
-        // This test verifies that subscribing while writes are happening
-        // doesn't cause data loss or duplication
-        let buffer = MultiplexBuffer::new(10 * 1024 * 1024);
+        let buffer = MultiplexByteBuffer::new(10 * 1024 * 1024);
 
-        // Start writing in background
         let buffer_clone = buffer.clone();
         let writer = tokio::spawn(async move {
             for i in 0..100 {
-                buffer_clone.write(format!("msg{:03}", i).as_bytes()).await;
+                buffer_clone
+                    .write(format!("msg{:03}", i).into_bytes())
+                    .await;
                 tokio::task::yield_now().await;
             }
         });
 
-        // Subscribe partway through
         tokio::time::sleep(Duration::from_micros(100)).await;
         let mut reader = buffer.subscribe().await.unwrap();
 
-        // Collect all data
         writer.await.unwrap();
         buffer.close().await;
 
@@ -294,11 +388,8 @@ mod tests {
             all_data.extend(chunk);
         }
 
-        // Verify we got all messages with no gaps
         let data_str = String::from_utf8(all_data).unwrap();
 
-        // Check that messages are in order and no gaps
-        // First chunk might be replay (multiple messages), rest are live
         for i in 0..100 {
             let expected = format!("msg{:03}", i);
             assert!(
@@ -308,7 +399,6 @@ mod tests {
             );
         }
 
-        // Check no duplicates by counting occurrences
         for i in 0..100 {
             let expected = format!("msg{:03}", i);
             let count = data_str.matches(&expected).count();
@@ -318,17 +408,74 @@ mod tests {
 
     #[tokio::test]
     async fn test_dropped_reader_doesnt_block_writes() {
-        let buffer = MultiplexBuffer::new(1024);
+        let buffer = MultiplexByteBuffer::new(1024);
         let reader = buffer.subscribe().await.unwrap();
 
-        // Drop the reader
         drop(reader);
 
-        // Writes should still work (not block)
-        let result = timeout(Duration::from_millis(100), buffer.write(b"data")).await;
+        let result = timeout(Duration::from_millis(100), buffer.write(b"data".to_vec())).await;
         assert!(
             result.is_ok(),
             "Write should not block after reader dropped"
         );
+    }
+
+    // ── Entry buffer tests (policy-specific behavior) ───────────────
+
+    fn user_msg(content: &str, uuid: &str) -> StructuredOutput {
+        StructuredOutput::Claude(ClaudeStructuredOutput::UserMessage {
+            content: content.to_string(),
+            timestamp: "2025-01-15T12:00:00Z".to_string(),
+            uuid: uuid.to_string(),
+        })
+    }
+
+    #[tokio::test]
+    async fn test_entry_truncation_by_count() {
+        let buffer = MultiplexStructuredBuffer::new(3); // Only 3 entries max
+
+        for i in 1..=5 {
+            buffer
+                .write(user_msg(&format!("msg{i}"), &i.to_string()))
+                .await;
+        }
+
+        // Late subscriber should see only the last 3 entries
+        let mut reader = buffer.subscribe().await.unwrap();
+        assert_eq!(reader.read().await.unwrap(), user_msg("msg3", "3"));
+        assert_eq!(reader.read().await.unwrap(), user_msg("msg4", "4"));
+        assert_eq!(reader.read().await.unwrap(), user_msg("msg5", "5"));
+    }
+
+    #[tokio::test]
+    async fn test_entry_per_entry_replay() {
+        let buffer = MultiplexStructuredBuffer::new(100);
+
+        // Write multiple entries before subscribing
+        buffer.write(user_msg("first", "1")).await;
+        buffer.write(user_msg("second", "2")).await;
+        buffer.write(user_msg("third", "3")).await;
+
+        // Each entry should arrive as a separate read() call
+        let mut reader = buffer.subscribe().await.unwrap();
+        assert_eq!(reader.read().await.unwrap(), user_msg("first", "1"));
+        assert_eq!(reader.read().await.unwrap(), user_msg("second", "2"));
+        assert_eq!(reader.read().await.unwrap(), user_msg("third", "3"));
+
+        // Live writes still work
+        buffer.write(user_msg("fourth", "4")).await;
+        assert_eq!(reader.read().await.unwrap(), user_msg("fourth", "4"));
+    }
+
+    #[tokio::test]
+    async fn test_entry_close_returns_none() {
+        let buffer = MultiplexStructuredBuffer::new(100);
+        let mut reader = buffer.subscribe().await.unwrap();
+
+        buffer.write(user_msg("data", "1")).await;
+        assert_eq!(reader.read().await.unwrap(), user_msg("data", "1"));
+
+        buffer.close().await;
+        assert!(reader.read().await.is_none());
     }
 }

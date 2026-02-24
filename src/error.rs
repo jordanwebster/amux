@@ -16,8 +16,8 @@ pub enum AmuxError {
     #[error("Agent not found: {0}")]
     AgentNotFound(String),
 
-    #[error("Invalid message")]
-    InvalidMessage,
+    #[error("Invalid message: {0}")]
+    InvalidMessage(String),
 
     #[error("PTY error: {0}")]
     Pty(String),
@@ -28,12 +28,17 @@ pub enum AmuxError {
     #[error("Server error: {0}")]
     ServerError(String),
 
-    #[error("Too many handshake attempts")]
+    #[error(
+        "Too many handshake attempts (link name collision) — this is usually transient, retry the command"
+    )]
     TooManyHandshakeAttempts,
 
-    #[error("Invalid or missing credentials")]
+    #[error("Invalid or missing credentials — run 'amux init' to re-authenticate")]
     InvalidCredentials,
 
     #[error("amux upgrade required: {0}")]
     VersionMismatch(String),
+
+    #[error("handshake timed out")]
+    HandshakeTimeout,
 }

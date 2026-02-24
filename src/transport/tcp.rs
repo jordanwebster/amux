@@ -1,10 +1,14 @@
+//! TCP transport for server-to-server peering.
+//!
+//! Generic over the stream type (`TcpStream` or `TlsStream<TcpStream>`) so the
+//! same framing logic serves both plain and TLS connections.
+
 use super::framing::{FrameReader, FrameWriter};
 use super::{
     LengthPrefixed, MAX_FRAME_SIZE, MessageReader, MessageWriter, Transport, TransportSplit,
 };
 use crate::error::{AmuxError, Result};
 use crate::message::Message;
-use async_trait::async_trait;
 use tokio::io::{AsyncRead, AsyncWrite};
 
 /// TCP transport with length-prefixed framing (for server-to-server connections).
@@ -29,7 +33,6 @@ where
     }
 }
 
-#[async_trait]
 impl<S> Transport for TcpTransport<S>
 where
     S: AsyncRead + AsyncWrite + Unpin + Send + Sync,
@@ -50,7 +53,6 @@ pub struct TcpMessageReader<S> {
     reader: FrameReader<tokio::io::ReadHalf<S>>,
 }
 
-#[async_trait]
 impl<S: AsyncRead + Unpin + Send> MessageReader for TcpMessageReader<S> {
     async fn read_message(&mut self) -> Result<Message> {
         let data = self.reader.read_frame(MAX_FRAME_SIZE).await?;
@@ -63,7 +65,6 @@ pub struct TcpMessageWriter<S> {
     writer: FrameWriter<tokio::io::WriteHalf<S>>,
 }
 
-#[async_trait]
 impl<S: AsyncWrite + Unpin + Send> MessageWriter for TcpMessageWriter<S> {
     async fn write_message(&mut self, msg: &Message) -> Result<()> {
         let data = msg.encode().map_err(AmuxError::SerializationEncode)?;

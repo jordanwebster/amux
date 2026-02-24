@@ -102,7 +102,7 @@ impl VariableContext {
 
 /// Test executor
 pub struct Executor {
-    config: ExecutorConfig,
+    pub config: ExecutorConfig,
 }
 
 impl Executor {

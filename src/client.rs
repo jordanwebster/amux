@@ -2,10 +2,11 @@ use crate::config::Config;
 use crate::error::AmuxError::AgentNotFound;
 use crate::error::{AmuxError, Result};
 use crate::message::{
-    AgentType, Command, CreateAgentRequest, DirectMessage, Message, PROTOCOL_VERSION,
-    ProtocolError, RoutableMessage, ServerDebugInfo, ShutdownReason, TerminalSize,
+    AgentType, Command, CreateAgentRequest, Message, RoutableMessage, ServerDebugInfo,
+    ShutdownReason, TerminalSize,
 };
 use crate::route::{Route, generate_terminal_link};
+use crate::server::connect_handshake;
 use crate::transport::{Transport, UnixTransport};
 use std::io::{self, Read, Write};
 use std::os::unix::io::AsRawFd;
@@ -29,6 +30,17 @@ enum StdinEvent {
     Detach,
 }
 
+/// Why the attached session's main loop exited.
+/// Replaces three separate mutable state variables (detached, error,
+/// shutdown_reason) with a single sum type — impossible states become
+/// unrepresentable and the post-loop handling is an exhaustive match.
+enum ExitReason {
+    Detached,
+    SessionEnded,
+    Shutdown(ShutdownReason),
+    Error(AmuxError),
+}
+
 /// Find a subsequence within a slice, returns the starting index if found
 fn find_subsequence(haystack: &[u8], needle: &[u8]) -> Option<usize> {
     haystack
@@ -40,74 +52,13 @@ fn find_subsequence(haystack: &[u8], needle: &[u8]) -> Option<usize> {
 async fn connect_and_handshake(config: &Config) -> Result<(UnixTransport, String)> {
     let stream = UnixStream::connect(&config.socket_path).await?;
     let mut transport = UnixTransport::new(stream);
-
-    // Retry up to 5 times on same connection in case of link name collision
-    for attempt in 0..5 {
-        // Generate terminal link name: "term-{rand}"
-        let link_name = generate_terminal_link();
-        transport
-            .write_message(&Message::Direct(DirectMessage::Connect {
-                link_name: link_name.clone(),
-                token: None,
-                version: PROTOCOL_VERSION,
-            }))
-            .await?;
-
-        // Receive ConnectResult
-        let response = transport.read_message().await?;
-        match response {
-            Message::Direct(DirectMessage::ConnectResult { error: None }) => {
-                tracing::info!(link = %link_name, "connected");
-                return Ok((transport, link_name));
-            }
-            Message::Direct(DirectMessage::ConnectResult {
-                error: Some(ProtocolError::LinkNameTaken),
-            }) => {
-                tracing::debug!(link = %link_name, attempt = attempt + 1, "link name taken, retrying");
-                continue;
-            }
-            Message::Direct(DirectMessage::ConnectResult {
-                error: Some(ProtocolError::InvalidCredentials),
-            }) => {
-                tracing::error!("invalid credentials");
-                return Err(AmuxError::InvalidCredentials);
-            }
-            Message::Direct(DirectMessage::ConnectResult {
-                error: Some(ProtocolError::InvalidLinkName),
-            }) => {
-                return Err(AmuxError::Config(
-                    ProtocolError::InvalidLinkName.to_string(),
-                ));
-            }
-            Message::Direct(DirectMessage::ConnectResult {
-                error:
-                    Some(ProtocolError::VersionMismatch {
-                        server_version,
-                        client_version,
-                    }),
-            }) => {
-                return Err(AmuxError::VersionMismatch(format!(
-                    "protocol v{}, client v{}",
-                    server_version, client_version
-                )));
-            }
-            Message::Direct(DirectMessage::ConnectResult { error }) => {
-                let msg = error
-                    .map(|e| e.to_string())
-                    .unwrap_or_else(|| "Connection rejected".to_string());
-                return Err(AmuxError::Config(msg));
-            }
-            _ => return Err(AmuxError::InvalidMessage),
-        }
-    }
-
-    Err(AmuxError::Config(
-        "Failed to connect after 5 attempts".to_string(),
-    ))
+    let link_name = connect_handshake(&mut transport, generate_terminal_link).await?;
+    tracing::info!(link = %link_name, "connected");
+    Ok((transport, link_name))
 }
 
 /// Get terminal size, falling back to 24x80 if the ioctl fails
-pub fn get_terminal_size() -> TerminalSize {
+fn get_terminal_size() -> TerminalSize {
     let mut size: libc::winsize = unsafe { std::mem::zeroed() };
     let fd = io::stdout().as_raw_fd();
 
@@ -167,12 +118,18 @@ pub async fn new_agent(name: Option<&str>, agent_type: AgentType, config: &Confi
                 )
                 .await
             }
-            RoutableMessage::CreateAgentResult { error: Some(e), .. } => {
-                Err(AmuxError::Pty(e.to_string()))
-            }
-            _ => Err(AmuxError::InvalidMessage),
+            RoutableMessage::CreateAgentResult { error: Some(e), .. } => Err(
+                AmuxError::ServerError(format!("failed to create agent: {e}")),
+            ),
+            other => Err(AmuxError::InvalidMessage(format!(
+                "expected CreateAgentResult, got {}",
+                other.type_label()
+            ))),
         },
-        _ => Err(AmuxError::InvalidMessage),
+        other => Err(AmuxError::InvalidMessage(format!(
+            "expected Routable(CreateAgentResult), got {}",
+            other.type_label()
+        ))),
     }
 }
 
@@ -199,8 +156,11 @@ pub async fn attach(target: Option<&str>, config: &Config) -> Result<()> {
                 Message::Command(Command::ResolveAgentResult { agent: None }) => {
                     return Err(AgentNotFound(identifier.to_string()));
                 }
-                _ => {
-                    return Err(AmuxError::InvalidMessage);
+                other => {
+                    return Err(AmuxError::InvalidMessage(format!(
+                        "expected ResolveAgentResult, got {}",
+                        other.type_label()
+                    )));
                 }
             }
         }
@@ -219,8 +179,11 @@ pub async fn attach(target: Option<&str>, config: &Config) -> Result<()> {
                     eprintln!("No agents running. Use 'amux new-agent' to create one.");
                     return Ok(());
                 }
-                _ => {
-                    return Err(AmuxError::InvalidMessage);
+                other => {
+                    return Err(AmuxError::InvalidMessage(format!(
+                        "expected ListAgentsResult, got {}",
+                        other.type_label()
+                    )));
                 }
             }
         }
@@ -280,12 +243,18 @@ async fn subscribe_and_stream(
                 eprintln!("Failed to subscribe: {}", e);
                 return Ok(());
             }
-            _ => {
-                return Err(AmuxError::InvalidMessage);
+            other => {
+                return Err(AmuxError::InvalidMessage(format!(
+                    "expected SubscribeRawResult, got {}",
+                    other.type_label()
+                )));
             }
         },
-        _ => {
-            return Err(AmuxError::InvalidMessage);
+        other => {
+            return Err(AmuxError::InvalidMessage(format!(
+                "expected Routable(SubscribeRawResult), got {}",
+                other.type_label()
+            )));
         }
     }
 
@@ -343,8 +312,11 @@ pub async fn list_agents(config: &Config) -> Result<()> {
                 }
             }
         }
-        _ => {
-            return Err(AmuxError::InvalidMessage);
+        other => {
+            return Err(AmuxError::InvalidMessage(format!(
+                "expected ListAgentsResult, got {}",
+                other.type_label()
+            )));
         }
     }
 
@@ -402,10 +374,13 @@ pub async fn connect(address: &str, config: &Config) -> Result<()> {
             println!("Connected to {}", address);
             Ok(())
         }
-        Message::Command(Command::ConnectToServerResult { error: Some(e) }) => {
-            Err(AmuxError::Config(e.to_string()))
-        }
-        _ => Err(AmuxError::InvalidMessage),
+        Message::Command(Command::ConnectToServerResult { error: Some(e) }) => Err(
+            AmuxError::ServerError(format!("failed to connect to {address}: {e}")),
+        ),
+        other => Err(AmuxError::InvalidMessage(format!(
+            "expected ConnectToServerResult, got {}",
+            other.type_label()
+        ))),
     }
 }
 
@@ -429,7 +404,10 @@ pub async fn debug(config: &Config) -> Result<ServerDebugInfo> {
     let response = transport.read_message().await?;
     match response {
         Message::Command(Command::DebugResult { info }) => Ok(info),
-        _ => Err(AmuxError::InvalidMessage),
+        other => Err(AmuxError::InvalidMessage(format!(
+            "expected DebugResult, got {}",
+            other.type_label()
+        ))),
     }
 }
 
@@ -557,14 +535,11 @@ async fn run_attached(
         }
     });
 
-    let mut detached = false;
-    let mut error: Option<AmuxError> = None;
-    let mut shutdown_reason: Option<ShutdownReason> = None;
-
-    // Main loop: select on stdin channel and server messages
-    loop {
+    // Main loop: select on stdin channel and server messages.
+    // The loop produces an ExitReason via break-with-value, which the
+    // post-loop match handles exhaustively.
+    let exit_reason: ExitReason = loop {
         tokio::select! {
-            // Event from stdin
             event = input_rx.recv() => {
                 match event {
                     Some(StdinEvent::Data(data)) => {
@@ -579,20 +554,13 @@ async fn run_attached(
                                 data,
                             },
                         )).await.is_err() {
-                            break;
+                            break ExitReason::SessionEnded;
                         }
                     }
-                    Some(StdinEvent::Detach) => {
-                        detached = true;
-                        break;
-                    }
-                    None => {
-                        // Channel closed (stdin task exited unexpectedly)
-                        break;
-                    }
+                    Some(StdinEvent::Detach) => break ExitReason::Detached,
+                    None => break ExitReason::SessionEnded,
                 }
             }
-            // Message from server
             msg = transport.read_message() => {
                 match msg {
                     Ok(Message::Routable { payload, .. }) => {
@@ -603,45 +571,42 @@ async fn run_attached(
                             }
                             Ok(RoutableMessage::SubscriptionClosed { .. }) => {
                                 tracing::info!("agent ended");
-                                break;
+                                break ExitReason::SessionEnded;
                             }
                             _ => {} // Ignore unexpected routable messages
                         }
                     }
                     Ok(Message::Command(Command::ShutdownNotification(reason))) => {
                         tracing::info!(reason = %reason, "server shutdown");
-                        shutdown_reason = Some(reason);
-                        break;
+                        break ExitReason::Shutdown(reason);
                     }
                     Err(e) => {
                         tracing::warn!(error = %e, "read error");
-                        error = Some(e);
-                        break;
+                        break ExitReason::Error(e);
                     }
                     _ => {} // Ignore unexpected messages
                 }
             }
         }
-    }
+    };
 
     // Drop raw mode guard before printing message
     drop(_raw_guard);
 
-    if let Some(e) = error {
-        return Err(e);
-    }
-
-    if let Some(reason) = shutdown_reason {
-        println!("\n[{}]", reason);
-        std::process::exit(1);
-    }
-
-    if detached {
-        println!("\n[detached from session]");
-    } else {
-        println!("\n[session ended]");
-        // Force exit because stdin blocking read in spawn_blocking won't terminate
-        std::process::exit(0);
+    match exit_reason {
+        ExitReason::Error(e) => return Err(e),
+        ExitReason::Shutdown(reason) => {
+            println!("\n[{}]", reason);
+            std::process::exit(1);
+        }
+        ExitReason::Detached => {
+            println!("\n[detached from session]");
+        }
+        ExitReason::SessionEnded => {
+            println!("\n[session ended]");
+            // Force exit because stdin blocking read in spawn_blocking won't terminate
+            std::process::exit(0);
+        }
     }
 
     Ok(())

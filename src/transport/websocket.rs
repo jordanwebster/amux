@@ -1,7 +1,13 @@
+//! WebSocket transport with binary MessagePack frames.
+//!
+//! Used for browser-based clients and cloud relay connections. Unlike the
+//! byte-stream transports, WebSocket provides its own message framing so
+//! no length prefix is needed. Ping/Pong handling is split: the reader
+//! forwards ping payloads to the writer via a channel.
+
 use super::{MessageReader, MessageWriter, Transport, TransportSplit};
 use crate::error::{AmuxError, Result};
 use crate::message::Message;
-use async_trait::async_trait;
 use futures_util::{SinkExt, StreamExt};
 use tokio::net::TcpStream;
 use tokio::sync::mpsc;
@@ -14,13 +20,11 @@ pub struct WebSocketTransport {
 }
 
 impl WebSocketTransport {
-    /// Create a new transport from a WebSocket stream
     pub fn new(stream: WebSocketStream<TcpStream>) -> Self {
         Self { stream }
     }
 }
 
-#[async_trait]
 impl Transport for WebSocketTransport {
     async fn read_message(&mut self) -> Result<Message> {
         loop {
@@ -67,7 +71,6 @@ pub struct WsMessageReader {
     pong_tx: mpsc::Sender<Vec<u8>>,
 }
 
-#[async_trait]
 impl MessageReader for WsMessageReader {
     async fn read_message(&mut self) -> Result<Message> {
         loop {
@@ -103,7 +106,6 @@ pub struct WsMessageWriter {
     pong_rx: mpsc::Receiver<Vec<u8>>,
 }
 
-#[async_trait]
 impl MessageWriter for WsMessageWriter {
     async fn write_message(&mut self, msg: &Message) -> Result<()> {
         // Drain any pending pong payloads first
