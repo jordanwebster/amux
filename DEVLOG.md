@@ -38,6 +38,25 @@ One paragraph describing what was done.
 
 ---
 
+## 2026-02-28: Improve OAuth error diagnostics for expired refresh tokens
+
+### Summary
+Fixed opaque OAuth error messages and incorrect retry behavior when a refresh token expires. Previously, an expired token produced `"Server returned error response"` and retried forever with exponential backoff. Now it detects `InvalidGrant` specifically, logs a clear message, and stops retrying immediately.
+
+### Changes
+- `src/oauth.rs`: Added `RefreshTokenExpired` variant to `OAuthError`. Pattern-match on `RequestTokenError::ServerResponse` to detect `InvalidGrant` and preserve error descriptions for other server errors.
+- `src/server/cloud.rs`: Treat `RefreshTokenExpired` as non-retriable (same as `NotAuthenticated`), stopping the reconnect loop immediately.
+
+### Decisions Made
+- Map `InvalidGrant` to a dedicated error variant rather than a generic string, so upstream code can match on it for control flow (non-retriable vs retriable)
+- Keep other `ServerResponse` errors as `OAuthError::Request` but include the actual error code and description instead of the opaque oauth2 crate `.to_string()`
+
+### Verification
+- `cargo check && cargo fmt && cargo clippy --workspace --all-targets -- -D warnings && cargo test` — all 164 tests pass
+- Manual test confirmed clear log output: `ERROR cloud non-retriable error, stopping error=Authentication failed — run 'amux init' to re-authenticate`
+
+---
+
 ## 2026-02-22: Consolidated branch cleanup and hardening
 
 ### Summary

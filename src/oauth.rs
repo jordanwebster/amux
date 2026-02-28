@@ -4,11 +4,12 @@
 //! users without requiring a browser on the same machine as the CLI.
 
 use chrono::{DateTime, Utc};
-use oauth2::basic::BasicClient;
+use oauth2::basic::{BasicClient, BasicErrorResponseType};
 use oauth2::devicecode::StandardDeviceAuthorizationResponse;
 use oauth2::reqwest::async_http_client;
 use oauth2::{
-    AuthUrl, ClientId, DeviceAuthorizationUrl, RefreshToken, Scope, TokenResponse, TokenUrl,
+    AuthUrl, ClientId, DeviceAuthorizationUrl, RefreshToken, RequestTokenError, Scope,
+    TokenResponse, TokenUrl,
 };
 use serde::Deserialize;
 use thiserror::Error;
@@ -19,6 +20,8 @@ pub enum OAuthError {
     Config(String),
     #[error("OAuth request error: {0}")]
     Request(String),
+    #[error("Refresh token expired or revoked — run 'amux init' to re-authenticate")]
+    RefreshTokenExpired,
     #[error("No refresh token returned")]
     NoRefreshToken,
     #[error("Unauthorized - token may be expired or revoked")]
@@ -124,7 +127,19 @@ pub async fn refresh_access_token(
         .exchange_refresh_token(&RefreshToken::new(refresh_token.to_string()))
         .request_async(async_http_client)
         .await
-        .map_err(|e| OAuthError::Request(e.to_string()))?;
+        .map_err(|e| match &e {
+            RequestTokenError::ServerResponse(resp) => match resp.error() {
+                BasicErrorResponseType::InvalidGrant => OAuthError::RefreshTokenExpired,
+                other => {
+                    let desc = resp
+                        .error_description()
+                        .map(|d| format!(": {d}"))
+                        .unwrap_or_default();
+                    OAuthError::Request(format!("{}{desc}", other.as_ref()))
+                }
+            },
+            _ => OAuthError::Request(e.to_string()),
+        })?;
 
     let access_token = token_response.access_token().secret().clone();
     let new_refresh = token_response.refresh_token().map(|t| t.secret().clone());

@@ -134,9 +134,11 @@ async fn run_cloud_connection(
 ) -> std::result::Result<(), CloudConnectionError> {
     let conn = match CloudConnection::connect(config).await {
         Ok(conn) => conn,
-        Err(CloudError::NotAuthenticated) | Err(CloudError::Auth(_)) => {
+        Err(CloudError::NotAuthenticated)
+        | Err(CloudError::Auth(_))
+        | Err(CloudError::OAuth(crate::oauth::OAuthError::RefreshTokenExpired)) => {
             return Err(CloudConnectionError::NonRetriable(
-                "Authentication failed - run 'amux init' to re-authenticate".to_string(),
+                "Authentication failed — run 'amux init' to re-authenticate".to_string(),
             ));
         }
         Err(CloudError::CloudDisabled) => {
