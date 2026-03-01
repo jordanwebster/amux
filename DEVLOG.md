@@ -38,6 +38,35 @@ One paragraph describing what was done.
 
 ---
 
+## 2026-03-01: Env-var agent ID + StructuredLogSource composite type
+
+### Summary
+Fixed hook system breaking when Claude Code's `session_id` changes (via `/clear`, `/compact`, `/fork`). Previously the server looked up agents by `session_id` extracted from the hook JSON payload, but after compaction Claude has a new `session_id` that doesn't match any agent. Now agents are identified by `AMUX_AGENT_ID` env var (set when spawning Claude), and transcript tailing supports clean re-linking with buffer clearing.
+
+### Changes
+- `src/buffer.rs`: Added `clear()` method to `BroadcastBuffer` — resets storage but keeps subscribers connected. Added test.
+- `src/claude/structured_log_source.rs`: **New** — composite type owning buffer + transcript tailer with `link_transcript()` that supports re-linking (stops old tailer, clears buffer, starts new tailer).
+- `src/claude/mod.rs`: Registered new module.
+- `src/session.rs`: Replaced `log_buffer` + `transcript_tailer` fields with `StructuredLogSource`. Removed `MAX_LOG_ENTRIES` (moved to `StructuredLogSource`). Set `AMUX_AGENT_ID` env var when spawning Claude. Dropped `--session-id` CLI flag.
+- `src/message.rs`: Added `agent_id: Uuid` field to `Command::HandleHook`. Updated `AgentType::Claude` doc comment.
+- `src/claude/hooks.rs`: Read `AMUX_AGENT_ID` from environment, pass to `Command::HandleHook`.
+- `src/server/handlers.rs`: `HandleHook` handler uses `agent_id` from command instead of `session_id` from hook payload. Updated 4 hook tests.
+
+### Decisions Made
+- `AMUX_AGENT_ID` env var is the stable agent identifier, decoupled from Claude's session_id which changes on `/clear`/`/compact`/`/fork`.
+- `StructuredLogSource::link_transcript()` clears the buffer on re-link so subscribers don't see stale entries from the old session.
+- `BroadcastBuffer::clear()` is separate from `close()` — clear resets data but keeps the buffer open and subscribers connected.
+
+### Verification
+- `cargo check && cargo fmt && cargo clippy --workspace --all-targets -- -D warnings`: clean
+- `cargo test`: 165 tests pass
+- E2E tests: 10/10 pass
+
+### Next Steps
+- Manual test with Claude Code: verify `/compact` triggers SessionStart hook with new transcript path and the tailer re-links correctly.
+
+---
+
 ## 2026-02-28: Improve OAuth error diagnostics for expired refresh tokens
 
 ### Summary

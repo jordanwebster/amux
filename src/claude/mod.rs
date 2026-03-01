@@ -8,5 +8,6 @@
 
 pub mod hooks;
 pub mod plugin;
+pub(crate) mod structured_log_source;
 pub(crate) mod transcript;
 pub(crate) mod types;

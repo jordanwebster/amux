@@ -12,6 +12,7 @@ use crate::route::generate_hook_link;
 use crate::transport::{Transport, UnixTransport};
 use std::io::{self, BufRead};
 use tokio::net::UnixStream;
+use uuid::Uuid;
 
 /// Handle Claude Code hook event.
 /// Reads JSON from stdin and sends HookEvent to server.
@@ -23,6 +24,17 @@ pub fn handle_claude_hook(config: &Config) {
 }
 
 fn handle_claude_hook_inner(config: &Config) -> io::Result<()> {
+    // Read agent_id from environment (set by amux when spawning Claude)
+    let agent_id: Uuid = std::env::var("AMUX_AGENT_ID")
+        .map_err(|_| io::Error::new(io::ErrorKind::NotFound, "AMUX_AGENT_ID not set"))?
+        .parse()
+        .map_err(|e| {
+            io::Error::new(
+                io::ErrorKind::InvalidData,
+                format!("invalid AMUX_AGENT_ID: {e}"),
+            )
+        })?;
+
     // Read all input from stdin
     let stdin = io::stdin();
     let mut input = String::new();
@@ -56,7 +68,8 @@ fn handle_claude_hook_inner(config: &Config) -> io::Result<()> {
         let socket_path = config.socket_path.clone();
         tokio::task::block_in_place(|| {
             tokio::runtime::Handle::current().block_on(async {
-                if let Err(e) = send_hook_event_to_server_inner(&socket_path, hook).await {
+                if let Err(e) = send_hook_event_to_server_inner(&socket_path, agent_id, hook).await
+                {
                     tracing::warn!(error = %e, "failed to send hook to server");
                 }
             });
@@ -70,6 +83,7 @@ fn handle_claude_hook_inner(config: &Config) -> io::Result<()> {
 
 async fn send_hook_event_to_server_inner(
     socket_path: &std::path::Path,
+    agent_id: Uuid,
     hook: Hook,
 ) -> io::Result<()> {
     let stream = UnixStream::connect(socket_path)
@@ -115,7 +129,7 @@ async fn send_hook_event_to_server_inner(
 
     // Send HandleHook command
     transport
-        .write_message(&Message::Command(Command::HandleHook { hook }))
+        .write_message(&Message::Command(Command::HandleHook { agent_id, hook }))
         .await
         .map_err(io::Error::other)?;
 

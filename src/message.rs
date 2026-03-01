@@ -27,7 +27,7 @@ pub const PROTOCOL_VERSION: u32 = 3;
 /// Type of agent to spawn
 #[derive(Serialize, Deserialize, Debug, Clone, PartialEq)]
 pub enum AgentType {
-    /// Claude Code agent (passes --session-id to claude command)
+    /// Claude Code agent (sets AMUX_AGENT_ID env var)
     Claude,
     /// Test agent for E2E tests (only available in dev/test builds)
     #[cfg(any(debug_assertions, test))]
@@ -224,7 +224,7 @@ pub(crate) enum Command {
     DebugResult { info: ServerDebugInfo },
     ConnectToServer { address: String },
     ConnectToServerResult { error: Option<ProtocolError> },
-    HandleHook { hook: Hook },
+    HandleHook { agent_id: Uuid, hook: Hook },
     HandleHookResult { error: Option<ProtocolError> },
 }
 

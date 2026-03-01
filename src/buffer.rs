@@ -205,6 +205,15 @@ impl<P: BufferPolicy> BroadcastBuffer<P> {
         Some(BroadcastReader { rx })
     }
 
+    /// Clear all stored data but keep the buffer open.
+    ///
+    /// Existing subscribers remain connected and will receive future writes.
+    /// Late subscribers will only see data written after the clear.
+    pub async fn clear(&self) {
+        let mut storage = self.inner.storage.write().await;
+        *storage = P::Storage::default();
+    }
+
     /// Close the buffer, causing all readers to receive `None` on their next read.
     ///
     /// Acquires the storage write lock first to synchronize with subscribe(),
@@ -465,6 +474,30 @@ mod tests {
         // Live writes still work
         buffer.write(user_msg("fourth", "4")).await;
         assert_eq!(reader.read().await.unwrap(), user_msg("fourth", "4"));
+    }
+
+    #[tokio::test]
+    async fn test_clear_resets_storage_keeps_subscribers() {
+        let buffer = MultiplexStructuredBuffer::new(100);
+
+        buffer.write(user_msg("before", "1")).await;
+        buffer.write(user_msg("also-before", "2")).await;
+
+        // Existing subscriber receives pre-clear data
+        let mut early = buffer.subscribe().await.unwrap();
+        assert_eq!(early.read().await.unwrap(), user_msg("before", "1"));
+        assert_eq!(early.read().await.unwrap(), user_msg("also-before", "2"));
+
+        buffer.clear().await;
+
+        // Late subscriber after clear sees nothing from before
+        let mut late = buffer.subscribe().await.unwrap();
+
+        // Write new data — both subscribers should receive it
+        buffer.write(user_msg("after", "3")).await;
+
+        assert_eq!(early.read().await.unwrap(), user_msg("after", "3"));
+        assert_eq!(late.read().await.unwrap(), user_msg("after", "3"));
     }
 
     #[tokio::test]

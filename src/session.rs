@@ -1,8 +1,6 @@
 use crate::agent_registry::Agent;
-use crate::buffer::{
-    MultiplexByteBuffer, MultiplexByteReader, MultiplexStructuredBuffer, MultiplexStructuredReader,
-};
-use crate::claude::transcript::TranscriptTailer;
+use crate::buffer::{MultiplexByteBuffer, MultiplexByteReader, MultiplexStructuredReader};
+use crate::claude::structured_log_source::StructuredLogSource;
 use crate::claude::types::StructuredOutput;
 use crate::error::{AmuxError, Result};
 use crate::message::{AgentType, CreateAgentRequest};
@@ -12,15 +10,11 @@ use std::io::{Read, Write};
 use std::path::PathBuf;
 use std::sync::Arc;
 use tokio::sync::{Mutex, mpsc};
-use tokio::task::JoinHandle;
 use tracing::Instrument;
 use uuid::Uuid;
 
 /// Maximum replay buffer size for PTY bytes
 const MAX_REPLAY_BUFFER: usize = 10 * 1024 * 1024; // 10MB
-
-/// Maximum number of structured log entries to keep
-const MAX_LOG_ENTRIES: usize = 1000;
 
 /// Event sent when a session ends
 #[derive(Clone)]
@@ -49,11 +43,8 @@ pub struct LocalAgentSession {
     /// Multiplex buffer for PTY output (handles both replay and broadcast)
     buffer: Arc<MultiplexByteBuffer>,
 
-    /// Multiplex buffer for structured logs (populated by transcript tailer)
-    log_buffer: Arc<MultiplexStructuredBuffer>,
-
-    /// Transcript tailer handle (None if no transcript linked)
-    transcript_tailer: Mutex<Option<(TranscriptTailer, JoinHandle<()>)>>,
+    /// Structured log source (buffer + transcript tailer)
+    log_source: StructuredLogSource,
 
     /// Channel to send input to PTY
     input_tx: mpsc::Sender<Vec<u8>>,
@@ -71,10 +62,7 @@ impl LocalAgentSession {
     ) -> Result<Self> {
         // Build command and args based on agent type
         let (command, args): (String, Vec<String>) = match &req.agent_type {
-            AgentType::Claude => (
-                "claude".to_string(),
-                vec![format!("--session-id={}", req.agent_id)],
-            ),
+            AgentType::Claude => ("claude".to_string(), vec![]),
             #[cfg(any(debug_assertions, test))]
             AgentType::TestAgent(cmd) => (cmd.clone(), vec![]),
         };
@@ -101,6 +89,9 @@ impl LocalAgentSession {
             cmd.arg(arg);
         }
         cmd.cwd(&req.working_dir);
+        if matches!(&req.agent_type, AgentType::Claude) {
+            cmd.env("AMUX_AGENT_ID", req.agent_id.to_string());
+        }
         let mut child = pair
             .slave
             .spawn_command(cmd)
@@ -119,7 +110,7 @@ impl LocalAgentSession {
             Arc::new(Mutex::new(Some(master)));
         let current_size: Arc<Mutex<(u16, u16)>> = Arc::new(Mutex::new((size.rows, size.cols)));
         let buffer = Arc::new(MultiplexByteBuffer::new(MAX_REPLAY_BUFFER));
-        let log_buffer = Arc::new(MultiplexStructuredBuffer::new(MAX_LOG_ENTRIES));
+        let log_source = StructuredLogSource::new();
         let (input_tx, mut input_rx) = mpsc::channel::<Vec<u8>>(256);
 
         // Task: Read from PTY, write to multiplex buffer
@@ -159,7 +150,7 @@ impl LocalAgentSession {
         let session_id = req.agent_id;
         let master_clone = master.clone();
         let buffer_clone = buffer.clone();
-        let log_buffer_clone = log_buffer.clone();
+        let log_buffer_clone = log_source.buffer().clone();
         let span = session_span;
         tokio::task::spawn_blocking(move || {
             let _guard = span.enter();
@@ -195,8 +186,7 @@ impl LocalAgentSession {
             working_dir: req.working_dir.clone(),
             pty_master: master,
             buffer,
-            log_buffer,
-            transcript_tailer: Mutex::new(None),
+            log_source,
             input_tx,
             current_size,
         })
@@ -250,27 +240,21 @@ impl LocalAgentSession {
     /// Shutdown the session
     pub async fn shutdown(&self) {
         tracing::info!(agent_id = %self.agent_id, "shutting down session");
-        // Stop transcript tailer if running
-        if let Some((tailer, _handle)) = self.transcript_tailer.lock().await.take() {
-            tailer.stop();
-        }
         // Drop the PTY master to kill any remaining processes
         self.pty_master.lock().await.take();
         // Close the multiplex buffer to disconnect clients
         self.buffer.close().await;
-        // Close the log buffer
-        self.log_buffer.close().await;
+        // Close the log source (stops tailer and closes buffer)
+        self.log_source.close().await;
     }
 
     /// Link a transcript file to this session.
     ///
-    /// Starts a background task that tails the transcript file and writes
-    /// parsed log entries to the log buffer.
+    /// On first call, starts tailing. On subsequent calls (session change),
+    /// clears the buffer and starts tailing the new path.
     pub async fn link_transcript(&self, path: PathBuf) {
         tracing::debug!(agent_id = %self.agent_id, path = %path.display(), "linking transcript");
-        let tailer = TranscriptTailer::new(path, self.log_buffer.clone());
-        let handle = tailer.start();
-        *self.transcript_tailer.lock().await = Some((tailer, handle));
+        self.log_source.link_transcript(path).await;
     }
 
     /// Subscribe to structured logs.
@@ -280,13 +264,13 @@ impl LocalAgentSession {
     ///
     /// Returns `None` if the log buffer has been closed.
     pub async fn subscribe_logs(&self) -> Option<MultiplexStructuredReader> {
-        self.log_buffer.subscribe().await
+        self.log_source.subscribe().await
     }
 
     /// Write a structured output entry directly (not from transcript).
     /// Used for permission requests and other events that don't come from the transcript.
     pub async fn write_log(&self, entry: StructuredOutput) {
-        self.log_buffer.write(entry).await;
+        self.log_source.write(entry).await;
     }
 
     /// Convert to Agent for listing

@@ -520,33 +520,29 @@ async fn handle_command(
             Ok(())
         }
 
-        Command::HandleHook { hook } => {
-            // Extract session_id and hook_type in one match, then do a single
-            // session lookup instead of duplicating it per variant.
-            let (session_id, hook_type) = match &hook {
-                Hook::Claude(ClaudeHook::SessionStart(s)) => (s.session_id, "SessionStart"),
-                Hook::Claude(ClaudeHook::PermissionRequest(p)) => {
-                    (p.session_id, "PermissionRequest")
-                }
+        Command::HandleHook { agent_id, hook } => {
+            let hook_type = match &hook {
+                Hook::Claude(ClaudeHook::SessionStart(_)) => "SessionStart",
+                Hook::Claude(ClaudeHook::PermissionRequest(_)) => "PermissionRequest",
             };
-            tracing::debug!(hook_type, "received hook event");
+            tracing::debug!(hook_type, %agent_id, "received hook event");
 
             let session = {
                 let us = ctx.user_state.read().await;
-                us.agents.get(&session_id).cloned()
+                us.agents.get(&agent_id).cloned()
             };
 
             let result = match session {
                 Some(session) => {
                     match hook {
                         Hook::Claude(ClaudeHook::SessionStart(session_start)) => {
-                            tracing::debug!(agent_id = %session_id, "linking transcript");
+                            tracing::debug!(%agent_id, "linking transcript");
                             session
                                 .link_transcript(PathBuf::from(&session_start.transcript_path))
                                 .await;
                         }
                         Hook::Claude(ClaudeHook::PermissionRequest(perm_req)) => {
-                            tracing::debug!(agent_id = %session_id, "permission request");
+                            tracing::debug!(%agent_id, "permission request");
                             session
                                 .write_log(StructuredOutput::Claude(
                                     ClaudeStructuredOutput::PermissionRequest {
@@ -559,9 +555,9 @@ async fn handle_command(
                     Ok(())
                 }
                 None => {
-                    tracing::warn!(session_id = %session_id, "no agent found for hook");
+                    tracing::warn!(%agent_id, "no agent found for hook");
                     Err(ProtocolError::ServerError(format!(
-                        "No agent found with session_id: {session_id}"
+                        "No agent found with agent_id: {agent_id}"
                     )))
                 }
             };
@@ -1647,12 +1643,13 @@ mod tests {
         let ctx = test_ctx(state, user_state);
         let (tx, written) = mock_tx();
 
+        let agent_id = Uuid::new_v4();
         let hook = Hook::Claude(ClaudeHook::SessionStart(ClaudeSessionStart {
             session_id: Uuid::new_v4(),
             transcript_path: "/tmp/transcript.jsonl".to_string(),
         }));
 
-        handle_command(&tx, Command::HandleHook { hook }, &ctx)
+        handle_command(&tx, Command::HandleHook { agent_id, hook }, &ctx)
             .await
             .unwrap();
 
@@ -1680,11 +1677,11 @@ mod tests {
         let (tx, written) = mock_tx();
 
         let hook = Hook::Claude(ClaudeHook::SessionStart(ClaudeSessionStart {
-            session_id: agent_id,
+            session_id: Uuid::new_v4(),
             transcript_path: "/tmp/nonexistent_transcript.jsonl".to_string(),
         }));
 
-        handle_command(&tx, Command::HandleHook { hook }, &ctx)
+        handle_command(&tx, Command::HandleHook { agent_id, hook }, &ctx)
             .await
             .unwrap();
 
@@ -1708,6 +1705,7 @@ mod tests {
         let ctx = test_ctx(state, user_state);
         let (tx, written) = mock_tx();
 
+        let agent_id = Uuid::new_v4();
         let hook = Hook::Claude(ClaudeHook::PermissionRequest(ClaudePermissionRequest {
             session_id: Uuid::new_v4(),
             tool: ClaudePermissionTool::Bash {
@@ -1719,7 +1717,7 @@ mod tests {
             },
         }));
 
-        handle_command(&tx, Command::HandleHook { hook }, &ctx)
+        handle_command(&tx, Command::HandleHook { agent_id, hook }, &ctx)
             .await
             .unwrap();
 
@@ -1754,11 +1752,11 @@ mod tests {
             },
         };
         let hook = Hook::Claude(ClaudeHook::PermissionRequest(ClaudePermissionRequest {
-            session_id: agent_id,
+            session_id: Uuid::new_v4(),
             tool: tool.clone(),
         }));
 
-        handle_command(&tx, Command::HandleHook { hook }, &ctx)
+        handle_command(&tx, Command::HandleHook { agent_id, hook }, &ctx)
             .await
             .unwrap();
 
