@@ -246,7 +246,8 @@ async fn ensure_server_running(config: &Config) -> Result<()> {
         tokio::time::sleep(Duration::from_millis(100)).await;
     }
 
-    let log_path = std::env::var("AMUX_LOG").unwrap_or_else(|_| "/tmp/amux.log".to_string());
+    let log_path = std::env::var("AMUX_LOG")
+        .unwrap_or_else(|_| amux::config::default_log_path().display().to_string());
     Err(anyhow!(
         "server failed to start within 5s — check {} for details",
         log_path
@@ -276,7 +277,12 @@ fn parse_agent_type(s: &str) -> Result<message::AgentType> {
 }
 
 fn init_tracing() -> WorkerGuard {
-    let log_path = std::env::var("AMUX_LOG").unwrap_or_else(|_| "/tmp/amux.log".to_string());
+    let log_path = std::env::var("AMUX_LOG")
+        .unwrap_or_else(|_| amux::config::default_log_path().display().to_string());
+    let log_path_buf = PathBuf::from(&log_path);
+    if let Some(parent) = log_path_buf.parent() {
+        let _ = std::fs::create_dir_all(parent);
+    }
     let (writer, guard) = match OpenOptions::new().create(true).append(true).open(&log_path) {
         Ok(file) => tracing_appender::non_blocking(file),
         Err(e) => {

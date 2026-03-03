@@ -135,7 +135,7 @@ Note: WebSocket cloud authentication is not yet implemented (tracked as future w
 Terminal clients connect via Unix socket:
 
 ```
-1. Connect to /tmp/amux.sock
+1. Connect to the Unix socket (per-user runtime dir)
 2. Send DirectMessage::Connect { link_name: "term-{rand}", token: null, version: PROTOCOL_VERSION }
 3. Server checks link_name uniqueness, inserts route
 4. Server responds with ConnectResult { error: None }
@@ -264,7 +264,7 @@ routes:
 config:
   host_name: my-laptop
   cloud_url: https://amux.sh
-  socket_path: /tmp/amux.sock
+  socket_path: $TMPDIR/amux/amux.sock  # macOS (per-user)
   tcp_port: 9001
   websocket_port: 9002
 ```

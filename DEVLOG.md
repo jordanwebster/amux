@@ -38,6 +38,28 @@ One paragraph describing what was done.
 
 ---
 
+## 2026-03-03: Per-user Unix socket and log paths
+
+### Summary
+Changed default socket and log paths from global `/tmp/amux.sock` and `/tmp/amux.log` to per-user locations, preventing conflicts on multi-user machines.
+
+### Changes
+- `src/config.rs`: Removed `DEFAULT_SOCKET_PATH`, added `default_socket_dir()` with platform-aware logic (macOS `$TMPDIR`, Linux `$XDG_RUNTIME_DIR`, fallback `/tmp/amux-<uid>/`). Added `default_log_path()` using XDG state dir.
+- `src/server/mod.rs`: Create socket parent directory with `0o700` permissions before bind.
+- `src/main.rs`: Default log path moved to `~/.local/state/amux/amux.log` (co-located with `state.yaml`). Parent directory created on startup.
+- `ARCHITECTURE.md`, `CLOUD_ARCHITECTURE.md`: Updated socket path references.
+
+### Decisions Made
+- macOS uses `$TMPDIR` (already per-user), Linux uses `$XDG_RUNTIME_DIR`, both fall back to `/tmp/amux-<uid>/`
+- Log moved to XDG state dir rather than runtime dir — logs should persist across reboots
+- `cfg!(target_os = "macos")` runtime check (not `#[cfg]`) keeps both paths as valid Rust for testability
+
+### Verification
+- `cargo check && cargo fmt && cargo clippy -- -D warnings && cargo test` — all 165 tests pass
+- `cargo build --workspace && cargo run -p e2e-runner -- run` — all 10 E2E tests pass
+
+---
+
 ## 2026-03-01: Env-var agent ID + StructuredLogSource composite type
 
 ### Summary

@@ -220,6 +220,14 @@ impl Server {
         };
 
         // Unix socket - always available (for CLI commands like list-agents, kill-server)
+        // Ensure the parent directory exists with owner-only permissions (0700)
+        if let Some(parent) = socket_path.parent()
+            && !parent.exists()
+        {
+            std::fs::create_dir_all(parent)?;
+            use std::os::unix::fs::PermissionsExt;
+            std::fs::set_permissions(parent, std::fs::Permissions::from_mode(0o700))?;
+        }
         let _ = std::fs::remove_file(&socket_path);
         let unix_listener = UnixListener::bind(&socket_path)?;
         // Restrict socket to owner-only (0600) to prevent other local users from

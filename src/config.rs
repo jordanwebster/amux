@@ -19,7 +19,6 @@ fn home_dir() -> PathBuf {
         .expect("$HOME is not set")
 }
 
-const DEFAULT_SOCKET_PATH: &str = "/tmp/amux.sock";
 const DEFAULT_TCP_PORT: u16 = 9001;
 const DEFAULT_WEBSOCKET_PORT: u16 = 9002;
 const DEFAULT_CLOUD_URL: &str = "https://amux.sh";
@@ -34,8 +33,26 @@ fn default_cloud_url() -> String {
     DEFAULT_CLOUD_URL.to_string()
 }
 
+/// Per-user runtime directory for the amux socket.
+///
+/// - macOS: `$TMPDIR/amux/` (already per-user, e.g. `/var/folders/xx/.../T/`)
+/// - Linux: `$XDG_RUNTIME_DIR/amux/` (per-user tmpfs, e.g. `/run/user/1000/`)
+/// - Fallback: `/tmp/amux-<uid>/` (UID-embedded for isolation)
+fn default_socket_dir() -> PathBuf {
+    if cfg!(target_os = "macos") {
+        if let Ok(tmpdir) = std::env::var("TMPDIR") {
+            return PathBuf::from(tmpdir).join("amux");
+        }
+    } else if let Ok(runtime_dir) = std::env::var("XDG_RUNTIME_DIR") {
+        return PathBuf::from(runtime_dir).join("amux");
+    }
+    // Fallback: embed UID for per-user isolation
+    let uid = unsafe { libc::getuid() };
+    PathBuf::from(format!("/tmp/amux-{uid}"))
+}
+
 fn default_socket_path() -> PathBuf {
-    PathBuf::from(DEFAULT_SOCKET_PATH)
+    default_socket_dir().join("amux.sock")
 }
 
 fn default_tcp_port() -> u16 {
@@ -56,6 +73,11 @@ fn default_enforce_tls_in_cloud_mode() -> bool {
 
 fn default_state_path() -> PathBuf {
     State::default_path()
+}
+
+/// Default log path: `$XDG_STATE_HOME/amux/amux.log` (co-located with state.yaml).
+pub fn default_log_path() -> PathBuf {
+    xdg_dir("XDG_STATE_HOME", ".local/state").join("amux/amux.log")
 }
 
 /// Server configuration

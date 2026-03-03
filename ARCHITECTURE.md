@@ -425,7 +425,7 @@ See `src/session.rs`.
 struct Config {
     host_name: String,               // Hostname for generating link names (default: system hostname)
     cloud_url: String,               // Cloud API URL (default: "https://amux.sh")
-    socket_path: PathBuf,            // Unix socket path (default: /tmp/amux.sock)
+    socket_path: PathBuf,            // Unix socket path (default: per-user runtime dir)
     tcp_port: u16,                   // TCP port for server-to-server (default: 9001)
     websocket_port: u16,             // WebSocket port for rich clients (default: 9002)
     randomise_link_name: bool,       // Add random suffix to link names (default: true, test-only override)
