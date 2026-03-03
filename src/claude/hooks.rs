@@ -56,7 +56,11 @@ fn handle_claude_hook_inner(config: &Config) -> io::Result<()> {
         }
     };
 
-    // Unknown tools: log and return early (don't send to server)
+    // Unknown hook or tool variants: log and return early (don't send to server)
+    if matches!(claude_hook, ClaudeHook::Unknown) {
+        tracing::warn!(input = %input, "unrecognized hook event");
+        return Ok(());
+    }
     if let ClaudeHook::PermissionRequest(ref p) = claude_hook
         && matches!(p.tool, ClaudePermissionTool::Unknown)
     {

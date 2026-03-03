@@ -41,16 +41,18 @@ One paragraph describing what was done.
 ## 2026-03-03: Handle Stop hook and add AgentStopped structured output
 
 ### Summary
-Added handling for Claude Code's `Stop` hook event, which fires when the agent finishes responding. Attached clients now receive an `AgentStopped` structured output entry in the log buffer, signaling the agent is idle and waiting for input.
+Added handling for Claude Code's `Stop` hook event, which fires when the agent finishes responding. Attached clients now receive an `AgentStopped` structured output entry in the log buffer, signaling the agent is idle and waiting for input. Also added forward-compatibility for unknown hook events via `#[serde(other)]` on `ClaudeHook`.
 
 ### Changes
-- `src/claude/types.rs` — Added `ClaudeStop` struct, `Stop(ClaudeStop)` variant to `ClaudeHook`, `AgentStopped` variant to `ClaudeStructuredOutput`, updated `Display` impl
+- `src/claude/types.rs` — Added `ClaudeStop` struct, `Stop(ClaudeStop)` variant to `ClaudeHook`, `AgentStopped` variant to `ClaudeStructuredOutput`, `Unknown` variant with `#[serde(other)]` for forward-compat, updated `Display` impl
 - `src/main.rs` — Added `ClaudeHookEvent::Stop` to `is_handled_hook_event` so it's no longer fast-path dropped
-- `src/server/handlers.rs` — Added `ClaudeHook::Stop` arm in `HandleHook` handler that writes `AgentStopped` to the session log buffer; added two tests
+- `src/claude/hooks.rs` — Filter unknown hook variants client-side before sending to server (same pattern as unknown permission tools)
+- `src/server/handlers.rs` — Added `ClaudeHook::Stop` arm in `HandleHook` handler that writes `AgentStopped` to the session log buffer; unknown hooks ack immediately with a warning; added two tests
 
 ### Decisions Made
 - `AgentStopped` is a unit variant (no fields): the `last_assistant_message` from the Stop hook JSON is not stored since transcript tailer already provides assistant messages
-- Reused the existing HandleHook pattern (session lookup → write to log buffer → return result)
+- Unknown hooks filtered client-side in `hooks.rs` (fail fast), with server-side safety net that warns and acks to prevent hook client hangs
+- `#[serde(other)]` on `ClaudeHook` mirrors the existing `ClaudePermissionTool` pattern — works because both use internally-tagged serde format
 
 ### Verification
 - `cargo check && cargo fmt && cargo clippy --workspace --all-targets -- -D warnings && cargo test` — all 167 tests pass

@@ -19,6 +19,8 @@ pub enum ClaudeHook {
     SessionStart(ClaudeSessionStart),
     PermissionRequest(ClaudePermissionRequest),
     Stop(ClaudeStop),
+    #[serde(other)]
+    Unknown,
 }
 
 /// SessionStart hook data from Claude Code
@@ -225,6 +227,7 @@ impl std::fmt::Display for ClaudeHook {
             ClaudeHook::Stop(s) => {
                 write!(f, "session {} stopped", s.session_id)
             }
+            ClaudeHook::Unknown => write!(f, "unknown hook"),
         }
     }
 }

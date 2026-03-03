@@ -525,8 +525,18 @@ async fn handle_command(
                 Hook::Claude(ClaudeHook::SessionStart(_)) => "SessionStart",
                 Hook::Claude(ClaudeHook::PermissionRequest(_)) => "PermissionRequest",
                 Hook::Claude(ClaudeHook::Stop(_)) => "Stop",
+                Hook::Claude(ClaudeHook::Unknown) => "Unknown",
             };
             tracing::debug!(hook_type, %agent_id, "received hook event");
+
+            // Unknown hook variants should be filtered client-side; warn and ack
+            if matches!(hook, Hook::Claude(ClaudeHook::Unknown)) {
+                tracing::warn!(%agent_id, "received unknown hook variant");
+                let _ = tx
+                    .send(Message::Command(Command::HandleHookResult { error: None }))
+                    .await;
+                return Ok(());
+            }
 
             let session = {
                 let us = ctx.user_state.read().await;
@@ -560,6 +570,7 @@ async fn handle_command(
                                 ))
                                 .await;
                         }
+                        Hook::Claude(ClaudeHook::Unknown) => unreachable!(),
                     }
                     Ok(())
                 }
