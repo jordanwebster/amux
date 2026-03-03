@@ -117,7 +117,7 @@ enum ClaudeHookEvent {
 fn is_handled_hook_event(event: &ClaudeHookEvent) -> bool {
     matches!(
         event,
-        ClaudeHookEvent::SessionStart | ClaudeHookEvent::PermissionRequest
+        ClaudeHookEvent::SessionStart | ClaudeHookEvent::PermissionRequest | ClaudeHookEvent::Stop
     )
 }
 

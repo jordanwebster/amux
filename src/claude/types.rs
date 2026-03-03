@@ -18,6 +18,7 @@ pub enum Hook {
 pub enum ClaudeHook {
     SessionStart(ClaudeSessionStart),
     PermissionRequest(ClaudePermissionRequest),
+    Stop(ClaudeStop),
 }
 
 /// SessionStart hook data from Claude Code
@@ -25,6 +26,14 @@ pub enum ClaudeHook {
 pub struct ClaudeSessionStart {
     pub session_id: Uuid,
     pub transcript_path: String,
+}
+
+/// Stop hook data from Claude Code
+#[derive(Debug, Clone, Deserialize, Serialize)]
+pub struct ClaudeStop {
+    pub session_id: Uuid,
+    pub stop_hook_active: bool,
+    pub last_assistant_message: String,
 }
 
 /// PermissionRequest hook data from Claude Code
@@ -213,6 +222,9 @@ impl std::fmt::Display for ClaudeHook {
             ClaudeHook::PermissionRequest(p) => {
                 write!(f, "session {} {}", p.session_id, p.tool)
             }
+            ClaudeHook::Stop(s) => {
+                write!(f, "session {} stopped", s.session_id)
+            }
         }
     }
 }
@@ -246,6 +258,8 @@ pub enum ClaudeStructuredOutput {
     },
     /// Permission request from agent
     PermissionRequest { tool: ClaudePermissionTool },
+    /// Agent has stopped and is waiting for input
+    AgentStopped,
     /// Unknown entry type (forward-compatibility)
     #[serde(other)]
     Unknown,

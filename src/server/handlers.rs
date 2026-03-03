@@ -524,6 +524,7 @@ async fn handle_command(
             let hook_type = match &hook {
                 Hook::Claude(ClaudeHook::SessionStart(_)) => "SessionStart",
                 Hook::Claude(ClaudeHook::PermissionRequest(_)) => "PermissionRequest",
+                Hook::Claude(ClaudeHook::Stop(_)) => "Stop",
             };
             tracing::debug!(hook_type, %agent_id, "received hook event");
 
@@ -548,6 +549,14 @@ async fn handle_command(
                                     ClaudeStructuredOutput::PermissionRequest {
                                         tool: perm_req.tool,
                                     },
+                                ))
+                                .await;
+                        }
+                        Hook::Claude(ClaudeHook::Stop(_)) => {
+                            tracing::debug!(%agent_id, "agent stopped");
+                            session
+                                .write_log(StructuredOutput::Claude(
+                                    ClaudeStructuredOutput::AgentStopped,
                                 ))
                                 .await;
                         }
@@ -855,7 +864,7 @@ mod tests {
     use super::*;
     use crate::claude::types::{
         BashToolInput, ClaudePermissionRequest, ClaudePermissionTool, ClaudeSessionStart,
-        ClaudeStructuredOutput,
+        ClaudeStop, ClaudeStructuredOutput,
     };
     use crate::route::Route;
     use crate::server::test_helpers::{test_ctx, test_state};
@@ -1787,6 +1796,82 @@ mod tests {
             panic!("expected PermissionRequest log entry, got {:?}", entry);
         };
         assert_eq!(logged_tool, tool);
+    }
+
+    #[tokio::test]
+    async fn handle_hook_stop_no_session_returns_error() {
+        let (state, user_state) = test_state().await;
+        let ctx = test_ctx(state, user_state);
+        let (tx, written) = mock_tx();
+
+        let agent_id = Uuid::new_v4();
+        let hook = Hook::Claude(ClaudeHook::Stop(ClaudeStop {
+            session_id: Uuid::new_v4(),
+            stop_hook_active: true,
+            last_assistant_message: "Done.".to_string(),
+        }));
+
+        handle_command(&tx, Command::HandleHook { agent_id, hook }, &ctx)
+            .await
+            .unwrap();
+
+        tokio::task::yield_now().await;
+
+        let msgs = written.lock().await;
+        assert_eq!(msgs.len(), 1);
+        let Message::Command(Command::HandleHookResult { error }) = &msgs[0] else {
+            panic!("expected HandleHookResult, got {:?}", msgs[0]);
+        };
+        assert!(
+            error.is_some(),
+            "should return error when session not found"
+        );
+    }
+
+    #[tokio::test]
+    async fn handle_hook_stop_writes_to_log_buffer() {
+        let (state, user_state) = test_state().await;
+
+        let agent_id = Uuid::new_v4();
+        let session = insert_test_session(&user_state, agent_id).await;
+
+        let ctx = test_ctx(state, user_state);
+        let (tx, written) = mock_tx();
+
+        let hook = Hook::Claude(ClaudeHook::Stop(ClaudeStop {
+            session_id: Uuid::new_v4(),
+            stop_hook_active: true,
+            last_assistant_message: "I've completed the refactoring.".to_string(),
+        }));
+
+        handle_command(&tx, Command::HandleHook { agent_id, hook }, &ctx)
+            .await
+            .unwrap();
+
+        tokio::task::yield_now().await;
+
+        // Verify success response
+        let msgs = written.lock().await;
+        assert_eq!(msgs.len(), 1);
+        let Message::Command(Command::HandleHookResult { error }) = &msgs[0] else {
+            panic!("expected HandleHookResult, got {:?}", msgs[0]);
+        };
+        assert!(
+            error.is_none(),
+            "should succeed when session exists: {:?}",
+            error
+        );
+
+        // Verify AgentStopped was written to the log buffer
+        let mut reader = session
+            .subscribe_logs()
+            .await
+            .expect("log buffer should be open");
+        let entry = reader.read().await.expect("should have a log entry");
+        assert_eq!(
+            entry,
+            StructuredOutput::Claude(ClaudeStructuredOutput::AgentStopped)
+        );
     }
 
     // --- Subscription stream lifecycle tests ---

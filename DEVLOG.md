@@ -38,6 +38,28 @@ One paragraph describing what was done.
 
 ---
 
+## 2026-03-03: Handle Stop hook and add AgentStopped structured output
+
+### Summary
+Added handling for Claude Code's `Stop` hook event, which fires when the agent finishes responding. Attached clients now receive an `AgentStopped` structured output entry in the log buffer, signaling the agent is idle and waiting for input.
+
+### Changes
+- `src/claude/types.rs` — Added `ClaudeStop` struct, `Stop(ClaudeStop)` variant to `ClaudeHook`, `AgentStopped` variant to `ClaudeStructuredOutput`, updated `Display` impl
+- `src/main.rs` — Added `ClaudeHookEvent::Stop` to `is_handled_hook_event` so it's no longer fast-path dropped
+- `src/server/handlers.rs` — Added `ClaudeHook::Stop` arm in `HandleHook` handler that writes `AgentStopped` to the session log buffer; added two tests
+
+### Decisions Made
+- `AgentStopped` is a unit variant (no fields): the `last_assistant_message` from the Stop hook JSON is not stored since transcript tailer already provides assistant messages
+- Reused the existing HandleHook pattern (session lookup → write to log buffer → return result)
+
+### Verification
+- `cargo check && cargo fmt && cargo clippy --workspace --all-targets -- -D warnings && cargo test` — all 167 tests pass
+
+### Next Steps
+- Client UI can now react to `AgentStopped` entries (e.g., show idle indicator)
+
+---
+
 ## 2026-03-03: Per-user Unix socket and log paths
 
 ### Summary
