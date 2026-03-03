@@ -18,15 +18,19 @@ use uuid::Uuid;
 /// Reads JSON from stdin and sends HookEvent to server.
 /// Fails silently (logs errors but returns 0) to not block Claude Code.
 pub fn handle_claude_hook(config: &Config) {
+    // Not in an amux session — silently ignore
+    if std::env::var("AMUX_AGENT_ID").is_err() {
+        return;
+    }
     if let Err(e) = handle_claude_hook_inner(config) {
         tracing::warn!(error = %e, "hook handling failed");
     }
 }
 
 fn handle_claude_hook_inner(config: &Config) -> io::Result<()> {
-    // Read agent_id from environment (set by amux when spawning Claude)
+    // Caller guarantees AMUX_AGENT_ID is set
     let agent_id: Uuid = std::env::var("AMUX_AGENT_ID")
-        .map_err(|_| io::Error::new(io::ErrorKind::NotFound, "AMUX_AGENT_ID not set"))?
+        .expect("AMUX_AGENT_ID checked by caller")
         .parse()
         .map_err(|e| {
             io::Error::new(
