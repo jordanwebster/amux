@@ -146,6 +146,7 @@ fn run_tests(
         .status();
     let _ = std::process::Command::new(&executor.config.test_agent_binary)
         .arg("--help")
+        .stdin(std::process::Stdio::null())
         .stdout(std::process::Stdio::null())
         .stderr(std::process::Stdio::null())
         .status();

@@ -37,14 +37,22 @@ impl<S> Transport for TcpTransport<S>
 where
     S: AsyncRead + AsyncWrite + Unpin + Send + Sync,
 {
+    async fn read_frame(&mut self) -> Result<Vec<u8>> {
+        self.framed.read_frame(MAX_FRAME_SIZE).await
+    }
+
+    async fn write_frame(&mut self, data: &[u8]) -> Result<()> {
+        self.framed.write_frame(data).await
+    }
+
     async fn read_message(&mut self) -> Result<Message> {
-        let data = self.framed.read_frame(MAX_FRAME_SIZE).await?;
+        let data = self.read_frame().await?;
         Message::decode(&data).map_err(AmuxError::SerializationDecode)
     }
 
     async fn write_message(&mut self, msg: &Message) -> Result<()> {
         let data = msg.encode().map_err(AmuxError::SerializationEncode)?;
-        self.framed.write_frame(&data).await
+        self.write_frame(&data).await
     }
 }
 

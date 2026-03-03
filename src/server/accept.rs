@@ -11,7 +11,8 @@ use super::connection::{ConnectionContext, run_connection};
 use super::routing::send_initial_announcements;
 use super::{LOCAL_USER_ID, ServerState, ServerUserState, get_or_create_user_state};
 use crate::error::{AmuxError, Result};
-use crate::message::{DirectMessage, Message, PROTOCOL_VERSION, ProtocolError};
+use crate::handshake::{Connect, ConnectResult, PROTOCOL_VERSION};
+use crate::message::{Message, ProtocolError};
 use crate::route::generate_server_link;
 use crate::transport::{
     TcpTransport, Transport, TransportSplit, UnixTransport, WebSocketTransport,
@@ -29,6 +30,15 @@ use uuid::Uuid;
 /// Prevents slow-loris attacks where a client connects but never sends
 /// (or slowly trickles) handshake data, holding a server task indefinitely.
 const HANDSHAKE_TIMEOUT: Duration = Duration::from_secs(10);
+
+async fn write_connect_result<T: Transport>(
+    transport: &mut T,
+    error: Option<ProtocolError>,
+) -> Result<()> {
+    let response = ConnectResult { error };
+    let payload = response.encode().map_err(AmuxError::SerializationEncode)?;
+    transport.write_frame(&payload).await
+}
 
 /// Accept-side handshake: client proposes link name, we validate against routes.
 /// Atomically checks uniqueness and inserts the route under a write lock.
@@ -48,21 +58,15 @@ pub(super) async fn accept_handshake<T: Transport>(
     Arc<RwLock<ServerUserState>>,
 )> {
     for _attempt in 0..5 {
-        let msg = transport.read_message().await?;
-        let (proposed_link, token, version) = match msg {
-            Message::Direct(DirectMessage::Connect {
-                link_name,
-                token,
-                version,
-            }) => (link_name, token, version),
-            other => {
-                tracing::error!("expected Connect, got unexpected message");
-                return Err(AmuxError::InvalidMessage(format!(
-                    "expected Connect during handshake, got {}",
-                    other.type_label()
-                )));
-            }
-        };
+        let payload = transport.read_frame().await?;
+        let connect = Connect::decode(&payload).map_err(|e| {
+            AmuxError::InvalidMessage(format!("expected Connect during handshake: {e}"))
+        })?;
+        let Connect {
+            link_name: proposed_link,
+            token,
+            version,
+        } = connect;
 
         if version != PROTOCOL_VERSION {
             tracing::warn!(
@@ -70,14 +74,14 @@ pub(super) async fn accept_handshake<T: Transport>(
                 server_version = PROTOCOL_VERSION,
                 "version mismatch"
             );
-            transport
-                .write_message(&Message::Direct(DirectMessage::ConnectResult {
-                    error: Some(ProtocolError::VersionMismatch {
-                        server_version: PROTOCOL_VERSION,
-                        client_version: version,
-                    }),
-                }))
-                .await?;
+            write_connect_result(
+                transport,
+                Some(ProtocolError::VersionMismatch {
+                    server_version: PROTOCOL_VERSION,
+                    client_version: version,
+                }),
+            )
+            .await?;
             return Err(AmuxError::VersionMismatch(format!(
                 "protocol v{}, client v{}",
                 PROTOCOL_VERSION, version
@@ -86,11 +90,7 @@ pub(super) async fn accept_handshake<T: Transport>(
 
         if proposed_link.contains('.') {
             tracing::warn!(link = %proposed_link, "rejecting invalid link name (contains '.')");
-            transport
-                .write_message(&Message::Direct(DirectMessage::ConnectResult {
-                    error: Some(ProtocolError::InvalidLinkName),
-                }))
-                .await?;
+            write_connect_result(transport, Some(ProtocolError::InvalidLinkName)).await?;
             return Err(AmuxError::Config(format!(
                 "Invalid link name '{}': must not contain '.'",
                 proposed_link
@@ -123,21 +123,18 @@ pub(super) async fn accept_handshake<T: Transport>(
                         Ok(user_id) => user_id,
                         Err(_) => {
                             tracing::error!(sub = %claims.sub, "invalid user_id in token");
-                            transport
-                                .write_message(&Message::Direct(DirectMessage::ConnectResult {
-                                    error: Some(ProtocolError::InvalidCredentials),
-                                }))
-                                .await?;
+                            write_connect_result(
+                                transport,
+                                Some(ProtocolError::InvalidCredentials),
+                            )
+                            .await?;
                             return Err(AmuxError::InvalidCredentials);
                         }
                     }
                 }
                 Err(e) => {
                     tracing::warn!(error = %e, "token validation failed");
-                    transport
-                        .write_message(&Message::Direct(DirectMessage::ConnectResult {
-                            error: Some(ProtocolError::InvalidCredentials),
-                        }))
+                    write_connect_result(transport, Some(ProtocolError::InvalidCredentials))
                         .await?;
                     return Err(AmuxError::InvalidCredentials);
                 }
@@ -156,11 +153,7 @@ pub(super) async fn accept_handshake<T: Transport>(
         };
 
         if link_taken {
-            transport
-                .write_message(&Message::Direct(DirectMessage::ConnectResult {
-                    error: Some(ProtocolError::LinkNameTaken),
-                }))
-                .await?;
+            write_connect_result(transport, Some(ProtocolError::LinkNameTaken)).await?;
             continue;
         }
 
@@ -169,11 +162,7 @@ pub(super) async fn accept_handshake<T: Transport>(
             // Re-check under write lock to close the race window
             if us.routes.contains_key(&proposed_link) {
                 drop(us);
-                transport
-                    .write_message(&Message::Direct(DirectMessage::ConnectResult {
-                        error: Some(ProtocolError::LinkNameTaken),
-                    }))
-                    .await?;
+                write_connect_result(transport, Some(ProtocolError::LinkNameTaken)).await?;
                 continue;
             }
 
@@ -183,12 +172,7 @@ pub(super) async fn accept_handshake<T: Transport>(
         };
 
         // Route is inserted — if the success write fails, clean up the stale route
-        if let Err(e) = transport
-            .write_message(&Message::Direct(DirectMessage::ConnectResult {
-                error: None,
-            }))
-            .await
-        {
+        if let Err(e) = write_connect_result(transport, None).await {
             let mut us = user_state.write().await;
             us.routes.remove(&proposed_link);
             return Err(e);
@@ -217,63 +201,48 @@ where
     for attempt in 0..5 {
         let proposed_link = generate_link();
 
-        transport
-            .write_message(&Message::Direct(DirectMessage::Connect {
-                link_name: proposed_link.clone(),
-                token: None,
-                version: PROTOCOL_VERSION,
-            }))
-            .await?;
+        let connect = Connect {
+            link_name: proposed_link.clone(),
+            token: None,
+            version: PROTOCOL_VERSION,
+        };
+        let payload = connect.encode().map_err(AmuxError::SerializationEncode)?;
+        transport.write_frame(&payload).await?;
 
-        let response = tokio::time::timeout(HANDSHAKE_TIMEOUT, transport.read_message())
+        let payload = tokio::time::timeout(HANDSHAKE_TIMEOUT, transport.read_frame())
             .await
             .map_err(|_| AmuxError::HandshakeTimeout)??;
-        match response {
-            Message::Direct(DirectMessage::ConnectResult { error: None }) => {
-                return Ok(proposed_link);
-            }
-            Message::Direct(DirectMessage::ConnectResult {
-                error: Some(ProtocolError::LinkNameTaken),
-            }) => {
+        let response = ConnectResult::decode(&payload).map_err(|e| {
+            AmuxError::InvalidMessage(format!("expected ConnectResult during handshake: {e}"))
+        })?;
+
+        match response.error {
+            None => return Ok(proposed_link),
+            Some(ProtocolError::LinkNameTaken) => {
                 tracing::debug!(link = %proposed_link, attempt = attempt + 1, "link name taken, retrying");
                 continue;
             }
-            Message::Direct(DirectMessage::ConnectResult {
-                error: Some(ProtocolError::InvalidCredentials),
-            }) => {
+            Some(ProtocolError::InvalidCredentials) => {
                 tracing::error!("authentication failed");
                 return Err(AmuxError::InvalidCredentials);
             }
-            Message::Direct(DirectMessage::ConnectResult {
-                error: Some(ProtocolError::InvalidLinkName),
-            }) => {
+            Some(ProtocolError::InvalidLinkName) => {
                 return Err(AmuxError::Config(
                     ProtocolError::InvalidLinkName.to_string(),
                 ));
             }
-            Message::Direct(DirectMessage::ConnectResult {
-                error:
-                    Some(ProtocolError::VersionMismatch {
-                        server_version,
-                        client_version,
-                    }),
+            Some(ProtocolError::VersionMismatch {
+                server_version,
+                client_version,
             }) => {
                 return Err(AmuxError::VersionMismatch(format!(
                     "protocol v{}, client v{}",
                     server_version, client_version
                 )));
             }
-            Message::Direct(DirectMessage::ConnectResult { error }) => {
-                let msg = error
-                    .map(|e| e.to_string())
-                    .unwrap_or_else(|| "Connection rejected".to_string());
+            Some(other) => {
+                let msg = other.to_string();
                 return Err(AmuxError::Config(msg));
-            }
-            other => {
-                return Err(AmuxError::InvalidMessage(format!(
-                    "expected ConnectResult during handshake, got {}",
-                    other.type_label()
-                )));
             }
         }
     }

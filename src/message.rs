@@ -21,9 +21,6 @@ pub(crate) struct Host {
     pub version: String,
 }
 
-/// Protocol version for Connect handshake. Increment on breaking changes.
-pub const PROTOCOL_VERSION: u32 = 3;
-
 /// Type of agent to spawn
 #[derive(Serialize, Deserialize, Debug, Clone, PartialEq)]
 pub enum AgentType {
@@ -177,17 +174,13 @@ impl RoutableMessage {
 }
 
 /// Messages that are handled directly by the receiving server (no routing).
-/// Used for peer-to-peer protocol messages (Connect, Announce, Withdraw).
+/// Used for peer-to-peer protocol messages after handshake.
 #[derive(Serialize, Deserialize, Debug, Clone)]
 pub(crate) enum DirectMessage {
-    Connect {
-        link_name: String,
-        #[serde(skip_serializing_if = "Option::is_none", default)]
-        token: Option<String>,
-        #[serde(default)]
-        version: u32,
+    Reauth {
+        token: String,
     },
-    ConnectResult {
+    ReauthResult {
         error: Option<ProtocolError>,
     },
     AnnounceAgent {
@@ -276,13 +269,13 @@ impl Message {
     }
 
     /// Short qualified label for this variant, for use in logs and error messages.
-    /// Returns e.g. "Routable", "Direct::Connect", "Command::Shutdown".
+    /// Returns e.g. "Routable", "Direct::Reauth", "Command::Shutdown".
     pub fn type_label(&self) -> &'static str {
         match self {
             Message::Routable { .. } => "Routable",
             Message::Direct(d) => match d {
-                DirectMessage::Connect { .. } => "Direct::Connect",
-                DirectMessage::ConnectResult { .. } => "Direct::ConnectResult",
+                DirectMessage::Reauth { .. } => "Direct::Reauth",
+                DirectMessage::ReauthResult { .. } => "Direct::ReauthResult",
                 DirectMessage::AnnounceAgent { .. } => "Direct::AnnounceAgent",
                 DirectMessage::WithdrawAgent { .. } => "Direct::WithdrawAgent",
                 DirectMessage::AnnounceHost { .. } => "Direct::AnnounceHost",
@@ -408,39 +401,6 @@ mod tests {
     // --- Backward compatibility: #[serde(default)] contract tests ---
     // These simulate old clients that lack fields added in later versions.
     // Removing the #[serde(default)] annotations would silently break compat.
-
-    #[test]
-    fn test_connect_without_version_defaults_to_zero() {
-        #[derive(Serialize)]
-        enum OldDirectMessage {
-            Connect {
-                link_name: String,
-                #[serde(skip_serializing_if = "Option::is_none")]
-                token: Option<String>,
-            },
-        }
-        #[derive(Serialize)]
-        enum OldMessage {
-            Direct(OldDirectMessage),
-        }
-        let old_msg = OldMessage::Direct(OldDirectMessage::Connect {
-            link_name: "old-client".to_string(),
-            token: None,
-        });
-        let encoded = rmp_serde::to_vec_named(&old_msg).unwrap();
-        let decoded = Message::decode(&encoded).unwrap();
-        let Message::Direct(DirectMessage::Connect {
-            link_name, version, ..
-        }) = decoded
-        else {
-            panic!("Expected Connect");
-        };
-        assert_eq!(link_name, "old-client");
-        assert_eq!(
-            version, 0,
-            "old client without version field should default to 0"
-        );
-    }
 
     #[test]
     fn test_subscribe_raw_backward_compat_without_terminal_size() {

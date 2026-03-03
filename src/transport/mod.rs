@@ -26,6 +26,12 @@ const MAX_FRAME_SIZE: usize = 16 * 1024 * 1024;
 
 /// Transport trait for reading and writing messages
 pub trait Transport: Send + Sync {
+    /// Read one raw frame from the transport (length-prefixed or WebSocket binary frame).
+    fn read_frame(&mut self) -> impl Future<Output = Result<Vec<u8>>> + Send;
+
+    /// Write one raw frame to the transport.
+    fn write_frame(&mut self, data: &[u8]) -> impl Future<Output = Result<()>> + Send;
+
     /// Read and decode a Message from the transport
     fn read_message(&mut self) -> impl Future<Output = Result<Message>> + Send;
 

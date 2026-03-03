@@ -25,14 +25,22 @@ impl UnixTransport {
 }
 
 impl Transport for UnixTransport {
+    async fn read_frame(&mut self) -> Result<Vec<u8>> {
+        self.framed.read_frame(MAX_FRAME_SIZE).await
+    }
+
+    async fn write_frame(&mut self, data: &[u8]) -> Result<()> {
+        self.framed.write_frame(data).await
+    }
+
     async fn read_message(&mut self) -> Result<Message> {
-        let data = self.framed.read_frame(MAX_FRAME_SIZE).await?;
+        let data = self.read_frame().await?;
         Message::decode(&data).map_err(AmuxError::SerializationDecode)
     }
 
     async fn write_message(&mut self, msg: &Message) -> Result<()> {
         let data = msg.encode().map_err(AmuxError::SerializationEncode)?;
-        self.framed.write_frame(&data).await
+        self.write_frame(&data).await
     }
 }
 
@@ -75,21 +83,10 @@ mod tests {
     use super::*;
     use crate::message::{AgentType, CreateAgentRequest, RoutableMessage, TerminalSize};
     use crate::route::Route;
-    use tokio::net::UnixListener;
     use uuid::Uuid;
 
     async fn create_socket_pair() -> (UnixTransport, UnixTransport) {
-        let dir = tempfile::tempdir().unwrap();
-        let socket_path = dir.path().join("test.sock");
-
-        let listener = UnixListener::bind(&socket_path).unwrap();
-
-        let client_future = UnixStream::connect(&socket_path);
-        let server_future = listener.accept();
-
-        let (client_result, server_result) = tokio::join!(client_future, server_future);
-        let client_stream = client_result.unwrap();
-        let (server_stream, _) = server_result.unwrap();
+        let (client_stream, server_stream) = UnixStream::pair().unwrap();
 
         (
             UnixTransport::new(client_stream),

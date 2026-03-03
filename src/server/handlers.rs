@@ -619,21 +619,7 @@ async fn handle_direct(
 ) -> Result<()> {
     match message {
         // In-band re-authentication for token refresh on established connections.
-        // The peer sends Connect with the same link_name and a fresh token.
-        DirectMessage::Connect {
-            link_name, token, ..
-        } => {
-            if link_name != ctx.link_name {
-                let _ = tx
-                    .send(Message::Direct(DirectMessage::ConnectResult {
-                        error: Some(ProtocolError::ServerError(
-                            "Link name mismatch on re-auth".to_string(),
-                        )),
-                    }))
-                    .await;
-                return Ok(());
-            }
-
+        DirectMessage::Reauth { token } => {
             let is_cloud = {
                 let state = ctx.state.read().await;
                 state.is_cloud_server
@@ -653,18 +639,6 @@ async fn handle_direct(
                     )
                 };
 
-                let token = match token {
-                    Some(t) => t,
-                    None => {
-                        let _ = tx
-                            .send(Message::Direct(DirectMessage::ConnectResult {
-                                error: Some(ProtocolError::InvalidCredentials),
-                            }))
-                            .await;
-                        return Ok(());
-                    }
-                };
-
                 match validator.validate(&token, &host, tcp_port).await {
                     Ok(claims) => {
                         let token_user_id = claims.sub.parse::<uuid::Uuid>().map_err(|_| {
@@ -674,7 +648,7 @@ async fn handle_direct(
                         if token_user_id != ctx.user_id {
                             tracing::error!("re-auth user_id mismatch");
                             let _ = tx
-                                .send(Message::Direct(DirectMessage::ConnectResult {
+                                .send(Message::Direct(DirectMessage::ReauthResult {
                                     error: Some(ProtocolError::InvalidCredentials),
                                 }))
                                 .await;
@@ -685,7 +659,7 @@ async fn handle_direct(
                     Err(e) => {
                         tracing::warn!(error = %e, "re-auth token validation failed");
                         let _ = tx
-                            .send(Message::Direct(DirectMessage::ConnectResult {
+                            .send(Message::Direct(DirectMessage::ReauthResult {
                                 error: Some(ProtocolError::InvalidCredentials),
                             }))
                             .await;
@@ -695,9 +669,7 @@ async fn handle_direct(
             }
 
             let _ = tx
-                .send(Message::Direct(DirectMessage::ConnectResult {
-                    error: None,
-                }))
+                .send(Message::Direct(DirectMessage::ReauthResult { error: None }))
                 .await;
             Ok(())
         }
@@ -863,7 +835,7 @@ async fn handle_direct(
             Ok(())
         }
 
-        DirectMessage::ConnectResult { .. } => {
+        DirectMessage::ReauthResult { .. } => {
             tracing::warn!("unexpected direct message");
             Ok(())
         }
@@ -900,16 +872,13 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn connect_reauth_matching_link_succeeds() {
+    async fn reauth_succeeds_in_non_cloud_mode() {
         let (state, user_state) = test_state().await;
         let ctx = test_ctx(state, user_state);
         let (tx, written) = mock_tx();
 
-        // Re-auth with matching link name (non-cloud mode = no token needed)
-        let msg = DirectMessage::Connect {
-            link_name: "test-link".to_string(),
-            token: None,
-            version: crate::message::PROTOCOL_VERSION,
+        let msg = DirectMessage::Reauth {
+            token: "test-token".to_string(),
         };
 
         handle_direct(&tx, msg, &ctx).await.unwrap();
@@ -918,35 +887,29 @@ mod tests {
 
         let msgs = written.lock().await;
         assert_eq!(msgs.len(), 1);
-        let Message::Direct(DirectMessage::ConnectResult { error }) = &msgs[0] else {
-            panic!("expected ConnectResult, got {:?}", msgs[0]);
+        let Message::Direct(DirectMessage::ReauthResult { error }) = &msgs[0] else {
+            panic!("expected ReauthResult, got {:?}", msgs[0]);
         };
         assert!(error.is_none());
     }
 
     #[tokio::test]
-    async fn connect_reauth_mismatched_link_rejected() {
+    async fn reauth_result_is_unexpected_response_variant() {
         let (state, user_state) = test_state().await;
         let ctx = test_ctx(state, user_state);
         let (tx, written) = mock_tx();
 
-        // Re-auth with wrong link name
-        let msg = DirectMessage::Connect {
-            link_name: "wrong-link".to_string(),
-            token: None,
-            version: crate::message::PROTOCOL_VERSION,
-        };
+        let msg = DirectMessage::ReauthResult { error: None };
 
         handle_direct(&tx, msg, &ctx).await.unwrap();
 
         tokio::task::yield_now().await;
 
         let msgs = written.lock().await;
-        assert_eq!(msgs.len(), 1);
-        let Message::Direct(DirectMessage::ConnectResult { error }) = &msgs[0] else {
-            panic!("expected ConnectResult, got {:?}", msgs[0]);
-        };
-        assert!(error.is_some());
+        assert!(
+            msgs.is_empty(),
+            "unexpected response should not emit a reply"
+        );
     }
 
     #[tokio::test]

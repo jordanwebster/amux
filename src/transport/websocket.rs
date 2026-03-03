@@ -26,12 +26,10 @@ impl WebSocketTransport {
 }
 
 impl Transport for WebSocketTransport {
-    async fn read_message(&mut self) -> Result<Message> {
+    async fn read_frame(&mut self) -> Result<Vec<u8>> {
         loop {
             match self.stream.next().await {
-                Some(Ok(WsMessage::Binary(data))) => {
-                    return Message::decode(&data).map_err(AmuxError::SerializationDecode);
-                }
+                Some(Ok(WsMessage::Binary(data))) => return Ok(data.to_vec()),
                 Some(Ok(WsMessage::Close(_))) | None => {
                     return Err(AmuxError::Io(std::io::Error::new(
                         std::io::ErrorKind::UnexpectedEof,
@@ -51,13 +49,22 @@ impl Transport for WebSocketTransport {
         }
     }
 
-    async fn write_message(&mut self, msg: &Message) -> Result<()> {
-        let data = msg.encode().map_err(AmuxError::SerializationEncode)?;
+    async fn write_frame(&mut self, data: &[u8]) -> Result<()> {
         self.stream
-            .send(WsMessage::Binary(data))
+            .send(WsMessage::Binary(data.to_vec()))
             .await
             .map_err(|e| AmuxError::Io(std::io::Error::other(e.to_string())))?;
         Ok(())
+    }
+
+    async fn read_message(&mut self) -> Result<Message> {
+        let data = self.read_frame().await?;
+        Message::decode(&data).map_err(AmuxError::SerializationDecode)
+    }
+
+    async fn write_message(&mut self, msg: &Message) -> Result<()> {
+        let data = msg.encode().map_err(AmuxError::SerializationEncode)?;
+        self.write_frame(&data).await
     }
 }
 

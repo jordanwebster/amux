@@ -38,6 +38,37 @@ One paragraph describing what was done.
 
 ---
 
+## 2026-03-03: Handshake extraction + Reauth split (protocol reset to v1)
+
+### Summary
+Performed a big-bang protocol cutover that removes `Connect/ConnectResult` from the session `Message` enum. Handshake is now a standalone bootstrap protocol (`src/handshake.rs`) exchanged as raw MessagePack frames before entering the normal message loop. In-band cloud token refresh now uses explicit `DirectMessage::Reauth` / `ReauthResult`. Protocol version was reset to `1`, and handshake `version` is now required.
+
+### Changes
+- `src/handshake.rs` — **New** standalone handshake types: `Connect`, `ConnectResult`, `PROTOCOL_VERSION = 1`, plus encode/decode helpers and tests
+- `src/message.rs` — Removed handshake variants from `DirectMessage`; added `Reauth { token: String }` and `ReauthResult { error: Option<ProtocolError> }`; updated labels/tests
+- `src/transport/mod.rs`, `src/transport/tcp.rs`, `src/transport/unix.rs`, `src/transport/websocket.rs` — Added raw frame methods to `Transport` (`read_frame`/`write_frame`) so handshake can run outside `Message`
+- `src/server/accept.rs` — Reworked accept/connect handshake paths to use standalone `Connect`/`ConnectResult` frame decode/encode
+- `src/cloud.rs`, `src/server/connection.rs`, `src/server/handlers.rs` — Migrated refresh path from in-band `Connect` to `Reauth` and updated interception/validation logic
+- `src/claude/hooks.rs` — Updated local hook client handshake to standalone `Connect`/`ConnectResult`
+- `src/server/cloud.rs` — Version mismatch reporting now references handshake protocol version
+- `ARCHITECTURE.md`, `CLOUD_ARCHITECTURE.md` — Updated docs to reflect handshake/session split and `Reauth` flow
+
+### Decisions Made
+- Big-bang cutover only: no backward-compat shims for old in-band `Connect`
+- Handshake remains MessagePack map encoding (`to_vec_named`), separate from session `Message` decoding
+- `Reauth.token` is required (`String`) to keep refresh semantics strict and avoid optional-credential ambiguity
+
+### Verification
+- `cargo check` — pass
+- `cargo clippy --workspace --all-targets -- -D warnings` — pass
+- `cargo test` — pass (169 tests)
+- E2E runner was not used for final verification in sandboxed CI context due networking constraints
+
+### Next Steps
+- Run full E2E on a non-sandboxed environment to validate end-to-end attach/connect flows against the new handshake boundary
+
+---
+
 ## 2026-03-03: Handle Stop hook and add AgentStopped structured output
 
 ### Summary

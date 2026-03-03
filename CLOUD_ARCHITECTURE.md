@@ -56,14 +56,14 @@ After initial OAuth setup, cloud connections use JWT tokens:
 3. Call GET {cloud_url}/api/connect with access_token
    Returns: { host, port, token (JWT), expires_at }
 4. Connect via TLS to host:port
-5. Send Connect { link_name, token: JWT, version: PROTOCOL_VERSION }
+5. Send handshake `Connect { link_name, token: JWT, version: PROTOCOL_VERSION }`
 6. Cloud server validates protocol version and JWT via JWKS
    - Checks version matches PROTOCOL_VERSION (rejects with VersionMismatch if not)
    - Fetches keys from {cloud_url}/.well-known/openid-configuration/jwks
    - Caches keys for 1 hour
    - Validates signature, audience ("amux_token"), expiry
    - Verifies host/port in claims match the receiving server
-7. Cloud server responds with ConnectResult { error: None }
+7. Cloud server responds with handshake `ConnectResult { error: None }`
 ```
 
 ### Token Refresh
@@ -73,7 +73,7 @@ Tokens are refreshed automatically before expiry (5 minutes before `expires_at`)
 1. The `connection_loop` has a third `select!` branch on a refresh deadline
 2. When triggered: exchange refresh_token for new access_token
 3. Call `/api/connect` for new JWT
-4. If same host/port: send in-band `Connect { link_name, token }` re-authentication
+4. If same host/port: send in-band `DirectMessage::Reauth { token }`
 5. If host/port changed: return `CloudError::HostChanged`, requiring full reconnection
 
 The refresh token itself may be rotated by the OAuth server; if a new refresh token is returned, it is persisted to state.
@@ -105,9 +105,9 @@ When a local server starts with cloud mode enabled:
 2. Exchange refresh_token for access_token (OAuth)
 3. Call /api/connect → { host, port, token, expires_at }
 4. TLS connect to host:port (rustls, webpki root certs)
-5. Send DirectMessage::Connect { link_name: "{hostname}-{rand}", token: JWT, version: PROTOCOL_VERSION }
+5. Send handshake `Connect { link_name: "{hostname}-{rand}", token: JWT, version: PROTOCOL_VERSION }`
 6. Cloud validates protocol version, JWT (JWKS), checks link_name uniqueness
-7. Cloud responds with ConnectResult { error: None }
+7. Cloud responds with handshake `ConnectResult { error: None }`
 8. Enter connection_loop with token refresh enabled
 ```
 
@@ -123,8 +123,8 @@ Rich clients (mobile, web) connect via WebSocket to the cloud server:
 
 ```
 1. WebSocket upgrade to ws://cloud:9002/
-2. Send DirectMessage::Connect { link_name, token: null, version: PROTOCOL_VERSION }
-3. Cloud responds with ConnectResult
+2. Send handshake `Connect { link_name, token: null, version: PROTOCOL_VERSION }`
+3. Cloud responds with handshake `ConnectResult`
 4. Enter connection_loop (MessagePack binary frames over WebSocket)
 ```
 
@@ -136,9 +136,9 @@ Terminal clients connect via Unix socket:
 
 ```
 1. Connect to the Unix socket (per-user runtime dir)
-2. Send DirectMessage::Connect { link_name: "term-{rand}", token: null, version: PROTOCOL_VERSION }
+2. Send handshake `Connect { link_name: "term-{rand}", token: null, version: PROTOCOL_VERSION }`
 3. Server checks link_name uniqueness, inserts route
-4. Server responds with ConnectResult { error: None }
+4. Server responds with handshake `ConnectResult { error: None }`
 5. Enter connection_loop (MessagePack over length-prefixed frames)
 ```
 
@@ -154,7 +154,7 @@ No token validation for Unix socket connections (local trust).
 | amux server → amux server | TCP with TLS + `TCP_NODELAY` | MessagePack (rmp-serde, named format) | Length-prefixed (4-byte BE) |
 | Rich clients (mobile, web) | WebSocket | MessagePack (rmp-serde, named format) | WebSocket native (binary frames) |
 
-All transports use the same `Transport` trait (`read_message`/`write_message`) and the same `Message` enum. The serialization format is encapsulated in the transport implementation.
+All transports use the same `Transport` trait and session `Message` enum after handshake. Handshake uses raw frame I/O (`read_frame`/`write_frame`) with standalone `Connect`/`ConnectResult` types, then transitions to `read_message`/`write_message`.
 
 ---
 

@@ -207,7 +207,7 @@ async fn run_cloud_connection(
         )),
         Err(AmuxError::VersionMismatch(_)) => Err(CloudConnectionError::VersionMismatch {
             server_version: 0,
-            client_version: crate::message::PROTOCOL_VERSION,
+            client_version: crate::handshake::PROTOCOL_VERSION,
         }),
         Err(e) => Err(CloudConnectionError::Retriable(e.to_string())),
     }

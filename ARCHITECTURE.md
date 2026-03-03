@@ -180,13 +180,13 @@ enum RoutableMessage {
 
 ### DirectMessage
 
-Peer-to-peer messages between directly connected servers (no routing):
+Peer-to-peer session messages between directly connected servers (no routing):
 
 ```rust
 enum DirectMessage {
-    // Connection handshake
-    Connect { link_name: String, token: Option<String>, version: u32 },
-    ConnectResult { error: Option<ProtocolError> },
+    // In-session authentication refresh (cloud links)
+    Reauth { token: String },
+    ReauthResult { error: Option<ProtocolError> },
 
     // Agent discovery (pure registry, no routing side effects)
     AnnounceAgent { agent_id: Uuid, name: Option<String>, command: String, working_dir: PathBuf, route: Route },
@@ -197,6 +197,26 @@ enum DirectMessage {
     WithdrawHost { id: Uuid },
 }
 ```
+
+### Handshake
+
+Connection bootstrap is a separate wire protocol (not part of `Message`):
+
+```rust
+const PROTOCOL_VERSION: u32 = 1;
+
+struct Connect {
+    link_name: String,
+    token: Option<String>,
+    version: u32, // required
+}
+
+struct ConnectResult {
+    error: Option<ProtocolError>,
+}
+```
+
+Handshake frames use MessagePack map encoding and are exchanged before the connection enters the normal session message loop.
 
 ### Command
 
@@ -305,7 +325,7 @@ struct ConnectionContext {
 
 Each connection has a dedicated `mpsc::Sender<Message>` stored in the routes table. Other tasks send messages to a connection by looking up its link name in the routes table and sending through the channel.
 
-For cloud connections, the loop extends with token refresh support: a `select!` branch fires when the JWT token is nearing expiry, triggering in-band re-authentication via `DirectMessage::Connect`.
+For cloud connections, the loop extends with token refresh support: a `select!` branch fires when the JWT token is nearing expiry, triggering in-band re-authentication via `DirectMessage::Reauth`.
 
 See `src/server/connection.rs`.
 
@@ -619,12 +639,12 @@ See `src/session.rs`.
 
 `accept_handshake()` handles the initial handshake:
 
-1. Read first message, expect `DirectMessage::Connect { link_name, token, version }`
+1. Read first frame, decode `Connect { link_name, token, version }`
 2. Check protocol version (`version` must match `PROTOCOL_VERSION`)
 3. If cloud mode: validate JWT token via JWKS, determine `user_id` from claims
 4. Check link name uniqueness in `user_state.routes` (read lock fast path, write lock for insert)
 5. Create `mpsc::channel` for the connection, insert sender into `user_state.routes`
-6. Send `DirectMessage::ConnectResult { error: None }`
+6. Send `ConnectResult { error: None }`
 7. Return `(link_name, outgoing_rx)` for use in `connection_loop`
 
 On link name collision, the server responds with `ConnectResult { error: Some(LinkNameTaken) }`. The client retries with a new random suffix (up to 5 attempts).
@@ -633,7 +653,7 @@ After handshake, `accept_connection()` splits the transport into reader/writer h
 
 ### Connecting to Peers (Client-Side)
 
-`connect_handshake()` sends `DirectMessage::Connect { link_name, token: None, version: PROTOCOL_VERSION }` and waits for `ConnectResult`. On `LinkNameTaken`, it regenerates the link name and retries (up to 5 attempts).
+`connect_handshake()` sends `Connect { link_name, token: None, version: PROTOCOL_VERSION }` and waits for `ConnectResult`. On `LinkNameTaken`, it regenerates the link name and retries (up to 5 attempts).
 
 ### Cleanup
 
@@ -825,7 +845,7 @@ MessagePack (rmp-serde with named/map format) replaced bincode for all transport
 
 ### 4. Handshake-based connection establishment
 
-Connections start with a `Connect { link_name, token }` / `ConnectResult` handshake instead of the original `EstablishConnection`. This:
+Connections start with standalone `Connect` / `ConnectResult` handshake frames (outside the `Message` enum). This:
 - Assigns link names at connect time (used for routing)
 - Carries JWT tokens for cloud authentication
 - Supports link name collision retry
@@ -838,7 +858,7 @@ Instead of a centralized `subscriptions: HashMap<AgentId, Vec<ConnectionId>>`, s
 
 The `Message` enum has three variants that encode routing capability and trust level in the type system:
 - `Routable { src, dst, request_id, payload }` - Can be forwarded across hops. Payload is opaque `Vec<u8>` that intermediate servers copy verbatim. Generic forwarding logic handles all routable message types uniformly.
-- `Direct(message)` - Peer-to-peer messages handled by the directly connected server. Cannot be forwarded. Used for handshake and discovery.
+- `Direct(message)` - Peer-to-peer session messages handled by the directly connected server. Cannot be forwarded. Used for discovery and in-session control (for example, `Reauth`).
 - `Command(command)` - CLI-only messages from local Unix socket clients. Rejected if received over TCP or WebSocket. Prevents remote peers from sending privileged commands (Shutdown, Debug, etc.).
 
 This collapses forwarding into one generic path in `handle_routable` and provides security boundaries via the Command/Direct split.

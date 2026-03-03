@@ -152,10 +152,10 @@ const REFRESH_RESPONSE_TIMEOUT: Duration = Duration::from_secs(30);
 /// Manages token refresh lifecycle within a connection loop.
 ///
 /// Encapsulates the two-phase refresh protocol: wait for a deadline, send a
-/// Connect with a fresh token, then await the ConnectResult response (with a
+/// Reauth with a fresh token, then await the ReauthResult response (with a
 /// timeout). The connection loop uses [`deadlines`](Self::deadlines) for
 /// select! guards, [`send_refresh`](Self::send_refresh) to initiate, and
-/// [`try_intercept`](Self::try_intercept) to consume ConnectResult responses.
+/// [`try_intercept`](Self::try_intercept) to consume ReauthResult responses.
 struct TokenRefresher {
     inner: TokenRefreshState,
     deadline: tokio::time::Instant,
@@ -188,24 +188,26 @@ impl TokenRefresher {
     async fn send_refresh(&mut self, tx: &mpsc::Sender<Message>) -> Result<()> {
         tracing::debug!("refreshing cloud token");
         self.inner
-            .send_connect(tx)
+            .send_reauth(tx)
             .await
             .map_err(cloud_err_to_amux)?;
         self.awaiting_since = Some(tokio::time::Instant::now());
         Ok(())
     }
 
-    /// Try to consume an incoming ConnectResult as a refresh response.
-    /// Returns `true` if consumed, `false` if the message is not a ConnectResult.
+    /// Try to consume an incoming ReauthResult as a refresh response.
+    /// Returns `true` if consumed, `false` if the message is not a ReauthResult.
     fn try_intercept(&mut self, msg: &Message) -> Result<bool> {
-        if !matches!(msg, Message::Direct(DirectMessage::ConnectResult { .. })) {
+        if !matches!(msg, Message::Direct(DirectMessage::ReauthResult { .. })) {
             return Ok(false);
         }
         if self.awaiting_since.is_none() {
-            tracing::warn!("unexpected ConnectResult");
+            tracing::warn!("unexpected ReauthResult");
             return Ok(true);
         }
-        self.inner.handle_response(msg).map_err(cloud_err_to_amux)?;
+        self.inner
+            .handle_reauth_result(msg)
+            .map_err(cloud_err_to_amux)?;
         self.deadline = self.inner.refresh_deadline();
         self.awaiting_since = None;
         Ok(true)
@@ -551,18 +553,18 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn connection_loop_skips_unexpected_connect_result() {
+    async fn connection_loop_skips_unexpected_reauth_result() {
         let (state, user_state) = test_state().await;
         let ctx = test_ctx(state, user_state);
         let (incoming_tx, incoming_rx) = mpsc::channel(16);
         let (response_tx, mut response_rx) = mpsc::channel(16);
 
-        // Send an unexpected ConnectResult (no refresh pending), then a real
-        // command, then EOF. The ConnectResult should be skipped and the
+        // Send an unexpected ReauthResult (no refresh pending), then a real
+        // command, then EOF. The ReauthResult should be skipped and the
         // command should still be dispatched.
         incoming_tx
             .send(Incoming::Msg(Message::Direct(
-                DirectMessage::ConnectResult { error: None },
+                DirectMessage::ReauthResult { error: None },
             )))
             .await
             .unwrap();
@@ -575,11 +577,11 @@ mod tests {
         let result = connection_loop(incoming_rx, response_tx, ctx, None).await;
         assert!(result.is_ok());
 
-        // The ConnectResult should be skipped; only ListAgentsResult should appear
+        // The ReauthResult should be skipped; only ListAgentsResult should appear
         let msg = response_rx.try_recv().expect("should have a response");
         assert!(
             matches!(msg, Message::Command(Command::ListAgentsResult { .. })),
-            "expected ListAgentsResult after skipped ConnectResult, got {:?}",
+            "expected ListAgentsResult after skipped ReauthResult, got {:?}",
             msg
         );
     }

@@ -7,7 +7,8 @@
 
 use crate::claude::types::{ClaudeHook, ClaudePermissionTool, Hook};
 use crate::config::Config;
-use crate::message::{Command, DirectMessage, Message, PROTOCOL_VERSION, ProtocolError};
+use crate::handshake::{Connect, ConnectResult, PROTOCOL_VERSION};
+use crate::message::{Command, Message, ProtocolError};
 use crate::route::generate_hook_link;
 use crate::transport::{Transport, UnixTransport};
 use std::io::{self, BufRead};
@@ -101,36 +102,34 @@ async fn send_hook_event_to_server_inner(
 
     // Send Connect handshake with hook link name
     let link_name = generate_hook_link();
+    let connect = Connect {
+        link_name,
+        token: None,
+        version: PROTOCOL_VERSION,
+    };
+    let payload = connect.encode().map_err(io::Error::other)?;
     transport
-        .write_message(&Message::Direct(DirectMessage::Connect {
-            link_name,
-            token: None,
-            version: PROTOCOL_VERSION,
-        }))
+        .write_frame(&payload)
         .await
         .map_err(io::Error::other)?;
 
     // Wait for ConnectResult
-    let response = transport.read_message().await.map_err(io::Error::other)?;
+    let payload = transport.read_frame().await.map_err(io::Error::other)?;
+    let response = ConnectResult::decode(&payload).map_err(io::Error::other)?;
 
-    match response {
-        Message::Direct(DirectMessage::ConnectResult { error: None }) => {}
-        Message::Direct(DirectMessage::ConnectResult {
-            error: Some(ProtocolError::LinkNameTaken),
-        }) => {
+    match response.error {
+        None => {}
+        Some(ProtocolError::LinkNameTaken) => {
             // Unlikely but possible - just fail
             return Err(io::Error::new(
                 io::ErrorKind::AddrInUse,
                 "Hook link name taken",
             ));
         }
-        other => {
+        Some(other) => {
             return Err(io::Error::new(
                 io::ErrorKind::ConnectionRefused,
-                format!(
-                    "handshake failed: expected ConnectResult(Ok), got {}",
-                    other.type_label()
-                ),
+                format!("handshake failed: {other}"),
             ));
         }
     }

@@ -5,6 +5,7 @@ pub mod client;
 pub(crate) mod cloud;
 pub mod config;
 pub(crate) mod error;
+pub(crate) mod handshake;
 pub mod init;
 pub(crate) mod jwt;
 pub mod message;
