@@ -56,10 +56,14 @@ jobs:
           mv artifacts/amux-linux-x86_64/amux amux-linux-x86_64
           mv artifacts/amux-macos-arm64/amux amux-macos-arm64
 
+      - name: Generate checksums
+        run: sha256sum amux-linux-x86_64 amux-macos-arm64 > checksums.txt
+
       - name: Create release
         uses: softprops/action-gh-release@v2
         with:
           files: |
             amux-linux-x86_64
             amux-macos-arm64
+            checksums.txt
           generate_release_notes: true
