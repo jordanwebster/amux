@@ -1,0 +1,22 @@
+[package]
+name = "amux-cli"
+version = "0.1.14"
+edition.workspace = true
+description = "Agent multiplexer - CLI binary"
+
+[[bin]]
+name = "amux"
+path = "src/main.rs"
+
+[dependencies]
+amux = { workspace = true }
+tokio = { workspace = true }
+clap = { workspace = true }
+serde_yaml = { workspace = true }
+anyhow = { workspace = true }
+tracing = { workspace = true }
+tracing-subscriber = { workspace = true }
+tracing-appender = { workspace = true }
+libc = { workspace = true }
+serde_json = { workspace = true }
+uuid = { workspace = true }

@@ -25,13 +25,13 @@ pub struct Route {
 impl Route {
     /// Create an empty route (no hops).
     /// Used in AnnounceAgent to indicate the agent is local to the sender.
-    pub(crate) fn empty() -> Self {
+    pub fn empty() -> Self {
         Self {
             links: VecDeque::new(),
         }
     }
 
-    pub(crate) fn is_empty(&self) -> bool {
+    pub fn is_empty(&self) -> bool {
         self.links.is_empty()
     }
 

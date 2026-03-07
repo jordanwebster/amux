@@ -1,4 +1,4 @@
-use crate::state;
+use amux::state;
 
 const PLUGIN_VERSION: u32 = 1;
 

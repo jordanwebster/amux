@@ -10,7 +10,7 @@ use crate::claude::types::{Hook, StructuredInput, StructuredOutput};
 /// Information about a connected host (machine running amux server).
 /// Propagated via AnnounceHost/WithdrawHost between peers.
 #[derive(Serialize, Deserialize, Debug, Clone)]
-pub(crate) struct Host {
+pub struct Host {
     /// Ephemeral ID generated at server startup (not persisted)
     pub id: Uuid,
     /// Human-readable hostname from config
@@ -33,7 +33,7 @@ pub enum AgentType {
 
 /// Protocol-level errors that can be returned in response messages
 #[derive(Serialize, Deserialize, Debug, Clone, PartialEq, thiserror::Error)]
-pub(crate) enum ProtocolError {
+pub enum ProtocolError {
     /// Generic server error with message
     #[error("{0}")]
     ServerError(String),
@@ -56,7 +56,7 @@ pub(crate) enum ProtocolError {
 
 /// Reason for server shutdown notification
 #[derive(Serialize, Deserialize, Debug, Clone, PartialEq)]
-pub(crate) enum ShutdownReason {
+pub enum ShutdownReason {
     ProtocolMismatch,
     UserRequested,
 }
@@ -72,7 +72,7 @@ impl std::fmt::Display for ShutdownReason {
 
 /// Terminal dimensions for PTY creation and resizing
 #[derive(Serialize, Deserialize, Debug, Clone, Copy, PartialEq, Eq)]
-pub(crate) struct TerminalSize {
+pub struct TerminalSize {
     pub rows: u16,
     pub cols: u16,
 }
@@ -85,7 +85,7 @@ impl Default for TerminalSize {
 
 /// Request to create a new agent
 #[derive(Serialize, Deserialize, Debug, Clone)]
-pub(crate) struct CreateAgentRequest {
+pub struct CreateAgentRequest {
     pub agent_id: Uuid,
     pub name: Option<String>,
     pub agent_type: AgentType,
@@ -98,7 +98,7 @@ pub(crate) struct CreateAgentRequest {
 /// Messages that carry src/dst routing information and can be forwarded across hops.
 /// agent_id is Uuid — callers must resolve names to UUIDs before constructing.
 #[derive(Serialize, Deserialize, Debug, Clone)]
-pub(crate) enum RoutableMessage {
+pub enum RoutableMessage {
     SubscribeRaw {
         agent_id: Uuid,
         /// Terminal dimensions for PTY resize. None means don't resize.
@@ -176,7 +176,7 @@ impl RoutableMessage {
 /// Messages that are handled directly by the receiving server (no routing).
 /// Used for peer-to-peer protocol messages after handshake.
 #[derive(Serialize, Deserialize, Debug, Clone)]
-pub(crate) enum DirectMessage {
+pub enum DirectMessage {
     Reauth {
         token: String,
     },
@@ -206,7 +206,7 @@ pub(crate) enum DirectMessage {
 
 /// CLI-only commands that must not be accepted from remote peers.
 #[derive(Serialize, Deserialize, Debug, Clone)]
-pub(crate) enum Command {
+pub enum Command {
     ListAgents,
     ListAgentsResult { agents: Vec<Agent> },
     ResolveAgent { identifier: String },
@@ -243,7 +243,7 @@ impl Command {
 
 /// All protocol messages between client and server
 #[derive(Serialize, Deserialize, Debug, Clone)]
-pub(crate) enum Message {
+pub enum Message {
     Routable {
         src: Route,
         dst: Route,

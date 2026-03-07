@@ -9,12 +9,12 @@
 mod framing;
 mod tcp;
 mod tls;
-mod unix;
+pub mod unix;
 mod websocket;
 
 pub use tcp::TcpTransport;
 pub use tls::{create_tls_acceptor, tls_connect};
-pub use unix::UnixTransport;
+pub use unix::{UnixMessageReader, UnixMessageWriter, UnixTransport};
 pub use websocket::WebSocketTransport;
 
 use crate::error::Result;

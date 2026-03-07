@@ -2,15 +2,15 @@
 //!
 //! Invoked as `amux hook` by Claude Code's hook system. Reads hook event JSON
 //! from stdin, connects to the local server over Unix socket, sends a
-//! [`HandleHook`](crate::message::Command::HandleHook) command, and waits for
-//! acknowledgement. Fails silently to avoid blocking Claude Code.
+//! HandleHook command, and waits for acknowledgement. Fails silently to avoid
+//! blocking Claude Code.
 
-use crate::claude::types::{ClaudeHook, ClaudePermissionTool, Hook};
-use crate::config::Config;
-use crate::handshake::{Connect, ConnectResult, PROTOCOL_VERSION};
-use crate::message::{Command, Message, ProtocolError};
-use crate::route::generate_hook_link;
-use crate::transport::{Transport, UnixTransport};
+use amux::claude::types::{ClaudeHook, ClaudePermissionTool, Hook};
+use amux::config::Config;
+use amux::handshake::{Connect, ConnectResult, PROTOCOL_VERSION};
+use amux::message::{Command, Message, ProtocolError};
+use amux::route::generate_hook_link;
+use amux::transport::{Transport, UnixTransport};
 use std::io::{self, BufRead};
 use tokio::net::UnixStream;
 use uuid::Uuid;
@@ -29,7 +29,6 @@ pub fn handle_claude_hook(config: &Config) {
 }
 
 fn handle_claude_hook_inner(config: &Config) -> io::Result<()> {
-    // Caller guarantees AMUX_AGENT_ID is set
     let agent_id: Uuid = std::env::var("AMUX_AGENT_ID")
         .expect("AMUX_AGENT_ID checked by caller")
         .parse()
@@ -40,7 +39,6 @@ fn handle_claude_hook_inner(config: &Config) -> io::Result<()> {
             )
         })?;
 
-    // Read all input from stdin
     let stdin = io::stdin();
     let mut input = String::new();
 
@@ -48,7 +46,6 @@ fn handle_claude_hook_inner(config: &Config) -> io::Result<()> {
         input.push_str(&line?);
     }
 
-    // Parse into typed struct
     let claude_hook: ClaudeHook = match serde_json::from_str(&input) {
         Ok(hook) => hook,
         Err(e) => {
@@ -57,7 +54,6 @@ fn handle_claude_hook_inner(config: &Config) -> io::Result<()> {
         }
     };
 
-    // Unknown hook or tool variants: log and return early (don't send to server)
     if matches!(claude_hook, ClaudeHook::Unknown) {
         tracing::warn!(input = %input, "unrecognized hook event");
         return Ok(());
@@ -100,27 +96,24 @@ async fn send_hook_event_to_server_inner(
         .map_err(|e| io::Error::new(io::ErrorKind::ConnectionRefused, e))?;
     let mut transport = UnixTransport::new(stream);
 
-    // Send Connect handshake with hook link name
     let link_name = generate_hook_link();
-    let connect = Connect {
+    let connect_msg = Connect {
         link_name,
         token: None,
         version: PROTOCOL_VERSION,
     };
-    let payload = connect.encode().map_err(io::Error::other)?;
+    let payload = connect_msg.encode().map_err(io::Error::other)?;
     transport
         .write_frame(&payload)
         .await
         .map_err(io::Error::other)?;
 
-    // Wait for ConnectResult
     let payload = transport.read_frame().await.map_err(io::Error::other)?;
     let response = ConnectResult::decode(&payload).map_err(io::Error::other)?;
 
     match response.error {
         None => {}
         Some(ProtocolError::LinkNameTaken) => {
-            // Unlikely but possible - just fail
             return Err(io::Error::new(
                 io::ErrorKind::AddrInUse,
                 "Hook link name taken",
@@ -134,13 +127,11 @@ async fn send_hook_event_to_server_inner(
         }
     }
 
-    // Send HandleHook command
     transport
         .write_message(&Message::Command(Command::HandleHook { agent_id, hook }))
         .await
         .map_err(io::Error::other)?;
 
-    // Wait for acknowledgement
     let ack = transport.read_message().await.map_err(io::Error::other)?;
 
     match ack {

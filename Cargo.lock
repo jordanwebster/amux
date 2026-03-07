@@ -15,9 +15,7 @@ dependencies = [
 name = "amux"
 version = "0.1.14"
 dependencies = [
- "anyhow",
  "chrono",
- "clap",
  "fs2",
  "futures-util",
  "gethostname",
@@ -39,10 +37,25 @@ dependencies = [
  "tokio-rustls 0.26.4",
  "tokio-tungstenite",
  "tracing",
+ "uuid",
+ "webpki-roots 0.26.11",
+]
+
+[[package]]
+name = "amux-cli"
+version = "0.1.14"
+dependencies = [
+ "amux",
+ "anyhow",
+ "clap",
+ "libc",
+ "serde_json",
+ "serde_yaml",
+ "tokio",
+ "tracing",
  "tracing-appender",
  "tracing-subscriber",
  "uuid",
- "webpki-roots 0.26.11",
 ]
 
 [[package]]

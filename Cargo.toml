@@ -1,13 +1,16 @@
-[package]
-name = "amux"
-version = "0.1.14"
-edition = "2024"
-description = "Agent multiplexer - transparent CLI wrapper for Claude"
-
 [workspace]
-members = [".", "test-agent", "e2e-runner"]
+resolver = "2"
+members = ["crates/*"]
+default-members = ["crates/amux-cli"]
 
-[dependencies]
+[workspace.package]
+edition = "2024"
+
+[workspace.dependencies]
+# Internal
+amux = { path = "crates/amux" }
+
+# Shared
 portable-pty = "0.8"
 tokio = { version = "1", features = ["rt-multi-thread", "macros", "net", "io-util", "sync", "time", "process", "fs"] }
 libc = "0.2"
@@ -37,11 +40,10 @@ anyhow = "1.0.101"
 tracing = "0.1"
 tracing-subscriber = { version = "0.3", features = ["env-filter", "fmt"] }
 tracing-appender = "0.2"
+tempfile = "3"
+
 [profile.dev]
 panic = "abort"
 
 [profile.release]
 panic = "abort"
-
-[dev-dependencies]
-tempfile = "3"

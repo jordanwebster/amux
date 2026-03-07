@@ -1,0 +1,33 @@
+[package]
+name = "amux"
+version = "0.1.14"
+edition.workspace = true
+description = "Agent multiplexer - library for building amux clients and servers"
+
+[dependencies]
+portable-pty = { workspace = true }
+tokio = { workspace = true }
+libc = { workspace = true }
+serde = { workspace = true }
+serde_json = { workspace = true }
+serde_yaml = { workspace = true }
+rmp-serde = { workspace = true }
+thiserror = { workspace = true }
+uuid = { workspace = true }
+tokio-tungstenite = { workspace = true }
+futures-util = { workspace = true }
+gethostname = { workspace = true }
+oauth2 = { workspace = true }
+tokio-rustls = { workspace = true }
+rustls = { workspace = true }
+webpki-roots = { workspace = true }
+rustls-pemfile = { workspace = true }
+jsonwebtoken = { workspace = true }
+reqwest = { workspace = true }
+fs2 = { workspace = true }
+socket2 = { workspace = true }
+chrono = { workspace = true }
+tracing = { workspace = true }
+
+[dev-dependencies]
+tempfile = { workspace = true }

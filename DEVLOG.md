@@ -38,6 +38,49 @@ One paragraph describing what was done.
 
 ---
 
+## 2026-03-07: Split amux into workspace crates with public API
+
+### Summary
+Split the single amux crate into a proper Cargo workspace with separate library (`amux`) and binary (`amux-cli`) crates. The `amux` crate now exposes a clean public API (`connect()`, `Connection`, `ConnectPolicy`) that third parties can use to build applications (mobile apps, custom UIs, etc.) on top of amux.
+
+### Changes
+- Root `Cargo.toml` → workspace-only with `[workspace.dependencies]`
+- `crates/amux/` — library crate with all protocol, server, and transport code
+- `crates/amux-cli/` — binary crate producing the `amux` binary
+- `crates/amux/src/connect.rs` — **New**: `connect()` function with `ConnectPolicy` enum (Daemon, Embedded, ExistingOnly)
+- `crates/amux/src/connection.rs` — **New**: `Connection` struct wrapping split transport with `send(&self)` / `recv(&self)` via `tokio::Mutex`
+- `crates/amux/src/lib.rs` — **New**: public module layout and API re-exports
+- `crates/amux-cli/src/main.rs` — Updated imports, removed `ensure_server_running()`, added `--config-from-stdin` flag
+- `crates/amux-cli/src/client.rs` — Uses `amux::connect()` + `Connection` instead of raw transport
+- `crates/amux-cli/src/hooks.rs` — Moved from `claude/hooks.rs`, updated imports
+- `crates/amux-cli/src/init.rs` — Moved, replaced `thiserror` with manual `Error` impl (CLI-only)
+- `crates/amux-cli/src/plugin.rs` — Moved from `claude/plugin.rs`, updated imports
+- Moved `test-agent/` and `e2e-runner/` to `crates/`
+- Made key types `pub` in message.rs, handshake.rs, route.rs for cross-crate access
+- Updated `CLAUDE.md` structure diagram
+
+### Decisions Made
+- **`Connection` uses `tokio::Mutex` internally**: both `send` and `recv` take `&self`, so consumers can use them in `select!` or across tasks without splitting
+- **`Daemon` policy passes config via stdin**: spawns `amux serve --config-from-stdin` and writes serialized Config to stdin, avoiding temp files
+- **All core modules are `pub` for now**: CLI needs broad access; public/private boundary will be refined later
+- **`anyhow` stays CLI-only**: core uses `thiserror` via `AmuxError`
+- **`tracing-subscriber`/`tracing-appender` stay CLI-only**: core uses `tracing` for instrumentation only
+- **`link_name` exposed on `Connection`**: needed by client.rs for routing (Route::from_link)
+
+### Verification
+- `cargo check` — passes
+- `cargo fmt` — clean
+- `cargo clippy --workspace --all-targets -- -D warnings` — zero warnings
+- `cargo test --workspace` — 175 tests pass (169 lib + 6 e2e-runner)
+- `cargo build --workspace && cargo run -p e2e-runner -- run` — all 10 E2E tests pass
+
+### Next Steps
+- Refine public API surface (mark internal modules `#[doc(hidden)]` or restructure exports)
+- Add examples showing `ConnectPolicy::Embedded` usage for third-party apps
+- Consider publishing `amux` crate to crates.io
+
+---
+
 ## 2026-03-03: Handshake extraction + Reauth split (protocol reset to v1)
 
 ### Summary

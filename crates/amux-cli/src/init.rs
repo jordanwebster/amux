@@ -4,44 +4,71 @@
 //! - Cloud mode configuration (yes/no prompt)
 //! - OAuth device flow authentication
 
-use crate::config::Config;
-use crate::oauth;
-use crate::state::{CloudState, State, StateError};
+use amux::config::Config;
+use amux::oauth;
+use amux::state::{CloudState, State, StateError};
 use std::io::{self, Write};
-use thiserror::Error;
 
-#[derive(Debug, Error)]
+#[derive(Debug)]
 pub enum InitError {
-    #[error("IO error: {0}")]
-    Io(#[from] io::Error),
-    #[error("State error: {0}")]
-    State(#[from] StateError),
-    #[error("OAuth error: {0}")]
-    OAuth(#[from] oauth::OAuthError),
+    Io(io::Error),
+    State(StateError),
+    OAuth(oauth::OAuthError),
+}
+
+impl std::fmt::Display for InitError {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            InitError::Io(e) => write!(f, "IO error: {}", e),
+            InitError::State(e) => write!(f, "State error: {}", e),
+            InitError::OAuth(e) => write!(f, "OAuth error: {}", e),
+        }
+    }
+}
+
+impl std::error::Error for InitError {
+    fn source(&self) -> Option<&(dyn std::error::Error + 'static)> {
+        match self {
+            InitError::Io(e) => Some(e),
+            InitError::State(e) => Some(e),
+            InitError::OAuth(e) => Some(e),
+        }
+    }
+}
+
+impl From<io::Error> for InitError {
+    fn from(e: io::Error) -> Self {
+        InitError::Io(e)
+    }
+}
+
+impl From<StateError> for InitError {
+    fn from(e: StateError) -> Self {
+        InitError::State(e)
+    }
+}
+
+impl From<oauth::OAuthError> for InitError {
+    fn from(e: oauth::OAuthError) -> Self {
+        InitError::OAuth(e)
+    }
 }
 
 /// Check if initialization is needed.
-///
-/// Returns true if:
-/// - Cloud mode has not been configured yet (use_cloud_mode is None)
-/// - Cloud mode is enabled but no refresh token is stored
 pub fn needs_init(config: &Config) -> bool {
     let state = State::load(&config.state_path).unwrap_or_default();
 
     match state.cloud.use_cloud_mode {
-        None => true,                                      // Not configured yet
-        Some(true) => state.cloud.refresh_token.is_none(), // Cloud mode but no token
-        Some(false) => false,                              // Local mode, all set
+        None => true,
+        Some(true) => state.cloud.refresh_token.is_none(),
+        Some(false) => false,
     }
 }
 
 /// Run the initialization flow.
-///
-/// If reset is true, clears existing state first.
 pub async fn run_init(config: &Config, reset: bool) -> Result<(), InitError> {
     let state_path = &config.state_path;
 
-    // If reset, clear existing cloud state
     if reset {
         State::update(state_path, |s| {
             s.cloud = CloudState::default();
@@ -51,7 +78,6 @@ pub async fn run_init(config: &Config, reset: bool) -> Result<(), InitError> {
 
     let state = State::load(state_path)?;
 
-    // Step 1: Ask about cloud mode if not set
     if state.cloud.use_cloud_mode.is_none() {
         println!();
         println!("amux can connect your local machine to the cloud, allowing you to");
@@ -79,7 +105,6 @@ pub async fn run_init(config: &Config, reset: bool) -> Result<(), InitError> {
         }
     }
 
-    // Step 2: OAuth device flow if cloud mode enabled but no token
     let state = State::load(state_path)?;
     if state.cloud.use_cloud_mode == Some(true) && state.cloud.refresh_token.is_none() {
         println!("\nStarting authentication...");

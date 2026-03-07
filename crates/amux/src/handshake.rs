@@ -8,7 +8,7 @@ pub const PROTOCOL_VERSION: u32 = 1;
 
 /// Initial connection handshake request.
 #[derive(Serialize, Deserialize, Debug, Clone)]
-pub(crate) struct Connect {
+pub struct Connect {
     pub link_name: String,
     #[serde(skip_serializing_if = "Option::is_none", default)]
     pub token: Option<String>,
@@ -29,7 +29,7 @@ impl Connect {
 
 /// Initial connection handshake response.
 #[derive(Serialize, Deserialize, Debug, Clone)]
-pub(crate) struct ConnectResult {
+pub struct ConnectResult {
     pub error: Option<ProtocolError>,
 }
 

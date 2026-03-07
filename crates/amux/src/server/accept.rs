@@ -190,10 +190,7 @@ pub(super) async fn accept_handshake<T: Transport>(
 ///
 /// Used by both the CLI client (Unix socket) and server-to-server peering (TCP).
 /// Retries up to 5 times on link name collision before giving up.
-pub(crate) async fn connect_handshake<T, F>(
-    transport: &mut T,
-    mut generate_link: F,
-) -> Result<String>
+pub async fn connect_handshake<T, F>(transport: &mut T, mut generate_link: F) -> Result<String>
 where
     T: Transport,
     F: FnMut() -> String,

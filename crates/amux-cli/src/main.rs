@@ -1,7 +1,9 @@
-use amux::claude;
-use amux::client;
+mod client;
+mod hooks;
+mod init;
+mod plugin;
+
 use amux::config::Config;
-use amux::init;
 use amux::message;
 use amux::server;
 use anyhow::Context;
@@ -10,10 +12,8 @@ use anyhow::anyhow;
 use clap::Parser;
 use clap::Subcommand;
 use std::fs::OpenOptions;
+use std::io::Read;
 use std::path::PathBuf;
-use std::process::Command;
-use std::process::Stdio;
-use std::time::Duration;
 use tracing_appender::non_blocking::WorkerGuard;
 use tracing_subscriber::{EnvFilter, fmt, prelude::*};
 
@@ -74,6 +74,10 @@ enum Commands {
         /// Run as cloud server (requires TLS, validates tokens)
         #[arg(long)]
         cloud: bool,
+
+        /// Read config from stdin (YAML format). Used by ConnectPolicy::Daemon.
+        #[arg(long, hide = true)]
+        config_from_stdin: bool,
     },
 
     /// Internal: Handle hooks from AI coding assistants
@@ -136,13 +140,29 @@ async fn main() -> Result<()> {
         return Ok(());
     }
 
+    // Special case: serve --config-from-stdin reads config from stdin before
+    // anything else (used by ConnectPolicy::Daemon)
+    if let Some(Commands::Serve {
+        cloud,
+        config_from_stdin: true,
+    }) = &cli.command
+    {
+        let mut input = String::new();
+        std::io::stdin()
+            .read_to_string(&mut input)
+            .context("failed to read config from stdin")?;
+        let config: Config =
+            serde_yaml::from_str(&input).context("failed to parse config from stdin")?;
+        let mut server = server::Server::with_config(config);
+        return server.run(*cloud).await.map_err(Into::into);
+    }
+
     let config = load_config(cli.config)?;
 
     match cli.command {
         None => {
             // Default: attach to first available agent
             ensure_initialized(&config).await?;
-            ensure_server_running(&config).await?;
             client::attach(None, &config).await?;
         }
         Some(Commands::NewAgent { agent_type, target }) => {
@@ -150,28 +170,25 @@ async fn main() -> Result<()> {
             ensure_initialized(&config).await?;
             match agent_type {
                 message::AgentType::Claude => {
-                    claude::plugin::ensure_plugin_installed().await;
+                    plugin::ensure_plugin_installed().await;
                 }
                 #[cfg(any(debug_assertions, test))]
                 message::AgentType::TestAgent(_) => {}
             };
-            ensure_server_running(&config).await?;
             client::new_agent(target.as_deref(), agent_type, &config).await?;
         }
         Some(Commands::Attach { target }) => {
             ensure_initialized(&config).await?;
-            ensure_server_running(&config).await?;
             client::attach(target.as_deref(), &config).await?;
         }
         Some(Commands::ListAgents) => client::list_agents(&config).await?,
         Some(Commands::KillServer) => client::kill_server(&config).await?,
         Some(Commands::Connect { address }) => {
             ensure_initialized(&config).await?;
-            ensure_server_running(&config).await?;
-            client::connect(&address, &config).await?;
+            client::connect_remote(&address, &config).await?;
         }
         Some(Commands::Init { reset }) => init::run_init(&config, reset).await?,
-        Some(Commands::Serve { cloud }) => {
+        Some(Commands::Serve { cloud, .. }) => {
             let mut server = server::Server::with_config(config);
             server.run(cloud).await?;
         }
@@ -181,7 +198,7 @@ async fn main() -> Result<()> {
         }
         Some(Commands::Hooks { provider }) => match provider {
             HooksProvider::Claude { .. } => {
-                claude::hooks::handle_claude_hook(&config);
+                hooks::handle_claude_hook(&config);
             }
         },
     }
@@ -198,60 +215,6 @@ async fn ensure_initialized(config: &Config) -> Result<()> {
             .context("initialization failed")?;
     }
     Ok(())
-}
-
-/// Ensure the server is running, start it if not
-async fn ensure_server_running(config: &Config) -> Result<()> {
-    let socket_path = &config.socket_path;
-
-    // Check if socket exists and server is actually responding
-    if socket_path.exists() {
-        // Try to connect to verify server is alive
-        match tokio::net::UnixStream::connect(socket_path).await {
-            Ok(_) => return Ok(()), // Server is running
-            Err(e) => {
-                // Stale socket - server died without cleanup
-                tracing::warn!(error = %e, "stale socket detected, removing");
-                let _ = std::fs::remove_file(socket_path);
-            }
-        }
-    }
-
-    tracing::info!("starting server");
-
-    // Spawn server as background process
-    let exe = std::env::current_exe().context("failed to get current exe")?;
-    let mut cmd = Command::new(&exe);
-    cmd.arg("serve");
-
-    // Pass config file path if we have one
-    if let Some(path) = config.path.as_deref() {
-        cmd.arg("--config").arg(path);
-    }
-
-    cmd.stdin(Stdio::null())
-        .stdout(Stdio::null())
-        .stderr(Stdio::null())
-        .spawn()
-        .context("failed to start server")?;
-
-    // Wait for server to be ready
-    for _ in 0..50 {
-        if socket_path.exists() {
-            // Verify server is actually listening
-            if tokio::net::UnixStream::connect(socket_path).await.is_ok() {
-                return Ok(());
-            }
-        }
-        tokio::time::sleep(Duration::from_millis(100)).await;
-    }
-
-    let log_path = std::env::var("AMUX_LOG")
-        .unwrap_or_else(|_| amux::config::default_log_path().display().to_string());
-    Err(anyhow!(
-        "server failed to start within 5s — check {} for details",
-        log_path
-    ))
 }
 
 // TODO: Once E2E executor can call amux/test-agent binaries directly (without

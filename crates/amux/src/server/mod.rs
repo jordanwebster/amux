@@ -36,7 +36,7 @@ mod connection;
 mod handlers;
 mod routing;
 
-pub(crate) use accept::connect_handshake;
+pub use accept::connect_handshake;
 use accept::{tcp_accept, unix_accept, websocket_accept};
 use cloud::establish_cloud_connection;
 use routing::broadcast_to_peers;
