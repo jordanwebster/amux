@@ -109,25 +109,8 @@ enum HooksProvider {
 #[derive(Subcommand)]
 enum ClaudeHookEvent {
     SessionStart,
-    SessionEnd,
-    PreToolUse,
-    PostToolUse,
-    PostToolUseFailure,
     PermissionRequest,
-    UserPromptSubmit,
-    Notification,
     Stop,
-    SubagentStart,
-    SubagentStop,
-    PreCompact,
-    Setup,
-}
-
-fn is_handled_hook_event(event: &ClaudeHookEvent) -> bool {
-    matches!(
-        event,
-        ClaudeHookEvent::SessionStart | ClaudeHookEvent::PermissionRequest | ClaudeHookEvent::Stop
-    )
 }
 
 #[tokio::main]
@@ -135,15 +118,6 @@ async fn main() -> Result<()> {
     let _log_guard = init_tracing();
 
     let cli = Cli::parse();
-
-    // Fast-path exit for unhandled hook events (no stdin, no config, no socket)
-    if let Some(Commands::Hooks {
-        provider: HooksProvider::Claude { event },
-    }) = &cli.command
-        && !is_handled_hook_event(event)
-    {
-        return Ok(());
-    }
 
     // Special case: serve --config-from-stdin reads config from stdin before
     // anything else (used by ConnectPolicy::Daemon)

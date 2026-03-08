@@ -1,17 +1,7 @@
 {
   "hooks": {
-    "SessionStart": [{ "hooks": [{ "type": "command", "command": "amux hooks claude session-start" }] }],
-    "SessionEnd": [{ "hooks": [{ "type": "command", "command": "amux hooks claude session-end" }] }],
-    "PreToolUse": [{ "hooks": [{ "type": "command", "command": "amux hooks claude pre-tool-use" }] }],
-    "PostToolUse": [{ "hooks": [{ "type": "command", "command": "amux hooks claude post-tool-use" }] }],
-    "PostToolUseFailure": [{ "hooks": [{ "type": "command", "command": "amux hooks claude post-tool-use-failure" }] }],
-    "PermissionRequest": [{ "hooks": [{ "type": "command", "command": "amux hooks claude permission-request" }] }],
-    "UserPromptSubmit": [{ "hooks": [{ "type": "command", "command": "amux hooks claude user-prompt-submit" }] }],
-    "Notification": [{ "hooks": [{ "type": "command", "command": "amux hooks claude notification" }] }],
-    "Stop": [{ "hooks": [{ "type": "command", "command": "amux hooks claude stop" }] }],
-    "SubagentStart": [{ "hooks": [{ "type": "command", "command": "amux hooks claude subagent-start" }] }],
-    "SubagentStop": [{ "hooks": [{ "type": "command", "command": "amux hooks claude subagent-stop" }] }],
-    "PreCompact": [{ "hooks": [{ "type": "command", "command": "amux hooks claude pre-compact" }] }],
-    "Setup": [{ "hooks": [{ "type": "command", "command": "amux hooks claude setup" }] }]
+    "SessionStart": [{ "hooks": [{ "type": "command", "command": "amux hooks claude session-start", "async": true }] }],
+    "PermissionRequest": [{ "hooks": [{ "type": "command", "command": "amux hooks claude permission-request", "async": true }] }],
+    "Stop": [{ "hooks": [{ "type": "command", "command": "amux hooks claude stop", "async": true }] }]
   }
 }
