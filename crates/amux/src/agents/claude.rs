@@ -1,10 +1,10 @@
 //! Claude Code agent session.
 //!
-//! Two-phase init: [`ClaudeSession::new`] stores metadata and event channel,
+//! Two-phase init: [`ClaudeSession::new`] stores metadata,
 //! [`ClaudeSession::start`] spawns the PTY process. Hook handling and structured
 //! input translation are encapsulated here.
 
-use super::{PtyHandle, SessionEvent, spawn_pty_agent};
+use super::{PtyHandle, spawn_pty_agent};
 use crate::buffer::MultiplexStructuredReader;
 use crate::claude::structured_log_source::StructuredLogSource;
 use crate::claude::types::{
@@ -15,7 +15,6 @@ use crate::error::Result;
 use crate::message::CreateAgentRequest;
 use std::path::PathBuf;
 use std::time::Duration;
-use tokio::sync::mpsc;
 use uuid::Uuid;
 
 /// Convert a permission response to the keystroke to send to Claude Code's TUI.
@@ -40,19 +39,16 @@ pub struct ClaudeSession {
     log_source: Option<StructuredLogSource>,
 
     // Stored for deferred start()
-    event_tx: mpsc::Sender<SessionEvent>,
-    user_id: Uuid,
-    terminal_size: Option<crate::message::TerminalSize>,
+    pub(super) terminal_size: Option<crate::message::TerminalSize>,
+    /// Claude session ID. Set from SessionStart hook during normal operation,
+    /// or pre-set before `start()` for resume (triggers `--resume <id>`).
+    pub(super) session_id: Option<Uuid>,
 }
 
 impl ClaudeSession {
     /// Create a new ClaudeSession from a CreateAgentRequest.
     /// Does not spawn the process — call [`start`] afterwards.
-    pub fn new(
-        req: &CreateAgentRequest,
-        event_tx: mpsc::Sender<SessionEvent>,
-        user_id: Uuid,
-    ) -> Self {
+    pub fn new(req: &CreateAgentRequest) -> Self {
         Self {
             agent_id: req.agent_id,
             name: req.name.clone(),
@@ -60,27 +56,30 @@ impl ClaudeSession {
             working_dir: req.working_dir.clone(),
             pty: None,
             log_source: None,
-            event_tx,
-            user_id,
             terminal_size: req.terminal_size,
+            session_id: None,
         }
     }
 
-    /// Spawn the Claude Code process.
-    pub fn start(&mut self) -> Result<()> {
+    /// Spawn the Claude Code process. Returns an exit handle that completes
+    /// when the process exits. If `session_id` is set, passes `--resume <id>`.
+    pub fn start(&mut self) -> Result<tokio::task::JoinHandle<()>> {
         let env = [("AMUX_AGENT_ID", self.agent_id.to_string())];
-        let (pty, log_source) = spawn_pty_agent(
+        let args: Vec<String> = match self.session_id {
+            Some(id) => vec!["--resume".to_string(), id.to_string()],
+            None => vec![],
+        };
+        let (pty, log_source, exit_handle) = spawn_pty_agent(
             self.agent_id,
             &self.command,
+            &args,
             &self.working_dir,
             &env,
             self.terminal_size,
-            self.event_tx.clone(),
-            self.user_id,
         )?;
         self.pty = Some(pty);
         self.log_source = Some(log_source);
-        Ok(())
+        Ok(exit_handle)
     }
 
     /// Send structured input to Claude Code.
@@ -106,13 +105,14 @@ impl ClaudeSession {
     }
 
     /// Handle a hook event.
-    pub async fn handle_hook(&self, hook: Hook) -> Result<()> {
+    pub async fn handle_hook(&mut self, hook: Hook) -> Result<()> {
         let Some(log_source) = &self.log_source else {
             return Ok(());
         };
         match hook {
             Hook::Claude(ClaudeHook::SessionStart(session_start)) => {
-                tracing::debug!(agent_id = %self.agent_id, "linking transcript");
+                tracing::debug!(agent_id = %self.agent_id, session_id = %session_start.session_id, "linking transcript");
+                self.session_id = Some(session_start.session_id);
                 log_source
                     .link_transcript(PathBuf::from(&session_start.transcript_path))
                     .await;

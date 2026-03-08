@@ -9,7 +9,8 @@ use super::connection::{
     ConnectionContext, cancel_streams_matching, cleanup_stream, register_stream,
 };
 use super::routing::{
-    broadcast_to_peers, connection_tx, create_agent, handle_subscribe, shutdown_server,
+    broadcast_to_peers, connection_tx, create_agent, handle_subscribe, resume_agents,
+    shutdown_server, suspend_server,
 };
 use crate::agent_registry::Agent;
 use crate::buffer::{BroadcastReader, BufferPolicy};
@@ -281,29 +282,26 @@ async fn handle_routable(
             let Some((reply_src, reply_dst)) = reply_routes(src, "SubscribeStructured") else {
                 return Ok(());
             };
-            let session = {
+            let log_reader = {
                 let us = ctx.user_state.read().await;
-                us.agents.get(&agent_id).cloned()
+                let Some(session) = us.agents.get(&agent_id) else {
+                    let _ = tx
+                        .send(Message::routable(
+                            reply_src,
+                            reply_dst,
+                            request_id,
+                            &RoutableMessage::SubscribeStructuredResult {
+                                agent_id,
+                                error: Some(ProtocolError::ServerError(format!(
+                                    "agent {agent_id} not found"
+                                ))),
+                            },
+                        ))
+                        .await;
+                    return Ok(());
+                };
+                session.subscribe().await
             };
-
-            let Some(session) = session else {
-                let _ = tx
-                    .send(Message::routable(
-                        reply_src,
-                        reply_dst,
-                        request_id,
-                        &RoutableMessage::SubscribeStructuredResult {
-                            agent_id,
-                            error: Some(ProtocolError::ServerError(format!(
-                                "agent {agent_id} not found"
-                            ))),
-                        },
-                    ))
-                    .await;
-                return Ok(());
-            };
-
-            let log_reader = session.subscribe().await;
 
             let Some(reader) = log_reader else {
                 let _ = tx
@@ -522,21 +520,18 @@ async fn handle_command(
                 return Ok(());
             }
 
-            let session = {
-                let us = ctx.user_state.read().await;
-                us.agents.get(&agent_id).cloned()
-            };
-
-            let result = match session {
-                Some(session) => session
-                    .handle_hook(hook)
-                    .await
-                    .map_err(|e| ProtocolError::ServerError(format!("hook handling failed: {e}"))),
-                None => {
-                    tracing::warn!(%agent_id, "no agent found for hook");
-                    Err(ProtocolError::ServerError(format!(
-                        "No agent found with agent_id: {agent_id}"
-                    )))
+            let result = {
+                let mut us = ctx.user_state.write().await;
+                match us.agents.get_mut(&agent_id) {
+                    Some(session) => session.handle_hook(hook).await.map_err(|e| {
+                        ProtocolError::ServerError(format!("hook handling failed: {e}"))
+                    }),
+                    None => {
+                        tracing::warn!(%agent_id, "no agent found for hook");
+                        Err(ProtocolError::ServerError(format!(
+                            "No agent found with agent_id: {agent_id}"
+                        )))
+                    }
                 }
             };
 
@@ -557,13 +552,95 @@ async fn handle_command(
             Ok(())
         }
 
+        Command::Suspend => {
+            tracing::info!("suspend requested");
+            let (suspended, errors) = suspend_server(&ctx.user_state).await;
+            let suspended_count = suspended.len();
+            let error = if !errors.is_empty() {
+                Some(ProtocolError::ServerError(errors.join("; ")))
+            } else {
+                None
+            };
+            if !suspended.is_empty() {
+                let state_path = {
+                    let state = ctx.state.read().await;
+                    state.config.state_path.clone()
+                };
+                if let Err(e) = crate::state::save_suspended(&state_path, &suspended) {
+                    tracing::error!(error = %e, "failed to save suspended agents");
+                    let _ = tx
+                        .send(Message::Command(Command::SuspendResult {
+                            suspended_count: 0,
+                            error: Some(ProtocolError::ServerError(format!(
+                                "failed to save state: {e}"
+                            ))),
+                        }))
+                        .await;
+                    return Ok(());
+                }
+            }
+            let _ = tx
+                .send(Message::Command(Command::SuspendResult {
+                    suspended_count,
+                    error,
+                }))
+                .await;
+
+            // Let agents handle SIGHUP from PTY master drop before exiting
+            tokio::time::sleep(Duration::from_millis(200)).await;
+
+            let socket_path = {
+                let state = ctx.state.read().await;
+                state.config.socket_path.clone()
+            };
+            let _ = std::fs::remove_file(socket_path);
+            tracing::info!("server exiting after suspend");
+            std::process::exit(0);
+        }
+
+        Command::Resume => {
+            tracing::info!("resume requested");
+            let state_path = {
+                let state = ctx.state.read().await;
+                state.config.state_path.clone()
+            };
+            let suspended = match crate::state::load_and_remove_suspended(&state_path) {
+                Ok(s) => s,
+                Err(e) => {
+                    tracing::error!(error = %e, "failed to load suspended agents");
+                    let _ = tx
+                        .send(Message::Command(Command::ResumeResult {
+                            resumed_count: 0,
+                            failed_count: 0,
+                            error: Some(ProtocolError::ServerError(format!(
+                                "failed to load state: {e}"
+                            ))),
+                        }))
+                        .await;
+                    return Ok(());
+                }
+            };
+            let (resumed_count, failed_count) =
+                resume_agents(&ctx.user_state, &ctx.event_tx, ctx.user_id, suspended).await;
+            let _ = tx
+                .send(Message::Command(Command::ResumeResult {
+                    resumed_count,
+                    failed_count,
+                    error: None,
+                }))
+                .await;
+            Ok(())
+        }
+
         // Response variants — should not arrive at the server
         Command::ListAgentsResult { .. }
         | Command::ResolveAgentResult { .. }
         | Command::ShutdownNotification(_)
         | Command::DebugResult { .. }
         | Command::ConnectToServerResult { .. }
-        | Command::HandleHookResult { .. } => {
+        | Command::HandleHookResult { .. }
+        | Command::SuspendResult { .. }
+        | Command::ResumeResult { .. } => {
             tracing::warn!("unexpected command response variant");
             Ok(())
         }
@@ -818,15 +895,12 @@ mod tests {
     use uuid::Uuid;
 
     /// Create an AgentSession::TestAgent from a CreateAgentRequest.
-    fn create_test_session(
-        req: &crate::message::CreateAgentRequest,
-        event_tx: mpsc::Sender<crate::agents::SessionEvent>,
-    ) -> AgentSession {
+    fn create_test_session(req: &crate::message::CreateAgentRequest) -> AgentSession {
         let cmd = match &req.agent_type {
             crate::message::AgentType::TestAgent(cmd) => cmd.clone(),
             _ => panic!("expected TestAgent"),
         };
-        let mut inner = crate::agents::TestAgentSession::new(req, cmd, event_tx, LOCAL_USER_ID);
+        let mut inner = crate::agents::TestAgentSession::new(req, cmd);
         inner.start().unwrap();
         AgentSession::TestAgent(inner)
     }
@@ -947,7 +1021,6 @@ mod tests {
         let agent_id = Uuid::new_v4();
         {
             let mut us = user_state.write().await;
-            let (event_tx, _rx) = mpsc::channel(16);
             let req = crate::message::CreateAgentRequest {
                 agent_id,
                 name: Some("local".to_string()),
@@ -955,9 +1028,9 @@ mod tests {
                 working_dir: PathBuf::from("/tmp"),
                 terminal_size: Some(crate::message::TerminalSize { rows: 24, cols: 80 }),
             };
-            let session = create_test_session(&req, event_tx);
+            let session = create_test_session(&req);
             let info = session.to_agent();
-            us.agents.insert(agent_id, Arc::new(session));
+            us.agents.insert(agent_id, session);
             us.registry.register_local(info).unwrap();
         }
 
@@ -1574,7 +1647,6 @@ mod tests {
     /// Insert a local test session into user_state.agents.
     async fn insert_test_session(user_state: &Arc<RwLock<ServerUserState>>, agent_id: Uuid) {
         let mut us = user_state.write().await;
-        let (event_tx, _rx) = mpsc::channel(16);
         let req = crate::message::CreateAgentRequest {
             agent_id,
             name: Some("hook-test".to_string()),
@@ -1582,8 +1654,8 @@ mod tests {
             working_dir: PathBuf::from("/tmp"),
             terminal_size: Some(crate::message::TerminalSize { rows: 24, cols: 80 }),
         };
-        let session = create_test_session(&req, event_tx);
-        us.agents.insert(agent_id, Arc::new(session));
+        let session = create_test_session(&req);
+        us.agents.insert(agent_id, session);
     }
 
     #[tokio::test]

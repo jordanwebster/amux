@@ -3,13 +3,12 @@
 //! Only available in debug/test builds. Spawns an arbitrary command
 //! (typically `test-agent`) without Claude-specific environment or hooks.
 
-use super::{PtyHandle, SessionEvent, spawn_pty_agent};
+use super::{PtyHandle, spawn_pty_agent};
 use crate::buffer::MultiplexStructuredReader;
 use crate::claude::structured_log_source::StructuredLogSource;
 use crate::error::Result;
 use crate::message::CreateAgentRequest;
 use std::path::PathBuf;
-use tokio::sync::mpsc;
 use uuid::Uuid;
 
 pub struct TestAgentSession {
@@ -21,20 +20,13 @@ pub struct TestAgentSession {
     log_source: Option<StructuredLogSource>,
 
     // Stored for deferred start()
-    event_tx: mpsc::Sender<SessionEvent>,
-    user_id: Uuid,
-    terminal_size: Option<crate::message::TerminalSize>,
+    pub(super) terminal_size: Option<crate::message::TerminalSize>,
 }
 
 impl TestAgentSession {
     /// Create a new TestAgentSession.
     /// Does not spawn the process — call [`start`] afterwards.
-    pub fn new(
-        req: &CreateAgentRequest,
-        cmd: String,
-        event_tx: mpsc::Sender<SessionEvent>,
-        user_id: Uuid,
-    ) -> Self {
+    pub fn new(req: &CreateAgentRequest, cmd: String) -> Self {
         Self {
             agent_id: req.agent_id,
             name: req.name.clone(),
@@ -42,26 +34,24 @@ impl TestAgentSession {
             working_dir: req.working_dir.clone(),
             pty: None,
             log_source: None,
-            event_tx,
-            user_id,
             terminal_size: req.terminal_size,
         }
     }
 
-    /// Spawn the test agent process.
-    pub fn start(&mut self) -> Result<()> {
-        let (pty, log_source) = spawn_pty_agent(
+    /// Spawn the test agent process. Returns an exit handle that completes
+    /// when the process exits.
+    pub fn start(&mut self) -> Result<tokio::task::JoinHandle<()>> {
+        let (pty, log_source, exit_handle) = spawn_pty_agent(
             self.agent_id,
             &self.command,
+            &[],
             &self.working_dir,
             &[],
             self.terminal_size,
-            self.event_tx.clone(),
-            self.user_id,
         )?;
         self.pty = Some(pty);
         self.log_source = Some(log_source);
-        Ok(())
+        Ok(exit_handle)
     }
 
     /// Subscribe to structured log output.

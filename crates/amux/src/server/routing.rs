@@ -12,6 +12,7 @@ use crate::buffer::MultiplexByteReader;
 use crate::error::{AmuxError, Result};
 use crate::message::{AgentType, CreateAgentRequest, DirectMessage, Message, TerminalSize};
 use crate::route::Route;
+use std::collections::HashMap;
 use std::sync::Arc;
 use tokio::sync::{RwLock, mpsc};
 use uuid::Uuid;
@@ -58,35 +59,37 @@ pub(super) async fn create_agent(
         )));
     }
 
-    let mut session =
-        match &req.agent_type {
-            AgentType::Claude => AgentSession::Claude(crate::agents::ClaudeSession::new(
-                &req,
-                event_tx.clone(),
-                user_id,
-            )),
-            #[cfg(any(debug_assertions, test))]
-            AgentType::TestAgent(cmd) => AgentSession::TestAgent(
-                crate::agents::TestAgentSession::new(&req, cmd.clone(), event_tx.clone(), user_id),
-            ),
-        };
-    session.start()?;
+    let agent_id = req.agent_id;
+    let mut session = match &req.agent_type {
+        AgentType::Claude => AgentSession::Claude(crate::agents::ClaudeSession::new(&req)),
+        #[cfg(any(debug_assertions, test))]
+        AgentType::TestAgent(cmd) => {
+            AgentSession::TestAgent(crate::agents::TestAgentSession::new(&req, cmd.clone()))
+        }
+    };
+    let exit_handle = session.start()?;
     let info = session.to_agent();
     let name = req.name.clone();
     let command = session.command().to_string();
     let working_dir = session.working_dir().to_path_buf();
-    us.agents.insert(req.agent_id, Arc::new(session));
+    us.agents.insert(agent_id, session);
     us.registry.register_local(info).map_err(|e| {
-        AmuxError::ServerError(format!(
-            "failed to register local agent {}: {e}",
-            req.agent_id
-        ))
+        AmuxError::ServerError(format!("failed to register local agent {agent_id}: {e}",))
     })?;
+
+    // Task: Monitor exit handle and notify server when agent exits
+    let event_tx = event_tx.clone();
+    tokio::spawn(async move {
+        let _ = exit_handle.await;
+        let _ = event_tx
+            .send(SessionEvent::Ended { agent_id, user_id })
+            .await;
+    });
 
     broadcast_to_peers(
         &mut us,
         &DirectMessage::AnnounceAgent {
-            agent_id: req.agent_id,
+            agent_id,
             name,
             command,
             working_dir,
@@ -95,7 +98,7 @@ pub(super) async fn create_agent(
         None,
     );
 
-    tracing::info!(agent_id = %req.agent_id, name = ?req.name, agents = us.agents.len(), "agent created");
+    tracing::info!(agent_id = %agent_id, name = ?req.name, agents = us.agents.len(), "agent created");
     Ok(())
 }
 
@@ -105,13 +108,11 @@ pub(super) async fn handle_subscribe(
     agent_id: &Uuid,
     terminal_size: Option<TerminalSize>,
 ) -> Result<MultiplexByteReader> {
-    let session = {
-        let us = user_state.read().await;
-        us.agents
-            .get(agent_id)
-            .ok_or(AmuxError::AgentNotFound(agent_id.to_string()))?
-            .clone()
-    };
+    let us = user_state.read().await;
+    let session = us
+        .agents
+        .get(agent_id)
+        .ok_or(AmuxError::AgentNotFound(agent_id.to_string()))?;
 
     let pty = session
         .get_pty_handle()
@@ -130,16 +131,113 @@ pub(super) async fn handle_subscribe(
 
 /// Shutdown the server — shuts down all agents for the given user state
 pub(super) async fn shutdown_server(user_state: &Arc<RwLock<ServerUserState>>) {
-    let sessions: Vec<_> = {
-        let us = user_state.read().await;
-        us.agents.iter().map(|(id, s)| (*id, s.clone())).collect()
+    let sessions: HashMap<Uuid, AgentSession> = {
+        let mut us = user_state.write().await;
+        std::mem::take(&mut us.agents)
     };
     for (id, session) in &sessions {
         tracing::info!(agent_id = %id, "shutting down agent");
         session.stop(StopPolicy::Interrupt).await;
     }
-    let mut us = user_state.write().await;
-    us.agents.clear();
+}
+
+/// Suspend the server — stop all agents and return serializable state.
+/// Returns (suspended_agents, errors) where errors are agent IDs that failed to suspend.
+pub(super) async fn suspend_server(
+    user_state: &Arc<RwLock<ServerUserState>>,
+) -> (Vec<crate::agents::SuspendedAgent>, Vec<String>) {
+    let sessions: HashMap<Uuid, AgentSession> = {
+        let mut us = user_state.write().await;
+        std::mem::take(&mut us.agents)
+    };
+
+    let mut suspended = Vec::new();
+    let mut errors = Vec::new();
+
+    for (id, session) in sessions {
+        // Remove from registry before suspending
+        {
+            let mut us = user_state.write().await;
+            us.registry.remove(&id);
+            broadcast_to_peers(
+                &mut us,
+                &DirectMessage::WithdrawAgent { agent_id: id },
+                None,
+            );
+        }
+
+        tracing::info!(agent_id = %id, "suspending agent");
+        match session.suspend().await {
+            Ok(sa) => suspended.push(sa),
+            Err(e) => {
+                tracing::error!(agent_id = %id, error = %e, "failed to suspend agent");
+                errors.push(format!("agent {id}: {e}"));
+            }
+        }
+    }
+    (suspended, errors)
+}
+
+/// Resume agents from suspended state. Returns (resumed_count, failed_count).
+pub(super) async fn resume_agents(
+    user_state: &Arc<RwLock<ServerUserState>>,
+    event_tx: &mpsc::Sender<SessionEvent>,
+    user_id: Uuid,
+    suspended: Vec<crate::agents::SuspendedAgent>,
+) -> (usize, usize) {
+    let mut resumed = 0usize;
+    let mut failed = 0usize;
+
+    for sa in suspended {
+        let agent_id = sa.agent_id();
+        let name = sa.name().map(String::from);
+        tracing::info!(agent_id = %agent_id, name = ?name, "resuming agent");
+
+        let mut session = sa.into_session();
+        match session.start() {
+            Ok(exit_handle) => {
+                let info = session.to_agent();
+                let command = session.command().to_string();
+                let working_dir = session.working_dir().to_path_buf();
+                {
+                    let mut us = user_state.write().await;
+                    us.agents.insert(agent_id, session);
+                    if let Err(e) = us.registry.register_local(info) {
+                        tracing::error!(agent_id = %agent_id, error = %e, "failed to register resumed agent");
+                    }
+                    broadcast_to_peers(
+                        &mut us,
+                        &DirectMessage::AnnounceAgent {
+                            agent_id,
+                            name: name.clone(),
+                            command,
+                            working_dir,
+                            route: Route::empty(),
+                        },
+                        None,
+                    );
+                }
+
+                // Task: Monitor exit handle and notify server when agent exits
+                let event_tx = event_tx.clone();
+                tokio::spawn(async move {
+                    let _ = exit_handle.await;
+                    let _ = event_tx
+                        .send(SessionEvent::Ended { agent_id, user_id })
+                        .await;
+                });
+
+                resumed += 1;
+            }
+            Err(e) => {
+                tracing::error!(agent_id = %agent_id, error = %e, "failed to resume agent");
+                failed += 1;
+            }
+        }
+    }
+
+    tracing::info!(resumed, failed, "resume complete");
+    (resumed, failed)
 }
 
 /// Send a DirectMessage to all peer links, optionally excluding one.
@@ -634,28 +732,21 @@ mod tests {
         let user_state = Arc::new(RwLock::new(ServerUserState::new()));
         let (event_tx, _event_rx) = mpsc::channel(16);
 
-        // Create one real session, then clone its Arc into the agents map
-        // under MAX_LOCAL_AGENTS different UUIDs to fill the map.
-        let seed_id = Uuid::new_v4();
-        let req = crate::message::CreateAgentRequest {
-            agent_id: seed_id,
-            name: None,
-            agent_type: crate::message::AgentType::TestAgent("/bin/cat".to_string()),
-            working_dir: PathBuf::from("/tmp"),
-            terminal_size: None,
-        };
-        let mut inner = crate::agents::TestAgentSession::new(
-            &req,
-            "/bin/cat".to_string(),
-            event_tx.clone(),
-            crate::server::LOCAL_USER_ID,
-        );
-        inner.start().unwrap();
-        let session = Arc::new(crate::agents::AgentSession::TestAgent(inner));
+        // Fill the agents map to MAX_LOCAL_AGENTS with unstarted sessions.
         {
             let mut us = user_state.write().await;
             for _ in 0..MAX_LOCAL_AGENTS {
-                us.agents.insert(Uuid::new_v4(), session.clone());
+                let id = Uuid::new_v4();
+                let req = crate::message::CreateAgentRequest {
+                    agent_id: id,
+                    name: None,
+                    agent_type: crate::message::AgentType::TestAgent("/bin/cat".to_string()),
+                    working_dir: PathBuf::from("/tmp"),
+                    terminal_size: None,
+                };
+                let inner = crate::agents::TestAgentSession::new(&req, "/bin/cat".to_string());
+                us.agents
+                    .insert(id, crate::agents::AgentSession::TestAgent(inner));
             }
         }
 

@@ -208,17 +208,45 @@ pub enum DirectMessage {
 #[derive(Serialize, Deserialize, Debug, Clone)]
 pub enum Command {
     ListAgents,
-    ListAgentsResult { agents: Vec<Agent> },
-    ResolveAgent { identifier: String },
-    ResolveAgentResult { agent: Option<Agent> },
+    ListAgentsResult {
+        agents: Vec<Agent>,
+    },
+    ResolveAgent {
+        identifier: String,
+    },
+    ResolveAgentResult {
+        agent: Option<Agent>,
+    },
     Shutdown,
     ShutdownNotification(ShutdownReason),
     Debug,
-    DebugResult { info: ServerDebugInfo },
-    ConnectToServer { address: String },
-    ConnectToServerResult { error: Option<ProtocolError> },
-    HandleHook { agent_id: Uuid, hook: Hook },
-    HandleHookResult { error: Option<ProtocolError> },
+    DebugResult {
+        info: ServerDebugInfo,
+    },
+    ConnectToServer {
+        address: String,
+    },
+    ConnectToServerResult {
+        error: Option<ProtocolError>,
+    },
+    HandleHook {
+        agent_id: Uuid,
+        hook: Hook,
+    },
+    HandleHookResult {
+        error: Option<ProtocolError>,
+    },
+    Suspend,
+    SuspendResult {
+        suspended_count: usize,
+        error: Option<ProtocolError>,
+    },
+    Resume,
+    ResumeResult {
+        resumed_count: usize,
+        failed_count: usize,
+        error: Option<ProtocolError>,
+    },
 }
 
 impl Command {
@@ -237,6 +265,10 @@ impl Command {
             Command::ConnectToServerResult { .. } => "ConnectToServerResult",
             Command::HandleHook { .. } => "HandleHook",
             Command::HandleHookResult { .. } => "HandleHookResult",
+            Command::Suspend => "Suspend",
+            Command::SuspendResult { .. } => "SuspendResult",
+            Command::Resume => "Resume",
+            Command::ResumeResult { .. } => "ResumeResult",
         }
     }
 }
@@ -294,6 +326,10 @@ impl Message {
                 Command::ConnectToServerResult { .. } => "Command::ConnectToServerResult",
                 Command::HandleHook { .. } => "Command::HandleHook",
                 Command::HandleHookResult { .. } => "Command::HandleHookResult",
+                Command::Suspend => "Command::Suspend",
+                Command::SuspendResult { .. } => "Command::SuspendResult",
+                Command::Resume => "Command::Resume",
+                Command::ResumeResult { .. } => "Command::ResumeResult",
             },
         }
     }

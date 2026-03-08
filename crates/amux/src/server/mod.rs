@@ -63,7 +63,7 @@ pub(super) struct StreamEntry {
 /// determines the user_id; all operations are scoped to that user's state.
 /// This provides complete user isolation without per-message authorization checks.
 pub(super) struct ServerUserState {
-    pub(super) agents: HashMap<Uuid, Arc<AgentSession>>,
+    pub(super) agents: HashMap<Uuid, AgentSession>,
     /// Per-user routing table. Link names are globally unique (random suffixes).
     /// Per-user for security: prevents cross-user message forwarding without
     /// explicit authorization.

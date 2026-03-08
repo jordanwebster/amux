@@ -38,6 +38,40 @@ One paragraph describing what was done.
 
 ---
 
+## 2026-03-08: Suspend/resume for agent sessions
+
+### Summary
+Added suspend/resume capability to support future `amux update` flow. Two prerequisite refactors removed `Arc` from agent storage (enabling ownership transfer for suspend) and moved lifecycle monitoring from sessions to server (decoupling sessions from server bookkeeping). The feature includes `SuspendedAgent` serialization, `--resume` support for Claude agents, `Suspend`/`Resume` command variants, server orchestration, and MessagePack state persistence.
+
+### Changes
+- `agents/mod.rs` — Added `SuspendedAgent` enum, `suspend(self)` method, `terminal_size()` accessor, `into_session()` for resume. Added `args` parameter to `spawn_pty_agent`. Removed `event_tx`/`user_id` from `spawn_pty_agent` (returns `JoinHandle<()>` instead).
+- `agents/claude.rs` — Added `session_id` field (set via SessionStart hook; when pre-set before `start()`, passes `--resume` to claude). Removed `event_tx`/`user_id` from struct and `new()`. `start()` returns `Result<JoinHandle<()>>`.
+- `agents/testagent.rs` — Same struct/new() cleanup. `start()` returns `Result<JoinHandle<()>>`.
+- `server/mod.rs` — Changed `agents: HashMap<Uuid, Arc<AgentSession>>` to `HashMap<Uuid, AgentSession>`.
+- `server/routing.rs` — Removed Arc wrapping in `create_agent`, added server-side exit monitoring. Added `suspend_server()` and `resume_agents()`. Changed `shutdown_server` to use `mem::take`.
+- `server/handlers.rs` — Updated patterns to work without Arc. Added `Suspend` and `Resume` command handlers.
+- `message.rs` — Added `Suspend`, `SuspendResult`, `Resume`, `ResumeResult` command variants with type labels.
+- `state.rs` — Added `save_suspended()`, `load_and_remove_suspended()` for MessagePack persistence.
+- `lib.rs` — Exported `SuspendedAgent`.
+
+### Decisions Made
+- `SuspendedAgent` uses MessagePack (not YAML) for consistency with all other transports
+- Suspend file lives alongside state.yaml as `suspended.msgpack`
+- Claude resume uses `--resume <session_id>` flag
+- Test agents restart fresh (no resume semantics)
+- `session_id` is captured from SessionStart hook — suspend errors if hook never arrived
+
+### Verification
+- `cargo check && cargo fmt && cargo clippy --workspace --all-targets -- -D warnings && cargo test` — all pass
+- 171 unit tests (168 existing + 3 new: serde roundtrip, nonexistent file, into_session)
+- 10 E2E tests pass unchanged
+
+### Next Steps
+- Add CLI `amux update` command that sends Suspend, waits, updates binary, starts new server, sends Resume
+- Add CLI `amux suspend` / `amux resume` commands for manual use
+
+---
+
 ## 2026-03-08: Refactor LocalAgentSession into AgentSession enum + PtyHandle
 
 ### Summary

@@ -19,11 +19,12 @@ use crate::buffer::{MultiplexByteBuffer, MultiplexByteReader, MultiplexStructure
 use crate::claude::structured_log_source::StructuredLogSource;
 use crate::claude::types::{Hook, StructuredInput};
 use crate::error::{AmuxError, Result};
-use crate::message::TerminalSize;
+use crate::message::{CreateAgentRequest, TerminalSize};
 use crate::route::Route;
 use portable_pty::{CommandBuilder, MasterPty, PtySize, native_pty_system};
+use serde::{Deserialize, Serialize};
 use std::io::{Read, Write};
-use std::path::Path;
+use std::path::{Path, PathBuf};
 use std::sync::Arc;
 use tokio::sync::{Mutex, mpsc};
 use tracing::Instrument;
@@ -97,19 +98,19 @@ impl PtyHandle {
     }
 }
 
-/// Spawn a PTY process and return a handle + structured log source.
+/// Spawn a PTY process and return a handle + structured log source + exit handle.
 ///
 /// Creates the PTY, spawns the command, and starts reader/writer/exit-monitor
-/// tasks. Used by both [`ClaudeSession`] and [`TestAgentSession`].
+/// tasks. The exit handle completes when the child exits (after internal cleanup).
+/// Used by both [`ClaudeSession`] and [`TestAgentSession`].
 pub(crate) fn spawn_pty_agent(
     agent_id: Uuid,
     command: &str,
+    args: &[String],
     working_dir: &Path,
     env: &[(&str, String)],
     terminal_size: Option<TerminalSize>,
-    event_tx: mpsc::Sender<SessionEvent>,
-    user_id: Uuid,
-) -> Result<(PtyHandle, StructuredLogSource)> {
+) -> Result<(PtyHandle, StructuredLogSource, tokio::task::JoinHandle<()>)> {
     let session_span = tracing::info_span!("session", agent_id = %agent_id, command = %command);
     tracing::info!(parent: &session_span, dir = %working_dir.display(), "creating session");
 
@@ -125,6 +126,9 @@ pub(crate) fn spawn_pty_agent(
         .map_err(|e| AmuxError::Pty(format!("failed to open pty: {e}")))?;
 
     let mut cmd = CommandBuilder::new(command);
+    for arg in args {
+        cmd.arg(arg);
+    }
     cmd.cwd(working_dir);
     for (key, val) in env {
         cmd.env(key, val);
@@ -182,12 +186,12 @@ pub(crate) fn spawn_pty_agent(
         .instrument(session_span.clone()),
     );
 
-    // Task: Wait for child to exit, then clean up and notify server
+    // Task: Wait for child to exit, then clean up (server monitors this handle)
     let master_clone = master.clone();
     let buffer_clone = buffer.clone();
     let log_buffer_clone = log_source.buffer().clone();
     let span = session_span;
-    tokio::task::spawn_blocking(move || {
+    let exit_handle = tokio::task::spawn_blocking(move || {
         let _guard = span.enter();
         let status = child.wait();
         tracing::info!(?status, "agent exited");
@@ -203,11 +207,6 @@ pub(crate) fn spawn_pty_agent(
             // Close the multiplex buffers to disconnect all clients
             buffer_clone.close().await;
             log_buffer_clone.close().await;
-
-            // Notify server
-            let _ = event_tx
-                .send(SessionEvent::Ended { agent_id, user_id })
-                .await;
         });
     });
 
@@ -218,7 +217,7 @@ pub(crate) fn spawn_pty_agent(
         buffer,
     };
 
-    Ok((pty, log_source))
+    Ok((pty, log_source, exit_handle))
 }
 
 /// Unified agent session handle, dispatching to concrete session types.
@@ -262,7 +261,8 @@ impl AgentSession {
     }
 
     /// Start the agent process (two-phase init: new() stores metadata, start() spawns).
-    pub fn start(&mut self) -> Result<()> {
+    /// Returns an exit handle that completes when the agent process exits.
+    pub fn start(&mut self) -> Result<tokio::task::JoinHandle<()>> {
         match self {
             Self::Claude(s) => s.start(),
             #[cfg(any(debug_assertions, test))]
@@ -289,7 +289,7 @@ impl AgentSession {
     }
 
     /// Handle a hook event for this agent.
-    pub async fn handle_hook(&self, hook: Hook) -> Result<()> {
+    pub async fn handle_hook(&mut self, hook: Hook) -> Result<()> {
         match self {
             Self::Claude(s) => s.handle_hook(hook).await,
             #[cfg(any(debug_assertions, test))]
@@ -317,6 +317,15 @@ impl AgentSession {
         }
     }
 
+    /// Get the terminal size this session was created with.
+    pub fn terminal_size(&self) -> Option<TerminalSize> {
+        match self {
+            Self::Claude(s) => s.terminal_size,
+            #[cfg(any(debug_assertions, test))]
+            Self::TestAgent(s) => s.terminal_size,
+        }
+    }
+
     /// Convert to Agent for listing/registry.
     pub fn to_agent(&self) -> Agent {
         Agent {
@@ -325,6 +334,124 @@ impl AgentSession {
             command: self.command().to_string(),
             working_dir: self.working_dir().to_path_buf(),
             route: Route::empty(),
+        }
+    }
+
+    /// Suspend this session: stop the agent and return serializable state.
+    /// Consumes self.
+    pub async fn suspend(self) -> Result<SuspendedAgent> {
+        match self {
+            Self::Claude(s) => {
+                s.stop(StopPolicy::Interrupt).await;
+                let session_id = s.session_id.ok_or_else(|| {
+                    AmuxError::ServerError(format!(
+                        "cannot suspend claude agent {}: no session_id (SessionStart hook not received)",
+                        s.agent_id
+                    ))
+                })?;
+                Ok(SuspendedAgent::Claude {
+                    agent_id: s.agent_id,
+                    name: s.name,
+                    working_dir: s.working_dir,
+                    terminal_size: s.terminal_size,
+                    session_id,
+                })
+            }
+            #[cfg(any(debug_assertions, test))]
+            Self::TestAgent(s) => {
+                s.stop().await;
+                Ok(SuspendedAgent::TestAgent {
+                    agent_id: s.agent_id,
+                    name: s.name,
+                    command: s.command,
+                    working_dir: s.working_dir,
+                    terminal_size: s.terminal_size,
+                })
+            }
+        }
+    }
+}
+
+/// Serializable representation of a suspended agent session.
+/// Used to persist agent state across server restarts (e.g., during `amux update`).
+#[derive(Serialize, Deserialize, Debug, Clone)]
+pub enum SuspendedAgent {
+    Claude {
+        agent_id: Uuid,
+        name: Option<String>,
+        working_dir: PathBuf,
+        terminal_size: Option<TerminalSize>,
+        session_id: Uuid,
+    },
+    #[cfg(any(debug_assertions, test))]
+    TestAgent {
+        agent_id: Uuid,
+        name: Option<String>,
+        command: String,
+        working_dir: PathBuf,
+        terminal_size: Option<TerminalSize>,
+    },
+}
+
+impl SuspendedAgent {
+    /// Get the agent_id from the suspended agent.
+    pub fn agent_id(&self) -> Uuid {
+        match self {
+            Self::Claude { agent_id, .. } => *agent_id,
+            #[cfg(any(debug_assertions, test))]
+            Self::TestAgent { agent_id, .. } => *agent_id,
+        }
+    }
+
+    /// Get the name from the suspended agent.
+    pub fn name(&self) -> Option<&str> {
+        match self {
+            Self::Claude { name, .. } => name.as_deref(),
+            #[cfg(any(debug_assertions, test))]
+            Self::TestAgent { name, .. } => name.as_deref(),
+        }
+    }
+
+    /// Create an unstarted AgentSession from this suspended agent.
+    /// For Claude agents, sets `session_id` so `start()` passes `--resume`.
+    /// Caller must call `session.start()` to spawn the process.
+    pub fn into_session(self) -> AgentSession {
+        match self {
+            Self::Claude {
+                agent_id,
+                name,
+                working_dir,
+                terminal_size,
+                session_id,
+            } => {
+                let req = CreateAgentRequest {
+                    agent_id,
+                    name,
+                    agent_type: crate::message::AgentType::Claude,
+                    working_dir,
+                    terminal_size,
+                };
+                let mut session = ClaudeSession::new(&req);
+                session.session_id = Some(session_id);
+                AgentSession::Claude(session)
+            }
+            #[cfg(any(debug_assertions, test))]
+            Self::TestAgent {
+                agent_id,
+                name,
+                command,
+                working_dir,
+                terminal_size,
+            } => {
+                let req = CreateAgentRequest {
+                    agent_id,
+                    name,
+                    agent_type: crate::message::AgentType::TestAgent(command.clone()),
+                    working_dir,
+                    terminal_size,
+                };
+                AgentSession::TestAgent(TestAgentSession::new(&req, command))
+            }
         }
     }
 }
