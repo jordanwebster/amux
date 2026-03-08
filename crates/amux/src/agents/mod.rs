@@ -271,9 +271,9 @@ impl AgentSession {
     }
 
     /// Stop the agent according to the given policy.
-    pub async fn stop(&self, _policy: StopPolicy) {
+    pub async fn stop(&self, policy: StopPolicy) {
         match self {
-            Self::Claude(s) => s.stop().await,
+            Self::Claude(s) => s.stop(policy).await,
             #[cfg(any(debug_assertions, test))]
             Self::TestAgent(s) => s.stop().await,
         }

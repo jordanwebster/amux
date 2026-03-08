@@ -145,9 +145,18 @@ impl ClaudeSession {
         self.log_source.as_ref()?.subscribe().await
     }
 
-    /// Shut down the session: close PTY and log source.
-    pub async fn stop(&self) {
+    /// Shut down the session according to the given policy.
+    pub async fn stop(&self, policy: super::StopPolicy) {
         tracing::info!(agent_id = %self.agent_id, "shutting down claude session");
+        match policy {
+            super::StopPolicy::Interrupt => {
+                if let Some(pty) = &self.pty {
+                    let _ = pty.send_input(vec![0x03]).await;
+                    tokio::time::sleep(Duration::from_millis(20)).await;
+                    let _ = pty.send_input(vec![0x03]).await;
+                }
+            }
+        }
         if let Some(pty) = &self.pty {
             pty.close().await;
         }
