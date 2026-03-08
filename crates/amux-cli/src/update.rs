@@ -61,11 +61,7 @@ async fn fetch_manifest(url: &str) -> Result<Manifest> {
     resp.json().await.context("failed to parse manifest")
 }
 
-async fn download_and_verify(
-    url: &str,
-    expected_sha256: &str,
-    exe_dir: &Path,
-) -> Result<PathBuf> {
+async fn download_and_verify(url: &str, expected_sha256: &str, exe_dir: &Path) -> Result<PathBuf> {
     let resp = reqwest::get(url)
         .await
         .with_context(|| format!("failed to download binary from {url}"))?;
