@@ -13,10 +13,7 @@ use super::routing::{
 };
 use crate::agent_registry::Agent;
 use crate::buffer::{BroadcastReader, BufferPolicy};
-use crate::claude::types::{
-    ClaudeHook, ClaudeStructuredInput, ClaudeStructuredOutput, Hook, StructuredInput,
-    StructuredOutput,
-};
+use crate::claude::types::{ClaudeHook, Hook};
 use crate::error::{AmuxError, Result};
 use crate::message::{
     Command, DirectMessage, Message, ProtocolError, RoutableMessage, ServerDebugInfo,
@@ -25,7 +22,6 @@ use crate::message::{
 use crate::route::Route;
 use crate::state::State;
 use std::future::Future;
-use std::path::PathBuf;
 use std::sync::atomic::Ordering;
 use std::time::Duration;
 use tokio::sync::{mpsc, oneshot};
@@ -307,7 +303,7 @@ async fn handle_routable(
                 return Ok(());
             };
 
-            let log_reader = session.subscribe_logs().await;
+            let log_reader = session.subscribe().await;
 
             let Some(reader) = log_reader else {
                 let _ = tx
@@ -383,8 +379,10 @@ async fn handle_routable(
 
         RoutableMessage::RawInput { agent_id, data } => {
             let us = ctx.user_state.read().await;
-            if let Some(session) = us.agents.get(&agent_id) {
-                let _ = session.send_input(data).await;
+            if let Some(session) = us.agents.get(&agent_id)
+                && let Some(pty) = session.get_pty_handle()
+            {
+                let _ = pty.send_input(data).await;
             }
             Ok(())
         }
@@ -392,21 +390,7 @@ async fn handle_routable(
         RoutableMessage::StructuredInput { agent_id, data } => {
             let us = ctx.user_state.read().await;
             if let Some(session) = us.agents.get(&agent_id) {
-                match data {
-                    StructuredInput::Claude(claude_input) => match claude_input {
-                        ClaudeStructuredInput::SubmitMessage { data } => {
-                            let _ = session.send_input(data).await;
-                            tokio::time::sleep(Duration::from_millis(20)).await;
-                            let _ = session.send_input(vec![b'\r']).await;
-                        }
-                        ClaudeStructuredInput::PermissionResponse(response) => {
-                            let keystroke =
-                                super::routing::permission_response_keystroke(&response);
-                            tracing::info!(agent_id = %agent_id, ?response, "sending permission response");
-                            let _ = session.send_input(keystroke.to_vec()).await;
-                        }
-                    },
-                }
+                let _ = session.send_input(data).await;
             }
             Ok(())
         }
@@ -544,36 +528,10 @@ async fn handle_command(
             };
 
             let result = match session {
-                Some(session) => {
-                    match hook {
-                        Hook::Claude(ClaudeHook::SessionStart(session_start)) => {
-                            tracing::debug!(%agent_id, "linking transcript");
-                            session
-                                .link_transcript(PathBuf::from(&session_start.transcript_path))
-                                .await;
-                        }
-                        Hook::Claude(ClaudeHook::PermissionRequest(perm_req)) => {
-                            tracing::debug!(%agent_id, "permission request");
-                            session
-                                .write_log(StructuredOutput::Claude(
-                                    ClaudeStructuredOutput::PermissionRequest {
-                                        tool: perm_req.tool,
-                                    },
-                                ))
-                                .await;
-                        }
-                        Hook::Claude(ClaudeHook::Stop(_)) => {
-                            tracing::debug!(%agent_id, "agent stopped");
-                            session
-                                .write_log(StructuredOutput::Claude(
-                                    ClaudeStructuredOutput::AgentStopped,
-                                ))
-                                .await;
-                        }
-                        Hook::Claude(ClaudeHook::Unknown) => unreachable!(),
-                    }
-                    Ok(())
-                }
+                Some(session) => session
+                    .handle_hook(hook)
+                    .await
+                    .map_err(|e| ProtocolError::ServerError(format!("hook handling failed: {e}"))),
                 None => {
                     tracing::warn!(%agent_id, "no agent found for hook");
                     Err(ProtocolError::ServerError(format!(
@@ -845,9 +803,10 @@ async fn handle_direct(
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::agents::AgentSession;
     use crate::claude::types::{
         BashToolInput, ClaudePermissionRequest, ClaudePermissionTool, ClaudeSessionStart,
-        ClaudeStop, ClaudeStructuredOutput,
+        ClaudeStop,
     };
     use crate::route::Route;
     use crate::server::test_helpers::{test_ctx, test_state};
@@ -857,6 +816,20 @@ mod tests {
     use std::sync::atomic::AtomicU64;
     use tokio::sync::{RwLock, mpsc};
     use uuid::Uuid;
+
+    /// Create an AgentSession::TestAgent from a CreateAgentRequest.
+    fn create_test_session(
+        req: &crate::message::CreateAgentRequest,
+        event_tx: mpsc::Sender<crate::agents::SessionEvent>,
+    ) -> AgentSession {
+        let cmd = match &req.agent_type {
+            crate::message::AgentType::TestAgent(cmd) => cmd.clone(),
+            _ => panic!("expected TestAgent"),
+        };
+        let mut inner = crate::agents::TestAgentSession::new(req, cmd, event_tx, LOCAL_USER_ID);
+        inner.start().unwrap();
+        AgentSession::TestAgent(inner)
+    }
 
     /// Create a response channel and collect written messages
     fn mock_tx() -> (mpsc::Sender<Message>, Arc<tokio::sync::Mutex<Vec<Message>>>) {
@@ -982,8 +955,7 @@ mod tests {
                 working_dir: PathBuf::from("/tmp"),
                 terminal_size: Some(crate::message::TerminalSize { rows: 24, cols: 80 }),
             };
-            let session =
-                crate::session::LocalAgentSession::new(&req, event_tx, LOCAL_USER_ID).unwrap();
+            let session = create_test_session(&req, event_tx);
             let info = session.to_agent();
             us.agents.insert(agent_id, Arc::new(session));
             us.registry.register_local(info).unwrap();
@@ -1599,11 +1571,8 @@ mod tests {
         assert!(us.registry.contains(&agent3));
     }
 
-    /// Insert a local test session into user_state.agents. Returns the session Arc.
-    async fn insert_test_session(
-        user_state: &Arc<RwLock<ServerUserState>>,
-        agent_id: Uuid,
-    ) -> Arc<crate::session::LocalAgentSession> {
+    /// Insert a local test session into user_state.agents.
+    async fn insert_test_session(user_state: &Arc<RwLock<ServerUserState>>, agent_id: Uuid) {
         let mut us = user_state.write().await;
         let (event_tx, _rx) = mpsc::channel(16);
         let req = crate::message::CreateAgentRequest {
@@ -1613,11 +1582,8 @@ mod tests {
             working_dir: PathBuf::from("/tmp"),
             terminal_size: Some(crate::message::TerminalSize { rows: 24, cols: 80 }),
         };
-        let session =
-            crate::session::LocalAgentSession::new(&req, event_tx, LOCAL_USER_ID).unwrap();
-        let session = Arc::new(session);
-        us.agents.insert(agent_id, session.clone());
-        session
+        let session = create_test_session(&req, event_tx);
+        us.agents.insert(agent_id, Arc::new(session));
     }
 
     #[tokio::test]
@@ -1718,11 +1684,11 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn handle_hook_permission_request_writes_to_log_buffer() {
+    async fn handle_hook_permission_request_with_session_succeeds() {
         let (state, user_state) = test_state().await;
 
         let agent_id = Uuid::new_v4();
-        let session = insert_test_session(&user_state, agent_id).await;
+        insert_test_session(&user_state, agent_id).await;
 
         let ctx = test_ctx(state, user_state);
         let (tx, written) = mock_tx();
@@ -1745,7 +1711,6 @@ mod tests {
 
         tokio::task::yield_now().await;
 
-        // Verify success response
         let msgs = written.lock().await;
         assert_eq!(msgs.len(), 1);
         let Message::Command(Command::HandleHookResult { error }) = &msgs[0] else {
@@ -1756,20 +1721,6 @@ mod tests {
             "should succeed when session exists: {:?}",
             error
         );
-
-        // Verify the permission request was written to the log buffer
-        let mut reader = session
-            .subscribe_logs()
-            .await
-            .expect("log buffer should be open");
-        let entry = reader.read().await.expect("should have a log entry");
-        let StructuredOutput::Claude(ClaudeStructuredOutput::PermissionRequest {
-            tool: logged_tool,
-        }) = entry
-        else {
-            panic!("expected PermissionRequest log entry, got {:?}", entry);
-        };
-        assert_eq!(logged_tool, tool);
     }
 
     #[tokio::test]
@@ -1803,11 +1754,11 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn handle_hook_stop_writes_to_log_buffer() {
+    async fn handle_hook_stop_with_session_succeeds() {
         let (state, user_state) = test_state().await;
 
         let agent_id = Uuid::new_v4();
-        let session = insert_test_session(&user_state, agent_id).await;
+        insert_test_session(&user_state, agent_id).await;
 
         let ctx = test_ctx(state, user_state);
         let (tx, written) = mock_tx();
@@ -1824,7 +1775,6 @@ mod tests {
 
         tokio::task::yield_now().await;
 
-        // Verify success response
         let msgs = written.lock().await;
         assert_eq!(msgs.len(), 1);
         let Message::Command(Command::HandleHookResult { error }) = &msgs[0] else {
@@ -1834,17 +1784,6 @@ mod tests {
             error.is_none(),
             "should succeed when session exists: {:?}",
             error
-        );
-
-        // Verify AgentStopped was written to the log buffer
-        let mut reader = session
-            .subscribe_logs()
-            .await
-            .expect("log buffer should be open");
-        let entry = reader.read().await.expect("should have a log entry");
-        assert_eq!(
-            entry,
-            StructuredOutput::Claude(ClaudeStructuredOutput::AgentStopped)
         );
     }
 

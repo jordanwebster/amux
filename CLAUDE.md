@@ -78,7 +78,7 @@ Terminal ──Unix socket──> Local amux server ──TCP──> Cloud amux 
 
 ### Naming Conventions
 
-- Types: `PascalCase` (e.g., `LocalAgentSession`, `ConnectionContext`)
+- Types: `PascalCase` (e.g., `AgentSession`, `ConnectionContext`)
 - Functions/methods: `snake_case` (e.g., `handle_subscribe`, `broadcast_to_peers`)
 - Constants: `SCREAMING_SNAKE_CASE`
 - Modules: `snake_case`
@@ -97,7 +97,10 @@ crates/
 │       ├── message.rs          # Protocol messages (Message, RoutableMessage, DirectMessage, Command)
 │       ├── route.rs            # Route type (stack-based multi-hop routing)
 │       ├── config.rs           # Config struct
-│       ├── session.rs          # LocalAgentSession, PTY management
+│       ├── agents/
+│       │   ├── mod.rs          # AgentSession enum, PtyHandle, StopPolicy, spawn_pty_agent
+│       │   ├── claude.rs       # ClaudeSession (hook handling, structured input)
+│       │   └── testagent.rs    # TestAgentSession (#[cfg(any(debug_assertions, test))])
 │       ├── buffer.rs           # BroadcastBuffer<P> (generic byte + entry buffers)
 │       ├── agent_registry.rs   # AgentRegistry (local + remote agent tracking)
 │       ├── error.rs            # Error types with thiserror

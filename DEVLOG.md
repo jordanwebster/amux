@@ -38,6 +38,37 @@ One paragraph describing what was done.
 
 ---
 
+## 2026-03-08: Refactor LocalAgentSession into AgentSession enum + PtyHandle
+
+### Summary
+Decoupled agent lifecycle management from PTY management by replacing the monolithic `LocalAgentSession` with an `AgentSession` enum dispatching to concrete session types (`ClaudeSession`, `TestAgentSession`). PTY operations are now encapsulated in `PtyHandle`. Hook handling and structured input translation moved from server handlers into session implementations, preparing for future non-PTY backends.
+
+### Changes
+- Created `crates/amux/src/agents/mod.rs` — `AgentSession` enum, `PtyHandle`, `StopPolicy`, `SessionEvent`, `spawn_pty_agent()` helper
+- Created `crates/amux/src/agents/claude.rs` — `ClaudeSession` with two-phase init, hook handling, structured input translation, `permission_response_keystroke()`
+- Created `crates/amux/src/agents/testagent.rs` — `TestAgentSession` (#[cfg(any(debug_assertions, test))])
+- Updated `lib.rs` — replaced `mod session` with `mod agents`
+- Updated `server/mod.rs` — `agents: HashMap<Uuid, Arc<AgentSession>>`
+- Updated `server/routing.rs` — `create_agent()` dispatches on `AgentType`, `handle_subscribe()` uses `get_pty_handle()`, `shutdown_server()` uses `StopPolicy::Interrupt`, removed `permission_response_keystroke()`
+- Updated `server/handlers.rs` — simplified `HandleHook` to `session.handle_hook()`, `StructuredInput` to `session.send_input()`, `RawInput` through `get_pty_handle()`
+- Updated `server/connection.rs`, `server/accept.rs` — import path changes
+- Deleted `crates/amux/src/session.rs`
+
+### Decisions Made
+- Two-phase init (new + start): allows metadata storage before process spawn, cleaner error handling
+- TestAgent hook/input as no-ops: test agents don't need Claude-specific behavior; handler tests simplified to verify response only
+- `spawn_pty_agent()` shared helper: both session types reuse the same PTY creation + task spawning logic
+
+### Verification
+- `cargo check && cargo fmt && cargo clippy --workspace --all-targets -- -D warnings` — clean
+- `cargo test --workspace` — 168 tests pass
+- `cargo build --workspace && cargo run -p e2e-runner -- run` — 10/10 E2E tests pass
+
+### Next Steps
+- Add Codex backend as a new `AgentSession` variant (non-PTY, stdin/stdout)
+
+---
+
 ## 2026-03-07: Split amux into workspace crates with public API
 
 ### Summary

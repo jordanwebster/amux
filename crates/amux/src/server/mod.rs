@@ -6,12 +6,12 @@
 //! for unauthenticated local connections).
 
 use crate::agent_registry::AgentRegistry;
+use crate::agents::{AgentSession, SessionEvent};
 use crate::config::Config;
 use crate::error::{AmuxError, Result};
 use crate::jwt::JwtValidator;
 use crate::message::{Host, Message};
 use crate::route::Route;
-use crate::session::{LocalAgentSession, SessionEvent};
 use crate::transport::{TcpTransport, create_tls_acceptor};
 use std::collections::{HashMap, HashSet};
 use std::net::SocketAddr;
@@ -63,7 +63,7 @@ pub(super) struct StreamEntry {
 /// determines the user_id; all operations are scoped to that user's state.
 /// This provides complete user isolation without per-message authorization checks.
 pub(super) struct ServerUserState {
-    pub(super) agents: HashMap<Uuid, Arc<LocalAgentSession>>,
+    pub(super) agents: HashMap<Uuid, Arc<AgentSession>>,
     /// Per-user routing table. Link names are globally unique (random suffixes).
     /// Per-user for security: prevents cross-user message forwarding without
     /// explicit authorization.

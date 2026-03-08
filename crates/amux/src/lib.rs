@@ -1,4 +1,5 @@
 mod agent_registry;
+mod agents;
 mod buffer;
 mod claude;
 mod cloud;
@@ -13,7 +14,6 @@ mod oauth;
 pub mod protocol;
 mod route;
 mod server;
-mod session;
 pub mod setup;
 mod state;
 mod transport;

@@ -8,11 +8,11 @@
 
 use super::handlers::handle_message;
 use super::{ServerState, ServerUserState, StreamEntry};
+use crate::agents::SessionEvent;
 use crate::cloud::{CloudError, TokenRefreshState};
 use crate::error::{AmuxError, Result};
 use crate::message::{DirectMessage, Message};
 use crate::route::Route;
-use crate::session::SessionEvent;
 use crate::transport::{MessageReader, TransportSplit};
 use std::sync::Arc;
 use std::sync::atomic::AtomicU64;

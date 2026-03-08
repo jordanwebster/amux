@@ -7,12 +7,11 @@
 
 use super::ServerUserState;
 use super::connection::cancel_streams_matching;
+use crate::agents::{AgentSession, SessionEvent, StopPolicy};
 use crate::buffer::MultiplexByteReader;
-use crate::claude::types::PermissionResponse;
 use crate::error::{AmuxError, Result};
-use crate::message::{CreateAgentRequest, DirectMessage, Message, TerminalSize};
+use crate::message::{AgentType, CreateAgentRequest, DirectMessage, Message, TerminalSize};
 use crate::route::Route;
-use crate::session::{LocalAgentSession, SessionEvent};
 use std::sync::Arc;
 use tokio::sync::{RwLock, mpsc};
 use uuid::Uuid;
@@ -59,11 +58,23 @@ pub(super) async fn create_agent(
         )));
     }
 
-    let session = LocalAgentSession::new(&req, event_tx.clone(), user_id)?;
+    let mut session =
+        match &req.agent_type {
+            AgentType::Claude => AgentSession::Claude(crate::agents::ClaudeSession::new(
+                &req,
+                event_tx.clone(),
+                user_id,
+            )),
+            #[cfg(any(debug_assertions, test))]
+            AgentType::TestAgent(cmd) => AgentSession::TestAgent(
+                crate::agents::TestAgentSession::new(&req, cmd.clone(), event_tx.clone(), user_id),
+            ),
+        };
+    session.start()?;
     let info = session.to_agent();
     let name = req.name.clone();
-    let command = session.command.clone();
-    let working_dir = session.working_dir.clone();
+    let command = session.command().to_string();
+    let working_dir = session.working_dir().to_path_buf();
     us.agents.insert(req.agent_id, Arc::new(session));
     us.registry.register_local(info).map_err(|e| {
         AmuxError::ServerError(format!(
@@ -102,17 +113,19 @@ pub(super) async fn handle_subscribe(
             .clone()
     };
 
+    let pty = session
+        .get_pty_handle()
+        .ok_or(AmuxError::ServerError(format!(
+            "agent {agent_id} has no PTY"
+        )))?;
+
     if let Some(size) = terminal_size {
-        session.resize(size.rows, size.cols).await?;
+        pty.resize(size.rows, size.cols).await?;
     }
 
-    let (reader, _input_tx) = session
-        .subscribe()
-        .await
-        .ok_or(AmuxError::ServerError(format!(
-            "agent {agent_id} session has ended"
-        )))?;
-    Ok(reader)
+    pty.subscribe().await.ok_or(AmuxError::ServerError(format!(
+        "agent {agent_id} session has ended"
+    )))
 }
 
 /// Shutdown the server — shuts down all agents for the given user state
@@ -123,7 +136,7 @@ pub(super) async fn shutdown_server(user_state: &Arc<RwLock<ServerUserState>>) {
     };
     for (id, session) in &sessions {
         tracing::info!(agent_id = %id, "shutting down agent");
-        session.shutdown().await;
+        session.stop(StopPolicy::Interrupt).await;
     }
     let mut us = user_state.write().await;
     us.agents.clear();
@@ -285,19 +298,6 @@ pub(super) fn handle_peer_disconnect(us: &mut ServerUserState, link_name: &str) 
         tracing::info!(host_id = %id, peer = %link_name, "withdrawing host");
         us.hosts.remove(&id);
         broadcast_to_peers(us, &DirectMessage::WithdrawHost { id }, None);
-    }
-}
-
-/// Convert a permission response to the keystroke to send to Claude Code's TUI.
-/// Claude Code's permission UI accepts:
-/// - 1: Yes (accept this edit)
-/// - 2: Yes (accept all edits)
-/// - 3: No (deny)
-pub(super) fn permission_response_keystroke(response: &PermissionResponse) -> &'static [u8] {
-    match response {
-        PermissionResponse::Yes => b"1",
-        PermissionResponse::YesAll => b"2",
-        PermissionResponse::No => b"3",
     }
 }
 
@@ -644,14 +644,14 @@ mod tests {
             working_dir: PathBuf::from("/tmp"),
             terminal_size: None,
         };
-        let session = Arc::new(
-            crate::session::LocalAgentSession::new(
-                &req,
-                event_tx.clone(),
-                crate::server::LOCAL_USER_ID,
-            )
-            .unwrap(),
+        let mut inner = crate::agents::TestAgentSession::new(
+            &req,
+            "/bin/cat".to_string(),
+            event_tx.clone(),
+            crate::server::LOCAL_USER_ID,
         );
+        inner.start().unwrap();
+        let session = Arc::new(crate::agents::AgentSession::TestAgent(inner));
         {
             let mut us = user_state.write().await;
             for _ in 0..MAX_LOCAL_AGENTS {
