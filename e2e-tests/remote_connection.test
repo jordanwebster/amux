@@ -23,7 +23,7 @@ terminal:
 
 # Create agent on server A
 @Ta
-> amux new-agent -t remote-test test-agent
+> amux new test-agent --name remote-test
 > hello from server A
 hello from server A
 echo: hello from server A
@@ -36,7 +36,7 @@ Connected to 127.0.0.1:$server_a.tcp_port
 # Subscribe to remote agent from server B (route:agent_id format)
 # Server B's link name is "host-b" (its host_name, no random suffix in tests)
 @Tb
-> amux attach -t host-b:remote-test
+> amux attach --name host-b:remote-test
 hello from server A
 echo: hello from server A
 > hello from server B

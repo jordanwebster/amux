@@ -25,21 +25,21 @@ terminal:
 
 # Create first agent in dir_alpha
 @T1
-> amux new-agent -t alpha test-agent
+> amux new test-agent --name alpha
 > ping from alpha
 ping from alpha
 echo: ping from alpha
 
 # Create second agent in dir_beta
 @T2
-> amux new-agent -t beta test-agent
+> amux new test-agent --name beta
 > ping from beta
 ping from beta
 echo: ping from beta
 
 # List agents and verify both are shown with their directories
 @T3
-> amux list-agents
+> amux list
 Running agents:
   alpha - $dir_alpha.path
   beta - $dir_beta.path

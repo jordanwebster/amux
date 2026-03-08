@@ -152,7 +152,7 @@ pub async fn attach(target: Option<&str>, config: &Config) -> Result<()> {
                     (agents[0].route.clone(), agents[0].id)
                 }
                 Message::Command(Command::ListAgentsResult { .. }) => {
-                    eprintln!("No agents running. Use 'amux new-agent' to create one.");
+                    eprintln!("No agents running. Use 'amux new' to create one.");
                     return Ok(());
                 }
                 other => {

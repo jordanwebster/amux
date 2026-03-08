@@ -128,9 +128,9 @@ crates/
 ├── amux-cli/                   # Binary crate → produces `amux` binary
 │   └── src/
 │       ├── main.rs             # CLI parsing, server startup
-│       ├── client.rs           # Client-side protocol (new-agent, attach, list-agents, etc.)
+│       ├── client.rs           # Client-side protocol (new, attach, list, etc.)
 │       ├── init.rs             # `amux init` command
-│       ├── hooks.rs            # Client-side hook handler (`amux hook`)
+│       ├── hooks.rs            # Client-side hook handler (`amux hooks claude <event>`)
 │       └── plugin.rs           # Plugin installation and update management
 ├── test-agent/                 # Simple echo agent for E2E testing
 └── e2e-runner/                 # E2E test runner
@@ -237,10 +237,10 @@ cargo run -p e2e-runner -- run <filter>  # Run specific E2E test
 
 Manual testing:
 ```bash
-cargo run -- new-agent -t test1 claude   # Create agent
-cargo run -- attach -t test1             # Attach (in another terminal)
-cargo run -- list-agents                 # List running agents
-cargo run -- kill-server                 # Clean shutdown
+cargo run -- new claude --name test1     # Create agent
+cargo run -- attach --name test1         # Attach (in another terminal)
+cargo run -- list                        # List running agents
+cargo run -- shutdown                    # Clean shutdown
 # Use Ctrl-b d to detach without killing agent
 ```
 
@@ -263,7 +263,7 @@ terminal:
 ## Test
 
 @T1
-> amux new-agent -t myagent test-agent
+> amux new test-agent --name myagent
 > input here
 input here
 echo: input here
@@ -290,20 +290,20 @@ echo: input here
    ## Test
 
    @T1
-   > amux list-agents
+   > amux list
      agent1 - $mydir.path
    ```
 
 4. **Multi-terminal:** Test attach, broadcast, replay buffer:
    ```
    @T1
-   > amux new-agent -t shared test-agent
+   > amux new test-agent --name shared
    > message one
    message one
    echo: message one
 
    @T2
-   > amux attach -t shared
+   > amux attach --name shared
    message one
    echo: message one
    > message two
@@ -320,7 +320,7 @@ echo: input here
 - New CLI commands or flags
 - Changes to protocol behavior (attach, subscribe, replay)
 - Multi-client interactions (broadcast, late-join replay)
-- Output format changes (list-agents, error messages)
+- Output format changes (list, error messages)
 
 ## Questions?
 

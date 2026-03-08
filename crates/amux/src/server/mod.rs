@@ -219,7 +219,7 @@ impl Server {
             None
         };
 
-        // Unix socket - always available (for CLI commands like list-agents, kill-server)
+        // Unix socket - always available (for CLI commands like list, shutdown)
         // Ensure the parent directory exists with owner-only permissions (0700)
         if let Some(parent) = socket_path.parent()
             && !parent.exists()

@@ -33,28 +33,28 @@ struct Cli {
 #[derive(Subcommand)]
 enum Commands {
     /// Create a new agent session
-    #[command(name = "new-agent")]
-    NewAgent {
+    New {
         /// Agent type: claude or test-agent (test-agent only in dev builds)
         agent_type: String,
 
         /// Session name (optional human-readable name)
-        #[arg(short = 't', long)]
-        target: Option<String>,
+        #[arg(long)]
+        name: Option<String>,
     },
 
     /// Attach to an existing agent session
     Attach {
-        /// Target session name (default: first available)
-        #[arg(short = 't', long)]
-        target: Option<String>,
+        /// Session name (default: first available)
+        #[arg(long)]
+        name: Option<String>,
     },
 
     /// List all running agent sessions
-    ListAgents,
+    #[command(alias = "ls")]
+    List,
 
-    /// Kill all agents and shut down the server
-    KillServer,
+    /// Shut down the server and all running agent sessions
+    Shutdown,
 
     /// Connect to a remote amux server
     Connect {
@@ -164,7 +164,7 @@ async fn main() -> Result<()> {
             ensure_initialized(&config).await?;
             client::attach(None, &config).await?;
         }
-        Some(Commands::NewAgent { agent_type, target }) => {
+        Some(Commands::New { agent_type, name }) => {
             let agent_type = parse_agent_type(&agent_type)?;
             ensure_initialized(&config).await?;
             match agent_type {
@@ -174,14 +174,14 @@ async fn main() -> Result<()> {
                 #[cfg(any(debug_assertions, test))]
                 protocol::AgentType::TestAgent(_) => {}
             };
-            client::new_agent(target.as_deref(), agent_type, &config).await?;
+            client::new_agent(name.as_deref(), agent_type, &config).await?;
         }
-        Some(Commands::Attach { target }) => {
+        Some(Commands::Attach { name }) => {
             ensure_initialized(&config).await?;
-            client::attach(target.as_deref(), &config).await?;
+            client::attach(name.as_deref(), &config).await?;
         }
-        Some(Commands::ListAgents) => client::list_agents(&config).await?,
-        Some(Commands::KillServer) => client::kill_server(&config).await?,
+        Some(Commands::List) => client::list_agents(&config).await?,
+        Some(Commands::Shutdown) => client::kill_server(&config).await?,
         Some(Commands::Connect { address }) => {
             ensure_initialized(&config).await?;
             client::connect_remote(&address, &config).await?;

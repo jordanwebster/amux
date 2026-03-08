@@ -27,7 +27,7 @@ A detailed design for the amux server internals covering data structures, messag
 
 | Term | Description |
 |------|-------------|
-| **agent_id** | UUID identifying an agent session. Optional human-readable name can be set via `-t` flag. |
+| **agent_id** | UUID identifying an agent session. Optional human-readable name can be set via `--name` flag. |
 | **link_name** | String identifying a connection (e.g. `"term-abc1"`, `"myhost"`, `"hook-xy12"`). Used as keys in the routing table. |
 | **Route** | A stack of link names (`VecDeque<String>`) representing a multi-hop path. Serializes as `"AB.BC.CD"` (dot-separated). |
 | **RoutableMessage** | A message that carries `src` and `dst` routes and can be forwarded across hops. |
@@ -41,7 +41,7 @@ A detailed design for the amux server internals covering data structures, messag
 ```rust
 // Agents are identified by UUID, with an optional human-readable name
 agent_id: Uuid           // e.g. 550e8400-e29b-41d4-a716-446655440000
-name: Option<String>     // e.g. "my-session" (set via -t flag)
+name: Option<String>     // e.g. "my-session" (set via --name flag)
 
 // Connections are identified by link name strings
 link_name: String        // e.g. "term-abc1", "myhost-xyz2", "hook-ab12"
@@ -240,7 +240,7 @@ enum Command {
 
 enum ShutdownReason {
     ProtocolMismatch,  // Server received version mismatch from cloud
-    UserRequested,     // User ran kill-server
+    UserRequested,     // User ran shutdown
 }
 ```
 

@@ -13,11 +13,11 @@ terminal:
 
 # T1 creates a new agent
 @T1
-> amux new-agent -t shared-session test-agent
+> amux new test-agent --name shared-session
 
 # T2 attaches to the same agent and can interact with it
 @T2
-> amux attach -t shared-session
+> amux attach --name shared-session
 > message from attached terminal
 message from attached terminal
 echo: message from attached terminal

@@ -23,7 +23,7 @@ terminal:
 
 # Create agent on server A
 @Ta
-> amux new-agent -t remote-test test-agent
+> amux new test-agent --name remote-test
 > hello from server A
 hello from server A
 echo: hello from server A
@@ -38,7 +38,7 @@ Connected to 127.0.0.1:$server_a.tcp_port
 # Attach by alias only — no route prefix needed
 # ResolveAgent on server B resolves "remote-test" to the remote agent with route
 @Tb
-> amux attach -t remote-test
+> amux attach --name remote-test
 hello from server A
 echo: hello from server A
 > hello from server B

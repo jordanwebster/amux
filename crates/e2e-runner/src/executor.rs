@@ -11,7 +11,7 @@ use tempfile::TempDir;
 /// Check if an amux command is non-interactive (runs and exits)
 fn is_oneshot_amux_command(cmd: &str) -> bool {
     // Commands that don't create an interactive session
-    let oneshot_commands = ["connect", "list-agents", "kill-server"];
+    let oneshot_commands = ["connect", "list", "ls", "shutdown"];
     for subcmd in oneshot_commands {
         // Match patterns like "amux connect" or "amux --config X connect"
         if cmd.contains(&format!(" {} ", subcmd))
@@ -262,10 +262,10 @@ state_path: "{}"
         let result =
             self.execute_steps(&test_case.steps, &terminal_configs, &config_paths, &var_ctx);
 
-        // Cleanup: kill background servers spawned by `ensure_server_running`
+        // Cleanup: shut down background servers spawned by `ensure_server_running`
         for config_path in config_paths.values() {
             let _ = Command::new(&self.config.amux_binary)
-                .args(["--config", &config_path.to_string_lossy(), "kill-server"])
+                .args(["--config", &config_path.to_string_lossy(), "shutdown"])
                 .output();
         }
         for socket_path in var_ctx.configs.values() {

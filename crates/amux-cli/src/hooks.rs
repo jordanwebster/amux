@@ -1,6 +1,6 @@
 //! Claude Code hook handler (client-side).
 //!
-//! Invoked as `amux hook` by Claude Code's hook system. Reads hook event JSON
+//! Invoked as `amux hooks claude <event>` by Claude Code's hook system. Reads hook event JSON
 //! from stdin, connects to the local server over Unix socket, sends a
 //! HandleHook command, and waits for acknowledgement. Fails silently to avoid
 //! blocking Claude Code.

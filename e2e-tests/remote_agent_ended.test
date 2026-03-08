@@ -23,7 +23,7 @@ terminal:
 
 # Create agent on server A
 @Ta
-> amux new-agent -t ended-test test-agent
+> amux new test-agent --name ended-test
 > hello
 hello
 echo: hello
@@ -37,7 +37,7 @@ Connected to 127.0.0.1:$server_a.tcp_port
 
 # Attach from server B to the remote agent
 @Tb
-> amux attach -t ended-test
+> amux attach --name ended-test
 hello
 echo: hello
 

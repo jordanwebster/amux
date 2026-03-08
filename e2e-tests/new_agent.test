@@ -9,7 +9,7 @@ terminal:
 ## Test
 
 @T1
-> amux new-agent -t test1 test-agent
+> amux new test-agent --name test1
 > hello world
 hello world
 echo: hello world

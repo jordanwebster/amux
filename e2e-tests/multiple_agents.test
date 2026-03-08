@@ -13,14 +13,14 @@ terminal:
 
 # Create first agent
 @T1
-> amux new-agent -t agent-alpha test-agent
+> amux new test-agent --name agent-alpha
 > message to alpha
 message to alpha
 echo: message to alpha
 
 # Create second agent (different name, same server)
 @T2
-> amux new-agent -t agent-beta test-agent
+> amux new test-agent --name agent-beta
 > message to beta
 message to beta
 echo: message to beta

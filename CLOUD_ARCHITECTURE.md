@@ -164,7 +164,7 @@ Agent sessions are identified by:
 
 ```
 agent_id: Uuid           // Globally unique
-alias: Option<String>    // Human-readable name (optional, via -t flag)
+alias: Option<String>    // Human-readable name (optional, via --name flag)
 ```
 
 Connections are identified by link names:
@@ -183,7 +183,7 @@ Route: VecDeque<String>  // Serializes as "AB.BC.CD" (dot-separated)
 
 ## Session Propagation
 
-Agents are propagated to connected peers via `AnnounceAgent`/`WithdrawAgent` direct messages. `list-agents` returns both local and remote agents. Remote agents include their route for multi-hop routing.
+Agents are propagated to connected peers via `AnnounceAgent`/`WithdrawAgent` direct messages. `list` returns both local and remote agents. Remote agents include their route for multi-hop routing.
 
 Hosts are propagated via `AnnounceHost`/`WithdrawHost`. When a peer connection is lost, `WithdrawHost` propagates through the network and each server bulk-removes agents reachable via the withdrawn host.
 

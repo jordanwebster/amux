@@ -13,7 +13,7 @@ terminal:
 
 # T1 creates agent and sends some messages
 @T1
-> amux new-agent -t replay-test test-agent
+> amux new test-agent --name replay-test
 > first message
 first message
 echo: first message
@@ -23,7 +23,7 @@ echo: second message
 
 # T2 attaches - should immediately see replay buffer with previous output
 @T2
-> amux attach -t replay-test
+> amux attach --name replay-test
 first message
 echo: first message
 second message
