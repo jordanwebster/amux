@@ -2,6 +2,7 @@ mod client;
 mod hooks;
 mod init;
 mod plugin;
+mod update;
 
 use amux::Config;
 use amux::protocol;
@@ -86,6 +87,9 @@ enum Commands {
         #[command(subcommand)]
         provider: HooksProvider,
     },
+
+    /// Update amux to the latest version
+    Update,
 
     /// Internal: Show server debug information
     #[command(hide = true)]
@@ -190,6 +194,7 @@ async fn main() -> Result<()> {
         Some(Commands::Serve { cloud, .. }) => {
             run_server(config, cloud).await?;
         }
+        Some(Commands::Update) => update::run_update(&config).await?,
         Some(Commands::Debug) => {
             let info = client::debug(&config).await?;
             print!("{}", serde_yaml::to_string(&info)?);

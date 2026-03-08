@@ -38,6 +38,35 @@ One paragraph describing what was done.
 
 ---
 
+## 2026-03-08: `amux update` command
+
+### Summary
+Added `amux update` command for self-updating the binary from GitHub releases. Fetches a version manifest from `{cloud_url}/manifest.json`, compares versions using semver, downloads the platform-specific binary with SHA256 verification, and performs an atomic rename to replace the running binary. If a server is running, it suspends agents before replacing the binary and resumes them on the new server.
+
+### Changes
+- `Cargo.toml`: Added `semver` and `sha2` to workspace dependencies
+- `crates/amux-cli/Cargo.toml`: Added `reqwest`, `serde`, `semver`, `sha2` dependencies
+- `crates/amux-cli/src/update.rs`: New module with manifest fetching, download/verify, suspend/resume, and binary replacement
+- `crates/amux-cli/src/main.rs`: Added `Update` command variant and dispatch
+
+### Decisions Made
+- Atomic rename: temp file in same directory as binary ensures same-filesystem rename
+- Connection drop after suspend is treated as success (server exits after sending SuspendResult)
+- `connect(config, Daemon)` for resume: `current_exe()` returns same path, now pointing to new binary
+- Platform detection via compile-time `#[cfg]` with `compile_error!` for unsupported platforms
+
+### Verification
+- `cargo check` passes
+- `cargo fmt` clean
+- `cargo clippy --workspace --all-targets -- -D warnings` passes
+- `cargo test` passes
+
+### Next Steps
+- Serve `manifest.json` from the cloud server
+- Build release binaries in CI and publish to GitHub releases
+
+---
+
 ## 2026-03-08: SuspendedServerState struct + YAML persistence
 
 ### Summary

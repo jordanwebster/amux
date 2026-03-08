@@ -133,8 +133,7 @@ pub fn load_and_remove_suspended(
         return Ok(crate::agents::SuspendedServerState { agents: Vec::new() });
     }
     let yaml = fs::read_to_string(&suspended_path)?;
-    let state: crate::agents::SuspendedServerState =
-        serde_yaml::from_str(&yaml)?;
+    let state: crate::agents::SuspendedServerState = serde_yaml::from_str(&yaml)?;
     fs::remove_file(&suspended_path)?;
     tracing::info!(path = %suspended_path.display(), count = state.agents.len(), "loaded and removed suspended agents");
     Ok(state)
