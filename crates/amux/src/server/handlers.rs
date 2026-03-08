@@ -555,13 +555,13 @@ async fn handle_command(
         Command::Suspend => {
             tracing::info!("suspend requested");
             let (suspended, errors) = suspend_server(&ctx.user_state).await;
-            let suspended_count = suspended.len();
+            let suspended_count = suspended.agents.len();
             let error = if !errors.is_empty() {
                 Some(ProtocolError::ServerError(errors.join("; ")))
             } else {
                 None
             };
-            if !suspended.is_empty() {
+            if !suspended.agents.is_empty() {
                 let state_path = {
                     let state = ctx.state.read().await;
                     state.config.state_path.clone()
@@ -620,8 +620,13 @@ async fn handle_command(
                     return Ok(());
                 }
             };
-            let (resumed_count, failed_count) =
-                resume_agents(&ctx.user_state, &ctx.event_tx, ctx.user_id, suspended).await;
+            let (resumed_count, failed_count) = resume_agents(
+                &ctx.user_state,
+                &ctx.event_tx,
+                ctx.user_id,
+                suspended.agents,
+            )
+            .await;
             let _ = tx
                 .send(Message::Command(Command::ResumeResult {
                     resumed_count,

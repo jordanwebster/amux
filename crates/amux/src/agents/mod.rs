@@ -372,6 +372,12 @@ impl AgentSession {
     }
 }
 
+/// All suspended agent sessions, serialized to disk across server restarts.
+#[derive(Serialize, Deserialize, Debug, Clone)]
+pub struct SuspendedServerState {
+    pub agents: Vec<SuspendedAgent>,
+}
+
 /// Serializable representation of a suspended agent session.
 /// Used to persist agent state across server restarts (e.g., during `amux update`).
 #[derive(Serialize, Deserialize, Debug, Clone)]

@@ -38,6 +38,27 @@ One paragraph describing what was done.
 
 ---
 
+## 2026-03-08: SuspendedServerState struct + YAML persistence
+
+### Summary
+Replaced the raw `Vec<SuspendedAgent>` tuple return from `suspend_server()` with a proper `SuspendedServerState` struct, and switched persistence from MessagePack (`suspended.msgpack`) to YAML (`suspended.yaml`) for human-readability and consistency with `state.yaml`.
+
+### Changes
+- `crates/amux/src/agents/mod.rs`: Added `SuspendedServerState` struct wrapping `Vec<SuspendedAgent>`
+- `crates/amux/src/server/routing.rs`: `suspend_server` now returns `(SuspendedServerState, Vec<String>)`
+- `crates/amux/src/state.rs`: `save_suspended` accepts `&SuspendedServerState`, `load_and_remove_suspended` returns `SuspendedServerState`, file changed to `suspended.yaml`, replaced `rmp_serde` with `serde_yaml`, renamed `StateError::MsgPack` to `StateError::Suspended`
+- `crates/amux/src/server/handlers.rs`: Updated Suspend/Resume handlers to use `.agents` field
+- `crates/amux/src/lib.rs`: Exported `SuspendedServerState`
+
+### Decisions Made
+- Renamed `StateError::MsgPack` to `StateError::Suspended` since the variant is now format-agnostic
+- Kept `rmp_serde` dependency since it's still used for transport serialization
+
+### Verification
+- `cargo check && cargo fmt && cargo clippy --workspace --all-targets -- -D warnings && cargo test` — all 171 tests pass, zero warnings
+
+---
+
 ## 2026-03-08: Suspend/resume for agent sessions
 
 ### Summary

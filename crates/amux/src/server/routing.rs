@@ -7,7 +7,7 @@
 
 use super::ServerUserState;
 use super::connection::cancel_streams_matching;
-use crate::agents::{AgentSession, SessionEvent, StopPolicy};
+use crate::agents::{AgentSession, SessionEvent, StopPolicy, SuspendedServerState};
 use crate::buffer::MultiplexByteReader;
 use crate::error::{AmuxError, Result};
 use crate::message::{AgentType, CreateAgentRequest, DirectMessage, Message, TerminalSize};
@@ -145,7 +145,7 @@ pub(super) async fn shutdown_server(user_state: &Arc<RwLock<ServerUserState>>) {
 /// Returns (suspended_agents, errors) where errors are agent IDs that failed to suspend.
 pub(super) async fn suspend_server(
     user_state: &Arc<RwLock<ServerUserState>>,
-) -> (Vec<crate::agents::SuspendedAgent>, Vec<String>) {
+) -> (SuspendedServerState, Vec<String>) {
     let sessions: HashMap<Uuid, AgentSession> = {
         let mut us = user_state.write().await;
         std::mem::take(&mut us.agents)
@@ -175,7 +175,7 @@ pub(super) async fn suspend_server(
             }
         }
     }
-    (suspended, errors)
+    (SuspendedServerState { agents: suspended }, errors)
 }
 
 /// Resume agents from suspended state. Returns (resumed_count, failed_count).

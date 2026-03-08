@@ -18,7 +18,7 @@ pub mod setup;
 mod state;
 mod transport;
 
-pub use agents::SuspendedAgent;
+pub use agents::{SuspendedAgent, SuspendedServerState};
 pub use config::{Config, default_log_path};
 pub use connect::{ConnectPolicy, connect};
 pub use connection::Connection;
