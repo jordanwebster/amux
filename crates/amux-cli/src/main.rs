@@ -22,6 +22,7 @@ use tracing_subscriber::{EnvFilter, fmt, prelude::*};
 #[derive(Parser)]
 #[command(name = "amux")]
 #[command(about = "Terminal multiplexer for AI agents (Claude, Codex, etc.)", long_about = None)]
+#[command(version)]
 struct Cli {
     #[command(subcommand)]
     command: Option<Commands>,
