@@ -3,9 +3,9 @@ mod hooks;
 mod init;
 mod plugin;
 
-use amux::config::Config;
-use amux::message;
-use amux::server;
+use amux::Config;
+use amux::protocol;
+use amux::run_server;
 use anyhow::Context;
 use anyhow::Result;
 use anyhow::anyhow;
@@ -153,8 +153,7 @@ async fn main() -> Result<()> {
             .context("failed to read config from stdin")?;
         let config: Config =
             serde_yaml::from_str(&input).context("failed to parse config from stdin")?;
-        let mut server = server::Server::with_config(config);
-        return server.run(*cloud).await.map_err(Into::into);
+        return run_server(config, *cloud).await.map_err(Into::into);
     }
 
     let config = load_config(cli.config)?;
@@ -169,11 +168,11 @@ async fn main() -> Result<()> {
             let agent_type = parse_agent_type(&agent_type)?;
             ensure_initialized(&config).await?;
             match agent_type {
-                message::AgentType::Claude => {
+                protocol::AgentType::Claude => {
                     plugin::ensure_plugin_installed().await;
                 }
                 #[cfg(any(debug_assertions, test))]
-                message::AgentType::TestAgent(_) => {}
+                protocol::AgentType::TestAgent(_) => {}
             };
             client::new_agent(target.as_deref(), agent_type, &config).await?;
         }
@@ -189,8 +188,7 @@ async fn main() -> Result<()> {
         }
         Some(Commands::Init { reset }) => init::run_init(&config, reset).await?,
         Some(Commands::Serve { cloud, .. }) => {
-            let mut server = server::Server::with_config(config);
-            server.run(cloud).await?;
+            run_server(config, cloud).await?;
         }
         Some(Commands::Debug) => {
             let info = client::debug(&config).await?;
@@ -219,15 +217,15 @@ async fn ensure_initialized(config: &Config) -> Result<()> {
 
 // TODO: Once E2E executor can call amux/test-agent binaries directly (without
 // path substitution), switch to Clap's ValueEnum for proper enum argument parsing.
-fn parse_agent_type(s: &str) -> Result<message::AgentType> {
+fn parse_agent_type(s: &str) -> Result<protocol::AgentType> {
     match s.to_lowercase().as_str() {
-        "claude" => Ok(message::AgentType::Claude),
+        "claude" => Ok(protocol::AgentType::Claude),
         #[cfg(any(debug_assertions, test))]
-        "test-agent" => Ok(message::AgentType::TestAgent(s.to_string())),
+        "test-agent" => Ok(protocol::AgentType::TestAgent(s.to_string())),
         #[cfg(any(debug_assertions, test))]
         _ if s.ends_with("test-agent") => {
             // Accept full path for E2E tests (e.g., /abs/path/test-agent)
-            Ok(message::AgentType::TestAgent(s.to_string()))
+            Ok(protocol::AgentType::TestAgent(s.to_string()))
         }
         #[cfg(not(any(debug_assertions, test)))]
         _ => Err(anyhow!("Unknown agent type: '{}'. Valid: claude", s)),
@@ -241,7 +239,7 @@ fn parse_agent_type(s: &str) -> Result<message::AgentType> {
 
 fn init_tracing() -> WorkerGuard {
     let log_path = std::env::var("AMUX_LOG")
-        .unwrap_or_else(|_| amux::config::default_log_path().display().to_string());
+        .unwrap_or_else(|_| amux::default_log_path().display().to_string());
     let log_path_buf = PathBuf::from(&log_path);
     if let Some(parent) = log_path_buf.parent() {
         let _ = std::fs::create_dir_all(parent);

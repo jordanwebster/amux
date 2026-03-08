@@ -5,14 +5,9 @@
 //! HandleHook command, and waits for acknowledgement. Fails silently to avoid
 //! blocking Claude Code.
 
-use amux::claude::types::{ClaudeHook, ClaudePermissionTool, Hook};
-use amux::config::Config;
-use amux::handshake::{Connect, ConnectResult, PROTOCOL_VERSION};
-use amux::message::{Command, Message, ProtocolError};
-use amux::route::generate_hook_link;
-use amux::transport::{Transport, UnixTransport};
+use amux::protocol::{ClaudeHook, ClaudePermissionTool, Command, Hook, Message};
+use amux::{AmuxError, Config, ConnectPolicy, Result, connect};
 use std::io::{self, BufRead};
-use tokio::net::UnixStream;
 use uuid::Uuid;
 
 /// Handle Claude Code hook event.
@@ -70,11 +65,10 @@ fn handle_claude_hook_inner(config: &Config) -> io::Result<()> {
     let hook = Hook::Claude(claude_hook);
 
     if config.socket_path.exists() {
-        let socket_path = config.socket_path.clone();
+        let config = config.clone();
         tokio::task::block_in_place(|| {
             tokio::runtime::Handle::current().block_on(async {
-                if let Err(e) = send_hook_event_to_server_inner(&socket_path, agent_id, hook).await
-                {
+                if let Err(e) = send_hook_event(&config, agent_id, hook).await {
                     tracing::warn!(error = %e, "failed to send hook to server");
                 }
             });
@@ -86,65 +80,21 @@ fn handle_claude_hook_inner(config: &Config) -> io::Result<()> {
     Ok(())
 }
 
-async fn send_hook_event_to_server_inner(
-    socket_path: &std::path::Path,
-    agent_id: Uuid,
-    hook: Hook,
-) -> io::Result<()> {
-    let stream = UnixStream::connect(socket_path)
-        .await
-        .map_err(|e| io::Error::new(io::ErrorKind::ConnectionRefused, e))?;
-    let mut transport = UnixTransport::new(stream);
+async fn send_hook_event(config: &Config, agent_id: Uuid, hook: Hook) -> Result<()> {
+    let conn = connect(config, ConnectPolicy::ExistingOnly).await?;
 
-    let link_name = generate_hook_link();
-    let connect_msg = Connect {
-        link_name,
-        token: None,
-        version: PROTOCOL_VERSION,
-    };
-    let payload = connect_msg.encode().map_err(io::Error::other)?;
-    transport
-        .write_frame(&payload)
-        .await
-        .map_err(io::Error::other)?;
+    conn.send(&Message::Command(Command::HandleHook { agent_id, hook }))
+        .await?;
 
-    let payload = transport.read_frame().await.map_err(io::Error::other)?;
-    let response = ConnectResult::decode(&payload).map_err(io::Error::other)?;
-
-    match response.error {
-        None => {}
-        Some(ProtocolError::LinkNameTaken) => {
-            return Err(io::Error::new(
-                io::ErrorKind::AddrInUse,
-                "Hook link name taken",
-            ));
-        }
-        Some(other) => {
-            return Err(io::Error::new(
-                io::ErrorKind::ConnectionRefused,
-                format!("handshake failed: {other}"),
-            ));
-        }
-    }
-
-    transport
-        .write_message(&Message::Command(Command::HandleHook { agent_id, hook }))
-        .await
-        .map_err(io::Error::other)?;
-
-    let ack = transport.read_message().await.map_err(io::Error::other)?;
-
+    let ack = conn.recv().await?;
     match ack {
-        Message::Command(Command::HandleHookResult { error: None }) => {
-            tracing::debug!("hook acknowledged");
-            Ok(())
-        }
+        Message::Command(Command::HandleHookResult { error: None }) => Ok(()),
         Message::Command(Command::HandleHookResult { error: Some(e) }) => {
-            Err(io::Error::other(e.to_string()))
+            Err(AmuxError::ServerError(e.to_string()))
         }
-        other => Err(io::Error::new(
-            io::ErrorKind::InvalidData,
-            format!("expected HandleHookResult, got {}", other.type_label()),
-        )),
+        other => Err(AmuxError::InvalidMessage(format!(
+            "expected HandleHookResult, got {}",
+            other.type_label()
+        ))),
     }
 }

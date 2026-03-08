@@ -14,7 +14,7 @@ mod websocket;
 
 pub use tcp::TcpTransport;
 pub use tls::{create_tls_acceptor, tls_connect};
-pub use unix::{UnixMessageReader, UnixMessageWriter, UnixTransport};
+pub use unix::UnixTransport;
 pub use websocket::WebSocketTransport;
 
 use crate::error::Result;
@@ -33,9 +33,11 @@ pub trait Transport: Send + Sync {
     fn write_frame(&mut self, data: &[u8]) -> impl Future<Output = Result<()>> + Send;
 
     /// Read and decode a Message from the transport
+    #[allow(dead_code)]
     fn read_message(&mut self) -> impl Future<Output = Result<Message>> + Send;
 
     /// Encode and write a Message to the transport
+    #[allow(dead_code)]
     fn write_message(&mut self, msg: &Message) -> impl Future<Output = Result<()>> + Send;
 }
 

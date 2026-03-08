@@ -1,13 +1,8 @@
-use amux::config::Config;
-use amux::connect::{ConnectPolicy, connect};
-use amux::connection::Connection;
-use amux::error::AmuxError;
-use amux::error::Result;
-use amux::message::{
+use amux::protocol::{
     AgentType, Command, CreateAgentRequest, Message, RoutableMessage, ServerDebugInfo,
     ShutdownReason, TerminalSize,
 };
-use amux::route::Route;
+use amux::{AmuxError, Config, ConnectPolicy, Connection, Result, Route, connect};
 use std::io::{self, Read, Write};
 use std::os::unix::io::AsRawFd;
 use std::sync::Arc;

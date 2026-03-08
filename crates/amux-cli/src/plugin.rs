@@ -1,14 +1,10 @@
-use amux::state;
+use amux::setup;
 
 const PLUGIN_VERSION: u32 = 1;
 
 /// Ensure the Claude Code amux plugin is installed and up to date
 pub async fn ensure_plugin_installed() {
-    let state_path = state::State::default_path();
-    let current_version = match state::State::load(&state_path) {
-        Ok(s) => s.claude.plugin_version,
-        Err(_) => None,
-    };
+    let current_version = setup::claude_plugin_version();
 
     if current_version == Some(PLUGIN_VERSION) {
         return;
@@ -30,9 +26,7 @@ pub async fn ensure_plugin_installed() {
 
     match result {
         Ok(()) => {
-            if let Err(e) = state::State::update(&state_path, |s| {
-                s.claude.plugin_version = Some(PLUGIN_VERSION)
-            }) {
+            if let Err(e) = setup::set_claude_plugin_version(PLUGIN_VERSION) {
                 eprintln!("error: failed to save plugin state: {}", e);
                 std::process::exit(1);
             }

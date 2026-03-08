@@ -187,11 +187,6 @@ pub fn generate_terminal_link() -> String {
     format!("term-{}", generate_link_suffix())
 }
 
-/// Generate a hook link name: "hook-{rand}".
-pub fn generate_hook_link() -> String {
-    format!("hook-{}", generate_link_suffix())
-}
-
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -305,13 +300,6 @@ mod tests {
         let link = generate_terminal_link();
         assert!(link.starts_with("term-"));
         assert_eq!(link.len(), "term-".len() + 4);
-    }
-
-    #[test]
-    fn test_generate_hook_link() {
-        let link = generate_hook_link();
-        assert!(link.starts_with("hook-"));
-        assert_eq!(link.len(), "hook-".len() + 4);
     }
 
     #[test]
