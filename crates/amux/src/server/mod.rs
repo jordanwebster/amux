@@ -10,9 +10,10 @@ use crate::agents::{AgentSession, SessionEvent};
 use crate::config::Config;
 use crate::error::{AmuxError, Result};
 use crate::jwt::JwtValidator;
-use crate::message::{Host, Message};
+use crate::message::{Command, Host, Message, ProtocolError, ShutdownReason};
 use crate::route::Route;
 use crate::transport::{TcpTransport, create_tls_acceptor};
+use routing::{shutdown_server, suspend_server};
 use std::collections::{HashMap, HashSet};
 use std::net::SocketAddr;
 use std::sync::Arc;
@@ -21,6 +22,15 @@ use tokio::net::{TcpListener, UnixListener};
 use tokio::sync::{RwLock, Semaphore, mpsc, oneshot};
 use tokio_rustls::TlsAcceptor;
 use uuid::Uuid;
+
+/// Request from a connection handler to shut down or suspend the server.
+/// Sent to `Server::run()` via `ServerState::shutdown_tx` so that the main
+/// loop can orchestrate cleanup (stop/suspend agents, remove socket, grace
+/// period) instead of `process::exit` from within a spawned connection task.
+pub(super) enum ShutdownRequest {
+    Shutdown { reply: mpsc::Sender<Message> },
+    Suspend { reply: mpsc::Sender<Message> },
+}
 
 /// Maximum time allowed for a TLS handshake to complete.
 const TLS_HANDSHAKE_TIMEOUT: Duration = Duration::from_secs(10);
@@ -105,10 +115,12 @@ pub(super) struct ServerState {
     pub(super) jwt_validator: Option<Arc<JwtValidator>>,
     /// Per-user state map. Each authenticated user gets isolated state.
     pub(super) users: HashMap<Uuid, Arc<RwLock<ServerUserState>>>,
+    /// Channel for connection handlers to request server shutdown/suspend
+    pub(super) shutdown_tx: mpsc::Sender<ShutdownRequest>,
 }
 
 impl ServerState {
-    fn new(config: Config) -> Self {
+    fn new(config: Config, shutdown_tx: mpsc::Sender<ShutdownRequest>) -> Self {
         let mut users = HashMap::new();
         users.insert(LOCAL_USER_ID, Arc::new(RwLock::new(ServerUserState::new())));
         Self {
@@ -117,6 +129,7 @@ impl ServerState {
             is_cloud_server: false,
             jwt_validator: None,
             users,
+            shutdown_tx,
         }
     }
 
@@ -153,15 +166,18 @@ pub struct Server {
     state: Arc<RwLock<ServerState>>,
     event_tx: mpsc::Sender<SessionEvent>,
     event_rx: Option<mpsc::Receiver<SessionEvent>>,
+    shutdown_rx: Option<mpsc::Receiver<ShutdownRequest>>,
 }
 
 impl Server {
     pub fn with_config(config: Config) -> Self {
         let (event_tx, event_rx) = mpsc::channel::<SessionEvent>(256);
+        let (shutdown_tx, shutdown_rx) = mpsc::channel::<ShutdownRequest>(1);
         Self {
-            state: Arc::new(RwLock::new(ServerState::new(config))),
+            state: Arc::new(RwLock::new(ServerState::new(config, shutdown_tx))),
             event_tx,
             event_rx: Some(event_rx),
+            shutdown_rx: Some(shutdown_rx),
         }
     }
 
@@ -304,8 +320,74 @@ impl Server {
             "network connection limit active"
         );
 
+        let mut shutdown_rx = self.shutdown_rx.take().expect("run() called twice");
+
+        // Deferred reply: built inside the select arm, sent after listener teardown
+        // so clients can't reconnect to the old socket before it's removed.
+        let mut deferred_reply: Option<(mpsc::Sender<Message>, Message)> = None;
+
         loop {
             tokio::select! {
+                // Shutdown/suspend request from a connection handler
+                Some(req) = shutdown_rx.recv() => {
+                    match req {
+                        ShutdownRequest::Shutdown { reply } => {
+                            let user_state = {
+                                let s = self.state.read().await;
+                                s.get_user_state(&LOCAL_USER_ID).unwrap()
+                            };
+                            shutdown_server(&user_state).await;
+                            deferred_reply = Some((
+                                reply,
+                                Message::Command(Command::ShutdownNotification(
+                                    ShutdownReason::UserRequested,
+                                )),
+                            ));
+                        }
+                        ShutdownRequest::Suspend { reply } => {
+                            let user_state = {
+                                let s = self.state.read().await;
+                                s.get_user_state(&LOCAL_USER_ID).unwrap()
+                            };
+                            let (suspended, errors) = suspend_server(&user_state).await;
+                            let suspended_count = suspended.agents.len();
+                            let error = if !errors.is_empty() {
+                                Some(ProtocolError::ServerError(errors.join("; ")))
+                            } else {
+                                None
+                            };
+                            if !suspended.agents.is_empty() {
+                                let state_path = {
+                                    let state = self.state.read().await;
+                                    state.config.state_path.clone()
+                                };
+                                if let Err(e) =
+                                    crate::state::save_suspended(&state_path, &suspended)
+                                {
+                                    tracing::error!(error = %e, "failed to save suspended agents");
+                                    let _ = reply
+                                        .send(Message::Command(Command::SuspendResult {
+                                            suspended_count: 0,
+                                            error: Some(ProtocolError::ServerError(format!(
+                                                "failed to save state: {e}"
+                                            ))),
+                                        }))
+                                        .await;
+                                    // Don't shut down on save failure
+                                    continue;
+                                }
+                            }
+                            deferred_reply = Some((
+                                reply,
+                                Message::Command(Command::SuspendResult {
+                                    suspended_count,
+                                    error,
+                                }),
+                            ));
+                        }
+                    }
+                    break;
+                }
                 // Unix socket connection
                 result = unix_listener.accept() => {
                     match result {
@@ -409,6 +491,22 @@ impl Server {
             }
         }
 
+        // Stop accepting connections and remove socket before replying, so
+        // clients can't reconnect to the old server after receiving the response.
+        drop(unix_listener);
+        drop(tcp_listener);
+        drop(ws_listener);
+        let _ = std::fs::remove_file(&socket_path);
+
+        // Send reply on the existing connection (writer task is still alive)
+        if let Some((reply, msg)) = deferred_reply {
+            let _ = reply.send(msg).await;
+        }
+
+        // Grace period: let agents handle SIGHUP from PTY master drop
+        tokio::time::sleep(Duration::from_millis(200)).await;
+        tracing::info!("server exiting");
+
         Ok(())
     }
 }
@@ -439,7 +537,11 @@ pub(super) mod test_helpers {
     }
 
     pub(super) async fn test_state() -> (Arc<RwLock<ServerState>>, Arc<RwLock<ServerUserState>>) {
-        let state = Arc::new(RwLock::new(ServerState::new(Config::default())));
+        let (shutdown_tx, _shutdown_rx) = mpsc::channel(1);
+        let state = Arc::new(RwLock::new(ServerState::new(
+            Config::default(),
+            shutdown_tx,
+        )));
         let user_state = {
             let s = state.read().await;
             s.get_user_state(&LOCAL_USER_ID).unwrap()

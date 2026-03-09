@@ -10,7 +10,6 @@ use super::connection::{
 };
 use super::routing::{
     broadcast_to_peers, connection_tx, create_agent, handle_subscribe, resume_agents,
-    shutdown_server, suspend_server,
 };
 use crate::agent_registry::Agent;
 use crate::buffer::{BroadcastReader, BufferPolicy};
@@ -18,13 +17,11 @@ use crate::claude::types::{ClaudeHook, Hook};
 use crate::error::{AmuxError, Result};
 use crate::message::{
     Command, DirectMessage, Message, ProtocolError, RoutableMessage, ServerDebugInfo,
-    ShutdownReason,
 };
 use crate::route::Route;
 use crate::state::State;
 use std::future::Future;
 use std::sync::atomic::Ordering;
-use std::time::Duration;
 use tokio::sync::{mpsc, oneshot};
 use tracing::Instrument;
 
@@ -413,23 +410,14 @@ async fn handle_command(
     match command {
         Command::Shutdown => {
             tracing::info!("shutdown requested");
-            shutdown_server(&ctx.user_state).await;
-            // Let agents handle SIGHUP from PTY master drop before exiting
-            tokio::time::sleep(Duration::from_millis(200)).await;
-
-            let _ = tx
-                .send(Message::Command(Command::ShutdownNotification(
-                    ShutdownReason::UserRequested,
-                )))
-                .await;
-
-            let socket_path = {
+            let shutdown_tx = {
                 let state = ctx.state.read().await;
-                state.config.socket_path.clone()
+                state.shutdown_tx.clone()
             };
-            let _ = std::fs::remove_file(socket_path);
-            tracing::info!("server exiting");
-            std::process::exit(0);
+            let _ = shutdown_tx
+                .send(super::ShutdownRequest::Shutdown { reply: tx.clone() })
+                .await;
+            Ok(())
         }
 
         Command::ConnectToServer { address } => {
@@ -554,48 +542,14 @@ async fn handle_command(
 
         Command::Suspend => {
             tracing::info!("suspend requested");
-            let (suspended, errors) = suspend_server(&ctx.user_state).await;
-            let suspended_count = suspended.agents.len();
-            let error = if !errors.is_empty() {
-                Some(ProtocolError::ServerError(errors.join("; ")))
-            } else {
-                None
-            };
-            if !suspended.agents.is_empty() {
-                let state_path = {
-                    let state = ctx.state.read().await;
-                    state.config.state_path.clone()
-                };
-                if let Err(e) = crate::state::save_suspended(&state_path, &suspended) {
-                    tracing::error!(error = %e, "failed to save suspended agents");
-                    let _ = tx
-                        .send(Message::Command(Command::SuspendResult {
-                            suspended_count: 0,
-                            error: Some(ProtocolError::ServerError(format!(
-                                "failed to save state: {e}"
-                            ))),
-                        }))
-                        .await;
-                    return Ok(());
-                }
-            }
-            let _ = tx
-                .send(Message::Command(Command::SuspendResult {
-                    suspended_count,
-                    error,
-                }))
-                .await;
-
-            // Let agents handle SIGHUP from PTY master drop before exiting
-            tokio::time::sleep(Duration::from_millis(200)).await;
-
-            let socket_path = {
+            let shutdown_tx = {
                 let state = ctx.state.read().await;
-                state.config.socket_path.clone()
+                state.shutdown_tx.clone()
             };
-            let _ = std::fs::remove_file(socket_path);
-            tracing::info!("server exiting after suspend");
-            std::process::exit(0);
+            let _ = shutdown_tx
+                .send(super::ShutdownRequest::Suspend { reply: tx.clone() })
+                .await;
+            Ok(())
         }
 
         Command::Resume => {
@@ -896,6 +850,7 @@ mod tests {
     use std::path::PathBuf;
     use std::sync::Arc;
     use std::sync::atomic::AtomicU64;
+    use std::time::Duration;
     use tokio::sync::{RwLock, mpsc};
     use uuid::Uuid;
 

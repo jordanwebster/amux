@@ -38,6 +38,27 @@ One paragraph describing what was done.
 
 ---
 
+## 2026-03-09: Graceful server shutdown and suspend
+
+### Summary
+Moved shutdown/suspend orchestration from connection handler tasks into `Server::run()`. Previously, both `Shutdown` and `Suspend` command handlers called `std::process::exit(0)` from within spawned connection tasks, which skipped destructors, didn't clean up resources, and caused a race condition during suspend where the accept loop kept running and clients could reconnect to the old server before it exited. Now handlers send a typed `ShutdownRequest` to the main loop via an mpsc channel, and the main loop handles everything: stop/suspend agents, send the client response, drop listeners, remove socket, grace period, then return normally.
+
+### Changes
+- `crates/amux/src/server/mod.rs`: Added `ShutdownRequest` enum (Shutdown/Suspend variants with reply channel), `shutdown_tx` field to `ServerState`, `shutdown_rx` field to `Server`, new select arm in `Server::run()` loop, and post-loop cleanup (drop listeners, remove socket, grace sleep)
+- `crates/amux/src/server/handlers.rs`: Replaced Shutdown and Suspend handler bodies with thin forwarding stubs that send `ShutdownRequest` to the main loop; removed unused imports (`shutdown_server`, `suspend_server`, `ShutdownReason`); moved `Duration` import into test module
+
+### Decisions Made
+- Handlers are thin relays: they only send the request and return `Ok(())`. All orchestration logic lives in `Server::run()` so the main loop controls listener teardown ordering.
+- The `reply` field in `ShutdownRequest` is the connection's `mpsc::Sender<Message>`, allowing the main loop to send the response directly to the requesting client after completing the work.
+- Reply is deferred until after listener drop + socket removal: the main loop builds the response message inside the select arm, breaks, tears down listeners, removes the socket file, and only then sends the reply. This eliminates the race where `amux update` could receive `SuspendResult`, see the old socket still exists, and reconnect to the dying server instead of spawning a new one.
+- On suspend save failure, the main loop sends an error response and `continue`s (doesn't break), keeping the server alive.
+
+### Verification
+- `cargo check && cargo fmt && cargo clippy --workspace --all-targets -- -D warnings && cargo test` — all pass (171 unit tests)
+- `cargo build --workspace && cargo run -p e2e-runner -- run` — all 10 E2E tests pass
+
+---
+
 ## 2026-03-08: `amux update` command
 
 ### Summary
