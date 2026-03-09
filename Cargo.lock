@@ -13,7 +13,7 @@ dependencies = [
 
 [[package]]
 name = "amux"
-version = "0.1.18"
+version = "0.1.19"
 dependencies = [
  "chrono",
  "fs2",
@@ -43,7 +43,7 @@ dependencies = [
 
 [[package]]
 name = "amux-cli"
-version = "0.1.18"
+version = "0.1.19"
 dependencies = [
  "amux",
  "anyhow",
