@@ -170,9 +170,13 @@ impl TestTerminal {
         env: &HashMap<String, String>,
     ) -> Result<Self, TerminalError> {
         let pty_system = native_pty_system();
+        // Use 1 row on Windows: ConPTY is a screen renderer that emits \r\n for
+        // every empty row in the buffer. With 24 rows, each output line is followed
+        // by ~22 blank lines. A 1-row buffer eliminates this padding entirely.
+        let rows = if cfg!(windows) { 1 } else { 24 };
         let pair = pty_system
             .openpty(PtySize {
-                rows: 24,
+                rows,
                 cols: 80,
                 pixel_width: 0,
                 pixel_height: 0,
@@ -263,10 +267,8 @@ impl TestTerminal {
         Ok(())
     }
 
-    /// Read output, render terminal semantics, and search for `expected`.
-    /// ConPTY inserts empty-row padding (`\r\n` per row) between real output
-    /// lines, so we search for `expected` as a substring rather than consuming
-    /// from the front.
+    /// Read output, render terminal semantics, and compare strictly from the
+    /// front of the buffer. Returns the actual rendered text for comparison.
     pub fn read_expected(
         &mut self,
         expected: &str,
@@ -277,7 +279,6 @@ impl TestTerminal {
         loop {
             let (rendered, rendered_map) = render_terminal(&self.output_buffer);
 
-            #[cfg(unix)]
             if rendered.len() >= expected.len() {
                 let actual = rendered[..expected.len()].to_string();
                 let consumed = rendered_map
@@ -286,17 +287,6 @@ impl TestTerminal {
                     .unwrap_or(0);
                 self.output_buffer.drain(..consumed);
                 return Ok(actual);
-            }
-
-            #[cfg(windows)]
-            if let Some(pos) = rendered.find(expected) {
-                let end = pos + expected.len();
-                let consumed = rendered_map
-                    .get(end.saturating_sub(1))
-                    .copied()
-                    .unwrap_or(0);
-                self.output_buffer.drain(..consumed);
-                return Ok(expected.to_string());
             }
 
             let remaining = timeout.saturating_sub(start.elapsed());
