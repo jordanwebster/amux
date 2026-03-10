@@ -64,18 +64,14 @@ fn handle_claude_hook_inner(config: &Config) -> io::Result<()> {
 
     let hook = Hook::Claude(claude_hook);
 
-    if config.socket_path.exists() {
-        let config = config.clone();
-        tokio::task::block_in_place(|| {
-            tokio::runtime::Handle::current().block_on(async {
-                if let Err(e) = send_hook_event(&config, agent_id, hook).await {
-                    tracing::warn!(error = %e, "failed to send hook to server");
-                }
-            });
+    let config = config.clone();
+    tokio::task::block_in_place(|| {
+        tokio::runtime::Handle::current().block_on(async {
+            if let Err(e) = send_hook_event(&config, agent_id, hook).await {
+                tracing::debug!(error = %e, "server not running or hook delivery failed");
+            }
         });
-    } else {
-        tracing::debug!("server not running, skipping hook");
-    }
+    });
 
     Ok(())
 }

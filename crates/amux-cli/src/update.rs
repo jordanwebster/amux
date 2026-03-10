@@ -6,8 +6,10 @@ use serde::Deserialize;
 use sha2::{Digest, Sha256};
 use std::collections::HashMap;
 use std::io;
-use std::os::unix::fs::PermissionsExt;
 use std::path::{Path, PathBuf};
+
+#[cfg(unix)]
+use std::os::unix::fs::PermissionsExt;
 
 #[derive(Deserialize)]
 struct Manifest {
@@ -39,11 +41,21 @@ fn platform_key() -> &'static str {
     {
         "linux-arm64"
     }
+    #[cfg(all(target_os = "windows", target_arch = "x86_64"))]
+    {
+        "windows-x86_64"
+    }
+    #[cfg(all(target_os = "windows", target_arch = "aarch64"))]
+    {
+        "windows-arm64"
+    }
     #[cfg(not(any(
         all(target_os = "macos", target_arch = "aarch64"),
         all(target_os = "macos", target_arch = "x86_64"),
         all(target_os = "linux", target_arch = "x86_64"),
         all(target_os = "linux", target_arch = "aarch64"),
+        all(target_os = "windows", target_arch = "x86_64"),
+        all(target_os = "windows", target_arch = "aarch64"),
     )))]
     {
         compile_error!("unsupported platform for update")
@@ -79,6 +91,7 @@ async fn download_and_verify(url: &str, expected_sha256: &str, exe_dir: &Path) -
 
     let tmp_path = exe_dir.join(".amux-update.tmp");
     std::fs::write(&tmp_path, &bytes).context("failed to write temp binary")?;
+    #[cfg(unix)]
     std::fs::set_permissions(&tmp_path, std::fs::Permissions::from_mode(0o755))
         .context("failed to set temp binary permissions")?;
 

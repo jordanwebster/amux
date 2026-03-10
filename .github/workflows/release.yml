@@ -21,22 +21,27 @@ jobs:
           - os: macos-latest
             target: aarch64-apple-darwin
             artifact: amux-macos-arm64
+          - os: windows-latest
+            target: x86_64-pc-windows-msvc
+            artifact: amux-windows-x86_64
 
     steps:
       - uses: actions/checkout@v4
 
       - uses: dtolnay/rust-toolchain@stable
+        with:
+          targets: ${{ matrix.target }}
 
       - uses: Swatinem/rust-cache@v2
 
       - name: Build release
-        run: cargo build --release
+        run: cargo build --release --target ${{ matrix.target }}
 
       - name: Upload artifact
         uses: actions/upload-artifact@v4
         with:
           name: ${{ matrix.artifact }}
-          path: target/release/amux
+          path: ${{ matrix.os == 'windows-latest' && format('target/{0}/release/amux.exe', matrix.target) || format('target/{0}/release/amux', matrix.target) }}
 
   release:
     name: Create Release
@@ -55,9 +60,10 @@ jobs:
         run: |
           mv artifacts/amux-linux-x86_64/amux amux-linux-x86_64
           mv artifacts/amux-macos-arm64/amux amux-macos-arm64
+          mv artifacts/amux-windows-x86_64/amux.exe amux-windows-x86_64.exe
 
       - name: Generate checksums
-        run: sha256sum amux-linux-x86_64 amux-macos-arm64 > checksums.txt
+        run: sha256sum amux-linux-x86_64 amux-macos-arm64 amux-windows-x86_64.exe > checksums.txt
 
       - name: Create release
         uses: softprops/action-gh-release@v2
@@ -65,5 +71,6 @@ jobs:
           files: |
             amux-linux-x86_64
             amux-macos-arm64
+            amux-windows-x86_64.exe
             checksums.txt
           generate_release_notes: true

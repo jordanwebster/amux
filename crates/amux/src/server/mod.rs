@@ -12,13 +12,14 @@ use crate::error::{AmuxError, Result};
 use crate::jwt::JwtValidator;
 use crate::message::{Command, Host, Message, ProtocolError, ShutdownReason};
 use crate::route::Route;
-use crate::transport::{TcpTransport, create_tls_acceptor};
+use crate::transport::{TcpTransport, TransportSplit, create_tls_acceptor};
 use routing::{shutdown_server, suspend_server};
 use std::collections::{HashMap, HashSet};
 use std::net::SocketAddr;
+use std::path::Path;
 use std::sync::Arc;
 use std::time::Duration;
-use tokio::net::{TcpListener, UnixListener};
+use tokio::net::TcpListener;
 use tokio::sync::{RwLock, Semaphore, mpsc, oneshot};
 use tokio_rustls::TlsAcceptor;
 use uuid::Uuid;
@@ -40,6 +41,61 @@ const TLS_HANDSHAKE_TIMEOUT: Duration = Duration::from_secs(10);
 /// semaphore permit for its lifetime; new connections are rejected at capacity.
 const MAX_CONNECTIONS: usize = 16384;
 
+/// Platform-abstracted local IPC listener (Unix socket on Unix, named pipe on Windows).
+pub(crate) struct LocalListener {
+    #[cfg(unix)]
+    inner: tokio::net::UnixListener,
+    #[cfg(windows)]
+    pipe_name: String,
+}
+
+impl LocalListener {
+    /// Bind to the local transport (Unix socket or named pipe).
+    pub fn bind(socket_path: &Path) -> Result<Self> {
+        #[cfg(unix)]
+        {
+            if let Some(parent) = socket_path.parent()
+                && !parent.exists()
+            {
+                std::fs::create_dir_all(parent)?;
+                use std::os::unix::fs::PermissionsExt;
+                std::fs::set_permissions(parent, std::fs::Permissions::from_mode(0o700))?;
+            }
+            let _ = std::fs::remove_file(socket_path);
+            let listener = tokio::net::UnixListener::bind(socket_path)?;
+            {
+                use std::os::unix::fs::PermissionsExt;
+                std::fs::set_permissions(socket_path, std::fs::Permissions::from_mode(0o600))?;
+            }
+            Ok(Self { inner: listener })
+        }
+        #[cfg(windows)]
+        {
+            Ok(Self {
+                pipe_name: socket_path.to_string_lossy().into_owned(),
+            })
+        }
+    }
+
+    /// Accept one incoming connection, returning a transport that implements TransportSplit.
+    pub async fn accept(&self) -> std::io::Result<impl TransportSplit + use<>> {
+        #[cfg(unix)]
+        {
+            let (stream, _) = self.inner.accept().await?;
+            Ok(crate::transport::unix::UnixTransport::new(stream))
+        }
+        #[cfg(windows)]
+        {
+            use tokio::net::windows::named_pipe::ServerOptions;
+            let server = ServerOptions::new().create(&self.pipe_name)?;
+            server.connect().await?;
+            Ok(crate::transport::named_pipe::NamedPipeTransport::new(
+                server,
+            ))
+        }
+    }
+}
+
 mod accept;
 mod cloud;
 mod connection;
@@ -47,7 +103,7 @@ mod handlers;
 mod routing;
 
 pub use accept::connect_handshake;
-use accept::{tcp_accept, unix_accept, websocket_accept};
+use accept::{local_accept, tcp_accept, websocket_accept};
 use cloud::establish_cloud_connection;
 use routing::broadcast_to_peers;
 
@@ -235,24 +291,8 @@ impl Server {
             None
         };
 
-        // Unix socket - always available (for CLI commands like list, shutdown)
-        // Ensure the parent directory exists with owner-only permissions (0700)
-        if let Some(parent) = socket_path.parent()
-            && !parent.exists()
-        {
-            std::fs::create_dir_all(parent)?;
-            use std::os::unix::fs::PermissionsExt;
-            std::fs::set_permissions(parent, std::fs::Permissions::from_mode(0o700))?;
-        }
-        let _ = std::fs::remove_file(&socket_path);
-        let unix_listener = UnixListener::bind(&socket_path)?;
-        // Restrict socket to owner-only (0600) to prevent other local users from
-        // issuing privileged commands (Shutdown, ConnectToServer, CreateAgent).
-        {
-            use std::os::unix::fs::PermissionsExt;
-            std::fs::set_permissions(&socket_path, std::fs::Permissions::from_mode(0o600))?;
-        }
-        tracing::info!(path = %socket_path.display(), "listening on unix socket");
+        let local_listener = LocalListener::bind(&socket_path)?;
+        tracing::info!(path = %socket_path.display(), "listening on local transport");
 
         let tcp_addr = SocketAddr::from(([0, 0, 0, 0], tcp_port));
         let tcp_listener = TcpListener::bind(tcp_addr).await?;
@@ -388,18 +428,18 @@ impl Server {
                     }
                     break;
                 }
-                // Unix socket connection
-                result = unix_listener.accept() => {
+                // Local transport connection
+                result = local_listener.accept() => {
                     match result {
-                        Ok((stream, _)) => {
+                        Ok(transport) => {
                             let state = self.state.clone();
                             let event_tx = self.event_tx.clone();
                             tokio::spawn(async move {
-                                let _ = unix_accept(stream, state, event_tx).await;
+                                let _ = local_accept(transport, state, event_tx).await;
                             });
                         }
                         Err(e) => {
-                            tracing::error!(error = %e, "unix accept error");
+                            tracing::error!(error = %e, "local accept error");
                             break;
                         }
                     }
@@ -493,9 +533,10 @@ impl Server {
 
         // Stop accepting connections and remove socket before replying, so
         // clients can't reconnect to the old server after receiving the response.
-        drop(unix_listener);
+        drop(local_listener);
         drop(tcp_listener);
         drop(ws_listener);
+        #[cfg(unix)]
         let _ = std::fs::remove_file(&socket_path);
 
         // Send reply on the existing connection (writer task is still alive)

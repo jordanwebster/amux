@@ -11,3 +11,4 @@ portable-pty = "0.8"
 clap = { version = "4", features = ["derive"] }
 glob = "0.3"
 tempfile = "3"
+shell-words = { workspace = true }

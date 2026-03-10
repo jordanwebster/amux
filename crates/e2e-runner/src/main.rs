@@ -6,6 +6,29 @@ use clap::{Parser, Subcommand};
 use executor::{Executor, ExecutorConfig};
 use std::path::{Path, PathBuf};
 
+fn debug_binary_path(name: &str) -> PathBuf {
+    PathBuf::from(format!(
+        "target/debug/{name}{}",
+        std::env::consts::EXE_SUFFIX
+    ))
+}
+
+#[cfg(unix)]
+fn make_binary_path_absolute(path: PathBuf) -> PathBuf {
+    path.canonicalize().unwrap_or(path)
+}
+
+#[cfg(windows)]
+fn make_binary_path_absolute(path: PathBuf) -> PathBuf {
+    if path.is_absolute() {
+        path
+    } else {
+        std::env::current_dir()
+            .map(|cwd| cwd.join(&path))
+            .unwrap_or(path)
+    }
+}
+
 #[derive(Parser)]
 #[command(name = "e2e-runner")]
 #[command(about = "E2E test runner for amux")]
@@ -92,22 +115,18 @@ fn run_tests(
 
     // Find binaries and convert to absolute paths
     let amux_binary = amux_binary.unwrap_or_else(|| {
-        // Try to find in target/debug first
-        let debug_path = PathBuf::from("target/debug/amux");
+        let debug_path = debug_binary_path("amux");
         if debug_path.exists() {
-            // Convert to absolute path so it works regardless of cwd
-            debug_path.canonicalize().unwrap_or(debug_path)
+            make_binary_path_absolute(debug_path)
         } else {
-            // Fall back to PATH
             PathBuf::from("amux")
         }
     });
 
     let test_agent_binary = test_agent_binary.unwrap_or_else(|| {
-        let debug_path = PathBuf::from("target/debug/test-agent");
+        let debug_path = debug_binary_path("test-agent");
         if debug_path.exists() {
-            // Convert to absolute path so it works regardless of cwd
-            debug_path.canonicalize().unwrap_or(debug_path)
+            make_binary_path_absolute(debug_path)
         } else {
             PathBuf::from("test-agent")
         }

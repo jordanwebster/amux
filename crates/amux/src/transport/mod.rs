@@ -7,14 +7,18 @@
 //! WebSocket transport uses binary MessagePack frames.
 
 mod framing;
+pub mod local;
+#[cfg(windows)]
+pub mod named_pipe;
 mod tcp;
 mod tls;
+#[cfg(unix)]
 pub mod unix;
 mod websocket;
 
+pub use local::{LocalMessageReader, LocalMessageWriter, LocalTransport};
 pub use tcp::TcpTransport;
 pub use tls::{create_tls_acceptor, tls_connect};
-pub use unix::UnixTransport;
 pub use websocket::WebSocketTransport;
 
 use crate::error::Result;

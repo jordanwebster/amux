@@ -5,18 +5,43 @@ use serde::{Deserialize, Serialize};
 use std::path::{Path, PathBuf};
 
 /// Resolve an XDG base directory: `$env_var` if set, otherwise `$HOME/{default_suffix}`.
+///
+/// On Windows, maps XDG conventions to standard Windows directories:
+/// `.config` → `%APPDATA%`, `.local/state` → `%LOCALAPPDATA%` (fallback `%APPDATA%`).
 pub(crate) fn xdg_dir(env_var: &str, default_suffix: &str) -> PathBuf {
     if let Ok(val) = std::env::var(env_var) {
         return PathBuf::from(val);
+    }
+    #[cfg(windows)]
+    {
+        let win_base = if default_suffix.starts_with(".config") {
+            std::env::var("APPDATA").ok()
+        } else {
+            std::env::var("LOCALAPPDATA")
+                .ok()
+                .or_else(|| std::env::var("APPDATA").ok())
+        };
+        if let Some(base) = win_base {
+            return PathBuf::from(base);
+        }
     }
     home_dir().join(default_suffix)
 }
 
 /// Resolve `$HOME`, panics if unset (same as `dirs::home_dir`).
+#[cfg(unix)]
 fn home_dir() -> PathBuf {
     std::env::var("HOME")
         .map(PathBuf::from)
         .expect("$HOME is not set")
+}
+
+/// Resolve the current user's home directory.
+#[cfg(windows)]
+fn home_dir() -> PathBuf {
+    std::env::var("USERPROFILE")
+        .map(PathBuf::from)
+        .expect("%USERPROFILE% is not set")
 }
 
 const DEFAULT_TCP_PORT: u16 = 9001;
@@ -33,11 +58,12 @@ fn default_cloud_url() -> String {
     DEFAULT_CLOUD_URL.to_string()
 }
 
-/// Per-user runtime directory for the amux socket.
+/// Per-user runtime directory for the amux socket on Unix.
 ///
 /// - macOS: `$TMPDIR/amux/` (already per-user, e.g. `/var/folders/xx/.../T/`)
 /// - Linux: `$XDG_RUNTIME_DIR/amux/` (per-user tmpfs, e.g. `/run/user/1000/`)
 /// - Fallback: `/tmp/amux-<uid>/` (UID-embedded for isolation)
+#[cfg(unix)]
 fn default_socket_dir() -> PathBuf {
     if cfg!(target_os = "macos") {
         if let Ok(tmpdir) = std::env::var("TMPDIR") {
@@ -51,8 +77,15 @@ fn default_socket_dir() -> PathBuf {
     PathBuf::from(format!("/tmp/amux-{uid}"))
 }
 
+#[cfg(unix)]
 fn default_socket_path() -> PathBuf {
     default_socket_dir().join("amux.sock")
+}
+
+#[cfg(windows)]
+fn default_socket_path() -> PathBuf {
+    let user = std::env::var("USERNAME").unwrap_or_else(|_| "default".to_string());
+    PathBuf::from(format!(r"\\.\pipe\amux-{user}"))
 }
 
 fn default_tcp_port() -> u16 {
@@ -160,5 +193,27 @@ impl Config {
             serde_yaml::from_str(&contents).map_err(|e| AmuxError::Config(e.to_string()))?;
         config.path = Some(path.to_path_buf());
         Ok(config)
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    /// Verify serde_yaml round-trips Windows-style backslash paths correctly.
+    /// serde_yaml serializes paths unquoted, which YAML parses literally.
+    /// (Double-quoted YAML strings would break because `\p`, `\U` etc. are
+    /// invalid YAML escape sequences.)
+    #[test]
+    fn yaml_windows_path_roundtrip() {
+        let config = Config {
+            socket_path: PathBuf::from(r"\\.\pipe\amux-test"),
+            state_path: PathBuf::from(r"C:\Users\me\state.yaml"),
+            ..Config::default()
+        };
+        let yaml = serde_yaml::to_string(&config).unwrap();
+        let parsed: Config = serde_yaml::from_str(&yaml).unwrap();
+        assert_eq!(parsed.socket_path, config.socket_path);
+        assert_eq!(parsed.state_path, config.state_path);
     }
 }

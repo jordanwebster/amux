@@ -854,6 +854,21 @@ mod tests {
     use tokio::sync::{RwLock, mpsc};
     use uuid::Uuid;
 
+    fn dummy_pty_command() -> String {
+        #[cfg(unix)]
+        {
+            "/bin/cat".to_string()
+        }
+        #[cfg(windows)]
+        {
+            "cmd.exe".to_string()
+        }
+    }
+
+    fn dummy_working_dir() -> PathBuf {
+        std::env::temp_dir()
+    }
+
     /// Create an AgentSession::TestAgent from a CreateAgentRequest.
     fn create_test_session(req: &crate::message::CreateAgentRequest) -> AgentSession {
         let cmd = match &req.agent_type {
@@ -984,8 +999,8 @@ mod tests {
             let req = crate::message::CreateAgentRequest {
                 agent_id,
                 name: Some("local".to_string()),
-                agent_type: crate::message::AgentType::TestAgent("/bin/cat".to_string()),
-                working_dir: PathBuf::from("/tmp"),
+                agent_type: crate::message::AgentType::TestAgent(dummy_pty_command()),
+                working_dir: dummy_working_dir(),
                 terminal_size: Some(crate::message::TerminalSize { rows: 24, cols: 80 }),
             };
             let session = create_test_session(&req);
@@ -1610,8 +1625,8 @@ mod tests {
         let req = crate::message::CreateAgentRequest {
             agent_id,
             name: Some("hook-test".to_string()),
-            agent_type: crate::message::AgentType::TestAgent("/bin/cat".to_string()),
-            working_dir: PathBuf::from("/tmp"),
+            agent_type: crate::message::AgentType::TestAgent(dummy_pty_command()),
+            working_dir: dummy_working_dir(),
             terminal_size: Some(crate::message::TerminalSize { rows: 24, cols: 80 }),
         };
         let session = create_test_session(&req);

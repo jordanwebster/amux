@@ -38,6 +38,65 @@ One paragraph describing what was done.
 
 ---
 
+## 2026-03-10: Windows support + platform abstraction cleanup
+
+### Summary
+Added Windows support across the codebase, then refactored to consolidate scattered `#[cfg]` blocks behind platform abstractions. The initial implementation replaced all Unix-specific APIs with cross-platform equivalents (crossterm for terminal control, named pipes for local IPC, `LocalTransport` type alias for transport abstraction) and added Windows to CI and release workflows. A follow-up pass consolidated ~33 `#[cfg]` blocks down to ~20 by introducing a `LocalListener` abstraction, fixing a type mismatch bug, cleaning up dependencies, and simplifying several platform-conditional helpers.
+
+### Changes
+
+**Transport layer — platform-abstracted local IPC:**
+- `crates/amux/src/transport/local.rs` (new): Type aliases (`LocalTransport`, `LocalMessageReader`, `LocalMessageWriter`) that resolve to `UnixTransport` on Unix and `NamedPipeClientTransport` on Windows
+- `crates/amux/src/transport/named_pipe.rs` (new): `NamedPipeTransport<S>` generic over `NamedPipeClient`/`NamedPipeServer`, with `Transport` and `TransportSplit` implementations using length-prefixed framing
+- `crates/amux/src/transport/mod.rs`: Added `local` and `named_pipe` modules; gated `unix` module on `#[cfg(unix)]`; replaced `pub use unix::UnixTransport` with `pub use local::{LocalTransport, ...}`
+- `crates/amux/src/connection.rs`: Changed `Connection` from hardcoded `UnixMessageReader`/`UnixMessageWriter` to `LocalMessageReader`/`LocalMessageWriter`
+
+**Server — `LocalListener` abstraction:**
+- `crates/amux/src/server/mod.rs`: Created `LocalListener` struct encapsulating Unix socket (wraps `UnixListener`) and named pipe (stores pipe name string) behind `bind()`/`accept()` methods. Replaced 5 cfg-gated functions (`bind_local_listener` x2, `accept_local_transport` x2, `accept_named_pipe`) and the platform-varying `local_listener` variable type. Fixed a type mismatch bug where the Windows `accept_local_transport` constructed `NamedPipeTransport<NamedPipeClient>` from a `NamedPipeServer`. Added `#[cfg(unix)]` gate on socket file removal at server exit.
+- `crates/amux/src/server/accept.rs`: Renamed `unix_accept` → `local_accept`, changed to accept `impl TransportSplit` instead of `UnixStream`, removed `UnixTransport`/`UnixStream` imports
+
+**Client — cross-platform terminal and connection:**
+- `crates/amux-cli/src/client.rs`: Replaced `libc`-based `get_terminal_size()` (ioctl/TIOCGWINSZ) with `crossterm::terminal::size()`; replaced `libc`-based `RawModeGuard` (tcgetattr/cfmakeraw/tcsetattr) with `crossterm::terminal::enable_raw_mode()`/`disable_raw_mode()`; removed `std::os::unix::io::AsRawFd` import
+- `crates/amux-cli/src/hooks.rs`: Removed `socket_path.exists()` guard (not reliable for named pipes); always attempt delivery, log at debug level on failure
+- `crates/amux/src/connect.rs`: Replaced `UnixStream::connect` with `connect_local_transport()` (two cfg-gated versions: Unix uses `UnixStream`, Windows uses `ClientOptions` with retry loop for ERROR_PIPE_BUSY). Rewrote `connect_daemon` to use connect-then-retry pattern instead of socket file existence checks. Added `DETACHED_PROCESS` creation flag (0x00000008) for Windows daemon spawn.
+
+**Config — Windows path conventions:**
+- `crates/amux/src/config.rs`: Added `#[cfg(windows)]` `home_dir()` using `%USERPROFILE%`; added Windows `default_socket_dir()` (`temp_dir()/amux`) and `default_socket_path()` (`\\.\pipe\amux-{USERNAME}`); restructured `xdg_dir()` Windows fallback to use `default_suffix` hint (`.config` → `%APPDATA%`, others → `%LOCALAPPDATA%`) instead of comparing `env_var` strings
+
+**Update — Windows platform support:**
+- `crates/amux-cli/src/update.rs`: Added `windows-x86_64` and `windows-arm64` platform keys; gated `PermissionsExt` import and binary permission setting on `#[cfg(unix)]`
+
+**E2E runner — cross-platform test infrastructure:**
+- `crates/e2e-runner/src/terminal.rs`: Split `spawn()` into cfg-gated Unix (sh -c with stty/exec) and Windows (direct ConPTY) paths; changed `args` parameter from `&[&str]` to `&[String]`; gated `shell_quote` on `#[cfg(unix)]`
+- `crates/e2e-runner/src/executor.rs`: Replaced string-based command transformation with `shell_words::split` producing `ResolvedCommand { program, args }`; consolidated 4 cfg-gated socket path functions into 1; removed `socket_dir` field from `ExecutorConfig`; gated socket file cleanup on `#[cfg(unix)]`
+- `crates/e2e-runner/src/main.rs`: Replaced 2 cfg-gated `debug_binary_path` functions with single function using `std::env::consts::EXE_SUFFIX`
+
+**CI and release:**
+- `.github/workflows/ci.yml`: Added `windows-latest` to check, clippy, and test matrices
+- `.github/workflows/release.yml`: Added `windows-latest`/`x86_64-pc-windows-msvc` build target; added `--target` flag to build; updated artifact paths for `.exe`; added Windows binary to release assets and checksums
+
+**Dependencies:**
+- `Cargo.toml` (workspace): Added `crossterm = "0.28"` and `shell-words = "1"`
+- `crates/amux/Cargo.toml`: Moved `libc` to `[target.'cfg(unix)'.dependencies]`
+- `crates/amux-cli/Cargo.toml`: Replaced `libc` with `crossterm`
+- `crates/e2e-runner/Cargo.toml`: Added `shell-words`
+
+### Decisions Made
+- **`LocalTransport` type alias pattern** (in `transport/local.rs`): Rather than a trait object or enum, the local transport is a compile-time type alias. This is zero-cost and lets all existing generic code (`impl TransportSplit`) work unchanged.
+- **`LocalListener::accept()` returns `impl TransportSplit + use<>`**: The `use<>` precise capture syntax (Rust 2024) tells the compiler the returned transport doesn't borrow `&self`, allowing it to be moved into `tokio::spawn`. A boxed trait object would add unnecessary overhead.
+- **crossterm over raw libc**: The terminal size query and raw mode handling previously used `libc::ioctl`/`tcgetattr`/`cfmakeraw` directly. `crossterm` provides the same functionality cross-platform without unsafe code.
+- **`shell_words::split` for command parsing**: The E2E executor previously did naive string splitting, which broke on paths with spaces. `shell_words` handles proper shell quoting.
+- **Named pipe retry loop on Windows**: `ClientOptions::new().open()` can fail with ERROR_PIPE_BUSY (231) when the server pipe hasn't recycled. The client retries up to 20 times with 50ms delay.
+- **Connect-then-retry pattern**: `connect_daemon` previously checked `socket_path.exists()` before connecting, which doesn't work for named pipes (they're kernel objects, not filesystem entries). Now it just attempts connection and retries on IO errors.
+- **Remaining cfg blocks (~20) kept**: These represent genuine platform differences (Unix socket paths vs named pipe names, stty vs ConPTY, UID-based socket dirs vs temp dir) rather than abstraction leaks.
+
+### Verification
+- `cargo check && cargo fmt && cargo clippy --workspace --all-targets -- -D warnings && cargo test` — all pass
+- `cargo build --workspace && cargo run -p e2e-runner -- run` — all 10 E2E tests pass
+- Windows-specific verification requires CI (the Windows runner in the updated ci.yml)
+
+---
+
 ## 2026-03-09: Graceful server shutdown and suspend
 
 ### Summary

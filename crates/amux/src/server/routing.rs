@@ -408,6 +408,21 @@ mod tests {
     use std::path::PathBuf;
     use tokio::sync::{mpsc, oneshot};
 
+    fn dummy_pty_command() -> String {
+        #[cfg(unix)]
+        {
+            "/bin/cat".to_string()
+        }
+        #[cfg(windows)]
+        {
+            "cmd.exe".to_string()
+        }
+    }
+
+    fn dummy_working_dir() -> PathBuf {
+        std::env::temp_dir()
+    }
+
     /// Insert a peer link (adds to both routes and peer_links) and return
     /// the receiver for inspecting broadcast messages.
     fn add_peer(us: &mut ServerUserState, name: &str) -> mpsc::Receiver<Message> {
@@ -740,11 +755,11 @@ mod tests {
                 let req = crate::message::CreateAgentRequest {
                     agent_id: id,
                     name: None,
-                    agent_type: crate::message::AgentType::TestAgent("/bin/cat".to_string()),
-                    working_dir: PathBuf::from("/tmp"),
+                    agent_type: crate::message::AgentType::TestAgent(dummy_pty_command()),
+                    working_dir: dummy_working_dir(),
                     terminal_size: None,
                 };
-                let inner = crate::agents::TestAgentSession::new(&req, "/bin/cat".to_string());
+                let inner = crate::agents::TestAgentSession::new(&req, dummy_pty_command());
                 us.agents
                     .insert(id, crate::agents::AgentSession::TestAgent(inner));
             }
@@ -754,8 +769,8 @@ mod tests {
         let new_req = crate::message::CreateAgentRequest {
             agent_id: Uuid::new_v4(),
             name: Some("one-too-many".to_string()),
-            agent_type: crate::message::AgentType::TestAgent("/bin/cat".to_string()),
-            working_dir: PathBuf::from("/tmp"),
+            agent_type: crate::message::AgentType::TestAgent(dummy_pty_command()),
+            working_dir: dummy_working_dir(),
             terminal_size: None,
         };
         let err = create_agent(

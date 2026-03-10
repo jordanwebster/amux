@@ -2,6 +2,7 @@ use portable_pty::{CommandBuilder, MasterPty, PtySize, native_pty_system};
 use std::collections::HashMap;
 use std::io::{Read, Write};
 use std::path::Path;
+use std::sync::mpsc;
 use std::time::Duration;
 
 // Note: We disable PTY echo (stty -echo) when spawning commands.
@@ -9,7 +10,8 @@ use std::time::Duration;
 // Rather than eagerly draining echo bytes after each input, we simply
 // disable echo to get cleaner output for test assertions.
 
-/// Quote a string for safe use in a shell command
+/// Quote a string for safe use in a shell command (Unix only: used by stty/exec spawn path)
+#[cfg(unix)]
 fn shell_quote(s: &str) -> String {
     // If the string contains no special characters, return as-is
     if s.chars()
@@ -19,6 +21,112 @@ fn shell_quote(s: &str) -> String {
     }
     // Otherwise, wrap in single quotes and escape any existing single quotes
     format!("'{}'", s.replace('\'', "'\\''"))
+}
+
+/// Skip one ANSI escape sequence starting at `pos` (which points to ESC).
+/// Returns the index of the first byte after the sequence.
+fn skip_one_escape(bytes: &[u8], pos: usize) -> usize {
+    let mut i = pos + 1; // skip ESC
+    if i >= bytes.len() {
+        return i;
+    }
+    match bytes[i] {
+        // CSI sequence: ESC [ ... (terminated by 0x40-0x7E)
+        b'[' => {
+            i += 1;
+            while i < bytes.len() {
+                if bytes[i] >= 0x40 && bytes[i] <= 0x7E {
+                    return i + 1;
+                }
+                i += 1;
+            }
+            i
+        }
+        // OSC sequence: ESC ] ... (terminated by BEL or ST)
+        b']' => {
+            i += 1;
+            while i < bytes.len() {
+                if bytes[i] == 0x07 {
+                    return i + 1; // BEL terminator
+                }
+                if bytes[i] == 0x1b && i + 1 < bytes.len() && bytes[i + 1] == b'\\' {
+                    return i + 2; // ST terminator (ESC \)
+                }
+                i += 1;
+            }
+            i
+        }
+        // Two-byte sequences: ESC followed by one character (e.g., ESC =, ESC >)
+        _ => i + 1,
+    }
+}
+
+/// Render raw terminal bytes into visible text while preserving a mapping back
+/// to raw-buffer indices.
+///
+/// This models the terminal semantics we care about:
+/// - ANSI escape sequences are ignored
+/// - `\r` moves the cursor to column 0
+/// - `\n` commits the current line
+/// - later bytes can overwrite earlier bytes on the same line
+fn render_terminal(bytes: &[u8]) -> (String, Vec<usize>) {
+    let mut rendered = Vec::with_capacity(bytes.len());
+    let mut rendered_map = Vec::with_capacity(bytes.len());
+    let mut line = Vec::with_capacity(128);
+    let mut line_map = Vec::with_capacity(128);
+    let mut cursor = 0usize;
+    let mut i = 0usize;
+
+    while i < bytes.len() {
+        if bytes[i] == 0x1b && i + 1 < bytes.len() {
+            i = skip_one_escape(bytes, i);
+            continue;
+        }
+
+        match bytes[i] {
+            b'\r' => {
+                cursor = 0;
+                i += 1;
+            }
+            b'\n' => {
+                rendered.extend_from_slice(&line);
+                rendered_map.extend(line_map.iter().copied());
+                rendered.push(b'\n');
+                rendered_map.push(i + 1);
+                line.clear();
+                line_map.clear();
+                cursor = 0;
+                i += 1;
+            }
+            0x08 => {
+                cursor = cursor.saturating_sub(1);
+                i += 1;
+            }
+            byte => {
+                if cursor < line.len() {
+                    line[cursor] = byte;
+                    line_map[cursor] = i + 1;
+                } else {
+                    while line.len() < cursor {
+                        line.push(b' ');
+                        line_map.push(i);
+                    }
+                    line.push(byte);
+                    line_map.push(i + 1);
+                }
+                cursor += 1;
+                i += 1;
+            }
+        }
+    }
+
+    rendered.extend_from_slice(&line);
+    rendered_map.extend(line_map.iter().copied());
+
+    (
+        String::from_utf8_lossy(&rendered).into_owned(),
+        rendered_map,
+    )
 }
 
 /// Error type for terminal operations
@@ -43,10 +151,11 @@ impl From<std::io::Error> for TerminalError {
     }
 }
 
-/// A test terminal that wraps a PTY
+/// A test terminal that wraps a PTY.
+/// The PTY reader runs in a background thread to avoid blocking on read().
 pub struct TestTerminal {
     _master: Box<dyn MasterPty + Send>,
-    reader: Box<dyn Read + Send>,
+    rx: mpsc::Receiver<Vec<u8>>,
     writer: Box<dyn Write + Send>,
     /// Buffer for accumulating output
     output_buffer: Vec<u8>,
@@ -56,7 +165,7 @@ impl TestTerminal {
     /// Create a new terminal and spawn a command
     pub fn spawn(
         command: &str,
-        args: &[&str],
+        args: &[String],
         working_dir: &Path,
         env: &HashMap<String, String>,
     ) -> Result<Self, TerminalError> {
@@ -72,21 +181,29 @@ impl TestTerminal {
                 message: format!("Failed to create PTY: {}", e),
             })?;
 
-        // Build the shell command that disables echo before exec'ing the real command
-        // This prevents PTY echo from cluttering our output
-        // We quote each argument to handle paths with spaces or special characters
-        let quoted_args: Vec<String> = args.iter().map(|arg| shell_quote(arg)).collect();
-        // stty raw: disable all input/output processing (no echo, no NL translation, etc.)
-        // Note: This only affects the outer PTY; nested PTYs (like those created by amux)
-        // will still have default terminal settings, so we normalize \r\n -> \n when reading.
-        let shell_cmd = format!(
-            "stty raw; exec {} {}",
-            shell_quote(command),
-            quoted_args.join(" ")
-        );
+        #[cfg(unix)]
+        let mut cmd = {
+            // Build the shell command that disables echo before exec'ing the real command.
+            // This keeps the existing Unix test behavior stable while Windows uses a direct
+            // ConPTY spawn path below.
+            let quoted_args: Vec<String> = args.iter().map(|arg| shell_quote(arg)).collect();
+            let shell_cmd = format!(
+                "stty raw; exec {} {}",
+                shell_quote(command),
+                quoted_args.join(" ")
+            );
+            let mut cmd = CommandBuilder::new("sh");
+            cmd.args(["-c", &shell_cmd]);
+            cmd
+        };
 
-        let mut cmd = CommandBuilder::new("sh");
-        cmd.args(["-c", &shell_cmd]);
+        #[cfg(windows)]
+        let mut cmd = {
+            let mut cmd = CommandBuilder::new(command);
+            cmd.args(args);
+            cmd
+        };
+
         cmd.cwd(working_dir);
         // Inherit all current environment vars first
         for (key, value) in std::env::vars() {
@@ -102,7 +219,7 @@ impl TestTerminal {
         })?;
         drop(pair.slave);
 
-        let reader = pair.master.try_clone_reader().map_err(|e| TerminalError {
+        let mut reader = pair.master.try_clone_reader().map_err(|e| TerminalError {
             message: format!("Failed to get PTY reader: {}", e),
         })?;
 
@@ -110,9 +227,26 @@ impl TestTerminal {
             message: format!("Failed to get PTY writer: {}", e),
         })?;
 
+        // Move the blocking reader into a background thread so read_expected
+        // can use recv_timeout instead of blocking forever on read().
+        let (tx, rx) = mpsc::channel();
+        std::thread::spawn(move || {
+            let mut buf = [0u8; 1024];
+            loop {
+                match reader.read(&mut buf) {
+                    Ok(0) | Err(_) => break,
+                    Ok(n) => {
+                        if tx.send(buf[..n].to_vec()).is_err() {
+                            break;
+                        }
+                    }
+                }
+            }
+        });
+
         Ok(Self {
             _master: pair.master,
-            reader,
+            rx,
             writer,
             output_buffer: Vec::new(),
         })
@@ -120,97 +254,100 @@ impl TestTerminal {
 
     /// Send input to the terminal (with newline)
     pub fn send_line(&mut self, input: &str) -> Result<(), TerminalError> {
-        writeln!(self.writer, "{}", input)?;
+        self.writer.write_all(input.as_bytes())?;
+        #[cfg(windows)]
+        self.writer.write_all(b"\r")?;
+        #[cfg(not(windows))]
+        self.writer.write_all(b"\n")?;
         self.writer.flush()?;
         Ok(())
     }
 
-    /// Read output and normalize to match expected string.
-    /// Handles \r\n vs \n differences from terminal output processing.
-    /// Waits up to `timeout` for enough data to arrive.
+    /// Read output, render terminal semantics, and search for `expected`.
+    /// ConPTY inserts empty-row padding (`\r\n` per row) between real output
+    /// lines, so we search for `expected` as a substring rather than consuming
+    /// from the front.
     pub fn read_expected(
         &mut self,
         expected: &str,
         timeout: Duration,
     ) -> Result<String, TerminalError> {
         let start = std::time::Instant::now();
-        let mut buffer = [0u8; 1024];
 
         loop {
-            // Normalize what we have so far and check if it matches
-            let normalized = self.normalize_buffer();
+            let (rendered, rendered_map) = render_terminal(&self.output_buffer);
 
-            if normalized.len() >= expected.len() {
-                // We have enough normalized bytes - extract and compare
-                let result = normalized[..expected.len()].to_string();
-                // Calculate how many raw bytes we consumed
-                // This is tricky because we normalized \r\n to \n
-                let consumed = self.calculate_consumed_bytes(expected.len());
+            #[cfg(unix)]
+            if rendered.len() >= expected.len() {
+                let actual = rendered[..expected.len()].to_string();
+                let consumed = rendered_map
+                    .get(expected.len().saturating_sub(1))
+                    .copied()
+                    .unwrap_or(0);
                 self.output_buffer.drain(..consumed);
-                return Ok(result);
+                return Ok(actual);
             }
 
-            if start.elapsed() > timeout {
+            #[cfg(windows)]
+            if let Some(pos) = rendered.find(expected) {
+                let end = pos + expected.len();
+                let consumed = rendered_map
+                    .get(end.saturating_sub(1))
+                    .copied()
+                    .unwrap_or(0);
+                self.output_buffer.drain(..consumed);
+                return Ok(expected.to_string());
+            }
+
+            let remaining = timeout.saturating_sub(start.elapsed());
+            if remaining.is_zero() {
                 return Err(TerminalError {
                     message: format!(
-                        "Timeout waiting for {} bytes (got {} normalized bytes: {:?})",
-                        expected.len(),
-                        normalized.len(),
-                        normalized
+                        "Timeout waiting for {:?} (got rendered: {:?})",
+                        expected, rendered
                     ),
                 });
             }
 
-            match self.reader.read(&mut buffer) {
-                Ok(0) => {
+            match self.rx.recv_timeout(remaining) {
+                Ok(data) => {
+                    self.output_buffer.extend_from_slice(&data);
+                }
+                Err(mpsc::RecvTimeoutError::Timeout) => {
+                    continue;
+                }
+                Err(mpsc::RecvTimeoutError::Disconnected) => {
                     return Err(TerminalError {
                         message: format!(
-                            "EOF before receiving {} bytes (got {} normalized bytes: {:?})",
-                            expected.len(),
-                            normalized.len(),
-                            normalized
+                            "EOF waiting for {:?} (got rendered: {:?})",
+                            expected, rendered
                         ),
                     });
                 }
-                Ok(n) => {
-                    self.output_buffer.extend_from_slice(&buffer[..n]);
-                }
-                Err(ref e) if e.kind() == std::io::ErrorKind::WouldBlock => {
-                    std::thread::sleep(Duration::from_millis(10));
-                    continue;
-                }
-                Err(e) => {
-                    return Err(TerminalError {
-                        message: format!("Read error: {}", e),
-                    });
-                }
             }
         }
     }
+}
 
-    /// Normalize buffer: convert \r\n to \n, and standalone \r to \n
-    fn normalize_buffer(&self) -> String {
-        let s = String::from_utf8_lossy(&self.output_buffer);
-        s.replace("\r\n", "\n").replace('\r', "\n")
+#[cfg(test)]
+mod tests {
+    use super::render_terminal;
+
+    #[test]
+    fn render_terminal_collapses_crlf() {
+        let (rendered, _) = render_terminal(b"hello\r\nworld\r\n");
+        assert_eq!(rendered, "hello\nworld\n");
     }
 
-    /// Calculate how many raw bytes to consume to get `normalized_len` normalized bytes
-    fn calculate_consumed_bytes(&self, normalized_len: usize) -> usize {
-        let mut raw_idx = 0;
-        let mut norm_count = 0;
-        let bytes = &self.output_buffer;
+    #[test]
+    fn render_terminal_treats_carriage_return_as_overwrite() {
+        let (rendered, _) = render_terminal(b"hello\rj");
+        assert_eq!(rendered, "jello");
+    }
 
-        while norm_count < normalized_len && raw_idx < bytes.len() {
-            if raw_idx + 1 < bytes.len() && bytes[raw_idx] == b'\r' && bytes[raw_idx + 1] == b'\n' {
-                // \r\n counts as one normalized char
-                raw_idx += 2;
-                norm_count += 1;
-            } else {
-                raw_idx += 1;
-                norm_count += 1;
-            }
-        }
-
-        raw_idx
+    #[test]
+    fn render_terminal_ignores_ansi_sequences() {
+        let (rendered, _) = render_terminal(b"\x1b[2J\x1b[Hhello\r\n");
+        assert_eq!(rendered, "hello\n");
     }
 }

@@ -8,20 +8,29 @@ use std::process::Command;
 use std::time::Duration;
 use tempfile::TempDir;
 
-/// Check if an amux command is non-interactive (runs and exits)
-fn is_oneshot_amux_command(cmd: &str) -> bool {
-    // Commands that don't create an interactive session
-    let oneshot_commands = ["connect", "list", "ls", "shutdown"];
-    for subcmd in oneshot_commands {
-        // Match patterns like "amux connect" or "amux --config X connect"
-        if cmd.contains(&format!(" {} ", subcmd))
-            || cmd.contains(&format!(" {}\n", subcmd))
-            || cmd.ends_with(&format!(" {}", subcmd))
-        {
-            return true;
-        }
+#[derive(Debug)]
+struct ResolvedCommand {
+    program: String,
+    args: Vec<String>,
+}
+
+/// Check if an amux command is non-interactive (runs and exits).
+fn is_oneshot_amux_command(command: &ResolvedCommand) -> bool {
+    command
+        .args
+        .iter()
+        .any(|arg| matches!(arg.as_str(), "connect" | "list" | "ls" | "shutdown"))
+}
+
+fn default_socket_path(test_name: &str, config_name: &str) -> PathBuf {
+    #[cfg(unix)]
+    {
+        std::env::temp_dir().join(format!("amux-test-{test_name}-{config_name}.sock"))
     }
-    false
+    #[cfg(windows)]
+    {
+        PathBuf::from(format!(r"\\.\pipe\amux-test-{test_name}-{config_name}"))
+    }
 }
 
 /// Result of running a test
@@ -37,8 +46,6 @@ pub struct ExecutorConfig {
     pub amux_binary: PathBuf,
     /// Path to the test-agent binary
     pub test_agent_binary: PathBuf,
-    /// Base directory for socket files
-    pub socket_dir: PathBuf,
     /// Timeout for read operations
     pub timeout: Duration,
 }
@@ -48,7 +55,6 @@ impl Default for ExecutorConfig {
         Self {
             amux_binary: PathBuf::from("target/debug/amux"),
             test_agent_binary: PathBuf::from("target/debug/test-agent"),
-            socket_dir: PathBuf::from("/tmp"),
             timeout: Duration::from_millis(200),
         }
     }
@@ -160,13 +166,11 @@ impl Executor {
             // Determine socket path
             let socket_path = match &cfg.socket_path {
                 Some(p) if p != "auto" => PathBuf::from(p),
-                _ => self
-                    .config
-                    .socket_dir
-                    .join(format!("amux-test-{}-{}.sock", test_case.name, cfg.name)),
+                _ => default_socket_path(&test_case.name, &cfg.name),
             };
 
             // Clean up any existing socket
+            #[cfg(unix)]
             let _ = std::fs::remove_file(&socket_path);
 
             // Determine TCP port (auto-assign if not specified)
@@ -205,19 +209,17 @@ impl Executor {
             std::fs::write(&state_path, "cloud:\n  use_cloud_mode: false\n")
                 .map_err(|e| format!("Failed to write state file: {}", e))?;
 
-            // Generate YAML config file
+            // Generate YAML config file.
+            // Use single quotes for paths: YAML double-quoted strings treat
+            // backslashes as escape characters, so Windows paths like
+            // `C:\Users` produce invalid `\U` escapes. Single-quoted YAML
+            // strings are literal (no escape processing).
             let host_name = cfg
                 .host_name
                 .clone()
                 .unwrap_or_else(|| test_case.name.clone());
             let yaml_content = format!(
-                r#"host_name: "{}"
-socket_path: "{}"
-tcp_port: {}
-websocket_port: {}
-randomise_link_name: false
-state_path: "{}"
-"#,
+                "host_name: '{}'\nsocket_path: '{}'\ntcp_port: {}\nwebsocket_port: {}\nrandomise_link_name: false\nstate_path: '{}'\n",
                 host_name,
                 socket_path.display(),
                 tcp_port,
@@ -268,6 +270,7 @@ state_path: "{}"
                 .args(["--config", &config_path.to_string_lossy(), "shutdown"])
                 .output();
         }
+        #[cfg(unix)]
         for socket_path in var_ctx.configs.values() {
             let _ = std::fs::remove_file(socket_path);
         }
@@ -307,12 +310,12 @@ state_path: "{}"
                     let is_amux_command = input_substituted.starts_with("amux ");
 
                     if is_amux_command && !active_terminals.contains_key(term_name) {
-                        let transformed = self.transform_command(&input_substituted, config_path);
+                        let transformed =
+                            self.transform_command(&input_substituted, config_path)?;
 
                         if is_oneshot_amux_command(&transformed) {
-                            let parts: Vec<&str> = transformed.split_whitespace().collect();
-                            let output = Command::new(parts[0])
-                                .args(&parts[1..])
+                            let output = Command::new(&transformed.program)
+                                .args(&transformed.args)
                                 .current_dir(cwd)
                                 .output()
                                 .map_err(|e| format!("Failed to run oneshot command: {}", e))?;
@@ -329,13 +332,15 @@ state_path: "{}"
                             };
                             oneshot_outputs.insert(term_name.clone(), combined);
                         } else {
-                            let parts: Vec<&str> = transformed.split_whitespace().collect();
-
-                            let terminal =
-                                TestTerminal::spawn(parts[0], &parts[1..], cwd, &HashMap::new())
-                                    .map_err(|e| {
-                                        format!("Failed to spawn terminal {}: {}", term_name, e)
-                                    })?;
+                            let terminal = TestTerminal::spawn(
+                                &transformed.program,
+                                &transformed.args,
+                                cwd,
+                                &HashMap::new(),
+                            )
+                            .map_err(|e| {
+                                format!("Failed to spawn terminal {}: {}", term_name, e)
+                            })?;
 
                             active_terminals.insert(term_name.clone(), terminal);
 
@@ -425,25 +430,32 @@ state_path: "{}"
     /// 1. Replacing "amux" with the absolute path to amux binary
     /// 2. Injecting --config after amux
     /// 3. Replacing "test-agent" with the absolute path
-    fn transform_command(&self, input: &str, config_path: &Path) -> String {
-        let mut result = input.to_string();
-
-        // Replace "amux " with absolute path and --config
-        if result.starts_with("amux ") {
-            result = format!(
-                "{} --config {} {}",
-                self.config.amux_binary.display(),
-                config_path.display(),
-                &result[5..] // Skip "amux "
-            );
+    fn transform_command(
+        &self,
+        input: &str,
+        config_path: &Path,
+    ) -> Result<ResolvedCommand, String> {
+        let mut parts =
+            shell_words::split(input).map_err(|e| format!("Failed to parse command: {}", e))?;
+        if parts.is_empty() {
+            return Err("Command cannot be empty".to_string());
         }
 
-        // Replace "test-agent" with absolute path
-        result = result.replace(
-            "test-agent",
-            &self.config.test_agent_binary.display().to_string(),
-        );
+        if parts[0] == "amux" {
+            parts[0] = self.config.amux_binary.display().to_string();
+            parts.insert(1, "--config".to_string());
+            parts.insert(2, config_path.display().to_string());
+        }
 
-        result
+        for part in &mut parts {
+            if part == "test-agent" {
+                *part = self.config.test_agent_binary.display().to_string();
+            }
+        }
+
+        Ok(ResolvedCommand {
+            program: parts.remove(0),
+            args: parts,
+        })
     }
 }

@@ -198,13 +198,20 @@ async fn ensure_initialized(config: &Config) -> Result<()> {
 // TODO: Once E2E executor can call amux/test-agent binaries directly (without
 // path substitution), switch to Clap's ValueEnum for proper enum argument parsing.
 fn parse_agent_type(s: &str) -> Result<protocol::AgentType> {
+    #[cfg(any(debug_assertions, test))]
+    let looks_like_test_agent_path = std::path::Path::new(s)
+        .file_stem()
+        .and_then(|stem| stem.to_str())
+        .map(|stem| stem.eq_ignore_ascii_case("test-agent"))
+        .unwrap_or(false);
+
     match s.to_lowercase().as_str() {
         "claude" => Ok(protocol::AgentType::Claude),
         #[cfg(any(debug_assertions, test))]
         "test-agent" => Ok(protocol::AgentType::TestAgent(s.to_string())),
         #[cfg(any(debug_assertions, test))]
-        _ if s.ends_with("test-agent") => {
-            // Accept full path for E2E tests (e.g., /abs/path/test-agent)
+        _ if looks_like_test_agent_path => {
+            // Accept full path for E2E tests (e.g., /abs/path/test-agent or test-agent.exe)
             Ok(protocol::AgentType::TestAgent(s.to_string()))
         }
         #[cfg(not(any(debug_assertions, test)))]

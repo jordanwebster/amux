@@ -3,8 +3,8 @@ use amux::protocol::{
     ShutdownReason, TerminalSize,
 };
 use amux::{AmuxError, Config, ConnectPolicy, Connection, Result, Route, connect};
+use crossterm::terminal;
 use std::io::{self, Read, Write};
-use std::os::unix::io::AsRawFd;
 use std::sync::Arc;
 use std::sync::atomic::{AtomicU64, Ordering};
 use tokio::sync::mpsc;
@@ -40,19 +40,11 @@ fn find_subsequence(haystack: &[u8], needle: &[u8]) -> Option<usize> {
         .position(|window| window == needle)
 }
 
-/// Get terminal size, falling back to 24x80 if the ioctl fails
+/// Get terminal size, falling back to 24x80 if the terminal query fails.
 fn get_terminal_size() -> TerminalSize {
-    let mut size: libc::winsize = unsafe { std::mem::zeroed() };
-    let fd = io::stdout().as_raw_fd();
-
-    if unsafe { libc::ioctl(fd, libc::TIOCGWINSZ, &mut size) } == 0 {
-        TerminalSize {
-            rows: size.ws_row,
-            cols: size.ws_col,
-        }
-    } else {
-        TerminalSize::default()
-    }
+    terminal::size()
+        .map(|(cols, rows)| TerminalSize { rows, cols })
+        .unwrap_or_default()
 }
 
 /// Create a new agent and attach to it
@@ -557,37 +549,17 @@ async fn run_attached(
 }
 
 /// RAII guard to restore terminal mode on drop
-struct RawModeGuard {
-    original: libc::termios,
-}
+struct RawModeGuard;
 
 impl RawModeGuard {
     fn new() -> io::Result<Self> {
-        let fd = io::stdin().as_raw_fd();
-        let mut original: libc::termios = unsafe { std::mem::zeroed() };
-
-        if unsafe { libc::tcgetattr(fd, &mut original) } != 0 {
-            return Err(io::Error::last_os_error());
-        }
-
-        let mut raw = original;
-        unsafe {
-            libc::cfmakeraw(&mut raw);
-        }
-
-        if unsafe { libc::tcsetattr(fd, libc::TCSANOW, &raw) } != 0 {
-            return Err(io::Error::last_os_error());
-        }
-
-        Ok(RawModeGuard { original })
+        terminal::enable_raw_mode()?;
+        Ok(Self)
     }
 }
 
 impl Drop for RawModeGuard {
     fn drop(&mut self) {
-        let fd = io::stdin().as_raw_fd();
-        unsafe {
-            libc::tcsetattr(fd, libc::TCSANOW, &self.original);
-        }
+        let _ = terminal::disable_raw_mode();
     }
 }

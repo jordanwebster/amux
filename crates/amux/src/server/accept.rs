@@ -14,13 +14,11 @@ use crate::error::{AmuxError, Result};
 use crate::handshake::{Connect, ConnectResult, PROTOCOL_VERSION};
 use crate::message::{Message, ProtocolError};
 use crate::route::generate_server_link;
-use crate::transport::{
-    TcpTransport, Transport, TransportSplit, UnixTransport, WebSocketTransport,
-};
+use crate::transport::{TcpTransport, Transport, TransportSplit, WebSocketTransport};
 use std::sync::Arc;
 use std::sync::atomic::AtomicU64;
 use std::time::Duration;
-use tokio::net::{TcpStream, UnixStream};
+use tokio::net::TcpStream;
 use tokio::sync::{RwLock, mpsc};
 use tokio_tungstenite::accept_async;
 use tracing::Instrument;
@@ -188,7 +186,7 @@ pub(super) async fn accept_handshake<T: Transport>(
 /// Connect-side handshake: we propose link name, remote validates.
 /// Returns the accepted link name on success.
 ///
-/// Used by both the CLI client (Unix socket) and server-to-server peering (TCP).
+/// Used by both the CLI client (local transport) and server-to-server peering (TCP).
 /// Retries up to 5 times on link name collision before giving up.
 pub async fn connect_handshake<T, F>(transport: &mut T, mut generate_link: F) -> Result<String>
 where
@@ -331,14 +329,13 @@ pub(super) async fn websocket_accept(
     accept_connection(transport, state, event_tx, verify_token, false, "websocket").await
 }
 
-/// Unix socket connection bootstrap - accept and handshake
-pub(super) async fn unix_accept(
-    stream: UnixStream,
+/// Local transport connection bootstrap - accept and handshake
+pub(super) async fn local_accept(
+    transport: impl TransportSplit,
     state: Arc<RwLock<ServerState>>,
     event_tx: mpsc::Sender<super::SessionEvent>,
 ) -> Result<()> {
-    let transport = UnixTransport::new(stream);
-    accept_connection(transport, state, event_tx, false, true, "unix").await
+    accept_connection(transport, state, event_tx, false, true, "local").await
 }
 
 /// TCP peer bootstrap - accept inbound connection and run handshake.
