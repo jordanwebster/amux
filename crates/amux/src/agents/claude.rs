@@ -99,6 +99,10 @@ impl ClaudeSession {
                     tracing::info!(agent_id = %self.agent_id, ?response, "sending permission response");
                     pty.send_input(keystroke.to_vec()).await?;
                 }
+                ClaudeStructuredInput::AskUserQuestionResponse(_) => {
+                    // Not wired to PTY keystroke sending yet — type definition only
+                    tracing::debug!(agent_id = %self.agent_id, "AskUserQuestionResponse not yet wired to PTY");
+                }
             },
         }
         Ok(())

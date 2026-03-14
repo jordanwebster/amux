@@ -77,6 +77,8 @@ pub struct AskUserQuestionItem {
 pub struct AskUserQuestionOption {
     pub label: String,
     pub description: String,
+    #[serde(default)]
+    pub markdown: Option<String>,
 }
 
 /// Tool input fields for the Bash tool
@@ -274,6 +276,48 @@ pub enum StructuredOutput {
     Claude(ClaudeStructuredOutput),
 }
 
+/// What the user selected for a given option slot.
+/// Predefined options are indexed from 1 (matching Claude Code's UI).
+/// "Other" (custom text) is modeled as `Custom`.
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
+pub enum SelectedOption {
+    /// A predefined option by index (1-based, matching Claude Code's UI)
+    Predefined(usize),
+    /// "Type something" — user entered custom text
+    Custom(String),
+}
+
+/// Answer to a single-select question.
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
+pub struct SingleSelectAnswer {
+    pub selected: SelectedOption,
+}
+
+/// Answer to a multi-select question.
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
+pub struct MultiSelectAnswer {
+    pub selected: Vec<SelectedOption>,
+}
+
+/// Answer to one question within an AskUserQuestion tool call.
+/// The client knows which variant to construct from the question's `multi_select` flag.
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
+pub enum AskUserQuestionAnswer {
+    SingleSelect(SingleSelectAnswer),
+    MultiSelect(MultiSelectAnswer),
+    /// "Chat about this" — bails this and all remaining questions.
+    /// Cannot be mixed with selections (enforced by type system).
+    ChatAboutThis,
+}
+
+/// Response to an AskUserQuestion tool call.
+/// One entry per answered question, positionally matching the `questions` array.
+/// Truncated after a `ChatAboutThis` entry (remaining questions not included).
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
+pub struct AskUserQuestionResponse {
+    pub answers: Vec<AskUserQuestionAnswer>,
+}
+
 /// Claude-specific structured input
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
 pub enum ClaudeStructuredInput {
@@ -281,6 +325,8 @@ pub enum ClaudeStructuredInput {
     PermissionResponse(PermissionResponse),
     /// Submit a message (text input with trailing carriage return)
     SubmitMessage { data: Vec<u8> },
+    /// Response to an AskUserQuestion tool call
+    AskUserQuestionResponse(AskUserQuestionResponse),
 }
 
 /// Wrapper enum for structured input, keyed by agent type
@@ -552,6 +598,100 @@ mod tests {
         assert_eq!(tool.to_string(), "Edit /tmp/test.rs");
 
         assert_eq!(ClaudePermissionTool::Unknown.to_string(), "Unknown tool");
+    }
+
+    #[test]
+    fn test_ask_user_question_option_without_markdown() {
+        let json = r#"{"label": "reqwest", "description": "HTTP client"}"#;
+        let opt: AskUserQuestionOption = serde_json::from_str(json).unwrap();
+        assert_eq!(opt.label, "reqwest");
+        assert_eq!(opt.description, "HTTP client");
+        assert!(opt.markdown.is_none());
+    }
+
+    #[test]
+    fn test_ask_user_question_option_with_markdown() {
+        let json = r#"{
+            "label": "Layout A",
+            "description": "Side-by-side layout",
+            "markdown": "```\n+-----+-----+\n| A   | B   |\n+-----+-----+\n```"
+        }"#;
+        let opt: AskUserQuestionOption = serde_json::from_str(json).unwrap();
+        assert_eq!(opt.label, "Layout A");
+        assert!(opt.markdown.is_some());
+        assert!(opt.markdown.unwrap().contains("+-----+"));
+    }
+
+    #[test]
+    fn test_ask_user_question_response_single_select_predefined() {
+        let resp = AskUserQuestionResponse {
+            answers: vec![AskUserQuestionAnswer::SingleSelect(SingleSelectAnswer {
+                selected: SelectedOption::Predefined(1),
+            })],
+        };
+        let serialized = serde_json::to_string(&resp).unwrap();
+        let deserialized: AskUserQuestionResponse = serde_json::from_str(&serialized).unwrap();
+        assert_eq!(resp, deserialized);
+    }
+
+    #[test]
+    fn test_ask_user_question_response_single_select_custom() {
+        let resp = AskUserQuestionResponse {
+            answers: vec![AskUserQuestionAnswer::SingleSelect(SingleSelectAnswer {
+                selected: SelectedOption::Custom("my custom answer".to_string()),
+            })],
+        };
+        let serialized = serde_json::to_string(&resp).unwrap();
+        let deserialized: AskUserQuestionResponse = serde_json::from_str(&serialized).unwrap();
+        assert_eq!(resp, deserialized);
+    }
+
+    #[test]
+    fn test_ask_user_question_response_multi_select() {
+        let resp = AskUserQuestionResponse {
+            answers: vec![AskUserQuestionAnswer::MultiSelect(MultiSelectAnswer {
+                selected: vec![
+                    SelectedOption::Predefined(1),
+                    SelectedOption::Predefined(3),
+                    SelectedOption::Custom("extra".to_string()),
+                ],
+            })],
+        };
+        let serialized = serde_json::to_string(&resp).unwrap();
+        let deserialized: AskUserQuestionResponse = serde_json::from_str(&serialized).unwrap();
+        assert_eq!(resp, deserialized);
+    }
+
+    #[test]
+    fn test_ask_user_question_response_chat_about_this_truncates() {
+        // Q1 answered, Q2 is ChatAboutThis, Q3 not included
+        let resp = AskUserQuestionResponse {
+            answers: vec![
+                AskUserQuestionAnswer::SingleSelect(SingleSelectAnswer {
+                    selected: SelectedOption::Predefined(1),
+                }),
+                AskUserQuestionAnswer::ChatAboutThis,
+            ],
+        };
+        let serialized = serde_json::to_string(&resp).unwrap();
+        let deserialized: AskUserQuestionResponse = serde_json::from_str(&serialized).unwrap();
+        assert_eq!(deserialized.answers.len(), 2);
+        assert_eq!(
+            deserialized.answers[1],
+            AskUserQuestionAnswer::ChatAboutThis
+        );
+    }
+
+    #[test]
+    fn test_ask_user_question_response_as_structured_input() {
+        let input = ClaudeStructuredInput::AskUserQuestionResponse(AskUserQuestionResponse {
+            answers: vec![AskUserQuestionAnswer::SingleSelect(SingleSelectAnswer {
+                selected: SelectedOption::Predefined(1),
+            })],
+        });
+        let serialized = serde_json::to_string(&input).unwrap();
+        let deserialized: ClaudeStructuredInput = serde_json::from_str(&serialized).unwrap();
+        assert_eq!(input, deserialized);
     }
 
     #[test]

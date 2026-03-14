@@ -38,6 +38,31 @@ One paragraph describing what was done.
 
 ---
 
+## 2026-03-14: AskUserQuestion type completeness
+
+### Summary
+Added the missing `markdown` field to `AskUserQuestionOption` and introduced response types (`SelectedOption`, `SingleSelectAnswer`, `MultiSelectAnswer`, `AskUserQuestionAnswer`, `AskUserQuestionResponse`) for conveying user selections back from clients. Wired `AskUserQuestionResponse` into `ClaudeStructuredInput` with a no-op handler in `ClaudeSession::send_input()`.
+
+### Changes
+- `crates/amux/src/claude/types.rs`: Added `markdown: Option<String>` to `AskUserQuestionOption` (with `#[serde(default)]`); added `SelectedOption`, `SingleSelectAnswer`, `MultiSelectAnswer`, `AskUserQuestionAnswer`, `AskUserQuestionResponse` types; added `AskUserQuestionResponse` variant to `ClaudeStructuredInput`; added 7 new tests
+- `crates/amux/src/agents/claude.rs`: Added match arm for `AskUserQuestionResponse` (logs debug, no PTY action yet)
+
+### Decisions Made
+- `markdown` uses `#[serde(default)]` for backward compatibility with payloads that omit it
+- `ChatAboutThis` lives at the `AskUserQuestionAnswer` level (not `SelectedOption`) so the type system prevents mixing it with actual selections
+- Response is positionally matched to the `questions` array; truncated after a `ChatAboutThis` entry
+- PTY keystroke translation for `AskUserQuestionResponse` deferred — type definitions only for now
+
+### Verification
+- `cargo check && cargo fmt && cargo clippy --workspace --all-targets -- -D warnings && cargo test` — all 179 tests pass
+- New tests cover: option with/without markdown, single-select predefined/custom, multi-select, ChatAboutThis truncation, round-trip through ClaudeStructuredInput
+
+### Next Steps
+- Wire `AskUserQuestionResponse` to actual PTY keystroke sending in `ClaudeSession`
+- Implement client-side UI for rendering AskUserQuestion and collecting answers
+
+---
+
 ## 2026-03-10: Windows support + platform abstraction cleanup
 
 ### Summary
