@@ -4,6 +4,8 @@
 //! hook events, permission requests, tool input structs, structured
 //! input/output envelopes, and permission responses.
 
+use std::collections::HashMap;
+
 use serde::{Deserialize, Serialize};
 use uuid::Uuid;
 
@@ -276,50 +278,22 @@ pub enum StructuredOutput {
     Claude(ClaudeStructuredOutput),
 }
 
-/// What the user selected for a given option slot.
-/// Every variant carries its own UI index so keystroke generation needs no
-/// external question context.
-#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
-pub enum SelectedOption {
-    /// A predefined option. `index` is 1-based (matching Claude Code's UI).
-    Predefined { index: usize },
-    /// "Other" — user entered custom text. `index` = `num_options + 1`.
-    Custom { index: usize, text: String },
-}
-
-/// Answer to a single-select question.
-#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
-pub struct SingleSelectAnswer {
-    pub selected: SelectedOption,
-}
-
-/// Answer to a multi-select question.
-#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
-pub struct MultiSelectAnswer {
-    pub selected: Vec<SelectedOption>,
-}
-
-/// Answer to one question within an AskUserQuestion tool call.
-/// The client knows which variant to construct from the question's `multi_select` flag.
-#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
-pub enum AskUserQuestionAnswer {
-    SingleSelect(SingleSelectAnswer),
-    MultiSelect(MultiSelectAnswer),
-    /// "Chat about this" — bails this and all remaining questions.
-    /// `index` = `num_options + 2`. `multi_select` mirrors the question type
-    /// so keystroke generation knows whether to press a digit or navigate+space.
-    ChatAboutThis {
-        index: usize,
-        multi_select: bool,
-    },
-}
-
 /// Response to an AskUserQuestion tool call.
-/// One entry per answered question, positionally matching the `questions` array.
-/// Truncated after a `ChatAboutThis` entry (remaining questions not included).
+/// Matches Claude Code's tool_result format: echoes back the questions
+/// and provides answers as label strings (or custom text for "Other").
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
 pub struct AskUserQuestionResponse {
-    pub answers: Vec<AskUserQuestionAnswer>,
+    /// Echo of the original questions (determines question type + option indices)
+    pub questions: Vec<AskUserQuestionItem>,
+    /// Map from question text to selected label (or custom text for "Other").
+    /// Multi-select: comma-separated labels (e.g. "Auth, Cache").
+    pub answers: HashMap<String, String>,
+    /// Question text where "Chat about this" was selected.
+    /// Answered questions are processed first, then we navigate
+    /// to this question's page to select ChatAboutThis.
+    /// Ends the tool immediately (no submit step).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub chat_about_this: Option<String>,
 }
 
 /// Claude-specific structured input
@@ -627,45 +601,27 @@ mod tests {
     }
 
     #[test]
-    fn test_ask_user_question_response_single_select_predefined() {
+    fn test_ask_user_question_response_roundtrip() {
         let resp = AskUserQuestionResponse {
-            answers: vec![AskUserQuestionAnswer::SingleSelect(SingleSelectAnswer {
-                selected: SelectedOption::Predefined { index: 1 },
-            })],
-        };
-        let serialized = serde_json::to_string(&resp).unwrap();
-        let deserialized: AskUserQuestionResponse = serde_json::from_str(&serialized).unwrap();
-        assert_eq!(resp, deserialized);
-    }
-
-    #[test]
-    fn test_ask_user_question_response_single_select_custom() {
-        let resp = AskUserQuestionResponse {
-            answers: vec![AskUserQuestionAnswer::SingleSelect(SingleSelectAnswer {
-                selected: SelectedOption::Custom {
-                    index: 3,
-                    text: "my custom answer".to_string(),
-                },
-            })],
-        };
-        let serialized = serde_json::to_string(&resp).unwrap();
-        let deserialized: AskUserQuestionResponse = serde_json::from_str(&serialized).unwrap();
-        assert_eq!(resp, deserialized);
-    }
-
-    #[test]
-    fn test_ask_user_question_response_multi_select() {
-        let resp = AskUserQuestionResponse {
-            answers: vec![AskUserQuestionAnswer::MultiSelect(MultiSelectAnswer {
-                selected: vec![
-                    SelectedOption::Predefined { index: 1 },
-                    SelectedOption::Predefined { index: 3 },
-                    SelectedOption::Custom {
-                        index: 4,
-                        text: "extra".to_string(),
+            questions: vec![AskUserQuestionItem {
+                question: "Which library?".to_string(),
+                header: "Library".to_string(),
+                options: vec![
+                    AskUserQuestionOption {
+                        label: "reqwest".to_string(),
+                        description: "HTTP client".to_string(),
+                        markdown: None,
+                    },
+                    AskUserQuestionOption {
+                        label: "ureq".to_string(),
+                        description: "Blocking HTTP".to_string(),
+                        markdown: None,
                     },
                 ],
-            })],
+                multi_select: false,
+            }],
+            answers: HashMap::from([("Which library?".to_string(), "reqwest".to_string())]),
+            chat_about_this: None,
         };
         let serialized = serde_json::to_string(&resp).unwrap();
         let deserialized: AskUserQuestionResponse = serde_json::from_str(&serialized).unwrap();
@@ -673,34 +629,69 @@ mod tests {
     }
 
     #[test]
-    fn test_ask_user_question_response_chat_about_this_truncates() {
-        // Q1 answered, Q2 is ChatAboutThis, Q3 not included
+    fn test_ask_user_question_response_custom_answer() {
         let resp = AskUserQuestionResponse {
-            answers: vec![
-                AskUserQuestionAnswer::SingleSelect(SingleSelectAnswer {
-                    selected: SelectedOption::Predefined { index: 1 },
-                }),
-                AskUserQuestionAnswer::ChatAboutThis {
-                    index: 3,
-                    multi_select: false,
-                },
-            ],
+            questions: vec![AskUserQuestionItem {
+                question: "Which library?".to_string(),
+                header: "Library".to_string(),
+                options: vec![AskUserQuestionOption {
+                    label: "reqwest".to_string(),
+                    description: "HTTP client".to_string(),
+                    markdown: None,
+                }],
+                multi_select: false,
+            }],
+            answers: HashMap::from([("Which library?".to_string(), "my custom lib".to_string())]),
+            chat_about_this: None,
         };
         let serialized = serde_json::to_string(&resp).unwrap();
         let deserialized: AskUserQuestionResponse = serde_json::from_str(&serialized).unwrap();
-        assert_eq!(deserialized.answers.len(), 2);
-        assert!(matches!(
-            deserialized.answers[1],
-            AskUserQuestionAnswer::ChatAboutThis { .. }
-        ));
+        assert_eq!(resp, deserialized);
+    }
+
+    #[test]
+    fn test_ask_user_question_response_multi_select_answer() {
+        let resp = AskUserQuestionResponse {
+            questions: vec![AskUserQuestionItem {
+                question: "Which features?".to_string(),
+                header: "Features".to_string(),
+                options: vec![
+                    AskUserQuestionOption {
+                        label: "Auth".to_string(),
+                        description: "Authentication".to_string(),
+                        markdown: None,
+                    },
+                    AskUserQuestionOption {
+                        label: "Cache".to_string(),
+                        description: "Caching".to_string(),
+                        markdown: None,
+                    },
+                ],
+                multi_select: true,
+            }],
+            answers: HashMap::from([("Which features?".to_string(), "Auth, Cache".to_string())]),
+            chat_about_this: None,
+        };
+        let serialized = serde_json::to_string(&resp).unwrap();
+        let deserialized: AskUserQuestionResponse = serde_json::from_str(&serialized).unwrap();
+        assert_eq!(resp, deserialized);
     }
 
     #[test]
     fn test_ask_user_question_response_as_structured_input() {
         let input = ClaudeStructuredInput::AskUserQuestionResponse(AskUserQuestionResponse {
-            answers: vec![AskUserQuestionAnswer::SingleSelect(SingleSelectAnswer {
-                selected: SelectedOption::Predefined { index: 1 },
-            })],
+            questions: vec![AskUserQuestionItem {
+                question: "Which library?".to_string(),
+                header: "Library".to_string(),
+                options: vec![AskUserQuestionOption {
+                    label: "reqwest".to_string(),
+                    description: "HTTP client".to_string(),
+                    markdown: None,
+                }],
+                multi_select: false,
+            }],
+            answers: HashMap::from([("Which library?".to_string(), "reqwest".to_string())]),
+            chat_about_this: None,
         });
         let serialized = serde_json::to_string(&input).unwrap();
         let deserialized: ClaudeStructuredInput = serde_json::from_str(&serialized).unwrap();

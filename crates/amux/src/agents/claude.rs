@@ -8,9 +8,8 @@ use super::{PtyHandle, spawn_pty_agent};
 use crate::buffer::MultiplexStructuredReader;
 use crate::claude::structured_log_source::StructuredLogSource;
 use crate::claude::types::{
-    AskUserQuestionAnswer, AskUserQuestionResponse, ClaudeHook, ClaudeStructuredInput,
-    ClaudeStructuredOutput, Hook, MultiSelectAnswer, PermissionResponse, SelectedOption,
-    SingleSelectAnswer, StructuredInput, StructuredOutput,
+    AskUserQuestionOption, AskUserQuestionResponse, ClaudeHook, ClaudeStructuredInput,
+    ClaudeStructuredOutput, Hook, PermissionResponse, StructuredInput, StructuredOutput,
 };
 use crate::error::Result;
 use crate::message::CreateAgentRequest;
@@ -46,16 +45,26 @@ fn submit_message_keystrokes(data: &[u8]) -> Vec<PtyAction> {
     ]
 }
 
-fn single_select_keystrokes(answer: &SingleSelectAnswer) -> Vec<PtyAction> {
-    match &answer.selected {
-        SelectedOption::Predefined { index } => {
-            vec![PtyAction::Send(index.to_string().into_bytes())]
+/// Find the 0-based index of the option whose label matches `answer`.
+/// Returns `None` if no label matches (i.e. "Other" / custom text).
+fn find_option_index(answer: &str, options: &[AskUserQuestionOption]) -> Option<usize> {
+    options.iter().position(|opt| opt.label == answer)
+}
+
+/// Keystrokes for a standard single-select question (digit press).
+fn select_keystrokes(answer: &str, options: &[AskUserQuestionOption]) -> Vec<PtyAction> {
+    match find_option_index(answer, options) {
+        Some(idx) => {
+            let digit = idx + 1; // 1-based UI index
+            vec![PtyAction::Send(digit.to_string().into_bytes())]
         }
-        SelectedOption::Custom { index, text } => {
+        None => {
+            // "Other" — digit for num_options+1, delay, type text, Enter
+            let other_digit = options.len() + 1;
             vec![
-                PtyAction::Send(index.to_string().into_bytes()),
+                PtyAction::Send(other_digit.to_string().into_bytes()),
                 PtyAction::Delay(DELAY),
-                PtyAction::Send(text.as_bytes().to_vec()),
+                PtyAction::Send(answer.as_bytes().to_vec()),
                 PtyAction::Delay(DELAY),
                 PtyAction::Send(b"\r".to_vec()),
             ]
@@ -63,36 +72,54 @@ fn single_select_keystrokes(answer: &SingleSelectAnswer) -> Vec<PtyAction> {
     }
 }
 
-fn multi_select_keystrokes(answer: &MultiSelectAnswer) -> Vec<PtyAction> {
+/// Keystrokes for a preview question (options with markdown).
+/// Arrow-nav to the target option, then Enter. No "Other" option exists.
+fn preview_keystrokes(answer: &str, options: &[AskUserQuestionOption]) -> Vec<PtyAction> {
+    let idx = find_option_index(answer, options).unwrap_or(0);
     let mut actions = Vec::new();
-    let mut cursor_pos: usize = 1;
+    for _ in 0..idx {
+        actions.push(PtyAction::Send(DOWN_ARROW.to_vec()));
+    }
+    actions.push(PtyAction::Delay(DELAY));
+    actions.push(PtyAction::Send(b"\r".to_vec()));
+    actions
+}
 
-    // Sort selections by index for efficient navigation
-    let mut sorted: Vec<&SelectedOption> = answer.selected.iter().collect();
-    sorted.sort_by_key(|opt| match opt {
-        SelectedOption::Predefined { index } | SelectedOption::Custom { index, .. } => *index,
-    });
+/// Keystrokes for a multi-select question.
+/// Navigates with arrows, Space to toggle each selected option.
+fn multi_select_keystrokes(answer: &str, options: &[AskUserQuestionOption]) -> Vec<PtyAction> {
+    let labels: Vec<&str> = answer.split(", ").collect();
+    let mut actions = Vec::new();
+    let mut cursor_pos: usize = 0; // 0-based
+
+    // Resolve each label to an index, sort for efficient navigation
+    let mut indices: Vec<(usize, Option<&str>)> = Vec::new();
+    for label in &labels {
+        match find_option_index(label, options) {
+            Some(idx) => indices.push((idx, None)),
+            None => {
+                // Custom "Other" option is at options.len()
+                indices.push((options.len(), Some(label)));
+            }
+        }
+    }
+    indices.sort_by_key(|(idx, _)| *idx);
 
     let mut last_was_custom = false;
-    for opt in &sorted {
-        let target = match opt {
-            SelectedOption::Predefined { index } | SelectedOption::Custom { index, .. } => *index,
-        };
-
+    for (target, custom_text) in &indices {
         // Navigate to target
-        for _ in cursor_pos..target {
+        for _ in cursor_pos..*target {
             actions.push(PtyAction::Send(DOWN_ARROW.to_vec()));
         }
-        for _ in target..cursor_pos {
+        for _ in *target..cursor_pos {
             actions.push(PtyAction::Send(UP_ARROW.to_vec()));
         }
-        cursor_pos = target;
+        cursor_pos = *target;
 
         // Toggle
         actions.push(PtyAction::Send(b" ".to_vec()));
 
-        // Custom text
-        if let SelectedOption::Custom { text, .. } = opt {
+        if let Some(text) = custom_text {
             actions.push(PtyAction::Delay(DELAY));
             actions.push(PtyAction::Send(text.as_bytes().to_vec()));
             last_was_custom = true;
@@ -109,11 +136,19 @@ fn multi_select_keystrokes(answer: &MultiSelectAnswer) -> Vec<PtyAction> {
     actions
 }
 
-fn chat_about_this_keystrokes(index: usize, multi_select: bool) -> Vec<PtyAction> {
+/// Keystrokes to select "Chat about this" on a question.
+/// For single-select: digit press (num_options + 2).
+/// For multi-select: arrow-nav to the position, then Enter.
+fn chat_about_this_keystrokes(
+    options: &[AskUserQuestionOption],
+    multi_select: bool,
+) -> Vec<PtyAction> {
+    // ChatAboutThis is always after "Other": num_options + 2 (1-based)
+    let index = options.len() + 2;
     if multi_select {
-        // Navigate from cursor position 1 to index, then press Enter
+        // Navigate from cursor position 0 to index-1 (0-based), then Enter
         let mut actions = Vec::new();
-        for _ in 1..index {
+        for _ in 0..index - 1 {
             actions.push(PtyAction::Send(DOWN_ARROW.to_vec()));
         }
         actions.push(PtyAction::Send(b"\r".to_vec()));
@@ -125,63 +160,73 @@ fn chat_about_this_keystrokes(index: usize, multi_select: bool) -> Vec<PtyAction
 
 /// Build the PTY keystroke sequence for an AskUserQuestionResponse.
 ///
-/// `num_questions` is the total number of answered questions (= `answers.len()`).
-/// For multi-question forms, right/left arrows navigate between pages and Enter
-/// submits. ChatAboutThis ends the tool immediately (no submit).
-fn ask_question_keystrokes(
-    response: &AskUserQuestionResponse,
-    num_questions: usize,
-) -> Vec<PtyAction> {
+/// Derives question type and selection indices from the echoed questions:
+/// - Any option has `markdown` → preview (arrow nav + Enter)
+/// - `multi_select: true` → multi-select (arrow nav + Space toggle)
+/// - Otherwise → select (digit press)
+///
+/// For multi-question forms, Right arrow navigates between pages and
+/// a final Right + Enter submits. If `chat_about_this` is set, all
+/// answered questions are processed first, then we navigate to the
+/// ChatAboutThis page and select it (no submit step).
+fn ask_question_keystrokes(response: &AskUserQuestionResponse) -> Vec<PtyAction> {
     let mut actions = Vec::new();
+    let num_questions = response.questions.len();
     let mut current_page = 0;
 
-    let chat_idx = response
-        .answers
-        .iter()
-        .position(|a| matches!(a, AskUserQuestionAnswer::ChatAboutThis { .. }));
+    // Find the ChatAboutThis page index, if any
+    let chat_page = response.chat_about_this.as_ref().and_then(|q| {
+        response
+            .questions
+            .iter()
+            .position(|item| item.question == *q)
+    });
 
-    // Phase 1: Process all non-ChatAboutThis answers
-    for (i, answer) in response.answers.iter().enumerate() {
-        if matches!(answer, AskUserQuestionAnswer::ChatAboutThis { .. }) {
+    // Phase 1: process all answered questions (skip the ChatAboutThis page)
+    for (i, question) in response.questions.iter().enumerate() {
+        if Some(i) == chat_page {
             continue;
         }
 
+        let Some(answer) = response.answers.get(&question.question) else {
+            continue;
+        };
+
+        // Navigate forward to this page
         while current_page < i {
             actions.push(PtyAction::Send(RIGHT_ARROW.to_vec()));
             current_page += 1;
         }
 
-        match answer {
-            AskUserQuestionAnswer::SingleSelect(sa) => {
-                actions.extend(single_select_keystrokes(sa));
-            }
-            AskUserQuestionAnswer::MultiSelect(ma) => {
-                actions.extend(multi_select_keystrokes(ma));
-            }
-            AskUserQuestionAnswer::ChatAboutThis { .. } => unreachable!(),
+        let is_preview = question.options.iter().any(|o| o.markdown.is_some());
+
+        if is_preview {
+            actions.extend(preview_keystrokes(answer, &question.options));
+        } else if question.multi_select {
+            actions.extend(multi_select_keystrokes(answer, &question.options));
+        } else {
+            actions.extend(select_keystrokes(answer, &question.options));
         }
     }
 
-    // Phase 2: ChatAboutThis present → navigate to it, select, done (no submit)
-    if let Some(idx) = chat_idx {
-        while current_page < idx {
+    // Phase 2: ChatAboutThis — navigate to its page and select it (no submit)
+    if let Some(chat_idx) = chat_page {
+        while current_page < chat_idx {
             actions.push(PtyAction::Send(RIGHT_ARROW.to_vec()));
             current_page += 1;
         }
-        while current_page > idx {
+        while current_page > chat_idx {
             actions.push(PtyAction::Send(LEFT_ARROW.to_vec()));
             current_page -= 1;
         }
 
-        if let AskUserQuestionAnswer::ChatAboutThis {
-            index,
-            multi_select,
-        } = &response.answers[idx]
-        {
-            actions.extend(chat_about_this_keystrokes(*index, *multi_select));
-        }
+        let question = &response.questions[chat_idx];
+        actions.extend(chat_about_this_keystrokes(
+            &question.options,
+            question.multi_select,
+        ));
     }
-    // Phase 3: No ChatAboutThis → submit (if multiple questions)
+    // Phase 3: no ChatAboutThis — submit (if multiple questions)
     else if num_questions > 1 {
         while current_page < num_questions {
             actions.push(PtyAction::Send(RIGHT_ARROW.to_vec()));
@@ -268,9 +313,8 @@ impl ClaudeSession {
                     permission_response_keystrokes(response)
                 }
                 ClaudeStructuredInput::AskUserQuestionResponse(response) => {
-                    let num_questions = response.answers.len();
-                    tracing::info!(agent_id = %self.agent_id, num_questions, "sending AskUserQuestion response");
-                    ask_question_keystrokes(response, num_questions)
+                    tracing::info!(agent_id = %self.agent_id, num_questions = response.questions.len(), "sending AskUserQuestion response");
+                    ask_question_keystrokes(response)
                 }
             },
         };
@@ -342,6 +386,8 @@ impl ClaudeSession {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::claude::types::{AskUserQuestionItem, AskUserQuestionOption};
+    use std::collections::HashMap;
 
     /// Extract just the Send bytes from a PtyAction sequence, ignoring delays.
     fn sends(actions: &[PtyAction]) -> Vec<Vec<u8>> {
@@ -352,6 +398,46 @@ mod tests {
                 PtyAction::Delay(_) => None,
             })
             .collect()
+    }
+
+    fn make_options(labels: &[&str]) -> Vec<AskUserQuestionOption> {
+        labels
+            .iter()
+            .map(|l| AskUserQuestionOption {
+                label: l.to_string(),
+                description: String::new(),
+                markdown: None,
+            })
+            .collect()
+    }
+
+    fn make_preview_options(labels: &[&str]) -> Vec<AskUserQuestionOption> {
+        labels
+            .iter()
+            .map(|l| AskUserQuestionOption {
+                label: l.to_string(),
+                description: String::new(),
+                markdown: Some("```preview```".to_string()),
+            })
+            .collect()
+    }
+
+    fn make_question(text: &str, options: Vec<AskUserQuestionOption>) -> AskUserQuestionItem {
+        AskUserQuestionItem {
+            question: text.to_string(),
+            header: "H".to_string(),
+            options,
+            multi_select: false,
+        }
+    }
+
+    fn make_multi_question(text: &str, options: Vec<AskUserQuestionOption>) -> AskUserQuestionItem {
+        AskUserQuestionItem {
+            question: text.to_string(),
+            header: "H".to_string(),
+            options,
+            multi_select: true,
+        }
     }
 
     #[test]
@@ -378,59 +464,74 @@ mod tests {
     }
 
     #[test]
-    fn test_single_question_single_select_predefined() {
+    fn test_single_question_select_predefined() {
         let response = AskUserQuestionResponse {
-            answers: vec![AskUserQuestionAnswer::SingleSelect(SingleSelectAnswer {
-                selected: SelectedOption::Predefined { index: 2 },
-            })],
+            questions: vec![make_question("Q?", make_options(&["A", "B"]))],
+            chat_about_this: None,
+            answers: HashMap::from([("Q?".to_string(), "B".to_string())]),
         };
-        let actions = ask_question_keystrokes(&response, 1);
+        let actions = ask_question_keystrokes(&response);
         assert_eq!(sends(&actions), vec![b"2".to_vec()]);
     }
 
     #[test]
-    fn test_single_question_single_select_custom() {
+    fn test_single_question_select_custom() {
         let response = AskUserQuestionResponse {
-            answers: vec![AskUserQuestionAnswer::SingleSelect(SingleSelectAnswer {
-                selected: SelectedOption::Custom {
-                    index: 3,
-                    text: "hello".to_string(),
-                },
-            })],
+            questions: vec![make_question("Q?", make_options(&["A", "B"]))],
+            chat_about_this: None,
+            answers: HashMap::from([("Q?".to_string(), "hello".to_string())]),
         };
-        let actions = ask_question_keystrokes(&response, 1);
+        let actions = ask_question_keystrokes(&response);
         let s = sends(&actions);
-        assert_eq!(s[0], b"3");
+        assert_eq!(s[0], b"3"); // Other = num_options + 1
         assert_eq!(s[1], b"hello");
         assert_eq!(s[2], b"\r");
     }
 
     #[test]
-    fn test_single_question_chat_about_this() {
+    fn test_preview_question_first_option() {
         let response = AskUserQuestionResponse {
-            answers: vec![AskUserQuestionAnswer::ChatAboutThis {
-                index: 4,
-                multi_select: false,
-            }],
+            questions: vec![make_question(
+                "Q?",
+                make_preview_options(&["Layout A", "Layout B"]),
+            )],
+            chat_about_this: None,
+            answers: HashMap::from([("Q?".to_string(), "Layout A".to_string())]),
         };
-        let actions = ask_question_keystrokes(&response, 1);
-        assert_eq!(sends(&actions), vec![b"4".to_vec()]);
+        let actions = ask_question_keystrokes(&response);
+        // First option: no Down arrows, just delay + Enter
+        assert_eq!(sends(&actions), vec![b"\r".to_vec()]);
+    }
+
+    #[test]
+    fn test_preview_question_second_option() {
+        let response = AskUserQuestionResponse {
+            questions: vec![make_question(
+                "Q?",
+                make_preview_options(&["Layout A", "Layout B"]),
+            )],
+            chat_about_this: None,
+            answers: HashMap::from([("Q?".to_string(), "Layout B".to_string())]),
+        };
+        let actions = ask_question_keystrokes(&response);
+        assert_eq!(sends(&actions), vec![DOWN_ARROW.to_vec(), b"\r".to_vec()]);
     }
 
     #[test]
     fn test_multi_question_right_arrows_and_submit() {
         let response = AskUserQuestionResponse {
-            answers: vec![
-                AskUserQuestionAnswer::SingleSelect(SingleSelectAnswer {
-                    selected: SelectedOption::Predefined { index: 1 },
-                }),
-                AskUserQuestionAnswer::SingleSelect(SingleSelectAnswer {
-                    selected: SelectedOption::Predefined { index: 2 },
-                }),
+            questions: vec![
+                make_question("Q1?", make_options(&["A", "B"])),
+                make_question("Q2?", make_options(&["C", "D"])),
             ],
+            answers: HashMap::from([
+                ("Q1?".to_string(), "A".to_string()),
+                ("Q2?".to_string(), "D".to_string()),
+            ]),
+            chat_about_this: None,
         };
-        let actions = ask_question_keystrokes(&response, 2);
-        // Page 0: "1", right→page 1, "2", right→page 2 (submit), Enter
+        let actions = ask_question_keystrokes(&response);
+        // Page 0: "1", right→page 1, "2", right→submit, Enter
         assert_eq!(
             sends(&actions),
             vec![
@@ -446,21 +547,18 @@ mod tests {
     #[test]
     fn test_multi_select_up_down_space() {
         let response = AskUserQuestionResponse {
-            answers: vec![AskUserQuestionAnswer::MultiSelect(MultiSelectAnswer {
-                selected: vec![
-                    SelectedOption::Predefined { index: 1 },
-                    SelectedOption::Predefined { index: 3 },
-                ],
-            })],
+            questions: vec![make_multi_question("Q?", make_options(&["A", "B", "C"]))],
+            chat_about_this: None,
+            answers: HashMap::from([("Q?".to_string(), "A, C".to_string())]),
         };
-        let actions = ask_question_keystrokes(&response, 1);
+        let actions = ask_question_keystrokes(&response);
         assert_eq!(
             sends(&actions),
             vec![
-                b" ".to_vec(),       // toggle 1
+                b" ".to_vec(),       // toggle A (index 0)
+                DOWN_ARROW.to_vec(), // 0→1
                 DOWN_ARROW.to_vec(), // 1→2
-                DOWN_ARROW.to_vec(), // 2→3
-                b" ".to_vec(),       // toggle 3
+                b" ".to_vec(),       // toggle C (index 2)
             ]
         );
     }
@@ -468,91 +566,139 @@ mod tests {
     #[test]
     fn test_multi_select_custom_navigate_away() {
         let response = AskUserQuestionResponse {
-            answers: vec![AskUserQuestionAnswer::MultiSelect(MultiSelectAnswer {
-                selected: vec![
-                    SelectedOption::Predefined { index: 1 },
-                    SelectedOption::Custom {
-                        index: 4,
-                        text: "extra".to_string(),
-                    },
-                ],
-            })],
+            questions: vec![make_multi_question("Q?", make_options(&["A", "B", "C"]))],
+            chat_about_this: None,
+            answers: HashMap::from([("Q?".to_string(), "A, extra".to_string())]),
         };
-        let actions = ask_question_keystrokes(&response, 1);
+        let actions = ask_question_keystrokes(&response);
         let s = sends(&actions);
-        assert_eq!(s[0], b" "); // toggle 1
-        assert_eq!(s[1], DOWN_ARROW); // 1→2
-        assert_eq!(s[2], DOWN_ARROW); // 2→3
-        assert_eq!(s[3], DOWN_ARROW); // 3→4
-        assert_eq!(s[4], b" "); // toggle 4
+        assert_eq!(s[0], b" "); // toggle A (index 0)
+        assert_eq!(s[1], DOWN_ARROW); // 0→1
+        assert_eq!(s[2], DOWN_ARROW); // 1→2
+        assert_eq!(s[3], DOWN_ARROW); // 2→3 (Other)
+        assert_eq!(s[4], b" "); // toggle Other
         assert_eq!(s[5], b"extra"); // type custom text
         assert_eq!(s[6], UP_ARROW); // navigate away
         assert_eq!(s.len(), 7);
     }
 
     #[test]
-    fn test_chat_about_this_last_answer_no_submit() {
-        let response = AskUserQuestionResponse {
-            answers: vec![
-                AskUserQuestionAnswer::SingleSelect(SingleSelectAnswer {
-                    selected: SelectedOption::Predefined { index: 1 },
-                }),
-                AskUserQuestionAnswer::ChatAboutThis {
-                    index: 3,
-                    multi_select: false,
-                },
-            ],
-        };
-        let actions = ask_question_keystrokes(&response, 2);
-        let s = sends(&actions);
-        // Page 0: select "1", right to page 1, digit "3", no submit
-        assert_eq!(s, vec![b"1".to_vec(), RIGHT_ARROW.to_vec(), b"3".to_vec(),]);
+    fn test_find_option_index_match() {
+        let options = make_options(&["A", "B", "C"]);
+        assert_eq!(find_option_index("B", &options), Some(1));
     }
 
     #[test]
-    fn test_chat_about_this_not_last_navigate_back() {
-        // Q0 is ChatAboutThis, Q1 answered normally — process Q1 first, navigate back
+    fn test_find_option_index_no_match() {
+        let options = make_options(&["A", "B"]);
+        assert_eq!(find_option_index("custom text", &options), None);
+    }
+
+    #[test]
+    fn test_chat_about_this_single_question_single_select() {
+        // Single question, "Chat about this" selected (no answers)
         let response = AskUserQuestionResponse {
-            answers: vec![
-                AskUserQuestionAnswer::ChatAboutThis {
-                    index: 3,
-                    multi_select: false,
-                },
-                AskUserQuestionAnswer::SingleSelect(SingleSelectAnswer {
-                    selected: SelectedOption::Predefined { index: 2 },
-                }),
-            ],
+            questions: vec![make_question("Q?", make_options(&["A", "B"]))],
+            answers: HashMap::new(),
+            chat_about_this: Some("Q?".to_string()),
         };
-        let actions = ask_question_keystrokes(&response, 2);
-        let s = sends(&actions);
-        // Phase 1: skip Q0, navigate to Q1 (right), select "2"
-        // Phase 2: navigate back to Q0 (left), digit "3"
+        let actions = ask_question_keystrokes(&response);
+        // 2 options → ChatAboutThis index = 4 (num_options + 2), digit press
+        assert_eq!(sends(&actions), vec![b"4".to_vec()]);
+    }
+
+    #[test]
+    fn test_chat_about_this_single_question_multi_select() {
+        // Single multi-select question, "Chat about this" selected
+        let response = AskUserQuestionResponse {
+            questions: vec![make_multi_question("Q?", make_options(&["A", "B"]))],
+            answers: HashMap::new(),
+            chat_about_this: Some("Q?".to_string()),
+        };
+        let actions = ask_question_keystrokes(&response);
+        // 2 options → ChatAboutThis at 0-based index 3, arrow-nav + Enter
         assert_eq!(
-            s,
+            sends(&actions),
             vec![
-                RIGHT_ARROW.to_vec(),
-                b"2".to_vec(),
-                LEFT_ARROW.to_vec(),
-                b"3".to_vec(),
+                DOWN_ARROW.to_vec(), // 0→1
+                DOWN_ARROW.to_vec(), // 1→2
+                DOWN_ARROW.to_vec(), // 2→3
+                b"\r".to_vec(),
             ]
         );
     }
 
     #[test]
-    fn test_multi_select_chat_about_this() {
+    fn test_chat_about_this_last_question_no_submit() {
+        // Q1 answered, Q2 is ChatAboutThis — no submit step
         let response = AskUserQuestionResponse {
-            answers: vec![AskUserQuestionAnswer::ChatAboutThis {
-                index: 3,
-                multi_select: true,
-            }],
+            questions: vec![
+                make_question("Q1?", make_options(&["A", "B"])),
+                make_question("Q2?", make_options(&["C", "D"])),
+            ],
+            answers: HashMap::from([("Q1?".to_string(), "A".to_string())]),
+            chat_about_this: Some("Q2?".to_string()),
         };
-        let actions = ask_question_keystrokes(&response, 1);
+        let actions = ask_question_keystrokes(&response);
+        // Page 0: select "1", right→page 1, digit "4" (ChatAboutThis), no submit
+        assert_eq!(
+            sends(&actions),
+            vec![b"1".to_vec(), RIGHT_ARROW.to_vec(), b"4".to_vec(),]
+        );
+    }
+
+    #[test]
+    fn test_chat_about_this_navigate_back() {
+        // Q1 is ChatAboutThis, Q2 answered — process Q2 first, navigate back
+        let response = AskUserQuestionResponse {
+            questions: vec![
+                make_question("Q1?", make_options(&["A", "B"])),
+                make_question("Q2?", make_options(&["C", "D"])),
+            ],
+            answers: HashMap::from([("Q2?".to_string(), "D".to_string())]),
+            chat_about_this: Some("Q1?".to_string()),
+        };
+        let actions = ask_question_keystrokes(&response);
+        // Phase 1: skip Q1, navigate to Q2 (right), select "2"
+        // Phase 2: navigate back to Q1 (left), digit "4" (ChatAboutThis)
         assert_eq!(
             sends(&actions),
             vec![
-                DOWN_ARROW.to_vec(), // 1→2
-                DOWN_ARROW.to_vec(), // 2→3
-                b"\r".to_vec(),      // select
+                RIGHT_ARROW.to_vec(),
+                b"2".to_vec(),
+                LEFT_ARROW.to_vec(),
+                b"4".to_vec(),
+            ]
+        );
+    }
+
+    #[test]
+    fn test_chat_about_this_middle_question_three_pages() {
+        // Q1 answered, Q2 is ChatAboutThis, Q3 answered
+        let response = AskUserQuestionResponse {
+            questions: vec![
+                make_question("Q1?", make_options(&["A", "B"])),
+                make_question("Q2?", make_options(&["C", "D"])),
+                make_question("Q3?", make_options(&["E", "F"])),
+            ],
+            answers: HashMap::from([
+                ("Q1?".to_string(), "A".to_string()),
+                ("Q3?".to_string(), "F".to_string()),
+            ]),
+            chat_about_this: Some("Q2?".to_string()),
+        };
+        let actions = ask_question_keystrokes(&response);
+        // Phase 1: Q1 select "1", right→Q2 (skip), right→Q3 select "2"
+        // Phase 2: navigate back from page 2 to page 1 (left), digit "4"
+        assert_eq!(
+            sends(&actions),
+            vec![
+                b"1".to_vec(),
+                RIGHT_ARROW.to_vec(),
+                RIGHT_ARROW.to_vec(),
+                b"2".to_vec(),
+                LEFT_ARROW.to_vec(),
+                b"4".to_vec(),
             ]
         );
     }

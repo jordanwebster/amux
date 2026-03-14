@@ -38,6 +38,26 @@ One paragraph describing what was done.
 
 ---
 
+## 2026-03-14: Redesign AskUserQuestionResponse to match Claude Code format
+
+### Summary
+Replaced the internal structured answer types (`SelectedOption`, `SingleSelectAnswer`, `MultiSelectAnswer`, `AskUserQuestionAnswer`) with a self-describing format that matches Claude Code's actual tool_result: the response echoes back the questions and provides answers as label strings in a `HashMap<String, String>`. Keystroke generation now derives question type (select/preview/multi-select) and option indices from the echoed questions rather than requiring pre-computed indices from the client.
+
+### Changes
+- `crates/amux/src/claude/types.rs`: Removed `SelectedOption`, `SingleSelectAnswer`, `MultiSelectAnswer`, `AskUserQuestionAnswer` enums; redesigned `AskUserQuestionResponse` with `questions: Vec<AskUserQuestionItem>`, `answers: HashMap<String, String>`, and `chat_about_this: Option<String>`; added `HashMap` import; rewrote tests
+- `crates/amux/src/agents/claude.rs`: Replaced old keystroke functions with `select_keystrokes`, `preview_keystrokes`, `multi_select_keystrokes` (new impl), `chat_about_this_keystrokes`, plus `find_option_index` helper; new `ask_question_keystrokes` with two-phase processing (answers first, then ChatAboutThis with backward navigation support); rewrote all tests plus 5 new ChatAboutThis tests
+
+### Decisions Made
+- Questions echoed in the response eliminates the need for clients to compute 1-based indices — they just send labels
+- Preview questions (options with `markdown`) use arrow-nav + Enter instead of digit press
+- Multi-select answers use comma-separated labels ("Auth, Cache") matching Claude Code's natural format
+- ChatAboutThis modeled as `chat_about_this: Option<String>` on the response — out-of-band from answers, carries the question text to navigate to; keystroke generation processes all answers first then navigates (possibly backwards) to the ChatAboutThis page
+
+### Verification
+- `cargo check && cargo fmt && cargo clippy --workspace --all-targets -- -D warnings && cargo test` — all 203 tests pass
+
+---
+
 ## 2026-03-14: AskUserQuestionResponse → PTY keystrokes
 
 ### Summary
