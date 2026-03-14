@@ -277,14 +277,14 @@ pub enum StructuredOutput {
 }
 
 /// What the user selected for a given option slot.
-/// Predefined options are indexed from 1 (matching Claude Code's UI).
-/// "Other" (custom text) is modeled as `Custom`.
+/// Every variant carries its own UI index so keystroke generation needs no
+/// external question context.
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
 pub enum SelectedOption {
-    /// A predefined option by index (1-based, matching Claude Code's UI)
-    Predefined(usize),
-    /// "Type something" — user entered custom text
-    Custom(String),
+    /// A predefined option. `index` is 1-based (matching Claude Code's UI).
+    Predefined { index: usize },
+    /// "Other" — user entered custom text. `index` = `num_options + 1`.
+    Custom { index: usize, text: String },
 }
 
 /// Answer to a single-select question.
@@ -306,8 +306,12 @@ pub enum AskUserQuestionAnswer {
     SingleSelect(SingleSelectAnswer),
     MultiSelect(MultiSelectAnswer),
     /// "Chat about this" — bails this and all remaining questions.
-    /// Cannot be mixed with selections (enforced by type system).
-    ChatAboutThis,
+    /// `index` = `num_options + 2`. `multi_select` mirrors the question type
+    /// so keystroke generation knows whether to press a digit or navigate+space.
+    ChatAboutThis {
+        index: usize,
+        multi_select: bool,
+    },
 }
 
 /// Response to an AskUserQuestion tool call.
@@ -626,7 +630,7 @@ mod tests {
     fn test_ask_user_question_response_single_select_predefined() {
         let resp = AskUserQuestionResponse {
             answers: vec![AskUserQuestionAnswer::SingleSelect(SingleSelectAnswer {
-                selected: SelectedOption::Predefined(1),
+                selected: SelectedOption::Predefined { index: 1 },
             })],
         };
         let serialized = serde_json::to_string(&resp).unwrap();
@@ -638,7 +642,10 @@ mod tests {
     fn test_ask_user_question_response_single_select_custom() {
         let resp = AskUserQuestionResponse {
             answers: vec![AskUserQuestionAnswer::SingleSelect(SingleSelectAnswer {
-                selected: SelectedOption::Custom("my custom answer".to_string()),
+                selected: SelectedOption::Custom {
+                    index: 3,
+                    text: "my custom answer".to_string(),
+                },
             })],
         };
         let serialized = serde_json::to_string(&resp).unwrap();
@@ -651,9 +658,12 @@ mod tests {
         let resp = AskUserQuestionResponse {
             answers: vec![AskUserQuestionAnswer::MultiSelect(MultiSelectAnswer {
                 selected: vec![
-                    SelectedOption::Predefined(1),
-                    SelectedOption::Predefined(3),
-                    SelectedOption::Custom("extra".to_string()),
+                    SelectedOption::Predefined { index: 1 },
+                    SelectedOption::Predefined { index: 3 },
+                    SelectedOption::Custom {
+                        index: 4,
+                        text: "extra".to_string(),
+                    },
                 ],
             })],
         };
@@ -668,25 +678,28 @@ mod tests {
         let resp = AskUserQuestionResponse {
             answers: vec![
                 AskUserQuestionAnswer::SingleSelect(SingleSelectAnswer {
-                    selected: SelectedOption::Predefined(1),
+                    selected: SelectedOption::Predefined { index: 1 },
                 }),
-                AskUserQuestionAnswer::ChatAboutThis,
+                AskUserQuestionAnswer::ChatAboutThis {
+                    index: 3,
+                    multi_select: false,
+                },
             ],
         };
         let serialized = serde_json::to_string(&resp).unwrap();
         let deserialized: AskUserQuestionResponse = serde_json::from_str(&serialized).unwrap();
         assert_eq!(deserialized.answers.len(), 2);
-        assert_eq!(
+        assert!(matches!(
             deserialized.answers[1],
-            AskUserQuestionAnswer::ChatAboutThis
-        );
+            AskUserQuestionAnswer::ChatAboutThis { .. }
+        ));
     }
 
     #[test]
     fn test_ask_user_question_response_as_structured_input() {
         let input = ClaudeStructuredInput::AskUserQuestionResponse(AskUserQuestionResponse {
             answers: vec![AskUserQuestionAnswer::SingleSelect(SingleSelectAnswer {
-                selected: SelectedOption::Predefined(1),
+                selected: SelectedOption::Predefined { index: 1 },
             })],
         });
         let serialized = serde_json::to_string(&input).unwrap();

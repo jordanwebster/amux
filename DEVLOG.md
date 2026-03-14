@@ -38,6 +38,28 @@ One paragraph describing what was done.
 
 ---
 
+## 2026-03-14: AskUserQuestionResponse → PTY keystrokes
+
+### Summary
+Implemented PTY keystroke generation for `AskUserQuestionResponse`. Response types are now self-describing (each variant carries its UI index), and a pure `ask_question_keystrokes` function translates semantic responses into `PtyAction` sequences. All three `ClaudeStructuredInput` variants now go through a unified `PtyAction`-based pipeline.
+
+### Changes
+- `crates/amux/src/claude/types.rs`: Changed `SelectedOption` from tuple variants to struct variants with `index` field; `Custom` now also carries `index`; `ChatAboutThis` now carries `index` and `multi_select` fields; updated all existing tests
+- `crates/amux/src/agents/claude.rs`: Added `PtyAction` enum and arrow-key constants; implemented `single_select_keystrokes`, `multi_select_keystrokes`, `chat_about_this_keystrokes`, `ask_question_keystrokes` (page navigation with ChatAboutThis support), `permission_response_keystrokes`, `submit_message_keystrokes`, `execute_pty_actions`; refactored `send_input` to produce `Vec<PtyAction>` for all input variants; added 10 unit tests
+
+### Decisions Made
+- Added `multi_select: bool` to `ChatAboutThis` (not in original plan) so keystroke generation can distinguish digit-press (single-select) vs navigate+space (multi-select) without needing the question metadata
+- Wire format for `SelectedOption` and `ChatAboutThis` changed (struct variants vs tuple/unit) — acceptable since these types are new and not yet used in production
+
+### Verification
+- `cargo check && cargo fmt && cargo clippy --workspace --all-targets -- -D warnings && cargo test` — all 190 tests pass, zero warnings
+
+### Next Steps
+- Client-side construction of `AskUserQuestionResponse` from TUI interaction
+- E2E testing with live Claude Code AskUserQuestion prompts
+
+---
+
 ## 2026-03-14: AskUserQuestion type completeness
 
 ### Summary
