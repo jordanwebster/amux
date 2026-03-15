@@ -74,13 +74,15 @@ fn select_keystrokes(answer: &str, options: &[AskUserQuestionOption]) -> Vec<Pty
 
 /// Keystrokes for a preview question (options with markdown).
 /// Arrow-nav to the target option, then Enter. No "Other" option exists.
+/// Focus starts on the first option; delays between Down presses give
+/// the preview UI time to process each navigation.
 fn preview_keystrokes(answer: &str, options: &[AskUserQuestionOption]) -> Vec<PtyAction> {
     let idx = find_option_index(answer, options).unwrap_or(0);
     let mut actions = Vec::new();
     for _ in 0..idx {
         actions.push(PtyAction::Send(DOWN_ARROW.to_vec()));
+        actions.push(PtyAction::Delay(DELAY));
     }
-    actions.push(PtyAction::Delay(DELAY));
     actions.push(PtyAction::Send(b"\r".to_vec()));
     actions
 }
@@ -105,32 +107,29 @@ fn multi_select_keystrokes(answer: &str, options: &[AskUserQuestionOption]) -> V
     }
     indices.sort_by_key(|(idx, _)| *idx);
 
-    let mut last_was_custom = false;
     for (target, custom_text) in &indices {
         // Navigate to target
         for _ in cursor_pos..*target {
             actions.push(PtyAction::Send(DOWN_ARROW.to_vec()));
+            actions.push(PtyAction::Delay(DELAY));
         }
         for _ in *target..cursor_pos {
             actions.push(PtyAction::Send(UP_ARROW.to_vec()));
+            actions.push(PtyAction::Delay(DELAY));
         }
         cursor_pos = *target;
 
-        // Toggle
-        actions.push(PtyAction::Send(b" ".to_vec()));
-
         if let Some(text) = custom_text {
+            // Other: just type text (auto-selects the checkbox), then navigate away
             actions.push(PtyAction::Delay(DELAY));
             actions.push(PtyAction::Send(text.as_bytes().to_vec()));
-            last_was_custom = true;
+            actions.push(PtyAction::Delay(DELAY));
+            actions.push(PtyAction::Send(UP_ARROW.to_vec()));
+            actions.push(PtyAction::Delay(DELAY));
         } else {
-            last_was_custom = false;
+            // Predefined option: Space to toggle
+            actions.push(PtyAction::Send(b" ".to_vec()));
         }
-    }
-
-    // If last was custom, navigate away to re-enable left/right
-    if last_was_custom {
-        actions.push(PtyAction::Send(UP_ARROW.to_vec()));
     }
 
     actions
@@ -143,19 +142,19 @@ fn chat_about_this_keystrokes(
     options: &[AskUserQuestionOption],
     multi_select: bool,
 ) -> Vec<PtyAction> {
-    // ChatAboutThis is always after "Other": num_options + 2 (1-based)
-    let index = options.len() + 2;
-    if multi_select {
-        // Navigate from cursor position 0 to index-1 (0-based), then Enter
-        let mut actions = Vec::new();
-        for _ in 0..index - 1 {
-            actions.push(PtyAction::Send(DOWN_ARROW.to_vec()));
-        }
-        actions.push(PtyAction::Send(b"\r".to_vec()));
-        actions
-    } else {
-        vec![PtyAction::Send(index.to_string().into_bytes())]
+    // ChatAboutThis is after "Other" in the option list but isn't digit-selectable,
+    // so we always use arrow navigation + Enter regardless of question type.
+    // 0-based target: num_options + 1 (options… Other… ChatAboutThis)
+    let target = options.len() + 1;
+    let mut actions = Vec::new();
+    // For multi-select cursor starts at 0; for single-select it also starts at 0
+    for _ in 0..target {
+        actions.push(PtyAction::Send(DOWN_ARROW.to_vec()));
+        actions.push(PtyAction::Delay(DELAY));
     }
+    actions.push(PtyAction::Send(b"\r".to_vec()));
+    let _ = multi_select; // currently no difference, kept for future use
+    actions
 }
 
 /// Build the PTY keystroke sequence for an AskUserQuestionResponse.
@@ -165,14 +164,19 @@ fn chat_about_this_keystrokes(
 /// - `multi_select: true` → multi-select (arrow nav + Space toggle)
 /// - Otherwise → select (digit press)
 ///
-/// For multi-question forms, Right arrow navigates between pages and
-/// a final Right + Enter submits. If `chat_about_this` is set, all
-/// answered questions are processed first, then we navigate to the
-/// ChatAboutThis page and select it (no submit step).
+/// In multi-question forms, single-select (digit press) and preview (Enter)
+/// auto-advance to the next page, so no explicit Right arrow is needed
+/// between them. Multi-select (Space toggle) does NOT auto-advance and
+/// still requires Right arrow navigation. The last auto-advancing selection
+/// advances to the submit page, where Enter is needed to confirm.
+///
+/// If `chat_about_this` is set, all answered questions are processed first,
+/// then we navigate to the ChatAboutThis page and select it (no submit step).
 fn ask_question_keystrokes(response: &AskUserQuestionResponse) -> Vec<PtyAction> {
     let mut actions = Vec::new();
     let num_questions = response.questions.len();
     let mut current_page = 0;
+    let multi_question = num_questions > 1;
 
     // Find the ChatAboutThis page index, if any
     let chat_page = response.chat_about_this.as_ref().and_then(|q| {
@@ -192,9 +196,12 @@ fn ask_question_keystrokes(response: &AskUserQuestionResponse) -> Vec<PtyAction>
             continue;
         };
 
-        // Navigate forward to this page
+        // Navigate forward to this page (only needed after multi-select
+        // which doesn't auto-advance, or when a page was skipped)
         while current_page < i {
+            actions.push(PtyAction::Delay(DELAY));
             actions.push(PtyAction::Send(RIGHT_ARROW.to_vec()));
+            actions.push(PtyAction::Delay(DELAY));
             current_page += 1;
         }
 
@@ -202,21 +209,35 @@ fn ask_question_keystrokes(response: &AskUserQuestionResponse) -> Vec<PtyAction>
 
         if is_preview {
             actions.extend(preview_keystrokes(answer, &question.options));
+            // Preview Enter auto-advances in multi-question forms
+            if multi_question {
+                actions.push(PtyAction::Delay(DELAY));
+                current_page += 1;
+            }
         } else if question.multi_select {
             actions.extend(multi_select_keystrokes(answer, &question.options));
         } else {
             actions.extend(select_keystrokes(answer, &question.options));
+            // Digit press auto-advances in multi-question forms
+            if multi_question {
+                actions.push(PtyAction::Delay(DELAY));
+                current_page += 1;
+            }
         }
     }
 
     // Phase 2: ChatAboutThis — navigate to its page and select it (no submit)
     if let Some(chat_idx) = chat_page {
         while current_page < chat_idx {
+            actions.push(PtyAction::Delay(DELAY));
             actions.push(PtyAction::Send(RIGHT_ARROW.to_vec()));
+            actions.push(PtyAction::Delay(DELAY));
             current_page += 1;
         }
         while current_page > chat_idx {
+            actions.push(PtyAction::Delay(DELAY));
             actions.push(PtyAction::Send(LEFT_ARROW.to_vec()));
+            actions.push(PtyAction::Delay(DELAY));
             current_page -= 1;
         }
 
@@ -226,10 +247,14 @@ fn ask_question_keystrokes(response: &AskUserQuestionResponse) -> Vec<PtyAction>
             question.multi_select,
         ));
     }
-    // Phase 3: no ChatAboutThis — submit (if multiple questions)
-    else if num_questions > 1 {
+    // Phase 3: no ChatAboutThis — submit when the form has a submit button
+    // (multi-question forms always do; single multi-select questions do too,
+    // since Space toggles don't auto-submit like digit presses)
+    else if num_questions > 1 || response.questions.iter().any(|q| q.multi_select) {
         while current_page < num_questions {
+            actions.push(PtyAction::Delay(DELAY));
             actions.push(PtyAction::Send(RIGHT_ARROW.to_vec()));
+            actions.push(PtyAction::Delay(DELAY));
             current_page += 1;
         }
         actions.push(PtyAction::Send(b"\r".to_vec()));
@@ -499,7 +524,7 @@ mod tests {
             answers: HashMap::from([("Q?".to_string(), "Layout A".to_string())]),
         };
         let actions = ask_question_keystrokes(&response);
-        // First option: no Down arrows, just delay + Enter
+        // First option: already focused, just Enter
         assert_eq!(sends(&actions), vec![b"\r".to_vec()]);
     }
 
@@ -514,6 +539,7 @@ mod tests {
             answers: HashMap::from([("Q?".to_string(), "Layout B".to_string())]),
         };
         let actions = ask_question_keystrokes(&response);
+        // Second option: one Down + Enter
         assert_eq!(sends(&actions), vec![DOWN_ARROW.to_vec(), b"\r".to_vec()]);
     }
 
@@ -531,16 +557,10 @@ mod tests {
             chat_about_this: None,
         };
         let actions = ask_question_keystrokes(&response);
-        // Page 0: "1", right→page 1, "2", right→submit, Enter
+        // Digit presses auto-advance: "1"→page 1, "2"→submit page, Enter
         assert_eq!(
             sends(&actions),
-            vec![
-                b"1".to_vec(),
-                RIGHT_ARROW.to_vec(),
-                b"2".to_vec(),
-                RIGHT_ARROW.to_vec(),
-                b"\r".to_vec(),
-            ]
+            vec![b"1".to_vec(), b"2".to_vec(), b"\r".to_vec(),]
         );
     }
 
@@ -555,10 +575,12 @@ mod tests {
         assert_eq!(
             sends(&actions),
             vec![
-                b" ".to_vec(),       // toggle A (index 0)
-                DOWN_ARROW.to_vec(), // 0→1
-                DOWN_ARROW.to_vec(), // 1→2
-                b" ".to_vec(),       // toggle C (index 2)
+                b" ".to_vec(),        // toggle A (index 0)
+                DOWN_ARROW.to_vec(),  // 0→1
+                DOWN_ARROW.to_vec(),  // 1→2
+                b" ".to_vec(),        // toggle C (index 2)
+                RIGHT_ARROW.to_vec(), // submit page
+                b"\r".to_vec(),       // submit
             ]
         );
     }
@@ -576,10 +598,11 @@ mod tests {
         assert_eq!(s[1], DOWN_ARROW); // 0→1
         assert_eq!(s[2], DOWN_ARROW); // 1→2
         assert_eq!(s[3], DOWN_ARROW); // 2→3 (Other)
-        assert_eq!(s[4], b" "); // toggle Other
-        assert_eq!(s[5], b"extra"); // type custom text
-        assert_eq!(s[6], UP_ARROW); // navigate away
-        assert_eq!(s.len(), 7);
+        assert_eq!(s[4], b"extra"); // type custom text (auto-selects Other)
+        assert_eq!(s[5], UP_ARROW); // navigate away from text input
+        assert_eq!(s[6], RIGHT_ARROW); // submit page
+        assert_eq!(s[7], b"\r"); // submit
+        assert_eq!(s.len(), 8);
     }
 
     #[test]
@@ -603,8 +626,16 @@ mod tests {
             chat_about_this: Some("Q?".to_string()),
         };
         let actions = ask_question_keystrokes(&response);
-        // 2 options → ChatAboutThis index = 4 (num_options + 2), digit press
-        assert_eq!(sends(&actions), vec![b"4".to_vec()]);
+        // 2 options → ChatAboutThis at 0-based index 3, arrow-nav + Enter
+        assert_eq!(
+            sends(&actions),
+            vec![
+                DOWN_ARROW.to_vec(), // 0→1
+                DOWN_ARROW.to_vec(), // 1→2
+                DOWN_ARROW.to_vec(), // 2→3
+                b"\r".to_vec(),
+            ]
+        );
     }
 
     #[test]
@@ -640,10 +671,16 @@ mod tests {
             chat_about_this: Some("Q2?".to_string()),
         };
         let actions = ask_question_keystrokes(&response);
-        // Page 0: select "1", right→page 1, digit "4" (ChatAboutThis), no submit
+        // Q1 digit auto-advances to page 1, arrow-nav to ChatAboutThis, no submit
         assert_eq!(
             sends(&actions),
-            vec![b"1".to_vec(), RIGHT_ARROW.to_vec(), b"4".to_vec(),]
+            vec![
+                b"1".to_vec(),
+                DOWN_ARROW.to_vec(),
+                DOWN_ARROW.to_vec(),
+                DOWN_ARROW.to_vec(),
+                b"\r".to_vec(),
+            ]
         );
     }
 
@@ -659,15 +696,19 @@ mod tests {
             chat_about_this: Some("Q1?".to_string()),
         };
         let actions = ask_question_keystrokes(&response);
-        // Phase 1: skip Q1, navigate to Q2 (right), select "2"
-        // Phase 2: navigate back to Q1 (left), digit "4" (ChatAboutThis)
+        // Phase 1: skip Q1, navigate to Q2 (right), select "2", auto-advance→page 2
+        // Phase 2: navigate back to Q1: left, left, arrow-nav to ChatAboutThis
         assert_eq!(
             sends(&actions),
             vec![
                 RIGHT_ARROW.to_vec(),
                 b"2".to_vec(),
                 LEFT_ARROW.to_vec(),
-                b"4".to_vec(),
+                LEFT_ARROW.to_vec(),
+                DOWN_ARROW.to_vec(),
+                DOWN_ARROW.to_vec(),
+                DOWN_ARROW.to_vec(),
+                b"\r".to_vec(),
             ]
         );
     }
@@ -688,17 +729,21 @@ mod tests {
             chat_about_this: Some("Q2?".to_string()),
         };
         let actions = ask_question_keystrokes(&response);
-        // Phase 1: Q1 select "1", right→Q2 (skip), right→Q3 select "2"
-        // Phase 2: navigate back from page 2 to page 1 (left), digit "4"
+        // Phase 1: Q1 select "1" auto-advance→page 1 (Q2, skip),
+        //          right→page 2 (Q3), select "2" auto-advance→page 3
+        // Phase 2: navigate back from page 3 to page 1: left, left, arrow-nav to ChatAboutThis
         assert_eq!(
             sends(&actions),
             vec![
                 b"1".to_vec(),
                 RIGHT_ARROW.to_vec(),
-                RIGHT_ARROW.to_vec(),
                 b"2".to_vec(),
                 LEFT_ARROW.to_vec(),
-                b"4".to_vec(),
+                LEFT_ARROW.to_vec(),
+                DOWN_ARROW.to_vec(),
+                DOWN_ARROW.to_vec(),
+                DOWN_ARROW.to_vec(),
+                b"\r".to_vec(),
             ]
         );
     }

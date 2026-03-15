@@ -38,6 +38,48 @@ One paragraph describing what was done.
 
 ---
 
+## 2026-03-15: Fix multi-select Other and refine AskUserQuestion keystroke timing
+
+### Summary
+Fixed multi-select custom "Other" text handling and refined keystroke timing throughout AskUserQuestion PTY generation. Key changes: removed the Space before typing custom Other text (typing auto-selects the checkbox in Claude Code's TUI), added delays between arrow navigation presses, unified ChatAboutThis to always use arrow-nav + Enter (instead of digit press for single-select), and implemented auto-advance awareness so digit presses and preview Enter in multi-question forms don't emit unnecessary Right arrow navigation.
+
+### Changes
+- `crates/amux/src/agents/claude.rs`:
+  - `multi_select_keystrokes`: Removed Space before custom Other text (typing auto-selects); added delay between text and Up arrow; added delays between arrow nav presses
+  - `preview_keystrokes`: Moved delay between each Down press instead of one delay before Enter
+  - `chat_about_this_keystrokes`: Unified to always use arrow-nav + Enter (removed digit-press path for single-select)
+  - `ask_question_keystrokes`: Added auto-advance tracking — digit press and preview Enter auto-advance `current_page`, eliminating redundant Right arrow presses; added delays around all Right/Left arrow navigation; single multi-select question now navigates to submit page
+  - Updated 8 unit tests to match new keystroke sequences
+
+### Decisions Made
+- Typing custom text auto-selects the Other checkbox in Claude Code's TUI, so sending Space first was double-toggling (deselecting)
+- ChatAboutThis always uses arrow-nav + Enter because it's not digit-selectable in the TUI — the old digit-press approach for single-select was incorrect
+- Delays between every arrow press give the TUI time to process navigation, critical for mobile-initiated keystrokes
+
+### Verification
+- `cargo check && cargo fmt && cargo clippy --workspace --all-targets -- -D warnings && cargo test` — all 203 tests pass
+- Mobile stress testing (18 tests):
+  1. Two single-select questions — digits auto-advance, no double-advance
+  2. Mixed single-select + multi-select — digit auto-advances, multi-select Right arrow submit
+  3. Three single-select questions — chained auto-advances
+  4. Other custom text Q1 + predefined Q2 — Other Enter auto-advances
+  5. Preview Q1 + single-select Q2 — preview Enter auto-advances
+  6. ChatAboutThis on Q2 with Q1 answered
+  7. ChatAboutThis on Q1 (form exits immediately)
+  8. Multi-select Q1 + ChatAboutThis on Q2
+  9. Three questions, ChatAboutThis on middle one
+  10. Preview Q1 + ChatAboutThis on Q2
+  11. Other custom text Q1 + ChatAboutThis on Q2
+  12. ChatAboutThis on Q1 with Q2 answered (navigate-back)
+  13. Multi-select Q1 (predefined + custom Other) + single-select Q2
+  14. Multi-select with custom Other Q1 + single-select Q2 (variant)
+  15. Multi-select with custom Other Q1 + ChatAboutThis on Q2
+  16. Multi-select with custom Other Q1 + ChatAboutThis on Q2 (repeat)
+  17. Preview Q1 + multi-select with custom Other Q2
+  18. Three questions with multi-select Other in the middle
+
+---
+
 ## 2026-03-14: Redesign AskUserQuestionResponse to match Claude Code format
 
 ### Summary
