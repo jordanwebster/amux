@@ -80,7 +80,7 @@ pub struct AskUserQuestionOption {
     pub label: String,
     pub description: String,
     #[serde(default)]
-    pub markdown: Option<String>,
+    pub preview: Option<String>,
 }
 
 /// Tool input fields for the Bash tool
@@ -579,25 +579,25 @@ mod tests {
     }
 
     #[test]
-    fn test_ask_user_question_option_without_markdown() {
+    fn test_ask_user_question_option_without_preview() {
         let json = r#"{"label": "reqwest", "description": "HTTP client"}"#;
         let opt: AskUserQuestionOption = serde_json::from_str(json).unwrap();
         assert_eq!(opt.label, "reqwest");
         assert_eq!(opt.description, "HTTP client");
-        assert!(opt.markdown.is_none());
+        assert!(opt.preview.is_none());
     }
 
     #[test]
-    fn test_ask_user_question_option_with_markdown() {
+    fn test_ask_user_question_option_with_preview() {
         let json = r#"{
             "label": "Layout A",
             "description": "Side-by-side layout",
-            "markdown": "```\n+-----+-----+\n| A   | B   |\n+-----+-----+\n```"
+            "preview": "```\n+-----+-----+\n| A   | B   |\n+-----+-----+\n```"
         }"#;
         let opt: AskUserQuestionOption = serde_json::from_str(json).unwrap();
         assert_eq!(opt.label, "Layout A");
-        assert!(opt.markdown.is_some());
-        assert!(opt.markdown.unwrap().contains("+-----+"));
+        assert!(opt.preview.is_some());
+        assert!(opt.preview.unwrap().contains("+-----+"));
     }
 
     #[test]
@@ -610,12 +610,12 @@ mod tests {
                     AskUserQuestionOption {
                         label: "reqwest".to_string(),
                         description: "HTTP client".to_string(),
-                        markdown: None,
+                        preview: None,
                     },
                     AskUserQuestionOption {
                         label: "ureq".to_string(),
                         description: "Blocking HTTP".to_string(),
-                        markdown: None,
+                        preview: None,
                     },
                 ],
                 multi_select: false,
@@ -637,7 +637,7 @@ mod tests {
                 options: vec![AskUserQuestionOption {
                     label: "reqwest".to_string(),
                     description: "HTTP client".to_string(),
-                    markdown: None,
+                    preview: None,
                 }],
                 multi_select: false,
             }],
@@ -659,12 +659,12 @@ mod tests {
                     AskUserQuestionOption {
                         label: "Auth".to_string(),
                         description: "Authentication".to_string(),
-                        markdown: None,
+                        preview: None,
                     },
                     AskUserQuestionOption {
                         label: "Cache".to_string(),
                         description: "Caching".to_string(),
-                        markdown: None,
+                        preview: None,
                     },
                 ],
                 multi_select: true,
@@ -686,7 +686,7 @@ mod tests {
                 options: vec![AskUserQuestionOption {
                     label: "reqwest".to_string(),
                     description: "HTTP client".to_string(),
-                    markdown: None,
+                    preview: None,
                 }],
                 multi_select: false,
             }],

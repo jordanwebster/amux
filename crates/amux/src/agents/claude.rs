@@ -72,7 +72,7 @@ fn select_keystrokes(answer: &str, options: &[AskUserQuestionOption]) -> Vec<Pty
     }
 }
 
-/// Keystrokes for a preview question (options with markdown).
+/// Keystrokes for a preview question (options with preview).
 /// Arrow-nav to the target option, then Enter. No "Other" option exists.
 /// Focus starts on the first option; delays between Down presses give
 /// the preview UI time to process each navigation.
@@ -160,7 +160,7 @@ fn chat_about_this_keystrokes(
 /// Build the PTY keystroke sequence for an AskUserQuestionResponse.
 ///
 /// Derives question type and selection indices from the echoed questions:
-/// - Any option has `markdown` → preview (arrow nav + Enter)
+/// - Any option has `preview` → preview (arrow nav + Enter)
 /// - `multi_select: true` → multi-select (arrow nav + Space toggle)
 /// - Otherwise → select (digit press)
 ///
@@ -205,7 +205,7 @@ fn ask_question_keystrokes(response: &AskUserQuestionResponse) -> Vec<PtyAction>
             current_page += 1;
         }
 
-        let is_preview = question.options.iter().any(|o| o.markdown.is_some());
+        let is_preview = question.options.iter().any(|o| o.preview.is_some());
 
         if is_preview {
             actions.extend(preview_keystrokes(answer, &question.options));
@@ -431,7 +431,7 @@ mod tests {
             .map(|l| AskUserQuestionOption {
                 label: l.to_string(),
                 description: String::new(),
-                markdown: None,
+                preview: None,
             })
             .collect()
     }
@@ -442,7 +442,7 @@ mod tests {
             .map(|l| AskUserQuestionOption {
                 label: l.to_string(),
                 description: String::new(),
-                markdown: Some("```preview```".to_string()),
+                preview: Some("```preview```".to_string()),
             })
             .collect()
     }

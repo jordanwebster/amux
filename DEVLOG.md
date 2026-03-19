@@ -38,6 +38,20 @@ One paragraph describing what was done.
 
 ---
 
+## 2026-03-19: Rename AskUserQuestion `markdown` field to `preview`
+
+### Summary
+Renamed the `markdown` field on `AskUserQuestionOption` to `preview` to match the upstream Claude Code rename.
+
+### Changes
+- `crates/amux/src/claude/types.rs`: Renamed struct field and updated all tests
+- `crates/amux/src/agents/claude.rs`: Updated field references and doc comments
+
+### Verification
+- `cargo check`, `cargo fmt`, `cargo clippy`, `cargo test` — all 194 tests pass
+
+---
+
 ## 2026-03-15: Fix multi-select Other and refine AskUserQuestion keystroke timing
 
 ### Summary
