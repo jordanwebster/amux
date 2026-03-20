@@ -112,6 +112,7 @@ enum ClaudeHookEvent {
     PermissionRequest,
     PreToolUse,
     PostToolUse,
+    PostToolUseFailure,
     Stop,
 }
 

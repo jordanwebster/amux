@@ -38,6 +38,22 @@ One paragraph describing what was done.
 
 ---
 
+## 2026-03-20: Add PostToolUseFailure hook event
+
+### Summary
+Added `PostToolUseFailure` hook variant to handle Claude Code's failure event when a tool execution fails. Unlike `PostToolUse` (which carries `tool_response`), this event carries `error` and `is_interrupt` fields. Reuses `PreToolUse` via `#[serde(flatten)]` for typed tool dispatch, matching the existing pattern.
+
+### Changes
+- `crates/amux/src/claude/types.rs`: Added `ClaudePostToolUseFailure` struct, `PostToolUseFailure` variant to `ClaudeHook`, `PostToolUseFailureEvent` variant to `ClaudeStructuredOutput`, Display impl arm
+- `crates/amux/src/agents/claude.rs`: Added `PostToolUseFailure` handler in `handle_hook` to emit `PostToolUseFailureEvent` structured output
+- `crates/amux/src/server/handlers.rs`: Added `PostToolUseFailure` to hook_type label match
+- `crates/amux-cli/src/hooks.rs`: Added unknown-tool warning for `PostToolUseFailure` hooks
+
+### Verification
+- `cargo check && cargo fmt && cargo clippy --workspace --all-targets -- -D warnings && cargo test` — all 219 tests pass, zero warnings
+
+---
+
 ## 2026-03-19: PreToolUse / PostToolUse structured output via hooks
 
 ### Summary

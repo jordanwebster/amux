@@ -23,6 +23,7 @@ pub enum ClaudeHook {
     PermissionRequest(ClaudePermissionRequest),
     PreToolUse(ClaudePreToolUse),
     PostToolUse(Box<ClaudePostToolUse>),
+    PostToolUseFailure(Box<ClaudePostToolUseFailure>),
     Stop(ClaudeStop),
     #[serde(other)]
     Unknown,
@@ -67,6 +68,18 @@ pub struct ClaudePostToolUse {
     pub tool_use_id: String,
     #[serde(flatten)]
     pub tool: PostToolUse,
+}
+
+/// PostToolUseFailure hook data from Claude Code.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct ClaudePostToolUseFailure {
+    pub session_id: Uuid,
+    pub tool_use_id: String,
+    #[serde(flatten)]
+    pub tool: PreToolUse,
+    pub error: String,
+    #[serde(default)]
+    pub is_interrupt: bool,
 }
 
 /// Tool input fields for the Edit tool
@@ -980,6 +993,9 @@ impl std::fmt::Display for ClaudeHook {
             ClaudeHook::PostToolUse(p) => {
                 write!(f, "session {} post-tool {}", p.session_id, p.tool)
             }
+            ClaudeHook::PostToolUseFailure(p) => {
+                write!(f, "session {} post-tool-failure {}", p.session_id, p.tool)
+            }
             ClaudeHook::Stop(s) => {
                 write!(f, "session {} stopped", s.session_id)
             }
@@ -1032,6 +1048,15 @@ pub enum ClaudeStructuredOutput {
         tool_use_id: String,
         #[serde(flatten)]
         tool: PostToolUse,
+        timestamp: String,
+    },
+    /// Tool use failed
+    PostToolUseFailureEvent {
+        tool_use_id: String,
+        #[serde(flatten)]
+        tool: PreToolUse,
+        error: String,
+        is_interrupt: bool,
         timestamp: String,
     },
     /// Agent has stopped and is waiting for input

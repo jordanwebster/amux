@@ -397,6 +397,21 @@ impl ClaudeSession {
                     ))
                     .await;
             }
+            Hook::Claude(ClaudeHook::PostToolUseFailure(post)) => {
+                tracing::debug!(agent_id = %self.agent_id, tool = %post.tool, "post-tool-use-failure");
+                let timestamp = chrono::Utc::now().to_rfc3339();
+                log_source
+                    .write(StructuredOutput::Claude(
+                        ClaudeStructuredOutput::PostToolUseFailureEvent {
+                            tool_use_id: post.tool_use_id,
+                            tool: post.tool,
+                            error: post.error,
+                            is_interrupt: post.is_interrupt,
+                            timestamp,
+                        },
+                    ))
+                    .await;
+            }
             Hook::Claude(ClaudeHook::Stop(_)) => {
                 tracing::debug!(agent_id = %self.agent_id, "agent stopped");
                 log_source

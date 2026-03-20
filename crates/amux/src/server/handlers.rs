@@ -499,6 +499,7 @@ async fn handle_command(
                 Hook::Claude(ClaudeHook::PermissionRequest(_)) => "PermissionRequest",
                 Hook::Claude(ClaudeHook::PreToolUse(_)) => "PreToolUse",
                 Hook::Claude(ClaudeHook::PostToolUse(_)) => "PostToolUse",
+                Hook::Claude(ClaudeHook::PostToolUseFailure(_)) => "PostToolUseFailure",
                 Hook::Claude(ClaudeHook::Stop(_)) => "Stop",
                 Hook::Claude(ClaudeHook::Unknown) => "Unknown",
             };
