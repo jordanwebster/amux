@@ -110,6 +110,8 @@ enum HooksProvider {
 enum ClaudeHookEvent {
     SessionStart,
     PermissionRequest,
+    PreToolUse,
+    PostToolUse,
     Stop,
 }
 

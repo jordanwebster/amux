@@ -34,7 +34,7 @@ pub(super) struct ConnectionContext {
 
 /// Typed enum for reader task output — avoids encoding transport errors as protocol messages.
 pub(super) enum Incoming {
-    Msg(Message),
+    Msg(Box<Message>),
     ReadErr(AmuxError),
     Eof,
 }
@@ -49,7 +49,7 @@ pub(super) async fn reader_loop<R: MessageReader>(mut reader: R, tx: mpsc::Sende
     loop {
         match reader.read_message().await {
             Ok(msg) => {
-                if tx.send(Incoming::Msg(msg)).await.is_err() {
+                if tx.send(Incoming::Msg(Box::new(msg))).await.is_err() {
                     break;
                 }
             }
@@ -253,7 +253,7 @@ pub(super) async fn connection_loop(
                         {
                             continue;
                         }
-                        handle_message(&response_tx, msg, &ctx).await?;
+                        handle_message(&response_tx, *msg, &ctx).await?;
                     }
                     Some(Incoming::Eof) | None => {
                         tracing::debug!("disconnected");
@@ -535,7 +535,9 @@ mod tests {
 
         // Send a ListAgents command, then EOF to exit the loop
         incoming_tx
-            .send(Incoming::Msg(Message::Command(Command::ListAgents)))
+            .send(Incoming::Msg(Box::new(Message::Command(
+                Command::ListAgents,
+            ))))
             .await
             .unwrap();
         incoming_tx.send(Incoming::Eof).await.unwrap();
@@ -563,13 +565,15 @@ mod tests {
         // command, then EOF. The ReauthResult should be skipped and the
         // command should still be dispatched.
         incoming_tx
-            .send(Incoming::Msg(Message::Direct(
+            .send(Incoming::Msg(Box::new(Message::Direct(
                 DirectMessage::ReauthResult { error: None },
-            )))
+            ))))
             .await
             .unwrap();
         incoming_tx
-            .send(Incoming::Msg(Message::Command(Command::ListAgents)))
+            .send(Incoming::Msg(Box::new(Message::Command(
+                Command::ListAgents,
+            ))))
             .await
             .unwrap();
         incoming_tx.send(Incoming::Eof).await.unwrap();

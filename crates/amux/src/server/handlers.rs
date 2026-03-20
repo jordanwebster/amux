@@ -335,7 +335,10 @@ async fn handle_routable(
                 reader,
                 agent_id,
                 "structured",
-                |id, data| RoutableMessage::StructuredOutput { agent_id: id, data },
+                |id, data| RoutableMessage::StructuredOutput {
+                    agent_id: id,
+                    data: Box::new(data),
+                },
                 reply_src,
                 reply_dst,
                 ctx,
@@ -491,16 +494,18 @@ async fn handle_command(
         }
 
         Command::HandleHook { agent_id, hook } => {
-            let hook_type = match &hook {
+            let hook_type = match hook.as_ref() {
                 Hook::Claude(ClaudeHook::SessionStart(_)) => "SessionStart",
                 Hook::Claude(ClaudeHook::PermissionRequest(_)) => "PermissionRequest",
+                Hook::Claude(ClaudeHook::PreToolUse(_)) => "PreToolUse",
+                Hook::Claude(ClaudeHook::PostToolUse(_)) => "PostToolUse",
                 Hook::Claude(ClaudeHook::Stop(_)) => "Stop",
                 Hook::Claude(ClaudeHook::Unknown) => "Unknown",
             };
             tracing::debug!(hook_type, %agent_id, "received hook event");
 
             // Unknown hook variants should be filtered client-side; warn and ack
-            if matches!(hook, Hook::Claude(ClaudeHook::Unknown)) {
+            if matches!(hook.as_ref(), Hook::Claude(ClaudeHook::Unknown)) {
                 tracing::warn!(%agent_id, "received unknown hook variant");
                 let _ = tx
                     .send(Message::Command(Command::HandleHookResult { error: None }))
@@ -511,7 +516,7 @@ async fn handle_command(
             let result = {
                 let mut us = ctx.user_state.write().await;
                 match us.agents.get_mut(&agent_id) {
-                    Some(session) => session.handle_hook(hook).await.map_err(|e| {
+                    Some(session) => session.handle_hook(*hook).await.map_err(|e| {
                         ProtocolError::ServerError(format!("hook handling failed: {e}"))
                     }),
                     None => {
@@ -1645,9 +1650,16 @@ mod tests {
             transcript_path: "/tmp/transcript.jsonl".to_string(),
         }));
 
-        handle_command(&tx, Command::HandleHook { agent_id, hook }, &ctx)
-            .await
-            .unwrap();
+        handle_command(
+            &tx,
+            Command::HandleHook {
+                agent_id,
+                hook: Box::new(hook),
+            },
+            &ctx,
+        )
+        .await
+        .unwrap();
 
         tokio::task::yield_now().await;
 
@@ -1677,9 +1689,16 @@ mod tests {
             transcript_path: "/tmp/nonexistent_transcript.jsonl".to_string(),
         }));
 
-        handle_command(&tx, Command::HandleHook { agent_id, hook }, &ctx)
-            .await
-            .unwrap();
+        handle_command(
+            &tx,
+            Command::HandleHook {
+                agent_id,
+                hook: Box::new(hook),
+            },
+            &ctx,
+        )
+        .await
+        .unwrap();
 
         tokio::task::yield_now().await;
 
@@ -1709,13 +1728,22 @@ mod tests {
                     command: "ls".to_string(),
                     description: None,
                     timeout: None,
+                    run_in_background: None,
+                    dangerously_disable_sandbox: None,
                 },
             },
         }));
 
-        handle_command(&tx, Command::HandleHook { agent_id, hook }, &ctx)
-            .await
-            .unwrap();
+        handle_command(
+            &tx,
+            Command::HandleHook {
+                agent_id,
+                hook: Box::new(hook),
+            },
+            &ctx,
+        )
+        .await
+        .unwrap();
 
         tokio::task::yield_now().await;
 
@@ -1745,6 +1773,8 @@ mod tests {
                 command: "cargo test".to_string(),
                 description: Some("Run tests".to_string()),
                 timeout: None,
+                run_in_background: None,
+                dangerously_disable_sandbox: None,
             },
         };
         let hook = Hook::Claude(ClaudeHook::PermissionRequest(ClaudePermissionRequest {
@@ -1752,9 +1782,16 @@ mod tests {
             tool: tool.clone(),
         }));
 
-        handle_command(&tx, Command::HandleHook { agent_id, hook }, &ctx)
-            .await
-            .unwrap();
+        handle_command(
+            &tx,
+            Command::HandleHook {
+                agent_id,
+                hook: Box::new(hook),
+            },
+            &ctx,
+        )
+        .await
+        .unwrap();
 
         tokio::task::yield_now().await;
 
@@ -1783,9 +1820,16 @@ mod tests {
             last_assistant_message: "Done.".to_string(),
         }));
 
-        handle_command(&tx, Command::HandleHook { agent_id, hook }, &ctx)
-            .await
-            .unwrap();
+        handle_command(
+            &tx,
+            Command::HandleHook {
+                agent_id,
+                hook: Box::new(hook),
+            },
+            &ctx,
+        )
+        .await
+        .unwrap();
 
         tokio::task::yield_now().await;
 
@@ -1816,9 +1860,16 @@ mod tests {
             last_assistant_message: "I've completed the refactoring.".to_string(),
         }));
 
-        handle_command(&tx, Command::HandleHook { agent_id, hook }, &ctx)
-            .await
-            .unwrap();
+        handle_command(
+            &tx,
+            Command::HandleHook {
+                agent_id,
+                hook: Box::new(hook),
+            },
+            &ctx,
+        )
+        .await
+        .unwrap();
 
         tokio::task::yield_now().await;
 

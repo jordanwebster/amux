@@ -285,6 +285,8 @@ pub struct ClaudeSession {
     pub(super) terminal_size: Option<crate::message::TerminalSize>,
     /// Claude session ID. Set from SessionStart hook during normal operation,
     /// or pre-set before `start()` for resume (triggers `--resume <id>`).
+    /// Claude session ID. Set from SessionStart hook during normal operation,
+    /// or pre-set before `start()` for resume (triggers `--resume <id>`).
     pub(super) session_id: Option<Uuid>,
 }
 
@@ -365,6 +367,32 @@ impl ClaudeSession {
                     .write(StructuredOutput::Claude(
                         ClaudeStructuredOutput::PermissionRequest {
                             tool: perm_req.tool,
+                        },
+                    ))
+                    .await;
+            }
+            Hook::Claude(ClaudeHook::PreToolUse(pre)) => {
+                tracing::debug!(agent_id = %self.agent_id, tool = %pre.tool, "pre-tool-use");
+                let timestamp = chrono::Utc::now().to_rfc3339();
+                log_source
+                    .write(StructuredOutput::Claude(
+                        ClaudeStructuredOutput::PreToolUseEvent {
+                            tool_use_id: pre.tool_use_id,
+                            tool: pre.tool,
+                            timestamp,
+                        },
+                    ))
+                    .await;
+            }
+            Hook::Claude(ClaudeHook::PostToolUse(post)) => {
+                tracing::debug!(agent_id = %self.agent_id, tool = %post.tool, "post-tool-use");
+                let timestamp = chrono::Utc::now().to_rfc3339();
+                log_source
+                    .write(StructuredOutput::Claude(
+                        ClaudeStructuredOutput::PostToolUseEvent {
+                            tool_use_id: post.tool_use_id,
+                            tool: post.tool,
+                            timestamp,
                         },
                     ))
                     .await;

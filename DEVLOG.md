@@ -38,6 +38,35 @@ One paragraph describing what was done.
 
 ---
 
+## 2026-03-19: PreToolUse / PostToolUse structured output via hooks
+
+### Summary
+Added PreToolUse and PostToolUse hook support to emit typed structured output events for tool activity cards. Renamed `ClaudePermissionTool` → `PreToolUse` (with type alias for backward compatibility). Added `PostToolUse` enum with typed result data per tool, `ToolUseResult` wrapper, `PatchHunk` struct, and custom deserialization for the PostToolUse hook JSON format.
+
+### Changes
+- `crates/amux/src/claude/types.rs`: Renamed `ClaudePermissionTool` → `PreToolUse`, added `PostToolUse`, `PatchHunk`, `ToolUseResult`, `ClaudePreToolUse`, `ClaudePostToolUse` structs, custom `deserialize_post_tool_use`, new `ClaudeHook` variants, new `ClaudeStructuredOutput::PreToolUseEvent`/`PostToolUseEvent` variants, 12 new tests
+- `crates/amux/src/agents/claude.rs`: Handle PreToolUse/PostToolUse hooks → emit structured output events
+- `crates/amux-cli/src/hooks.rs`: Updated imports (`PreToolUse`), added unknown-tool filtering for PreToolUse hooks
+- `crates/amux-cli/src/main.rs`: Added `PreToolUse`/`PostToolUse` to `ClaudeHookEvent` enum
+- `crates/amux-cli/src/plugin.rs`: Bumped `PLUGIN_VERSION` to 2 for new hook registration
+- `crates/amux/src/server/handlers.rs`: Added PreToolUse/PostToolUse to hook_type match
+- `crates/amux/src/server/connection.rs`: Boxed `Message` in `Incoming::Msg` to fix clippy large_enum_variant
+
+### Decisions Made
+- Kept `ClaudePermissionTool` as a type alias for backward compatibility
+- PostToolUse uses custom deserializer because hook JSON has `tool_name`, `tool_input`, `tool_response` as separate top-level fields — both PreToolUse and PostToolUse need `tool_name` as discriminator
+- All PostToolUse fields use `#[serde(default)]` for resilience to missing/partial tool_response data
+- `success: false` → `ToolUseResult::Rejected`; `Failed` variant exists for future use
+
+### Verification
+- `cargo check && cargo fmt && cargo clippy --workspace --all-targets -- -D warnings && cargo test --workspace` — all 206 tests pass, zero clippy warnings
+
+### Next Steps
+- Wire up client-side UI to render PreToolUseEvent/PostToolUseEvent as tool activity cards
+- Plugin manifest (upstream) needs PreToolUse/PostToolUse hook registration
+
+---
+
 ## 2026-03-19: Rename AskUserQuestion `markdown` field to `preview`
 
 ### Summary

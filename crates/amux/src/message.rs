@@ -131,7 +131,7 @@ pub enum RoutableMessage {
     },
     StructuredOutput {
         agent_id: Uuid,
-        data: StructuredOutput,
+        data: Box<StructuredOutput>,
     },
     StructuredInput {
         agent_id: Uuid,
@@ -231,7 +231,7 @@ pub enum Command {
     },
     HandleHook {
         agent_id: Uuid,
-        hook: Hook,
+        hook: Box<Hook>,
     },
     HandleHookResult {
         error: Option<ProtocolError>,

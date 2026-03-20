@@ -2,11 +2,11 @@
 //!
 //! Invoked as `amux hooks claude <event>` by Claude Code's hook system. Reads hook event JSON
 //! from stdin, connects to the local server over Unix socket, sends a
-//! HandleHook command, and waits for acknowledgement. Fails silently to avoid
-//! blocking Claude Code.
+//! HandleHook command fire-and-forget (no ack wait). Exits immediately with
+//! code 0 and no stdout so Claude Code is never blocked.
 
-use amux::protocol::{ClaudeHook, ClaudePermissionTool, Command, Hook, Message};
-use amux::{AmuxError, Config, ConnectPolicy, Result, connect};
+use amux::protocol::{ClaudeHook, Command, Hook, Message, PreToolUse};
+use amux::{Config, ConnectPolicy, connect};
 use std::io::{self, BufRead};
 use uuid::Uuid;
 
@@ -41,11 +41,11 @@ fn handle_claude_hook_inner(config: &Config) -> io::Result<()> {
         input.push_str(&line?);
     }
 
-    let claude_hook: ClaudeHook = match serde_json::from_str(&input) {
+    let claude_hook = match serde_json::from_str(&input) {
         Ok(hook) => hook,
         Err(e) => {
             tracing::error!(error = %e, "hook parse failed");
-            return Err(io::Error::new(io::ErrorKind::InvalidData, e));
+            return Err(io::Error::new(io::ErrorKind::InvalidData, e.to_string()));
         }
     };
 
@@ -54,16 +54,22 @@ fn handle_claude_hook_inner(config: &Config) -> io::Result<()> {
         return Ok(());
     }
     if let ClaudeHook::PermissionRequest(ref p) = claude_hook
-        && matches!(p.tool, ClaudePermissionTool::Unknown)
+        && matches!(p.tool, PreToolUse::Unknown)
     {
         tracing::warn!(input = %input, "unrecognized permission request tool");
-        return Ok(());
+    }
+    if let ClaudeHook::PreToolUse(ref p) = claude_hook
+        && matches!(p.tool, PreToolUse::Unknown)
+    {
+        tracing::warn!(input = %input, "unrecognized pre-tool-use tool");
     }
 
     tracing::debug!(hook = %claude_hook, "received hook");
 
     let hook = Hook::Claude(claude_hook);
 
+    // Fire-and-forget: connect, send, don't wait for ack.
+    // Hooks must exit quickly so Claude Code is never blocked.
     let config = config.clone();
     tokio::task::block_in_place(|| {
         tokio::runtime::Handle::current().block_on(async {
@@ -76,21 +82,12 @@ fn handle_claude_hook_inner(config: &Config) -> io::Result<()> {
     Ok(())
 }
 
-async fn send_hook_event(config: &Config, agent_id: Uuid, hook: Hook) -> Result<()> {
+async fn send_hook_event(config: &Config, agent_id: Uuid, hook: Hook) -> amux::Result<()> {
     let conn = connect(config, ConnectPolicy::ExistingOnly).await?;
-
-    conn.send(&Message::Command(Command::HandleHook { agent_id, hook }))
-        .await?;
-
-    let ack = conn.recv().await?;
-    match ack {
-        Message::Command(Command::HandleHookResult { error: None }) => Ok(()),
-        Message::Command(Command::HandleHookResult { error: Some(e) }) => {
-            Err(AmuxError::ServerError(e.to_string()))
-        }
-        other => Err(AmuxError::InvalidMessage(format!(
-            "expected HandleHookResult, got {}",
-            other.type_label()
-        ))),
-    }
+    conn.send(&Message::Command(Command::HandleHook {
+        agent_id,
+        hook: Box::new(hook),
+    }))
+    .await?;
+    Ok(())
 }
