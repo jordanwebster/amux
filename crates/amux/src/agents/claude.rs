@@ -8,8 +8,8 @@ use super::{PtyHandle, spawn_pty_agent};
 use crate::buffer::MultiplexStructuredReader;
 use crate::claude::structured_log_source::StructuredLogSource;
 use crate::claude::types::{
-    AskUserQuestionOption, AskUserQuestionResponse, ClaudeHook, ClaudeStructuredInput,
-    ClaudeStructuredOutput, Hook, PermissionResponse, StructuredInput, StructuredOutput,
+    AgentStructuredInput, AgentStructuredOutput, AskUserQuestionOption, AskUserQuestionResponse,
+    ClaudeHook, ClaudeStructuredInput, ClaudeStructuredOutput, Hook, PermissionResponse,
 };
 use crate::error::Result;
 use crate::message::CreateAgentRequest;
@@ -328,12 +328,12 @@ impl ClaudeSession {
     }
 
     /// Send structured input to Claude Code.
-    pub async fn send_input(&self, input: StructuredInput) -> Result<()> {
+    pub async fn send_input(&self, input: AgentStructuredInput) -> Result<()> {
         let Some(pty) = &self.pty else {
             return Ok(());
         };
         let actions = match &input {
-            StructuredInput::Claude(claude_input) => match claude_input {
+            AgentStructuredInput::Claude(claude_input) => match claude_input {
                 ClaudeStructuredInput::SubmitMessage { data } => submit_message_keystrokes(data),
                 ClaudeStructuredInput::PermissionResponse(response) => {
                     tracing::info!(agent_id = %self.agent_id, ?response, "sending permission response");
@@ -364,7 +364,7 @@ impl ClaudeSession {
             Hook::Claude(ClaudeHook::PermissionRequest(perm_req)) => {
                 tracing::debug!(agent_id = %self.agent_id, "permission request");
                 log_source
-                    .write(StructuredOutput::Claude(
+                    .write(AgentStructuredOutput::Claude(
                         ClaudeStructuredOutput::PermissionRequest {
                             tool: perm_req.tool,
                         },
@@ -375,7 +375,7 @@ impl ClaudeSession {
                 tracing::debug!(agent_id = %self.agent_id, tool = %pre.tool, "pre-tool-use");
                 let timestamp = chrono::Utc::now().to_rfc3339();
                 log_source
-                    .write(StructuredOutput::Claude(
+                    .write(AgentStructuredOutput::Claude(
                         ClaudeStructuredOutput::PreToolUseEvent {
                             tool_use_id: pre.tool_use_id,
                             tool: pre.tool,
@@ -388,7 +388,7 @@ impl ClaudeSession {
                 tracing::debug!(agent_id = %self.agent_id, tool = %post.tool, "post-tool-use");
                 let timestamp = chrono::Utc::now().to_rfc3339();
                 log_source
-                    .write(StructuredOutput::Claude(
+                    .write(AgentStructuredOutput::Claude(
                         ClaudeStructuredOutput::PostToolUseEvent {
                             tool_use_id: post.tool_use_id,
                             tool: post.tool,
@@ -401,7 +401,7 @@ impl ClaudeSession {
                 tracing::debug!(agent_id = %self.agent_id, tool = %post.tool, "post-tool-use-failure");
                 let timestamp = chrono::Utc::now().to_rfc3339();
                 log_source
-                    .write(StructuredOutput::Claude(
+                    .write(AgentStructuredOutput::Claude(
                         ClaudeStructuredOutput::PostToolUseFailureEvent {
                             tool_use_id: post.tool_use_id,
                             tool: post.tool,
@@ -415,7 +415,7 @@ impl ClaudeSession {
             Hook::Claude(ClaudeHook::Stop(_)) => {
                 tracing::debug!(agent_id = %self.agent_id, "agent stopped");
                 log_source
-                    .write(StructuredOutput::Claude(
+                    .write(AgentStructuredOutput::Claude(
                         ClaudeStructuredOutput::AgentStopped,
                     ))
                     .await;
@@ -423,6 +423,14 @@ impl ClaudeSession {
             Hook::Claude(ClaudeHook::Unknown) => {}
         }
         Ok(())
+    }
+
+    /// Return the current structured output sequence number.
+    pub fn current_seq(&self) -> u64 {
+        self.log_source
+            .as_ref()
+            .map(|s| s.current_seq())
+            .unwrap_or(0)
     }
 
     /// Subscribe to structured log output.

@@ -54,6 +54,14 @@ impl TestAgentSession {
         Ok(exit_handle)
     }
 
+    /// Return the current structured output sequence number.
+    pub fn current_seq(&self) -> u64 {
+        self.log_source
+            .as_ref()
+            .map(|s| s.current_seq())
+            .unwrap_or(0)
+    }
+
     /// Subscribe to structured log output.
     pub async fn subscribe(&self) -> Option<MultiplexStructuredReader> {
         self.log_source.as_ref()?.subscribe().await

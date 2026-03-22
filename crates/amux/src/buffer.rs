@@ -7,9 +7,21 @@
 //! Key invariant: `write()` and `subscribe()` are mutually exclusive via the
 //! storage lock, ensuring no data loss or duplication between replay and live data.
 
-use crate::claude::types::StructuredOutput;
+use crate::claude::types::AgentStructuredOutput;
 use std::sync::Arc;
+use std::sync::atomic::{AtomicU64, Ordering};
 use tokio::sync::{RwLock, mpsc};
+
+/// Sequenced envelope for structured output entries.
+///
+/// Every structured output entry gets a monotonically increasing sequence
+/// number. Clients must include the latest seq when sending input; the
+/// server rejects input with a stale seq.
+#[derive(Debug, Clone, PartialEq)]
+pub struct StructuredOutput {
+    pub seq: u64,
+    pub data: AgentStructuredOutput,
+}
 
 /// Extra channel capacity beyond the replay snapshot size.
 ///
@@ -263,9 +275,59 @@ pub type MultiplexByteBuffer = BroadcastBuffer<BytePolicy>;
 pub type MultiplexByteReader = BroadcastReader<BytePolicy>;
 
 /// Structured broadcast buffer for Claude structured I/O (replay + broadcast).
-pub type MultiplexStructuredBuffer = BroadcastBuffer<StructuredPolicy>;
-/// Reader for [`MultiplexStructuredBuffer`].
+type MultiplexStructuredBuffer = BroadcastBuffer<StructuredPolicy>;
+/// Reader for structured output (yields sequenced envelopes).
 pub type MultiplexStructuredReader = BroadcastReader<StructuredPolicy>;
+
+/// Sequenced wrapper around a structured broadcast buffer.
+///
+/// Assigns monotonically increasing sequence numbers to each entry.
+/// Clients include the latest seq when sending input; the server
+/// can reject stale input by comparing sequence numbers.
+pub struct SequencedStructuredBuffer {
+    inner: MultiplexStructuredBuffer,
+    seq: AtomicU64,
+}
+
+impl SequencedStructuredBuffer {
+    /// Create a new sequenced buffer with the given entry capacity.
+    pub fn new(capacity: usize) -> Self {
+        Self {
+            inner: MultiplexStructuredBuffer::new(capacity),
+            seq: AtomicU64::new(0),
+        }
+    }
+
+    /// Write an entry, assigning the next sequence number.
+    pub async fn write(&self, entry: AgentStructuredOutput) {
+        let seq = self.seq.fetch_add(1, Ordering::Relaxed) + 1;
+        self.inner
+            .write(StructuredOutput { seq, data: entry })
+            .await;
+    }
+
+    /// Return the current (most recently assigned) sequence number.
+    /// Returns 0 if no entries have been written.
+    pub fn current_seq(&self) -> u64 {
+        self.seq.load(Ordering::Relaxed)
+    }
+
+    /// Subscribe to the buffer (replay + live).
+    pub async fn subscribe(&self) -> Option<MultiplexStructuredReader> {
+        self.inner.subscribe().await
+    }
+
+    /// Clear stored data but keep the buffer open.
+    /// Does NOT reset the sequence counter.
+    pub async fn clear(&self) {
+        self.inner.clear().await;
+    }
+
+    /// Close the buffer.
+    pub async fn close(&self) {
+        self.inner.close().await;
+    }
+}
 
 #[cfg(test)]
 mod tests {
@@ -429,19 +491,26 @@ mod tests {
         );
     }
 
-    // ── Entry buffer tests (policy-specific behavior) ───────────────
+    // ── Sequenced structured buffer tests ─────────────────────────
 
-    fn user_msg(content: &str, uuid: &str) -> StructuredOutput {
-        StructuredOutput::Claude(ClaudeStructuredOutput::UserMessage {
+    fn user_msg(content: &str, uuid: &str) -> AgentStructuredOutput {
+        AgentStructuredOutput::Claude(ClaudeStructuredOutput::UserMessage {
             content: content.to_string(),
             timestamp: "2025-01-15T12:00:00Z".to_string(),
             uuid: uuid.to_string(),
         })
     }
 
+    fn envelope(seq: u64, content: &str, uuid: &str) -> StructuredOutput {
+        StructuredOutput {
+            seq,
+            data: user_msg(content, uuid),
+        }
+    }
+
     #[tokio::test]
     async fn test_entry_truncation_by_count() {
-        let buffer = MultiplexStructuredBuffer::new(3); // Only 3 entries max
+        let buffer = SequencedStructuredBuffer::new(3); // Only 3 entries max
 
         for i in 1..=5 {
             buffer
@@ -449,66 +518,115 @@ mod tests {
                 .await;
         }
 
-        // Late subscriber should see only the last 3 entries
+        // Late subscriber should see only the last 3 entries (with original seqs)
         let mut reader = buffer.subscribe().await.unwrap();
-        assert_eq!(reader.read().await.unwrap(), user_msg("msg3", "3"));
-        assert_eq!(reader.read().await.unwrap(), user_msg("msg4", "4"));
-        assert_eq!(reader.read().await.unwrap(), user_msg("msg5", "5"));
+        assert_eq!(reader.read().await.unwrap(), envelope(3, "msg3", "3"));
+        assert_eq!(reader.read().await.unwrap(), envelope(4, "msg4", "4"));
+        assert_eq!(reader.read().await.unwrap(), envelope(5, "msg5", "5"));
     }
 
     #[tokio::test]
     async fn test_entry_per_entry_replay() {
-        let buffer = MultiplexStructuredBuffer::new(100);
+        let buffer = SequencedStructuredBuffer::new(100);
 
-        // Write multiple entries before subscribing
         buffer.write(user_msg("first", "1")).await;
         buffer.write(user_msg("second", "2")).await;
         buffer.write(user_msg("third", "3")).await;
 
         // Each entry should arrive as a separate read() call
         let mut reader = buffer.subscribe().await.unwrap();
-        assert_eq!(reader.read().await.unwrap(), user_msg("first", "1"));
-        assert_eq!(reader.read().await.unwrap(), user_msg("second", "2"));
-        assert_eq!(reader.read().await.unwrap(), user_msg("third", "3"));
+        assert_eq!(reader.read().await.unwrap(), envelope(1, "first", "1"));
+        assert_eq!(reader.read().await.unwrap(), envelope(2, "second", "2"));
+        assert_eq!(reader.read().await.unwrap(), envelope(3, "third", "3"));
 
         // Live writes still work
         buffer.write(user_msg("fourth", "4")).await;
-        assert_eq!(reader.read().await.unwrap(), user_msg("fourth", "4"));
+        assert_eq!(reader.read().await.unwrap(), envelope(4, "fourth", "4"));
     }
 
     #[tokio::test]
     async fn test_clear_resets_storage_keeps_subscribers() {
-        let buffer = MultiplexStructuredBuffer::new(100);
+        let buffer = SequencedStructuredBuffer::new(100);
 
         buffer.write(user_msg("before", "1")).await;
         buffer.write(user_msg("also-before", "2")).await;
 
-        // Existing subscriber receives pre-clear data
         let mut early = buffer.subscribe().await.unwrap();
-        assert_eq!(early.read().await.unwrap(), user_msg("before", "1"));
-        assert_eq!(early.read().await.unwrap(), user_msg("also-before", "2"));
+        assert_eq!(early.read().await.unwrap(), envelope(1, "before", "1"));
+        assert_eq!(early.read().await.unwrap(), envelope(2, "also-before", "2"));
 
         buffer.clear().await;
 
-        // Late subscriber after clear sees nothing from before
         let mut late = buffer.subscribe().await.unwrap();
 
-        // Write new data — both subscribers should receive it
         buffer.write(user_msg("after", "3")).await;
 
-        assert_eq!(early.read().await.unwrap(), user_msg("after", "3"));
-        assert_eq!(late.read().await.unwrap(), user_msg("after", "3"));
+        assert_eq!(early.read().await.unwrap(), envelope(3, "after", "3"));
+        assert_eq!(late.read().await.unwrap(), envelope(3, "after", "3"));
     }
 
     #[tokio::test]
     async fn test_entry_close_returns_none() {
-        let buffer = MultiplexStructuredBuffer::new(100);
+        let buffer = SequencedStructuredBuffer::new(100);
         let mut reader = buffer.subscribe().await.unwrap();
 
         buffer.write(user_msg("data", "1")).await;
-        assert_eq!(reader.read().await.unwrap(), user_msg("data", "1"));
+        assert_eq!(reader.read().await.unwrap(), envelope(1, "data", "1"));
 
         buffer.close().await;
         assert!(reader.read().await.is_none());
+    }
+
+    #[tokio::test]
+    async fn test_seq_increments_on_each_write() {
+        let buffer = SequencedStructuredBuffer::new(100);
+        assert_eq!(buffer.current_seq(), 0);
+
+        buffer.write(user_msg("a", "1")).await;
+        assert_eq!(buffer.current_seq(), 1);
+
+        buffer.write(user_msg("b", "2")).await;
+        assert_eq!(buffer.current_seq(), 2);
+
+        buffer.write(user_msg("c", "3")).await;
+        assert_eq!(buffer.current_seq(), 3);
+    }
+
+    #[tokio::test]
+    async fn test_seq_survives_clear() {
+        let buffer = SequencedStructuredBuffer::new(100);
+
+        buffer.write(user_msg("a", "1")).await;
+        buffer.write(user_msg("b", "2")).await;
+        assert_eq!(buffer.current_seq(), 2);
+
+        buffer.clear().await;
+        assert_eq!(buffer.current_seq(), 2, "clear must not reset seq");
+
+        buffer.write(user_msg("c", "3")).await;
+        assert_eq!(buffer.current_seq(), 3);
+
+        let mut reader = buffer.subscribe().await.unwrap();
+        assert_eq!(reader.read().await.unwrap(), envelope(3, "c", "3"));
+    }
+
+    #[tokio::test]
+    async fn test_subscribers_receive_correct_seq_in_replay_and_live() {
+        let buffer = SequencedStructuredBuffer::new(100);
+
+        buffer.write(user_msg("a", "1")).await;
+        buffer.write(user_msg("b", "2")).await;
+
+        // Late subscriber gets replay with correct seq values
+        let mut reader = buffer.subscribe().await.unwrap();
+        let item1 = reader.read().await.unwrap();
+        assert_eq!(item1.seq, 1);
+        let item2 = reader.read().await.unwrap();
+        assert_eq!(item2.seq, 2);
+
+        // Live write has next seq
+        buffer.write(user_msg("c", "3")).await;
+        let item3 = reader.read().await.unwrap();
+        assert_eq!(item3.seq, 3);
     }
 }

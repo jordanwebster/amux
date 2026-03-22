@@ -38,6 +38,39 @@ One paragraph describing what was done.
 
 ---
 
+## 2026-03-22: Add sequence numbers to structured I/O
+
+### Summary
+Added monotonic sequence numbers to the structured output buffer so the server can reject stale structured input from concurrent clients. Every structured output entry gets a `seq` number assigned by a new `SequencedStructuredBuffer` wrapper. Clients must include the latest `seq` when sending `StructuredInput`; the server rejects mismatches with a `StructuredInputResult` error.
+
+### Changes
+- `crates/amux/src/claude/types.rs` — renamed `StructuredOutput` → `AgentStructuredOutput`, `StructuredInput` → `AgentStructuredInput`
+- `crates/amux/src/buffer.rs` — added `StructuredOutput` envelope struct (seq + data), `SequencedStructuredBuffer` wrapper with atomic seq counter
+- `crates/amux/src/claude/transcript.rs` — updated to use `SequencedStructuredBuffer`
+- `crates/amux/src/claude/structured_log_source.rs` — switched to `SequencedStructuredBuffer`, added `current_seq()` accessor
+- `crates/amux/src/message.rs` — added `seq` field to `RoutableMessage::StructuredOutput`, `StructuredInput`, and `SubscribeStructuredResult`; added `StructuredInputResult` variant; added `ProtocolError::SequenceNumberMismatch`
+- `crates/amux/src/agents/mod.rs` — added `current_seq()` to `AgentSession` dispatch
+- `crates/amux/src/agents/claude.rs` — added `current_seq()` to `ClaudeSession`
+- `crates/amux/src/agents/testagent.rs` — added `current_seq()` to `TestAgentSession`
+- `crates/amux/src/server/handlers.rs` — structured output stream extracts seq from envelope, structured input handler validates seq and returns `StructuredInputResult` on mismatch
+
+### Decisions Made
+- `clear()` does NOT reset the seq counter — avoids confusion when clients hold a seq from before the clear
+- Seq starts at 0 (no writes yet), first write gets seq 1
+- `SequencedStructuredBuffer` wraps `BroadcastBuffer<StructuredPolicy>` rather than modifying the generic — keeps the generic buffer simple
+- Test agent returns 0 for `current_seq()` since it has no structured log source until started
+
+### Verification
+- `cargo check && cargo fmt && cargo clippy --workspace --all-targets -- -D warnings` — clean
+- `cargo test` — 213 unit tests pass (including new seq tests)
+- `cargo build --workspace && cargo run -p e2e-runner -- run` — all 10 E2E tests pass
+
+### Next Steps
+- Client-side: include `seq` from latest `StructuredOutput` when sending `StructuredInput`
+- Client-side: handle `StructuredInputResult` error responses
+
+---
+
 ## 2026-03-20: Add PostToolUseFailure hook event
 
 ### Summary

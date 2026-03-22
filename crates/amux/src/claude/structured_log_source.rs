@@ -7,8 +7,8 @@
 //! to the same buffer — keeping existing subscribers connected.
 
 use super::transcript::TranscriptTailer;
-use super::types::StructuredOutput;
-use crate::buffer::{MultiplexStructuredBuffer, MultiplexStructuredReader};
+use super::types::AgentStructuredOutput;
+use crate::buffer::{MultiplexStructuredReader, SequencedStructuredBuffer};
 use std::path::PathBuf;
 use std::sync::Arc;
 use tokio::sync::Mutex;
@@ -19,7 +19,7 @@ const MAX_LOG_ENTRIES: usize = 1000;
 
 /// Owns a structured log buffer and an optional transcript tailer.
 pub struct StructuredLogSource {
-    buffer: Arc<MultiplexStructuredBuffer>,
+    buffer: Arc<SequencedStructuredBuffer>,
     tailer: Mutex<Option<(TranscriptTailer, JoinHandle<()>)>>,
 }
 
@@ -27,7 +27,7 @@ impl StructuredLogSource {
     /// Create a new source with an empty buffer.
     pub fn new() -> Self {
         Self {
-            buffer: Arc::new(MultiplexStructuredBuffer::new(MAX_LOG_ENTRIES)),
+            buffer: Arc::new(SequencedStructuredBuffer::new(MAX_LOG_ENTRIES)),
             tailer: Mutex::new(None),
         }
     }
@@ -55,12 +55,17 @@ impl StructuredLogSource {
     }
 
     /// Write a structured output entry directly (e.g. permission requests).
-    pub async fn write(&self, entry: StructuredOutput) {
+    pub async fn write(&self, entry: AgentStructuredOutput) {
         self.buffer.write(entry).await;
     }
 
+    /// Return the current sequence number.
+    pub fn current_seq(&self) -> u64 {
+        self.buffer.current_seq()
+    }
+
     /// Access the underlying buffer (needed by child waiter task).
-    pub fn buffer(&self) -> &Arc<MultiplexStructuredBuffer> {
+    pub fn buffer(&self) -> &Arc<SequencedStructuredBuffer> {
         &self.buffer
     }
 

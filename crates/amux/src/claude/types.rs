@@ -1068,7 +1068,7 @@ pub enum ClaudeStructuredOutput {
 
 /// Wrapper enum for structured output, keyed by agent type
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
-pub enum StructuredOutput {
+pub enum AgentStructuredOutput {
     Claude(ClaudeStructuredOutput),
 }
 
@@ -1103,7 +1103,7 @@ pub enum ClaudeStructuredInput {
 
 /// Wrapper enum for structured input, keyed by agent type
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
-pub enum StructuredInput {
+pub enum AgentStructuredInput {
     Claude(ClaudeStructuredInput),
 }
 

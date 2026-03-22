@@ -17,7 +17,7 @@ pub use testagent::TestAgentSession;
 use crate::agent_registry::Agent;
 use crate::buffer::{MultiplexByteBuffer, MultiplexByteReader, MultiplexStructuredReader};
 use crate::claude::structured_log_source::StructuredLogSource;
-use crate::claude::types::{Hook, StructuredInput};
+use crate::claude::types::{AgentStructuredInput, Hook};
 use crate::error::{AmuxError, Result};
 use crate::message::{CreateAgentRequest, TerminalSize};
 use crate::route::Route;
@@ -279,8 +279,17 @@ impl AgentSession {
         }
     }
 
+    /// Return the current structured output sequence number.
+    pub fn current_seq(&self) -> u64 {
+        match self {
+            Self::Claude(s) => s.current_seq(),
+            #[cfg(any(debug_assertions, test))]
+            Self::TestAgent(s) => s.current_seq(),
+        }
+    }
+
     /// Send structured input to the agent.
-    pub async fn send_input(&self, input: StructuredInput) -> Result<()> {
+    pub async fn send_input(&self, input: AgentStructuredInput) -> Result<()> {
         match self {
             Self::Claude(s) => s.send_input(input).await,
             #[cfg(any(debug_assertions, test))]

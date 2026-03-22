@@ -279,7 +279,7 @@ async fn handle_routable(
             let Some((reply_src, reply_dst)) = reply_routes(src, "SubscribeStructured") else {
                 return Ok(());
             };
-            let log_reader = {
+            let (log_reader, current_seq) = {
                 let us = ctx.user_state.read().await;
                 let Some(session) = us.agents.get(&agent_id) else {
                     let _ = tx
@@ -289,6 +289,7 @@ async fn handle_routable(
                             request_id,
                             &RoutableMessage::SubscribeStructuredResult {
                                 agent_id,
+                                seq: 0,
                                 error: Some(ProtocolError::ServerError(format!(
                                     "agent {agent_id} not found"
                                 ))),
@@ -297,7 +298,7 @@ async fn handle_routable(
                         .await;
                     return Ok(());
                 };
-                session.subscribe().await
+                (session.subscribe().await, session.current_seq())
             };
 
             let Some(reader) = log_reader else {
@@ -308,6 +309,7 @@ async fn handle_routable(
                         request_id,
                         &RoutableMessage::SubscribeStructuredResult {
                             agent_id,
+                            seq: 0,
                             error: Some(ProtocolError::ServerError(format!(
                                 "agent {agent_id} session ended"
                             ))),
@@ -324,6 +326,7 @@ async fn handle_routable(
                     request_id,
                     &RoutableMessage::SubscribeStructuredResult {
                         agent_id,
+                        seq: current_seq,
                         error: None,
                     },
                 ))
@@ -335,9 +338,10 @@ async fn handle_routable(
                 reader,
                 agent_id,
                 "structured",
-                |id, data| RoutableMessage::StructuredOutput {
+                |id, envelope| RoutableMessage::StructuredOutput {
                     agent_id: id,
-                    data: Box::new(data),
+                    seq: envelope.seq,
+                    data: Box::new(envelope.data),
                 },
                 reply_src,
                 reply_dst,
@@ -385,9 +389,33 @@ async fn handle_routable(
             Ok(())
         }
 
-        RoutableMessage::StructuredInput { agent_id, data } => {
+        RoutableMessage::StructuredInput {
+            agent_id,
+            seq: client_seq,
+            data,
+        } => {
             let us = ctx.user_state.read().await;
             if let Some(session) = us.agents.get(&agent_id) {
+                let current_seq = session.current_seq();
+                if client_seq != current_seq {
+                    if let Some((reply_src, reply_dst)) = reply_routes(src, "StructuredInput") {
+                        let _ = tx
+                            .send(Message::routable(
+                                reply_src,
+                                reply_dst,
+                                request_id,
+                                &RoutableMessage::StructuredInputResult {
+                                    agent_id,
+                                    error: Some(ProtocolError::SequenceNumberMismatch {
+                                        client_seq,
+                                        current_seq,
+                                    }),
+                                },
+                            ))
+                            .await;
+                    }
+                    return Ok(());
+                }
                 let _ = session.send_input(data).await;
             }
             Ok(())
@@ -399,6 +427,7 @@ async fn handle_routable(
         | RoutableMessage::CreateAgentResult { .. }
         | RoutableMessage::RawOutput { .. }
         | RoutableMessage::StructuredOutput { .. }
+        | RoutableMessage::StructuredInputResult { .. }
         | RoutableMessage::SubscriptionClosed { .. }
         | RoutableMessage::UnknownMessage => Ok(()),
     }
@@ -1530,6 +1559,7 @@ mod tests {
             },
             RoutableMessage::SubscribeStructuredResult {
                 agent_id: Uuid::new_v4(),
+                seq: 0,
                 error: None,
             },
             RoutableMessage::CreateAgentResult {
@@ -1539,6 +1569,17 @@ mod tests {
             RoutableMessage::RawOutput {
                 agent_id: Uuid::new_v4(),
                 data: vec![0x41],
+            },
+            RoutableMessage::StructuredOutput {
+                agent_id: Uuid::new_v4(),
+                seq: 1,
+                data: Box::new(crate::claude::types::AgentStructuredOutput::Claude(
+                    crate::claude::types::ClaudeStructuredOutput::AgentStopped,
+                )),
+            },
+            RoutableMessage::StructuredInputResult {
+                agent_id: Uuid::new_v4(),
+                error: None,
             },
             RoutableMessage::SubscriptionClosed {
                 agent_id: Uuid::new_v4(),

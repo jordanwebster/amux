@@ -3,8 +3,8 @@
 //! This module watches a Claude Code transcript JSONL file and parses
 //! user/assistant messages into StructuredOutput entries.
 
-use super::types::{ClaudeStructuredOutput, StructuredOutput};
-use crate::buffer::MultiplexStructuredBuffer;
+use super::types::{AgentStructuredOutput, ClaudeStructuredOutput};
+use crate::buffer::SequencedStructuredBuffer;
 use serde::Deserialize;
 use std::path::PathBuf;
 use std::sync::Arc;
@@ -65,13 +65,13 @@ enum ContentBlock {
 
 impl TranscriptEntry {
     /// Convert transcript entry to StructuredOutput if applicable.
-    fn into_structured_output(self) -> Option<StructuredOutput> {
+    fn into_structured_output(self) -> Option<AgentStructuredOutput> {
         match self {
             TranscriptEntry::User {
                 message,
                 uuid,
                 timestamp,
-            } => Some(StructuredOutput::Claude(
+            } => Some(AgentStructuredOutput::Claude(
                 ClaudeStructuredOutput::UserMessage {
                     content: message.content,
                     timestamp: timestamp.unwrap_or_default(),
@@ -84,7 +84,7 @@ impl TranscriptEntry {
                 timestamp,
             } => {
                 let text = message.extract_text()?;
-                Some(StructuredOutput::Claude(
+                Some(AgentStructuredOutput::Claude(
                     ClaudeStructuredOutput::AssistantMessage {
                         content: text,
                         timestamp: timestamp.unwrap_or_default(),
@@ -124,13 +124,13 @@ impl AssistantMessage {
 /// Tails a Claude transcript file and writes parsed entries to a buffer.
 pub struct TranscriptTailer {
     path: PathBuf,
-    buffer: Arc<MultiplexStructuredBuffer>,
+    buffer: Arc<SequencedStructuredBuffer>,
     shutdown_tx: watch::Sender<bool>,
 }
 
 impl TranscriptTailer {
     /// Create a new TranscriptTailer for the given transcript path.
-    pub fn new(path: PathBuf, buffer: Arc<MultiplexStructuredBuffer>) -> Self {
+    pub fn new(path: PathBuf, buffer: Arc<SequencedStructuredBuffer>) -> Self {
         let (shutdown_tx, _) = watch::channel(false);
         Self {
             path,
@@ -163,7 +163,7 @@ impl TranscriptTailer {
 /// Internal function to tail the transcript file.
 async fn tail_transcript(
     path: PathBuf,
-    buffer: Arc<MultiplexStructuredBuffer>,
+    buffer: Arc<SequencedStructuredBuffer>,
     shutdown_rx: &mut watch::Receiver<bool>,
 ) -> std::io::Result<()> {
     // Wait for file to exist
@@ -223,7 +223,7 @@ async fn tail_transcript(
 }
 
 /// Parse a single line from the transcript JSONL file.
-fn parse_transcript_line(line: &str) -> Option<StructuredOutput> {
+fn parse_transcript_line(line: &str) -> Option<AgentStructuredOutput> {
     let line = line.trim();
     if line.is_empty() {
         return None;
@@ -243,7 +243,7 @@ mod tests {
         let line = r#"{"type":"user","message":{"role":"user","content":"Hello world"},"uuid":"abc123","timestamp":"2025-01-15T12:00:00Z"}"#;
         let entry = parse_transcript_line(line).unwrap();
 
-        let StructuredOutput::Claude(inner) = entry;
+        let AgentStructuredOutput::Claude(inner) = entry;
         match inner {
             ClaudeStructuredOutput::UserMessage {
                 content,
@@ -263,7 +263,7 @@ mod tests {
         let line = r#"{"type":"assistant","message":{"role":"assistant","content":[{"type":"text","text":"Hi there!"}]},"uuid":"def456","timestamp":"2025-01-15T12:00:01Z"}"#;
         let entry = parse_transcript_line(line).unwrap();
 
-        let StructuredOutput::Claude(inner) = entry;
+        let AgentStructuredOutput::Claude(inner) = entry;
         match inner {
             ClaudeStructuredOutput::AssistantMessage {
                 content,
@@ -284,7 +284,7 @@ mod tests {
         let line = r#"{"type":"assistant","message":{"role":"assistant","content":[{"type":"thinking","thinking":"Let me think..."},{"type":"text","text":"Here is my answer"}]},"uuid":"ghi789","timestamp":"2025-01-15T12:00:02Z"}"#;
         let entry = parse_transcript_line(line).unwrap();
 
-        let StructuredOutput::Claude(inner) = entry;
+        let AgentStructuredOutput::Claude(inner) = entry;
         match inner {
             ClaudeStructuredOutput::AssistantMessage { content, .. } => {
                 assert_eq!(content, "Here is my answer");

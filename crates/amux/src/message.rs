@@ -5,7 +5,7 @@ use serde::{Deserialize, Serialize};
 use std::path::PathBuf;
 use uuid::Uuid;
 
-use crate::claude::types::{Hook, StructuredInput, StructuredOutput};
+use crate::claude::types::{AgentStructuredInput, AgentStructuredOutput, Hook};
 
 /// Information about a connected host (machine running amux server).
 /// Propagated via AnnounceHost/WithdrawHost between peers.
@@ -52,6 +52,9 @@ pub enum ProtocolError {
         server_version: u32,
         client_version: u32,
     },
+    /// Structured input seq doesn't match current output seq
+    #[error("sequence number mismatch (client {client_seq}, server {current_seq})")]
+    SequenceNumberMismatch { client_seq: u64, current_seq: u64 },
 }
 
 /// Reason for server shutdown notification
@@ -114,6 +117,9 @@ pub enum RoutableMessage {
     },
     SubscribeStructuredResult {
         agent_id: Uuid,
+        /// Current sequence number at subscribe time. Clients use this as
+        /// their initial seq when no StructuredOutput messages have arrived.
+        seq: u64,
         error: Option<ProtocolError>,
     },
     CreateAgent(CreateAgentRequest),
@@ -131,11 +137,17 @@ pub enum RoutableMessage {
     },
     StructuredOutput {
         agent_id: Uuid,
-        data: Box<StructuredOutput>,
+        seq: u64,
+        data: Box<AgentStructuredOutput>,
     },
     StructuredInput {
         agent_id: Uuid,
-        data: StructuredInput,
+        seq: u64,
+        data: AgentStructuredInput,
+    },
+    StructuredInputResult {
+        agent_id: Uuid,
+        error: Option<ProtocolError>,
     },
     SubscriptionClosed {
         agent_id: Uuid,
@@ -157,6 +169,7 @@ impl RoutableMessage {
             RoutableMessage::RawOutput { .. } => "RawOutput",
             RoutableMessage::StructuredOutput { .. } => "StructuredOutput",
             RoutableMessage::StructuredInput { .. } => "StructuredInput",
+            RoutableMessage::StructuredInputResult { .. } => "StructuredInputResult",
             RoutableMessage::SubscriptionClosed { .. } => "SubscriptionClosed",
             RoutableMessage::UnknownMessage => "UnknownMessage",
         }
