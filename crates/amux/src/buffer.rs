@@ -9,7 +9,6 @@
 
 use crate::claude::types::AgentStructuredOutput;
 use std::sync::Arc;
-use std::sync::atomic::{AtomicU64, Ordering};
 use tokio::sync::{RwLock, mpsc};
 
 /// Sequenced envelope for structured output entries.
@@ -39,19 +38,25 @@ const CHANNEL_HEADROOM: usize = 256;
 /// Two implementations are provided: [`BytePolicy`] for contiguous byte
 /// streams and [`StructuredPolicy`] for structured entries.
 pub trait BufferPolicy: Send + Sync + 'static {
+    /// The caller-provided value published into the buffer.
+    type Input: Send + 'static;
     /// The message type sent through subscriber channels.
     type Item: Clone + Send + 'static;
     /// Internal storage type.
     type Storage: Send + Sync + Default;
 
-    /// Return `true` to skip a no-op write (e.g. empty byte slice).
-    fn should_skip(item: &Self::Item) -> bool;
-    /// Append an item to storage.
-    fn append(storage: &mut Self::Storage, item: &Self::Item);
-    /// Truncate storage to fit within `capacity`.
-    fn truncate(storage: &mut Self::Storage, capacity: usize);
+    /// Publish one logical input into storage, returning the broadcast item.
+    ///
+    /// Return `None` to skip a no-op publish (e.g. empty byte slice).
+    fn publish(
+        storage: &mut Self::Storage,
+        input: Self::Input,
+        capacity: usize,
+    ) -> Option<Self::Item>;
     /// Replay existing storage contents to a newly registered subscriber.
     fn replay(storage: &Self::Storage, tx: &mpsc::Sender<Self::Item>);
+    /// Clear stored data while preserving any policy-owned metadata.
+    fn clear(storage: &mut Self::Storage);
     /// Channel capacity for a buffer with the given max capacity.
     fn channel_capacity(buffer_capacity: usize) -> usize;
 }
@@ -65,28 +70,32 @@ pub trait BufferPolicy: Send + Sync + 'static {
 pub struct BytePolicy;
 
 impl BufferPolicy for BytePolicy {
+    type Input = Vec<u8>;
     type Item = Vec<u8>;
     type Storage = Vec<u8>;
 
-    fn should_skip(item: &Vec<u8>) -> bool {
-        item.is_empty()
-    }
+    fn publish(storage: &mut Vec<u8>, input: Vec<u8>, capacity: usize) -> Option<Vec<u8>> {
+        if input.is_empty() {
+            return None;
+        }
 
-    fn append(storage: &mut Vec<u8>, item: &Vec<u8>) {
-        storage.extend_from_slice(item);
-    }
-
-    fn truncate(storage: &mut Vec<u8>, capacity: usize) {
+        storage.extend_from_slice(&input);
         if storage.len() > capacity {
             let excess = storage.len() - capacity;
             storage.drain(..excess);
         }
+
+        Some(input)
     }
 
     fn replay(storage: &Vec<u8>, tx: &mpsc::Sender<Vec<u8>>) {
         if !storage.is_empty() {
             let _ = tx.try_send(storage.clone());
         }
+    }
+
+    fn clear(storage: &mut Vec<u8>) {
+        storage.clear();
     }
 
     fn channel_capacity(_buffer_capacity: usize) -> usize {
@@ -98,33 +107,51 @@ impl BufferPolicy for BytePolicy {
 
 /// Policy for structured entry buffers (Claude structured I/O).
 ///
-/// Entries are stored in a `Vec` and truncated by entry count. Replay
-/// sends each entry individually to preserve message boundaries.
+/// Entries are stored in a `Vec` and truncated by entry count. The storage also
+/// tracks the most recently published sequence number. Replay sends each entry
+/// individually to preserve message boundaries.
 pub struct StructuredPolicy;
 
+#[derive(Default)]
+#[doc(hidden)]
+pub struct StructuredStorage {
+    entries: Vec<StructuredOutput>,
+    last_seq: u64,
+}
+
 impl BufferPolicy for StructuredPolicy {
+    type Input = AgentStructuredOutput;
     type Item = StructuredOutput;
-    type Storage = Vec<StructuredOutput>;
+    type Storage = StructuredStorage;
 
-    fn should_skip(_item: &StructuredOutput) -> bool {
-        false
-    }
+    fn publish(
+        storage: &mut StructuredStorage,
+        input: AgentStructuredOutput,
+        capacity: usize,
+    ) -> Option<StructuredOutput> {
+        storage.last_seq += 1;
+        let item = StructuredOutput {
+            seq: storage.last_seq,
+            data: input,
+        };
 
-    fn append(storage: &mut Vec<StructuredOutput>, item: &StructuredOutput) {
-        storage.push(item.clone());
-    }
-
-    fn truncate(storage: &mut Vec<StructuredOutput>, capacity: usize) {
-        if storage.len() > capacity {
-            let excess = storage.len() - capacity;
-            storage.drain(..excess);
+        storage.entries.push(item.clone());
+        if storage.entries.len() > capacity {
+            let excess = storage.entries.len() - capacity;
+            storage.entries.drain(..excess);
         }
+
+        Some(item)
     }
 
-    fn replay(storage: &Vec<StructuredOutput>, tx: &mpsc::Sender<StructuredOutput>) {
-        for entry in storage {
+    fn replay(storage: &StructuredStorage, tx: &mpsc::Sender<StructuredOutput>) {
+        for entry in &storage.entries {
             let _ = tx.try_send(entry.clone());
         }
+    }
+
+    fn clear(storage: &mut StructuredStorage) {
+        storage.entries.clear();
     }
 
     fn channel_capacity(buffer_capacity: usize) -> usize {
@@ -170,25 +197,22 @@ impl<P: BufferPolicy> BroadcastBuffer<P> {
         }
     }
 
-    /// Write an item to the buffer and broadcast to all subscribers.
+    /// Publish an input into the buffer and broadcast the resulting item.
     ///
-    /// Holds the storage write lock during both append and broadcast,
-    /// ensuring atomicity with `subscribe()`. Dead or full subscribers
-    /// are automatically cleaned up.
-    pub async fn write(&self, item: P::Item) {
-        if P::should_skip(&item) {
-            return;
-        }
-
+    /// Holds the storage write lock during both publication and broadcast,
+    /// ensuring atomicity with `subscribe()`. Dead or full subscribers are
+    /// automatically cleaned up.
+    pub async fn write(&self, input: P::Input) -> Option<P::Item> {
         let mut storage = self.inner.storage.write().await;
-        P::append(&mut storage, &item);
-        P::truncate(&mut storage, self.inner.capacity);
+        let item = P::publish(&mut storage, input, self.inner.capacity)?;
 
         // Broadcast to subscribers, removing any that are disconnected or full.
         // Dropping full subscribers provides backpressure: a consumer that can't
         // keep up gets disconnected rather than causing unbounded memory growth.
         let mut subs = self.inner.subscribers.write().await;
         subs.retain(|tx| tx.try_send(item.clone()).is_ok());
+
+        Some(item)
     }
 
     /// Subscribe to the buffer, receiving all existing items and future writes.
@@ -198,6 +222,19 @@ impl<P: BufferPolicy> BroadcastBuffer<P> {
     ///
     /// Returns `None` if the buffer has been closed.
     pub async fn subscribe(&self) -> Option<BroadcastReader<P>> {
+        self.subscribe_with_snapshot(|_| ())
+            .await
+            .map(|(reader, ())| reader)
+    }
+
+    /// Subscribe to the buffer and read a policy-specific snapshot under the
+    /// same storage lock used for replay.
+    ///
+    /// The returned snapshot is consistent with the replayed data.
+    pub async fn subscribe_with_snapshot<R>(
+        &self,
+        snapshot: impl FnOnce(&P::Storage) -> R,
+    ) -> Option<(BroadcastReader<P>, R)> {
         let capacity = P::channel_capacity(self.inner.capacity);
         let (tx, rx) = mpsc::channel(capacity);
 
@@ -211,10 +248,17 @@ impl<P: BufferPolicy> BroadcastBuffer<P> {
             return None;
         }
 
+        let snapshot = snapshot(&storage);
         self.inner.subscribers.write().await.push(tx.clone());
         P::replay(&storage, &tx);
 
-        Some(BroadcastReader { rx })
+        Some((BroadcastReader { rx }, snapshot))
+    }
+
+    /// Inspect storage under the buffer's read lock.
+    pub async fn inspect<R>(&self, inspect: impl FnOnce(&P::Storage) -> R) -> R {
+        let storage = self.inner.storage.read().await;
+        inspect(&storage)
     }
 
     /// Clear all stored data but keep the buffer open.
@@ -223,7 +267,7 @@ impl<P: BufferPolicy> BroadcastBuffer<P> {
     /// Late subscribers will only see data written after the clear.
     pub async fn clear(&self) {
         let mut storage = self.inner.storage.write().await;
-        *storage = P::Storage::default();
+        P::clear(&mut storage);
     }
 
     /// Close the buffer, causing all readers to receive `None` on their next read.
@@ -275,57 +319,23 @@ pub type MultiplexByteBuffer = BroadcastBuffer<BytePolicy>;
 pub type MultiplexByteReader = BroadcastReader<BytePolicy>;
 
 /// Structured broadcast buffer for Claude structured I/O (replay + broadcast).
-type MultiplexStructuredBuffer = BroadcastBuffer<StructuredPolicy>;
+pub type MultiplexStructuredBuffer = BroadcastBuffer<StructuredPolicy>;
 /// Reader for structured output (yields sequenced envelopes).
 pub type MultiplexStructuredReader = BroadcastReader<StructuredPolicy>;
 
-/// Sequenced wrapper around a structured broadcast buffer.
-///
-/// Assigns monotonically increasing sequence numbers to each entry.
-/// Clients include the latest seq when sending input; the server
-/// can reject stale input by comparing sequence numbers.
-pub struct SequencedStructuredBuffer {
-    inner: MultiplexStructuredBuffer,
-    seq: AtomicU64,
-}
-
-impl SequencedStructuredBuffer {
-    /// Create a new sequenced buffer with the given entry capacity.
-    pub fn new(capacity: usize) -> Self {
-        Self {
-            inner: MultiplexStructuredBuffer::new(capacity),
-            seq: AtomicU64::new(0),
-        }
+impl BroadcastBuffer<StructuredPolicy> {
+    /// Return the current structured output sequence number.
+    ///
+    /// Returns 0 if no entries have been published.
+    pub async fn current_seq(&self) -> u64 {
+        self.inspect(|storage| storage.last_seq).await
     }
 
-    /// Write an entry, assigning the next sequence number.
-    pub async fn write(&self, entry: AgentStructuredOutput) {
-        let seq = self.seq.fetch_add(1, Ordering::Relaxed) + 1;
-        self.inner
-            .write(StructuredOutput { seq, data: entry })
-            .await;
-    }
-
-    /// Return the current (most recently assigned) sequence number.
-    /// Returns 0 if no entries have been written.
-    pub fn current_seq(&self) -> u64 {
-        self.seq.load(Ordering::Relaxed)
-    }
-
-    /// Subscribe to the buffer (replay + live).
-    pub async fn subscribe(&self) -> Option<MultiplexStructuredReader> {
-        self.inner.subscribe().await
-    }
-
-    /// Clear stored data but keep the buffer open.
-    /// Does NOT reset the sequence counter.
-    pub async fn clear(&self) {
-        self.inner.clear().await;
-    }
-
-    /// Close the buffer.
-    pub async fn close(&self) {
-        self.inner.close().await;
+    /// Subscribe to structured output and return the sequence number that
+    /// matches the replayed snapshot.
+    pub async fn subscribe_with_current_seq(&self) -> Option<(MultiplexStructuredReader, u64)> {
+        self.subscribe_with_snapshot(|storage| storage.last_seq)
+            .await
     }
 }
 
@@ -510,7 +520,7 @@ mod tests {
 
     #[tokio::test]
     async fn test_entry_truncation_by_count() {
-        let buffer = SequencedStructuredBuffer::new(3); // Only 3 entries max
+        let buffer = MultiplexStructuredBuffer::new(3); // Only 3 entries max
 
         for i in 1..=5 {
             buffer
@@ -527,7 +537,7 @@ mod tests {
 
     #[tokio::test]
     async fn test_entry_per_entry_replay() {
-        let buffer = SequencedStructuredBuffer::new(100);
+        let buffer = MultiplexStructuredBuffer::new(100);
 
         buffer.write(user_msg("first", "1")).await;
         buffer.write(user_msg("second", "2")).await;
@@ -546,7 +556,7 @@ mod tests {
 
     #[tokio::test]
     async fn test_clear_resets_storage_keeps_subscribers() {
-        let buffer = SequencedStructuredBuffer::new(100);
+        let buffer = MultiplexStructuredBuffer::new(100);
 
         buffer.write(user_msg("before", "1")).await;
         buffer.write(user_msg("also-before", "2")).await;
@@ -567,7 +577,7 @@ mod tests {
 
     #[tokio::test]
     async fn test_entry_close_returns_none() {
-        let buffer = SequencedStructuredBuffer::new(100);
+        let buffer = MultiplexStructuredBuffer::new(100);
         let mut reader = buffer.subscribe().await.unwrap();
 
         buffer.write(user_msg("data", "1")).await;
@@ -579,32 +589,32 @@ mod tests {
 
     #[tokio::test]
     async fn test_seq_increments_on_each_write() {
-        let buffer = SequencedStructuredBuffer::new(100);
-        assert_eq!(buffer.current_seq(), 0);
+        let buffer = MultiplexStructuredBuffer::new(100);
+        assert_eq!(buffer.current_seq().await, 0);
 
         buffer.write(user_msg("a", "1")).await;
-        assert_eq!(buffer.current_seq(), 1);
+        assert_eq!(buffer.current_seq().await, 1);
 
         buffer.write(user_msg("b", "2")).await;
-        assert_eq!(buffer.current_seq(), 2);
+        assert_eq!(buffer.current_seq().await, 2);
 
         buffer.write(user_msg("c", "3")).await;
-        assert_eq!(buffer.current_seq(), 3);
+        assert_eq!(buffer.current_seq().await, 3);
     }
 
     #[tokio::test]
     async fn test_seq_survives_clear() {
-        let buffer = SequencedStructuredBuffer::new(100);
+        let buffer = MultiplexStructuredBuffer::new(100);
 
         buffer.write(user_msg("a", "1")).await;
         buffer.write(user_msg("b", "2")).await;
-        assert_eq!(buffer.current_seq(), 2);
+        assert_eq!(buffer.current_seq().await, 2);
 
         buffer.clear().await;
-        assert_eq!(buffer.current_seq(), 2, "clear must not reset seq");
+        assert_eq!(buffer.current_seq().await, 2, "clear must not reset seq");
 
         buffer.write(user_msg("c", "3")).await;
-        assert_eq!(buffer.current_seq(), 3);
+        assert_eq!(buffer.current_seq().await, 3);
 
         let mut reader = buffer.subscribe().await.unwrap();
         assert_eq!(reader.read().await.unwrap(), envelope(3, "c", "3"));
@@ -612,7 +622,7 @@ mod tests {
 
     #[tokio::test]
     async fn test_subscribers_receive_correct_seq_in_replay_and_live() {
-        let buffer = SequencedStructuredBuffer::new(100);
+        let buffer = MultiplexStructuredBuffer::new(100);
 
         buffer.write(user_msg("a", "1")).await;
         buffer.write(user_msg("b", "2")).await;
@@ -628,5 +638,18 @@ mod tests {
         buffer.write(user_msg("c", "3")).await;
         let item3 = reader.read().await.unwrap();
         assert_eq!(item3.seq, 3);
+    }
+
+    #[tokio::test]
+    async fn test_subscribe_with_current_seq_matches_replayed_snapshot() {
+        let buffer = MultiplexStructuredBuffer::new(100);
+
+        buffer.write(user_msg("a", "1")).await;
+        buffer.write(user_msg("b", "2")).await;
+
+        let (mut reader, seq) = buffer.subscribe_with_current_seq().await.unwrap();
+        assert_eq!(seq, 2);
+        assert_eq!(reader.read().await.unwrap(), envelope(1, "a", "1"));
+        assert_eq!(reader.read().await.unwrap(), envelope(2, "b", "2"));
     }
 }

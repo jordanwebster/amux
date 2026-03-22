@@ -19,7 +19,7 @@ use crate::buffer::{MultiplexByteBuffer, MultiplexByteReader, MultiplexStructure
 use crate::claude::structured_log_source::StructuredLogSource;
 use crate::claude::types::{AgentStructuredInput, Hook};
 use crate::error::{AmuxError, Result};
-use crate::message::{CreateAgentRequest, TerminalSize};
+use crate::message::{CreateAgentRequest, ProtocolError, TerminalSize};
 use crate::route::Route;
 use portable_pty::{CommandBuilder, MasterPty, PtySize, native_pty_system};
 use serde::{Deserialize, Serialize};
@@ -228,6 +228,14 @@ pub enum AgentSession {
 }
 
 impl AgentSession {
+    fn structured_input_type_label(&self) -> &'static str {
+        match self {
+            Self::Claude(_) => "Claude",
+            #[cfg(any(debug_assertions, test))]
+            Self::TestAgent(_) => "no structured input",
+        }
+    }
+
     pub fn agent_id(&self) -> Uuid {
         match self {
             Self::Claude(s) => s.agent_id,
@@ -280,20 +288,43 @@ impl AgentSession {
     }
 
     /// Return the current structured output sequence number.
-    pub fn current_seq(&self) -> u64 {
+    pub async fn current_seq(&self) -> u64 {
         match self {
-            Self::Claude(s) => s.current_seq(),
+            Self::Claude(s) => s.current_seq().await,
             #[cfg(any(debug_assertions, test))]
-            Self::TestAgent(s) => s.current_seq(),
+            Self::TestAgent(s) => s.current_seq().await,
         }
     }
 
-    /// Send structured input to the agent.
-    pub async fn send_input(&self, input: AgentStructuredInput) -> Result<()> {
+    /// Subscribe to structured log output and return the matching seq.
+    pub async fn subscribe_with_current_seq(&self) -> Option<(MultiplexStructuredReader, u64)> {
         match self {
-            Self::Claude(s) => s.send_input(input).await,
+            Self::Claude(s) => s.subscribe_with_current_seq().await,
             #[cfg(any(debug_assertions, test))]
-            Self::TestAgent(_) => Ok(()),
+            Self::TestAgent(s) => s.subscribe_with_current_seq().await,
+        }
+    }
+
+    /// Validate seq and send structured input to the agent.
+    pub async fn send_structured_input(
+        &self,
+        client_seq: u64,
+        input: AgentStructuredInput,
+    ) -> std::result::Result<(), ProtocolError> {
+        match (self, input) {
+            (Self::Claude(s), AgentStructuredInput::Claude(input)) => {
+                s.send_structured_input(client_seq, input).await
+            }
+            #[cfg(any(debug_assertions, test))]
+            (Self::TestAgent(_), input) => Err(ProtocolError::StructuredInputTypeMismatch {
+                expected: self.structured_input_type_label().to_string(),
+                received: input.type_label().to_string(),
+            }),
+            #[allow(unreachable_patterns)]
+            (session, input) => Err(ProtocolError::StructuredInputTypeMismatch {
+                expected: session.structured_input_type_label().to_string(),
+                received: input.type_label().to_string(),
+            }),
         }
     }
 
@@ -468,5 +499,44 @@ impl SuspendedAgent {
                 AgentSession::TestAgent(TestAgentSession::new(&req, command))
             }
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::claude::types::{AgentStructuredInput, ClaudeStructuredInput};
+    use crate::message::AgentType;
+
+    #[tokio::test]
+    #[cfg(any(debug_assertions, test))]
+    async fn test_test_agent_rejects_claude_structured_input_with_type_mismatch() {
+        let req = CreateAgentRequest {
+            agent_id: Uuid::new_v4(),
+            name: Some("test".to_string()),
+            agent_type: AgentType::TestAgent("test-agent".to_string()),
+            working_dir: PathBuf::from("/tmp"),
+            terminal_size: None,
+        };
+        let session =
+            AgentSession::TestAgent(TestAgentSession::new(&req, "test-agent".to_string()));
+
+        let err = session
+            .send_structured_input(
+                0,
+                AgentStructuredInput::Claude(ClaudeStructuredInput::SubmitMessage {
+                    data: b"hello".to_vec(),
+                }),
+            )
+            .await
+            .unwrap_err();
+
+        assert_eq!(
+            err,
+            ProtocolError::StructuredInputTypeMismatch {
+                expected: "no structured input".to_string(),
+                received: "Claude".to_string(),
+            }
+        );
     }
 }

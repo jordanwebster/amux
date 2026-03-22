@@ -279,7 +279,7 @@ async fn handle_routable(
             let Some((reply_src, reply_dst)) = reply_routes(src, "SubscribeStructured") else {
                 return Ok(());
             };
-            let (log_reader, current_seq) = {
+            let subscribed = {
                 let us = ctx.user_state.read().await;
                 let Some(session) = us.agents.get(&agent_id) else {
                     let _ = tx
@@ -298,10 +298,10 @@ async fn handle_routable(
                         .await;
                     return Ok(());
                 };
-                (session.subscribe().await, session.current_seq())
+                session.subscribe_with_current_seq().await
             };
 
-            let Some(reader) = log_reader else {
+            let Some((reader, current_seq)) = subscribed else {
                 let _ = tx
                     .send(Message::routable(
                         reply_src,
@@ -395,28 +395,23 @@ async fn handle_routable(
             data,
         } => {
             let us = ctx.user_state.read().await;
-            if let Some(session) = us.agents.get(&agent_id) {
-                let current_seq = session.current_seq();
-                if client_seq != current_seq {
-                    if let Some((reply_src, reply_dst)) = reply_routes(src, "StructuredInput") {
-                        let _ = tx
-                            .send(Message::routable(
-                                reply_src,
-                                reply_dst,
-                                request_id,
-                                &RoutableMessage::StructuredInputResult {
-                                    agent_id,
-                                    error: Some(ProtocolError::SequenceNumberMismatch {
-                                        client_seq,
-                                        current_seq,
-                                    }),
-                                },
-                            ))
-                            .await;
-                    }
-                    return Ok(());
+            if let Some(session) = us.agents.get(&agent_id)
+                && let Err(error) = session.send_structured_input(client_seq, data).await
+            {
+                if let Some((reply_src, reply_dst)) = reply_routes(src, "StructuredInput") {
+                    let _ = tx
+                        .send(Message::routable(
+                            reply_src,
+                            reply_dst,
+                            request_id,
+                            &RoutableMessage::StructuredInputResult {
+                                agent_id,
+                                error: Some(error),
+                            },
+                        ))
+                        .await;
                 }
-                let _ = session.send_input(data).await;
+                return Ok(());
             }
             Ok(())
         }

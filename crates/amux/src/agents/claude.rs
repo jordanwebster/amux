@@ -8,11 +8,11 @@ use super::{PtyHandle, spawn_pty_agent};
 use crate::buffer::MultiplexStructuredReader;
 use crate::claude::structured_log_source::StructuredLogSource;
 use crate::claude::types::{
-    AgentStructuredInput, AgentStructuredOutput, AskUserQuestionOption, AskUserQuestionResponse,
-    ClaudeHook, ClaudeStructuredInput, ClaudeStructuredOutput, Hook, PermissionResponse,
+    AgentStructuredOutput, AskUserQuestionOption, AskUserQuestionResponse, ClaudeHook,
+    ClaudeStructuredInput, ClaudeStructuredOutput, Hook, PermissionResponse,
 };
 use crate::error::Result;
-use crate::message::CreateAgentRequest;
+use crate::message::{CreateAgentRequest, ProtocolError};
 use std::path::PathBuf;
 use std::time::Duration;
 use uuid::Uuid;
@@ -328,24 +328,41 @@ impl ClaudeSession {
     }
 
     /// Send structured input to Claude Code.
-    pub async fn send_input(&self, input: AgentStructuredInput) -> Result<()> {
+    async fn send_input(&self, input: ClaudeStructuredInput) -> Result<()> {
         let Some(pty) = &self.pty else {
             return Ok(());
         };
         let actions = match &input {
-            AgentStructuredInput::Claude(claude_input) => match claude_input {
-                ClaudeStructuredInput::SubmitMessage { data } => submit_message_keystrokes(data),
-                ClaudeStructuredInput::PermissionResponse(response) => {
-                    tracing::info!(agent_id = %self.agent_id, ?response, "sending permission response");
-                    permission_response_keystrokes(response)
-                }
-                ClaudeStructuredInput::AskUserQuestionResponse(response) => {
-                    tracing::info!(agent_id = %self.agent_id, num_questions = response.questions.len(), "sending AskUserQuestion response");
-                    ask_question_keystrokes(response)
-                }
-            },
+            ClaudeStructuredInput::SubmitMessage { data } => submit_message_keystrokes(data),
+            ClaudeStructuredInput::PermissionResponse(response) => {
+                tracing::info!(agent_id = %self.agent_id, ?response, "sending permission response");
+                permission_response_keystrokes(response)
+            }
+            ClaudeStructuredInput::AskUserQuestionResponse(response) => {
+                tracing::info!(agent_id = %self.agent_id, num_questions = response.questions.len(), "sending AskUserQuestion response");
+                ask_question_keystrokes(response)
+            }
         };
         execute_pty_actions(pty, &actions).await
+    }
+
+    /// Validate seq and send structured input to Claude Code.
+    pub async fn send_structured_input(
+        &self,
+        client_seq: u64,
+        input: ClaudeStructuredInput,
+    ) -> std::result::Result<(), ProtocolError> {
+        let current_seq = self.current_seq().await;
+        if client_seq != current_seq {
+            return Err(ProtocolError::SequenceNumberMismatch {
+                client_seq,
+                current_seq,
+            });
+        }
+
+        self.send_input(input)
+            .await
+            .map_err(|e| ProtocolError::ServerError(e.to_string()))
     }
 
     /// Handle a hook event.
@@ -426,16 +443,21 @@ impl ClaudeSession {
     }
 
     /// Return the current structured output sequence number.
-    pub fn current_seq(&self) -> u64 {
-        self.log_source
-            .as_ref()
-            .map(|s| s.current_seq())
-            .unwrap_or(0)
+    pub async fn current_seq(&self) -> u64 {
+        match &self.log_source {
+            Some(log_source) => log_source.current_seq().await,
+            None => 0,
+        }
     }
 
     /// Subscribe to structured log output.
     pub async fn subscribe(&self) -> Option<MultiplexStructuredReader> {
         self.log_source.as_ref()?.subscribe().await
+    }
+
+    /// Subscribe to structured log output and return the matching seq.
+    pub async fn subscribe_with_current_seq(&self) -> Option<(MultiplexStructuredReader, u64)> {
+        self.log_source.as_ref()?.subscribe_with_current_seq().await
     }
 
     /// Shut down the session according to the given policy.

@@ -1107,6 +1107,15 @@ pub enum AgentStructuredInput {
     Claude(ClaudeStructuredInput),
 }
 
+impl AgentStructuredInput {
+    /// Human-readable label for this structured input family.
+    pub fn type_label(&self) -> &'static str {
+        match self {
+            Self::Claude(_) => "Claude",
+        }
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;

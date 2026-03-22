@@ -55,6 +55,9 @@ pub enum ProtocolError {
     /// Structured input seq doesn't match current output seq
     #[error("sequence number mismatch (client {client_seq}, server {current_seq})")]
     SequenceNumberMismatch { client_seq: u64, current_seq: u64 },
+    /// Structured input was sent to an agent that expects a different input family
+    #[error("structured input type mismatch (expected {expected}, received {received})")]
+    StructuredInputTypeMismatch { expected: String, received: String },
 }
 
 /// Reason for server shutdown notification

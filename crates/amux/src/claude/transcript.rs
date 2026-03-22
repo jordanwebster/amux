@@ -4,7 +4,7 @@
 //! user/assistant messages into StructuredOutput entries.
 
 use super::types::{AgentStructuredOutput, ClaudeStructuredOutput};
-use crate::buffer::SequencedStructuredBuffer;
+use crate::buffer::MultiplexStructuredBuffer;
 use serde::Deserialize;
 use std::path::PathBuf;
 use std::sync::Arc;
@@ -124,13 +124,13 @@ impl AssistantMessage {
 /// Tails a Claude transcript file and writes parsed entries to a buffer.
 pub struct TranscriptTailer {
     path: PathBuf,
-    buffer: Arc<SequencedStructuredBuffer>,
+    buffer: Arc<MultiplexStructuredBuffer>,
     shutdown_tx: watch::Sender<bool>,
 }
 
 impl TranscriptTailer {
     /// Create a new TranscriptTailer for the given transcript path.
-    pub fn new(path: PathBuf, buffer: Arc<SequencedStructuredBuffer>) -> Self {
+    pub fn new(path: PathBuf, buffer: Arc<MultiplexStructuredBuffer>) -> Self {
         let (shutdown_tx, _) = watch::channel(false);
         Self {
             path,
@@ -163,7 +163,7 @@ impl TranscriptTailer {
 /// Internal function to tail the transcript file.
 async fn tail_transcript(
     path: PathBuf,
-    buffer: Arc<SequencedStructuredBuffer>,
+    buffer: Arc<MultiplexStructuredBuffer>,
     shutdown_rx: &mut watch::Receiver<bool>,
 ) -> std::io::Result<()> {
     // Wait for file to exist

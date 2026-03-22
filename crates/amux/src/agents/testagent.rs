@@ -55,16 +55,21 @@ impl TestAgentSession {
     }
 
     /// Return the current structured output sequence number.
-    pub fn current_seq(&self) -> u64 {
-        self.log_source
-            .as_ref()
-            .map(|s| s.current_seq())
-            .unwrap_or(0)
+    pub async fn current_seq(&self) -> u64 {
+        match &self.log_source {
+            Some(log_source) => log_source.current_seq().await,
+            None => 0,
+        }
     }
 
     /// Subscribe to structured log output.
     pub async fn subscribe(&self) -> Option<MultiplexStructuredReader> {
         self.log_source.as_ref()?.subscribe().await
+    }
+
+    /// Subscribe to structured log output and return the matching seq.
+    pub async fn subscribe_with_current_seq(&self) -> Option<(MultiplexStructuredReader, u64)> {
+        self.log_source.as_ref()?.subscribe_with_current_seq().await
     }
 
     /// Shut down the session: close PTY and log source.
