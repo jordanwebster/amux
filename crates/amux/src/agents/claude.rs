@@ -285,9 +285,11 @@ pub struct ClaudeSession {
     pub(super) terminal_size: Option<crate::message::TerminalSize>,
     /// Claude session ID. Set from SessionStart hook during normal operation,
     /// or pre-set before `start()` for resume (triggers `--resume <id>`).
-    /// Claude session ID. Set from SessionStart hook during normal operation,
-    /// or pre-set before `start()` for resume (triggers `--resume <id>`).
     pub(super) session_id: Option<Uuid>,
+    /// True for externally-started sessions (no PTY, transcript-only)
+    pub(super) readonly: bool,
+    /// Extra arguments passed to the claude command
+    pub(super) args: Vec<String>,
 }
 
 impl ClaudeSession {
@@ -303,17 +305,45 @@ impl ClaudeSession {
             log_source: None,
             terminal_size: req.terminal_size,
             session_id: None,
+            readonly: false,
+            args: req.args.clone(),
+        }
+    }
+
+    /// Create a readonly session for an externally-started Claude process.
+    /// Has a StructuredLogSource (for transcript tailing) but no PTY.
+    pub fn new_readonly(agent_id: Uuid, working_dir: PathBuf) -> Self {
+        Self {
+            agent_id,
+            name: None,
+            command: "claude".to_string(),
+            working_dir,
+            pty: None,
+            log_source: Some(StructuredLogSource::new()),
+            terminal_size: None,
+            session_id: None,
+            readonly: true,
+            args: vec![],
+        }
+    }
+
+    /// Link a transcript file for structured output tailing.
+    pub async fn link_transcript(&self, path: PathBuf) {
+        if let Some(log_source) = &self.log_source {
+            log_source.link_transcript(path).await;
         }
     }
 
     /// Spawn the Claude Code process. Returns an exit handle that completes
     /// when the process exits. If `session_id` is set, passes `--resume <id>`.
+    /// Extra args from creation are appended.
     pub fn start(&mut self) -> Result<tokio::task::JoinHandle<()>> {
         let env = [("AMUX_AGENT_ID", self.agent_id.to_string())];
-        let args: Vec<String> = match self.session_id {
+        let mut args: Vec<String> = match self.session_id {
             Some(id) => vec!["--resume".to_string(), id.to_string()],
             None => vec![],
         };
+        args.extend(self.args.iter().cloned());
         let (pty, log_source, exit_handle) = spawn_pty_agent(
             self.agent_id,
             &self.command,
@@ -352,6 +382,11 @@ impl ClaudeSession {
         client_seq: u64,
         input: ClaudeStructuredInput,
     ) -> std::result::Result<(), ProtocolError> {
+        if self.readonly {
+            return Err(ProtocolError::ServerError(
+                "session is readonly".to_string(),
+            ));
+        }
         let current_seq = self.current_seq().await;
         if client_seq != current_seq {
             return Err(ProtocolError::SequenceNumberMismatch {
@@ -431,6 +466,14 @@ impl ClaudeSession {
             }
             Hook::Claude(ClaudeHook::Stop(_)) => {
                 tracing::debug!(agent_id = %self.agent_id, "agent stopped");
+                log_source
+                    .write(AgentStructuredOutput::Claude(
+                        ClaudeStructuredOutput::AgentStopped,
+                    ))
+                    .await;
+            }
+            Hook::Claude(ClaudeHook::SessionEnd(_)) => {
+                tracing::debug!(agent_id = %self.agent_id, "session ended");
                 log_source
                     .write(AgentStructuredOutput::Claude(
                         ClaudeStructuredOutput::AgentStopped,

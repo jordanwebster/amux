@@ -10,7 +10,7 @@ use crate::agents::{AgentSession, SessionEvent};
 use crate::config::Config;
 use crate::error::{AmuxError, Result};
 use crate::jwt::JwtValidator;
-use crate::message::{Command, Host, Message, ProtocolError, ShutdownReason};
+use crate::message::{AgentType, Command, Host, Message, ProtocolError, ShutdownReason};
 use crate::route::Route;
 use crate::transport::{TcpTransport, TransportSplit, create_tls_acceptor};
 use routing::{shutdown_server, suspend_server};
@@ -105,7 +105,7 @@ mod routing;
 pub use accept::connect_handshake;
 use accept::{local_accept, tcp_accept, websocket_accept};
 use cloud::establish_cloud_connection;
-use routing::broadcast_to_peers;
+use routing::withdraw_agent;
 
 /// Default user for non-authenticated connections. Local amux servers are
 /// single-user: all state (agents, routes, registry) lives under this ID.
@@ -322,20 +322,39 @@ impl Server {
                         };
                         if let Some(user_state) = user_state {
                             let mut us = user_state.write().await;
-                            let name = us.registry.get(&agent_id).and_then(|a| a.name.clone());
-                            us.registry.remove(&agent_id);
-                            us.agents.remove(&agent_id);
-                            tracing::info!(
-                                agent_id = %agent_id,
-                                name = ?name,
-                                remaining_agents = us.agents.len(),
-                                "agent session ended"
-                            );
-                            broadcast_to_peers(
-                                &mut us,
-                                &crate::message::DirectMessage::WithdrawAgent { agent_id },
-                                None,
-                            );
+                            withdraw_agent(&mut us, agent_id);
+                        }
+                    }
+                    SessionEvent::Created {
+                        agent_id,
+                        user_id,
+                        agent_type,
+                        args,
+                    } => {
+                        // Check if this agent was forked from a readonly session
+                        if matches!(agent_type, AgentType::Claude)
+                            && args.contains(&"--fork-session".to_string())
+                            && let Some(pos) = args.iter().position(|a| a == "--resume")
+                            && let Some(source_id_str) = args.get(pos + 1)
+                            && let Ok(source_id) = source_id_str.parse::<Uuid>()
+                        {
+                            let user_state = {
+                                let s = state.read().await;
+                                s.get_user_state(&user_id)
+                            };
+                            if let Some(user_state) = user_state {
+                                let mut us = user_state.write().await;
+                                let is_readonly =
+                                    us.agents.get(&source_id).is_some_and(|s| s.readonly());
+                                if is_readonly {
+                                    withdraw_agent(&mut us, source_id);
+                                    tracing::info!(
+                                        source = %source_id,
+                                        fork = %agent_id,
+                                        "withdrew readonly session (forked)"
+                                    );
+                                }
+                            }
                         }
                     }
                 }

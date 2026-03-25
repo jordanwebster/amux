@@ -38,6 +38,43 @@ One paragraph describing what was done.
 
 ---
 
+## 2026-03-23: External session capture and fork-and-swap
+
+### Summary
+Added the ability for amux to capture Claude sessions started outside of amux as readonly sessions. When a Claude Code hook fires without `AMUX_AGENT_ID`, the hook handler uses the session's `session_id` as the `agent_id` and sends the hook to the server. The server creates a readonly `ClaudeSession` (no PTY, just transcript tailing) and announces it to peers. Clients can fork a readonly session into a full PTY-backed session by creating a new agent with `--resume <id> --fork-session` args; an event handler detects this and auto-withdraws the readonly source. A `SessionEnd` hook cleans up readonly sessions when the external Claude process exits.
+
+### Changes
+- `crates/amux/src/message.rs` — added `args: Vec<String>` to `CreateAgentRequest`, `agent_type: AgentType` and `readonly: bool` to `AnnounceAgent`
+- `crates/amux/src/agent_registry.rs` — added `agent_type: AgentType` and `readonly: bool` to `Agent` struct
+- `crates/amux/src/claude/types.rs` — added `SessionEnd` variant to `ClaudeHook`, added `cwd` and `transcript_path` fields to all hook variant structs, added `session_id()`, `cwd()`, `transcript_path()` accessors
+- `crates/amux/src/agents/claude.rs` — added `readonly` and `args` fields, `new_readonly()` constructor, `link_transcript()` method, `SessionEnd` hook handling, readonly input gating
+- `crates/amux/src/agents/mod.rs` — added `readonly()` method, `SessionEvent::Created` variant, updated `to_agent()` with `agent_type`
+- `crates/amux-cli/src/hooks.rs` — restructured to handle external sessions (no `AMUX_AGENT_ID`)
+- `crates/amux/src/server/handlers.rs` — readonly session creation on external hooks, `SessionEnd` cleanup, `agent_type` propagation in `AnnounceAgent`
+- `crates/amux/src/server/routing.rs` — `withdraw_agent()` helper, `SessionEvent::Created` emission
+- `crates/amux/src/server/mod.rs` — fork detection event handler, `withdraw_agent()` usage
+
+### Decisions Made
+- `readonly` as a flag on `Agent`/`AnnounceAgent` (not a separate `AgentType` variant) — readonly is orthogonal to agent type and will apply to Codex and future agents too
+- `agent_type` propagated through `AnnounceAgent` and `Agent` — sets up for adding Codex and other agent types
+- Use `session_id` as `agent_id` for readonly sessions — avoids needing a mapping table
+- Any hook (not just SessionStart) can create a readonly session — all hooks carry `cwd` and `transcript_path`, so sessions survive server restarts
+- Skip readonly sessions during suspend — they're ephemeral, the next hook re-creates them
+- `withdraw_agent()` extracted as a method — the remove-from-agents + remove-from-registry + broadcast-withdraw pattern appeared in 4 places
+- `CreateAgentRequest` gets `args: Vec<String>` for general CLI passthrough — enables `--fork-session --resume <id>` and future args like `--allow-dangerously-skip-permissions`
+
+### Verification
+- `cargo check && cargo fmt && cargo clippy --workspace --all-targets -- -D warnings` — clean
+- `cargo test` — all tests pass
+- E2E tests — all 10 pass
+
+### Next Steps
+- CLI support for `amux new claude --name x -- --extra-args`
+- Mobile app integration: detect readonly sessions, fork-on-input UX
+- E2E test for external session capture flow
+
+---
+
 ## 2026-03-22: Add sequence numbers to structured I/O
 
 ### Summary

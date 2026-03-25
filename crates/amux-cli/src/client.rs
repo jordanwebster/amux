@@ -75,6 +75,7 @@ pub async fn new_agent(name: Option<&str>, agent_type: AgentType, config: &Confi
             agent_type,
             working_dir: working_dir.clone(),
             terminal_size: Some(terminal_size),
+            args: vec![],
         }),
     ))
     .await?;

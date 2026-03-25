@@ -1,3 +1,4 @@
+use crate::message::AgentType;
 use crate::route::Route;
 use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
@@ -13,6 +14,8 @@ pub struct Agent {
     pub command: String,
     pub working_dir: PathBuf,
     pub route: Route,
+    pub agent_type: AgentType,
+    pub readonly: bool,
 }
 
 impl Agent {
@@ -214,6 +217,8 @@ mod tests {
             command: "test".to_string(),
             working_dir: PathBuf::from("/tmp"),
             route: Route::empty(),
+            agent_type: crate::message::AgentType::Claude,
+            readonly: false,
         }
     }
 
@@ -224,6 +229,8 @@ mod tests {
             command: "test".to_string(),
             working_dir: PathBuf::from("/tmp"),
             route,
+            agent_type: crate::message::AgentType::Claude,
+            readonly: false,
         }
     }
 

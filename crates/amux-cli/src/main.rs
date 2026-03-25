@@ -109,6 +109,7 @@ enum HooksProvider {
 #[derive(Subcommand)]
 enum ClaudeHookEvent {
     SessionStart,
+    SessionEnd,
     PermissionRequest,
     PreToolUse,
     PostToolUse,

@@ -99,6 +99,9 @@ pub struct CreateAgentRequest {
     /// Terminal dimensions. None means use defaults (future: headless mode).
     #[serde(default)]
     pub terminal_size: Option<TerminalSize>,
+    /// Extra arguments passed to the agent command (e.g., --fork-session --resume <id>)
+    #[serde(default)]
+    pub args: Vec<String>,
 }
 
 /// Messages that carry src/dst routing information and can be forwarded across hops.
@@ -205,6 +208,8 @@ pub enum DirectMessage {
         command: String,
         working_dir: PathBuf,
         route: Route,
+        agent_type: AgentType,
+        readonly: bool,
     },
     WithdrawAgent {
         agent_id: Uuid,
@@ -444,6 +449,8 @@ mod tests {
             command: "claude".to_string(),
             working_dir: PathBuf::from("/tmp"),
             route: Route::from_link("host-a"),
+            agent_type: AgentType::Claude,
+            readonly: false,
         };
         let encoded = rmp_serde::to_vec_named(&info).unwrap();
         let decoded: Agent = rmp_serde::from_slice(&encoded).unwrap();

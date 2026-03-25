@@ -25,8 +25,53 @@ pub enum ClaudeHook {
     PostToolUse(Box<ClaudePostToolUse>),
     PostToolUseFailure(Box<ClaudePostToolUseFailure>),
     Stop(ClaudeStop),
+    SessionEnd(ClaudeSessionEnd),
     #[serde(other)]
     Unknown,
+}
+
+impl ClaudeHook {
+    /// Extract session_id from any known hook variant.
+    pub fn session_id(&self) -> Option<Uuid> {
+        match self {
+            Self::SessionStart(s) => Some(s.session_id),
+            Self::PermissionRequest(s) => Some(s.session_id),
+            Self::PreToolUse(s) => Some(s.session_id),
+            Self::PostToolUse(s) => Some(s.session_id),
+            Self::PostToolUseFailure(s) => Some(s.session_id),
+            Self::Stop(s) => Some(s.session_id),
+            Self::SessionEnd(s) => Some(s.session_id),
+            Self::Unknown => None,
+        }
+    }
+
+    /// Extract cwd from any known hook variant (all Claude Code hooks include cwd).
+    pub fn cwd(&self) -> Option<&str> {
+        match self {
+            Self::SessionStart(s) => Some(&s.cwd),
+            Self::PermissionRequest(s) => Some(&s.cwd),
+            Self::PreToolUse(s) => Some(&s.cwd),
+            Self::PostToolUse(s) => Some(&s.cwd),
+            Self::PostToolUseFailure(s) => Some(&s.cwd),
+            Self::Stop(s) => Some(&s.cwd),
+            Self::SessionEnd(s) => Some(&s.cwd),
+            Self::Unknown => None,
+        }
+    }
+
+    /// Extract transcript_path from any known hook variant (all Claude Code hooks include it).
+    pub fn transcript_path(&self) -> Option<&str> {
+        match self {
+            Self::SessionStart(s) => Some(&s.transcript_path),
+            Self::PermissionRequest(s) => Some(&s.transcript_path),
+            Self::PreToolUse(s) => Some(&s.transcript_path),
+            Self::PostToolUse(s) => Some(&s.transcript_path),
+            Self::PostToolUseFailure(s) => Some(&s.transcript_path),
+            Self::Stop(s) => Some(&s.transcript_path),
+            Self::SessionEnd(s) => Some(&s.transcript_path),
+            Self::Unknown => None,
+        }
+    }
 }
 
 /// SessionStart hook data from Claude Code
@@ -34,6 +79,15 @@ pub enum ClaudeHook {
 pub struct ClaudeSessionStart {
     pub session_id: Uuid,
     pub transcript_path: String,
+    pub cwd: String,
+}
+
+/// SessionEnd hook data from Claude Code
+#[derive(Debug, Clone, Deserialize, Serialize)]
+pub struct ClaudeSessionEnd {
+    pub session_id: Uuid,
+    pub transcript_path: String,
+    pub cwd: String,
 }
 
 /// Stop hook data from Claude Code
@@ -42,12 +96,16 @@ pub struct ClaudeStop {
     pub session_id: Uuid,
     pub stop_hook_active: bool,
     pub last_assistant_message: String,
+    pub transcript_path: String,
+    pub cwd: String,
 }
 
 /// PermissionRequest hook data from Claude Code
 #[derive(Debug, Clone, Deserialize, Serialize)]
 pub struct ClaudePermissionRequest {
     pub session_id: Uuid,
+    pub transcript_path: String,
+    pub cwd: String,
     #[serde(flatten)]
     pub tool: ClaudePermissionTool,
 }
@@ -57,6 +115,8 @@ pub struct ClaudePermissionRequest {
 pub struct ClaudePreToolUse {
     pub session_id: Uuid,
     pub tool_use_id: String,
+    pub transcript_path: String,
+    pub cwd: String,
     #[serde(flatten)]
     pub tool: PreToolUse,
 }
@@ -66,6 +126,8 @@ pub struct ClaudePreToolUse {
 pub struct ClaudePostToolUse {
     pub session_id: Uuid,
     pub tool_use_id: String,
+    pub transcript_path: String,
+    pub cwd: String,
     #[serde(flatten)]
     pub tool: PostToolUse,
 }
@@ -75,6 +137,8 @@ pub struct ClaudePostToolUse {
 pub struct ClaudePostToolUseFailure {
     pub session_id: Uuid,
     pub tool_use_id: String,
+    pub transcript_path: String,
+    pub cwd: String,
     #[serde(flatten)]
     pub tool: PreToolUse,
     pub error: String,
@@ -999,6 +1063,9 @@ impl std::fmt::Display for ClaudeHook {
             ClaudeHook::Stop(s) => {
                 write!(f, "session {} stopped", s.session_id)
             }
+            ClaudeHook::SessionEnd(s) => {
+                write!(f, "session {} ended", s.session_id)
+            }
             ClaudeHook::Unknown => write!(f, "unknown hook"),
         }
     }
@@ -1152,6 +1219,8 @@ mod tests {
         let json = r#"{
             "hook_event_name": "PermissionRequest",
             "session_id": "00000000-0000-0000-0000-000000000001",
+            "transcript_path": "/tmp",
+            "cwd": "/tmp",
             "tool_name": "SomeNewTool",
             "tool_input": {"foo": "bar"}
         }"#;
@@ -1167,6 +1236,8 @@ mod tests {
         let json = r#"{
             "hook_event_name": "PermissionRequest",
             "session_id": "00000000-0000-0000-0000-000000000001",
+            "transcript_path": "/tmp",
+            "cwd": "/tmp",
             "tool_name": "AskUserQuestion",
             "tool_input": {
                 "questions": [{
@@ -1202,6 +1273,8 @@ mod tests {
         let json = r#"{
             "hook_event_name": "PermissionRequest",
             "session_id": "00000000-0000-0000-0000-000000000001",
+            "transcript_path": "/tmp",
+            "cwd": "/tmp",
             "tool_name": "AskUserQuestion",
             "tool_input": {
                 "questions": [{
@@ -1230,6 +1303,8 @@ mod tests {
         let json = r#"{
             "hook_event_name": "PermissionRequest",
             "session_id": "00000000-0000-0000-0000-000000000001",
+            "transcript_path": "/tmp",
+            "cwd": "/tmp",
             "tool_name": "Edit",
             "tool_input": {
                 "file_path": "/tmp/test.rs",
@@ -1255,6 +1330,8 @@ mod tests {
         let json = r#"{
             "hook_event_name": "PermissionRequest",
             "session_id": "00000000-0000-0000-0000-000000000001",
+            "transcript_path": "/tmp",
+            "cwd": "/tmp",
             "tool_name": "Bash",
             "tool_input": {
                 "command": "cargo test",
@@ -1279,6 +1356,8 @@ mod tests {
         let json = r#"{
             "hook_event_name": "PermissionRequest",
             "session_id": "00000000-0000-0000-0000-000000000001",
+            "transcript_path": "/tmp",
+            "cwd": "/tmp",
             "tool_name": "Bash",
             "tool_input": {
                 "command": "ls"
@@ -1301,6 +1380,8 @@ mod tests {
         let json = r#"{
             "hook_event_name": "PermissionRequest",
             "session_id": "00000000-0000-0000-0000-000000000001",
+            "transcript_path": "/tmp",
+            "cwd": "/tmp",
             "tool_name": "Write",
             "tool_input": {
                 "file_path": "/tmp/output.txt",
@@ -1323,6 +1404,8 @@ mod tests {
         let json = r#"{
             "hook_event_name": "PermissionRequest",
             "session_id": "00000000-0000-0000-0000-000000000001",
+            "transcript_path": "/tmp",
+            "cwd": "/tmp",
             "tool_name": "WebSearch",
             "tool_input": {
                 "query": "rust serde tutorial"
@@ -1343,6 +1426,8 @@ mod tests {
         let json = r#"{
             "hook_event_name": "PermissionRequest",
             "session_id": "00000000-0000-0000-0000-000000000001",
+            "transcript_path": "/tmp",
+            "cwd": "/tmp",
             "tool_name": "Skill",
             "tool_input": {
                 "skill": "commit",
@@ -1365,6 +1450,8 @@ mod tests {
         let json = r#"{
             "hook_event_name": "PermissionRequest",
             "session_id": "00000000-0000-0000-0000-000000000001",
+            "transcript_path": "/tmp",
+            "cwd": "/tmp",
             "tool_name": "ExitPlanMode",
             "tool_input": {
                 "allowedPrompts": [
@@ -1529,6 +1616,7 @@ mod tests {
         let hook = ClaudeHook::SessionStart(ClaudeSessionStart {
             session_id: Uuid::parse_str("00000000-0000-0000-0000-000000000001").unwrap(),
             transcript_path: "/tmp/transcript.jsonl".to_string(),
+            cwd: "/tmp".to_string(),
         });
         assert_eq!(
             hook.to_string(),
@@ -1537,6 +1625,8 @@ mod tests {
 
         let hook = ClaudeHook::PermissionRequest(ClaudePermissionRequest {
             session_id: Uuid::parse_str("00000000-0000-0000-0000-000000000002").unwrap(),
+            transcript_path: "/tmp".to_string(),
+            cwd: "/tmp".to_string(),
             tool: ClaudePermissionTool::Bash {
                 tool_input: bash_tool_input("ls"),
             },
@@ -1660,6 +1750,8 @@ mod tests {
             "hook_event_name": "PreToolUse",
             "session_id": "00000000-0000-0000-0000-000000000001",
             "tool_use_id": "toolu_abc123",
+            "transcript_path": "/tmp",
+            "cwd": "/tmp",
             "tool_name": "Bash",
             "tool_input": {
                 "command": "cargo test",
@@ -1683,6 +1775,8 @@ mod tests {
             "hook_event_name": "PreToolUse",
             "session_id": "00000000-0000-0000-0000-000000000001",
             "tool_use_id": "toolu_read123",
+            "transcript_path": "/tmp",
+            "cwd": "/tmp",
             "tool_name": "Read",
             "tool_input": {
                 "file_path": "/tmp/test.rs",
@@ -1708,6 +1802,8 @@ mod tests {
             "hook_event_name": "PostToolUse",
             "session_id": "00000000-0000-0000-0000-000000000001",
             "tool_use_id": "toolu_abc123",
+            "transcript_path": "/tmp",
+            "cwd": "/tmp",
             "tool_name": "Write",
             "tool_input": {
                 "file_path": "/tmp/test.rs",
@@ -1752,6 +1848,8 @@ mod tests {
             "hook_event_name": "PostToolUse",
             "session_id": "00000000-0000-0000-0000-000000000001",
             "tool_use_id": "toolu_read456",
+            "transcript_path": "/tmp",
+            "cwd": "/tmp",
             "tool_name": "Read",
             "tool_input": {
                 "file_path": "/tmp/test.rs"
@@ -1788,6 +1886,8 @@ mod tests {
             "hook_event_name": "PostToolUse",
             "session_id": "00000000-0000-0000-0000-000000000001",
             "tool_use_id": "toolu_unknown",
+            "transcript_path": "/tmp",
+            "cwd": "/tmp",
             "tool_name": "SomeFutureTool",
             "tool_input": {},
             "tool_response": {
@@ -1819,6 +1919,8 @@ mod tests {
         let hook = Hook::Claude(ClaudeHook::PreToolUse(ClaudePreToolUse {
             session_id: Uuid::parse_str("00000000-0000-0000-0000-000000000001").unwrap(),
             tool_use_id: "toolu_abc".to_string(),
+            transcript_path: "/tmp".to_string(),
+            cwd: "/tmp".to_string(),
             tool: PreToolUse::Bash {
                 tool_input: bash_tool_input("ls"),
             },
@@ -1839,6 +1941,8 @@ mod tests {
         let hook = Hook::Claude(ClaudeHook::PreToolUse(ClaudePreToolUse {
             session_id: Uuid::new_v4(),
             tool_use_id: "toolu_xyz".to_string(),
+            transcript_path: "/tmp".to_string(),
+            cwd: "/tmp".to_string(),
             tool: PreToolUse::Bash {
                 tool_input: BashToolInput {
                     description: Some("Run tests".to_string()),
@@ -1874,6 +1978,8 @@ mod tests {
         let hook = Hook::Claude(ClaudeHook::PostToolUse(Box::new(ClaudePostToolUse {
             session_id: Uuid::new_v4(),
             tool_use_id: "toolu_post".to_string(),
+            transcript_path: "/tmp".to_string(),
+            cwd: "/tmp".to_string(),
             tool: PostToolUse::Bash {
                 tool_input: bash_tool_input("ls"),
                 tool_response: bash_tool_output("file.txt\n"),

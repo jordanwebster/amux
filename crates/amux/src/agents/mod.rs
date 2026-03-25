@@ -19,7 +19,7 @@ use crate::buffer::{MultiplexByteBuffer, MultiplexByteReader, MultiplexStructure
 use crate::claude::structured_log_source::StructuredLogSource;
 use crate::claude::types::{AgentStructuredInput, Hook};
 use crate::error::{AmuxError, Result};
-use crate::message::{CreateAgentRequest, ProtocolError, TerminalSize};
+use crate::message::{AgentType, CreateAgentRequest, ProtocolError, TerminalSize};
 use crate::route::Route;
 use portable_pty::{CommandBuilder, MasterPty, PtySize, native_pty_system};
 use serde::{Deserialize, Serialize};
@@ -33,11 +33,18 @@ use uuid::Uuid;
 /// Maximum replay buffer size for PTY bytes
 const MAX_REPLAY_BUFFER: usize = 10 * 1024 * 1024; // 10MB
 
-/// Event sent when a session ends
+/// Events sent from agent sessions to the server event loop
 #[derive(Clone)]
 pub enum SessionEvent {
     /// Session ended (agent exited)
     Ended { agent_id: Uuid, user_id: Uuid },
+    /// Session created (for post-creation side effects like fork detection)
+    Created {
+        agent_id: Uuid,
+        user_id: Uuid,
+        agent_type: AgentType,
+        args: Vec<String>,
+    },
 }
 
 /// Policy for stopping an agent session
@@ -268,6 +275,14 @@ impl AgentSession {
         }
     }
 
+    pub fn readonly(&self) -> bool {
+        match self {
+            Self::Claude(s) => s.readonly,
+            #[cfg(any(debug_assertions, test))]
+            Self::TestAgent(_) => false,
+        }
+    }
+
     /// Start the agent process (two-phase init: new() stores metadata, start() spawns).
     /// Returns an exit handle that completes when the agent process exits.
     pub fn start(&mut self) -> Result<tokio::task::JoinHandle<()>> {
@@ -374,6 +389,12 @@ impl AgentSession {
             command: self.command().to_string(),
             working_dir: self.working_dir().to_path_buf(),
             route: Route::empty(),
+            agent_type: match self {
+                Self::Claude(_) => AgentType::Claude,
+                #[cfg(any(debug_assertions, test))]
+                Self::TestAgent(s) => AgentType::TestAgent(s.command.clone()),
+            },
+            readonly: self.readonly(),
         }
     }
 
@@ -476,6 +497,7 @@ impl SuspendedAgent {
                     agent_type: crate::message::AgentType::Claude,
                     working_dir,
                     terminal_size,
+                    args: vec![],
                 };
                 let mut session = ClaudeSession::new(&req);
                 session.session_id = Some(session_id);
@@ -495,6 +517,7 @@ impl SuspendedAgent {
                     agent_type: crate::message::AgentType::TestAgent(command.clone()),
                     working_dir,
                     terminal_size,
+                    args: vec![],
                 };
                 AgentSession::TestAgent(TestAgentSession::new(&req, command))
             }
@@ -517,6 +540,7 @@ mod tests {
             agent_type: AgentType::TestAgent("test-agent".to_string()),
             working_dir: PathBuf::from("/tmp"),
             terminal_size: None,
+            args: vec![],
         };
         let session =
             AgentSession::TestAgent(TestAgentSession::new(&req, "test-agent".to_string()));

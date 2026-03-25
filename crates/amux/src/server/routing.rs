@@ -35,71 +35,99 @@ pub(super) async fn create_agent(
     req: CreateAgentRequest,
     user_id: Uuid,
 ) -> Result<()> {
-    let mut us = user_state.write().await;
-
-    if us.agents.len() >= MAX_LOCAL_AGENTS {
-        return Err(AmuxError::ServerError(format!(
-            "agent limit reached ({MAX_LOCAL_AGENTS} max)"
-        )));
-    }
-
-    if us.registry.contains(&req.agent_id) {
-        return Err(AmuxError::ServerError(format!(
-            "Agent already exists: {}",
-            &req.agent_id
-        )));
-    }
-
-    if let Some(ref a) = req.name
-        && us.registry.name_taken(a)
-    {
-        return Err(AmuxError::ServerError(format!(
-            "Agent already exists: {}",
-            a
-        )));
-    }
-
+    let agent_type = req.agent_type.clone();
+    let args = req.args.clone();
     let agent_id = req.agent_id;
-    let mut session = match &req.agent_type {
-        AgentType::Claude => AgentSession::Claude(crate::agents::ClaudeSession::new(&req)),
-        #[cfg(any(debug_assertions, test))]
-        AgentType::TestAgent(cmd) => {
-            AgentSession::TestAgent(crate::agents::TestAgentSession::new(&req, cmd.clone()))
+    let req_name = req.name.clone();
+
+    let agent_count = {
+        let mut us = user_state.write().await;
+
+        if us.agents.len() >= MAX_LOCAL_AGENTS {
+            return Err(AmuxError::ServerError(format!(
+                "agent limit reached ({MAX_LOCAL_AGENTS} max)"
+            )));
         }
-    };
-    let exit_handle = session.start()?;
-    let info = session.to_agent();
-    let name = req.name.clone();
-    let command = session.command().to_string();
-    let working_dir = session.working_dir().to_path_buf();
-    us.agents.insert(agent_id, session);
-    us.registry.register_local(info).map_err(|e| {
-        AmuxError::ServerError(format!("failed to register local agent {agent_id}: {e}",))
-    })?;
 
-    // Task: Monitor exit handle and notify server when agent exits
-    let event_tx = event_tx.clone();
-    tokio::spawn(async move {
-        let _ = exit_handle.await;
-        let _ = event_tx
-            .send(SessionEvent::Ended { agent_id, user_id })
-            .await;
-    });
+        if us.registry.contains(&req.agent_id) {
+            return Err(AmuxError::ServerError(format!(
+                "Agent already exists: {}",
+                &req.agent_id
+            )));
+        }
 
-    broadcast_to_peers(
-        &mut us,
-        &DirectMessage::AnnounceAgent {
+        if let Some(ref a) = req.name
+            && us.registry.name_taken(a)
+        {
+            return Err(AmuxError::ServerError(format!(
+                "Agent already exists: {}",
+                a
+            )));
+        }
+
+        let mut session = match &req.agent_type {
+            AgentType::Claude => AgentSession::Claude(crate::agents::ClaudeSession::new(&req)),
+            #[cfg(any(debug_assertions, test))]
+            AgentType::TestAgent(cmd) => {
+                AgentSession::TestAgent(crate::agents::TestAgentSession::new(&req, cmd.clone()))
+            }
+        };
+        let exit_handle = session.start()?;
+        let info = session.to_agent();
+        let name = req.name.clone();
+        let command = session.command().to_string();
+        let working_dir = session.working_dir().to_path_buf();
+        us.agents.insert(agent_id, session);
+        us.registry.register_local(info).map_err(|e| {
+            AmuxError::ServerError(format!("failed to register local agent {agent_id}: {e}",))
+        })?;
+
+        // Task: Monitor exit handle and notify server when agent exits
+        let exit_event_tx = event_tx.clone();
+        tokio::spawn(async move {
+            let _ = exit_handle.await;
+            let _ = exit_event_tx
+                .send(SessionEvent::Ended { agent_id, user_id })
+                .await;
+        });
+
+        broadcast_to_peers(
+            &mut us,
+            &DirectMessage::AnnounceAgent {
+                agent_id,
+                name,
+                command,
+                working_dir,
+                route: Route::empty(),
+                agent_type: agent_type.clone(),
+                readonly: false,
+            },
+            None,
+        );
+
+        us.agents.len()
+    }; // write lock dropped here
+
+    let _ = event_tx
+        .send(SessionEvent::Created {
             agent_id,
-            name,
-            command,
-            working_dir,
-            route: Route::empty(),
-        },
-        None,
-    );
+            user_id,
+            agent_type,
+            args,
+        })
+        .await;
 
-    tracing::info!(agent_id = %agent_id, name = ?req.name, agents = us.agents.len(), "agent created");
+    tracing::info!(agent_id = %agent_id, name = ?req_name, agents = agent_count, "agent created");
     Ok(())
+}
+
+/// Remove an agent from local state and broadcast withdrawal to peers.
+pub(super) fn withdraw_agent(us: &mut ServerUserState, agent_id: Uuid) {
+    let name = us.registry.get(&agent_id).and_then(|a| a.name.clone());
+    us.agents.remove(&agent_id);
+    us.registry.remove(&agent_id);
+    broadcast_to_peers(us, &DirectMessage::WithdrawAgent { agent_id }, None);
+    tracing::info!(%agent_id, ?name, remaining = us.agents.len(), "agent withdrawn");
 }
 
 /// Handle subscribe request by UUID.
@@ -197,6 +225,7 @@ pub(super) async fn resume_agents(
         match session.start() {
             Ok(exit_handle) => {
                 let info = session.to_agent();
+                let agent_type = info.agent_type.clone();
                 let command = session.command().to_string();
                 let working_dir = session.working_dir().to_path_buf();
                 {
@@ -213,6 +242,8 @@ pub(super) async fn resume_agents(
                             command,
                             working_dir,
                             route: Route::empty(),
+                            agent_type,
+                            readonly: false,
                         },
                         None,
                     );
@@ -286,6 +317,8 @@ fn send_initial_agent_announcements(us: &ServerUserState, peer_link: &str) -> us
             command: info.command.clone(),
             working_dir: info.working_dir.clone(),
             route: info.route.clone(),
+            agent_type: info.agent_type.clone(),
+            readonly: info.readonly,
         });
         if tx.try_send(msg).is_err() {
             tracing::warn!(agent_id = %uuid, peer = %peer_link, "failed to announce agent");
@@ -442,6 +475,8 @@ mod tests {
                 command: "test".to_string(),
                 working_dir: PathBuf::from("/tmp"),
                 route: Route::from_link(link),
+                agent_type: AgentType::TestAgent("test".to_string()),
+                readonly: false,
             })
             .unwrap();
         id
@@ -758,6 +793,7 @@ mod tests {
                     agent_type: crate::message::AgentType::TestAgent(dummy_pty_command()),
                     working_dir: dummy_working_dir(),
                     terminal_size: None,
+                    args: vec![],
                 };
                 let inner = crate::agents::TestAgentSession::new(&req, dummy_pty_command());
                 us.agents
@@ -772,6 +808,7 @@ mod tests {
             agent_type: crate::message::AgentType::TestAgent(dummy_pty_command()),
             working_dir: dummy_working_dir(),
             terminal_size: None,
+            args: vec![],
         };
         let err = create_agent(
             &user_state,

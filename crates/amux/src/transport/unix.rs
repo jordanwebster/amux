@@ -109,6 +109,7 @@ mod tests {
                 agent_type: AgentType::Claude,
                 working_dir: std::path::PathBuf::from("/tmp"),
                 terminal_size: Some(TerminalSize { rows: 24, cols: 80 }),
+                args: vec![],
             }),
         );
 
