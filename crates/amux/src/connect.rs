@@ -4,15 +4,29 @@ use crate::error::{AmuxError, Result};
 use crate::route::generate_terminal_link;
 use crate::server;
 use crate::transport::LocalTransport;
+use std::path::PathBuf;
 use std::time::Duration;
 
 #[cfg(windows)]
 use tokio::net::windows::named_pipe::ClientOptions;
 
+#[derive(Clone, Debug)]
+pub struct DaemonOptions {
+    pub executable: PathBuf,
+}
+
+impl DaemonOptions {
+    pub fn new(executable: impl Into<PathBuf>) -> Self {
+        Self {
+            executable: executable.into(),
+        }
+    }
+}
+
 /// Policy for how `connect()` reaches the amux server.
 pub enum ConnectPolicy {
-    /// Connect to existing server, spawn `amux serve` if not running.
-    Daemon,
+    /// Connect to existing server, spawn a managed `amux serve` daemon if needed.
+    SpawnDaemon(DaemonOptions),
     /// Start server in-process on a background task, connect via socket.
     Embedded,
     /// Connect to existing server only, fail if not running.
@@ -25,7 +39,7 @@ pub enum ConnectPolicy {
 pub async fn connect(config: &Config, policy: ConnectPolicy) -> Result<Connection> {
     match policy {
         ConnectPolicy::ExistingOnly => connect_existing(config).await,
-        ConnectPolicy::Daemon => connect_daemon(config).await,
+        ConnectPolicy::SpawnDaemon(options) => connect_daemon(config, options).await,
         ConnectPolicy::Embedded => connect_embedded(config).await,
     }
 }
@@ -62,7 +76,7 @@ async fn connect_existing(config: &Config) -> Result<Connection> {
 }
 
 /// Try connecting to existing server; if not running, spawn `amux serve` and retry.
-async fn connect_daemon(config: &Config) -> Result<Connection> {
+async fn connect_daemon(config: &Config, options: DaemonOptions) -> Result<Connection> {
     match connect_existing(config).await {
         Ok(conn) => return Ok(conn),
         #[cfg(unix)]
@@ -80,13 +94,10 @@ async fn connect_daemon(config: &Config) -> Result<Connection> {
 
     tracing::info!("starting server");
 
-    let exe = std::env::current_exe()
-        .map_err(|e| AmuxError::Config(format!("failed to get current exe: {e}")))?;
-
     let config_yaml = serde_yaml::to_string(config)
         .map_err(|e| AmuxError::Config(format!("failed to serialize config: {e}")))?;
 
-    let mut cmd = std::process::Command::new(&exe);
+    let mut cmd = std::process::Command::new(&options.executable);
     cmd.arg("serve")
         .arg("--config-from-stdin")
         .stdin(std::process::Stdio::piped())

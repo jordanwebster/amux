@@ -20,7 +20,7 @@ mod transport;
 
 pub use agents::{SuspendedAgent, SuspendedServerState};
 pub use config::{Config, default_log_path};
-pub use connect::{ConnectPolicy, connect};
+pub use connect::{ConnectPolicy, DaemonOptions, connect};
 pub use connection::Connection;
 pub use error::{AmuxError, Result};
 pub use route::Route;

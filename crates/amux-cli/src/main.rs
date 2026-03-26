@@ -77,7 +77,7 @@ enum Commands {
         #[arg(long)]
         cloud: bool,
 
-        /// Read config from stdin (YAML format). Used by ConnectPolicy::Daemon.
+        /// Read config from stdin (YAML format). Used by ConnectPolicy::SpawnDaemon.
         #[arg(long, hide = true)]
         config_from_stdin: bool,
     },
@@ -124,7 +124,7 @@ async fn main() -> Result<()> {
     let cli = Cli::parse();
 
     // Special case: serve --config-from-stdin reads config from stdin before
-    // anything else (used by ConnectPolicy::Daemon)
+    // anything else (used by ConnectPolicy::SpawnDaemon)
     if let Some(Commands::Serve {
         cloud,
         config_from_stdin: true,

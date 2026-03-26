@@ -1,5 +1,5 @@
 use amux::protocol::{Command, Message};
-use amux::{AmuxError, Config, ConnectPolicy, connect};
+use amux::{AmuxError, Config, ConnectPolicy, DaemonOptions, connect};
 use anyhow::{Context, Result, bail};
 use semver::Version;
 use serde::Deserialize;
@@ -131,8 +131,12 @@ async fn suspend_if_running(config: &Config) -> Result<bool> {
     }
 }
 
-async fn resume_server(config: &Config) -> Result<()> {
-    let conn = connect(config, ConnectPolicy::Daemon).await?;
+async fn resume_server(config: &Config, exe_path: &Path) -> Result<()> {
+    let conn = connect(
+        config,
+        ConnectPolicy::SpawnDaemon(DaemonOptions::new(exe_path.to_path_buf())),
+    )
+    .await?;
 
     conn.send(&Message::Command(Command::Resume)).await?;
 
@@ -204,7 +208,7 @@ pub async fn run_update(config: &Config) -> Result<()> {
 
     if was_running {
         println!("Restarting server...");
-        resume_server(config).await?;
+        resume_server(config, &current_exe).await?;
     }
 
     Ok(())

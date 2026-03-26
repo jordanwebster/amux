@@ -2,7 +2,7 @@ use amux::protocol::{
     AgentType, Command, CreateAgentRequest, Message, RoutableMessage, ServerDebugInfo,
     ShutdownReason, TerminalSize,
 };
-use amux::{AmuxError, Config, ConnectPolicy, Connection, Result, Route, connect};
+use amux::{AmuxError, Config, ConnectPolicy, Connection, DaemonOptions, Result, Route, connect};
 use crossterm::terminal;
 use std::io::{self, Read, Write};
 use std::sync::Arc;
@@ -47,9 +47,16 @@ fn get_terminal_size() -> TerminalSize {
         .unwrap_or_default()
 }
 
+fn cli_daemon_policy() -> Result<ConnectPolicy> {
+    let executable = std::env::current_exe().map_err(|e| {
+        AmuxError::Config(format!("failed to determine current executable path: {e}"))
+    })?;
+    Ok(ConnectPolicy::SpawnDaemon(DaemonOptions::new(executable)))
+}
+
 /// Create a new agent and attach to it
 pub async fn new_agent(name: Option<&str>, agent_type: AgentType, config: &Config) -> Result<()> {
-    let conn = connect(config, ConnectPolicy::Daemon).await?;
+    let conn = connect(config, cli_daemon_policy()?).await?;
     let terminal_size = get_terminal_size();
     let working_dir = std::env::current_dir()?;
 
@@ -109,7 +116,7 @@ pub async fn new_agent(name: Option<&str>, agent_type: AgentType, config: &Confi
 
 /// Attach to an existing agent
 pub async fn attach(target: Option<&str>, config: &Config) -> Result<()> {
-    let conn = connect(config, ConnectPolicy::Daemon).await?;
+    let conn = connect(config, cli_daemon_policy()?).await?;
     let terminal_size = get_terminal_size();
 
     // Resolve the target to (route, agent_id)
@@ -228,7 +235,7 @@ async fn subscribe_and_stream(
 
 /// List all running agents
 pub async fn list_agents(config: &Config) -> Result<()> {
-    let conn = match connect(config, ConnectPolicy::Daemon).await {
+    let conn = match connect(config, cli_daemon_policy()?).await {
         Ok(conn) => conn,
         Err(AmuxError::Io(e))
             if e.kind() == io::ErrorKind::NotFound
@@ -315,7 +322,7 @@ pub async fn kill_server(config: &Config) -> Result<()> {
 
 /// Connect to a remote amux server
 pub async fn connect_remote(address: &str, config: &Config) -> Result<()> {
-    let conn = connect(config, ConnectPolicy::Daemon).await?;
+    let conn = connect(config, cli_daemon_policy()?).await?;
 
     conn.send(&Message::Command(Command::ConnectToServer {
         address: address.to_string(),
