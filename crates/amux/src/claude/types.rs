@@ -1953,17 +1953,20 @@ mod tests {
         let msg = Message::Command(Command::HandleHook {
             agent_id,
             hook: Box::new(hook),
+            source_ppid: Some(1234),
         });
         let encoded = msg.encode().unwrap();
         let decoded = Message::decode(&encoded).unwrap();
         let Message::Command(Command::HandleHook {
             agent_id: decoded_id,
             hook: decoded_hook,
+            source_ppid,
         }) = decoded
         else {
             panic!("Expected HandleHook, got {decoded:?}");
         };
         assert_eq!(decoded_id, agent_id);
+        assert_eq!(source_ppid, Some(1234));
         let Hook::Claude(ClaudeHook::PreToolUse(pre)) = *decoded_hook else {
             panic!("Expected PreToolUse");
         };
@@ -1988,15 +1991,19 @@ mod tests {
         let msg = Message::Command(Command::HandleHook {
             agent_id,
             hook: Box::new(hook),
+            source_ppid: Some(5678),
         });
         let encoded = msg.encode().unwrap();
         let decoded = Message::decode(&encoded).unwrap();
         let Message::Command(Command::HandleHook {
-            hook: decoded_hook, ..
+            hook: decoded_hook,
+            source_ppid,
+            ..
         }) = decoded
         else {
             panic!("Expected HandleHook");
         };
+        assert_eq!(source_ppid, Some(5678));
         let Hook::Claude(ClaudeHook::PostToolUse(post)) = *decoded_hook else {
             panic!("Expected PostToolUse");
         };

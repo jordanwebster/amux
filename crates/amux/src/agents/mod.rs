@@ -382,11 +382,19 @@ impl AgentSession {
     }
 
     /// Handle a hook event for this agent.
-    pub async fn handle_hook(&mut self, hook: Hook) -> Result<()> {
+    pub async fn handle_hook(&mut self, hook: Hook, source_ppid: Option<u32>) -> Result<()> {
         match self {
-            Self::Claude(s) => s.handle_hook(hook).await,
+            Self::Claude(s) => s.handle_hook(hook, source_ppid).await,
             #[cfg(any(debug_assertions, test))]
             Self::TestAgent(_) => Ok(()),
+        }
+    }
+
+    pub fn external_pid(&self) -> Option<u32> {
+        match self {
+            Self::Claude(s) => s.external_pid(),
+            #[cfg(any(debug_assertions, test))]
+            Self::TestAgent(_) => None,
         }
     }
 

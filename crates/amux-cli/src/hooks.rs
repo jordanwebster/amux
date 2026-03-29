@@ -9,7 +9,7 @@
 //! the agent_id so the server can create a readonly session.
 
 use amux::protocol::{ClaudeHook, Command, Hook, Message, PreToolUse};
-use amux::{Config, ConnectPolicy, connect};
+use amux::{Config, ConnectPolicy, connect, current_parent_pid};
 use std::io::{self, BufRead};
 use uuid::Uuid;
 
@@ -99,6 +99,7 @@ async fn send_hook_event(config: &Config, agent_id: Uuid, hook: Hook) -> amux::R
     conn.send(&Message::Command(Command::HandleHook {
         agent_id,
         hook: Box::new(hook),
+        source_ppid: current_parent_pid(),
     }))
     .await?;
     Ok(())

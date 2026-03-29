@@ -253,6 +253,8 @@ pub enum Command {
     HandleHook {
         agent_id: Uuid,
         hook: Box<Hook>,
+        #[serde(default)]
+        source_ppid: Option<u32>,
     },
     HandleHookResult {
         error: Option<ProtocolError>,

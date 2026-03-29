@@ -38,6 +38,34 @@ One paragraph describing what was done.
 
 ---
 
+## 2026-03-30: Reap readonly Claude sessions by external PID
+
+### Summary
+Readonly Claude sessions were sticking around because Claude Code does not reliably emit `SessionEnd` for interactive exits, and `Stop` is not a terminal signal. Changed amux to capture the hook process parent PID for external Claude hooks, track that PID on readonly sessions, and periodically reap readonly sessions whose external Claude process no longer exists. The reaper only runs on local/client servers, not the cloud relay.
+
+### Changes
+- `crates/amux-cli/src/hooks.rs` / `crates/amux/src/message.rs` / `crates/amux/src/claude/types.rs` — added `source_ppid` to `HandleHook` and propagated it through hook encoding/decoding
+- `crates/amux/src/process.rs` / `crates/amux/src/lib.rs` / `crates/amux/Cargo.toml` / `Cargo.lock` — added cross-platform helpers for parent-PID capture and process-existence checks
+- `crates/amux/src/agents/claude.rs` / `crates/amux/src/agents/mod.rs` — added readonly `external_pid` tracking and surfaced it through `AgentSession`
+- `crates/amux/src/server/mod.rs` — added a readonly-session reaper that runs every 5 minutes on non-cloud servers and withdraws readonly sessions whose tracked external PID has exited
+- `crates/amux/src/server/handlers.rs` — threaded `source_ppid` through existing hook handling and readonly session creation
+
+### Decisions Made
+- Do not treat `Stop` as terminal — Claude can emit `Stop` for a live session and continue sending later hooks, so cleanup must not be hook-driven
+- Key cleanup off external process liveness, not hook semantics — if Claude dies without a final lifecycle hook, the reaper still converges state
+- Run the reaper only on client/local servers — the cloud relay should never own readonly Claude sessions, so sweeping there is redundant work
+- Use a 5 minute sweep interval — readonly cleanup does not need to be phone-responsive, and the longer interval reduces pointless periodic work and resume flicker
+- Accept best-effort PID identity — this depends on the hook parent PID being the Claude process as observed today; if Claude changes hook launching to insert a wrapper shell, this heuristic may need to be revisited
+
+### Verification
+- Manual hook probe: verified `SessionEnd` fires for a vanilla interactive Claude session when the Claude process is terminated directly, and verified interactive TUI exit paths can skip `SessionEnd`
+- Manual persistence check: verified readonly sessions persist under the PID-based approach instead of being immediately reaped
+- `cargo test -p amux`
+- `cargo test --workspace --no-run`
+
+### Next Steps
+- If PID false-positives ever appear, harden the external-process identity check with process start-time validation instead of PID alone
+
 ## 2026-03-29: Fix structured subscribe gating and stream EOF teardown
 
 ### Summary

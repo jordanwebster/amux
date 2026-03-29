@@ -288,6 +288,8 @@ pub struct ClaudeSession {
     pub(super) session_id: Option<Uuid>,
     /// True for externally-started sessions (no PTY, transcript-only)
     pub(super) readonly: bool,
+    /// Parent PID of the external Claude process that emitted the last hook.
+    external_pid: Option<u32>,
     /// Extra arguments passed to the claude command
     pub(super) args: Vec<String>,
 }
@@ -306,6 +308,7 @@ impl ClaudeSession {
             terminal_size: req.terminal_size,
             session_id: None,
             readonly: false,
+            external_pid: None,
             args: req.args.clone(),
         }
     }
@@ -323,6 +326,7 @@ impl ClaudeSession {
             terminal_size: None,
             session_id: None,
             readonly: true,
+            external_pid: None,
             args: vec![],
         }
     }
@@ -344,6 +348,18 @@ impl ClaudeSession {
         }
 
         Ok(())
+    }
+
+    fn sync_hook_source_ppid(&mut self, source_ppid: Option<u32>) {
+        if self.readonly
+            && let Some(pid) = source_ppid
+        {
+            self.external_pid = Some(pid);
+        }
+    }
+
+    pub fn external_pid(&self) -> Option<u32> {
+        self.external_pid
     }
 
     /// Spawn the Claude Code process. Returns an exit handle that completes
@@ -422,9 +438,10 @@ impl ClaudeSession {
     }
 
     /// Handle a hook event.
-    pub async fn handle_hook(&mut self, hook: Hook) -> Result<()> {
+    pub async fn handle_hook(&mut self, hook: Hook, source_ppid: Option<u32>) -> Result<()> {
         let Hook::Claude(claude_hook) = &hook;
         self.sync_hook_metadata(claude_hook).await?;
+        self.sync_hook_source_ppid(source_ppid);
         let Some(log_source) = &self.log_source else {
             return Ok(());
         };
@@ -927,22 +944,25 @@ mod tests {
         let mut session = ClaudeSession::new_readonly(Uuid::new_v4(), dir.path().to_path_buf());
 
         session
-            .handle_hook(Hook::Claude(ClaudeHook::PermissionRequest(
-                crate::claude::types::ClaudePermissionRequest {
-                    session_id,
-                    transcript_path: transcript_path_str.clone(),
-                    cwd: cwd.clone(),
-                    tool: crate::claude::types::ClaudePermissionTool::Bash {
-                        tool_input: crate::claude::types::BashToolInput {
-                            command: "echo hi".to_string(),
-                            description: Some("test".to_string()),
-                            timeout: None,
-                            run_in_background: None,
-                            dangerously_disable_sandbox: None,
+            .handle_hook(
+                Hook::Claude(ClaudeHook::PermissionRequest(
+                    crate::claude::types::ClaudePermissionRequest {
+                        session_id,
+                        transcript_path: transcript_path_str.clone(),
+                        cwd: cwd.clone(),
+                        tool: crate::claude::types::ClaudePermissionTool::Bash {
+                            tool_input: crate::claude::types::BashToolInput {
+                                command: "echo hi".to_string(),
+                                description: Some("test".to_string()),
+                                timeout: None,
+                                run_in_background: None,
+                                dangerously_disable_sandbox: None,
+                            },
                         },
                     },
-                },
-            )))
+                )),
+                None,
+            )
             .await
             .unwrap();
 
@@ -959,15 +979,16 @@ mod tests {
 
         let seq_after_first_hook = session.current_seq().await;
         session
-            .handle_hook(Hook::Claude(ClaudeHook::Stop(
-                crate::claude::types::ClaudeStop {
+            .handle_hook(
+                Hook::Claude(ClaudeHook::Stop(crate::claude::types::ClaudeStop {
                     session_id,
                     stop_hook_active: false,
                     last_assistant_message: String::new(),
                     transcript_path: transcript_path_str,
                     cwd,
-                },
-            )))
+                })),
+                None,
+            )
             .await
             .unwrap();
 

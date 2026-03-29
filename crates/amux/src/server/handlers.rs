@@ -557,7 +557,11 @@ async fn handle_command(
             Ok(())
         }
 
-        Command::HandleHook { agent_id, hook } => {
+        Command::HandleHook {
+            agent_id,
+            hook,
+            source_ppid,
+        } => {
             let hook_type = match hook.as_ref() {
                 Hook::Claude(ClaudeHook::SessionStart(_)) => "SessionStart",
                 Hook::Claude(ClaudeHook::PermissionRequest(_)) => "PermissionRequest",
@@ -586,7 +590,7 @@ async fn handle_command(
                     matches!(hook.as_ref(), Hook::Claude(ClaudeHook::SessionEnd(_)));
                 if let Some(session) = us.agents.get_mut(&agent_id) {
                     let is_readonly = session.readonly();
-                    let r = session.handle_hook(*hook).await.map_err(|e| {
+                    let r = session.handle_hook(*hook, source_ppid).await.map_err(|e| {
                         ProtocolError::ServerError(format!("hook handling failed: {e}"))
                     });
                     if r.is_ok() && is_session_end && is_readonly {
@@ -605,7 +609,7 @@ async fn handle_command(
                         let wd = PathBuf::from(cwd);
                         let mut session =
                             AgentSession::Claude(ClaudeSession::new_readonly(agent_id, wd.clone()));
-                        if let Err(e) = session.handle_hook(*hook).await {
+                        if let Err(e) = session.handle_hook(*hook, source_ppid).await {
                             Err(ProtocolError::ServerError(format!(
                                 "hook handling failed: {e}"
                             )))
@@ -1819,6 +1823,7 @@ mod tests {
             Command::HandleHook {
                 agent_id,
                 hook: Box::new(hook),
+                source_ppid: None,
             },
             &ctx,
         )
@@ -1860,6 +1865,7 @@ mod tests {
             Command::HandleHook {
                 agent_id,
                 hook: Box::new(hook),
+                source_ppid: None,
             },
             &ctx,
         )
@@ -1908,6 +1914,7 @@ mod tests {
             Command::HandleHook {
                 agent_id,
                 hook: Box::new(hook),
+                source_ppid: None,
             },
             &ctx,
         )
@@ -1955,6 +1962,7 @@ mod tests {
             Command::HandleHook {
                 agent_id,
                 hook: Box::new(hook),
+                source_ppid: None,
             },
             &ctx,
         )
@@ -2009,6 +2017,7 @@ mod tests {
             Command::HandleHook {
                 agent_id,
                 hook: Box::new(hook),
+                source_ppid: None,
             },
             &ctx,
         )
@@ -2049,6 +2058,7 @@ mod tests {
             Command::HandleHook {
                 agent_id,
                 hook: Box::new(hook),
+                source_ppid: None,
             },
             &ctx,
         )
@@ -2094,6 +2104,7 @@ mod tests {
             Command::HandleHook {
                 agent_id,
                 hook: Box::new(hook),
+                source_ppid: None,
             },
             &ctx,
         )
@@ -2143,6 +2154,7 @@ mod tests {
             Command::HandleHook {
                 agent_id,
                 hook: Box::new(hook),
+                source_ppid: None,
             },
             &ctx,
         )
