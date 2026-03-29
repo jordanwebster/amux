@@ -600,9 +600,7 @@ fn withdraw_dead_readonly_sessions_with(
         .agents
         .iter()
         .filter_map(|(agent_id, session)| {
-            let Some(pid) = session.external_pid() else {
-                return None;
-            };
+            let pid = session.external_pid()?;
             if session.readonly() && !process_exists_fn(pid) {
                 Some(*agent_id)
             } else {
