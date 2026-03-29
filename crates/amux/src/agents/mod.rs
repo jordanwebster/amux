@@ -53,6 +53,26 @@ pub enum StopPolicy {
     Interrupt,
 }
 
+#[derive(Clone)]
+pub enum StructuredSubscription {
+    Immediate(StructuredLogSource),
+    WaitForLink(StructuredLogSource),
+}
+
+impl StructuredSubscription {
+    pub async fn subscribe_with_current_seq(
+        &self,
+    ) -> Result<Option<(MultiplexStructuredReader, u64)>> {
+        match self {
+            Self::Immediate(log_source) => Ok(log_source.subscribe_with_current_seq().await),
+            Self::WaitForLink(log_source) => {
+                log_source.wait_until_linked().await?;
+                Ok(log_source.subscribe_with_current_seq().await)
+            }
+        }
+    }
+}
+
 /// PTY I/O handle — input, output subscription, resize.
 pub struct PtyHandle {
     input_tx: mpsc::Sender<Vec<u8>>,
@@ -196,7 +216,7 @@ pub(crate) fn spawn_pty_agent(
     // Task: Wait for child to exit, then clean up (server monitors this handle)
     let master_clone = master.clone();
     let buffer_clone = buffer.clone();
-    let log_buffer_clone = log_source.buffer().clone();
+    let log_source_clone = log_source.clone();
     let span = session_span;
     let exit_handle = tokio::task::spawn_blocking(move || {
         let _guard = span.enter();
@@ -213,7 +233,7 @@ pub(crate) fn spawn_pty_agent(
 
             // Close the multiplex buffers to disconnect all clients
             buffer_clone.close().await;
-            log_buffer_clone.close().await;
+            log_source_clone.close().await;
         });
     });
 
@@ -311,8 +331,26 @@ impl AgentSession {
         }
     }
 
+    pub fn log_source(&self) -> Option<StructuredLogSource> {
+        match self {
+            Self::Claude(s) => s.log_source(),
+            #[cfg(any(debug_assertions, test))]
+            Self::TestAgent(s) => s.log_source(),
+        }
+    }
+
+    pub fn structured_subscription(&self) -> Option<StructuredSubscription> {
+        match self {
+            Self::Claude(s) => s.log_source().map(StructuredSubscription::WaitForLink),
+            #[cfg(any(debug_assertions, test))]
+            Self::TestAgent(s) => s.log_source().map(StructuredSubscription::Immediate),
+        }
+    }
+
     /// Subscribe to structured log output and return the matching seq.
-    pub async fn subscribe_with_current_seq(&self) -> Option<(MultiplexStructuredReader, u64)> {
+    pub async fn subscribe_with_current_seq(
+        &self,
+    ) -> Result<Option<(MultiplexStructuredReader, u64)>> {
         match self {
             Self::Claude(s) => s.subscribe_with_current_seq().await,
             #[cfg(any(debug_assertions, test))]
@@ -355,7 +393,7 @@ impl AgentSession {
     /// Subscribe to structured log output.
     ///
     /// Returns `None` if the log buffer has been closed.
-    pub async fn subscribe(&self) -> Option<MultiplexStructuredReader> {
+    pub async fn subscribe(&self) -> Result<Option<MultiplexStructuredReader>> {
         match self {
             Self::Claude(s) => s.subscribe().await,
             #[cfg(any(debug_assertions, test))]

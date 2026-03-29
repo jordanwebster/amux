@@ -121,13 +121,25 @@ pub(super) async fn create_agent(
     Ok(())
 }
 
-/// Remove an agent from local state and broadcast withdrawal to peers.
-pub(super) fn withdraw_agent(us: &mut ServerUserState, agent_id: Uuid) {
+/// Remove an agent from local state and broadcast withdrawal.
+///
+/// Active streams are left registered until their underlying buffers close and
+/// each stream task can emit its terminal EOF notification before cleaning
+/// itself up.
+pub(super) fn withdraw_agent(us: &mut ServerUserState, agent_id: Uuid) -> Option<AgentSession> {
     let name = us.registry.get(&agent_id).and_then(|a| a.name.clone());
-    us.agents.remove(&agent_id);
+    let session = us.agents.remove(&agent_id);
     us.registry.remove(&agent_id);
+    let active_streams = us.active_streams.get(&agent_id).map_or(0, Vec::len);
     broadcast_to_peers(us, &DirectMessage::WithdrawAgent { agent_id }, None);
-    tracing::info!(%agent_id, ?name, remaining = us.agents.len(), "agent withdrawn");
+    tracing::info!(
+        %agent_id,
+        ?name,
+        active_streams,
+        remaining = us.agents.len(),
+        "agent withdrawn"
+    );
+    session
 }
 
 /// Handle subscribe request by UUID.
@@ -517,6 +529,50 @@ mod tests {
                 link: link.to_string(),
             });
         cancel_rx
+    }
+
+    #[test]
+    fn withdraw_agent_preserves_streams_and_returns_session() {
+        let mut us = ServerUserState::new();
+        let mut peer_rx = add_peer(&mut us, "peer-a");
+
+        let agent_id = Uuid::new_v4();
+        let session = AgentSession::Claude(crate::agents::ClaudeSession::new_readonly(
+            agent_id,
+            PathBuf::from("/tmp"),
+        ));
+        let info = session.to_agent();
+        us.agents.insert(agent_id, session);
+        us.registry.register_local(info).unwrap();
+
+        let mut cancel_rx = add_stream(&mut us, agent_id, "peer-a", Route::from_link("peer-a"));
+
+        let removed = withdraw_agent(&mut us, agent_id);
+
+        assert!(
+            removed.is_some(),
+            "local session should be returned for cleanup"
+        );
+        assert!(!us.registry.contains(&agent_id));
+        assert!(
+            us.active_streams.contains_key(&agent_id),
+            "withdrawal should preserve active streams until they observe EOF"
+        );
+        assert!(
+            matches!(
+                cancel_rx.try_recv(),
+                Err(tokio::sync::oneshot::error::TryRecvError::Empty)
+            ),
+            "stream cancel sender should remain alive after withdrawal"
+        );
+
+        let msg = peer_rx
+            .try_recv()
+            .expect("peers should receive WithdrawAgent");
+        assert!(matches!(
+            msg,
+            Message::Direct(DirectMessage::WithdrawAgent { agent_id: id }) if id == agent_id
+        ));
     }
 
     // --- handle_peer_disconnect tests ---

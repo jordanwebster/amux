@@ -6,7 +6,7 @@
 //! for unauthenticated local connections).
 
 use crate::agent_registry::AgentRegistry;
-use crate::agents::{AgentSession, SessionEvent};
+use crate::agents::{AgentSession, SessionEvent, StopPolicy};
 use crate::config::Config;
 use crate::error::{AmuxError, Result};
 use crate::jwt::JwtValidator;
@@ -322,7 +322,7 @@ impl Server {
                         };
                         if let Some(user_state) = user_state {
                             let mut us = user_state.write().await;
-                            withdraw_agent(&mut us, agent_id);
+                            let _ = withdraw_agent(&mut us, agent_id);
                         }
                     }
                     SessionEvent::Created {
@@ -331,7 +331,6 @@ impl Server {
                         agent_type,
                         args,
                     } => {
-                        // Check if this agent was forked from a readonly session
                         if matches!(agent_type, AgentType::Claude)
                             && args.contains(&"--fork-session".to_string())
                             && let Some(pos) = args.iter().position(|a| a == "--resume")
@@ -343,11 +342,18 @@ impl Server {
                                 s.get_user_state(&user_id)
                             };
                             if let Some(user_state) = user_state {
-                                let mut us = user_state.write().await;
-                                let is_readonly =
-                                    us.agents.get(&source_id).is_some_and(|s| s.readonly());
-                                if is_readonly {
-                                    withdraw_agent(&mut us, source_id);
+                                let withdrawn_session = {
+                                    let mut us = user_state.write().await;
+                                    let is_readonly =
+                                        us.agents.get(&source_id).is_some_and(|s| s.readonly());
+                                    if is_readonly {
+                                        withdraw_agent(&mut us, source_id)
+                                    } else {
+                                        None
+                                    }
+                                };
+                                if let Some(session) = withdrawn_session {
+                                    session.stop(StopPolicy::Interrupt).await;
                                     tracing::info!(
                                         source = %source_id,
                                         fork = %agent_id,
@@ -356,6 +362,7 @@ impl Server {
                                 }
                             }
                         }
+                        tracing::debug!(agent_id = %agent_id, ?agent_type, ?args, "session created");
                     }
                 }
             }

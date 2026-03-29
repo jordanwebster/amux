@@ -3,6 +3,7 @@
 //! This module watches a Claude Code transcript JSONL file and parses
 //! user/assistant messages into StructuredOutput entries.
 
+use super::structured_log_source::StructuredLogSource;
 use super::types::{AgentStructuredOutput, ClaudeStructuredOutput};
 use crate::buffer::MultiplexStructuredBuffer;
 use serde::Deserialize;
@@ -126,16 +127,22 @@ pub struct TranscriptTailer {
     path: PathBuf,
     buffer: Arc<MultiplexStructuredBuffer>,
     shutdown_tx: watch::Sender<bool>,
+    log_source: StructuredLogSource,
 }
 
 impl TranscriptTailer {
     /// Create a new TranscriptTailer for the given transcript path.
-    pub fn new(path: PathBuf, buffer: Arc<MultiplexStructuredBuffer>) -> Self {
+    pub fn new(
+        path: PathBuf,
+        buffer: Arc<MultiplexStructuredBuffer>,
+        log_source: StructuredLogSource,
+    ) -> Self {
         let (shutdown_tx, _) = watch::channel(false);
         Self {
             path,
             buffer,
             shutdown_tx,
+            log_source,
         }
     }
 
@@ -145,10 +152,14 @@ impl TranscriptTailer {
     pub fn start(&self) -> JoinHandle<()> {
         let path = self.path.clone();
         let buffer = self.buffer.clone();
+        let log_source = self.log_source.clone();
         let mut shutdown_rx = self.shutdown_tx.subscribe();
 
         tokio::spawn(async move {
-            if let Err(e) = tail_transcript(path, buffer, &mut shutdown_rx).await {
+            if let Err(e) =
+                tail_transcript(path, buffer, log_source.clone(), &mut shutdown_rx).await
+            {
+                log_source.mark_failed(std::io::Error::new(e.kind(), e.to_string()));
                 tracing::warn!(error = %e, "transcript tailer error");
             }
         })
@@ -164,6 +175,7 @@ impl TranscriptTailer {
 async fn tail_transcript(
     path: PathBuf,
     buffer: Arc<MultiplexStructuredBuffer>,
+    log_source: StructuredLogSource,
     shutdown_rx: &mut watch::Receiver<bool>,
 ) -> std::io::Result<()> {
     // Wait for file to exist
@@ -183,13 +195,15 @@ async fn tail_transcript(
         line.clear();
         let bytes_read = reader.read_line(&mut line).await?;
         if bytes_read == 0 {
-            break; // End of existing content
+            break;
         }
 
         if let Some(entry) = parse_transcript_line(&line) {
             buffer.write(entry).await;
         }
     }
+
+    log_source.mark_linked().await;
 
     // Now tail for new content
     loop {

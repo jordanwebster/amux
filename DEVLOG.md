@@ -38,6 +38,32 @@ One paragraph describing what was done.
 
 ---
 
+## 2026-03-29: Fix structured subscribe gating and stream EOF teardown
+
+### Summary
+Changed structured subscriptions to wait for Claude transcript linkage instead of relying on delayed agent announcement timing, and fixed two lifecycle regressions uncovered during review. Withdrawing an agent now preserves active stream entries until their underlying buffers close so clients still receive terminal EOF notifications, and PTY exit now closes the full `StructuredLogSource` so `wait_until_linked()` resolves with a closed error if Claude exits before any transcript is linked.
+
+### Changes
+- `crates/amux/src/agents/mod.rs` — added `StructuredSubscription`, routed Claude subscriptions through `wait_until_linked()`, and changed PTY exit cleanup to close the full `StructuredLogSource`
+- `crates/amux/src/claude/structured_log_source.rs` — added explicit link lifecycle state (`Unlinked`/`Linking`/`Linked`/`Failed`/`Closed`), pending-write buffering, and close/failure wakeups for blocked subscribers
+- `crates/amux/src/claude/transcript.rs` — wired transcript tailers to mark link success/failure on the owning `StructuredLogSource`
+- `crates/amux/src/server/handlers.rs` — changed `SubscribeStructured` to surface link-wait errors and readonly `SessionEnd` cleanup to stop the withdrawn session after releasing the write lock
+- `crates/amux/src/server/routing.rs` — changed `withdraw_agent()` to preserve `active_streams` until stream tasks observe EOF and clean themselves up
+- `crates/amux/src/server/mod.rs` — changed fork cleanup to stop the withdrawn readonly session after the registry/state removal
+- `crates/amux/src/agents/claude.rs` / `crates/amux/src/agents/testagent.rs` — aligned session subscribe APIs with the new fallible structured-subscribe path and added coverage for non-`SessionStart` transcript linking / immediate test-agent subscribe
+
+### Decisions Made
+- Keep `SubscriptionClosed` tied to reader exhaustion, not synthetic cancellation — route teardown still uses explicit cancellation, but normal session withdrawal now lets streams terminate naturally
+- Close the entire `StructuredLogSource` on process exit — closing only the underlying buffer was not enough because `wait_until_linked()` needed a terminal watch-state transition
+- Preserve the fork-and-swap model — readonly source sessions are still withdrawn immediately on fork, but subscribers now drain via EOF instead of being cancelled out from under the stream task
+
+### Verification
+- `cargo fmt --all`
+- `cargo test -p amux --lib`
+
+### Next Steps
+- Keep the mobile client aligned with the blocking `SubscribeStructured` semantics and explicit subscribe-error handling during readonly fork handoff
+
 ## 2026-03-23: External session capture and fork-and-swap
 
 ### Summary

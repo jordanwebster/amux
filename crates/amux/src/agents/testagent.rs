@@ -62,14 +62,26 @@ impl TestAgentSession {
         }
     }
 
+    pub fn log_source(&self) -> Option<StructuredLogSource> {
+        self.log_source.clone()
+    }
+
     /// Subscribe to structured log output.
-    pub async fn subscribe(&self) -> Option<MultiplexStructuredReader> {
-        self.log_source.as_ref()?.subscribe().await
+    pub async fn subscribe(&self) -> Result<Option<MultiplexStructuredReader>> {
+        match &self.log_source {
+            Some(log_source) => Ok(log_source.subscribe().await),
+            None => Ok(None),
+        }
     }
 
     /// Subscribe to structured log output and return the matching seq.
-    pub async fn subscribe_with_current_seq(&self) -> Option<(MultiplexStructuredReader, u64)> {
-        self.log_source.as_ref()?.subscribe_with_current_seq().await
+    pub async fn subscribe_with_current_seq(
+        &self,
+    ) -> Result<Option<(MultiplexStructuredReader, u64)>> {
+        match &self.log_source {
+            Some(log_source) => Ok(log_source.subscribe_with_current_seq().await),
+            None => Ok(None),
+        }
     }
 
     /// Shut down the session: close PTY and log source.
@@ -81,5 +93,34 @@ impl TestAgentSession {
         if let Some(log_source) = &self.log_source {
             log_source.close().await;
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[tokio::test]
+    async fn structured_subscribe_does_not_wait_for_transcript_linking() {
+        let session = TestAgentSession {
+            agent_id: Uuid::new_v4(),
+            name: None,
+            command: "test-agent".to_string(),
+            working_dir: std::env::temp_dir(),
+            pty: None,
+            log_source: Some(StructuredLogSource::new()),
+            terminal_size: None,
+        };
+
+        let (_reader, seq) = tokio::time::timeout(
+            std::time::Duration::from_millis(100),
+            session.subscribe_with_current_seq(),
+        )
+        .await
+        .unwrap()
+        .unwrap()
+        .unwrap();
+
+        assert_eq!(seq, 0);
     }
 }

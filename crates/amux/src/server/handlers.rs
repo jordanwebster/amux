@@ -13,7 +13,7 @@ use super::routing::{
     withdraw_agent,
 };
 use crate::agent_registry::Agent;
-use crate::agents::{AgentSession, ClaudeSession};
+use crate::agents::{AgentSession, ClaudeSession, StopPolicy};
 use crate::buffer::{BroadcastReader, BufferPolicy};
 use crate::claude::types::{ClaudeHook, Hook};
 use crate::error::{AmuxError, Result};
@@ -282,7 +282,7 @@ async fn handle_routable(
             let Some((reply_src, reply_dst)) = reply_routes(src, "SubscribeStructured") else {
                 return Ok(());
             };
-            let subscribed = {
+            let structured_subscription = {
                 let us = ctx.user_state.read().await;
                 let Some(session) = us.agents.get(&agent_id) else {
                     let _ = tx
@@ -301,7 +301,44 @@ async fn handle_routable(
                         .await;
                     return Ok(());
                 };
-                session.subscribe_with_current_seq().await
+                session.structured_subscription()
+            };
+
+            let Some(structured_subscription) = structured_subscription else {
+                let _ = tx
+                    .send(Message::routable(
+                        reply_src,
+                        reply_dst,
+                        request_id,
+                        &RoutableMessage::SubscribeStructuredResult {
+                            agent_id,
+                            seq: 0,
+                            error: Some(ProtocolError::ServerError(format!(
+                                "agent {agent_id} session ended"
+                            ))),
+                        },
+                    ))
+                    .await;
+                return Ok(());
+            };
+
+            let subscribed = match structured_subscription.subscribe_with_current_seq().await {
+                Ok(subscribed) => subscribed,
+                Err(error) => {
+                    let _ = tx
+                        .send(Message::routable(
+                            reply_src,
+                            reply_dst,
+                            request_id,
+                            &RoutableMessage::SubscribeStructuredResult {
+                                agent_id,
+                                seq: 0,
+                                error: Some(ProtocolError::ServerError(error.to_string())),
+                            },
+                        ))
+                        .await;
+                    return Ok(());
+                }
             };
 
             let Some((reader, current_seq)) = subscribed else {
@@ -542,79 +579,81 @@ async fn handle_command(
                 return Ok(());
             }
 
+            let mut session_to_stop = None;
             let result = {
                 let mut us = ctx.user_state.write().await;
                 let is_session_end =
                     matches!(hook.as_ref(), Hook::Claude(ClaudeHook::SessionEnd(_)));
-                match us.agents.get_mut(&agent_id) {
-                    Some(session) => {
+                if us.agents.contains_key(&agent_id) {
+                    let (r, is_readonly) = {
+                        let session = us.agents.get_mut(&agent_id).expect("checked above");
                         let is_readonly = session.readonly();
                         let r = session.handle_hook(*hook).await.map_err(|e| {
                             ProtocolError::ServerError(format!("hook handling failed: {e}"))
                         });
-                        // SessionEnd on a readonly session: withdraw it
-                        if r.is_ok() && is_session_end && is_readonly {
-                            withdraw_agent(&mut us, agent_id);
-                        }
-                        r
+                        (r, is_readonly)
+                    };
+                    if r.is_ok() && is_session_end && is_readonly {
+                        session_to_stop = withdraw_agent(&mut us, agent_id);
                     }
-                    None => {
-                        if is_session_end {
-                            tracing::debug!(%agent_id, "ignoring SessionEnd for unknown session");
-                            Ok(())
+                    r
+                } else if is_session_end {
+                    tracing::debug!(%agent_id, "ignoring SessionEnd for unknown session");
+                    Ok(())
+                } else {
+                    // External session — create readonly agent from hook data
+                    let claude_hook = match hook.as_ref() {
+                        Hook::Claude(claude_hook) => claude_hook,
+                    };
+                    if let Some(cwd) = claude_hook.cwd()
+                        && let Some(_transcript_path) = claude_hook.transcript_path()
+                    {
+                        let wd = PathBuf::from(cwd);
+                        let mut session =
+                            AgentSession::Claude(ClaudeSession::new_readonly(agent_id, wd.clone()));
+                        if let Err(e) = session.handle_hook(*hook).await {
+                            Err(ProtocolError::ServerError(format!(
+                                "hook handling failed: {e}"
+                            )))
                         } else {
-                            // External session — create readonly agent from hook data
-                            let Hook::Claude(claude_hook) = hook.as_ref();
-                            if let Some(cwd) = claude_hook.cwd()
-                                && let Some(transcript_path) = claude_hook.transcript_path()
-                            {
-                                let wd = PathBuf::from(cwd);
-                                let tp = PathBuf::from(transcript_path);
-                                let claude_session =
-                                    ClaudeSession::new_readonly(agent_id, wd.clone());
-                                claude_session.link_transcript(tp).await;
-                                let mut session = AgentSession::Claude(claude_session);
-                                if let Err(e) = session.handle_hook(*hook).await {
-                                    Err(ProtocolError::ServerError(format!(
-                                        "hook handling failed: {e}"
-                                    )))
-                                } else {
-                                    let info = session.to_agent();
-                                    let command = session.command().to_string();
-                                    let working_dir = session.working_dir().to_path_buf();
-                                    us.agents.insert(agent_id, session);
-                                    if let Err(e) = us.registry.register_local(info) {
-                                        Err(ProtocolError::ServerError(format!(
-                                            "failed to register readonly agent {agent_id}: {e}"
-                                        )))
-                                    } else {
-                                        broadcast_to_peers(
-                                            &mut us,
-                                            &DirectMessage::AnnounceAgent {
-                                                agent_id,
-                                                name: None,
-                                                command,
-                                                working_dir,
-                                                route: Route::empty(),
-                                                agent_type: AgentType::Claude,
-                                                readonly: true,
-                                            },
-                                            None,
-                                        );
-                                        tracing::info!(%agent_id, "created readonly session from external hook");
-                                        Ok(())
-                                    }
-                                }
-                            } else {
-                                tracing::warn!(%agent_id, "no agent found for hook");
+                            let info = session.to_agent();
+                            let command = session.command().to_string();
+                            let working_dir = session.working_dir().to_path_buf();
+                            us.agents.insert(agent_id, session);
+                            if let Err(e) = us.registry.register_local(info) {
                                 Err(ProtocolError::ServerError(format!(
-                                    "No agent found with agent_id: {agent_id}"
+                                    "failed to register readonly agent {agent_id}: {e}"
                                 )))
+                            } else {
+                                broadcast_to_peers(
+                                    &mut us,
+                                    &DirectMessage::AnnounceAgent {
+                                        agent_id,
+                                        name: None,
+                                        command,
+                                        working_dir,
+                                        route: Route::empty(),
+                                        agent_type: AgentType::Claude,
+                                        readonly: true,
+                                    },
+                                    None,
+                                );
+                                tracing::info!(%agent_id, "created readonly session from external hook");
+                                Ok(())
                             }
                         }
+                    } else {
+                        tracing::warn!(%agent_id, "no agent found for hook");
+                        Err(ProtocolError::ServerError(format!(
+                            "No agent found with agent_id: {agent_id}"
+                        )))
                     }
                 }
             };
+
+            if let Some(session) = session_to_stop {
+                session.stop(StopPolicy::Interrupt).await;
+            }
 
             let response = match result {
                 Ok(()) => Message::Command(Command::HandleHookResult { error: None }),
@@ -2254,6 +2293,66 @@ mod tests {
         assert!(
             !us.active_streams.contains_key(&agent_id),
             "stream should be cleaned up after reader close"
+        );
+    }
+
+    #[tokio::test]
+    async fn withdrawn_agent_stream_still_sends_subscription_closed_on_eof() {
+        let (state, user_state) = test_state().await;
+        let ctx = test_ctx(state, user_state.clone());
+        let mut route_rx = setup_route(&user_state).await;
+
+        let agent_id = Uuid::new_v4();
+        let session = AgentSession::Claude(crate::agents::ClaudeSession::new_readonly(
+            agent_id,
+            PathBuf::from("/tmp"),
+        ));
+        let info = session.to_agent();
+        {
+            let mut us = user_state.write().await;
+            us.agents.insert(agent_id, session);
+            us.registry.register_local(info).unwrap();
+        }
+
+        let (mock_tx, mock_rx) = mpsc::channel::<Vec<u8>>(16);
+
+        spawn_subscription_stream(
+            MockReader { rx: mock_rx },
+            agent_id,
+            "raw",
+            |id, data| RoutableMessage::RawOutput { agent_id: id, data },
+            Route::from_link("server"),
+            Route::from_link("client"),
+            &ctx,
+        )
+        .await;
+
+        {
+            let mut us = user_state.write().await;
+            let removed = withdraw_agent(&mut us, agent_id);
+            assert!(
+                removed.is_some(),
+                "withdrawal should return the removed session"
+            );
+            assert!(
+                us.active_streams.contains_key(&agent_id),
+                "active stream should remain registered until EOF"
+            );
+        }
+
+        drop(mock_tx);
+
+        let msg = recv_routable(&mut route_rx).await;
+        assert!(
+            matches!(msg, RoutableMessage::SubscriptionClosed { agent_id: id } if id == agent_id)
+        );
+
+        tokio::time::sleep(Duration::from_millis(100)).await;
+
+        let us = user_state.read().await;
+        assert!(
+            !us.active_streams.contains_key(&agent_id),
+            "stream should clean itself up after EOF"
         );
     }
 

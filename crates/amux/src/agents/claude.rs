@@ -334,6 +334,18 @@ impl ClaudeSession {
         }
     }
 
+    async fn sync_hook_metadata(&mut self, hook: &ClaudeHook) -> Result<()> {
+        if let Some(session_id) = hook.session_id() {
+            self.session_id = Some(session_id);
+        }
+
+        if let Some(transcript_path) = hook.transcript_path() {
+            self.link_transcript(PathBuf::from(transcript_path)).await;
+        }
+
+        Ok(())
+    }
+
     /// Spawn the Claude Code process. Returns an exit handle that completes
     /// when the process exits. If `session_id` is set, passes `--resume <id>`.
     /// Extra args from creation are appended.
@@ -387,6 +399,15 @@ impl ClaudeSession {
                 "session is readonly".to_string(),
             ));
         }
+        if self
+            .log_source
+            .as_ref()
+            .is_some_and(|log_source| !log_source.is_linked())
+        {
+            return Err(ProtocolError::ServerError(
+                "structured session not ready".to_string(),
+            ));
+        }
         let current_seq = self.current_seq().await;
         if client_seq != current_seq {
             return Err(ProtocolError::SequenceNumberMismatch {
@@ -402,16 +423,21 @@ impl ClaudeSession {
 
     /// Handle a hook event.
     pub async fn handle_hook(&mut self, hook: Hook) -> Result<()> {
+        let claude_hook = match &hook {
+            Hook::Claude(claude_hook) => claude_hook,
+        };
+        self.sync_hook_metadata(claude_hook).await?;
         let Some(log_source) = &self.log_source else {
             return Ok(());
         };
         match hook {
             Hook::Claude(ClaudeHook::SessionStart(session_start)) => {
-                tracing::debug!(agent_id = %self.agent_id, session_id = %session_start.session_id, "linking transcript");
-                self.session_id = Some(session_start.session_id);
-                log_source
-                    .link_transcript(PathBuf::from(&session_start.transcript_path))
-                    .await;
+                tracing::debug!(
+                    agent_id = %self.agent_id,
+                    session_id = %session_start.session_id,
+                    transcript_path = session_start.transcript_path,
+                    "session started"
+                );
             }
             Hook::Claude(ClaudeHook::PermissionRequest(perm_req)) => {
                 tracing::debug!(agent_id = %self.agent_id, "permission request");
@@ -493,14 +519,32 @@ impl ClaudeSession {
         }
     }
 
+    pub fn log_source(&self) -> Option<StructuredLogSource> {
+        self.log_source.clone()
+    }
+
     /// Subscribe to structured log output.
-    pub async fn subscribe(&self) -> Option<MultiplexStructuredReader> {
-        self.log_source.as_ref()?.subscribe().await
+    pub async fn subscribe(&self) -> Result<Option<MultiplexStructuredReader>> {
+        match &self.log_source {
+            Some(log_source) => {
+                log_source.wait_until_linked().await?;
+                Ok(log_source.subscribe().await)
+            }
+            None => Ok(None),
+        }
     }
 
     /// Subscribe to structured log output and return the matching seq.
-    pub async fn subscribe_with_current_seq(&self) -> Option<(MultiplexStructuredReader, u64)> {
-        self.log_source.as_ref()?.subscribe_with_current_seq().await
+    pub async fn subscribe_with_current_seq(
+        &self,
+    ) -> Result<Option<(MultiplexStructuredReader, u64)>> {
+        match &self.log_source {
+            Some(log_source) => {
+                log_source.wait_until_linked().await?;
+                Ok(log_source.subscribe_with_current_seq().await)
+            }
+            None => Ok(None),
+        }
     }
 
     /// Shut down the session according to the given policy.
@@ -529,6 +573,7 @@ mod tests {
     use super::*;
     use crate::claude::types::{AskUserQuestionItem, AskUserQuestionOption};
     use std::collections::HashMap;
+    use tempfile::tempdir;
 
     /// Extract just the Send bytes from a PtyAction sequence, ignoring delays.
     fn sends(actions: &[PtyAction]) -> Vec<Vec<u8>> {
@@ -862,5 +907,84 @@ mod tests {
                 b"\r".to_vec(),
             ]
         );
+    }
+
+    #[tokio::test]
+    async fn non_session_start_hook_links_transcript_once() {
+        let dir = tempdir().unwrap();
+        let transcript_path = dir.path().join("transcript.jsonl");
+        tokio::fs::write(
+            &transcript_path,
+            concat!(
+                "{\"type\":\"user\",\"message\":{\"content\":\"hello\"},\"uuid\":\"u1\",\"timestamp\":\"2026-03-29T10:00:00Z\"}\n",
+                "{\"type\":\"assistant\",\"message\":{\"content\":[{\"type\":\"text\",\"text\":\"world\"}]},\"uuid\":\"a1\",\"timestamp\":\"2026-03-29T10:00:01Z\"}\n"
+            ),
+        )
+        .await
+        .unwrap();
+
+        let session_id = Uuid::new_v4();
+        let transcript_path_str = transcript_path.display().to_string();
+        let cwd = dir.path().display().to_string();
+        let mut session = ClaudeSession::new_readonly(Uuid::new_v4(), dir.path().to_path_buf());
+
+        session
+            .handle_hook(Hook::Claude(ClaudeHook::PermissionRequest(
+                crate::claude::types::ClaudePermissionRequest {
+                    session_id,
+                    transcript_path: transcript_path_str.clone(),
+                    cwd: cwd.clone(),
+                    tool: crate::claude::types::ClaudePermissionTool::Bash {
+                        tool_input: crate::claude::types::BashToolInput {
+                            command: "echo hi".to_string(),
+                            description: Some("test".to_string()),
+                            timeout: None,
+                            run_in_background: None,
+                            dangerously_disable_sandbox: None,
+                        },
+                    },
+                },
+            )))
+            .await
+            .unwrap();
+
+        tokio::time::timeout(std::time::Duration::from_secs(2), async {
+            loop {
+                if session.current_seq().await >= 3 {
+                    break;
+                }
+                tokio::time::sleep(std::time::Duration::from_millis(10)).await;
+            }
+        })
+        .await
+        .unwrap();
+
+        let seq_after_first_hook = session.current_seq().await;
+        session
+            .handle_hook(Hook::Claude(ClaudeHook::Stop(
+                crate::claude::types::ClaudeStop {
+                    session_id,
+                    stop_hook_active: false,
+                    last_assistant_message: String::new(),
+                    transcript_path: transcript_path_str,
+                    cwd,
+                },
+            )))
+            .await
+            .unwrap();
+
+        tokio::time::timeout(std::time::Duration::from_secs(2), async {
+            loop {
+                if session.current_seq().await >= seq_after_first_hook + 1 {
+                    break;
+                }
+                tokio::time::sleep(std::time::Duration::from_millis(10)).await;
+            }
+        })
+        .await
+        .unwrap();
+
+        assert_eq!(session.session_id, Some(session_id));
+        assert_eq!(session.current_seq().await, seq_after_first_hook + 1);
     }
 }
