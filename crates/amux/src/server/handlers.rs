@@ -584,15 +584,11 @@ async fn handle_command(
                 let mut us = ctx.user_state.write().await;
                 let is_session_end =
                     matches!(hook.as_ref(), Hook::Claude(ClaudeHook::SessionEnd(_)));
-                if us.agents.contains_key(&agent_id) {
-                    let (r, is_readonly) = {
-                        let session = us.agents.get_mut(&agent_id).expect("checked above");
-                        let is_readonly = session.readonly();
-                        let r = session.handle_hook(*hook).await.map_err(|e| {
-                            ProtocolError::ServerError(format!("hook handling failed: {e}"))
-                        });
-                        (r, is_readonly)
-                    };
+                if let Some(session) = us.agents.get_mut(&agent_id) {
+                    let is_readonly = session.readonly();
+                    let r = session.handle_hook(*hook).await.map_err(|e| {
+                        ProtocolError::ServerError(format!("hook handling failed: {e}"))
+                    });
                     if r.is_ok() && is_session_end && is_readonly {
                         session_to_stop = withdraw_agent(&mut us, agent_id);
                     }
@@ -602,9 +598,7 @@ async fn handle_command(
                     Ok(())
                 } else {
                     // External session — create readonly agent from hook data
-                    let claude_hook = match hook.as_ref() {
-                        Hook::Claude(claude_hook) => claude_hook,
-                    };
+                    let Hook::Claude(claude_hook) = hook.as_ref();
                     if let Some(cwd) = claude_hook.cwd()
                         && let Some(_transcript_path) = claude_hook.transcript_path()
                     {

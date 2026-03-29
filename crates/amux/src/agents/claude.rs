@@ -423,9 +423,7 @@ impl ClaudeSession {
 
     /// Handle a hook event.
     pub async fn handle_hook(&mut self, hook: Hook) -> Result<()> {
-        let claude_hook = match &hook {
-            Hook::Claude(claude_hook) => claude_hook,
-        };
+        let Hook::Claude(claude_hook) = &hook;
         self.sync_hook_metadata(claude_hook).await?;
         let Some(log_source) = &self.log_source else {
             return Ok(());
@@ -975,7 +973,7 @@ mod tests {
 
         tokio::time::timeout(std::time::Duration::from_secs(2), async {
             loop {
-                if session.current_seq().await >= seq_after_first_hook + 1 {
+                if session.current_seq().await > seq_after_first_hook {
                     break;
                 }
                 tokio::time::sleep(std::time::Duration::from_millis(10)).await;
