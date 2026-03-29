@@ -69,13 +69,13 @@ pub(crate) fn process_exists(pid: u32) -> bool {
 
     unsafe {
         let handle = OpenProcess(PROCESS_QUERY_LIMITED_INFORMATION, 0, pid);
-        if handle == 0 {
+        if handle.is_null() {
             return false;
         }
 
         let mut exit_code = 0;
         let ok = GetExitCodeProcess(handle, &mut exit_code);
         let _ = CloseHandle(handle);
-        ok != 0 && exit_code == STILL_ACTIVE
+        ok != 0 && exit_code == STILL_ACTIVE as u32
     }
 }
