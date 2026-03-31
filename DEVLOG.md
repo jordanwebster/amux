@@ -38,6 +38,28 @@ One paragraph describing what was done.
 
 ---
 
+## 2026-03-31: Transcript parser: slug, new entry types, stop_hook_summary skip
+
+### Summary
+Compared the transcript parser against a live Claude Code JSONL transcript and filled in missing entry types, added `slug` propagation, and suppressed internal bookkeeping entries from structured output.
+
+### Changes
+- `crates/amux/src/claude/transcript.rs` — added `slug` field to `User`, `Assistant`, `System` transcript entry variants; added explicit `FileHistorySnapshot`, `QueueOperation` variants (parsed but not emitted); added `local_command` system subtype → `LocalCommand` output; suppressed `stop_hook_summary` from structured output; refactored `parse_assistant`/`parse_tool_result` to use `EntryContext` struct (clippy too-many-arguments); removed debug logging from `parse_entry`; added tests for all new behavior
+- `crates/amux/src/claude/types.rs` — added `slug: Option<String>` to `UserMessage`, `AssistantMessage`, `PostToolUseEvent`, `ToolUseRejected`, `TurnDuration`, `ApiError`, `CompactBoundary`, `LocalCommand`, `SystemEvent` variants; added `LocalCommand` variant to `ClaudeStructuredOutput`
+- `crates/amux/src/buffer.rs`, `crates/amux/src/claude/structured_log_source.rs` — updated test helpers for new `slug` field
+
+### Decisions Made
+- `stop_hook_summary` is internal hook machinery — skip silently rather than emitting as structured output
+- `file-history-snapshot` and `queue-operation` are internal bookkeeping — parse explicitly but don't emit (queue-operation may be useful later)
+- `slug` goes on all output types sourced from entries that carry it, but not on `PreToolUseEvent` (synthesized from assistant content blocks, slug lives on the parent entry)
+- `local_command` is worth surfacing — it captures slash commands like `/rename` that change session state
+
+### Verification
+- `cargo check && cargo fmt && cargo clippy --workspace --all-targets -- -D warnings && cargo test --workspace` — all 235 tests pass, zero warnings
+
+### Next Steps
+- Consider propagating `queue-operation` as structured output if needed for UI message queueing indicators
+
 ## 2026-03-30: Reap readonly Claude sessions by external PID
 
 ### Summary

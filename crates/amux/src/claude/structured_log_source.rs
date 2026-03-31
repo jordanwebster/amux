@@ -212,7 +212,10 @@ mod tests {
         log_source.link_transcript(transcript_path.clone()).await;
         log_source
             .write(AgentStructuredOutput::Claude(
-                ClaudeStructuredOutput::AgentStopped,
+                ClaudeStructuredOutput::AgentStopped {
+                    cwd: Some(dir.path().display().to_string()),
+                    stop_hook_active: Some(false),
+                },
             ))
             .await;
 
@@ -247,13 +250,22 @@ mod tests {
             reader.read().await.unwrap().data,
             AgentStructuredOutput::Claude(ClaudeStructuredOutput::UserMessage {
                 content: "hello".to_string(),
-                timestamp: "2026-03-29T10:00:00Z".to_string(),
                 uuid: "u1".to_string(),
+                timestamp: "2026-03-29T10:00:00Z".to_string(),
+                cwd: None,
+                git_branch: None,
+                parent_uuid: None,
+                prompt_id: None,
+                permission_mode: None,
+                slug: None,
             })
         );
         assert_eq!(
             reader.read().await.unwrap().data,
-            AgentStructuredOutput::Claude(ClaudeStructuredOutput::AgentStopped)
+            AgentStructuredOutput::Claude(ClaudeStructuredOutput::AgentStopped {
+                cwd: Some(dir.path().display().to_string()),
+                stop_hook_active: Some(false),
+            })
         );
     }
 
@@ -276,6 +288,7 @@ mod tests {
                             pages: None,
                         },
                     },
+                    cwd: Some(dir.path().display().to_string()),
                 },
             ))
             .await;
@@ -297,8 +310,14 @@ mod tests {
             reader.read().await.unwrap().data,
             AgentStructuredOutput::Claude(ClaudeStructuredOutput::UserMessage {
                 content: "hello".to_string(),
-                timestamp: "2026-03-29T10:00:00Z".to_string(),
                 uuid: "u1".to_string(),
+                timestamp: "2026-03-29T10:00:00Z".to_string(),
+                cwd: None,
+                git_branch: None,
+                parent_uuid: None,
+                prompt_id: None,
+                permission_mode: None,
+                slug: None,
             })
         );
         assert!(

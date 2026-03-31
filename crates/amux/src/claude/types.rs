@@ -1082,6 +1082,62 @@ pub enum PermissionResponse {
     No,
 }
 
+/// Content blocks for AssistantMessage structured output.
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
+#[serde(tag = "type")]
+pub enum AssistantContentBlock {
+    #[serde(rename = "text")]
+    Text { text: String },
+    #[serde(rename = "thinking")]
+    Thinking { thinking: String, signature: String },
+    #[serde(rename = "redacted_thinking")]
+    RedactedThinking,
+    #[serde(other)]
+    Other,
+}
+
+/// Token usage metadata for an assistant API call.
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
+pub struct MessageUsage {
+    #[serde(
+        default,
+        skip_serializing_if = "Option::is_none",
+        alias = "inputTokens"
+    )]
+    pub input_tokens: Option<u64>,
+    #[serde(
+        default,
+        skip_serializing_if = "Option::is_none",
+        alias = "outputTokens"
+    )]
+    pub output_tokens: Option<u64>,
+    #[serde(
+        default,
+        skip_serializing_if = "Option::is_none",
+        alias = "cacheCreationInputTokens"
+    )]
+    pub cache_creation_input_tokens: Option<u64>,
+    #[serde(
+        default,
+        skip_serializing_if = "Option::is_none",
+        alias = "cacheReadInputTokens"
+    )]
+    pub cache_read_input_tokens: Option<u64>,
+    #[serde(flatten)]
+    pub extra: HashMap<String, Value>,
+}
+
+/// Metadata emitted when Claude compacts transcript context.
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
+pub struct CompactMetadata {
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub trigger: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none", alias = "preTokens")]
+    pub pre_tokens: Option<u64>,
+    #[serde(flatten)]
+    pub extra: HashMap<String, Value>,
+}
+
 /// Claude-specific structured output (internally tagged by "type")
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
 #[serde(tag = "type")]
@@ -1089,19 +1145,49 @@ pub enum ClaudeStructuredOutput {
     /// User message to the agent
     UserMessage {
         content: String,
-        timestamp: String,
         uuid: String,
+        timestamp: String,
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        cwd: Option<String>,
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        git_branch: Option<String>,
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        parent_uuid: Option<String>,
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        prompt_id: Option<String>,
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        permission_mode: Option<String>,
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        slug: Option<String>,
     },
-    /// Assistant response (text content)
+    /// Assistant response (text/thinking content)
     AssistantMessage {
-        content: String,
-        timestamp: String,
+        content: Vec<AssistantContentBlock>,
         uuid: String,
+        timestamp: String,
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        cwd: Option<String>,
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        git_branch: Option<String>,
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        model: Option<String>,
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        stop_reason: Option<String>,
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        message_id: Option<String>,
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        request_id: Option<String>,
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        usage: Option<MessageUsage>,
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        slug: Option<String>,
     },
     /// Permission request from agent
     PermissionRequest {
         #[serde(flatten)]
         tool: PreToolUse,
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        cwd: Option<String>,
     },
     /// Tool about to be used
     PreToolUseEvent {
@@ -1109,34 +1195,213 @@ pub enum ClaudeStructuredOutput {
         #[serde(flatten)]
         tool: PreToolUse,
         timestamp: String,
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        cwd: Option<String>,
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        git_branch: Option<String>,
     },
-    /// Tool use completed
+    /// Tool use completed (successfully or with error).
+    /// Rejections (user denied permission) are ToolUseRejected, not this.
     PostToolUseEvent {
         tool_use_id: String,
         #[serde(flatten)]
         tool: PostToolUse,
+        /// Whether the tool execution was considered an error by Claude Code
+        /// (e.g. Edit couldn't find old_string, Bash non-zero exit).
+        #[serde(default)]
+        is_error: bool,
         timestamp: String,
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        cwd: Option<String>,
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        git_branch: Option<String>,
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        slug: Option<String>,
     },
-    /// Tool use failed
-    PostToolUseFailureEvent {
+    /// Tool use was rejected, usually by user denial.
+    ToolUseRejected {
         tool_use_id: String,
-        #[serde(flatten)]
-        tool: PreToolUse,
         error: String,
-        is_interrupt: bool,
         timestamp: String,
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        cwd: Option<String>,
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        git_branch: Option<String>,
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        slug: Option<String>,
     },
     /// Agent has stopped and is waiting for input
-    AgentStopped,
+    AgentStopped {
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        cwd: Option<String>,
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        stop_hook_active: Option<bool>,
+    },
+    /// End-of-turn timing metadata from transcript system messages.
+    TurnDuration {
+        duration_ms: u64,
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        message_count: Option<u64>,
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        timestamp: Option<String>,
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        uuid: Option<String>,
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        slug: Option<String>,
+    },
+    /// API error information surfaced from transcript system messages.
+    ApiError {
+        error: Value,
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        retry_in_ms: Option<f64>,
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        retry_attempt: Option<u64>,
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        max_retries: Option<u64>,
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        timestamp: Option<String>,
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        uuid: Option<String>,
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        slug: Option<String>,
+    },
+    /// Context compaction boundary emitted from transcript system messages.
+    CompactBoundary {
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        compact_metadata: Option<CompactMetadata>,
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        timestamp: Option<String>,
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        uuid: Option<String>,
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        slug: Option<String>,
+    },
+    /// Local slash command executed in the session (e.g. /rename).
+    LocalCommand {
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        content: Option<String>,
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        timestamp: Option<String>,
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        uuid: Option<String>,
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        slug: Option<String>,
+    },
+    /// Catch-all for unrecognized system subtypes.
+    SystemEvent {
+        subtype: String,
+        #[serde(flatten)]
+        payload: HashMap<String, Value>,
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        timestamp: Option<String>,
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        uuid: Option<String>,
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        slug: Option<String>,
+    },
+    /// Streaming progress updates from subagents.
+    AgentProgress {
+        agent_id: String,
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        prompt: Option<String>,
+        events: Vec<ClaudeStructuredOutput>,
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        parent_tool_use_id: Option<String>,
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        timestamp: Option<String>,
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        cwd: Option<String>,
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        git_branch: Option<String>,
+    },
+    /// Claude is waiting for an asynchronous background task.
+    WaitingForTask {
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        task_description: Option<String>,
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        task_type: Option<String>,
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        tool_use_id: Option<String>,
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        timestamp: Option<String>,
+    },
+    /// Catch-all for progress updates.
+    ProgressEvent {
+        data: Value,
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        tool_use_id: Option<String>,
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        parent_tool_use_id: Option<String>,
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        timestamp: Option<String>,
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        cwd: Option<String>,
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        git_branch: Option<String>,
+    },
+    /// Session auto-generated name.
+    AgentName {
+        agent_name: String,
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        session_id: Option<String>,
+    },
+    /// Session custom title.
+    CustomTitle {
+        custom_title: String,
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        session_id: Option<String>,
+    },
+    /// Last prompt metadata written at session end.
+    LastPrompt {
+        last_prompt: String,
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        session_id: Option<String>,
+    },
     /// Unknown entry type (forward-compatibility)
     #[serde(other)]
     Unknown,
+}
+
+impl ClaudeStructuredOutput {
+    /// Short label for logging (redacted contents).
+    pub fn type_label(&self) -> &'static str {
+        match self {
+            Self::UserMessage { .. } => "user_message",
+            Self::AssistantMessage { .. } => "assistant_message",
+            Self::PermissionRequest { .. } => "permission_request",
+            Self::PreToolUseEvent { .. } => "pre_tool_use",
+            Self::PostToolUseEvent { .. } => "post_tool_use",
+            Self::ToolUseRejected { .. } => "tool_use_rejected",
+            Self::AgentStopped { .. } => "agent_stopped",
+            Self::TurnDuration { .. } => "turn_duration",
+            Self::ApiError { .. } => "api_error",
+            Self::CompactBoundary { .. } => "compact_boundary",
+            Self::LocalCommand { .. } => "local_command",
+            Self::SystemEvent { .. } => "system_event",
+            Self::AgentProgress { .. } => "agent_progress",
+            Self::WaitingForTask { .. } => "waiting_for_task",
+            Self::ProgressEvent { .. } => "progress_event",
+            Self::AgentName { .. } => "agent_name",
+            Self::CustomTitle { .. } => "custom_title",
+            Self::LastPrompt { .. } => "last_prompt",
+            Self::Unknown => "unknown",
+        }
+    }
 }
 
 /// Wrapper enum for structured output, keyed by agent type
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
 pub enum AgentStructuredOutput {
     Claude(ClaudeStructuredOutput),
+}
+
+impl AgentStructuredOutput {
+    /// Short label for logging (redacted contents).
+    pub fn type_label(&self) -> &'static str {
+        match self {
+            Self::Claude(inner) => inner.type_label(),
+        }
+    }
 }
 
 /// Response to an AskUserQuestion tool call.
@@ -2017,12 +2282,14 @@ mod tests {
             tool: PreToolUse::Bash {
                 tool_input: bash_tool_input("cargo test"),
             },
+            cwd: Some("/tmp/project".to_string()),
         };
 
         let value = serde_json::to_value(&output).unwrap();
         assert_eq!(value["type"], "PermissionRequest");
         assert_eq!(value["tool_name"], "Bash");
         assert_eq!(value["tool_input"]["command"], "cargo test");
+        assert_eq!(value["cwd"], "/tmp/project");
         assert!(value.get("tool").is_none());
     }
 
@@ -2047,7 +2314,11 @@ mod tests {
                     },
                 },
             },
+            is_error: false,
             timestamp: "2026-03-20T12:00:00Z".to_string(),
+            cwd: Some("/tmp".to_string()),
+            git_branch: Some("main".to_string()),
+            slug: None,
         };
 
         let value = serde_json::to_value(&output).unwrap();
@@ -2057,6 +2328,9 @@ mod tests {
         assert_eq!(value["tool_input"]["file_path"], "/tmp/test.rs");
         assert_eq!(value["tool_response"]["type"], "text");
         assert_eq!(value["tool_response"]["file"]["filePath"], "/tmp/test.rs");
+        assert_eq!(value["cwd"], "/tmp");
+        assert_eq!(value["git_branch"], "main");
+        assert_eq!(value["is_error"], false);
         assert!(value.get("tool").is_none());
 
         let roundtrip: ClaudeStructuredOutput = serde_json::from_value(value).unwrap();

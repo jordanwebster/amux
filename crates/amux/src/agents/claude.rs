@@ -460,64 +460,39 @@ impl ClaudeSession {
                     .write(AgentStructuredOutput::Claude(
                         ClaudeStructuredOutput::PermissionRequest {
                             tool: perm_req.tool,
+                            cwd: Some(perm_req.cwd),
                         },
                     ))
                     .await;
             }
             Hook::Claude(ClaudeHook::PreToolUse(pre)) => {
                 tracing::debug!(agent_id = %self.agent_id, tool = %pre.tool, "pre-tool-use");
-                let timestamp = chrono::Utc::now().to_rfc3339();
-                log_source
-                    .write(AgentStructuredOutput::Claude(
-                        ClaudeStructuredOutput::PreToolUseEvent {
-                            tool_use_id: pre.tool_use_id,
-                            tool: pre.tool,
-                            timestamp,
-                        },
-                    ))
-                    .await;
             }
             Hook::Claude(ClaudeHook::PostToolUse(post)) => {
                 tracing::debug!(agent_id = %self.agent_id, tool = %post.tool, "post-tool-use");
-                let timestamp = chrono::Utc::now().to_rfc3339();
-                log_source
-                    .write(AgentStructuredOutput::Claude(
-                        ClaudeStructuredOutput::PostToolUseEvent {
-                            tool_use_id: post.tool_use_id,
-                            tool: post.tool,
-                            timestamp,
-                        },
-                    ))
-                    .await;
             }
             Hook::Claude(ClaudeHook::PostToolUseFailure(post)) => {
                 tracing::debug!(agent_id = %self.agent_id, tool = %post.tool, "post-tool-use-failure");
-                let timestamp = chrono::Utc::now().to_rfc3339();
+            }
+            Hook::Claude(ClaudeHook::Stop(stop)) => {
+                tracing::debug!(agent_id = %self.agent_id, "agent stopped");
                 log_source
                     .write(AgentStructuredOutput::Claude(
-                        ClaudeStructuredOutput::PostToolUseFailureEvent {
-                            tool_use_id: post.tool_use_id,
-                            tool: post.tool,
-                            error: post.error,
-                            is_interrupt: post.is_interrupt,
-                            timestamp,
+                        ClaudeStructuredOutput::AgentStopped {
+                            cwd: Some(stop.cwd),
+                            stop_hook_active: Some(stop.stop_hook_active),
                         },
                     ))
                     .await;
             }
-            Hook::Claude(ClaudeHook::Stop(_)) => {
-                tracing::debug!(agent_id = %self.agent_id, "agent stopped");
-                log_source
-                    .write(AgentStructuredOutput::Claude(
-                        ClaudeStructuredOutput::AgentStopped,
-                    ))
-                    .await;
-            }
-            Hook::Claude(ClaudeHook::SessionEnd(_)) => {
+            Hook::Claude(ClaudeHook::SessionEnd(stop)) => {
                 tracing::debug!(agent_id = %self.agent_id, "session ended");
                 log_source
                     .write(AgentStructuredOutput::Claude(
-                        ClaudeStructuredOutput::AgentStopped,
+                        ClaudeStructuredOutput::AgentStopped {
+                            cwd: Some(stop.cwd),
+                            stop_hook_active: None,
+                        },
                     ))
                     .await;
             }

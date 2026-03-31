@@ -506,8 +506,14 @@ mod tests {
     fn user_msg(content: &str, uuid: &str) -> AgentStructuredOutput {
         AgentStructuredOutput::Claude(ClaudeStructuredOutput::UserMessage {
             content: content.to_string(),
-            timestamp: "2025-01-15T12:00:00Z".to_string(),
             uuid: uuid.to_string(),
+            timestamp: "2025-01-15T12:00:00Z".to_string(),
+            cwd: None,
+            git_branch: None,
+            parent_uuid: None,
+            prompt_id: None,
+            permission_mode: None,
+            slug: None,
         })
     }
 

@@ -1692,7 +1692,10 @@ mod tests {
                 agent_id: Uuid::new_v4(),
                 seq: 1,
                 data: Box::new(crate::claude::types::AgentStructuredOutput::Claude(
-                    crate::claude::types::ClaudeStructuredOutput::AgentStopped,
+                    crate::claude::types::ClaudeStructuredOutput::AgentStopped {
+                        cwd: Some("/tmp".to_string()),
+                        stop_hook_active: Some(false),
+                    },
                 )),
             },
             RoutableMessage::StructuredInputResult {
