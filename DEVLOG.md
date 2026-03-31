@@ -38,6 +38,26 @@ One paragraph describing what was done.
 
 ---
 
+## 2026-03-31: Add PlanReviewResponse structured input
+
+### Summary
+Added `PlanReviewResponse` as a new variant of `ClaudeStructuredInput`, enabling the app to send plan review responses (YesAuto, YesManual, No with optional feedback) to Claude Code via PTY keystrokes. Also renamed `PlanModeReview` to `PlanReviewResponse` across amuxapp for consistency with the existing `AskUserQuestionResponse` and `PermissionRequestResponse` naming pattern.
+
+### Changes
+- `crates/amux/src/claude/types.rs`: Added `PlanReviewResponse` enum (YesAuto, YesManual, No(Option<String>)) and new `ClaudeStructuredInput::PlanReviewResponse` variant
+- `crates/amux/src/agents/claude.rs`: Added `plan_review_response_keystrokes()` function and wired it into `send_input()`
+- `amuxapp`: Renamed `PlanModeReview` → `PlanReviewResponse` across types/chat.ts, agents/claude/input.ts, session/types.ts, components/chat/permission-panel.tsx, logging/structured-input.ts, logging/structured-input.test.ts, session/store.test.ts
+
+### Decisions Made
+- PTY keystroke mapping: 1=YesAuto, 2=YesManual, 3=No (matches Claude Code's plan review prompt order)
+- For No responses: send "3", delay, optional feedback message, delay, Enter (because Claude expects an optional description after rejection)
+- Wire format key is `PlanReviewResponse` (not `PlanModeReview`) for consistency with other response types
+
+### Verification
+- `cargo check && cargo fmt && cargo clippy --workspace --all-targets -- -D warnings && cargo test` — all 235 tests pass, zero warnings
+
+---
+
 ## 2026-03-31: Transcript parser: slug, new entry types, stop_hook_summary skip
 
 ### Summary

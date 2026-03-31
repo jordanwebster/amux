@@ -1422,6 +1422,17 @@ pub struct AskUserQuestionResponse {
     pub chat_about_this: Option<String>,
 }
 
+/// Response to a plan review (ExitPlanMode) request
+#[derive(Serialize, Deserialize, Debug, Clone, PartialEq)]
+pub enum PlanReviewResponse {
+    /// Press "1" - accept and auto-execute
+    YesAuto,
+    /// Press "2" - accept with manual confirmation
+    YesManual,
+    /// Press "3" - reject, with optional feedback
+    No(Option<String>),
+}
+
 /// Claude-specific structured input
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
 pub enum ClaudeStructuredInput {
@@ -1431,6 +1442,8 @@ pub enum ClaudeStructuredInput {
     SubmitMessage { data: Vec<u8> },
     /// Response to an AskUserQuestion tool call
     AskUserQuestionResponse(AskUserQuestionResponse),
+    /// Response to a plan review (ExitPlanMode) request
+    PlanReviewResponse(PlanReviewResponse),
 }
 
 /// Wrapper enum for structured input, keyed by agent type

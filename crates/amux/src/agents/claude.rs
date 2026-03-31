@@ -9,7 +9,7 @@ use crate::buffer::MultiplexStructuredReader;
 use crate::claude::structured_log_source::StructuredLogSource;
 use crate::claude::types::{
     AgentStructuredOutput, AskUserQuestionOption, AskUserQuestionResponse, ClaudeHook,
-    ClaudeStructuredInput, ClaudeStructuredOutput, Hook, PermissionResponse,
+    ClaudeStructuredInput, ClaudeStructuredOutput, Hook, PermissionResponse, PlanReviewResponse,
 };
 use crate::error::Result;
 use crate::message::{CreateAgentRequest, ProtocolError};
@@ -35,6 +35,22 @@ fn permission_response_keystrokes(response: &PermissionResponse) -> Vec<PtyActio
         PermissionResponse::No => b"3",
     };
     vec![PtyAction::Send(byte.to_vec())]
+}
+
+fn plan_review_response_keystrokes(response: &PlanReviewResponse) -> Vec<PtyAction> {
+    match response {
+        PlanReviewResponse::YesAuto => vec![PtyAction::Send(b"1".to_vec())],
+        PlanReviewResponse::YesManual => vec![PtyAction::Send(b"2".to_vec())],
+        PlanReviewResponse::No(feedback) => {
+            let mut actions = vec![PtyAction::Send(b"3".to_vec()), PtyAction::Delay(DELAY)];
+            if let Some(msg) = feedback {
+                actions.push(PtyAction::Send(msg.as_bytes().to_vec()));
+                actions.push(PtyAction::Delay(DELAY));
+            }
+            actions.push(PtyAction::Send(b"\r".to_vec()));
+            actions
+        }
+    }
 }
 
 fn submit_message_keystrokes(data: &[u8]) -> Vec<PtyAction> {
@@ -399,6 +415,10 @@ impl ClaudeSession {
             ClaudeStructuredInput::AskUserQuestionResponse(response) => {
                 tracing::info!(agent_id = %self.agent_id, num_questions = response.questions.len(), "sending AskUserQuestion response");
                 ask_question_keystrokes(response)
+            }
+            ClaudeStructuredInput::PlanReviewResponse(response) => {
+                tracing::info!(agent_id = %self.agent_id, ?response, "sending plan review response");
+                plan_review_response_keystrokes(response)
             }
         };
         execute_pty_actions(pty, &actions).await
