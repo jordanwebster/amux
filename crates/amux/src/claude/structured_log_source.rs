@@ -9,7 +9,6 @@
 use super::transcript::TranscriptTailer;
 use super::types::AgentStructuredOutput;
 use crate::buffer::{MultiplexStructuredBuffer, MultiplexStructuredReader};
-use crate::error::AmuxError;
 use std::path::PathBuf;
 use std::sync::Arc;
 use tokio::sync::{Mutex, watch};
@@ -31,7 +30,6 @@ struct StructuredLogSourceInner {
     buffer: Arc<MultiplexStructuredBuffer>,
     tailer: Mutex<Option<(TranscriptTailer, JoinHandle<()>)>>,
     current_path: Mutex<Option<PathBuf>>,
-    pending_writes: Mutex<Vec<AgentStructuredOutput>>,
     link_state_tx: watch::Sender<LinkState>,
 }
 
@@ -50,7 +48,6 @@ impl StructuredLogSource {
                 buffer: Arc::new(MultiplexStructuredBuffer::new(MAX_LOG_ENTRIES)),
                 tailer: Mutex::new(None),
                 current_path: Mutex::new(None),
-                pending_writes: Mutex::new(Vec::new()),
                 link_state_tx,
             }),
         }
@@ -87,38 +84,12 @@ impl StructuredLogSource {
             let mut current_path = self.inner.current_path.lock().await;
             *current_path = Some(path.clone());
         }
-        self.inner.pending_writes.lock().await.clear();
         self.inner.link_state_tx.send_replace(LinkState::Linking);
 
         let tailer = TranscriptTailer::new(path, self.inner.buffer.clone(), self.clone());
         let handle = tailer.start();
         let mut guard = self.inner.tailer.lock().await;
         *guard = Some((tailer, handle));
-    }
-
-    pub async fn wait_until_linked(&self) -> Result<(), AmuxError> {
-        let mut link_state_rx = self.inner.link_state_tx.subscribe();
-        loop {
-            match &*link_state_rx.borrow() {
-                LinkState::Linked => return Ok(()),
-                LinkState::Failed(error) => {
-                    return Err(AmuxError::ServerError(format!(
-                        "structured transcript link failed: {error}"
-                    )));
-                }
-                LinkState::Closed => {
-                    return Err(AmuxError::ServerError(
-                        "structured transcript source closed".to_string(),
-                    ));
-                }
-                LinkState::Unlinked | LinkState::Linking => {}
-            }
-            if link_state_rx.changed().await.is_err() {
-                return Err(AmuxError::ServerError(
-                    "structured transcript source closed".to_string(),
-                ));
-            }
-        }
     }
 
     /// Subscribe to the structured log buffer immediately.
@@ -133,26 +104,12 @@ impl StructuredLogSource {
 
     /// Write a structured output entry directly (e.g. permission requests).
     pub async fn write(&self, entry: AgentStructuredOutput) {
-        if self.is_linked() {
-            self.inner.buffer.write(entry).await;
-        } else {
-            let mut pending_writes = self.inner.pending_writes.lock().await;
-            if self.is_linked() {
-                drop(pending_writes);
-                self.inner.buffer.write(entry).await;
-            } else {
-                pending_writes.push(entry);
-            }
-        }
+        self.inner.buffer.write(entry).await;
     }
 
     /// Return the current sequence number.
     pub async fn current_seq(&self) -> u64 {
         self.inner.buffer.current_seq().await
-    }
-
-    pub fn is_linked(&self) -> bool {
-        matches!(&*self.inner.link_state_tx.borrow(), LinkState::Linked)
     }
 
     /// Access the underlying buffer (needed by child waiter task).
@@ -161,19 +118,7 @@ impl StructuredLogSource {
     }
 
     pub async fn mark_linked(&self) {
-        loop {
-            let pending = {
-                let mut pending_writes = self.inner.pending_writes.lock().await;
-                if pending_writes.is_empty() {
-                    self.inner.link_state_tx.send_replace(LinkState::Linked);
-                    return;
-                }
-                std::mem::take(&mut *pending_writes)
-            };
-            for entry in pending {
-                self.inner.buffer.write(entry).await;
-            }
-        }
+        self.inner.link_state_tx.send_replace(LinkState::Linked);
     }
 
     pub fn mark_failed(&self, error: std::io::Error) {
@@ -204,34 +149,32 @@ mod tests {
     use tempfile::tempdir;
 
     #[tokio::test]
-    async fn subscribe_waits_for_replay_and_flushes_pending_entries_in_order() {
+    async fn subscribe_immediately_returns_empty_snapshot_before_transcript_exists() {
         let dir = tempdir().unwrap();
         let transcript_path = dir.path().join("transcript.jsonl");
         let log_source = StructuredLogSource::new();
 
         log_source.link_transcript(transcript_path.clone()).await;
-        log_source
-            .write(AgentStructuredOutput::Claude(
-                ClaudeStructuredOutput::AgentStopped {
-                    cwd: Some(dir.path().display().to_string()),
-                    stop_hook_active: Some(false),
-                },
-            ))
-            .await;
+        let (_reader, seq) = tokio::time::timeout(
+            std::time::Duration::from_millis(100),
+            log_source.subscribe_with_current_seq(),
+        )
+        .await
+        .unwrap()
+        .unwrap();
 
-        let ready_task = tokio::spawn({
-            let log_source = log_source.clone();
-            async move {
-                log_source.wait_until_linked().await.unwrap();
-                log_source.subscribe_with_current_seq().await.unwrap()
-            }
-        });
+        assert_eq!(seq, 0);
+    }
 
-        tokio::time::sleep(std::time::Duration::from_millis(50)).await;
-        assert!(
-            !ready_task.is_finished(),
-            "readiness should wait until the transcript is linked"
-        );
+    #[tokio::test]
+    async fn subscriber_receives_replay_after_immediate_subscribe() {
+        let dir = tempdir().unwrap();
+        let transcript_path = dir.path().join("transcript.jsonl");
+        let log_source = StructuredLogSource::new();
+
+        log_source.link_transcript(transcript_path.clone()).await;
+        let (mut reader, seq) = log_source.subscribe_with_current_seq().await.unwrap();
+        assert_eq!(seq, 0);
 
         tokio::fs::write(
             &transcript_path,
@@ -240,14 +183,12 @@ mod tests {
         .await
         .unwrap();
 
-        let (mut reader, seq) = tokio::time::timeout(std::time::Duration::from_secs(2), ready_task)
+        let entry = tokio::time::timeout(std::time::Duration::from_secs(2), reader.read())
             .await
             .unwrap()
             .unwrap();
-
-        assert_eq!(seq, 2);
         assert_eq!(
-            reader.read().await.unwrap().data,
+            entry.data,
             AgentStructuredOutput::Claude(ClaudeStructuredOutput::UserMessage {
                 content: "hello".to_string(),
                 uuid: "u1".to_string(),
@@ -260,6 +201,26 @@ mod tests {
                 slug: None,
             })
         );
+    }
+
+    #[tokio::test]
+    async fn write_is_visible_before_transcript_linking() {
+        let dir = tempdir().unwrap();
+        let transcript_path = dir.path().join("transcript.jsonl");
+        let log_source = StructuredLogSource::new();
+
+        log_source.link_transcript(transcript_path).await;
+        log_source
+            .write(AgentStructuredOutput::Claude(
+                ClaudeStructuredOutput::AgentStopped {
+                    cwd: Some(dir.path().display().to_string()),
+                    stop_hook_active: Some(false),
+                },
+            ))
+            .await;
+
+        let (mut reader, seq) = log_source.subscribe_with_current_seq().await.unwrap();
+        assert_eq!(seq, 1);
         assert_eq!(
             reader.read().await.unwrap().data,
             AgentStructuredOutput::Claude(ClaudeStructuredOutput::AgentStopped {
@@ -270,7 +231,7 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn relink_discards_pending_hook_entries_from_previous_generation() {
+    async fn relink_discards_entries_from_previous_generation() {
         let dir = tempdir().unwrap();
         let transcript_one = dir.path().join("transcript-one.jsonl");
         let transcript_two = dir.path().join("transcript-two.jsonl");
@@ -302,7 +263,17 @@ mod tests {
         .await
         .unwrap();
 
-        log_source.wait_until_linked().await.unwrap();
+        tokio::time::timeout(std::time::Duration::from_secs(2), async {
+            loop {
+                if log_source.current_seq().await == 1 {
+                    break;
+                }
+                tokio::time::sleep(std::time::Duration::from_millis(10)).await;
+            }
+        })
+        .await
+        .unwrap();
+
         let (mut reader, seq) = log_source.subscribe_with_current_seq().await.unwrap();
 
         assert_eq!(seq, 1);
@@ -324,37 +295,37 @@ mod tests {
             tokio::time::timeout(std::time::Duration::from_millis(50), reader.read())
                 .await
                 .is_err(),
-            "pending hook entries from the previous generation should be discarded on relink"
+            "entries from the previous generation should be discarded on relink"
         );
     }
 
     #[tokio::test]
-    async fn wait_until_linked_returns_closed_error_when_closed_before_link() {
+    async fn same_path_relink_is_ignored() {
+        let dir = tempdir().unwrap();
+        let transcript = dir.path().join("transcript.jsonl");
         let log_source = StructuredLogSource::new();
-        let wait_task = tokio::spawn({
-            let log_source = log_source.clone();
-            async move { log_source.wait_until_linked().await }
-        });
 
-        tokio::time::sleep(std::time::Duration::from_millis(50)).await;
-        assert!(
-            !wait_task.is_finished(),
-            "link readiness should still be pending before the source is closed"
-        );
+        tokio::fs::write(
+            &transcript,
+            "{\"type\":\"user\",\"message\":{\"content\":\"hello\"},\"uuid\":\"u1\",\"timestamp\":\"2026-03-29T10:00:00Z\"}\n",
+        )
+        .await
+        .unwrap();
 
-        log_source.close().await;
+        log_source.link_transcript(transcript.clone()).await;
+        tokio::time::timeout(std::time::Duration::from_secs(2), async {
+            loop {
+                if log_source.current_seq().await == 1 {
+                    break;
+                }
+                tokio::time::sleep(std::time::Duration::from_millis(10)).await;
+            }
+        })
+        .await
+        .unwrap();
 
-        let result = tokio::time::timeout(std::time::Duration::from_secs(1), wait_task)
-            .await
-            .unwrap()
-            .unwrap();
-        let error = result.unwrap_err();
-
-        assert!(
-            error
-                .to_string()
-                .contains("structured transcript source closed"),
-            "unexpected error: {error}"
-        );
+        log_source.link_transcript(transcript).await;
+        let (_reader, seq) = log_source.subscribe_with_current_seq().await.unwrap();
+        assert_eq!(seq, 1);
     }
 }

@@ -38,6 +38,29 @@ One paragraph describing what was done.
 
 ---
 
+## 2026-04-02: Restore immediate structured subscribe semantics
+
+### Summary
+Reverted Claude structured subscribe to the pre-March-29 “attach immediately to the current buffer” behavior so opening a brand-new or not-yet-linked chat no longer blocks the websocket connection. Kept the later transcript-link protections that are still required for the newer hook model: same-path transcript links are ignored, path changes still clear and relink safely, and PTY exit still stops the full structured log source so transcript tailers do not leak.
+
+### Changes
+- `crates/amux/src/server/handlers.rs` — changed `SubscribeStructured` back to immediate subscribe against the current structured buffer snapshot instead of waiting for transcript linkage
+- `crates/amux/src/agents/claude.rs` / `crates/amux/src/agents/mod.rs` / `crates/amux/src/agents/testagent.rs` — restored immediate structured subscribe APIs and removed the Claude-side “structured session not ready” input gate
+- `crates/amux/src/claude/structured_log_source.rs` / `crates/amux/src/claude/transcript.rs` — removed subscribe-time readiness gating and pending-write buffering, but kept same-path relink suppression, awaited old tailer shutdown before clear-on-relink, and full source close semantics
+- Added regression coverage for immediate empty subscribe, delayed replay after immediate subscribe, same-path relink no-op, generation clearing on actual relink, and unlinked Claude subscribe returning immediately
+
+### Decisions Made
+- Immediate subscribe is the server contract again: clients own fork/input readiness and must tolerate history arriving after subscribe
+- Keep transcript-link dedupe by path: `sync_hook_metadata()` links on every hook carrying `transcript_path`, so re-linking the same transcript on later hooks must not clear/replay the session
+- Keep awaited tailer shutdown on real relinks and full `StructuredLogSource::close()` on PTY exit: those later fixes prevent stale-generation writes and transcript tailer leaks and are independent of subscribe semantics
+
+### Verification
+- `cargo fmt --all`
+- `cargo test -p amux --lib` — 238 tests pass
+
+### Next Steps
+- Client: use fork-anchor/watermark logic to decide when optimistic input is ready to send on a newly forked runtime
+
 ## 2026-03-31: Add PlanReviewResponse structured input
 
 ### Summary

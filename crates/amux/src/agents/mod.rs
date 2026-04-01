@@ -53,26 +53,6 @@ pub enum StopPolicy {
     Interrupt,
 }
 
-#[derive(Clone)]
-pub enum StructuredSubscription {
-    Immediate(StructuredLogSource),
-    WaitForLink(StructuredLogSource),
-}
-
-impl StructuredSubscription {
-    pub async fn subscribe_with_current_seq(
-        &self,
-    ) -> Result<Option<(MultiplexStructuredReader, u64)>> {
-        match self {
-            Self::Immediate(log_source) => Ok(log_source.subscribe_with_current_seq().await),
-            Self::WaitForLink(log_source) => {
-                log_source.wait_until_linked().await?;
-                Ok(log_source.subscribe_with_current_seq().await)
-            }
-        }
-    }
-}
-
 /// PTY I/O handle — input, output subscription, resize.
 pub struct PtyHandle {
     input_tx: mpsc::Sender<Vec<u8>>,
@@ -339,18 +319,8 @@ impl AgentSession {
         }
     }
 
-    pub fn structured_subscription(&self) -> Option<StructuredSubscription> {
-        match self {
-            Self::Claude(s) => s.log_source().map(StructuredSubscription::WaitForLink),
-            #[cfg(any(debug_assertions, test))]
-            Self::TestAgent(s) => s.log_source().map(StructuredSubscription::Immediate),
-        }
-    }
-
     /// Subscribe to structured log output and return the matching seq.
-    pub async fn subscribe_with_current_seq(
-        &self,
-    ) -> Result<Option<(MultiplexStructuredReader, u64)>> {
+    pub async fn subscribe_with_current_seq(&self) -> Option<(MultiplexStructuredReader, u64)> {
         match self {
             Self::Claude(s) => s.subscribe_with_current_seq().await,
             #[cfg(any(debug_assertions, test))]
@@ -401,7 +371,7 @@ impl AgentSession {
     /// Subscribe to structured log output.
     ///
     /// Returns `None` if the log buffer has been closed.
-    pub async fn subscribe(&self) -> Result<Option<MultiplexStructuredReader>> {
+    pub async fn subscribe(&self) -> Option<MultiplexStructuredReader> {
         match self {
             Self::Claude(s) => s.subscribe().await,
             #[cfg(any(debug_assertions, test))]

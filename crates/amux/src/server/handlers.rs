@@ -282,7 +282,7 @@ async fn handle_routable(
             let Some((reply_src, reply_dst)) = reply_routes(src, "SubscribeStructured") else {
                 return Ok(());
             };
-            let structured_subscription = {
+            let subscribed = {
                 let us = ctx.user_state.read().await;
                 let Some(session) = us.agents.get(&agent_id) else {
                     let _ = tx
@@ -301,44 +301,7 @@ async fn handle_routable(
                         .await;
                     return Ok(());
                 };
-                session.structured_subscription()
-            };
-
-            let Some(structured_subscription) = structured_subscription else {
-                let _ = tx
-                    .send(Message::routable(
-                        reply_src,
-                        reply_dst,
-                        request_id,
-                        &RoutableMessage::SubscribeStructuredResult {
-                            agent_id,
-                            seq: 0,
-                            error: Some(ProtocolError::ServerError(format!(
-                                "agent {agent_id} session ended"
-                            ))),
-                        },
-                    ))
-                    .await;
-                return Ok(());
-            };
-
-            let subscribed = match structured_subscription.subscribe_with_current_seq().await {
-                Ok(subscribed) => subscribed,
-                Err(error) => {
-                    let _ = tx
-                        .send(Message::routable(
-                            reply_src,
-                            reply_dst,
-                            request_id,
-                            &RoutableMessage::SubscribeStructuredResult {
-                                agent_id,
-                                seq: 0,
-                                error: Some(ProtocolError::ServerError(error.to_string())),
-                            },
-                        ))
-                        .await;
-                    return Ok(());
-                }
+                session.subscribe_with_current_seq().await
             };
 
             let Some((reader, current_seq)) = subscribed else {
@@ -1720,6 +1683,54 @@ mod tests {
             msgs.is_empty(),
             "response variants at destination should produce no output"
         );
+    }
+
+    #[tokio::test]
+    async fn subscribe_structured_returns_immediately_for_unlinked_claude_session() {
+        let (state, user_state) = test_state().await;
+        let ctx = test_ctx(state, user_state.clone());
+        let (tx, written) = mock_tx();
+
+        let agent_id = Uuid::new_v4();
+        let session = AgentSession::Claude(crate::agents::ClaudeSession::new_readonly(
+            agent_id,
+            PathBuf::from("/tmp"),
+        ));
+        let info = session.to_agent();
+        {
+            let mut us = user_state.write().await;
+            us.agents.insert(agent_id, session);
+            us.registry.register_local(info).unwrap();
+        }
+
+        let msg = Message::routable(
+            Route::from_link("client"),
+            Route::empty(),
+            1,
+            &RoutableMessage::SubscribeStructured { agent_id },
+        );
+
+        tokio::time::timeout(Duration::from_millis(100), handle_message(&tx, msg, &ctx))
+            .await
+            .unwrap()
+            .unwrap();
+
+        tokio::task::yield_now().await;
+
+        let msgs = written.lock().await;
+        assert_eq!(msgs.len(), 1);
+        let Message::Routable { payload, .. } = &msgs[0] else {
+            panic!("expected Routable, got {:?}", msgs[0]);
+        };
+        let response = RoutableMessage::decode(payload).unwrap();
+        assert!(matches!(
+            response,
+            RoutableMessage::SubscribeStructuredResult {
+                agent_id: id,
+                seq: 0,
+                error: None,
+            } if id == agent_id
+        ));
     }
 
     #[tokio::test]

@@ -67,21 +67,13 @@ impl TestAgentSession {
     }
 
     /// Subscribe to structured log output.
-    pub async fn subscribe(&self) -> Result<Option<MultiplexStructuredReader>> {
-        match &self.log_source {
-            Some(log_source) => Ok(log_source.subscribe().await),
-            None => Ok(None),
-        }
+    pub async fn subscribe(&self) -> Option<MultiplexStructuredReader> {
+        self.log_source.as_ref()?.subscribe().await
     }
 
     /// Subscribe to structured log output and return the matching seq.
-    pub async fn subscribe_with_current_seq(
-        &self,
-    ) -> Result<Option<(MultiplexStructuredReader, u64)>> {
-        match &self.log_source {
-            Some(log_source) => Ok(log_source.subscribe_with_current_seq().await),
-            None => Ok(None),
-        }
+    pub async fn subscribe_with_current_seq(&self) -> Option<(MultiplexStructuredReader, u64)> {
+        self.log_source.as_ref()?.subscribe_with_current_seq().await
     }
 
     /// Shut down the session: close PTY and log source.
@@ -117,7 +109,6 @@ mod tests {
             session.subscribe_with_current_seq(),
         )
         .await
-        .unwrap()
         .unwrap()
         .unwrap();
 

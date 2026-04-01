@@ -435,15 +435,6 @@ impl ClaudeSession {
                 "session is readonly".to_string(),
             ));
         }
-        if self
-            .log_source
-            .as_ref()
-            .is_some_and(|log_source| !log_source.is_linked())
-        {
-            return Err(ProtocolError::ServerError(
-                "structured session not ready".to_string(),
-            ));
-        }
         let current_seq = self.current_seq().await;
         if client_seq != current_seq {
             return Err(ProtocolError::SequenceNumberMismatch {
@@ -534,27 +525,13 @@ impl ClaudeSession {
     }
 
     /// Subscribe to structured log output.
-    pub async fn subscribe(&self) -> Result<Option<MultiplexStructuredReader>> {
-        match &self.log_source {
-            Some(log_source) => {
-                log_source.wait_until_linked().await?;
-                Ok(log_source.subscribe().await)
-            }
-            None => Ok(None),
-        }
+    pub async fn subscribe(&self) -> Option<MultiplexStructuredReader> {
+        self.log_source.as_ref()?.subscribe().await
     }
 
     /// Subscribe to structured log output and return the matching seq.
-    pub async fn subscribe_with_current_seq(
-        &self,
-    ) -> Result<Option<(MultiplexStructuredReader, u64)>> {
-        match &self.log_source {
-            Some(log_source) => {
-                log_source.wait_until_linked().await?;
-                Ok(log_source.subscribe_with_current_seq().await)
-            }
-            None => Ok(None),
-        }
+    pub async fn subscribe_with_current_seq(&self) -> Option<(MultiplexStructuredReader, u64)> {
+        self.log_source.as_ref()?.subscribe_with_current_seq().await
     }
 
     /// Shut down the session according to the given policy.
