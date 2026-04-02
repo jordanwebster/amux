@@ -20,10 +20,7 @@ pub enum Hook {
 #[serde(tag = "hook_event_name")]
 pub enum ClaudeHook {
     SessionStart(ClaudeSessionStart),
-    PermissionRequest(ClaudePermissionRequest),
-    PreToolUse(ClaudePreToolUse),
-    PostToolUse(Box<ClaudePostToolUse>),
-    PostToolUseFailure(Box<ClaudePostToolUseFailure>),
+    PermissionRequest(Box<ClaudePermissionRequest>),
     Stop(ClaudeStop),
     SessionEnd(ClaudeSessionEnd),
     #[serde(other)]
@@ -36,9 +33,6 @@ impl ClaudeHook {
         match self {
             Self::SessionStart(s) => Some(s.session_id),
             Self::PermissionRequest(s) => Some(s.session_id),
-            Self::PreToolUse(s) => Some(s.session_id),
-            Self::PostToolUse(s) => Some(s.session_id),
-            Self::PostToolUseFailure(s) => Some(s.session_id),
             Self::Stop(s) => Some(s.session_id),
             Self::SessionEnd(s) => Some(s.session_id),
             Self::Unknown => None,
@@ -50,9 +44,6 @@ impl ClaudeHook {
         match self {
             Self::SessionStart(s) => Some(&s.cwd),
             Self::PermissionRequest(s) => Some(&s.cwd),
-            Self::PreToolUse(s) => Some(&s.cwd),
-            Self::PostToolUse(s) => Some(&s.cwd),
-            Self::PostToolUseFailure(s) => Some(&s.cwd),
             Self::Stop(s) => Some(&s.cwd),
             Self::SessionEnd(s) => Some(&s.cwd),
             Self::Unknown => None,
@@ -64,9 +55,6 @@ impl ClaudeHook {
         match self {
             Self::SessionStart(s) => Some(&s.transcript_path),
             Self::PermissionRequest(s) => Some(&s.transcript_path),
-            Self::PreToolUse(s) => Some(&s.transcript_path),
-            Self::PostToolUse(s) => Some(&s.transcript_path),
-            Self::PostToolUseFailure(s) => Some(&s.transcript_path),
             Self::Stop(s) => Some(&s.transcript_path),
             Self::SessionEnd(s) => Some(&s.transcript_path),
             Self::Unknown => None,
@@ -108,42 +96,6 @@ pub struct ClaudePermissionRequest {
     pub cwd: String,
     #[serde(flatten)]
     pub tool: ClaudePermissionTool,
-}
-
-/// PreToolUse hook data from Claude Code
-#[derive(Debug, Clone, Deserialize, Serialize)]
-pub struct ClaudePreToolUse {
-    pub session_id: Uuid,
-    pub tool_use_id: String,
-    pub transcript_path: String,
-    pub cwd: String,
-    #[serde(flatten)]
-    pub tool: PreToolUse,
-}
-
-/// PostToolUse hook data from Claude Code.
-#[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct ClaudePostToolUse {
-    pub session_id: Uuid,
-    pub tool_use_id: String,
-    pub transcript_path: String,
-    pub cwd: String,
-    #[serde(flatten)]
-    pub tool: PostToolUse,
-}
-
-/// PostToolUseFailure hook data from Claude Code.
-#[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct ClaudePostToolUseFailure {
-    pub session_id: Uuid,
-    pub tool_use_id: String,
-    pub transcript_path: String,
-    pub cwd: String,
-    #[serde(flatten)]
-    pub tool: PreToolUse,
-    pub error: String,
-    #[serde(default)]
-    pub is_interrupt: bool,
 }
 
 /// Tool input fields for the Edit tool
@@ -1051,15 +1003,6 @@ impl std::fmt::Display for ClaudeHook {
             ClaudeHook::PermissionRequest(p) => {
                 write!(f, "session {} {}", p.session_id, p.tool)
             }
-            ClaudeHook::PreToolUse(p) => {
-                write!(f, "session {} pre-tool {}", p.session_id, p.tool)
-            }
-            ClaudeHook::PostToolUse(p) => {
-                write!(f, "session {} post-tool {}", p.session_id, p.tool)
-            }
-            ClaudeHook::PostToolUseFailure(p) => {
-                write!(f, "session {} post-tool-failure {}", p.session_id, p.tool)
-            }
             ClaudeHook::Stop(s) => {
                 write!(f, "session {} stopped", s.session_id)
             }
@@ -1901,14 +1844,14 @@ mod tests {
             "session 00000000-0000-0000-0000-000000000001 at /tmp/transcript.jsonl"
         );
 
-        let hook = ClaudeHook::PermissionRequest(ClaudePermissionRequest {
+        let hook = ClaudeHook::PermissionRequest(Box::new(ClaudePermissionRequest {
             session_id: Uuid::parse_str("00000000-0000-0000-0000-000000000002").unwrap(),
             transcript_path: "/tmp".to_string(),
             cwd: "/tmp".to_string(),
             tool: ClaudePermissionTool::Bash {
                 tool_input: bash_tool_input("ls"),
             },
-        });
+        }));
         assert_eq!(
             hook.to_string(),
             "session 00000000-0000-0000-0000-000000000002 Bash `ls`"
@@ -2023,210 +1966,15 @@ mod tests {
     }
 
     #[test]
-    fn test_claude_pre_tool_use_deserializes_from_hook_json() {
-        let json = r#"{
-            "hook_event_name": "PreToolUse",
-            "session_id": "00000000-0000-0000-0000-000000000001",
-            "tool_use_id": "toolu_abc123",
-            "transcript_path": "/tmp",
-            "cwd": "/tmp",
-            "tool_name": "Bash",
-            "tool_input": {
-                "command": "cargo test",
-                "description": "Run tests"
-            }
-        }"#;
-        let hook: ClaudeHook = serde_json::from_str(json).unwrap();
-        let ClaudeHook::PreToolUse(pre) = hook else {
-            panic!("Expected PreToolUse, got {hook:?}");
-        };
-        assert_eq!(pre.tool_use_id, "toolu_abc123");
-        let PreToolUse::Bash { tool_input } = pre.tool else {
-            panic!("Expected Bash tool");
-        };
-        assert_eq!(tool_input.command, "cargo test");
-    }
-
-    #[test]
-    fn test_claude_pre_tool_use_read_deserializes_from_hook_json() {
-        let json = r#"{
-            "hook_event_name": "PreToolUse",
-            "session_id": "00000000-0000-0000-0000-000000000001",
-            "tool_use_id": "toolu_read123",
-            "transcript_path": "/tmp",
-            "cwd": "/tmp",
-            "tool_name": "Read",
-            "tool_input": {
-                "file_path": "/tmp/test.rs",
-                "offset": 10,
-                "limit": 5
-            }
-        }"#;
-        let hook: ClaudeHook = serde_json::from_str(json).unwrap();
-        let ClaudeHook::PreToolUse(pre) = hook else {
-            panic!("Expected PreToolUse");
-        };
-        let PreToolUse::Read { tool_input } = pre.tool else {
-            panic!("Expected Read tool");
-        };
-        assert_eq!(tool_input.file_path, "/tmp/test.rs");
-        assert_eq!(tool_input.offset, Some(10));
-        assert_eq!(tool_input.limit, Some(5));
-    }
-
-    #[test]
-    fn test_claude_post_tool_use_deserializes_write_output_from_hook_json() {
-        let json = r#"{
-            "hook_event_name": "PostToolUse",
-            "session_id": "00000000-0000-0000-0000-000000000001",
-            "tool_use_id": "toolu_abc123",
-            "transcript_path": "/tmp",
-            "cwd": "/tmp",
-            "tool_name": "Write",
-            "tool_input": {
-                "file_path": "/tmp/test.rs",
-                "content": "bar"
-            },
-            "tool_response": {
-                "success": true,
-                "type": "create",
-                "filePath": "/tmp/test.rs",
-                "content": "bar",
-                "structuredPatch": [{
-                    "oldStart": 1,
-                    "oldLines": 0,
-                    "newStart": 1,
-                    "newLines": 1,
-                    "lines": ["-foo", "+bar"]
-                }],
-                "originalFile": null
-            }
-        }"#;
-        let hook: ClaudeHook = serde_json::from_str(json).unwrap();
-        let ClaudeHook::PostToolUse(post) = hook else {
-            panic!("Expected PostToolUse");
-        };
-        assert_eq!(post.tool_use_id, "toolu_abc123");
-
-        let PostToolUse::Write {
-            tool_input,
-            tool_response,
-        } = &post.tool
-        else {
-            panic!("Expected Write post tool");
-        };
-        assert_eq!(tool_input.file_path, "/tmp/test.rs");
-        assert_eq!(tool_response.file_path, "/tmp/test.rs");
-        assert_eq!(tool_response.structured_patch.len(), 1);
-    }
-
-    #[test]
-    fn test_claude_post_tool_use_deserializes_read_output_from_hook_json() {
-        let json = r#"{
-            "hook_event_name": "PostToolUse",
-            "session_id": "00000000-0000-0000-0000-000000000001",
-            "tool_use_id": "toolu_read456",
-            "transcript_path": "/tmp",
-            "cwd": "/tmp",
-            "tool_name": "Read",
-            "tool_input": {
-                "file_path": "/tmp/test.rs"
-            },
-            "tool_response": {
-                "type": "text",
-                "file": {
-                    "filePath": "/tmp/test.rs",
-                    "content": "fn main() {}\n",
-                    "numLines": 1,
-                    "startLine": 1,
-                    "totalLines": 1
-                }
-            }
-        }"#;
-        let hook: ClaudeHook = serde_json::from_str(json).unwrap();
-        let ClaudeHook::PostToolUse(post) = hook else {
-            panic!("Expected PostToolUse");
-        };
-        let PostToolUse::Read {
-            tool_response: ReadToolOutput::Text { file },
-            ..
-        } = &post.tool
-        else {
-            panic!("Expected text read output");
-        };
-        assert_eq!(file.file_path, "/tmp/test.rs");
-        assert_eq!(file.total_lines, 1);
-    }
-
-    #[test]
-    fn test_post_tool_use_unknown_tool_from_json() {
-        let json = r#"{
-            "hook_event_name": "PostToolUse",
-            "session_id": "00000000-0000-0000-0000-000000000001",
-            "tool_use_id": "toolu_unknown",
-            "transcript_path": "/tmp",
-            "cwd": "/tmp",
-            "tool_name": "SomeFutureTool",
-            "tool_input": {},
-            "tool_response": {
-                "whatever": "data"
-            }
-        }"#;
-        let hook: ClaudeHook = serde_json::from_str(json).unwrap();
-        let ClaudeHook::PostToolUse(post) = hook else {
-            panic!("Expected PostToolUse");
-        };
-        assert!(matches!(post.tool, PostToolUse::Unknown));
-    }
-
-    #[test]
-    fn test_claude_post_tool_use_missing_tool_response() {
-        let json = r#"{
-            "session_id": "00000000-0000-0000-0000-000000000001",
-            "tool_use_id": "toolu_abc789",
-            "tool_name": "Read",
-            "tool_input": {
-                "file_path": "/tmp/test.rs"
-            }
-        }"#;
-        assert!(serde_json::from_str::<ClaudeHook>(json).is_err());
-    }
-
-    #[test]
-    fn test_hook_pre_tool_use_msgpack_roundtrip() {
-        let hook = Hook::Claude(ClaudeHook::PreToolUse(ClaudePreToolUse {
-            session_id: Uuid::parse_str("00000000-0000-0000-0000-000000000001").unwrap(),
-            tool_use_id: "toolu_abc".to_string(),
-            transcript_path: "/tmp".to_string(),
-            cwd: "/tmp".to_string(),
-            tool: PreToolUse::Bash {
-                tool_input: bash_tool_input("ls"),
-            },
-        }));
-        let encoded = rmp_serde::to_vec_named(&hook).unwrap();
-        let decoded: Hook = rmp_serde::from_slice(&encoded).unwrap();
-        let Hook::Claude(ClaudeHook::PreToolUse(pre)) = decoded else {
-            panic!("Expected PreToolUse, got {decoded:?}");
-        };
-        assert_eq!(pre.tool_use_id, "toolu_abc");
-    }
-
-    #[test]
     fn test_handle_hook_message_msgpack_roundtrip() {
         use crate::message::{Command, Message};
 
         let agent_id = Uuid::new_v4();
-        let hook = Hook::Claude(ClaudeHook::PreToolUse(ClaudePreToolUse {
-            session_id: Uuid::new_v4(),
-            tool_use_id: "toolu_xyz".to_string(),
-            transcript_path: "/tmp".to_string(),
+        let session_id = Uuid::new_v4();
+        let hook = Hook::Claude(ClaudeHook::SessionStart(ClaudeSessionStart {
+            session_id,
+            transcript_path: "/tmp/transcript.jsonl".to_string(),
             cwd: "/tmp".to_string(),
-            tool: PreToolUse::Bash {
-                tool_input: BashToolInput {
-                    description: Some("Run tests".to_string()),
-                    ..bash_tool_input("cargo test")
-                },
-            },
         }));
         let msg = Message::Command(Command::HandleHook {
             agent_id,
@@ -2245,48 +1993,10 @@ mod tests {
         };
         assert_eq!(decoded_id, agent_id);
         assert_eq!(source_ppid, Some(1234));
-        let Hook::Claude(ClaudeHook::PreToolUse(pre)) = *decoded_hook else {
-            panic!("Expected PreToolUse");
+        let Hook::Claude(ClaudeHook::SessionStart(start)) = *decoded_hook else {
+            panic!("Expected SessionStart");
         };
-        assert_eq!(pre.tool_use_id, "toolu_xyz");
-    }
-
-    #[test]
-    fn test_post_tool_use_hook_msgpack_roundtrip() {
-        use crate::message::{Command, Message};
-
-        let agent_id = Uuid::new_v4();
-        let hook = Hook::Claude(ClaudeHook::PostToolUse(Box::new(ClaudePostToolUse {
-            session_id: Uuid::new_v4(),
-            tool_use_id: "toolu_post".to_string(),
-            transcript_path: "/tmp".to_string(),
-            cwd: "/tmp".to_string(),
-            tool: PostToolUse::Bash {
-                tool_input: bash_tool_input("ls"),
-                tool_response: bash_tool_output("file.txt\n"),
-            },
-        })));
-        let msg = Message::Command(Command::HandleHook {
-            agent_id,
-            hook: Box::new(hook),
-            source_ppid: Some(5678),
-        });
-        let encoded = msg.encode().unwrap();
-        let decoded = Message::decode(&encoded).unwrap();
-        let Message::Command(Command::HandleHook {
-            hook: decoded_hook,
-            source_ppid,
-            ..
-        }) = decoded
-        else {
-            panic!("Expected HandleHook");
-        };
-        assert_eq!(source_ppid, Some(5678));
-        let Hook::Claude(ClaudeHook::PostToolUse(post)) = *decoded_hook else {
-            panic!("Expected PostToolUse");
-        };
-        assert_eq!(post.tool_use_id, "toolu_post");
-        assert!(matches!(post.tool, PostToolUse::Bash { .. }));
+        assert_eq!(start.session_id, session_id);
     }
 
     #[test]

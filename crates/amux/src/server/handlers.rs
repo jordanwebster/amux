@@ -528,9 +528,6 @@ async fn handle_command(
             let hook_type = match hook.as_ref() {
                 Hook::Claude(ClaudeHook::SessionStart(_)) => "SessionStart",
                 Hook::Claude(ClaudeHook::PermissionRequest(_)) => "PermissionRequest",
-                Hook::Claude(ClaudeHook::PreToolUse(_)) => "PreToolUse",
-                Hook::Claude(ClaudeHook::PostToolUse(_)) => "PostToolUse",
-                Hook::Claude(ClaudeHook::PostToolUseFailure(_)) => "PostToolUseFailure",
                 Hook::Claude(ClaudeHook::Stop(_)) => "Stop",
                 Hook::Claude(ClaudeHook::SessionEnd(_)) => "SessionEnd",
                 Hook::Claude(ClaudeHook::Unknown) => "Unknown",
@@ -1956,20 +1953,22 @@ mod tests {
         let (tx, written) = mock_tx();
 
         let agent_id = Uuid::new_v4();
-        let hook = Hook::Claude(ClaudeHook::PermissionRequest(ClaudePermissionRequest {
-            session_id: Uuid::new_v4(),
-            transcript_path: "/tmp".to_string(),
-            cwd: "/tmp".to_string(),
-            tool: ClaudePermissionTool::Bash {
-                tool_input: BashToolInput {
-                    command: "ls".to_string(),
-                    description: None,
-                    timeout: None,
-                    run_in_background: None,
-                    dangerously_disable_sandbox: None,
+        let hook = Hook::Claude(ClaudeHook::PermissionRequest(Box::new(
+            ClaudePermissionRequest {
+                session_id: Uuid::new_v4(),
+                transcript_path: "/tmp".to_string(),
+                cwd: "/tmp".to_string(),
+                tool: ClaudePermissionTool::Bash {
+                    tool_input: BashToolInput {
+                        command: "ls".to_string(),
+                        description: None,
+                        timeout: None,
+                        run_in_background: None,
+                        dangerously_disable_sandbox: None,
+                    },
                 },
             },
-        }));
+        )));
 
         handle_command(
             &tx,
@@ -2019,12 +2018,14 @@ mod tests {
                 dangerously_disable_sandbox: None,
             },
         };
-        let hook = Hook::Claude(ClaudeHook::PermissionRequest(ClaudePermissionRequest {
-            session_id: Uuid::new_v4(),
-            transcript_path: "/tmp".to_string(),
-            cwd: "/tmp".to_string(),
-            tool: tool.clone(),
-        }));
+        let hook = Hook::Claude(ClaudeHook::PermissionRequest(Box::new(
+            ClaudePermissionRequest {
+                session_id: Uuid::new_v4(),
+                transcript_path: "/tmp".to_string(),
+                cwd: "/tmp".to_string(),
+                tool: tool.clone(),
+            },
+        )));
 
         handle_command(
             &tx,

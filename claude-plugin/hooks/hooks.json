@@ -1,11 +1,48 @@
 {
   "hooks": {
-    "SessionStart": [{ "hooks": [{ "type": "command", "command": "amux hooks claude session-start", "async": true }] }],
-    "SessionEnd": [{ "hooks": [{ "type": "command", "command": "amux hooks claude session-end", "async": true }] }],
-    "PermissionRequest": [{ "hooks": [{ "type": "command", "command": "amux hooks claude permission-request", "async": true }] }],
-    "PreToolUse": [{ "hooks": [{ "type": "command", "command": "amux hooks claude pre-tool-use", "async": true }] }],
-    "PostToolUse": [{ "hooks": [{ "type": "command", "command": "amux hooks claude post-tool-use", "async": true }] }],
-    "PostToolUseFailure": [{ "hooks": [{ "type": "command", "command": "amux hooks claude post-tool-use-failure", "async": true }] }],
-    "Stop": [{ "hooks": [{ "type": "command", "command": "amux hooks claude stop", "async": true }] }]
+    "SessionStart": [
+      {
+        "hooks": [
+          {
+            "type": "command",
+            "command": "amux hooks claude session-start",
+            "async": true
+          }
+        ]
+      }
+    ],
+    "SessionEnd": [
+      {
+        "hooks": [
+          {
+            "type": "command",
+            "command": "amux hooks claude session-end",
+            "async": true
+          }
+        ]
+      }
+    ],
+    "PermissionRequest": [
+      {
+        "hooks": [
+          {
+            "type": "command",
+            "command": "amux hooks claude permission-request",
+            "async": true
+          }
+        ]
+      }
+    ],
+    "Stop": [
+      {
+        "hooks": [
+          {
+            "type": "command",
+            "command": "amux hooks claude stop",
+            "async": true
+          }
+        ]
+      }
+    ]
   }
 }

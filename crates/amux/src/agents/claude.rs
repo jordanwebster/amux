@@ -476,15 +476,6 @@ impl ClaudeSession {
                     ))
                     .await;
             }
-            Hook::Claude(ClaudeHook::PreToolUse(pre)) => {
-                tracing::debug!(agent_id = %self.agent_id, tool = %pre.tool, "pre-tool-use");
-            }
-            Hook::Claude(ClaudeHook::PostToolUse(post)) => {
-                tracing::debug!(agent_id = %self.agent_id, tool = %post.tool, "post-tool-use");
-            }
-            Hook::Claude(ClaudeHook::PostToolUseFailure(post)) => {
-                tracing::debug!(agent_id = %self.agent_id, tool = %post.tool, "post-tool-use-failure");
-            }
             Hook::Claude(ClaudeHook::Stop(stop)) => {
                 tracing::debug!(agent_id = %self.agent_id, "agent stopped");
                 log_source
@@ -917,7 +908,7 @@ mod tests {
 
         session
             .handle_hook(
-                Hook::Claude(ClaudeHook::PermissionRequest(
+                Hook::Claude(ClaudeHook::PermissionRequest(Box::new(
                     crate::claude::types::ClaudePermissionRequest {
                         session_id,
                         transcript_path: transcript_path_str.clone(),
@@ -932,7 +923,7 @@ mod tests {
                             },
                         },
                     },
-                )),
+                ))),
                 None,
             )
             .await

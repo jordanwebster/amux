@@ -65,17 +65,6 @@ fn handle_claude_hook_inner(config: &Config) -> io::Result<()> {
     {
         tracing::warn!(input = %input, "unrecognized permission request tool");
     }
-    if let ClaudeHook::PreToolUse(ref p) = claude_hook
-        && matches!(p.tool, PreToolUse::Unknown)
-    {
-        tracing::warn!(input = %input, "unrecognized pre-tool-use tool");
-    }
-    if let ClaudeHook::PostToolUseFailure(ref p) = claude_hook
-        && matches!(p.tool, PreToolUse::Unknown)
-    {
-        tracing::warn!(input = %input, "unrecognized post-tool-use-failure tool");
-    }
-
     tracing::debug!(hook = %claude_hook, "received hook");
 
     let hook = Hook::Claude(claude_hook);

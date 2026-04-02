@@ -111,9 +111,6 @@ enum ClaudeHookEvent {
     SessionStart,
     SessionEnd,
     PermissionRequest,
-    PreToolUse,
-    PostToolUse,
-    PostToolUseFailure,
     Stop,
 }
 
