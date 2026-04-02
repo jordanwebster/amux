@@ -38,6 +38,33 @@ One paragraph describing what was done.
 
 ---
 
+## 2026-04-03: Add local agent name sniffing with provider-derived rename support
+
+### Summary
+Agents can now be automatically renamed from structured log output. A name sniffer task watches the structured log source for slug and agent_name events, emitting `SessionEvent::NameCandidateChanged` when a new best name is discovered. The server applies candidates respecting a precedence hierarchy (Unset < ProviderSlug < ProviderName < Amux), updates the registry, session, and re-announces to peers. User-supplied (`Amux`) names are never overridden.
+
+### Changes
+- `crates/amux/src/agent_registry.rs` — added `NotFound` error variant, `update_local()` method for in-place metadata updates with alias collision protection
+- `crates/amux/src/agents/mod.rs` — added `LocalAgentNameSource` enum with `is_automatic()`/`rank()` methods, `SessionEvent::NameCandidateChanged` variant, name sniffer lifecycle methods on `AgentSession`, `name_source` field in `SuspendedAgent`
+- `crates/amux/src/agents/claude.rs` — added `NameSnifferState` (split into `ingest`/`effective_candidate`/`observe`), `spawn_name_sniffer()`, name sniffer lifecycle on `ClaudeSession`
+- `crates/amux/src/server/routing.rs` — added `apply_local_name_candidate()` with read-then-write phase separation, name sniffer startup on agent creation and resume
+- `crates/amux/src/server/mod.rs` — extracted `handle_session_event()`, added `NameCandidateChanged` handling
+- `crates/amux/src/server/handlers.rs` — name sniffer startup for readonly external sessions
+- `crates/amux/src/message.rs` — doc comment on `AnnounceAgent`
+- `crates/amux/src/state.rs` — updated suspended agent roundtrip tests for `name_source`
+
+### Decisions Made
+- Precedence as methods on the enum (`is_automatic()`, `rank()`) rather than a free function returning `Option<u8>` — keeps domain logic co-located and simplifies call sites
+- `NameSnifferState` split into three methods (ingest, effective_candidate, observe) — separates mutation from computation from dedup orchestration
+- `apply_local_name_candidate` uses immutable borrow for validation, then mutable for mutations — avoids tuple-extraction pattern to work around borrow checker
+- Same-name with higher-precedence source upgrades provenance without peer re-announcement — avoids unnecessary network chatter
+
+### Verification
+- `cargo check`, `cargo fmt`, `cargo clippy --workspace --all-targets -- -D warnings` — clean
+- `cargo test --workspace` — 243 tests pass
+
+---
+
 ## 2026-04-02: Restore immediate structured subscribe semantics
 
 ### Summary

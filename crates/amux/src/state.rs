@@ -210,7 +210,7 @@ mod tests {
 
     #[test]
     fn test_suspended_agent_roundtrip() {
-        use crate::agents::{SuspendedAgent, SuspendedServerState};
+        use crate::agents::{LocalAgentNameSource, SuspendedAgent, SuspendedServerState};
         use crate::message::TerminalSize;
         use uuid::Uuid;
 
@@ -219,6 +219,7 @@ mod tests {
                 SuspendedAgent::Claude {
                     agent_id: Uuid::new_v4(),
                     name: Some("test-claude".to_string()),
+                    name_source: LocalAgentNameSource::ProviderName,
                     working_dir: PathBuf::from("/home/user/project"),
                     terminal_size: Some(TerminalSize {
                         rows: 40,
@@ -266,7 +267,7 @@ mod tests {
 
     #[test]
     fn test_suspended_agent_into_session_roundtrip() {
-        use crate::agents::SuspendedAgent;
+        use crate::agents::{LocalAgentNameSource, SuspendedAgent};
         use uuid::Uuid;
 
         let agent_id = Uuid::new_v4();
@@ -274,6 +275,7 @@ mod tests {
         let sa = SuspendedAgent::Claude {
             agent_id,
             name: Some("my-claude".to_string()),
+            name_source: LocalAgentNameSource::ProviderSlug,
             working_dir: PathBuf::from("/home/user"),
             terminal_size: Some(crate::message::TerminalSize {
                 rows: 30,
@@ -286,6 +288,10 @@ mod tests {
         let session = sa.into_session();
         assert_eq!(session.agent_id(), agent_id);
         assert_eq!(session.name(), Some("my-claude"));
+        assert_eq!(
+            session.local_name_source(),
+            Some(LocalAgentNameSource::ProviderSlug)
+        );
         assert_eq!(session.working_dir(), PathBuf::from("/home/user"));
     }
 }

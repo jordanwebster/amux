@@ -7,7 +7,10 @@
 
 use super::ServerUserState;
 use super::connection::cancel_streams_matching;
-use crate::agents::{AgentSession, SessionEvent, StopPolicy, SuspendedServerState};
+use crate::agent_registry::AgentRegistryError;
+use crate::agents::{
+    AgentSession, LocalAgentNameSource, SessionEvent, StopPolicy, SuspendedServerState,
+};
 use crate::buffer::MultiplexByteReader;
 use crate::error::{AmuxError, Result};
 use crate::message::{AgentType, CreateAgentRequest, DirectMessage, Message, TerminalSize};
@@ -28,6 +31,98 @@ pub(super) async fn connection_tx(
 /// Maximum local agents per user. Each agent holds a PTY and several tokio
 /// tasks, so this provides an upper bound on per-user resource consumption.
 const MAX_LOCAL_AGENTS: usize = 1024;
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(super) enum LocalNameUpdateOutcome {
+    Renamed,
+    ProvenanceUpdated,
+    Skipped,
+    Collision,
+}
+
+pub(super) fn apply_local_name_candidate(
+    us: &mut ServerUserState,
+    agent_id: Uuid,
+    name: String,
+    source: LocalAgentNameSource,
+) -> LocalNameUpdateOutcome {
+    // Phase 1: read-only validation
+    let session = match us.agents.get(&agent_id) {
+        Some(s) => s,
+        None => return LocalNameUpdateOutcome::Skipped,
+    };
+    let Some(current_source) = session.local_name_source() else {
+        return LocalNameUpdateOutcome::Skipped;
+    };
+    if !current_source.is_automatic() || !source.is_automatic() {
+        return LocalNameUpdateOutcome::Skipped;
+    }
+    if source.rank() < current_source.rank() {
+        return LocalNameUpdateOutcome::Skipped;
+    }
+
+    let current_name = session.name().map(str::to_owned);
+
+    if current_name.as_deref() == Some(name.as_str()) {
+        if source.rank() > current_source.rank() {
+            us.agents
+                .get_mut(&agent_id)
+                .unwrap()
+                .set_local_name(Some(name), source);
+            return LocalNameUpdateOutcome::ProvenanceUpdated;
+        }
+        return LocalNameUpdateOutcome::Skipped;
+    }
+
+    let mut updated = session.to_agent();
+    updated.name = Some(name.clone());
+    // session borrow is dropped here
+
+    // Phase 2: registry + session mutation
+    match us.registry.update_local(updated.clone()) {
+        Ok(()) => {
+            us.agents
+                .get_mut(&agent_id)
+                .unwrap()
+                .set_local_name(updated.name.clone(), source);
+            broadcast_to_peers(
+                us,
+                &DirectMessage::AnnounceAgent {
+                    agent_id,
+                    name: updated.name,
+                    command: updated.command,
+                    working_dir: updated.working_dir,
+                    route: Route::empty(),
+                    agent_type: updated.agent_type,
+                    readonly: updated.readonly,
+                },
+                None,
+            );
+            LocalNameUpdateOutcome::Renamed
+        }
+        Err(AgentRegistryError::AlreadyExists(_)) => {
+            tracing::info!(
+                agent_id = %agent_id,
+                candidate = %name,
+                ?source,
+                current_name = ?current_name,
+                current_source = ?current_source,
+                "skipping local rename: alias collision"
+            );
+            LocalNameUpdateOutcome::Collision
+        }
+        Err(err) => {
+            tracing::warn!(
+                agent_id = %agent_id,
+                candidate = %name,
+                ?source,
+                error = %err,
+                "failed to update local agent metadata"
+            );
+            LocalNameUpdateOutcome::Skipped
+        }
+    }
+}
 
 pub(super) async fn create_agent(
     user_state: &Arc<RwLock<ServerUserState>>,
@@ -81,6 +176,9 @@ pub(super) async fn create_agent(
         us.registry.register_local(info).map_err(|e| {
             AmuxError::ServerError(format!("failed to register local agent {agent_id}: {e}",))
         })?;
+        if let Some(session) = us.agents.get_mut(&agent_id) {
+            session.maybe_start_name_sniffer(user_id, event_tx);
+        }
 
         // Task: Monitor exit handle and notify server when agent exits
         let exit_event_tx = event_tx.clone();
@@ -245,6 +343,8 @@ pub(super) async fn resume_agents(
                     us.agents.insert(agent_id, session);
                     if let Err(e) = us.registry.register_local(info) {
                         tracing::error!(agent_id = %agent_id, error = %e, "failed to register resumed agent");
+                    } else if let Some(session) = us.agents.get_mut(&agent_id) {
+                        session.maybe_start_name_sniffer(user_id, event_tx);
                     }
                     broadcast_to_peers(
                         &mut us,

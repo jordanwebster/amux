@@ -40,6 +40,8 @@ pub enum AgentRegistryError {
     NotLocal,
     #[error("Agent must not have empty route")]
     NotRemote,
+    #[error("Agent not found: {0}")]
+    NotFound(String),
     #[error("Agent already exists: {0}")]
     AlreadyExists(String),
 }
@@ -73,7 +75,8 @@ impl AgentRegistry {
     }
 
     /// Register a remote agent. Upserts by UUID; clears old name on re-announce.
-    /// First-one-wins for name (silently skips if taken by another agent).
+    /// Stores the latest metadata for the UUID, but keeps alias ownership unique:
+    /// a colliding alias stays with its current owner.
     pub fn register_remote(&mut self, info: Agent) -> Result<(), AgentRegistryError> {
         if info.route.is_empty() {
             return Err(AgentRegistryError::NotRemote);
@@ -94,6 +97,44 @@ impl AgentRegistry {
             self.uuid_to_name.insert(info.id, name.clone());
         }
         // else: silently skip — name is taken by another agent
+
+        self.entries.insert(info.id, info);
+        Ok(())
+    }
+
+    /// Update an existing local agent entry in place.
+    ///
+    /// The entry must already exist locally. Alias ownership stays unique:
+    /// renaming to a colliding alias fails without mutating the registry.
+    pub fn update_local(&mut self, info: Agent) -> Result<(), AgentRegistryError> {
+        if !info.route.is_empty() {
+            return Err(AgentRegistryError::NotLocal);
+        }
+
+        let Some(existing) = self.entries.get(&info.id) else {
+            return Err(AgentRegistryError::NotFound(info.id.to_string()));
+        };
+        if existing.is_remote() {
+            return Err(AgentRegistryError::NotLocal);
+        }
+
+        if let Some(ref new_name) = info.name
+            && let Some(owner) = self.name_to_uuid.get(new_name)
+            && owner != &info.id
+        {
+            return Err(AgentRegistryError::AlreadyExists(new_name.clone()));
+        }
+
+        if let Some(old_name) = self.uuid_to_name.remove(&info.id)
+            && self.name_to_uuid.get(&old_name) == Some(&info.id)
+        {
+            self.name_to_uuid.remove(&old_name);
+        }
+
+        if let Some(ref name) = info.name {
+            self.name_to_uuid.insert(name.clone(), info.id);
+            self.uuid_to_name.insert(info.id, name.clone());
+        }
 
         self.entries.insert(info.id, info);
         Ok(())
@@ -273,6 +314,42 @@ mod tests {
     }
 
     #[test]
+    fn update_local_replaces_alias_and_cleans_up_old_mapping() {
+        let mut reg = AgentRegistry::new();
+        let id = Uuid::new_v4();
+        reg.register_local(make_info(id, Some("old-name"))).unwrap();
+
+        reg.update_local(make_info(id, Some("new-name"))).unwrap();
+
+        assert!(reg.resolve("old-name").is_none());
+        let info = reg.resolve("new-name").unwrap();
+        assert_eq!(info.id, id);
+        assert_eq!(info.name.as_deref(), Some("new-name"));
+    }
+
+    #[test]
+    fn update_local_collision_leaves_existing_mapping_intact() {
+        let mut reg = AgentRegistry::new();
+        let owner = Uuid::new_v4();
+        let candidate = Uuid::new_v4();
+        reg.register_local(make_info(owner, Some("taken"))).unwrap();
+        reg.register_local(make_info(candidate, Some("candidate")))
+            .unwrap();
+
+        let err = reg
+            .update_local(make_info(candidate, Some("taken")))
+            .unwrap_err();
+
+        assert!(matches!(err, AgentRegistryError::AlreadyExists(ref name) if name == "taken"));
+        assert_eq!(reg.resolve("taken").unwrap().id, owner);
+        assert_eq!(reg.resolve("candidate").unwrap().id, candidate);
+        assert_eq!(
+            reg.get(&candidate).and_then(|info| info.name.as_deref()),
+            Some("candidate")
+        );
+    }
+
+    #[test]
     fn register_remote_and_resolve() {
         let mut reg = AgentRegistry::new();
         let id = Uuid::new_v4();
@@ -327,6 +404,40 @@ mod tests {
         assert!(reg.resolve("old-name").is_none());
         let info = reg.resolve("new-name").unwrap();
         assert_eq!(info.id, id);
+        assert_eq!(
+            reg.get(&id).and_then(|info| info.name.as_deref()),
+            Some("new-name")
+        );
+    }
+
+    #[test]
+    fn reannounce_updates_remote_display_name_without_stealing_alias() {
+        let mut reg = AgentRegistry::new();
+        let local_id = Uuid::new_v4();
+        let remote_id = Uuid::new_v4();
+
+        reg.register_local(make_info(local_id, Some("taken")))
+            .unwrap();
+        reg.register_remote(make_remote_info(
+            remote_id,
+            Some("old-remote"),
+            Route::from_link("peer-a"),
+        ))
+        .unwrap();
+
+        reg.register_remote(make_remote_info(
+            remote_id,
+            Some("taken"),
+            Route::from_link("peer-a"),
+        ))
+        .unwrap();
+
+        assert_eq!(reg.resolve("taken").unwrap().id, local_id);
+        assert!(reg.resolve("old-remote").is_none());
+        assert_eq!(
+            reg.get(&remote_id).and_then(|info| info.name.as_deref()),
+            Some("taken")
+        );
     }
 
     #[test]

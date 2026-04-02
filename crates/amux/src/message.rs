@@ -202,6 +202,7 @@ pub enum DirectMessage {
     ReauthResult {
         error: Option<ProtocolError>,
     },
+    /// Advertise or refresh agent metadata for a known UUID.
     AnnounceAgent {
         agent_id: Uuid,
         name: Option<String>,

@@ -33,6 +33,37 @@ use uuid::Uuid;
 /// Maximum replay buffer size for PTY bytes
 const MAX_REPLAY_BUFFER: usize = 10 * 1024 * 1024; // 10MB
 
+/// Local-only provenance for an agent session's current display name.
+///
+/// This is used to decide whether provider-derived candidates may rename a
+/// local session. It is never sent over the peer protocol.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum LocalAgentNameSource {
+    Unset,
+    Amux,
+    ProviderName,
+    ProviderSlug,
+}
+
+impl LocalAgentNameSource {
+    /// Whether this source can be overridden by automatic name discovery.
+    pub fn is_automatic(self) -> bool {
+        !matches!(self, Self::Amux)
+    }
+
+    /// Precedence rank among automatic sources. Higher wins.
+    /// Only valid for automatic sources — panics for `Amux`.
+    pub fn rank(self) -> u8 {
+        match self {
+            Self::Unset => 0,
+            Self::ProviderSlug => 1,
+            Self::ProviderName => 2,
+            Self::Amux => unreachable!("check is_automatic() before calling rank()"),
+        }
+    }
+}
+
 /// Events sent from agent sessions to the server event loop
 #[derive(Clone)]
 pub enum SessionEvent {
@@ -44,6 +75,13 @@ pub enum SessionEvent {
         user_id: Uuid,
         agent_type: AgentType,
         args: Vec<String>,
+    },
+    /// A provider discovered a stronger local name candidate for this session.
+    NameCandidateChanged {
+        agent_id: Uuid,
+        user_id: Uuid,
+        name: String,
+        source: LocalAgentNameSource,
     },
 }
 
@@ -311,6 +349,32 @@ impl AgentSession {
         }
     }
 
+    pub fn maybe_start_name_sniffer(
+        &mut self,
+        user_id: Uuid,
+        event_tx: &mpsc::Sender<SessionEvent>,
+    ) {
+        if let Self::Claude(s) = self {
+            s.maybe_start_name_sniffer(user_id, event_tx);
+        }
+    }
+
+    pub fn local_name_source(&self) -> Option<LocalAgentNameSource> {
+        match self {
+            Self::Claude(s) => Some(s.name_source()),
+            #[cfg(any(debug_assertions, test))]
+            Self::TestAgent(_) => None,
+        }
+    }
+
+    pub fn set_local_name(&mut self, name: Option<String>, source: LocalAgentNameSource) {
+        match self {
+            Self::Claude(s) => s.set_name_and_source(name, source),
+            #[cfg(any(debug_assertions, test))]
+            Self::TestAgent(_) => {}
+        }
+    }
+
     pub fn log_source(&self) -> Option<StructuredLogSource> {
         match self {
             Self::Claude(s) => s.log_source(),
@@ -420,6 +484,7 @@ impl AgentSession {
         match self {
             Self::Claude(s) => {
                 s.stop(StopPolicy::Interrupt).await;
+                let name_source = s.name_source();
                 let session_id = s.session_id.ok_or_else(|| {
                     AmuxError::ServerError(format!(
                         "cannot suspend claude agent {}: no session_id (SessionStart hook not received)",
@@ -429,6 +494,7 @@ impl AgentSession {
                 Ok(SuspendedAgent::Claude {
                     agent_id: s.agent_id,
                     name: s.name,
+                    name_source,
                     working_dir: s.working_dir,
                     terminal_size: s.terminal_size,
                     session_id,
@@ -462,6 +528,7 @@ pub enum SuspendedAgent {
     Claude {
         agent_id: Uuid,
         name: Option<String>,
+        name_source: LocalAgentNameSource,
         working_dir: PathBuf,
         terminal_size: Option<TerminalSize>,
         session_id: Uuid,
@@ -503,6 +570,7 @@ impl SuspendedAgent {
             Self::Claude {
                 agent_id,
                 name,
+                name_source,
                 working_dir,
                 terminal_size,
                 session_id,
@@ -517,6 +585,7 @@ impl SuspendedAgent {
                 };
                 let mut session = ClaudeSession::new(&req);
                 session.session_id = Some(session_id);
+                session.set_name_and_source(req.name, name_source);
                 AgentSession::Claude(session)
             }
             #[cfg(any(debug_assertions, test))]

@@ -14,7 +14,7 @@ use crate::message::{AgentType, Command, Host, Message, ProtocolError, ShutdownR
 use crate::process::process_exists;
 use crate::route::Route;
 use crate::transport::{TcpTransport, TransportSplit, create_tls_acceptor};
-use routing::{shutdown_server, suspend_server};
+use routing::{apply_local_name_candidate, shutdown_server, suspend_server};
 use std::collections::{HashMap, HashSet};
 use std::net::SocketAddr;
 use std::path::Path;
@@ -316,57 +316,7 @@ impl Server {
         let state = self.state.clone();
         tokio::spawn(async move {
             while let Some(event) = event_rx.recv().await {
-                match event {
-                    SessionEvent::Ended { agent_id, user_id } => {
-                        let user_state = {
-                            let s = state.read().await;
-                            s.get_user_state(&user_id)
-                        };
-                        if let Some(user_state) = user_state {
-                            let mut us = user_state.write().await;
-                            let _ = withdraw_agent(&mut us, agent_id);
-                        }
-                    }
-                    SessionEvent::Created {
-                        agent_id,
-                        user_id,
-                        agent_type,
-                        args,
-                    } => {
-                        if matches!(agent_type, AgentType::Claude)
-                            && args.contains(&"--fork-session".to_string())
-                            && let Some(pos) = args.iter().position(|a| a == "--resume")
-                            && let Some(source_id_str) = args.get(pos + 1)
-                            && let Ok(source_id) = source_id_str.parse::<Uuid>()
-                        {
-                            let user_state = {
-                                let s = state.read().await;
-                                s.get_user_state(&user_id)
-                            };
-                            if let Some(user_state) = user_state {
-                                let withdrawn_session = {
-                                    let mut us = user_state.write().await;
-                                    let is_readonly =
-                                        us.agents.get(&source_id).is_some_and(|s| s.readonly());
-                                    if is_readonly {
-                                        withdraw_agent(&mut us, source_id)
-                                    } else {
-                                        None
-                                    }
-                                };
-                                if let Some(session) = withdrawn_session {
-                                    session.stop(StopPolicy::Interrupt).await;
-                                    tracing::info!(
-                                        source = %source_id,
-                                        fork = %agent_id,
-                                        "withdrew readonly session (forked)"
-                                    );
-                                }
-                            }
-                        }
-                        tracing::debug!(agent_id = %agent_id, ?agent_type, ?args, "session created");
-                    }
-                }
+                handle_session_event(&state, event).await;
             }
         });
 
@@ -634,6 +584,83 @@ async fn reap_dead_readonly_sessions(state: &Arc<RwLock<ServerState>>) {
     }
 }
 
+async fn handle_session_event(state: &Arc<RwLock<ServerState>>, event: SessionEvent) {
+    match event {
+        SessionEvent::Ended { agent_id, user_id } => {
+            let user_state = {
+                let s = state.read().await;
+                s.get_user_state(&user_id)
+            };
+            if let Some(user_state) = user_state {
+                let mut us = user_state.write().await;
+                let _ = withdraw_agent(&mut us, agent_id);
+            }
+        }
+        SessionEvent::Created {
+            agent_id,
+            user_id,
+            agent_type,
+            args,
+        } => {
+            if matches!(agent_type, AgentType::Claude)
+                && args.contains(&"--fork-session".to_string())
+                && let Some(pos) = args.iter().position(|a| a == "--resume")
+                && let Some(source_id_str) = args.get(pos + 1)
+                && let Ok(source_id) = source_id_str.parse::<Uuid>()
+            {
+                let user_state = {
+                    let s = state.read().await;
+                    s.get_user_state(&user_id)
+                };
+                if let Some(user_state) = user_state {
+                    let withdrawn_session = {
+                        let mut us = user_state.write().await;
+                        let is_readonly = us.agents.get(&source_id).is_some_and(|s| s.readonly());
+                        if is_readonly {
+                            withdraw_agent(&mut us, source_id)
+                        } else {
+                            None
+                        }
+                    };
+                    if let Some(session) = withdrawn_session {
+                        session.stop(StopPolicy::Interrupt).await;
+                        tracing::info!(
+                            source = %source_id,
+                            fork = %agent_id,
+                            "withdrew readonly session (forked)"
+                        );
+                    }
+                }
+            }
+            tracing::debug!(agent_id = %agent_id, ?agent_type, ?args, "session created");
+        }
+        SessionEvent::NameCandidateChanged {
+            agent_id,
+            user_id,
+            name,
+            source,
+        } => {
+            let user_state = {
+                let s = state.read().await;
+                s.get_user_state(&user_id)
+            };
+            if let Some(user_state) = user_state {
+                let outcome = {
+                    let mut us = user_state.write().await;
+                    apply_local_name_candidate(&mut us, agent_id, name.clone(), source)
+                };
+                tracing::debug!(
+                    agent_id = %agent_id,
+                    candidate = %name,
+                    ?source,
+                    ?outcome,
+                    "processed local name candidate"
+                );
+            }
+        }
+    }
+}
+
 #[cfg(test)]
 pub(super) mod test_helpers {
     use super::connection::ConnectionContext;
@@ -675,10 +702,16 @@ pub(super) mod test_helpers {
 
 #[cfg(test)]
 mod tests {
-    use super::{ServerUserState, withdraw_dead_readonly_sessions_with};
-    use crate::agents::AgentSession;
+    use super::{
+        ServerUserState, handle_session_event, test_helpers::test_state,
+        withdraw_dead_readonly_sessions_with,
+    };
+    use crate::agents::{AgentSession, LocalAgentNameSource, SessionEvent};
     use crate::claude::types::{ClaudeHook, ClaudeSessionStart, Hook};
+    use crate::message::{AgentType, CreateAgentRequest, DirectMessage, Message};
     use std::path::PathBuf;
+    use std::sync::Arc;
+    use tokio::sync::{RwLock, mpsc};
     use uuid::Uuid;
 
     async fn readonly_session_with_pid(agent_id: Uuid, pid: u32) -> AgentSession {
@@ -698,6 +731,40 @@ mod tests {
             .await
             .unwrap();
         session
+    }
+
+    async fn add_peer(
+        user_state: &Arc<RwLock<ServerUserState>>,
+        link_name: &str,
+    ) -> mpsc::Receiver<Message> {
+        let (tx, rx) = mpsc::channel(16);
+        let mut us = user_state.write().await;
+        us.routes.insert(link_name.to_string(), tx);
+        us.peer_links.insert(link_name.to_string());
+        rx
+    }
+
+    async fn insert_local_claude(
+        user_state: &Arc<RwLock<ServerUserState>>,
+        agent_id: Uuid,
+        name: Option<&str>,
+        source: LocalAgentNameSource,
+    ) {
+        let req = CreateAgentRequest {
+            agent_id,
+            name: name.map(str::to_owned),
+            agent_type: AgentType::Claude,
+            working_dir: PathBuf::from("/tmp"),
+            terminal_size: None,
+            args: vec![],
+        };
+        let mut session = AgentSession::Claude(crate::agents::ClaudeSession::new(&req));
+        session.set_local_name(name.map(str::to_owned), source);
+        let info = session.to_agent();
+
+        let mut us = user_state.write().await;
+        us.agents.insert(agent_id, session);
+        us.registry.register_local(info).unwrap();
     }
 
     #[tokio::test]
@@ -730,5 +797,223 @@ mod tests {
         assert!(removed.is_empty());
         assert!(us.agents.contains_key(&agent_id));
         assert!(us.registry.contains(&agent_id));
+    }
+
+    #[tokio::test]
+    async fn unnamed_local_claude_agent_gets_slug_rename_and_rebroadcast() {
+        let (state, user_state) = test_state().await;
+        let mut peer_rx = add_peer(&user_state, "peer-a").await;
+        let agent_id = Uuid::new_v4();
+        insert_local_claude(&user_state, agent_id, None, LocalAgentNameSource::Unset).await;
+
+        handle_session_event(
+            &state,
+            SessionEvent::NameCandidateChanged {
+                agent_id,
+                user_id: super::LOCAL_USER_ID,
+                name: "merry-slug".to_string(),
+                source: LocalAgentNameSource::ProviderSlug,
+            },
+        )
+        .await;
+
+        let us = user_state.read().await;
+        let entry = us.registry.get(&agent_id).unwrap();
+        assert_eq!(entry.name.as_deref(), Some("merry-slug"));
+        assert_eq!(
+            us.agents.get(&agent_id).and_then(|session| session.name()),
+            Some("merry-slug")
+        );
+        drop(us);
+
+        let msg = peer_rx
+            .try_recv()
+            .expect("peer should receive rename announce");
+        assert!(matches!(
+            msg,
+            Message::Direct(DirectMessage::AnnounceAgent {
+                agent_id: id,
+                name: Some(name),
+                ..
+            }) if id == agent_id && name == "merry-slug"
+        ));
+    }
+
+    #[tokio::test]
+    async fn later_agent_name_overrides_earlier_slug_rename_and_rebroadcast() {
+        let (state, user_state) = test_state().await;
+        let mut peer_rx = add_peer(&user_state, "peer-a").await;
+        let agent_id = Uuid::new_v4();
+        insert_local_claude(&user_state, agent_id, None, LocalAgentNameSource::Unset).await;
+
+        handle_session_event(
+            &state,
+            SessionEvent::NameCandidateChanged {
+                agent_id,
+                user_id: super::LOCAL_USER_ID,
+                name: "slug-name".to_string(),
+                source: LocalAgentNameSource::ProviderSlug,
+            },
+        )
+        .await;
+        let _ = peer_rx.try_recv().expect("slug rename should announce");
+
+        handle_session_event(
+            &state,
+            SessionEvent::NameCandidateChanged {
+                agent_id,
+                user_id: super::LOCAL_USER_ID,
+                name: "final-agent-name".to_string(),
+                source: LocalAgentNameSource::ProviderName,
+            },
+        )
+        .await;
+
+        let us = user_state.read().await;
+        let entry = us.registry.get(&agent_id).unwrap();
+        assert_eq!(entry.name.as_deref(), Some("final-agent-name"));
+        assert_eq!(
+            us.agents
+                .get(&agent_id)
+                .and_then(|session| session.local_name_source()),
+            Some(LocalAgentNameSource::ProviderName)
+        );
+        drop(us);
+
+        let msg = peer_rx
+            .try_recv()
+            .expect("agent-name rename should announce");
+        assert!(matches!(
+            msg,
+            Message::Direct(DirectMessage::AnnounceAgent {
+                agent_id: id,
+                name: Some(name),
+                ..
+            }) if id == agent_id && name == "final-agent-name"
+        ));
+    }
+
+    #[tokio::test]
+    async fn amux_supplied_name_blocks_slug_and_agent_name_updates() {
+        let (state, user_state) = test_state().await;
+        let mut peer_rx = add_peer(&user_state, "peer-a").await;
+        let agent_id = Uuid::new_v4();
+        insert_local_claude(
+            &user_state,
+            agent_id,
+            Some("fixed-name"),
+            LocalAgentNameSource::Amux,
+        )
+        .await;
+
+        for (name, source) in [
+            ("slug-name", LocalAgentNameSource::ProviderSlug),
+            ("agent-name", LocalAgentNameSource::ProviderName),
+        ] {
+            handle_session_event(
+                &state,
+                SessionEvent::NameCandidateChanged {
+                    agent_id,
+                    user_id: super::LOCAL_USER_ID,
+                    name: name.to_string(),
+                    source,
+                },
+            )
+            .await;
+        }
+
+        let us = user_state.read().await;
+        let entry = us.registry.get(&agent_id).unwrap();
+        assert_eq!(entry.name.as_deref(), Some("fixed-name"));
+        assert_eq!(
+            us.agents
+                .get(&agent_id)
+                .and_then(|session| session.local_name_source()),
+            Some(LocalAgentNameSource::Amux)
+        );
+        drop(us);
+        assert!(
+            peer_rx.try_recv().is_err(),
+            "blocked updates should not announce"
+        );
+    }
+
+    #[tokio::test]
+    async fn same_string_higher_precedence_source_upgrades_provenance_without_announce() {
+        let (state, user_state) = test_state().await;
+        let mut peer_rx = add_peer(&user_state, "peer-a").await;
+        let agent_id = Uuid::new_v4();
+        insert_local_claude(
+            &user_state,
+            agent_id,
+            Some("shared-name"),
+            LocalAgentNameSource::ProviderSlug,
+        )
+        .await;
+
+        handle_session_event(
+            &state,
+            SessionEvent::NameCandidateChanged {
+                agent_id,
+                user_id: super::LOCAL_USER_ID,
+                name: "shared-name".to_string(),
+                source: LocalAgentNameSource::ProviderName,
+            },
+        )
+        .await;
+
+        let us = user_state.read().await;
+        let entry = us.registry.get(&agent_id).unwrap();
+        assert_eq!(entry.name.as_deref(), Some("shared-name"));
+        assert_eq!(
+            us.agents
+                .get(&agent_id)
+                .and_then(|session| session.local_name_source()),
+            Some(LocalAgentNameSource::ProviderName)
+        );
+        drop(us);
+        assert!(
+            peer_rx.try_recv().is_err(),
+            "provenance-only upgrades should not announce"
+        );
+    }
+
+    #[tokio::test]
+    async fn candidate_rename_collision_is_skipped_and_not_announced() {
+        let (state, user_state) = test_state().await;
+        let mut peer_rx = add_peer(&user_state, "peer-a").await;
+        let owner_id = Uuid::new_v4();
+        let candidate_id = Uuid::new_v4();
+        insert_local_claude(
+            &user_state,
+            owner_id,
+            Some("taken-name"),
+            LocalAgentNameSource::Amux,
+        )
+        .await;
+        insert_local_claude(&user_state, candidate_id, None, LocalAgentNameSource::Unset).await;
+
+        handle_session_event(
+            &state,
+            SessionEvent::NameCandidateChanged {
+                agent_id: candidate_id,
+                user_id: super::LOCAL_USER_ID,
+                name: "taken-name".to_string(),
+                source: LocalAgentNameSource::ProviderSlug,
+            },
+        )
+        .await;
+
+        let us = user_state.read().await;
+        assert_eq!(us.registry.resolve("taken-name").unwrap().id, owner_id);
+        assert_eq!(us.registry.get(&candidate_id).unwrap().name, None);
+        assert_eq!(
+            us.agents
+                .get(&candidate_id)
+                .and_then(|session| session.name()),
+            None
+        );
+        drop(us);
+        assert!(peer_rx.try_recv().is_err(), "collision should not announce");
     }
 }

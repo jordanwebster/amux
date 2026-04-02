@@ -4,7 +4,7 @@
 //! [`ClaudeSession::start`] spawns the PTY process. Hook handling and structured
 //! input translation are encapsulated here.
 
-use super::{PtyHandle, spawn_pty_agent};
+use super::{LocalAgentNameSource, PtyHandle, SessionEvent, spawn_pty_agent};
 use crate::buffer::MultiplexStructuredReader;
 use crate::claude::structured_log_source::StructuredLogSource;
 use crate::claude::types::{
@@ -15,6 +15,8 @@ use crate::error::Result;
 use crate::message::{CreateAgentRequest, ProtocolError};
 use std::path::PathBuf;
 use std::time::Duration;
+use tokio::sync::mpsc;
+use tokio::task::{AbortHandle, JoinHandle};
 use uuid::Uuid;
 
 const RIGHT_ARROW: &[u8] = b"\x1b[C";
@@ -289,6 +291,118 @@ async fn execute_pty_actions(pty: &PtyHandle, actions: &[PtyAction]) -> Result<(
     Ok(())
 }
 
+#[derive(Debug, Clone, PartialEq, Eq)]
+struct EffectiveNameCandidate {
+    name: String,
+    source: LocalAgentNameSource,
+}
+
+#[derive(Debug, Default)]
+struct NameSnifferState {
+    latest_slug: Option<String>,
+    latest_agent_name: Option<String>,
+    last_emitted: Option<EffectiveNameCandidate>,
+}
+
+impl NameSnifferState {
+    /// Record a structured output event. Returns true if internal state changed.
+    fn ingest(&mut self, output: &ClaudeStructuredOutput) -> bool {
+        match output {
+            ClaudeStructuredOutput::AgentName { agent_name, .. } => {
+                self.latest_agent_name = Some(agent_name.clone());
+                true
+            }
+            _ => match structured_output_slug(output) {
+                Some(slug) => {
+                    self.latest_slug = Some(slug.to_string());
+                    true
+                }
+                None => false,
+            },
+        }
+    }
+
+    /// The current best name candidate based on all ingested data.
+    fn effective_candidate(&self) -> Option<EffectiveNameCandidate> {
+        let (name, source) = self
+            .latest_agent_name
+            .as_ref()
+            .map(|n| (n, LocalAgentNameSource::ProviderName))
+            .or_else(|| {
+                self.latest_slug
+                    .as_ref()
+                    .map(|n| (n, LocalAgentNameSource::ProviderSlug))
+            })?;
+        Some(EffectiveNameCandidate {
+            name: name.clone(),
+            source,
+        })
+    }
+
+    /// Ingest an output event and return a candidate only if it differs from the last emission.
+    fn observe(&mut self, output: &ClaudeStructuredOutput) -> Option<EffectiveNameCandidate> {
+        if !self.ingest(output) {
+            return None;
+        }
+        let candidate = self.effective_candidate()?;
+        if self.last_emitted.as_ref() == Some(&candidate) {
+            return None;
+        }
+        self.last_emitted = Some(candidate.clone());
+        Some(candidate)
+    }
+}
+
+fn structured_output_slug(output: &ClaudeStructuredOutput) -> Option<&str> {
+    match output {
+        ClaudeStructuredOutput::UserMessage { slug, .. }
+        | ClaudeStructuredOutput::AssistantMessage { slug, .. }
+        | ClaudeStructuredOutput::PostToolUseEvent { slug, .. }
+        | ClaudeStructuredOutput::ToolUseRejected { slug, .. }
+        | ClaudeStructuredOutput::TurnDuration { slug, .. }
+        | ClaudeStructuredOutput::ApiError { slug, .. }
+        | ClaudeStructuredOutput::CompactBoundary { slug, .. }
+        | ClaudeStructuredOutput::LocalCommand { slug, .. }
+        | ClaudeStructuredOutput::SystemEvent { slug, .. } => slug.as_deref(),
+        _ => None,
+    }
+}
+
+fn spawn_name_sniffer(
+    log_source: StructuredLogSource,
+    event_tx: mpsc::Sender<SessionEvent>,
+    agent_id: Uuid,
+    user_id: Uuid,
+) -> JoinHandle<()> {
+    tokio::spawn(async move {
+        let Some(mut reader) = log_source.subscribe().await else {
+            return;
+        };
+
+        let mut state = NameSnifferState::default();
+
+        while let Some(entry) = reader.read().await {
+            let AgentStructuredOutput::Claude(output) = entry.data;
+            let Some(candidate) = state.observe(&output) else {
+                continue;
+            };
+
+            if event_tx
+                .send(SessionEvent::NameCandidateChanged {
+                    agent_id,
+                    user_id,
+                    name: candidate.name,
+                    source: candidate.source,
+                })
+                .await
+                .is_err()
+            {
+                break;
+            }
+        }
+    })
+}
+
 pub struct ClaudeSession {
     pub(super) agent_id: Uuid,
     pub(super) name: Option<String>,
@@ -308,6 +422,8 @@ pub struct ClaudeSession {
     external_pid: Option<u32>,
     /// Extra arguments passed to the claude command
     pub(super) args: Vec<String>,
+    name_source: LocalAgentNameSource,
+    name_sniffer_abort: Option<AbortHandle>,
 }
 
 impl ClaudeSession {
@@ -326,6 +442,12 @@ impl ClaudeSession {
             readonly: false,
             external_pid: None,
             args: req.args.clone(),
+            name_source: if req.name.is_some() {
+                LocalAgentNameSource::Amux
+            } else {
+                LocalAgentNameSource::Unset
+            },
+            name_sniffer_abort: None,
         }
     }
 
@@ -344,7 +466,42 @@ impl ClaudeSession {
             readonly: true,
             external_pid: None,
             args: vec![],
+            name_source: LocalAgentNameSource::Unset,
+            name_sniffer_abort: None,
         }
+    }
+
+    pub fn name_source(&self) -> LocalAgentNameSource {
+        self.name_source
+    }
+
+    pub fn set_name_and_source(&mut self, name: Option<String>, source: LocalAgentNameSource) {
+        self.name = name;
+        self.name_source = source;
+        if matches!(source, LocalAgentNameSource::Amux)
+            && let Some(abort) = self.name_sniffer_abort.take()
+        {
+            abort.abort();
+        }
+    }
+
+    pub fn maybe_start_name_sniffer(
+        &mut self,
+        user_id: Uuid,
+        event_tx: &mpsc::Sender<SessionEvent>,
+    ) {
+        if self.name_sniffer_abort.is_some()
+            || matches!(self.name_source, LocalAgentNameSource::Amux)
+        {
+            return;
+        }
+        let Some(log_source) = &self.log_source else {
+            return;
+        };
+
+        let handle =
+            spawn_name_sniffer(log_source.clone(), event_tx.clone(), self.agent_id, user_id);
+        self.name_sniffer_abort = Some(handle.abort_handle());
     }
 
     /// Link a transcript file for structured output tailing.
@@ -528,6 +685,9 @@ impl ClaudeSession {
     /// Shut down the session according to the given policy.
     pub async fn stop(&self, policy: super::StopPolicy) {
         tracing::info!(agent_id = %self.agent_id, "shutting down claude session");
+        if let Some(abort) = &self.name_sniffer_abort {
+            abort.abort();
+        }
         match policy {
             super::StopPolicy::Interrupt => {
                 if let Some(pty) = &self.pty {
@@ -549,9 +709,13 @@ impl ClaudeSession {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::claude::types::{AskUserQuestionItem, AskUserQuestionOption};
+    use crate::agents::{LocalAgentNameSource, SessionEvent};
+    use crate::claude::types::{
+        AgentStructuredOutput, AskUserQuestionItem, AskUserQuestionOption, ClaudeStructuredOutput,
+    };
     use std::collections::HashMap;
     use tempfile::tempdir;
+    use tokio::sync::mpsc;
 
     /// Extract just the Send bytes from a PtyAction sequence, ignoring delays.
     fn sends(actions: &[PtyAction]) -> Vec<Vec<u8>> {
@@ -968,5 +1132,178 @@ mod tests {
 
         assert_eq!(session.session_id, Some(session_id));
         assert_eq!(session.current_seq().await, seq_after_first_hook + 1);
+    }
+
+    #[tokio::test]
+    async fn name_sniffer_ignores_custom_title() {
+        let log_source = StructuredLogSource::new();
+        let (event_tx, mut event_rx) = mpsc::channel(4);
+        let sniffer =
+            spawn_name_sniffer(log_source.clone(), event_tx, Uuid::new_v4(), Uuid::new_v4());
+
+        log_source
+            .write(AgentStructuredOutput::Claude(
+                ClaudeStructuredOutput::CustomTitle {
+                    custom_title: "Ignored".to_string(),
+                    session_id: None,
+                },
+            ))
+            .await;
+
+        assert!(
+            tokio::time::timeout(std::time::Duration::from_millis(100), event_rx.recv())
+                .await
+                .is_err(),
+            "custom-title should not emit a name candidate event"
+        );
+
+        sniffer.abort();
+        let _ = sniffer.await;
+    }
+
+    #[tokio::test]
+    async fn name_sniffer_emits_same_name_when_source_upgrades() {
+        let log_source = StructuredLogSource::new();
+        let agent_id = Uuid::new_v4();
+        let user_id = Uuid::new_v4();
+        let (event_tx, mut event_rx) = mpsc::channel(4);
+        let sniffer = spawn_name_sniffer(log_source.clone(), event_tx, agent_id, user_id);
+
+        log_source
+            .write(AgentStructuredOutput::Claude(
+                ClaudeStructuredOutput::UserMessage {
+                    content: "hello".to_string(),
+                    uuid: "u1".to_string(),
+                    timestamp: "2026-04-03T10:00:00Z".to_string(),
+                    cwd: None,
+                    git_branch: None,
+                    parent_uuid: None,
+                    prompt_id: None,
+                    permission_mode: None,
+                    slug: Some("shared-name".to_string()),
+                },
+            ))
+            .await;
+
+        let first = tokio::time::timeout(std::time::Duration::from_secs(1), event_rx.recv())
+            .await
+            .unwrap()
+            .unwrap();
+        assert!(matches!(
+            first,
+            SessionEvent::NameCandidateChanged {
+                agent_id: id,
+                user_id: uid,
+                name,
+                source: LocalAgentNameSource::ProviderSlug,
+            } if id == agent_id && uid == user_id && name == "shared-name"
+        ));
+
+        log_source
+            .write(AgentStructuredOutput::Claude(
+                ClaudeStructuredOutput::AgentName {
+                    agent_name: "shared-name".to_string(),
+                    session_id: None,
+                },
+            ))
+            .await;
+
+        let second = tokio::time::timeout(std::time::Duration::from_secs(1), event_rx.recv())
+            .await
+            .unwrap()
+            .unwrap();
+        assert!(matches!(
+            second,
+            SessionEvent::NameCandidateChanged {
+                name,
+                source: LocalAgentNameSource::ProviderName,
+                ..
+            } if name == "shared-name"
+        ));
+
+        sniffer.abort();
+        let _ = sniffer.await;
+    }
+
+    #[tokio::test]
+    async fn maybe_start_name_sniffer_runs_for_existing_provider_slug_name() {
+        let agent_id = Uuid::new_v4();
+        let user_id = Uuid::new_v4();
+        let dir = tempdir().unwrap();
+        let mut session = ClaudeSession::new_readonly(agent_id, dir.path().to_path_buf());
+        session.set_name_and_source(
+            Some("slug-derived-name".to_string()),
+            LocalAgentNameSource::ProviderSlug,
+        );
+
+        let (event_tx, mut event_rx) = mpsc::channel(4);
+        session.maybe_start_name_sniffer(user_id, &event_tx);
+
+        let log_source = session
+            .log_source()
+            .expect("readonly session has log source");
+        log_source
+            .write(AgentStructuredOutput::Claude(
+                ClaudeStructuredOutput::AgentName {
+                    agent_name: "upgraded-provider-name".to_string(),
+                    session_id: None,
+                },
+            ))
+            .await;
+
+        let event = tokio::time::timeout(std::time::Duration::from_secs(1), event_rx.recv())
+            .await
+            .unwrap()
+            .unwrap();
+        assert!(matches!(
+            event,
+            SessionEvent::NameCandidateChanged {
+                agent_id: id,
+                user_id: uid,
+                name,
+                source: LocalAgentNameSource::ProviderName,
+            } if id == agent_id && uid == user_id && name == "upgraded-provider-name"
+        ));
+    }
+
+    #[tokio::test]
+    async fn maybe_start_name_sniffer_runs_for_existing_provider_name() {
+        let agent_id = Uuid::new_v4();
+        let user_id = Uuid::new_v4();
+        let dir = tempdir().unwrap();
+        let mut session = ClaudeSession::new_readonly(agent_id, dir.path().to_path_buf());
+        session.set_name_and_source(
+            Some("provider-name".to_string()),
+            LocalAgentNameSource::ProviderName,
+        );
+
+        let (event_tx, mut event_rx) = mpsc::channel(4);
+        session.maybe_start_name_sniffer(user_id, &event_tx);
+
+        let log_source = session
+            .log_source()
+            .expect("readonly session has log source");
+        log_source
+            .write(AgentStructuredOutput::Claude(
+                ClaudeStructuredOutput::AgentName {
+                    agent_name: "renamed-provider-name".to_string(),
+                    session_id: None,
+                },
+            ))
+            .await;
+
+        let event = tokio::time::timeout(std::time::Duration::from_secs(1), event_rx.recv())
+            .await
+            .unwrap()
+            .unwrap();
+        assert!(matches!(
+            event,
+            SessionEvent::NameCandidateChanged {
+                agent_id: id,
+                user_id: uid,
+                name,
+                source: LocalAgentNameSource::ProviderName,
+            } if id == agent_id && uid == user_id && name == "renamed-provider-name"
+        ));
     }
 }

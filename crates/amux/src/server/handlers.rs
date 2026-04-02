@@ -583,6 +583,9 @@ async fn handle_command(
                                     "failed to register readonly agent {agent_id}: {e}"
                                 )))
                             } else {
+                                if let Some(session) = us.agents.get_mut(&agent_id) {
+                                    session.maybe_start_name_sniffer(ctx.user_id, &ctx.event_tx);
+                                }
                                 broadcast_to_peers(
                                     &mut us,
                                     &DirectMessage::AnnounceAgent {
@@ -775,6 +778,7 @@ async fn handle_direct(
                 return Ok(());
             }
 
+            // AnnounceAgent doubles as a metadata refresh for an already-known UUID.
             // Compute our route: prepend the link this came from
             let mut our_route = received_route.clone();
             our_route.push(&ctx.link_name);
@@ -935,15 +939,15 @@ async fn handle_direct(
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::agents::AgentSession;
+    use crate::agents::{AgentSession, SessionEvent};
     use crate::claude::types::{
-        BashToolInput, ClaudePermissionRequest, ClaudePermissionTool, ClaudeSessionEnd,
-        ClaudeSessionStart, ClaudeStop,
+        AgentStructuredOutput, BashToolInput, ClaudePermissionRequest, ClaudePermissionTool,
+        ClaudeSessionEnd, ClaudeSessionStart, ClaudeStop, ClaudeStructuredOutput,
     };
     use crate::route::Route;
     use crate::server::test_helpers::{test_ctx, test_state};
     use crate::server::{LOCAL_USER_ID, ServerUserState};
-    use std::path::PathBuf;
+    use std::path::{Path, PathBuf};
     use std::sync::Arc;
     use std::sync::atomic::AtomicU64;
     use std::time::Duration;
@@ -987,6 +991,17 @@ mod tests {
             }
         });
         (tx, written)
+    }
+
+    async fn add_peer_link(
+        user_state: &Arc<RwLock<ServerUserState>>,
+        link_name: &str,
+    ) -> mpsc::Receiver<Message> {
+        let (tx, rx) = mpsc::channel::<Message>(16);
+        let mut us = user_state.write().await;
+        us.routes.insert(link_name.to_string(), tx);
+        us.peer_links.insert(link_name.to_string());
+        rx
     }
 
     #[tokio::test]
@@ -1199,6 +1214,7 @@ mod tests {
         let (state, user_state) = test_state().await;
         let ctx = test_ctx(state, user_state.clone());
         let (tx, _written) = mock_tx();
+        let mut peer_rx = add_peer_link(&user_state, "peer-a").await;
 
         let agent_id = Uuid::new_v4();
 
@@ -1230,6 +1246,32 @@ mod tests {
         let entry = us.registry.get(&agent_id).unwrap();
         assert_eq!(entry.name, Some("second".to_string()));
         assert_eq!(entry.working_dir, PathBuf::from("/second"));
+        drop(us);
+
+        let forwarded = peer_rx
+            .try_recv()
+            .expect("first announce should be propagated");
+        assert!(matches!(
+            forwarded,
+            Message::Direct(DirectMessage::AnnounceAgent {
+                agent_id: id,
+                name: Some(name),
+                ..
+            }) if id == agent_id && name == "first"
+        ));
+
+        let forwarded = peer_rx
+            .try_recv()
+            .expect("updated announce should be propagated");
+        assert!(matches!(
+            forwarded,
+            Message::Direct(DirectMessage::AnnounceAgent {
+                agent_id: id,
+                name: Some(name),
+                working_dir,
+                ..
+            }) if id == agent_id && name == "second" && working_dir == Path::new("/second")
+        ));
     }
 
     #[tokio::test]
@@ -2199,6 +2241,127 @@ mod tests {
             us.registry.get(&agent_id).is_none(),
             "readonly session should be removed from registry on SessionEnd"
         );
+    }
+
+    #[tokio::test]
+    async fn readonly_external_claude_session_gets_name_updates() {
+        let (state, user_state) = test_state().await;
+        let (event_tx, mut event_rx) = mpsc::channel(16);
+        let ctx = ConnectionContext {
+            state: state.clone(),
+            user_state: user_state.clone(),
+            user_id: LOCAL_USER_ID,
+            event_tx,
+            link_name: "test-link".to_string(),
+            is_local: true,
+            next_request_id: Arc::new(AtomicU64::new(1)),
+        };
+        let (tx, written) = mock_tx();
+        let mut peer_rx = add_peer_link(&user_state, "peer-a").await;
+
+        let agent_id = Uuid::new_v4();
+        let hook = Hook::Claude(ClaudeHook::SessionStart(ClaudeSessionStart {
+            session_id: Uuid::new_v4(),
+            transcript_path: "/tmp/transcript.jsonl".to_string(),
+            cwd: "/tmp".to_string(),
+        }));
+
+        handle_command(
+            &tx,
+            Command::HandleHook {
+                agent_id,
+                hook: Box::new(hook),
+                source_ppid: None,
+            },
+            &ctx,
+        )
+        .await
+        .unwrap();
+
+        tokio::task::yield_now().await;
+
+        let log_source = {
+            let us = user_state.read().await;
+            us.agents
+                .get(&agent_id)
+                .and_then(|session| session.log_source())
+                .expect("readonly session should have a log source")
+        };
+
+        log_source
+            .write(AgentStructuredOutput::Claude(
+                ClaudeStructuredOutput::UserMessage {
+                    content: "hello".to_string(),
+                    uuid: "u1".to_string(),
+                    timestamp: "2026-04-03T10:00:00Z".to_string(),
+                    cwd: None,
+                    git_branch: None,
+                    parent_uuid: None,
+                    prompt_id: None,
+                    permission_mode: None,
+                    slug: Some("readonly-slug".to_string()),
+                },
+            ))
+            .await;
+
+        let event = tokio::time::timeout(Duration::from_secs(1), event_rx.recv())
+            .await
+            .unwrap()
+            .unwrap();
+        assert!(matches!(
+            event,
+            SessionEvent::NameCandidateChanged {
+                agent_id: id,
+                ref name,
+                source: crate::agents::LocalAgentNameSource::ProviderSlug,
+                ..
+            } if id == agent_id && name == "readonly-slug"
+        ));
+
+        crate::server::handle_session_event(&state, event).await;
+
+        let msgs = written.lock().await;
+        assert_eq!(msgs.len(), 1);
+        let Message::Command(Command::HandleHookResult { error }) = &msgs[0] else {
+            panic!("expected HandleHookResult, got {:?}", msgs[0]);
+        };
+        assert!(error.is_none());
+        drop(msgs);
+
+        let us = user_state.read().await;
+        let entry = us.registry.get(&agent_id).unwrap();
+        assert_eq!(entry.name.as_deref(), Some("readonly-slug"));
+        assert_eq!(
+            us.agents.get(&agent_id).and_then(|session| session.name()),
+            Some("readonly-slug")
+        );
+        drop(us);
+
+        let initial = peer_rx
+            .try_recv()
+            .expect("readonly creation should announce unnamed agent");
+        assert!(matches!(
+            initial,
+            Message::Direct(DirectMessage::AnnounceAgent {
+                agent_id: id,
+                name: None,
+                readonly: true,
+                ..
+            }) if id == agent_id
+        ));
+
+        let renamed = peer_rx
+            .try_recv()
+            .expect("readonly rename should be re-announced");
+        assert!(matches!(
+            renamed,
+            Message::Direct(DirectMessage::AnnounceAgent {
+                agent_id: id,
+                name: Some(name),
+                readonly: true,
+                ..
+            }) if id == agent_id && name == "readonly-slug"
+        ));
     }
 
     // --- Subscription stream lifecycle tests ---
