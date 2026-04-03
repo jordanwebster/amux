@@ -1,5 +1,6 @@
 use crate::message::AgentType;
 use crate::route::Route;
+use chrono::{DateTime, Utc};
 use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
 use std::path::PathBuf;
@@ -16,6 +17,7 @@ pub struct Agent {
     pub route: Route,
     pub agent_type: AgentType,
     pub readonly: bool,
+    pub created_at: DateTime<Utc>,
 }
 
 impl Agent {
@@ -260,6 +262,7 @@ mod tests {
             route: Route::empty(),
             agent_type: crate::message::AgentType::Claude,
             readonly: false,
+            created_at: Utc::now(),
         }
     }
 
@@ -272,6 +275,7 @@ mod tests {
             route,
             agent_type: crate::message::AgentType::Claude,
             readonly: false,
+            created_at: Utc::now(),
         }
     }
 

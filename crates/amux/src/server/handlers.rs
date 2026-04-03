@@ -577,6 +577,7 @@ async fn handle_command(
                             let info = session.to_agent();
                             let command = session.command().to_string();
                             let working_dir = session.working_dir().to_path_buf();
+                            let created_at = session.created_at();
                             us.agents.insert(agent_id, session);
                             if let Err(e) = us.registry.register_local(info) {
                                 Err(ProtocolError::ServerError(format!(
@@ -596,6 +597,7 @@ async fn handle_command(
                                         route: Route::empty(),
                                         agent_type: AgentType::Claude,
                                         readonly: true,
+                                        created_at,
                                     },
                                     None,
                                 );
@@ -769,6 +771,7 @@ async fn handle_direct(
             route: received_route,
             agent_type,
             readonly,
+            created_at,
         } => {
             let mut us = ctx.user_state.write().await;
 
@@ -791,6 +794,7 @@ async fn handle_direct(
                 route: our_route.clone(),
                 agent_type: agent_type.clone(),
                 readonly,
+                created_at,
             };
 
             if let Err(e) = us.registry.register_remote(info) {
@@ -811,6 +815,7 @@ async fn handle_direct(
                     route: our_route,
                     agent_type,
                     readonly,
+                    created_at,
                 },
                 Some(&ctx.link_name),
             );
@@ -947,6 +952,7 @@ mod tests {
     use crate::route::Route;
     use crate::server::test_helpers::{test_ctx, test_state};
     use crate::server::{LOCAL_USER_ID, ServerUserState};
+    use chrono::Utc;
     use std::path::{Path, PathBuf};
     use std::sync::Arc;
     use std::sync::atomic::AtomicU64;
@@ -1060,6 +1066,7 @@ mod tests {
             route: Route::empty(),
             agent_type: AgentType::Claude,
             readonly: false,
+            created_at: Utc::now(),
         };
 
         handle_direct(&tx, msg, &ctx).await.unwrap();
@@ -1089,6 +1096,7 @@ mod tests {
             route: Route::from_link("host-a"),
             agent_type: AgentType::Claude,
             readonly: false,
+            created_at: Utc::now(),
         };
 
         handle_direct(&tx, msg, &ctx).await.unwrap();
@@ -1137,6 +1145,7 @@ mod tests {
             route: Route::empty(),
             agent_type: AgentType::Claude,
             readonly: false,
+            created_at: Utc::now(),
         };
 
         handle_direct(&tx, msg, &ctx).await.unwrap();
@@ -1163,6 +1172,7 @@ mod tests {
                     route: Route::from_link("test-link"),
                     agent_type: crate::message::AgentType::Claude,
                     readonly: false,
+                    created_at: Utc::now(),
                 })
                 .unwrap();
         }
@@ -1193,6 +1203,7 @@ mod tests {
                     route: Route::from_link("other-link"),
                     agent_type: crate::message::AgentType::Claude,
                     readonly: false,
+                    created_at: Utc::now(),
                 })
                 .unwrap();
         }
@@ -1227,6 +1238,7 @@ mod tests {
             route: Route::empty(),
             agent_type: AgentType::Claude,
             readonly: false,
+            created_at: Utc::now(),
         };
         handle_direct(&tx, msg, &ctx).await.unwrap();
 
@@ -1239,6 +1251,7 @@ mod tests {
             route: Route::empty(),
             agent_type: AgentType::Claude,
             readonly: false,
+            created_at: Utc::now(),
         };
         handle_direct(&tx, msg, &ctx).await.unwrap();
 
@@ -1290,6 +1303,7 @@ mod tests {
                     route: Route::from_link("peer-a"),
                     agent_type: crate::message::AgentType::Claude,
                     readonly: false,
+                    created_at: Utc::now(),
                 })
                 .unwrap();
         }
@@ -1801,6 +1815,7 @@ mod tests {
                     route: Route::from_link("test-link"),
                     agent_type: crate::message::AgentType::Claude,
                     readonly: false,
+                    created_at: Utc::now(),
                 })
                 .unwrap();
             let mut deep_route = Route::from_link("host-b");
@@ -1814,6 +1829,7 @@ mod tests {
                     route: deep_route,
                     agent_type: crate::message::AgentType::Claude,
                     readonly: false,
+                    created_at: Utc::now(),
                 })
                 .unwrap();
             // Agent on different link (should survive)
@@ -1826,6 +1842,7 @@ mod tests {
                     route: Route::from_link("other-link"),
                     agent_type: crate::message::AgentType::Claude,
                     readonly: false,
+                    created_at: Utc::now(),
                 })
                 .unwrap();
         }

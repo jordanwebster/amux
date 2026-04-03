@@ -13,6 +13,7 @@ use crate::claude::types::{
 };
 use crate::error::Result;
 use crate::message::{CreateAgentRequest, ProtocolError};
+use chrono::{DateTime, Utc};
 use std::path::PathBuf;
 use std::time::Duration;
 use tokio::sync::mpsc;
@@ -424,6 +425,7 @@ pub struct ClaudeSession {
     pub(super) args: Vec<String>,
     name_source: LocalAgentNameSource,
     name_sniffer_abort: Option<AbortHandle>,
+    pub(super) created_at: DateTime<Utc>,
 }
 
 impl ClaudeSession {
@@ -448,6 +450,7 @@ impl ClaudeSession {
                 LocalAgentNameSource::Unset
             },
             name_sniffer_abort: None,
+            created_at: Utc::now(),
         }
     }
 
@@ -468,6 +471,7 @@ impl ClaudeSession {
             args: vec![],
             name_source: LocalAgentNameSource::Unset,
             name_sniffer_abort: None,
+            created_at: Utc::now(),
         }
     }
 

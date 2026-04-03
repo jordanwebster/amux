@@ -95,6 +95,7 @@ pub(super) fn apply_local_name_candidate(
                     route: Route::empty(),
                     agent_type: updated.agent_type,
                     readonly: updated.readonly,
+                    created_at: updated.created_at,
                 },
                 None,
             );
@@ -172,6 +173,7 @@ pub(super) async fn create_agent(
         let name = req.name.clone();
         let command = session.command().to_string();
         let working_dir = session.working_dir().to_path_buf();
+        let created_at = session.created_at();
         us.agents.insert(agent_id, session);
         us.registry.register_local(info).map_err(|e| {
             AmuxError::ServerError(format!("failed to register local agent {agent_id}: {e}",))
@@ -199,6 +201,7 @@ pub(super) async fn create_agent(
                 route: Route::empty(),
                 agent_type: agent_type.clone(),
                 readonly: false,
+                created_at,
             },
             None,
         );
@@ -338,6 +341,7 @@ pub(super) async fn resume_agents(
                 let agent_type = info.agent_type.clone();
                 let command = session.command().to_string();
                 let working_dir = session.working_dir().to_path_buf();
+                let created_at = session.created_at();
                 {
                     let mut us = user_state.write().await;
                     us.agents.insert(agent_id, session);
@@ -356,6 +360,7 @@ pub(super) async fn resume_agents(
                             route: Route::empty(),
                             agent_type,
                             readonly: false,
+                            created_at,
                         },
                         None,
                     );
@@ -431,6 +436,7 @@ fn send_initial_agent_announcements(us: &ServerUserState, peer_link: &str) -> us
             route: info.route.clone(),
             agent_type: info.agent_type.clone(),
             readonly: info.readonly,
+            created_at: info.created_at,
         });
         if tx.try_send(msg).is_err() {
             tracing::warn!(agent_id = %uuid, peer = %peer_link, "failed to announce agent");
@@ -550,6 +556,7 @@ mod tests {
     use crate::agent_registry::Agent;
     use crate::message::Host;
     use crate::server::StreamEntry;
+    use chrono::Utc;
     use std::path::PathBuf;
     use tokio::sync::{mpsc, oneshot};
 
@@ -589,6 +596,7 @@ mod tests {
                 route: Route::from_link(link),
                 agent_type: AgentType::TestAgent("test".to_string()),
                 readonly: false,
+                created_at: Utc::now(),
             })
             .unwrap();
         id

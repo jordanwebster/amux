@@ -212,6 +212,7 @@ mod tests {
     fn test_suspended_agent_roundtrip() {
         use crate::agents::{LocalAgentNameSource, SuspendedAgent, SuspendedServerState};
         use crate::message::TerminalSize;
+        use chrono::Utc;
         use uuid::Uuid;
 
         let state = SuspendedServerState {
@@ -226,6 +227,7 @@ mod tests {
                         cols: 120,
                     }),
                     session_id: Uuid::new_v4(),
+                    created_at: Utc::now(),
                 },
                 SuspendedAgent::TestAgent {
                     agent_id: Uuid::new_v4(),
@@ -233,6 +235,7 @@ mod tests {
                     command: "test-agent".to_string(),
                     working_dir: PathBuf::from("/tmp"),
                     terminal_size: None,
+                    created_at: Utc::now(),
                 },
             ],
         };
@@ -268,6 +271,7 @@ mod tests {
     #[test]
     fn test_suspended_agent_into_session_roundtrip() {
         use crate::agents::{LocalAgentNameSource, SuspendedAgent};
+        use chrono::Utc;
         use uuid::Uuid;
 
         let agent_id = Uuid::new_v4();
@@ -282,6 +286,7 @@ mod tests {
                 cols: 100,
             }),
             session_id,
+            created_at: Utc::now(),
         };
 
         // Convert to session (don't start — no PTY needed for metadata check)

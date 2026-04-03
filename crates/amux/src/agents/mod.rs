@@ -21,6 +21,7 @@ use crate::claude::types::{AgentStructuredInput, Hook};
 use crate::error::{AmuxError, Result};
 use crate::message::{AgentType, CreateAgentRequest, ProtocolError, TerminalSize};
 use crate::route::Route;
+use chrono::{DateTime, Utc};
 use portable_pty::{CommandBuilder, MasterPty, PtySize, native_pty_system};
 use serde::{Deserialize, Serialize};
 use std::io::{Read, Write};
@@ -461,6 +462,14 @@ impl AgentSession {
         }
     }
 
+    pub fn created_at(&self) -> DateTime<Utc> {
+        match self {
+            Self::Claude(s) => s.created_at,
+            #[cfg(any(debug_assertions, test))]
+            Self::TestAgent(s) => s.created_at,
+        }
+    }
+
     /// Convert to Agent for listing/registry.
     pub fn to_agent(&self) -> Agent {
         Agent {
@@ -475,6 +484,7 @@ impl AgentSession {
                 Self::TestAgent(s) => AgentType::TestAgent(s.command.clone()),
             },
             readonly: self.readonly(),
+            created_at: self.created_at(),
         }
     }
 
@@ -497,6 +507,7 @@ impl AgentSession {
                     name_source,
                     working_dir: s.working_dir,
                     terminal_size: s.terminal_size,
+                    created_at: s.created_at,
                     session_id,
                 })
             }
@@ -509,6 +520,7 @@ impl AgentSession {
                     command: s.command,
                     working_dir: s.working_dir,
                     terminal_size: s.terminal_size,
+                    created_at: s.created_at,
                 })
             }
         }
@@ -532,6 +544,7 @@ pub enum SuspendedAgent {
         working_dir: PathBuf,
         terminal_size: Option<TerminalSize>,
         session_id: Uuid,
+        created_at: DateTime<Utc>,
     },
     #[cfg(any(debug_assertions, test))]
     TestAgent {
@@ -540,6 +553,7 @@ pub enum SuspendedAgent {
         command: String,
         working_dir: PathBuf,
         terminal_size: Option<TerminalSize>,
+        created_at: DateTime<Utc>,
     },
 }
 
@@ -574,6 +588,7 @@ impl SuspendedAgent {
                 working_dir,
                 terminal_size,
                 session_id,
+                created_at,
             } => {
                 let req = CreateAgentRequest {
                     agent_id,
@@ -585,6 +600,7 @@ impl SuspendedAgent {
                 };
                 let mut session = ClaudeSession::new(&req);
                 session.session_id = Some(session_id);
+                session.created_at = created_at;
                 session.set_name_and_source(req.name, name_source);
                 AgentSession::Claude(session)
             }
@@ -595,6 +611,7 @@ impl SuspendedAgent {
                 command,
                 working_dir,
                 terminal_size,
+                created_at,
             } => {
                 let req = CreateAgentRequest {
                     agent_id,
@@ -604,7 +621,9 @@ impl SuspendedAgent {
                     terminal_size,
                     args: vec![],
                 };
-                AgentSession::TestAgent(TestAgentSession::new(&req, command))
+                let mut session = TestAgentSession::new(&req, command);
+                session.created_at = created_at;
+                AgentSession::TestAgent(session)
             }
         }
     }

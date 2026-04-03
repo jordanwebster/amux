@@ -38,6 +38,32 @@ One paragraph describing what was done.
 
 ---
 
+## 2026-04-03: Add created_at timestamp to agents
+
+### Summary
+Added `created_at: DateTime<Utc>` field to agents. The timestamp is set when an agent is first created (including readonly agents), propagated via `AnnounceAgent` messages to remote servers, and preserved through suspend/resume cycles.
+
+### Changes
+- `crates/amux/src/agent_registry.rs` — added `created_at: DateTime<Utc>` to `Agent` struct
+- `crates/amux/src/message.rs` — added `created_at` field to `DirectMessage::AnnounceAgent` variant
+- `crates/amux/src/agents/claude.rs` — added `created_at` field to `ClaudeSession`, set to `Utc::now()` in `new()` and `new_readonly()`
+- `crates/amux/src/agents/testagent.rs` — added `created_at` field to `TestAgentSession`, set to `Utc::now()` in `new()`
+- `crates/amux/src/agents/mod.rs` — added `created_at()` accessor on `AgentSession`, threaded through `to_agent()`, `SuspendedAgent` enum variants, `suspend()`, and `into_session()`
+- `crates/amux/src/server/routing.rs` — propagated `created_at` in all 4 `AnnounceAgent` construction sites (create, resume, rename, initial announcements)
+- `crates/amux/src/server/handlers.rs` — propagated `created_at` in readonly agent creation and AnnounceAgent receive/re-broadcast handler
+
+### Decisions Made
+- Uses `chrono::DateTime<Utc>` — consistent with existing usage in cloud.rs/oauth.rs, serde support already enabled
+- Readonly agents get `Utc::now()` at the time amux first sees them (external process start time is unknown)
+- Resumed agents preserve their original `created_at` from before suspend
+
+### Verification
+- `cargo check && cargo fmt && cargo clippy --workspace --all-targets -- -D warnings` — clean
+- `cargo test` — 243 unit tests pass
+- E2E tests — 10/10 pass
+
+---
+
 ## 2026-04-03: Add local agent name sniffing with provider-derived rename support
 
 ### Summary

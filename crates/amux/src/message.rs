@@ -1,6 +1,7 @@
 use crate::agent_registry::Agent;
 use crate::config::Config;
 use crate::route::Route;
+use chrono::{DateTime, Utc};
 use serde::{Deserialize, Serialize};
 use std::path::PathBuf;
 use uuid::Uuid;
@@ -211,6 +212,7 @@ pub enum DirectMessage {
         route: Route,
         agent_type: AgentType,
         readonly: bool,
+        created_at: DateTime<Utc>,
     },
     WithdrawAgent {
         agent_id: Uuid,
@@ -454,6 +456,7 @@ mod tests {
             route: Route::from_link("host-a"),
             agent_type: AgentType::Claude,
             readonly: false,
+            created_at: Utc::now(),
         };
         let encoded = rmp_serde::to_vec_named(&info).unwrap();
         let decoded: Agent = rmp_serde::from_slice(&encoded).unwrap();

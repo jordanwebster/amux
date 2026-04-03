@@ -8,6 +8,7 @@ use crate::buffer::MultiplexStructuredReader;
 use crate::claude::structured_log_source::StructuredLogSource;
 use crate::error::Result;
 use crate::message::CreateAgentRequest;
+use chrono::{DateTime, Utc};
 use std::path::PathBuf;
 use uuid::Uuid;
 
@@ -21,6 +22,7 @@ pub struct TestAgentSession {
 
     // Stored for deferred start()
     pub(super) terminal_size: Option<crate::message::TerminalSize>,
+    pub(super) created_at: DateTime<Utc>,
 }
 
 impl TestAgentSession {
@@ -35,6 +37,7 @@ impl TestAgentSession {
             pty: None,
             log_source: None,
             terminal_size: req.terminal_size,
+            created_at: Utc::now(),
         }
     }
 
@@ -102,6 +105,7 @@ mod tests {
             pty: None,
             log_source: Some(StructuredLogSource::new()),
             terminal_size: None,
+            created_at: Utc::now(),
         };
 
         let (_reader, seq) = tokio::time::timeout(
