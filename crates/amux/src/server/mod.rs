@@ -11,7 +11,6 @@ use crate::config::Config;
 use crate::error::{AmuxError, Result};
 use crate::jwt::JwtValidator;
 use crate::message::{AgentType, Command, Host, Message, ProtocolError, ShutdownReason};
-use crate::process::process_exists;
 use crate::route::Route;
 use crate::transport::{TcpTransport, TransportSplit, create_tls_acceptor};
 use routing::{apply_local_name_candidate, shutdown_server, suspend_server};
@@ -41,7 +40,6 @@ const TLS_HANDSHAKE_TIMEOUT: Duration = Duration::from_secs(10);
 /// Safety net against resource exhaustion. Each network connection holds a
 /// semaphore permit for its lifetime; new connections are rejected at capacity.
 const MAX_CONNECTIONS: usize = 16384;
-const READONLY_REAP_INTERVAL: Duration = Duration::from_secs(5 * 60);
 
 /// Platform-abstracted local IPC listener (Unix socket on Unix, named pipe on Windows).
 pub(crate) struct LocalListener {
@@ -320,18 +318,6 @@ impl Server {
             }
         });
 
-        if !is_cloud_server {
-            let reap_state = self.state.clone();
-            tokio::spawn(async move {
-                let mut interval = tokio::time::interval(READONLY_REAP_INTERVAL);
-                interval.set_missed_tick_behavior(tokio::time::MissedTickBehavior::Delay);
-                loop {
-                    interval.tick().await;
-                    reap_dead_readonly_sessions(&reap_state).await;
-                }
-            });
-        }
-
         // Auto-connect to cloud (local server only, not cloud server)
         if !is_cloud_server {
             let config = {
@@ -542,48 +528,6 @@ impl Server {
     }
 }
 
-fn withdraw_dead_readonly_sessions_with(
-    us: &mut ServerUserState,
-    process_exists_fn: impl Fn(u32) -> bool,
-) -> Vec<(Uuid, AgentSession)> {
-    let dead_ids: Vec<Uuid> = us
-        .agents
-        .iter()
-        .filter_map(|(agent_id, session)| {
-            let pid = session.external_pid()?;
-            if session.readonly() && !process_exists_fn(pid) {
-                Some(*agent_id)
-            } else {
-                None
-            }
-        })
-        .collect();
-
-    dead_ids
-        .into_iter()
-        .filter_map(|agent_id| withdraw_agent(us, agent_id).map(|session| (agent_id, session)))
-        .collect()
-}
-
-async fn reap_dead_readonly_sessions(state: &Arc<RwLock<ServerState>>) {
-    let user_states: Vec<Arc<RwLock<ServerUserState>>> = {
-        let s = state.read().await;
-        s.users.values().cloned().collect()
-    };
-
-    for user_state in user_states {
-        let withdrawn_sessions = {
-            let mut us = user_state.write().await;
-            withdraw_dead_readonly_sessions_with(&mut us, process_exists)
-        };
-
-        for (agent_id, session) in withdrawn_sessions {
-            session.stop(StopPolicy::Interrupt).await;
-            tracing::info!(agent_id = %agent_id, "withdrew readonly session (pid exited)");
-        }
-    }
-}
-
 async fn handle_session_event(state: &Arc<RwLock<ServerState>>, event: SessionEvent) {
     match event {
         SessionEvent::Ended { agent_id, user_id } => {
@@ -702,36 +646,13 @@ pub(super) mod test_helpers {
 
 #[cfg(test)]
 mod tests {
-    use super::{
-        ServerUserState, handle_session_event, test_helpers::test_state,
-        withdraw_dead_readonly_sessions_with,
-    };
+    use super::{ServerUserState, handle_session_event, test_helpers::test_state};
     use crate::agents::{AgentSession, LocalAgentNameSource, SessionEvent};
-    use crate::claude::types::{ClaudeHook, ClaudeSessionStart, Hook};
     use crate::message::{AgentType, CreateAgentRequest, DirectMessage, Message};
     use std::path::PathBuf;
     use std::sync::Arc;
     use tokio::sync::{RwLock, mpsc};
     use uuid::Uuid;
-
-    async fn readonly_session_with_pid(agent_id: Uuid, pid: u32) -> AgentSession {
-        let mut session = AgentSession::Claude(crate::agents::ClaudeSession::new_readonly(
-            agent_id,
-            PathBuf::from("/tmp"),
-        ));
-        session
-            .handle_hook(
-                Hook::Claude(ClaudeHook::SessionStart(ClaudeSessionStart {
-                    session_id: agent_id,
-                    transcript_path: "/tmp/transcript.jsonl".to_string(),
-                    cwd: "/tmp".to_string(),
-                })),
-                Some(pid),
-            )
-            .await
-            .unwrap();
-        session
-    }
 
     async fn add_peer(
         user_state: &Arc<RwLock<ServerUserState>>,
@@ -765,38 +686,6 @@ mod tests {
         let mut us = user_state.write().await;
         us.agents.insert(agent_id, session);
         us.registry.register_local(info).unwrap();
-    }
-
-    #[tokio::test]
-    async fn withdraw_dead_readonly_sessions_with_removes_dead_sessions() {
-        let mut us = ServerUserState::new();
-        let agent_id = Uuid::new_v4();
-        let session = readonly_session_with_pid(agent_id, 4242).await;
-        let info = session.to_agent();
-        us.agents.insert(agent_id, session);
-        us.registry.register_local(info).unwrap();
-
-        let removed = withdraw_dead_readonly_sessions_with(&mut us, |pid| pid != 4242);
-
-        assert_eq!(removed.len(), 1);
-        assert!(!us.agents.contains_key(&agent_id));
-        assert!(!us.registry.contains(&agent_id));
-    }
-
-    #[tokio::test]
-    async fn withdraw_dead_readonly_sessions_with_keeps_live_sessions() {
-        let mut us = ServerUserState::new();
-        let agent_id = Uuid::new_v4();
-        let session = readonly_session_with_pid(agent_id, 4242).await;
-        let info = session.to_agent();
-        us.agents.insert(agent_id, session);
-        us.registry.register_local(info).unwrap();
-
-        let removed = withdraw_dead_readonly_sessions_with(&mut us, |_pid| true);
-
-        assert!(removed.is_empty());
-        assert!(us.agents.contains_key(&agent_id));
-        assert!(us.registry.contains(&agent_id));
     }
 
     #[tokio::test]

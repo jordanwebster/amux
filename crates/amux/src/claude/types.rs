@@ -1979,20 +1979,17 @@ mod tests {
         let msg = Message::Command(Command::HandleHook {
             agent_id,
             hook: Box::new(hook),
-            source_ppid: Some(1234),
         });
         let encoded = msg.encode().unwrap();
         let decoded = Message::decode(&encoded).unwrap();
         let Message::Command(Command::HandleHook {
             agent_id: decoded_id,
             hook: decoded_hook,
-            source_ppid,
         }) = decoded
         else {
             panic!("Expected HandleHook, got {decoded:?}");
         };
         assert_eq!(decoded_id, agent_id);
-        assert_eq!(source_ppid, Some(1234));
         let Hook::Claude(ClaudeHook::SessionStart(start)) = *decoded_hook else {
             panic!("Expected SessionStart");
         };

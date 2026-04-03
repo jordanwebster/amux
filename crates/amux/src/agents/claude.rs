@@ -419,8 +419,6 @@ pub struct ClaudeSession {
     pub(super) session_id: Option<Uuid>,
     /// True for externally-started sessions (no PTY, transcript-only)
     pub(super) readonly: bool,
-    /// Parent PID of the external Claude process that emitted the last hook.
-    external_pid: Option<u32>,
     /// Extra arguments passed to the claude command
     pub(super) args: Vec<String>,
     name_source: LocalAgentNameSource,
@@ -442,7 +440,6 @@ impl ClaudeSession {
             terminal_size: req.terminal_size,
             session_id: None,
             readonly: false,
-            external_pid: None,
             args: req.args.clone(),
             name_source: if req.name.is_some() {
                 LocalAgentNameSource::Amux
@@ -467,7 +464,6 @@ impl ClaudeSession {
             terminal_size: None,
             session_id: None,
             readonly: true,
-            external_pid: None,
             args: vec![],
             name_source: LocalAgentNameSource::Unset,
             name_sniffer_abort: None,
@@ -525,18 +521,6 @@ impl ClaudeSession {
         }
 
         Ok(())
-    }
-
-    fn sync_hook_source_ppid(&mut self, source_ppid: Option<u32>) {
-        if self.readonly
-            && let Some(pid) = source_ppid
-        {
-            self.external_pid = Some(pid);
-        }
-    }
-
-    pub fn external_pid(&self) -> Option<u32> {
-        self.external_pid
     }
 
     /// Spawn the Claude Code process. Returns an exit handle that completes
@@ -610,10 +594,9 @@ impl ClaudeSession {
     }
 
     /// Handle a hook event.
-    pub async fn handle_hook(&mut self, hook: Hook, source_ppid: Option<u32>) -> Result<()> {
+    pub async fn handle_hook(&mut self, hook: Hook) -> Result<()> {
         let Hook::Claude(claude_hook) = &hook;
         self.sync_hook_metadata(claude_hook).await?;
-        self.sync_hook_source_ppid(source_ppid);
         let Some(log_source) = &self.log_source else {
             return Ok(());
         };
@@ -1092,7 +1075,6 @@ mod tests {
                         },
                     },
                 ))),
-                None,
             )
             .await
             .unwrap();
@@ -1118,7 +1100,6 @@ mod tests {
                     transcript_path: transcript_path_str,
                     cwd,
                 })),
-                None,
             )
             .await
             .unwrap();

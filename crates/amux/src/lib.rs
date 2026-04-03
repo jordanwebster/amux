@@ -11,7 +11,6 @@ mod handshake;
 mod jwt;
 mod message;
 mod oauth;
-mod process;
 pub mod protocol;
 mod route;
 mod server;
@@ -24,7 +23,6 @@ pub use config::{Config, default_log_path};
 pub use connect::{ConnectPolicy, DaemonOptions, connect};
 pub use connection::Connection;
 pub use error::{AmuxError, Result};
-pub use process::current_parent_pid;
 pub use route::Route;
 
 /// Run the amux server with the provided config.

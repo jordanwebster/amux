@@ -38,6 +38,36 @@ One paragraph describing what was done.
 
 ---
 
+## 2026-04-03: Remove readonly session reaper and PID tracking
+
+### Summary
+Removed the periodic reaper task that checked whether external Claude processes behind readonly sessions were still alive. The reaper was added based on the incorrect belief that `SessionEnd` hooks didn't fire on Ctrl+C — this turned out to be a local testing misconfiguration. The existing `SessionEnd` hook handler already withdraws readonly sessions reliably, making the reaper redundant.
+
+### Changes
+- Deleted `crates/amux/src/process.rs` — `current_parent_pid()` and `process_exists()` helpers
+- `crates/amux/src/lib.rs` — removed `mod process` and `pub use process::current_parent_pid`
+- `crates/amux/src/agents/claude.rs` — removed `external_pid` field, `sync_hook_source_ppid()`, `external_pid()` accessor, and `source_ppid` parameter from `handle_hook()`
+- `crates/amux/src/agents/mod.rs` — removed `source_ppid` parameter from `AgentSession::handle_hook()` and `external_pid()` method
+- `crates/amux/src/message.rs` — removed `source_ppid` field from `Command::HandleHook`
+- `crates/amux/src/server/mod.rs` — removed `READONLY_REAP_INTERVAL`, reaper task spawn, `withdraw_dead_readonly_sessions_with()`, `reap_dead_readonly_sessions()`, and related tests
+- `crates/amux/src/server/handlers.rs` — removed `source_ppid` threading through hook handling
+- `crates/amux-cli/src/hooks.rs` — removed `current_parent_pid` import and usage
+- `crates/amux/src/claude/types.rs` — removed `source_ppid` from test
+- `crates/amux/Cargo.toml` — removed `windows-sys` dependency (only used by `process.rs`)
+
+### Decisions Made
+- Rely on `SessionEnd` hook for readonly session cleanup (already implemented in handlers.rs)
+- Remove `windows-sys` dependency entirely since it was only used for PID checking in `process.rs`
+- Keep `libc` dependency — still used in `config.rs` for `getuid()`
+
+### Verification
+- `cargo check` — clean
+- `cargo fmt` — clean
+- `cargo clippy --workspace --all-targets -- -D warnings` — clean
+- `cargo test --workspace` — 241 tests pass
+
+---
+
 ## 2026-04-03: Add created_at timestamp to agents
 
 ### Summary
