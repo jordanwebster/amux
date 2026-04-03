@@ -42,6 +42,10 @@ enum Commands {
         /// Session name (optional human-readable name)
         #[arg(long)]
         name: Option<String>,
+
+        /// Extra arguments passed to the agent (after --)
+        #[arg(last = true)]
+        args: Vec<String>,
     },
 
     /// Attach to an existing agent session
@@ -144,7 +148,11 @@ async fn main() -> Result<()> {
             ensure_initialized(&config).await?;
             client::attach(None, &config).await?;
         }
-        Some(Commands::New { agent_type, name }) => {
+        Some(Commands::New {
+            agent_type,
+            name,
+            args,
+        }) => {
             let agent_type = parse_agent_type(&agent_type)?;
             ensure_initialized(&config).await?;
             match agent_type {
@@ -154,7 +162,7 @@ async fn main() -> Result<()> {
                 #[cfg(any(debug_assertions, test))]
                 protocol::AgentType::TestAgent(_) => {}
             };
-            client::new_agent(name.as_deref(), agent_type, &config).await?;
+            client::new_agent(name.as_deref(), agent_type, args, &config).await?;
         }
         Some(Commands::Attach { name }) => {
             ensure_initialized(&config).await?;

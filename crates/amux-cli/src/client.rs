@@ -50,7 +50,12 @@ fn cli_daemon_policy() -> Result<ConnectPolicy> {
 }
 
 /// Create a new agent and attach to it
-pub async fn new_agent(name: Option<&str>, agent_type: AgentType, config: &Config) -> Result<()> {
+pub async fn new_agent(
+    name: Option<&str>,
+    agent_type: AgentType,
+    args: Vec<String>,
+    config: &Config,
+) -> Result<()> {
     let conn = connect(config, cli_daemon_policy()?).await?;
     let terminal_size = get_terminal_size();
     let working_dir = std::env::current_dir()?;
@@ -77,7 +82,7 @@ pub async fn new_agent(name: Option<&str>, agent_type: AgentType, config: &Confi
             agent_type,
             working_dir: working_dir.clone(),
             terminal_size: Some(terminal_size),
-            args: vec![],
+            args,
         }),
     ))
     .await?;
