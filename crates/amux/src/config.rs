@@ -2,6 +2,7 @@ use crate::error::{AmuxError, Result};
 use crate::state::State;
 use gethostname::gethostname;
 use serde::{Deserialize, Serialize};
+use std::fmt;
 use std::path::{Path, PathBuf};
 
 /// Resolve an XDG base directory: `$env_var` if set, otherwise `$HOME/{default_suffix}`.
@@ -113,6 +114,85 @@ pub fn default_log_path() -> PathBuf {
     xdg_dir("XDG_STATE_HOME", ".local/state").join("amux/amux.log")
 }
 
+/// A control-key leader parsed from the `ctrl+<char>` format (e.g. `ctrl+a`).
+#[derive(Debug, Clone)]
+pub struct LeaderKey {
+    /// The lowercase character (e.g. 'a' for ctrl+a)
+    pub char: u8,
+}
+
+impl LeaderKey {
+    /// Raw byte value for this key (ctrl+a = 0x01, ctrl+b = 0x02, etc.)
+    pub fn raw_byte(&self) -> u8 {
+        self.char - b'a' + 1
+    }
+
+    /// CSI u escape sequence: ESC[<ascii>;5u
+    pub fn csi_u_sequence(&self) -> Vec<u8> {
+        let ascii = self.char.to_string();
+        let mut seq = vec![27, b'['];
+        seq.extend_from_slice(ascii.as_bytes());
+        seq.extend_from_slice(b";5u");
+        seq
+    }
+
+    fn parse(s: &str) -> std::result::Result<Self, String> {
+        let s = s.trim();
+        let lower = s.to_ascii_lowercase();
+        let ch = lower
+            .strip_prefix("ctrl+")
+            .ok_or_else(|| format!("invalid leader key '{s}': expected 'ctrl+<a-z>'"))?;
+        if ch.len() != 1 {
+            return Err(format!(
+                "invalid leader key '{s}': expected single character after 'ctrl+'"
+            ));
+        }
+        let byte = ch.as_bytes()[0];
+        if !byte.is_ascii_lowercase() {
+            return Err(format!("invalid leader key '{s}': expected 'ctrl+<a-z>'"));
+        }
+        Ok(Self { char: byte })
+    }
+}
+
+impl Default for LeaderKey {
+    fn default() -> Self {
+        Self { char: b'a' }
+    }
+}
+
+impl fmt::Display for LeaderKey {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        write!(f, "ctrl+{}", self.char as char)
+    }
+}
+
+impl Serialize for LeaderKey {
+    fn serialize<S: serde::Serializer>(
+        &self,
+        serializer: S,
+    ) -> std::result::Result<S::Ok, S::Error> {
+        serializer.serialize_str(&self.to_string())
+    }
+}
+
+impl<'de> Deserialize<'de> for LeaderKey {
+    fn deserialize<D: serde::Deserializer<'de>>(
+        deserializer: D,
+    ) -> std::result::Result<Self, D::Error> {
+        let s = String::deserialize(deserializer)?;
+        LeaderKey::parse(&s).map_err(serde::de::Error::custom)
+    }
+}
+
+/// Keybind configuration
+#[derive(Debug, Clone, Default, Serialize, Deserialize)]
+#[serde(default)]
+pub struct Keybinds {
+    /// Leader key prefix for keybinds (default: ctrl+a)
+    pub leader: LeaderKey,
+}
+
 /// Server configuration
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(default)]
@@ -155,6 +235,10 @@ pub struct Config {
     #[serde(default = "default_enforce_tls_in_cloud_mode")]
     pub enforce_tls_in_cloud_mode: bool,
 
+    /// Keybind configuration
+    #[serde(default)]
+    pub keybinds: Keybinds,
+
     #[serde(skip)]
     pub path: Option<PathBuf>,
 }
@@ -170,6 +254,7 @@ impl Default for Config {
             randomise_link_name: default_randomise_link_name(),
             state_path: default_state_path(),
             enforce_tls_in_cloud_mode: default_enforce_tls_in_cloud_mode(),
+            keybinds: Keybinds::default(),
             path: None,
         }
     }
@@ -215,5 +300,68 @@ mod tests {
         let parsed: Config = serde_yaml::from_str(&yaml).unwrap();
         assert_eq!(parsed.socket_path, config.socket_path);
         assert_eq!(parsed.state_path, config.state_path);
+    }
+
+    #[test]
+    fn leader_key_default_is_ctrl_a() {
+        let leader = LeaderKey::default();
+        assert_eq!(leader.char, b'a');
+        assert_eq!(leader.raw_byte(), 0x01);
+        // ESC[97;5u
+        assert_eq!(
+            leader.csi_u_sequence(),
+            vec![27, b'[', b'9', b'7', b';', b'5', b'u']
+        );
+    }
+
+    #[test]
+    fn leader_key_ctrl_b() {
+        let leader = LeaderKey::parse("ctrl+b").unwrap();
+        assert_eq!(leader.char, b'b');
+        assert_eq!(leader.raw_byte(), 0x02);
+        // ESC[98;5u
+        assert_eq!(
+            leader.csi_u_sequence(),
+            vec![27, b'[', b'9', b'8', b';', b'5', b'u']
+        );
+    }
+
+    #[test]
+    fn leader_key_case_insensitive() {
+        let leader = LeaderKey::parse("Ctrl+A").unwrap();
+        assert_eq!(leader.char, b'a');
+    }
+
+    #[test]
+    fn leader_key_invalid() {
+        assert!(LeaderKey::parse("alt+a").is_err());
+        assert!(LeaderKey::parse("ctrl+1").is_err());
+        assert!(LeaderKey::parse("ctrl+ab").is_err());
+        assert!(LeaderKey::parse("a").is_err());
+    }
+
+    #[test]
+    fn leader_key_yaml_roundtrip() {
+        let yaml = "leader: ctrl+b\n";
+        let keybinds: Keybinds = serde_yaml::from_str(yaml).unwrap();
+        assert_eq!(keybinds.leader.char, b'b');
+
+        let serialized = serde_yaml::to_string(&keybinds).unwrap();
+        let parsed: Keybinds = serde_yaml::from_str(&serialized).unwrap();
+        assert_eq!(parsed.leader.char, b'b');
+    }
+
+    #[test]
+    fn config_with_keybinds() {
+        let yaml = "keybinds:\n  leader: ctrl+b\n";
+        let config: Config = serde_yaml::from_str(yaml).unwrap();
+        assert_eq!(config.keybinds.leader.char, b'b');
+    }
+
+    #[test]
+    fn config_without_keybinds_uses_default() {
+        let yaml = "tcp_port: 9999\n";
+        let config: Config = serde_yaml::from_str(yaml).unwrap();
+        assert_eq!(config.keybinds.leader.char, b'a');
     }
 }

@@ -244,7 +244,7 @@ cargo run -- new claude --name test1     # Create agent
 cargo run -- attach --name test1         # Attach (in another terminal)
 cargo run -- list                        # List running agents
 cargo run -- shutdown                    # Clean shutdown
-# Use Ctrl-b d to detach without killing agent
+# Use Ctrl-a d to detach without killing agent
 ```
 
 ## Writing E2E Tests

@@ -1058,24 +1058,22 @@ mod tests {
         let mut session = ClaudeSession::new_readonly(Uuid::new_v4(), dir.path().to_path_buf());
 
         session
-            .handle_hook(
-                Hook::Claude(ClaudeHook::PermissionRequest(Box::new(
-                    crate::claude::types::ClaudePermissionRequest {
-                        session_id,
-                        transcript_path: transcript_path_str.clone(),
-                        cwd: cwd.clone(),
-                        tool: crate::claude::types::ClaudePermissionTool::Bash {
-                            tool_input: crate::claude::types::BashToolInput {
-                                command: "echo hi".to_string(),
-                                description: Some("test".to_string()),
-                                timeout: None,
-                                run_in_background: None,
-                                dangerously_disable_sandbox: None,
-                            },
+            .handle_hook(Hook::Claude(ClaudeHook::PermissionRequest(Box::new(
+                crate::claude::types::ClaudePermissionRequest {
+                    session_id,
+                    transcript_path: transcript_path_str.clone(),
+                    cwd: cwd.clone(),
+                    tool: crate::claude::types::ClaudePermissionTool::Bash {
+                        tool_input: crate::claude::types::BashToolInput {
+                            command: "echo hi".to_string(),
+                            description: Some("test".to_string()),
+                            timeout: None,
+                            run_in_background: None,
+                            dangerously_disable_sandbox: None,
                         },
                     },
-                ))),
-            )
+                },
+            ))))
             .await
             .unwrap();
 
@@ -1092,15 +1090,15 @@ mod tests {
 
         let seq_after_first_hook = session.current_seq().await;
         session
-            .handle_hook(
-                Hook::Claude(ClaudeHook::Stop(crate::claude::types::ClaudeStop {
+            .handle_hook(Hook::Claude(ClaudeHook::Stop(
+                crate::claude::types::ClaudeStop {
                     session_id,
                     stop_hook_active: false,
                     last_assistant_message: String::new(),
                     transcript_path: transcript_path_str,
                     cwd,
-                })),
-            )
+                },
+            )))
             .await
             .unwrap();
 

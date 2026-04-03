@@ -19,7 +19,7 @@ mod state;
 mod transport;
 
 pub use agents::{SuspendedAgent, SuspendedServerState};
-pub use config::{Config, default_log_path};
+pub use config::{Config, Keybinds, LeaderKey, default_log_path};
 pub use connect::{ConnectPolicy, DaemonOptions, connect};
 pub use connection::Connection;
 pub use error::{AmuxError, Result};

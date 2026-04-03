@@ -2,7 +2,9 @@ use amux::protocol::{
     AgentType, Command, CreateAgentRequest, Message, RoutableMessage, ServerDebugInfo,
     ShutdownReason, TerminalSize,
 };
-use amux::{AmuxError, Config, ConnectPolicy, Connection, DaemonOptions, Result, Route, connect};
+use amux::{
+    AmuxError, Config, ConnectPolicy, Connection, DaemonOptions, LeaderKey, Result, Route, connect,
+};
 use crossterm::terminal;
 use std::io::{self, Read, Write};
 use std::sync::Arc;
@@ -10,18 +12,11 @@ use std::sync::atomic::{AtomicU64, Ordering};
 use tokio::sync::mpsc;
 use uuid::Uuid;
 
-/// Control key prefix (Ctrl-b = 0x02)
-const CTRL_B: u8 = 0x02;
-
-/// CSI u sequence for Ctrl-b: ESC[98;5u
-/// Modern terminals (iTerm2, kitty, WezTerm) use this instead of raw 0x02
-const CSI_U_CTRL_B: &[u8] = &[27, b'[', b'9', b'8', b';', b'5', b'u'];
-
 /// Events from stdin reading task
 enum StdinEvent {
     /// Raw input data to send to agent
     Data(Vec<u8>),
-    /// User requested detach (Ctrl-b d)
+    /// User requested detach (<leader>d)
     Detach,
 }
 
@@ -96,6 +91,7 @@ pub async fn new_agent(name: Option<&str>, agent_type: AgentType, config: &Confi
                     full_route,
                     Some(terminal_size),
                     request_counter,
+                    config.keybinds.leader.clone(),
                 )
                 .await
             }
@@ -179,6 +175,7 @@ pub async fn attach(target: Option<&str>, config: &Config) -> Result<()> {
         full_route,
         Some(terminal_size),
         request_counter,
+        config.keybinds.leader.clone(),
     )
     .await
 }
@@ -190,6 +187,7 @@ async fn subscribe_and_stream(
     full_route: Route,
     terminal_size: Option<TerminalSize>,
     request_counter: AtomicU64,
+    leader: LeaderKey,
 ) -> Result<()> {
     let (src, dst) =
         Route::send(full_route.clone()).expect("full_route should have at least one link");
@@ -230,7 +228,7 @@ async fn subscribe_and_stream(
         }
     }
 
-    run_attached(conn, agent_id, full_route, request_counter).await
+    run_attached(conn, agent_id, full_route, request_counter, leader).await
 }
 
 /// List all running agents
@@ -370,12 +368,13 @@ pub async fn debug(config: &Config) -> Result<ServerDebugInfo> {
     }
 }
 
-/// Run the attached session (streaming mode with Ctrl-b handling)
+/// Run the attached session (streaming mode with leader key handling)
 async fn run_attached(
     conn: Connection,
     agent_id: Uuid,
     full_route: Route,
     request_counter: AtomicU64,
+    leader: LeaderKey,
 ) -> Result<()> {
     let _raw_guard = RawModeGuard::new()?;
 
@@ -383,11 +382,14 @@ async fn run_attached(
 
     let (input_tx, mut input_rx) = mpsc::channel::<StdinEvent>(256);
 
-    // Task: Read stdin, handle Ctrl-b (both raw 0x02 and CSI u format)
+    let leader_raw = leader.raw_byte();
+    let leader_csi_u = leader.csi_u_sequence();
+
+    // Task: Read stdin, handle leader key (both raw byte and CSI u format)
     tokio::task::spawn_blocking(move || {
         let mut stdin = io::stdin();
         let mut buffer = [0u8; 1024];
-        let mut pending_ctrl_b = false;
+        let mut pending_leader = false;
 
         loop {
             match stdin.read(&mut buffer) {
@@ -395,7 +397,7 @@ async fn run_attached(
                 Ok(n) => {
                     let data = &buffer[..n];
 
-                    if let Some(pos) = find_subsequence(data, CSI_U_CTRL_B) {
+                    if let Some(pos) = find_subsequence(data, &leader_csi_u) {
                         if pos > 0
                             && input_tx
                                 .blocking_send(StdinEvent::Data(data[..pos].to_vec()))
@@ -403,35 +405,35 @@ async fn run_attached(
                         {
                             return;
                         }
-                        let after = pos + CSI_U_CTRL_B.len();
+                        let after = pos + leader_csi_u.len();
                         if after < n {
                             if data[after] == b'd' {
                                 tracing::info!("detaching");
                                 let _ = input_tx.blocking_send(StdinEvent::Detach);
                                 return;
                             }
-                            let mut remaining = vec![CTRL_B];
+                            let mut remaining = vec![leader_raw];
                             remaining.extend_from_slice(&data[after..]);
                             if input_tx.blocking_send(StdinEvent::Data(remaining)).is_err() {
                                 return;
                             }
                         } else {
-                            pending_ctrl_b = true;
+                            pending_leader = true;
                         }
                         continue;
                     }
 
                     let mut i = 0;
                     while i < n {
-                        if pending_ctrl_b {
-                            pending_ctrl_b = false;
+                        if pending_leader {
+                            pending_leader = false;
                             if data[i] == b'd' {
                                 tracing::info!("detaching");
                                 let _ = input_tx.blocking_send(StdinEvent::Detach);
                                 return;
                             }
                             if input_tx
-                                .blocking_send(StdinEvent::Data(vec![CTRL_B, data[i]]))
+                                .blocking_send(StdinEvent::Data(vec![leader_raw, data[i]]))
                                 .is_err()
                             {
                                 return;
@@ -440,14 +442,14 @@ async fn run_attached(
                             continue;
                         }
 
-                        if data[i] == CTRL_B {
-                            pending_ctrl_b = true;
+                        if data[i] == leader_raw {
+                            pending_leader = true;
                             i += 1;
                             continue;
                         }
 
                         let start = i;
-                        while i < n && data[i] != CTRL_B {
+                        while i < n && data[i] != leader_raw {
                             i += 1;
                         }
                         if input_tx
@@ -461,18 +463,18 @@ async fn run_attached(
                 Err(_) => break,
             }
 
-            if pending_ctrl_b {
+            if pending_leader {
                 let mut next = [0u8; 1];
                 match stdin.read_exact(&mut next) {
                     Ok(_) => {
-                        pending_ctrl_b = false;
+                        pending_leader = false;
                         if next[0] == b'd' {
                             tracing::info!("detaching");
                             let _ = input_tx.blocking_send(StdinEvent::Detach);
                             return;
                         }
                         if input_tx
-                            .blocking_send(StdinEvent::Data(vec![CTRL_B, next[0]]))
+                            .blocking_send(StdinEvent::Data(vec![leader_raw, next[0]]))
                             .is_err()
                         {
                             return;
