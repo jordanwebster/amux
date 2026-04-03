@@ -177,6 +177,8 @@ pub async fn run_update(config: &Config) -> Result<()> {
 
     if latest <= current {
         println!("Already up to date (v{current}).");
+        let marker_path = amux::update::update_marker_path(&config.state_path);
+        amux::update::clear_update_marker(&marker_path);
         return Ok(());
     }
 
@@ -205,6 +207,10 @@ pub async fn run_update(config: &Config) -> Result<()> {
 
     replace_binary(&tmp_path, &current_exe)?;
     println!("Updated to v{latest}.");
+
+    // Clear update marker so stale banners don't persist
+    let marker_path = amux::update::update_marker_path(&config.state_path);
+    amux::update::clear_update_marker(&marker_path);
 
     if was_running {
         println!("Restarting server...");

@@ -445,7 +445,10 @@ async fn handle_command(
                 state.shutdown_tx.clone()
             };
             let _ = shutdown_tx
-                .send(super::ShutdownRequest::Shutdown { reply: tx.clone() })
+                .send(super::ShutdownRequest::Shutdown {
+                    reply: tx.clone(),
+                    link_name: ctx.link_name.clone(),
+                })
                 .await;
             Ok(())
         }
@@ -638,7 +641,10 @@ async fn handle_command(
                 state.shutdown_tx.clone()
             };
             let _ = shutdown_tx
-                .send(super::ShutdownRequest::Suspend { reply: tx.clone() })
+                .send(super::ShutdownRequest::Suspend {
+                    reply: tx.clone(),
+                    link_name: ctx.link_name.clone(),
+                })
                 .await;
             Ok(())
         }

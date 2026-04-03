@@ -29,8 +29,14 @@ use uuid::Uuid;
 /// loop can orchestrate cleanup (stop/suspend agents, remove socket, grace
 /// period) instead of `process::exit` from within a spawned connection task.
 pub(super) enum ShutdownRequest {
-    Shutdown { reply: mpsc::Sender<Message> },
-    Suspend { reply: mpsc::Sender<Message> },
+    Shutdown {
+        reply: mpsc::Sender<Message>,
+        link_name: String,
+    },
+    Suspend {
+        reply: mpsc::Sender<Message>,
+        link_name: String,
+    },
 }
 
 /// Maximum time allowed for a TLS handshake to complete.
@@ -325,6 +331,18 @@ impl Server {
                 state.config.clone()
             };
             establish_cloud_connection(config, self.state.clone(), self.event_tx.clone());
+
+            // Task: Periodic update check (every hour)
+            let state_path = {
+                let state = self.state.read().await;
+                state.config.state_path.clone()
+            };
+            crate::update::spawn_update_checker(
+                cloud_url.clone(),
+                env!("CARGO_PKG_VERSION").to_string(),
+                Duration::from_secs(3600),
+                state_path,
+            );
         }
 
         // Network connection limiter (TCP + WebSocket): each connection holds a
@@ -347,11 +365,17 @@ impl Server {
                 // Shutdown/suspend request from a connection handler
                 Some(req) = shutdown_rx.recv() => {
                     match req {
-                        ShutdownRequest::Shutdown { reply } => {
+                        ShutdownRequest::Shutdown { reply, link_name } => {
                             let user_state = {
                                 let s = self.state.read().await;
                                 s.get_user_state(&LOCAL_USER_ID).unwrap()
                             };
+                            // Notify before shutdown so clients see it before streams close
+                            notify_other_clients(
+                                &user_state,
+                                &link_name,
+                                ShutdownReason::UserRequested,
+                            ).await;
                             shutdown_server(&user_state).await;
                             deferred_reply = Some((
                                 reply,
@@ -360,11 +384,17 @@ impl Server {
                                 )),
                             ));
                         }
-                        ShutdownRequest::Suspend { reply } => {
+                        ShutdownRequest::Suspend { reply, link_name } => {
                             let user_state = {
                                 let s = self.state.read().await;
                                 s.get_user_state(&LOCAL_USER_ID).unwrap()
                             };
+                            // Notify before suspend so clients see it before streams close
+                            notify_other_clients(
+                                &user_state,
+                                &link_name,
+                                ShutdownReason::Updating,
+                            ).await;
                             let (suspended, errors) = suspend_server(&user_state).await;
                             let suspended_count = suspended.agents.len();
                             let error = if !errors.is_empty() {
@@ -525,6 +555,26 @@ impl Server {
         tracing::info!("server exiting");
 
         Ok(())
+    }
+}
+
+/// Best-effort notification for attached clients on shutdown/suspend.
+///
+/// This intentionally uses `try_send` so server shutdown does not block on a
+/// slow or backlogged client link. Missing this notice only affects the exit
+/// banner; update availability still comes from the marker file.
+async fn notify_other_clients(
+    user_state: &Arc<RwLock<ServerUserState>>,
+    exclude_link: &str,
+    reason: ShutdownReason,
+) {
+    let us = user_state.read().await;
+    let msg = Message::Command(Command::ShutdownNotification(reason));
+    for (link, tx) in &us.routes {
+        if link == exclude_link {
+            continue;
+        }
+        let _ = tx.try_send(msg.clone());
     }
 }
 

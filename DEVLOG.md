@@ -38,6 +38,38 @@ One paragraph describing what was done.
 
 ---
 
+## 2026-04-03: Update availability notification and graceful shutdown broadcast
+
+### Summary
+Added an update notification system so users see a banner when a newer amux version is available. The server spawns an hourly background task that fetches the release manifest and writes a marker file when an update exists. Clients read this file and display a banner on exit (attached sessions) or after command output (one-shot commands like `list`, `shutdown`). Also added graceful `ShutdownNotification` broadcast to all connected clients on server shutdown/suspend, so attached sessions see `[server shutting down]` or `[server updating]` instead of a raw connection error.
+
+### Changes
+- `crates/amux/src/update.rs` (new) — public module with manifest fetch, semver comparison, marker file read/write/clear, and `spawn_update_checker` background task
+- `crates/amux/src/lib.rs` — added `pub mod update`
+- `crates/amux/Cargo.toml` — added `semver` dependency
+- `crates/amux/src/message.rs` — added `ShutdownReason::Updating` variant
+- `crates/amux/src/server/mod.rs` — spawns hourly update checker (local server only), added `notify_other_clients()` to broadcast `ShutdownNotification` to all routes except the requester, notifications sent before `shutdown_server()`/`suspend_server()` so clients see them before streams close
+- `crates/amux/src/server/handlers.rs` — `ShutdownRequest` now carries `link_name` for exclude-from-broadcast
+- `crates/amux-cli/src/client.rs` — `print_update_banner()` reads marker file with stale version self-healing, called after output in `list_agents`/`kill_server` and on all attached session exit paths (skipped when `ShutdownReason::Updating`)
+- `crates/amux-cli/src/update.rs` — `amux update` clears marker file after successful update and on "already up to date"
+
+### Decisions Made
+- File-based approach over protocol messages: avoids breaking request/response ordering in one-shot CLI flows, allows showing banners before or after any command without protocol changes, instant (no network round-trip)
+- Marker file (`~/.local/state/amux/update-available`) contains two lines: current_version and update_version. Self-heals on version mismatch (stale marker from pre-upgrade deleted by client)
+- Server owns the marker (writes/refreshes/clears on check), `amux update` also clears it. Normal clients never delete.
+- `ShutdownNotification` broadcast sent before `suspend_server()`/`shutdown_server()` to avoid race where `SubscriptionClosed` from stream teardown arrives first
+- Update banner shown after command output (not before) for one-shot commands — command output is what the user asked for, banner is supplementary
+
+### Verification
+- `cargo check`, `cargo fmt`, `cargo clippy --workspace --all-targets -- -D warnings`, `cargo test` — all 248 tests pass, zero warnings
+- Manual testing: temporarily set version to 0.1.21, built, ran `amux-dev list` — banner displayed correctly after agent list. Attached to agent, detached — banner shown after `[detached from session]`. Reverted version.
+
+### Next Steps
+- Consider interactive upgrade prompt before commands (e.g. "Update now? [y/N]")
+- Future: use `AnnounceHost` to notify remote peers about available updates for remote update support
+
+---
+
 ## 2026-04-03: Remove readonly session reaper and PID tracking
 
 ### Summary

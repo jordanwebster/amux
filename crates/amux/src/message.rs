@@ -66,6 +66,7 @@ pub enum ProtocolError {
 pub enum ShutdownReason {
     ProtocolMismatch,
     UserRequested,
+    Updating,
 }
 
 impl std::fmt::Display for ShutdownReason {
@@ -73,6 +74,7 @@ impl std::fmt::Display for ShutdownReason {
         match self {
             ShutdownReason::ProtocolMismatch => write!(f, "amux upgrade required"),
             ShutdownReason::UserRequested => write!(f, "server shutting down"),
+            ShutdownReason::Updating => write!(f, "server updating"),
         }
     }
 }

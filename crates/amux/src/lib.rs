@@ -17,6 +17,7 @@ mod server;
 pub mod setup;
 mod state;
 mod transport;
+pub mod update;
 
 pub use agents::{SuspendedAgent, SuspendedServerState};
 pub use config::{Config, Keybinds, LeaderKey, default_log_path};

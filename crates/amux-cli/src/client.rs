@@ -7,6 +7,7 @@ use amux::{
 };
 use crossterm::terminal;
 use std::io::{self, Read, Write};
+use std::path::Path;
 use std::sync::Arc;
 use std::sync::atomic::{AtomicU64, Ordering};
 use tokio::sync::mpsc;
@@ -97,6 +98,7 @@ pub async fn new_agent(
                     Some(terminal_size),
                     request_counter,
                     config.keybinds.leader.clone(),
+                    &config.state_path,
                 )
                 .await
             }
@@ -181,6 +183,7 @@ pub async fn attach(target: Option<&str>, config: &Config) -> Result<()> {
         Some(terminal_size),
         request_counter,
         config.keybinds.leader.clone(),
+        &config.state_path,
     )
     .await
 }
@@ -193,6 +196,7 @@ async fn subscribe_and_stream(
     terminal_size: Option<TerminalSize>,
     request_counter: AtomicU64,
     leader: LeaderKey,
+    state_path: &Path,
 ) -> Result<()> {
     let (src, dst) =
         Route::send(full_route.clone()).expect("full_route should have at least one link");
@@ -233,7 +237,15 @@ async fn subscribe_and_stream(
         }
     }
 
-    run_attached(conn, agent_id, full_route, request_counter, leader).await
+    run_attached(
+        conn,
+        agent_id,
+        full_route,
+        request_counter,
+        leader,
+        state_path,
+    )
+    .await
 }
 
 /// List all running agents
@@ -290,6 +302,8 @@ pub async fn list_agents(config: &Config) -> Result<()> {
         }
     }
 
+    print_update_banner(&config.state_path);
+
     Ok(())
 }
 
@@ -320,6 +334,7 @@ pub async fn kill_server(config: &Config) -> Result<()> {
     }
 
     println!("Server shutting down.");
+    print_update_banner(&config.state_path);
     Ok(())
 }
 
@@ -380,6 +395,7 @@ async fn run_attached(
     full_route: Route,
     request_counter: AtomicU64,
     leader: LeaderKey,
+    state_path: &Path,
 ) -> Result<()> {
     let _raw_guard = RawModeGuard::new()?;
 
@@ -549,6 +565,9 @@ async fn run_attached(
         ExitReason::Error(e) => return Err(e),
         ExitReason::Shutdown(reason) => {
             println!("\n[{}]", reason);
+            if reason != ShutdownReason::Updating {
+                print_update_banner(state_path);
+            }
             std::process::exit(1);
         }
         ExitReason::Detached => {
@@ -556,9 +575,12 @@ async fn run_attached(
         }
         ExitReason::SessionEnded => {
             println!("\n[session ended]");
+            print_update_banner(state_path);
             std::process::exit(0);
         }
     }
+
+    print_update_banner(state_path);
 
     Ok(())
 }
@@ -576,5 +598,25 @@ impl RawModeGuard {
 impl Drop for RawModeGuard {
     fn drop(&mut self) {
         let _ = terminal::disable_raw_mode();
+    }
+}
+
+/// Check the update marker file and print a banner if a valid update is available.
+/// The marker is ignored (and deleted) if its current_version doesn't match our binary.
+fn print_update_banner(state_path: &Path) {
+    let marker_path = amux::update::update_marker_path(state_path);
+    match amux::update::read_update_marker(&marker_path) {
+        Some(info) if info.current_version == env!("CARGO_PKG_VERSION") => {
+            println!(
+                "An update is available ({} vs {}). Run 'amux update' to update.",
+                info.update_version, info.current_version
+            );
+            println!("Updating will suspend and resume all running agents.");
+        }
+        Some(_) => {
+            // Stale marker from a different binary version — clean up
+            let _ = std::fs::remove_file(&marker_path);
+        }
+        None => {}
     }
 }
