@@ -723,11 +723,9 @@ async fn handle_direct(
                         .jwt_validator
                         .clone()
                         .expect("is_cloud_server requires jwt_validator");
-                    (
-                        validator,
-                        state.config.host_name.clone(),
-                        state.config.tcp_port,
-                    )
+                    // Safe: cloud mode validation guarantees tcp_port is Some
+                    let tcp_port = state.config.tcp_port.expect("cloud mode requires tcp_port");
+                    (validator, state.config.host_name.clone(), tcp_port)
                 };
 
                 match validator.validate(&token, &host, tcp_port).await {

@@ -38,6 +38,30 @@ One paragraph describing what was done.
 
 ---
 
+## 2026-04-03: Optional TCP/WebSocket listeners and centralized config validation
+
+### Summary
+Made TCP and WebSocket server listeners optional — they only start when the corresponding port is configured. Added a centralized `Config::validate()` method called early in startup so invalid configs fail fast with clear error messages, regardless of which subcommand is being run.
+
+### Changes
+- `crates/amux/src/config.rs`: Changed `tcp_port` and `websocket_port` from `u16` to `Option<u16>` (default: `None`). Added `Config::validate(is_cloud: bool)` that checks leader key format and cloud port requirements. Added tests.
+- `crates/amux/src/server/mod.rs`: TCP/WS listeners are now conditional. Uses `std::future::pending()` in the select loop when a listener is disabled. Added server-side validation call.
+- `crates/amux/src/server/accept.rs`, `crates/amux/src/server/handlers.rs`: Updated `tcp_port` reads to unwrap `Option` (safe: cloud mode guarantees `Some` via validation).
+- `crates/amux-cli/src/main.rs`: Calls `config.validate()` immediately after loading config, before any command runs. Malformed implicit config now errors instead of silently falling back to defaults.
+- `crates/amux/src/connect.rs`: `connect_embedded` and `connect_daemon` validate config before spawning, so callers get the real error instead of an opaque 5s timeout.
+
+### Decisions Made
+- Ports default to `None` (no listener) rather than defaulting to 9001/9002: local-only users shouldn't bind network ports they don't need.
+- Cloud mode requires both ports via validation, so the `expect()` calls in JWT token handling are safe.
+- Leader key validation in `validate()` is a belt-and-suspenders check alongside serde deserialization validation — covers programmatic construction too.
+- Malformed implicit config (default path exists but fails to parse) is now a hard error, not a warning-and-fallback. With ports defaulting to None, the old fallback would silently disable network listeners.
+
+### Verification
+- `cargo check && cargo fmt && cargo clippy --workspace --all-targets -- -D warnings && cargo test --workspace` — 263 unit tests pass
+- E2E tests: 10/10 pass (E2E runner auto-assigns ports in generated configs)
+
+---
+
 ## 2026-04-03: Update availability notification and graceful shutdown broadcast
 
 ### Summary

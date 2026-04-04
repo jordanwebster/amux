@@ -92,6 +92,9 @@ async fn connect_daemon(config: &Config, options: DaemonOptions) -> Result<Conne
         Err(e) => return Err(e),
     }
 
+    // Validate before spawning so callers see the real error, not a timeout
+    config.validate(false)?;
+
     tracing::info!("starting server");
 
     let config_yaml = serde_yaml::to_string(config)
@@ -135,6 +138,9 @@ async fn connect_daemon(config: &Config, options: DaemonOptions) -> Result<Conne
 
 /// Start server in-process on a background task, then connect.
 async fn connect_embedded(config: &Config) -> Result<Connection> {
+    // Validate before spawning so callers see the real error, not a timeout
+    config.validate(false)?;
+
     #[cfg(unix)]
     if config.socket_path.exists() {
         let _ = std::fs::remove_file(&config.socket_path);

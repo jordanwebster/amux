@@ -260,6 +260,12 @@ impl Server {
             )
         };
 
+        // Validate server-specific config (cloud requires tcp + ws ports)
+        {
+            let state = self.state.read().await;
+            state.config.validate(is_cloud_server)?;
+        }
+
         // Configure cloud server: enable JWT validation (and optionally TLS)
         let tls_acceptor: Option<TlsAcceptor> = if is_cloud_server {
             let mut state = self.state.write().await;
@@ -300,19 +306,29 @@ impl Server {
         let local_listener = LocalListener::bind(&socket_path)?;
         tracing::info!(path = %socket_path.display(), "listening on local transport");
 
-        let tcp_addr = SocketAddr::from(([0, 0, 0, 0], tcp_port));
-        let tcp_listener = TcpListener::bind(tcp_addr).await?;
-        if is_cloud_server && enforce_tls {
-            tracing::info!(addr = %tcp_addr, "listening on TLS TCP");
-        } else if is_cloud_server {
-            tracing::info!(addr = %tcp_addr, "listening on TCP (external TLS)");
+        let tcp_listener = if let Some(port) = tcp_port {
+            let addr = SocketAddr::from(([0, 0, 0, 0], port));
+            let listener = TcpListener::bind(addr).await?;
+            if is_cloud_server && enforce_tls {
+                tracing::info!(addr = %addr, "listening on TLS TCP");
+            } else if is_cloud_server {
+                tracing::info!(addr = %addr, "listening on TCP (external TLS)");
+            } else {
+                tracing::info!(addr = %addr, "listening on TCP");
+            }
+            Some(listener)
         } else {
-            tracing::info!(addr = %tcp_addr, "listening on TCP");
-        }
+            None
+        };
 
-        let ws_addr = SocketAddr::from(([0, 0, 0, 0], ws_port));
-        let ws_listener = TcpListener::bind(ws_addr).await?;
-        tracing::info!(addr = %ws_addr, "listening on WebSocket");
+        let ws_listener = if let Some(port) = ws_port {
+            let addr = SocketAddr::from(([0, 0, 0, 0], port));
+            let listener = TcpListener::bind(addr).await?;
+            tracing::info!(addr = %addr, "listening on WebSocket");
+            Some(listener)
+        } else {
+            None
+        };
 
         let mut event_rx = self.event_rx.take().expect("run() called twice");
 
@@ -451,7 +467,12 @@ impl Server {
                     }
                 }
                 // TCP connection - TLS in cloud mode, plain in local mode
-                result = tcp_listener.accept() => {
+                result = async {
+                    match &tcp_listener {
+                        Some(l) => l.accept().await,
+                        None => std::future::pending().await,
+                    }
+                } => {
                     match result {
                         Ok((stream, addr)) => {
                             let permit = match network_conn_limit.clone().try_acquire_owned() {
@@ -508,7 +529,12 @@ impl Server {
                     }
                 }
                 // WebSocket connection
-                result = ws_listener.accept() => {
+                result = async {
+                    match &ws_listener {
+                        Some(l) => l.accept().await,
+                        None => std::future::pending().await,
+                    }
+                } => {
                     match result {
                         Ok((stream, _addr)) => {
                             let permit = match network_conn_limit.clone().try_acquire_owned() {

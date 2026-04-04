@@ -45,8 +45,6 @@ fn home_dir() -> PathBuf {
         .expect("%USERPROFILE% is not set")
 }
 
-const DEFAULT_TCP_PORT: u16 = 9001;
-const DEFAULT_WEBSOCKET_PORT: u16 = 9002;
 const DEFAULT_CLOUD_URL: &str = "https://amux.sh";
 
 fn default_host_name() -> String {
@@ -87,14 +85,6 @@ fn default_socket_path() -> PathBuf {
 fn default_socket_path() -> PathBuf {
     let user = std::env::var("USERNAME").unwrap_or_else(|_| "default".to_string());
     PathBuf::from(format!(r"\\.\pipe\amux-{user}"))
-}
-
-fn default_tcp_port() -> u16 {
-    DEFAULT_TCP_PORT
-}
-
-fn default_websocket_port() -> u16 {
-    DEFAULT_WEBSOCKET_PORT
 }
 
 fn default_randomise_link_name() -> bool {
@@ -209,13 +199,13 @@ pub struct Config {
     #[serde(default = "default_socket_path")]
     pub socket_path: PathBuf,
 
-    /// TCP port for server-to-server connections
-    #[serde(default = "default_tcp_port")]
-    pub tcp_port: u16,
+    /// TCP port for server-to-server connections (None = don't listen)
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub tcp_port: Option<u16>,
 
-    /// WebSocket port for rich clients
-    #[serde(default = "default_websocket_port")]
-    pub websocket_port: u16,
+    /// WebSocket port for rich clients (None = don't listen)
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub websocket_port: Option<u16>,
 
     /// Whether to add random suffixes to link names (default: true).
     /// Set to false in tests for deterministic link names.
@@ -249,8 +239,8 @@ impl Default for Config {
             host_name: default_host_name(),
             cloud_url: default_cloud_url(),
             socket_path: default_socket_path(),
-            tcp_port: default_tcp_port(),
-            websocket_port: default_websocket_port(),
+            tcp_port: None,
+            websocket_port: None,
             randomise_link_name: default_randomise_link_name(),
             state_path: default_state_path(),
             enforce_tls_in_cloud_mode: default_enforce_tls_in_cloud_mode(),
@@ -269,6 +259,34 @@ impl Config {
     /// falling back to `~/.config/amux/config.yaml`.
     pub fn default_path() -> PathBuf {
         xdg_dir("XDG_CONFIG_HOME", ".config").join("amux/config.yaml")
+    }
+
+    /// Validate config. Call early to surface errors before any work begins.
+    /// When `is_cloud` is true, also validates cloud-server requirements.
+    pub fn validate(&self, is_cloud: bool) -> Result<()> {
+        // Leader key must be ctrl+<a-z>
+        let ch = self.keybinds.leader.char;
+        if !ch.is_ascii_lowercase() {
+            return Err(AmuxError::Config(format!(
+                "invalid leader key: byte 0x{ch:02x} is not a lowercase letter (expected ctrl+<a-z>)"
+            )));
+        }
+
+        // Cloud servers must have TCP and WebSocket ports configured
+        if is_cloud {
+            if self.tcp_port.is_none() {
+                return Err(AmuxError::Config(
+                    "cloud mode requires tcp_port to be set".into(),
+                ));
+            }
+            if self.websocket_port.is_none() {
+                return Err(AmuxError::Config(
+                    "cloud mode requires websocket_port to be set".into(),
+                ));
+            }
+        }
+
+        Ok(())
     }
 
     /// Load config from a YAML file
@@ -362,6 +380,58 @@ mod tests {
     fn config_without_keybinds_uses_default() {
         let yaml = "tcp_port: 9999\n";
         let config: Config = serde_yaml::from_str(yaml).unwrap();
+        assert_eq!(config.tcp_port, Some(9999));
         assert_eq!(config.keybinds.leader.char, b'a');
+    }
+
+    #[test]
+    fn ports_default_to_none() {
+        let config = Config::default();
+        assert_eq!(config.tcp_port, None);
+        assert_eq!(config.websocket_port, None);
+    }
+
+    #[test]
+    fn validate_default_config_ok() {
+        let config = Config::default();
+        assert!(config.validate(false).is_ok());
+    }
+
+    #[test]
+    fn validate_cloud_requires_tcp_port() {
+        let config = Config {
+            websocket_port: Some(9002),
+            ..Config::default()
+        };
+        let err = config.validate(true).unwrap_err();
+        assert!(err.to_string().contains("tcp_port"));
+    }
+
+    #[test]
+    fn validate_cloud_requires_websocket_port() {
+        let config = Config {
+            tcp_port: Some(9001),
+            ..Config::default()
+        };
+        let err = config.validate(true).unwrap_err();
+        assert!(err.to_string().contains("websocket_port"));
+    }
+
+    #[test]
+    fn validate_cloud_ok_with_both_ports() {
+        let config = Config {
+            tcp_port: Some(9001),
+            websocket_port: Some(9002),
+            ..Config::default()
+        };
+        assert!(config.validate(true).is_ok());
+    }
+
+    #[test]
+    fn validate_leader_key_bad_char() {
+        let mut config = Config::default();
+        config.keybinds.leader = LeaderKey { char: b'1' };
+        let err = config.validate(false).unwrap_err();
+        assert!(err.to_string().contains("leader key"));
     }
 }

@@ -137,10 +137,19 @@ async fn main() -> Result<()> {
             .context("failed to read config from stdin")?;
         let config: Config =
             serde_yaml::from_str(&input).context("failed to parse config from stdin")?;
+        config
+            .validate(*cloud)
+            .map_err(|e| anyhow!("invalid config: {e}"))?;
         return run_server(config, *cloud).await.map_err(Into::into);
     }
 
     let config = load_config(cli.config)?;
+
+    // Determine if this is a cloud-server invocation for validation purposes
+    let is_cloud = matches!(cli.command, Some(Commands::Serve { cloud: true, .. }));
+    config
+        .validate(is_cloud)
+        .map_err(|e| anyhow!("invalid config: {e}"))?;
 
     match cli.command {
         None => {
@@ -283,19 +292,8 @@ fn load_config(input_path: Option<PathBuf>) -> Result<Config> {
 
     // Load config from file or use defaults
     Ok(match &config_path {
-        Some(path) => match Config::from_file(path) {
-            Ok(c) => c,
-            Err(e) => match input_path {
-                Some(_) => Err(anyhow!("failed to load config from {:?}: {}", path, e))?,
-                None => {
-                    eprintln!(
-                        "warning: failed to load config from {:?}: {}, using defaults",
-                        path, e
-                    );
-                    Config::new()
-                }
-            },
-        },
+        Some(path) => Config::from_file(path)
+            .map_err(|e| anyhow!("failed to load config from {:?}: {}", path, e))?,
         None => Config::new(),
     })
 }

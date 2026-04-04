@@ -102,11 +102,9 @@ pub(super) async fn accept_handshake<T: Transport>(
                     .jwt_validator
                     .clone()
                     .expect("verify_token=true requires jwt_validator");
-                (
-                    validator,
-                    state.config.host_name.clone(),
-                    state.config.tcp_port,
-                )
+                // Safe: cloud mode validation guarantees tcp_port is Some
+                let tcp_port = state.config.tcp_port.expect("cloud mode requires tcp_port");
+                (validator, state.config.host_name.clone(), tcp_port)
             };
 
             let token = token.ok_or_else(|| {
