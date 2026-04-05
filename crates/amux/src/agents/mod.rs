@@ -632,10 +632,7 @@ mod tests {
             AgentSession::TestAgent(TestAgentSession::new(&req, "test-agent".to_string()));
 
         let err = session
-            .send_structured_input(
-                0,
-                json!({"SubmitPrompt": "hello"}),
-            )
+            .send_structured_input(0, json!({"SubmitPrompt": "hello"}))
             .await
             .unwrap_err();
 
