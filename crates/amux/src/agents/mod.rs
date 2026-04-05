@@ -19,7 +19,7 @@ use crate::buffer::{MultiplexByteBuffer, MultiplexByteReader, MultiplexStructure
 use crate::claude::structured_log_source::StructuredLogSource;
 use crate::claude::types::Hook;
 use crate::error::{AmuxError, Result};
-use crate::message::{AgentType, CreateAgentRequest, ProtocolError, TerminalSize};
+use crate::message::{AgentProtocol, AgentType, ClaudeProtocol, CreateAgentRequest, ProtocolError, TerminalSize};
 use crate::route::Route;
 use chrono::{DateTime, Utc};
 use portable_pty::{CommandBuilder, MasterPty, PtySize, native_pty_system};
@@ -386,6 +386,14 @@ impl AgentSession {
         }
     }
 
+    pub fn agent_protocol(&self) -> Option<AgentProtocol> {
+        match self {
+            Self::Claude(_) => Some(AgentProtocol::Claude(ClaudeProtocol::PtyV1)),
+            #[cfg(any(debug_assertions, test))]
+            Self::TestAgent(_) => None,
+        }
+    }
+
     /// Validate seq and send structured input to the agent.
     pub async fn send_structured_input(
         &self,
@@ -462,11 +470,6 @@ impl AgentSession {
             },
             readonly: self.readonly(),
             created_at: self.created_at(),
-            structured_protocol: match self {
-                Self::Claude(_) => "claude_pty_v1".to_string(),
-                #[cfg(any(debug_assertions, test))]
-                Self::TestAgent(_) => "test_echo_v1".to_string(),
-            },
         }
     }
 

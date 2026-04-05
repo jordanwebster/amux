@@ -33,6 +33,19 @@ pub enum AgentType {
     TestAgent(String),
 }
 
+/// Claude-specific structured I/O protocol negotiated on subscribe.
+#[derive(Serialize, Deserialize, Debug, Clone, PartialEq, Eq)]
+pub enum ClaudeProtocol {
+    PtyV1,
+    SdkV1,
+}
+
+/// Structured I/O protocol contract for a subscribed agent session.
+#[derive(Serialize, Deserialize, Debug, Clone, PartialEq, Eq)]
+pub enum AgentProtocol {
+    Claude(ClaudeProtocol),
+}
+
 /// Protocol-level errors that can be returned in response messages
 #[derive(Serialize, Deserialize, Debug, Clone, PartialEq, thiserror::Error)]
 pub enum ProtocolError {
@@ -127,6 +140,8 @@ pub enum RoutableMessage {
         /// Current sequence number at subscribe time. Clients use this as
         /// their initial seq when no StructuredOutput messages have arrived.
         seq: u64,
+        /// Structured I/O contract for this subscription, if the session exposes one.
+        protocol: Option<AgentProtocol>,
         error: Option<ProtocolError>,
     },
     CreateAgent(CreateAgentRequest),
@@ -213,7 +228,6 @@ pub enum DirectMessage {
         agent_type: AgentType,
         readonly: bool,
         created_at: DateTime<Utc>,
-        structured_protocol: String,
     },
     WithdrawAgent {
         agent_id: Uuid,
@@ -456,7 +470,6 @@ mod tests {
             agent_type: AgentType::Claude,
             readonly: false,
             created_at: Utc::now(),
-            structured_protocol: "claude_pty_v1".to_string(),
         };
         let encoded = rmp_serde::to_vec_named(&info).unwrap();
         let decoded: Agent = rmp_serde::from_slice(&encoded).unwrap();

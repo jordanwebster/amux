@@ -18,7 +18,6 @@ pub struct Agent {
     pub agent_type: AgentType,
     pub readonly: bool,
     pub created_at: DateTime<Utc>,
-    pub structured_protocol: String,
 }
 
 impl Agent {
@@ -264,7 +263,6 @@ mod tests {
             agent_type: crate::message::AgentType::Claude,
             readonly: false,
             created_at: Utc::now(),
-            structured_protocol: "claude_pty_v1".to_string(),
         }
     }
 
@@ -278,7 +276,6 @@ mod tests {
             agent_type: crate::message::AgentType::Claude,
             readonly: false,
             created_at: Utc::now(),
-            structured_protocol: "claude_pty_v1".to_string(),
         }
     }
 

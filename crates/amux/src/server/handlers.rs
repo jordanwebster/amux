@@ -293,6 +293,7 @@ async fn handle_routable(
                             &RoutableMessage::SubscribeStructuredResult {
                                 agent_id,
                                 seq: 0,
+                                protocol: None,
                                 error: Some(ProtocolError::ServerError(format!(
                                     "agent {agent_id} not found"
                                 ))),
@@ -301,10 +302,13 @@ async fn handle_routable(
                         .await;
                     return Ok(());
                 };
-                session.subscribe_with_current_seq().await
+                session
+                    .subscribe_with_current_seq()
+                    .await
+                    .map(|(reader, current_seq)| (reader, current_seq, session.agent_protocol()))
             };
 
-            let Some((reader, current_seq)) = subscribed else {
+            let Some((reader, current_seq, protocol)) = subscribed else {
                 let _ = tx
                     .send(Message::routable(
                         reply_src,
@@ -313,6 +317,7 @@ async fn handle_routable(
                         &RoutableMessage::SubscribeStructuredResult {
                             agent_id,
                             seq: 0,
+                            protocol: None,
                             error: Some(ProtocolError::ServerError(format!(
                                 "agent {agent_id} session ended"
                             ))),
@@ -330,6 +335,7 @@ async fn handle_routable(
                     &RoutableMessage::SubscribeStructuredResult {
                         agent_id,
                         seq: current_seq,
+                        protocol,
                         error: None,
                     },
                 ))
@@ -597,7 +603,6 @@ async fn handle_command(
                                         agent_type: AgentType::Claude,
                                         readonly: true,
                                         created_at,
-                                        structured_protocol: "claude_pty_v1".to_string(),
                                     },
                                     None,
                                 );
@@ -773,7 +778,6 @@ async fn handle_direct(
             agent_type,
             readonly,
             created_at,
-            structured_protocol,
         } => {
             let mut us = ctx.user_state.write().await;
 
@@ -797,7 +801,6 @@ async fn handle_direct(
                 agent_type: agent_type.clone(),
                 readonly,
                 created_at,
-                structured_protocol: structured_protocol.clone(),
             };
 
             if let Err(e) = us.registry.register_remote(info) {
@@ -819,7 +822,6 @@ async fn handle_direct(
                     agent_type,
                     readonly,
                     created_at,
-                    structured_protocol,
                 },
                 Some(&ctx.link_name),
             );
@@ -980,6 +982,10 @@ mod tests {
         std::env::temp_dir()
     }
 
+    fn claude_agent_type() -> AgentType {
+        AgentType::Claude
+    }
+
     /// Create an AgentSession::TestAgent from a CreateAgentRequest.
     fn create_test_session(req: &crate::message::CreateAgentRequest) -> AgentSession {
         let cmd = match &req.agent_type {
@@ -1069,10 +1075,9 @@ mod tests {
             command: "claude".to_string(),
             working_dir: PathBuf::from("/tmp"),
             route: Route::empty(),
-            agent_type: AgentType::Claude,
+            agent_type: claude_agent_type(),
             readonly: false,
             created_at: Utc::now(),
-            structured_protocol: "claude_pty_v1".to_string(),
         };
 
         handle_direct(&tx, msg, &ctx).await.unwrap();
@@ -1100,10 +1105,9 @@ mod tests {
             command: "bash".to_string(),
             working_dir: PathBuf::from("/home"),
             route: Route::from_link("host-a"),
-            agent_type: AgentType::Claude,
+            agent_type: claude_agent_type(),
             readonly: false,
             created_at: Utc::now(),
-            structured_protocol: "claude_pty_v1".to_string(),
         };
 
         handle_direct(&tx, msg, &ctx).await.unwrap();
@@ -1150,10 +1154,9 @@ mod tests {
             command: "claude".to_string(),
             working_dir: PathBuf::from("/remote"),
             route: Route::empty(),
-            agent_type: AgentType::Claude,
+            agent_type: claude_agent_type(),
             readonly: false,
             created_at: Utc::now(),
-            structured_protocol: "claude_pty_v1".to_string(),
         };
 
         handle_direct(&tx, msg, &ctx).await.unwrap();
@@ -1178,10 +1181,9 @@ mod tests {
                     command: "bash".to_string(),
                     working_dir: PathBuf::from("/tmp"),
                     route: Route::from_link("test-link"),
-                    agent_type: crate::message::AgentType::Claude,
+                    agent_type: claude_agent_type(),
                     readonly: false,
                     created_at: Utc::now(),
-                    structured_protocol: "claude_pty_v1".to_string(),
                 })
                 .unwrap();
         }
@@ -1210,10 +1212,9 @@ mod tests {
                     command: "bash".to_string(),
                     working_dir: PathBuf::from("/tmp"),
                     route: Route::from_link("other-link"),
-                    agent_type: crate::message::AgentType::Claude,
+                    agent_type: claude_agent_type(),
                     readonly: false,
                     created_at: Utc::now(),
-                    structured_protocol: "claude_pty_v1".to_string(),
                 })
                 .unwrap();
         }
@@ -1246,10 +1247,9 @@ mod tests {
             command: "bash".to_string(),
             working_dir: PathBuf::from("/first"),
             route: Route::empty(),
-            agent_type: AgentType::Claude,
+            agent_type: claude_agent_type(),
             readonly: false,
             created_at: Utc::now(),
-            structured_protocol: "claude_pty_v1".to_string(),
         };
         handle_direct(&tx, msg, &ctx).await.unwrap();
 
@@ -1260,10 +1260,9 @@ mod tests {
             command: "claude".to_string(),
             working_dir: PathBuf::from("/second"),
             route: Route::empty(),
-            agent_type: AgentType::Claude,
+            agent_type: claude_agent_type(),
             readonly: false,
             created_at: Utc::now(),
-            structured_protocol: "claude_pty_v1".to_string(),
         };
         handle_direct(&tx, msg, &ctx).await.unwrap();
 
@@ -1313,10 +1312,9 @@ mod tests {
                     command: "claude".to_string(),
                     working_dir: PathBuf::from("/tmp"),
                     route: Route::from_link("peer-a"),
-                    agent_type: crate::message::AgentType::Claude,
+                    agent_type: claude_agent_type(),
                     readonly: false,
                     created_at: Utc::now(),
-                    structured_protocol: "claude_pty_v1".to_string(),
                 })
                 .unwrap();
         }
@@ -1707,6 +1705,7 @@ mod tests {
             RoutableMessage::SubscribeStructuredResult {
                 agent_id: Uuid::new_v4(),
                 seq: 0,
+                protocol: None,
                 error: None,
             },
             RoutableMessage::CreateAgentResult {
@@ -1789,6 +1788,9 @@ mod tests {
             RoutableMessage::SubscribeStructuredResult {
                 agent_id: id,
                 seq: 0,
+                protocol: Some(crate::message::AgentProtocol::Claude(
+                    crate::message::ClaudeProtocol::PtyV1
+                )),
                 error: None,
             } if id == agent_id
         ));
@@ -1821,10 +1823,9 @@ mod tests {
                     command: "claude".to_string(),
                     working_dir: PathBuf::from("/tmp"),
                     route: Route::from_link("test-link"),
-                    agent_type: crate::message::AgentType::Claude,
+                    agent_type: claude_agent_type(),
                     readonly: false,
                     created_at: Utc::now(),
-                    structured_protocol: "claude_pty_v1".to_string(),
                 })
                 .unwrap();
             let mut deep_route = Route::from_link("host-b");
@@ -1836,10 +1837,9 @@ mod tests {
                     command: "claude".to_string(),
                     working_dir: PathBuf::from("/tmp"),
                     route: deep_route,
-                    agent_type: crate::message::AgentType::Claude,
+                    agent_type: claude_agent_type(),
                     readonly: false,
                     created_at: Utc::now(),
-                    structured_protocol: "claude_pty_v1".to_string(),
                 })
                 .unwrap();
             // Agent on different link (should survive)
@@ -1850,10 +1850,9 @@ mod tests {
                     command: "claude".to_string(),
                     working_dir: PathBuf::from("/tmp"),
                     route: Route::from_link("other-link"),
-                    agent_type: crate::message::AgentType::Claude,
+                    agent_type: claude_agent_type(),
                     readonly: false,
                     created_at: Utc::now(),
-                    structured_protocol: "claude_pty_v1".to_string(),
                 })
                 .unwrap();
         }
