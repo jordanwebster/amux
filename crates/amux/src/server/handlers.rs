@@ -344,7 +344,7 @@ async fn handle_routable(
                 |id, envelope| RoutableMessage::StructuredOutput {
                     agent_id: id,
                     seq: envelope.seq,
-                    data: Box::new(envelope.data),
+                    payload: envelope.payload,
                 },
                 reply_src,
                 reply_dst,
@@ -395,11 +395,11 @@ async fn handle_routable(
         RoutableMessage::StructuredInput {
             agent_id,
             seq: client_seq,
-            data,
+            payload,
         } => {
             let us = ctx.user_state.read().await;
             if let Some(session) = us.agents.get(&agent_id)
-                && let Err(error) = session.send_structured_input(client_seq, data).await
+                && let Err(error) = session.send_structured_input(client_seq, payload).await
             {
                 if let Some((reply_src, reply_dst)) = reply_routes(src, "StructuredInput") {
                     let _ = tx
@@ -525,16 +525,16 @@ async fn handle_command(
 
         Command::HandleHook { agent_id, hook } => {
             let hook_type = match hook.as_ref() {
-                Hook::Claude(ClaudeHook::SessionStart(_)) => "SessionStart",
-                Hook::Claude(ClaudeHook::PermissionRequest(_)) => "PermissionRequest",
-                Hook::Claude(ClaudeHook::Stop(_)) => "Stop",
-                Hook::Claude(ClaudeHook::SessionEnd(_)) => "SessionEnd",
-                Hook::Claude(ClaudeHook::Unknown) => "Unknown",
+                Hook::Claude(ClaudeHook::SessionStart(_), _) => "SessionStart",
+                Hook::Claude(ClaudeHook::PermissionRequest(_), _) => "PermissionRequest",
+                Hook::Claude(ClaudeHook::Stop(_), _) => "Stop",
+                Hook::Claude(ClaudeHook::SessionEnd(_), _) => "SessionEnd",
+                Hook::Claude(ClaudeHook::Unknown, _) => "Unknown",
             };
             tracing::debug!(hook_type, %agent_id, "received hook event");
 
             // Unknown hook variants should be filtered client-side; warn and ack
-            if matches!(hook.as_ref(), Hook::Claude(ClaudeHook::Unknown)) {
+            if matches!(hook.as_ref(), Hook::Claude(ClaudeHook::Unknown, _)) {
                 tracing::warn!(%agent_id, "received unknown hook variant");
                 let _ = tx
                     .send(Message::Command(Command::HandleHookResult { error: None }))
@@ -546,7 +546,7 @@ async fn handle_command(
             let result = {
                 let mut us = ctx.user_state.write().await;
                 let is_session_end =
-                    matches!(hook.as_ref(), Hook::Claude(ClaudeHook::SessionEnd(_)));
+                    matches!(hook.as_ref(), Hook::Claude(ClaudeHook::SessionEnd(_), _));
                 if let Some(session) = us.agents.get_mut(&agent_id) {
                     let is_readonly = session.readonly();
                     let r = session.handle_hook(*hook).await.map_err(|e| {
@@ -561,7 +561,7 @@ async fn handle_command(
                     Ok(())
                 } else {
                     // External session — create readonly agent from hook data
-                    let Hook::Claude(claude_hook) = hook.as_ref();
+                    let Hook::Claude(claude_hook, _) = hook.as_ref();
                     if let Some(cwd) = claude_hook.cwd()
                         && let Some(_transcript_path) = claude_hook.transcript_path()
                     {
@@ -597,6 +597,7 @@ async fn handle_command(
                                         agent_type: AgentType::Claude,
                                         readonly: true,
                                         created_at,
+                                        structured_protocol: "claude_pty_v1".to_string(),
                                     },
                                     None,
                                 );
@@ -772,6 +773,7 @@ async fn handle_direct(
             agent_type,
             readonly,
             created_at,
+            structured_protocol,
         } => {
             let mut us = ctx.user_state.write().await;
 
@@ -795,6 +797,7 @@ async fn handle_direct(
                 agent_type: agent_type.clone(),
                 readonly,
                 created_at,
+                structured_protocol: structured_protocol.clone(),
             };
 
             if let Err(e) = us.registry.register_remote(info) {
@@ -816,6 +819,7 @@ async fn handle_direct(
                     agent_type,
                     readonly,
                     created_at,
+                    structured_protocol,
                 },
                 Some(&ctx.link_name),
             );
@@ -946,13 +950,14 @@ mod tests {
     use super::*;
     use crate::agents::{AgentSession, SessionEvent};
     use crate::claude::types::{
-        AgentStructuredOutput, BashToolInput, ClaudePermissionRequest, ClaudePermissionTool,
-        ClaudeSessionEnd, ClaudeSessionStart, ClaudeStop, ClaudeStructuredOutput,
+        BashToolInput, ClaudePermissionRequest, ClaudePermissionTool, ClaudeSessionEnd,
+        ClaudeSessionStart, ClaudeStop,
     };
     use crate::route::Route;
     use crate::server::test_helpers::{test_ctx, test_state};
     use crate::server::{LOCAL_USER_ID, ServerUserState};
     use chrono::Utc;
+    use serde_json::json;
     use std::path::{Path, PathBuf};
     use std::sync::Arc;
     use std::sync::atomic::AtomicU64;
@@ -1067,6 +1072,7 @@ mod tests {
             agent_type: AgentType::Claude,
             readonly: false,
             created_at: Utc::now(),
+            structured_protocol: "claude_pty_v1".to_string(),
         };
 
         handle_direct(&tx, msg, &ctx).await.unwrap();
@@ -1097,6 +1103,7 @@ mod tests {
             agent_type: AgentType::Claude,
             readonly: false,
             created_at: Utc::now(),
+            structured_protocol: "claude_pty_v1".to_string(),
         };
 
         handle_direct(&tx, msg, &ctx).await.unwrap();
@@ -1146,6 +1153,7 @@ mod tests {
             agent_type: AgentType::Claude,
             readonly: false,
             created_at: Utc::now(),
+            structured_protocol: "claude_pty_v1".to_string(),
         };
 
         handle_direct(&tx, msg, &ctx).await.unwrap();
@@ -1173,6 +1181,7 @@ mod tests {
                     agent_type: crate::message::AgentType::Claude,
                     readonly: false,
                     created_at: Utc::now(),
+                    structured_protocol: "claude_pty_v1".to_string(),
                 })
                 .unwrap();
         }
@@ -1204,6 +1213,7 @@ mod tests {
                     agent_type: crate::message::AgentType::Claude,
                     readonly: false,
                     created_at: Utc::now(),
+                    structured_protocol: "claude_pty_v1".to_string(),
                 })
                 .unwrap();
         }
@@ -1239,6 +1249,7 @@ mod tests {
             agent_type: AgentType::Claude,
             readonly: false,
             created_at: Utc::now(),
+            structured_protocol: "claude_pty_v1".to_string(),
         };
         handle_direct(&tx, msg, &ctx).await.unwrap();
 
@@ -1252,6 +1263,7 @@ mod tests {
             agent_type: AgentType::Claude,
             readonly: false,
             created_at: Utc::now(),
+            structured_protocol: "claude_pty_v1".to_string(),
         };
         handle_direct(&tx, msg, &ctx).await.unwrap();
 
@@ -1304,6 +1316,7 @@ mod tests {
                     agent_type: crate::message::AgentType::Claude,
                     readonly: false,
                     created_at: Utc::now(),
+                    structured_protocol: "claude_pty_v1".to_string(),
                 })
                 .unwrap();
         }
@@ -1707,12 +1720,7 @@ mod tests {
             RoutableMessage::StructuredOutput {
                 agent_id: Uuid::new_v4(),
                 seq: 1,
-                data: Box::new(crate::claude::types::AgentStructuredOutput::Claude(
-                    crate::claude::types::ClaudeStructuredOutput::AgentStopped {
-                        cwd: Some("/tmp".to_string()),
-                        stop_hook_active: Some(false),
-                    },
-                )),
+                payload: json!({"type": "hook.stop", "cwd": "/tmp", "stop_hook_active": false}),
             },
             RoutableMessage::StructuredInputResult {
                 agent_id: Uuid::new_v4(),
@@ -1816,6 +1824,7 @@ mod tests {
                     agent_type: crate::message::AgentType::Claude,
                     readonly: false,
                     created_at: Utc::now(),
+                    structured_protocol: "claude_pty_v1".to_string(),
                 })
                 .unwrap();
             let mut deep_route = Route::from_link("host-b");
@@ -1830,6 +1839,7 @@ mod tests {
                     agent_type: crate::message::AgentType::Claude,
                     readonly: false,
                     created_at: Utc::now(),
+                    structured_protocol: "claude_pty_v1".to_string(),
                 })
                 .unwrap();
             // Agent on different link (should survive)
@@ -1843,6 +1853,7 @@ mod tests {
                     agent_type: crate::message::AgentType::Claude,
                     readonly: false,
                     created_at: Utc::now(),
+                    structured_protocol: "claude_pty_v1".to_string(),
                 })
                 .unwrap();
         }
@@ -1882,7 +1893,7 @@ mod tests {
         let (tx, written) = mock_tx();
 
         let agent_id = Uuid::new_v4();
-        let hook = Hook::Claude(ClaudeHook::SessionStart(ClaudeSessionStart {
+        let hook = Hook::from_claude(ClaudeHook::SessionStart(ClaudeSessionStart {
             session_id: Uuid::new_v4(),
             transcript_path: "/tmp/transcript.jsonl".to_string(),
             cwd: "/tmp".to_string(),
@@ -1923,7 +1934,7 @@ mod tests {
         let (tx, written) = mock_tx();
 
         let agent_id = Uuid::new_v4();
-        let hook = Hook::Claude(ClaudeHook::SessionEnd(ClaudeSessionEnd {
+        let hook = Hook::from_claude(ClaudeHook::SessionEnd(ClaudeSessionEnd {
             session_id: Uuid::new_v4(),
             transcript_path: "/tmp/transcript.jsonl".to_string(),
             cwd: "/tmp".to_string(),
@@ -1971,7 +1982,7 @@ mod tests {
         let ctx = test_ctx(state, user_state);
         let (tx, written) = mock_tx();
 
-        let hook = Hook::Claude(ClaudeHook::SessionStart(ClaudeSessionStart {
+        let hook = Hook::from_claude(ClaudeHook::SessionStart(ClaudeSessionStart {
             session_id: Uuid::new_v4(),
             transcript_path: "/tmp/nonexistent_transcript.jsonl".to_string(),
             cwd: "/tmp".to_string(),
@@ -2009,7 +2020,7 @@ mod tests {
         let (tx, written) = mock_tx();
 
         let agent_id = Uuid::new_v4();
-        let hook = Hook::Claude(ClaudeHook::PermissionRequest(Box::new(
+        let hook = Hook::from_claude(ClaudeHook::PermissionRequest(Box::new(
             ClaudePermissionRequest {
                 session_id: Uuid::new_v4(),
                 transcript_path: "/tmp".to_string(),
@@ -2073,7 +2084,7 @@ mod tests {
                 dangerously_disable_sandbox: None,
             },
         };
-        let hook = Hook::Claude(ClaudeHook::PermissionRequest(Box::new(
+        let hook = Hook::from_claude(ClaudeHook::PermissionRequest(Box::new(
             ClaudePermissionRequest {
                 session_id: Uuid::new_v4(),
                 transcript_path: "/tmp".to_string(),
@@ -2114,7 +2125,7 @@ mod tests {
         let (tx, written) = mock_tx();
 
         let agent_id = Uuid::new_v4();
-        let hook = Hook::Claude(ClaudeHook::Stop(ClaudeStop {
+        let hook = Hook::from_claude(ClaudeHook::Stop(ClaudeStop {
             session_id: Uuid::new_v4(),
             stop_hook_active: true,
             last_assistant_message: "Done.".to_string(),
@@ -2159,7 +2170,7 @@ mod tests {
         let ctx = test_ctx(state, user_state);
         let (tx, written) = mock_tx();
 
-        let hook = Hook::Claude(ClaudeHook::Stop(ClaudeStop {
+        let hook = Hook::from_claude(ClaudeHook::Stop(ClaudeStop {
             session_id: Uuid::new_v4(),
             stop_hook_active: true,
             last_assistant_message: "I've completed the refactoring.".to_string(),
@@ -2210,7 +2221,7 @@ mod tests {
             us.registry.register_local(info).unwrap();
         }
 
-        let hook = Hook::Claude(ClaudeHook::SessionEnd(ClaudeSessionEnd {
+        let hook = Hook::from_claude(ClaudeHook::SessionEnd(ClaudeSessionEnd {
             session_id: Uuid::new_v4(),
             transcript_path: "/tmp/transcript.jsonl".to_string(),
             cwd: "/tmp".to_string(),
@@ -2269,7 +2280,7 @@ mod tests {
         let mut peer_rx = add_peer_link(&user_state, "peer-a").await;
 
         let agent_id = Uuid::new_v4();
-        let hook = Hook::Claude(ClaudeHook::SessionStart(ClaudeSessionStart {
+        let hook = Hook::from_claude(ClaudeHook::SessionStart(ClaudeSessionStart {
             session_id: Uuid::new_v4(),
             transcript_path: "/tmp/transcript.jsonl".to_string(),
             cwd: "/tmp".to_string(),
@@ -2297,19 +2308,13 @@ mod tests {
         };
 
         log_source
-            .write(AgentStructuredOutput::Claude(
-                ClaudeStructuredOutput::UserMessage {
-                    content: "hello".to_string(),
-                    uuid: "u1".to_string(),
-                    timestamp: "2026-04-03T10:00:00Z".to_string(),
-                    cwd: None,
-                    git_branch: None,
-                    parent_uuid: None,
-                    prompt_id: None,
-                    permission_mode: None,
-                    slug: Some("readonly-slug".to_string()),
-                },
-            ))
+            .write(json!({
+                "type": "user",
+                "message": {"content": "hello"},
+                "uuid": "u1",
+                "timestamp": "2026-04-03T10:00:00Z",
+                "slug": "readonly-slug"
+            }))
             .await;
 
         let event = tokio::time::timeout(Duration::from_secs(1), event_rx.recv())

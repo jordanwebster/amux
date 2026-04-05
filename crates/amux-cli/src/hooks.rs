@@ -10,6 +10,7 @@
 
 use amux::protocol::{ClaudeHook, Command, Hook, Message, PreToolUse};
 use amux::{Config, ConnectPolicy, connect};
+use serde_json::Value;
 use std::io::{self, BufRead};
 use uuid::Uuid;
 
@@ -30,10 +31,18 @@ fn handle_claude_hook_inner(config: &Config) -> io::Result<()> {
         input.push_str(&line?);
     }
 
-    let claude_hook: ClaudeHook = match serde_json::from_str(&input) {
-        Ok(hook) => hook,
+    let raw: Value = match serde_json::from_str(&input) {
+        Ok(v) => v,
         Err(e) => {
             tracing::error!(error = %e, "hook parse failed");
+            return Err(io::Error::new(io::ErrorKind::InvalidData, e.to_string()));
+        }
+    };
+
+    let claude_hook: ClaudeHook = match serde_json::from_value(raw.clone()) {
+        Ok(hook) => hook,
+        Err(e) => {
+            tracing::error!(error = %e, "hook typed parse failed");
             return Err(io::Error::new(io::ErrorKind::InvalidData, e.to_string()));
         }
     };
@@ -67,7 +76,7 @@ fn handle_claude_hook_inner(config: &Config) -> io::Result<()> {
     }
     tracing::debug!(hook = %claude_hook, "received hook");
 
-    let hook = Hook::Claude(claude_hook);
+    let hook = Hook::Claude(claude_hook, raw);
 
     // Fire-and-forget: connect, send, don't wait for ack.
     // Hooks must exit quickly so Claude Code is never blocked.

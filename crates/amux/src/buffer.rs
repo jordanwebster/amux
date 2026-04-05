@@ -7,7 +7,7 @@
 //! Key invariant: `write()` and `subscribe()` are mutually exclusive via the
 //! storage lock, ensuring no data loss or duplication between replay and live data.
 
-use crate::claude::types::AgentStructuredOutput;
+use serde_json::Value;
 use std::sync::Arc;
 use tokio::sync::{RwLock, mpsc};
 
@@ -15,11 +15,12 @@ use tokio::sync::{RwLock, mpsc};
 ///
 /// Every structured output entry gets a monotonically increasing sequence
 /// number. Clients must include the latest seq when sending input; the
-/// server rejects input with a stale seq.
+/// server rejects input with a stale seq. The payload is opaque JSON —
+/// amux transports it without interpreting the schema.
 #[derive(Debug, Clone, PartialEq)]
 pub struct StructuredOutput {
     pub seq: u64,
-    pub data: AgentStructuredOutput,
+    pub payload: Value,
 }
 
 /// Extra channel capacity beyond the replay snapshot size.
@@ -120,19 +121,19 @@ pub struct StructuredStorage {
 }
 
 impl BufferPolicy for StructuredPolicy {
-    type Input = AgentStructuredOutput;
+    type Input = Value;
     type Item = StructuredOutput;
     type Storage = StructuredStorage;
 
     fn publish(
         storage: &mut StructuredStorage,
-        input: AgentStructuredOutput,
+        input: Value,
         capacity: usize,
     ) -> Option<StructuredOutput> {
         storage.last_seq += 1;
         let item = StructuredOutput {
             seq: storage.last_seq,
-            data: input,
+            payload: input,
         };
 
         storage.entries.push(item.clone());
@@ -342,7 +343,7 @@ impl BroadcastBuffer<StructuredPolicy> {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::claude::types::ClaudeStructuredOutput;
+    use serde_json::Value;
     use std::time::Duration;
     use tokio::time::timeout;
 
@@ -503,24 +504,19 @@ mod tests {
 
     // ── Sequenced structured buffer tests ─────────────────────────
 
-    fn user_msg(content: &str, uuid: &str) -> AgentStructuredOutput {
-        AgentStructuredOutput::Claude(ClaudeStructuredOutput::UserMessage {
-            content: content.to_string(),
-            uuid: uuid.to_string(),
-            timestamp: "2025-01-15T12:00:00Z".to_string(),
-            cwd: None,
-            git_branch: None,
-            parent_uuid: None,
-            prompt_id: None,
-            permission_mode: None,
-            slug: None,
+    fn user_msg(content: &str, uuid: &str) -> Value {
+        serde_json::json!({
+            "type": "user",
+            "message": {"content": content},
+            "uuid": uuid,
+            "timestamp": "2025-01-15T12:00:00Z"
         })
     }
 
     fn envelope(seq: u64, content: &str, uuid: &str) -> StructuredOutput {
         StructuredOutput {
             seq,
-            data: user_msg(content, uuid),
+            payload: user_msg(content, uuid),
         }
     }
 

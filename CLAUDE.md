@@ -2,6 +2,8 @@
 
 This file provides guidance for AI assistants working on the amux codebase.
 
+AMUX IS IN ACTIVE DEVELOPMENT AND IS NOT CURRENTLY RELEASED. DO NOT CONCERN YOURSELF WITH BACKWARDS COMPATIBILITY.
+
 ## First Steps
 
 1. **Read DEVLOG.md** - See recent work, decisions made, and current state

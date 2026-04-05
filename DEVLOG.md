@@ -38,6 +38,37 @@ One paragraph describing what was done.
 
 ---
 
+## 2026-04-05: Structured I/O transport refactor — opaque JSON passthrough
+
+### Summary
+Replaced the typed semantic structured output model (`ClaudeStructuredOutput` with 18 variants, `AgentStructuredOutput` wrapper, `TranscriptParser` state machine) with an opaque `serde_json::Value` transport. amux no longer interprets transcript semantics — it passes through raw JSONL entries as `Value` and lets the client own all transcript/tool interpretation. Hook-originated events use `hook.*` type namespace. Added `structured_protocol: Option<String>` to agent announcements so clients know how to interpret payloads.
+
+### Changes
+- `crates/amux/src/buffer.rs`: `StructuredOutput.data: AgentStructuredOutput` → `StructuredOutput.payload: Value`
+- `crates/amux/src/message.rs`: `RoutableMessage::StructuredOutput/StructuredInput` now carry `payload: Value`; removed `ProtocolError::StructuredInputTypeMismatch`; added `structured_protocol` to `AnnounceAgent`
+- `crates/amux/src/agent_registry.rs`: Added `structured_protocol: Option<String>` to `Agent`
+- `crates/amux/src/claude/types.rs`: Removed `AgentStructuredOutput`, `ClaudeStructuredOutput` (18 variants), `AgentStructuredInput`, `AssistantContentBlock`, `MessageUsage`, `CompactMetadata`; kept `ClaudeStructuredInput` and all hook/tool types
+- `crates/amux/src/claude/transcript.rs`: Gutted `TranscriptParser` — now just parses each JSONL line to `Value` and writes directly to buffer
+- `crates/amux/src/claude/structured_log_source.rs`: `write()` accepts `Value`
+- `crates/amux/src/claude/types.rs`: `Hook` now carries `(ClaudeHook, Value)` — typed parse for internal side effects, raw JSON for lossless structured output passthrough; added `Hook::from_claude()` convenience constructor for tests
+- `crates/amux/src/agents/claude.rs`: `hook.permission_request` and `hook.stop` pass through raw hook JSON with `type` field injected (lossless — no field loss from typed round-tripping); `SessionEnd` is internal-only cleanup, not emitted as structured output; structured input parsed from `Value` to `ClaudeStructuredInput` locally; name sniffer reads `Value` fields directly; `to_agent()` sets `structured_protocol: Some("claude_pty_v1")`
+- `crates/amux-cli/src/hooks.rs`: Captures raw JSON `Value` alongside typed `ClaudeHook` and sends both in `Hook::Claude`
+- `crates/amux/src/agents/mod.rs`: `send_structured_input` accepts `Value`; removed agent-type dispatch
+- `crates/amux/src/server/handlers.rs`, `routing.rs`: Updated for new types and `structured_protocol`
+
+### Decisions Made
+- `serde_json::Value` over `String` or `Box<RawValue>`: Value gets efficient MessagePack packing (maps/arrays/scalars) instead of double-encoding "JSON text inside a MessagePack string"
+- Field named `payload` (not `json`) to avoid confusion with the serialization format
+- Hook events are lossless: raw JSON from stdin is carried alongside the typed parse and emitted with only a `type` field injected (`hook.permission_request`, `hook.stop`). `SessionEnd` is not emitted — it's for amux-internal agent cleanup only
+- `ClaudeStructuredInput` kept locally inside Claude PTY implementation — transport carries opaque `Value`, Claude session parses it
+
+### Verification
+- `cargo check && cargo fmt && cargo clippy --workspace --all-targets -- -D warnings` — clean
+- `cargo test` — 245 tests pass
+- E2E tests — 10/10 pass
+
+---
+
 ## 2026-04-03: Optional TCP/WebSocket listeners and centralized config validation
 
 ### Summary

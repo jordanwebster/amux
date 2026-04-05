@@ -7,8 +7,8 @@
 //! to the same buffer — keeping existing subscribers connected.
 
 use super::transcript::TranscriptTailer;
-use super::types::AgentStructuredOutput;
 use crate::buffer::{MultiplexStructuredBuffer, MultiplexStructuredReader};
+use serde_json::Value;
 use std::path::PathBuf;
 use std::sync::Arc;
 use tokio::sync::{Mutex, watch};
@@ -102,9 +102,9 @@ impl StructuredLogSource {
         self.inner.buffer.subscribe_with_current_seq().await
     }
 
-    /// Write a structured output entry directly (e.g. permission requests).
-    pub async fn write(&self, entry: AgentStructuredOutput) {
-        self.inner.buffer.write(entry).await;
+    /// Write a structured output entry directly (e.g. hook events).
+    pub async fn write(&self, payload: Value) {
+        self.inner.buffer.write(payload).await;
     }
 
     /// Return the current sequence number.
@@ -145,7 +145,7 @@ impl StructuredLogSource {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::claude::types::ClaudeStructuredOutput;
+    use serde_json::json;
     use tempfile::tempdir;
 
     #[tokio::test]
@@ -187,20 +187,8 @@ mod tests {
             .await
             .unwrap()
             .unwrap();
-        assert_eq!(
-            entry.data,
-            AgentStructuredOutput::Claude(ClaudeStructuredOutput::UserMessage {
-                content: "hello".to_string(),
-                uuid: "u1".to_string(),
-                timestamp: "2026-03-29T10:00:00Z".to_string(),
-                cwd: None,
-                git_branch: None,
-                parent_uuid: None,
-                prompt_id: None,
-                permission_mode: None,
-                slug: None,
-            })
-        );
+        assert_eq!(entry.payload["type"], "user");
+        assert_eq!(entry.payload["uuid"], "u1");
     }
 
     #[tokio::test]
@@ -211,23 +199,12 @@ mod tests {
 
         log_source.link_transcript(transcript_path).await;
         log_source
-            .write(AgentStructuredOutput::Claude(
-                ClaudeStructuredOutput::AgentStopped {
-                    cwd: Some(dir.path().display().to_string()),
-                    stop_hook_active: Some(false),
-                },
-            ))
+            .write(json!({"type": "hook.stop", "cwd": "/tmp"}))
             .await;
 
         let (mut reader, seq) = log_source.subscribe_with_current_seq().await.unwrap();
         assert_eq!(seq, 1);
-        assert_eq!(
-            reader.read().await.unwrap().data,
-            AgentStructuredOutput::Claude(ClaudeStructuredOutput::AgentStopped {
-                cwd: Some(dir.path().display().to_string()),
-                stop_hook_active: Some(false),
-            })
-        );
+        assert_eq!(reader.read().await.unwrap().payload["type"], "hook.stop");
     }
 
     #[tokio::test]
@@ -239,19 +216,7 @@ mod tests {
 
         log_source.link_transcript(transcript_one.clone()).await;
         log_source
-            .write(AgentStructuredOutput::Claude(
-                ClaudeStructuredOutput::PermissionRequest {
-                    tool: crate::claude::types::PreToolUse::Read {
-                        tool_input: crate::claude::types::ReadToolInput {
-                            file_path: "a.txt".to_string(),
-                            offset: None,
-                            limit: None,
-                            pages: None,
-                        },
-                    },
-                    cwd: Some(dir.path().display().to_string()),
-                },
-            ))
+            .write(json!({"type": "hook.permission_request"}))
             .await;
 
         log_source.link_transcript(transcript_two.clone()).await;
@@ -275,22 +240,8 @@ mod tests {
         .unwrap();
 
         let (mut reader, seq) = log_source.subscribe_with_current_seq().await.unwrap();
-
         assert_eq!(seq, 1);
-        assert_eq!(
-            reader.read().await.unwrap().data,
-            AgentStructuredOutput::Claude(ClaudeStructuredOutput::UserMessage {
-                content: "hello".to_string(),
-                uuid: "u1".to_string(),
-                timestamp: "2026-03-29T10:00:00Z".to_string(),
-                cwd: None,
-                git_branch: None,
-                parent_uuid: None,
-                prompt_id: None,
-                permission_mode: None,
-                slug: None,
-            })
-        );
+        assert_eq!(reader.read().await.unwrap().payload["type"], "user");
         assert!(
             tokio::time::timeout(std::time::Duration::from_millis(50), reader.read())
                 .await

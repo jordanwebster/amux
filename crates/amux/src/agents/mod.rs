@@ -17,13 +17,14 @@ pub use testagent::TestAgentSession;
 use crate::agent_registry::Agent;
 use crate::buffer::{MultiplexByteBuffer, MultiplexByteReader, MultiplexStructuredReader};
 use crate::claude::structured_log_source::StructuredLogSource;
-use crate::claude::types::{AgentStructuredInput, Hook};
+use crate::claude::types::Hook;
 use crate::error::{AmuxError, Result};
 use crate::message::{AgentType, CreateAgentRequest, ProtocolError, TerminalSize};
 use crate::route::Route;
 use chrono::{DateTime, Utc};
 use portable_pty::{CommandBuilder, MasterPty, PtySize, native_pty_system};
 use serde::{Deserialize, Serialize};
+use serde_json::Value;
 use std::io::{Read, Write};
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
@@ -274,14 +275,6 @@ pub enum AgentSession {
 }
 
 impl AgentSession {
-    fn structured_input_type_label(&self) -> &'static str {
-        match self {
-            Self::Claude(_) => "Claude",
-            #[cfg(any(debug_assertions, test))]
-            Self::TestAgent(_) => "no structured input",
-        }
-    }
-
     pub fn agent_id(&self) -> Uuid {
         match self {
             Self::Claude(s) => s.agent_id,
@@ -397,22 +390,14 @@ impl AgentSession {
     pub async fn send_structured_input(
         &self,
         client_seq: u64,
-        input: AgentStructuredInput,
+        payload: Value,
     ) -> std::result::Result<(), ProtocolError> {
-        match (self, input) {
-            (Self::Claude(s), AgentStructuredInput::Claude(input)) => {
-                s.send_structured_input(client_seq, input).await
-            }
+        match self {
+            Self::Claude(s) => s.send_structured_input(client_seq, payload).await,
             #[cfg(any(debug_assertions, test))]
-            (Self::TestAgent(_), input) => Err(ProtocolError::StructuredInputTypeMismatch {
-                expected: self.structured_input_type_label().to_string(),
-                received: input.type_label().to_string(),
-            }),
-            #[allow(unreachable_patterns)]
-            (session, input) => Err(ProtocolError::StructuredInputTypeMismatch {
-                expected: session.structured_input_type_label().to_string(),
-                received: input.type_label().to_string(),
-            }),
+            Self::TestAgent(_) => Err(ProtocolError::ServerError(
+                "structured input not supported".to_string(),
+            )),
         }
     }
 
@@ -477,6 +462,11 @@ impl AgentSession {
             },
             readonly: self.readonly(),
             created_at: self.created_at(),
+            structured_protocol: match self {
+                Self::Claude(_) => "claude_pty_v1".to_string(),
+                #[cfg(any(debug_assertions, test))]
+                Self::TestAgent(_) => "test_echo_v1".to_string(),
+            },
         }
     }
 
@@ -624,12 +614,12 @@ impl SuspendedAgent {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::claude::types::{AgentStructuredInput, ClaudeStructuredInput};
     use crate::message::AgentType;
+    use serde_json::json;
 
     #[tokio::test]
     #[cfg(any(debug_assertions, test))]
-    async fn test_test_agent_rejects_claude_structured_input_with_type_mismatch() {
+    async fn test_test_agent_rejects_structured_input() {
         let req = CreateAgentRequest {
             agent_id: Uuid::new_v4(),
             name: Some("test".to_string()),
@@ -644,19 +634,14 @@ mod tests {
         let err = session
             .send_structured_input(
                 0,
-                AgentStructuredInput::Claude(ClaudeStructuredInput::SubmitMessage {
-                    data: b"hello".to_vec(),
-                }),
+                json!({"SubmitPrompt": "hello"}),
             )
             .await
             .unwrap_err();
 
         assert_eq!(
             err,
-            ProtocolError::StructuredInputTypeMismatch {
-                expected: "no structured input".to_string(),
-                received: "Claude".to_string(),
-            }
+            ProtocolError::ServerError("structured input not supported".to_string()),
         );
     }
 }

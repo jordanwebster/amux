@@ -6,7 +6,8 @@ use serde::{Deserialize, Serialize};
 use std::path::PathBuf;
 use uuid::Uuid;
 
-use crate::claude::types::{AgentStructuredInput, AgentStructuredOutput, Hook};
+use crate::claude::types::Hook;
+use serde_json::Value;
 
 /// Information about a connected host (machine running amux server).
 /// Propagated via AnnounceHost/WithdrawHost between peers.
@@ -56,9 +57,6 @@ pub enum ProtocolError {
     /// Structured input seq doesn't match current output seq
     #[error("sequence number mismatch (client {client_seq}, server {current_seq})")]
     SequenceNumberMismatch { client_seq: u64, current_seq: u64 },
-    /// Structured input was sent to an agent that expects a different input family
-    #[error("structured input type mismatch (expected {expected}, received {received})")]
-    StructuredInputTypeMismatch { expected: String, received: String },
 }
 
 /// Reason for server shutdown notification
@@ -147,12 +145,12 @@ pub enum RoutableMessage {
     StructuredOutput {
         agent_id: Uuid,
         seq: u64,
-        data: Box<AgentStructuredOutput>,
+        payload: Value,
     },
     StructuredInput {
         agent_id: Uuid,
         seq: u64,
-        data: AgentStructuredInput,
+        payload: Value,
     },
     StructuredInputResult {
         agent_id: Uuid,
@@ -215,6 +213,7 @@ pub enum DirectMessage {
         agent_type: AgentType,
         readonly: bool,
         created_at: DateTime<Utc>,
+        structured_protocol: String,
     },
     WithdrawAgent {
         agent_id: Uuid,
@@ -457,6 +456,7 @@ mod tests {
             agent_type: AgentType::Claude,
             readonly: false,
             created_at: Utc::now(),
+            structured_protocol: "claude_pty_v1".to_string(),
         };
         let encoded = rmp_serde::to_vec_named(&info).unwrap();
         let decoded: Agent = rmp_serde::from_slice(&encoded).unwrap();

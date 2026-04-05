@@ -96,6 +96,7 @@ pub(super) fn apply_local_name_candidate(
                     agent_type: updated.agent_type,
                     readonly: updated.readonly,
                     created_at: updated.created_at,
+                    structured_protocol: updated.structured_protocol,
                 },
                 None,
             );
@@ -191,6 +192,11 @@ pub(super) async fn create_agent(
                 .await;
         });
 
+        let structured_protocol = us
+            .agents
+            .get(&agent_id)
+            .map(|s| s.to_agent().structured_protocol)
+            .unwrap_or_default();
         broadcast_to_peers(
             &mut us,
             &DirectMessage::AnnounceAgent {
@@ -202,6 +208,7 @@ pub(super) async fn create_agent(
                 agent_type: agent_type.clone(),
                 readonly: false,
                 created_at,
+                structured_protocol,
             },
             None,
         );
@@ -350,6 +357,11 @@ pub(super) async fn resume_agents(
                     } else if let Some(session) = us.agents.get_mut(&agent_id) {
                         session.maybe_start_name_sniffer(user_id, event_tx);
                     }
+                    let structured_protocol = us
+                        .agents
+                        .get(&agent_id)
+                        .map(|s| s.to_agent().structured_protocol)
+                        .unwrap_or_default();
                     broadcast_to_peers(
                         &mut us,
                         &DirectMessage::AnnounceAgent {
@@ -361,6 +373,7 @@ pub(super) async fn resume_agents(
                             agent_type,
                             readonly: false,
                             created_at,
+                            structured_protocol,
                         },
                         None,
                     );
@@ -437,6 +450,7 @@ fn send_initial_agent_announcements(us: &ServerUserState, peer_link: &str) -> us
             agent_type: info.agent_type.clone(),
             readonly: info.readonly,
             created_at: info.created_at,
+            structured_protocol: info.structured_protocol.clone(),
         });
         if tx.try_send(msg).is_err() {
             tracing::warn!(agent_id = %uuid, peer = %peer_link, "failed to announce agent");
@@ -597,6 +611,7 @@ mod tests {
                 agent_type: AgentType::TestAgent("test".to_string()),
                 readonly: false,
                 created_at: Utc::now(),
+                structured_protocol: "claude_pty_v1".to_string(),
             })
             .unwrap();
         id

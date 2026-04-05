@@ -8,12 +8,13 @@ use super::{LocalAgentNameSource, PtyHandle, SessionEvent, spawn_pty_agent};
 use crate::buffer::MultiplexStructuredReader;
 use crate::claude::structured_log_source::StructuredLogSource;
 use crate::claude::types::{
-    AgentStructuredOutput, AskUserQuestionOption, AskUserQuestionResponse, ClaudeHook,
-    ClaudeStructuredInput, ClaudeStructuredOutput, Hook, PermissionResponse, PlanReviewResponse,
+    AskUserQuestionOption, AskUserQuestionResponse, ClaudeHook, ClaudeStructuredInput, Hook,
+    PermissionResponse, PlanReviewResponse,
 };
 use crate::error::Result;
 use crate::message::{CreateAgentRequest, ProtocolError};
 use chrono::{DateTime, Utc};
+use serde_json::{Value, json};
 use std::path::PathBuf;
 use std::time::Duration;
 use tokio::sync::mpsc;
@@ -56,9 +57,9 @@ fn plan_review_response_keystrokes(response: &PlanReviewResponse) -> Vec<PtyActi
     }
 }
 
-fn submit_message_keystrokes(data: &[u8]) -> Vec<PtyAction> {
+fn submit_prompt_keystrokes(prompt: &str) -> Vec<PtyAction> {
     vec![
-        PtyAction::Send(data.to_vec()),
+        PtyAction::Send(prompt.as_bytes().to_vec()),
         PtyAction::Delay(DELAY),
         PtyAction::Send(b"\r".to_vec()),
     ]
@@ -306,21 +307,23 @@ struct NameSnifferState {
 }
 
 impl NameSnifferState {
-    /// Record a structured output event. Returns true if internal state changed.
-    fn ingest(&mut self, output: &ClaudeStructuredOutput) -> bool {
-        match output {
-            ClaudeStructuredOutput::AgentName { agent_name, .. } => {
-                self.latest_agent_name = Some(agent_name.clone());
-                true
-            }
-            _ => match structured_output_slug(output) {
-                Some(slug) => {
-                    self.latest_slug = Some(slug.to_string());
-                    true
-                }
-                None => false,
-            },
+    /// Record a structured output Value. Returns true if internal state changed.
+    fn ingest(&mut self, value: &Value) -> bool {
+        let entry_type = value.get("type").and_then(Value::as_str).unwrap_or("");
+
+        if entry_type == "agent-name"
+            && let Some(name) = value.get("agentName").and_then(Value::as_str)
+        {
+            self.latest_agent_name = Some(name.to_string());
+            return true;
         }
+
+        if let Some(slug) = value.get("slug").and_then(Value::as_str) {
+            self.latest_slug = Some(slug.to_string());
+            return true;
+        }
+
+        false
     }
 
     /// The current best name candidate based on all ingested data.
@@ -341,8 +344,8 @@ impl NameSnifferState {
     }
 
     /// Ingest an output event and return a candidate only if it differs from the last emission.
-    fn observe(&mut self, output: &ClaudeStructuredOutput) -> Option<EffectiveNameCandidate> {
-        if !self.ingest(output) {
+    fn observe(&mut self, value: &Value) -> Option<EffectiveNameCandidate> {
+        if !self.ingest(value) {
             return None;
         }
         let candidate = self.effective_candidate()?;
@@ -351,21 +354,6 @@ impl NameSnifferState {
         }
         self.last_emitted = Some(candidate.clone());
         Some(candidate)
-    }
-}
-
-fn structured_output_slug(output: &ClaudeStructuredOutput) -> Option<&str> {
-    match output {
-        ClaudeStructuredOutput::UserMessage { slug, .. }
-        | ClaudeStructuredOutput::AssistantMessage { slug, .. }
-        | ClaudeStructuredOutput::PostToolUseEvent { slug, .. }
-        | ClaudeStructuredOutput::ToolUseRejected { slug, .. }
-        | ClaudeStructuredOutput::TurnDuration { slug, .. }
-        | ClaudeStructuredOutput::ApiError { slug, .. }
-        | ClaudeStructuredOutput::CompactBoundary { slug, .. }
-        | ClaudeStructuredOutput::LocalCommand { slug, .. }
-        | ClaudeStructuredOutput::SystemEvent { slug, .. } => slug.as_deref(),
-        _ => None,
     }
 }
 
@@ -383,8 +371,7 @@ fn spawn_name_sniffer(
         let mut state = NameSnifferState::default();
 
         while let Some(entry) = reader.read().await {
-            let AgentStructuredOutput::Claude(output) = entry.data;
-            let Some(candidate) = state.observe(&output) else {
+            let Some(candidate) = state.observe(&entry.payload) else {
                 continue;
             };
 
@@ -552,7 +539,7 @@ impl ClaudeSession {
             return Ok(());
         };
         let actions = match &input {
-            ClaudeStructuredInput::SubmitMessage { data } => submit_message_keystrokes(data),
+            ClaudeStructuredInput::SubmitPrompt(prompt) => submit_prompt_keystrokes(prompt),
             ClaudeStructuredInput::PermissionResponse(response) => {
                 tracing::info!(agent_id = %self.agent_id, ?response, "sending permission response");
                 permission_response_keystrokes(response)
@@ -570,10 +557,11 @@ impl ClaudeSession {
     }
 
     /// Validate seq and send structured input to Claude Code.
+    /// Parses the opaque JSON payload into `ClaudeStructuredInput` locally.
     pub async fn send_structured_input(
         &self,
         client_seq: u64,
-        input: ClaudeStructuredInput,
+        payload: Value,
     ) -> std::result::Result<(), ProtocolError> {
         if self.readonly {
             return Err(ProtocolError::ServerError(
@@ -588,20 +576,29 @@ impl ClaudeSession {
             });
         }
 
+        let input: ClaudeStructuredInput = serde_json::from_value(payload)
+            .map_err(|e| ProtocolError::ServerError(format!("invalid structured input: {e}")))?;
+
         self.send_input(input)
             .await
             .map_err(|e| ProtocolError::ServerError(e.to_string()))
     }
 
     /// Handle a hook event.
+    ///
+    /// Internal side effects (session_id, transcript linking) use the typed
+    /// `ClaudeHook`. Structured output for `hook.permission_request` and
+    /// `hook.stop` passes through the original raw JSON with a `type` field
+    /// injected — no field loss from typed round-tripping. `SessionEnd` is
+    /// internal-only (agent cleanup) and is not emitted as structured output.
     pub async fn handle_hook(&mut self, hook: Hook) -> Result<()> {
-        let Hook::Claude(claude_hook) = &hook;
+        let Hook::Claude(ref claude_hook, _) = hook;
         self.sync_hook_metadata(claude_hook).await?;
         let Some(log_source) = &self.log_source else {
             return Ok(());
         };
         match hook {
-            Hook::Claude(ClaudeHook::SessionStart(session_start)) => {
+            Hook::Claude(ClaudeHook::SessionStart(session_start), _) => {
                 tracing::debug!(
                     agent_id = %self.agent_id,
                     session_id = %session_start.session_id,
@@ -609,40 +606,27 @@ impl ClaudeSession {
                     "session started"
                 );
             }
-            Hook::Claude(ClaudeHook::PermissionRequest(perm_req)) => {
+            Hook::Claude(ClaudeHook::PermissionRequest(_), raw) => {
                 tracing::debug!(agent_id = %self.agent_id, "permission request");
-                log_source
-                    .write(AgentStructuredOutput::Claude(
-                        ClaudeStructuredOutput::PermissionRequest {
-                            tool: perm_req.tool,
-                            cwd: Some(perm_req.cwd),
-                        },
-                    ))
-                    .await;
+                let mut value = raw;
+                if let Some(obj) = value.as_object_mut() {
+                    obj.insert("type".to_string(), json!("hook.permission_request"));
+                }
+                log_source.write(value).await;
             }
-            Hook::Claude(ClaudeHook::Stop(stop)) => {
+            Hook::Claude(ClaudeHook::Stop(_), raw) => {
                 tracing::debug!(agent_id = %self.agent_id, "agent stopped");
-                log_source
-                    .write(AgentStructuredOutput::Claude(
-                        ClaudeStructuredOutput::AgentStopped {
-                            cwd: Some(stop.cwd),
-                            stop_hook_active: Some(stop.stop_hook_active),
-                        },
-                    ))
-                    .await;
+                let mut value = raw;
+                if let Some(obj) = value.as_object_mut() {
+                    obj.insert("type".to_string(), json!("hook.stop"));
+                }
+                log_source.write(value).await;
             }
-            Hook::Claude(ClaudeHook::SessionEnd(stop)) => {
+            Hook::Claude(ClaudeHook::SessionEnd(_), _) => {
+                // Internal cleanup only — not emitted as structured output
                 tracing::debug!(agent_id = %self.agent_id, "session ended");
-                log_source
-                    .write(AgentStructuredOutput::Claude(
-                        ClaudeStructuredOutput::AgentStopped {
-                            cwd: Some(stop.cwd),
-                            stop_hook_active: None,
-                        },
-                    ))
-                    .await;
             }
-            Hook::Claude(ClaudeHook::Unknown) => {}
+            Hook::Claude(ClaudeHook::Unknown, _) => {}
         }
         Ok(())
     }
@@ -697,9 +681,7 @@ impl ClaudeSession {
 mod tests {
     use super::*;
     use crate::agents::{LocalAgentNameSource, SessionEvent};
-    use crate::claude::types::{
-        AgentStructuredOutput, AskUserQuestionItem, AskUserQuestionOption, ClaudeStructuredOutput,
-    };
+    use crate::claude::types::AskUserQuestionItem;
     use std::collections::HashMap;
     use tempfile::tempdir;
     use tokio::sync::mpsc;
@@ -772,8 +754,8 @@ mod tests {
     }
 
     #[test]
-    fn test_submit_message_keystrokes() {
-        let actions = submit_message_keystrokes(b"hello");
+    fn test_submit_prompt_keystrokes() {
+        let actions = submit_prompt_keystrokes("hello");
         assert_eq!(sends(&actions), vec![b"hello".to_vec(), b"\r".to_vec()]);
         assert!(matches!(actions[1], PtyAction::Delay(_)));
     }
@@ -1058,7 +1040,7 @@ mod tests {
         let mut session = ClaudeSession::new_readonly(Uuid::new_v4(), dir.path().to_path_buf());
 
         session
-            .handle_hook(Hook::Claude(ClaudeHook::PermissionRequest(Box::new(
+            .handle_hook(Hook::from_claude(ClaudeHook::PermissionRequest(Box::new(
                 crate::claude::types::ClaudePermissionRequest {
                     session_id,
                     transcript_path: transcript_path_str.clone(),
@@ -1077,6 +1059,7 @@ mod tests {
             .await
             .unwrap();
 
+        // 2 transcript lines + 1 hook event = 3
         tokio::time::timeout(std::time::Duration::from_secs(2), async {
             loop {
                 if session.current_seq().await >= 3 {
@@ -1090,7 +1073,7 @@ mod tests {
 
         let seq_after_first_hook = session.current_seq().await;
         session
-            .handle_hook(Hook::Claude(ClaudeHook::Stop(
+            .handle_hook(Hook::from_claude(ClaudeHook::Stop(
                 crate::claude::types::ClaudeStop {
                     session_id,
                     stop_hook_active: false,
@@ -1118,6 +1101,48 @@ mod tests {
     }
 
     #[tokio::test]
+    async fn session_end_hook_does_not_emit_structured_output() {
+        let dir = tempdir().unwrap();
+        let session_id = Uuid::new_v4();
+        let cwd = dir.path().display().to_string();
+        let mut session = ClaudeSession::new_readonly(Uuid::new_v4(), dir.path().to_path_buf());
+
+        // Link transcript so the log source exists
+        let transcript_path = dir.path().join("transcript.jsonl");
+        tokio::fs::write(&transcript_path, "").await.unwrap();
+        session
+            .handle_hook(Hook::from_claude(ClaudeHook::SessionStart(
+                crate::claude::types::ClaudeSessionStart {
+                    session_id,
+                    transcript_path: transcript_path.display().to_string(),
+                    cwd: cwd.clone(),
+                },
+            )))
+            .await
+            .unwrap();
+
+        let seq_before = session.current_seq().await;
+
+        session
+            .handle_hook(Hook::from_claude(ClaudeHook::SessionEnd(
+                crate::claude::types::ClaudeSessionEnd {
+                    session_id,
+                    transcript_path: transcript_path.display().to_string(),
+                    cwd,
+                },
+            )))
+            .await
+            .unwrap();
+
+        // SessionEnd is internal-only — seq must not advance
+        assert_eq!(
+            session.current_seq().await,
+            seq_before,
+            "SessionEnd should not emit structured output"
+        );
+    }
+
+    #[tokio::test]
     async fn name_sniffer_ignores_custom_title() {
         let log_source = StructuredLogSource::new();
         let (event_tx, mut event_rx) = mpsc::channel(4);
@@ -1125,12 +1150,7 @@ mod tests {
             spawn_name_sniffer(log_source.clone(), event_tx, Uuid::new_v4(), Uuid::new_v4());
 
         log_source
-            .write(AgentStructuredOutput::Claude(
-                ClaudeStructuredOutput::CustomTitle {
-                    custom_title: "Ignored".to_string(),
-                    session_id: None,
-                },
-            ))
+            .write(json!({"type": "custom-title", "customTitle": "Ignored"}))
             .await;
 
         assert!(
@@ -1153,19 +1173,13 @@ mod tests {
         let sniffer = spawn_name_sniffer(log_source.clone(), event_tx, agent_id, user_id);
 
         log_source
-            .write(AgentStructuredOutput::Claude(
-                ClaudeStructuredOutput::UserMessage {
-                    content: "hello".to_string(),
-                    uuid: "u1".to_string(),
-                    timestamp: "2026-04-03T10:00:00Z".to_string(),
-                    cwd: None,
-                    git_branch: None,
-                    parent_uuid: None,
-                    prompt_id: None,
-                    permission_mode: None,
-                    slug: Some("shared-name".to_string()),
-                },
-            ))
+            .write(json!({
+                "type": "user",
+                "message": {"content": "hello"},
+                "uuid": "u1",
+                "timestamp": "2026-04-03T10:00:00Z",
+                "slug": "shared-name"
+            }))
             .await;
 
         let first = tokio::time::timeout(std::time::Duration::from_secs(1), event_rx.recv())
@@ -1183,12 +1197,7 @@ mod tests {
         ));
 
         log_source
-            .write(AgentStructuredOutput::Claude(
-                ClaudeStructuredOutput::AgentName {
-                    agent_name: "shared-name".to_string(),
-                    session_id: None,
-                },
-            ))
+            .write(json!({"type": "agent-name", "agentName": "shared-name"}))
             .await;
 
         let second = tokio::time::timeout(std::time::Duration::from_secs(1), event_rx.recv())
@@ -1226,12 +1235,7 @@ mod tests {
             .log_source()
             .expect("readonly session has log source");
         log_source
-            .write(AgentStructuredOutput::Claude(
-                ClaudeStructuredOutput::AgentName {
-                    agent_name: "upgraded-provider-name".to_string(),
-                    session_id: None,
-                },
-            ))
+            .write(json!({"type": "agent-name", "agentName": "upgraded-provider-name"}))
             .await;
 
         let event = tokio::time::timeout(std::time::Duration::from_secs(1), event_rx.recv())
@@ -1267,12 +1271,7 @@ mod tests {
             .log_source()
             .expect("readonly session has log source");
         log_source
-            .write(AgentStructuredOutput::Claude(
-                ClaudeStructuredOutput::AgentName {
-                    agent_name: "renamed-provider-name".to_string(),
-                    session_id: None,
-                },
-            ))
+            .write(json!({"type": "agent-name", "agentName": "renamed-provider-name"}))
             .await;
 
         let event = tokio::time::timeout(std::time::Duration::from_secs(1), event_rx.recv())
