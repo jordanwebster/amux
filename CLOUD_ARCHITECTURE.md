@@ -187,6 +187,11 @@ Agents are propagated to connected peers via `AnnounceAgent`/`WithdrawAgent` dir
 
 Hosts are propagated via `AnnounceHost`/`WithdrawHost`. When a peer connection is lost, `WithdrawHost` propagates through the network and each server bulk-removes agents reachable via the withdrawn host.
 
+Idle peer links also run symmetric application heartbeats: after 60 seconds
+with no inbound traffic, a peer sends `Heartbeat` and expects inbound traffic
+within 10 seconds. If not, the connection is closed and the existing
+`WithdrawHost` propagation handles cleanup.
+
 Routing uses the per-user routes table: `HashMap<String, mpsc::Sender<Message>>`. When a client wants to reach an agent on a remote server, the route is resolved from the agent registry (e.g. `"cloud-server.local-host"`) and the message is forwarded hop-by-hop using the stack-based routing algorithm described in [ARCHITECTURE.md](ARCHITECTURE.md).
 
 ---

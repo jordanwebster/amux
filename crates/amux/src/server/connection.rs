@@ -147,7 +147,22 @@ pub(super) async fn run_connection<T: TransportSplit>(
     result
 }
 
-const REFRESH_RESPONSE_TIMEOUT: Duration = Duration::from_secs(30);
+const REFRESH_RESPONSE_TIMEOUT: Duration = Duration::from_secs(15);
+const HEARTBEAT_IDLE_INTERVAL: Duration = Duration::from_secs(60);
+const HEARTBEAT_ACK_TIMEOUT: Duration = Duration::from_secs(10);
+
+#[derive(Clone, Copy)]
+struct HeartbeatConfig {
+    idle_interval: Duration,
+    ack_timeout: Duration,
+}
+
+fn heartbeat_config_for_connection(is_local: bool) -> Option<HeartbeatConfig> {
+    (!is_local).then_some(HeartbeatConfig {
+        idle_interval: HEARTBEAT_IDLE_INTERVAL,
+        ack_timeout: HEARTBEAT_ACK_TIMEOUT,
+    })
+}
 
 /// Manages token refresh lifecycle within a connection loop.
 ///
@@ -184,6 +199,10 @@ impl TokenRefresher {
         }
     }
 
+    fn is_awaiting_response(&self) -> bool {
+        self.awaiting_since.is_some()
+    }
+
     /// Send the token refresh request. Call when refresh_deadline fires.
     async fn send_refresh(&mut self, tx: &mpsc::Sender<Message>) -> Result<()> {
         tracing::debug!("refreshing cloud token");
@@ -214,6 +233,77 @@ impl TokenRefresher {
     }
 }
 
+/// Tracks idle heartbeats for a single peer connection.
+struct HeartbeatState {
+    config: HeartbeatConfig,
+    last_rx_at: tokio::time::Instant,
+    ack_deadline: Option<tokio::time::Instant>,
+}
+
+impl HeartbeatState {
+    fn new(config: HeartbeatConfig) -> Self {
+        Self {
+            config,
+            last_rx_at: tokio::time::Instant::now(),
+            ack_deadline: None,
+        }
+    }
+
+    /// Returns (idle_deadline, ack_deadline) for use in select! guards.
+    fn deadlines(&self) -> (Option<tokio::time::Instant>, Option<tokio::time::Instant>) {
+        if let Some(deadline) = self.ack_deadline {
+            (None, Some(deadline))
+        } else {
+            (Some(self.last_rx_at + self.config.idle_interval), None)
+        }
+    }
+
+    /// Any inbound message proves the peer app loop is alive.
+    fn note_activity(&mut self) {
+        self.last_rx_at = tokio::time::Instant::now();
+        self.ack_deadline = None;
+    }
+
+    /// Suspend heartbeat timers while waiting for an in-band refresh response.
+    fn pause_for_refresh(&mut self) {
+        self.last_rx_at = tokio::time::Instant::now();
+        self.ack_deadline = None;
+    }
+
+    async fn send_heartbeat(&mut self, tx: &mpsc::Sender<Message>) -> Result<()> {
+        tracing::debug!("sending heartbeat");
+        tx.send(Message::Direct(DirectMessage::Heartbeat))
+            .await
+            .map_err(|_| {
+                AmuxError::Io(std::io::Error::new(
+                    std::io::ErrorKind::BrokenPipe,
+                    "outgoing channel closed while sending heartbeat",
+                ))
+            })?;
+        self.ack_deadline = Some(tokio::time::Instant::now() + self.config.ack_timeout);
+        Ok(())
+    }
+}
+
+fn heartbeat_deadlines(
+    heartbeat: Option<&HeartbeatState>,
+    refresh_has_priority: bool,
+) -> (Option<tokio::time::Instant>, Option<tokio::time::Instant>) {
+    if refresh_has_priority {
+        (None, None)
+    } else {
+        heartbeat.map(|h| h.deadlines()).unwrap_or((None, None))
+    }
+}
+
+fn refresh_has_priority(
+    refresh_deadline: Option<tokio::time::Instant>,
+    refresh_awaiting_response: bool,
+) -> bool {
+    refresh_awaiting_response
+        || refresh_deadline.is_some_and(|deadline| deadline <= tokio::time::Instant::now())
+}
+
 fn cloud_err_to_amux(e: CloudError) -> AmuxError {
     match e {
         CloudError::HostChanged => {
@@ -231,23 +321,64 @@ fn cloud_err_to_amux(e: CloudError) -> AmuxError {
 
 /// Shared connection loop for all transports. Pure channel I/O — cancellation-safe.
 pub(super) async fn connection_loop(
-    mut incoming_rx: mpsc::Receiver<Incoming>,
+    incoming_rx: mpsc::Receiver<Incoming>,
     response_tx: mpsc::Sender<Message>,
     ctx: ConnectionContext,
     token_refresh: Option<TokenRefreshState>,
 ) -> Result<()> {
+    let heartbeat_config = heartbeat_config_for_connection(ctx.is_local);
+    connection_loop_with_heartbeat(
+        incoming_rx,
+        response_tx,
+        ctx,
+        token_refresh,
+        heartbeat_config,
+    )
+    .await
+}
+
+async fn connection_loop_with_heartbeat(
+    mut incoming_rx: mpsc::Receiver<Incoming>,
+    response_tx: mpsc::Sender<Message>,
+    ctx: ConnectionContext,
+    token_refresh: Option<TokenRefreshState>,
+    heartbeat_config: Option<HeartbeatConfig>,
+) -> Result<()> {
     let mut refresher = token_refresh.map(TokenRefresher::new);
+    let mut heartbeat = heartbeat_config.map(HeartbeatState::new);
 
     loop {
         let (refresh_deadline, refresh_timeout) = refresher
             .as_ref()
             .map(|r| r.deadlines())
             .unwrap_or((None, None));
+        let refresh_awaiting_response = matches!(
+            refresher.as_ref(),
+            Some(refresher) if refresher.is_awaiting_response()
+        );
+        let refresh_has_priority =
+            refresh_has_priority(refresh_deadline, refresh_awaiting_response);
+        if refresh_has_priority && !refresh_awaiting_response {
+            refresher
+                .as_mut()
+                .unwrap()
+                .send_refresh(&response_tx)
+                .await?;
+            if let Some(ref mut heartbeat) = heartbeat {
+                heartbeat.pause_for_refresh();
+            }
+            continue;
+        }
+        let (heartbeat_deadline, heartbeat_timeout) =
+            heartbeat_deadlines(heartbeat.as_ref(), refresh_has_priority);
 
         tokio::select! {
             incoming = incoming_rx.recv() => {
                 match incoming {
                     Some(Incoming::Msg(msg)) => {
+                        if let Some(ref mut heartbeat) = heartbeat {
+                            heartbeat.note_activity();
+                        }
                         if let Some(ref mut r) = refresher
                             && r.try_intercept(&msg)?
                         {
@@ -266,6 +397,9 @@ pub(super) async fn connection_loop(
             }
             _ = maybe_sleep_until(refresh_deadline), if refresh_deadline.is_some() => {
                 refresher.as_mut().unwrap().send_refresh(&response_tx).await?;
+                if let Some(ref mut heartbeat) = heartbeat {
+                    heartbeat.pause_for_refresh();
+                }
             }
             _ = maybe_sleep_until(refresh_timeout), if refresh_timeout.is_some() => {
                 tracing::error!("token refresh response timeout");
@@ -273,6 +407,16 @@ pub(super) async fn connection_loop(
                     "cloud token refresh timed out after {}s — the cloud server may be unresponsive",
                     REFRESH_RESPONSE_TIMEOUT.as_secs()
                 )));
+            }
+            _ = maybe_sleep_until(heartbeat_deadline), if heartbeat_deadline.is_some() => {
+                heartbeat.as_mut().unwrap().send_heartbeat(&response_tx).await?;
+            }
+            _ = maybe_sleep_until(heartbeat_timeout), if heartbeat_timeout.is_some() => {
+                // If refresh and heartbeat timeout become ready in the same select!
+                // wait, this branch may win and force a reconnect instead of in-band
+                // reauth. We accept that tradeoff to keep this loop simpler.
+                tracing::warn!("heartbeat ack timed out");
+                return Err(AmuxError::HeartbeatTimeout);
             }
         }
     }
@@ -347,7 +491,10 @@ pub(super) fn cancel_streams_matching(
 mod tests {
     use super::*;
     use crate::message::{Command, DirectMessage, Message};
+    use crate::server::LOCAL_USER_ID;
     use crate::server::test_helpers::{test_ctx, test_state};
+    use std::sync::Arc;
+    use std::sync::atomic::AtomicU64;
 
     // --- Mock MessageReader for reader_loop tests ---
 
@@ -387,6 +534,22 @@ mod tests {
             });
         }
         labels
+    }
+
+    fn test_peer_ctx(
+        state: Arc<RwLock<ServerState>>,
+        user_state: Arc<RwLock<ServerUserState>>,
+    ) -> ConnectionContext {
+        let (event_tx, _event_rx) = mpsc::channel(16);
+        ConnectionContext {
+            state,
+            user_state,
+            user_id: LOCAL_USER_ID,
+            event_tx,
+            link_name: "test-peer".to_string(),
+            is_local: false,
+            next_request_id: Arc::new(AtomicU64::new(1)),
+        }
     }
 
     #[tokio::test]
@@ -587,6 +750,187 @@ mod tests {
             matches!(msg, Message::Command(Command::ListAgentsResult { .. })),
             "expected ListAgentsResult after skipped ReauthResult, got {:?}",
             msg
+        );
+    }
+
+    #[tokio::test]
+    async fn connection_loop_local_connections_do_not_send_heartbeats() {
+        let (state, user_state) = test_state().await;
+        let ctx = test_ctx(state, user_state);
+        let (incoming_tx, incoming_rx) = mpsc::channel(16);
+        let (response_tx, mut response_rx) = mpsc::channel(16);
+
+        let handle = tokio::spawn(connection_loop(incoming_rx, response_tx, ctx, None));
+
+        let recv_result = tokio::time::timeout(Duration::from_millis(40), response_rx.recv()).await;
+        assert!(
+            recv_result.is_err(),
+            "local connections should not emit idle heartbeats"
+        );
+
+        incoming_tx.send(Incoming::Eof).await.unwrap();
+        let result = handle.await.unwrap();
+        assert!(result.is_ok(), "local connection should exit cleanly");
+    }
+
+    #[tokio::test]
+    async fn connection_loop_sends_heartbeat_after_idle_period() {
+        let (state, user_state) = test_state().await;
+        let ctx = test_peer_ctx(state, user_state);
+        let (incoming_tx, incoming_rx) = mpsc::channel(16);
+        let (response_tx, mut response_rx) = mpsc::channel(16);
+
+        let handle = tokio::spawn(connection_loop_with_heartbeat(
+            incoming_rx,
+            response_tx,
+            ctx,
+            None,
+            Some(HeartbeatConfig {
+                idle_interval: Duration::from_millis(20),
+                ack_timeout: Duration::from_millis(100),
+            }),
+        ));
+
+        let msg = tokio::time::timeout(Duration::from_millis(80), response_rx.recv())
+            .await
+            .expect("heartbeat should be sent before timeout")
+            .expect("response channel should remain open");
+        assert!(matches!(msg, Message::Direct(DirectMessage::Heartbeat)));
+
+        incoming_tx.send(Incoming::Eof).await.unwrap();
+        let result = handle.await.unwrap();
+        assert!(result.is_ok(), "connection should exit cleanly after EOF");
+    }
+
+    #[tokio::test]
+    async fn connection_loop_times_out_when_heartbeat_unacked() {
+        let (state, user_state) = test_state().await;
+        let ctx = test_peer_ctx(state, user_state);
+        let (_incoming_tx, incoming_rx) = mpsc::channel(16);
+        let (response_tx, mut response_rx) = mpsc::channel(16);
+
+        let result = connection_loop_with_heartbeat(
+            incoming_rx,
+            response_tx,
+            ctx,
+            None,
+            Some(HeartbeatConfig {
+                idle_interval: Duration::from_millis(15),
+                ack_timeout: Duration::from_millis(15),
+            }),
+        )
+        .await;
+
+        assert!(
+            matches!(result, Err(AmuxError::HeartbeatTimeout)),
+            "expected heartbeat timeout, got {:?}",
+            result
+        );
+        let msg = response_rx
+            .try_recv()
+            .expect("heartbeat should have been sent");
+        assert!(matches!(msg, Message::Direct(DirectMessage::Heartbeat)));
+    }
+
+    #[tokio::test]
+    async fn connection_loop_inbound_message_clears_pending_heartbeat_ack() {
+        let (state, user_state) = test_state().await;
+        let ctx = test_peer_ctx(state, user_state);
+        let (incoming_tx, incoming_rx) = mpsc::channel(16);
+        let (response_tx, mut response_rx) = mpsc::channel(16);
+
+        let handle = tokio::spawn(connection_loop_with_heartbeat(
+            incoming_rx,
+            response_tx,
+            ctx,
+            None,
+            Some(HeartbeatConfig {
+                idle_interval: Duration::from_millis(50),
+                ack_timeout: Duration::from_millis(20),
+            }),
+        ));
+
+        let msg = tokio::time::timeout(Duration::from_millis(100), response_rx.recv())
+            .await
+            .expect("heartbeat should be sent before timeout")
+            .expect("response channel should remain open");
+        assert!(matches!(msg, Message::Direct(DirectMessage::Heartbeat)));
+
+        incoming_tx
+            .send(Incoming::Msg(Box::new(Message::Direct(
+                DirectMessage::HeartbeatAck,
+            ))))
+            .await
+            .unwrap();
+        tokio::time::sleep(Duration::from_millis(30)).await;
+
+        incoming_tx.send(Incoming::Eof).await.unwrap();
+        let result = handle.await.unwrap();
+        assert!(
+            result.is_ok(),
+            "inbound activity should clear the pending heartbeat timeout"
+        );
+        assert!(
+            response_rx.try_recv().is_err(),
+            "no second heartbeat should be sent before the next idle interval"
+        );
+    }
+
+    #[tokio::test]
+    async fn heartbeat_deadlines_are_suppressed_while_refresh_response_is_pending() {
+        let heartbeat = HeartbeatState {
+            config: HeartbeatConfig {
+                idle_interval: Duration::from_millis(50),
+                ack_timeout: Duration::from_millis(20),
+            },
+            last_rx_at: tokio::time::Instant::now(),
+            ack_deadline: Some(tokio::time::Instant::now() + Duration::from_millis(20)),
+        };
+
+        let (heartbeat_deadline, heartbeat_timeout) = heartbeat_deadlines(Some(&heartbeat), true);
+
+        assert!(
+            heartbeat_deadline.is_none(),
+            "idle heartbeats should be paused while awaiting ReauthResult"
+        );
+        assert!(
+            heartbeat_timeout.is_none(),
+            "pending heartbeat acks should not time out while awaiting ReauthResult"
+        );
+    }
+
+    #[tokio::test]
+    async fn refresh_due_now_takes_priority_over_heartbeat_timeouts() {
+        let refresh_deadline = Some(tokio::time::Instant::now() - Duration::from_millis(1));
+
+        assert!(
+            refresh_has_priority(refresh_deadline, false),
+            "a due refresh should preempt heartbeat timeout handling"
+        );
+    }
+
+    #[tokio::test]
+    async fn heartbeat_pause_for_refresh_clears_pending_ack() {
+        let mut heartbeat = HeartbeatState {
+            config: HeartbeatConfig {
+                idle_interval: Duration::from_millis(50),
+                ack_timeout: Duration::from_millis(20),
+            },
+            last_rx_at: tokio::time::Instant::now(),
+            ack_deadline: Some(tokio::time::Instant::now() + Duration::from_millis(20)),
+        };
+        let previous_last_rx_at = heartbeat.last_rx_at;
+
+        tokio::time::sleep(Duration::from_millis(2)).await;
+        heartbeat.pause_for_refresh();
+
+        assert!(
+            heartbeat.ack_deadline.is_none(),
+            "refresh start should clear any pending heartbeat ack timeout"
+        );
+        assert!(
+            heartbeat.last_rx_at > previous_last_rx_at,
+            "refresh start should reset the idle heartbeat timer"
         );
     }
 }

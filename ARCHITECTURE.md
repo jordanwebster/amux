@@ -187,6 +187,8 @@ enum DirectMessage {
     // In-session authentication refresh (cloud links)
     Reauth { token: String },
     ReauthResult { error: Option<ProtocolError> },
+    Heartbeat,
+    HeartbeatAck,
 
     // Agent discovery (pure registry, no routing side effects)
     AnnounceAgent { agent_id: Uuid, name: Option<String>, command: String, working_dir: PathBuf, route: Route },
@@ -197,6 +199,12 @@ enum DirectMessage {
     WithdrawHost { id: Uuid },
 }
 ```
+
+Idle peer links send `Heartbeat` after 60 seconds without inbound traffic. Any
+inbound message counts as liveness, so `HeartbeatAck` is only needed when both
+sides are otherwise idle. If no inbound traffic arrives within 10 seconds after
+sending a heartbeat, the connection is closed and the normal `WithdrawHost`
+cleanup path runs.
 
 ### Handshake
 

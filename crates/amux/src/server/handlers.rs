@@ -940,6 +940,20 @@ async fn handle_direct(
             Ok(())
         }
 
+        DirectMessage::Heartbeat => {
+            tx.send(Message::Direct(DirectMessage::HeartbeatAck))
+                .await
+                .map_err(|_| {
+                    AmuxError::Io(std::io::Error::new(
+                        std::io::ErrorKind::BrokenPipe,
+                        "outgoing channel closed while sending heartbeat ack",
+                    ))
+                })?;
+            Ok(())
+        }
+
+        DirectMessage::HeartbeatAck => Ok(()),
+
         DirectMessage::ReauthResult { .. } => {
             tracing::warn!("unexpected direct message");
             Ok(())
@@ -1060,6 +1074,42 @@ mod tests {
             msgs.is_empty(),
             "unexpected response should not emit a reply"
         );
+    }
+
+    #[tokio::test]
+    async fn heartbeat_sends_heartbeat_ack() {
+        let (state, user_state) = test_state().await;
+        let ctx = test_ctx(state, user_state);
+        let (tx, written) = mock_tx();
+
+        handle_direct(&tx, DirectMessage::Heartbeat, &ctx)
+            .await
+            .unwrap();
+
+        tokio::task::yield_now().await;
+
+        let msgs = written.lock().await;
+        assert_eq!(msgs.len(), 1);
+        assert!(matches!(
+            msgs[0],
+            Message::Direct(DirectMessage::HeartbeatAck)
+        ));
+    }
+
+    #[tokio::test]
+    async fn heartbeat_ack_is_accepted_without_reply() {
+        let (state, user_state) = test_state().await;
+        let ctx = test_ctx(state, user_state);
+        let (tx, written) = mock_tx();
+
+        handle_direct(&tx, DirectMessage::HeartbeatAck, &ctx)
+            .await
+            .unwrap();
+
+        tokio::task::yield_now().await;
+
+        let msgs = written.lock().await;
+        assert!(msgs.is_empty(), "heartbeat ack should not emit a reply");
     }
 
     #[tokio::test]

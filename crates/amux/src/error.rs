@@ -41,4 +41,7 @@ pub enum AmuxError {
 
     #[error("handshake timed out")]
     HandshakeTimeout,
+
+    #[error("heartbeat timed out")]
+    HeartbeatTimeout,
 }

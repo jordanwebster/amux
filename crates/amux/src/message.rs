@@ -218,6 +218,8 @@ pub enum DirectMessage {
     ReauthResult {
         error: Option<ProtocolError>,
     },
+    Heartbeat,
+    HeartbeatAck,
     /// Advertise or refresh agent metadata for a known UUID.
     AnnounceAgent {
         agent_id: Uuid,
@@ -347,6 +349,8 @@ impl Message {
             Message::Direct(d) => match d {
                 DirectMessage::Reauth { .. } => "Direct::Reauth",
                 DirectMessage::ReauthResult { .. } => "Direct::ReauthResult",
+                DirectMessage::Heartbeat => "Direct::Heartbeat",
+                DirectMessage::HeartbeatAck => "Direct::HeartbeatAck",
                 DirectMessage::AnnounceAgent { .. } => "Direct::AnnounceAgent",
                 DirectMessage::WithdrawAgent { .. } => "Direct::WithdrawAgent",
                 DirectMessage::AnnounceHost { .. } => "Direct::AnnounceHost",
@@ -562,6 +566,15 @@ mod tests {
             Message::decode(&encoded).is_err(),
             "unknown DirectMessage variant should produce a decode error"
         );
+    }
+
+    #[test]
+    fn test_direct_heartbeat_roundtrip_and_type_label() {
+        let msg = Message::Direct(DirectMessage::Heartbeat);
+        let encoded = msg.encode().unwrap();
+        let decoded = Message::decode(&encoded).unwrap();
+        assert!(matches!(decoded, Message::Direct(DirectMessage::Heartbeat)));
+        assert_eq!(msg.type_label(), "Direct::Heartbeat");
     }
 
     #[test]
