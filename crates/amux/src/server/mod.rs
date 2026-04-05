@@ -747,13 +747,23 @@ mod tests {
         name: Option<&str>,
         source: LocalAgentNameSource,
     ) {
+        insert_local_claude_with_args(user_state, agent_id, name, source, vec![]).await;
+    }
+
+    async fn insert_local_claude_with_args(
+        user_state: &Arc<RwLock<ServerUserState>>,
+        agent_id: Uuid,
+        name: Option<&str>,
+        source: LocalAgentNameSource,
+        args: Vec<String>,
+    ) {
         let req = CreateAgentRequest {
             agent_id,
             name: name.map(str::to_owned),
             agent_type: AgentType::Claude,
             working_dir: PathBuf::from("/tmp"),
             terminal_size: None,
-            args: vec![],
+            args,
         };
         let mut session = AgentSession::Claude(crate::agents::ClaudeSession::new(&req));
         session.set_local_name(name.map(str::to_owned), source);
@@ -769,7 +779,14 @@ mod tests {
         let (state, user_state) = test_state().await;
         let mut peer_rx = add_peer(&user_state, "peer-a").await;
         let agent_id = Uuid::new_v4();
-        insert_local_claude(&user_state, agent_id, None, LocalAgentNameSource::Unset).await;
+        insert_local_claude_with_args(
+            &user_state,
+            agent_id,
+            None,
+            LocalAgentNameSource::Unset,
+            vec!["--dangerously-skip-permissions".to_string()],
+        )
+        .await;
 
         handle_session_event(
             &state,
@@ -799,8 +816,11 @@ mod tests {
             Message::Direct(DirectMessage::AnnounceAgent {
                 agent_id: id,
                 name: Some(name),
+                args,
                 ..
-            }) if id == agent_id && name == "merry-slug"
+            }) if id == agent_id
+                && name == "merry-slug"
+                && args == vec!["--dangerously-skip-permissions".to_string()]
         ));
     }
 

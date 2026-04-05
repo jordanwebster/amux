@@ -457,6 +457,14 @@ impl AgentSession {
         }
     }
 
+    pub fn args(&self) -> &[String] {
+        match self {
+            Self::Claude(s) => &s.args,
+            #[cfg(any(debug_assertions, test))]
+            Self::TestAgent(_) => &[],
+        }
+    }
+
     /// Convert to Agent for listing/registry.
     pub fn to_agent(&self) -> Agent {
         Agent {
@@ -471,6 +479,7 @@ impl AgentSession {
                 Self::TestAgent(s) => AgentType::TestAgent(s.command.clone()),
             },
             readonly: self.readonly(),
+            args: self.args().to_vec(),
             created_at: self.created_at(),
         }
     }
@@ -495,6 +504,7 @@ impl AgentSession {
                     working_dir: s.working_dir,
                     terminal_size: s.terminal_size,
                     created_at: s.created_at,
+                    args: s.args,
                     session_id,
                 })
             }
@@ -530,6 +540,7 @@ pub enum SuspendedAgent {
         name_source: LocalAgentNameSource,
         working_dir: PathBuf,
         terminal_size: Option<TerminalSize>,
+        args: Vec<String>,
         session_id: Uuid,
         created_at: DateTime<Utc>,
     },
@@ -542,6 +553,42 @@ pub enum SuspendedAgent {
         terminal_size: Option<TerminalSize>,
         created_at: DateTime<Utc>,
     },
+}
+
+fn sanitize_claude_resume_args(args: Vec<String>) -> Vec<String> {
+    fn skip_flag_with_optional_value(args: &[String], i: &mut usize) {
+        *i += 1;
+        if *i < args.len() && !args[*i].starts_with('-') {
+            *i += 1;
+        }
+    }
+
+    let mut sanitized = Vec::with_capacity(args.len());
+    let mut i = 0;
+    while i < args.len() {
+        match args[i].as_str() {
+            "--fork-session" | "-c" | "--continue" => i += 1,
+            "-r" | "--resume" | "--from-pr" | "--session-id" | "-w" | "--worktree" | "--tmux" => {
+                skip_flag_with_optional_value(&args, &mut i)
+            }
+            arg if arg.starts_with("--resume=")
+                || arg.starts_with("--from-pr=")
+                || arg.starts_with("--session-id=")
+                || arg.starts_with("--worktree=")
+                || arg.starts_with("--tmux=") =>
+            {
+                let _ = arg;
+                i += 1;
+            }
+            arg if arg.starts_with("-r") && arg.len() > 2 => i += 1,
+            arg if arg.starts_with("-w") && arg.len() > 2 => i += 1,
+            _ => {
+                sanitized.push(args[i].clone());
+                i += 1;
+            }
+        }
+    }
+    sanitized
 }
 
 impl SuspendedAgent {
@@ -574,16 +621,18 @@ impl SuspendedAgent {
                 name_source,
                 working_dir,
                 terminal_size,
+                args,
                 session_id,
                 created_at,
             } => {
+                let args = sanitize_claude_resume_args(args);
                 let req = CreateAgentRequest {
                     agent_id,
                     name,
                     agent_type: crate::message::AgentType::Claude,
                     working_dir,
                     terminal_size,
-                    args: vec![],
+                    args,
                 };
                 let mut session = ClaudeSession::new(&req);
                 session.session_id = Some(session_id);
@@ -644,6 +693,79 @@ mod tests {
         assert_eq!(
             err,
             ProtocolError::ServerError("structured input not supported".to_string()),
+        );
+    }
+
+    #[test]
+    fn suspended_claude_into_session_filters_resume_unsafe_args() {
+        let sa = SuspendedAgent::Claude {
+            agent_id: Uuid::new_v4(),
+            name: Some("claude".to_string()),
+            name_source: LocalAgentNameSource::ProviderName,
+            working_dir: PathBuf::from("/tmp"),
+            terminal_size: None,
+            args: vec![
+                "--dangerously-skip-permissions".to_string(),
+                "--resume".to_string(),
+                Uuid::new_v4().to_string(),
+                "--fork-session".to_string(),
+                "--continue".to_string(),
+                "--from-pr=123".to_string(),
+                "--session-id".to_string(),
+                Uuid::new_v4().to_string(),
+                "--worktree".to_string(),
+                "feature-branch".to_string(),
+                "--tmux=classic".to_string(),
+                "--model".to_string(),
+                "sonnet".to_string(),
+            ],
+            session_id: Uuid::new_v4(),
+            created_at: Utc::now(),
+        };
+
+        let session = sa.into_session();
+
+        assert_eq!(
+            session.to_agent().args,
+            vec![
+                "--dangerously-skip-permissions".to_string(),
+                "--model".to_string(),
+                "sonnet".to_string(),
+            ]
+        );
+    }
+
+    #[tokio::test]
+    async fn suspended_claude_persists_raw_args_before_resume_sanitization() {
+        let req = CreateAgentRequest {
+            agent_id: Uuid::new_v4(),
+            name: Some("claude".to_string()),
+            agent_type: AgentType::Claude,
+            working_dir: PathBuf::from("/tmp"),
+            terminal_size: None,
+            args: vec![
+                "--resume".to_string(),
+                Uuid::new_v4().to_string(),
+                "--fork-session".to_string(),
+                "--dangerously-skip-permissions".to_string(),
+            ],
+        };
+        let mut session = ClaudeSession::new(&req);
+        session.session_id = Some(Uuid::new_v4());
+
+        let suspended = AgentSession::Claude(session).suspend().await.unwrap();
+
+        let SuspendedAgent::Claude { args, .. } = suspended else {
+            panic!("expected suspended claude agent");
+        };
+        assert_eq!(
+            args,
+            vec![
+                req.args[0].clone(),
+                req.args[1].clone(),
+                req.args[2].clone(),
+                req.args[3].clone(),
+            ]
         );
     }
 }

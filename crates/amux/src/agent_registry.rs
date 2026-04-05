@@ -17,6 +17,7 @@ pub struct Agent {
     pub route: Route,
     pub agent_type: AgentType,
     pub readonly: bool,
+    pub args: Vec<String>,
     pub created_at: DateTime<Utc>,
 }
 
@@ -262,6 +263,7 @@ mod tests {
             route: Route::empty(),
             agent_type: crate::message::AgentType::Claude,
             readonly: false,
+            args: vec![],
             created_at: Utc::now(),
         }
     }
@@ -275,6 +277,7 @@ mod tests {
             route,
             agent_type: crate::message::AgentType::Claude,
             readonly: false,
+            args: vec![],
             created_at: Utc::now(),
         }
     }

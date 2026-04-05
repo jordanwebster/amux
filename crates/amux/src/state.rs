@@ -226,6 +226,7 @@ mod tests {
                         rows: 40,
                         cols: 120,
                     }),
+                    args: vec!["--dangerously-skip-permissions".to_string()],
                     session_id: Uuid::new_v4(),
                     created_at: Utc::now(),
                 },
@@ -250,6 +251,11 @@ mod tests {
         assert!(
             matches!(&loaded.agents[0], SuspendedAgent::Claude { name, .. } if name.as_deref() == Some("test-claude"))
         );
+        assert!(matches!(
+            &loaded.agents[0],
+            SuspendedAgent::Claude { args, .. }
+                if args == &vec!["--dangerously-skip-permissions".to_string()]
+        ));
         assert!(
             matches!(&loaded.agents[1], SuspendedAgent::TestAgent { command, .. } if command == "test-agent")
         );
@@ -285,6 +291,7 @@ mod tests {
                 rows: 30,
                 cols: 100,
             }),
+            args: vec!["--allow-dangerously-skip-permissions".to_string()],
             session_id,
             created_at: Utc::now(),
         };
@@ -298,5 +305,9 @@ mod tests {
             Some(LocalAgentNameSource::ProviderSlug)
         );
         assert_eq!(session.working_dir(), PathBuf::from("/home/user"));
+        assert_eq!(
+            session.to_agent().args,
+            vec!["--allow-dangerously-skip-permissions".to_string()]
+        );
     }
 }

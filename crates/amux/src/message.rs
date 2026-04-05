@@ -229,6 +229,7 @@ pub enum DirectMessage {
         route: Route,
         agent_type: AgentType,
         readonly: bool,
+        args: Vec<String>,
         created_at: DateTime<Utc>,
     },
     WithdrawAgent {
@@ -473,6 +474,7 @@ mod tests {
             route: Route::from_link("host-a"),
             agent_type: AgentType::Claude,
             readonly: false,
+            args: vec![],
             created_at: Utc::now(),
         };
         let encoded = rmp_serde::to_vec_named(&info).unwrap();

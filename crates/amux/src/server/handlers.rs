@@ -582,6 +582,7 @@ async fn handle_command(
                             let info = session.to_agent();
                             let command = session.command().to_string();
                             let working_dir = session.working_dir().to_path_buf();
+                            let announce_args = info.args.clone();
                             let created_at = session.created_at();
                             us.agents.insert(agent_id, session);
                             if let Err(e) = us.registry.register_local(info) {
@@ -602,6 +603,7 @@ async fn handle_command(
                                         route: Route::empty(),
                                         agent_type: AgentType::Claude,
                                         readonly: true,
+                                        args: announce_args,
                                         created_at,
                                     },
                                     None,
@@ -777,6 +779,7 @@ async fn handle_direct(
             route: received_route,
             agent_type,
             readonly,
+            args,
             created_at,
         } => {
             let mut us = ctx.user_state.write().await;
@@ -800,6 +803,7 @@ async fn handle_direct(
                 route: our_route.clone(),
                 agent_type: agent_type.clone(),
                 readonly,
+                args: args.clone(),
                 created_at,
             };
 
@@ -821,6 +825,7 @@ async fn handle_direct(
                     route: our_route,
                     agent_type,
                     readonly,
+                    args,
                     created_at,
                 },
                 Some(&ctx.link_name),
@@ -1127,6 +1132,7 @@ mod tests {
             route: Route::empty(),
             agent_type: claude_agent_type(),
             readonly: false,
+            args: vec!["--dangerously-skip-permissions".to_string()],
             created_at: Utc::now(),
         };
 
@@ -1136,6 +1142,7 @@ mod tests {
         assert!(us.registry.contains(&agent_id));
         let entry = us.registry.get(&agent_id).unwrap();
         assert_eq!(entry.name, Some("remote-test".to_string()));
+        assert_eq!(entry.args, vec!["--dangerously-skip-permissions"]);
         assert!(entry.is_remote());
         let mut route = entry.route.clone();
         assert_eq!(route.pop(), Some("test-link".to_string()));
@@ -1157,6 +1164,7 @@ mod tests {
             route: Route::from_link("host-a"),
             agent_type: claude_agent_type(),
             readonly: false,
+            args: vec![],
             created_at: Utc::now(),
         };
 
@@ -1206,6 +1214,7 @@ mod tests {
             route: Route::empty(),
             agent_type: claude_agent_type(),
             readonly: false,
+            args: vec![],
             created_at: Utc::now(),
         };
 
@@ -1233,6 +1242,7 @@ mod tests {
                     route: Route::from_link("test-link"),
                     agent_type: claude_agent_type(),
                     readonly: false,
+                    args: vec![],
                     created_at: Utc::now(),
                 })
                 .unwrap();
@@ -1264,6 +1274,7 @@ mod tests {
                     route: Route::from_link("other-link"),
                     agent_type: claude_agent_type(),
                     readonly: false,
+                    args: vec![],
                     created_at: Utc::now(),
                 })
                 .unwrap();
@@ -1299,6 +1310,7 @@ mod tests {
             route: Route::empty(),
             agent_type: claude_agent_type(),
             readonly: false,
+            args: vec!["--dangerously-skip-permissions".to_string()],
             created_at: Utc::now(),
         };
         handle_direct(&tx, msg, &ctx).await.unwrap();
@@ -1312,6 +1324,7 @@ mod tests {
             route: Route::empty(),
             agent_type: claude_agent_type(),
             readonly: false,
+            args: vec!["--allow-dangerously-skip-permissions".to_string()],
             created_at: Utc::now(),
         };
         handle_direct(&tx, msg, &ctx).await.unwrap();
@@ -1320,6 +1333,10 @@ mod tests {
         let entry = us.registry.get(&agent_id).unwrap();
         assert_eq!(entry.name, Some("second".to_string()));
         assert_eq!(entry.working_dir, PathBuf::from("/second"));
+        assert_eq!(
+            entry.args,
+            vec!["--allow-dangerously-skip-permissions".to_string()]
+        );
         drop(us);
 
         let forwarded = peer_rx
@@ -1342,9 +1359,13 @@ mod tests {
             Message::Direct(DirectMessage::AnnounceAgent {
                 agent_id: id,
                 name: Some(name),
+                args,
                 working_dir,
                 ..
-            }) if id == agent_id && name == "second" && working_dir == Path::new("/second")
+            }) if id == agent_id
+                && name == "second"
+                && args == vec!["--allow-dangerously-skip-permissions".to_string()]
+                && working_dir == Path::new("/second")
         ));
     }
 
@@ -1364,6 +1385,7 @@ mod tests {
                     route: Route::from_link("peer-a"),
                     agent_type: claude_agent_type(),
                     readonly: false,
+                    args: vec![],
                     created_at: Utc::now(),
                 })
                 .unwrap();
@@ -1875,6 +1897,7 @@ mod tests {
                     route: Route::from_link("test-link"),
                     agent_type: claude_agent_type(),
                     readonly: false,
+                    args: vec![],
                     created_at: Utc::now(),
                 })
                 .unwrap();
@@ -1889,6 +1912,7 @@ mod tests {
                     route: deep_route,
                     agent_type: claude_agent_type(),
                     readonly: false,
+                    args: vec![],
                     created_at: Utc::now(),
                 })
                 .unwrap();
@@ -1902,6 +1926,7 @@ mod tests {
                     route: Route::from_link("other-link"),
                     agent_type: claude_agent_type(),
                     readonly: false,
+                    args: vec![],
                     created_at: Utc::now(),
                 })
                 .unwrap();

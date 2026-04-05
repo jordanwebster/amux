@@ -95,6 +95,7 @@ pub(super) fn apply_local_name_candidate(
                     route: Route::empty(),
                     agent_type: updated.agent_type,
                     readonly: updated.readonly,
+                    args: updated.args,
                     created_at: updated.created_at,
                 },
                 None,
@@ -173,6 +174,7 @@ pub(super) async fn create_agent(
         let name = req.name.clone();
         let command = session.command().to_string();
         let working_dir = session.working_dir().to_path_buf();
+        let announce_args = info.args.clone();
         let created_at = session.created_at();
         us.agents.insert(agent_id, session);
         us.registry.register_local(info).map_err(|e| {
@@ -201,6 +203,7 @@ pub(super) async fn create_agent(
                 route: Route::empty(),
                 agent_type: agent_type.clone(),
                 readonly: false,
+                args: announce_args,
                 created_at,
             },
             None,
@@ -341,6 +344,7 @@ pub(super) async fn resume_agents(
                 let agent_type = info.agent_type.clone();
                 let command = session.command().to_string();
                 let working_dir = session.working_dir().to_path_buf();
+                let announce_args = info.args.clone();
                 let created_at = session.created_at();
                 {
                     let mut us = user_state.write().await;
@@ -360,6 +364,7 @@ pub(super) async fn resume_agents(
                             route: Route::empty(),
                             agent_type,
                             readonly: false,
+                            args: announce_args,
                             created_at,
                         },
                         None,
@@ -436,6 +441,7 @@ fn send_initial_agent_announcements(us: &ServerUserState, peer_link: &str) -> us
             route: info.route.clone(),
             agent_type: info.agent_type.clone(),
             readonly: info.readonly,
+            args: info.args.clone(),
             created_at: info.created_at,
         });
         if tx.try_send(msg).is_err() {
@@ -596,6 +602,7 @@ mod tests {
                 route: Route::from_link(link),
                 agent_type: crate::message::AgentType::TestAgent("test".to_string()),
                 readonly: false,
+                args: vec![],
                 created_at: Utc::now(),
             })
             .unwrap();
