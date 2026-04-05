@@ -19,7 +19,9 @@ use crate::buffer::{MultiplexByteBuffer, MultiplexByteReader, MultiplexStructure
 use crate::claude::structured_log_source::StructuredLogSource;
 use crate::claude::types::Hook;
 use crate::error::{AmuxError, Result};
-use crate::message::{AgentProtocol, AgentType, ClaudeProtocol, CreateAgentRequest, ProtocolError, TerminalSize};
+use crate::message::{
+    AgentProtocol, AgentType, ClaudeProtocol, CreateAgentRequest, ProtocolError, TerminalSize,
+};
 use crate::route::Route;
 use chrono::{DateTime, Utc};
 use portable_pty::{CommandBuilder, MasterPty, PtySize, native_pty_system};
