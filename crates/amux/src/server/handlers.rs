@@ -9,8 +9,8 @@ use super::connection::{
     ConnectionContext, cancel_streams_matching, cleanup_stream, register_stream,
 };
 use super::routing::{
-    broadcast_to_peers, connection_tx, create_agent, handle_subscribe, resume_agents,
-    withdraw_agent,
+    broadcast_to_peers, connection_tx, create_agent, delete_local_agent, handle_subscribe,
+    rename_local_agent, resume_agents, withdraw_agent,
 };
 use crate::agent_registry::Agent;
 use crate::agents::{AgentSession, ClaudeSession, StopPolicy};
@@ -388,6 +388,69 @@ async fn handle_routable(
             Ok(())
         }
 
+        RoutableMessage::RenameAgent(req) => {
+            let Some((reply_src, reply_dst)) = reply_routes(src, "RenameAgent") else {
+                return Ok(());
+            };
+            let agent_id = req.agent_id;
+            let response_message = {
+                let mut us = ctx.user_state.write().await;
+                match rename_local_agent(&mut us, &req) {
+                    Ok(_) => RoutableMessage::RenameAgentResult {
+                        agent_id,
+                        error: None,
+                    },
+                    Err(e) => RoutableMessage::RenameAgentResult {
+                        agent_id,
+                        error: Some(ProtocolError::ServerError(e.to_string())),
+                    },
+                }
+            };
+            let _ = tx
+                .send(Message::routable(
+                    reply_src,
+                    reply_dst,
+                    request_id,
+                    &response_message,
+                ))
+                .await;
+            Ok(())
+        }
+
+        RoutableMessage::DeleteAgent { agent_id } => {
+            let Some((reply_src, reply_dst)) = reply_routes(src, "DeleteAgent") else {
+                return Ok(());
+            };
+            let session_to_stop = {
+                let mut us = ctx.user_state.write().await;
+                delete_local_agent(&mut us, agent_id).ok()
+            };
+            let response_message = match session_to_stop {
+                Some(session) => {
+                    session.stop(StopPolicy::Interrupt).await;
+                    RoutableMessage::DeleteAgentResult {
+                        agent_id,
+                        error: None,
+                    }
+                }
+                None => RoutableMessage::DeleteAgentResult {
+                    agent_id,
+                    error: Some(ProtocolError::ServerError(format!(
+                        "Agent not found: {agent_id}"
+                    ))),
+                },
+            };
+            let _ = tx
+                .send(Message::routable(
+                    reply_src,
+                    reply_dst,
+                    request_id,
+                    &response_message,
+                ))
+                .await;
+            Ok(())
+        }
+
         RoutableMessage::RawInput { agent_id, data } => {
             let us = ctx.user_state.read().await;
             if let Some(session) = us.agents.get(&agent_id)
@@ -429,6 +492,8 @@ async fn handle_routable(
         RoutableMessage::SubscribeRawResult { .. }
         | RoutableMessage::SubscribeStructuredResult { .. }
         | RoutableMessage::CreateAgentResult { .. }
+        | RoutableMessage::RenameAgentResult { .. }
+        | RoutableMessage::DeleteAgentResult { .. }
         | RoutableMessage::RawOutput { .. }
         | RoutableMessage::StructuredOutput { .. }
         | RoutableMessage::StructuredInputResult { .. }
@@ -969,11 +1034,12 @@ async fn handle_direct(
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::agents::{AgentSession, SessionEvent};
+    use crate::agents::{AgentSession, LocalAgentNameSource, SessionEvent};
     use crate::claude::types::{
         BashToolInput, ClaudePermissionRequest, ClaudePermissionTool, ClaudeSessionEnd,
         ClaudeSessionStart, ClaudeStop,
     };
+    use crate::message::{CreateAgentRequest, RenameAgentRequest};
     use crate::route::Route;
     use crate::server::test_helpers::{test_ctx, test_state};
     use crate::server::{LOCAL_USER_ID, ServerUserState};
@@ -1038,6 +1104,36 @@ mod tests {
         us.routes.insert(link_name.to_string(), tx);
         us.peer_links.insert(link_name.to_string());
         rx
+    }
+
+    async fn insert_local_claude(
+        user_state: &Arc<RwLock<ServerUserState>>,
+        agent_id: Uuid,
+        name: Option<&str>,
+        source: LocalAgentNameSource,
+    ) {
+        let req = CreateAgentRequest {
+            agent_id,
+            name: name.map(str::to_owned),
+            agent_type: AgentType::Claude,
+            working_dir: PathBuf::from("/tmp"),
+            terminal_size: None,
+            args: vec![],
+        };
+        let mut session = AgentSession::Claude(crate::agents::ClaudeSession::new(&req));
+        session.set_local_name(name.map(str::to_owned), source);
+        let info = session.to_agent();
+
+        let mut us = user_state.write().await;
+        us.agents.insert(agent_id, session);
+        us.registry.register_local(info).unwrap();
+    }
+
+    fn decode_written_routable(msg: &Message) -> RoutableMessage {
+        let Message::Routable { payload, .. } = msg else {
+            panic!("expected Routable, got {:?}", msg);
+        };
+        RoutableMessage::decode(payload).unwrap()
     }
 
     #[tokio::test]
@@ -1367,6 +1463,286 @@ mod tests {
                 && args == vec!["--allow-dangerously-skip-permissions".to_string()]
                 && working_dir == Path::new("/second")
         ));
+    }
+
+    #[tokio::test]
+    async fn rename_agent_renames_local_agent_and_reannounces() {
+        let (state, user_state) = test_state().await;
+        let ctx = test_ctx(state, user_state.clone());
+        let (tx, written) = mock_tx();
+        let mut peer_rx = add_peer_link(&user_state, "peer-a").await;
+
+        let agent_id = Uuid::new_v4();
+        insert_local_claude(&user_state, agent_id, None, LocalAgentNameSource::Unset).await;
+
+        let msg = Message::routable(
+            Route::from_link("client"),
+            Route::empty(),
+            1,
+            &RoutableMessage::RenameAgent(RenameAgentRequest {
+                agent_id,
+                name: "renamed-agent".to_string(),
+            }),
+        );
+
+        handle_message(&tx, msg, &ctx).await.unwrap();
+        tokio::task::yield_now().await;
+
+        let msgs = written.lock().await;
+        assert_eq!(msgs.len(), 1);
+        assert!(matches!(
+            decode_written_routable(&msgs[0]),
+            RoutableMessage::RenameAgentResult {
+                agent_id: id,
+                error: None,
+            } if id == agent_id
+        ));
+        drop(msgs);
+
+        let us = user_state.read().await;
+        let entry = us.registry.get(&agent_id).unwrap();
+        assert_eq!(entry.name.as_deref(), Some("renamed-agent"));
+        assert_eq!(
+            us.agents
+                .get(&agent_id)
+                .and_then(|session| session.local_name_source()),
+            Some(LocalAgentNameSource::Amux)
+        );
+        drop(us);
+
+        let forwarded = peer_rx
+            .try_recv()
+            .expect("rename should be re-announced to peers");
+        assert!(matches!(
+            forwarded,
+            Message::Direct(DirectMessage::AnnounceAgent {
+                agent_id: id,
+                name: Some(name),
+                ..
+            }) if id == agent_id && name == "renamed-agent"
+        ));
+    }
+
+    #[tokio::test]
+    async fn rename_agent_same_name_upgrades_to_amux_without_reannounce() {
+        let (state, user_state) = test_state().await;
+        let ctx = test_ctx(state, user_state.clone());
+        let (tx, written) = mock_tx();
+        let mut peer_rx = add_peer_link(&user_state, "peer-a").await;
+
+        let agent_id = Uuid::new_v4();
+        insert_local_claude(
+            &user_state,
+            agent_id,
+            Some("shared-name"),
+            LocalAgentNameSource::ProviderSlug,
+        )
+        .await;
+
+        let msg = Message::routable(
+            Route::from_link("client"),
+            Route::empty(),
+            1,
+            &RoutableMessage::RenameAgent(RenameAgentRequest {
+                agent_id,
+                name: "shared-name".to_string(),
+            }),
+        );
+
+        handle_message(&tx, msg, &ctx).await.unwrap();
+        tokio::task::yield_now().await;
+
+        let msgs = written.lock().await;
+        assert_eq!(msgs.len(), 1);
+        assert!(matches!(
+            decode_written_routable(&msgs[0]),
+            RoutableMessage::RenameAgentResult {
+                agent_id: id,
+                error: None,
+            } if id == agent_id
+        ));
+        drop(msgs);
+
+        let us = user_state.read().await;
+        assert_eq!(
+            us.registry.get(&agent_id).unwrap().name.as_deref(),
+            Some("shared-name")
+        );
+        assert_eq!(
+            us.agents
+                .get(&agent_id)
+                .and_then(|session| session.local_name_source()),
+            Some(LocalAgentNameSource::Amux)
+        );
+        drop(us);
+
+        assert!(
+            peer_rx.try_recv().is_err(),
+            "provenance-only manual updates should not re-announce"
+        );
+    }
+
+    #[tokio::test]
+    async fn rename_agent_collision_returns_error_without_reannounce() {
+        let (state, user_state) = test_state().await;
+        let ctx = test_ctx(state, user_state.clone());
+        let (tx, written) = mock_tx();
+        let mut peer_rx = add_peer_link(&user_state, "peer-a").await;
+
+        let owner_id = Uuid::new_v4();
+        let candidate_id = Uuid::new_v4();
+        insert_local_claude(
+            &user_state,
+            owner_id,
+            Some("taken-name"),
+            LocalAgentNameSource::Amux,
+        )
+        .await;
+        insert_local_claude(&user_state, candidate_id, None, LocalAgentNameSource::Unset).await;
+
+        let msg = Message::routable(
+            Route::from_link("client"),
+            Route::empty(),
+            1,
+            &RoutableMessage::RenameAgent(RenameAgentRequest {
+                agent_id: candidate_id,
+                name: "taken-name".to_string(),
+            }),
+        );
+
+        handle_message(&tx, msg, &ctx).await.unwrap();
+        tokio::task::yield_now().await;
+
+        let msgs = written.lock().await;
+        assert_eq!(msgs.len(), 1);
+        assert!(matches!(
+            decode_written_routable(&msgs[0]),
+            RoutableMessage::RenameAgentResult {
+                agent_id: id,
+                error: Some(ProtocolError::ServerError(ref err)),
+            } if id == candidate_id && err == "Agent already exists: taken-name"
+        ));
+        drop(msgs);
+
+        let us = user_state.read().await;
+        assert_eq!(us.registry.resolve("taken-name").unwrap().id, owner_id);
+        assert_eq!(us.registry.get(&candidate_id).unwrap().name, None);
+        drop(us);
+
+        assert!(
+            peer_rx.try_recv().is_err(),
+            "failed updates should not re-announce"
+        );
+    }
+
+    #[tokio::test]
+    async fn delete_agent_withdraws_local_agent_and_replies_success() {
+        let (state, user_state) = test_state().await;
+        let ctx = test_ctx(state, user_state.clone());
+        let (tx, written) = mock_tx();
+        let mut peer_rx = add_peer_link(&user_state, "peer-a").await;
+
+        let agent_id = Uuid::new_v4();
+        let session = AgentSession::Claude(crate::agents::ClaudeSession::new_readonly(
+            agent_id,
+            PathBuf::from("/tmp"),
+        ));
+        let info = session.to_agent();
+        {
+            let mut us = user_state.write().await;
+            us.agents.insert(agent_id, session);
+            us.registry.register_local(info).unwrap();
+        }
+
+        let msg = Message::routable(
+            Route::from_link("client"),
+            Route::empty(),
+            1,
+            &RoutableMessage::DeleteAgent { agent_id },
+        );
+
+        handle_message(&tx, msg, &ctx).await.unwrap();
+        tokio::task::yield_now().await;
+
+        let msgs = written.lock().await;
+        assert_eq!(msgs.len(), 1);
+        assert!(matches!(
+            decode_written_routable(&msgs[0]),
+            RoutableMessage::DeleteAgentResult {
+                agent_id: id,
+                error: None,
+            } if id == agent_id
+        ));
+        drop(msgs);
+
+        let us = user_state.read().await;
+        assert!(!us.agents.contains_key(&agent_id));
+        assert!(us.registry.get(&agent_id).is_none());
+        drop(us);
+
+        let forwarded = peer_rx
+            .try_recv()
+            .expect("delete should withdraw from peers");
+        assert!(matches!(
+            forwarded,
+            Message::Direct(DirectMessage::WithdrawAgent { agent_id: id }) if id == agent_id
+        ));
+    }
+
+    #[tokio::test]
+    async fn delete_agent_rejects_remote_registry_entry() {
+        let (state, user_state) = test_state().await;
+        let ctx = test_ctx(state, user_state.clone());
+        let (tx, written) = mock_tx();
+        let mut peer_rx = add_peer_link(&user_state, "peer-a").await;
+
+        let agent_id = Uuid::new_v4();
+        {
+            let mut us = user_state.write().await;
+            us.registry
+                .register_remote(Agent {
+                    id: agent_id,
+                    name: Some("remote-agent".to_string()),
+                    command: "claude".to_string(),
+                    working_dir: PathBuf::from("/tmp"),
+                    route: Route::from_link("upstream"),
+                    agent_type: claude_agent_type(),
+                    readonly: false,
+                    args: vec![],
+                    created_at: Utc::now(),
+                })
+                .unwrap();
+        }
+
+        let msg = Message::routable(
+            Route::from_link("client"),
+            Route::empty(),
+            1,
+            &RoutableMessage::DeleteAgent { agent_id },
+        );
+
+        handle_message(&tx, msg, &ctx).await.unwrap();
+        tokio::task::yield_now().await;
+
+        let msgs = written.lock().await;
+        assert_eq!(msgs.len(), 1);
+        assert!(matches!(
+            decode_written_routable(&msgs[0]),
+            RoutableMessage::DeleteAgentResult {
+                agent_id: id,
+                error: Some(ProtocolError::ServerError(ref err)),
+            } if id == agent_id && err == &format!("Agent not found: {agent_id}")
+        ));
+        drop(msgs);
+
+        let us = user_state.read().await;
+        assert!(us.registry.contains(&agent_id));
+        drop(us);
+
+        assert!(
+            peer_rx.try_recv().is_err(),
+            "failed delete should not withdraw from peers"
+        );
     }
 
     #[tokio::test]
@@ -1781,6 +2157,14 @@ mod tests {
                 error: None,
             },
             RoutableMessage::CreateAgentResult {
+                agent_id: Uuid::new_v4(),
+                error: None,
+            },
+            RoutableMessage::RenameAgentResult {
+                agent_id: Uuid::new_v4(),
+                error: None,
+            },
+            RoutableMessage::DeleteAgentResult {
                 agent_id: Uuid::new_v4(),
                 error: None,
             },

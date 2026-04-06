@@ -13,7 +13,9 @@ use crate::agents::{
 };
 use crate::buffer::MultiplexByteReader;
 use crate::error::{AmuxError, Result};
-use crate::message::{AgentType, CreateAgentRequest, DirectMessage, Message, TerminalSize};
+use crate::message::{
+    AgentType, CreateAgentRequest, DirectMessage, Message, RenameAgentRequest, TerminalSize,
+};
 use crate::route::Route;
 use std::collections::HashMap;
 use std::sync::Arc;
@@ -34,10 +36,109 @@ const MAX_LOCAL_AGENTS: usize = 1024;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub(super) enum LocalNameUpdateOutcome {
-    Renamed,
+    Updated,
     ProvenanceUpdated,
     Skipped,
     Collision,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(super) enum LocalAgentRenameOutcome {
+    Updated,
+    ProvenanceUpdated,
+    Unchanged,
+}
+
+#[derive(Debug, thiserror::Error)]
+pub(super) enum LocalAgentRenameError {
+    #[error("Agent not found: {0}")]
+    NotFound(String),
+    #[error("Agent already exists: {0}")]
+    AlreadyExists(String),
+    #[error("failed to update local agent metadata: {0}")]
+    Other(String),
+}
+
+#[derive(Debug, thiserror::Error)]
+pub(super) enum LocalAgentDeleteError {
+    #[error("Agent not found: {0}")]
+    NotFound(String),
+}
+
+fn reannounce_local_agent(us: &mut ServerUserState, updated: crate::agent_registry::Agent) {
+    broadcast_to_peers(
+        us,
+        &DirectMessage::AnnounceAgent {
+            agent_id: updated.id,
+            name: updated.name,
+            command: updated.command,
+            working_dir: updated.working_dir,
+            route: Route::empty(),
+            agent_type: updated.agent_type,
+            readonly: updated.readonly,
+            args: updated.args,
+            created_at: updated.created_at,
+        },
+        None,
+    );
+}
+
+fn commit_local_name_update(
+    us: &mut ServerUserState,
+    updated: crate::agent_registry::Agent,
+    source: LocalAgentNameSource,
+) -> std::result::Result<(), AgentRegistryError> {
+    let agent_id = updated.id;
+    us.registry.update_local(updated.clone())?;
+    if let Some(session) = us.agents.get_mut(&agent_id) {
+        session.set_local_name(updated.name.clone(), source);
+    }
+    reannounce_local_agent(us, updated);
+    Ok(())
+}
+
+pub(super) fn rename_local_agent(
+    us: &mut ServerUserState,
+    req: &RenameAgentRequest,
+) -> std::result::Result<LocalAgentRenameOutcome, LocalAgentRenameError> {
+    let session = us
+        .agents
+        .get(&req.agent_id)
+        .ok_or_else(|| LocalAgentRenameError::NotFound(req.agent_id.to_string()))?;
+
+    let current_name = session.name().map(str::to_owned);
+    let current_source = session.local_name_source();
+    let mut updated = session.to_agent();
+    let mut metadata_changed = false;
+    let mut provenance_changed = false;
+
+    if current_name.as_deref() != Some(req.name.as_str()) {
+        updated.name = Some(req.name.clone());
+        metadata_changed = true;
+    } else if current_source.is_some() && current_source != Some(LocalAgentNameSource::Amux) {
+        provenance_changed = true;
+    }
+
+    if !metadata_changed && !provenance_changed {
+        return Ok(LocalAgentRenameOutcome::Unchanged);
+    }
+
+    if metadata_changed {
+        return commit_local_name_update(us, updated, LocalAgentNameSource::Amux)
+            .map(|()| LocalAgentRenameOutcome::Updated)
+            .map_err(|err| match err {
+                AgentRegistryError::AlreadyExists(name) => {
+                    LocalAgentRenameError::AlreadyExists(name)
+                }
+                other => LocalAgentRenameError::Other(other.to_string()),
+            });
+    }
+
+    us.agents
+        .get_mut(&req.agent_id)
+        .unwrap()
+        .set_local_name(current_name, LocalAgentNameSource::Amux);
+    Ok(LocalAgentRenameOutcome::ProvenanceUpdated)
 }
 
 pub(super) fn apply_local_name_candidate(
@@ -79,29 +180,8 @@ pub(super) fn apply_local_name_candidate(
     // session borrow is dropped here
 
     // Phase 2: registry + session mutation
-    match us.registry.update_local(updated.clone()) {
-        Ok(()) => {
-            us.agents
-                .get_mut(&agent_id)
-                .unwrap()
-                .set_local_name(updated.name.clone(), source);
-            broadcast_to_peers(
-                us,
-                &DirectMessage::AnnounceAgent {
-                    agent_id,
-                    name: updated.name,
-                    command: updated.command,
-                    working_dir: updated.working_dir,
-                    route: Route::empty(),
-                    agent_type: updated.agent_type,
-                    readonly: updated.readonly,
-                    args: updated.args,
-                    created_at: updated.created_at,
-                },
-                None,
-            );
-            LocalNameUpdateOutcome::Renamed
-        }
+    match commit_local_name_update(us, updated, source) {
+        Ok(()) => LocalNameUpdateOutcome::Updated,
         Err(AgentRegistryError::AlreadyExists(_)) => {
             tracing::info!(
                 agent_id = %agent_id,
@@ -231,6 +311,9 @@ pub(super) async fn create_agent(
 /// each stream task can emit its terminal EOF notification before cleaning
 /// itself up.
 pub(super) fn withdraw_agent(us: &mut ServerUserState, agent_id: Uuid) -> Option<AgentSession> {
+    if !us.agents.contains_key(&agent_id) {
+        return None;
+    }
     let name = us.registry.get(&agent_id).and_then(|a| a.name.clone());
     let session = us.agents.remove(&agent_id);
     us.registry.remove(&agent_id);
@@ -244,6 +327,14 @@ pub(super) fn withdraw_agent(us: &mut ServerUserState, agent_id: Uuid) -> Option
         "agent withdrawn"
     );
     session
+}
+
+pub(super) fn delete_local_agent(
+    us: &mut ServerUserState,
+    agent_id: Uuid,
+) -> std::result::Result<AgentSession, LocalAgentDeleteError> {
+    withdraw_agent(us, agent_id)
+        .ok_or_else(|| LocalAgentDeleteError::NotFound(agent_id.to_string()))
 }
 
 /// Handle subscribe request by UUID.

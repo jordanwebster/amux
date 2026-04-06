@@ -367,7 +367,7 @@ impl AgentSession {
         match self {
             Self::Claude(s) => s.set_name_and_source(name, source),
             #[cfg(any(debug_assertions, test))]
-            Self::TestAgent(_) => {}
+            Self::TestAgent(s) => s.name = name,
         }
     }
 

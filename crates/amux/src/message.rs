@@ -118,6 +118,13 @@ pub struct CreateAgentRequest {
     pub args: Vec<String>,
 }
 
+/// Request to rename an existing agent.
+#[derive(Serialize, Deserialize, Debug, Clone)]
+pub struct RenameAgentRequest {
+    pub agent_id: Uuid,
+    pub name: String,
+}
+
 /// Messages that carry src/dst routing information and can be forwarded across hops.
 /// agent_id is Uuid — callers must resolve names to UUIDs before constructing.
 #[derive(Serialize, Deserialize, Debug, Clone)]
@@ -146,6 +153,18 @@ pub enum RoutableMessage {
     },
     CreateAgent(CreateAgentRequest),
     CreateAgentResult {
+        agent_id: Uuid,
+        error: Option<ProtocolError>,
+    },
+    RenameAgent(RenameAgentRequest),
+    RenameAgentResult {
+        agent_id: Uuid,
+        error: Option<ProtocolError>,
+    },
+    DeleteAgent {
+        agent_id: Uuid,
+    },
+    DeleteAgentResult {
         agent_id: Uuid,
         error: Option<ProtocolError>,
     },
@@ -187,6 +206,10 @@ impl RoutableMessage {
             RoutableMessage::SubscribeStructuredResult { .. } => "SubscribeStructuredResult",
             RoutableMessage::CreateAgent(_) => "CreateAgent",
             RoutableMessage::CreateAgentResult { .. } => "CreateAgentResult",
+            RoutableMessage::RenameAgent(_) => "RenameAgent",
+            RoutableMessage::RenameAgentResult { .. } => "RenameAgentResult",
+            RoutableMessage::DeleteAgent { .. } => "DeleteAgent",
+            RoutableMessage::DeleteAgentResult { .. } => "DeleteAgentResult",
             RoutableMessage::RawInput { .. } => "RawInput",
             RoutableMessage::RawOutput { .. } => "RawOutput",
             RoutableMessage::StructuredOutput { .. } => "StructuredOutput",
@@ -459,6 +482,34 @@ mod tests {
         assert!(matches!(
             decoded_rm,
             RoutableMessage::CreateAgentResult { error: None, .. }
+        ));
+    }
+
+    #[test]
+    fn test_rename_agent_roundtrip() {
+        let agent_id = Uuid::new_v4();
+        let rm = RoutableMessage::RenameAgent(RenameAgentRequest {
+            agent_id,
+            name: "renamed".to_string(),
+        });
+        let encoded = rm.encode().unwrap();
+        let decoded = RoutableMessage::decode(&encoded).unwrap();
+        let RoutableMessage::RenameAgent(req) = decoded else {
+            panic!("Expected RenameAgent");
+        };
+        assert_eq!(req.agent_id, agent_id);
+        assert_eq!(req.name, "renamed");
+    }
+
+    #[test]
+    fn test_delete_agent_roundtrip() {
+        let agent_id = Uuid::new_v4();
+        let rm = RoutableMessage::DeleteAgent { agent_id };
+        let encoded = rm.encode().unwrap();
+        let decoded = RoutableMessage::decode(&encoded).unwrap();
+        assert!(matches!(
+            decoded,
+            RoutableMessage::DeleteAgent { agent_id: decoded_id } if decoded_id == agent_id
         ));
     }
 

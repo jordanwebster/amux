@@ -6,6 +6,7 @@
 pub use crate::claude::types::*;
 pub use crate::message::{
     AgentProtocol, AgentType, ClaudeProtocol, Command, CreateAgentRequest, DirectMessage, Host,
-    Message, ProtocolError, RoutableMessage, ServerDebugInfo, ShutdownReason, TerminalSize,
+    Message, ProtocolError, RenameAgentRequest, RoutableMessage, ServerDebugInfo, ShutdownReason,
+    TerminalSize,
 };
 pub use crate::route::Route;
