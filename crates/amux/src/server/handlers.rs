@@ -927,9 +927,9 @@ async fn handle_direct(
             // This prevents stale or alternate paths from republishing the agent on
             // a route we no longer consider canonical, which would then cause the
             // real sender's later WithdrawAgent to be ignored as a link mismatch.
-            let host_ok = us.hosts.get(&host_id).is_some_and(|host| {
-                matches!(host.route.peek(), Some(link) if link == ctx.link_name)
-            });
+            let host_ok = us.hosts.get(&host_id).is_some_and(
+                |host| matches!(host.route.peek(), Some(link) if link == ctx.link_name),
+            );
             if !host_ok {
                 let reason = if us.hosts.contains_key(&host_id) {
                     "non-selected host route"
