@@ -38,6 +38,29 @@ One paragraph describing what was done.
 
 ---
 
+## 2026-04-07: Separate network topology from agent announcements
+
+### Summary
+Completed the separation of network topology (AnnounceHost/WithdrawHost) from application-level resource announcements (AnnounceAgent/WithdrawAgent). Removed `route` from `AnnounceAgent` — agents are now associated with hosts via `host_id`, and routes are derived from the host table at read time. Added `route` to `WithdrawHost` so receivers can match the withdrawal to the correct path and cascade cleanup. Added `Route::replace_prefix` for local host route normalization when a host is re-announced via a different path. Cloud servers now reject `CreateAgent` and `Resume` requests since they are stateless relays. Peer disconnect now computes root hosts and sends minimal `WithdrawHost` messages (one per root, not per descendant).
+
+### Changes
+- `crates/amux/src/message.rs` — Removed `route` from `AnnounceAgent`. Added `route` to `WithdrawHost`.
+- `crates/amux/src/route.rs` — Added `Route::replace_prefix` for in-place prefix substitution.
+- `crates/amux/src/agent_registry.rs` — `remove_for_link` and `remove_for_route_prefix` replaced with generic `remove_where(host_route, predicate)`. Added `StoredAgent::announce_message()`. Removed route validation from registration methods.
+- `crates/amux/src/server/handlers.rs` — `AnnounceAgent` validates host exists and is reachable via sender's link, but no longer threads route through the `Agent` struct. `AnnounceHost` rewrites descendant host routes locally when a parent's route changes. `WithdrawHost` cascades: removes agents, cancels streams, removes descendant hosts, and propagates. Cloud server rejects `CreateAgent` and `Resume`. Extensive new tests for announce/withdraw/rename/delete flows.
+- `crates/amux/src/server/routing.rs` — `handle_peer_disconnect` computes `disconnected_hosts` and `disconnected_host_roots` to send minimal withdrawal messages. Helper functions `descendant_host_ids`, `rewrite_descendant_host_routes`, `remove_descendant_hosts` for host subtree operations. New tests for root-only withdrawal and full cascade.
+
+### Decisions Made
+- `WithdrawHost` carries `route` so receivers can match the withdrawal to the correct stored path and avoid removing hosts learned via a different route
+- Descendant host route rewrites on `AnnounceHost` are local normalization only — not rebroadcast. Each hop applies the same normalization independently.
+- Peer disconnect sends `WithdrawHost` only for root hosts (shortest routes). Descendants are removed locally and cleaned up by each receiver when processing the root withdrawal.
+
+### Verification
+- `cargo check && cargo fmt && cargo clippy --workspace --all-targets -- -D warnings` — clean
+- `cargo test --workspace` — 278 tests pass
+
+---
+
 ## 2026-04-05: Structured I/O transport refactor — opaque JSON passthrough
 
 ### Summary

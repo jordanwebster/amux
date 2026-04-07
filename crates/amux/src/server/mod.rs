@@ -1036,7 +1036,10 @@ mod tests {
         .await;
 
         let us = user_state.read().await;
-        assert_eq!(us.registry.resolve("taken-name").unwrap().id, owner_id);
+        assert_eq!(
+            us.registry.resolve(&us.hosts, "taken-name").unwrap().id,
+            owner_id
+        );
         assert_eq!(us.registry.get(&candidate_id).unwrap().name, None);
         assert_eq!(
             us.agents

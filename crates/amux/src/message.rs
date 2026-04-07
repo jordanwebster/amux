@@ -250,7 +250,6 @@ pub enum DirectMessage {
         name: Option<String>,
         command: String,
         working_dir: PathBuf,
-        route: Route,
         agent_type: AgentType,
         readonly: bool,
         args: Vec<String>,
@@ -267,6 +266,7 @@ pub enum DirectMessage {
     },
     WithdrawHost {
         id: Uuid,
+        route: Route,
     },
 }
 

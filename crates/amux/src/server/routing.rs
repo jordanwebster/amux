@@ -72,7 +72,6 @@ pub(super) fn announce_agent_message(info: &Agent) -> DirectMessage {
         name: info.name.clone(),
         command: info.command.clone(),
         working_dir: info.working_dir.clone(),
-        route: info.route.clone(),
         agent_type: info.agent_type.clone(),
         readonly: info.readonly,
         args: info.args.clone(),
@@ -495,12 +494,18 @@ fn send_initial_agent_announcements(us: &ServerUserState, peer_link: &str) -> us
 
     let mut count = 0usize;
     for (uuid, info) in us.registry.iter_entries() {
-        if let Some(link) = info.route.peek()
-            && link == peer_link
-        {
-            continue;
+        if info.is_remote() {
+            let Some(host) = us.hosts.get(&info.host_id) else {
+                tracing::debug!(agent_id = %uuid, host_id = %info.host_id, "skipping remote announce for agent with unknown host");
+                continue;
+            };
+            if let Some(link) = host.route.peek()
+                && link == peer_link
+            {
+                continue;
+            }
         }
-        let msg = Message::Direct(announce_agent_message(info));
+        let msg = Message::Direct(info.announce_message());
         if tx.try_send(msg).is_err() {
             tracing::warn!(agent_id = %uuid, peer = %peer_link, "failed to announce agent");
         } else {
@@ -571,9 +576,38 @@ pub(super) fn send_initial_announcements(
     is_cloud_server: bool,
     peer_link: &str,
 ) {
-    let agents = send_initial_agent_announcements(us, peer_link);
     let hosts = send_initial_host_announcements(us, host_id, host_name, is_cloud_server, peer_link);
+    let agents = send_initial_agent_announcements(us, peer_link);
     tracing::info!(peer = %peer_link, agents, hosts, "sent initial announcements");
+}
+
+fn disconnected_hosts(us: &ServerUserState, link_name: &str) -> Vec<(Uuid, Route)> {
+    let prefix = Route::from_link(link_name);
+    let mut hosts: Vec<_> = us
+        .hosts
+        .iter()
+        .filter(|(_, info)| info.route.starts_with_route(&prefix))
+        .map(|(id, info)| (*id, info.route.clone()))
+        .collect();
+    hosts.sort_unstable_by(|(id_a, route_a), (id_b, route_b)| {
+        route_a
+            .to_string()
+            .cmp(&route_b.to_string())
+            .then_with(|| id_a.as_u128().cmp(&id_b.as_u128()))
+    });
+    hosts
+}
+
+fn disconnected_host_roots(hosts: &[(Uuid, Route)]) -> Vec<(Uuid, Route)> {
+    hosts
+        .iter()
+        .filter(|(_, route)| {
+            !hosts.iter().any(|(_, other_route)| {
+                route != other_route && route.starts_with_route(other_route)
+            })
+        })
+        .cloned()
+        .collect()
 }
 
 /// Handle a peer disconnecting: remove route, peer_links entry, remote agents,
@@ -594,22 +628,29 @@ pub(super) fn handle_peer_disconnect(us: &mut ServerUserState, link_name: &str) 
         tracing::info!(count = cancelled, peer = %link_name, "cancelled streams for disconnected peer");
     }
 
-    let removed_ids = us.registry.remove_for_link(link_name);
+    let prefix = Route::from_link(link_name);
+    let hosts = &us.hosts;
+    let removed_ids = us.registry.remove_where(
+        |hid| hosts.get(&hid).map(|h| h.route.clone()),
+        |r| r.starts_with_route(&prefix),
+    );
     if !removed_ids.is_empty() {
         tracing::info!(count = removed_ids.len(), peer = %link_name, "removed agents for disconnected peer");
     }
 
-    // Withdraw hosts learned from the dead link
-    let removed_host_ids: Vec<Uuid> = us
-        .hosts
-        .iter()
-        .filter(|(_, info)| matches!(info.route.peek(), Some(link) if link == link_name))
-        .map(|(id, _)| *id)
-        .collect();
-    for id in removed_host_ids {
+    // Propagate one withdrawal per disconnected root host. Descendants are local
+    // bookkeeping and are removed from each receiver's host table independently.
+    let removed_hosts = disconnected_hosts(us, link_name);
+    let withdrawn_roots = disconnected_host_roots(&removed_hosts);
+    if !removed_hosts.is_empty() {
+        tracing::info!(count = removed_hosts.len(), peer = %link_name, "removed hosts for disconnected peer");
+    }
+    for (id, _) in &removed_hosts {
+        us.hosts.remove(id);
+    }
+    for (id, route) in withdrawn_roots {
         tracing::info!(host_id = %id, peer = %link_name, "withdrawing host");
-        us.hosts.remove(&id);
-        broadcast_to_peers(us, &DirectMessage::WithdrawHost { id }, None);
+        broadcast_to_peers(us, &DirectMessage::WithdrawHost { id, route }, None);
     }
 }
 
@@ -647,13 +688,23 @@ mod tests {
         rx
     }
 
-    /// Register a remote agent reachable through the given link.
-    fn add_remote_agent(us: &mut ServerUserState, link: &str, name: Option<&str>) -> Uuid {
+    /// Register a remote agent and its host reachable through the given link.
+    fn add_remote_agent(us: &mut ServerUserState, link: &str, name: Option<&str>) -> (Uuid, Uuid) {
         let id = Uuid::new_v4();
+        let host_id = Uuid::new_v4();
+        us.hosts.insert(
+            host_id,
+            Host {
+                id: host_id,
+                name: format!("host-{host_id}"),
+                route: Route::from_link(link),
+                version: "0.1.0".to_string(),
+            },
+        );
         us.registry
             .register_remote(Agent {
                 id,
-                host_id: Uuid::new_v4(),
+                host_id,
                 name: name.map(String::from),
                 command: "test".to_string(),
                 working_dir: PathBuf::from("/tmp"),
@@ -664,7 +715,7 @@ mod tests {
                 created_at: Utc::now(),
             })
             .unwrap();
-        id
+        (id, host_id)
     }
 
     /// Add a host reachable through the given link.
@@ -816,8 +867,8 @@ mod tests {
         let mut us = ServerUserState::new();
         let _rx = add_peer(&mut us, "dead-peer");
 
-        let dead_agent = add_remote_agent(&mut us, "dead-peer", Some("doomed"));
-        let alive_agent = add_remote_agent(&mut us, "other-peer", Some("safe"));
+        let (dead_agent, _dead_host) = add_remote_agent(&mut us, "dead-peer", Some("doomed"));
+        let (alive_agent, _alive_host) = add_remote_agent(&mut us, "other-peer", Some("safe"));
 
         handle_peer_disconnect(&mut us, "dead-peer");
 
@@ -844,11 +895,87 @@ mod tests {
             .try_recv()
             .expect("alive-peer should receive WithdrawHost");
         match msg {
-            Message::Direct(DirectMessage::WithdrawHost { id }) => {
+            Message::Direct(DirectMessage::WithdrawHost { id, route }) => {
                 assert_eq!(id, dead_host);
+                assert_eq!(route, Route::from_link("dead-peer"));
             }
             other => panic!("expected WithdrawHost, got {:?}", other),
         }
+    }
+
+    #[test]
+    fn peer_disconnect_withdraws_only_root_hosts() {
+        let mut us = ServerUserState::new();
+        let _dead_rx = add_peer(&mut us, "dead-peer");
+        let mut alive_rx = add_peer(&mut us, "alive-peer");
+
+        let root_a = Uuid::new_v4();
+        let child_a = Uuid::new_v4();
+        let root_b = Uuid::new_v4();
+
+        let mut root_a_route = Route::from_link("a");
+        root_a_route.push("dead-peer");
+        let mut child_a_route = Route::from_link("child");
+        child_a_route.push("a");
+        child_a_route.push("dead-peer");
+        let mut root_b_route = Route::from_link("b");
+        root_b_route.push("dead-peer");
+
+        us.hosts.insert(
+            root_a,
+            Host {
+                id: root_a,
+                name: "root-a".to_string(),
+                route: root_a_route.clone(),
+                version: "0.1.0".to_string(),
+            },
+        );
+        us.hosts.insert(
+            child_a,
+            Host {
+                id: child_a,
+                name: "child-a".to_string(),
+                route: child_a_route,
+                version: "0.1.0".to_string(),
+            },
+        );
+        us.hosts.insert(
+            root_b,
+            Host {
+                id: root_b,
+                name: "root-b".to_string(),
+                route: root_b_route.clone(),
+                version: "0.1.0".to_string(),
+            },
+        );
+
+        handle_peer_disconnect(&mut us, "dead-peer");
+
+        assert!(!us.hosts.contains_key(&root_a));
+        assert!(!us.hosts.contains_key(&child_a));
+        assert!(!us.hosts.contains_key(&root_b));
+
+        let mut received = Vec::new();
+        while let Ok(msg) = alive_rx.try_recv() {
+            received.push(msg);
+        }
+        received.sort_unstable_by(|a, b| format!("{a:?}").cmp(&format!("{b:?}")));
+
+        assert_eq!(received.len(), 2);
+        assert!(received.iter().any(|msg| {
+            matches!(
+                msg,
+                Message::Direct(DirectMessage::WithdrawHost { id, route })
+                    if *id == root_a && *route == root_a_route
+            )
+        }));
+        assert!(received.iter().any(|msg| {
+            matches!(
+                msg,
+                Message::Direct(DirectMessage::WithdrawHost { id, route })
+                    if *id == root_b && *route == root_b_route
+            )
+        }));
     }
 
     #[test]
@@ -857,8 +984,7 @@ mod tests {
         let _dead_rx = add_peer(&mut us, "dead-peer");
         let mut alive_rx = add_peer(&mut us, "alive-peer");
 
-        let dead_agent = add_remote_agent(&mut us, "dead-peer", Some("remote-agent"));
-        let dead_host = add_host(&mut us, "dead-peer", "remote-host");
+        let (dead_agent, dead_host) = add_remote_agent(&mut us, "dead-peer", Some("remote-agent"));
         let mut cancel_rx = add_stream(
             &mut us,
             dead_agent,
@@ -866,8 +992,8 @@ mod tests {
             Route::from_link("somewhere"),
         );
 
-        let alive_agent = add_remote_agent(&mut us, "alive-peer", Some("local-agent"));
-        let alive_host = add_host(&mut us, "alive-peer", "local-host");
+        let (alive_agent, alive_host) =
+            add_remote_agent(&mut us, "alive-peer", Some("local-agent"));
 
         handle_peer_disconnect(&mut us, "dead-peer");
 
@@ -890,7 +1016,7 @@ mod tests {
             .try_recv()
             .expect("alive-peer should receive WithdrawHost");
         assert!(
-            matches!(msg, Message::Direct(DirectMessage::WithdrawHost { id }) if id == dead_host)
+            matches!(msg, Message::Direct(DirectMessage::WithdrawHost { id, route }) if id == dead_host && route == Route::from_link("dead-peer"))
         );
     }
 
@@ -938,9 +1064,10 @@ mod tests {
         let mut rx = add_peer(&mut us, "peer-a");
 
         // Agent learned from peer-a (should NOT be re-announced to peer-a)
-        let _echo_id = add_remote_agent(&mut us, "peer-a", Some("echo-agent"));
+        let (_echo_id, _echo_host) = add_remote_agent(&mut us, "peer-a", Some("echo-agent"));
         // Agent learned from peer-b (SHOULD be announced to peer-a)
-        let forwarded_id = add_remote_agent(&mut us, "peer-b", Some("forward-agent"));
+        let (forwarded_id, _forwarded_host) =
+            add_remote_agent(&mut us, "peer-b", Some("forward-agent"));
 
         let count = send_initial_agent_announcements(&us, "peer-a");
 

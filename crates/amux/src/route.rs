@@ -90,6 +90,23 @@ impl Route {
             .all(|(a, b)| a == b)
     }
 
+    /// Replace a matching route prefix in-place, preserving the remaining suffix.
+    ///
+    /// Returns false when `old_prefix` does not match the start of this route.
+    pub fn replace_prefix(&mut self, old_prefix: &Route, new_prefix: &Route) -> bool {
+        if !self.starts_with_route(old_prefix) {
+            return false;
+        }
+
+        self.links = new_prefix
+            .links
+            .iter()
+            .cloned()
+            .chain(self.links.iter().skip(old_prefix.links.len()).cloned())
+            .collect();
+        true
+    }
+
     /// Prepare to send a message toward a destination. Pops the next hop from dst
     /// and creates a single-link src from it. Returns (src, dst) ready for the message.
     ///
@@ -394,5 +411,32 @@ mod tests {
         let mut prefix = Route::from_link("CD");
         prefix.push("AB");
         assert!(!route.starts_with_route(&prefix));
+    }
+
+    #[test]
+    fn test_replace_prefix() {
+        let mut route = Route::from_link("CD");
+        route.push("BC");
+        route.push("AB");
+
+        let mut old_prefix = Route::from_link("BC");
+        old_prefix.push("AB");
+        let new_prefix = Route::from_link("XY");
+
+        assert!(route.replace_prefix(&old_prefix, &new_prefix));
+        assert_eq!(route.to_string(), "XY.CD");
+    }
+
+    #[test]
+    fn test_replace_prefix_no_match() {
+        let mut route = Route::from_link("CD");
+        route.push("BC");
+        route.push("AB");
+
+        let old_prefix = Route::from_link("ZZ");
+        let new_prefix = Route::from_link("XY");
+
+        assert!(!route.replace_prefix(&old_prefix, &new_prefix));
+        assert_eq!(route.to_string(), "AB.BC.CD");
     }
 }

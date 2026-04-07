@@ -18,7 +18,7 @@ use crate::buffer::{BroadcastReader, BufferPolicy};
 use crate::claude::types::{ClaudeHook, Hook};
 use crate::error::{AmuxError, Result};
 use crate::message::{
-    AgentType, Command, DirectMessage, Message, ProtocolError, RoutableMessage, ServerDebugInfo,
+    Command, DirectMessage, Message, ProtocolError, RoutableMessage, ServerDebugInfo,
 };
 use crate::route::Route;
 use crate::state::State;
@@ -111,6 +111,56 @@ async fn spawn_subscription_stream<R: SubscriptionReader>(
         }
         .instrument(stream_span),
     );
+}
+
+fn descendant_host_ids(
+    us: &super::ServerUserState,
+    root_host_id: uuid::Uuid,
+    route_prefix: &Route,
+) -> Vec<uuid::Uuid> {
+    let mut ids: Vec<_> = us
+        .hosts
+        .iter()
+        .filter(|(id, host)| **id != root_host_id && host.route.starts_with_route(route_prefix))
+        .map(|(id, _)| *id)
+        .collect();
+    ids.sort_unstable_by_key(|id| id.as_u128());
+    ids
+}
+
+fn rewrite_descendant_host_routes(
+    us: &mut super::ServerUserState,
+    root_host_id: uuid::Uuid,
+    old_route: &Route,
+    new_route: &Route,
+) -> usize {
+    if old_route == new_route {
+        return 0;
+    }
+
+    descendant_host_ids(us, root_host_id, old_route)
+        .into_iter()
+        .map(|id| {
+            let host = us
+                .hosts
+                .get_mut(&id)
+                .expect("descendant host should still exist while rewriting routes");
+            let replaced = host.route.replace_prefix(old_route, new_route);
+            debug_assert!(replaced, "descendant route should still match old prefix");
+            1usize
+        })
+        .sum()
+}
+
+fn remove_descendant_hosts(
+    us: &mut super::ServerUserState,
+    root_host_id: uuid::Uuid,
+    route_prefix: &Route,
+) -> usize {
+    descendant_host_ids(us, root_host_id, route_prefix)
+        .into_iter()
+        .filter(|id| us.hosts.remove(id).is_some())
+        .count()
 }
 
 pub(super) async fn handle_message(
@@ -366,12 +416,17 @@ async fn handle_routable(
                 return Ok(());
             };
             let agent_id = req.agent_id;
-            let host_id = {
+            let (host_id, is_cloud_server) = {
                 let state = ctx.state.read().await;
-                state.host_id
+                (state.host_id, state.is_cloud_server)
             };
-            let result =
-                create_agent(&ctx.user_state, &ctx.event_tx, req, ctx.user_id, host_id).await;
+            let result = if is_cloud_server {
+                Err(AmuxError::ServerError(
+                    "cloud relays do not host local agents".to_string(),
+                ))
+            } else {
+                create_agent(&ctx.user_state, &ctx.event_tx, req, ctx.user_id, host_id).await
+            };
             let response_message = match result {
                 Ok(()) => RoutableMessage::CreateAgentResult {
                     agent_id,
@@ -593,7 +648,7 @@ async fn handle_command(
         Command::ListAgents => {
             let agents = {
                 let us = ctx.user_state.read().await;
-                us.registry.list_all()
+                us.registry.list_all(&us.hosts)
             };
             let _ = tx
                 .send(Message::Command(Command::ListAgentsResult {
@@ -696,7 +751,7 @@ async fn handle_command(
 
         Command::ResolveAgent { identifier } => {
             let us = ctx.user_state.read().await;
-            let agent = us.registry.resolve(&identifier);
+            let agent = us.registry.resolve(&us.hosts, &identifier);
             let _ = tx
                 .send(Message::Command(Command::ResolveAgentResult { agent }))
                 .await;
@@ -720,10 +775,26 @@ async fn handle_command(
 
         Command::Resume => {
             tracing::info!("resume requested");
-            let (state_path, host_id) = {
+            let (state_path, host_id, is_cloud_server) = {
                 let state = ctx.state.read().await;
-                (state.config.state_path.clone(), state.host_id)
+                (
+                    state.config.state_path.clone(),
+                    state.host_id,
+                    state.is_cloud_server,
+                )
             };
+            if is_cloud_server {
+                let _ = tx
+                    .send(Message::Command(Command::ResumeResult {
+                        resumed_count: 0,
+                        failed_count: 0,
+                        error: Some(ProtocolError::ServerError(
+                            "cloud relays do not host local agents".to_string(),
+                        )),
+                    }))
+                    .await;
+                return Ok(());
+            }
             let suspended = match crate::state::load_and_remove_suspended(&state_path) {
                 Ok(s) => s,
                 Err(e) => {
@@ -839,7 +910,6 @@ async fn handle_direct(
             name,
             command,
             working_dir,
-            route: received_route,
             agent_type,
             readonly,
             args,
@@ -853,10 +923,22 @@ async fn handle_direct(
                 return Ok(());
             }
 
-            // AnnounceAgent doubles as a metadata refresh for an already-known UUID.
-            // Compute our route: prepend the link this came from
-            let mut our_route = received_route.clone();
-            our_route.push(&ctx.link_name);
+            // Only accept agent metadata from the selected next hop for this host.
+            // This prevents stale or alternate paths from republishing the agent on
+            // a route we no longer consider canonical, which would then cause the
+            // real sender's later WithdrawAgent to be ignored as a link mismatch.
+            let host_ok = us.hosts.get(&host_id).is_some_and(|host| {
+                matches!(host.route.peek(), Some(link) if link == ctx.link_name)
+            });
+            if !host_ok {
+                let reason = if us.hosts.contains_key(&host_id) {
+                    "non-selected host route"
+                } else {
+                    "unknown host"
+                };
+                tracing::warn!(agent_id = %agent_id, host_id = %host_id, peer = %ctx.link_name, "ignoring remote agent announcement: {reason}");
+                return Ok(());
+            }
 
             let info = Agent {
                 id: agent_id,
@@ -864,7 +946,7 @@ async fn handle_direct(
                 name: name.clone(),
                 command: command.clone(),
                 working_dir: working_dir.clone(),
-                route: our_route.clone(),
+                route: Route::empty(),
                 agent_type: agent_type.clone(),
                 readonly,
                 args: args.clone(),
@@ -889,10 +971,12 @@ async fn handle_direct(
             let mut us = ctx.user_state.write().await;
 
             // Only remove if the stored link matches the sender
-            let should_remove = us
-                .registry
-                .get(&agent_id)
-                .is_some_and(|e| matches!(&e.route.peek(), Some(link) if link == &ctx.link_name));
+            let should_remove = us.registry.get(&agent_id).is_some_and(|e| {
+                e.is_remote()
+                    && us.hosts.get(&e.host_id).is_some_and(
+                        |host| matches!(host.route.peek(), Some(link) if link == ctx.link_name),
+                    )
+            });
 
             if should_remove {
                 us.registry.remove(&agent_id);
@@ -929,6 +1013,7 @@ async fn handle_direct(
             }
 
             let mut us = ctx.user_state.write().await;
+            let old_route = us.hosts.get(&id).map(|host| host.route.clone());
 
             let mut our_route = received_route;
             our_route.push(&ctx.link_name);
@@ -941,7 +1026,30 @@ async fn handle_direct(
             };
 
             us.hosts.insert(id, info);
-            tracing::info!(host_id = %id, name = %name, "stored remote host");
+
+            // Keep descendant host routes aligned with the selected route for this host.
+            // This is local normalization, not a new topology fact. For example, if we
+            // previously knew `H` via `old-link` and a child host `C` via
+            // `old-link.child`, then learning a new route `H = test-link` does not
+            // prove `old-link.child` stopped working. Direct disconnects and explicit
+            // withdrawals already clean up dead paths.
+            //
+            // We still rewrite the subtree locally so the in-memory topology is easier
+            // to reason about: once we pick `H = test-link`, its descendants read as
+            // `test-link.child`, `test-link.child.grand`, etc. We do not rebroadcast
+            // those descendant rewrites; the parent `AnnounceHost` already follows the
+            // topology, and each receiving hop can apply the same local normalization.
+            let rewritten_descendants = old_route
+                .as_ref()
+                .map(|old_route| rewrite_descendant_host_routes(&mut us, id, old_route, &our_route))
+                .unwrap_or(0);
+
+            tracing::info!(
+                host_id = %id,
+                name = %name,
+                rewritten_descendants,
+                "stored remote host"
+            );
 
             broadcast_to_peers(
                 &mut us,
@@ -957,41 +1065,65 @@ async fn handle_direct(
             Ok(())
         }
 
-        DirectMessage::WithdrawHost { id } => {
+        DirectMessage::WithdrawHost {
+            id,
+            route: received_route,
+        } => {
             let mut us = ctx.user_state.write().await;
 
-            let should_remove = us
+            let mut withdrawn_route = received_route;
+            withdrawn_route.push(&ctx.link_name);
+
+            let root_matches = us
                 .hosts
                 .get(&id)
-                .is_some_and(|h| matches!(h.route.peek(), Some(link) if link == ctx.link_name));
+                .is_some_and(|h| h.route == withdrawn_route);
+            tracing::info!(host_id = %id, root_matches, "received withdraw host");
 
-            if should_remove {
-                let host_route = us.hosts.get(&id).map(|h| h.route.clone());
+            let super::ServerUserState {
+                ref hosts,
+                ref mut registry,
+                ..
+            } = *us;
+            let removed = registry.remove_where(
+                |hid| hosts.get(&hid).map(|h| h.route.clone()),
+                |r| r.starts_with_route(&withdrawn_route),
+            );
+            if !removed.is_empty() {
+                tracing::info!(count = removed.len(), host_id = %id, "removed agents for withdrawn host");
+            }
+
+            let cancelled = cancel_streams_matching(&mut us, |entry| {
+                entry.dst.starts_with_route(&withdrawn_route)
+            });
+            if cancelled > 0 {
+                tracing::info!(count = cancelled, host_id = %id, "cancelled streams for withdrawn host");
+            }
+
+            let removed_descendants = remove_descendant_hosts(&mut us, id, &withdrawn_route);
+            if removed_descendants > 0 {
+                tracing::info!(
+                    count = removed_descendants,
+                    host_id = %id,
+                    "removed descendant hosts for withdrawn host"
+                );
+            }
+
+            if root_matches {
                 us.hosts.remove(&id);
                 tracing::info!(host_id = %id, "withdrew remote host");
-
-                if let Some(ref host_route) = host_route {
-                    let removed = us.registry.remove_for_route_prefix(host_route);
-                    if !removed.is_empty() {
-                        tracing::info!(count = removed.len(), host_id = %id, "removed agents for withdrawn host");
-                    }
-
-                    let cancelled = cancel_streams_matching(&mut us, |entry| {
-                        entry.dst.starts_with_route(host_route)
-                    });
-                    if cancelled > 0 {
-                        tracing::info!(count = cancelled, host_id = %id, "cancelled streams for withdrawn host");
-                    }
-                }
-
-                broadcast_to_peers(
-                    &mut us,
-                    &DirectMessage::WithdrawHost { id },
-                    Some(&ctx.link_name),
-                );
             } else {
-                tracing::debug!(host_id = %id, "ignoring withdraw host (link mismatch)");
+                tracing::debug!(host_id = %id, "propagating withdraw host without matching local root");
             }
+
+            broadcast_to_peers(
+                &mut us,
+                &DirectMessage::WithdrawHost {
+                    id,
+                    route: withdrawn_route,
+                },
+                Some(&ctx.link_name),
+            );
 
             Ok(())
         }
@@ -1025,7 +1157,7 @@ mod tests {
         BashToolInput, ClaudePermissionRequest, ClaudePermissionTool, ClaudeSessionEnd,
         ClaudeSessionStart, ClaudeStop,
     };
-    use crate::message::{CreateAgentRequest, RenameAgentRequest};
+    use crate::message::{AgentType, CreateAgentRequest, RenameAgentRequest};
     use crate::route::Route;
     use crate::server::test_helpers::{test_ctx, test_state};
     use crate::server::{LOCAL_USER_ID, ServerUserState};
@@ -1092,6 +1224,19 @@ mod tests {
         rx
     }
 
+    async fn insert_remote_agent(user_state: &Arc<RwLock<ServerUserState>>, info: Agent) {
+        let mut us = user_state.write().await;
+        us.hosts
+            .entry(info.host_id)
+            .or_insert_with(|| crate::message::Host {
+                id: info.host_id,
+                name: format!("host-{}", info.host_id),
+                route: info.route.clone(),
+                version: "0.1.0".to_string(),
+            });
+        us.registry.register_remote(info).unwrap();
+    }
+
     async fn insert_local_claude(
         user_state: &Arc<RwLock<ServerUserState>>,
         agent_id: Uuid,
@@ -1120,6 +1265,17 @@ mod tests {
             panic!("expected Routable, got {:?}", msg);
         };
         RoutableMessage::decode(payload).unwrap()
+    }
+
+    fn drain_direct_messages(rx: &mut mpsc::Receiver<Message>) -> Vec<DirectMessage> {
+        let mut messages = Vec::new();
+        while let Ok(msg) = rx.try_recv() {
+            let Message::Direct(msg) = msg else {
+                panic!("expected Direct message, got {:?}", msg);
+            };
+            messages.push(msg);
+        }
+        messages
     }
 
     #[tokio::test]
@@ -1207,13 +1363,24 @@ mod tests {
 
         let agent_id = Uuid::new_v4();
         let remote_host_id = Uuid::new_v4();
+        {
+            let mut us = user_state.write().await;
+            us.hosts.insert(
+                remote_host_id,
+                crate::message::Host {
+                    id: remote_host_id,
+                    name: "remote-host".to_string(),
+                    route: Route::from_link("test-link"),
+                    version: "0.1.0".to_string(),
+                },
+            );
+        }
         let msg = DirectMessage::AnnounceAgent {
             agent_id,
             host_id: remote_host_id,
             name: Some("remote-test".to_string()),
             command: "claude".to_string(),
             working_dir: PathBuf::from("/tmp"),
-            route: Route::empty(),
             agent_type: claude_agent_type(),
             readonly: false,
             args: vec!["--dangerously-skip-permissions".to_string()],
@@ -1229,25 +1396,39 @@ mod tests {
         assert_eq!(entry.name, Some("remote-test".to_string()));
         assert_eq!(entry.args, vec!["--dangerously-skip-permissions"]);
         assert!(entry.is_remote());
-        let mut route = entry.route.clone();
+        let mut route = us.registry.materialize(&us.hosts, &agent_id).unwrap().route;
         assert_eq!(route.pop(), Some("test-link".to_string()));
         assert_eq!(route.pop(), None);
     }
 
     #[tokio::test]
-    async fn announce_agent_with_route_prepends_link() {
+    async fn announce_agent_uses_current_host_route() {
         let (state, user_state) = test_state().await;
         let ctx = test_ctx(state, user_state.clone());
         let (tx, _written) = mock_tx();
 
         let agent_id = Uuid::new_v4();
+        let host_id = Uuid::new_v4();
+        {
+            let mut us = user_state.write().await;
+            let mut route = Route::from_link("host-a");
+            route.push("test-link");
+            us.hosts.insert(
+                host_id,
+                crate::message::Host {
+                    id: host_id,
+                    name: "remote-host".to_string(),
+                    route,
+                    version: "0.1.0".to_string(),
+                },
+            );
+        }
         let msg = DirectMessage::AnnounceAgent {
             agent_id,
-            host_id: Uuid::new_v4(),
+            host_id,
             name: None,
             command: "bash".to_string(),
             working_dir: PathBuf::from("/home"),
-            route: Route::from_link("host-a"),
             agent_type: claude_agent_type(),
             readonly: false,
             args: vec![],
@@ -1259,11 +1440,110 @@ mod tests {
         let us = user_state.read().await;
         let entry = us.registry.get(&agent_id).unwrap();
         assert!(entry.is_remote());
-        let mut route = entry.route.clone();
-        // Should be test-link.host-a (test-link prepended)
+        let mut route = us.registry.materialize(&us.hosts, &agent_id).unwrap().route;
         assert_eq!(route.pop(), Some("test-link".to_string()));
         assert_eq!(route.pop(), Some("host-a".to_string()));
         assert_eq!(route.pop(), None);
+    }
+
+    #[tokio::test]
+    async fn announce_agent_ignores_non_selected_host_route() {
+        let (state, user_state) = test_state().await;
+        let ctx = test_ctx(state, user_state.clone());
+        let (tx, _written) = mock_tx();
+
+        let agent_id = Uuid::new_v4();
+        let host_id = Uuid::new_v4();
+        {
+            let mut us = user_state.write().await;
+            us.hosts.insert(
+                host_id,
+                crate::message::Host {
+                    id: host_id,
+                    name: "remote-host".to_string(),
+                    route: Route::from_link("other-link"),
+                    version: "0.1.0".to_string(),
+                },
+            );
+        }
+
+        let msg = DirectMessage::AnnounceAgent {
+            agent_id,
+            host_id,
+            name: Some("remote-test".to_string()),
+            command: "claude".to_string(),
+            working_dir: PathBuf::from("/tmp"),
+            agent_type: claude_agent_type(),
+            readonly: false,
+            args: vec![],
+            created_at: Utc::now(),
+        };
+
+        handle_direct(&tx, msg, &ctx).await.unwrap();
+
+        let us = user_state.read().await;
+        assert!(
+            !us.registry.contains(&agent_id),
+            "non-selected sender should not be able to publish the agent"
+        );
+    }
+
+    #[tokio::test]
+    async fn announce_agent_non_selected_route_does_not_overwrite_existing_entry() {
+        let (state, user_state) = test_state().await;
+        let ctx = test_ctx(state, user_state.clone());
+        let (tx, _written) = mock_tx();
+
+        let agent_id = Uuid::new_v4();
+        let host_id = Uuid::new_v4();
+        {
+            let mut us = user_state.write().await;
+            us.hosts.insert(
+                host_id,
+                crate::message::Host {
+                    id: host_id,
+                    name: "remote-host".to_string(),
+                    route: Route::from_link("other-link"),
+                    version: "0.1.0".to_string(),
+                },
+            );
+        }
+        insert_remote_agent(
+            &user_state,
+            Agent {
+                id: agent_id,
+                host_id,
+                name: Some("selected-name".to_string()),
+                command: "claude".to_string(),
+                working_dir: PathBuf::from("/tmp"),
+                route: Route::from_link("other-link"),
+                agent_type: claude_agent_type(),
+                readonly: false,
+                args: vec![],
+                created_at: Utc::now(),
+            },
+        )
+        .await;
+
+        let msg = DirectMessage::AnnounceAgent {
+            agent_id,
+            host_id,
+            name: Some("stale-name".to_string()),
+            command: "bash".to_string(),
+            working_dir: PathBuf::from("/stale"),
+            agent_type: claude_agent_type(),
+            readonly: false,
+            args: vec!["--stale".to_string()],
+            created_at: Utc::now(),
+        };
+
+        handle_direct(&tx, msg, &ctx).await.unwrap();
+
+        let us = user_state.read().await;
+        let entry = us.registry.get(&agent_id).unwrap();
+        assert_eq!(entry.name.as_deref(), Some("selected-name"));
+        assert_eq!(entry.command, "claude");
+        assert!(entry.args.is_empty());
     }
 
     #[tokio::test]
@@ -1298,7 +1578,6 @@ mod tests {
             name: Some("remote".to_string()),
             command: "claude".to_string(),
             working_dir: PathBuf::from("/remote"),
-            route: Route::empty(),
             agent_type: claude_agent_type(),
             readonly: false,
             args: vec![],
@@ -1318,23 +1597,22 @@ mod tests {
         let (state, user_state) = test_state().await;
 
         let agent_id = Uuid::new_v4();
-        {
-            let mut us = user_state.write().await;
-            us.registry
-                .register_remote(Agent {
-                    id: agent_id,
-                    host_id: Uuid::new_v4(),
-                    name: None,
-                    command: "bash".to_string(),
-                    working_dir: PathBuf::from("/tmp"),
-                    route: Route::from_link("test-link"),
-                    agent_type: claude_agent_type(),
-                    readonly: false,
-                    args: vec![],
-                    created_at: Utc::now(),
-                })
-                .unwrap();
-        }
+        insert_remote_agent(
+            &user_state,
+            Agent {
+                id: agent_id,
+                host_id: Uuid::new_v4(),
+                name: None,
+                command: "bash".to_string(),
+                working_dir: PathBuf::from("/tmp"),
+                route: Route::from_link("test-link"),
+                agent_type: claude_agent_type(),
+                readonly: false,
+                args: vec![],
+                created_at: Utc::now(),
+            },
+        )
+        .await;
 
         let ctx = test_ctx(state, user_state.clone());
         let (tx, _written) = mock_tx();
@@ -1351,23 +1629,22 @@ mod tests {
         let (state, user_state) = test_state().await;
 
         let agent_id = Uuid::new_v4();
-        {
-            let mut us = user_state.write().await;
-            us.registry
-                .register_remote(Agent {
-                    id: agent_id,
-                    host_id: Uuid::new_v4(),
-                    name: None,
-                    command: "bash".to_string(),
-                    working_dir: PathBuf::from("/tmp"),
-                    route: Route::from_link("other-link"),
-                    agent_type: claude_agent_type(),
-                    readonly: false,
-                    args: vec![],
-                    created_at: Utc::now(),
-                })
-                .unwrap();
-        }
+        insert_remote_agent(
+            &user_state,
+            Agent {
+                id: agent_id,
+                host_id: Uuid::new_v4(),
+                name: None,
+                command: "bash".to_string(),
+                working_dir: PathBuf::from("/tmp"),
+                route: Route::from_link("other-link"),
+                agent_type: claude_agent_type(),
+                readonly: false,
+                args: vec![],
+                created_at: Utc::now(),
+            },
+        )
+        .await;
 
         let ctx = test_ctx(state, user_state.clone());
         let (tx, _written) = mock_tx();
@@ -1389,15 +1666,37 @@ mod tests {
         let mut peer_rx = add_peer_link(&user_state, "peer-a").await;
 
         let agent_id = Uuid::new_v4();
+        let first_host_id = Uuid::new_v4();
+        let second_host_id = Uuid::new_v4();
+        {
+            let mut us = user_state.write().await;
+            us.hosts.insert(
+                first_host_id,
+                crate::message::Host {
+                    id: first_host_id,
+                    name: "first-host".to_string(),
+                    route: Route::from_link("test-link"),
+                    version: "0.1.0".to_string(),
+                },
+            );
+            us.hosts.insert(
+                second_host_id,
+                crate::message::Host {
+                    id: second_host_id,
+                    name: "second-host".to_string(),
+                    route: Route::from_link("test-link"),
+                    version: "0.1.0".to_string(),
+                },
+            );
+        }
 
         // First announce
         let msg = DirectMessage::AnnounceAgent {
             agent_id,
-            host_id: Uuid::new_v4(),
+            host_id: first_host_id,
             name: Some("first".to_string()),
             command: "bash".to_string(),
             working_dir: PathBuf::from("/first"),
-            route: Route::empty(),
             agent_type: claude_agent_type(),
             readonly: false,
             args: vec!["--dangerously-skip-permissions".to_string()],
@@ -1408,11 +1707,10 @@ mod tests {
         // Second announce with same agent_id
         let msg = DirectMessage::AnnounceAgent {
             agent_id,
-            host_id: Uuid::new_v4(),
+            host_id: second_host_id,
             name: Some("second".to_string()),
             command: "claude".to_string(),
             working_dir: PathBuf::from("/second"),
-            route: Route::empty(),
             agent_type: claude_agent_type(),
             readonly: false,
             args: vec!["--allow-dangerously-skip-permissions".to_string()],
@@ -1620,7 +1918,10 @@ mod tests {
         drop(msgs);
 
         let us = user_state.read().await;
-        assert_eq!(us.registry.resolve("taken-name").unwrap().id, owner_id);
+        assert_eq!(
+            us.registry.resolve(&us.hosts, "taken-name").unwrap().id,
+            owner_id
+        );
         assert_eq!(us.registry.get(&candidate_id).unwrap().name, None);
         drop(us);
 
@@ -1692,23 +1993,22 @@ mod tests {
         let mut peer_rx = add_peer_link(&user_state, "peer-a").await;
 
         let agent_id = Uuid::new_v4();
-        {
-            let mut us = user_state.write().await;
-            us.registry
-                .register_remote(Agent {
-                    id: agent_id,
-                    host_id: Uuid::new_v4(),
-                    name: Some("remote-agent".to_string()),
-                    command: "claude".to_string(),
-                    working_dir: PathBuf::from("/tmp"),
-                    route: Route::from_link("upstream"),
-                    agent_type: claude_agent_type(),
-                    readonly: false,
-                    args: vec![],
-                    created_at: Utc::now(),
-                })
-                .unwrap();
-        }
+        insert_remote_agent(
+            &user_state,
+            Agent {
+                id: agent_id,
+                host_id: Uuid::new_v4(),
+                name: Some("remote-agent".to_string()),
+                command: "claude".to_string(),
+                working_dir: PathBuf::from("/tmp"),
+                route: Route::from_link("upstream"),
+                agent_type: claude_agent_type(),
+                readonly: false,
+                args: vec![],
+                created_at: Utc::now(),
+            },
+        )
+        .await;
 
         let msg = Message::routable(
             Route::from_link("client"),
@@ -1746,23 +2046,22 @@ mod tests {
         let (state, user_state) = test_state().await;
 
         let agent_id = Uuid::new_v4();
-        {
-            let mut us = user_state.write().await;
-            us.registry
-                .register_remote(Agent {
-                    id: agent_id,
-                    host_id: Uuid::new_v4(),
-                    name: Some("my-agent".to_string()),
-                    command: "claude".to_string(),
-                    working_dir: PathBuf::from("/tmp"),
-                    route: Route::from_link("peer-a"),
-                    agent_type: claude_agent_type(),
-                    readonly: false,
-                    args: vec![],
-                    created_at: Utc::now(),
-                })
-                .unwrap();
-        }
+        insert_remote_agent(
+            &user_state,
+            Agent {
+                id: agent_id,
+                host_id: Uuid::new_v4(),
+                name: Some("my-agent".to_string()),
+                command: "claude".to_string(),
+                working_dir: PathBuf::from("/tmp"),
+                route: Route::from_link("peer-a"),
+                agent_type: claude_agent_type(),
+                readonly: false,
+                args: vec![],
+                created_at: Utc::now(),
+            },
+        )
+        .await;
 
         let ctx = test_ctx(state, user_state);
         let (tx, written) = mock_tx();
@@ -1857,6 +2156,114 @@ mod tests {
     }
 
     #[tokio::test]
+    async fn announce_host_rewrites_descendant_prefixes_but_only_rebroadcasts_parent() {
+        let (state, user_state) = test_state().await;
+        let ctx = test_ctx(state, user_state.clone());
+        let (tx, _written) = mock_tx();
+        let mut peer_rx = add_peer_link(&user_state, "peer-b").await;
+
+        let host_id = Uuid::new_v4();
+        let child_host_id = Uuid::new_v4();
+        let grandchild_host_id = Uuid::new_v4();
+        let agent_id = Uuid::new_v4();
+
+        let mut child_route = Route::from_link("child");
+        child_route.push("old-link");
+        let mut grandchild_route = Route::from_link("grand");
+        grandchild_route.push("child");
+        grandchild_route.push("old-link");
+
+        {
+            let mut us = user_state.write().await;
+            us.hosts.insert(
+                host_id,
+                crate::message::Host {
+                    id: host_id,
+                    name: "remote-parent".to_string(),
+                    route: Route::from_link("old-link"),
+                    version: "0.1.0".to_string(),
+                },
+            );
+            us.hosts.insert(
+                child_host_id,
+                crate::message::Host {
+                    id: child_host_id,
+                    name: "remote-child".to_string(),
+                    route: child_route.clone(),
+                    version: "0.1.0".to_string(),
+                },
+            );
+            us.hosts.insert(
+                grandchild_host_id,
+                crate::message::Host {
+                    id: grandchild_host_id,
+                    name: "remote-grandchild".to_string(),
+                    route: grandchild_route,
+                    version: "0.1.0".to_string(),
+                },
+            );
+        }
+
+        insert_remote_agent(
+            &user_state,
+            Agent {
+                id: agent_id,
+                host_id: child_host_id,
+                name: Some("remote-agent".to_string()),
+                command: "claude".to_string(),
+                working_dir: PathBuf::from("/tmp"),
+                route: child_route,
+                agent_type: claude_agent_type(),
+                readonly: false,
+                args: vec![],
+                created_at: Utc::now(),
+            },
+        )
+        .await;
+
+        let msg = DirectMessage::AnnounceHost {
+            id: host_id,
+            name: "remote-parent".to_string(),
+            route: Route::empty(),
+            version: "0.2.0".to_string(),
+        };
+
+        handle_direct(&tx, msg, &ctx).await.unwrap();
+
+        let us = user_state.read().await;
+        assert_eq!(us.hosts[&host_id].route.to_string(), "test-link");
+        assert_eq!(
+            us.hosts[&child_host_id].route.to_string(),
+            "test-link.child"
+        );
+        assert_eq!(
+            us.hosts[&grandchild_host_id].route.to_string(),
+            "test-link.child.grand"
+        );
+        assert_eq!(
+            us.registry
+                .materialize(&us.hosts, &agent_id)
+                .unwrap()
+                .route
+                .to_string(),
+            "test-link.child"
+        );
+        drop(us);
+
+        let mut announced_hosts: Vec<_> = drain_direct_messages(&mut peer_rx)
+            .into_iter()
+            .map(|msg| match msg {
+                DirectMessage::AnnounceHost { id, route, .. } => (id, route.to_string()),
+                other => panic!("expected AnnounceHost, got {:?}", other),
+            })
+            .collect();
+        announced_hosts.sort_unstable_by_key(|(id, _)| id.as_u128());
+        let expected_hosts = vec![(host_id, "test-link".to_string())];
+
+        assert_eq!(announced_hosts, expected_hosts);
+    }
+
+    #[tokio::test]
     async fn announce_host_skips_own_host_id() {
         let (state, user_state) = test_state().await;
 
@@ -1902,7 +2309,10 @@ mod tests {
         let ctx = test_ctx(state, user_state.clone());
         let (tx, _written) = mock_tx();
 
-        let msg = DirectMessage::WithdrawHost { id: host_id };
+        let msg = DirectMessage::WithdrawHost {
+            id: host_id,
+            route: Route::empty(),
+        };
         handle_direct(&tx, msg, &ctx).await.unwrap();
 
         let us = user_state.read().await;
@@ -1910,10 +2320,15 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn withdraw_host_ignores_link_mismatch() {
+    async fn withdraw_host_route_mismatch_preserves_root_but_cleans_stale_descendants() {
         let (state, user_state) = test_state().await;
+        let mut peer_rx = add_peer_link(&user_state, "peer-b").await;
 
         let host_id = Uuid::new_v4();
+        let child_host_id = Uuid::new_v4();
+        let agent_id = Uuid::new_v4();
+        let mut child_route = Route::from_link("child");
+        child_route.push("test-link");
         {
             let mut us = user_state.write().await;
             us.hosts.insert(
@@ -1925,18 +2340,118 @@ mod tests {
                     version: "0.1.0".to_string(),
                 },
             );
+            us.hosts.insert(
+                child_host_id,
+                crate::message::Host {
+                    id: child_host_id,
+                    name: "stale-child".to_string(),
+                    route: child_route.clone(),
+                    version: "0.1.0".to_string(),
+                },
+            );
         }
+        insert_remote_agent(
+            &user_state,
+            Agent {
+                id: agent_id,
+                host_id: child_host_id,
+                name: Some("stale-agent".to_string()),
+                command: "claude".to_string(),
+                working_dir: PathBuf::from("/tmp"),
+                route: child_route,
+                agent_type: claude_agent_type(),
+                readonly: false,
+                args: vec![],
+                created_at: Utc::now(),
+            },
+        )
+        .await;
 
         let ctx = test_ctx(state, user_state.clone());
         let (tx, _written) = mock_tx();
 
-        // Withdraw from "test-link" but host is stored from "other-link"
-        let msg = DirectMessage::WithdrawHost { id: host_id };
+        let msg = DirectMessage::WithdrawHost {
+            id: host_id,
+            route: Route::empty(),
+        };
         handle_direct(&tx, msg, &ctx).await.unwrap();
 
-        // Should still be there (link mismatch)
         let us = user_state.read().await;
         assert!(us.hosts.contains_key(&host_id));
+        assert!(!us.hosts.contains_key(&child_host_id));
+        assert!(!us.registry.contains(&agent_id));
+        drop(us);
+
+        let withdrawn_hosts = drain_direct_messages(&mut peer_rx);
+        assert_eq!(withdrawn_hosts.len(), 1);
+        assert!(matches!(
+            &withdrawn_hosts[0],
+            DirectMessage::WithdrawHost { id, route }
+                if *id == host_id && route.to_string() == "test-link"
+        ));
+    }
+
+    #[tokio::test]
+    async fn withdraw_host_missing_root_cleans_descendants_and_propagates() {
+        let (state, user_state) = test_state().await;
+        let mut peer_rx = add_peer_link(&user_state, "peer-b").await;
+
+        let host_id = Uuid::new_v4();
+        let child_host_id = Uuid::new_v4();
+        let agent_id = Uuid::new_v4();
+        let mut child_route = Route::from_link("child");
+        child_route.push("test-link");
+        {
+            let mut us = user_state.write().await;
+            us.hosts.insert(
+                child_host_id,
+                crate::message::Host {
+                    id: child_host_id,
+                    name: "orphan-child".to_string(),
+                    route: child_route.clone(),
+                    version: "0.1.0".to_string(),
+                },
+            );
+        }
+        insert_remote_agent(
+            &user_state,
+            Agent {
+                id: agent_id,
+                host_id: child_host_id,
+                name: Some("orphan-agent".to_string()),
+                command: "claude".to_string(),
+                working_dir: PathBuf::from("/tmp"),
+                route: child_route,
+                agent_type: claude_agent_type(),
+                readonly: false,
+                args: vec![],
+                created_at: Utc::now(),
+            },
+        )
+        .await;
+
+        let ctx = test_ctx(state, user_state.clone());
+        let (tx, _written) = mock_tx();
+
+        let msg = DirectMessage::WithdrawHost {
+            id: host_id,
+            route: Route::empty(),
+        };
+        handle_direct(&tx, msg, &ctx).await.unwrap();
+
+        let us = user_state.read().await;
+        assert!(!us.hosts.contains_key(&host_id));
+        assert!(!us.hosts.contains_key(&child_host_id));
+        assert!(!us.registry.contains(&agent_id));
+        drop(us);
+
+        let withdrawn_hosts = drain_direct_messages(&mut peer_rx);
+        assert_eq!(withdrawn_hosts.len(), 1);
+        assert!(matches!(
+            &withdrawn_hosts[0],
+            DirectMessage::WithdrawHost { id, route }
+                if *id == host_id && route.to_string() == "test-link"
+        ));
     }
 
     #[tokio::test]
@@ -2199,6 +2714,81 @@ mod tests {
     }
 
     #[tokio::test]
+    async fn create_agent_is_rejected_on_cloud_relay() {
+        let (state, user_state) = test_state().await;
+        {
+            let mut s = state.write().await;
+            s.is_cloud_server = true;
+        }
+        let ctx = test_ctx(state, user_state.clone());
+        let (tx, written) = mock_tx();
+
+        let agent_id = Uuid::new_v4();
+        let msg = Message::routable(
+            Route::from_link("client"),
+            Route::empty(),
+            1,
+            &RoutableMessage::CreateAgent(CreateAgentRequest {
+                agent_id,
+                name: Some("cloud-agent".to_string()),
+                agent_type: AgentType::TestAgent(dummy_pty_command()),
+                working_dir: dummy_working_dir(),
+                terminal_size: None,
+                args: vec![],
+            }),
+        );
+
+        handle_message(&tx, msg, &ctx).await.unwrap();
+        tokio::task::yield_now().await;
+
+        let msgs = written.lock().await;
+        assert_eq!(msgs.len(), 1);
+        assert!(matches!(
+            decode_written_routable(&msgs[0]),
+            RoutableMessage::CreateAgentResult {
+                agent_id: id,
+                error: Some(ProtocolError::ServerError(ref msg)),
+            } if id == agent_id && msg.contains("cloud relays do not host local agents")
+        ));
+        drop(msgs);
+
+        let us = user_state.read().await;
+        assert!(!us.agents.contains_key(&agent_id));
+        assert!(!us.registry.contains(&agent_id));
+    }
+
+    #[tokio::test]
+    async fn resume_is_rejected_on_cloud_relay() {
+        let (state, user_state) = test_state().await;
+        {
+            let mut s = state.write().await;
+            s.is_cloud_server = true;
+        }
+        let ctx = test_ctx(state, user_state);
+        let (tx, written) = mock_tx();
+
+        handle_command(&tx, Command::Resume, &ctx).await.unwrap();
+        tokio::task::yield_now().await;
+
+        let msgs = written.lock().await;
+        assert_eq!(msgs.len(), 1);
+        let Message::Command(Command::ResumeResult {
+            resumed_count,
+            failed_count,
+            error,
+        }) = &msgs[0]
+        else {
+            panic!("expected ResumeResult, got {:?}", msgs[0]);
+        };
+        assert_eq!(*resumed_count, 0);
+        assert_eq!(*failed_count, 0);
+        assert!(matches!(
+            error,
+            Some(ProtocolError::ServerError(msg)) if msg.contains("cloud relays do not host local agents")
+        ));
+    }
+
+    #[tokio::test]
     async fn subscribe_structured_returns_immediately_for_unlinked_claude_session() {
         let (state, user_state) = test_state().await;
         let ctx = test_ctx(state, user_state.clone());
@@ -2252,11 +2842,16 @@ mod tests {
     #[tokio::test]
     async fn withdraw_host_removes_agents_with_matching_route() {
         let (state, user_state) = test_state().await;
+        let mut peer_rx = add_peer_link(&user_state, "peer-b").await;
 
         let host_id = Uuid::new_v4();
         let agent1 = Uuid::new_v4();
         let agent2 = Uuid::new_v4();
         let agent3 = Uuid::new_v4();
+        let deep_host_id = Uuid::new_v4();
+        let other_host_id = Uuid::new_v4();
+        let mut deep_route = Route::from_link("host-b");
+        deep_route.push("test-link");
         {
             let mut us = user_state.write().await;
             us.hosts.insert(
@@ -2268,65 +2863,105 @@ mod tests {
                     version: "0.1.0".to_string(),
                 },
             );
-            // Agents reachable via test-link (should be removed)
-            us.registry
-                .register_remote(Agent {
-                    id: agent1,
-                    host_id: Uuid::new_v4(),
-                    name: Some("a1".to_string()),
-                    command: "claude".to_string(),
-                    working_dir: PathBuf::from("/tmp"),
-                    route: Route::from_link("test-link"),
-                    agent_type: claude_agent_type(),
-                    readonly: false,
-                    args: vec![],
-                    created_at: Utc::now(),
-                })
-                .unwrap();
-            let mut deep_route = Route::from_link("host-b");
-            deep_route.push("test-link");
-            us.registry
-                .register_remote(Agent {
-                    id: agent2,
-                    host_id: Uuid::new_v4(),
-                    name: Some("a2".to_string()),
-                    command: "claude".to_string(),
-                    working_dir: PathBuf::from("/tmp"),
-                    route: deep_route,
-                    agent_type: claude_agent_type(),
-                    readonly: false,
-                    args: vec![],
-                    created_at: Utc::now(),
-                })
-                .unwrap();
-            // Agent on different link (should survive)
-            us.registry
-                .register_remote(Agent {
-                    id: agent3,
-                    host_id: Uuid::new_v4(),
-                    name: Some("a3".to_string()),
-                    command: "claude".to_string(),
-                    working_dir: PathBuf::from("/tmp"),
+            us.hosts.insert(
+                deep_host_id,
+                crate::message::Host {
+                    id: deep_host_id,
+                    name: "deep-remote".to_string(),
+                    route: deep_route.clone(),
+                    version: "0.1.0".to_string(),
+                },
+            );
+            us.hosts.insert(
+                other_host_id,
+                crate::message::Host {
+                    id: other_host_id,
+                    name: "other-remote".to_string(),
                     route: Route::from_link("other-link"),
-                    agent_type: claude_agent_type(),
-                    readonly: false,
-                    args: vec![],
-                    created_at: Utc::now(),
-                })
-                .unwrap();
+                    version: "0.1.0".to_string(),
+                },
+            );
         }
+
+        // Agents reachable via test-link (should be removed)
+        insert_remote_agent(
+            &user_state,
+            Agent {
+                id: agent1,
+                host_id,
+                name: Some("a1".to_string()),
+                command: "claude".to_string(),
+                working_dir: PathBuf::from("/tmp"),
+                route: Route::from_link("test-link"),
+                agent_type: claude_agent_type(),
+                readonly: false,
+                args: vec![],
+                created_at: Utc::now(),
+            },
+        )
+        .await;
+        insert_remote_agent(
+            &user_state,
+            Agent {
+                id: agent2,
+                host_id: deep_host_id,
+                name: Some("a2".to_string()),
+                command: "claude".to_string(),
+                working_dir: PathBuf::from("/tmp"),
+                route: deep_route,
+                agent_type: claude_agent_type(),
+                readonly: false,
+                args: vec![],
+                created_at: Utc::now(),
+            },
+        )
+        .await;
+        insert_remote_agent(
+            &user_state,
+            Agent {
+                id: agent3,
+                host_id: other_host_id,
+                name: Some("a3".to_string()),
+                command: "claude".to_string(),
+                working_dir: PathBuf::from("/tmp"),
+                route: Route::from_link("other-link"),
+                agent_type: claude_agent_type(),
+                readonly: false,
+                args: vec![],
+                created_at: Utc::now(),
+            },
+        )
+        .await;
 
         let ctx = test_ctx(state, user_state.clone());
         let (tx, _written) = mock_tx();
 
-        let msg = DirectMessage::WithdrawHost { id: host_id };
+        let msg = DirectMessage::WithdrawHost {
+            id: host_id,
+            route: Route::empty(),
+        };
         handle_direct(&tx, msg, &ctx).await.unwrap();
 
         let us = user_state.read().await;
         assert!(!us.hosts.contains_key(&host_id));
+        assert!(!us.hosts.contains_key(&deep_host_id));
+        assert!(us.hosts.contains_key(&other_host_id));
         assert!(!us.registry.contains(&agent1));
         assert!(!us.registry.contains(&agent2));
         assert!(us.registry.contains(&agent3));
+        drop(us);
+
+        let mut withdrawn_hosts: Vec<_> = drain_direct_messages(&mut peer_rx)
+            .into_iter()
+            .map(|msg| match msg {
+                DirectMessage::WithdrawHost { id, route } => (id, route.to_string()),
+                other => panic!("expected WithdrawHost, got {:?}", other),
+            })
+            .collect();
+        withdrawn_hosts.sort_unstable_by_key(|(id, _)| id.as_u128());
+        let expected_withdrawals = vec![(host_id, "test-link".to_string())];
+
+        assert_eq!(withdrawn_hosts, expected_withdrawals);
     }
 
     /// Insert a local test session into user_state.agents.
