@@ -466,9 +466,10 @@ impl AgentSession {
     }
 
     /// Convert to Agent for listing/registry.
-    pub fn to_agent(&self) -> Agent {
+    pub fn to_agent(&self, host_id: Uuid) -> Agent {
         Agent {
             id: self.agent_id(),
+            host_id,
             name: self.name().map(String::from),
             command: self.command().to_string(),
             working_dir: self.working_dir().to_path_buf(),
@@ -726,7 +727,7 @@ mod tests {
         let session = sa.into_session();
 
         assert_eq!(
-            session.to_agent().args,
+            session.to_agent(Uuid::new_v4()).args,
             vec![
                 "--dangerously-skip-permissions".to_string(),
                 "--model".to_string(),

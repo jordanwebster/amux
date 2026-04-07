@@ -169,7 +169,7 @@ impl ServerUserState {
 /// lives in `ServerUserState`, providing user isolation via JWT authentication.
 pub(super) struct ServerState {
     pub(super) config: Config,
-    /// Ephemeral host ID generated at startup (not persisted)
+    /// Stable host ID loaded from persistent state
     pub(super) host_id: Uuid,
     /// Whether this server is a cloud relay (`amux serve --cloud`)
     pub(super) is_cloud_server: bool,
@@ -182,12 +182,12 @@ pub(super) struct ServerState {
 }
 
 impl ServerState {
-    fn new(config: Config, shutdown_tx: mpsc::Sender<ShutdownRequest>) -> Self {
+    fn new(config: Config, host_id: Uuid, shutdown_tx: mpsc::Sender<ShutdownRequest>) -> Self {
         let mut users = HashMap::new();
         users.insert(LOCAL_USER_ID, Arc::new(RwLock::new(ServerUserState::new())));
         Self {
             config,
-            host_id: Uuid::new_v4(),
+            host_id,
             is_cloud_server: false,
             jwt_validator: None,
             users,
@@ -232,15 +232,17 @@ pub struct Server {
 }
 
 impl Server {
-    pub fn with_config(config: Config) -> Self {
+    pub fn with_config(config: Config) -> Result<Self> {
+        let host_id = crate::state::load_or_create_host_id(&config.state_path)
+            .map_err(|e| AmuxError::Config(format!("failed to load host state: {e}")))?;
         let (event_tx, event_rx) = mpsc::channel::<SessionEvent>(256);
         let (shutdown_tx, shutdown_rx) = mpsc::channel::<ShutdownRequest>(1);
-        Self {
-            state: Arc::new(RwLock::new(ServerState::new(config, shutdown_tx))),
+        Ok(Self {
+            state: Arc::new(RwLock::new(ServerState::new(config, host_id, shutdown_tx))),
             event_tx,
             event_rx: Some(event_rx),
             shutdown_rx: Some(shutdown_rx),
-        }
+        })
     }
 
     /// Run the server
@@ -660,14 +662,14 @@ async fn handle_session_event(state: &Arc<RwLock<ServerState>>, event: SessionEv
             name,
             source,
         } => {
-            let user_state = {
+            let (user_state, host_id) = {
                 let s = state.read().await;
-                s.get_user_state(&user_id)
+                (s.get_user_state(&user_id), s.host_id)
             };
             if let Some(user_state) = user_state {
                 let outcome = {
                     let mut us = user_state.write().await;
-                    apply_local_name_candidate(&mut us, agent_id, name.clone(), source)
+                    apply_local_name_candidate(&mut us, host_id, agent_id, name.clone(), source)
                 };
                 tracing::debug!(
                     agent_id = %agent_id,
@@ -689,6 +691,7 @@ pub(super) mod test_helpers {
     use std::sync::Arc;
     use std::sync::atomic::AtomicU64;
     use tokio::sync::{RwLock, mpsc};
+    use uuid::Uuid;
 
     pub(super) fn test_ctx(
         state: Arc<RwLock<ServerState>>,
@@ -710,6 +713,7 @@ pub(super) mod test_helpers {
         let (shutdown_tx, _shutdown_rx) = mpsc::channel(1);
         let state = Arc::new(RwLock::new(ServerState::new(
             Config::default(),
+            Uuid::new_v4(),
             shutdown_tx,
         )));
         let user_state = {
@@ -743,15 +747,17 @@ mod tests {
 
     async fn insert_local_claude(
         user_state: &Arc<RwLock<ServerUserState>>,
+        host_id: Uuid,
         agent_id: Uuid,
         name: Option<&str>,
         source: LocalAgentNameSource,
     ) {
-        insert_local_claude_with_args(user_state, agent_id, name, source, vec![]).await;
+        insert_local_claude_with_args(user_state, host_id, agent_id, name, source, vec![]).await;
     }
 
     async fn insert_local_claude_with_args(
         user_state: &Arc<RwLock<ServerUserState>>,
+        host_id: Uuid,
         agent_id: Uuid,
         name: Option<&str>,
         source: LocalAgentNameSource,
@@ -767,7 +773,7 @@ mod tests {
         };
         let mut session = AgentSession::Claude(crate::agents::ClaudeSession::new(&req));
         session.set_local_name(name.map(str::to_owned), source);
-        let info = session.to_agent();
+        let info = session.to_agent(host_id);
 
         let mut us = user_state.write().await;
         us.agents.insert(agent_id, session);
@@ -778,9 +784,14 @@ mod tests {
     async fn unnamed_local_claude_agent_gets_slug_rename_and_rebroadcast() {
         let (state, user_state) = test_state().await;
         let mut peer_rx = add_peer(&user_state, "peer-a").await;
+        let host_id = {
+            let s = state.read().await;
+            s.host_id
+        };
         let agent_id = Uuid::new_v4();
         insert_local_claude_with_args(
             &user_state,
+            host_id,
             agent_id,
             None,
             LocalAgentNameSource::Unset,
@@ -815,10 +826,12 @@ mod tests {
             msg,
             Message::Direct(DirectMessage::AnnounceAgent {
                 agent_id: id,
+                host_id: announced_host_id,
                 name: Some(name),
                 args,
                 ..
             }) if id == agent_id
+                && announced_host_id == host_id
                 && name == "merry-slug"
                 && args == vec!["--dangerously-skip-permissions".to_string()]
         ));
@@ -828,8 +841,19 @@ mod tests {
     async fn later_agent_name_overrides_earlier_slug_rename_and_rebroadcast() {
         let (state, user_state) = test_state().await;
         let mut peer_rx = add_peer(&user_state, "peer-a").await;
+        let host_id = {
+            let s = state.read().await;
+            s.host_id
+        };
         let agent_id = Uuid::new_v4();
-        insert_local_claude(&user_state, agent_id, None, LocalAgentNameSource::Unset).await;
+        insert_local_claude(
+            &user_state,
+            host_id,
+            agent_id,
+            None,
+            LocalAgentNameSource::Unset,
+        )
+        .await;
 
         handle_session_event(
             &state,
@@ -882,9 +906,14 @@ mod tests {
     async fn amux_supplied_name_blocks_slug_and_agent_name_updates() {
         let (state, user_state) = test_state().await;
         let mut peer_rx = add_peer(&user_state, "peer-a").await;
+        let host_id = {
+            let s = state.read().await;
+            s.host_id
+        };
         let agent_id = Uuid::new_v4();
         insert_local_claude(
             &user_state,
+            host_id,
             agent_id,
             Some("fixed-name"),
             LocalAgentNameSource::Amux,
@@ -927,9 +956,14 @@ mod tests {
     async fn same_string_higher_precedence_source_upgrades_provenance_without_announce() {
         let (state, user_state) = test_state().await;
         let mut peer_rx = add_peer(&user_state, "peer-a").await;
+        let host_id = {
+            let s = state.read().await;
+            s.host_id
+        };
         let agent_id = Uuid::new_v4();
         insert_local_claude(
             &user_state,
+            host_id,
             agent_id,
             Some("shared-name"),
             LocalAgentNameSource::ProviderSlug,
@@ -967,16 +1001,28 @@ mod tests {
     async fn candidate_rename_collision_is_skipped_and_not_announced() {
         let (state, user_state) = test_state().await;
         let mut peer_rx = add_peer(&user_state, "peer-a").await;
+        let host_id = {
+            let s = state.read().await;
+            s.host_id
+        };
         let owner_id = Uuid::new_v4();
         let candidate_id = Uuid::new_v4();
         insert_local_claude(
             &user_state,
+            host_id,
             owner_id,
             Some("taken-name"),
             LocalAgentNameSource::Amux,
         )
         .await;
-        insert_local_claude(&user_state, candidate_id, None, LocalAgentNameSource::Unset).await;
+        insert_local_claude(
+            &user_state,
+            host_id,
+            candidate_id,
+            None,
+            LocalAgentNameSource::Unset,
+        )
+        .await;
 
         handle_session_event(
             &state,

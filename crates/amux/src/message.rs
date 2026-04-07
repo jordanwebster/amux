@@ -13,7 +13,7 @@ use serde_json::Value;
 /// Propagated via AnnounceHost/WithdrawHost between peers.
 #[derive(Serialize, Deserialize, Debug, Clone)]
 pub struct Host {
-    /// Ephemeral ID generated at server startup (not persisted)
+    /// Stable ID loaded from state and announced to peers
     pub id: Uuid,
     /// Human-readable hostname from config
     pub name: String,
@@ -246,6 +246,7 @@ pub enum DirectMessage {
     /// Advertise or refresh agent metadata for a known UUID.
     AnnounceAgent {
         agent_id: Uuid,
+        host_id: Uuid,
         name: Option<String>,
         command: String,
         working_dir: PathBuf,
@@ -519,6 +520,7 @@ mod tests {
     fn test_agent_is_remote_after_deserialization() {
         let info = Agent {
             id: Uuid::new_v4(),
+            host_id: Uuid::new_v4(),
             name: Some("remote-agent".to_string()),
             command: "claude".to_string(),
             working_dir: PathBuf::from("/tmp"),

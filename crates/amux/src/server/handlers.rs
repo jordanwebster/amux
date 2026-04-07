@@ -9,8 +9,8 @@ use super::connection::{
     ConnectionContext, cancel_streams_matching, cleanup_stream, register_stream,
 };
 use super::routing::{
-    broadcast_to_peers, connection_tx, create_agent, delete_local_agent, handle_subscribe,
-    rename_local_agent, resume_agents, withdraw_agent,
+    announce_agent_message, broadcast_to_peers, connection_tx, create_agent, delete_local_agent,
+    handle_subscribe, rename_local_agent, resume_agents, withdraw_agent,
 };
 use crate::agent_registry::Agent;
 use crate::agents::{AgentSession, ClaudeSession, StopPolicy};
@@ -366,7 +366,12 @@ async fn handle_routable(
                 return Ok(());
             };
             let agent_id = req.agent_id;
-            let result = create_agent(&ctx.user_state, &ctx.event_tx, req, ctx.user_id).await;
+            let host_id = {
+                let state = ctx.state.read().await;
+                state.host_id
+            };
+            let result =
+                create_agent(&ctx.user_state, &ctx.event_tx, req, ctx.user_id, host_id).await;
             let response_message = match result {
                 Ok(()) => RoutableMessage::CreateAgentResult {
                     agent_id,
@@ -393,9 +398,13 @@ async fn handle_routable(
                 return Ok(());
             };
             let agent_id = req.agent_id;
+            let host_id = {
+                let state = ctx.state.read().await;
+                state.host_id
+            };
             let response_message = {
                 let mut us = ctx.user_state.write().await;
-                match rename_local_agent(&mut us, &req) {
+                match rename_local_agent(&mut us, host_id, &req) {
                     Ok(_) => RoutableMessage::RenameAgentResult {
                         agent_id,
                         error: None,
@@ -644,11 +653,12 @@ async fn handle_command(
                                 "hook handling failed: {e}"
                             )))
                         } else {
-                            let info = session.to_agent();
-                            let command = session.command().to_string();
-                            let working_dir = session.working_dir().to_path_buf();
-                            let announce_args = info.args.clone();
-                            let created_at = session.created_at();
+                            let host_id = {
+                                let state = ctx.state.read().await;
+                                state.host_id
+                            };
+                            let info = session.to_agent(host_id);
+                            let announce = announce_agent_message(&info);
                             us.agents.insert(agent_id, session);
                             if let Err(e) = us.registry.register_local(info) {
                                 Err(ProtocolError::ServerError(format!(
@@ -658,21 +668,7 @@ async fn handle_command(
                                 if let Some(session) = us.agents.get_mut(&agent_id) {
                                     session.maybe_start_name_sniffer(ctx.user_id, &ctx.event_tx);
                                 }
-                                broadcast_to_peers(
-                                    &mut us,
-                                    &DirectMessage::AnnounceAgent {
-                                        agent_id,
-                                        name: None,
-                                        command,
-                                        working_dir,
-                                        route: Route::empty(),
-                                        agent_type: AgentType::Claude,
-                                        readonly: true,
-                                        args: announce_args,
-                                        created_at,
-                                    },
-                                    None,
-                                );
+                                broadcast_to_peers(&mut us, &announce, None);
                                 tracing::info!(%agent_id, "created readonly session from external hook");
                                 Ok(())
                             }
@@ -724,9 +720,9 @@ async fn handle_command(
 
         Command::Resume => {
             tracing::info!("resume requested");
-            let state_path = {
+            let (state_path, host_id) = {
                 let state = ctx.state.read().await;
-                state.config.state_path.clone()
+                (state.config.state_path.clone(), state.host_id)
             };
             let suspended = match crate::state::load_and_remove_suspended(&state_path) {
                 Ok(s) => s,
@@ -749,6 +745,7 @@ async fn handle_command(
                 &ctx.event_tx,
                 ctx.user_id,
                 suspended.agents,
+                host_id,
             )
             .await;
             let _ = tx
@@ -838,6 +835,7 @@ async fn handle_direct(
 
         DirectMessage::AnnounceAgent {
             agent_id,
+            host_id,
             name,
             command,
             working_dir,
@@ -862,6 +860,7 @@ async fn handle_direct(
 
             let info = Agent {
                 id: agent_id,
+                host_id,
                 name: name.clone(),
                 command: command.clone(),
                 working_dir: working_dir.clone(),
@@ -872,6 +871,7 @@ async fn handle_direct(
                 created_at,
             };
 
+            let announce = announce_agent_message(&info);
             if let Err(e) = us.registry.register_remote(info) {
                 tracing::warn!(error = %e, agent_id = %agent_id, "ignoring invalid remote announcement");
                 return Ok(());
@@ -880,21 +880,7 @@ async fn handle_direct(
             tracing::info!(agent_id = %agent_id, name = ?name, "stored remote agent");
 
             // Propagate to other peers with our stored route
-            broadcast_to_peers(
-                &mut us,
-                &DirectMessage::AnnounceAgent {
-                    agent_id,
-                    name,
-                    command,
-                    working_dir,
-                    route: our_route,
-                    agent_type,
-                    readonly,
-                    args,
-                    created_at,
-                },
-                Some(&ctx.link_name),
-            );
+            broadcast_to_peers(&mut us, &announce, Some(&ctx.link_name));
 
             Ok(())
         }
@@ -1122,7 +1108,7 @@ mod tests {
         };
         let mut session = AgentSession::Claude(crate::agents::ClaudeSession::new(&req));
         session.set_local_name(name.map(str::to_owned), source);
-        let info = session.to_agent();
+        let info = session.to_agent(Uuid::new_v4());
 
         let mut us = user_state.write().await;
         us.agents.insert(agent_id, session);
@@ -1220,8 +1206,10 @@ mod tests {
         let (tx, _written) = mock_tx();
 
         let agent_id = Uuid::new_v4();
+        let remote_host_id = Uuid::new_v4();
         let msg = DirectMessage::AnnounceAgent {
             agent_id,
+            host_id: remote_host_id,
             name: Some("remote-test".to_string()),
             command: "claude".to_string(),
             working_dir: PathBuf::from("/tmp"),
@@ -1237,6 +1225,7 @@ mod tests {
         let us = user_state.read().await;
         assert!(us.registry.contains(&agent_id));
         let entry = us.registry.get(&agent_id).unwrap();
+        assert_eq!(entry.host_id, remote_host_id);
         assert_eq!(entry.name, Some("remote-test".to_string()));
         assert_eq!(entry.args, vec!["--dangerously-skip-permissions"]);
         assert!(entry.is_remote());
@@ -1254,6 +1243,7 @@ mod tests {
         let agent_id = Uuid::new_v4();
         let msg = DirectMessage::AnnounceAgent {
             agent_id,
+            host_id: Uuid::new_v4(),
             name: None,
             command: "bash".to_string(),
             working_dir: PathBuf::from("/home"),
@@ -1293,7 +1283,7 @@ mod tests {
                 args: vec![],
             };
             let session = create_test_session(&req);
-            let info = session.to_agent();
+            let info = session.to_agent(Uuid::new_v4());
             us.agents.insert(agent_id, session);
             us.registry.register_local(info).unwrap();
         }
@@ -1304,6 +1294,7 @@ mod tests {
         // Try to announce same agent_id from remote
         let msg = DirectMessage::AnnounceAgent {
             agent_id,
+            host_id: Uuid::new_v4(),
             name: Some("remote".to_string()),
             command: "claude".to_string(),
             working_dir: PathBuf::from("/remote"),
@@ -1332,6 +1323,7 @@ mod tests {
             us.registry
                 .register_remote(Agent {
                     id: agent_id,
+                    host_id: Uuid::new_v4(),
                     name: None,
                     command: "bash".to_string(),
                     working_dir: PathBuf::from("/tmp"),
@@ -1364,6 +1356,7 @@ mod tests {
             us.registry
                 .register_remote(Agent {
                     id: agent_id,
+                    host_id: Uuid::new_v4(),
                     name: None,
                     command: "bash".to_string(),
                     working_dir: PathBuf::from("/tmp"),
@@ -1400,6 +1393,7 @@ mod tests {
         // First announce
         let msg = DirectMessage::AnnounceAgent {
             agent_id,
+            host_id: Uuid::new_v4(),
             name: Some("first".to_string()),
             command: "bash".to_string(),
             working_dir: PathBuf::from("/first"),
@@ -1414,6 +1408,7 @@ mod tests {
         // Second announce with same agent_id
         let msg = DirectMessage::AnnounceAgent {
             agent_id,
+            host_id: Uuid::new_v4(),
             name: Some("second".to_string()),
             command: "claude".to_string(),
             working_dir: PathBuf::from("/second"),
@@ -1647,7 +1642,7 @@ mod tests {
             agent_id,
             PathBuf::from("/tmp"),
         ));
-        let info = session.to_agent();
+        let info = session.to_agent(Uuid::new_v4());
         {
             let mut us = user_state.write().await;
             us.agents.insert(agent_id, session);
@@ -1702,6 +1697,7 @@ mod tests {
             us.registry
                 .register_remote(Agent {
                     id: agent_id,
+                    host_id: Uuid::new_v4(),
                     name: Some("remote-agent".to_string()),
                     command: "claude".to_string(),
                     working_dir: PathBuf::from("/tmp"),
@@ -1755,6 +1751,7 @@ mod tests {
             us.registry
                 .register_remote(Agent {
                     id: agent_id,
+                    host_id: Uuid::new_v4(),
                     name: Some("my-agent".to_string()),
                     command: "claude".to_string(),
                     working_dir: PathBuf::from("/tmp"),
@@ -2212,7 +2209,7 @@ mod tests {
             agent_id,
             PathBuf::from("/tmp"),
         ));
-        let info = session.to_agent();
+        let info = session.to_agent(Uuid::new_v4());
         {
             let mut us = user_state.write().await;
             us.agents.insert(agent_id, session);
@@ -2275,6 +2272,7 @@ mod tests {
             us.registry
                 .register_remote(Agent {
                     id: agent1,
+                    host_id: Uuid::new_v4(),
                     name: Some("a1".to_string()),
                     command: "claude".to_string(),
                     working_dir: PathBuf::from("/tmp"),
@@ -2290,6 +2288,7 @@ mod tests {
             us.registry
                 .register_remote(Agent {
                     id: agent2,
+                    host_id: Uuid::new_v4(),
                     name: Some("a2".to_string()),
                     command: "claude".to_string(),
                     working_dir: PathBuf::from("/tmp"),
@@ -2304,6 +2303,7 @@ mod tests {
             us.registry
                 .register_remote(Agent {
                     id: agent3,
+                    host_id: Uuid::new_v4(),
                     name: Some("a3".to_string()),
                     command: "claude".to_string(),
                     working_dir: PathBuf::from("/tmp"),
@@ -2672,7 +2672,7 @@ mod tests {
             agent_id,
             PathBuf::from("/tmp"),
         ));
-        let info = session.to_agent();
+        let info = session.to_agent(Uuid::new_v4());
         {
             let mut us = user_state.write().await;
             us.agents.insert(agent_id, session);
@@ -2962,7 +2962,7 @@ mod tests {
             agent_id,
             PathBuf::from("/tmp"),
         ));
-        let info = session.to_agent();
+        let info = session.to_agent(Uuid::new_v4());
         {
             let mut us = user_state.write().await;
             us.agents.insert(agent_id, session);

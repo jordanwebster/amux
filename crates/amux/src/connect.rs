@@ -146,7 +146,7 @@ async fn connect_embedded(config: &Config) -> Result<Connection> {
         let _ = std::fs::remove_file(&config.socket_path);
     }
 
-    let mut server = server::Server::with_config(config.clone());
+    let mut server = server::Server::with_config(config.clone())?;
     tokio::spawn(async move {
         if let Err(e) = server.run(false).await {
             tracing::error!(error = %e, "embedded server exited with error");

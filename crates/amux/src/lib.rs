@@ -28,6 +28,6 @@ pub use route::Route;
 
 /// Run the amux server with the provided config.
 pub async fn run_server(config: Config, cloud: bool) -> Result<()> {
-    let mut server = server::Server::with_config(config);
+    let mut server = server::Server::with_config(config)?;
     server.run(cloud).await
 }

@@ -7,7 +7,7 @@
 
 use super::ServerUserState;
 use super::connection::cancel_streams_matching;
-use crate::agent_registry::AgentRegistryError;
+use crate::agent_registry::{Agent, AgentRegistryError};
 use crate::agents::{
     AgentSession, LocalAgentNameSource, SessionEvent, StopPolicy, SuspendedServerState,
 };
@@ -65,22 +65,24 @@ pub(super) enum LocalAgentDeleteError {
     NotFound(String),
 }
 
-fn reannounce_local_agent(us: &mut ServerUserState, updated: crate::agent_registry::Agent) {
-    broadcast_to_peers(
-        us,
-        &DirectMessage::AnnounceAgent {
-            agent_id: updated.id,
-            name: updated.name,
-            command: updated.command,
-            working_dir: updated.working_dir,
-            route: Route::empty(),
-            agent_type: updated.agent_type,
-            readonly: updated.readonly,
-            args: updated.args,
-            created_at: updated.created_at,
-        },
-        None,
-    );
+pub(super) fn announce_agent_message(info: &Agent) -> DirectMessage {
+    DirectMessage::AnnounceAgent {
+        agent_id: info.id,
+        host_id: info.host_id,
+        name: info.name.clone(),
+        command: info.command.clone(),
+        working_dir: info.working_dir.clone(),
+        route: info.route.clone(),
+        agent_type: info.agent_type.clone(),
+        readonly: info.readonly,
+        args: info.args.clone(),
+        created_at: info.created_at,
+    }
+}
+
+fn reannounce_local_agent(us: &mut ServerUserState, updated: Agent) {
+    let announce = announce_agent_message(&updated);
+    broadcast_to_peers(us, &announce, None);
 }
 
 fn commit_local_name_update(
@@ -99,6 +101,7 @@ fn commit_local_name_update(
 
 pub(super) fn rename_local_agent(
     us: &mut ServerUserState,
+    host_id: Uuid,
     req: &RenameAgentRequest,
 ) -> std::result::Result<LocalAgentRenameOutcome, LocalAgentRenameError> {
     let session = us
@@ -108,7 +111,7 @@ pub(super) fn rename_local_agent(
 
     let current_name = session.name().map(str::to_owned);
     let current_source = session.local_name_source();
-    let mut updated = session.to_agent();
+    let mut updated = session.to_agent(host_id);
     let mut metadata_changed = false;
     let mut provenance_changed = false;
 
@@ -143,6 +146,7 @@ pub(super) fn rename_local_agent(
 
 pub(super) fn apply_local_name_candidate(
     us: &mut ServerUserState,
+    host_id: Uuid,
     agent_id: Uuid,
     name: String,
     source: LocalAgentNameSource,
@@ -175,7 +179,7 @@ pub(super) fn apply_local_name_candidate(
         return LocalNameUpdateOutcome::Skipped;
     }
 
-    let mut updated = session.to_agent();
+    let mut updated = session.to_agent(host_id);
     updated.name = Some(name.clone());
     // session borrow is dropped here
 
@@ -211,6 +215,7 @@ pub(super) async fn create_agent(
     event_tx: &mpsc::Sender<SessionEvent>,
     req: CreateAgentRequest,
     user_id: Uuid,
+    host_id: Uuid,
 ) -> Result<()> {
     let agent_type = req.agent_type.clone();
     let args = req.args.clone();
@@ -250,12 +255,8 @@ pub(super) async fn create_agent(
             }
         };
         let exit_handle = session.start()?;
-        let info = session.to_agent();
-        let name = req.name.clone();
-        let command = session.command().to_string();
-        let working_dir = session.working_dir().to_path_buf();
-        let announce_args = info.args.clone();
-        let created_at = session.created_at();
+        let info = session.to_agent(host_id);
+        let announce = announce_agent_message(&info);
         us.agents.insert(agent_id, session);
         us.registry.register_local(info).map_err(|e| {
             AmuxError::ServerError(format!("failed to register local agent {agent_id}: {e}",))
@@ -273,21 +274,7 @@ pub(super) async fn create_agent(
                 .await;
         });
 
-        broadcast_to_peers(
-            &mut us,
-            &DirectMessage::AnnounceAgent {
-                agent_id,
-                name,
-                command,
-                working_dir,
-                route: Route::empty(),
-                agent_type: agent_type.clone(),
-                readonly: false,
-                args: announce_args,
-                created_at,
-            },
-            None,
-        );
+        broadcast_to_peers(&mut us, &announce, None);
 
         us.agents.len()
     }; // write lock dropped here
@@ -301,7 +288,13 @@ pub(super) async fn create_agent(
         })
         .await;
 
-    tracing::info!(agent_id = %agent_id, name = ?req_name, agents = agent_count, "agent created");
+    tracing::info!(
+        agent_id = %agent_id,
+        host_id = %host_id,
+        name = ?req_name,
+        agents = agent_count,
+        "agent created"
+    );
     Ok(())
 }
 
@@ -419,6 +412,7 @@ pub(super) async fn resume_agents(
     event_tx: &mpsc::Sender<SessionEvent>,
     user_id: Uuid,
     suspended: Vec<crate::agents::SuspendedAgent>,
+    host_id: Uuid,
 ) -> (usize, usize) {
     let mut resumed = 0usize;
     let mut failed = 0usize;
@@ -431,12 +425,8 @@ pub(super) async fn resume_agents(
         let mut session = sa.into_session();
         match session.start() {
             Ok(exit_handle) => {
-                let info = session.to_agent();
-                let agent_type = info.agent_type.clone();
-                let command = session.command().to_string();
-                let working_dir = session.working_dir().to_path_buf();
-                let announce_args = info.args.clone();
-                let created_at = session.created_at();
+                let info = session.to_agent(host_id);
+                let announce = announce_agent_message(&info);
                 {
                     let mut us = user_state.write().await;
                     us.agents.insert(agent_id, session);
@@ -445,21 +435,7 @@ pub(super) async fn resume_agents(
                     } else if let Some(session) = us.agents.get_mut(&agent_id) {
                         session.maybe_start_name_sniffer(user_id, event_tx);
                     }
-                    broadcast_to_peers(
-                        &mut us,
-                        &DirectMessage::AnnounceAgent {
-                            agent_id,
-                            name: name.clone(),
-                            command,
-                            working_dir,
-                            route: Route::empty(),
-                            agent_type,
-                            readonly: false,
-                            args: announce_args,
-                            created_at,
-                        },
-                        None,
-                    );
+                    broadcast_to_peers(&mut us, &announce, None);
                 }
 
                 // Task: Monitor exit handle and notify server when agent exits
@@ -524,17 +500,7 @@ fn send_initial_agent_announcements(us: &ServerUserState, peer_link: &str) -> us
         {
             continue;
         }
-        let msg = Message::Direct(DirectMessage::AnnounceAgent {
-            agent_id: *uuid,
-            name: info.name.clone(),
-            command: info.command.clone(),
-            working_dir: info.working_dir.clone(),
-            route: info.route.clone(),
-            agent_type: info.agent_type.clone(),
-            readonly: info.readonly,
-            args: info.args.clone(),
-            created_at: info.created_at,
-        });
+        let msg = Message::Direct(announce_agent_message(info));
         if tx.try_send(msg).is_err() {
             tracing::warn!(agent_id = %uuid, peer = %peer_link, "failed to announce agent");
         } else {
@@ -687,6 +653,7 @@ mod tests {
         us.registry
             .register_remote(Agent {
                 id,
+                host_id: Uuid::new_v4(),
                 name: name.map(String::from),
                 command: "test".to_string(),
                 working_dir: PathBuf::from("/tmp"),
@@ -747,7 +714,7 @@ mod tests {
             agent_id,
             PathBuf::from("/tmp"),
         ));
-        let info = session.to_agent();
+        let info = session.to_agent(Uuid::new_v4());
         us.agents.insert(agent_id, session);
         us.registry.register_local(info).unwrap();
 
@@ -1077,6 +1044,7 @@ mod tests {
             &event_tx,
             new_req,
             crate::server::LOCAL_USER_ID,
+            Uuid::new_v4(),
         )
         .await
         .unwrap_err();
@@ -1084,6 +1052,65 @@ mod tests {
             err.to_string().contains("agent limit reached"),
             "expected agent limit error, got: {err}"
         );
+    }
+
+    #[tokio::test]
+    async fn resume_agents_uses_current_host_id_for_registry_and_announce() {
+        let user_state = Arc::new(RwLock::new(ServerUserState::new()));
+        let (event_tx, _event_rx) = mpsc::channel(16);
+        let mut peer_rx = {
+            let mut us = user_state.write().await;
+            add_peer(&mut us, "peer-a")
+        };
+
+        let agent_id = Uuid::new_v4();
+        let host_id = Uuid::new_v4();
+        let suspended = vec![crate::agents::SuspendedAgent::TestAgent {
+            agent_id,
+            name: Some("resumed-agent".to_string()),
+            command: dummy_pty_command(),
+            working_dir: dummy_working_dir(),
+            terminal_size: None,
+            created_at: Utc::now(),
+        }];
+
+        let (resumed, failed) = resume_agents(
+            &user_state,
+            &event_tx,
+            crate::server::LOCAL_USER_ID,
+            suspended,
+            host_id,
+        )
+        .await;
+
+        assert_eq!(resumed, 1);
+        assert_eq!(failed, 0);
+
+        let us = user_state.read().await;
+        let entry = us
+            .registry
+            .get(&agent_id)
+            .expect("resumed agent should register");
+        assert_eq!(entry.host_id, host_id);
+        drop(us);
+
+        let msg = peer_rx
+            .try_recv()
+            .expect("resumed agent should be announced to peers");
+        assert!(matches!(
+            msg,
+            Message::Direct(DirectMessage::AnnounceAgent {
+                agent_id: id,
+                host_id: announced_host_id,
+                ..
+            }) if id == agent_id && announced_host_id == host_id
+        ));
+
+        let session = {
+            let mut us = user_state.write().await;
+            withdraw_agent(&mut us, agent_id).expect("resumed session should still exist")
+        };
+        session.stop(crate::agents::StopPolicy::Interrupt).await;
     }
 
     #[test]

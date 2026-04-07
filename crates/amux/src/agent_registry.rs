@@ -11,6 +11,7 @@ use uuid::Uuid;
 #[derive(Serialize, Deserialize, Debug, Clone)]
 pub struct Agent {
     pub id: Uuid,
+    pub host_id: Uuid,
     pub name: Option<String>,
     pub command: String,
     pub working_dir: PathBuf,
@@ -257,6 +258,7 @@ mod tests {
     fn make_info(uuid: Uuid, name: Option<&str>) -> Agent {
         Agent {
             id: uuid,
+            host_id: Uuid::new_v4(),
             name: name.map(|s| s.to_string()),
             command: "test".to_string(),
             working_dir: PathBuf::from("/tmp"),
@@ -271,6 +273,7 @@ mod tests {
     fn make_remote_info(uuid: Uuid, name: Option<&str>, route: Route) -> Agent {
         Agent {
             id: uuid,
+            host_id: Uuid::new_v4(),
             name: name.map(|s| s.to_string()),
             command: "test".to_string(),
             working_dir: PathBuf::from("/tmp"),
