@@ -124,10 +124,8 @@ pub(super) struct StreamEntry {
     pub stream_id: u64,
     #[allow(dead_code)] // Held for drop: dropping Sender cancels the oneshot Receiver
     pub cancel: oneshot::Sender<()>,
-    /// Destination route for this stream
+    /// Full destination route for this stream, including the immediate next hop.
     pub dst: Route,
-    /// Link name this stream sends through (used for teardown cancellation)
-    pub link: String,
 }
 
 /// Per-user state. Each authenticated user gets isolated agents, routes,

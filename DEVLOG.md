@@ -38,6 +38,30 @@ One paragraph describing what was done.
 
 ---
 
+## 2026-04-08: Store full stream routes for subscription cleanup
+
+### Summary
+Refactored active subscription bookkeeping so `StreamEntry` stores the full destination route instead of splitting it across `link` plus a suffix. This fixes a stale structured/raw subscription cleanup bug introduced during the host-routing overhaul: when a downstream host link disappeared behind an otherwise live peer, `WithdrawHost` cleanup compared a full withdrawn route against only the stored suffix and failed to cancel the upstream stream task. With full routes in `active_streams`, host-withdrawal and peer-disconnect cleanup now reason about the same route shape.
+
+### Changes
+- `crates/amux/src/server/mod.rs` — Simplified `StreamEntry` to store only `stream_id`, `cancel`, and full `dst`.
+- `crates/amux/src/server/handlers.rs` — `spawn_subscription_stream()` now reconstructs the full subscriber route before registering the stream. Added a regression test covering `WithdrawHost` cancellation for a matching multi-hop route.
+- `crates/amux/src/server/connection.rs` — Local connection teardown now identifies attached streams by `entry.dst.peek()` instead of a separate stored link.
+- `crates/amux/src/server/routing.rs` — Peer-disconnect cleanup now cancels streams purely by route containment. Updated routing tests for the full-route stream model.
+
+### Decisions Made
+- `active_streams` should store one canonical full route, not a split representation, because route-based cleanup is now the primary model and the split form was too easy to misuse.
+- The runtime send path still uses `reply_src`/`reply_dst`; `StreamEntry` is cleanup metadata only, so it should optimize for correctness and clarity rather than mirroring the post-`Route::send()` transport state.
+
+### Verification
+- `cargo fmt`
+- `cargo test -p amux withdraw_host_cancels_streams_with_matching_full_route`
+- `cargo test -p amux withdraw_host_route_mismatch_preserves_root_but_cleans_stale_descendants`
+- `cargo test -p amux peer_disconnect_cancels_streams_on_link`
+- `cargo test -p amux peer_disconnect_cancels_streams_routed_through_link`
+- `cargo test -p amux peer_disconnect_full_cascade`
+- `cargo test -p amux stream_cancelled_stops_without_subscription_closed`
+
 ## 2026-04-07: Separate network topology from agent announcements
 
 ### Summary

@@ -60,14 +60,10 @@ async fn spawn_subscription_stream<R: SubscriptionReader>(
 
     let (cancel_tx, cancel_rx) = oneshot::channel::<()>();
     let stream_id = {
+        let mut full_dst = reply_dst.clone();
+        full_dst.push(ctx.link_name.clone());
         let mut us = ctx.user_state.write().await;
-        register_stream(
-            &mut us,
-            agent_id,
-            cancel_tx,
-            reply_dst.clone(),
-            ctx.link_name.clone(),
-        )
+        register_stream(&mut us, agent_id, cancel_tx, full_dst)
     };
 
     let stream_span = tracing::info_span!("stream", stream_id, agent_id = %agent_id, mode);
@@ -1158,14 +1154,14 @@ mod tests {
     use crate::message::{AgentType, CreateAgentRequest, RenameAgentRequest};
     use crate::route::Route;
     use crate::server::test_helpers::{test_ctx, test_state};
-    use crate::server::{LOCAL_USER_ID, ServerUserState};
+    use crate::server::{LOCAL_USER_ID, ServerUserState, StreamEntry};
     use chrono::Utc;
     use serde_json::json;
     use std::path::{Path, PathBuf};
     use std::sync::Arc;
     use std::sync::atomic::AtomicU64;
     use std::time::Duration;
-    use tokio::sync::{RwLock, mpsc};
+    use tokio::sync::{RwLock, mpsc, oneshot};
     use uuid::Uuid;
 
     fn dummy_pty_command() -> String {
@@ -2315,6 +2311,60 @@ mod tests {
 
         let us = user_state.read().await;
         assert!(!us.hosts.contains_key(&host_id));
+    }
+
+    #[tokio::test]
+    async fn withdraw_host_cancels_streams_with_matching_full_route() {
+        let (state, user_state) = test_state().await;
+
+        let host_id = Uuid::new_v4();
+        let agent_id = Uuid::new_v4();
+        let mut full_route = Route::from_link("child");
+        full_route.push("test-link");
+        let (cancel_tx, mut cancel_rx) = oneshot::channel();
+
+        {
+            let mut us = user_state.write().await;
+            us.hosts.insert(
+                host_id,
+                crate::message::Host {
+                    id: host_id,
+                    name: "mobile".to_string(),
+                    route: full_route.clone(),
+                    version: "0.1.0".to_string(),
+                },
+            );
+            let stream_id = us.next_stream_id;
+            us.next_stream_id += 1;
+            us.active_streams
+                .entry(agent_id)
+                .or_default()
+                .push(StreamEntry {
+                    stream_id,
+                    cancel: cancel_tx,
+                    dst: full_route.clone(),
+                });
+        }
+
+        let ctx = test_ctx(state, user_state.clone());
+        let (tx, _written) = mock_tx();
+
+        let msg = DirectMessage::WithdrawHost {
+            id: host_id,
+            route: Route::from_link("child"),
+        };
+        handle_direct(&tx, msg, &ctx).await.unwrap();
+
+        assert!(
+            cancel_rx.try_recv().is_err(),
+            "matching withdraw should cancel the stream"
+        );
+
+        let us = user_state.read().await;
+        assert!(
+            !us.active_streams.contains_key(&agent_id),
+            "cancelled stream should be removed from active_streams"
+        );
     }
 
     #[tokio::test]

@@ -178,7 +178,10 @@ pub(super) async fn run_connection<T: TransportSplit>(
             super::routing::handle_peer_disconnect(&mut us, &link_name);
         } else {
             us.routes.remove(&link_name);
-            cancel_streams_matching(&mut us, |entry| entry.link == link_name);
+            cancel_streams_matching(
+                &mut us,
+                |entry| matches!(entry.dst.peek(), Some(link) if link == link_name),
+            );
         }
     }
 
@@ -660,7 +663,6 @@ pub(super) fn register_stream(
     agent_id: uuid::Uuid,
     cancel_tx: oneshot::Sender<()>,
     dst: Route,
-    link: String,
 ) -> u64 {
     let sid = us.next_stream_id;
     us.next_stream_id += 1;
@@ -671,7 +673,6 @@ pub(super) fn register_stream(
             stream_id: sid,
             cancel: cancel_tx,
             dst,
-            link,
         });
     sid
 }

@@ -644,9 +644,7 @@ pub(super) fn handle_peer_disconnect(us: &mut ServerUserState, link_name: &str) 
     // Cancel streams spawned for subscribers on this link (they hold cloned senders
     // to the link's outgoing channel — must be dropped for writer task to exit)
     // and streams whose route passes through this link (unreachable).
-    let cancelled = cancel_streams_matching(us, |entry| {
-        entry.link == link_name || entry.dst.contains_link(link_name)
-    });
+    let cancelled = cancel_streams_matching(us, |entry| entry.dst.contains_link(link_name));
     if cancelled > 0 {
         tracing::info!(count = cancelled, peer = %link_name, "cancelled streams for disconnected peer");
     }
@@ -757,12 +755,7 @@ mod tests {
     }
 
     /// Register a stream and return the cancel receiver (completes when stream is cancelled).
-    fn add_stream(
-        us: &mut ServerUserState,
-        agent_id: Uuid,
-        link: &str,
-        dst: Route,
-    ) -> oneshot::Receiver<()> {
+    fn add_stream(us: &mut ServerUserState, agent_id: Uuid, dst: Route) -> oneshot::Receiver<()> {
         let (cancel_tx, cancel_rx) = oneshot::channel();
         let sid = us.next_stream_id;
         us.next_stream_id += 1;
@@ -773,7 +766,6 @@ mod tests {
                 stream_id: sid,
                 cancel: cancel_tx,
                 dst,
-                link: link.to_string(),
             });
         cancel_rx
     }
@@ -792,7 +784,7 @@ mod tests {
         us.agents.insert(agent_id, session);
         us.registry.register_local(info).unwrap();
 
-        let mut cancel_rx = add_stream(&mut us, agent_id, "peer-a", Route::from_link("peer-a"));
+        let mut cancel_rx = add_stream(&mut us, agent_id, Route::from_link("peer-a"));
 
         let removed = withdraw_agent(&mut us, agent_id);
 
@@ -844,18 +836,8 @@ mod tests {
         let _rx = add_peer(&mut us, "dead-peer");
 
         let agent_id = Uuid::new_v4();
-        let mut cancel_rx_dead = add_stream(
-            &mut us,
-            agent_id,
-            "dead-peer",
-            Route::from_link("somewhere"),
-        );
-        let _cancel_rx_alive = add_stream(
-            &mut us,
-            agent_id,
-            "alive-link",
-            Route::from_link("somewhere"),
-        );
+        let mut cancel_rx_dead = add_stream(&mut us, agent_id, Route::from_link("dead-peer"));
+        let _cancel_rx_alive = add_stream(&mut us, agent_id, Route::from_link("alive-link"));
 
         handle_peer_disconnect(&mut us, "dead-peer");
 
@@ -864,7 +846,7 @@ mod tests {
         // Stream on alive-link survives
         let remaining = us.active_streams.get(&agent_id).unwrap();
         assert_eq!(remaining.len(), 1);
-        assert_eq!(remaining[0].link, "alive-link");
+        assert_eq!(remaining[0].dst, Route::from_link("alive-link"));
     }
 
     #[test]
@@ -876,7 +858,8 @@ mod tests {
         // Stream whose dst route passes through dead-peer (but originates from a different link)
         let mut through_route = Route::from_link("host-b");
         through_route.push("dead-peer");
-        let mut cancel_rx = add_stream(&mut us, agent_id, "local-link", through_route);
+        through_route.push("local-link");
+        let mut cancel_rx = add_stream(&mut us, agent_id, through_route);
 
         handle_peer_disconnect(&mut us, "dead-peer");
 
@@ -1008,12 +991,7 @@ mod tests {
         let mut alive_rx = add_peer(&mut us, "alive-peer");
 
         let (dead_agent, dead_host) = add_remote_agent(&mut us, "dead-peer", Some("remote-agent"));
-        let mut cancel_rx = add_stream(
-            &mut us,
-            dead_agent,
-            "dead-peer",
-            Route::from_link("somewhere"),
-        );
+        let mut cancel_rx = add_stream(&mut us, dead_agent, Route::from_link("dead-peer"));
 
         let (alive_agent, alive_host) =
             add_remote_agent(&mut us, "alive-peer", Some("local-agent"));
