@@ -4,7 +4,7 @@
 //! Handles exponential backoff on retriable errors, stops on auth failures, and
 //! exits the process on protocol version mismatch (after notifying attached terminals).
 
-use super::connection::{ConnectionContext, run_connection};
+use super::connection::{ConnectionContext, HeartbeatRole, run_connection};
 use super::routing::send_initial_announcements;
 use super::{LOCAL_USER_ID, ServerState, ServerUserState, get_or_create_user_state};
 use crate::cloud::{CloudConnection, CloudError};
@@ -177,7 +177,13 @@ async fn run_cloud_connection(
         us.peer_links.insert(link_name.clone());
         send_initial_announcements(&us, host_id, &host_name, is_cloud_server, &link_name);
     }
-    let conn_span = tracing::info_span!("connection", link = %link_name, transport = "cloud", user_id = %LOCAL_USER_ID);
+    let conn_span = tracing::info_span!(
+        "connection",
+        link = %link_name,
+        transport = "cloud",
+        user_id = %LOCAL_USER_ID,
+        heartbeat_role = HeartbeatRole::Dialer.as_str(),
+    );
     tracing::info!(parent: &conn_span, "cloud route established");
 
     let ctx = ConnectionContext {
@@ -187,6 +193,7 @@ async fn run_cloud_connection(
         event_tx,
         link_name: link_name.clone(),
         is_local: false,
+        heartbeat_role: HeartbeatRole::Dialer,
         next_request_id: Arc::new(AtomicU64::new(1)),
     };
 

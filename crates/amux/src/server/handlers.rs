@@ -2465,6 +2465,7 @@ mod tests {
             event_tx,
             link_name: "remote-peer".to_string(),
             is_local: false,
+            heartbeat_role: crate::server::connection::HeartbeatRole::Acceptor,
             next_request_id: Arc::new(AtomicU64::new(1)),
         };
         let (tx, written) = mock_tx();
@@ -3367,6 +3368,7 @@ mod tests {
             event_tx,
             link_name: "test-link".to_string(),
             is_local: true,
+            heartbeat_role: crate::server::connection::HeartbeatRole::Disabled,
             next_request_id: Arc::new(AtomicU64::new(1)),
         };
         let (tx, written) = mock_tx();

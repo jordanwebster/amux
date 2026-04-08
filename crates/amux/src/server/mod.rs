@@ -685,7 +685,7 @@ async fn handle_session_event(state: &Arc<RwLock<ServerState>>, event: SessionEv
 
 #[cfg(test)]
 pub(super) mod test_helpers {
-    use super::connection::ConnectionContext;
+    use super::connection::{ConnectionContext, HeartbeatRole};
     use super::{LOCAL_USER_ID, ServerState, ServerUserState};
     use crate::config::Config;
     use std::sync::Arc;
@@ -705,6 +705,7 @@ pub(super) mod test_helpers {
             event_tx,
             link_name: "test-link".to_string(),
             is_local: true,
+            heartbeat_role: HeartbeatRole::Disabled,
             next_request_id: Arc::new(AtomicU64::new(1)),
         }
     }

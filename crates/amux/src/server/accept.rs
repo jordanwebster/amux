@@ -7,7 +7,7 @@
 //! lifecycle. [`tcp_connect`] handles the outbound (client-side) direction for
 //! server-to-server peering.
 
-use super::connection::{ConnectionContext, run_connection};
+use super::connection::{ConnectionContext, HeartbeatRole, run_connection};
 use super::routing::send_initial_announcements;
 use super::{LOCAL_USER_ID, ServerState, ServerUserState, get_or_create_user_state};
 use crate::error::{AmuxError, Result};
@@ -275,7 +275,18 @@ pub(super) async fn accept_connection<T: TransportSplit>(
     .instrument(tracing::info_span!("handshake", transport = log_label))
     .await?;
 
-    let conn_span = tracing::info_span!("connection", link = %link_name, transport = log_label, user_id = %user_id);
+    let heartbeat_role = if is_local {
+        HeartbeatRole::Disabled
+    } else {
+        HeartbeatRole::Acceptor
+    };
+    let conn_span = tracing::info_span!(
+        "connection",
+        link = %link_name,
+        transport = log_label,
+        user_id = %user_id,
+        heartbeat_role = heartbeat_role.as_str(),
+    );
     tracing::info!(parent: &conn_span, "connection established");
 
     if !is_local {
@@ -300,6 +311,7 @@ pub(super) async fn accept_connection<T: TransportSplit>(
         event_tx,
         link_name: link_name.clone(),
         is_local,
+        heartbeat_role,
         next_request_id: Arc::new(AtomicU64::new(1)),
     };
 
@@ -382,8 +394,13 @@ pub(super) async fn tcp_connect(
     })
     .await?;
 
-    let conn_span =
-        tracing::info_span!("connection", link = %link_name, transport = "tcp", user_id = %user_id);
+    let conn_span = tracing::info_span!(
+        "connection",
+        link = %link_name,
+        transport = "tcp",
+        user_id = %user_id,
+        heartbeat_role = HeartbeatRole::Dialer.as_str(),
+    );
     tracing::info!(parent: &conn_span, "peer handshake complete");
 
     let (outgoing_tx, outgoing_rx) = mpsc::channel::<Message>(256);
@@ -408,6 +425,7 @@ pub(super) async fn tcp_connect(
             event_tx,
             link_name: link_name.clone(),
             is_local: false,
+            heartbeat_role: HeartbeatRole::Dialer,
             next_request_id: Arc::new(AtomicU64::new(1)),
         };
         let _ = run_connection(transport, outgoing_rx, outgoing_tx, ctx, None, conn_span).await;
