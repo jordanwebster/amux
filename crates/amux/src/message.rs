@@ -46,12 +46,17 @@ pub enum AgentProtocol {
     Claude(ClaudeProtocol),
 }
 
+pub type SubscriptionId = Uuid;
+
 /// Protocol-level errors that can be returned in response messages
 #[derive(Serialize, Deserialize, Debug, Clone, PartialEq, thiserror::Error)]
 pub enum ProtocolError {
     /// The requested agent session is no longer available on this connection.
     #[error("No agent found")]
     NoAgentFound,
+    /// The requested subscription is unknown or has already ended.
+    #[error("Unknown subscription")]
+    UnknownSubscription,
     /// Generic server error with message
     #[error("{0}")]
     ServerError(String),
@@ -81,6 +86,13 @@ pub enum ShutdownReason {
     ProtocolMismatch,
     UserRequested,
     Updating,
+}
+
+#[derive(Serialize, Deserialize, Debug, Clone, Copy, PartialEq, Eq)]
+pub enum SubscriptionCloseReason {
+    SourceClosed,
+    Unsubscribed,
+    LeaseExpired,
 }
 
 impl std::fmt::Display for ShutdownReason {
@@ -135,24 +147,36 @@ pub enum RoutableMessage {
     SubscribeRaw {
         agent_id: Uuid,
         /// Terminal dimensions for PTY resize. None means don't resize.
-        #[serde(default)]
         terminal_size: Option<TerminalSize>,
+    },
+    SubscribeRawResult {
+        subscription_id: SubscriptionId,
+        lease_ms: u64,
+        error: Option<ProtocolError>,
     },
     SubscribeStructured {
         agent_id: Uuid,
     },
-    SubscribeRawResult {
-        agent_id: Uuid,
-        error: Option<ProtocolError>,
-    },
     SubscribeStructuredResult {
-        agent_id: Uuid,
+        subscription_id: SubscriptionId,
         /// Current sequence number at subscribe time. Clients use this as
         /// their initial seq when no StructuredOutput messages have arrived.
         seq: u64,
         /// Structured I/O contract for this subscription, if the session exposes one.
         protocol: Option<AgentProtocol>,
+        lease_ms: u64,
         error: Option<ProtocolError>,
+    },
+    ExtendSubscription {
+        subscription_id: SubscriptionId,
+    },
+    ExtendSubscriptionResult {
+        subscription_id: SubscriptionId,
+        lease_ms: u64,
+        error: Option<ProtocolError>,
+    },
+    Unsubscribe {
+        subscription_id: SubscriptionId,
     },
     CreateAgent(CreateAgentRequest),
     CreateAgentResult {
@@ -176,11 +200,11 @@ pub enum RoutableMessage {
         data: Vec<u8>,
     },
     RawOutput {
-        agent_id: Uuid,
+        subscription_id: SubscriptionId,
         data: Vec<u8>,
     },
     StructuredOutput {
-        agent_id: Uuid,
+        subscription_id: SubscriptionId,
         seq: u64,
         payload: Value,
     },
@@ -194,7 +218,8 @@ pub enum RoutableMessage {
         error: Option<ProtocolError>,
     },
     SubscriptionClosed {
-        agent_id: Uuid,
+        subscription_id: SubscriptionId,
+        reason: SubscriptionCloseReason,
     },
     UnknownMessage,
 }
@@ -207,6 +232,9 @@ impl RoutableMessage {
             RoutableMessage::SubscribeStructured { .. } => "SubscribeStructured",
             RoutableMessage::SubscribeRawResult { .. } => "SubscribeRawResult",
             RoutableMessage::SubscribeStructuredResult { .. } => "SubscribeStructuredResult",
+            RoutableMessage::ExtendSubscription { .. } => "ExtendSubscription",
+            RoutableMessage::ExtendSubscriptionResult { .. } => "ExtendSubscriptionResult",
+            RoutableMessage::Unsubscribe { .. } => "Unsubscribe",
             RoutableMessage::CreateAgent(_) => "CreateAgent",
             RoutableMessage::CreateAgentResult { .. } => "CreateAgentResult",
             RoutableMessage::RenameAgent(_) => "RenameAgent",
@@ -445,22 +473,85 @@ mod tests {
 
     #[test]
     fn test_routable_message_standalone_encode_decode() {
-        let agent_id = Uuid::new_v4();
+        let subscription_id = Uuid::new_v4();
         let rm = RoutableMessage::RawOutput {
-            agent_id,
+            subscription_id,
             data: b"hello".to_vec(),
         };
         let encoded = rm.encode().unwrap();
         let decoded = RoutableMessage::decode(&encoded).unwrap();
         let RoutableMessage::RawOutput {
-            agent_id: decoded_id,
+            subscription_id: decoded_id,
             data,
         } = decoded
         else {
             panic!("Expected RawOutput");
         };
-        assert_eq!(decoded_id, agent_id);
+        assert_eq!(decoded_id, subscription_id);
         assert_eq!(data, b"hello");
+    }
+
+    #[test]
+    fn test_subscription_variants_roundtrip() {
+        let agent_id = Uuid::new_v4();
+        let subscription_id = Uuid::new_v4();
+        let variants = vec![
+            RoutableMessage::SubscribeRaw {
+                agent_id,
+                terminal_size: Some(TerminalSize {
+                    rows: 40,
+                    cols: 120,
+                }),
+            },
+            RoutableMessage::SubscribeRawResult {
+                subscription_id,
+                lease_ms: 30_000,
+                error: None,
+            },
+            RoutableMessage::SubscribeStructured { agent_id },
+            RoutableMessage::SubscribeStructuredResult {
+                subscription_id,
+                seq: 42,
+                protocol: Some(AgentProtocol::Claude(ClaudeProtocol::PtyV1)),
+                lease_ms: 30_000,
+                error: None,
+            },
+            RoutableMessage::ExtendSubscription { subscription_id },
+            RoutableMessage::ExtendSubscriptionResult {
+                subscription_id,
+                lease_ms: 30_000,
+                error: Some(ProtocolError::UnknownSubscription),
+            },
+            RoutableMessage::Unsubscribe { subscription_id },
+            RoutableMessage::StructuredOutput {
+                subscription_id,
+                seq: 7,
+                payload: serde_json::json!({"type": "event"}),
+            },
+            RoutableMessage::SubscriptionClosed {
+                subscription_id,
+                reason: SubscriptionCloseReason::LeaseExpired,
+            },
+        ];
+
+        for variant in variants {
+            let encoded = variant.encode().unwrap();
+            let decoded = RoutableMessage::decode(&encoded).unwrap();
+            assert_eq!(decoded.type_label(), variant.type_label());
+        }
+    }
+
+    #[test]
+    fn test_subscription_close_reason_roundtrip() {
+        for reason in [
+            SubscriptionCloseReason::SourceClosed,
+            SubscriptionCloseReason::Unsubscribed,
+            SubscriptionCloseReason::LeaseExpired,
+        ] {
+            let encoded = rmp_serde::to_vec_named(&reason).unwrap();
+            let decoded: SubscriptionCloseReason = rmp_serde::from_slice(&encoded).unwrap();
+            assert_eq!(decoded, reason);
+        }
     }
 
     #[test]
@@ -539,36 +630,6 @@ mod tests {
         let encoded = rmp_serde::to_vec_named(&info).unwrap();
         let decoded: Agent = rmp_serde::from_slice(&encoded).unwrap();
         assert!(decoded.is_remote());
-    }
-
-    // --- Backward compatibility: #[serde(default)] contract tests ---
-    // These simulate old clients that lack fields added in later versions.
-    // Removing the #[serde(default)] annotations would silently break compat.
-
-    #[test]
-    fn test_subscribe_raw_backward_compat_without_terminal_size() {
-        // Old clients send SubscribeRaw without terminal_size field.
-        // The #[serde(default)] ensures it defaults to None.
-        #[derive(Serialize)]
-        enum OldRoutableMessage {
-            SubscribeRaw { agent_id: Uuid },
-        }
-        let agent_id = Uuid::new_v4();
-        let old_msg = OldRoutableMessage::SubscribeRaw { agent_id };
-        let encoded = rmp_serde::to_vec_named(&old_msg).unwrap();
-        let decoded = RoutableMessage::decode(&encoded).unwrap();
-        let RoutableMessage::SubscribeRaw {
-            agent_id: decoded_id,
-            terminal_size,
-        } = decoded
-        else {
-            panic!("Expected SubscribeRaw, got {:?}", decoded);
-        };
-        assert_eq!(decoded_id, agent_id);
-        assert_eq!(
-            terminal_size, None,
-            "missing terminal_size should default to None"
-        );
     }
 
     #[test]

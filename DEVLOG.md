@@ -38,6 +38,38 @@ One paragraph describing what was done.
 
 ---
 
+## 2026-04-09: Migrate subscriptions to leased subscription IDs
+
+### Summary
+Completed the subscription protocol migration from agent-scoped output streams to owner-issued leased subscription IDs. Raw and structured subscriptions now return `subscription_id` plus `lease_ms`, outputs and close events are keyed by `subscription_id`, the server owns subscription lifecycle end-to-end, and the CLI renews leases and unsubscribes explicitly on detach. Follow-up fixes tightened cancellation ordering, made lease renewal server-authoritative, raised the lease to five minutes, moved the lease sweeper to a non-blocking best-effort close path, and routed unsolicited close messages through the destination connection's own request-id counter.
+
+### Changes
+- `crates/amux/src/message.rs` — Added `SubscriptionId`, `SubscriptionCloseReason`, `ExtendSubscription`, `Unsubscribe`, lease-bearing subscribe/extend results, and `ProtocolError::UnknownSubscription`. Removed `agent_id` from subscription-scoped output/close messages and updated codec coverage.
+- `crates/amux/src/server/mod.rs` — Replaced `active_streams` with `active_subscriptions`, added lease deadlines, a 5-minute lease constant, a 10-second sweep cadence, `ConnectionHandle` for per-route sender plus request-id allocation, and a non-blocking lease-expiry close path.
+- `crates/amux/src/server/connection.rs` — Switched subscription bookkeeping to subscription-keyed helpers for register/cleanup/extend/unsubscribe and route-based cancellation.
+- `crates/amux/src/server/handlers.rs` — Raw and structured subscribe now allocate owner-side subscription IDs, return leases before spawning streams, emit output by `subscription_id`, handle extend/unsubscribe, and ensure cancel happens before best-effort close. Added subscription lifecycle, lease-expiry, remote-unsubscribe, and no-synthetic-EOF regressions.
+- `crates/amux/src/server/accept.rs`, `crates/amux/src/server/cloud.rs`, `crates/amux/src/server/routing.rs` — Threaded `ConnectionHandle` through route registration so forwarded and server-originated routable messages share the destination connection’s request-id counter.
+- `crates/amux-cli/src/client.rs` — Added `AttachedSession`, switched attach to server-assigned subscription IDs, folded lease renewal into the main attach loop, updated renewal timing from `ExtendSubscriptionResult.lease_ms`, treated `UnknownSubscription` as terminal, and sent `Unsubscribe` on graceful detach.
+- `Cargo.toml`, `crates/amux/src/protocol.rs`, `crates/amux/src/transport/unix.rs` — Updated supporting exports/tests and enabled paused-time Tokio test utilities used by the new lease-expiry coverage.
+
+### Decisions Made
+- Subscription identity is now `subscription_id` only after subscribe. `agent_id` remains on subscribe and input messages so output routing stays decoupled from input routing.
+- Lease expiry is cleanup, not topology. Unexpected disconnects are handled by lease timeout rather than intermediate-hop subscription bookkeeping.
+- Renewal timing is server-authoritative. The client replaces its current lease with each successful `ExtendSubscriptionResult.lease_ms` and reschedules from “now”.
+- Unsolicited routable messages should use the destination connection’s request-id counter, not a global counter or `0`, so route entries now store both sender and counter.
+- Lease-expiry close sends are best-effort and non-blocking so a saturated subscriber queue cannot stall the server main loop.
+
+### Verification
+- `cargo check`
+- `cargo fmt`
+- `cargo clippy --workspace --all-targets -- -D warnings`
+- `cargo test`
+- `cargo build --workspace && cargo run -p e2e-runner -- run` — 10/10 tests passed (`attach`, `list_agents`, `local_agent_ended`, `multiple_agents`, `new_agent`, `remote_agent_ended`, `remote_attach_by_alias`, `remote_connection`, `remote_list_agents`, `replay_buffer`)
+
+### Next Steps
+- Update any out-of-tree clients or tools to the new leased subscription wire format.
+- Revisit lease duration and sweep cadence with real-world attach/disconnect behavior once the new protocol has more usage data.
+
 ## 2026-04-08: Store full stream routes for subscription cleanup
 
 ### Summary

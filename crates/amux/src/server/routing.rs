@@ -3,10 +3,10 @@
 //! Provides the building blocks used by [`connection`](super::connection) handlers:
 //! agent creation/shutdown, subscription, peer broadcast, initial announcement
 //! exchange on connect, and the peer disconnect cascade (route removal, agent/host
-//! withdrawal propagation, stream cancellation).
+//! withdrawal propagation, subscription cancellation).
 
-use super::ServerUserState;
-use super::connection::cancel_streams_matching;
+use super::connection::cancel_subscriptions_matching;
+use super::{ConnectionHandle, ServerUserState};
 use crate::agent_registry::{Agent, AgentRegistryError};
 use crate::agents::{
     AgentSession, LocalAgentNameSource, SessionEvent, StopPolicy, SuspendedServerState,
@@ -27,7 +27,7 @@ pub(super) async fn connection_tx(
     link_name: &str,
 ) -> Option<mpsc::Sender<crate::message::Message>> {
     let us = user_state.read().await;
-    us.routes.get(link_name).cloned()
+    us.routes.get(link_name).map(ConnectionHandle::sender)
 }
 
 /// Maximum local agents per user. Each agent holds a PTY and several tokio
@@ -299,9 +299,9 @@ pub(super) async fn create_agent(
 
 /// Remove an agent from local state and broadcast withdrawal.
 ///
-/// Active streams are left registered until their underlying buffers close and
-/// each stream task can emit its terminal EOF notification before cleaning
-/// itself up.
+/// Active subscriptions are left registered until their underlying buffers
+/// close and each stream task can emit its terminal EOF notification before
+/// cleaning itself up.
 pub(super) fn withdraw_agent(us: &mut ServerUserState, agent_id: Uuid) -> Option<AgentSession> {
     if !us.agents.contains_key(&agent_id) {
         return None;
@@ -309,12 +309,16 @@ pub(super) fn withdraw_agent(us: &mut ServerUserState, agent_id: Uuid) -> Option
     let name = us.registry.get(&agent_id).and_then(|a| a.name.clone());
     let session = us.agents.remove(&agent_id);
     us.registry.remove(&agent_id);
-    let active_streams = us.active_streams.get(&agent_id).map_or(0, Vec::len);
+    let active_subscriptions = us
+        .active_subscriptions
+        .values()
+        .filter(|entry| entry.agent_id == agent_id)
+        .count();
     broadcast_to_peers(us, &DirectMessage::WithdrawAgent { agent_id }, None);
     tracing::info!(
         %agent_id,
         ?name,
-        active_streams,
+        active_subscriptions,
         remaining = us.agents.len(),
         "agent withdrawn"
     );
@@ -472,8 +476,8 @@ pub(super) fn broadcast_to_peers(
         if exclude_link == Some(link.as_str()) {
             continue;
         }
-        if let Some(tx) = us.routes.get(link) {
-            if tx.try_send(wire_msg.clone()).is_err() {
+        if let Some(handle) = us.routes.get(link) {
+            if !handle.try_send(wire_msg.clone()) {
                 tracing::warn!(peer = %link, "failed to send to peer");
                 failed += 1;
             } else {
@@ -488,7 +492,7 @@ pub(super) fn broadcast_to_peers(
 /// Filters out agents that were learned from this same peer (no echo-back).
 /// Returns the number of agents announced.
 fn send_initial_agent_announcements(us: &ServerUserState, peer_link: &str) -> usize {
-    let Some(tx) = us.routes.get(peer_link) else {
+    let Some(handle) = us.routes.get(peer_link) else {
         return 0;
     };
 
@@ -506,7 +510,7 @@ fn send_initial_agent_announcements(us: &ServerUserState, peer_link: &str) -> us
             }
         }
         let msg = Message::Direct(info.announce_message());
-        if tx.try_send(msg).is_err() {
+        if !handle.try_send(msg) {
             tracing::warn!(agent_id = %uuid, peer = %peer_link, "failed to announce agent");
         } else {
             count += 1;
@@ -526,7 +530,7 @@ fn send_initial_host_announcements(
     is_cloud_server: bool,
     peer_link: &str,
 ) -> usize {
-    let Some(tx) = us.routes.get(peer_link) else {
+    let Some(handle) = us.routes.get(peer_link) else {
         return 0;
     };
 
@@ -543,7 +547,7 @@ fn send_initial_host_announcements(
             route: info.route.clone(),
             version: info.version.clone(),
         });
-        if tx.try_send(msg).is_err() {
+        if !handle.try_send(msg) {
             tracing::warn!(host_id = %info.id, peer = %peer_link, "failed to announce host");
         } else {
             count += 1;
@@ -557,7 +561,7 @@ fn send_initial_host_announcements(
             route: crate::route::Route::empty(),
             version: env!("CARGO_PKG_VERSION").to_string(),
         });
-        if tx.try_send(msg).is_err() {
+        if !handle.try_send(msg) {
             tracing::warn!(peer = %peer_link, "failed to announce own host");
         } else {
             count += 1;
@@ -567,14 +571,11 @@ fn send_initial_host_announcements(
 }
 
 fn send_initial_sync_complete(us: &ServerUserState, peer_link: &str) -> bool {
-    let Some(tx) = us.routes.get(peer_link) else {
+    let Some(handle) = us.routes.get(peer_link) else {
         return false;
     };
 
-    if tx
-        .try_send(Message::Direct(DirectMessage::InitialSyncComplete))
-        .is_err()
-    {
+    if !handle.try_send(Message::Direct(DirectMessage::InitialSyncComplete)) {
         tracing::warn!(peer = %peer_link, "failed to send initial sync complete");
         false
     } else {
@@ -644,9 +645,13 @@ pub(super) fn handle_peer_disconnect(us: &mut ServerUserState, link_name: &str) 
     // Cancel streams spawned for subscribers on this link (they hold cloned senders
     // to the link's outgoing channel — must be dropped for writer task to exit)
     // and streams whose route passes through this link (unreachable).
-    let cancelled = cancel_streams_matching(us, |entry| entry.dst.contains_link(link_name));
-    if cancelled > 0 {
-        tracing::info!(count = cancelled, peer = %link_name, "cancelled streams for disconnected peer");
+    let cancelled = cancel_subscriptions_matching(us, |entry| entry.dst.contains_link(link_name));
+    if !cancelled.is_empty() {
+        tracing::info!(
+            count = cancelled.len(),
+            peer = %link_name,
+            "cancelled subscriptions for disconnected peer"
+        );
     }
 
     let prefix = Route::from_link(link_name);
@@ -680,10 +685,11 @@ mod tests {
     use super::*;
     use crate::agent_registry::Agent;
     use crate::message::Host;
-    use crate::server::StreamEntry;
+    use crate::server::{SUBSCRIPTION_LEASE_DURATION, SubscriptionEntry, SubscriptionMode};
     use chrono::Utc;
     use std::path::PathBuf;
     use tokio::sync::{mpsc, oneshot};
+    use tokio::time::Instant;
 
     fn dummy_pty_command() -> String {
         #[cfg(unix)]
@@ -704,7 +710,10 @@ mod tests {
     /// the receiver for inspecting broadcast messages.
     fn add_peer(us: &mut ServerUserState, name: &str) -> mpsc::Receiver<Message> {
         let (tx, rx) = mpsc::channel::<Message>(64);
-        us.routes.insert(name.to_string(), tx);
+        us.routes.insert(
+            name.to_string(),
+            ConnectionHandle::new(tx, Arc::new(std::sync::atomic::AtomicU64::new(1))),
+        );
         us.peer_links.insert(name.to_string());
         rx
     }
@@ -754,24 +763,30 @@ mod tests {
         id
     }
 
-    /// Register a stream and return the cancel receiver (completes when stream is cancelled).
-    fn add_stream(us: &mut ServerUserState, agent_id: Uuid, dst: Route) -> oneshot::Receiver<()> {
+    /// Register a subscription and return the cancel receiver (completes when it is cancelled).
+    fn add_subscription(
+        us: &mut ServerUserState,
+        agent_id: Uuid,
+        dst: Route,
+    ) -> (Uuid, oneshot::Receiver<()>) {
+        let subscription_id = Uuid::new_v4();
         let (cancel_tx, cancel_rx) = oneshot::channel();
-        let sid = us.next_stream_id;
-        us.next_stream_id += 1;
-        us.active_streams
-            .entry(agent_id)
-            .or_default()
-            .push(StreamEntry {
-                stream_id: sid,
+        us.active_subscriptions.insert(
+            subscription_id,
+            SubscriptionEntry {
+                subscription_id,
+                agent_id,
+                mode: SubscriptionMode::Raw,
                 cancel: cancel_tx,
                 dst,
-            });
-        cancel_rx
+                lease_deadline: Instant::now() + SUBSCRIPTION_LEASE_DURATION,
+            },
+        );
+        (subscription_id, cancel_rx)
     }
 
     #[test]
-    fn withdraw_agent_preserves_streams_and_returns_session() {
+    fn withdraw_agent_preserves_subscriptions_and_returns_session() {
         let mut us = ServerUserState::new();
         let mut peer_rx = add_peer(&mut us, "peer-a");
 
@@ -784,7 +799,8 @@ mod tests {
         us.agents.insert(agent_id, session);
         us.registry.register_local(info).unwrap();
 
-        let mut cancel_rx = add_stream(&mut us, agent_id, Route::from_link("peer-a"));
+        let (_subscription_id, mut cancel_rx) =
+            add_subscription(&mut us, agent_id, Route::from_link("peer-a"));
 
         let removed = withdraw_agent(&mut us, agent_id);
 
@@ -794,15 +810,17 @@ mod tests {
         );
         assert!(!us.registry.contains(&agent_id));
         assert!(
-            us.active_streams.contains_key(&agent_id),
-            "withdrawal should preserve active streams until they observe EOF"
+            us.active_subscriptions
+                .values()
+                .any(|entry| entry.agent_id == agent_id),
+            "withdrawal should preserve active subscriptions until they observe EOF"
         );
         assert!(
             matches!(
                 cancel_rx.try_recv(),
                 Err(tokio::sync::oneshot::error::TryRecvError::Empty)
             ),
-            "stream cancel sender should remain alive after withdrawal"
+            "subscription cancel sender should remain alive after withdrawal"
         );
 
         let msg = peer_rx
@@ -831,26 +849,27 @@ mod tests {
     }
 
     #[test]
-    fn peer_disconnect_cancels_streams_on_link() {
+    fn peer_disconnect_cancels_subscriptions_on_link() {
         let mut us = ServerUserState::new();
         let _rx = add_peer(&mut us, "dead-peer");
 
         let agent_id = Uuid::new_v4();
-        let mut cancel_rx_dead = add_stream(&mut us, agent_id, Route::from_link("dead-peer"));
-        let _cancel_rx_alive = add_stream(&mut us, agent_id, Route::from_link("alive-link"));
+        let (_dead_id, mut cancel_rx_dead) =
+            add_subscription(&mut us, agent_id, Route::from_link("dead-peer"));
+        let (alive_id, _cancel_rx_alive) =
+            add_subscription(&mut us, agent_id, Route::from_link("alive-link"));
 
         handle_peer_disconnect(&mut us, "dead-peer");
 
-        // Stream on dead-peer should be cancelled (sender dropped)
+        // Subscription on dead-peer should be cancelled (sender dropped)
         assert!(cancel_rx_dead.try_recv().is_err());
-        // Stream on alive-link survives
-        let remaining = us.active_streams.get(&agent_id).unwrap();
-        assert_eq!(remaining.len(), 1);
-        assert_eq!(remaining[0].dst, Route::from_link("alive-link"));
+        // Subscription on alive-link survives
+        let remaining = us.active_subscriptions.get(&alive_id).unwrap();
+        assert_eq!(remaining.dst, Route::from_link("alive-link"));
     }
 
     #[test]
-    fn peer_disconnect_cancels_streams_routed_through_link() {
+    fn peer_disconnect_cancels_subscriptions_routed_through_link() {
         let mut us = ServerUserState::new();
         let _rx = add_peer(&mut us, "dead-peer");
 
@@ -859,13 +878,17 @@ mod tests {
         let mut through_route = Route::from_link("host-b");
         through_route.push("dead-peer");
         through_route.push("local-link");
-        let mut cancel_rx = add_stream(&mut us, agent_id, through_route);
+        let (_subscription_id, mut cancel_rx) = add_subscription(&mut us, agent_id, through_route);
 
         handle_peer_disconnect(&mut us, "dead-peer");
 
-        // Stream routed through dead-peer should be cancelled
+        // Subscription routed through dead-peer should be cancelled
         assert!(cancel_rx.try_recv().is_err());
-        assert!(!us.active_streams.contains_key(&agent_id));
+        assert!(
+            !us.active_subscriptions
+                .values()
+                .any(|entry| entry.agent_id == agent_id)
+        );
     }
 
     #[test]
@@ -991,7 +1014,8 @@ mod tests {
         let mut alive_rx = add_peer(&mut us, "alive-peer");
 
         let (dead_agent, dead_host) = add_remote_agent(&mut us, "dead-peer", Some("remote-agent"));
-        let mut cancel_rx = add_stream(&mut us, dead_agent, Route::from_link("dead-peer"));
+        let (_subscription_id, mut cancel_rx) =
+            add_subscription(&mut us, dead_agent, Route::from_link("dead-peer"));
 
         let (alive_agent, alive_host) =
             add_remote_agent(&mut us, "alive-peer", Some("local-agent"));
@@ -1004,7 +1028,11 @@ mod tests {
         assert!(!us.registry.contains(&dead_agent));
         assert!(!us.hosts.contains_key(&dead_host));
         assert!(cancel_rx.try_recv().is_err());
-        assert!(!us.active_streams.contains_key(&dead_agent));
+        assert!(
+            !us.active_subscriptions
+                .values()
+                .any(|entry| entry.agent_id == dead_agent)
+        );
 
         // All alive state preserved
         assert!(us.routes.contains_key("alive-peer"));

@@ -140,7 +140,7 @@ mod tests {
             Route::from_link("host-b"),
             0,
             &RoutableMessage::RawOutput {
-                agent_id: Uuid::new_v4(),
+                subscription_id: Uuid::new_v4(),
                 data: b"hello world".to_vec(),
             },
         );

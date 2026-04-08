@@ -9,7 +9,9 @@
 
 use super::connection::{ConnectionContext, HeartbeatRole, run_connection};
 use super::routing::send_initial_announcements;
-use super::{LOCAL_USER_ID, ServerState, ServerUserState, get_or_create_user_state};
+use super::{
+    ConnectionHandle, LOCAL_USER_ID, ServerState, ServerUserState, get_or_create_user_state,
+};
 use crate::error::{AmuxError, Result};
 use crate::handshake::{Connect, ConnectResult, PROTOCOL_VERSION};
 use crate::message::{Message, ProtocolError};
@@ -51,6 +53,7 @@ pub(super) async fn accept_handshake<T: Transport>(
     verify_token: bool,
 ) -> Result<(
     String,
+    ConnectionHandle,
     mpsc::Receiver<Message>,
     Uuid,
     Arc<RwLock<ServerUserState>>,
@@ -163,8 +166,10 @@ pub(super) async fn accept_handshake<T: Transport>(
             }
 
             let (outgoing_tx, outgoing_rx) = mpsc::channel::<Message>(256);
-            us.routes.insert(proposed_link.clone(), outgoing_tx);
-            outgoing_rx
+            let next_request_id = Arc::new(AtomicU64::new(1));
+            let handle = ConnectionHandle::new(outgoing_tx, next_request_id);
+            us.routes.insert(proposed_link.clone(), handle.clone());
+            (handle, outgoing_rx)
         };
 
         // Route is inserted — if the success write fails, clean up the stale route
@@ -174,7 +179,8 @@ pub(super) async fn accept_handshake<T: Transport>(
             return Err(e);
         }
 
-        return Ok((proposed_link, outgoing_rx, user_id, user_state));
+        let (handle, outgoing_rx) = outgoing_rx;
+        return Ok((proposed_link, handle, outgoing_rx, user_id, user_state));
     }
 
     tracing::warn!("handshake failed after 5 link-name retries");
@@ -258,7 +264,7 @@ pub(super) async fn accept_connection<T: TransportSplit>(
     // Handshake uses the transport directly (safe — no select! involved).
     // Timeout prevents slow-loris: clients that connect but never send handshake data.
     // The span gives all handshake-phase logs transport context (before conn_span exists).
-    let (link_name, outgoing_rx, user_id, user_state) = async {
+    let (link_name, route_handle, outgoing_rx, user_id, user_state) = async {
         match tokio::time::timeout(
             HANDSHAKE_TIMEOUT,
             accept_handshake(&mut transport, &state, verify_token),
@@ -299,11 +305,6 @@ pub(super) async fn accept_connection<T: TransportSplit>(
         send_initial_announcements(&us, host_id, &host_name, is_cloud_server, &link_name);
     }
 
-    let response_tx = {
-        let us = user_state.read().await;
-        us.routes.get(&link_name).unwrap().clone()
-    };
-
     let ctx = ConnectionContext {
         state: state.clone(),
         user_state: user_state.clone(),
@@ -312,10 +313,18 @@ pub(super) async fn accept_connection<T: TransportSplit>(
         link_name: link_name.clone(),
         is_local,
         heartbeat_role,
-        next_request_id: Arc::new(AtomicU64::new(1)),
+        next_request_id: route_handle.request_counter(),
     };
 
-    run_connection(transport, outgoing_rx, response_tx, ctx, None, conn_span).await
+    run_connection(
+        transport,
+        outgoing_rx,
+        route_handle.sender(),
+        ctx,
+        None,
+        conn_span,
+    )
+    .await
 }
 
 /// WebSocket connection bootstrap - accept, upgrade, and handshake
@@ -404,13 +413,17 @@ pub(super) async fn tcp_connect(
     tracing::info!(parent: &conn_span, "peer handshake complete");
 
     let (outgoing_tx, outgoing_rx) = mpsc::channel::<Message>(256);
+    let next_request_id = Arc::new(AtomicU64::new(1));
     {
         let (host_id, host_name, is_cloud_server) = {
             let s = state.read().await;
             (s.host_id, s.config.host_name.clone(), s.is_cloud_server)
         };
         let mut us = user_state.write().await;
-        us.routes.insert(link_name.clone(), outgoing_tx.clone());
+        us.routes.insert(
+            link_name.clone(),
+            ConnectionHandle::new(outgoing_tx.clone(), next_request_id.clone()),
+        );
         us.peer_links.insert(link_name.clone());
         send_initial_announcements(&us, host_id, &host_name, is_cloud_server, &link_name);
     }
@@ -426,7 +439,7 @@ pub(super) async fn tcp_connect(
             link_name: link_name.clone(),
             is_local: false,
             heartbeat_role: HeartbeatRole::Dialer,
-            next_request_id: Arc::new(AtomicU64::new(1)),
+            next_request_id,
         };
         let _ = run_connection(transport, outgoing_rx, outgoing_tx, ctx, None, conn_span).await;
     });

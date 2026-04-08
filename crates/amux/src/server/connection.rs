@@ -3,21 +3,23 @@
 //! Each connection runs a [`connection_loop`] that receives messages from the
 //! reader task and dispatches them via [`handle_message`](super::handlers::handle_message).
 //! Reader and writer tasks ([`reader_loop`], [`writer_loop`]) bridge the transport
-//! to channels. Stream management ([`register_stream`], [`cleanup_stream`],
-//! [`cancel_streams_matching`]) tracks active subscription streams per agent.
+//! to channels. Subscription management ([`register_subscription`],
+//! [`cleanup_subscription`], [`cancel_subscriptions_matching`]) tracks active
+//! subscriptions owned by this server.
 
 use super::handlers::handle_message;
-use super::{ServerState, ServerUserState, StreamEntry};
+use super::{ServerState, ServerUserState, SubscriptionEntry, SubscriptionMode};
 use crate::agents::SessionEvent;
 use crate::cloud::{CloudError, TokenRefreshState};
 use crate::error::{AmuxError, Result};
-use crate::message::{DirectMessage, Message};
+use crate::message::{DirectMessage, Message, SubscriptionId};
 use crate::route::Route;
 use crate::transport::{MessageReader, TransportSplit};
 use std::sync::Arc;
 use std::sync::atomic::AtomicU64;
 use std::time::Duration;
 use tokio::sync::{RwLock, mpsc, oneshot};
+use tokio::time::Instant;
 use tracing::Instrument;
 use uuid::Uuid;
 
@@ -178,10 +180,10 @@ pub(super) async fn run_connection<T: TransportSplit>(
             super::routing::handle_peer_disconnect(&mut us, &link_name);
         } else {
             us.routes.remove(&link_name);
-            cancel_streams_matching(
+            drop(cancel_subscriptions_matching(
                 &mut us,
                 |entry| matches!(entry.dst.peek(), Some(link) if link == link_name),
-            );
+            ));
         }
     }
 
@@ -657,60 +659,78 @@ async fn maybe_sleep_until(deadline: Option<tokio::time::Instant>) {
     }
 }
 
-/// Register a stream entry in active_streams. Returns the assigned stream_id.
-pub(super) fn register_stream(
+/// Register a subscription entry in active_subscriptions.
+pub(super) fn register_subscription(
     us: &mut ServerUserState,
-    agent_id: uuid::Uuid,
+    subscription_id: SubscriptionId,
+    agent_id: Uuid,
+    mode: SubscriptionMode,
     cancel_tx: oneshot::Sender<()>,
     dst: Route,
-) -> u64 {
-    let sid = us.next_stream_id;
-    us.next_stream_id += 1;
-    us.active_streams
-        .entry(agent_id)
-        .or_default()
-        .push(StreamEntry {
-            stream_id: sid,
+    lease_deadline: Instant,
+) {
+    us.active_subscriptions.insert(
+        subscription_id,
+        SubscriptionEntry {
+            subscription_id,
+            agent_id,
+            mode,
             cancel: cancel_tx,
             dst,
-        });
-    sid
+            lease_deadline,
+        },
+    );
 }
 
-/// Remove a stream entry by stream_id after the task exits.
-pub(super) async fn cleanup_stream(
+/// Remove a subscription entry after the task exits.
+pub(super) async fn cleanup_subscription(
     user_state: &Arc<RwLock<ServerUserState>>,
-    agent_id: uuid::Uuid,
-    stream_id: u64,
-) {
-    let mut us = user_state.write().await;
-    if let Some(entries) = us.active_streams.get_mut(&agent_id) {
-        entries.retain(|e| e.stream_id != stream_id);
-        if entries.is_empty() {
-            us.active_streams.remove(&agent_id);
-        }
-    }
-    tracing::trace!(stream_id, agent_id = %agent_id, "stream cleaned up");
+    subscription_id: SubscriptionId,
+) -> Option<SubscriptionEntry> {
+    let removed = user_state
+        .write()
+        .await
+        .active_subscriptions
+        .remove(&subscription_id);
+    tracing::trace!(subscription_id = %subscription_id, "subscription cleaned up");
+    removed
 }
 
-/// Cancel all active streams matching a predicate. Returns count cancelled.
-pub(super) fn cancel_streams_matching(
+/// Push a subscription deadline out. Returns the owning agent_id when found.
+pub(super) async fn extend_subscription(
+    user_state: &Arc<RwLock<ServerUserState>>,
+    subscription_id: SubscriptionId,
+    lease_deadline: Instant,
+) -> Option<Uuid> {
+    let mut us = user_state.write().await;
+    let entry = us.active_subscriptions.get_mut(&subscription_id)?;
+    entry.lease_deadline = lease_deadline;
+    Some(entry.agent_id)
+}
+
+/// Explicitly remove a subscription and cancel its stream task.
+pub(super) async fn unsubscribe_subscription(
+    user_state: &Arc<RwLock<ServerUserState>>,
+    subscription_id: SubscriptionId,
+) -> Option<SubscriptionEntry> {
+    cleanup_subscription(user_state, subscription_id).await
+}
+
+/// Cancel all active subscriptions matching a predicate.
+pub(super) fn cancel_subscriptions_matching(
     us: &mut ServerUserState,
-    predicate: impl Fn(&StreamEntry) -> bool,
-) -> usize {
-    let mut cancelled = 0usize;
-    for entries in us.active_streams.values_mut() {
-        entries.retain(|entry| {
-            if predicate(entry) {
-                cancelled += 1;
-                false
-            } else {
-                true
-            }
-        });
-    }
-    us.active_streams.retain(|_, v| !v.is_empty());
-    cancelled
+    predicate: impl Fn(&SubscriptionEntry) -> bool,
+) -> Vec<SubscriptionEntry> {
+    let cancelled_ids: Vec<_> = us
+        .active_subscriptions
+        .iter()
+        .filter_map(|(subscription_id, entry)| predicate(entry).then_some(*subscription_id))
+        .collect();
+
+    cancelled_ids
+        .into_iter()
+        .filter_map(|subscription_id| us.active_subscriptions.remove(&subscription_id))
+        .collect()
 }
 
 #[cfg(test)]

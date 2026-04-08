@@ -10,7 +10,10 @@ use crate::agents::{AgentSession, SessionEvent, StopPolicy};
 use crate::config::Config;
 use crate::error::{AmuxError, Result};
 use crate::jwt::JwtValidator;
-use crate::message::{AgentType, Command, Host, Message, ProtocolError, ShutdownReason};
+use crate::message::{
+    AgentType, Command, Host, Message, ProtocolError, RoutableMessage, ShutdownReason,
+    SubscriptionCloseReason, SubscriptionId,
+};
 use crate::route::Route;
 use crate::transport::{TcpTransport, TransportSplit, create_tls_acceptor};
 use routing::{apply_local_name_candidate, shutdown_server, suspend_server};
@@ -18,9 +21,11 @@ use std::collections::{HashMap, HashSet};
 use std::net::SocketAddr;
 use std::path::Path;
 use std::sync::Arc;
+use std::sync::atomic::{AtomicU64, Ordering};
 use std::time::Duration;
 use tokio::net::TcpListener;
 use tokio::sync::{RwLock, Semaphore, mpsc, oneshot};
+use tokio::time::{Instant, MissedTickBehavior};
 use tokio_rustls::TlsAcceptor;
 use uuid::Uuid;
 
@@ -46,6 +51,9 @@ const TLS_HANDSHAKE_TIMEOUT: Duration = Duration::from_secs(10);
 /// Safety net against resource exhaustion. Each network connection holds a
 /// semaphore permit for its lifetime; new connections are rejected at capacity.
 const MAX_CONNECTIONS: usize = 16384;
+
+pub(super) const SUBSCRIPTION_LEASE_DURATION: Duration = Duration::from_secs(300);
+const SUBSCRIPTION_SWEEP_INTERVAL: Duration = Duration::from_secs(10);
 
 /// Platform-abstracted local IPC listener (Unix socket on Unix, named pipe on Windows).
 pub(crate) struct LocalListener {
@@ -118,14 +126,70 @@ use routing::withdraw_agent;
 /// User isolation is enforced on the cloud server via JWT authentication.
 pub(crate) const LOCAL_USER_ID: Uuid = Uuid::nil();
 
-/// An active stream (Output or StructuredOutput) that can be cancelled.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub(super) enum SubscriptionMode {
+    Raw,
+    Structured,
+}
+
+impl SubscriptionMode {
+    pub(super) fn as_str(self) -> &'static str {
+        match self {
+            Self::Raw => "raw",
+            Self::Structured => "structured",
+        }
+    }
+}
+
+#[derive(Clone)]
+pub(super) struct ConnectionHandle {
+    tx: mpsc::Sender<Message>,
+    next_request_id: Arc<AtomicU64>,
+}
+
+impl ConnectionHandle {
+    pub(super) fn new(tx: mpsc::Sender<Message>, next_request_id: Arc<AtomicU64>) -> Self {
+        Self {
+            tx,
+            next_request_id,
+        }
+    }
+
+    pub(super) fn sender(&self) -> mpsc::Sender<Message> {
+        self.tx.clone()
+    }
+
+    pub(super) fn request_counter(&self) -> Arc<AtomicU64> {
+        self.next_request_id.clone()
+    }
+
+    pub(super) fn next_request_id(&self) -> u64 {
+        self.next_request_id.fetch_add(1, Ordering::Relaxed)
+    }
+
+    pub(super) async fn send(
+        &self,
+        msg: Message,
+    ) -> std::result::Result<(), mpsc::error::SendError<Message>> {
+        self.tx.send(msg).await
+    }
+
+    pub(super) fn try_send(&self, msg: Message) -> bool {
+        self.tx.try_send(msg).is_ok()
+    }
+}
+
+/// An active subscription that can be cancelled.
 /// Dropping the entry drops `cancel`, which signals the stream task via `oneshot::Receiver`.
-pub(super) struct StreamEntry {
-    pub stream_id: u64,
+pub(super) struct SubscriptionEntry {
+    pub subscription_id: SubscriptionId,
+    pub agent_id: Uuid,
+    pub mode: SubscriptionMode,
     #[allow(dead_code)] // Held for drop: dropping Sender cancels the oneshot Receiver
     pub cancel: oneshot::Sender<()>,
-    /// Full destination route for this stream, including the immediate next hop.
+    /// Full destination route for this subscription, including the immediate next hop.
     pub dst: Route,
+    pub lease_deadline: Instant,
 }
 
 /// Per-user state. Each authenticated user gets isolated agents, routes,
@@ -137,16 +201,15 @@ pub(super) struct ServerUserState {
     /// Per-user routing table. Link names are globally unique (random suffixes).
     /// Per-user for security: prevents cross-user message forwarding without
     /// explicit authorization.
-    pub(super) routes: HashMap<String, mpsc::Sender<Message>>,
+    pub(super) routes: HashMap<String, ConnectionHandle>,
     /// Centralized agent registry (local + remote agents, name mapping)
     pub(super) registry: AgentRegistry,
     /// Link names of peer connections (non-local connections that receive announcements)
     pub(super) peer_links: HashSet<String>,
     /// Known remote hosts (announced via AnnounceHost)
     pub(super) hosts: HashMap<Uuid, Host>,
-    /// Active streaming tasks keyed by agent_id, with cancellation tokens
-    pub(super) active_streams: HashMap<Uuid, Vec<StreamEntry>>,
-    pub(super) next_stream_id: u64,
+    /// Active subscriptions keyed by server-assigned subscription_id.
+    pub(super) active_subscriptions: HashMap<SubscriptionId, SubscriptionEntry>,
 }
 
 impl ServerUserState {
@@ -157,10 +220,16 @@ impl ServerUserState {
             registry: AgentRegistry::new(),
             peer_links: HashSet::new(),
             hosts: HashMap::new(),
-            active_streams: HashMap::new(),
-            next_stream_id: 0,
+            active_subscriptions: HashMap::new(),
         }
     }
+}
+
+pub(super) fn subscription_lease_ms() -> u64 {
+    SUBSCRIPTION_LEASE_DURATION
+        .as_millis()
+        .try_into()
+        .expect("subscription lease should fit in u64 milliseconds")
 }
 
 /// Global server state. Per-user state (agents, routes, registry, streams, peer_links)
@@ -371,6 +440,9 @@ impl Server {
         );
 
         let mut shutdown_rx = self.shutdown_rx.take().expect("run() called twice");
+        let mut subscription_sweep = tokio::time::interval(SUBSCRIPTION_SWEEP_INTERVAL);
+        subscription_sweep.set_missed_tick_behavior(MissedTickBehavior::Skip);
+        subscription_sweep.tick().await;
 
         // Deferred reply: built inside the select arm, sent after listener teardown
         // so clients can't reconnect to the old socket before it's removed.
@@ -378,6 +450,9 @@ impl Server {
 
         loop {
             tokio::select! {
+                _ = subscription_sweep.tick() => {
+                    sweep_expired_subscriptions(&self.state).await;
+                }
                 // Shutdown/suspend request from a connection handler
                 Some(req) = shutdown_rx.recv() => {
                     match req {
@@ -596,11 +671,117 @@ async fn notify_other_clients(
 ) {
     let us = user_state.read().await;
     let msg = Message::Command(Command::ShutdownNotification(reason));
-    for (link, tx) in &us.routes {
+    for (link, handle) in &us.routes {
         if link == exclude_link {
             continue;
         }
-        let _ = tx.try_send(msg.clone());
+        let _ = handle.try_send(msg.clone());
+    }
+}
+
+pub(super) async fn send_routable_via_full_dst(
+    user_state: &Arc<RwLock<ServerUserState>>,
+    full_dst: &Route,
+    message: &RoutableMessage,
+) -> bool {
+    let Some((src, dst)) = Route::send(full_dst.clone()) else {
+        return false;
+    };
+    let Some(next_hop) = src.peek() else {
+        return false;
+    };
+
+    let route_handle = {
+        let us = user_state.read().await;
+        us.routes.get(next_hop).cloned()
+    };
+
+    let Some(route_handle) = route_handle else {
+        return false;
+    };
+
+    let request_id = route_handle.next_request_id();
+    route_handle
+        .send(Message::routable(src, dst, request_id, message))
+        .await
+        .is_ok()
+}
+
+pub(super) async fn try_send_routable_via_full_dst(
+    user_state: &Arc<RwLock<ServerUserState>>,
+    full_dst: &Route,
+    message: &RoutableMessage,
+) -> bool {
+    let Some((src, dst)) = Route::send(full_dst.clone()) else {
+        return false;
+    };
+    let Some(next_hop) = src.peek() else {
+        return false;
+    };
+
+    let route_handle = {
+        let us = user_state.read().await;
+        us.routes.get(next_hop).cloned()
+    };
+
+    let Some(route_handle) = route_handle else {
+        return false;
+    };
+
+    let request_id = route_handle.next_request_id();
+    route_handle.try_send(Message::routable(src, dst, request_id, message))
+}
+
+pub(super) async fn sweep_expired_subscriptions(state: &Arc<RwLock<ServerState>>) {
+    let user_states: Vec<_> = {
+        let s = state.read().await;
+        s.users.values().cloned().collect()
+    };
+    let now = Instant::now();
+
+    for user_state in user_states {
+        let expired = {
+            let mut us = user_state.write().await;
+            let expired_ids: Vec<_> = us
+                .active_subscriptions
+                .iter()
+                .filter_map(|(subscription_id, entry)| {
+                    (entry.lease_deadline <= now).then_some(*subscription_id)
+                })
+                .collect();
+
+            expired_ids
+                .into_iter()
+                .filter_map(|subscription_id| us.active_subscriptions.remove(&subscription_id))
+                .collect::<Vec<_>>()
+        };
+
+        for entry in expired {
+            let SubscriptionEntry {
+                subscription_id,
+                agent_id,
+                mode,
+                cancel,
+                dst,
+                ..
+            } = entry;
+            drop(cancel);
+            tracing::info!(
+                subscription_id = %subscription_id,
+                agent_id = %agent_id,
+                mode = mode.as_str(),
+                "subscription lease expired"
+            );
+            let _ = try_send_routable_via_full_dst(
+                &user_state,
+                &dst,
+                &RoutableMessage::SubscriptionClosed {
+                    subscription_id,
+                    reason: SubscriptionCloseReason::LeaseExpired,
+                },
+            )
+            .await;
+        }
     }
 }
 
@@ -725,11 +906,14 @@ pub(super) mod test_helpers {
 
 #[cfg(test)]
 mod tests {
-    use super::{ServerUserState, handle_session_event, test_helpers::test_state};
+    use super::{
+        ConnectionHandle, ServerUserState, handle_session_event, test_helpers::test_state,
+    };
     use crate::agents::{AgentSession, LocalAgentNameSource, SessionEvent};
     use crate::message::{AgentType, CreateAgentRequest, DirectMessage, Message};
     use std::path::PathBuf;
     use std::sync::Arc;
+    use std::sync::atomic::AtomicU64;
     use tokio::sync::{RwLock, mpsc};
     use uuid::Uuid;
 
@@ -739,7 +923,10 @@ mod tests {
     ) -> mpsc::Receiver<Message> {
         let (tx, rx) = mpsc::channel(16);
         let mut us = user_state.write().await;
-        us.routes.insert(link_name.to_string(), tx);
+        us.routes.insert(
+            link_name.to_string(),
+            ConnectionHandle::new(tx, Arc::new(AtomicU64::new(1))),
+        );
         us.peer_links.insert(link_name.to_string());
         rx
     }

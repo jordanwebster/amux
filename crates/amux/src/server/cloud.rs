@@ -6,7 +6,9 @@
 
 use super::connection::{ConnectionContext, HeartbeatRole, run_connection};
 use super::routing::send_initial_announcements;
-use super::{LOCAL_USER_ID, ServerState, ServerUserState, get_or_create_user_state};
+use super::{
+    ConnectionHandle, LOCAL_USER_ID, ServerState, ServerUserState, get_or_create_user_state,
+};
 use crate::cloud::{CloudConnection, CloudError};
 use crate::config::Config;
 use crate::error::AmuxError;
@@ -167,13 +169,17 @@ async fn run_cloud_connection(
     let link_name = token_refresh.link_name.clone();
 
     let (outgoing_tx, outgoing_rx) = mpsc::channel::<Message>(256);
+    let next_request_id = Arc::new(AtomicU64::new(1));
     {
         let (host_id, host_name, is_cloud_server) = {
             let s = state.read().await;
             (s.host_id, s.config.host_name.clone(), s.is_cloud_server)
         };
         let mut us = user_state.write().await;
-        us.routes.insert(link_name.clone(), outgoing_tx.clone());
+        us.routes.insert(
+            link_name.clone(),
+            ConnectionHandle::new(outgoing_tx.clone(), next_request_id.clone()),
+        );
         us.peer_links.insert(link_name.clone());
         send_initial_announcements(&us, host_id, &host_name, is_cloud_server, &link_name);
     }
@@ -194,7 +200,7 @@ async fn run_cloud_connection(
         link_name: link_name.clone(),
         is_local: false,
         heartbeat_role: HeartbeatRole::Dialer,
-        next_request_id: Arc::new(AtomicU64::new(1)),
+        next_request_id,
     };
 
     let result = run_connection(

@@ -6,11 +6,16 @@
 
 use super::accept::tcp_connect;
 use super::connection::{
-    ConnectionContext, cancel_streams_matching, cleanup_stream, register_stream,
+    ConnectionContext, cancel_subscriptions_matching, cleanup_subscription, extend_subscription,
+    register_subscription, unsubscribe_subscription,
 };
 use super::routing::{
     announce_agent_message, broadcast_to_peers, connection_tx, create_agent, delete_local_agent,
     handle_subscribe, rename_local_agent, resume_agents, withdraw_agent,
+};
+use super::{
+    SUBSCRIPTION_LEASE_DURATION, SubscriptionMode, send_routable_via_full_dst,
+    subscription_lease_ms,
 };
 use crate::agent_registry::Agent;
 use crate::agents::{AgentSession, ClaudeSession, StopPolicy};
@@ -19,6 +24,7 @@ use crate::claude::types::{ClaudeHook, Hook};
 use crate::error::{AmuxError, Result};
 use crate::message::{
     Command, DirectMessage, Message, ProtocolError, RoutableMessage, ServerDebugInfo,
+    SubscriptionCloseReason, SubscriptionId,
 };
 use crate::route::Route;
 use crate::state::State;
@@ -26,7 +32,9 @@ use std::future::Future;
 use std::path::PathBuf;
 use std::sync::atomic::Ordering;
 use tokio::sync::{mpsc, oneshot};
+use tokio::time::Instant;
 use tracing::Instrument;
+use uuid::Uuid;
 
 /// A readable subscription stream. Implemented for all [`BroadcastReader`]
 /// instantiations to enable shared stream spawning logic.
@@ -42,71 +50,140 @@ impl<P: BufferPolicy> SubscriptionReader for BroadcastReader<P> {
     }
 }
 
+struct SubscriptionHandle {
+    subscription_id: SubscriptionId,
+    agent_id: Uuid,
+    mode: SubscriptionMode,
+    reply_src: Route,
+    reply_dst: Route,
+}
+
+impl SubscriptionHandle {
+    async fn register(
+        ctx: &ConnectionContext,
+        subscription_id: SubscriptionId,
+        agent_id: Uuid,
+        mode: SubscriptionMode,
+        reply_src: Route,
+        reply_dst: Route,
+    ) -> (Self, oneshot::Receiver<()>) {
+        let (cancel_tx, cancel_rx) = oneshot::channel::<()>();
+        let mut full_dst = reply_dst.clone();
+        full_dst.push(ctx.link_name.clone());
+        let mut us = ctx.user_state.write().await;
+        register_subscription(
+            &mut us,
+            subscription_id,
+            agent_id,
+            mode,
+            cancel_tx,
+            full_dst,
+            Instant::now() + SUBSCRIPTION_LEASE_DURATION,
+        );
+        (
+            Self {
+                subscription_id,
+                agent_id,
+                mode,
+                reply_src,
+                reply_dst,
+            },
+            cancel_rx,
+        )
+    }
+
+    fn stream_span(&self) -> tracing::Span {
+        tracing::info_span!(
+            "stream",
+            subscription_id = %self.subscription_id,
+            agent_id = %self.agent_id,
+            mode = self.mode.as_str()
+        )
+    }
+
+    async fn send_source_closed(&self, tx: &mpsc::Sender<Message>, request_id: u64) {
+        let _ = tx
+            .send(Message::routable(
+                self.reply_src.clone(),
+                self.reply_dst.clone(),
+                request_id,
+                &RoutableMessage::SubscriptionClosed {
+                    subscription_id: self.subscription_id,
+                    reason: SubscriptionCloseReason::SourceClosed,
+                },
+            ))
+            .await;
+    }
+}
+
 /// Spawn a subscription stream task that reads from a buffer, wraps each item
 /// into a RoutableMessage, and forwards it to the subscriber. Handles cancellation
 /// and cleanup automatically.
 async fn spawn_subscription_stream<R: SubscriptionReader>(
     mut reader: R,
-    agent_id: uuid::Uuid,
-    mode: &'static str,
-    wrap_item: fn(uuid::Uuid, R::Item) -> RoutableMessage,
-    reply_src: Route,
-    reply_dst: Route,
+    handle: SubscriptionHandle,
+    cancel_rx: oneshot::Receiver<()>,
+    wrap_item: fn(SubscriptionId, R::Item) -> RoutableMessage,
     ctx: &ConnectionContext,
 ) {
     let Some(tx) = connection_tx(&ctx.user_state, &ctx.link_name).await else {
+        let _ = cleanup_subscription(&ctx.user_state, handle.subscription_id).await;
         return;
     };
 
-    let (cancel_tx, cancel_rx) = oneshot::channel::<()>();
-    let stream_id = {
-        let mut full_dst = reply_dst.clone();
-        full_dst.push(ctx.link_name.clone());
-        let mut us = ctx.user_state.write().await;
-        register_stream(&mut us, agent_id, cancel_tx, full_dst)
-    };
-
-    let stream_span = tracing::info_span!("stream", stream_id, agent_id = %agent_id, mode);
+    let stream_span = handle.stream_span();
     let stream_user_state = ctx.user_state.clone();
     let next_rid = ctx.next_request_id.clone();
     tokio::spawn(
         async move {
+            let subscription_id = handle.subscription_id;
             tokio::select! {
-                _ = async {
+                source_closed = async {
                     while let Some(item) = reader.recv().await {
                         let rid = next_rid.fetch_add(1, Ordering::Relaxed);
                         if tx
                             .send(Message::routable(
-                                reply_src.clone(),
-                                reply_dst.clone(),
+                                handle.reply_src.clone(),
+                                handle.reply_dst.clone(),
                                 rid,
-                                &wrap_item(agent_id, item),
+                                &wrap_item(subscription_id, item),
                             ))
                             .await
                             .is_err()
                         {
-                            return;
+                            return false;
                         }
                     }
-                    let rid = next_rid.fetch_add(1, Ordering::Relaxed);
-                    let _ = tx
-                        .send(Message::routable(
-                            reply_src.clone(),
-                            reply_dst.clone(),
-                            rid,
-                            &RoutableMessage::SubscriptionClosed { agent_id },
-                        ))
-                        .await;
-                } => {}
+                    true
+                } => {
+                    if source_closed {
+                        if cleanup_subscription(&stream_user_state, subscription_id)
+                            .await
+                            .is_some()
+                        {
+                            let rid = next_rid.fetch_add(1, Ordering::Relaxed);
+                            handle.send_source_closed(&tx, rid).await;
+                        }
+                    } else {
+                        let _ = cleanup_subscription(&stream_user_state, subscription_id).await;
+                    }
+                }
                 _ = cancel_rx => {
                     tracing::debug!("stream cancelled");
+                    let _ = cleanup_subscription(&stream_user_state, subscription_id).await;
                 }
             }
-            cleanup_stream(&stream_user_state, agent_id, stream_id).await;
             tracing::debug!("stream ended");
         }
         .instrument(stream_span),
     );
+}
+
+fn subscribe_error(err: &AmuxError) -> ProtocolError {
+    match err {
+        AmuxError::AgentNotFound(_) => ProtocolError::NoAgentFound,
+        _ => ProtocolError::ServerError(err.to_string()),
+    }
 }
 
 fn descendant_host_ids(
@@ -261,7 +338,8 @@ async fn handle_routable(
         RoutableMessage::RawInput { .. }
         | RoutableMessage::RawOutput { .. }
         | RoutableMessage::StructuredOutput { .. }
-        | RoutableMessage::StructuredInput { .. } => {}
+        | RoutableMessage::StructuredInput { .. }
+        | RoutableMessage::ExtendSubscription { .. } => {}
         other => tracing::debug!(
             msg_type = std::any::type_name_of_val(other),
             "decoded routable"
@@ -280,27 +358,55 @@ async fn handle_routable(
 
             match result {
                 Ok(buffer_reader) => {
-                    let _ = tx
+                    let subscription_id = Uuid::new_v4();
+                    let (handle, cancel_rx) = SubscriptionHandle::register(
+                        ctx,
+                        subscription_id,
+                        agent_id,
+                        SubscriptionMode::Raw,
+                        reply_src.clone(),
+                        reply_dst.clone(),
+                    )
+                    .await;
+                    if tx
                         .send(Message::routable(
                             reply_src.clone(),
                             reply_dst.clone(),
                             request_id,
                             &RoutableMessage::SubscribeRawResult {
-                                agent_id,
+                                subscription_id,
+                                lease_ms: subscription_lease_ms(),
                                 error: None,
                             },
                         ))
-                        .await;
+                        .await
+                        .is_err()
+                    {
+                        drop(unsubscribe_subscription(&ctx.user_state, subscription_id).await);
+                        tracing::debug!(
+                            subscription_id = %subscription_id,
+                            agent_id = %agent_id,
+                            "subscribe result send failed before stream spawn"
+                        );
+                        return Ok(());
+                    }
 
-                    tracing::info!(agent_id = %agent_id, mode = "raw", "subscribed");
+                    tracing::info!(
+                        subscription_id = %subscription_id,
+                        agent_id = %agent_id,
+                        mode = SubscriptionMode::Raw.as_str(),
+                        lease_ms = subscription_lease_ms(),
+                        "subscription created"
+                    );
 
                     spawn_subscription_stream(
                         buffer_reader,
-                        agent_id,
-                        "raw",
-                        |id, data| RoutableMessage::RawOutput { agent_id: id, data },
-                        reply_src,
-                        reply_dst,
+                        handle,
+                        cancel_rx,
+                        |subscription_id, data| RoutableMessage::RawOutput {
+                            subscription_id,
+                            data,
+                        },
                         ctx,
                     )
                     .await;
@@ -314,8 +420,9 @@ async fn handle_routable(
                             reply_dst,
                             request_id,
                             &RoutableMessage::SubscribeRawResult {
-                                agent_id,
-                                error: Some(ProtocolError::ServerError(e.to_string())),
+                                subscription_id: Uuid::nil(),
+                                lease_ms: 0,
+                                error: Some(subscribe_error(&e)),
                             },
                         ))
                         .await;
@@ -337,9 +444,10 @@ async fn handle_routable(
                             reply_dst,
                             request_id,
                             &RoutableMessage::SubscribeStructuredResult {
-                                agent_id,
+                                subscription_id: Uuid::nil(),
                                 seq: 0,
                                 protocol: None,
+                                lease_ms: 0,
                                 error: Some(ProtocolError::NoAgentFound),
                             },
                         ))
@@ -359,9 +467,10 @@ async fn handle_routable(
                         reply_dst,
                         request_id,
                         &RoutableMessage::SubscribeStructuredResult {
-                            agent_id,
+                            subscription_id: Uuid::nil(),
                             seq: 0,
                             protocol: None,
+                            lease_ms: 0,
                             error: Some(ProtocolError::NoAgentFound),
                         },
                     ))
@@ -369,37 +478,139 @@ async fn handle_routable(
                 return Ok(());
             };
 
-            let _ = tx
+            let subscription_id = Uuid::new_v4();
+            let (handle, cancel_rx) = SubscriptionHandle::register(
+                ctx,
+                subscription_id,
+                agent_id,
+                SubscriptionMode::Structured,
+                reply_src.clone(),
+                reply_dst.clone(),
+            )
+            .await;
+            if tx
                 .send(Message::routable(
                     reply_src.clone(),
                     reply_dst.clone(),
                     request_id,
                     &RoutableMessage::SubscribeStructuredResult {
-                        agent_id,
+                        subscription_id,
                         seq: current_seq,
                         protocol,
+                        lease_ms: subscription_lease_ms(),
                         error: None,
                     },
                 ))
-                .await;
+                .await
+                .is_err()
+            {
+                drop(unsubscribe_subscription(&ctx.user_state, subscription_id).await);
+                tracing::debug!(
+                    subscription_id = %subscription_id,
+                    agent_id = %agent_id,
+                    "subscribe result send failed before stream spawn"
+                );
+                return Ok(());
+            }
 
-            tracing::info!(agent_id = %agent_id, mode = "structured", "subscribed");
+            tracing::info!(
+                subscription_id = %subscription_id,
+                agent_id = %agent_id,
+                mode = SubscriptionMode::Structured.as_str(),
+                lease_ms = subscription_lease_ms(),
+                "subscription created"
+            );
 
             spawn_subscription_stream(
                 reader,
-                agent_id,
-                "structured",
-                |id, envelope| RoutableMessage::StructuredOutput {
-                    agent_id: id,
+                handle,
+                cancel_rx,
+                |subscription_id, envelope| RoutableMessage::StructuredOutput {
+                    subscription_id,
                     seq: envelope.seq,
                     payload: envelope.payload,
                 },
-                reply_src,
-                reply_dst,
                 ctx,
             )
             .await;
 
+            Ok(())
+        }
+
+        RoutableMessage::ExtendSubscription { subscription_id } => {
+            let Some((reply_src, reply_dst)) = reply_routes(src, "ExtendSubscription") else {
+                return Ok(());
+            };
+
+            let lease_deadline = Instant::now() + SUBSCRIPTION_LEASE_DURATION;
+            let response_message = match extend_subscription(
+                &ctx.user_state,
+                subscription_id,
+                lease_deadline,
+            )
+            .await
+            {
+                Some(agent_id) => {
+                    tracing::debug!(
+                        subscription_id = %subscription_id,
+                        agent_id = %agent_id,
+                        lease_ms = subscription_lease_ms(),
+                        "subscription extended"
+                    );
+                    RoutableMessage::ExtendSubscriptionResult {
+                        subscription_id,
+                        lease_ms: subscription_lease_ms(),
+                        error: None,
+                    }
+                }
+                None => {
+                    tracing::debug!(subscription_id = %subscription_id, "late or unknown extend");
+                    RoutableMessage::ExtendSubscriptionResult {
+                        subscription_id,
+                        lease_ms: 0,
+                        error: Some(ProtocolError::UnknownSubscription),
+                    }
+                }
+            };
+
+            let _ = tx
+                .send(Message::routable(
+                    reply_src,
+                    reply_dst,
+                    request_id,
+                    &response_message,
+                ))
+                .await;
+            Ok(())
+        }
+
+        RoutableMessage::Unsubscribe { subscription_id } => {
+            if let Some(entry) = unsubscribe_subscription(&ctx.user_state, subscription_id).await {
+                let super::SubscriptionEntry {
+                    subscription_id,
+                    agent_id,
+                    cancel,
+                    dst,
+                    ..
+                } = entry;
+                drop(cancel);
+                tracing::info!(
+                    subscription_id = %subscription_id,
+                    agent_id = %agent_id,
+                    "explicit unsubscribe handled"
+                );
+                let _ = send_routable_via_full_dst(
+                    &ctx.user_state,
+                    &dst,
+                    &RoutableMessage::SubscriptionClosed {
+                        subscription_id,
+                        reason: SubscriptionCloseReason::Unsubscribed,
+                    },
+                )
+                .await;
+            } else {
+                tracing::debug!(subscription_id = %subscription_id, "late or unknown unsubscribe");
+            }
             Ok(())
         }
 
@@ -547,6 +758,7 @@ async fn handle_routable(
         // Response messages that arrived at their destination (empty dst)
         RoutableMessage::SubscribeRawResult { .. }
         | RoutableMessage::SubscribeStructuredResult { .. }
+        | RoutableMessage::ExtendSubscriptionResult { .. }
         | RoutableMessage::CreateAgentResult { .. }
         | RoutableMessage::RenameAgentResult { .. }
         | RoutableMessage::DeleteAgentResult { .. }
@@ -1085,11 +1297,15 @@ async fn handle_direct(
                 tracing::info!(count = removed.len(), host_id = %id, "removed agents for withdrawn host");
             }
 
-            let cancelled = cancel_streams_matching(&mut us, |entry| {
+            let cancelled = cancel_subscriptions_matching(&mut us, |entry| {
                 entry.dst.starts_with_route(&withdrawn_route)
             });
-            if cancelled > 0 {
-                tracing::info!(count = cancelled, host_id = %id, "cancelled streams for withdrawn host");
+            if !cancelled.is_empty() {
+                tracing::info!(
+                    count = cancelled.len(),
+                    host_id = %id,
+                    "cancelled subscriptions for withdrawn host"
+                );
             }
 
             let removed_descendants = remove_descendant_hosts(&mut us, id, &withdrawn_route);
@@ -1151,10 +1367,13 @@ mod tests {
         BashToolInput, ClaudePermissionRequest, ClaudePermissionTool, ClaudeSessionEnd,
         ClaudeSessionStart, ClaudeStop,
     };
-    use crate::message::{AgentType, CreateAgentRequest, RenameAgentRequest};
+    use crate::message::{AgentType, CreateAgentRequest, DirectMessage, RenameAgentRequest};
     use crate::route::Route;
     use crate::server::test_helpers::{test_ctx, test_state};
-    use crate::server::{LOCAL_USER_ID, ServerUserState, StreamEntry};
+    use crate::server::{
+        ConnectionHandle, LOCAL_USER_ID, SUBSCRIPTION_LEASE_DURATION, ServerUserState,
+        SubscriptionMode, sweep_expired_subscriptions,
+    };
     use chrono::Utc;
     use serde_json::json;
     use std::path::{Path, PathBuf};
@@ -1162,6 +1381,7 @@ mod tests {
     use std::sync::atomic::AtomicU64;
     use std::time::Duration;
     use tokio::sync::{RwLock, mpsc, oneshot};
+    use tokio::time::Instant;
     use uuid::Uuid;
 
     fn dummy_pty_command() -> String {
@@ -1213,7 +1433,10 @@ mod tests {
     ) -> mpsc::Receiver<Message> {
         let (tx, rx) = mpsc::channel::<Message>(16);
         let mut us = user_state.write().await;
-        us.routes.insert(link_name.to_string(), tx);
+        us.routes.insert(
+            link_name.to_string(),
+            ConnectionHandle::new(tx, Arc::new(AtomicU64::new(1))),
+        );
         us.peer_links.insert(link_name.to_string());
         rx
     }
@@ -2334,16 +2557,15 @@ mod tests {
                     version: "0.1.0".to_string(),
                 },
             );
-            let stream_id = us.next_stream_id;
-            us.next_stream_id += 1;
-            us.active_streams
-                .entry(agent_id)
-                .or_default()
-                .push(StreamEntry {
-                    stream_id,
-                    cancel: cancel_tx,
-                    dst: full_route.clone(),
-                });
+            register_subscription(
+                &mut us,
+                Uuid::new_v4(),
+                agent_id,
+                SubscriptionMode::Raw,
+                cancel_tx,
+                full_route.clone(),
+                Instant::now() + SUBSCRIPTION_LEASE_DURATION,
+            );
         }
 
         let ctx = test_ctx(state, user_state.clone());
@@ -2357,13 +2579,15 @@ mod tests {
 
         assert!(
             cancel_rx.try_recv().is_err(),
-            "matching withdraw should cancel the stream"
+            "matching withdraw should cancel the subscription"
         );
 
         let us = user_state.read().await;
         assert!(
-            !us.active_streams.contains_key(&agent_id),
-            "cancelled stream should be removed from active_streams"
+            !us.active_subscriptions
+                .values()
+                .any(|entry| entry.agent_id == agent_id),
+            "cancelled subscription should be removed from active_subscriptions"
         );
     }
 
@@ -2657,7 +2881,10 @@ mod tests {
         let (peer_tx, mut peer_rx) = mpsc::channel::<Message>(16);
         {
             let mut us = user_state.write().await;
-            us.routes.insert("peer-a".to_string(), peer_tx);
+            us.routes.insert(
+                "peer-a".to_string(),
+                ConnectionHandle::new(peer_tx, Arc::new(AtomicU64::new(1))),
+            );
         }
 
         let ctx = test_ctx(state, user_state);
@@ -2708,13 +2935,20 @@ mod tests {
         // Response messages arriving at their destination (empty dst) should be silently ignored
         let responses: Vec<RoutableMessage> = vec![
             RoutableMessage::SubscribeRawResult {
-                agent_id: Uuid::new_v4(),
+                subscription_id: Uuid::new_v4(),
+                lease_ms: subscription_lease_ms(),
                 error: None,
             },
             RoutableMessage::SubscribeStructuredResult {
-                agent_id: Uuid::new_v4(),
+                subscription_id: Uuid::new_v4(),
                 seq: 0,
                 protocol: None,
+                lease_ms: subscription_lease_ms(),
+                error: None,
+            },
+            RoutableMessage::ExtendSubscriptionResult {
+                subscription_id: Uuid::new_v4(),
+                lease_ms: subscription_lease_ms(),
                 error: None,
             },
             RoutableMessage::CreateAgentResult {
@@ -2730,11 +2964,11 @@ mod tests {
                 error: None,
             },
             RoutableMessage::RawOutput {
-                agent_id: Uuid::new_v4(),
+                subscription_id: Uuid::new_v4(),
                 data: vec![0x41],
             },
             RoutableMessage::StructuredOutput {
-                agent_id: Uuid::new_v4(),
+                subscription_id: Uuid::new_v4(),
                 seq: 1,
                 payload: json!({"type": "hook.stop", "cwd": "/tmp", "stop_hook_active": false}),
             },
@@ -2743,7 +2977,8 @@ mod tests {
                 error: None,
             },
             RoutableMessage::SubscriptionClosed {
-                agent_id: Uuid::new_v4(),
+                subscription_id: Uuid::new_v4(),
+                reason: SubscriptionCloseReason::SourceClosed,
             },
             RoutableMessage::UnknownMessage,
         ];
@@ -2859,11 +3094,12 @@ mod tests {
         assert!(matches!(
             decode_written_routable(&msgs[0]),
             RoutableMessage::SubscribeStructuredResult {
-                agent_id: id,
+                subscription_id: id,
                 seq: 0,
                 protocol: None,
+                lease_ms: 0,
                 error: Some(ProtocolError::NoAgentFound),
-            } if id == agent_id
+            } if id.is_nil()
         ));
     }
 
@@ -2905,11 +3141,12 @@ mod tests {
         assert!(matches!(
             decode_written_routable(&msgs[0]),
             RoutableMessage::SubscribeStructuredResult {
-                agent_id: id,
+                subscription_id: id,
                 seq: 0,
                 protocol: None,
+                lease_ms: 0,
                 error: Some(ProtocolError::NoAgentFound),
-            } if id == agent_id
+            } if id.is_nil()
         ));
     }
 
@@ -2918,6 +3155,7 @@ mod tests {
         let (state, user_state) = test_state().await;
         let ctx = test_ctx(state, user_state.clone());
         let (tx, written) = mock_tx();
+        let _route_rx = setup_route(&user_state).await;
 
         let agent_id = Uuid::new_v4();
         let session = AgentSession::Claude(crate::agents::ClaudeSession::new_readonly(
@@ -2951,17 +3189,26 @@ mod tests {
             panic!("expected Routable, got {:?}", msgs[0]);
         };
         let response = RoutableMessage::decode(payload).unwrap();
-        assert!(matches!(
-            response,
+        let subscription_id = match response {
             RoutableMessage::SubscribeStructuredResult {
-                agent_id: id,
+                subscription_id: id,
                 seq: 0,
-                protocol: Some(crate::message::AgentProtocol::Claude(
-                    crate::message::ClaudeProtocol::PtyV1
-                )),
+                protocol:
+                    Some(crate::message::AgentProtocol::Claude(crate::message::ClaudeProtocol::PtyV1)),
+                lease_ms,
                 error: None,
-            } if id == agent_id
-        ));
+            } if !id.is_nil() && lease_ms == subscription_lease_ms() => id,
+            other => panic!("expected SubscribeStructuredResult, got {:?}", other),
+        };
+        drop(msgs);
+
+        let us = user_state.read().await;
+        let entry = us
+            .active_subscriptions
+            .get(&subscription_id)
+            .expect("structured subscribe should register a subscription");
+        assert_eq!(entry.agent_id, agent_id);
+        assert_eq!(entry.mode, SubscriptionMode::Structured);
     }
 
     #[tokio::test]
@@ -3610,13 +3857,23 @@ mod tests {
         }
     }
 
-    /// Set up a route channel for the test connection's link_name ("test-link"),
-    /// returning the receiver for collecting forwarded messages.
-    async fn setup_route(user_state: &Arc<RwLock<ServerUserState>>) -> mpsc::Receiver<Message> {
+    /// Set up a route channel for a test link, returning the receiver for collecting forwarded
+    /// messages.
+    async fn setup_named_route(
+        user_state: &Arc<RwLock<ServerUserState>>,
+        link_name: &str,
+    ) -> mpsc::Receiver<Message> {
         let (route_tx, route_rx) = mpsc::channel::<Message>(64);
         let mut us = user_state.write().await;
-        us.routes.insert("test-link".to_string(), route_tx);
+        us.routes.insert(
+            link_name.to_string(),
+            ConnectionHandle::new(route_tx, Arc::new(AtomicU64::new(1))),
+        );
         route_rx
+    }
+
+    async fn setup_route(user_state: &Arc<RwLock<ServerUserState>>) -> mpsc::Receiver<Message> {
+        setup_named_route(user_state, "test-link").await
     }
 
     /// Receive the next message from the route channel, decode its routable payload.
@@ -3631,89 +3888,317 @@ mod tests {
         RoutableMessage::decode(&payload).unwrap()
     }
 
+    async fn register_test_subscription(
+        ctx: &ConnectionContext,
+        agent_id: Uuid,
+        subscription_id: Uuid,
+        reply_src: Route,
+        reply_dst: &Route,
+        mode: SubscriptionMode,
+    ) -> (SubscriptionHandle, oneshot::Receiver<()>) {
+        SubscriptionHandle::register(
+            ctx,
+            subscription_id,
+            agent_id,
+            mode,
+            reply_src,
+            reply_dst.clone(),
+        )
+        .await
+    }
+
     #[tokio::test]
-    async fn stream_forwards_items_and_sends_subscription_closed() {
+    async fn raw_subscribe_returns_subscription_id_and_registers_entry() {
+        let (state, user_state) = test_state().await;
+        let ctx = test_ctx(state, user_state.clone());
+        let (tx, written) = mock_tx();
+        let _route_rx = setup_route(&user_state).await;
+
+        let agent_id = Uuid::new_v4();
+        insert_test_session(&user_state, agent_id).await;
+
+        let msg = Message::routable(
+            Route::from_link("client"),
+            Route::empty(),
+            1,
+            &RoutableMessage::SubscribeRaw {
+                agent_id,
+                terminal_size: None,
+            },
+        );
+
+        handle_message(&tx, msg, &ctx).await.unwrap();
+        tokio::task::yield_now().await;
+
+        let msgs = written.lock().await;
+        assert_eq!(msgs.len(), 1);
+        let subscription_id = match decode_written_routable(&msgs[0]) {
+            RoutableMessage::SubscribeRawResult {
+                subscription_id,
+                lease_ms,
+                error: None,
+            } => {
+                assert_eq!(lease_ms, subscription_lease_ms());
+                subscription_id
+            }
+            other => panic!("expected SubscribeRawResult, got {:?}", other),
+        };
+        drop(msgs);
+
+        let us = user_state.read().await;
+        let entry = us
+            .active_subscriptions
+            .get(&subscription_id)
+            .expect("raw subscribe should register a subscription");
+        assert_eq!(entry.agent_id, agent_id);
+        assert_eq!(entry.mode, SubscriptionMode::Raw);
+    }
+
+    #[tokio::test]
+    async fn extend_subscription_success_updates_deadline() {
+        let (state, user_state) = test_state().await;
+        let ctx = test_ctx(state, user_state.clone());
+        let (tx, written) = mock_tx();
+
+        let agent_id = Uuid::new_v4();
+        let subscription_id = Uuid::new_v4();
+        let old_deadline = Instant::now() + Duration::from_secs(1);
+        let (cancel_tx, _cancel_rx) = oneshot::channel();
+
+        {
+            let mut us = user_state.write().await;
+            register_subscription(
+                &mut us,
+                subscription_id,
+                agent_id,
+                SubscriptionMode::Raw,
+                cancel_tx,
+                Route::from_link("test-link"),
+                old_deadline,
+            );
+        }
+
+        let msg = Message::routable(
+            Route::from_link("client"),
+            Route::empty(),
+            1,
+            &RoutableMessage::ExtendSubscription { subscription_id },
+        );
+
+        handle_message(&tx, msg, &ctx).await.unwrap();
+        tokio::task::yield_now().await;
+
+        let msgs = written.lock().await;
+        assert_eq!(msgs.len(), 1);
+        assert!(matches!(
+            decode_written_routable(&msgs[0]),
+            RoutableMessage::ExtendSubscriptionResult {
+                subscription_id: id,
+                lease_ms,
+                error: None,
+            } if id == subscription_id && lease_ms == subscription_lease_ms()
+        ));
+        drop(msgs);
+
+        let us = user_state.read().await;
+        let entry = us.active_subscriptions.get(&subscription_id).unwrap();
+        assert!(entry.lease_deadline > old_deadline);
+    }
+
+    #[tokio::test]
+    async fn extend_subscription_unknown_returns_unknown_subscription() {
+        let (state, user_state) = test_state().await;
+        let ctx = test_ctx(state, user_state);
+        let (tx, written) = mock_tx();
+
+        let subscription_id = Uuid::new_v4();
+        let msg = Message::routable(
+            Route::from_link("client"),
+            Route::empty(),
+            1,
+            &RoutableMessage::ExtendSubscription { subscription_id },
+        );
+
+        handle_message(&tx, msg, &ctx).await.unwrap();
+        tokio::task::yield_now().await;
+
+        let msgs = written.lock().await;
+        assert_eq!(msgs.len(), 1);
+        assert!(matches!(
+            decode_written_routable(&msgs[0]),
+            RoutableMessage::ExtendSubscriptionResult {
+                subscription_id: id,
+                lease_ms: 0,
+                error: Some(ProtocolError::UnknownSubscription),
+            } if id == subscription_id
+        ));
+    }
+
+    #[tokio::test]
+    async fn unsubscribe_success_sends_unsubscribed_and_removes_subscription() {
+        let (state, user_state) = test_state().await;
+        let ctx = test_ctx(state, user_state.clone());
+        let (tx, written) = mock_tx();
+        let mut route_rx = setup_route(&user_state).await;
+
+        let agent_id = Uuid::new_v4();
+        let subscription_id = Uuid::new_v4();
+        let (cancel_tx, mut cancel_rx) = oneshot::channel();
+        let mut full_dst = Route::from_link("client");
+        full_dst.push("test-link");
+
+        {
+            let mut us = user_state.write().await;
+            register_subscription(
+                &mut us,
+                subscription_id,
+                agent_id,
+                SubscriptionMode::Raw,
+                cancel_tx,
+                full_dst,
+                Instant::now() + SUBSCRIPTION_LEASE_DURATION,
+            );
+        }
+
+        let msg = Message::routable(
+            Route::from_link("client"),
+            Route::empty(),
+            1,
+            &RoutableMessage::Unsubscribe { subscription_id },
+        );
+
+        handle_message(&tx, msg, &ctx).await.unwrap();
+        tokio::task::yield_now().await;
+
+        assert!(
+            cancel_rx.try_recv().is_err(),
+            "unsubscribe should drop the cancellation sender"
+        );
+        assert!(matches!(
+            recv_routable(&mut route_rx).await,
+            RoutableMessage::SubscriptionClosed {
+                subscription_id: id,
+                reason: SubscriptionCloseReason::Unsubscribed,
+            } if id == subscription_id
+        ));
+
+        let us = user_state.read().await;
+        assert!(!us.active_subscriptions.contains_key(&subscription_id));
+        drop(us);
+
+        let msgs = written.lock().await;
+        assert!(msgs.is_empty(), "unsubscribe should not emit an ack");
+    }
+
+    #[tokio::test]
+    async fn duplicate_unsubscribe_is_harmless() {
+        let (state, user_state) = test_state().await;
+        let ctx = test_ctx(state, user_state.clone());
+        let (tx, written) = mock_tx();
+        let mut route_rx = setup_route(&user_state).await;
+
+        let agent_id = Uuid::new_v4();
+        let subscription_id = Uuid::new_v4();
+        let (cancel_tx, _cancel_rx) = oneshot::channel();
+        let mut full_dst = Route::from_link("client");
+        full_dst.push("test-link");
+
+        {
+            let mut us = user_state.write().await;
+            register_subscription(
+                &mut us,
+                subscription_id,
+                agent_id,
+                SubscriptionMode::Raw,
+                cancel_tx,
+                full_dst,
+                Instant::now() + SUBSCRIPTION_LEASE_DURATION,
+            );
+        }
+
+        let msg = Message::routable(
+            Route::from_link("client"),
+            Route::empty(),
+            1,
+            &RoutableMessage::Unsubscribe { subscription_id },
+        );
+        handle_message(&tx, msg.clone(), &ctx).await.unwrap();
+        let _ = recv_routable(&mut route_rx).await;
+
+        handle_message(&tx, msg, &ctx).await.unwrap();
+        tokio::task::yield_now().await;
+
+        assert!(
+            route_rx.try_recv().is_err(),
+            "duplicate unsubscribe should not emit another close"
+        );
+        let us = user_state.read().await;
+        assert!(!us.active_subscriptions.contains_key(&subscription_id));
+        drop(us);
+
+        let msgs = written.lock().await;
+        assert!(msgs.is_empty(), "unsubscribe remains fire-and-forget");
+    }
+
+    #[tokio::test]
+    async fn stream_source_eof_sends_source_closed_and_cleans_up_subscription() {
         let (state, user_state) = test_state().await;
         let ctx = test_ctx(state, user_state.clone());
         let mut route_rx = setup_route(&user_state).await;
 
         let agent_id = Uuid::new_v4();
+        let subscription_id = Uuid::new_v4();
+        let reply_dst = Route::from_link("client");
+        let (handle, cancel_rx) = register_test_subscription(
+            &ctx,
+            agent_id,
+            subscription_id,
+            Route::from_link("server"),
+            &reply_dst,
+            SubscriptionMode::Raw,
+        )
+        .await;
         let (mock_tx, mock_rx) = mpsc::channel::<Vec<u8>>(16);
 
         spawn_subscription_stream(
             MockReader { rx: mock_rx },
-            agent_id,
-            "raw",
-            |id, data| RoutableMessage::RawOutput { agent_id: id, data },
-            Route::from_link("server"),
-            Route::from_link("client"),
+            handle,
+            cancel_rx,
+            |subscription_id, data| RoutableMessage::RawOutput {
+                subscription_id,
+                data,
+            },
             &ctx,
         )
         .await;
 
-        // Send items then close the reader
         mock_tx.send(b"hello".to_vec()).await.unwrap();
         mock_tx.send(b"world".to_vec()).await.unwrap();
         drop(mock_tx);
 
-        // Verify forwarded items
-        let msg = recv_routable(&mut route_rx).await;
-        assert!(matches!(&msg, RoutableMessage::RawOutput { data, .. } if data == b"hello"));
+        assert!(matches!(
+            recv_routable(&mut route_rx).await,
+            RoutableMessage::RawOutput { subscription_id: id, data } if id == subscription_id && data == b"hello"
+        ));
+        assert!(matches!(
+            recv_routable(&mut route_rx).await,
+            RoutableMessage::RawOutput { subscription_id: id, data } if id == subscription_id && data == b"world"
+        ));
+        assert!(matches!(
+            recv_routable(&mut route_rx).await,
+            RoutableMessage::SubscriptionClosed {
+                subscription_id: id,
+                reason: SubscriptionCloseReason::SourceClosed,
+            } if id == subscription_id
+        ));
 
-        let msg = recv_routable(&mut route_rx).await;
-        assert!(matches!(&msg, RoutableMessage::RawOutput { data, .. } if data == b"world"));
-
-        // Verify SubscriptionClosed sent after reader exhaustion
-        let msg = recv_routable(&mut route_rx).await;
-        assert!(
-            matches!(msg, RoutableMessage::SubscriptionClosed { agent_id: id } if id == agent_id)
-        );
-    }
-
-    #[tokio::test]
-    async fn stream_cleans_up_active_streams_on_close() {
-        let (state, user_state) = test_state().await;
-        let ctx = test_ctx(state, user_state.clone());
-        let _route_rx = setup_route(&user_state).await;
-
-        let agent_id = Uuid::new_v4();
-        let (mock_tx, mock_rx) = mpsc::channel::<Vec<u8>>(16);
-
-        spawn_subscription_stream(
-            MockReader { rx: mock_rx },
-            agent_id,
-            "raw",
-            |id, data| RoutableMessage::RawOutput { agent_id: id, data },
-            Route::from_link("server"),
-            Route::from_link("client"),
-            &ctx,
-        )
-        .await;
-
-        // Stream should be registered in active_streams
-        {
-            let us = user_state.read().await;
-            assert!(
-                us.active_streams.contains_key(&agent_id),
-                "stream should be registered after spawn"
-            );
-        }
-
-        // Close the reader
-        drop(mock_tx);
-
-        // Give spawned task time to process close and clean up
         tokio::time::sleep(Duration::from_millis(100)).await;
-
         let us = user_state.read().await;
-        assert!(
-            !us.active_streams.contains_key(&agent_id),
-            "stream should be cleaned up after reader close"
-        );
+        assert!(!us.active_subscriptions.contains_key(&subscription_id));
     }
 
     #[tokio::test]
-    async fn withdrawn_agent_stream_still_sends_subscription_closed_on_eof() {
+    async fn withdrawn_agent_stream_still_sends_source_closed_on_eof() {
         let (state, user_state) = test_state().await;
         let ctx = test_ctx(state, user_state.clone());
         let mut route_rx = setup_route(&user_state).await;
@@ -3730,15 +4215,27 @@ mod tests {
             us.registry.register_local(info).unwrap();
         }
 
+        let subscription_id = Uuid::new_v4();
+        let reply_dst = Route::from_link("client");
+        let (handle, cancel_rx) = register_test_subscription(
+            &ctx,
+            agent_id,
+            subscription_id,
+            Route::from_link("server"),
+            &reply_dst,
+            SubscriptionMode::Raw,
+        )
+        .await;
         let (mock_tx, mock_rx) = mpsc::channel::<Vec<u8>>(16);
 
         spawn_subscription_stream(
             MockReader { rx: mock_rx },
-            agent_id,
-            "raw",
-            |id, data| RoutableMessage::RawOutput { agent_id: id, data },
-            Route::from_link("server"),
-            Route::from_link("client"),
+            handle,
+            cancel_rx,
+            |subscription_id, data| RoutableMessage::RawOutput {
+                subscription_id,
+                data,
+            },
             &ctx,
         )
         .await;
@@ -3751,25 +4248,24 @@ mod tests {
                 "withdrawal should return the removed session"
             );
             assert!(
-                us.active_streams.contains_key(&agent_id),
-                "active stream should remain registered until EOF"
+                us.active_subscriptions.contains_key(&subscription_id),
+                "active subscription should remain registered until EOF"
             );
         }
 
         drop(mock_tx);
 
-        let msg = recv_routable(&mut route_rx).await;
-        assert!(
-            matches!(msg, RoutableMessage::SubscriptionClosed { agent_id: id } if id == agent_id)
-        );
+        assert!(matches!(
+            recv_routable(&mut route_rx).await,
+            RoutableMessage::SubscriptionClosed {
+                subscription_id: id,
+                reason: SubscriptionCloseReason::SourceClosed,
+            } if id == subscription_id
+        ));
 
         tokio::time::sleep(Duration::from_millis(100)).await;
-
         let us = user_state.read().await;
-        assert!(
-            !us.active_streams.contains_key(&agent_id),
-            "stream should clean itself up after EOF"
-        );
+        assert!(!us.active_subscriptions.contains_key(&subscription_id));
     }
 
     #[tokio::test]
@@ -3779,34 +4275,41 @@ mod tests {
         let mut route_rx = setup_route(&user_state).await;
 
         let agent_id = Uuid::new_v4();
-        // Keep _mock_tx alive so the reader blocks (doesn't close)
+        let subscription_id = Uuid::new_v4();
+        let reply_dst = Route::from_link("client");
+        let (handle, cancel_rx) = register_test_subscription(
+            &ctx,
+            agent_id,
+            subscription_id,
+            Route::from_link("server"),
+            &reply_dst,
+            SubscriptionMode::Raw,
+        )
+        .await;
         let (_mock_tx, mock_rx) = mpsc::channel::<Vec<u8>>(16);
 
         spawn_subscription_stream(
             MockReader { rx: mock_rx },
-            agent_id,
-            "raw",
-            |id, data| RoutableMessage::RawOutput { agent_id: id, data },
-            Route::from_link("server"),
-            Route::from_link("client"),
+            handle,
+            cancel_rx,
+            |subscription_id, data| RoutableMessage::RawOutput {
+                subscription_id,
+                data,
+            },
             &ctx,
         )
         .await;
 
-        // Cancel all streams (drops oneshot senders, triggering cancel_rx)
         {
             let mut us = user_state.write().await;
-            let cancelled = cancel_streams_matching(&mut us, |_| true);
-            assert_eq!(cancelled, 1);
+            let cancelled = cancel_subscriptions_matching(&mut us, |_| true);
+            assert_eq!(cancelled.len(), 1);
         }
 
-        // Give spawned task time to process cancellation
         tokio::time::sleep(Duration::from_millis(100)).await;
-
-        // No SubscriptionClosed should have been sent (cancelled, not reader exhaustion)
         assert!(
             route_rx.try_recv().is_err(),
-            "cancelled stream should not send SubscriptionClosed"
+            "cancelled stream should not send synthetic SubscriptionClosed"
         );
     }
 
@@ -3814,27 +4317,222 @@ mod tests {
     async fn stream_no_route_skips_spawn() {
         let (state, user_state) = test_state().await;
         let ctx = test_ctx(state, user_state.clone());
-        // Don't set up any route — connection_tx will return None
 
         let agent_id = Uuid::new_v4();
+        let subscription_id = Uuid::new_v4();
+        let (_cancel_tx, cancel_rx) = oneshot::channel::<()>();
         let (_mock_tx, mock_rx) = mpsc::channel::<Vec<u8>>(16);
+        let handle = SubscriptionHandle {
+            subscription_id,
+            agent_id,
+            mode: SubscriptionMode::Raw,
+            reply_src: Route::from_link("server"),
+            reply_dst: Route::from_link("client"),
+        };
 
         spawn_subscription_stream(
             MockReader { rx: mock_rx },
-            agent_id,
-            "raw",
-            |id, data| RoutableMessage::RawOutput { agent_id: id, data },
-            Route::from_link("server"),
-            Route::from_link("client"),
+            handle,
+            cancel_rx,
+            |subscription_id, data| RoutableMessage::RawOutput {
+                subscription_id,
+                data,
+            },
             &ctx,
         )
         .await;
 
-        // No stream should be registered (early return when route not found)
         let us = user_state.read().await;
         assert!(
-            !us.active_streams.contains_key(&agent_id),
-            "no stream should be registered when route doesn't exist"
+            !us.active_subscriptions.contains_key(&subscription_id),
+            "no subscription should be registered when route doesn't exist"
         );
+    }
+
+    #[tokio::test(start_paused = true)]
+    async fn lease_expiry_removes_subscription_and_emits_closed() {
+        let (state, user_state) = test_state().await;
+        let mut route_rx = setup_route(&user_state).await;
+
+        let agent_id = Uuid::new_v4();
+        let subscription_id = Uuid::new_v4();
+        let (cancel_tx, mut cancel_rx) = oneshot::channel();
+        let mut full_dst = Route::from_link("client");
+        full_dst.push("test-link");
+
+        {
+            let mut us = user_state.write().await;
+            register_subscription(
+                &mut us,
+                subscription_id,
+                agent_id,
+                SubscriptionMode::Raw,
+                cancel_tx,
+                full_dst,
+                Instant::now() + SUBSCRIPTION_LEASE_DURATION,
+            );
+        }
+
+        tokio::time::advance(SUBSCRIPTION_LEASE_DURATION + Duration::from_secs(1)).await;
+        sweep_expired_subscriptions(&state).await;
+
+        assert!(
+            cancel_rx.try_recv().is_err(),
+            "lease expiry should drop the cancellation sender"
+        );
+        assert!(matches!(
+            recv_routable(&mut route_rx).await,
+            RoutableMessage::SubscriptionClosed {
+                subscription_id: id,
+                reason: SubscriptionCloseReason::LeaseExpired,
+            } if id == subscription_id
+        ));
+
+        let us = user_state.read().await;
+        assert!(!us.active_subscriptions.contains_key(&subscription_id));
+    }
+
+    #[tokio::test]
+    async fn lease_expiry_does_not_block_on_full_route_channel() {
+        let (state, user_state) = test_state().await;
+
+        let (route_tx, _route_rx) = mpsc::channel::<Message>(1);
+        route_tx
+            .try_send(Message::Direct(DirectMessage::InitialSyncComplete))
+            .unwrap();
+        {
+            let mut us = user_state.write().await;
+            us.routes.insert(
+                "test-link".to_string(),
+                ConnectionHandle::new(route_tx, Arc::new(AtomicU64::new(1))),
+            );
+        }
+
+        let agent_id = Uuid::new_v4();
+        let subscription_id = Uuid::new_v4();
+        let (cancel_tx, _cancel_rx) = oneshot::channel();
+        let mut full_dst = Route::from_link("client");
+        full_dst.push("test-link");
+
+        {
+            let mut us = user_state.write().await;
+            register_subscription(
+                &mut us,
+                subscription_id,
+                agent_id,
+                SubscriptionMode::Raw,
+                cancel_tx,
+                full_dst,
+                Instant::now(),
+            );
+        }
+
+        tokio::time::timeout(
+            Duration::from_millis(50),
+            sweep_expired_subscriptions(&state),
+        )
+        .await
+        .expect("sweep should not block on a full route channel");
+
+        let us = user_state.read().await;
+        assert!(!us.active_subscriptions.contains_key(&subscription_id));
+    }
+
+    #[tokio::test]
+    async fn remote_unsubscribe_forwarded_through_hop_removes_owner_subscription() {
+        let (relay_state, relay_user_state) = test_state().await;
+        let relay_ctx = test_ctx(relay_state, relay_user_state.clone());
+        let (relay_tx, _relay_written) = mock_tx();
+
+        let (peer_tx, mut peer_rx) = mpsc::channel::<Message>(16);
+        {
+            let mut us = relay_user_state.write().await;
+            us.routes.insert(
+                "peer-hop".to_string(),
+                ConnectionHandle::new(peer_tx, Arc::new(AtomicU64::new(1))),
+            );
+        }
+
+        let (owner_state, owner_user_state) = test_state().await;
+        let mut owner_ctx = test_ctx(owner_state, owner_user_state.clone());
+        owner_ctx.link_name = "peer-hop".to_string();
+        let (owner_tx, _owner_written) = mock_tx();
+        let _owner_route_rx = setup_named_route(&owner_user_state, "peer-hop").await;
+
+        let agent_id = Uuid::new_v4();
+        let subscription_id = Uuid::new_v4();
+        let (cancel_tx, _cancel_rx) = oneshot::channel();
+        let mut full_dst = Route::from_link("client-link");
+        full_dst.push("peer-hop");
+        {
+            let mut us = owner_user_state.write().await;
+            register_subscription(
+                &mut us,
+                subscription_id,
+                agent_id,
+                SubscriptionMode::Raw,
+                cancel_tx,
+                full_dst,
+                Instant::now() + SUBSCRIPTION_LEASE_DURATION,
+            );
+        }
+
+        let msg = Message::routable(
+            Route::from_link("client-link"),
+            Route::from_link("peer-hop"),
+            1,
+            &RoutableMessage::Unsubscribe { subscription_id },
+        );
+        handle_message(&relay_tx, msg, &relay_ctx).await.unwrap();
+
+        let forwarded = peer_rx.try_recv().expect("unsubscribe should be forwarded");
+        handle_message(&owner_tx, forwarded, &owner_ctx)
+            .await
+            .unwrap();
+        tokio::task::yield_now().await;
+
+        let us = owner_user_state.read().await;
+        assert!(
+            !us.active_subscriptions.contains_key(&subscription_id),
+            "owner should remove forwarded remote subscription"
+        );
+    }
+
+    #[tokio::test(start_paused = true)]
+    async fn owner_lease_expiry_cleans_up_remote_shaped_subscription_without_intermediate_state() {
+        let (state, user_state) = test_state().await;
+        let mut route_rx = setup_named_route(&user_state, "peer-hop").await;
+
+        let agent_id = Uuid::new_v4();
+        let subscription_id = Uuid::new_v4();
+        let (cancel_tx, _cancel_rx) = oneshot::channel();
+        let mut full_dst = Route::from_link("client-link");
+        full_dst.push("peer-hop");
+
+        {
+            let mut us = user_state.write().await;
+            register_subscription(
+                &mut us,
+                subscription_id,
+                agent_id,
+                SubscriptionMode::Raw,
+                cancel_tx,
+                full_dst,
+                Instant::now() + SUBSCRIPTION_LEASE_DURATION,
+            );
+        }
+
+        tokio::time::advance(SUBSCRIPTION_LEASE_DURATION + Duration::from_secs(1)).await;
+        sweep_expired_subscriptions(&state).await;
+
+        assert!(matches!(
+            recv_routable(&mut route_rx).await,
+            RoutableMessage::SubscriptionClosed {
+                subscription_id: id,
+                reason: SubscriptionCloseReason::LeaseExpired,
+            } if id == subscription_id
+        ));
+        let us = user_state.read().await;
+        assert!(!us.active_subscriptions.contains_key(&subscription_id));
     }
 }
