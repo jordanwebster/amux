@@ -368,10 +368,10 @@ impl HeartbeatState {
     /// timer. Heartbeat writes are timed from queue_heartbeat(), so a late
     /// write callback must not move the idle timer.
     fn note_outbound_write(&mut self, meta: MessageMetadata) {
-        if let Self::Dialer(state) = self {
-            if !meta.is_heartbeat {
-                state.last_tx_at = tokio::time::Instant::now();
-            }
+        if let Self::Dialer(state) = self
+            && !meta.is_heartbeat
+        {
+            state.last_tx_at = tokio::time::Instant::now();
         }
     }
 
