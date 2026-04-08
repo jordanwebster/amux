@@ -1,6 +1,6 @@
 [package]
 name = "amux"
-version = "0.1.26"
+version = "0.1.27"
 edition.workspace = true
 description = "Agent multiplexer - library for building amux clients and servers"
 
