@@ -49,6 +49,9 @@ pub enum AgentProtocol {
 /// Protocol-level errors that can be returned in response messages
 #[derive(Serialize, Deserialize, Debug, Clone, PartialEq, thiserror::Error)]
 pub enum ProtocolError {
+    /// The requested agent session is no longer available on this connection.
+    #[error("No agent found")]
+    NoAgentFound,
     /// Generic server error with message
     #[error("{0}")]
     ServerError(String),
@@ -243,6 +246,8 @@ pub enum DirectMessage {
     },
     Heartbeat,
     HeartbeatAck,
+    /// Marks the end of the initial host/agent discovery snapshot for a connection.
+    InitialSyncComplete,
     /// Advertise or refresh agent metadata for a known UUID.
     AnnounceAgent {
         agent_id: Uuid,
@@ -376,6 +381,7 @@ impl Message {
                 DirectMessage::ReauthResult { .. } => "Direct::ReauthResult",
                 DirectMessage::Heartbeat => "Direct::Heartbeat",
                 DirectMessage::HeartbeatAck => "Direct::HeartbeatAck",
+                DirectMessage::InitialSyncComplete => "Direct::InitialSyncComplete",
                 DirectMessage::AnnounceAgent { .. } => "Direct::AnnounceAgent",
                 DirectMessage::WithdrawAgent { .. } => "Direct::WithdrawAgent",
                 DirectMessage::AnnounceHost { .. } => "Direct::AnnounceHost",
@@ -630,6 +636,18 @@ mod tests {
         let decoded = Message::decode(&encoded).unwrap();
         assert!(matches!(decoded, Message::Direct(DirectMessage::Heartbeat)));
         assert_eq!(msg.type_label(), "Direct::Heartbeat");
+    }
+
+    #[test]
+    fn test_direct_initial_sync_complete_roundtrip_and_type_label() {
+        let msg = Message::Direct(DirectMessage::InitialSyncComplete);
+        let encoded = msg.encode().unwrap();
+        let decoded = Message::decode(&encoded).unwrap();
+        assert!(matches!(
+            decoded,
+            Message::Direct(DirectMessage::InitialSyncComplete)
+        ));
+        assert_eq!(msg.type_label(), "Direct::InitialSyncComplete");
     }
 
     #[test]

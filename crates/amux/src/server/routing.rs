@@ -566,6 +566,22 @@ fn send_initial_host_announcements(
     count
 }
 
+fn send_initial_sync_complete(us: &ServerUserState, peer_link: &str) -> bool {
+    let Some(tx) = us.routes.get(peer_link) else {
+        return false;
+    };
+
+    if tx
+        .try_send(Message::Direct(DirectMessage::InitialSyncComplete))
+        .is_err()
+    {
+        tracing::warn!(peer = %peer_link, "failed to send initial sync complete");
+        false
+    } else {
+        true
+    }
+}
+
 /// Send all initial announcements (agents + hosts) to a newly connected peer.
 /// `host_id`, `host_name`, and `is_cloud_server` are extracted from global state by the caller
 /// to avoid holding both locks simultaneously.
@@ -578,7 +594,14 @@ pub(super) fn send_initial_announcements(
 ) {
     let hosts = send_initial_host_announcements(us, host_id, host_name, is_cloud_server, peer_link);
     let agents = send_initial_agent_announcements(us, peer_link);
-    tracing::info!(peer = %peer_link, agents, hosts, "sent initial announcements");
+    let sync_complete = send_initial_sync_complete(us, peer_link);
+    tracing::info!(
+        peer = %peer_link,
+        agents,
+        hosts,
+        sync_complete,
+        "sent initial announcements"
+    );
 }
 
 fn disconnected_hosts(us: &ServerUserState, link_name: &str) -> Vec<(Uuid, Route)> {
@@ -1123,12 +1146,11 @@ mod tests {
         let host_id = Uuid::new_v4();
         send_initial_announcements(&us, host_id, "cloud-server", true, "peer-a");
 
-        // Cloud servers don't announce themselves as hosts — no messages expected
-        // (no agents or remote hosts registered either)
-        assert!(
-            rx.try_recv().is_err(),
-            "cloud server should not announce own host"
-        );
+        assert!(matches!(
+            rx.try_recv(),
+            Ok(Message::Direct(DirectMessage::InitialSyncComplete))
+        ));
+        assert!(rx.try_recv().is_err(), "should send sync marker only once");
     }
 
     // --- create_agent tests ---
@@ -1256,5 +1278,54 @@ mod tests {
             }
             other => panic!("expected AnnounceHost, got {:?}", other),
         }
+        assert!(matches!(
+            rx.try_recv(),
+            Ok(Message::Direct(DirectMessage::InitialSyncComplete))
+        ));
+        assert!(rx.try_recv().is_err(), "should send sync marker only once");
+    }
+
+    #[test]
+    fn initial_announcements_finish_with_sync_complete() {
+        let mut us = ServerUserState::new();
+        let mut rx = add_peer(&mut us, "peer-a");
+
+        let host_id = Uuid::new_v4();
+        let agent_id = Uuid::new_v4();
+        us.registry
+            .register_local(Agent {
+                id: agent_id,
+                host_id,
+                name: Some("local-agent".to_string()),
+                command: "test".to_string(),
+                working_dir: PathBuf::from("/tmp"),
+                route: Route::empty(),
+                agent_type: crate::message::AgentType::TestAgent("test".to_string()),
+                readonly: false,
+                args: vec![],
+                created_at: Utc::now(),
+            })
+            .unwrap();
+
+        send_initial_announcements(&us, host_id, "my-laptop", false, "peer-a");
+
+        assert!(matches!(
+            rx.try_recv(),
+            Ok(Message::Direct(DirectMessage::AnnounceHost {
+                id,
+                name,
+                route,
+                ..
+            })) if id == host_id && name == "my-laptop" && route == Route::empty()
+        ));
+        assert!(matches!(
+            rx.try_recv(),
+            Ok(Message::Direct(DirectMessage::AnnounceAgent { agent_id: id, .. })) if id == agent_id
+        ));
+        assert!(matches!(
+            rx.try_recv(),
+            Ok(Message::Direct(DirectMessage::InitialSyncComplete))
+        ));
+        assert!(rx.try_recv().is_err(), "should send sync marker only once");
     }
 }

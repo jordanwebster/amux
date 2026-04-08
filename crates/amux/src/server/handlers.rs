@@ -344,9 +344,7 @@ async fn handle_routable(
                                 agent_id,
                                 seq: 0,
                                 protocol: None,
-                                error: Some(ProtocolError::ServerError(format!(
-                                    "agent {agent_id} not found"
-                                ))),
+                                error: Some(ProtocolError::NoAgentFound),
                             },
                         ))
                         .await;
@@ -368,9 +366,7 @@ async fn handle_routable(
                             agent_id,
                             seq: 0,
                             protocol: None,
-                            error: Some(ProtocolError::ServerError(format!(
-                                "agent {agent_id} session ended"
-                            ))),
+                            error: Some(ProtocolError::NoAgentFound),
                         },
                     ))
                     .await;
@@ -1141,6 +1137,8 @@ async fn handle_direct(
         }
 
         DirectMessage::HeartbeatAck => Ok(()),
+
+        DirectMessage::InitialSyncComplete => Ok(()),
 
         DirectMessage::ReauthResult { .. } => {
             tracing::warn!("unexpected direct message");
@@ -2786,6 +2784,82 @@ mod tests {
         assert!(matches!(
             error,
             Some(ProtocolError::ServerError(msg)) if msg.contains("cloud relays do not host local agents")
+        ));
+    }
+
+    #[tokio::test]
+    async fn subscribe_structured_returns_no_agent_found_when_agent_is_missing() {
+        let (state, user_state) = test_state().await;
+        let ctx = test_ctx(state, user_state);
+        let (tx, written) = mock_tx();
+
+        let agent_id = Uuid::new_v4();
+        let msg = Message::routable(
+            Route::from_link("client"),
+            Route::empty(),
+            1,
+            &RoutableMessage::SubscribeStructured { agent_id },
+        );
+
+        handle_message(&tx, msg, &ctx).await.unwrap();
+        tokio::task::yield_now().await;
+
+        let msgs = written.lock().await;
+        assert_eq!(msgs.len(), 1);
+        assert!(matches!(
+            decode_written_routable(&msgs[0]),
+            RoutableMessage::SubscribeStructuredResult {
+                agent_id: id,
+                seq: 0,
+                protocol: None,
+                error: Some(ProtocolError::NoAgentFound),
+            } if id == agent_id
+        ));
+    }
+
+    #[tokio::test]
+    async fn subscribe_structured_returns_no_agent_found_when_session_has_ended() {
+        let (state, user_state) = test_state().await;
+        let ctx = test_ctx(state, user_state.clone());
+        let (tx, written) = mock_tx();
+
+        let agent_id = Uuid::new_v4();
+        let session = AgentSession::Claude(crate::agents::ClaudeSession::new_readonly(
+            agent_id,
+            PathBuf::from("/tmp"),
+        ));
+        let info = session.to_agent(Uuid::new_v4());
+        session
+            .log_source()
+            .expect("readonly session should expose structured logs")
+            .close()
+            .await;
+        {
+            let mut us = user_state.write().await;
+            us.agents.insert(agent_id, session);
+            us.registry.register_local(info).unwrap();
+        }
+
+        let msg = Message::routable(
+            Route::from_link("client"),
+            Route::empty(),
+            1,
+            &RoutableMessage::SubscribeStructured { agent_id },
+        );
+
+        handle_message(&tx, msg, &ctx).await.unwrap();
+        tokio::task::yield_now().await;
+
+        let msgs = written.lock().await;
+        assert_eq!(msgs.len(), 1);
+        assert!(matches!(
+            decode_written_routable(&msgs[0]),
+            RoutableMessage::SubscribeStructuredResult {
+                agent_id: id,
+                seq: 0,
+                protocol: None,
+                error: Some(ProtocolError::NoAgentFound),
+            } if id == agent_id
         ));
     }
 
