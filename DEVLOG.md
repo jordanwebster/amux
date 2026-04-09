@@ -38,6 +38,28 @@ One paragraph describing what was done.
 
 ---
 
+## 2026-04-09: Jitter cloud reconnects and reset backoff after stable sessions
+
+### Summary
+Adjusted the cloud reconnect loop so retry sleeps now include both relative jitter and an absolute early-retry smear, which reduces reconnect storms after shared cloud disconnects. Fixed the stale-backoff behavior by resetting the exponential base after clean disconnects and after cloud sessions that stayed up long enough to count as stable, while preserving exponential growth for repeated post-handshake failures like heartbeat or transport flaps.
+
+### Changes
+- `crates/amux/src/server/cloud.rs` — Added jittered retry delay calculation using `base_backoff + uniform(-25%, +25%) + uniform(0s, 5s)`, split base-backoff progression into helpers, logged both `base_backoff` and actual `retry_delay`, and introduced a `30s` stability threshold before post-handshake failures reset the retry base. Added focused unit tests for jitter bounds, capped doubling, and the stability-threshold reset behavior.
+- `CLOUD_ARCHITECTURE.md` — Updated the cloud reconnect description to note jittered exponential backoff and that the base resets after a stable session or clean disconnect.
+
+### Decisions Made
+- Keep the `300s` cap as the capped exponential base, not the final sleep. Jitter is applied on top of the capped base so the retry curve stays easy to reason about while still spreading reconnect load.
+- Add an absolute `0..5s` jitter term in addition to `+/-25%` relative jitter so mass disconnects do not cause all clients to retry within the same first second.
+- Do not reset backoff immediately on handshake success. That would collapse exponential backoff under repeated post-handshake failures, so the reset now requires either a clean EOF or at least `30s` of successful uptime.
+
+### Verification
+- `cargo fmt --all`
+- `cargo test -p amux server::cloud::tests --lib`
+- `cargo clippy --workspace --all-targets`
+
+### Next Steps
+- Observe production reconnect logs to see whether the `30s` stability threshold and `0..5s` absolute jitter need tuning.
+
 ## 2026-04-09: Migrate subscriptions to leased subscription IDs
 
 ### Summary

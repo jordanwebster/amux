@@ -113,7 +113,7 @@ When a local server starts with cloud mode enabled:
 
 On authentication failure (`InvalidCredentials`), the user is prompted to re-run `amux init`.
 
-On connection failure, the server uses exponential backoff before retrying.
+On connection failure, the server uses exponential backoff with jitter before retrying. The exponential backoff base resets after a clean disconnect or after a cloud session stays established long enough to count as stable.
 
 On `HostChanged` during token refresh, the connection is dropped and re-established from scratch.
 

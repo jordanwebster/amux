@@ -19,12 +19,19 @@ use std::sync::atomic::AtomicU64;
 use std::time::Duration;
 use tokio::sync::{RwLock, mpsc};
 use tracing::Instrument;
+use uuid::Uuid;
+
+const INITIAL_BACKOFF: Duration = Duration::from_secs(1);
+const MAX_BACKOFF: Duration = Duration::from_secs(300);
+const RELATIVE_JITTER_RATIO: f64 = 0.25;
+const ABSOLUTE_JITTER_MAX: Duration = Duration::from_secs(5);
+const BACKOFF_RESET_AFTER_ESTABLISHED: Duration = Duration::from_secs(30);
 
 /// Establish and maintain a cloud connection with automatic reconnection.
 ///
 /// This function spawns a background task that:
 /// 1. Checks if cloud mode is enabled in state
-/// 2. Connects to the cloud server with exponential backoff on retriable errors
+/// 2. Connects to the cloud server with exponential backoff and jitter on retriable errors
 /// 3. Stops retrying on non-retriable errors (auth failures)
 pub(super) fn establish_cloud_connection(
     config: Config,
@@ -46,8 +53,7 @@ pub(super) fn establish_cloud_connection(
             // Get the default user state for cloud connections
             let user_state = get_or_create_user_state(&state, LOCAL_USER_ID).await;
 
-            let mut backoff = Duration::from_secs(1);
-            const MAX_BACKOFF: Duration = Duration::from_secs(300);
+            let mut backoff = INITIAL_BACKOFF;
 
             loop {
                 tracing::info!("attempting cloud connection");
@@ -61,7 +67,7 @@ pub(super) fn establish_cloud_connection(
                 {
                     Ok(()) => {
                         tracing::info!("cloud connection closed cleanly");
-                        backoff = Duration::from_secs(1);
+                        backoff = INITIAL_BACKOFF;
                     }
                     Err(CloudConnectionError::VersionMismatch {
                         server_version,
@@ -89,7 +95,10 @@ pub(super) fn establish_cloud_connection(
                         tracing::error!(error = %msg, "cloud non-retriable error, stopping");
                         return;
                     }
-                    Err(CloudConnectionError::Retriable(msg)) => {
+                    Err(CloudConnectionError::Retriable { msg, reset_backoff }) => {
+                        if reset_backoff {
+                            backoff = INITIAL_BACKOFF;
+                        }
                         tracing::warn!(error = %msg, "cloud connection error, will retry");
                     }
                 }
@@ -103,9 +112,10 @@ pub(super) fn establish_cloud_connection(
                     return;
                 }
 
-                tracing::info!(backoff = ?backoff, "reconnecting to cloud");
-                tokio::time::sleep(backoff).await;
-                backoff = std::cmp::min(backoff * 2, MAX_BACKOFF);
+                let retry_delay = jittered_backoff(backoff);
+                tracing::info!(base_backoff = ?backoff, retry_delay = ?retry_delay, "reconnecting to cloud");
+                tokio::time::sleep(retry_delay).await;
+                backoff = next_backoff(backoff);
             }
         }
         .instrument(cloud_span),
@@ -115,7 +125,7 @@ pub(super) fn establish_cloud_connection(
 /// Error type for cloud connection attempts
 enum CloudConnectionError {
     /// Error that should trigger reconnection (connection lost, host changed)
-    Retriable(String),
+    Retriable { msg: String, reset_backoff: bool },
     /// Error that should stop reconnection attempts (auth failure)
     NonRetriable(String),
     /// Protocol version mismatch — notify terminals and exit
@@ -158,10 +168,10 @@ async fn run_cloud_connection(
             });
         }
         Err(e) => {
-            return Err(CloudConnectionError::Retriable(format!(
-                "Connection failed: {}",
-                e
-            )));
+            return Err(CloudConnectionError::Retriable {
+                msg: format!("Connection failed: {}", e),
+                reset_backoff: false,
+            });
         }
     };
 
@@ -203,6 +213,7 @@ async fn run_cloud_connection(
         next_request_id,
     };
 
+    let connected_at = std::time::Instant::now();
     let result = run_connection(
         transport,
         outgoing_rx,
@@ -222,6 +233,98 @@ async fn run_cloud_connection(
             server_version: 0,
             client_version: crate::handshake::PROTOCOL_VERSION,
         }),
-        Err(e) => Err(CloudConnectionError::Retriable(e.to_string())),
+        Err(e) => Err(CloudConnectionError::Retriable {
+            msg: e.to_string(),
+            reset_backoff: should_reset_backoff_after_connection(connected_at.elapsed()),
+        }),
+    }
+}
+
+fn next_backoff(backoff: Duration) -> Duration {
+    std::cmp::min(backoff * 2, MAX_BACKOFF)
+}
+
+fn jittered_backoff(base_backoff: Duration) -> Duration {
+    jittered_backoff_with_samples(base_backoff, random_unit_interval(), random_unit_interval())
+}
+
+fn jittered_backoff_with_samples(
+    base_backoff: Duration,
+    relative_sample: f64,
+    absolute_sample: f64,
+) -> Duration {
+    debug_assert!((0.0..=1.0).contains(&relative_sample));
+    debug_assert!((0.0..=1.0).contains(&absolute_sample));
+
+    let base_secs = base_backoff.as_secs_f64();
+    let relative_offset = base_secs * RELATIVE_JITTER_RATIO * ((relative_sample * 2.0) - 1.0);
+    let absolute_offset = ABSOLUTE_JITTER_MAX.as_secs_f64() * absolute_sample;
+    Duration::from_secs_f64((base_secs + relative_offset + absolute_offset).max(0.0))
+}
+
+fn random_unit_interval() -> f64 {
+    let uuid = Uuid::new_v4();
+    let mut bytes = [0u8; 8];
+    bytes.copy_from_slice(&uuid.as_bytes()[..8]);
+    let sample = u64::from_le_bytes(bytes);
+    sample as f64 / u64::MAX as f64
+}
+
+fn should_reset_backoff_after_connection(connection_uptime: Duration) -> bool {
+    connection_uptime >= BACKOFF_RESET_AFTER_ESTABLISHED
+}
+
+#[cfg(test)]
+mod tests {
+    use super::{
+        ABSOLUTE_JITTER_MAX, BACKOFF_RESET_AFTER_ESTABLISHED, INITIAL_BACKOFF, MAX_BACKOFF,
+        jittered_backoff_with_samples, next_backoff, should_reset_backoff_after_connection,
+    };
+    use std::time::Duration;
+
+    #[test]
+    fn jittered_backoff_applies_relative_and_absolute_jitter() {
+        let base = Duration::from_secs(10);
+
+        let min = jittered_backoff_with_samples(base, 0.0, 0.0);
+        let mid = jittered_backoff_with_samples(base, 0.5, 0.5);
+        let max = jittered_backoff_with_samples(base, 1.0, 1.0);
+
+        assert_eq!(min, Duration::from_millis(7500));
+        assert_eq!(mid, base + ABSOLUTE_JITTER_MAX / 2);
+        assert_eq!(
+            max,
+            Duration::from_secs(10) + Duration::from_millis(2500) + ABSOLUTE_JITTER_MAX
+        );
+    }
+
+    #[test]
+    fn jittered_backoff_keeps_small_backoff_positive() {
+        let delay = jittered_backoff_with_samples(INITIAL_BACKOFF, 0.0, 0.0);
+        assert_eq!(delay, Duration::from_millis(750));
+    }
+
+    #[test]
+    fn next_backoff_doubles_until_capped() {
+        assert_eq!(next_backoff(INITIAL_BACKOFF), Duration::from_secs(2));
+        assert_eq!(next_backoff(Duration::from_secs(150)), MAX_BACKOFF);
+        assert_eq!(next_backoff(MAX_BACKOFF), MAX_BACKOFF);
+    }
+
+    #[test]
+    fn short_lived_connection_does_not_reset_backoff() {
+        assert!(!should_reset_backoff_after_connection(
+            BACKOFF_RESET_AFTER_ESTABLISHED - Duration::from_secs(1)
+        ));
+    }
+
+    #[test]
+    fn stable_connection_resets_backoff() {
+        assert!(should_reset_backoff_after_connection(
+            BACKOFF_RESET_AFTER_ESTABLISHED
+        ));
+        assert!(should_reset_backoff_after_connection(
+            BACKOFF_RESET_AFTER_ESTABLISHED + Duration::from_secs(1)
+        ));
     }
 }
