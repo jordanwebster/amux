@@ -836,7 +836,10 @@ mod tests {
     async fn reader_loop_forwards_messages_then_eof() {
         let reader = MockReader::new(vec![
             Ok(Message::Command(Command::ListAgents)),
-            Ok(Message::Command(Command::Debug)),
+            Ok(Message::Command(Command::Debug {
+                verbose: false,
+                format: crate::message::DebugFormat::Yaml,
+            })),
             // MockReader auto-sends EOF when exhausted
         ]);
         let (tx, mut rx) = mpsc::channel(16);
@@ -868,7 +871,10 @@ mod tests {
         let reader = MockReader::new(vec![
             Ok(Message::Command(Command::ListAgents)),
             Err(AmuxError::SerializationDecode(decode_err)),
-            Ok(Message::Command(Command::Debug)),
+            Ok(Message::Command(Command::Debug {
+                verbose: false,
+                format: crate::message::DebugFormat::Yaml,
+            })),
         ]);
         let (tx, mut rx) = mpsc::channel(16);
 
@@ -914,7 +920,10 @@ mod tests {
         let handle = tokio::spawn(writer_loop(writer, outgoing_rx, incoming_tx));
 
         outgoing_tx
-            .send(Message::Command(Command::Debug))
+            .send(Message::Command(Command::Debug {
+                verbose: false,
+                format: crate::message::DebugFormat::Yaml,
+            }))
             .await
             .unwrap();
         outgoing_tx

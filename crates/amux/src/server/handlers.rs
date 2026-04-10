@@ -23,11 +23,10 @@ use crate::buffer::{BroadcastReader, BufferPolicy};
 use crate::claude::types::{ClaudeHook, Hook};
 use crate::error::{AmuxError, Result};
 use crate::message::{
-    Command, DirectMessage, Message, ProtocolError, RoutableMessage, ServerDebugInfo,
-    SubscriptionCloseReason, SubscriptionId,
+    Command, DirectMessage, Message, ProtocolError, RoutableMessage, SubscriptionCloseReason,
+    SubscriptionId,
 };
 use crate::route::Route;
-use crate::state::State;
 use std::future::Future;
 use std::path::PathBuf;
 use std::sync::atomic::Ordering;
@@ -733,10 +732,26 @@ async fn handle_routable(
             seq: client_seq,
             payload,
         } => {
+            tracing::debug!(%agent_id, client_seq, "structured input received");
             let us = ctx.user_state.read().await;
-            if let Some(session) = us.agents.get(&agent_id)
-                && let Err(error) = session.send_structured_input(client_seq, payload).await
-            {
+            let Some(session) = us.agents.get(&agent_id) else {
+                tracing::warn!(%agent_id, "structured input rejected: agent not found");
+                if let Some((reply_src, reply_dst)) = reply_routes(src, "StructuredInput") {
+                    let _ = tx
+                        .send(Message::routable(
+                            reply_src,
+                            reply_dst,
+                            request_id,
+                            &RoutableMessage::StructuredInputResult {
+                                agent_id,
+                                error: Some(ProtocolError::NoAgentFound),
+                            },
+                        ))
+                        .await;
+                }
+                return Ok(());
+            };
+            if let Err(error) = session.send_structured_input(client_seq, payload).await {
                 if let Some((reply_src, reply_dst)) = reply_routes(src, "StructuredInput") {
                     let _ = tx
                         .send(Message::routable(
@@ -814,37 +829,10 @@ async fn handle_command(
             Ok(())
         }
 
-        Command::Debug => {
-            let state = ctx.state.read().await;
-            let use_cloud_mode = State::load(&state.config.state_path)
-                .map(|s| s.cloud.use_cloud_mode == Some(true))
-                .unwrap_or(false);
-            let mut agent_count = 0;
-            let mut remote_agent_count = 0;
-            let mut host_count = 0;
-            let mut route_count = 0;
-            let mut peer_link_count = 0;
-            for us in state.users.values() {
-                let us = us.read().await;
-                agent_count += us.agents.len();
-                remote_agent_count += us.registry.count_remote();
-                host_count += us.hosts.len();
-                route_count += us.routes.len();
-                peer_link_count += us.peer_links.len();
-            }
-            let info = ServerDebugInfo {
-                is_cloud_server: state.is_cloud_server,
-                use_cloud_mode,
-                user_count: state.users.len(),
-                agent_count,
-                remote_agent_count,
-                host_count,
-                route_count,
-                peer_link_count,
-                config: state.config.clone(),
-            };
+        Command::Debug { verbose, format } => {
+            let dump = crate::debug::dump_server_debug_info(&ctx.state, format, verbose).await;
             let _ = tx
-                .send(Message::Command(Command::DebugResult { info }))
+                .send(Message::Command(Command::DebugResult { dump }))
                 .await;
             Ok(())
         }
@@ -1367,7 +1355,9 @@ mod tests {
         BashToolInput, ClaudePermissionRequest, ClaudePermissionTool, ClaudeSessionEnd,
         ClaudeSessionStart, ClaudeStop,
     };
-    use crate::message::{AgentType, CreateAgentRequest, DirectMessage, RenameAgentRequest};
+    use crate::message::{
+        AgentType, Command, CreateAgentRequest, DirectMessage, RenameAgentRequest,
+    };
     use crate::route::Route;
     use crate::server::test_helpers::{test_ctx, test_state};
     use crate::server::{
@@ -1570,6 +1560,123 @@ mod tests {
 
         let msgs = written.lock().await;
         assert!(msgs.is_empty(), "heartbeat ack should not emit a reply");
+    }
+
+    async fn populate_debug_state(
+        state: &Arc<RwLock<crate::server::ServerState>>,
+        user_state: &Arc<RwLock<ServerUserState>>,
+    ) {
+        let _term_rx = setup_named_route(user_state, "term-debug").await;
+        let _peer_rx = add_peer_link(user_state, "peer-debug").await;
+
+        let local_host_id = state.read().await.host_id;
+        let local_agent_id = Uuid::new_v4();
+        let mut local_session = AgentSession::Claude(ClaudeSession::new_readonly(
+            local_agent_id,
+            PathBuf::from("/tmp/local-agent"),
+        ));
+        local_session.set_local_name(Some("local-agent".to_string()), LocalAgentNameSource::Amux);
+        let local_info = local_session.to_agent(local_host_id);
+
+        let remote_host_id = Uuid::new_v4();
+        let remote_agent_id = Uuid::new_v4();
+        let mut us = user_state.write().await;
+        us.hosts.insert(
+            remote_host_id,
+            crate::message::Host {
+                id: remote_host_id,
+                name: "remote-host".to_string(),
+                route: Route::from_link("peer-debug"),
+                version: "9.9.9".to_string(),
+            },
+        );
+        us.agents.insert(local_agent_id, local_session);
+        us.registry.register_local(local_info).unwrap();
+        us.registry
+            .register_remote(Agent {
+                id: remote_agent_id,
+                host_id: remote_host_id,
+                name: Some("remote-agent".to_string()),
+                command: "claude".to_string(),
+                working_dir: PathBuf::from("/tmp/remote-agent"),
+                route: Route::from_link("peer-debug"),
+                agent_type: claude_agent_type(),
+                readonly: false,
+                args: vec!["--model".to_string(), "sonnet".to_string()],
+                created_at: Utc::now(),
+            })
+            .unwrap();
+
+        let (raw_cancel_tx, _raw_cancel_rx) = oneshot::channel();
+        register_subscription(
+            &mut us,
+            Uuid::new_v4(),
+            local_agent_id,
+            SubscriptionMode::Raw,
+            raw_cancel_tx,
+            Route::from_link("term-debug"),
+            Instant::now() + SUBSCRIPTION_LEASE_DURATION,
+        );
+    }
+
+    #[tokio::test]
+    async fn debug_yaml_dump_is_non_empty_and_parses() {
+        let (state, user_state) = test_state().await;
+        populate_debug_state(&state, &user_state).await;
+        let ctx = test_ctx(state, user_state);
+        let (tx, written) = mock_tx();
+
+        handle_command(
+            &tx,
+            Command::Debug {
+                verbose: true,
+                format: crate::message::DebugFormat::Yaml,
+            },
+            &ctx,
+        )
+        .await
+        .unwrap();
+        tokio::task::yield_now().await;
+
+        let msgs = written.lock().await;
+        let Some(Message::Command(Command::DebugResult { dump })) = msgs.first() else {
+            panic!("expected DebugResult, got {:?}", msgs.first());
+        };
+        assert!(!dump.is_empty(), "yaml dump should be non-empty");
+        let parsed: serde_yaml::Value =
+            serde_yaml::from_str(dump).expect("dump should be valid yaml");
+        assert!(parsed.get("user_count").is_some());
+        assert!(parsed.get("local_host").is_some());
+    }
+
+    #[tokio::test]
+    async fn debug_json_dump_is_non_empty_and_parses() {
+        let (state, user_state) = test_state().await;
+        populate_debug_state(&state, &user_state).await;
+        let ctx = test_ctx(state, user_state);
+        let (tx, written) = mock_tx();
+
+        handle_command(
+            &tx,
+            Command::Debug {
+                verbose: true,
+                format: crate::message::DebugFormat::Json,
+            },
+            &ctx,
+        )
+        .await
+        .unwrap();
+        tokio::task::yield_now().await;
+
+        let msgs = written.lock().await;
+        let Some(Message::Command(Command::DebugResult { dump })) = msgs.first() else {
+            panic!("expected DebugResult, got {:?}", msgs.first());
+        };
+        assert!(!dump.is_empty(), "json dump should be non-empty");
+        let parsed: serde_json::Value =
+            serde_json::from_str(dump).expect("dump should be valid json");
+        assert!(parsed.get("user_count").is_some());
+        assert!(parsed.get("local_host").is_some());
     }
 
     #[tokio::test]

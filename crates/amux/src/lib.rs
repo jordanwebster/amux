@@ -6,6 +6,7 @@ mod cloud;
 mod config;
 mod connect;
 mod connection;
+mod debug;
 mod error;
 mod handshake;
 mod jwt;

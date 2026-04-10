@@ -11,9 +11,11 @@ use crate::claude::types::{
     AskUserQuestionOption, AskUserQuestionResponse, ClaudeHook, ClaudeStructuredInput, Hook,
     PermissionResponse, PlanReviewResponse,
 };
+use crate::debug::DebugView;
 use crate::error::Result;
 use crate::message::{CreateAgentRequest, ProtocolError};
 use chrono::{DateTime, Utc};
+use serde::{Serialize, Serializer, ser::SerializeMap};
 use serde_json::{Value, json};
 use std::path::PathBuf;
 use std::time::Duration;
@@ -564,12 +566,19 @@ impl ClaudeSession {
         payload: Value,
     ) -> std::result::Result<(), ProtocolError> {
         if self.readonly {
+            tracing::warn!(agent_id = %self.agent_id, "structured input rejected: session is readonly");
             return Err(ProtocolError::ServerError(
                 "session is readonly".to_string(),
             ));
         }
         let current_seq = self.current_seq().await;
         if client_seq != current_seq {
+            tracing::warn!(
+                agent_id = %self.agent_id,
+                client_seq,
+                current_seq,
+                "structured input rejected: seq mismatch"
+            );
             return Err(ProtocolError::SequenceNumberMismatch {
                 client_seq,
                 current_seq,
@@ -579,6 +588,7 @@ impl ClaudeSession {
         let input: ClaudeStructuredInput = serde_json::from_value(payload)
             .map_err(|e| ProtocolError::ServerError(format!("invalid structured input: {e}")))?;
 
+        tracing::info!(agent_id = %self.agent_id, client_seq, "structured input accepted");
         self.send_input(input)
             .await
             .map_err(|e| ProtocolError::ServerError(e.to_string()))
@@ -674,6 +684,23 @@ impl ClaudeSession {
         if let Some(log_source) = &self.log_source {
             log_source.close().await;
         }
+    }
+}
+
+impl Serialize for DebugView<'_, ClaudeSession> {
+    fn serialize<S: Serializer>(&self, serializer: S) -> std::result::Result<S::Ok, S::Error> {
+        let session = self.inner;
+        let mut map = serializer.serialize_map(None)?;
+        map.serialize_entry("kind", "claude")?;
+        if let Some(session_id) = session.session_id {
+            map.serialize_entry("session_id", &session_id)?;
+        }
+        map.serialize_entry("readonly", &session.readonly)?;
+        map.serialize_entry("has_pty", &session.pty.is_some())?;
+        if let Some(log_source) = &session.log_source {
+            map.serialize_entry("transcript", &DebugView::new(log_source, self.verbose))?;
+        }
+        map.end()
     }
 }
 

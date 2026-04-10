@@ -127,7 +127,7 @@ use routing::withdraw_agent;
 pub(crate) const LOCAL_USER_ID: Uuid = Uuid::nil();
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
-pub(super) enum SubscriptionMode {
+pub(crate) enum SubscriptionMode {
     Raw,
     Structured,
 }
@@ -181,7 +181,7 @@ impl ConnectionHandle {
 
 /// An active subscription that can be cancelled.
 /// Dropping the entry drops `cancel`, which signals the stream task via `oneshot::Receiver`.
-pub(super) struct SubscriptionEntry {
+pub(crate) struct SubscriptionEntry {
     pub subscription_id: SubscriptionId,
     pub agent_id: Uuid,
     pub mode: SubscriptionMode,
@@ -196,20 +196,20 @@ pub(super) struct SubscriptionEntry {
 /// registry, peer links, and streams. JWT authentication at connection time
 /// determines the user_id; all operations are scoped to that user's state.
 /// This provides complete user isolation without per-message authorization checks.
-pub(super) struct ServerUserState {
-    pub(super) agents: HashMap<Uuid, AgentSession>,
+pub(crate) struct ServerUserState {
+    pub(crate) agents: HashMap<Uuid, AgentSession>,
     /// Per-user routing table. Link names are globally unique (random suffixes).
     /// Per-user for security: prevents cross-user message forwarding without
     /// explicit authorization.
-    pub(super) routes: HashMap<String, ConnectionHandle>,
+    pub(crate) routes: HashMap<String, ConnectionHandle>,
     /// Centralized agent registry (local + remote agents, name mapping)
-    pub(super) registry: AgentRegistry,
+    pub(crate) registry: AgentRegistry,
     /// Link names of peer connections (non-local connections that receive announcements)
-    pub(super) peer_links: HashSet<String>,
+    pub(crate) peer_links: HashSet<String>,
     /// Known remote hosts (announced via AnnounceHost)
-    pub(super) hosts: HashMap<Uuid, Host>,
+    pub(crate) hosts: HashMap<Uuid, Host>,
     /// Active subscriptions keyed by server-assigned subscription_id.
-    pub(super) active_subscriptions: HashMap<SubscriptionId, SubscriptionEntry>,
+    pub(crate) active_subscriptions: HashMap<SubscriptionId, SubscriptionEntry>,
 }
 
 impl ServerUserState {
@@ -234,16 +234,16 @@ pub(super) fn subscription_lease_ms() -> u64 {
 
 /// Global server state. Per-user state (agents, routes, registry, streams, peer_links)
 /// lives in `ServerUserState`, providing user isolation via JWT authentication.
-pub(super) struct ServerState {
-    pub(super) config: Config,
+pub(crate) struct ServerState {
+    pub(crate) config: Config,
     /// Stable host ID loaded from persistent state
-    pub(super) host_id: Uuid,
+    pub(crate) host_id: Uuid,
     /// Whether this server is a cloud relay (`amux serve --cloud`)
-    pub(super) is_cloud_server: bool,
+    pub(crate) is_cloud_server: bool,
     /// JWT validator for cloud mode (validates incoming tokens)
     pub(super) jwt_validator: Option<Arc<JwtValidator>>,
     /// Per-user state map. Each authenticated user gets isolated state.
-    pub(super) users: HashMap<Uuid, Arc<RwLock<ServerUserState>>>,
+    pub(crate) users: HashMap<Uuid, Arc<RwLock<ServerUserState>>>,
     /// Channel for connection handlers to request server shutdown/suspend
     pub(super) shutdown_tx: mpsc::Sender<ShutdownRequest>,
 }

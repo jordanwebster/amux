@@ -525,6 +525,23 @@ impl AgentSession {
     }
 }
 
+impl serde::Serialize for crate::debug::DebugView<'_, AgentSession> {
+    fn serialize<S: serde::Serializer>(
+        &self,
+        serializer: S,
+    ) -> std::result::Result<S::Ok, S::Error> {
+        match self.inner {
+            AgentSession::Claude(s) => {
+                crate::debug::DebugView::new(s, self.verbose).serialize(serializer)
+            }
+            #[cfg(any(debug_assertions, test))]
+            AgentSession::TestAgent(s) => {
+                crate::debug::DebugView::new(s, self.verbose).serialize(serializer)
+            }
+        }
+    }
+}
+
 /// All suspended agent sessions, serialized to disk across server restarts.
 #[derive(Serialize, Deserialize, Debug, Clone)]
 pub struct SuspendedServerState {

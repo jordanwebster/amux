@@ -6,9 +6,11 @@
 use super::{PtyHandle, spawn_pty_agent};
 use crate::buffer::MultiplexStructuredReader;
 use crate::claude::structured_log_source::StructuredLogSource;
+use crate::debug::DebugView;
 use crate::error::Result;
 use crate::message::CreateAgentRequest;
 use chrono::{DateTime, Utc};
+use serde::{Serialize, Serializer, ser::SerializeMap};
 use std::path::PathBuf;
 use uuid::Uuid;
 
@@ -88,6 +90,19 @@ impl TestAgentSession {
         if let Some(log_source) = &self.log_source {
             log_source.close().await;
         }
+    }
+}
+
+impl Serialize for DebugView<'_, TestAgentSession> {
+    fn serialize<S: Serializer>(&self, serializer: S) -> std::result::Result<S::Ok, S::Error> {
+        let session = self.inner;
+        let mut map = serializer.serialize_map(None)?;
+        map.serialize_entry("kind", "test_agent")?;
+        map.serialize_entry("has_pty", &session.pty.is_some())?;
+        if let Some(log_source) = &session.log_source {
+            map.serialize_entry("transcript", &DebugView::new(log_source, self.verbose))?;
+        }
+        map.end()
     }
 }
 

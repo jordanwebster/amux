@@ -38,6 +38,47 @@ One paragraph describing what was done.
 
 ---
 
+## 2026-04-10: Rework `amux debug` around `DebugView` newtype + manual `Serialize`
+
+### Summary
+Rewrote the `amux debug` command to remove the protocol-level `ServerDebug*` struct hierarchy and the centralized `build_debug_info` builder. Each type that participates in the dump now owns its own `impl Serialize for DebugView<'_, T>`, colocated with the type's source file. The wire format collapses to `DebugResult { dump: String }`, format selection rides on the request as `DebugFormat { Yaml, Json }`, and the renderer is just whichever serde `Serializer` the server picks. The CLI gained a `--format` flag so `amux debug --verbose --format json | jq …` works.
+
+### Changes
+- **`crates/amux/src/debug.rs`** (new) — `DebugView<'a, T>` newtype, async `dump_server_debug_info` entry point that acquires read guards and dispatches to either `serde_yaml::to_string` or `serde_json::to_string_pretty`, plus manual `Serialize` impls for `ServerDebugView` (top-level), `UserView`, `RoutesView`, `HostsView`, `AgentsView`, `SubscriptionsView` and their entry types. The structured intermediate stays inside this file — nothing leaks onto the wire or onto the types being dumped.
+- **`crates/amux/src/message.rs`** — Added `DebugFormat` enum (`Yaml`/`Json`, default `Yaml`). Slimmed `Command::Debug` to `{ verbose, format }` and `Command::DebugResult` to `{ dump: String }`. **Deleted** `ServerDebugInfo`, `ServerDebugVerboseInfo`, `ServerDebugLocalHostInfo`, `ServerDebugUserInfo`, `ServerDebugRouteInfo`, `ServerDebugHostInfo`, `ServerDebugAgentInfo`, `ServerDebugSubscriptionInfo`, `ServerDebugAgentLocation`, `ServerDebugRouteKind`, `ServerDebugSubscriptionMode` (~120 lines).
+- **`crates/amux/src/protocol.rs`** — Removed the `ServerDebug*` re-exports, added `DebugFormat`.
+- **`crates/amux/src/server/handlers.rs`** — Deleted `build_debug_info` and helpers (`AgentSubscriptionCounts`, `debug_route_kind`, `debug_subscription_mode`, ~280 lines). The `Command::Debug` arm is now a one-liner that calls `crate::debug::dump_server_debug_info`. Replaced the typed-contract debug test with two minimal smoke tests (one for YAML, one for JSON) that assert the dump is non-empty and parses.
+- **`crates/amux/src/server/mod.rs`** — Widened `ServerState`, `ServerUserState`, `SubscriptionEntry`, `SubscriptionMode` from `pub(super)` to `pub(crate)` so the new `crate::debug` module can read their fields directly without accessor methods.
+- **`crates/amux/src/claude/structured_log_source.rs`** — Flipped `current_path` from `tokio::sync::Mutex<…>` to `std::sync::Mutex<…>` (it's never held across an `await`, so it was always safe). **Deleted** the debug-only public accessors `current_path()`, `link_status()`, `link_error()`. Added `impl Serialize for DebugView<'_, StructuredLogSource>` which reads `inner.current_path` and `inner.link_state_tx.borrow()` directly.
+- **`crates/amux/src/agents/claude.rs`** — **Deleted** four debug-only public accessors (`session_id`, `transcript_path`, `transcript_status`, `transcript_error`). Added `impl Serialize for DebugView<'_, ClaudeSession>` which reads `agent_id`, `session_id`, `readonly`, `pty.is_some()`, and delegates the transcript sub-map to `DebugView<'_, StructuredLogSource>`.
+- **`crates/amux/src/agents/mod.rs`** — **Deleted** four debug-only `AgentSession` accessors (`session_id`, `transcript_path`, `transcript_status`, `transcript_error`). Added `impl Serialize for DebugView<'_, AgentSession>` that delegates to the variant impls.
+- **`crates/amux/src/agents/testagent.rs`** — Added `impl Serialize for DebugView<'_, TestAgentSession>` (`TestAgentSession` itself is `cfg(any(debug_assertions, test))`).
+- **`crates/amux/src/lib.rs`** — Added `mod debug;`.
+- **`crates/amux/src/cloud.rs`, `crates/amux/src/server/connection.rs`** — Updated four test sites that constructed `Command::Debug { verbose: false }` to include `format: DebugFormat::Yaml`.
+- **`crates/amux-cli/src/main.rs`** — Added a CLI-side `CliDebugFormat` `clap::ValueEnum` (parallel to `protocol::DebugFormat`) and a `--format` flag on the `Debug` subcommand. Avoids pulling clap into the `amux` library crate.
+- **`crates/amux-cli/src/client.rs`** — `client::debug` now takes a `DebugFormat`, sends it in the request, and returns the pre-rendered `String` instead of a typed `ServerDebugInfo`.
+
+### Decisions Made
+- **Per-type `Serialize` impls instead of a centralized builder.** The original approach forced six new public accessors onto `ClaudeSession`/`AgentSession`/`StructuredLogSource` and a 200-line `build_debug_info` that knew the shape of every subsystem. Inverting it so each type owns its own debug rendering eliminated the public-API growth, deleted the central builder entirely, and made future "add a debug field" changes a one-liner next to the field itself.
+- **`DebugView` newtype + manual `Serialize` over `serde_json::Value` tree or `DebugWriter` DSL.** `DebugView` is the most idiomatic Rust path: it's pure serde, no intermediate allocation, no new dependencies, no global feature flags (`preserve_order` would have unified across the workspace and changed observable JSON ordering in unrelated subsystems). Format selection becomes "which `Serializer` did we pass" — the impls don't know YAML from JSON.
+- **Wire format is `String`, not `Value`.** Sending a `Value` over MessagePack would have been a more flexible protocol but added complexity for no real benefit: the CLI doesn't post-process the dump (`jq` operates on the rendered text), debug is one-shot not streaming, and the renderer code lives one module away from the request handler regardless. `String` keeps the protocol minimal.
+- **`current_path` flipped to `std::sync::Mutex`.** It was always safe — never held across `await` — so this is the right shape. Doing it lets the `Serialize` impl for `StructuredLogSource` read the path from sync context without an async pre-fetch step or a snapshot side-channel.
+- **Dropped `structured_output_seq` from the dump.** The remaining async-only field was the buffer's `current_seq` (behind a `tokio::sync::RwLock`). Exposing a `try_read`-based sync wrapper would have widened the public surface again for marginal value, so it's out.
+- **Visibility widening was `pub(super)` → `pub(crate)`, not `pub`.** Stays internal to the `amux` crate, no public API impact.
+
+### Verification
+- `cargo check && cargo fmt && cargo clippy --workspace --all-targets -- -D warnings && cargo test` — clean across the workspace, 304 unit tests pass.
+- `cargo build --workspace && cargo run -p e2e-runner -- run` — all 10 e2e tests pass.
+- New smoke tests in `server::handlers::tests`: `debug_yaml_dump_is_non_empty_and_parses` and `debug_json_dump_is_non_empty_and_parses` populate a representative state (local agent + remote agent + peer link + named route + subscription) and assert both formats produce parseable output with the expected top-level keys.
+
+### Net diff shape
+~250 lines deleted overall — protocol module ~−120, handlers ~−280, agent files ~−80 in deleted accessors — in exchange for one new ~530-line `debug.rs` file that's cleanly scoped and small `Serialize` impls in each type's home file.
+
+### Next Steps
+- Optional follow-up: `link_state_tx` is a `watch::Sender` with zero subscribers anywhere in the codebase. It could be simplified to a plain `std::sync::Mutex<LinkState>` in a separate small commit. Out of scope for this work to keep the change focused on debug.
+
+---
+
 ## 2026-04-09: Jitter cloud reconnects and reset backoff after stable sessions
 
 ### Summary

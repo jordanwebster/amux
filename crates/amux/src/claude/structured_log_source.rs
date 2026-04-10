@@ -8,9 +8,11 @@
 
 use super::transcript::TranscriptTailer;
 use crate::buffer::{MultiplexStructuredBuffer, MultiplexStructuredReader};
+use crate::debug::{DebugView, LossyPath};
+use serde::{Serialize, Serializer, ser::SerializeMap};
 use serde_json::Value;
 use std::path::PathBuf;
-use std::sync::Arc;
+use std::sync::{Arc, Mutex as StdMutex};
 use tokio::sync::{Mutex, watch};
 use tokio::task::JoinHandle;
 
@@ -29,7 +31,10 @@ enum LinkState {
 struct StructuredLogSourceInner {
     buffer: Arc<MultiplexStructuredBuffer>,
     tailer: Mutex<Option<(TranscriptTailer, JoinHandle<()>)>>,
-    current_path: Mutex<Option<PathBuf>>,
+    /// Held only briefly for read/replace — never across an `await`,
+    /// so a `std::sync::Mutex` is appropriate (and lets the debug
+    /// `Serialize` impl read it from sync context).
+    current_path: StdMutex<Option<PathBuf>>,
     link_state_tx: watch::Sender<LinkState>,
 }
 
@@ -47,7 +52,7 @@ impl StructuredLogSource {
             inner: Arc::new(StructuredLogSourceInner {
                 buffer: Arc::new(MultiplexStructuredBuffer::new(MAX_LOG_ENTRIES)),
                 tailer: Mutex::new(None),
-                current_path: Mutex::new(None),
+                current_path: StdMutex::new(None),
                 link_state_tx,
             }),
         }
@@ -62,7 +67,7 @@ impl StructuredLogSource {
     pub async fn link_transcript(&self, path: PathBuf) {
         let current_state = self.inner.link_state_tx.borrow().clone();
         {
-            let current_path = self.inner.current_path.lock().await;
+            let current_path = self.inner.current_path.lock().expect("mutex poisoned");
             if current_path.as_ref() == Some(&path)
                 && matches!(current_state, LinkState::Linking | LinkState::Linked)
             {
@@ -81,7 +86,7 @@ impl StructuredLogSource {
         }
 
         {
-            let mut current_path = self.inner.current_path.lock().await;
+            let mut current_path = self.inner.current_path.lock().expect("mutex poisoned");
             *current_path = Some(path.clone());
         }
         self.inner.link_state_tx.send_replace(LinkState::Linking);
@@ -139,6 +144,41 @@ impl StructuredLogSource {
         }
         self.inner.link_state_tx.send_replace(LinkState::Closed);
         self.inner.buffer.close().await;
+    }
+}
+
+impl LinkState {
+    fn as_str(&self) -> &'static str {
+        match self {
+            LinkState::Unlinked => "unlinked",
+            LinkState::Linking => "linking",
+            LinkState::Linked => "linked",
+            LinkState::Failed(_) => "failed",
+            LinkState::Closed => "closed",
+        }
+    }
+}
+
+impl Serialize for DebugView<'_, StructuredLogSource> {
+    fn serialize<S: Serializer>(&self, serializer: S) -> Result<S::Ok, S::Error> {
+        let state = self.inner.inner.link_state_tx.borrow().clone();
+        let path = self
+            .inner
+            .inner
+            .current_path
+            .lock()
+            .expect("mutex poisoned")
+            .clone();
+
+        let mut map = serializer.serialize_map(None)?;
+        map.serialize_entry("link_state", state.as_str())?;
+        if let LinkState::Failed(err) = &state {
+            map.serialize_entry("link_error", err)?;
+        }
+        if let Some(path) = &path {
+            map.serialize_entry("current_path", &LossyPath(path))?;
+        }
+        map.end()
     }
 }
 

@@ -354,7 +354,10 @@ mod tests {
         let mut state = test_refresh_state(Utc::now() + Duration::hours(1));
 
         // Not a ReauthResult at all — should be rejected
-        let msg = Message::Command(crate::message::Command::Debug);
+        let msg = Message::Command(crate::message::Command::Debug {
+            verbose: false,
+            format: crate::message::DebugFormat::Yaml,
+        });
         let result = state.handle_reauth_result(&msg);
 
         assert!(matches!(result, Err(CloudError::Connection(_))));

@@ -12,6 +12,7 @@ use anyhow::Result;
 use anyhow::anyhow;
 use clap::Parser;
 use clap::Subcommand;
+use clap::ValueEnum;
 use std::fs::OpenOptions;
 use std::io::Read;
 use std::path::PathBuf;
@@ -98,7 +99,32 @@ enum Commands {
 
     /// Internal: Show server debug information
     #[command(hide = true)]
-    Debug,
+    Debug {
+        /// Dump per-user, per-host, per-route, and per-agent details
+        #[arg(long)]
+        verbose: bool,
+        /// Output format (default: yaml)
+        #[arg(long, value_enum, default_value_t = CliDebugFormat::Yaml)]
+        format: CliDebugFormat,
+    },
+}
+
+/// CLI-side mirror of `protocol::DebugFormat` so we can derive `clap::ValueEnum`
+/// without pulling clap into the `amux` library crate.
+#[derive(Copy, Clone, Debug, ValueEnum)]
+#[value(rename_all = "snake_case")]
+enum CliDebugFormat {
+    Yaml,
+    Json,
+}
+
+impl From<CliDebugFormat> for protocol::DebugFormat {
+    fn from(value: CliDebugFormat) -> Self {
+        match value {
+            CliDebugFormat::Yaml => protocol::DebugFormat::Yaml,
+            CliDebugFormat::Json => protocol::DebugFormat::Json,
+        }
+    }
 }
 
 #[derive(Subcommand)]
@@ -188,9 +214,9 @@ async fn main() -> Result<()> {
             run_server(config, cloud).await?;
         }
         Some(Commands::Update) => update::run_update(&config).await?,
-        Some(Commands::Debug) => {
-            let info = client::debug(&config).await?;
-            print!("{}", serde_yaml::to_string(&info)?);
+        Some(Commands::Debug { verbose, format }) => {
+            let dump = client::debug(&config, verbose, format.into()).await?;
+            print!("{dump}");
         }
         Some(Commands::Hooks { provider }) => match provider {
             HooksProvider::Claude { .. } => {

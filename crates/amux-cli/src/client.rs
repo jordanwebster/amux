@@ -1,6 +1,6 @@
 use amux::protocol::{
-    AgentType, Command, CreateAgentRequest, Message, ProtocolError, RoutableMessage,
-    ServerDebugInfo, ShutdownReason, SubscriptionId, TerminalSize,
+    AgentType, Command, CreateAgentRequest, DebugFormat, Message, ProtocolError, RoutableMessage,
+    ShutdownReason, SubscriptionId, TerminalSize,
 };
 use amux::{
     AmuxError, Config, ConnectPolicy, Connection, DaemonOptions, LeaderKey, Result, Route, connect,
@@ -406,8 +406,8 @@ pub async fn connect_remote(address: &str, config: &Config) -> Result<()> {
     }
 }
 
-/// Get server debug information
-pub async fn debug(config: &Config) -> Result<ServerDebugInfo> {
+/// Get server debug information as a pre-rendered string in the requested format.
+pub async fn debug(config: &Config, verbose: bool, format: DebugFormat) -> Result<String> {
     let conn = match connect(config, ConnectPolicy::ExistingOnly).await {
         Ok(conn) => conn,
         Err(AmuxError::Io(e))
@@ -419,11 +419,12 @@ pub async fn debug(config: &Config) -> Result<ServerDebugInfo> {
         Err(e) => return Err(e),
     };
 
-    conn.send(&Message::Command(Command::Debug)).await?;
+    conn.send(&Message::Command(Command::Debug { verbose, format }))
+        .await?;
 
     let response = conn.recv().await?;
     match response {
-        Message::Command(Command::DebugResult { info }) => Ok(info),
+        Message::Command(Command::DebugResult { dump }) => Ok(dump),
         other => Err(AmuxError::InvalidMessage(format!(
             "expected DebugResult, got {}",
             other.type_label()

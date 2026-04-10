@@ -1,5 +1,4 @@
 use crate::agent_registry::Agent;
-use crate::config::Config;
 use crate::route::Route;
 use chrono::{DateTime, Utc};
 use serde::{Deserialize, Serialize};
@@ -78,6 +77,15 @@ pub enum ProtocolError {
     /// Structured input seq doesn't match current output seq
     #[error("sequence number mismatch (client {client_seq}, server {current_seq})")]
     SequenceNumberMismatch { client_seq: u64, current_seq: u64 },
+}
+
+/// Output format requested for the server `debug` dump.
+#[derive(Serialize, Deserialize, Debug, Clone, Copy, PartialEq, Eq, Default)]
+#[serde(rename_all = "snake_case")]
+pub enum DebugFormat {
+    #[default]
+    Yaml,
+    Json,
 }
 
 /// Reason for server shutdown notification
@@ -318,9 +326,12 @@ pub enum Command {
     },
     Shutdown,
     ShutdownNotification(ShutdownReason),
-    Debug,
+    Debug {
+        verbose: bool,
+        format: DebugFormat,
+    },
     DebugResult {
-        info: ServerDebugInfo,
+        dump: String,
     },
     ConnectToServer {
         address: String,
@@ -358,7 +369,7 @@ impl Command {
             Command::ResolveAgentResult { .. } => "ResolveAgentResult",
             Command::Shutdown => "Shutdown",
             Command::ShutdownNotification(_) => "ShutdownNotification",
-            Command::Debug => "Debug",
+            Command::Debug { .. } => "Debug",
             Command::DebugResult { .. } => "DebugResult",
             Command::ConnectToServer { .. } => "ConnectToServer",
             Command::ConnectToServerResult { .. } => "ConnectToServerResult",
@@ -422,7 +433,7 @@ impl Message {
                 Command::ResolveAgentResult { .. } => "Command::ResolveAgentResult",
                 Command::Shutdown => "Command::Shutdown",
                 Command::ShutdownNotification(_) => "Command::ShutdownNotification",
-                Command::Debug => "Command::Debug",
+                Command::Debug { .. } => "Command::Debug",
                 Command::DebugResult { .. } => "Command::DebugResult",
                 Command::ConnectToServer { .. } => "Command::ConnectToServer",
                 Command::ConnectToServerResult { .. } => "Command::ConnectToServerResult",
@@ -435,22 +446,6 @@ impl Message {
             },
         }
     }
-}
-
-/// Debug information about server state (aggregated across all users)
-#[derive(Serialize, Deserialize, Debug, Clone)]
-pub struct ServerDebugInfo {
-    /// Whether this server is running as a cloud server (TLS + token auth)
-    pub is_cloud_server: bool,
-    /// Whether cloud mode is enabled in state (connect to cloud)
-    pub use_cloud_mode: bool,
-    pub user_count: usize,
-    pub agent_count: usize,
-    pub remote_agent_count: usize,
-    pub host_count: usize,
-    pub route_count: usize,
-    pub peer_link_count: usize,
-    pub config: Config,
 }
 
 impl Message {
