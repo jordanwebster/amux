@@ -13,29 +13,19 @@ use serde::{Serialize, Serializer, ser::SerializeMap};
 use serde_json::Value;
 use std::path::PathBuf;
 use std::sync::{Arc, Mutex as StdMutex};
-use tokio::sync::{Mutex, watch};
+use tokio::sync::Mutex;
 use tokio::task::JoinHandle;
 
 /// Maximum number of structured log entries to keep
 const MAX_LOG_ENTRIES: usize = 1000;
 
-#[derive(Clone, Debug, PartialEq, Eq)]
-enum LinkState {
-    Unlinked,
-    Linking,
-    Linked,
-    Failed(String),
-    Closed,
-}
-
 struct StructuredLogSourceInner {
     buffer: Arc<MultiplexStructuredBuffer>,
     tailer: Mutex<Option<(TranscriptTailer, JoinHandle<()>)>>,
-    /// Held only briefly for read/replace — never across an `await`,
+    /// Held only briefly for read/replace — never held across an `await`,
     /// so a `std::sync::Mutex` is appropriate (and lets the debug
     /// `Serialize` impl read it from sync context).
     current_path: StdMutex<Option<PathBuf>>,
-    link_state_tx: watch::Sender<LinkState>,
 }
 
 /// Owns a structured log buffer and an optional transcript tailer.
@@ -47,30 +37,27 @@ pub struct StructuredLogSource {
 impl StructuredLogSource {
     /// Create a new source with an empty buffer.
     pub fn new() -> Self {
-        let (link_state_tx, _) = watch::channel(LinkState::Unlinked);
         Self {
             inner: Arc::new(StructuredLogSourceInner {
                 buffer: Arc::new(MultiplexStructuredBuffer::new(MAX_LOG_ENTRIES)),
                 tailer: Mutex::new(None),
                 current_path: StdMutex::new(None),
-                link_state_tx,
             }),
         }
     }
 
     /// Link a transcript file to this source.
     ///
-    /// On first call, starts tailing the file. On subsequent calls (session
-    /// change), stops the old tailer, clears the buffer, and starts tailing
-    /// the new path. Existing subscribers remain connected and receive entries
-    /// from the new transcript.
+    /// On first call, starts tailing the file. On subsequent calls with a
+    /// different path (session change), stops the old tailer, clears the
+    /// buffer, and starts tailing the new path. Existing subscribers remain
+    /// connected and receive entries from the new transcript.
+    ///
+    /// Calls with the same path as the current link are ignored.
     pub async fn link_transcript(&self, path: PathBuf) {
-        let current_state = self.inner.link_state_tx.borrow().clone();
         {
             let current_path = self.inner.current_path.lock().expect("mutex poisoned");
-            if current_path.as_ref() == Some(&path)
-                && matches!(current_state, LinkState::Linking | LinkState::Linked)
-            {
+            if current_path.as_ref() == Some(&path) {
                 return;
             }
         }
@@ -89,9 +76,8 @@ impl StructuredLogSource {
             let mut current_path = self.inner.current_path.lock().expect("mutex poisoned");
             *current_path = Some(path.clone());
         }
-        self.inner.link_state_tx.send_replace(LinkState::Linking);
 
-        let tailer = TranscriptTailer::new(path, self.inner.buffer.clone(), self.clone());
+        let tailer = TranscriptTailer::new(path, self.inner.buffer.clone());
         let handle = tailer.start();
         let mut guard = self.inner.tailer.lock().await;
         *guard = Some((tailer, handle));
@@ -122,16 +108,6 @@ impl StructuredLogSource {
         &self.inner.buffer
     }
 
-    pub async fn mark_linked(&self) {
-        self.inner.link_state_tx.send_replace(LinkState::Linked);
-    }
-
-    pub fn mark_failed(&self, error: std::io::Error) {
-        self.inner
-            .link_state_tx
-            .send_replace(LinkState::Failed(error.to_string()));
-    }
-
     /// Stop the tailer and close the buffer.
     pub async fn close(&self) {
         let tailer = {
@@ -142,26 +118,12 @@ impl StructuredLogSource {
             tailer.stop();
             let _ = handle.await;
         }
-        self.inner.link_state_tx.send_replace(LinkState::Closed);
         self.inner.buffer.close().await;
-    }
-}
-
-impl LinkState {
-    fn as_str(&self) -> &'static str {
-        match self {
-            LinkState::Unlinked => "unlinked",
-            LinkState::Linking => "linking",
-            LinkState::Linked => "linked",
-            LinkState::Failed(_) => "failed",
-            LinkState::Closed => "closed",
-        }
     }
 }
 
 impl Serialize for DebugView<'_, StructuredLogSource> {
     fn serialize<S: Serializer>(&self, serializer: S) -> Result<S::Ok, S::Error> {
-        let state = self.inner.inner.link_state_tx.borrow().clone();
         let path = self
             .inner
             .inner
@@ -171,10 +133,6 @@ impl Serialize for DebugView<'_, StructuredLogSource> {
             .clone();
 
         let mut map = serializer.serialize_map(None)?;
-        map.serialize_entry("link_state", state.as_str())?;
-        if let LinkState::Failed(err) = &state {
-            map.serialize_entry("link_error", err)?;
-        }
         if let Some(path) = &path {
             map.serialize_entry("current_path", &LossyPath(path))?;
         }
@@ -229,6 +187,12 @@ mod tests {
             .unwrap();
         assert_eq!(entry.payload["type"], "user");
         assert_eq!(entry.payload["uuid"], "u1");
+
+        let marker = tokio::time::timeout(std::time::Duration::from_secs(2), reader.read())
+            .await
+            .unwrap()
+            .unwrap();
+        assert_eq!(marker.payload["type"], "amux.replay_finished");
     }
 
     #[tokio::test]
@@ -268,9 +232,12 @@ mod tests {
         .await
         .unwrap();
 
+        // Wait for the new tailer to drain (one user entry) and emit its
+        // replay_finished marker. seq is preserved across clear(), so the hook
+        // counted as 1 → user is 2 → marker is 3.
         tokio::time::timeout(std::time::Duration::from_secs(2), async {
             loop {
-                if log_source.current_seq().await == 1 {
+                if log_source.current_seq().await == 3 {
                     break;
                 }
                 tokio::time::sleep(std::time::Duration::from_millis(10)).await;
@@ -280,8 +247,12 @@ mod tests {
         .unwrap();
 
         let (mut reader, seq) = log_source.subscribe_with_current_seq().await.unwrap();
-        assert_eq!(seq, 1);
+        assert_eq!(seq, 3);
         assert_eq!(reader.read().await.unwrap().payload["type"], "user");
+        assert_eq!(
+            reader.read().await.unwrap().payload["type"],
+            "amux.replay_finished"
+        );
         assert!(
             tokio::time::timeout(std::time::Duration::from_millis(50), reader.read())
                 .await
@@ -304,9 +275,10 @@ mod tests {
         .unwrap();
 
         log_source.link_transcript(transcript.clone()).await;
+        // One user entry + one replay_finished marker.
         tokio::time::timeout(std::time::Duration::from_secs(2), async {
             loop {
-                if log_source.current_seq().await == 1 {
+                if log_source.current_seq().await == 2 {
                     break;
                 }
                 tokio::time::sleep(std::time::Duration::from_millis(10)).await;
@@ -315,8 +287,9 @@ mod tests {
         .await
         .unwrap();
 
+        // Second link to the same path is a no-op — no new tailer, no new marker.
         log_source.link_transcript(transcript).await;
         let (_reader, seq) = log_source.subscribe_with_current_seq().await.unwrap();
-        assert_eq!(seq, 1);
+        assert_eq!(seq, 2);
     }
 }

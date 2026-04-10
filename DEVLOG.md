@@ -38,6 +38,32 @@ One paragraph describing what was done.
 
 ---
 
+## 2026-04-10: Add `amux.replay_finished` marker; remove vestigial `LinkState`
+
+### Summary
+Added a synthetic in-band marker, `{ "type": "amux.replay_finished" }`, that the transcript tailer writes into the structured output buffer at the moment the catchup drain completes and live tailing begins. Subscribers waiting to "catch up" (the fork-coordination use case) can wait for this marker instead of trying to infer caught-up state from a UUID watermark or other positional heuristic. The marker lives in the broadcast buffer like any other entry, so new subscribers see it in their replay in position, and a relink-driven (compaction) replay just emits another one. Same change ripped out the vestigial `LinkState` (`Unlinked`/`Linking`/`Linked`/`Failed`/`Closed`) state machine that DEVLOG-2026-04-10-debug had already flagged as having zero subscribers in the codebase — its only functional uses were a same-path-relink optimization and the `amux debug` dump, both of which no longer need it.
+
+### Changes
+- **`crates/amux/src/claude/transcript.rs`** — In `tail_transcript()`, write the `amux.replay_finished` marker via `buffer.write(...)` immediately after the catchup `read_line` loop returns 0 bytes (i.e. at the catchup→live transition). Removed the `log_source: StructuredLogSource` parameter from `TranscriptTailer::new()` and the inner `tail_transcript()` function — the tailer no longer needs to call `mark_linked()` / `mark_failed()` and can write the marker directly into the buffer it already owns. Removed the `super::structured_log_source::StructuredLogSource` import. Updated the existing `tailer_writes_lines_to_buffer` test to expect 3 entries (two transcript lines + marker) and added a new `tailer_emits_replay_finished_for_empty_transcript` test that verifies the marker fires even when the catchup drain processes zero entries.
+- **`crates/amux/src/claude/structured_log_source.rs`** — **Deleted** the `LinkState` enum, `link_state_tx: watch::Sender<LinkState>` field, `mark_linked()`, `mark_failed()`, `LinkState::as_str()`, and the `tokio::sync::watch` import. Simplified the same-path-relink check in `link_transcript()` from `current_path == path && state in {Linking, Linked}` to plain `current_path == path` — the gating clause was a workaround for retry-after-failure that was never an intended use case (path changes are what trigger relinks). Updated `link_transcript()` to no longer pass `self.clone()` into `TranscriptTailer::new()`. Simplified `impl Serialize for DebugView<'_, StructuredLogSource>` to emit only `current_path` (no more `link_state` / `link_error` fields). Updated `relink_discards_entries_from_previous_generation` and `same_path_relink_is_ignored` test wait/assert conditions to account for the marker's seq increment, and added a marker-read assertion to `subscriber_receives_replay_after_immediate_subscribe` and `relink_discards_entries_from_previous_generation`.
+
+### Decisions Made
+- **Single end marker, no `replay_started` bookend.** The fork-coordination use case only needs a "you're caught up now" signal — clients waiting for catch-up watch for the marker, everyone else ignores it. A `replay_started` bookend would be useful if future consumers wanted to display "loading…" during a compaction-driven replay or buffer entries between markers for atomic apply, but no such consumer exists today and adding the start marker later is a non-breaking change. Single marker is the smallest surface area that solves the actual problem.
+- **Marker is written by the tailer directly to its `buffer`, not via `log_source.write()`.** Originally the marker write went through `log_source.write()`, but that broke the unit tests in `transcript.rs` because the tests construct a tailer with an explicit buffer that's separate from the log_source's internal buffer. In production these are the same `Arc<MultiplexStructuredBuffer>`, but in the test the tailer writes catchup entries to the explicit buffer while the marker would have gone to a different buffer. The fix was to drop the `log_source` parameter from the tailer entirely — with `mark_linked()`/`mark_failed()` gone, the tailer doesn't need it anymore.
+- **Same-path-relink check reduced to plain path equality.** The previous version gated on `LinkState::Linking | LinkState::Linked`, which allowed retry-after-failure for the same path. In practice the only thing that calls `link_transcript()` is `sync_hook_metadata()` extracting `transcript_path` from a hook event, and path changes are what trigger relinks — failed-link retry on the same path was never an intended use case. Plain path equality is what the optimization logically wants.
+- **No metadata on the marker payload yet.** Just `{"type": "amux.replay_finished"}`. If consumers later need to disambiguate "which replay" (generation counter, transcript path, reason), add fields then — adding fields to a tagged JSON object is non-breaking.
+- **Tailer-failure-during-catchup leaves clients hanging.** If `read_line()` errors before the catchup drains, the marker is never emitted and any client waiting for it hangs. This matches today's behavior (nothing previously emitted a "tailer broken" signal either) and is out of scope. If it becomes a real problem, the catchup loop can be wrapped in a function whose return value is checked, with the marker emitted unconditionally before the early return.
+
+### Verification
+- `cargo check && cargo fmt && cargo clippy --workspace --all-targets -- -D warnings` — clean.
+- `cargo test --workspace` — 305 amux unit tests pass (was 304; net +1 from the new `tailer_emits_replay_finished_for_empty_transcript` test). All other crates pass too.
+- `cargo build --workspace && cargo run -p e2e-runner -- run` — all 10 e2e tests pass.
+
+### Next Steps
+- Wire up the client-side fork coordination that *waits for* the marker. Lives in the consumer (TBD — likely whichever crate ends up owning the fork command). Out of scope for this change.
+
+---
+
 ## 2026-04-10: Rework `amux debug` around `DebugView` newtype + manual `Serialize`
 
 ### Summary
