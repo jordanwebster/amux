@@ -36,6 +36,7 @@ pub enum ClaudeHook {
     PermissionRequest(Box<ClaudePermissionRequest>),
     Stop(ClaudeStop),
     SessionEnd(ClaudeSessionEnd),
+    Notification(ClaudeNotification),
     #[serde(other)]
     Unknown,
 }
@@ -48,6 +49,7 @@ impl ClaudeHook {
             Self::PermissionRequest(s) => Some(s.session_id),
             Self::Stop(s) => Some(s.session_id),
             Self::SessionEnd(s) => Some(s.session_id),
+            Self::Notification(s) => Some(s.session_id),
             Self::Unknown => None,
         }
     }
@@ -59,6 +61,7 @@ impl ClaudeHook {
             Self::PermissionRequest(s) => Some(&s.cwd),
             Self::Stop(s) => Some(&s.cwd),
             Self::SessionEnd(s) => Some(&s.cwd),
+            Self::Notification(s) => Some(&s.cwd),
             Self::Unknown => None,
         }
     }
@@ -70,6 +73,7 @@ impl ClaudeHook {
             Self::PermissionRequest(s) => Some(&s.transcript_path),
             Self::Stop(s) => Some(&s.transcript_path),
             Self::SessionEnd(s) => Some(&s.transcript_path),
+            Self::Notification(s) => Some(&s.transcript_path),
             Self::Unknown => None,
         }
     }
@@ -99,6 +103,24 @@ pub struct ClaudeStop {
     pub last_assistant_message: String,
     pub transcript_path: String,
     pub cwd: String,
+}
+
+/// Notification hook data from Claude Code.
+///
+/// Fired for events such as permission prompts, idle prompts, auth success,
+/// and elicitation dialogs. `notification_type` is the matcher value (e.g.
+/// `permission_prompt`, `idle_prompt`, `auth_success`, `elicitation_dialog`)
+/// and is left as a `String` so new values from Claude Code do not break
+/// parsing.
+#[derive(Debug, Clone, Deserialize, Serialize)]
+pub struct ClaudeNotification {
+    pub session_id: Uuid,
+    pub transcript_path: String,
+    pub cwd: String,
+    pub message: String,
+    #[serde(default)]
+    pub title: Option<String>,
+    pub notification_type: String,
 }
 
 /// PermissionRequest hook data from Claude Code
@@ -1022,6 +1044,13 @@ impl std::fmt::Display for ClaudeHook {
             ClaudeHook::SessionEnd(s) => {
                 write!(f, "session {} ended", s.session_id)
             }
+            ClaudeHook::Notification(n) => {
+                write!(
+                    f,
+                    "session {} notification ({})",
+                    n.session_id, n.notification_type
+                )
+            }
             ClaudeHook::Unknown => write!(f, "unknown hook"),
         }
     }
@@ -1078,6 +1107,10 @@ pub enum ClaudeStructuredInput {
     AskUserQuestionResponse(AskUserQuestionResponse),
     /// Response to a plan review (ExitPlanMode) request
     PlanReviewResponse(PlanReviewResponse),
+    /// Interrupt Claude Code by sending the Esc key
+    Interrupt,
+    /// Cycle Claude Code's permission mode by sending Shift+Tab
+    CyclePermissions,
 }
 
 #[cfg(test)]
@@ -1126,6 +1159,45 @@ mod tests {
             panic!("Expected PermissionRequest");
         };
         assert!(matches!(p.tool, ClaudePermissionTool::Unknown));
+    }
+
+    #[test]
+    fn test_notification_deserializes_from_json() {
+        let json = r#"{
+            "hook_event_name": "Notification",
+            "session_id": "00000000-0000-0000-0000-000000000001",
+            "transcript_path": "/tmp/transcript.jsonl",
+            "cwd": "/tmp",
+            "message": "Claude needs your permission to use Bash",
+            "title": "Permission needed",
+            "notification_type": "permission_prompt"
+        }"#;
+        let hook: ClaudeHook = serde_json::from_str(json).unwrap();
+        let ClaudeHook::Notification(n) = hook else {
+            panic!("Expected Notification");
+        };
+        assert_eq!(n.message, "Claude needs your permission to use Bash");
+        assert_eq!(n.title.as_deref(), Some("Permission needed"));
+        assert_eq!(n.notification_type, "permission_prompt");
+        assert_eq!(n.cwd, "/tmp");
+    }
+
+    #[test]
+    fn test_notification_deserializes_without_title() {
+        let json = r#"{
+            "hook_event_name": "Notification",
+            "session_id": "00000000-0000-0000-0000-000000000001",
+            "transcript_path": "/tmp/transcript.jsonl",
+            "cwd": "/tmp",
+            "message": "Idle for too long",
+            "notification_type": "idle_prompt"
+        }"#;
+        let hook: ClaudeHook = serde_json::from_str(json).unwrap();
+        let ClaudeHook::Notification(n) = hook else {
+            panic!("Expected Notification");
+        };
+        assert!(n.title.is_none());
+        assert_eq!(n.notification_type, "idle_prompt");
     }
 
     #[test]

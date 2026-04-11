@@ -142,6 +142,7 @@ enum ClaudeHookEvent {
     SessionEnd,
     PermissionRequest,
     Stop,
+    Notification,
 }
 
 #[tokio::main]

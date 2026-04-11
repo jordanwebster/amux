@@ -856,6 +856,7 @@ async fn handle_command(
                 Hook::Claude(ClaudeHook::PermissionRequest(_), _) => "PermissionRequest",
                 Hook::Claude(ClaudeHook::Stop(_), _) => "Stop",
                 Hook::Claude(ClaudeHook::SessionEnd(_), _) => "SessionEnd",
+                Hook::Claude(ClaudeHook::Notification(_), _) => "Notification",
                 Hook::Claude(ClaudeHook::Unknown, _) => "Unknown",
             };
             tracing::debug!(hook_type, %agent_id, "received hook event");

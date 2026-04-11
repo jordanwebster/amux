@@ -38,6 +38,51 @@ One paragraph describing what was done.
 
 ---
 
+## 2026-04-10: Add `Notification` hook support
+
+### Summary
+Added support for Claude Code's `Notification` hook event (https://code.claude.com/docs/en/hooks#notification). Notifications fire for permission prompts, idle prompts, auth success, and elicitation dialogs. Like `PermissionRequest` and `Stop`, the Notification hook is propagated to subscribers as structured output by passing through the original raw JSON with a `"type": "hook.notification"` field injected — lossless, no field loss from typed round-tripping.
+
+### Changes
+- **`crates/amux/src/claude/types.rs`** — Added `ClaudeNotification` struct (`session_id`, `transcript_path`, `cwd`, `message`, `title: Option<String>`, `notification_type: String`) and `ClaudeHook::Notification(ClaudeNotification)` variant. Extended `ClaudeHook::session_id()`, `cwd()`, `transcript_path()` accessors and the `Display` impl. Added two unit tests covering deserialization with and without the optional `title` field.
+- **`crates/amux/src/agents/claude.rs`** — Added a `Notification` arm in `ClaudeSession::handle_hook()` mirroring the `Stop` and `PermissionRequest` passthrough pattern: take the raw `Value`, inject `"type": "hook.notification"`, write to `log_source`. Updated the doc comment on `handle_hook` to mention notification.
+- **`crates/amux/src/server/handlers.rs`** — Added `Notification` to the `hook_type` debug-tracing match.
+- **`crates/amux-cli/src/main.rs`** — Added `Notification` variant to the `ClaudeHookEvent` clap subcommand enum so `amux hooks claude notification` is a valid invocation.
+- **`claude-plugin/hooks/hooks.json`** — Registered a `Notification` entry that runs `amux hooks claude notification` async, matching the existing `SessionStart`/`SessionEnd`/`PermissionRequest`/`Stop` registrations.
+
+### Decisions Made
+- **`notification_type` is a `String`, not an enum.** Claude Code documents four matcher values (`permission_prompt`, `idle_prompt`, `auth_success`, `elicitation_dialog`) but new types may appear over time. Using `String` keeps the parser forward-compatible — we don't reject hooks just because Claude added a new notification kind. Consumers that care can match on the string.
+- **`title` is `Option<String>` with `#[serde(default)]`.** The Claude Code docs explicitly mark `title` as "Optional notification title", so it can be absent on the wire. The added `test_notification_deserializes_without_title` test pins this behavior.
+- **Notification propagates as structured output (not internal-only).** Unlike `SessionStart`/`SessionEnd` which are bookkeeping events, notifications are user-facing — clients want to render them. Slotted into the same passthrough lane as `PermissionRequest` and `Stop`.
+- **`hooks.json` uses the same async fire-and-forget pattern.** The hook handler in `crates/amux-cli/src/hooks.rs` is event-name-agnostic — it reads the JSON from stdin and uses the `hook_event_name` field for dispatch — so adding the new variant only required registering it in the manifest and adding a clap subcommand. No new code path in `handle_claude_hook`.
+
+### Verification
+- `cargo check && cargo fmt && cargo clippy --workspace --all-targets -- -D warnings` — clean.
+- `cargo test --workspace` — 309 amux unit tests pass (was 307; +2 from the new notification tests).
+- `cargo build --workspace && cargo run -p e2e-runner -- run` — all 10 e2e tests pass.
+
+---
+
+## 2026-04-10: Add `ClaudeStructuredInput::Interrupt` and `CyclePermissions`
+
+### Summary
+Added two new unit variants to `ClaudeStructuredInput`: `Interrupt` sends a single Esc byte (`\x1b`) to interrupt Claude mid-response, and `CyclePermissions` sends Shift+Tab (`\x1b[Z`) to cycle Claude Code's permission mode. Both mirror keystrokes a user would press in an interactive Claude Code session.
+
+### Changes
+- **`crates/amux/src/claude/types.rs`** — Added `ClaudeStructuredInput::Interrupt` and `ClaudeStructuredInput::CyclePermissions` (both unit variants, no payload).
+- **`crates/amux/src/agents/claude.rs`** — Added `ESC: &[u8] = b"\x1b"` and `SHIFT_TAB: &[u8] = b"\x1b[Z"` constants alongside the existing arrow-key constants. Added `interrupt_keystrokes()` and `cycle_permissions_keystrokes()` helpers (each returns a single `PtyAction::Send`). Added match arms in `ClaudeSession::send_input()` that log and dispatch the new variants. Added `test_interrupt_keystrokes` and `test_cycle_permissions_keystrokes` unit tests.
+
+### Decisions Made
+- **Unit variants, not structs/enums.** Both inputs are parameterless — they're just "send key X". Modeled as unit variants rather than tuple variants with placeholder types so the wire format and Rust ergonomics stay minimal.
+- **Single keystroke, no delay or follow-up.** Other helpers like `submit_prompt_keystrokes` and `plan_review_response_keystrokes` insert `DELAY` between keystrokes because the Claude TUI needs settling time between multi-step inputs. These are single keystrokes, so no delay is required.
+- **Shift+Tab as `\x1b[Z` (CSI Z / "back tab").** This is the standard xterm sequence for Shift+Tab and is what the Claude TUI listens for to cycle permission mode.
+
+### Verification
+- `cargo check && cargo fmt && cargo clippy --workspace --all-targets -- -D warnings` — clean.
+- `cargo test --workspace` — 307 amux unit tests pass (was 305; +2 from the new keystroke tests).
+
+---
+
 ## 2026-04-10: Add `amux.replay_finished` marker; remove vestigial `LinkState`
 
 ### Summary

@@ -27,6 +27,8 @@ const RIGHT_ARROW: &[u8] = b"\x1b[C";
 const LEFT_ARROW: &[u8] = b"\x1b[D";
 const UP_ARROW: &[u8] = b"\x1b[A";
 const DOWN_ARROW: &[u8] = b"\x1b[B";
+const ESC: &[u8] = b"\x1b";
+const SHIFT_TAB: &[u8] = b"\x1b[Z";
 const DELAY: Duration = Duration::from_millis(20);
 
 enum PtyAction {
@@ -65,6 +67,14 @@ fn submit_prompt_keystrokes(prompt: &str) -> Vec<PtyAction> {
         PtyAction::Delay(DELAY),
         PtyAction::Send(b"\r".to_vec()),
     ]
+}
+
+fn interrupt_keystrokes() -> Vec<PtyAction> {
+    vec![PtyAction::Send(ESC.to_vec())]
+}
+
+fn cycle_permissions_keystrokes() -> Vec<PtyAction> {
+    vec![PtyAction::Send(SHIFT_TAB.to_vec())]
 }
 
 /// Find the 0-based index of the option whose label matches `answer`.
@@ -554,6 +564,14 @@ impl ClaudeSession {
                 tracing::info!(agent_id = %self.agent_id, ?response, "sending plan review response");
                 plan_review_response_keystrokes(response)
             }
+            ClaudeStructuredInput::Interrupt => {
+                tracing::info!(agent_id = %self.agent_id, "sending interrupt");
+                interrupt_keystrokes()
+            }
+            ClaudeStructuredInput::CyclePermissions => {
+                tracing::info!(agent_id = %self.agent_id, "sending cycle permissions");
+                cycle_permissions_keystrokes()
+            }
         };
         execute_pty_actions(pty, &actions).await
     }
@@ -597,10 +615,11 @@ impl ClaudeSession {
     /// Handle a hook event.
     ///
     /// Internal side effects (session_id, transcript linking) use the typed
-    /// `ClaudeHook`. Structured output for `hook.permission_request` and
-    /// `hook.stop` passes through the original raw JSON with a `type` field
-    /// injected — no field loss from typed round-tripping. `SessionEnd` is
-    /// internal-only (agent cleanup) and is not emitted as structured output.
+    /// `ClaudeHook`. Structured output for `hook.permission_request`,
+    /// `hook.stop`, and `hook.notification` passes through the original raw
+    /// JSON with a `type` field injected — no field loss from typed
+    /// round-tripping. `SessionEnd` is internal-only (agent cleanup) and is
+    /// not emitted as structured output.
     pub async fn handle_hook(&mut self, hook: Hook) -> Result<()> {
         let Hook::Claude(ref claude_hook, _) = hook;
         self.sync_hook_metadata(claude_hook).await?;
@@ -629,6 +648,18 @@ impl ClaudeSession {
                 let mut value = raw;
                 if let Some(obj) = value.as_object_mut() {
                     obj.insert("type".to_string(), json!("hook.stop"));
+                }
+                log_source.write(value).await;
+            }
+            Hook::Claude(ClaudeHook::Notification(ref n), raw) => {
+                tracing::debug!(
+                    agent_id = %self.agent_id,
+                    notification_type = %n.notification_type,
+                    "notification"
+                );
+                let mut value = raw;
+                if let Some(obj) = value.as_object_mut() {
+                    obj.insert("type".to_string(), json!("hook.notification"));
                 }
                 log_source.write(value).await;
             }
@@ -785,6 +816,18 @@ mod tests {
         let actions = submit_prompt_keystrokes("hello");
         assert_eq!(sends(&actions), vec![b"hello".to_vec(), b"\r".to_vec()]);
         assert!(matches!(actions[1], PtyAction::Delay(_)));
+    }
+
+    #[test]
+    fn test_interrupt_keystrokes() {
+        let actions = interrupt_keystrokes();
+        assert_eq!(sends(&actions), vec![b"\x1b".to_vec()]);
+    }
+
+    #[test]
+    fn test_cycle_permissions_keystrokes() {
+        let actions = cycle_permissions_keystrokes();
+        assert_eq!(sends(&actions), vec![b"\x1b[Z".to_vec()]);
     }
 
     #[test]
