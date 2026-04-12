@@ -28,8 +28,10 @@ const LEFT_ARROW: &[u8] = b"\x1b[D";
 const UP_ARROW: &[u8] = b"\x1b[A";
 const DOWN_ARROW: &[u8] = b"\x1b[B";
 const ESC: &[u8] = b"\x1b";
+const CTRL_L: &[u8] = b"\x0c";
 const SHIFT_TAB: &[u8] = b"\x1b[Z";
 const DELAY: Duration = Duration::from_millis(20);
+const INTERRUPT_CLEAR_DELAY: Duration = Duration::from_millis(500);
 
 enum PtyAction {
     Send(Vec<u8>),
@@ -70,7 +72,11 @@ fn submit_prompt_keystrokes(prompt: &str) -> Vec<PtyAction> {
 }
 
 fn interrupt_keystrokes() -> Vec<PtyAction> {
-    vec![PtyAction::Send(ESC.to_vec())]
+    vec![
+        PtyAction::Send(ESC.to_vec()),
+        PtyAction::Delay(INTERRUPT_CLEAR_DELAY),
+        PtyAction::Send(CTRL_L.to_vec()),
+    ]
 }
 
 fn cycle_permissions_keystrokes() -> Vec<PtyAction> {
@@ -821,7 +827,8 @@ mod tests {
     #[test]
     fn test_interrupt_keystrokes() {
         let actions = interrupt_keystrokes();
-        assert_eq!(sends(&actions), vec![b"\x1b".to_vec()]);
+        assert_eq!(sends(&actions), vec![b"\x1b".to_vec(), b"\x0c".to_vec()]);
+        assert!(matches!(actions[1], PtyAction::Delay(_)));
     }
 
     #[test]
