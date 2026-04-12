@@ -225,6 +225,11 @@ pub struct Config {
     #[serde(default = "default_enforce_tls_in_cloud_mode")]
     pub enforce_tls_in_cloud_mode: bool,
 
+    /// Minimum client version required to connect (semver string, e.g. "0.2.0").
+    /// Clients below this version will be rejected with UpgradeRequired.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub minimum_client_version: Option<String>,
+
     /// Keybind configuration
     #[serde(default)]
     pub keybinds: Keybinds,
@@ -244,6 +249,7 @@ impl Default for Config {
             randomise_link_name: default_randomise_link_name(),
             state_path: default_state_path(),
             enforce_tls_in_cloud_mode: default_enforce_tls_in_cloud_mode(),
+            minimum_client_version: None,
             keybinds: Keybinds::default(),
             path: None,
         }
@@ -284,6 +290,15 @@ impl Config {
                     "cloud mode requires websocket_port to be set".into(),
                 ));
             }
+        }
+
+        // Validate minimum_client_version is valid semver if set
+        if let Some(ref v) = self.minimum_client_version
+            && semver::Version::parse(v).is_err()
+        {
+            return Err(AmuxError::Config(format!(
+                "invalid minimum_client_version '{v}': must be valid semver (e.g. \"0.2.0\")"
+            )));
         }
 
         Ok(())
@@ -433,5 +448,24 @@ mod tests {
         config.keybinds.leader = LeaderKey { char: b'1' };
         let err = config.validate(false).unwrap_err();
         assert!(err.to_string().contains("leader key"));
+    }
+
+    #[test]
+    fn validate_minimum_client_version_valid() {
+        let config = Config {
+            minimum_client_version: Some("0.2.0".to_string()),
+            ..Config::default()
+        };
+        assert!(config.validate(false).is_ok());
+    }
+
+    #[test]
+    fn validate_minimum_client_version_invalid() {
+        let config = Config {
+            minimum_client_version: Some("v0.2.0".to_string()),
+            ..Config::default()
+        };
+        let err = config.validate(false).unwrap_err();
+        assert!(err.to_string().contains("minimum_client_version"));
     }
 }

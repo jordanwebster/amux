@@ -42,10 +42,17 @@ pub enum CloudError {
     Transport(#[from] AmuxError),
     #[error("State error: {0}")]
     State(#[from] crate::state::StateError),
-    #[error("amux upgrade required (protocol v{server_version}, client v{client_version})")]
-    VersionMismatch {
+    #[error(
+        "protocol mismatch (server protocol v{server_version}, client protocol v{client_version})"
+    )]
+    ProtocolMismatch {
         server_version: u32,
         client_version: u32,
+    },
+    #[error("amux upgrade required (minimum v{minimum_version}, you have v{client_version})")]
+    UpgradeRequired {
+        minimum_version: String,
+        client_version: String,
     },
 }
 
@@ -56,12 +63,19 @@ fn check_handshake_connect_result(result: &ConnectResult) -> std::result::Result
         Some(ProtocolError::InvalidCredentials) => {
             Err(CloudError::Auth("invalid credentials".to_string()))
         }
-        Some(ProtocolError::VersionMismatch {
+        Some(ProtocolError::ProtocolMismatch {
             server_version,
             client_version,
-        }) => Err(CloudError::VersionMismatch {
+        }) => Err(CloudError::ProtocolMismatch {
             server_version: *server_version,
             client_version: *client_version,
+        }),
+        Some(ProtocolError::UpgradeRequired {
+            minimum_version,
+            client_version,
+        }) => Err(CloudError::UpgradeRequired {
+            minimum_version: minimum_version.clone(),
+            client_version: client_version.clone(),
         }),
         Some(e) => Err(CloudError::Connection(format!("server rejected: {e}"))),
     }
@@ -76,13 +90,23 @@ fn check_reauth_result(msg: &Message) -> std::result::Result<(), CloudError> {
         }) => Err(CloudError::Auth("invalid credentials".to_string())),
         Message::Direct(DirectMessage::ReauthResult {
             error:
-                Some(ProtocolError::VersionMismatch {
+                Some(ProtocolError::ProtocolMismatch {
                     server_version,
                     client_version,
                 }),
-        }) => Err(CloudError::VersionMismatch {
+        }) => Err(CloudError::ProtocolMismatch {
             server_version: *server_version,
             client_version: *client_version,
+        }),
+        Message::Direct(DirectMessage::ReauthResult {
+            error:
+                Some(ProtocolError::UpgradeRequired {
+                    minimum_version,
+                    client_version,
+                }),
+        }) => Err(CloudError::UpgradeRequired {
+            minimum_version: minimum_version.clone(),
+            client_version: client_version.clone(),
         }),
         Message::Direct(DirectMessage::ReauthResult { error: Some(e) }) => {
             Err(CloudError::Connection(format!("server rejected: {e}")))
@@ -155,6 +179,7 @@ impl CloudConnection {
             link_name: link_name.clone(),
             token: Some(conn.token),
             version: PROTOCOL_VERSION,
+            client_version: env!("CARGO_PKG_VERSION").to_string(),
         };
         let payload = connect.encode().map_err(AmuxError::SerializationEncode)?;
         transport.write_frame(&payload).await?;
@@ -317,11 +342,11 @@ mod tests {
     }
 
     #[test]
-    fn handle_reauth_result_version_mismatch() {
+    fn handle_reauth_result_protocol_mismatch() {
         let mut state = test_refresh_state(Utc::now() + Duration::hours(1));
 
         let msg = Message::Direct(DirectMessage::ReauthResult {
-            error: Some(ProtocolError::VersionMismatch {
+            error: Some(ProtocolError::ProtocolMismatch {
                 server_version: 4,
                 client_version: 3,
             }),
@@ -330,7 +355,7 @@ mod tests {
 
         assert!(matches!(
             result,
-            Err(CloudError::VersionMismatch {
+            Err(CloudError::ProtocolMismatch {
                 server_version: 4,
                 client_version: 3,
             })

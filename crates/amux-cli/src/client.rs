@@ -687,6 +687,16 @@ impl Drop for RawModeGuard {
 /// Check the update marker file and print a banner if a valid update is available.
 /// The marker is ignored (and deleted) if its current_version doesn't match our binary.
 fn print_update_banner(state_path: &Path) {
+    // Check for required upgrade (stronger message, takes priority)
+    if let Some(minimum_version) = amux::update::read_upgrade_required(state_path) {
+        let current = env!("CARGO_PKG_VERSION");
+        println!(
+            "An update is REQUIRED for cloud connectivity (minimum v{minimum_version}, \
+             you have v{current}). Run 'amux update' to update."
+        );
+        return;
+    }
+
     let marker_path = amux::update::update_marker_path(state_path);
     match amux::update::read_update_marker(&marker_path) {
         Some(info) if info.current_version == env!("CARGO_PKG_VERSION") => {

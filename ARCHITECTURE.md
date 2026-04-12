@@ -278,7 +278,8 @@ enum ProtocolError {
     LinkNameTaken,
     InvalidCredentials,
     InvalidLinkName,
-    VersionMismatch { server_version: u32, client_version: u32 },
+    ProtocolMismatch { server_version: u32, client_version: u32 },
+    UpgradeRequired { minimum_version: String, client_version: String },
 }
 ```
 

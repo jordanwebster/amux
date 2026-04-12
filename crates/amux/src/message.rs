@@ -80,9 +80,15 @@ pub enum ProtocolError {
     InvalidLinkName,
     /// Protocol version mismatch between client and server
     #[error("amux upgrade required (protocol v{server_version}, client v{client_version})")]
-    VersionMismatch {
+    ProtocolMismatch {
         server_version: u32,
         client_version: u32,
+    },
+    /// Client binary version is below the server's minimum requirement
+    #[error("amux upgrade required (minimum v{minimum_version}, you have v{client_version})")]
+    UpgradeRequired {
+        minimum_version: String,
+        client_version: String,
     },
     /// Structured input seq doesn't match current output seq
     #[error("sequence number mismatch (client {client_seq}, server {current_seq})")]

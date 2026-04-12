@@ -36,8 +36,16 @@ pub enum AmuxError {
     #[error("Invalid or missing credentials — run 'amux init' to re-authenticate")]
     InvalidCredentials,
 
-    #[error("amux upgrade required: {0}")]
-    VersionMismatch(String),
+    #[error("protocol mismatch: {0}")]
+    ProtocolMismatch(String),
+
+    #[error(
+        "amux upgrade required (minimum v{minimum_version}, you have v{client_version}). Run 'amux update' to update."
+    )]
+    UpgradeRequired {
+        minimum_version: String,
+        client_version: String,
+    },
 
     #[error("handshake timed out")]
     HandshakeTimeout,

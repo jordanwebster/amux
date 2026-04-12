@@ -69,11 +69,11 @@ pub(super) fn establish_cloud_connection(
                         tracing::info!("cloud connection closed cleanly");
                         backoff = INITIAL_BACKOFF;
                     }
-                    Err(CloudConnectionError::VersionMismatch {
+                    Err(CloudConnectionError::ProtocolMismatch {
                         server_version,
                         client_version,
                     }) => {
-                        tracing::error!(server_version, client_version, "cloud version mismatch");
+                        tracing::error!(server_version, client_version, "cloud protocol mismatch");
                         // Notify all attached terminals to exit cleanly
                         let us = user_state.read().await;
                         for (link, tx) in &us.routes {
@@ -90,6 +90,21 @@ pub(super) fn establish_cloud_connection(
                         // them, so terminals see "connection reset" not "amux upgrade required".
                         tokio::time::sleep(Duration::from_millis(100)).await;
                         std::process::exit(1);
+                    }
+                    Err(CloudConnectionError::UpgradeRequired {
+                        minimum_version,
+                        client_version,
+                    }) => {
+                        tracing::error!(
+                            minimum_version = %minimum_version,
+                            client_version = %client_version,
+                            "cloud requires newer client version"
+                        );
+                        crate::update::write_upgrade_required(
+                            &config.state_path,
+                            &minimum_version,
+                        );
+                        return;
                     }
                     Err(CloudConnectionError::NonRetriable(msg)) => {
                         tracing::error!(error = %msg, "cloud non-retriable error, stopping");
@@ -129,9 +144,14 @@ enum CloudConnectionError {
     /// Error that should stop reconnection attempts (auth failure)
     NonRetriable(String),
     /// Protocol version mismatch — notify terminals and exit
-    VersionMismatch {
+    ProtocolMismatch {
         server_version: u32,
         client_version: u32,
+    },
+    /// Client binary version is below the server's minimum requirement
+    UpgradeRequired {
+        minimum_version: String,
+        client_version: String,
     },
 }
 
@@ -158,12 +178,21 @@ async fn run_cloud_connection(
                 "Cloud mode disabled".to_string(),
             ));
         }
-        Err(CloudError::VersionMismatch {
+        Err(CloudError::ProtocolMismatch {
             server_version,
             client_version,
         }) => {
-            return Err(CloudConnectionError::VersionMismatch {
+            return Err(CloudConnectionError::ProtocolMismatch {
                 server_version,
+                client_version,
+            });
+        }
+        Err(CloudError::UpgradeRequired {
+            minimum_version,
+            client_version,
+        }) => {
+            return Err(CloudConnectionError::UpgradeRequired {
+                minimum_version,
                 client_version,
             });
         }
@@ -174,6 +203,9 @@ async fn run_cloud_connection(
             });
         }
     };
+
+    // Handshake succeeded — clear any stale upgrade-required marker
+    crate::update::clear_upgrade_required(&config.state_path);
 
     let (transport, token_refresh) = conn.into_parts();
     let link_name = token_refresh.link_name.clone();
@@ -211,6 +243,7 @@ async fn run_cloud_connection(
         is_local: false,
         heartbeat_role: HeartbeatRole::Dialer,
         next_request_id,
+        client_version: env!("CARGO_PKG_VERSION").to_string(),
     };
 
     let connected_at = std::time::Instant::now();
@@ -229,9 +262,16 @@ async fn run_cloud_connection(
         Err(AmuxError::InvalidCredentials) => Err(CloudConnectionError::NonRetriable(
             "Invalid credentials — run 'amux init' to re-authenticate".to_string(),
         )),
-        Err(AmuxError::VersionMismatch(_)) => Err(CloudConnectionError::VersionMismatch {
+        Err(AmuxError::ProtocolMismatch(_)) => Err(CloudConnectionError::ProtocolMismatch {
             server_version: 0,
             client_version: crate::handshake::PROTOCOL_VERSION,
+        }),
+        Err(AmuxError::UpgradeRequired {
+            minimum_version,
+            client_version,
+        }) => Err(CloudConnectionError::UpgradeRequired {
+            minimum_version,
+            client_version,
         }),
         Err(e) => Err(CloudConnectionError::Retriable {
             msg: e.to_string(),

@@ -7,6 +7,7 @@ mod update;
 use amux::Config;
 use amux::protocol;
 use amux::run_server;
+use amux::setup;
 use anyhow::Context;
 use anyhow::Result;
 use anyhow::anyhow;
@@ -191,6 +192,7 @@ async fn main() -> Result<()> {
         }) => {
             let agent_type = parse_agent_type(&agent_type)?;
             ensure_initialized(&config).await?;
+            check_upgrade_required(&config);
             match agent_type {
                 protocol::AgentType::Claude => {
                     plugin::ensure_plugin_installed().await;
@@ -301,6 +303,45 @@ fn init_tracing() -> WorkerGuard {
         .init();
 
     guard
+}
+
+/// Show a blocking warning if the cloud server requires a newer version.
+/// Only shown when cloud mode is enabled and the user hasn't dismissed this version.
+fn check_upgrade_required(config: &Config) {
+    // Only relevant if cloud mode is enabled
+    let cloud_state = match setup::cloud_setup_state(config) {
+        Ok(s) => s,
+        Err(_) => return,
+    };
+    if cloud_state.use_cloud_mode != Some(true) {
+        return;
+    }
+
+    let minimum_version = match amux::update::read_upgrade_required(&config.state_path) {
+        Some(v) => v,
+        None => return,
+    };
+
+    if amux::update::is_upgrade_dismissed(&config.state_path, &minimum_version) {
+        return;
+    }
+
+    let current = env!("CARGO_PKG_VERSION");
+    eprintln!("┌ Update required ──────────────────────────────────────────┐");
+    eprintln!("│                                                           │");
+    eprintln!("│  Your version ({current}) is below the minimum required");
+    eprintln!("│  version ({minimum_version}) for cloud connectivity.");
+    eprintln!("│                                                           │");
+    eprintln!("│  Run 'amux update' to update.                             │");
+    eprintln!("│                                                           │");
+    eprintln!("│  Press Enter to continue, 'd' to dismiss permanently      │");
+    eprintln!("│  (until next update), or Ctrl-C to exit.                  │");
+    eprintln!("└───────────────────────────────────────────────────────────┘");
+
+    let mut input = String::new();
+    if std::io::stdin().read_line(&mut input).is_ok() && input.trim().eq_ignore_ascii_case("d") {
+        amux::update::dismiss_upgrade(&config.state_path, &minimum_version);
+    }
 }
 
 fn load_config(input_path: Option<PathBuf>) -> Result<Config> {

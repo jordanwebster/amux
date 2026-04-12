@@ -33,6 +33,8 @@ pub(super) struct ConnectionContext {
     pub(super) is_local: bool,
     pub(super) heartbeat_role: HeartbeatRole,
     pub(super) next_request_id: Arc<AtomicU64>,
+    /// Semantic version of the connecting client (from Connect handshake).
+    pub(super) client_version: String,
 }
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
@@ -812,6 +814,7 @@ mod tests {
             is_local: false,
             heartbeat_role: HeartbeatRole::Dialer,
             next_request_id: Arc::new(AtomicU64::new(1)),
+            client_version: env!("CARGO_PKG_VERSION").to_string(),
         }
     }
 
@@ -829,6 +832,7 @@ mod tests {
             is_local: false,
             heartbeat_role: HeartbeatRole::Acceptor,
             next_request_id: Arc::new(AtomicU64::new(1)),
+            client_version: env!("CARGO_PKG_VERSION").to_string(),
         }
     }
 

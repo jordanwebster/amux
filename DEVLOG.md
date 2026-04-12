@@ -38,6 +38,43 @@ One paragraph describing what was done.
 
 ---
 
+## 2026-04-12: Minimum client version enforcement
+
+### Summary
+Added server-side minimum client version enforcement. Cloud servers (or any server) can set `minimum_client_version` in their config to reject clients running old binaries. This is separate from the existing protocol version mismatch check — it enforces semver-level policy ("you must be at least v0.2.0") rather than wire-format compatibility. Also renamed `VersionMismatch` to `ProtocolMismatch` across `ProtocolError`, `CloudError`, `AmuxError`, and `CloudConnectionError` to disambiguate from the new `UpgradeRequired` variant.
+
+### Changes
+- **`crates/amux/src/handshake.rs`** — Added `client_version: String` field to `Connect` struct (required, breaking change). Added test for missing field.
+- **`crates/amux/src/message.rs`** — Added `ProtocolError::UpgradeRequired { minimum_version, client_version }` variant.
+- **`crates/amux/src/error.rs`** — Added `AmuxError::UpgradeRequired { minimum_version, client_version }` variant.
+- **`crates/amux/src/config.rs`** — Added `minimum_client_version: Option<String>` to `Config`.
+- **`crates/amux/src/cloud.rs`** — Added `CloudError::UpgradeRequired` variant. Updated `check_handshake_connect_result` and `check_reauth_result` to handle the new protocol error.
+- **`crates/amux/src/server/accept.rs`** — Added semver check in `accept_handshake()` after protocol version check. Updated `connect_handshake()` to handle `UpgradeRequired` response. All `Connect` construction sites now include `client_version`.
+- **`crates/amux/src/server/connection.rs`** — Added `client_version: String` field to `ConnectionContext`.
+- **`crates/amux/src/server/handlers.rs`** — Added minimum version re-check in `Reauth` handler (catches config changes on already-connected clients at next token refresh).
+- **`crates/amux/src/server/cloud.rs`** — Added `CloudConnectionError::UpgradeRequired` variant. Writes `upgrade-required` marker file on rejection, clears it on successful connection.
+- **`crates/amux/src/update.rs`** — Added marker file functions: `write_upgrade_required`, `read_upgrade_required`, `clear_upgrade_required`, `is_upgrade_dismissed`, `dismiss_upgrade`.
+- **`crates/amux-cli/src/main.rs`** — Added `check_upgrade_required()` pre-command warning before `amux new` (only when cloud mode enabled and not dismissed). Interactive prompt: Enter to continue, 'd' to dismiss permanently (until next update), Ctrl-C to exit.
+- **`crates/amux-cli/src/client.rs`** — Enhanced `print_update_banner()` to show "update REQUIRED" when upgrade-required marker exists (takes priority over "update available").
+- **`crates/amux-cli/src/update.rs`** — `amux update` now clears upgrade-required and upgrade-dismissed markers.
+
+### Decisions Made
+- **`client_version` is required (not Optional)**: Breaking change is fine since amux is pre-release. Old clients that don't send it will fail deserialization.
+- **Marker files instead of State**: Follows the same pattern as the existing `update-available` marker. Avoids file locks and YAML parsing in the CLI for a simple flag check. Three files: `upgrade-required` (minimum version), `upgrade-dismissed` (dismissed version), cleared by `amux update`.
+- **Reauth checks minimum version**: If the cloud bumps `minimum_client_version` while a client is connected, the next token refresh will reject them. Enforcement latency bounded by token refresh interval.
+- **Warning only on `amux new`**: Not on `list`, `attach`, etc. `new` is when you're starting a session that benefits from cloud.
+- **Dismiss is per-minimum-version**: If the minimum changes, the dismissed file won't match and the warning reappears.
+
+### Verification
+- `cargo check` — clean
+- `cargo fmt` — clean
+- `cargo clippy --workspace --all-targets -- -D warnings` — clean
+- `cargo test --workspace` — 325 tests pass
+- E2E tests — 10/10 pass
+
+### Next Steps
+- Option 3 (manifest.json `minimum_version`) can be added later for client-side proactive warnings without cloud rejection
+
 ## 2026-04-10: Add `Notification` hook support
 
 ### Summary
