@@ -430,7 +430,7 @@ async fn handle_routable(
             }
         }
 
-        RoutableMessage::SubscribeStructured { agent_id } => {
+        RoutableMessage::SubscribeStructured { agent_id, query } => {
             let Some((reply_src, reply_dst)) = reply_routes(src, "SubscribeStructured") else {
                 return Ok(());
             };
@@ -454,7 +454,7 @@ async fn handle_routable(
                     return Ok(());
                 };
                 session
-                    .subscribe_with_current_seq()
+                    .subscribe_with_query(query)
                     .await
                     .map(|(reader, current_seq)| (reader, current_seq, session.agent_protocol()))
             };
@@ -3191,7 +3191,10 @@ mod tests {
             Route::from_link("client"),
             Route::empty(),
             1,
-            &RoutableMessage::SubscribeStructured { agent_id },
+            &RoutableMessage::SubscribeStructured {
+                agent_id,
+                query: None,
+            },
         );
 
         handle_message(&tx, msg, &ctx).await.unwrap();
@@ -3238,7 +3241,10 @@ mod tests {
             Route::from_link("client"),
             Route::empty(),
             1,
-            &RoutableMessage::SubscribeStructured { agent_id },
+            &RoutableMessage::SubscribeStructured {
+                agent_id,
+                query: None,
+            },
         );
 
         handle_message(&tx, msg, &ctx).await.unwrap();
@@ -3281,7 +3287,10 @@ mod tests {
             Route::from_link("client"),
             Route::empty(),
             1,
-            &RoutableMessage::SubscribeStructured { agent_id },
+            &RoutableMessage::SubscribeStructured {
+                agent_id,
+                query: None,
+            },
         );
 
         tokio::time::timeout(Duration::from_millis(100), handle_message(&tx, msg, &ctx))

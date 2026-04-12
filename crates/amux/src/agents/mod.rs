@@ -20,7 +20,8 @@ use crate::claude::structured_log_source::StructuredLogSource;
 use crate::claude::types::Hook;
 use crate::error::{AmuxError, Result};
 use crate::message::{
-    AgentProtocol, AgentType, ClaudeProtocol, CreateAgentRequest, ProtocolError, TerminalSize,
+    AgentProtocol, AgentType, ClaudeProtocol, CreateAgentRequest, ProtocolError, SubscribeQuery,
+    TerminalSize,
 };
 use crate::route::Route;
 use chrono::{DateTime, Utc};
@@ -379,12 +380,16 @@ impl AgentSession {
         }
     }
 
-    /// Subscribe to structured log output and return the matching seq.
-    pub async fn subscribe_with_current_seq(&self) -> Option<(MultiplexStructuredReader, u64)> {
+    /// Subscribe to structured log output with an optional query filter
+    /// and return the matching seq.
+    pub async fn subscribe_with_query(
+        &self,
+        query: Option<SubscribeQuery>,
+    ) -> Option<(MultiplexStructuredReader, u64)> {
         match self {
-            Self::Claude(s) => s.subscribe_with_current_seq().await,
+            Self::Claude(s) => s.subscribe_with_query(query).await,
             #[cfg(any(debug_assertions, test))]
-            Self::TestAgent(s) => s.subscribe_with_current_seq().await,
+            Self::TestAgent(s) => s.subscribe_with_query(query).await,
         }
     }
 

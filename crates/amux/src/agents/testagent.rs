@@ -8,7 +8,7 @@ use crate::buffer::MultiplexStructuredReader;
 use crate::claude::structured_log_source::StructuredLogSource;
 use crate::debug::DebugView;
 use crate::error::Result;
-use crate::message::CreateAgentRequest;
+use crate::message::{CreateAgentRequest, SubscribeQuery};
 use chrono::{DateTime, Utc};
 use serde::{Serialize, Serializer, ser::SerializeMap};
 use std::path::PathBuf;
@@ -76,9 +76,13 @@ impl TestAgentSession {
         self.log_source.as_ref()?.subscribe().await
     }
 
-    /// Subscribe to structured log output and return the matching seq.
-    pub async fn subscribe_with_current_seq(&self) -> Option<(MultiplexStructuredReader, u64)> {
-        self.log_source.as_ref()?.subscribe_with_current_seq().await
+    /// Subscribe to structured log output with an optional query filter
+    /// and return the matching seq.
+    pub async fn subscribe_with_query(
+        &self,
+        query: Option<SubscribeQuery>,
+    ) -> Option<(MultiplexStructuredReader, u64)> {
+        self.log_source.as_ref()?.subscribe_with_query(query).await
     }
 
     /// Shut down the session: close PTY and log source.
@@ -125,7 +129,7 @@ mod tests {
 
         let (_reader, seq) = tokio::time::timeout(
             std::time::Duration::from_millis(100),
-            session.subscribe_with_current_seq(),
+            session.subscribe_with_query(None),
         )
         .await
         .unwrap()

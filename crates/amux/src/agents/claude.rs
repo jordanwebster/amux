@@ -13,7 +13,7 @@ use crate::claude::types::{
 };
 use crate::debug::DebugView;
 use crate::error::Result;
-use crate::message::{CreateAgentRequest, ProtocolError};
+use crate::message::{CreateAgentRequest, ProtocolError, SubscribeQuery};
 use chrono::{DateTime, Utc};
 use serde::{Serialize, Serializer, ser::SerializeMap};
 use serde_json::{Value, json};
@@ -695,9 +695,13 @@ impl ClaudeSession {
         self.log_source.as_ref()?.subscribe().await
     }
 
-    /// Subscribe to structured log output and return the matching seq.
-    pub async fn subscribe_with_current_seq(&self) -> Option<(MultiplexStructuredReader, u64)> {
-        self.log_source.as_ref()?.subscribe_with_current_seq().await
+    /// Subscribe to structured log output with an optional query filter
+    /// and return the matching seq.
+    pub async fn subscribe_with_query(
+        &self,
+        query: Option<SubscribeQuery>,
+    ) -> Option<(MultiplexStructuredReader, u64)> {
+        self.log_source.as_ref()?.subscribe_with_query(query).await
     }
 
     /// Shut down the session according to the given policy.

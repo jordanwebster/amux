@@ -47,6 +47,16 @@ pub enum AgentProtocol {
 
 pub type SubscriptionId = Uuid;
 
+/// Query parameter for structured subscriptions, controlling which entries
+/// are replayed on subscribe.
+#[derive(Serialize, Deserialize, Debug, Clone, PartialEq, Eq)]
+pub enum SubscribeQuery {
+    /// Replay entries with `seq >= seq`. O(log n) seek + O(k) replay.
+    Since { seq: u64 },
+    /// Replay only the last `count` entries. O(count) replay.
+    Tail { count: u64 },
+}
+
 /// Protocol-level errors that can be returned in response messages
 #[derive(Serialize, Deserialize, Debug, Clone, PartialEq, thiserror::Error)]
 pub enum ProtocolError {
@@ -164,6 +174,7 @@ pub enum RoutableMessage {
     },
     SubscribeStructured {
         agent_id: Uuid,
+        query: Option<SubscribeQuery>,
     },
     SubscribeStructuredResult {
         subscription_id: SubscriptionId,
@@ -503,7 +514,10 @@ mod tests {
                 lease_ms: 30_000,
                 error: None,
             },
-            RoutableMessage::SubscribeStructured { agent_id },
+            RoutableMessage::SubscribeStructured {
+                agent_id,
+                query: None,
+            },
             RoutableMessage::SubscribeStructuredResult {
                 subscription_id,
                 seq: 42,

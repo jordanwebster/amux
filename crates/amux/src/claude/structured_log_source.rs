@@ -9,6 +9,7 @@
 use super::transcript::TranscriptTailer;
 use crate::buffer::{MultiplexStructuredBuffer, MultiplexStructuredReader};
 use crate::debug::{DebugView, LossyPath};
+use crate::message::SubscribeQuery;
 use serde::{Serialize, Serializer, ser::SerializeMap};
 use serde_json::Value;
 use std::path::PathBuf;
@@ -88,9 +89,13 @@ impl StructuredLogSource {
         self.inner.buffer.subscribe().await
     }
 
-    /// Subscribe to the structured log buffer immediately and return the matching seq.
-    pub async fn subscribe_with_current_seq(&self) -> Option<(MultiplexStructuredReader, u64)> {
-        self.inner.buffer.subscribe_with_current_seq().await
+    /// Subscribe to the structured log buffer with an optional query filter
+    /// and return the matching seq.
+    pub async fn subscribe_with_query(
+        &self,
+        query: Option<SubscribeQuery>,
+    ) -> Option<(MultiplexStructuredReader, u64)> {
+        self.inner.buffer.subscribe_with_query(query).await
     }
 
     /// Write a structured output entry directly (e.g. hook events).
@@ -155,7 +160,7 @@ mod tests {
         log_source.link_transcript(transcript_path.clone()).await;
         let (_reader, seq) = tokio::time::timeout(
             std::time::Duration::from_millis(100),
-            log_source.subscribe_with_current_seq(),
+            log_source.subscribe_with_query(None),
         )
         .await
         .unwrap()
@@ -171,7 +176,7 @@ mod tests {
         let log_source = StructuredLogSource::new();
 
         log_source.link_transcript(transcript_path.clone()).await;
-        let (mut reader, seq) = log_source.subscribe_with_current_seq().await.unwrap();
+        let (mut reader, seq) = log_source.subscribe_with_query(None).await.unwrap();
         assert_eq!(seq, 0);
 
         tokio::fs::write(
@@ -206,7 +211,7 @@ mod tests {
             .write(json!({"type": "hook.stop", "cwd": "/tmp"}))
             .await;
 
-        let (mut reader, seq) = log_source.subscribe_with_current_seq().await.unwrap();
+        let (mut reader, seq) = log_source.subscribe_with_query(None).await.unwrap();
         assert_eq!(seq, 1);
         assert_eq!(reader.read().await.unwrap().payload["type"], "hook.stop");
     }
@@ -246,7 +251,7 @@ mod tests {
         .await
         .unwrap();
 
-        let (mut reader, seq) = log_source.subscribe_with_current_seq().await.unwrap();
+        let (mut reader, seq) = log_source.subscribe_with_query(None).await.unwrap();
         assert_eq!(seq, 3);
         assert_eq!(reader.read().await.unwrap().payload["type"], "user");
         assert_eq!(
@@ -289,7 +294,7 @@ mod tests {
 
         // Second link to the same path is a no-op — no new tailer, no new marker.
         log_source.link_transcript(transcript).await;
-        let (_reader, seq) = log_source.subscribe_with_current_seq().await.unwrap();
+        let (_reader, seq) = log_source.subscribe_with_query(None).await.unwrap();
         assert_eq!(seq, 2);
     }
 }

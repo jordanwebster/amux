@@ -7,6 +7,7 @@
 //! Key invariant: `write()` and `subscribe()` are mutually exclusive via the
 //! storage lock, ensuring no data loss or duplication between replay and live data.
 
+use crate::message::SubscribeQuery;
 use serde_json::Value;
 use std::sync::Arc;
 use tokio::sync::{RwLock, mpsc};
@@ -45,6 +46,8 @@ pub trait BufferPolicy: Send + Sync + 'static {
     type Item: Clone + Send + 'static;
     /// Internal storage type.
     type Storage: Send + Sync + Default;
+    /// Filter applied during replay to control which entries are sent.
+    type Filter: Send + Sync + Default;
 
     /// Publish one logical input into storage, returning the broadcast item.
     ///
@@ -54,8 +57,9 @@ pub trait BufferPolicy: Send + Sync + 'static {
         input: Self::Input,
         capacity: usize,
     ) -> Option<Self::Item>;
-    /// Replay existing storage contents to a newly registered subscriber.
-    fn replay(storage: &Self::Storage, tx: &mpsc::Sender<Self::Item>);
+    /// Replay existing storage contents to a newly registered subscriber,
+    /// filtered by the given filter. The default filter replays everything.
+    fn replay(storage: &Self::Storage, tx: &mpsc::Sender<Self::Item>, filter: &Self::Filter);
     /// Clear stored data while preserving any policy-owned metadata.
     fn clear(storage: &mut Self::Storage);
     /// Channel capacity for a buffer with the given max capacity.
@@ -74,6 +78,7 @@ impl BufferPolicy for BytePolicy {
     type Input = Vec<u8>;
     type Item = Vec<u8>;
     type Storage = Vec<u8>;
+    type Filter = ();
 
     fn publish(storage: &mut Vec<u8>, input: Vec<u8>, capacity: usize) -> Option<Vec<u8>> {
         if input.is_empty() {
@@ -89,7 +94,7 @@ impl BufferPolicy for BytePolicy {
         Some(input)
     }
 
-    fn replay(storage: &Vec<u8>, tx: &mpsc::Sender<Vec<u8>>) {
+    fn replay(storage: &Vec<u8>, tx: &mpsc::Sender<Vec<u8>>, _filter: &()) {
         if !storage.is_empty() {
             let _ = tx.try_send(storage.clone());
         }
@@ -124,6 +129,7 @@ impl BufferPolicy for StructuredPolicy {
     type Input = Value;
     type Item = StructuredOutput;
     type Storage = StructuredStorage;
+    type Filter = Option<SubscribeQuery>;
 
     fn publish(
         storage: &mut StructuredStorage,
@@ -145,8 +151,23 @@ impl BufferPolicy for StructuredPolicy {
         Some(item)
     }
 
-    fn replay(storage: &StructuredStorage, tx: &mpsc::Sender<StructuredOutput>) {
-        for entry in &storage.entries {
+    fn replay(
+        storage: &StructuredStorage,
+        tx: &mpsc::Sender<StructuredOutput>,
+        filter: &Option<SubscribeQuery>,
+    ) {
+        let entries = match filter {
+            None => &storage.entries[..],
+            Some(SubscribeQuery::Since { seq }) => {
+                let start = storage.entries.partition_point(|e| e.seq < *seq);
+                &storage.entries[start..]
+            }
+            Some(SubscribeQuery::Tail { count }) => {
+                let start = storage.entries.len().saturating_sub(*count as usize);
+                &storage.entries[start..]
+            }
+        };
+        for entry in entries {
             let _ = tx.try_send(entry.clone());
         }
     }
@@ -223,7 +244,7 @@ impl<P: BufferPolicy> BroadcastBuffer<P> {
     ///
     /// Returns `None` if the buffer has been closed.
     pub async fn subscribe(&self) -> Option<BroadcastReader<P>> {
-        self.subscribe_with_snapshot(|_| ())
+        self.subscribe_filtered(P::Filter::default(), |_| ())
             .await
             .map(|(reader, ())| reader)
     }
@@ -234,6 +255,20 @@ impl<P: BufferPolicy> BroadcastBuffer<P> {
     /// The returned snapshot is consistent with the replayed data.
     pub async fn subscribe_with_snapshot<R>(
         &self,
+        snapshot: impl FnOnce(&P::Storage) -> R,
+    ) -> Option<(BroadcastReader<P>, R)> {
+        self.subscribe_filtered(P::Filter::default(), snapshot)
+            .await
+    }
+
+    /// Subscribe with a replay filter and a snapshot function.
+    ///
+    /// The filter controls which stored entries are replayed. The default
+    /// filter replays everything. The snapshot is read under the same storage
+    /// lock to ensure consistency.
+    pub async fn subscribe_filtered<R>(
+        &self,
+        filter: P::Filter,
         snapshot: impl FnOnce(&P::Storage) -> R,
     ) -> Option<(BroadcastReader<P>, R)> {
         let capacity = P::channel_capacity(self.inner.capacity);
@@ -251,7 +286,7 @@ impl<P: BufferPolicy> BroadcastBuffer<P> {
 
         let snapshot = snapshot(&storage);
         self.inner.subscribers.write().await.push(tx.clone());
-        P::replay(&storage, &tx);
+        P::replay(&storage, &tx, &filter);
 
         Some((BroadcastReader { rx }, snapshot))
     }
@@ -332,10 +367,13 @@ impl BroadcastBuffer<StructuredPolicy> {
         self.inspect(|storage| storage.last_seq).await
     }
 
-    /// Subscribe to structured output and return the sequence number that
-    /// matches the replayed snapshot.
-    pub async fn subscribe_with_current_seq(&self) -> Option<(MultiplexStructuredReader, u64)> {
-        self.subscribe_with_snapshot(|storage| storage.last_seq)
+    /// Subscribe to structured output with an optional query filter and return
+    /// the sequence number that matches the replayed snapshot.
+    pub async fn subscribe_with_query(
+        &self,
+        query: Option<SubscribeQuery>,
+    ) -> Option<(MultiplexStructuredReader, u64)> {
+        self.subscribe_filtered(query, |storage| storage.last_seq)
             .await
     }
 }
@@ -643,15 +681,118 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn test_subscribe_with_current_seq_matches_replayed_snapshot() {
+    async fn test_subscribe_with_query_none_replays_all() {
         let buffer = MultiplexStructuredBuffer::new(100);
 
         buffer.write(user_msg("a", "1")).await;
         buffer.write(user_msg("b", "2")).await;
 
-        let (mut reader, seq) = buffer.subscribe_with_current_seq().await.unwrap();
+        let (mut reader, seq) = buffer.subscribe_with_query(None).await.unwrap();
         assert_eq!(seq, 2);
         assert_eq!(reader.read().await.unwrap(), envelope(1, "a", "1"));
         assert_eq!(reader.read().await.unwrap(), envelope(2, "b", "2"));
+    }
+
+    // ── SubscribeQuery tests ─────────────────────────────────────
+
+    #[tokio::test]
+    async fn test_query_since_mid_buffer() {
+        let buffer = MultiplexStructuredBuffer::new(100);
+
+        for i in 1..=5 {
+            buffer
+                .write(user_msg(&format!("msg{i}"), &i.to_string()))
+                .await;
+        }
+
+        let query = Some(SubscribeQuery::Since { seq: 3 });
+        let (mut reader, seq) = buffer.subscribe_with_query(query).await.unwrap();
+        assert_eq!(seq, 5);
+        assert_eq!(reader.read().await.unwrap(), envelope(3, "msg3", "3"));
+        assert_eq!(reader.read().await.unwrap(), envelope(4, "msg4", "4"));
+        assert_eq!(reader.read().await.unwrap(), envelope(5, "msg5", "5"));
+    }
+
+    #[tokio::test]
+    async fn test_query_since_older_than_oldest() {
+        let buffer = MultiplexStructuredBuffer::new(3);
+
+        for i in 1..=5 {
+            buffer
+                .write(user_msg(&format!("msg{i}"), &i.to_string()))
+                .await;
+        }
+
+        // seq 1 has been evicted; Since { seq: 1 } replays everything available
+        let query = Some(SubscribeQuery::Since { seq: 1 });
+        let (mut reader, seq) = buffer.subscribe_with_query(query).await.unwrap();
+        assert_eq!(seq, 5);
+        assert_eq!(reader.read().await.unwrap(), envelope(3, "msg3", "3"));
+        assert_eq!(reader.read().await.unwrap(), envelope(4, "msg4", "4"));
+        assert_eq!(reader.read().await.unwrap(), envelope(5, "msg5", "5"));
+    }
+
+    #[tokio::test]
+    async fn test_query_since_beyond_current() {
+        let buffer = MultiplexStructuredBuffer::new(100);
+
+        buffer.write(user_msg("a", "1")).await;
+        buffer.write(user_msg("b", "2")).await;
+
+        // seq 10 is beyond current (2); no replay, but live writes still arrive
+        let query = Some(SubscribeQuery::Since { seq: 10 });
+        let (mut reader, seq) = buffer.subscribe_with_query(query).await.unwrap();
+        assert_eq!(seq, 2);
+
+        buffer.write(user_msg("c", "3")).await;
+        assert_eq!(reader.read().await.unwrap(), envelope(3, "c", "3"));
+    }
+
+    #[tokio::test]
+    async fn test_query_tail_less_than_buffer() {
+        let buffer = MultiplexStructuredBuffer::new(100);
+
+        for i in 1..=5 {
+            buffer
+                .write(user_msg(&format!("msg{i}"), &i.to_string()))
+                .await;
+        }
+
+        let query = Some(SubscribeQuery::Tail { count: 2 });
+        let (mut reader, seq) = buffer.subscribe_with_query(query).await.unwrap();
+        assert_eq!(seq, 5);
+        assert_eq!(reader.read().await.unwrap(), envelope(4, "msg4", "4"));
+        assert_eq!(reader.read().await.unwrap(), envelope(5, "msg5", "5"));
+    }
+
+    #[tokio::test]
+    async fn test_query_tail_greater_than_buffer() {
+        let buffer = MultiplexStructuredBuffer::new(100);
+
+        buffer.write(user_msg("a", "1")).await;
+        buffer.write(user_msg("b", "2")).await;
+
+        // Tail { count: 100 } with only 2 entries replays everything
+        let query = Some(SubscribeQuery::Tail { count: 100 });
+        let (mut reader, seq) = buffer.subscribe_with_query(query).await.unwrap();
+        assert_eq!(seq, 2);
+        assert_eq!(reader.read().await.unwrap(), envelope(1, "a", "1"));
+        assert_eq!(reader.read().await.unwrap(), envelope(2, "b", "2"));
+    }
+
+    #[tokio::test]
+    async fn test_query_tail_zero() {
+        let buffer = MultiplexStructuredBuffer::new(100);
+
+        buffer.write(user_msg("a", "1")).await;
+        buffer.write(user_msg("b", "2")).await;
+
+        // Tail { count: 0 } replays nothing, but live writes still arrive
+        let query = Some(SubscribeQuery::Tail { count: 0 });
+        let (mut reader, seq) = buffer.subscribe_with_query(query).await.unwrap();
+        assert_eq!(seq, 2);
+
+        buffer.write(user_msg("c", "3")).await;
+        assert_eq!(reader.read().await.unwrap(), envelope(3, "c", "3"));
     }
 }

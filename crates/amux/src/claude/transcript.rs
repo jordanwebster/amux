@@ -237,7 +237,7 @@ mod tests {
         .await
         .unwrap();
 
-        let (mut reader, seq) = buffer.subscribe_with_current_seq().await.unwrap();
+        let (mut reader, seq) = buffer.subscribe_with_query(None).await.unwrap();
         assert_eq!(seq, 3);
 
         let first = reader.read().await.unwrap();
@@ -272,7 +272,7 @@ mod tests {
         .await
         .unwrap();
 
-        let (mut reader, seq) = buffer.subscribe_with_current_seq().await.unwrap();
+        let (mut reader, seq) = buffer.subscribe_with_query(None).await.unwrap();
         assert_eq!(seq, 1);
         let entry = reader.read().await.unwrap();
         assert_eq!(entry.payload["type"], "amux.replay_finished");
