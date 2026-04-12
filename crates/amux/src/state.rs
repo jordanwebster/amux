@@ -8,6 +8,8 @@ use serde::{Deserialize, Serialize};
 use std::fs::{self, File, OpenOptions};
 use std::io::{Read, Seek, SeekFrom, Write};
 use std::path::{Path, PathBuf};
+#[cfg(unix)]
+use std::os::unix::fs::OpenOptionsExt;
 use thiserror::Error;
 use uuid::Uuid;
 
@@ -82,12 +84,11 @@ impl State {
             fs::create_dir_all(parent)?;
         }
 
-        let file = OpenOptions::new()
-            .read(true)
-            .write(true)
-            .create(true)
-            .truncate(false)
-            .open(path)?;
+        let mut opts = OpenOptions::new();
+        opts.read(true).write(true).create(true).truncate(false);
+        #[cfg(unix)]
+        opts.mode(0o600);
+        let file = opts.open(path)?;
         file.lock_exclusive()?;
 
         let mut contents = String::new();
