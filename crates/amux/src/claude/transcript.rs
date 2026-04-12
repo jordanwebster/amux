@@ -86,12 +86,12 @@ async fn tail_transcript(
     }
 
     // Catchup→live transition: emit a synthetic marker so subscribers waiting
-    // to "catch up" (e.g. fork coordination) can know the existing transcript
-    // has been fully drained. The marker lives in the broadcast buffer like any
-    // other entry, so new subscribers see it in their replay in position, and a
-    // relink-driven (compaction) replay just emits another one.
+    // for the transcript to reach a known state (e.g. fork coordination) can
+    // know the existing content has been fully drained. The marker lives in the
+    // broadcast buffer like any other entry, so new subscribers see it in their
+    // replay in position, and a relink-driven clear just emits another one.
     buffer
-        .write(serde_json::json!({ "type": "amux.replay_finished" }))
+        .write(serde_json::json!({ "type": "amux.transcript_ready" }))
         .await;
 
     // Live tail
@@ -225,7 +225,7 @@ mod tests {
         let tailer = TranscriptTailer::new(path, buffer.clone());
         let handle = tailer.start();
 
-        // Two transcript lines + one trailing replay_finished marker.
+        // Two transcript lines + one trailing transcript_ready marker.
         tokio::time::timeout(std::time::Duration::from_secs(2), async {
             loop {
                 if buffer.current_seq().await == 3 {
@@ -245,14 +245,14 @@ mod tests {
         let second = reader.read().await.unwrap();
         assert_eq!(second.payload["type"], "assistant");
         let third = reader.read().await.unwrap();
-        assert_eq!(third.payload["type"], "amux.replay_finished");
+        assert_eq!(third.payload["type"], "amux.transcript_ready");
 
         tailer.stop();
         let _ = handle.await;
     }
 
     #[tokio::test]
-    async fn tailer_emits_replay_finished_for_empty_transcript() {
+    async fn tailer_emits_transcript_ready_for_empty_transcript() {
         let dir = tempfile::tempdir().unwrap();
         let path = dir.path().join("transcript.jsonl");
         tokio::fs::write(&path, "").await.unwrap();
@@ -275,7 +275,7 @@ mod tests {
         let (mut reader, seq) = buffer.subscribe_with_query(None).await.unwrap();
         assert_eq!(seq, 1);
         let entry = reader.read().await.unwrap();
-        assert_eq!(entry.payload["type"], "amux.replay_finished");
+        assert_eq!(entry.payload["type"], "amux.transcript_ready");
         assert_eq!(entry.seq, 1);
 
         tailer.stop();

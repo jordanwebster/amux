@@ -197,7 +197,7 @@ mod tests {
             .await
             .unwrap()
             .unwrap();
-        assert_eq!(marker.payload["type"], "amux.replay_finished");
+        assert_eq!(marker.payload["type"], "amux.transcript_ready");
     }
 
     #[tokio::test]
@@ -238,7 +238,7 @@ mod tests {
         .unwrap();
 
         // Wait for the new tailer to drain (one user entry) and emit its
-        // replay_finished marker. seq is preserved across clear(), so the hook
+        // transcript_ready marker. seq is preserved across clear(), so the hook
         // counted as 1 → user is 2 → marker is 3.
         tokio::time::timeout(std::time::Duration::from_secs(2), async {
             loop {
@@ -256,7 +256,7 @@ mod tests {
         assert_eq!(reader.read().await.unwrap().payload["type"], "user");
         assert_eq!(
             reader.read().await.unwrap().payload["type"],
-            "amux.replay_finished"
+            "amux.transcript_ready"
         );
         assert!(
             tokio::time::timeout(std::time::Duration::from_millis(50), reader.read())
@@ -280,7 +280,7 @@ mod tests {
         .unwrap();
 
         log_source.link_transcript(transcript.clone()).await;
-        // One user entry + one replay_finished marker.
+        // One user entry + one transcript_ready marker.
         tokio::time::timeout(std::time::Duration::from_secs(2), async {
             loop {
                 if log_source.current_seq().await == 2 {
