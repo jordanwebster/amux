@@ -38,6 +38,40 @@ One paragraph describing what was done.
 
 ---
 
+## 2026-04-12: Move Claude PTY encoding to the app client
+
+### Summary
+Moved Claude PTY input encoding out of the `amux` server and into `amuxapp`. The app now converts semantic Claude intents into opaque `PtyInput[]` payloads (`Bytes` / `Delay`) before sending them over the wire, and the server now treats Claude structured input as transport-only PTY actions. This breaks the old semantic wire format on purpose so Claude UI coupling lives in the app instead of the server.
+
+### Changes
+- **`crates/amux/src/agents/claude.rs`** — Added `PtyInput` enum, removed all server-side Claude keystroke generation helpers/tests, and changed `send_structured_input()` to deserialize `Vec<PtyInput>` and execute it directly against the PTY.
+- **`crates/amux/src/claude/types.rs`** — Removed input-only Claude semantic types (`PermissionResponse`, `AskUserQuestionResponse`, `PlanReviewResponse`, `ClaudeStructuredInput`) and the tests that only exercised those input payloads.
+- **`../amuxapp/agents/claude/pty-encoding.ts`** — Added the client-side pure PTY encoder and exported the Claude intent → `PtyInput[]` mapping.
+- **`../amuxapp/agents/claude/input.ts` / `agents/types.ts` / `agents/claude/module.ts`** — Plumbed optional runtime-version context through `buildInput()` and returned `PtyInput[]` directly for Claude.
+- **`../amuxapp/session/store.ts` / `session/types.ts` / `services/ws-manager.ts`** — Passed runtime version into input building, added explicit `interrupt` / `passive` effect flags, and stopped sniffing semantic payload strings in the transport.
+- **`../amuxapp/logging/structured-input.ts`** — Added an opaque array fallback summary for `PtyInput[]`.
+- **`../amuxapp/agents/claude/pty-encoding.test.ts`** — Ported the Claude PTY golden tests to TypeScript so byte sequences are now validated on the client side.
+
+### Decisions Made
+- **Make the server transport-only**: the server now only validates seq/read-only state and executes already-encoded PTY actions. Claude TUI knowledge no longer lives in infrastructure.
+- **Keep `StructuredInput { payload: Value }` opaque**: no protocol-wide input schema was introduced; agent-specific payloads still deserialize per agent type.
+- **Use effect flags instead of payload sniffing**: `interrupt` and `passive` semantics now come from dispatch-time intent knowledge, not from transport-layer inspection of Claude-specific payload strings.
+- **Keep logging simple at the transport layer**: `PtyInput[]` logging only records `PtyV1` + action count. Rich semantic detail stays closer to the intent layer.
+
+### Verification
+- **App focused tests**: `npx vitest run agents/claude/pty-encoding.test.ts logging/structured-input.test.ts session/store.test.ts services/ws-manager.test.ts`
+- **App full suite**: `npx vitest run`
+- **App typecheck**: `npx tsc --noEmit`
+- **Server format/checks**: `cargo fmt`, `cargo check`, `cargo clippy --workspace --all-targets -- -D warnings`
+- **Server tests**: `cargo test` and `cargo test --workspace`
+- **Results**: all commands passed; `cargo test --workspace` ran the `amux` crate tests that cover the new `PtyInput` deserialization path.
+
+### Next Steps
+- Add version-dependent PTY encoding branches in `amuxapp` when Claude UI behavior diverges by runtime version.
+- Keep future non-PTY agent protocols (`SdkV1`, etc.) on their own opaque structured-input shapes instead of reintroducing server-side semantic translation.
+
+---
+
 ## 2026-04-12: Minimum client version enforcement
 
 ### Summary

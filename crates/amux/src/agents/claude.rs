@@ -2,20 +2,17 @@
 //!
 //! Two-phase init: [`ClaudeSession::new`] stores metadata,
 //! [`ClaudeSession::start`] spawns the PTY process. Hook handling and structured
-//! input translation are encapsulated here.
+//! PTY input transport are encapsulated here.
 
 use super::{LocalAgentNameSource, PtyHandle, SessionEvent, spawn_pty_agent};
 use crate::buffer::MultiplexStructuredReader;
 use crate::claude::structured_log_source::StructuredLogSource;
-use crate::claude::types::{
-    AskUserQuestionOption, AskUserQuestionResponse, ClaudeHook, ClaudeStructuredInput, Hook,
-    PermissionResponse, PlanReviewResponse,
-};
+use crate::claude::types::{ClaudeHook, Hook};
 use crate::debug::DebugView;
 use crate::error::Result;
 use crate::message::{CreateAgentRequest, ProtocolError, SubscribeQuery};
 use chrono::{DateTime, Utc};
-use serde::{Serialize, Serializer, ser::SerializeMap};
+use serde::{Deserialize, Serialize, Serializer, ser::SerializeMap};
 use serde_json::{Value, json};
 use std::path::PathBuf;
 use std::time::Duration;
@@ -23,292 +20,11 @@ use tokio::sync::mpsc;
 use tokio::task::{AbortHandle, JoinHandle};
 use uuid::Uuid;
 
-const RIGHT_ARROW: &[u8] = b"\x1b[C";
-const LEFT_ARROW: &[u8] = b"\x1b[D";
-const UP_ARROW: &[u8] = b"\x1b[A";
-const DOWN_ARROW: &[u8] = b"\x1b[B";
-const ESC: &[u8] = b"\x1b";
-const CTRL_L: &[u8] = b"\x0c";
-const SHIFT_TAB: &[u8] = b"\x1b[Z";
-const DELAY: Duration = Duration::from_millis(20);
-const INTERRUPT_CLEAR_DELAY: Duration = Duration::from_millis(500);
-
-enum PtyAction {
-    Send(Vec<u8>),
-    Delay(Duration),
-}
-
-fn permission_response_keystrokes(response: &PermissionResponse) -> Vec<PtyAction> {
-    let byte: &[u8] = match response {
-        PermissionResponse::Yes => b"1",
-        PermissionResponse::YesAll => b"2",
-        PermissionResponse::No => b"3",
-    };
-    vec![PtyAction::Send(byte.to_vec())]
-}
-
-fn plan_review_response_keystrokes(response: &PlanReviewResponse) -> Vec<PtyAction> {
-    match response {
-        PlanReviewResponse::YesAuto => vec![PtyAction::Send(b"1".to_vec())],
-        PlanReviewResponse::YesManual => vec![PtyAction::Send(b"2".to_vec())],
-        PlanReviewResponse::No(feedback) => {
-            let mut actions = vec![PtyAction::Send(b"3".to_vec()), PtyAction::Delay(DELAY)];
-            if let Some(msg) = feedback {
-                actions.push(PtyAction::Send(msg.as_bytes().to_vec()));
-                actions.push(PtyAction::Delay(DELAY));
-            }
-            actions.push(PtyAction::Send(b"\r".to_vec()));
-            actions
-        }
-    }
-}
-
-fn submit_prompt_keystrokes(prompt: &str) -> Vec<PtyAction> {
-    vec![
-        PtyAction::Send(prompt.as_bytes().to_vec()),
-        PtyAction::Delay(DELAY),
-        PtyAction::Send(b"\r".to_vec()),
-    ]
-}
-
-fn interrupt_keystrokes() -> Vec<PtyAction> {
-    vec![
-        PtyAction::Send(ESC.to_vec()),
-        PtyAction::Delay(INTERRUPT_CLEAR_DELAY),
-        PtyAction::Send(CTRL_L.to_vec()),
-    ]
-}
-
-fn cycle_permissions_keystrokes() -> Vec<PtyAction> {
-    vec![PtyAction::Send(SHIFT_TAB.to_vec())]
-}
-
-/// Find the 0-based index of the option whose label matches `answer`.
-/// Returns `None` if no label matches (i.e. "Other" / custom text).
-fn find_option_index(answer: &str, options: &[AskUserQuestionOption]) -> Option<usize> {
-    options.iter().position(|opt| opt.label == answer)
-}
-
-/// Keystrokes for a standard single-select question (digit press).
-fn select_keystrokes(answer: &str, options: &[AskUserQuestionOption]) -> Vec<PtyAction> {
-    match find_option_index(answer, options) {
-        Some(idx) => {
-            let digit = idx + 1; // 1-based UI index
-            vec![PtyAction::Send(digit.to_string().into_bytes())]
-        }
-        None => {
-            // "Other" — digit for num_options+1, delay, type text, Enter
-            let other_digit = options.len() + 1;
-            vec![
-                PtyAction::Send(other_digit.to_string().into_bytes()),
-                PtyAction::Delay(DELAY),
-                PtyAction::Send(answer.as_bytes().to_vec()),
-                PtyAction::Delay(DELAY),
-                PtyAction::Send(b"\r".to_vec()),
-            ]
-        }
-    }
-}
-
-/// Keystrokes for a preview question (options with preview).
-/// Arrow-nav to the target option, then Enter. No "Other" option exists.
-/// Focus starts on the first option; delays between Down presses give
-/// the preview UI time to process each navigation.
-fn preview_keystrokes(answer: &str, options: &[AskUserQuestionOption]) -> Vec<PtyAction> {
-    let idx = find_option_index(answer, options).unwrap_or(0);
-    let mut actions = Vec::new();
-    for _ in 0..idx {
-        actions.push(PtyAction::Send(DOWN_ARROW.to_vec()));
-        actions.push(PtyAction::Delay(DELAY));
-    }
-    actions.push(PtyAction::Send(b"\r".to_vec()));
-    actions
-}
-
-/// Keystrokes for a multi-select question.
-/// Navigates with arrows, Space to toggle each selected option.
-fn multi_select_keystrokes(answer: &str, options: &[AskUserQuestionOption]) -> Vec<PtyAction> {
-    let labels: Vec<&str> = answer.split(", ").collect();
-    let mut actions = Vec::new();
-    let mut cursor_pos: usize = 0; // 0-based
-
-    // Resolve each label to an index, sort for efficient navigation
-    let mut indices: Vec<(usize, Option<&str>)> = Vec::new();
-    for label in &labels {
-        match find_option_index(label, options) {
-            Some(idx) => indices.push((idx, None)),
-            None => {
-                // Custom "Other" option is at options.len()
-                indices.push((options.len(), Some(label)));
-            }
-        }
-    }
-    indices.sort_by_key(|(idx, _)| *idx);
-
-    for (target, custom_text) in &indices {
-        // Navigate to target
-        for _ in cursor_pos..*target {
-            actions.push(PtyAction::Send(DOWN_ARROW.to_vec()));
-            actions.push(PtyAction::Delay(DELAY));
-        }
-        for _ in *target..cursor_pos {
-            actions.push(PtyAction::Send(UP_ARROW.to_vec()));
-            actions.push(PtyAction::Delay(DELAY));
-        }
-        cursor_pos = *target;
-
-        if let Some(text) = custom_text {
-            // Other: just type text (auto-selects the checkbox), then navigate away
-            actions.push(PtyAction::Delay(DELAY));
-            actions.push(PtyAction::Send(text.as_bytes().to_vec()));
-            actions.push(PtyAction::Delay(DELAY));
-            actions.push(PtyAction::Send(UP_ARROW.to_vec()));
-            actions.push(PtyAction::Delay(DELAY));
-        } else {
-            // Predefined option: Space to toggle
-            actions.push(PtyAction::Send(b" ".to_vec()));
-        }
-    }
-
-    actions
-}
-
-/// Keystrokes to select "Chat about this" on a question.
-/// For single-select: digit press (num_options + 2).
-/// For multi-select: arrow-nav to the position, then Enter.
-fn chat_about_this_keystrokes(
-    options: &[AskUserQuestionOption],
-    multi_select: bool,
-) -> Vec<PtyAction> {
-    // ChatAboutThis is after "Other" in the option list but isn't digit-selectable,
-    // so we always use arrow navigation + Enter regardless of question type.
-    // 0-based target: num_options + 1 (options… Other… ChatAboutThis)
-    let target = options.len() + 1;
-    let mut actions = Vec::new();
-    // For multi-select cursor starts at 0; for single-select it also starts at 0
-    for _ in 0..target {
-        actions.push(PtyAction::Send(DOWN_ARROW.to_vec()));
-        actions.push(PtyAction::Delay(DELAY));
-    }
-    actions.push(PtyAction::Send(b"\r".to_vec()));
-    let _ = multi_select; // currently no difference, kept for future use
-    actions
-}
-
-/// Build the PTY keystroke sequence for an AskUserQuestionResponse.
-///
-/// Derives question type and selection indices from the echoed questions:
-/// - Any option has `preview` → preview (arrow nav + Enter)
-/// - `multi_select: true` → multi-select (arrow nav + Space toggle)
-/// - Otherwise → select (digit press)
-///
-/// In multi-question forms, single-select (digit press) and preview (Enter)
-/// auto-advance to the next page, so no explicit Right arrow is needed
-/// between them. Multi-select (Space toggle) does NOT auto-advance and
-/// still requires Right arrow navigation. The last auto-advancing selection
-/// advances to the submit page, where Enter is needed to confirm.
-///
-/// If `chat_about_this` is set, all answered questions are processed first,
-/// then we navigate to the ChatAboutThis page and select it (no submit step).
-fn ask_question_keystrokes(response: &AskUserQuestionResponse) -> Vec<PtyAction> {
-    let mut actions = Vec::new();
-    let num_questions = response.questions.len();
-    let mut current_page = 0;
-    let multi_question = num_questions > 1;
-
-    // Find the ChatAboutThis page index, if any
-    let chat_page = response.chat_about_this.as_ref().and_then(|q| {
-        response
-            .questions
-            .iter()
-            .position(|item| item.question == *q)
-    });
-
-    // Phase 1: process all answered questions (skip the ChatAboutThis page)
-    for (i, question) in response.questions.iter().enumerate() {
-        if Some(i) == chat_page {
-            continue;
-        }
-
-        let Some(answer) = response.answers.get(&question.question) else {
-            continue;
-        };
-
-        // Navigate forward to this page (only needed after multi-select
-        // which doesn't auto-advance, or when a page was skipped)
-        while current_page < i {
-            actions.push(PtyAction::Delay(DELAY));
-            actions.push(PtyAction::Send(RIGHT_ARROW.to_vec()));
-            actions.push(PtyAction::Delay(DELAY));
-            current_page += 1;
-        }
-
-        let is_preview = question.options.iter().any(|o| o.preview.is_some());
-
-        if is_preview {
-            actions.extend(preview_keystrokes(answer, &question.options));
-            // Preview Enter auto-advances in multi-question forms
-            if multi_question {
-                actions.push(PtyAction::Delay(DELAY));
-                current_page += 1;
-            }
-        } else if question.multi_select {
-            actions.extend(multi_select_keystrokes(answer, &question.options));
-        } else {
-            actions.extend(select_keystrokes(answer, &question.options));
-            // Digit press auto-advances in multi-question forms
-            if multi_question {
-                actions.push(PtyAction::Delay(DELAY));
-                current_page += 1;
-            }
-        }
-    }
-
-    // Phase 2: ChatAboutThis — navigate to its page and select it (no submit)
-    if let Some(chat_idx) = chat_page {
-        while current_page < chat_idx {
-            actions.push(PtyAction::Delay(DELAY));
-            actions.push(PtyAction::Send(RIGHT_ARROW.to_vec()));
-            actions.push(PtyAction::Delay(DELAY));
-            current_page += 1;
-        }
-        while current_page > chat_idx {
-            actions.push(PtyAction::Delay(DELAY));
-            actions.push(PtyAction::Send(LEFT_ARROW.to_vec()));
-            actions.push(PtyAction::Delay(DELAY));
-            current_page -= 1;
-        }
-
-        let question = &response.questions[chat_idx];
-        actions.extend(chat_about_this_keystrokes(
-            &question.options,
-            question.multi_select,
-        ));
-    }
-    // Phase 3: no ChatAboutThis — submit when the form has a submit button
-    // (multi-question forms always do; single multi-select questions do too,
-    // since Space toggles don't auto-submit like digit presses)
-    else if num_questions > 1 || response.questions.iter().any(|q| q.multi_select) {
-        while current_page < num_questions {
-            actions.push(PtyAction::Delay(DELAY));
-            actions.push(PtyAction::Send(RIGHT_ARROW.to_vec()));
-            actions.push(PtyAction::Delay(DELAY));
-            current_page += 1;
-        }
-        actions.push(PtyAction::Send(b"\r".to_vec()));
-    }
-
-    actions
-}
-
-async fn execute_pty_actions(pty: &PtyHandle, actions: &[PtyAction]) -> Result<()> {
-    for action in actions {
-        match action {
-            PtyAction::Send(bytes) => pty.send_input(bytes.clone()).await?,
-            PtyAction::Delay(dur) => tokio::time::sleep(*dur).await,
-        }
-    }
-    Ok(())
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+#[serde(deny_unknown_fields)]
+pub(crate) enum PtyInput {
+    Bytes(Vec<u8>),
+    Delay(u32),
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -551,71 +267,51 @@ impl ClaudeSession {
         Ok(exit_handle)
     }
 
-    /// Send structured input to Claude Code.
-    async fn send_input(&self, input: ClaudeStructuredInput) -> Result<()> {
-        let Some(pty) = &self.pty else {
-            return Ok(());
-        };
-        let actions = match &input {
-            ClaudeStructuredInput::SubmitPrompt(prompt) => submit_prompt_keystrokes(prompt),
-            ClaudeStructuredInput::PermissionResponse(response) => {
-                tracing::info!(agent_id = %self.agent_id, ?response, "sending permission response");
-                permission_response_keystrokes(response)
-            }
-            ClaudeStructuredInput::AskUserQuestionResponse(response) => {
-                tracing::info!(agent_id = %self.agent_id, num_questions = response.questions.len(), "sending AskUserQuestion response");
-                ask_question_keystrokes(response)
-            }
-            ClaudeStructuredInput::PlanReviewResponse(response) => {
-                tracing::info!(agent_id = %self.agent_id, ?response, "sending plan review response");
-                plan_review_response_keystrokes(response)
-            }
-            ClaudeStructuredInput::Interrupt => {
-                tracing::info!(agent_id = %self.agent_id, "sending interrupt");
-                interrupt_keystrokes()
-            }
-            ClaudeStructuredInput::CyclePermissions => {
-                tracing::info!(agent_id = %self.agent_id, "sending cycle permissions");
-                cycle_permissions_keystrokes()
-            }
-        };
-        execute_pty_actions(pty, &actions).await
-    }
-
     /// Validate seq and send structured input to Claude Code.
-    /// Parses the opaque JSON payload into `ClaudeStructuredInput` locally.
     pub async fn send_structured_input(
         &self,
         client_seq: u64,
         payload: Value,
     ) -> std::result::Result<(), ProtocolError> {
         if self.readonly {
-            tracing::warn!(agent_id = %self.agent_id, "structured input rejected: session is readonly");
             return Err(ProtocolError::ServerError(
                 "session is readonly".to_string(),
             ));
         }
         let current_seq = self.current_seq().await;
         if client_seq != current_seq {
-            tracing::warn!(
-                agent_id = %self.agent_id,
-                client_seq,
-                current_seq,
-                "structured input rejected: seq mismatch"
-            );
             return Err(ProtocolError::SequenceNumberMismatch {
                 client_seq,
                 current_seq,
             });
         }
 
-        let input: ClaudeStructuredInput = serde_json::from_value(payload)
-            .map_err(|e| ProtocolError::ServerError(format!("invalid structured input: {e}")))?;
+        let actions: Vec<PtyInput> = serde_json::from_value(payload)
+            .map_err(|e| ProtocolError::ServerError(format!("invalid pty input: {e}")))?;
 
-        tracing::info!(agent_id = %self.agent_id, client_seq, "structured input accepted");
-        self.send_input(input)
-            .await
-            .map_err(|e| ProtocolError::ServerError(e.to_string()))
+        tracing::info!(
+            agent_id = %self.agent_id,
+            client_seq,
+            action_count = actions.len(),
+            "structured input accepted"
+        );
+
+        let Some(pty) = &self.pty else {
+            return Ok(());
+        };
+        for action in &actions {
+            match action {
+                PtyInput::Bytes(bytes) => pty
+                    .send_input(bytes.clone())
+                    .await
+                    .map_err(|e| ProtocolError::ServerError(e.to_string()))?,
+                PtyInput::Delay(ms) => {
+                    let clamped = (*ms).min(5000);
+                    tokio::time::sleep(Duration::from_millis(u64::from(clamped))).await
+                }
+            }
+        }
+        Ok(())
     }
 
     /// Handle a hook event.
@@ -749,356 +445,29 @@ impl Serialize for DebugView<'_, ClaudeSession> {
 mod tests {
     use super::*;
     use crate::agents::{LocalAgentNameSource, SessionEvent};
-    use crate::claude::types::AskUserQuestionItem;
-    use std::collections::HashMap;
     use tempfile::tempdir;
     use tokio::sync::mpsc;
 
-    /// Extract just the Send bytes from a PtyAction sequence, ignoring delays.
-    fn sends(actions: &[PtyAction]) -> Vec<Vec<u8>> {
-        actions
-            .iter()
-            .filter_map(|a| match a {
-                PtyAction::Send(bytes) => Some(bytes.clone()),
-                PtyAction::Delay(_) => None,
-            })
-            .collect()
-    }
-
-    fn make_options(labels: &[&str]) -> Vec<AskUserQuestionOption> {
-        labels
-            .iter()
-            .map(|l| AskUserQuestionOption {
-                label: l.to_string(),
-                description: String::new(),
-                preview: None,
-            })
-            .collect()
-    }
-
-    fn make_preview_options(labels: &[&str]) -> Vec<AskUserQuestionOption> {
-        labels
-            .iter()
-            .map(|l| AskUserQuestionOption {
-                label: l.to_string(),
-                description: String::new(),
-                preview: Some("```preview```".to_string()),
-            })
-            .collect()
-    }
-
-    fn make_question(text: &str, options: Vec<AskUserQuestionOption>) -> AskUserQuestionItem {
-        AskUserQuestionItem {
-            question: text.to_string(),
-            header: "H".to_string(),
-            options,
-            multi_select: false,
-        }
-    }
-
-    fn make_multi_question(text: &str, options: Vec<AskUserQuestionOption>) -> AskUserQuestionItem {
-        AskUserQuestionItem {
-            question: text.to_string(),
-            header: "H".to_string(),
-            options,
-            multi_select: true,
-        }
+    #[test]
+    fn test_pty_input_deserializes() {
+        let json = r#"[{"Bytes":[104,101,108,108,111]},{"Delay":20},{"Bytes":[13]}]"#;
+        let actions: Vec<PtyInput> = serde_json::from_str(json).unwrap();
+        assert_eq!(actions.len(), 3);
+        assert_eq!(actions[0], PtyInput::Bytes(b"hello".to_vec()));
+        assert_eq!(actions[1], PtyInput::Delay(20));
+        assert_eq!(actions[2], PtyInput::Bytes(vec![13]));
     }
 
     #[test]
-    fn test_permission_response_keystrokes() {
-        assert_eq!(
-            sends(&permission_response_keystrokes(&PermissionResponse::Yes)),
-            vec![b"1".to_vec()]
-        );
-        assert_eq!(
-            sends(&permission_response_keystrokes(&PermissionResponse::YesAll)),
-            vec![b"2".to_vec()]
-        );
-        assert_eq!(
-            sends(&permission_response_keystrokes(&PermissionResponse::No)),
-            vec![b"3".to_vec()]
-        );
+    fn test_pty_input_rejects_unknown_variant() {
+        let json = r#"[{"Unknown":"bad"}]"#;
+        assert!(serde_json::from_str::<Vec<PtyInput>>(json).is_err());
     }
 
     #[test]
-    fn test_submit_prompt_keystrokes() {
-        let actions = submit_prompt_keystrokes("hello");
-        assert_eq!(sends(&actions), vec![b"hello".to_vec(), b"\r".to_vec()]);
-        assert!(matches!(actions[1], PtyAction::Delay(_)));
-    }
-
-    #[test]
-    fn test_interrupt_keystrokes() {
-        let actions = interrupt_keystrokes();
-        assert_eq!(sends(&actions), vec![b"\x1b".to_vec(), b"\x0c".to_vec()]);
-        assert!(matches!(actions[1], PtyAction::Delay(_)));
-    }
-
-    #[test]
-    fn test_cycle_permissions_keystrokes() {
-        let actions = cycle_permissions_keystrokes();
-        assert_eq!(sends(&actions), vec![b"\x1b[Z".to_vec()]);
-    }
-
-    #[test]
-    fn test_single_question_select_predefined() {
-        let response = AskUserQuestionResponse {
-            questions: vec![make_question("Q?", make_options(&["A", "B"]))],
-            chat_about_this: None,
-            answers: HashMap::from([("Q?".to_string(), "B".to_string())]),
-        };
-        let actions = ask_question_keystrokes(&response);
-        assert_eq!(sends(&actions), vec![b"2".to_vec()]);
-    }
-
-    #[test]
-    fn test_single_question_select_custom() {
-        let response = AskUserQuestionResponse {
-            questions: vec![make_question("Q?", make_options(&["A", "B"]))],
-            chat_about_this: None,
-            answers: HashMap::from([("Q?".to_string(), "hello".to_string())]),
-        };
-        let actions = ask_question_keystrokes(&response);
-        let s = sends(&actions);
-        assert_eq!(s[0], b"3"); // Other = num_options + 1
-        assert_eq!(s[1], b"hello");
-        assert_eq!(s[2], b"\r");
-    }
-
-    #[test]
-    fn test_preview_question_first_option() {
-        let response = AskUserQuestionResponse {
-            questions: vec![make_question(
-                "Q?",
-                make_preview_options(&["Layout A", "Layout B"]),
-            )],
-            chat_about_this: None,
-            answers: HashMap::from([("Q?".to_string(), "Layout A".to_string())]),
-        };
-        let actions = ask_question_keystrokes(&response);
-        // First option: already focused, just Enter
-        assert_eq!(sends(&actions), vec![b"\r".to_vec()]);
-    }
-
-    #[test]
-    fn test_preview_question_second_option() {
-        let response = AskUserQuestionResponse {
-            questions: vec![make_question(
-                "Q?",
-                make_preview_options(&["Layout A", "Layout B"]),
-            )],
-            chat_about_this: None,
-            answers: HashMap::from([("Q?".to_string(), "Layout B".to_string())]),
-        };
-        let actions = ask_question_keystrokes(&response);
-        // Second option: one Down + Enter
-        assert_eq!(sends(&actions), vec![DOWN_ARROW.to_vec(), b"\r".to_vec()]);
-    }
-
-    #[test]
-    fn test_multi_question_right_arrows_and_submit() {
-        let response = AskUserQuestionResponse {
-            questions: vec![
-                make_question("Q1?", make_options(&["A", "B"])),
-                make_question("Q2?", make_options(&["C", "D"])),
-            ],
-            answers: HashMap::from([
-                ("Q1?".to_string(), "A".to_string()),
-                ("Q2?".to_string(), "D".to_string()),
-            ]),
-            chat_about_this: None,
-        };
-        let actions = ask_question_keystrokes(&response);
-        // Digit presses auto-advance: "1"→page 1, "2"→submit page, Enter
-        assert_eq!(
-            sends(&actions),
-            vec![b"1".to_vec(), b"2".to_vec(), b"\r".to_vec(),]
-        );
-    }
-
-    #[test]
-    fn test_multi_select_up_down_space() {
-        let response = AskUserQuestionResponse {
-            questions: vec![make_multi_question("Q?", make_options(&["A", "B", "C"]))],
-            chat_about_this: None,
-            answers: HashMap::from([("Q?".to_string(), "A, C".to_string())]),
-        };
-        let actions = ask_question_keystrokes(&response);
-        assert_eq!(
-            sends(&actions),
-            vec![
-                b" ".to_vec(),        // toggle A (index 0)
-                DOWN_ARROW.to_vec(),  // 0→1
-                DOWN_ARROW.to_vec(),  // 1→2
-                b" ".to_vec(),        // toggle C (index 2)
-                RIGHT_ARROW.to_vec(), // submit page
-                b"\r".to_vec(),       // submit
-            ]
-        );
-    }
-
-    #[test]
-    fn test_multi_select_custom_navigate_away() {
-        let response = AskUserQuestionResponse {
-            questions: vec![make_multi_question("Q?", make_options(&["A", "B", "C"]))],
-            chat_about_this: None,
-            answers: HashMap::from([("Q?".to_string(), "A, extra".to_string())]),
-        };
-        let actions = ask_question_keystrokes(&response);
-        let s = sends(&actions);
-        assert_eq!(s[0], b" "); // toggle A (index 0)
-        assert_eq!(s[1], DOWN_ARROW); // 0→1
-        assert_eq!(s[2], DOWN_ARROW); // 1→2
-        assert_eq!(s[3], DOWN_ARROW); // 2→3 (Other)
-        assert_eq!(s[4], b"extra"); // type custom text (auto-selects Other)
-        assert_eq!(s[5], UP_ARROW); // navigate away from text input
-        assert_eq!(s[6], RIGHT_ARROW); // submit page
-        assert_eq!(s[7], b"\r"); // submit
-        assert_eq!(s.len(), 8);
-    }
-
-    #[test]
-    fn test_find_option_index_match() {
-        let options = make_options(&["A", "B", "C"]);
-        assert_eq!(find_option_index("B", &options), Some(1));
-    }
-
-    #[test]
-    fn test_find_option_index_no_match() {
-        let options = make_options(&["A", "B"]);
-        assert_eq!(find_option_index("custom text", &options), None);
-    }
-
-    #[test]
-    fn test_chat_about_this_single_question_single_select() {
-        // Single question, "Chat about this" selected (no answers)
-        let response = AskUserQuestionResponse {
-            questions: vec![make_question("Q?", make_options(&["A", "B"]))],
-            answers: HashMap::new(),
-            chat_about_this: Some("Q?".to_string()),
-        };
-        let actions = ask_question_keystrokes(&response);
-        // 2 options → ChatAboutThis at 0-based index 3, arrow-nav + Enter
-        assert_eq!(
-            sends(&actions),
-            vec![
-                DOWN_ARROW.to_vec(), // 0→1
-                DOWN_ARROW.to_vec(), // 1→2
-                DOWN_ARROW.to_vec(), // 2→3
-                b"\r".to_vec(),
-            ]
-        );
-    }
-
-    #[test]
-    fn test_chat_about_this_single_question_multi_select() {
-        // Single multi-select question, "Chat about this" selected
-        let response = AskUserQuestionResponse {
-            questions: vec![make_multi_question("Q?", make_options(&["A", "B"]))],
-            answers: HashMap::new(),
-            chat_about_this: Some("Q?".to_string()),
-        };
-        let actions = ask_question_keystrokes(&response);
-        // 2 options → ChatAboutThis at 0-based index 3, arrow-nav + Enter
-        assert_eq!(
-            sends(&actions),
-            vec![
-                DOWN_ARROW.to_vec(), // 0→1
-                DOWN_ARROW.to_vec(), // 1→2
-                DOWN_ARROW.to_vec(), // 2→3
-                b"\r".to_vec(),
-            ]
-        );
-    }
-
-    #[test]
-    fn test_chat_about_this_last_question_no_submit() {
-        // Q1 answered, Q2 is ChatAboutThis — no submit step
-        let response = AskUserQuestionResponse {
-            questions: vec![
-                make_question("Q1?", make_options(&["A", "B"])),
-                make_question("Q2?", make_options(&["C", "D"])),
-            ],
-            answers: HashMap::from([("Q1?".to_string(), "A".to_string())]),
-            chat_about_this: Some("Q2?".to_string()),
-        };
-        let actions = ask_question_keystrokes(&response);
-        // Q1 digit auto-advances to page 1, arrow-nav to ChatAboutThis, no submit
-        assert_eq!(
-            sends(&actions),
-            vec![
-                b"1".to_vec(),
-                DOWN_ARROW.to_vec(),
-                DOWN_ARROW.to_vec(),
-                DOWN_ARROW.to_vec(),
-                b"\r".to_vec(),
-            ]
-        );
-    }
-
-    #[test]
-    fn test_chat_about_this_navigate_back() {
-        // Q1 is ChatAboutThis, Q2 answered — process Q2 first, navigate back
-        let response = AskUserQuestionResponse {
-            questions: vec![
-                make_question("Q1?", make_options(&["A", "B"])),
-                make_question("Q2?", make_options(&["C", "D"])),
-            ],
-            answers: HashMap::from([("Q2?".to_string(), "D".to_string())]),
-            chat_about_this: Some("Q1?".to_string()),
-        };
-        let actions = ask_question_keystrokes(&response);
-        // Phase 1: skip Q1, navigate to Q2 (right), select "2", auto-advance→page 2
-        // Phase 2: navigate back to Q1: left, left, arrow-nav to ChatAboutThis
-        assert_eq!(
-            sends(&actions),
-            vec![
-                RIGHT_ARROW.to_vec(),
-                b"2".to_vec(),
-                LEFT_ARROW.to_vec(),
-                LEFT_ARROW.to_vec(),
-                DOWN_ARROW.to_vec(),
-                DOWN_ARROW.to_vec(),
-                DOWN_ARROW.to_vec(),
-                b"\r".to_vec(),
-            ]
-        );
-    }
-
-    #[test]
-    fn test_chat_about_this_middle_question_three_pages() {
-        // Q1 answered, Q2 is ChatAboutThis, Q3 answered
-        let response = AskUserQuestionResponse {
-            questions: vec![
-                make_question("Q1?", make_options(&["A", "B"])),
-                make_question("Q2?", make_options(&["C", "D"])),
-                make_question("Q3?", make_options(&["E", "F"])),
-            ],
-            answers: HashMap::from([
-                ("Q1?".to_string(), "A".to_string()),
-                ("Q3?".to_string(), "F".to_string()),
-            ]),
-            chat_about_this: Some("Q2?".to_string()),
-        };
-        let actions = ask_question_keystrokes(&response);
-        // Phase 1: Q1 select "1" auto-advance→page 1 (Q2, skip),
-        //          right→page 2 (Q3), select "2" auto-advance→page 3
-        // Phase 2: navigate back from page 3 to page 1: left, left, arrow-nav to ChatAboutThis
-        assert_eq!(
-            sends(&actions),
-            vec![
-                b"1".to_vec(),
-                RIGHT_ARROW.to_vec(),
-                b"2".to_vec(),
-                LEFT_ARROW.to_vec(),
-                LEFT_ARROW.to_vec(),
-                DOWN_ARROW.to_vec(),
-                DOWN_ARROW.to_vec(),
-                DOWN_ARROW.to_vec(),
-                b"\r".to_vec(),
-            ]
-        );
+    fn test_pty_input_empty_array() {
+        let actions: Vec<PtyInput> = serde_json::from_str("[]").unwrap();
+        assert!(actions.is_empty());
     }
 
     #[tokio::test]
