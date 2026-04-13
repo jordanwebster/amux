@@ -274,9 +274,9 @@ impl ClaudeSession {
         payload: Value,
     ) -> std::result::Result<(), ProtocolError> {
         if self.readonly {
-            return Err(ProtocolError::ServerError(
-                "session is readonly".to_string(),
-            ));
+            return Err(ProtocolError::ServerError {
+                message: "session is readonly".to_string(),
+            });
         }
         let current_seq = self.current_seq().await;
         if client_seq != current_seq {
@@ -286,8 +286,10 @@ impl ClaudeSession {
             });
         }
 
-        let actions: Vec<PtyInput> = serde_json::from_value(payload)
-            .map_err(|e| ProtocolError::ServerError(format!("invalid pty input: {e}")))?;
+        let actions: Vec<PtyInput> =
+            serde_json::from_value(payload).map_err(|e| ProtocolError::ServerError {
+                message: format!("invalid pty input: {e}"),
+            })?;
 
         tracing::info!(
             agent_id = %self.agent_id,
@@ -301,10 +303,13 @@ impl ClaudeSession {
         };
         for action in &actions {
             match action {
-                PtyInput::Bytes(bytes) => pty
-                    .send_input(bytes.clone())
-                    .await
-                    .map_err(|e| ProtocolError::ServerError(e.to_string()))?,
+                PtyInput::Bytes(bytes) => {
+                    pty.send_input(bytes.clone())
+                        .await
+                        .map_err(|e| ProtocolError::ServerError {
+                            message: e.to_string(),
+                        })?
+                }
                 PtyInput::Delay(ms) => {
                     let clamped = (*ms).min(5000);
                     tokio::time::sleep(Duration::from_millis(u64::from(clamped))).await

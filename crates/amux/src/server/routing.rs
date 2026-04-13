@@ -249,7 +249,7 @@ pub(super) async fn create_agent(
         let mut session = match &req.agent_type {
             AgentType::Claude => AgentSession::Claude(crate::agents::ClaudeSession::new(&req)),
             #[cfg(any(debug_assertions, test))]
-            AgentType::TestAgent(cmd) => {
+            AgentType::TestAgent { command: cmd } => {
                 AgentSession::TestAgent(crate::agents::TestAgentSession::new(&req, cmd.clone()))
             }
         };
@@ -469,7 +469,9 @@ pub(super) fn broadcast_to_peers(
     msg: &DirectMessage,
     exclude_link: Option<&str>,
 ) {
-    let wire_msg = Message::Direct(msg.clone());
+    let wire_msg = Message::Direct {
+        message: msg.clone(),
+    };
     let mut sent = 0usize;
     let mut failed = 0usize;
     for link in &us.peer_links {
@@ -509,7 +511,9 @@ fn send_initial_agent_announcements(us: &ServerUserState, peer_link: &str) -> us
                 continue;
             }
         }
-        let msg = Message::Direct(info.announce_message());
+        let msg = Message::Direct {
+            message: info.announce_message(),
+        };
         if !handle.try_send(msg) {
             tracing::warn!(agent_id = %uuid, peer = %peer_link, "failed to announce agent");
         } else {
@@ -541,12 +545,14 @@ fn send_initial_host_announcements(
         {
             continue;
         }
-        let msg = Message::Direct(DirectMessage::AnnounceHost {
-            id: info.id,
-            name: info.name.clone(),
-            route: info.route.clone(),
-            version: info.version.clone(),
-        });
+        let msg = Message::Direct {
+            message: DirectMessage::AnnounceHost {
+                id: info.id,
+                name: info.name.clone(),
+                route: info.route.clone(),
+                version: info.version.clone(),
+            },
+        };
         if !handle.try_send(msg) {
             tracing::warn!(host_id = %info.id, peer = %peer_link, "failed to announce host");
         } else {
@@ -555,12 +561,14 @@ fn send_initial_host_announcements(
     }
 
     if !is_cloud_server {
-        let msg = Message::Direct(DirectMessage::AnnounceHost {
-            id: host_id,
-            name: host_name.to_string(),
-            route: crate::route::Route::empty(),
-            version: env!("CARGO_PKG_VERSION").to_string(),
-        });
+        let msg = Message::Direct {
+            message: DirectMessage::AnnounceHost {
+                id: host_id,
+                name: host_name.to_string(),
+                route: crate::route::Route::empty(),
+                version: env!("CARGO_PKG_VERSION").to_string(),
+            },
+        };
         if !handle.try_send(msg) {
             tracing::warn!(peer = %peer_link, "failed to announce own host");
         } else {
@@ -575,7 +583,9 @@ fn send_initial_sync_complete(us: &ServerUserState, peer_link: &str) -> bool {
         return false;
     };
 
-    if !handle.try_send(Message::Direct(DirectMessage::InitialSyncComplete)) {
+    if !handle.try_send(Message::Direct {
+        message: DirectMessage::InitialSyncComplete,
+    }) {
         tracing::warn!(peer = %peer_link, "failed to send initial sync complete");
         false
     } else {
@@ -739,7 +749,9 @@ mod tests {
                 command: "test".to_string(),
                 working_dir: PathBuf::from("/tmp"),
                 route: Route::from_link(link),
-                agent_type: crate::message::AgentType::TestAgent("test".to_string()),
+                agent_type: crate::message::AgentType::TestAgent {
+                    command: "test".to_string(),
+                },
                 readonly: false,
                 args: vec![],
                 created_at: Utc::now(),
@@ -828,7 +840,9 @@ mod tests {
             .expect("peers should receive WithdrawAgent");
         assert!(matches!(
             msg,
-            Message::Direct(DirectMessage::WithdrawAgent { agent_id: id }) if id == agent_id
+            Message::Direct {
+                message: DirectMessage::WithdrawAgent { agent_id: id }
+            } if id == agent_id
         ));
     }
 
@@ -924,7 +938,9 @@ mod tests {
             .try_recv()
             .expect("alive-peer should receive WithdrawHost");
         match msg {
-            Message::Direct(DirectMessage::WithdrawHost { id, route }) => {
+            Message::Direct {
+                message: DirectMessage::WithdrawHost { id, route },
+            } => {
                 assert_eq!(id, dead_host);
                 assert_eq!(route, Route::from_link("dead-peer"));
             }
@@ -994,14 +1010,18 @@ mod tests {
         assert!(received.iter().any(|msg| {
             matches!(
                 msg,
-                Message::Direct(DirectMessage::WithdrawHost { id, route })
+                Message::Direct {
+                    message: DirectMessage::WithdrawHost { id, route }
+                }
                     if *id == root_a && *route == root_a_route
             )
         }));
         assert!(received.iter().any(|msg| {
             matches!(
                 msg,
-                Message::Direct(DirectMessage::WithdrawHost { id, route })
+                Message::Direct {
+                    message: DirectMessage::WithdrawHost { id, route }
+                }
                     if *id == root_b && *route == root_b_route
             )
         }));
@@ -1044,9 +1064,12 @@ mod tests {
         let msg = alive_rx
             .try_recv()
             .expect("alive-peer should receive WithdrawHost");
-        assert!(
-            matches!(msg, Message::Direct(DirectMessage::WithdrawHost { id, route }) if id == dead_host && route == Route::from_link("dead-peer"))
-        );
+        assert!(matches!(
+            msg,
+            Message::Direct {
+                message: DirectMessage::WithdrawHost { id, route }
+            } if id == dead_host && route == Route::from_link("dead-peer")
+        ));
     }
 
     // --- broadcast_to_peers tests ---
@@ -1068,7 +1091,9 @@ mod tests {
         let msg = rx_b.try_recv().expect("non-excluded peer should receive");
         assert!(matches!(
             msg,
-            Message::Direct(DirectMessage::WithdrawAgent { .. })
+            Message::Direct {
+                message: DirectMessage::WithdrawAgent { .. }
+            }
         ));
     }
 
@@ -1103,7 +1128,9 @@ mod tests {
         assert_eq!(count, 1, "only non-echo agents should be announced");
         let msg = rx.try_recv().expect("should receive one announcement");
         match msg {
-            Message::Direct(DirectMessage::AnnounceAgent { agent_id, .. }) => {
+            Message::Direct {
+                message: DirectMessage::AnnounceAgent { agent_id, .. },
+            } => {
                 assert_eq!(agent_id, forwarded_id);
             }
             other => panic!("expected AnnounceAgent, got {:?}", other),
@@ -1136,7 +1163,9 @@ mod tests {
         let announced_ids: Vec<Uuid> = received
             .iter()
             .filter_map(|m| match m {
-                Message::Direct(DirectMessage::AnnounceHost { id, .. }) => Some(*id),
+                Message::Direct {
+                    message: DirectMessage::AnnounceHost { id, .. },
+                } => Some(*id),
                 _ => None,
             })
             .collect();
@@ -1154,7 +1183,9 @@ mod tests {
 
         assert!(matches!(
             rx.try_recv(),
-            Ok(Message::Direct(DirectMessage::InitialSyncComplete))
+            Ok(Message::Direct {
+                message: DirectMessage::InitialSyncComplete
+            })
         ));
         assert!(rx.try_recv().is_err(), "should send sync marker only once");
     }
@@ -1174,7 +1205,9 @@ mod tests {
                 let req = crate::message::CreateAgentRequest {
                     agent_id: id,
                     name: None,
-                    agent_type: crate::message::AgentType::TestAgent(dummy_pty_command()),
+                    agent_type: crate::message::AgentType::TestAgent {
+                        command: dummy_pty_command(),
+                    },
                     working_dir: dummy_working_dir(),
                     terminal_size: None,
                     args: vec![],
@@ -1189,7 +1222,9 @@ mod tests {
         let new_req = crate::message::CreateAgentRequest {
             agent_id: Uuid::new_v4(),
             name: Some("one-too-many".to_string()),
-            agent_type: crate::message::AgentType::TestAgent(dummy_pty_command()),
+            agent_type: crate::message::AgentType::TestAgent {
+                command: dummy_pty_command(),
+            },
             working_dir: dummy_working_dir(),
             terminal_size: None,
             args: vec![],
@@ -1254,11 +1289,13 @@ mod tests {
             .expect("resumed agent should be announced to peers");
         assert!(matches!(
             msg,
-            Message::Direct(DirectMessage::AnnounceAgent {
-                agent_id: id,
-                host_id: announced_host_id,
-                ..
-            }) if id == agent_id && announced_host_id == host_id
+            Message::Direct {
+                message: DirectMessage::AnnounceAgent {
+                    agent_id: id,
+                    host_id: announced_host_id,
+                    ..
+                }
+            } if id == agent_id && announced_host_id == host_id
         ));
 
         let session = {
@@ -1278,7 +1315,9 @@ mod tests {
 
         let msg = rx.try_recv().expect("should announce own host");
         match msg {
-            Message::Direct(DirectMessage::AnnounceHost { id, name, .. }) => {
+            Message::Direct {
+                message: DirectMessage::AnnounceHost { id, name, .. },
+            } => {
                 assert_eq!(id, host_id);
                 assert_eq!(name, "my-laptop");
             }
@@ -1286,7 +1325,9 @@ mod tests {
         }
         assert!(matches!(
             rx.try_recv(),
-            Ok(Message::Direct(DirectMessage::InitialSyncComplete))
+            Ok(Message::Direct {
+                message: DirectMessage::InitialSyncComplete
+            })
         ));
         assert!(rx.try_recv().is_err(), "should send sync marker only once");
     }
@@ -1306,7 +1347,9 @@ mod tests {
                 command: "test".to_string(),
                 working_dir: PathBuf::from("/tmp"),
                 route: Route::empty(),
-                agent_type: crate::message::AgentType::TestAgent("test".to_string()),
+                agent_type: crate::message::AgentType::TestAgent {
+                    command: "test".to_string(),
+                },
                 readonly: false,
                 args: vec![],
                 created_at: Utc::now(),
@@ -1317,20 +1360,26 @@ mod tests {
 
         assert!(matches!(
             rx.try_recv(),
-            Ok(Message::Direct(DirectMessage::AnnounceHost {
-                id,
-                name,
-                route,
-                ..
-            })) if id == host_id && name == "my-laptop" && route == Route::empty()
+            Ok(Message::Direct {
+                message: DirectMessage::AnnounceHost {
+                    id,
+                    name,
+                    route,
+                    ..
+                }
+            }) if id == host_id && name == "my-laptop" && route == Route::empty()
         ));
         assert!(matches!(
             rx.try_recv(),
-            Ok(Message::Direct(DirectMessage::AnnounceAgent { agent_id: id, .. })) if id == agent_id
+            Ok(Message::Direct {
+                message: DirectMessage::AnnounceAgent { agent_id: id, .. }
+            }) if id == agent_id
         ));
         assert!(matches!(
             rx.try_recv(),
-            Ok(Message::Direct(DirectMessage::InitialSyncComplete))
+            Ok(Message::Direct {
+                message: DirectMessage::InitialSyncComplete
+            })
         ));
         assert!(rx.try_recv().is_err(), "should send sync marker only once");
     }

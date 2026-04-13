@@ -1569,16 +1569,21 @@ mod tests {
             transcript_path: "/tmp/transcript.jsonl".to_string(),
             cwd: "/tmp".to_string(),
         }));
-        let msg = Message::Command(Command::HandleHook {
-            agent_id,
-            hook: Box::new(hook),
-        });
+        let msg = Message::Command {
+            command: Command::HandleHook {
+                agent_id,
+                hook: Box::new(hook),
+            },
+        };
         let encoded = msg.encode().unwrap();
         let decoded = Message::decode(&encoded).unwrap();
-        let Message::Command(Command::HandleHook {
-            agent_id: decoded_id,
-            hook: decoded_hook,
-        }) = decoded
+        let Message::Command {
+            command:
+                Command::HandleHook {
+                    agent_id: decoded_id,
+                    hook: decoded_hook,
+                },
+        } = decoded
         else {
             panic!("Expected HandleHook, got {decoded:?}");
         };

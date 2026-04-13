@@ -24,25 +24,28 @@ pub struct Host {
 
 /// Type of agent to spawn
 #[derive(Serialize, Deserialize, Debug, Clone, PartialEq)]
+#[serde(tag = "type", rename_all = "snake_case")]
 pub enum AgentType {
     /// Claude Code agent (sets AMUX_AGENT_ID env var)
     Claude,
     /// Test agent for E2E tests (only available in dev/test builds)
     #[cfg(any(debug_assertions, test))]
-    TestAgent(String),
+    TestAgent { command: String },
 }
 
-/// Claude-specific structured I/O protocol negotiated on subscribe.
+/// Claude-specific structured I/O protocol mode negotiated on subscribe.
 #[derive(Serialize, Deserialize, Debug, Clone, PartialEq, Eq)]
-pub enum ClaudeProtocol {
-    PtyV1,
-    SdkV1,
+#[serde(rename_all = "snake_case")]
+pub enum ClaudeMode {
+    Pty,
+    Sdk,
 }
 
 /// Structured I/O protocol contract for a subscribed agent session.
 #[derive(Serialize, Deserialize, Debug, Clone, PartialEq, Eq)]
+#[serde(tag = "agent_type", rename_all = "snake_case")]
 pub enum AgentProtocol {
-    Claude(ClaudeProtocol),
+    Claude { mode: ClaudeMode, version: u16 },
 }
 
 pub type SubscriptionId = Uuid;
@@ -50,6 +53,7 @@ pub type SubscriptionId = Uuid;
 /// Query parameter for structured subscriptions, controlling which entries
 /// are replayed on subscribe.
 #[derive(Serialize, Deserialize, Debug, Clone, PartialEq, Eq)]
+#[serde(tag = "type", rename_all = "snake_case")]
 pub enum SubscribeQuery {
     /// Replay entries with `seq >= seq`. O(log n) seek + O(k) replay.
     Since { seq: u64 },
@@ -59,6 +63,7 @@ pub enum SubscribeQuery {
 
 /// Protocol-level errors that can be returned in response messages
 #[derive(Serialize, Deserialize, Debug, Clone, PartialEq, thiserror::Error)]
+#[serde(tag = "code", rename_all = "snake_case")]
 pub enum ProtocolError {
     /// The requested agent session is no longer available on this connection.
     #[error("No agent found")]
@@ -67,8 +72,8 @@ pub enum ProtocolError {
     #[error("Unknown subscription")]
     UnknownSubscription,
     /// Generic server error with message
-    #[error("{0}")]
-    ServerError(String),
+    #[error("{message}")]
+    ServerError { message: String },
     /// The proposed link name is already in use
     #[error("Link name already in use")]
     LinkNameTaken,
@@ -106,6 +111,7 @@ pub enum DebugFormat {
 
 /// Reason for server shutdown notification
 #[derive(Serialize, Deserialize, Debug, Clone, PartialEq)]
+#[serde(rename_all = "snake_case")]
 pub enum ShutdownReason {
     ProtocolMismatch,
     UserRequested,
@@ -113,6 +119,7 @@ pub enum ShutdownReason {
 }
 
 #[derive(Serialize, Deserialize, Debug, Clone, Copy, PartialEq, Eq)]
+#[serde(rename_all = "snake_case")]
 pub enum SubscriptionCloseReason {
     SourceClosed,
     Unsubscribed,
@@ -167,6 +174,7 @@ pub struct RenameAgentRequest {
 /// Messages that carry src/dst routing information and can be forwarded across hops.
 /// agent_id is Uuid — callers must resolve names to UUIDs before constructing.
 #[derive(Serialize, Deserialize, Debug, Clone)]
+#[serde(tag = "type", rename_all = "snake_case")]
 pub enum RoutableMessage {
     SubscribeRaw {
         agent_id: Uuid,
@@ -298,6 +306,7 @@ impl RoutableMessage {
 /// Messages that are handled directly by the receiving server (no routing).
 /// Used for peer-to-peer protocol messages after handshake.
 #[derive(Serialize, Deserialize, Debug, Clone)]
+#[serde(tag = "type", rename_all = "snake_case")]
 pub enum DirectMessage {
     Reauth {
         token: String,
@@ -338,6 +347,7 @@ pub enum DirectMessage {
 
 /// CLI-only commands that must not be accepted from remote peers.
 #[derive(Serialize, Deserialize, Debug, Clone)]
+#[serde(tag = "type", rename_all = "snake_case")]
 pub enum Command {
     ListAgents,
     ListAgentsResult {
@@ -350,7 +360,9 @@ pub enum Command {
         agent: Option<Agent>,
     },
     Shutdown,
-    ShutdownNotification(ShutdownReason),
+    ShutdownNotification {
+        reason: ShutdownReason,
+    },
     Debug {
         verbose: bool,
         format: DebugFormat,
@@ -373,13 +385,13 @@ pub enum Command {
     },
     Suspend,
     SuspendResult {
-        suspended_count: usize,
+        suspended_count: u64,
         error: Option<ProtocolError>,
     },
     Resume,
     ResumeResult {
-        resumed_count: usize,
-        failed_count: usize,
+        resumed_count: u64,
+        failed_count: u64,
         error: Option<ProtocolError>,
     },
 }
@@ -393,7 +405,7 @@ impl Command {
             Command::ResolveAgent { .. } => "ResolveAgent",
             Command::ResolveAgentResult { .. } => "ResolveAgentResult",
             Command::Shutdown => "Shutdown",
-            Command::ShutdownNotification(_) => "ShutdownNotification",
+            Command::ShutdownNotification { .. } => "ShutdownNotification",
             Command::Debug { .. } => "Debug",
             Command::DebugResult { .. } => "DebugResult",
             Command::ConnectToServer { .. } => "ConnectToServer",
@@ -410,6 +422,7 @@ impl Command {
 
 /// All protocol messages between client and server
 #[derive(Serialize, Deserialize, Debug, Clone)]
+#[serde(tag = "kind", rename_all = "snake_case")]
 pub enum Message {
     Routable {
         src: Route,
@@ -417,8 +430,12 @@ pub enum Message {
         request_id: u64,
         payload: Vec<u8>,
     },
-    Direct(DirectMessage),
-    Command(Command),
+    Direct {
+        message: DirectMessage,
+    },
+    Command {
+        command: Command,
+    },
 }
 
 impl Message {
@@ -440,7 +457,7 @@ impl Message {
     pub fn type_label(&self) -> &'static str {
         match self {
             Message::Routable { .. } => "Routable",
-            Message::Direct(d) => match d {
+            Message::Direct { message: d } => match d {
                 DirectMessage::Reauth { .. } => "Direct::Reauth",
                 DirectMessage::ReauthResult { .. } => "Direct::ReauthResult",
                 DirectMessage::Heartbeat => "Direct::Heartbeat",
@@ -451,13 +468,13 @@ impl Message {
                 DirectMessage::AnnounceHost { .. } => "Direct::AnnounceHost",
                 DirectMessage::WithdrawHost { .. } => "Direct::WithdrawHost",
             },
-            Message::Command(c) => match c {
+            Message::Command { command: c } => match c {
                 Command::ListAgents => "Command::ListAgents",
                 Command::ListAgentsResult { .. } => "Command::ListAgentsResult",
                 Command::ResolveAgent { .. } => "Command::ResolveAgent",
                 Command::ResolveAgentResult { .. } => "Command::ResolveAgentResult",
                 Command::Shutdown => "Command::Shutdown",
-                Command::ShutdownNotification(_) => "Command::ShutdownNotification",
+                Command::ShutdownNotification { .. } => "Command::ShutdownNotification",
                 Command::Debug { .. } => "Command::Debug",
                 Command::DebugResult { .. } => "Command::DebugResult",
                 Command::ConnectToServer { .. } => "Command::ConnectToServer",
@@ -535,7 +552,10 @@ mod tests {
             RoutableMessage::SubscribeStructuredResult {
                 subscription_id,
                 seq: 42,
-                protocol: Some(AgentProtocol::Claude(ClaudeProtocol::PtyV1)),
+                protocol: Some(AgentProtocol::Claude {
+                    mode: ClaudeMode::Pty,
+                    version: 1,
+                }),
                 lease_ms: 30_000,
                 error: None,
             },
@@ -678,6 +698,7 @@ mod tests {
             working_dir: PathBuf,
         }
         #[derive(Serialize)]
+        #[serde(tag = "type", rename_all = "snake_case")]
         enum OldRoutableMessage {
             CreateAgent(OldCreateAgentRequest),
         }
@@ -709,14 +730,18 @@ mod tests {
         // Simulate a future DirectMessage variant that this version doesn't know about.
         // The reader_loop handles this by skipping the message (not killing the connection).
         #[derive(Serialize)]
+        #[serde(tag = "type", rename_all = "snake_case")]
         enum FutureDirectMessage {
             Ping { seq: u64 },
         }
         #[derive(Serialize)]
+        #[serde(tag = "kind", rename_all = "snake_case")]
         enum FutureMessage {
-            Direct(FutureDirectMessage),
+            Direct { message: FutureDirectMessage },
         }
-        let future_msg = FutureMessage::Direct(FutureDirectMessage::Ping { seq: 42 });
+        let future_msg = FutureMessage::Direct {
+            message: FutureDirectMessage::Ping { seq: 42 },
+        };
         let encoded = rmp_serde::to_vec_named(&future_msg).unwrap();
         assert!(
             Message::decode(&encoded).is_err(),
@@ -726,21 +751,32 @@ mod tests {
 
     #[test]
     fn test_direct_heartbeat_roundtrip_and_type_label() {
-        let msg = Message::Direct(DirectMessage::Heartbeat);
+        let msg = Message::Direct {
+            message: DirectMessage::Heartbeat,
+        };
         let encoded = msg.encode().unwrap();
         let decoded = Message::decode(&encoded).unwrap();
-        assert!(matches!(decoded, Message::Direct(DirectMessage::Heartbeat)));
+        assert!(matches!(
+            decoded,
+            Message::Direct {
+                message: DirectMessage::Heartbeat
+            }
+        ));
         assert_eq!(msg.type_label(), "Direct::Heartbeat");
     }
 
     #[test]
     fn test_direct_initial_sync_complete_roundtrip_and_type_label() {
-        let msg = Message::Direct(DirectMessage::InitialSyncComplete);
+        let msg = Message::Direct {
+            message: DirectMessage::InitialSyncComplete,
+        };
         let encoded = msg.encode().unwrap();
         let decoded = Message::decode(&encoded).unwrap();
         assert!(matches!(
             decoded,
-            Message::Direct(DirectMessage::InitialSyncComplete)
+            Message::Direct {
+                message: DirectMessage::InitialSyncComplete
+            }
         ));
         assert_eq!(msg.type_label(), "Direct::InitialSyncComplete");
     }
@@ -749,6 +785,7 @@ mod tests {
     fn test_unknown_top_level_variant_produces_decode_error() {
         // Simulate a future top-level Message variant that this version doesn't know about.
         #[derive(Serialize)]
+        #[serde(tag = "kind", rename_all = "snake_case")]
         enum FutureMessage {
             Stream { id: u64 },
         }

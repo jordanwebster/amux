@@ -94,10 +94,12 @@ fn handle_claude_hook_inner(config: &Config) -> io::Result<()> {
 
 async fn send_hook_event(config: &Config, agent_id: Uuid, hook: Hook) -> amux::Result<()> {
     let conn = connect(config, ConnectPolicy::ExistingOnly).await?;
-    conn.send(&Message::Command(Command::HandleHook {
-        agent_id,
-        hook: Box::new(hook),
-    }))
+    conn.send(&Message::Command {
+        command: Command::HandleHook {
+            agent_id,
+            hook: Box::new(hook),
+        },
+    })
     .await?;
     Ok(())
 }

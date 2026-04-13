@@ -110,14 +110,20 @@ async fn suspend_if_running(config: &Config) -> Result<bool> {
         Err(e) => return Err(e.into()),
     };
 
-    conn.send(&Message::Command(Command::Suspend)).await?;
+    conn.send(&Message::Command {
+        command: Command::Suspend,
+    })
+    .await?;
 
     // Server exits after sending SuspendResult, so connection may drop
     match conn.recv().await {
-        Ok(Message::Command(Command::SuspendResult {
-            suspended_count,
-            error,
-        })) => {
+        Ok(Message::Command {
+            command:
+                Command::SuspendResult {
+                    suspended_count,
+                    error,
+                },
+        }) => {
             if let Some(e) = error {
                 bail!("suspend failed: {e}");
             }
@@ -138,14 +144,20 @@ async fn resume_server(config: &Config, exe_path: &Path) -> Result<()> {
     )
     .await?;
 
-    conn.send(&Message::Command(Command::Resume)).await?;
+    conn.send(&Message::Command {
+        command: Command::Resume,
+    })
+    .await?;
 
     match conn.recv().await? {
-        Message::Command(Command::ResumeResult {
-            resumed_count,
-            failed_count,
-            error,
-        }) => {
+        Message::Command {
+            command:
+                Command::ResumeResult {
+                    resumed_count,
+                    failed_count,
+                    error,
+                },
+        } => {
             if let Some(e) = error {
                 bail!("resume failed: {e}");
             }

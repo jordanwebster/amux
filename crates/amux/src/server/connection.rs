@@ -62,7 +62,12 @@ pub(super) struct MessageMetadata {
 impl MessageMetadata {
     fn from_message(msg: &Message) -> Self {
         Self {
-            is_heartbeat: matches!(msg, Message::Direct(DirectMessage::Heartbeat)),
+            is_heartbeat: matches!(
+                msg,
+                Message::Direct {
+                    message: DirectMessage::Heartbeat
+                }
+            ),
         }
     }
 }
@@ -268,7 +273,12 @@ impl TokenRefresher {
     /// Try to consume an incoming ReauthResult as a refresh response.
     /// Returns `true` if consumed, `false` if the message is not a ReauthResult.
     fn try_intercept(&mut self, msg: &Message) -> Result<bool> {
-        if !matches!(msg, Message::Direct(DirectMessage::ReauthResult { .. })) {
+        if !matches!(
+            msg,
+            Message::Direct {
+                message: DirectMessage::ReauthResult { .. }
+            }
+        ) {
             return Ok(false);
         }
         if self.awaiting_since.is_none() {
@@ -396,14 +406,16 @@ impl HeartbeatState {
                 tracing::debug!(role = HeartbeatRole::Dialer.as_str(), "sending heartbeat");
                 state.last_tx_at = now;
                 state.probe_deadline = Some(now + state.config.ack_timeout);
-                tx.send(Message::Direct(DirectMessage::Heartbeat))
-                    .await
-                    .map_err(|_| {
-                        AmuxError::Io(std::io::Error::new(
-                            std::io::ErrorKind::BrokenPipe,
-                            "outgoing channel closed while sending heartbeat",
-                        ))
-                    })?;
+                tx.send(Message::Direct {
+                    message: DirectMessage::Heartbeat,
+                })
+                .await
+                .map_err(|_| {
+                    AmuxError::Io(std::io::Error::new(
+                        std::io::ErrorKind::BrokenPipe,
+                        "outgoing channel closed while sending heartbeat",
+                    ))
+                })?;
                 Ok(())
             }
             Self::Acceptor(_) => unreachable!("acceptors never initiate heartbeats"),
@@ -839,11 +851,15 @@ mod tests {
     #[tokio::test]
     async fn reader_loop_forwards_messages_then_eof() {
         let reader = MockReader::new(vec![
-            Ok(Message::Command(Command::ListAgents)),
-            Ok(Message::Command(Command::Debug {
-                verbose: false,
-                format: crate::message::DebugFormat::Yaml,
-            })),
+            Ok(Message::Command {
+                command: Command::ListAgents,
+            }),
+            Ok(Message::Command {
+                command: Command::Debug {
+                    verbose: false,
+                    format: crate::message::DebugFormat::Yaml,
+                },
+            }),
             // MockReader auto-sends EOF when exhausted
         ]);
         let (tx, mut rx) = mpsc::channel(16);
@@ -873,12 +889,16 @@ mod tests {
         // Simulate: good message → decode error → good message → EOF
         let decode_err = rmp_serde::decode::Error::Syntax("unknown variant".to_string());
         let reader = MockReader::new(vec![
-            Ok(Message::Command(Command::ListAgents)),
+            Ok(Message::Command {
+                command: Command::ListAgents,
+            }),
             Err(AmuxError::SerializationDecode(decode_err)),
-            Ok(Message::Command(Command::Debug {
-                verbose: false,
-                format: crate::message::DebugFormat::Yaml,
-            })),
+            Ok(Message::Command {
+                command: Command::Debug {
+                    verbose: false,
+                    format: crate::message::DebugFormat::Yaml,
+                },
+            }),
         ]);
         let (tx, mut rx) = mpsc::channel(16);
 
@@ -924,14 +944,18 @@ mod tests {
         let handle = tokio::spawn(writer_loop(writer, outgoing_rx, incoming_tx));
 
         outgoing_tx
-            .send(Message::Command(Command::Debug {
-                verbose: false,
-                format: crate::message::DebugFormat::Yaml,
-            }))
+            .send(Message::Command {
+                command: Command::Debug {
+                    verbose: false,
+                    format: crate::message::DebugFormat::Yaml,
+                },
+            })
             .await
             .unwrap();
         outgoing_tx
-            .send(Message::Direct(DirectMessage::Heartbeat))
+            .send(Message::Direct {
+                message: DirectMessage::Heartbeat,
+            })
             .await
             .unwrap();
         drop(outgoing_tx);
@@ -956,9 +980,15 @@ mod tests {
     async fn reader_loop_stops_when_receiver_dropped() {
         // If the receiver is dropped, reader_loop should exit on next send
         let reader = MockReader::new(vec![
-            Ok(Message::Command(Command::ListAgents)),
-            Ok(Message::Command(Command::ListAgents)),
-            Ok(Message::Command(Command::ListAgents)),
+            Ok(Message::Command {
+                command: Command::ListAgents,
+            }),
+            Ok(Message::Command {
+                command: Command::ListAgents,
+            }),
+            Ok(Message::Command {
+                command: Command::ListAgents,
+            }),
         ]);
         let (tx, rx) = mpsc::channel(1);
         drop(rx);
@@ -1028,9 +1058,9 @@ mod tests {
 
         // Send a ListAgents command, then EOF to exit the loop
         incoming_tx
-            .send(Incoming::Msg(Box::new(Message::Command(
-                Command::ListAgents,
-            ))))
+            .send(Incoming::Msg(Box::new(Message::Command {
+                command: Command::ListAgents,
+            })))
             .await
             .unwrap();
         incoming_tx.send(Incoming::Eof).await.unwrap();
@@ -1041,7 +1071,12 @@ mod tests {
         // ListAgents should have produced a ListAgentsResult
         let msg = response_rx.try_recv().expect("should have a response");
         assert!(
-            matches!(msg, Message::Command(Command::ListAgentsResult { .. })),
+            matches!(
+                msg,
+                Message::Command {
+                    command: Command::ListAgentsResult { .. }
+                }
+            ),
             "expected ListAgentsResult, got {:?}",
             msg
         );
@@ -1058,15 +1093,15 @@ mod tests {
         // command, then EOF. The ReauthResult should be skipped and the
         // command should still be dispatched.
         incoming_tx
-            .send(Incoming::Msg(Box::new(Message::Direct(
-                DirectMessage::ReauthResult { error: None },
-            ))))
+            .send(Incoming::Msg(Box::new(Message::Direct {
+                message: DirectMessage::ReauthResult { error: None },
+            })))
             .await
             .unwrap();
         incoming_tx
-            .send(Incoming::Msg(Box::new(Message::Command(
-                Command::ListAgents,
-            ))))
+            .send(Incoming::Msg(Box::new(Message::Command {
+                command: Command::ListAgents,
+            })))
             .await
             .unwrap();
         incoming_tx.send(Incoming::Eof).await.unwrap();
@@ -1077,7 +1112,12 @@ mod tests {
         // The ReauthResult should be skipped; only ListAgentsResult should appear
         let msg = response_rx.try_recv().expect("should have a response");
         assert!(
-            matches!(msg, Message::Command(Command::ListAgentsResult { .. })),
+            matches!(
+                msg,
+                Message::Command {
+                    command: Command::ListAgentsResult { .. }
+                }
+            ),
             "expected ListAgentsResult after skipped ReauthResult, got {:?}",
             msg
         );
@@ -1125,7 +1165,12 @@ mod tests {
             .await
             .expect("heartbeat should be sent before timeout")
             .expect("response channel should remain open");
-        assert!(matches!(msg, Message::Direct(DirectMessage::Heartbeat)));
+        assert!(matches!(
+            msg,
+            Message::Direct {
+                message: DirectMessage::Heartbeat
+            }
+        ));
 
         incoming_tx.send(Incoming::Eof).await.unwrap();
         let result = handle.await.unwrap();
@@ -1152,9 +1197,9 @@ mod tests {
 
         tokio::time::sleep(Duration::from_millis(10)).await;
         incoming_tx
-            .send(Incoming::Msg(Box::new(Message::Direct(
-                DirectMessage::HeartbeatAck,
-            ))))
+            .send(Incoming::Msg(Box::new(Message::Direct {
+                message: DirectMessage::HeartbeatAck,
+            })))
             .await
             .unwrap();
 
@@ -1162,7 +1207,12 @@ mod tests {
             .await
             .expect("inbound-only traffic should not suppress a dialer heartbeat")
             .expect("response channel should remain open");
-        assert!(matches!(msg, Message::Direct(DirectMessage::Heartbeat)));
+        assert!(matches!(
+            msg,
+            Message::Direct {
+                message: DirectMessage::Heartbeat
+            }
+        ));
 
         incoming_tx.send(Incoming::Eof).await.unwrap();
         let result = handle.await.unwrap();
@@ -1205,7 +1255,12 @@ mod tests {
             .await
             .expect("heartbeat should fire after the reset idle interval")
             .expect("response channel should remain open");
-        assert!(matches!(msg, Message::Direct(DirectMessage::Heartbeat)));
+        assert!(matches!(
+            msg,
+            Message::Direct {
+                message: DirectMessage::Heartbeat
+            }
+        ));
 
         incoming_tx.send(Incoming::Eof).await.unwrap();
         let result = handle.await.unwrap();
@@ -1234,7 +1289,12 @@ mod tests {
             .await
             .expect("heartbeat should be queued before timeout")
             .expect("response channel should remain open");
-        assert!(matches!(msg, Message::Direct(DirectMessage::Heartbeat)));
+        assert!(matches!(
+            msg,
+            Message::Direct {
+                message: DirectMessage::Heartbeat
+            }
+        ));
 
         incoming_tx
             .send(Incoming::Wrote(MessageMetadata { is_heartbeat: true }))
@@ -1271,7 +1331,12 @@ mod tests {
             .await
             .expect("heartbeat should be queued before timeout")
             .expect("response channel should remain open");
-        assert!(matches!(msg, Message::Direct(DirectMessage::Heartbeat)));
+        assert!(matches!(
+            msg,
+            Message::Direct {
+                message: DirectMessage::Heartbeat
+            }
+        ));
 
         let result = handle.await.unwrap();
         assert!(
@@ -1333,15 +1398,20 @@ mod tests {
             .await
             .expect("heartbeat should be queued before timeout")
             .expect("response channel should remain open");
-        assert!(matches!(msg, Message::Direct(DirectMessage::Heartbeat)));
+        assert!(matches!(
+            msg,
+            Message::Direct {
+                message: DirectMessage::Heartbeat
+            }
+        ));
 
         // The ack arrives before the writer reports the heartbeat write. That
         // late write callback must not expose a stale idle deadline or queue a
         // second heartbeat immediately.
         incoming_tx
-            .send(Incoming::Msg(Box::new(Message::Direct(
-                DirectMessage::HeartbeatAck,
-            ))))
+            .send(Incoming::Msg(Box::new(Message::Direct {
+                message: DirectMessage::HeartbeatAck,
+            })))
             .await
             .unwrap();
         incoming_tx

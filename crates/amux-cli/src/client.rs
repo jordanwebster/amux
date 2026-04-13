@@ -163,17 +163,24 @@ pub async fn attach(target: Option<&str>, config: &Config) -> Result<()> {
     // Resolve the target to (route, agent_id)
     let (mut route_suffix, agent_id) = match target {
         Some(identifier) => {
-            conn.send(&Message::Command(Command::ResolveAgent {
-                identifier: identifier.to_string(),
-            }))
+            conn.send(&Message::Command {
+                command: Command::ResolveAgent {
+                    identifier: identifier.to_string(),
+                },
+            })
             .await?;
 
             let response = conn.recv().await?;
             match response {
-                Message::Command(Command::ResolveAgentResult {
-                    agent: Some(info), ..
-                }) => (info.route, info.id),
-                Message::Command(Command::ResolveAgentResult { agent: None }) => {
+                Message::Command {
+                    command:
+                        Command::ResolveAgentResult {
+                            agent: Some(info), ..
+                        },
+                } => (info.route, info.id),
+                Message::Command {
+                    command: Command::ResolveAgentResult { agent: None },
+                } => {
                     return Err(AmuxError::AgentNotFound(identifier.to_string()));
                 }
                 other => {
@@ -185,14 +192,19 @@ pub async fn attach(target: Option<&str>, config: &Config) -> Result<()> {
             }
         }
         None => {
-            conn.send(&Message::Command(Command::ListAgents)).await?;
+            conn.send(&Message::Command {
+                command: Command::ListAgents,
+            })
+            .await?;
 
             let response = conn.recv().await?;
             match response {
-                Message::Command(Command::ListAgentsResult { agents }) if !agents.is_empty() => {
-                    (agents[0].route.clone(), agents[0].id)
-                }
-                Message::Command(Command::ListAgentsResult { .. }) => {
+                Message::Command {
+                    command: Command::ListAgentsResult { agents },
+                } if !agents.is_empty() => (agents[0].route.clone(), agents[0].id),
+                Message::Command {
+                    command: Command::ListAgentsResult { .. },
+                } => {
                     eprintln!("No agents running. Use 'amux new' to create one.");
                     return Ok(());
                 }
@@ -305,11 +317,16 @@ pub async fn list_agents(config: &Config) -> Result<()> {
         Err(e) => return Err(e),
     };
 
-    conn.send(&Message::Command(Command::ListAgents)).await?;
+    conn.send(&Message::Command {
+        command: Command::ListAgents,
+    })
+    .await?;
 
     let response = conn.recv().await?;
     match response {
-        Message::Command(Command::ListAgentsResult { mut agents }) => {
+        Message::Command {
+            command: Command::ListAgentsResult { mut agents },
+        } => {
             if agents.is_empty() {
                 println!("No agents running.");
             } else {
@@ -364,10 +381,18 @@ pub async fn kill_server(config: &Config) -> Result<()> {
         Err(e) => return Err(e),
     };
 
-    conn.send(&Message::Command(Command::Shutdown)).await?;
+    conn.send(&Message::Command {
+        command: Command::Shutdown,
+    })
+    .await?;
 
     match conn.recv().await {
-        Ok(Message::Command(Command::ShutdownNotification(ShutdownReason::UserRequested))) => {}
+        Ok(Message::Command {
+            command:
+                Command::ShutdownNotification {
+                    reason: ShutdownReason::UserRequested,
+                },
+        }) => {}
         Ok(other) => {
             tracing::warn!(?other, "unexpected shutdown response");
         }
@@ -385,20 +410,26 @@ pub async fn kill_server(config: &Config) -> Result<()> {
 pub async fn connect_remote(address: &str, config: &Config) -> Result<()> {
     let conn = connect(config, cli_daemon_policy()?).await?;
 
-    conn.send(&Message::Command(Command::ConnectToServer {
-        address: address.to_string(),
-    }))
+    conn.send(&Message::Command {
+        command: Command::ConnectToServer {
+            address: address.to_string(),
+        },
+    })
     .await?;
 
     let response = conn.recv().await?;
     match response {
-        Message::Command(Command::ConnectToServerResult { error: None }) => {
+        Message::Command {
+            command: Command::ConnectToServerResult { error: None },
+        } => {
             println!("Connected to {}", address);
             Ok(())
         }
-        Message::Command(Command::ConnectToServerResult { error: Some(e) }) => Err(
-            AmuxError::ServerError(format!("failed to connect to {address}: {e}")),
-        ),
+        Message::Command {
+            command: Command::ConnectToServerResult { error: Some(e) },
+        } => Err(AmuxError::ServerError(format!(
+            "failed to connect to {address}: {e}"
+        ))),
         other => Err(AmuxError::InvalidMessage(format!(
             "expected ConnectToServerResult, got {}",
             other.type_label()
@@ -419,12 +450,16 @@ pub async fn debug(config: &Config, verbose: bool, format: DebugFormat) -> Resul
         Err(e) => return Err(e),
     };
 
-    conn.send(&Message::Command(Command::Debug { verbose, format }))
-        .await?;
+    conn.send(&Message::Command {
+        command: Command::Debug { verbose, format },
+    })
+    .await?;
 
     let response = conn.recv().await?;
     match response {
-        Message::Command(Command::DebugResult { dump }) => Ok(dump),
+        Message::Command {
+            command: Command::DebugResult { dump },
+        } => Ok(dump),
         other => Err(AmuxError::InvalidMessage(format!(
             "expected DebugResult, got {}",
             other.type_label()
@@ -617,7 +652,9 @@ async fn run_attached(
                             _ => {}
                         }
                     }
-                    Ok(Message::Command(Command::ShutdownNotification(reason))) => {
+                    Ok(Message::Command {
+                        command: Command::ShutdownNotification { reason },
+                    }) => {
                         tracing::info!(reason = %reason, "server shutdown");
                         break ExitReason::Shutdown(reason);
                     }

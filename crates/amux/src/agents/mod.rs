@@ -20,7 +20,7 @@ use crate::claude::structured_log_source::StructuredLogSource;
 use crate::claude::types::Hook;
 use crate::error::{AmuxError, Result};
 use crate::message::{
-    AgentProtocol, AgentType, ClaudeProtocol, CreateAgentRequest, ProtocolError, SubscribeQuery,
+    AgentProtocol, AgentType, ClaudeMode, CreateAgentRequest, ProtocolError, SubscribeQuery,
     TerminalSize,
 };
 use crate::route::Route;
@@ -395,7 +395,10 @@ impl AgentSession {
 
     pub fn agent_protocol(&self) -> Option<AgentProtocol> {
         match self {
-            Self::Claude(_) => Some(AgentProtocol::Claude(ClaudeProtocol::PtyV1)),
+            Self::Claude(_) => Some(AgentProtocol::Claude {
+                mode: ClaudeMode::Pty,
+                version: 1,
+            }),
             #[cfg(any(debug_assertions, test))]
             Self::TestAgent(_) => None,
         }
@@ -410,9 +413,9 @@ impl AgentSession {
         match self {
             Self::Claude(s) => s.send_structured_input(client_seq, payload).await,
             #[cfg(any(debug_assertions, test))]
-            Self::TestAgent(_) => Err(ProtocolError::ServerError(
-                "structured input not supported".to_string(),
-            )),
+            Self::TestAgent(_) => Err(ProtocolError::ServerError {
+                message: "structured input not supported".to_string(),
+            }),
         }
     }
 
@@ -482,7 +485,9 @@ impl AgentSession {
             agent_type: match self {
                 Self::Claude(_) => AgentType::Claude,
                 #[cfg(any(debug_assertions, test))]
-                Self::TestAgent(s) => AgentType::TestAgent(s.command.clone()),
+                Self::TestAgent(s) => AgentType::TestAgent {
+                    command: s.command.clone(),
+                },
             },
             readonly: self.readonly(),
             args: self.args().to_vec(),
@@ -675,7 +680,9 @@ impl SuspendedAgent {
                 let req = CreateAgentRequest {
                     agent_id,
                     name,
-                    agent_type: crate::message::AgentType::TestAgent(command.clone()),
+                    agent_type: crate::message::AgentType::TestAgent {
+                        command: command.clone(),
+                    },
                     working_dir,
                     terminal_size,
                     args: vec![],
@@ -700,7 +707,9 @@ mod tests {
         let req = CreateAgentRequest {
             agent_id: Uuid::new_v4(),
             name: Some("test".to_string()),
-            agent_type: AgentType::TestAgent("test-agent".to_string()),
+            agent_type: AgentType::TestAgent {
+                command: "test-agent".to_string(),
+            },
             working_dir: PathBuf::from("/tmp"),
             terminal_size: None,
             args: vec![],
@@ -715,7 +724,9 @@ mod tests {
 
         assert_eq!(
             err,
-            ProtocolError::ServerError("structured input not supported".to_string()),
+            ProtocolError::ServerError {
+                message: "structured input not supported".to_string(),
+            },
         );
     }
 

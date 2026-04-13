@@ -78,9 +78,11 @@ pub(super) fn establish_cloud_connection(
                         let us = user_state.read().await;
                         for (link, tx) in &us.routes {
                             if !us.peer_links.contains(link) {
-                                let _ = tx.try_send(Message::Command(
-                                    Command::ShutdownNotification(ShutdownReason::ProtocolMismatch),
-                                ));
+                                let _ = tx.try_send(Message::Command {
+                                    command: Command::ShutdownNotification {
+                                        reason: ShutdownReason::ProtocolMismatch,
+                                    },
+                                });
                             }
                         }
                         drop(us);

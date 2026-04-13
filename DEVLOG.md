@@ -38,6 +38,38 @@ One paragraph describing what was done.
 
 ---
 
+## 2026-04-14: Reshape protocol wire enums for non-Rust clients
+
+### Summary
+Changed the public protocol message shapes away from serde's default external tagging and onto explicit tagged objects that are easier for JS/TS, Go, and Python clients to consume. The top-level envelope now uses `kind`, direct/routable/command payload enums use `type`, protocol errors use `code`, and `AgentProtocol` is now structurally tied to the owning agent type via `agent_type`, `mode`, and `version`. UUIDs were deliberately left as MessagePack bytes on the wire.
+
+### Changes
+- **`crates/amux/src/message.rs`** — Switched `Message` to `kind`-tagged envelopes, with `Direct { message: ... }` and `Command { command: ... }`. Switched `RoutableMessage`, `DirectMessage`, `Command`, and `SubscribeQuery` to `type`-tagged forms. Switched `ProtocolError` to `code`-tagged form and changed `ServerError(String)` to `ServerError { message }`. Changed `Command::ShutdownNotification` to a struct variant. Changed `AgentType::TestAgent(String)` to `TestAgent { command }`. Replaced `ClaudeProtocol` with `ClaudeMode`, and changed `AgentProtocol` to `Claude { mode, version }`.
+- **`crates/amux/src/protocol.rs`** — Re-exported `ClaudeMode` instead of the old `ClaudeProtocol`.
+- **`crates/amux/src/agents/*.rs`** — Updated agent protocol reporting and structured-input error construction to match the new enum shapes.
+- **`crates/amux/src/server/*.rs` / `crates/amux/src/cloud.rs`** — Updated all routing, command handling, cloud reauth, shutdown/suspend notifications, and heartbeat paths to use the new envelope and error shapes.
+- **`crates/amux-cli/src/*.rs`** — Updated CLI command send/receive handling to match `Message::Command { command: ... }` and the new protocol enum forms.
+- **Tests across `message.rs`, `server/*`, and `claude/types.rs`** — Updated serialization roundtrips and pattern matches to the new wire shapes. Also updated forward-compat serialization tests to emit internally-tagged/`kind`-tagged future variants instead of old external-tagged forms.
+
+### Decisions Made
+- Use **`kind`** only for the top-level envelope and **`type`** for actual message variants. This keeps the outer transport class (`routable` / `direct` / `command`) distinct from inner operation names (`subscribe_structured`, `heartbeat`, etc.).
+- Use **`code`** for `ProtocolError` instead of overloading `type` again. Error payloads read more naturally as `{ "code": "unknown_subscription" }`.
+- Keep **UUIDs as bytes** on the wire for now. Cross-language ergonomics would be better with strings, but the app already speaks byte UUIDs and this cut was intentionally limited to message shape.
+- Keep **`AgentProtocol` coupled to the agent family**. Flattening to namespaced strings like `claude_pty_v1` would have hidden the relationship between payload schema and agent type behind naming convention. The new shape is explicit: `{ "agent_type": "claude", "mode": "pty", "version": 1 }`.
+- Name the top-level command field **`command`**, not `message`. `kind = "command"` plus `command = {...}` is clearer than another generic `message` field.
+- Do not preserve backwards compatibility or bump the protocol version. amux is still pre-release and simplifying the wire contract now is cheaper than carrying transitional shapes.
+
+### Verification
+- `cargo fmt`
+- `cargo check`
+- `cargo test -p amux`
+- `cargo test`
+- Result: all checks passed; `cargo test -p amux` ran 301 passing library tests after the protocol shape change.
+
+### Next Steps
+- Update any external clients (notably `amuxapp`) to the new tagged wire shapes before relying on these protocol messages again.
+- Revisit string UUIDs later as a separate protocol simplification if cross-language client ergonomics become the dominant concern.
+
 ## 2026-04-13: Add Unreachable message for forwarding failures
 
 ### Summary

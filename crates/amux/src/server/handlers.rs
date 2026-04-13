@@ -181,7 +181,9 @@ async fn spawn_subscription_stream<R: SubscriptionReader>(
 fn subscribe_error(err: &AmuxError) -> ProtocolError {
     match err {
         AmuxError::AgentNotFound(_) => ProtocolError::NoAgentFound,
-        _ => ProtocolError::ServerError(err.to_string()),
+        _ => ProtocolError::ServerError {
+            message: err.to_string(),
+        },
     }
 }
 
@@ -252,8 +254,8 @@ pub(super) async fn handle_message(
             request_id,
             payload,
         } => handle_routable(tx, src, dst, request_id, payload, ctx).await,
-        Message::Direct(direct) => handle_direct(tx, direct, ctx).await,
-        Message::Command(cmd) => {
+        Message::Direct { message: direct } => handle_direct(tx, direct, ctx).await,
+        Message::Command { command: cmd } => {
             if !ctx.is_local {
                 tracing::warn!(cmd = cmd.type_label(), "rejecting command from remote peer");
                 return Ok(());
@@ -652,7 +654,9 @@ async fn handle_routable(
                 },
                 Err(e) => RoutableMessage::CreateAgentResult {
                     agent_id,
-                    error: Some(ProtocolError::ServerError(e.to_string())),
+                    error: Some(ProtocolError::ServerError {
+                        message: e.to_string(),
+                    }),
                 },
             };
             let _ = tx
@@ -684,7 +688,9 @@ async fn handle_routable(
                     },
                     Err(e) => RoutableMessage::RenameAgentResult {
                         agent_id,
-                        error: Some(ProtocolError::ServerError(e.to_string())),
+                        error: Some(ProtocolError::ServerError {
+                            message: e.to_string(),
+                        }),
                     },
                 }
             };
@@ -717,9 +723,9 @@ async fn handle_routable(
                 }
                 None => RoutableMessage::DeleteAgentResult {
                     agent_id,
-                    error: Some(ProtocolError::ServerError(format!(
-                        "Agent not found: {agent_id}"
-                    ))),
+                    error: Some(ProtocolError::ServerError {
+                        message: format!("Agent not found: {agent_id}"),
+                    }),
                 },
             };
             let _ = tx
@@ -824,10 +830,16 @@ async fn handle_command(
                 ))
             });
             let response = match result {
-                Ok(()) => Message::Command(Command::ConnectToServerResult { error: None }),
-                Err(e) => Message::Command(Command::ConnectToServerResult {
-                    error: Some(ProtocolError::ServerError(e.to_string())),
-                }),
+                Ok(()) => Message::Command {
+                    command: Command::ConnectToServerResult { error: None },
+                },
+                Err(e) => Message::Command {
+                    command: Command::ConnectToServerResult {
+                        error: Some(ProtocolError::ServerError {
+                            message: e.to_string(),
+                        }),
+                    },
+                },
             };
             let _ = tx.send(response).await;
             Ok(())
@@ -836,7 +848,9 @@ async fn handle_command(
         Command::Debug { verbose, format } => {
             let dump = crate::debug::dump_server_debug_info(&ctx.state, format, verbose).await;
             let _ = tx
-                .send(Message::Command(Command::DebugResult { dump }))
+                .send(Message::Command {
+                    command: Command::DebugResult { dump },
+                })
                 .await;
             Ok(())
         }
@@ -847,9 +861,11 @@ async fn handle_command(
                 us.registry.list_all(&us.hosts)
             };
             let _ = tx
-                .send(Message::Command(Command::ListAgentsResult {
-                    agents: agents.into_iter().collect(),
-                }))
+                .send(Message::Command {
+                    command: Command::ListAgentsResult {
+                        agents: agents.into_iter().collect(),
+                    },
+                })
                 .await;
             Ok(())
         }
@@ -869,7 +885,9 @@ async fn handle_command(
             if matches!(hook.as_ref(), Hook::Claude(ClaudeHook::Unknown, _)) {
                 tracing::warn!(%agent_id, "received unknown hook variant");
                 let _ = tx
-                    .send(Message::Command(Command::HandleHookResult { error: None }))
+                    .send(Message::Command {
+                        command: Command::HandleHookResult { error: None },
+                    })
                     .await;
                 return Ok(());
             }
@@ -881,9 +899,13 @@ async fn handle_command(
                     matches!(hook.as_ref(), Hook::Claude(ClaudeHook::SessionEnd(_), _));
                 if let Some(session) = us.agents.get_mut(&agent_id) {
                     let is_readonly = session.readonly();
-                    let r = session.handle_hook(*hook).await.map_err(|e| {
-                        ProtocolError::ServerError(format!("hook handling failed: {e}"))
-                    });
+                    let r =
+                        session
+                            .handle_hook(*hook)
+                            .await
+                            .map_err(|e| ProtocolError::ServerError {
+                                message: format!("hook handling failed: {e}"),
+                            });
                     if r.is_ok() && is_session_end && is_readonly {
                         session_to_stop = withdraw_agent(&mut us, agent_id);
                     }
@@ -901,9 +923,9 @@ async fn handle_command(
                         let mut session =
                             AgentSession::Claude(ClaudeSession::new_readonly(agent_id, wd.clone()));
                         if let Err(e) = session.handle_hook(*hook).await {
-                            Err(ProtocolError::ServerError(format!(
-                                "hook handling failed: {e}"
-                            )))
+                            Err(ProtocolError::ServerError {
+                                message: format!("hook handling failed: {e}"),
+                            })
                         } else {
                             let host_id = {
                                 let state = ctx.state.read().await;
@@ -913,9 +935,11 @@ async fn handle_command(
                             let announce = announce_agent_message(&info);
                             us.agents.insert(agent_id, session);
                             if let Err(e) = us.registry.register_local(info) {
-                                Err(ProtocolError::ServerError(format!(
-                                    "failed to register readonly agent {agent_id}: {e}"
-                                )))
+                                Err(ProtocolError::ServerError {
+                                    message: format!(
+                                        "failed to register readonly agent {agent_id}: {e}"
+                                    ),
+                                })
                             } else {
                                 if let Some(session) = us.agents.get_mut(&agent_id) {
                                     session.maybe_start_name_sniffer(ctx.user_id, &ctx.event_tx);
@@ -927,9 +951,9 @@ async fn handle_command(
                         }
                     } else {
                         tracing::warn!(%agent_id, "no agent found for hook");
-                        Err(ProtocolError::ServerError(format!(
-                            "No agent found with agent_id: {agent_id}"
-                        )))
+                        Err(ProtocolError::ServerError {
+                            message: format!("No agent found with agent_id: {agent_id}"),
+                        })
                     }
                 }
             };
@@ -939,8 +963,12 @@ async fn handle_command(
             }
 
             let response = match result {
-                Ok(()) => Message::Command(Command::HandleHookResult { error: None }),
-                Err(e) => Message::Command(Command::HandleHookResult { error: Some(e) }),
+                Ok(()) => Message::Command {
+                    command: Command::HandleHookResult { error: None },
+                },
+                Err(e) => Message::Command {
+                    command: Command::HandleHookResult { error: Some(e) },
+                },
             };
             let _ = tx.send(response).await;
             Ok(())
@@ -950,7 +978,9 @@ async fn handle_command(
             let us = ctx.user_state.read().await;
             let agent = us.registry.resolve(&us.hosts, &identifier);
             let _ = tx
-                .send(Message::Command(Command::ResolveAgentResult { agent }))
+                .send(Message::Command {
+                    command: Command::ResolveAgentResult { agent },
+                })
                 .await;
             Ok(())
         }
@@ -982,13 +1012,15 @@ async fn handle_command(
             };
             if is_cloud_server {
                 let _ = tx
-                    .send(Message::Command(Command::ResumeResult {
-                        resumed_count: 0,
-                        failed_count: 0,
-                        error: Some(ProtocolError::ServerError(
-                            "cloud relays do not host local agents".to_string(),
-                        )),
-                    }))
+                    .send(Message::Command {
+                        command: Command::ResumeResult {
+                            resumed_count: 0,
+                            failed_count: 0,
+                            error: Some(ProtocolError::ServerError {
+                                message: "cloud relays do not host local agents".to_string(),
+                            }),
+                        },
+                    })
                     .await;
                 return Ok(());
             }
@@ -997,13 +1029,15 @@ async fn handle_command(
                 Err(e) => {
                     tracing::error!(error = %e, "failed to load suspended agents");
                     let _ = tx
-                        .send(Message::Command(Command::ResumeResult {
-                            resumed_count: 0,
-                            failed_count: 0,
-                            error: Some(ProtocolError::ServerError(format!(
-                                "failed to load state: {e}"
-                            ))),
-                        }))
+                        .send(Message::Command {
+                            command: Command::ResumeResult {
+                                resumed_count: 0,
+                                failed_count: 0,
+                                error: Some(ProtocolError::ServerError {
+                                    message: format!("failed to load state: {e}"),
+                                }),
+                            },
+                        })
                         .await;
                     return Ok(());
                 }
@@ -1017,11 +1051,13 @@ async fn handle_command(
             )
             .await;
             let _ = tx
-                .send(Message::Command(Command::ResumeResult {
-                    resumed_count,
-                    failed_count,
-                    error: None,
-                }))
+                .send(Message::Command {
+                    command: Command::ResumeResult {
+                        resumed_count: resumed_count as u64,
+                        failed_count: failed_count as u64,
+                        error: None,
+                    },
+                })
                 .await;
             Ok(())
         }
@@ -1029,7 +1065,7 @@ async fn handle_command(
         // Response variants — should not arrive at the server
         Command::ListAgentsResult { .. }
         | Command::ResolveAgentResult { .. }
-        | Command::ShutdownNotification(_)
+        | Command::ShutdownNotification { .. }
         | Command::DebugResult { .. }
         | Command::ConnectToServerResult { .. }
         | Command::HandleHookResult { .. }
@@ -1073,12 +1109,14 @@ async fn handle_direct(
                         "re-auth: client version below minimum"
                     );
                     let _ = tx
-                        .send(Message::Direct(DirectMessage::ReauthResult {
-                            error: Some(ProtocolError::UpgradeRequired {
-                                minimum_version: min_ver_str.clone(),
-                                client_version: ctx.client_version.clone(),
-                            }),
-                        }))
+                        .send(Message::Direct {
+                            message: DirectMessage::ReauthResult {
+                                error: Some(ProtocolError::UpgradeRequired {
+                                    minimum_version: min_ver_str.clone(),
+                                    client_version: ctx.client_version.clone(),
+                                }),
+                            },
+                        })
                         .await;
                     return Err(AmuxError::UpgradeRequired {
                         minimum_version: min_ver_str.clone(),
@@ -1108,9 +1146,11 @@ async fn handle_direct(
                         if token_user_id != ctx.user_id {
                             tracing::error!("re-auth user_id mismatch");
                             let _ = tx
-                                .send(Message::Direct(DirectMessage::ReauthResult {
-                                    error: Some(ProtocolError::InvalidCredentials),
-                                }))
+                                .send(Message::Direct {
+                                    message: DirectMessage::ReauthResult {
+                                        error: Some(ProtocolError::InvalidCredentials),
+                                    },
+                                })
                                 .await;
                             return Err(AmuxError::InvalidCredentials);
                         }
@@ -1119,9 +1159,11 @@ async fn handle_direct(
                     Err(e) => {
                         tracing::warn!(error = %e, "re-auth token validation failed");
                         let _ = tx
-                            .send(Message::Direct(DirectMessage::ReauthResult {
-                                error: Some(ProtocolError::InvalidCredentials),
-                            }))
+                            .send(Message::Direct {
+                                message: DirectMessage::ReauthResult {
+                                    error: Some(ProtocolError::InvalidCredentials),
+                                },
+                            })
                             .await;
                         return Ok(());
                     }
@@ -1129,7 +1171,9 @@ async fn handle_direct(
             }
 
             let _ = tx
-                .send(Message::Direct(DirectMessage::ReauthResult { error: None }))
+                .send(Message::Direct {
+                    message: DirectMessage::ReauthResult { error: None },
+                })
                 .await;
             Ok(())
         }
@@ -1363,14 +1407,16 @@ async fn handle_direct(
         }
 
         DirectMessage::Heartbeat => {
-            tx.send(Message::Direct(DirectMessage::HeartbeatAck))
-                .await
-                .map_err(|_| {
-                    AmuxError::Io(std::io::Error::new(
-                        std::io::ErrorKind::BrokenPipe,
-                        "outgoing channel closed while sending heartbeat ack",
-                    ))
-                })?;
+            tx.send(Message::Direct {
+                message: DirectMessage::HeartbeatAck,
+            })
+            .await
+            .map_err(|_| {
+                AmuxError::Io(std::io::Error::new(
+                    std::io::ErrorKind::BrokenPipe,
+                    "outgoing channel closed while sending heartbeat ack",
+                ))
+            })?;
             Ok(())
         }
 
@@ -1434,7 +1480,7 @@ mod tests {
     /// Create an AgentSession::TestAgent from a CreateAgentRequest.
     fn create_test_session(req: &crate::message::CreateAgentRequest) -> AgentSession {
         let cmd = match &req.agent_type {
-            crate::message::AgentType::TestAgent(cmd) => cmd.clone(),
+            crate::message::AgentType::TestAgent { command: cmd } => cmd.clone(),
             _ => panic!("expected TestAgent"),
         };
         let mut inner = crate::agents::TestAgentSession::new(req, cmd);
@@ -1515,7 +1561,7 @@ mod tests {
     fn drain_direct_messages(rx: &mut mpsc::Receiver<Message>) -> Vec<DirectMessage> {
         let mut messages = Vec::new();
         while let Ok(msg) = rx.try_recv() {
-            let Message::Direct(msg) = msg else {
+            let Message::Direct { message: msg } = msg else {
                 panic!("expected Direct message, got {:?}", msg);
             };
             messages.push(msg);
@@ -1539,7 +1585,10 @@ mod tests {
 
         let msgs = written.lock().await;
         assert_eq!(msgs.len(), 1);
-        let Message::Direct(DirectMessage::ReauthResult { error }) = &msgs[0] else {
+        let Message::Direct {
+            message: DirectMessage::ReauthResult { error },
+        } = &msgs[0]
+        else {
             panic!("expected ReauthResult, got {:?}", msgs[0]);
         };
         assert!(error.is_none());
@@ -1580,7 +1629,9 @@ mod tests {
         assert_eq!(msgs.len(), 1);
         assert!(matches!(
             msgs[0],
-            Message::Direct(DirectMessage::HeartbeatAck)
+            Message::Direct {
+                message: DirectMessage::HeartbeatAck
+            }
         ));
     }
 
@@ -1677,7 +1728,10 @@ mod tests {
         tokio::task::yield_now().await;
 
         let msgs = written.lock().await;
-        let Some(Message::Command(Command::DebugResult { dump })) = msgs.first() else {
+        let Some(Message::Command {
+            command: Command::DebugResult { dump },
+        }) = msgs.first()
+        else {
             panic!("expected DebugResult, got {:?}", msgs.first());
         };
         assert!(!dump.is_empty(), "yaml dump should be non-empty");
@@ -1707,7 +1761,10 @@ mod tests {
         tokio::task::yield_now().await;
 
         let msgs = written.lock().await;
-        let Some(Message::Command(Command::DebugResult { dump })) = msgs.first() else {
+        let Some(Message::Command {
+            command: Command::DebugResult { dump },
+        }) = msgs.first()
+        else {
             panic!("expected DebugResult, got {:?}", msgs.first());
         };
         assert!(!dump.is_empty(), "json dump should be non-empty");
@@ -1919,7 +1976,9 @@ mod tests {
             let req = crate::message::CreateAgentRequest {
                 agent_id,
                 name: Some("local".to_string()),
-                agent_type: crate::message::AgentType::TestAgent(dummy_pty_command()),
+                agent_type: crate::message::AgentType::TestAgent {
+                    command: dummy_pty_command(),
+                },
                 working_dir: dummy_working_dir(),
                 terminal_size: Some(crate::message::TerminalSize { rows: 24, cols: 80 }),
                 args: vec![],
@@ -2095,11 +2154,13 @@ mod tests {
             .expect("first announce should be propagated");
         assert!(matches!(
             forwarded,
-            Message::Direct(DirectMessage::AnnounceAgent {
-                agent_id: id,
-                name: Some(name),
-                ..
-            }) if id == agent_id && name == "first"
+            Message::Direct {
+                message: DirectMessage::AnnounceAgent {
+                    agent_id: id,
+                    name: Some(name),
+                    ..
+                }
+            } if id == agent_id && name == "first"
         ));
 
         let forwarded = peer_rx
@@ -2107,13 +2168,15 @@ mod tests {
             .expect("updated announce should be propagated");
         assert!(matches!(
             forwarded,
-            Message::Direct(DirectMessage::AnnounceAgent {
-                agent_id: id,
-                name: Some(name),
-                args,
-                working_dir,
-                ..
-            }) if id == agent_id
+            Message::Direct {
+                message: DirectMessage::AnnounceAgent {
+                    agent_id: id,
+                    name: Some(name),
+                    args,
+                    working_dir,
+                    ..
+                }
+            } if id == agent_id
                 && name == "second"
                 && args == vec!["--allow-dangerously-skip-permissions".to_string()]
                 && working_dir == Path::new("/second")
@@ -2170,11 +2233,13 @@ mod tests {
             .expect("rename should be re-announced to peers");
         assert!(matches!(
             forwarded,
-            Message::Direct(DirectMessage::AnnounceAgent {
-                agent_id: id,
-                name: Some(name),
-                ..
-            }) if id == agent_id && name == "renamed-agent"
+            Message::Direct {
+                message: DirectMessage::AnnounceAgent {
+                    agent_id: id,
+                    name: Some(name),
+                    ..
+                }
+            } if id == agent_id && name == "renamed-agent"
         ));
     }
 
@@ -2274,7 +2339,7 @@ mod tests {
             decode_written_routable(&msgs[0]),
             RoutableMessage::RenameAgentResult {
                 agent_id: id,
-                error: Some(ProtocolError::ServerError(ref err)),
+                error: Some(ProtocolError::ServerError { message: ref err }),
             } if id == candidate_id && err == "Agent already exists: taken-name"
         ));
         drop(msgs);
@@ -2343,7 +2408,9 @@ mod tests {
             .expect("delete should withdraw from peers");
         assert!(matches!(
             forwarded,
-            Message::Direct(DirectMessage::WithdrawAgent { agent_id: id }) if id == agent_id
+            Message::Direct {
+                message: DirectMessage::WithdrawAgent { agent_id: id }
+            } if id == agent_id
         ));
     }
 
@@ -2388,7 +2455,7 @@ mod tests {
             decode_written_routable(&msgs[0]),
             RoutableMessage::DeleteAgentResult {
                 agent_id: id,
-                error: Some(ProtocolError::ServerError(ref err)),
+                error: Some(ProtocolError::ServerError { message: ref err }),
             } if id == agent_id && err == &format!("Agent not found: {agent_id}")
         ));
         drop(msgs);
@@ -2437,7 +2504,10 @@ mod tests {
 
         let msgs = written.lock().await;
         assert_eq!(msgs.len(), 1);
-        let Message::Command(Command::ResolveAgentResult { agent }) = &msgs[0] else {
+        let Message::Command {
+            command: Command::ResolveAgentResult { agent },
+        } = &msgs[0]
+        else {
             panic!("expected ResolveAgentResult, got {:?}", msgs[0]);
         };
         assert!(agent.is_some());
@@ -2459,7 +2529,10 @@ mod tests {
 
         let msgs = written.lock().await;
         assert_eq!(msgs.len(), 1);
-        let Message::Command(Command::ResolveAgentResult { agent }) = &msgs[0] else {
+        let Message::Command {
+            command: Command::ResolveAgentResult { agent },
+        } = &msgs[0]
+        else {
             panic!("expected ResolveAgentResult, got {:?}", msgs[0]);
         };
         assert!(agent.is_none());
@@ -2889,11 +2962,15 @@ mod tests {
         let (tx, written) = mock_tx();
 
         // Remote peer sends Shutdown — should be silently rejected
-        let msg = Message::Command(Command::Shutdown);
+        let msg = Message::Command {
+            command: Command::Shutdown,
+        };
         handle_message(&tx, msg, &ctx).await.unwrap();
 
         // Remote peer sends ListAgents — should also be rejected
-        let msg = Message::Command(Command::ListAgents);
+        let msg = Message::Command {
+            command: Command::ListAgents,
+        };
         handle_message(&tx, msg, &ctx).await.unwrap();
 
         tokio::task::yield_now().await;
@@ -3237,7 +3314,9 @@ mod tests {
             &RoutableMessage::CreateAgent(CreateAgentRequest {
                 agent_id,
                 name: Some("cloud-agent".to_string()),
-                agent_type: AgentType::TestAgent(dummy_pty_command()),
+                agent_type: AgentType::TestAgent {
+                    command: dummy_pty_command(),
+                },
                 working_dir: dummy_working_dir(),
                 terminal_size: None,
                 args: vec![],
@@ -3253,7 +3332,7 @@ mod tests {
             decode_written_routable(&msgs[0]),
             RoutableMessage::CreateAgentResult {
                 agent_id: id,
-                error: Some(ProtocolError::ServerError(ref msg)),
+                error: Some(ProtocolError::ServerError { message: ref msg }),
             } if id == agent_id && msg.contains("cloud relays do not host local agents")
         ));
         drop(msgs);
@@ -3278,11 +3357,14 @@ mod tests {
 
         let msgs = written.lock().await;
         assert_eq!(msgs.len(), 1);
-        let Message::Command(Command::ResumeResult {
-            resumed_count,
-            failed_count,
-            error,
-        }) = &msgs[0]
+        let Message::Command {
+            command:
+                Command::ResumeResult {
+                    resumed_count,
+                    failed_count,
+                    error,
+                },
+        } = &msgs[0]
         else {
             panic!("expected ResumeResult, got {:?}", msgs[0]);
         };
@@ -3290,7 +3372,8 @@ mod tests {
         assert_eq!(*failed_count, 0);
         assert!(matches!(
             error,
-            Some(ProtocolError::ServerError(msg)) if msg.contains("cloud relays do not host local agents")
+            Some(ProtocolError::ServerError { message: msg })
+                if msg.contains("cloud relays do not host local agents")
         ));
     }
 
@@ -3425,7 +3508,10 @@ mod tests {
                 subscription_id: id,
                 seq: 0,
                 protocol:
-                    Some(crate::message::AgentProtocol::Claude(crate::message::ClaudeProtocol::PtyV1)),
+                    Some(crate::message::AgentProtocol::Claude {
+                        mode: crate::message::ClaudeMode::Pty,
+                        version: 1,
+                    }),
                 lease_ms,
                 error: None,
             } if !id.is_nil() && lease_ms == subscription_lease_ms() => id,
@@ -3573,7 +3659,9 @@ mod tests {
         let req = crate::message::CreateAgentRequest {
             agent_id,
             name: Some("hook-test".to_string()),
-            agent_type: crate::message::AgentType::TestAgent(dummy_pty_command()),
+            agent_type: crate::message::AgentType::TestAgent {
+                command: dummy_pty_command(),
+            },
             working_dir: dummy_working_dir(),
             terminal_size: Some(crate::message::TerminalSize { rows: 24, cols: 80 }),
             args: vec![],
@@ -3610,7 +3698,10 @@ mod tests {
 
         let msgs = written.lock().await;
         assert_eq!(msgs.len(), 1);
-        let Message::Command(Command::HandleHookResult { error }) = &msgs[0] else {
+        let Message::Command {
+            command: Command::HandleHookResult { error },
+        } = &msgs[0]
+        else {
             panic!("expected HandleHookResult, got {:?}", msgs[0]);
         };
         assert!(
@@ -3651,7 +3742,10 @@ mod tests {
 
         let msgs = written.lock().await;
         assert_eq!(msgs.len(), 1);
-        let Message::Command(Command::HandleHookResult { error }) = &msgs[0] else {
+        let Message::Command {
+            command: Command::HandleHookResult { error },
+        } = &msgs[0]
+        else {
             panic!("expected HandleHookResult, got {:?}", msgs[0]);
         };
         assert!(
@@ -3699,7 +3793,10 @@ mod tests {
 
         let msgs = written.lock().await;
         assert_eq!(msgs.len(), 1);
-        let Message::Command(Command::HandleHookResult { error }) = &msgs[0] else {
+        let Message::Command {
+            command: Command::HandleHookResult { error },
+        } = &msgs[0]
+        else {
             panic!("expected HandleHookResult, got {:?}", msgs[0]);
         };
         assert!(
@@ -3748,7 +3845,10 @@ mod tests {
 
         let msgs = written.lock().await;
         assert_eq!(msgs.len(), 1);
-        let Message::Command(Command::HandleHookResult { error }) = &msgs[0] else {
+        let Message::Command {
+            command: Command::HandleHookResult { error },
+        } = &msgs[0]
+        else {
             panic!("expected HandleHookResult, got {:?}", msgs[0]);
         };
         assert!(
@@ -3804,7 +3904,10 @@ mod tests {
 
         let msgs = written.lock().await;
         assert_eq!(msgs.len(), 1);
-        let Message::Command(Command::HandleHookResult { error }) = &msgs[0] else {
+        let Message::Command {
+            command: Command::HandleHookResult { error },
+        } = &msgs[0]
+        else {
             panic!("expected HandleHookResult, got {:?}", msgs[0]);
         };
         assert!(
@@ -3844,7 +3947,10 @@ mod tests {
 
         let msgs = written.lock().await;
         assert_eq!(msgs.len(), 1);
-        let Message::Command(Command::HandleHookResult { error }) = &msgs[0] else {
+        let Message::Command {
+            command: Command::HandleHookResult { error },
+        } = &msgs[0]
+        else {
             panic!("expected HandleHookResult, got {:?}", msgs[0]);
         };
         assert!(
@@ -3889,7 +3995,10 @@ mod tests {
 
         let msgs = written.lock().await;
         assert_eq!(msgs.len(), 1);
-        let Message::Command(Command::HandleHookResult { error }) = &msgs[0] else {
+        let Message::Command {
+            command: Command::HandleHookResult { error },
+        } = &msgs[0]
+        else {
             panic!("expected HandleHookResult, got {:?}", msgs[0]);
         };
         assert!(
@@ -3938,7 +4047,10 @@ mod tests {
 
         let msgs = written.lock().await;
         assert_eq!(msgs.len(), 1);
-        let Message::Command(Command::HandleHookResult { error }) = &msgs[0] else {
+        let Message::Command {
+            command: Command::HandleHookResult { error },
+        } = &msgs[0]
+        else {
             panic!("expected HandleHookResult, got {:?}", msgs[0]);
         };
         assert!(
@@ -4033,7 +4145,10 @@ mod tests {
 
         let msgs = written.lock().await;
         assert_eq!(msgs.len(), 1);
-        let Message::Command(Command::HandleHookResult { error }) = &msgs[0] else {
+        let Message::Command {
+            command: Command::HandleHookResult { error },
+        } = &msgs[0]
+        else {
             panic!("expected HandleHookResult, got {:?}", msgs[0]);
         };
         assert!(error.is_none());
@@ -4053,12 +4168,14 @@ mod tests {
             .expect("readonly creation should announce unnamed agent");
         assert!(matches!(
             initial,
-            Message::Direct(DirectMessage::AnnounceAgent {
-                agent_id: id,
-                name: None,
-                readonly: true,
-                ..
-            }) if id == agent_id
+            Message::Direct {
+                message: DirectMessage::AnnounceAgent {
+                    agent_id: id,
+                    name: None,
+                    readonly: true,
+                    ..
+                }
+            } if id == agent_id
         ));
 
         let renamed = peer_rx
@@ -4066,12 +4183,14 @@ mod tests {
             .expect("readonly rename should be re-announced");
         assert!(matches!(
             renamed,
-            Message::Direct(DirectMessage::AnnounceAgent {
-                agent_id: id,
-                name: Some(name),
-                readonly: true,
-                ..
-            }) if id == agent_id && name == "readonly-slug"
+            Message::Direct {
+                message: DirectMessage::AnnounceAgent {
+                    agent_id: id,
+                    name: Some(name),
+                    readonly: true,
+                    ..
+                }
+            } if id == agent_id && name == "readonly-slug"
         ));
     }
 
@@ -4630,7 +4749,9 @@ mod tests {
 
         let (route_tx, _route_rx) = mpsc::channel::<Message>(1);
         route_tx
-            .try_send(Message::Direct(DirectMessage::InitialSyncComplete))
+            .try_send(Message::Direct {
+                message: DirectMessage::InitialSyncComplete,
+            })
             .unwrap();
         {
             let mut us = user_state.write().await;

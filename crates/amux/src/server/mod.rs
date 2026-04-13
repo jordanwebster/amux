@@ -470,9 +470,11 @@ impl Server {
                             shutdown_server(&user_state).await;
                             deferred_reply = Some((
                                 reply,
-                                Message::Command(Command::ShutdownNotification(
-                                    ShutdownReason::UserRequested,
-                                )),
+                                Message::Command {
+                                    command: Command::ShutdownNotification {
+                                        reason: ShutdownReason::UserRequested,
+                                    },
+                                },
                             ));
                         }
                         ShutdownRequest::Suspend { reply, link_name } => {
@@ -489,7 +491,9 @@ impl Server {
                             let (suspended, errors) = suspend_server(&user_state).await;
                             let suspended_count = suspended.agents.len();
                             let error = if !errors.is_empty() {
-                                Some(ProtocolError::ServerError(errors.join("; ")))
+                                Some(ProtocolError::ServerError {
+                                    message: errors.join("; "),
+                                })
                             } else {
                                 None
                             };
@@ -503,12 +507,14 @@ impl Server {
                                 {
                                     tracing::error!(error = %e, "failed to save suspended agents");
                                     let _ = reply
-                                        .send(Message::Command(Command::SuspendResult {
-                                            suspended_count: 0,
-                                            error: Some(ProtocolError::ServerError(format!(
-                                                "failed to save state: {e}"
-                                            ))),
-                                        }))
+                                        .send(Message::Command {
+                                            command: Command::SuspendResult {
+                                                suspended_count: 0,
+                                                error: Some(ProtocolError::ServerError {
+                                                    message: format!("failed to save state: {e}"),
+                                                }),
+                                            },
+                                        })
                                         .await;
                                     // Don't shut down on save failure
                                     continue;
@@ -516,10 +522,12 @@ impl Server {
                             }
                             deferred_reply = Some((
                                 reply,
-                                Message::Command(Command::SuspendResult {
-                                    suspended_count,
-                                    error,
-                                }),
+                                Message::Command {
+                                    command: Command::SuspendResult {
+                                        suspended_count: suspended_count as u64,
+                                        error,
+                                    },
+                                },
                             ));
                         }
                     }
@@ -670,7 +678,9 @@ async fn notify_other_clients(
     reason: ShutdownReason,
 ) {
     let us = user_state.read().await;
-    let msg = Message::Command(Command::ShutdownNotification(reason));
+    let msg = Message::Command {
+        command: Command::ShutdownNotification { reason },
+    };
     for (link, handle) in &us.routes {
         if link == exclude_link {
             continue;
@@ -1011,13 +1021,15 @@ mod tests {
             .expect("peer should receive rename announce");
         assert!(matches!(
             msg,
-            Message::Direct(DirectMessage::AnnounceAgent {
-                agent_id: id,
-                host_id: announced_host_id,
-                name: Some(name),
-                args,
-                ..
-            }) if id == agent_id
+            Message::Direct {
+                message: DirectMessage::AnnounceAgent {
+                    agent_id: id,
+                    host_id: announced_host_id,
+                    name: Some(name),
+                    args,
+                    ..
+                }
+            } if id == agent_id
                 && announced_host_id == host_id
                 && name == "merry-slug"
                 && args == vec!["--dangerously-skip-permissions".to_string()]
@@ -1081,11 +1093,13 @@ mod tests {
             .expect("agent-name rename should announce");
         assert!(matches!(
             msg,
-            Message::Direct(DirectMessage::AnnounceAgent {
-                agent_id: id,
-                name: Some(name),
-                ..
-            }) if id == agent_id && name == "final-agent-name"
+            Message::Direct {
+                message: DirectMessage::AnnounceAgent {
+                    agent_id: id,
+                    name: Some(name),
+                    ..
+                }
+            } if id == agent_id && name == "final-agent-name"
         ));
     }
 

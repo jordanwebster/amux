@@ -198,7 +198,7 @@ async fn main() -> Result<()> {
                     plugin::ensure_plugin_installed().await;
                 }
                 #[cfg(any(debug_assertions, test))]
-                protocol::AgentType::TestAgent(_) => {}
+                protocol::AgentType::TestAgent { .. } => {}
             };
             client::new_agent(name.as_deref(), agent_type, args, &config).await?;
         }
@@ -255,11 +255,15 @@ fn parse_agent_type(s: &str) -> Result<protocol::AgentType> {
     match s.to_lowercase().as_str() {
         "claude" => Ok(protocol::AgentType::Claude),
         #[cfg(any(debug_assertions, test))]
-        "test-agent" => Ok(protocol::AgentType::TestAgent(s.to_string())),
+        "test-agent" => Ok(protocol::AgentType::TestAgent {
+            command: s.to_string(),
+        }),
         #[cfg(any(debug_assertions, test))]
         _ if looks_like_test_agent_path => {
             // Accept full path for E2E tests (e.g., /abs/path/test-agent or test-agent.exe)
-            Ok(protocol::AgentType::TestAgent(s.to_string()))
+            Ok(protocol::AgentType::TestAgent {
+                command: s.to_string(),
+            })
         }
         #[cfg(not(any(debug_assertions, test)))]
         _ => Err(anyhow!("Unknown agent type: '{}'. Valid: claude", s)),
