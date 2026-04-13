@@ -246,6 +246,13 @@ pub enum RoutableMessage {
         subscription_id: SubscriptionId,
         reason: SubscriptionCloseReason,
     },
+    /// Sent by an intermediate hop when it cannot forward a message.
+    /// Analogous to ICMP Destination Unreachable — the hop doesn't inspect the
+    /// payload, it just reports that delivery failed. The original sender
+    /// matches on `request_id` to fail the pending request.
+    Unreachable {
+        request_id: u64,
+    },
     UnknownMessage,
 }
 
@@ -272,6 +279,7 @@ impl RoutableMessage {
             RoutableMessage::StructuredInput { .. } => "StructuredInput",
             RoutableMessage::StructuredInputResult { .. } => "StructuredInputResult",
             RoutableMessage::SubscriptionClosed { .. } => "SubscriptionClosed",
+            RoutableMessage::Unreachable { .. } => "Unreachable",
             RoutableMessage::UnknownMessage => "UnknownMessage",
         }
     }
@@ -623,6 +631,17 @@ mod tests {
         assert!(matches!(
             decoded,
             RoutableMessage::DeleteAgent { agent_id: decoded_id } if decoded_id == agent_id
+        ));
+    }
+
+    #[test]
+    fn test_unreachable_roundtrip() {
+        let rm = RoutableMessage::Unreachable { request_id: 42 };
+        let encoded = rm.encode().unwrap();
+        let decoded = RoutableMessage::decode(&encoded).unwrap();
+        assert!(matches!(
+            decoded,
+            RoutableMessage::Unreachable { request_id: 42 }
         ));
     }
 

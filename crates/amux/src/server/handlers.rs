@@ -283,6 +283,9 @@ async fn handle_routable(
 ) -> Result<()> {
     // Check if this message needs forwarding — payload forwarded verbatim
     if let Some(next_hop) = dst.pop() {
+        // Clone src before push — if forwarding fails, we need the original
+        // return path (without the failed hop) to send Unreachable back.
+        let return_path = src.clone();
         src.push(&next_hop);
 
         let route_tx = {
@@ -290,23 +293,30 @@ async fn handle_routable(
             us.routes.get(&next_hop).cloned()
         };
 
-        match route_tx {
-            Some(route_tx) => {
-                if route_tx
-                    .send(Message::Routable {
-                        src,
-                        dst,
+        let forwarded = match route_tx {
+            Some(route_tx) => route_tx
+                .send(Message::Routable {
+                    src,
+                    dst,
+                    request_id,
+                    payload,
+                })
+                .await
+                .is_ok(),
+            None => false,
+        };
+
+        if !forwarded {
+            tracing::debug!(next_hop = %next_hop, "forwarding failed, sending Unreachable");
+            if let Some((reply_src, reply_dst)) = Route::reply(return_path) {
+                let _ = tx
+                    .send(Message::routable(
+                        reply_src,
+                        reply_dst,
                         request_id,
-                        payload,
-                    })
-                    .await
-                    .is_err()
-                {
-                    tracing::debug!(next_hop = %next_hop, "forwarding failed (channel closed)");
-                }
-            }
-            None => {
-                tracing::debug!(next_hop = %next_hop, "no route");
+                        &RoutableMessage::Unreachable { request_id },
+                    ))
+                    .await;
             }
         }
 
@@ -768,6 +778,7 @@ async fn handle_routable(
         | RoutableMessage::StructuredOutput { .. }
         | RoutableMessage::StructuredInputResult { .. }
         | RoutableMessage::SubscriptionClosed { .. }
+        | RoutableMessage::Unreachable { .. }
         | RoutableMessage::UnknownMessage => Ok(()),
     }
 }
@@ -2889,7 +2900,7 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn routable_to_nonexistent_route_is_silently_dropped() {
+    async fn forwarding_to_nonexistent_route_sends_unreachable() {
         let (state, user_state) = test_state().await;
         let ctx = test_ctx(state, user_state);
         let (tx, written) = mock_tx();
@@ -2898,14 +2909,100 @@ mod tests {
         let msg = Message::routable(
             Route::from_link("sender"),
             Route::from_link("nonexistent-hop"),
-            1,
+            42,
             &RoutableMessage::RawInput {
                 agent_id,
                 data: vec![0x41],
             },
         );
 
-        // Should not error — forwarding failures are silent drops
+        handle_message(&tx, msg, &ctx).await.unwrap();
+
+        tokio::task::yield_now().await;
+
+        let msgs = written.lock().await;
+        assert_eq!(msgs.len(), 1);
+        let Message::Routable {
+            payload,
+            request_id,
+            ..
+        } = &msgs[0]
+        else {
+            panic!("expected Routable, got {:?}", msgs[0]);
+        };
+        assert_eq!(*request_id, 42);
+        let reply = RoutableMessage::decode(payload).unwrap();
+        assert!(
+            matches!(reply, RoutableMessage::Unreachable { request_id: 42 }),
+            "expected Unreachable, got {:?}",
+            reply
+        );
+    }
+
+    #[tokio::test]
+    async fn forwarding_over_closed_channel_sends_unreachable() {
+        let (state, user_state) = test_state().await;
+
+        // Set up a route for "dead-peer" then immediately drop the receiver
+        let (peer_tx, peer_rx) = mpsc::channel::<Message>(16);
+        {
+            let mut us = user_state.write().await;
+            us.routes.insert(
+                "dead-peer".to_string(),
+                ConnectionHandle::new(peer_tx, Arc::new(AtomicU64::new(1))),
+            );
+        }
+        drop(peer_rx);
+
+        let ctx = test_ctx(state, user_state);
+        let (tx, written) = mock_tx();
+
+        let msg = Message::routable(
+            Route::from_link("sender"),
+            Route::from_link("dead-peer"),
+            7,
+            &RoutableMessage::SubscribeRaw {
+                agent_id: Uuid::new_v4(),
+                terminal_size: None,
+            },
+        );
+
+        handle_message(&tx, msg, &ctx).await.unwrap();
+
+        tokio::task::yield_now().await;
+
+        let msgs = written.lock().await;
+        assert_eq!(msgs.len(), 1);
+        let Message::Routable {
+            payload,
+            request_id,
+            ..
+        } = &msgs[0]
+        else {
+            panic!("expected Routable, got {:?}", msgs[0]);
+        };
+        assert_eq!(*request_id, 7);
+        let reply = RoutableMessage::decode(payload).unwrap();
+        assert!(
+            matches!(reply, RoutableMessage::Unreachable { request_id: 7 }),
+            "expected Unreachable, got {:?}",
+            reply
+        );
+    }
+
+    #[tokio::test]
+    async fn forwarding_with_empty_src_does_not_send_unreachable() {
+        let (state, user_state) = test_state().await;
+        let ctx = test_ctx(state, user_state);
+        let (tx, written) = mock_tx();
+
+        let msg = Message::Routable {
+            src: Route::empty(),
+            dst: Route::from_link("nonexistent"),
+            request_id: 1,
+            payload: vec![0x41],
+        };
+
         handle_message(&tx, msg, &ctx).await.unwrap();
 
         tokio::task::yield_now().await;
@@ -2913,7 +3010,7 @@ mod tests {
         let msgs = written.lock().await;
         assert!(
             msgs.is_empty(),
-            "no error message should be sent for routing failures"
+            "empty-src forwarding failures should not attempt a reply"
         );
     }
 
@@ -3109,6 +3206,7 @@ mod tests {
                 subscription_id: Uuid::new_v4(),
                 reason: SubscriptionCloseReason::SourceClosed,
             },
+            RoutableMessage::Unreachable { request_id: 99 },
             RoutableMessage::UnknownMessage,
         ];
 
