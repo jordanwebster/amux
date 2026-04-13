@@ -41,18 +41,18 @@ One paragraph describing what was done.
 ## 2026-04-13: Add Unreachable message for forwarding failures
 
 ### Summary
-Added a new `RoutableMessage::Unreachable` variant, analogous to ICMP Destination Unreachable. When an intermediate hop cannot forward a message (next hop not in routing table, or peer channel closed), it now sends `Unreachable` back to the original sender via the reverse path instead of silently dropping the message. This gives clients immediate error feedback instead of hanging until timeout.
+Added a new `RoutableMessage::Unreachable` variant, analogous to ICMP Destination Unreachable. When an intermediate hop cannot forward a message because the next hop doesn't exist in the routing table, it sends `Unreachable` back to the original sender via the reverse path. This gives clients immediate error feedback instead of hanging until timeout.
 
 ### Changes
 - **`crates/amux/src/message.rs`** — Added `Unreachable { request_id: u64 }` variant to `RoutableMessage`, updated `type_label()`, added roundtrip test.
-- **`crates/amux/src/server/handlers.rs`** — Restructured the forwarding path in `handle_routable()` to clone `src` before the hop push, then send `Unreachable` back via the original return path on failure. Added `Unreachable` to the destination noop match arm. Updated existing test, added three new tests.
+- **`crates/amux/src/server/handlers.rs`** — In the `None` (no route) arm of `handle_routable()` forwarding, send `Unreachable` back via `Route::reply(src)`. Added `Unreachable` to the destination noop match arm. Updated existing test, added three new tests.
 
 ### Decisions Made
 - Named `Unreachable` (not `UnreachableRoute`) following ICMP/BGP/SCTP convention — the routing layer reports it can't deliver, the name is self-evident in that context.
 - `Unreachable` carries `request_id` so it's self-describing in the payload, even though the envelope also carries it. Mirrors ICMP including the original datagram header.
 - No reason enum (NoRoute vs LinkDown) — the client treats both identically. Can add `Option<UnreachableReason>` later if needed.
 - No hop identification — can add `Option<String>` later if diagnostics warrant it.
-- Uses `src.clone()` before the push to preserve the return path. The clone is only on the forwarding path (multi-hop), which is the less common case for local setups.
+- Only the no-route case sends Unreachable. The channel-closed case (route exists but peer disconnected between lookup and send) does not — `src` is consumed by the forwarded message so we can't reply. This is acceptable because `send()` succeeding only means the message landed in the channel buffer, not that the peer processed it. Reliable delivery requires application-level acks (`*Result` messages), so senders must use timeouts for in-flight losses regardless.
 
 ### Verification
 - `cargo check`, `cargo fmt`, `cargo clippy --workspace --all-targets -- -D warnings`, `cargo test --workspace` — all 301 tests pass (3 new: forwarding to nonexistent route, forwarding over closed channel, empty-src forwarding; plus roundtrip serialization test).

@@ -283,40 +283,46 @@ async fn handle_routable(
 ) -> Result<()> {
     // Check if this message needs forwarding — payload forwarded verbatim
     if let Some(next_hop) = dst.pop() {
-        // Clone src before push — if forwarding fails, we need the original
-        // return path (without the failed hop) to send Unreachable back.
-        let return_path = src.clone();
-        src.push(&next_hop);
-
         let route_tx = {
             let us = ctx.user_state.read().await;
             us.routes.get(&next_hop).cloned()
         };
 
-        let forwarded = match route_tx {
-            Some(route_tx) => route_tx
-                .send(Message::Routable {
-                    src,
-                    dst,
-                    request_id,
-                    payload,
-                })
-                .await
-                .is_ok(),
-            None => false,
-        };
-
-        if !forwarded {
-            tracing::debug!(next_hop = %next_hop, "forwarding failed, sending Unreachable");
-            if let Some((reply_src, reply_dst)) = Route::reply(return_path) {
-                let _ = tx
-                    .send(Message::routable(
-                        reply_src,
-                        reply_dst,
+        match route_tx {
+            Some(route_tx) => {
+                // src is consumed by the forwarded message. If the channel is
+                // closed (peer disconnected between lookup and send), we can't
+                // send Unreachable — but that's fine: a successful send() only
+                // means the message landed in the channel buffer, not that the
+                // peer processed it. Reliable delivery requires application-level
+                // acks (*Result messages), so the sender must use timeouts for
+                // in-flight losses regardless.
+                src.push(&next_hop);
+                if route_tx
+                    .send(Message::Routable {
+                        src,
+                        dst,
                         request_id,
-                        &RoutableMessage::Unreachable { request_id },
-                    ))
-                    .await;
+                        payload,
+                    })
+                    .await
+                    .is_err()
+                {
+                    tracing::debug!(next_hop = %next_hop, "forwarding failed (channel closed)");
+                }
+            }
+            None => {
+                tracing::debug!(next_hop = %next_hop, "no route, sending Unreachable");
+                if let Some((reply_src, reply_dst)) = Route::reply(src) {
+                    let _ = tx
+                        .send(Message::routable(
+                            reply_src,
+                            reply_dst,
+                            request_id,
+                            &RoutableMessage::Unreachable { request_id },
+                        ))
+                        .await;
+                }
             }
         }
 
@@ -2940,7 +2946,7 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn forwarding_over_closed_channel_sends_unreachable() {
+    async fn forwarding_over_closed_channel_is_silently_dropped() {
         let (state, user_state) = test_state().await;
 
         // Set up a route for "dead-peer" then immediately drop the receiver
@@ -2971,22 +2977,11 @@ mod tests {
 
         tokio::task::yield_now().await;
 
+        // src was consumed by the send attempt, so no Unreachable can be sent
         let msgs = written.lock().await;
-        assert_eq!(msgs.len(), 1);
-        let Message::Routable {
-            payload,
-            request_id,
-            ..
-        } = &msgs[0]
-        else {
-            panic!("expected Routable, got {:?}", msgs[0]);
-        };
-        assert_eq!(*request_id, 7);
-        let reply = RoutableMessage::decode(payload).unwrap();
         assert!(
-            matches!(reply, RoutableMessage::Unreachable { request_id: 7 }),
-            "expected Unreachable, got {:?}",
-            reply
+            msgs.is_empty(),
+            "channel-closed forwarding failures cannot send Unreachable (src consumed)"
         );
     }
 
