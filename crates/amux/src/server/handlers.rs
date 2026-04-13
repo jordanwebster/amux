@@ -733,40 +733,27 @@ async fn handle_routable(
             payload,
         } => {
             tracing::debug!(%agent_id, client_seq, "structured input received");
-            let us = ctx.user_state.read().await;
-            let Some(session) = us.agents.get(&agent_id) else {
-                tracing::warn!(%agent_id, "structured input rejected: agent not found");
-                if let Some((reply_src, reply_dst)) = reply_routes(src, "StructuredInput") {
-                    let _ = tx
-                        .send(Message::routable(
-                            reply_src,
-                            reply_dst,
-                            request_id,
-                            &RoutableMessage::StructuredInputResult {
-                                agent_id,
-                                error: Some(ProtocolError::NoAgentFound),
-                            },
-                        ))
-                        .await;
-                }
+            let Some((reply_src, reply_dst)) = reply_routes(src, "StructuredInput") else {
                 return Ok(());
             };
-            if let Err(error) = session.send_structured_input(client_seq, payload).await {
-                if let Some((reply_src, reply_dst)) = reply_routes(src, "StructuredInput") {
-                    let _ = tx
-                        .send(Message::routable(
-                            reply_src,
-                            reply_dst,
-                            request_id,
-                            &RoutableMessage::StructuredInputResult {
-                                agent_id,
-                                error: Some(error),
-                            },
-                        ))
-                        .await;
-                }
-                return Ok(());
-            }
+            let us = ctx.user_state.read().await;
+            let error = if let Some(session) = us.agents.get(&agent_id) {
+                session
+                    .send_structured_input(client_seq, payload)
+                    .await
+                    .err()
+            } else {
+                tracing::warn!(%agent_id, "structured input rejected: agent not found");
+                Some(ProtocolError::NoAgentFound)
+            };
+            let _ = tx
+                .send(Message::routable(
+                    reply_src,
+                    reply_dst,
+                    request_id,
+                    &RoutableMessage::StructuredInputResult { agent_id, error },
+                ))
+                .await;
             Ok(())
         }
 

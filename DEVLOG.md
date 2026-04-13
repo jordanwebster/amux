@@ -38,6 +38,23 @@ One paragraph describing what was done.
 
 ---
 
+## 2026-04-13: Always return StructuredInputResult
+
+### Summary
+Changed StructuredInput handling to always send a StructuredInputResult back to the caller, including on success. Previously, a successful StructuredInput was silent (fire-and-forget) and only errors produced a result. This was inconsistent with the other request/result pairs (CreateAgent, DeleteAgent, RenameAgent, etc.) which all unconditionally return a result.
+
+### Changes
+- **`crates/amux/src/server/handlers.rs`** — Restructured the StructuredInput handler to extract reply routes up front and always send StructuredInputResult with `error: None` on success.
+
+### Decisions Made
+- Always-respond is the right pattern for StructuredInput because clients (e.g. mobile fork flow) need positive confirmation that input was accepted before advancing UI state. The seq handshake implies the client cares about correctness, and a positive ack completes that contract.
+- RawInput remains fire-and-forget — it's a byte stream with no sequencing contract, and the PTY echo is the feedback loop.
+
+### Verification
+- `cargo check`, `cargo fmt`, `cargo clippy --workspace --all-targets -- -D warnings`, `cargo test --workspace` — all 298 tests pass.
+
+---
+
 ## 2026-04-12: Move Claude PTY encoding to the app client
 
 ### Summary
