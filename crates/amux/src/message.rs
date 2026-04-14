@@ -31,21 +31,8 @@ pub enum AgentType {
     /// Test agent for E2E tests (only available in dev/test builds)
     #[cfg(any(debug_assertions, test))]
     TestAgent { command: String },
-}
-
-/// Claude-specific structured I/O protocol mode negotiated on subscribe.
-#[derive(Serialize, Deserialize, Debug, Clone, PartialEq, Eq)]
-#[serde(rename_all = "snake_case")]
-pub enum ClaudeMode {
-    Pty,
-    Sdk,
-}
-
-/// Structured I/O protocol contract for a subscribed agent session.
-#[derive(Serialize, Deserialize, Debug, Clone, PartialEq, Eq)]
-#[serde(tag = "agent_type", rename_all = "snake_case")]
-pub enum AgentProtocol {
-    Claude { mode: ClaudeMode, version: u16 },
+    #[serde(other)]
+    Unknown,
 }
 
 pub type SubscriptionId = Uuid;
@@ -59,6 +46,8 @@ pub enum SubscribeQuery {
     Since { seq: u64 },
     /// Replay only the last `count` entries. O(count) replay.
     Tail { count: u64 },
+    #[serde(other)]
+    Unknown,
 }
 
 /// Protocol-level errors that can be returned in response messages
@@ -71,6 +60,9 @@ pub enum ProtocolError {
     /// The requested subscription is unknown or has already ended.
     #[error("Unknown subscription")]
     UnknownSubscription,
+    /// The requested structured subscribe query is not supported by this peer.
+    #[error("Unsupported subscribe query")]
+    UnsupportedSubscribeQuery,
     /// Generic server error with message
     #[error("{message}")]
     ServerError { message: String },
@@ -98,6 +90,9 @@ pub enum ProtocolError {
     /// Structured input seq doesn't match current output seq
     #[error("sequence number mismatch (client {client_seq}, server {current_seq})")]
     SequenceNumberMismatch { client_seq: u64, current_seq: u64 },
+    #[serde(other)]
+    #[error("Unknown protocol error")]
+    Unknown,
 }
 
 /// Output format requested for the server `debug` dump.
@@ -196,7 +191,8 @@ pub enum RoutableMessage {
         /// their initial seq when no StructuredOutput messages have arrived.
         seq: u64,
         /// Structured I/O contract for this subscription, if the session exposes one.
-        protocol: Option<AgentProtocol>,
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        structured_protocol: Option<String>,
         lease_ms: u64,
         error: Option<ProtocolError>,
     },
@@ -261,7 +257,10 @@ pub enum RoutableMessage {
     Unreachable {
         request_id: u64,
     },
-    UnknownMessage,
+    UnsupportedMessage,
+    InvalidMessage,
+    #[serde(other)]
+    Unknown,
 }
 
 impl RoutableMessage {
@@ -288,7 +287,9 @@ impl RoutableMessage {
             RoutableMessage::StructuredInputResult { .. } => "StructuredInputResult",
             RoutableMessage::SubscriptionClosed { .. } => "SubscriptionClosed",
             RoutableMessage::Unreachable { .. } => "Unreachable",
-            RoutableMessage::UnknownMessage => "UnknownMessage",
+            RoutableMessage::UnsupportedMessage => "UnsupportedMessage",
+            RoutableMessage::InvalidMessage => "InvalidMessage",
+            RoutableMessage::Unknown => "Unknown",
         }
     }
 
@@ -325,7 +326,9 @@ pub enum DirectMessage {
         name: Option<String>,
         command: String,
         working_dir: PathBuf,
-        agent_type: AgentType,
+        agent_type: String,
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        structured_protocol: Option<String>,
         readonly: bool,
         args: Vec<String>,
         created_at: DateTime<Utc>,
@@ -343,6 +346,8 @@ pub enum DirectMessage {
         id: Uuid,
         route: Route,
     },
+    #[serde(other)]
+    Unknown,
 }
 
 /// CLI-only commands that must not be accepted from remote peers.
@@ -394,6 +399,8 @@ pub enum Command {
         failed_count: u64,
         error: Option<ProtocolError>,
     },
+    #[serde(other)]
+    Unknown,
 }
 
 impl Command {
@@ -416,6 +423,7 @@ impl Command {
             Command::SuspendResult { .. } => "SuspendResult",
             Command::Resume => "Resume",
             Command::ResumeResult { .. } => "ResumeResult",
+            Command::Unknown => "Unknown",
         }
     }
 }
@@ -436,6 +444,8 @@ pub enum Message {
     Command {
         command: Command,
     },
+    #[serde(other)]
+    Unknown,
 }
 
 impl Message {
@@ -467,6 +477,7 @@ impl Message {
                 DirectMessage::WithdrawAgent { .. } => "Direct::WithdrawAgent",
                 DirectMessage::AnnounceHost { .. } => "Direct::AnnounceHost",
                 DirectMessage::WithdrawHost { .. } => "Direct::WithdrawHost",
+                DirectMessage::Unknown => "Direct::Unknown",
             },
             Message::Command { command: c } => match c {
                 Command::ListAgents => "Command::ListAgents",
@@ -485,7 +496,9 @@ impl Message {
                 Command::SuspendResult { .. } => "Command::SuspendResult",
                 Command::Resume => "Command::Resume",
                 Command::ResumeResult { .. } => "Command::ResumeResult",
+                Command::Unknown => "Command::Unknown",
             },
+            Message::Unknown => "Unknown",
         }
     }
 }
@@ -552,10 +565,7 @@ mod tests {
             RoutableMessage::SubscribeStructuredResult {
                 subscription_id,
                 seq: 42,
-                protocol: Some(AgentProtocol::Claude {
-                    mode: ClaudeMode::Pty,
-                    version: 1,
-                }),
+                structured_protocol: Some("claude_pty_v1".to_string()),
                 lease_ms: 30_000,
                 error: None,
             },
@@ -676,7 +686,8 @@ mod tests {
             command: "claude".to_string(),
             working_dir: PathBuf::from("/tmp"),
             route: Route::from_link("host-a"),
-            agent_type: AgentType::Claude,
+            agent_type: "claude".to_string(),
+            structured_protocol: Some("claude_pty_v1".to_string()),
             readonly: false,
             args: vec![],
             created_at: Utc::now(),
@@ -722,13 +733,11 @@ mod tests {
     }
 
     // --- Forward compatibility contract tests ---
-    // These verify that unknown message variants produce decode errors (not panics),
-    // which the reader_loop skips to keep the connection alive.
+    // These verify that unknown message variants deserialize to explicit Unknown
+    // cases instead of failing the entire frame decode.
 
     #[test]
-    fn test_unknown_direct_variant_produces_decode_error() {
-        // Simulate a future DirectMessage variant that this version doesn't know about.
-        // The reader_loop handles this by skipping the message (not killing the connection).
+    fn test_unknown_direct_variant_deserializes_to_unknown() {
         #[derive(Serialize)]
         #[serde(tag = "type", rename_all = "snake_case")]
         enum FutureDirectMessage {
@@ -743,10 +752,27 @@ mod tests {
             message: FutureDirectMessage::Ping { seq: 42 },
         };
         let encoded = rmp_serde::to_vec_named(&future_msg).unwrap();
-        assert!(
-            Message::decode(&encoded).is_err(),
-            "unknown DirectMessage variant should produce a decode error"
-        );
+        let decoded = Message::decode(&encoded).unwrap();
+        assert!(matches!(
+            decoded,
+            Message::Direct {
+                message: DirectMessage::Unknown
+            }
+        ));
+    }
+
+    #[test]
+    fn test_unknown_routable_variant_deserializes_to_unknown() {
+        #[derive(Serialize)]
+        #[serde(tag = "type", rename_all = "snake_case")]
+        enum FutureRoutableMessage {
+            FancyPing { seq: u64 },
+        }
+
+        let encoded =
+            rmp_serde::to_vec_named(&FutureRoutableMessage::FancyPing { seq: 42 }).unwrap();
+        let decoded = RoutableMessage::decode(&encoded).unwrap();
+        assert!(matches!(decoded, RoutableMessage::Unknown));
     }
 
     #[test]
@@ -782,8 +808,7 @@ mod tests {
     }
 
     #[test]
-    fn test_unknown_top_level_variant_produces_decode_error() {
-        // Simulate a future top-level Message variant that this version doesn't know about.
+    fn test_unknown_top_level_variant_deserializes_to_unknown() {
         #[derive(Serialize)]
         #[serde(tag = "kind", rename_all = "snake_case")]
         enum FutureMessage {
@@ -791,9 +816,7 @@ mod tests {
         }
         let future_msg = FutureMessage::Stream { id: 1 };
         let encoded = rmp_serde::to_vec_named(&future_msg).unwrap();
-        assert!(
-            Message::decode(&encoded).is_err(),
-            "unknown Message variant should produce a decode error"
-        );
+        let decoded = Message::decode(&encoded).unwrap();
+        assert!(matches!(decoded, Message::Unknown));
     }
 }

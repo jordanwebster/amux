@@ -82,10 +82,10 @@ pub(super) enum Incoming {
 
 /// Reader task: reads from transport, sends to channel. Never cancelled.
 ///
-/// Decode errors (e.g. unknown message variant from a newer peer) are logged and
-/// skipped rather than killing the connection. This is safe because the framing
-/// layer reads the complete frame before decoding — a decode failure doesn't
-/// corrupt the stream position. I/O errors remain fatal.
+/// Decode errors on the top-level wire frame are logged and skipped rather than
+/// killing the connection. This is safe because the framing layer reads the
+/// complete frame before decoding, so an undecodable frame does not corrupt the
+/// stream position. I/O errors remain fatal.
 pub(super) async fn reader_loop<R: MessageReader>(mut reader: R, tx: mpsc::Sender<Incoming>) {
     loop {
         match reader.read_message().await {
@@ -99,10 +99,9 @@ pub(super) async fn reader_loop<R: MessageReader>(mut reader: R, tx: mpsc::Sende
                 break;
             }
             Err(AmuxError::SerializationDecode(e)) => {
-                // Unknown message variant or unrecognized field layout from a
-                // newer peer. The frame was fully consumed by the framing layer,
-                // so the stream position is correct for the next read. Skip this
-                // message to keep the connection alive during rolling upgrades.
+                // The frame was fully consumed by the framing layer, so the
+                // stream position is correct for the next read. Skip undecodable
+                // top-level frames to keep the connection alive.
                 tracing::debug!(error = %e, "skipping undecodable message");
             }
             Err(e) => {
@@ -886,7 +885,7 @@ mod tests {
 
     #[tokio::test]
     async fn reader_loop_skips_decode_errors_and_continues() {
-        // Simulate: good message → decode error → good message → EOF
+        // Simulate: good message → undecodable frame → good message → EOF
         let decode_err = rmp_serde::decode::Error::Syntax("unknown variant".to_string());
         let reader = MockReader::new(vec![
             Ok(Message::Command {
@@ -904,7 +903,7 @@ mod tests {
 
         reader_loop(reader, tx).await;
 
-        // Decode error should be skipped — two messages plus EOF
+        // Undecodable frame should be skipped — two messages plus EOF
         let items = drain_incoming(&mut rx).await;
         assert_eq!(
             items,

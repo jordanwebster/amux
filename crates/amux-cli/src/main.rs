@@ -199,6 +199,9 @@ async fn main() -> Result<()> {
                 }
                 #[cfg(any(debug_assertions, test))]
                 protocol::AgentType::TestAgent { .. } => {}
+                protocol::AgentType::Unknown => {
+                    unreachable!("CLI parser only constructs known agent types")
+                }
             };
             client::new_agent(name.as_deref(), agent_type, args, &config).await?;
         }

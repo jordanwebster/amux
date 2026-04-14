@@ -166,6 +166,9 @@ impl BufferPolicy for StructuredPolicy {
                 let start = storage.entries.len().saturating_sub(*count as usize);
                 &storage.entries[start..]
             }
+            Some(SubscribeQuery::Unknown) => {
+                unreachable!("unknown subscribe queries must be rejected before buffer replay")
+            }
         };
         for entry in entries {
             let _ = tx.try_send(entry.clone());

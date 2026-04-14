@@ -73,6 +73,7 @@ pub(super) fn announce_agent_message(info: &Agent) -> DirectMessage {
         command: info.command.clone(),
         working_dir: info.working_dir.clone(),
         agent_type: info.agent_type.clone(),
+        structured_protocol: info.structured_protocol.clone(),
         readonly: info.readonly,
         args: info.args.clone(),
         created_at: info.created_at,
@@ -251,6 +252,9 @@ pub(super) async fn create_agent(
             #[cfg(any(debug_assertions, test))]
             AgentType::TestAgent { command: cmd } => {
                 AgentSession::TestAgent(crate::agents::TestAgentSession::new(&req, cmd.clone()))
+            }
+            AgentType::Unknown => {
+                return Err(AmuxError::ServerError("unknown agent type".to_string()));
             }
         };
         let exit_handle = session.start()?;
@@ -749,9 +753,8 @@ mod tests {
                 command: "test".to_string(),
                 working_dir: PathBuf::from("/tmp"),
                 route: Route::from_link(link),
-                agent_type: crate::message::AgentType::TestAgent {
-                    command: "test".to_string(),
-                },
+                agent_type: "test_agent".to_string(),
+                structured_protocol: None,
                 readonly: false,
                 args: vec![],
                 created_at: Utc::now(),
@@ -1347,9 +1350,8 @@ mod tests {
                 command: "test".to_string(),
                 working_dir: PathBuf::from("/tmp"),
                 route: Route::empty(),
-                agent_type: crate::message::AgentType::TestAgent {
-                    command: "test".to_string(),
-                },
+                agent_type: "test_agent".to_string(),
+                structured_protocol: None,
                 readonly: false,
                 args: vec![],
                 created_at: Utc::now(),

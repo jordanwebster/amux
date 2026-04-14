@@ -154,7 +154,13 @@ enum RoutableMessage {
     SubscribeRaw { agent_id: Uuid, terminal_size: Option<TerminalSize> },
     SubscribeStructured { agent_id: Uuid },
     SubscribeRawResult { agent_id: Uuid, error: Option<ProtocolError> },
-    SubscribeStructuredResult { agent_id: Uuid, error: Option<ProtocolError> },
+    SubscribeStructuredResult {
+        subscription_id: Uuid,
+        seq: u64,
+        structured_protocol: Option<String>,
+        lease_ms: u64,
+        error: Option<ProtocolError>,
+    },
 
     // Input to agents
     RawInput { agent_id: Uuid, data: Vec<u8> },           // Raw keystroke bytes
@@ -172,7 +178,8 @@ enum RoutableMessage {
     SubscriptionClosed { agent_id: Uuid },  // Subscription EOF (agent ended or buffer closed)
 
     // Error handling
-    UnknownMessage,  // Sent back when the endpoint can't deserialize the payload
+    UnsupportedMessage,  // Parsed payload with an unknown routable tag
+    InvalidMessage,      // Malformed / undecodable payload bytes
 }
 ```
 
@@ -191,7 +198,15 @@ enum DirectMessage {
     HeartbeatAck,
 
     // Agent discovery (pure registry, no routing side effects)
-    AnnounceAgent { agent_id: Uuid, name: Option<String>, command: String, working_dir: PathBuf, route: Route },
+    AnnounceAgent {
+        agent_id: Uuid,
+        name: Option<String>,
+        command: String,
+        working_dir: PathBuf,
+        route: Route,
+        agent_type: String,
+        structured_protocol: Option<String>,
+    },
     WithdrawAgent { agent_id: Uuid },
 
     // Host/route management (single source of routing truth)
@@ -582,7 +597,8 @@ When a `Routable` message arrives at `handle_routable`:
 3. **If `None`:** This message has arrived at its destination
    - Deserialize `payload` into `RoutableMessage` (two-step deserialization)
    - Deliver locally (subscribe, input, output, etc.)
-   - On payload deserialization failure: send `RoutableMessage::UnknownMessage` response
+   - On parsed-but-unknown routable tag: send `RoutableMessage::UnsupportedMessage`
+   - On malformed / undecodable payload bytes: send `RoutableMessage::InvalidMessage`
 
 ### Reply Routing
 

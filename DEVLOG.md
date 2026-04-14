@@ -38,6 +38,36 @@ One paragraph describing what was done.
 
 ---
 
+## 2026-04-14: Add forward-compatibility Unknown variants and flatten AgentProtocol
+
+### Summary
+Added `#[serde(other)] Unknown` catch-all variants to all protocol enums (`Message`, `DirectMessage`, `RoutableMessage`, `Command`, `SubscribeQuery`, `ProtocolError`, `AgentType`) so that peers at different versions can deserialize unrecognized variants without frame-level decode failures. Split the old `UnknownMessage` response into `UnsupportedMessage` (parsed but unrecognized routable tag) vs `InvalidMessage` (corrupt/undecodable payload bytes). Replaced the `AgentProtocol` enum with an opaque `structured_protocol: Option<String>` on both `AnnounceAgent` and `SubscribeStructuredResult`, and changed `agent_type` in the registry from `AgentType` enum to a plain `String`.
+
+### Changes
+- **`crates/amux/src/message.rs`** — Added `Unknown` variants with `#[serde(other)]` to `Message`, `DirectMessage`, `RoutableMessage`, `Command`, `SubscribeQuery`, `ProtocolError`, `AgentType`. Replaced `UnknownMessage` with `UnsupportedMessage` + `InvalidMessage` + `Unknown`. Removed `ClaudeMode`, `AgentProtocol` enums. Changed `SubscribeStructuredResult.protocol` to `structured_protocol: Option<String>`. Updated forward-compat tests to assert `Unknown` deserialization instead of decode errors. Added new test for unknown routable variant.
+- **`crates/amux/src/protocol.rs`** — Removed `AgentProtocol` and `ClaudeMode` re-exports.
+- **`crates/amux/src/agents/mod.rs`** — Replaced `agent_protocol()` with `structured_protocol()` returning `Option<String>`. Changed `to_agent()` to emit `agent_type` as a string and include `structured_protocol`.
+- **`crates/amux/src/agent_registry.rs`** — Changed `Agent` and `StoredAgent` `agent_type` from `AgentType` enum to `String`, added `structured_protocol: Option<String>`.
+- **`crates/amux/src/buffer.rs`** — Added `SubscribeQuery::Unknown` arm returning empty slice (defensive; handler rejects before reaching buffer).
+- **`crates/amux/src/debug.rs`** — Emit `structured_protocol` in agent debug dump when present.
+- **`crates/amux/src/server/handlers.rs`** — Handle `Unknown` variants in `handle_message`, `handle_routable`, `handle_command`, `handle_direct` (log and drop). Distinguish `RoutableMessage::Unknown` (→ `UnsupportedMessage` reply) from decode failure (→ `InvalidMessage` reply). Reject `SubscribeQuery::Unknown` with `UnsupportedSubscribeQuery` error. Added `unknown_routable_variant_returns_unsupported_message` test.
+- **`crates/amux/src/server/connection.rs`** — Updated doc comments: frame-level decode errors are now only for truly undecodable frames since known-but-unsupported variants deserialize to `Unknown`.
+- **`crates/amux/src/server/routing.rs`** — Pass `structured_protocol` in `announce_agent_message`. Reject `AgentType::Unknown` in `create_agent`. Updated test agent types to strings.
+- **`crates/amux-cli/src/main.rs`** — Handle `AgentType::Unknown` as unreachable in CLI parser.
+- **`ARCHITECTURE.md`** — Updated `RoutableMessage`, `DirectMessage`, and error handling sections to match.
+
+### Decisions Made
+- **`#[serde(other)]` on every protocol enum.** This shifts version-skew handling from frame-level skip (reader_loop) to handler-level drop, preserving envelope context (src/dst/request_id) for logging and reply routing.
+- **`UnsupportedMessage` vs `InvalidMessage` split.** "I parsed your payload but don't know this variant" is a different situation from "your bytes are corrupt." The sender can act differently: retry with a fallback vs investigate a serialization bug.
+- **`AgentProtocol` → `structured_protocol: Option<String>`.** Non-Rust clients don't benefit from a typed enum they'd have to mirror. A simple string like `"claude_pty_v1"` is easier to match on from JS/Go/Python. Trade-off: no compile-time exhaustiveness on the protocol value.
+- **`agent_type` as `String` in registry.** Decouples the registry (which also stores remote agents announced by peers) from the local `AgentType` enum. A remote peer can announce an agent type this node doesn't know how to create, and that's fine — it just stores and re-announces the string.
+
+### Verification
+- `cargo check`, `cargo fmt`, `cargo clippy --workspace --all-targets -- -D warnings`, `cargo test --workspace` — all 313 tests pass (304 library + 9 CLI).
+- E2E tests: 10/10 passed (attach, list_agents, local_agent_ended, multiple_agents, new_agent, remote_agent_ended, remote_attach_by_alias, remote_connection, remote_list_agents, replay_buffer).
+
+---
+
 ## 2026-04-14: Reshape protocol wire enums for non-Rust clients
 
 ### Summary

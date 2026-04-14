@@ -23,8 +23,8 @@ use crate::buffer::{BroadcastReader, BufferPolicy};
 use crate::claude::types::{ClaudeHook, Hook};
 use crate::error::{AmuxError, Result};
 use crate::message::{
-    Command, DirectMessage, Message, ProtocolError, RoutableMessage, SubscriptionCloseReason,
-    SubscriptionId,
+    Command, DirectMessage, Message, ProtocolError, RoutableMessage, SubscribeQuery,
+    SubscriptionCloseReason, SubscriptionId,
 };
 use crate::route::Route;
 use std::future::Future;
@@ -262,6 +262,10 @@ pub(super) async fn handle_message(
             }
             handle_command(tx, cmd, ctx).await
         }
+        Message::Unknown => {
+            tracing::warn!("dropping unknown top-level message");
+            Ok(())
+        }
     }
 }
 
@@ -333,6 +337,21 @@ async fn handle_routable(
 
     // Local delivery — two-step decode
     let message = match RoutableMessage::decode(&payload) {
+        Ok(RoutableMessage::Unknown) => {
+            tracing::warn!("received unsupported routable message");
+            let Some((reply_src, reply_dst)) = reply_routes(src, "UnsupportedMessage") else {
+                return Ok(());
+            };
+            let _ = tx
+                .send(Message::routable(
+                    reply_src,
+                    reply_dst,
+                    request_id,
+                    &RoutableMessage::UnsupportedMessage,
+                ))
+                .await;
+            return Ok(());
+        }
         Ok(m) => m,
         Err(e) => {
             tracing::warn!(error = %e, "failed to decode routable payload");
@@ -344,7 +363,7 @@ async fn handle_routable(
                     reply_src,
                     reply_dst,
                     request_id,
-                    &RoutableMessage::UnknownMessage,
+                    &RoutableMessage::InvalidMessage,
                 ))
                 .await;
             return Ok(());
@@ -452,6 +471,23 @@ async fn handle_routable(
             let Some((reply_src, reply_dst)) = reply_routes(src, "SubscribeStructured") else {
                 return Ok(());
             };
+            if matches!(query, Some(SubscribeQuery::Unknown)) {
+                let _ = tx
+                    .send(Message::routable(
+                        reply_src,
+                        reply_dst,
+                        request_id,
+                        &RoutableMessage::SubscribeStructuredResult {
+                            subscription_id: Uuid::nil(),
+                            seq: 0,
+                            structured_protocol: None,
+                            lease_ms: 0,
+                            error: Some(ProtocolError::UnsupportedSubscribeQuery),
+                        },
+                    ))
+                    .await;
+                return Ok(());
+            }
             let subscribed = {
                 let us = ctx.user_state.read().await;
                 let Some(session) = us.agents.get(&agent_id) else {
@@ -463,7 +499,7 @@ async fn handle_routable(
                             &RoutableMessage::SubscribeStructuredResult {
                                 subscription_id: Uuid::nil(),
                                 seq: 0,
-                                protocol: None,
+                                structured_protocol: None,
                                 lease_ms: 0,
                                 error: Some(ProtocolError::NoAgentFound),
                             },
@@ -474,10 +510,12 @@ async fn handle_routable(
                 session
                     .subscribe_with_query(query)
                     .await
-                    .map(|(reader, current_seq)| (reader, current_seq, session.agent_protocol()))
+                    .map(|(reader, current_seq)| {
+                        (reader, current_seq, session.structured_protocol())
+                    })
             };
 
-            let Some((reader, current_seq, protocol)) = subscribed else {
+            let Some((reader, current_seq, structured_protocol)) = subscribed else {
                 let _ = tx
                     .send(Message::routable(
                         reply_src,
@@ -486,7 +524,7 @@ async fn handle_routable(
                         &RoutableMessage::SubscribeStructuredResult {
                             subscription_id: Uuid::nil(),
                             seq: 0,
-                            protocol: None,
+                            structured_protocol: None,
                             lease_ms: 0,
                             error: Some(ProtocolError::NoAgentFound),
                         },
@@ -513,7 +551,7 @@ async fn handle_routable(
                     &RoutableMessage::SubscribeStructuredResult {
                         subscription_id,
                         seq: current_seq,
-                        protocol,
+                        structured_protocol,
                         lease_ms: subscription_lease_ms(),
                         error: None,
                     },
@@ -791,7 +829,9 @@ async fn handle_routable(
         | RoutableMessage::StructuredInputResult { .. }
         | RoutableMessage::SubscriptionClosed { .. }
         | RoutableMessage::Unreachable { .. }
-        | RoutableMessage::UnknownMessage => Ok(()),
+        | RoutableMessage::UnsupportedMessage
+        | RoutableMessage::InvalidMessage
+        | RoutableMessage::Unknown => Ok(()),
     }
 }
 
@@ -1074,6 +1114,10 @@ async fn handle_command(
             tracing::warn!("unexpected command response variant");
             Ok(())
         }
+        Command::Unknown => {
+            tracing::warn!("dropping unknown command");
+            Ok(())
+        }
     }
 }
 
@@ -1185,6 +1229,7 @@ async fn handle_direct(
             command,
             working_dir,
             agent_type,
+            structured_protocol,
             readonly,
             args,
             created_at,
@@ -1222,6 +1267,7 @@ async fn handle_direct(
                 working_dir: working_dir.clone(),
                 route: Route::empty(),
                 agent_type: agent_type.clone(),
+                structured_protocol: structured_protocol.clone(),
                 readonly,
                 args: args.clone(),
                 created_at,
@@ -1428,6 +1474,10 @@ async fn handle_direct(
             tracing::warn!("unexpected direct message");
             Ok(())
         }
+        DirectMessage::Unknown => {
+            tracing::warn!("dropping unknown direct message");
+            Ok(())
+        }
     }
 }
 
@@ -1440,7 +1490,7 @@ mod tests {
         ClaudeSessionStart, ClaudeStop,
     };
     use crate::message::{
-        AgentType, Command, CreateAgentRequest, DirectMessage, RenameAgentRequest,
+        AgentType, Command, CreateAgentRequest, DirectMessage, RenameAgentRequest, SubscribeQuery,
     };
     use crate::route::Route;
     use crate::server::test_helpers::{test_ctx, test_state};
@@ -1449,6 +1499,7 @@ mod tests {
         SubscriptionMode, sweep_expired_subscriptions,
     };
     use chrono::Utc;
+    use serde::Serialize;
     use serde_json::json;
     use std::path::{Path, PathBuf};
     use std::sync::Arc;
@@ -1473,8 +1524,12 @@ mod tests {
         std::env::temp_dir()
     }
 
-    fn claude_agent_type() -> AgentType {
-        AgentType::Claude
+    fn claude_agent_type() -> String {
+        "claude".to_string()
+    }
+
+    fn claude_structured_protocol() -> Option<String> {
+        Some("claude_pty_v1".to_string())
     }
 
     /// Create an AgentSession::TestAgent from a CreateAgentRequest.
@@ -1690,6 +1745,7 @@ mod tests {
                 working_dir: PathBuf::from("/tmp/remote-agent"),
                 route: Route::from_link("peer-debug"),
                 agent_type: claude_agent_type(),
+                structured_protocol: claude_structured_protocol(),
                 readonly: false,
                 args: vec!["--model".to_string(), "sonnet".to_string()],
                 created_at: Utc::now(),
@@ -1801,6 +1857,7 @@ mod tests {
             command: "claude".to_string(),
             working_dir: PathBuf::from("/tmp"),
             agent_type: claude_agent_type(),
+            structured_protocol: claude_structured_protocol(),
             readonly: false,
             args: vec!["--dangerously-skip-permissions".to_string()],
             created_at: Utc::now(),
@@ -1849,6 +1906,7 @@ mod tests {
             command: "bash".to_string(),
             working_dir: PathBuf::from("/home"),
             agent_type: claude_agent_type(),
+            structured_protocol: claude_structured_protocol(),
             readonly: false,
             args: vec![],
             created_at: Utc::now(),
@@ -1893,6 +1951,7 @@ mod tests {
             command: "claude".to_string(),
             working_dir: PathBuf::from("/tmp"),
             agent_type: claude_agent_type(),
+            structured_protocol: claude_structured_protocol(),
             readonly: false,
             args: vec![],
             created_at: Utc::now(),
@@ -1937,6 +1996,7 @@ mod tests {
                 working_dir: PathBuf::from("/tmp"),
                 route: Route::from_link("other-link"),
                 agent_type: claude_agent_type(),
+                structured_protocol: claude_structured_protocol(),
                 readonly: false,
                 args: vec![],
                 created_at: Utc::now(),
@@ -1951,6 +2011,7 @@ mod tests {
             command: "bash".to_string(),
             working_dir: PathBuf::from("/stale"),
             agent_type: claude_agent_type(),
+            structured_protocol: claude_structured_protocol(),
             readonly: false,
             args: vec!["--stale".to_string()],
             created_at: Utc::now(),
@@ -2000,6 +2061,7 @@ mod tests {
             command: "claude".to_string(),
             working_dir: PathBuf::from("/remote"),
             agent_type: claude_agent_type(),
+            structured_protocol: claude_structured_protocol(),
             readonly: false,
             args: vec![],
             created_at: Utc::now(),
@@ -2028,6 +2090,7 @@ mod tests {
                 working_dir: PathBuf::from("/tmp"),
                 route: Route::from_link("test-link"),
                 agent_type: claude_agent_type(),
+                structured_protocol: claude_structured_protocol(),
                 readonly: false,
                 args: vec![],
                 created_at: Utc::now(),
@@ -2060,6 +2123,7 @@ mod tests {
                 working_dir: PathBuf::from("/tmp"),
                 route: Route::from_link("other-link"),
                 agent_type: claude_agent_type(),
+                structured_protocol: claude_structured_protocol(),
                 readonly: false,
                 args: vec![],
                 created_at: Utc::now(),
@@ -2119,6 +2183,7 @@ mod tests {
             command: "bash".to_string(),
             working_dir: PathBuf::from("/first"),
             agent_type: claude_agent_type(),
+            structured_protocol: claude_structured_protocol(),
             readonly: false,
             args: vec!["--dangerously-skip-permissions".to_string()],
             created_at: Utc::now(),
@@ -2133,6 +2198,7 @@ mod tests {
             command: "claude".to_string(),
             working_dir: PathBuf::from("/second"),
             agent_type: claude_agent_type(),
+            structured_protocol: claude_structured_protocol(),
             readonly: false,
             args: vec!["--allow-dangerously-skip-permissions".to_string()],
             created_at: Utc::now(),
@@ -2432,6 +2498,7 @@ mod tests {
                 working_dir: PathBuf::from("/tmp"),
                 route: Route::from_link("upstream"),
                 agent_type: claude_agent_type(),
+                structured_protocol: claude_structured_protocol(),
                 readonly: false,
                 args: vec![],
                 created_at: Utc::now(),
@@ -2485,6 +2552,7 @@ mod tests {
                 working_dir: PathBuf::from("/tmp"),
                 route: Route::from_link("peer-a"),
                 agent_type: claude_agent_type(),
+                structured_protocol: claude_structured_protocol(),
                 readonly: false,
                 args: vec![],
                 created_at: Utc::now(),
@@ -2649,6 +2717,7 @@ mod tests {
                 working_dir: PathBuf::from("/tmp"),
                 route: child_route,
                 agent_type: claude_agent_type(),
+                structured_protocol: claude_structured_protocol(),
                 readonly: false,
                 args: vec![],
                 created_at: Utc::now(),
@@ -2850,6 +2919,7 @@ mod tests {
                 working_dir: PathBuf::from("/tmp"),
                 route: child_route,
                 agent_type: claude_agent_type(),
+                structured_protocol: claude_structured_protocol(),
                 readonly: false,
                 args: vec![],
                 created_at: Utc::now(),
@@ -2913,6 +2983,7 @@ mod tests {
                 working_dir: PathBuf::from("/tmp"),
                 route: child_route,
                 agent_type: claude_agent_type(),
+                structured_protocol: claude_structured_protocol(),
                 readonly: false,
                 args: vec![],
                 created_at: Utc::now(),
@@ -3087,7 +3158,7 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn invalid_payload_returns_unknown_message() {
+    async fn invalid_payload_returns_invalid_message() {
         let (state, user_state) = test_state().await;
         let ctx = test_ctx(state, user_state);
         let (tx, written) = mock_tx();
@@ -3106,14 +3177,52 @@ mod tests {
 
         let msgs = written.lock().await;
         assert_eq!(msgs.len(), 1);
-        // Should be a routable reply containing UnknownMessage
+        // Should be a routable reply containing InvalidMessage
         let Message::Routable { payload, .. } = &msgs[0] else {
             panic!("expected Routable reply, got {:?}", msgs[0]);
         };
         let reply = RoutableMessage::decode(payload).unwrap();
         assert!(
-            matches!(reply, RoutableMessage::UnknownMessage),
-            "expected UnknownMessage, got {:?}",
+            matches!(reply, RoutableMessage::InvalidMessage),
+            "expected InvalidMessage, got {:?}",
+            reply
+        );
+    }
+
+    #[tokio::test]
+    async fn unknown_routable_variant_returns_unsupported_message() {
+        #[derive(Serialize)]
+        #[serde(tag = "type", rename_all = "snake_case")]
+        enum FutureRoutableMessage {
+            FancyPing { seq: u64 },
+        }
+
+        let (state, user_state) = test_state().await;
+        let ctx = test_ctx(state, user_state);
+        let (tx, written) = mock_tx();
+
+        let payload =
+            rmp_serde::to_vec_named(&FutureRoutableMessage::FancyPing { seq: 7 }).unwrap();
+        let msg = Message::Routable {
+            src: Route::from_link("sender"),
+            dst: Route::empty(),
+            request_id: 42,
+            payload,
+        };
+
+        handle_message(&tx, msg, &ctx).await.unwrap();
+
+        tokio::task::yield_now().await;
+
+        let msgs = written.lock().await;
+        assert_eq!(msgs.len(), 1);
+        let Message::Routable { payload, .. } = &msgs[0] else {
+            panic!("expected Routable reply, got {:?}", msgs[0]);
+        };
+        let reply = RoutableMessage::decode(payload).unwrap();
+        assert!(
+            matches!(reply, RoutableMessage::UnsupportedMessage),
+            "expected UnsupportedMessage, got {:?}",
             reply
         );
     }
@@ -3240,7 +3349,7 @@ mod tests {
             RoutableMessage::SubscribeStructuredResult {
                 subscription_id: Uuid::new_v4(),
                 seq: 0,
-                protocol: None,
+                structured_protocol: None,
                 lease_ms: subscription_lease_ms(),
                 error: None,
             },
@@ -3279,21 +3388,24 @@ mod tests {
                 reason: SubscriptionCloseReason::SourceClosed,
             },
             RoutableMessage::Unreachable { request_id: 99 },
-            RoutableMessage::UnknownMessage,
+            RoutableMessage::UnsupportedMessage,
+            RoutableMessage::InvalidMessage,
         ];
 
         for response in responses {
+            let response_type = response.type_label().to_string();
             let msg = Message::routable(Route::from_link("sender"), Route::empty(), 1, &response);
             handle_message(&tx, msg, &ctx).await.unwrap();
+            tokio::task::yield_now().await;
+
+            let mut msgs = written.lock().await;
+            assert!(
+                msgs.is_empty(),
+                "response variant {response_type} at destination should produce no output, got {:?}",
+                *msgs
+            );
+            msgs.clear();
         }
-
-        tokio::task::yield_now().await;
-
-        let msgs = written.lock().await;
-        assert!(
-            msgs.is_empty(),
-            "response variants at destination should produce no output"
-        );
     }
 
     #[tokio::test]
@@ -3404,9 +3516,43 @@ mod tests {
             RoutableMessage::SubscribeStructuredResult {
                 subscription_id: id,
                 seq: 0,
-                protocol: None,
+                structured_protocol: None,
                 lease_ms: 0,
                 error: Some(ProtocolError::NoAgentFound),
+            } if id.is_nil()
+        ));
+    }
+
+    #[tokio::test]
+    async fn subscribe_structured_returns_unsupported_query_for_unknown_query() {
+        let (state, user_state) = test_state().await;
+        let ctx = test_ctx(state, user_state);
+        let (tx, written) = mock_tx();
+
+        let agent_id = Uuid::new_v4();
+        let msg = Message::routable(
+            Route::from_link("client"),
+            Route::empty(),
+            1,
+            &RoutableMessage::SubscribeStructured {
+                agent_id,
+                query: Some(SubscribeQuery::Unknown),
+            },
+        );
+
+        handle_message(&tx, msg, &ctx).await.unwrap();
+        tokio::task::yield_now().await;
+
+        let msgs = written.lock().await;
+        assert_eq!(msgs.len(), 1);
+        assert!(matches!(
+            decode_written_routable(&msgs[0]),
+            RoutableMessage::SubscribeStructuredResult {
+                subscription_id: id,
+                seq: 0,
+                structured_protocol: None,
+                lease_ms: 0,
+                error: Some(ProtocolError::UnsupportedSubscribeQuery),
             } if id.is_nil()
         ));
     }
@@ -3454,7 +3600,7 @@ mod tests {
             RoutableMessage::SubscribeStructuredResult {
                 subscription_id: id,
                 seq: 0,
-                protocol: None,
+                structured_protocol: None,
                 lease_ms: 0,
                 error: Some(ProtocolError::NoAgentFound),
             } if id.is_nil()
@@ -3507,14 +3653,15 @@ mod tests {
             RoutableMessage::SubscribeStructuredResult {
                 subscription_id: id,
                 seq: 0,
-                protocol:
-                    Some(crate::message::AgentProtocol::Claude {
-                        mode: crate::message::ClaudeMode::Pty,
-                        version: 1,
-                    }),
+                structured_protocol: Some(protocol),
                 lease_ms,
                 error: None,
-            } if !id.is_nil() && lease_ms == subscription_lease_ms() => id,
+            } if !id.is_nil()
+                && lease_ms == subscription_lease_ms()
+                && protocol == "claude_pty_v1" =>
+            {
+                id
+            }
             other => panic!("expected SubscribeStructuredResult, got {:?}", other),
         };
         drop(msgs);
@@ -3583,6 +3730,7 @@ mod tests {
                 working_dir: PathBuf::from("/tmp"),
                 route: Route::from_link("test-link"),
                 agent_type: claude_agent_type(),
+                structured_protocol: claude_structured_protocol(),
                 readonly: false,
                 args: vec![],
                 created_at: Utc::now(),
@@ -3599,6 +3747,7 @@ mod tests {
                 working_dir: PathBuf::from("/tmp"),
                 route: deep_route,
                 agent_type: claude_agent_type(),
+                structured_protocol: claude_structured_protocol(),
                 readonly: false,
                 args: vec![],
                 created_at: Utc::now(),
@@ -3615,6 +3764,7 @@ mod tests {
                 working_dir: PathBuf::from("/tmp"),
                 route: Route::from_link("other-link"),
                 agent_type: claude_agent_type(),
+                structured_protocol: claude_structured_protocol(),
                 readonly: false,
                 args: vec![],
                 created_at: Utc::now(),

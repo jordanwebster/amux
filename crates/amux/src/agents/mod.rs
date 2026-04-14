@@ -19,10 +19,7 @@ use crate::buffer::{MultiplexByteBuffer, MultiplexByteReader, MultiplexStructure
 use crate::claude::structured_log_source::StructuredLogSource;
 use crate::claude::types::Hook;
 use crate::error::{AmuxError, Result};
-use crate::message::{
-    AgentProtocol, AgentType, ClaudeMode, CreateAgentRequest, ProtocolError, SubscribeQuery,
-    TerminalSize,
-};
+use crate::message::{AgentType, CreateAgentRequest, ProtocolError, SubscribeQuery, TerminalSize};
 use crate::route::Route;
 use chrono::{DateTime, Utc};
 use portable_pty::{CommandBuilder, MasterPty, PtySize, native_pty_system};
@@ -393,12 +390,9 @@ impl AgentSession {
         }
     }
 
-    pub fn agent_protocol(&self) -> Option<AgentProtocol> {
+    pub fn structured_protocol(&self) -> Option<String> {
         match self {
-            Self::Claude(_) => Some(AgentProtocol::Claude {
-                mode: ClaudeMode::Pty,
-                version: 1,
-            }),
+            Self::Claude(_) => Some("claude_pty_v1".to_string()),
             #[cfg(any(debug_assertions, test))]
             Self::TestAgent(_) => None,
         }
@@ -483,12 +477,11 @@ impl AgentSession {
             working_dir: self.working_dir().to_path_buf(),
             route: Route::empty(),
             agent_type: match self {
-                Self::Claude(_) => AgentType::Claude,
+                Self::Claude(_) => "claude".to_string(),
                 #[cfg(any(debug_assertions, test))]
-                Self::TestAgent(s) => AgentType::TestAgent {
-                    command: s.command.clone(),
-                },
+                Self::TestAgent(_) => "test_agent".to_string(),
             },
+            structured_protocol: self.structured_protocol(),
             readonly: self.readonly(),
             args: self.args().to_vec(),
             created_at: self.created_at(),

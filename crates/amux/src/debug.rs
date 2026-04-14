@@ -466,6 +466,9 @@ impl Serialize for AgentEntry<'_> {
             map.serialize_entry("via", via)?;
         }
         map.serialize_entry("agent_type", &agent.agent_type)?;
+        if let Some(structured_protocol) = &agent.structured_protocol {
+            map.serialize_entry("structured_protocol", structured_protocol)?;
+        }
         map.serialize_entry("readonly", &agent.readonly)?;
         map.serialize_entry("command", &agent.command)?;
         map.serialize_entry("working_dir", &LossyPath(&agent.working_dir))?;
