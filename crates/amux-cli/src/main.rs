@@ -11,6 +11,7 @@ use amux::setup;
 use anyhow::Context;
 use anyhow::Result;
 use anyhow::anyhow;
+use clap::CommandFactory;
 use clap::Parser;
 use clap::Subcommand;
 use clap::ValueEnum;
@@ -21,7 +22,7 @@ use tracing_appender::non_blocking::WorkerGuard;
 use tracing_subscriber::{EnvFilter, fmt, prelude::*};
 
 /// Agent multiplexer - terminal multiplexer for AI agents
-#[derive(Parser)]
+#[derive(Debug, Parser)]
 #[command(name = "amux")]
 #[command(about = "Terminal multiplexer for AI agents (Claude, Codex, etc.)", long_about = None)]
 #[command(version)]
@@ -34,7 +35,7 @@ struct Cli {
     config: Option<PathBuf>,
 }
 
-#[derive(Subcommand)]
+#[derive(Debug, Subcommand)]
 enum Commands {
     /// Create a new agent session
     New {
@@ -53,7 +54,6 @@ enum Commands {
     /// Attach to an existing agent session
     Attach {
         /// Session name (default: first available)
-        #[arg(long)]
         name: Option<String>,
     },
 
@@ -61,13 +61,10 @@ enum Commands {
     #[command(alias = "ls")]
     List,
 
-    /// Shut down the server and all running agent sessions
-    Shutdown,
-
-    /// Connect to a remote amux server
-    Connect {
-        /// Remote server address (host:port)
-        address: String,
+    /// Manage the amux server lifecycle and topology
+    Server {
+        #[command(subcommand)]
+        command: ServerCommands,
     },
 
     /// Initialize amux (cloud mode, authentication)
@@ -75,17 +72,6 @@ enum Commands {
         /// Clear existing state and re-initialize
         #[arg(long)]
         reset: bool,
-    },
-
-    /// Start the amux server directly (usually auto-started)
-    Serve {
-        /// Run as cloud server (requires TLS, validates tokens)
-        #[arg(long)]
-        cloud: bool,
-
-        /// Read config from stdin (YAML format). Used by ConnectPolicy::SpawnDaemon.
-        #[arg(long, hide = true)]
-        config_from_stdin: bool,
     },
 
     /// Internal: Handle hooks from AI coding assistants
@@ -110,6 +96,41 @@ enum Commands {
     },
 }
 
+#[derive(Debug, Subcommand)]
+enum ServerCommands {
+    /// Start the amux server
+    Start {
+        /// Run as cloud server (requires TLS, validates tokens)
+        #[arg(long)]
+        cloud: bool,
+
+        /// Run in the foreground instead of daemonizing
+        #[arg(long)]
+        foreground: bool,
+
+        /// Read config from stdin (YAML format). Used by ConnectPolicy::SpawnDaemon.
+        #[arg(long, hide = true)]
+        config_from_stdin: bool,
+    },
+
+    /// Shut down the server and all running agent sessions
+    Stop,
+
+    /// Connect the local server to a remote amux server
+    Connect {
+        /// Remote server address (host:port)
+        address: String,
+    },
+
+    /// Internal: Suspend all agents and stop the server
+    #[command(hide = true)]
+    Suspend,
+
+    /// Internal: Resume suspended agents
+    #[command(hide = true)]
+    Resume,
+}
+
 /// CLI-side mirror of `protocol::DebugFormat` so we can derive `clap::ValueEnum`
 /// without pulling clap into the `amux` library crate.
 #[derive(Copy, Clone, Debug, ValueEnum)]
@@ -128,7 +149,7 @@ impl From<CliDebugFormat> for protocol::DebugFormat {
     }
 }
 
-#[derive(Subcommand)]
+#[derive(Debug, Subcommand)]
 enum HooksProvider {
     /// Claude Code hooks
     Claude {
@@ -137,7 +158,7 @@ enum HooksProvider {
     },
 }
 
-#[derive(Subcommand)]
+#[derive(Debug, Subcommand)]
 enum ClaudeHookEvent {
     SessionStart,
     SessionEnd,
@@ -152,11 +173,21 @@ async fn main() -> Result<()> {
 
     let cli = Cli::parse();
 
-    // Special case: serve --config-from-stdin reads config from stdin before
-    // anything else (used by ConnectPolicy::SpawnDaemon)
-    if let Some(Commands::Serve {
-        cloud,
-        config_from_stdin: true,
+    if cli.command.is_none() {
+        let mut command = Cli::command();
+        command.print_help()?;
+        return Ok(());
+    }
+
+    // Special case: server start --config-from-stdin reads config from stdin
+    // before anything else (used by ConnectPolicy::SpawnDaemon).
+    if let Some(Commands::Server {
+        command:
+            ServerCommands::Start {
+                cloud,
+                config_from_stdin: true,
+                ..
+            },
     }) = &cli.command
     {
         let mut input = String::new();
@@ -174,17 +205,18 @@ async fn main() -> Result<()> {
     let config = load_config(cli.config)?;
 
     // Determine if this is a cloud-server invocation for validation purposes
-    let is_cloud = matches!(cli.command, Some(Commands::Serve { cloud: true, .. }));
+    let is_cloud = matches!(
+        cli.command,
+        Some(Commands::Server {
+            command: ServerCommands::Start { cloud: true, .. }
+        })
+    );
     config
         .validate(is_cloud)
         .map_err(|e| anyhow!("invalid config: {e}"))?;
 
     match cli.command {
-        None => {
-            // Default: attach to first available agent
-            ensure_initialized(&config).await?;
-            client::attach(None, &config).await?;
-        }
+        None => unreachable!("handled before config loading"),
         Some(Commands::New {
             agent_type,
             name,
@@ -210,15 +242,19 @@ async fn main() -> Result<()> {
             client::attach(name.as_deref(), &config).await?;
         }
         Some(Commands::List) => client::list_agents(&config).await?,
-        Some(Commands::Shutdown) => client::kill_server(&config).await?,
-        Some(Commands::Connect { address }) => {
-            ensure_initialized(&config).await?;
-            client::connect_remote(&address, &config).await?;
-        }
+        Some(Commands::Server { command }) => match command {
+            ServerCommands::Start {
+                cloud, foreground, ..
+            } => client::start_server(&config, cloud, foreground).await?,
+            ServerCommands::Stop => client::stop_server(&config).await?,
+            ServerCommands::Connect { address } => {
+                ensure_initialized(&config).await?;
+                client::connect_remote(&address, &config).await?;
+            }
+            ServerCommands::Suspend => client::suspend_server(&config).await?,
+            ServerCommands::Resume => client::resume_server(&config).await?,
+        },
         Some(Commands::Init { reset }) => init::run_init(&config, reset).await?,
-        Some(Commands::Serve { cloud, .. }) => {
-            run_server(config, cloud).await?;
-        }
         Some(Commands::Update) => update::run_update(&config).await?,
         Some(Commands::Debug { verbose, format }) => {
             let dump = client::debug(&config, verbose, format.into()).await?;

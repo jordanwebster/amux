@@ -34,7 +34,7 @@ echo: hello
 
 # Server B connects to server A
 @Tb
-> amux connect 127.0.0.1:$server_a.tcp_port
+> amux server connect 127.0.0.1:$server_a.tcp_port
 Connected to 127.0.0.1:$server_a.tcp_port
 
 # Wait for announcements to propagate

@@ -4,10 +4,12 @@ use amux::protocol::{
 };
 use amux::{
     AmuxError, Config, ConnectPolicy, Connection, DaemonOptions, LeaderKey, Result, Route, connect,
+    run_server,
 };
 use crossterm::terminal;
 use std::io::{self, Read, Write};
-use std::path::Path;
+use std::path::{Path, PathBuf};
+use std::process::Stdio;
 use std::sync::Arc;
 use std::sync::atomic::{AtomicU64, Ordering};
 use std::time::Duration;
@@ -81,11 +83,105 @@ fn get_terminal_size() -> TerminalSize {
         .unwrap_or_default()
 }
 
+fn current_executable() -> Result<PathBuf> {
+    std::env::current_exe()
+        .map_err(|e| AmuxError::Config(format!("failed to determine current executable path: {e}")))
+}
+
 fn cli_daemon_policy() -> Result<ConnectPolicy> {
-    let executable = std::env::current_exe().map_err(|e| {
-        AmuxError::Config(format!("failed to determine current executable path: {e}"))
-    })?;
-    Ok(ConnectPolicy::SpawnDaemon(DaemonOptions::new(executable)))
+    Ok(ConnectPolicy::SpawnDaemon(DaemonOptions::new(
+        current_executable()?,
+    )))
+}
+
+fn is_server_unavailable(error: &io::Error) -> bool {
+    matches!(
+        error.kind(),
+        io::ErrorKind::NotFound | io::ErrorKind::ConnectionRefused
+    )
+}
+
+async fn server_is_running(config: &Config) -> Result<bool> {
+    match connect(config, ConnectPolicy::ExistingOnly).await {
+        Ok(_) => Ok(true),
+        #[cfg(unix)]
+        Err(AmuxError::Io(e)) if config.socket_path.exists() && is_server_unavailable(&e) => {
+            tracing::warn!(error = %e, "stale local socket detected, removing");
+            let _ = std::fs::remove_file(&config.socket_path);
+            Ok(false)
+        }
+        Err(AmuxError::Io(e)) if is_server_unavailable(&e) => Ok(false),
+        Err(e) => Err(e),
+    }
+}
+
+fn serialized_config(config: &Config) -> Result<String> {
+    serde_yaml::to_string(config)
+        .map_err(|e| AmuxError::Config(format!("failed to serialize config: {e}")))
+}
+
+async fn wait_for_server(config: &Config) -> Result<()> {
+    for _ in 0..50 {
+        match connect(config, ConnectPolicy::ExistingOnly).await {
+            Ok(_) => return Ok(()),
+            Err(AmuxError::Io(e)) if is_server_unavailable(&e) => {
+                tokio::time::sleep(Duration::from_millis(100)).await;
+            }
+            Err(e) => return Err(e),
+        }
+    }
+
+    let log_path = std::env::var("AMUX_LOG")
+        .unwrap_or_else(|_| amux::default_log_path().display().to_string());
+    Err(AmuxError::Config(format!(
+        "server failed to start within 5s — check {} for details",
+        log_path
+    )))
+}
+
+async fn spawn_server_daemon(config: &Config, cloud: bool, executable: &Path) -> Result<()> {
+    let config_yaml = serialized_config(config)?;
+
+    let mut cmd = std::process::Command::new(executable);
+    cmd.arg("server")
+        .arg("start")
+        .arg("--foreground")
+        .arg("--config-from-stdin")
+        .stdin(Stdio::piped())
+        .stdout(Stdio::null())
+        .stderr(Stdio::null());
+    if cloud {
+        cmd.arg("--cloud");
+    }
+    #[cfg(unix)]
+    {
+        use std::os::unix::process::CommandExt;
+
+        // Start a new session so the background server is not tied to the
+        // caller's shell job or controlling terminal.
+        unsafe {
+            cmd.pre_exec(|| {
+                if libc::setsid() == -1 {
+                    return Err(io::Error::last_os_error());
+                }
+                Ok(())
+            });
+        }
+    }
+    #[cfg(windows)]
+    {
+        use std::os::windows::process::CommandExt;
+        cmd.creation_flags(0x00000008); // DETACHED_PROCESS
+    }
+    let mut child = cmd
+        .spawn()
+        .map_err(|e| AmuxError::Config(format!("failed to start server: {e}")))?;
+
+    if let Some(mut stdin) = child.stdin.take() {
+        let _ = stdin.write_all(config_yaml.as_bytes());
+    }
+
+    wait_for_server(config).await
 }
 
 /// Create a new agent and attach to it
@@ -303,6 +399,25 @@ async fn subscribe_and_stream(
     run_attached(conn, session, leader, state_path).await
 }
 
+/// Start the local server, daemonizing unless `foreground` is requested.
+pub async fn start_server(config: &Config, cloud: bool, foreground: bool) -> Result<()> {
+    if server_is_running(config).await? {
+        println!("Server already running.");
+        return Ok(());
+    }
+
+    config.validate(cloud)?;
+
+    if foreground {
+        return run_server(config.clone(), cloud).await;
+    }
+
+    let executable = current_executable()?;
+    spawn_server_daemon(config, cloud, &executable).await?;
+    println!("Server started.");
+    Ok(())
+}
+
 /// List all running agents
 pub async fn list_agents(config: &Config) -> Result<()> {
     let conn = match connect(config, cli_daemon_policy()?).await {
@@ -368,13 +483,10 @@ pub async fn list_agents(config: &Config) -> Result<()> {
 }
 
 /// Kill all agents and shut down the server
-pub async fn kill_server(config: &Config) -> Result<()> {
+pub async fn stop_server(config: &Config) -> Result<()> {
     let conn = match connect(config, ConnectPolicy::ExistingOnly).await {
         Ok(conn) => conn,
-        Err(AmuxError::Io(e))
-            if e.kind() == io::ErrorKind::NotFound
-                || e.kind() == io::ErrorKind::ConnectionRefused =>
-        {
+        Err(AmuxError::Io(e)) if is_server_unavailable(&e) => {
             println!("No server running.");
             return Ok(());
         }
@@ -404,6 +516,103 @@ pub async fn kill_server(config: &Config) -> Result<()> {
     println!("Server shutting down.");
     print_update_banner(&config.state_path);
     Ok(())
+}
+
+async fn suspend_server_inner(config: &Config, print_if_missing: bool) -> Result<bool> {
+    let conn = match connect(config, ConnectPolicy::ExistingOnly).await {
+        Ok(conn) => conn,
+        Err(AmuxError::Io(e)) if is_server_unavailable(&e) => {
+            if print_if_missing {
+                println!("No server running.");
+            }
+            return Ok(false);
+        }
+        Err(e) => return Err(e),
+    };
+
+    conn.send(&Message::Command {
+        command: Command::Suspend,
+    })
+    .await?;
+
+    match conn.recv().await {
+        Ok(Message::Command {
+            command:
+                Command::SuspendResult {
+                    suspended_count,
+                    error,
+                },
+        }) => {
+            if let Some(error) = error {
+                return Err(AmuxError::ServerError(format!("suspend failed: {error}")));
+            }
+            println!("Suspended {suspended_count} agent(s).");
+            Ok(true)
+        }
+        // Server exits after sending SuspendResult, so the connection may drop.
+        Err(AmuxError::Io(_)) => Ok(true),
+        Err(e) => Err(e),
+        Ok(other) => Err(AmuxError::InvalidMessage(format!(
+            "unexpected response to Suspend: {}",
+            other.type_label()
+        ))),
+    }
+}
+
+/// Suspend all agents and stop the server.
+pub async fn suspend_server(config: &Config) -> Result<()> {
+    let _ = suspend_server_inner(config, true).await?;
+    Ok(())
+}
+
+/// Suspend all agents and stop the server if it is currently running.
+pub async fn suspend_server_if_running(config: &Config) -> Result<bool> {
+    suspend_server_inner(config, false).await
+}
+
+/// Resume any previously suspended agents, spawning the daemon if needed.
+pub async fn resume_server(config: &Config) -> Result<()> {
+    let executable = current_executable()?;
+    resume_server_with_executable(config, &executable).await
+}
+
+/// Resume any previously suspended agents, spawning the daemon from `executable` if needed.
+pub async fn resume_server_with_executable(config: &Config, executable: &Path) -> Result<()> {
+    let conn = connect(
+        config,
+        ConnectPolicy::SpawnDaemon(DaemonOptions::new(executable.to_path_buf())),
+    )
+    .await?;
+
+    conn.send(&Message::Command {
+        command: Command::Resume,
+    })
+    .await?;
+
+    match conn.recv().await? {
+        Message::Command {
+            command:
+                Command::ResumeResult {
+                    resumed_count,
+                    failed_count,
+                    error,
+                },
+        } => {
+            if let Some(error) = error {
+                return Err(AmuxError::ServerError(format!("resume failed: {error}")));
+            }
+            print!("Resumed {resumed_count} agent(s).");
+            if failed_count > 0 {
+                print!(" ({failed_count} failed to resume)");
+            }
+            println!();
+            Ok(())
+        }
+        other => Err(AmuxError::InvalidMessage(format!(
+            "unexpected response to Resume: {}",
+            other.type_label()
+        ))),
+    }
 }
 
 /// Connect to a remote amux server

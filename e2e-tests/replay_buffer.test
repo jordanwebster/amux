@@ -23,7 +23,7 @@ echo: second message
 
 # T2 attaches - should immediately see replay buffer with previous output
 @T2
-> amux attach --name replay-test
+> amux attach replay-test
 first message
 echo: first message
 second message

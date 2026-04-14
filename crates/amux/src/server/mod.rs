@@ -238,7 +238,7 @@ pub(crate) struct ServerState {
     pub(crate) config: Config,
     /// Stable host ID loaded from persistent state
     pub(crate) host_id: Uuid,
-    /// Whether this server is a cloud relay (`amux serve --cloud`)
+    /// Whether this server is a cloud relay (`amux server start --cloud`)
     pub(crate) is_cloud_server: bool,
     /// JWT validator for cloud mode (validates incoming tokens)
     pub(super) jwt_validator: Option<Arc<JwtValidator>>,

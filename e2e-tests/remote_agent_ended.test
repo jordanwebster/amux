@@ -30,14 +30,14 @@ echo: hello
 
 # Server B connects to server A
 @Tb
-> amux connect 127.0.0.1:$server_a.tcp_port
+> amux server connect 127.0.0.1:$server_a.tcp_port
 Connected to 127.0.0.1:$server_a.tcp_port
 
 @@sleep 20
 
 # Attach from server B to the remote agent
 @Tb
-> amux attach --name ended-test
+> amux attach ended-test
 hello
 echo: hello
 

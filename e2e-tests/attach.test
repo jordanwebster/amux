@@ -17,7 +17,7 @@ terminal:
 
 # T2 attaches to the same agent and can interact with it
 @T2
-> amux attach --name shared-session
+> amux attach shared-session
 > message from attached terminal
 message from attached terminal
 echo: message from attached terminal

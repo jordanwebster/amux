@@ -25,7 +25,7 @@ impl DaemonOptions {
 
 /// Policy for how `connect()` reaches the amux server.
 pub enum ConnectPolicy {
-    /// Connect to existing server, spawn a managed `amux serve` daemon if needed.
+    /// Connect to existing server, spawn a managed `amux server start` daemon if needed.
     SpawnDaemon(DaemonOptions),
     /// Start server in-process on a background task, connect via socket.
     Embedded,
@@ -75,7 +75,7 @@ async fn connect_existing(config: &Config) -> Result<Connection> {
     Ok(Connection::new(transport, link_name))
 }
 
-/// Try connecting to existing server; if not running, spawn `amux serve` and retry.
+/// Try connecting to existing server; if not running, spawn `amux server start` and retry.
 async fn connect_daemon(config: &Config, options: DaemonOptions) -> Result<Connection> {
     match connect_existing(config).await {
         Ok(conn) => return Ok(conn),
@@ -101,11 +101,28 @@ async fn connect_daemon(config: &Config, options: DaemonOptions) -> Result<Conne
         .map_err(|e| AmuxError::Config(format!("failed to serialize config: {e}")))?;
 
     let mut cmd = std::process::Command::new(&options.executable);
-    cmd.arg("serve")
+    cmd.arg("server")
+        .arg("start")
+        .arg("--foreground")
         .arg("--config-from-stdin")
         .stdin(std::process::Stdio::piped())
         .stdout(std::process::Stdio::null())
         .stderr(std::process::Stdio::null());
+    #[cfg(unix)]
+    {
+        use std::os::unix::process::CommandExt;
+
+        // Start a new session so implicit daemon auto-starts are not tied to
+        // the caller's shell job or controlling terminal.
+        unsafe {
+            cmd.pre_exec(|| {
+                if libc::setsid() == -1 {
+                    return Err(std::io::Error::last_os_error());
+                }
+                Ok(())
+            });
+        }
+    }
     #[cfg(windows)]
     {
         use std::os::windows::process::CommandExt;

@@ -24,3 +24,6 @@ reqwest = { workspace = true }
 semver = { workspace = true }
 sha2 = { workspace = true }
 crossterm = { workspace = true }
+
+[target.'cfg(unix)'.dependencies]
+libc = { workspace = true }

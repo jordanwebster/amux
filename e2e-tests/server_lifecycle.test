@@ -1,0 +1,21 @@
+# test: server_lifecycle
+# description: Explicit server lifecycle commands start idempotently and stop cleanly
+
+## Environment
+
+terminal:
+  name: T1
+
+## Test
+
+@T1
+> amux server start
+Server started.
+
+@T1
+> amux server start
+Server already running.
+
+@T1
+> amux server stop
+Server shutting down.

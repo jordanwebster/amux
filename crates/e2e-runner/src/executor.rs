@@ -16,10 +16,30 @@ struct ResolvedCommand {
 
 /// Check if an amux command is non-interactive (runs and exits).
 fn is_oneshot_amux_command(command: &ResolvedCommand) -> bool {
-    command
-        .args
-        .iter()
-        .any(|arg| matches!(arg.as_str(), "connect" | "list" | "ls" | "shutdown"))
+    let mut index = 0;
+    while index < command.args.len() {
+        match command.args[index].as_str() {
+            "--config" => index += 2,
+            arg if arg.starts_with("--config=") => index += 1,
+            _ => break,
+        }
+    }
+
+    let Some(subcommand) = command.args.get(index).map(String::as_str) else {
+        return true;
+    };
+
+    match subcommand {
+        "list" | "ls" => true,
+        "server" => match command.args.get(index + 1).map(String::as_str) {
+            Some("connect" | "stop" | "suspend" | "resume") => true,
+            Some("start") => !command.args[index + 2..]
+                .iter()
+                .any(|arg| arg == "--foreground"),
+            _ => false,
+        },
+        _ => false,
+    }
 }
 
 fn default_socket_path(test_name: &str, config_name: &str) -> PathBuf {
@@ -264,10 +284,10 @@ impl Executor {
         let result =
             self.execute_steps(&test_case.steps, &terminal_configs, &config_paths, &var_ctx);
 
-        // Cleanup: shut down background servers spawned by `ensure_server_running`
+        // Cleanup: shut down background servers spawned during the test.
         for config_path in config_paths.values() {
             let _ = Command::new(&self.config.amux_binary)
-                .args(["--config", &config_path.to_string_lossy(), "shutdown"])
+                .args(["--config", &config_path.to_string_lossy(), "server", "stop"])
                 .output();
         }
         #[cfg(unix)]
@@ -307,7 +327,8 @@ impl Executor {
                         .ok_or(format!("Unknown config: {}", config_name))?;
 
                     let input_substituted = var_ctx.substitute(input);
-                    let is_amux_command = input_substituted.starts_with("amux ");
+                    let is_amux_command =
+                        input_substituted == "amux" || input_substituted.starts_with("amux ");
 
                     if is_amux_command && !active_terminals.contains_key(term_name) {
                         let transformed =

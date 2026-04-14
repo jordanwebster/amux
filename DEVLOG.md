@@ -38,6 +38,39 @@ One paragraph describing what was done.
 
 ---
 
+## 2026-04-14: CLI ergonomics — server subcommand, positional attach, suspend/resume
+
+### Summary
+Restructured the CLI for better ergonomics. Grouped server lifecycle commands under `amux server` (start/stop/connect), made the attach name a positional argument, added hidden `suspend`/`resume` commands as standalone alternatives to the update-only flow, and changed bare `amux` to print help instead of auto-attaching.
+
+### Changes
+- **`crates/amux-cli/src/main.rs`** — Replaced top-level `Serve`, `Shutdown`, `Connect` with nested `Server { Start, Stop, Connect, Suspend, Resume }`. `Attach` name changed from `--name` flag to positional. Bare `amux` now prints help.
+- **`crates/amux-cli/src/client.rs`** — Added `start_server` (idempotent, with daemon spawn and stale socket cleanup), `stop_server` (renamed from `kill_server`), `suspend_server`, `suspend_server_if_running`, `resume_server`, `resume_server_with_executable`. Extracted `server_is_running`, `spawn_server_daemon`, `wait_for_server` helpers.
+- **`crates/amux-cli/src/update.rs`** — Replaced inline suspend/resume logic with calls to `client::suspend_server_if_running` and `client::resume_server_with_executable`.
+- **`crates/amux/src/connect.rs`** — Updated `SpawnDaemon` to use `server start --foreground --config-from-stdin`.
+- **`crates/amux/src/server/mod.rs`** — Minor update for config validation.
+- **`crates/amux-cli/Cargo.toml`** — Added `serde_yaml` dependency for config serialization in daemon spawn.
+- **`e2e-tests/*.test`** — Updated all tests using `shutdown` to use `server stop`. Added `bare_help.test` and `server_lifecycle.test`.
+- **`crates/e2e-runner/src/executor.rs`** — Updated E2E runner for new command structure.
+
+### Decisions Made
+- **Nested `server` group over flat commands**: Prevents verb collision if agent-level kill/stop is added later. `amux server stop` vs future `amux kill <agent>` is unambiguous.
+- **`--foreground` flag instead of coupling cloud=foreground**: Cloud mode and process mode are orthogonal. `--cloud --foreground` for systemd, `--cloud` alone for a cloud daemon.
+- **Bare `amux` prints help**: Placeholder — the bare command will be repurposed in the future.
+- **`suspend`/`resume` hidden**: Useful for manual server management but not part of the public API yet.
+
+### Verification
+- `cargo check` — clean
+- `cargo clippy --workspace --all-targets -- -D warnings` — clean
+- `cargo test` — all passing
+- E2E: 12/12 passing (including new `bare_help` and `server_lifecycle` tests)
+
+### Next Steps
+- Consider `amux kill <name>` for stopping individual agents (protocol support exists via `DeleteAgent`)
+- Bare `amux` behavior to be repurposed
+
+---
+
 ## 2026-04-14: Strip claude/types.rs to production essentials
 
 ### Summary

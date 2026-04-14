@@ -1,11 +1,10 @@
-use amux::protocol::{Command, Message};
-use amux::{AmuxError, Config, ConnectPolicy, DaemonOptions, connect};
+use crate::client;
+use amux::Config;
 use anyhow::{Context, Result, bail};
 use semver::Version;
 use serde::Deserialize;
 use sha2::{Digest, Sha256};
 use std::collections::HashMap;
-use std::io;
 use std::path::{Path, PathBuf};
 
 #[cfg(unix)]
@@ -98,80 +97,6 @@ async fn download_and_verify(url: &str, expected_sha256: &str, exe_dir: &Path) -
     Ok(tmp_path)
 }
 
-async fn suspend_if_running(config: &Config) -> Result<bool> {
-    let conn = match connect(config, ConnectPolicy::ExistingOnly).await {
-        Ok(conn) => conn,
-        Err(AmuxError::Io(e))
-            if e.kind() == io::ErrorKind::NotFound
-                || e.kind() == io::ErrorKind::ConnectionRefused =>
-        {
-            return Ok(false);
-        }
-        Err(e) => return Err(e.into()),
-    };
-
-    conn.send(&Message::Command {
-        command: Command::Suspend,
-    })
-    .await?;
-
-    // Server exits after sending SuspendResult, so connection may drop
-    match conn.recv().await {
-        Ok(Message::Command {
-            command:
-                Command::SuspendResult {
-                    suspended_count,
-                    error,
-                },
-        }) => {
-            if let Some(e) = error {
-                bail!("suspend failed: {e}");
-            }
-            println!("Suspended {suspended_count} agent(s).");
-            Ok(true)
-        }
-        // Connection drop after suspend is expected (server exits)
-        Err(AmuxError::Io(_)) => Ok(true),
-        Err(e) => Err(e.into()),
-        Ok(other) => bail!("unexpected response to Suspend: {}", other.type_label()),
-    }
-}
-
-async fn resume_server(config: &Config, exe_path: &Path) -> Result<()> {
-    let conn = connect(
-        config,
-        ConnectPolicy::SpawnDaemon(DaemonOptions::new(exe_path.to_path_buf())),
-    )
-    .await?;
-
-    conn.send(&Message::Command {
-        command: Command::Resume,
-    })
-    .await?;
-
-    match conn.recv().await? {
-        Message::Command {
-            command:
-                Command::ResumeResult {
-                    resumed_count,
-                    failed_count,
-                    error,
-                },
-        } => {
-            if let Some(e) = error {
-                bail!("resume failed: {e}");
-            }
-            print!("Resumed {resumed_count} agent(s).");
-            if failed_count > 0 {
-                print!(" ({failed_count} failed to resume)");
-            }
-            println!();
-            Ok(())
-        }
-        other => bail!("unexpected response to Resume: {}", other.type_label()),
-    }
-}
-
 fn replace_binary(temp: &Path, target: &Path) -> Result<()> {
     std::fs::rename(temp, target).context("failed to replace binary")
 }
@@ -216,7 +141,7 @@ pub async fn run_update(config: &Config) -> Result<()> {
     println!("Downloading...");
     let tmp_path = download_and_verify(&binary.url, &binary.sha256, &exe_dir).await?;
 
-    let was_running = suspend_if_running(config).await?;
+    let was_running = client::suspend_server_if_running(config).await?;
 
     replace_binary(&tmp_path, &current_exe)?;
     println!("Updated to v{latest}.");
@@ -228,7 +153,7 @@ pub async fn run_update(config: &Config) -> Result<()> {
 
     if was_running {
         println!("Restarting server...");
-        resume_server(config, &current_exe).await?;
+        client::resume_server_with_executable(config, &current_exe).await?;
     }
 
     Ok(())
