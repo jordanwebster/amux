@@ -117,7 +117,9 @@ mod tests {
         assert!(matches!(hook, ClaudeHook::SessionStart(_)));
         assert_eq!(
             hook.session_id().unwrap(),
-            "00000000-0000-0000-0000-000000000001".parse::<Uuid>().unwrap()
+            "00000000-0000-0000-0000-000000000001"
+                .parse::<Uuid>()
+                .unwrap()
         );
         assert_eq!(hook.transcript_path().unwrap(), "/tmp/transcript.jsonl");
         assert_eq!(hook.cwd().unwrap(), "/tmp");
