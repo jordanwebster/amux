@@ -1,4 +1,4 @@
-use crate::client;
+use crate::server_client;
 use amux::Config;
 use anyhow::{Context, Result, bail};
 use semver::Version;
@@ -141,7 +141,7 @@ pub async fn run_update(config: &Config) -> Result<()> {
     println!("Downloading...");
     let tmp_path = download_and_verify(&binary.url, &binary.sha256, &exe_dir).await?;
 
-    let was_running = client::suspend_server_if_running(config).await?;
+    let was_running = server_client::suspend_server_if_running(config).await?;
 
     replace_binary(&tmp_path, &current_exe)?;
     println!("Updated to v{latest}.");
@@ -153,7 +153,7 @@ pub async fn run_update(config: &Config) -> Result<()> {
 
     if was_running {
         println!("Restarting server...");
-        client::resume_server_with_executable(config, &current_exe).await?;
+        server_client::resume_server_with_executable(config, &current_exe).await?;
     }
 
     Ok(())

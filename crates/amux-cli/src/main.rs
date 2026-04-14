@@ -1,13 +1,15 @@
-mod client;
+mod client_common;
 mod hooks;
 mod init;
 mod plugin;
+mod server_client;
+mod session_client;
 mod update;
 
-use amux::Config;
 use amux::protocol;
 use amux::run_server;
 use amux::setup;
+use amux::{Config, ServerMode};
 use anyhow::Context;
 use anyhow::Result;
 use anyhow::anyhow;
@@ -172,56 +174,76 @@ async fn main() -> Result<()> {
     let _log_guard = init_tracing();
 
     let cli = Cli::parse();
+    let Some(command) = cli.command else {
+        print_top_level_help()?;
+        return Ok(());
+    };
 
-    if cli.command.is_none() {
-        let mut command = Cli::command();
-        command.print_help()?;
+    if handle_server_start_from_stdin(&command).await? {
         return Ok(());
     }
 
-    // Special case: server start --config-from-stdin reads config from stdin
-    // before anything else (used by ConnectPolicy::SpawnDaemon).
-    if let Some(Commands::Server {
+    let config = load_validated_config(&command, cli.config)?;
+
+    run_command(command, config).await
+}
+
+fn print_top_level_help() -> Result<()> {
+    let mut command = Cli::command();
+    command.print_help()?;
+    Ok(())
+}
+
+async fn handle_server_start_from_stdin(command: &Commands) -> Result<bool> {
+    let Commands::Server {
         command:
             ServerCommands::Start {
                 cloud,
                 config_from_stdin: true,
                 ..
             },
-    }) = &cli.command
-    {
-        let mut input = String::new();
-        std::io::stdin()
-            .read_to_string(&mut input)
-            .context("failed to read config from stdin")?;
-        let config: Config =
-            serde_yaml::from_str(&input).context("failed to parse config from stdin")?;
-        config
-            .validate(*cloud)
-            .map_err(|e| anyhow!("invalid config: {e}"))?;
-        return run_server(config, *cloud).await.map_err(Into::into);
-    }
+    } = command
+    else {
+        return Ok(false);
+    };
 
-    let config = load_config(cli.config)?;
-
-    // Determine if this is a cloud-server invocation for validation purposes
-    let is_cloud = matches!(
-        cli.command,
-        Some(Commands::Server {
-            command: ServerCommands::Start { cloud: true, .. }
-        })
-    );
+    let mut input = String::new();
+    std::io::stdin()
+        .read_to_string(&mut input)
+        .context("failed to read config from stdin")?;
+    let config: Config =
+        serde_yaml::from_str(&input).context("failed to parse config from stdin")?;
     config
-        .validate(is_cloud)
+        .validate(*cloud)
         .map_err(|e| anyhow!("invalid config: {e}"))?;
+    run_server(config, *cloud).await?;
+    Ok(true)
+}
 
-    match cli.command {
-        None => unreachable!("handled before config loading"),
-        Some(Commands::New {
+fn load_validated_config(command: &Commands, path: Option<PathBuf>) -> Result<Config> {
+    let config = load_config(path)?;
+    config
+        .validate(command_server_mode(command).is_cloud())
+        .map_err(|e| anyhow!("invalid config: {e}"))?;
+    Ok(config)
+}
+
+fn command_server_mode(command: &Commands) -> ServerMode {
+    match command {
+        Commands::Server {
+            command: ServerCommands::Start { cloud: true, .. },
+        } => ServerMode::Cloud,
+        _ => ServerMode::Local,
+    }
+}
+
+async fn run_command(command: Commands, config: Config) -> Result<()> {
+    match command {
+        Commands::New {
             agent_type,
             name,
             args,
-        }) => {
+        } => {
             let agent_type = parse_agent_type(&agent_type)?;
             ensure_initialized(&config).await?;
             check_upgrade_required(&config);
@@ -235,32 +257,35 @@ async fn main() -> Result<()> {
                     unreachable!("CLI parser only constructs known agent types")
                 }
             };
-            client::new_agent(name.as_deref(), agent_type, args, &config).await?;
+            session_client::new_agent(name.as_deref(), agent_type, args, &config).await?;
         }
-        Some(Commands::Attach { name }) => {
+        Commands::Attach { name } => {
             ensure_initialized(&config).await?;
-            client::attach(name.as_deref(), &config).await?;
+            session_client::attach(name.as_deref(), &config).await?;
         }
-        Some(Commands::List) => client::list_agents(&config).await?,
-        Some(Commands::Server { command }) => match command {
+        Commands::List => session_client::list_agents(&config).await?,
+        Commands::Server { command } => match command {
             ServerCommands::Start {
                 cloud, foreground, ..
-            } => client::start_server(&config, cloud, foreground).await?,
-            ServerCommands::Stop => client::stop_server(&config).await?,
+            } => {
+                let options = server_client::StartOptions::from_flags(cloud, foreground);
+                server_client::start_server(&config, options).await?
+            }
+            ServerCommands::Stop => server_client::stop_server(&config).await?,
             ServerCommands::Connect { address } => {
                 ensure_initialized(&config).await?;
-                client::connect_remote(&address, &config).await?;
+                server_client::connect_remote(&address, &config).await?;
             }
-            ServerCommands::Suspend => client::suspend_server(&config).await?,
-            ServerCommands::Resume => client::resume_server(&config).await?,
+            ServerCommands::Suspend => server_client::suspend_server(&config).await?,
+            ServerCommands::Resume => server_client::resume_server(&config).await?,
         },
-        Some(Commands::Init { reset }) => init::run_init(&config, reset).await?,
-        Some(Commands::Update) => update::run_update(&config).await?,
-        Some(Commands::Debug { verbose, format }) => {
-            let dump = client::debug(&config, verbose, format.into()).await?;
+        Commands::Init { reset } => init::run_init(&config, reset).await?,
+        Commands::Update => update::run_update(&config).await?,
+        Commands::Debug { verbose, format } => {
+            let dump = server_client::debug(&config, verbose, format.into()).await?;
             print!("{dump}");
         }
-        Some(Commands::Hooks { provider }) => match provider {
+        Commands::Hooks { provider } => match provider {
             HooksProvider::Claude { .. } => {
                 hooks::handle_claude_hook(&config);
             }

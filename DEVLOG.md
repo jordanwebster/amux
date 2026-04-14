@@ -38,6 +38,37 @@ One paragraph describing what was done.
 
 ---
 
+## 2026-04-15: Refactor CLI client split and centralize daemon spawning
+
+### Summary
+Refactored the CLI ergonomics implementation to simplify control flow and reduce duplication without changing behavior. Split the old mixed CLI client into separate session and server modules, made `main()` do a single-pass command dispatch, and moved daemon spawning into a shared library helper so explicit `amux server start` and implicit auto-spawn paths use the same detached process setup.
+
+### Changes
+- **`crates/amux-cli/src/main.rs`** — Simplified command dispatch: early bare-help handling, dedicated `server start --config-from-stdin` path, centralized config loading/validation, single `match` over `Commands`.
+- **`crates/amux-cli/src/session_client.rs`** — New module containing `new`, `attach`, `list`, and the attached-session PTY/lease handling that previously lived in the monolithic `client.rs`.
+- **`crates/amux-cli/src/server_client.rs`** — New module containing `start`, `stop`, `connect`, `suspend`, `resume`, and `debug` helpers. Added typed `StartOptions`/`StartStyle` instead of boolean-heavy APIs.
+- **`crates/amux-cli/src/client_common.rs`** — New shared helper module for daemon options/policy and update-banner rendering.
+- **`crates/amux/src/connect.rs`** — Added shared daemon-spawn helpers and `ServerMode`, so both explicit background start and `ConnectPolicy::SpawnDaemon` use the same detached spawn path.
+- **`crates/amux/src/lib.rs`** — Re-exported `ServerMode` and `spawn_daemon`.
+- **`crates/amux-cli/src/update.rs`** — Switched to `server_client` helpers after the module split.
+- **`crates/amux-cli/Cargo.toml` / `Cargo.lock`** — Removed the CLI-only `libc` dependency after moving Unix detachment fully into the library.
+- **`crates/amux-cli/src/client.rs`** — Removed after splitting its responsibilities across the new modules.
+
+### Decisions Made
+- **Keep daemon spawning in the library**: The explicit CLI lifecycle path and the implicit auto-spawn path must share one implementation, otherwise they drift and regress independently.
+- **Split session and server concerns**: The PTY attach loop and the server lifecycle/control-plane logic are unrelated enough that keeping them in one module was making both harder to reason about.
+- **Use typed start options**: `StartOptions { mode, style }` is clearer at call sites than passing `cloud` / `foreground` booleans around.
+
+### Verification
+- `cargo fmt --all`
+- `cargo test`
+- `cargo test -p amux --lib`
+- `cargo run -p e2e-runner -- run`
+- Result: all checks passed; library tests (286) and E2E tests (12/12) remained green after the refactor.
+
+### Next Steps
+- If the hidden `server suspend` / `server resume` flow remains part of the CLI surface, consider whether the cloud-relay behavior should be encoded more explicitly in persisted state rather than left as an implicit local-server-only path.
+
 ## 2026-04-14: CLI ergonomics — server subcommand, positional attach, suspend/resume
 
 ### Summary
