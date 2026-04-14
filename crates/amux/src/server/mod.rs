@@ -896,7 +896,8 @@ pub(super) mod test_helpers {
             is_local: true,
             heartbeat_role: HeartbeatRole::Disabled,
             next_request_id: Arc::new(AtomicU64::new(1)),
-            client_version: env!("CARGO_PKG_VERSION").to_string(),
+            client_name: Some("amux-cli".to_string()),
+            client_version: Some(env!("CARGO_PKG_VERSION").to_string()),
         }
     }
 

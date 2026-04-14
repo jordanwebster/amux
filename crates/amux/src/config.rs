@@ -2,6 +2,7 @@ use crate::error::{AmuxError, Result};
 use crate::state::State;
 use gethostname::gethostname;
 use serde::{Deserialize, Serialize};
+use std::collections::HashMap;
 use std::fmt;
 use std::path::{Path, PathBuf};
 
@@ -225,10 +226,11 @@ pub struct Config {
     #[serde(default = "default_enforce_tls_in_cloud_mode")]
     pub enforce_tls_in_cloud_mode: bool,
 
-    /// Minimum client version required to connect (semver string, e.g. "0.2.0").
-    /// Clients below this version will be rejected with UpgradeRequired.
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub minimum_client_version: Option<String>,
+    /// Per-client minimum version requirements (e.g. {"amux-cli": "0.2.0"}).
+    /// Clients whose client_name matches a key and whose client_version is
+    /// below the value will be rejected with UpgradeRequired.
+    #[serde(default, skip_serializing_if = "HashMap::is_empty")]
+    pub minimum_client_versions: HashMap<String, String>,
 
     /// Keybind configuration
     #[serde(default)]
@@ -249,7 +251,7 @@ impl Default for Config {
             randomise_link_name: default_randomise_link_name(),
             state_path: default_state_path(),
             enforce_tls_in_cloud_mode: default_enforce_tls_in_cloud_mode(),
-            minimum_client_version: None,
+            minimum_client_versions: HashMap::new(),
             keybinds: Keybinds::default(),
             path: None,
         }
@@ -292,13 +294,13 @@ impl Config {
             }
         }
 
-        // Validate minimum_client_version is valid semver if set
-        if let Some(ref v) = self.minimum_client_version
-            && semver::Version::parse(v).is_err()
-        {
-            return Err(AmuxError::Config(format!(
-                "invalid minimum_client_version '{v}': must be valid semver (e.g. \"0.2.0\")"
-            )));
+        // Validate all minimum_client_versions values are valid semver
+        for (name, version) in &self.minimum_client_versions {
+            if semver::Version::parse(version).is_err() {
+                return Err(AmuxError::Config(format!(
+                    "invalid minimum_client_versions['{name}']: '{version}' is not valid semver (e.g. \"0.2.0\")"
+                )));
+            }
         }
 
         Ok(())
@@ -451,21 +453,25 @@ mod tests {
     }
 
     #[test]
-    fn validate_minimum_client_version_valid() {
+    fn validate_minimum_client_versions_valid() {
         let config = Config {
-            minimum_client_version: Some("0.2.0".to_string()),
+            minimum_client_versions: HashMap::from([("amux-cli".to_string(), "0.2.0".to_string())]),
             ..Config::default()
         };
         assert!(config.validate(false).is_ok());
     }
 
     #[test]
-    fn validate_minimum_client_version_invalid() {
+    fn validate_minimum_client_versions_invalid() {
         let config = Config {
-            minimum_client_version: Some("v0.2.0".to_string()),
+            minimum_client_versions: HashMap::from([(
+                "amux-cli".to_string(),
+                "v0.2.0".to_string(),
+            )]),
             ..Config::default()
         };
         let err = config.validate(false).unwrap_err();
-        assert!(err.to_string().contains("minimum_client_version"));
+        assert!(err.to_string().contains("minimum_client_versions"));
+        assert!(err.to_string().contains("amux-cli"));
     }
 }

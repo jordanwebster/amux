@@ -33,8 +33,10 @@ pub(super) struct ConnectionContext {
     pub(super) is_local: bool,
     pub(super) heartbeat_role: HeartbeatRole,
     pub(super) next_request_id: Arc<AtomicU64>,
+    /// Client implementation name (from Connect handshake, e.g. "amux-cli").
+    pub(super) client_name: Option<String>,
     /// Semantic version of the connecting client (from Connect handshake).
-    pub(super) client_version: String,
+    pub(super) client_version: Option<String>,
 }
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
@@ -825,7 +827,8 @@ mod tests {
             is_local: false,
             heartbeat_role: HeartbeatRole::Dialer,
             next_request_id: Arc::new(AtomicU64::new(1)),
-            client_version: env!("CARGO_PKG_VERSION").to_string(),
+            client_name: Some("amux-cli".to_string()),
+            client_version: Some(env!("CARGO_PKG_VERSION").to_string()),
         }
     }
 
@@ -843,7 +846,8 @@ mod tests {
             is_local: false,
             heartbeat_role: HeartbeatRole::Acceptor,
             next_request_id: Arc::new(AtomicU64::new(1)),
-            client_version: env!("CARGO_PKG_VERSION").to_string(),
+            client_name: Some("amux-cli".to_string()),
+            client_version: Some(env!("CARGO_PKG_VERSION").to_string()),
         }
     }
 

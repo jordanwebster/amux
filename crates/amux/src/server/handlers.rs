@@ -1129,43 +1129,49 @@ async fn handle_direct(
     match message {
         // In-band re-authentication for token refresh on established connections.
         DirectMessage::Reauth { token } => {
-            let (is_cloud, min_version) = {
+            let is_cloud = {
                 let state = ctx.state.read().await;
-                (
-                    state.is_cloud_server,
-                    state.config.minimum_client_version.clone(),
-                )
+                state.is_cloud_server
             };
 
             // Re-check minimum client version (config may have changed since connect)
-            if let Some(ref min_ver_str) = min_version {
-                let reject = match (
-                    semver::Version::parse(&ctx.client_version),
-                    semver::Version::parse(min_ver_str),
-                ) {
-                    (Ok(client), Ok(minimum)) => client < minimum,
-                    _ => true,
+            if let Some(ref name) = ctx.client_name {
+                let min_version = {
+                    let state = ctx.state.read().await;
+                    state.config.minimum_client_versions.get(name).cloned()
                 };
-                if reject {
-                    tracing::warn!(
-                        client_version = %ctx.client_version,
-                        minimum_version = %min_ver_str,
-                        "re-auth: client version below minimum"
-                    );
-                    let _ = tx
-                        .send(Message::Direct {
-                            message: DirectMessage::ReauthResult {
-                                error: Some(ProtocolError::UpgradeRequired {
-                                    minimum_version: min_ver_str.clone(),
-                                    client_version: ctx.client_version.clone(),
-                                }),
-                            },
-                        })
-                        .await;
-                    return Err(AmuxError::UpgradeRequired {
-                        minimum_version: min_ver_str.clone(),
-                        client_version: ctx.client_version.clone(),
-                    });
+                if let Some(ref min_ver_str) = min_version {
+                    let cv = ctx.client_version.as_deref().unwrap_or("");
+                    let reject = match (
+                        semver::Version::parse(cv),
+                        semver::Version::parse(min_ver_str),
+                    ) {
+                        (Ok(client), Ok(minimum)) => client < minimum,
+                        _ => true,
+                    };
+                    if reject {
+                        let cv = cv.to_string();
+                        tracing::warn!(
+                            client_name = %name,
+                            client_version = %cv,
+                            minimum_version = %min_ver_str,
+                            "re-auth: client version below minimum"
+                        );
+                        let _ = tx
+                            .send(Message::Direct {
+                                message: DirectMessage::ReauthResult {
+                                    error: Some(ProtocolError::UpgradeRequired {
+                                        minimum_version: min_ver_str.clone(),
+                                        client_version: cv.clone(),
+                                    }),
+                                },
+                            })
+                            .await;
+                        return Err(AmuxError::UpgradeRequired {
+                            minimum_version: min_ver_str.clone(),
+                            client_version: cv,
+                        });
+                    }
                 }
             }
 
@@ -3028,7 +3034,8 @@ mod tests {
             is_local: false,
             heartbeat_role: crate::server::connection::HeartbeatRole::Acceptor,
             next_request_id: Arc::new(AtomicU64::new(1)),
-            client_version: env!("CARGO_PKG_VERSION").to_string(),
+            client_name: Some("amux-cli".to_string()),
+            client_version: Some(env!("CARGO_PKG_VERSION").to_string()),
         };
         let (tx, written) = mock_tx();
 
@@ -4234,7 +4241,8 @@ mod tests {
             is_local: true,
             heartbeat_role: crate::server::connection::HeartbeatRole::Disabled,
             next_request_id: Arc::new(AtomicU64::new(1)),
-            client_version: env!("CARGO_PKG_VERSION").to_string(),
+            client_name: Some("amux-cli".to_string()),
+            client_version: Some(env!("CARGO_PKG_VERSION").to_string()),
         };
         let (tx, written) = mock_tx();
         let mut peer_rx = add_peer_link(&user_state, "peer-a").await;

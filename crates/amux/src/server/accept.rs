@@ -57,7 +57,8 @@ pub(super) async fn accept_handshake<T: Transport>(
     mpsc::Receiver<Message>,
     Uuid,
     Arc<RwLock<ServerUserState>>,
-    String,
+    Option<String>,
+    Option<String>,
 )> {
     for _attempt in 0..5 {
         let payload = transport.read_frame().await?;
@@ -68,6 +69,7 @@ pub(super) async fn accept_handshake<T: Transport>(
             link_name: proposed_link,
             token,
             version,
+            client_name,
             client_version,
         } = connect;
 
@@ -91,24 +93,27 @@ pub(super) async fn accept_handshake<T: Transport>(
             )));
         }
 
-        // Check minimum client version if configured
-        {
+        // Check minimum client version if configured for this client_name
+        if let Some(ref name) = client_name {
             let min_version = {
                 let s = state.read().await;
-                s.config.minimum_client_version.clone()
+                s.config.minimum_client_versions.get(name).cloned()
             };
             if let Some(ref min_ver_str) = min_version {
+                let cv = client_version.as_deref().unwrap_or("");
                 let reject = match (
-                    semver::Version::parse(&client_version),
+                    semver::Version::parse(cv),
                     semver::Version::parse(min_ver_str),
                 ) {
                     (Ok(client), Ok(minimum)) => client < minimum,
-                    // Unparseable client version is treated as below minimum
+                    // Missing or unparseable client version is treated as below minimum
                     _ => true,
                 };
                 if reject {
+                    let cv = cv.to_string();
                     tracing::warn!(
-                        client_version = %client_version,
+                        client_name = %name,
+                        client_version = %cv,
                         minimum_version = %min_ver_str,
                         "client version below minimum"
                     );
@@ -116,13 +121,13 @@ pub(super) async fn accept_handshake<T: Transport>(
                         transport,
                         Some(ProtocolError::UpgradeRequired {
                             minimum_version: min_ver_str.clone(),
-                            client_version: client_version.clone(),
+                            client_version: cv.clone(),
                         }),
                     )
                     .await?;
                     return Err(AmuxError::UpgradeRequired {
                         minimum_version: min_ver_str.clone(),
-                        client_version,
+                        client_version: cv,
                     });
                 }
             }
@@ -225,6 +230,7 @@ pub(super) async fn accept_handshake<T: Transport>(
             outgoing_rx,
             user_id,
             user_state,
+            client_name,
             client_version,
         ));
     }
@@ -250,7 +256,8 @@ where
             link_name: proposed_link.clone(),
             token: None,
             version: PROTOCOL_VERSION,
-            client_version: env!("CARGO_PKG_VERSION").to_string(),
+            client_name: Some("amux-cli".to_string()),
+            client_version: Some(env!("CARGO_PKG_VERSION").to_string()),
         };
         let payload = connect.encode().map_err(AmuxError::SerializationEncode)?;
         transport.write_frame(&payload).await?;
@@ -320,22 +327,23 @@ pub(super) async fn accept_connection<T: TransportSplit>(
     // Handshake uses the transport directly (safe — no select! involved).
     // Timeout prevents slow-loris: clients that connect but never send handshake data.
     // The span gives all handshake-phase logs transport context (before conn_span exists).
-    let (link_name, route_handle, outgoing_rx, user_id, user_state, client_version) = async {
-        match tokio::time::timeout(
-            HANDSHAKE_TIMEOUT,
-            accept_handshake(&mut transport, &state, verify_token),
-        )
-        .await
-        {
-            Ok(result) => result,
-            Err(_) => {
-                tracing::warn!("handshake timed out");
-                Err(AmuxError::HandshakeTimeout)
+    let (link_name, route_handle, outgoing_rx, user_id, user_state, client_name, client_version) =
+        async {
+            match tokio::time::timeout(
+                HANDSHAKE_TIMEOUT,
+                accept_handshake(&mut transport, &state, verify_token),
+            )
+            .await
+            {
+                Ok(result) => result,
+                Err(_) => {
+                    tracing::warn!("handshake timed out");
+                    Err(AmuxError::HandshakeTimeout)
+                }
             }
         }
-    }
-    .instrument(tracing::info_span!("handshake", transport = log_label))
-    .await?;
+        .instrument(tracing::info_span!("handshake", transport = log_label))
+        .await?;
 
     let heartbeat_role = if is_local {
         HeartbeatRole::Disabled
@@ -370,6 +378,7 @@ pub(super) async fn accept_connection<T: TransportSplit>(
         is_local,
         heartbeat_role,
         next_request_id: route_handle.request_counter(),
+        client_name,
         client_version,
     };
 
@@ -497,7 +506,8 @@ pub(super) async fn tcp_connect(
             is_local: false,
             heartbeat_role: HeartbeatRole::Dialer,
             next_request_id,
-            client_version: env!("CARGO_PKG_VERSION").to_string(),
+            client_name: Some("amux-cli".to_string()),
+            client_version: Some(env!("CARGO_PKG_VERSION").to_string()),
         };
         let _ = run_connection(transport, outgoing_rx, outgoing_tx, ctx, None, conn_span).await;
     });

@@ -245,7 +245,8 @@ async fn run_cloud_connection(
         is_local: false,
         heartbeat_role: HeartbeatRole::Dialer,
         next_request_id,
-        client_version: env!("CARGO_PKG_VERSION").to_string(),
+        client_name: Some("amux-cli".to_string()),
+        client_version: Some(env!("CARGO_PKG_VERSION").to_string()),
     };
 
     let connected_at = std::time::Instant::now();

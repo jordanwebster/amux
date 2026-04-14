@@ -56,10 +56,10 @@ After initial OAuth setup, cloud connections use JWT tokens:
 3. Call GET {cloud_url}/api/connect with access_token
    Returns: { host, port, token (JWT), expires_at }
 4. Connect via TLS to host:port
-5. Send handshake `Connect { link_name, token: JWT, version: PROTOCOL_VERSION, client_version }`
+5. Send handshake `Connect { link_name, token: JWT, version: PROTOCOL_VERSION, client_name?, client_version? }`
 6. Cloud server validates protocol version and JWT via JWKS
    - Checks version matches PROTOCOL_VERSION (rejects with ProtocolMismatch if not)
-   - Checks client_version against minimum_client_version config (rejects with UpgradeRequired if below)
+   - If client_name is present and listed in minimum_client_versions config, checks client_version against that minimum (rejects with UpgradeRequired if below)
    - Fetches keys from {cloud_url}/.well-known/openid-configuration/jwks
    - Caches keys for 1 hour
    - Validates signature, audience ("amux_token"), expiry

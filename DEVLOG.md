@@ -38,6 +38,31 @@ One paragraph describing what was done.
 
 ---
 
+## 2026-04-14: Make client_name/client_version optional, per-client minimum versions
+
+### Summary
+Made `client_version` optional in the Connect handshake and added an optional `client_name` field, so that different client implementations (CLI, mobile app) can identify themselves independently. Replaced the single `minimum_client_version` config with a `minimum_client_versions` map keyed by client name, allowing per-client version enforcement. Clients that send no `client_name` or `client_version` are allowed through (the server can't check what it doesn't know).
+
+### Changes
+- **`crates/amux/src/handshake.rs`** — `client_version` changed from `String` to `Option<String>` with `#[serde(default)]`. Added `client_name: Option<String>`. Updated tests: removed `connect_requires_client_version_field`, added `connect_without_client_name_or_version_decodes`.
+- **`crates/amux/src/config.rs`** — Replaced `minimum_client_version: Option<String>` with `minimum_client_versions: HashMap<String, String>`. Updated `validate()` to check each map value is valid semver. Updated tests.
+- **`crates/amux/src/server/accept.rs`** — Version check now looks up `client_name` in the `minimum_client_versions` map. Skipped if client sends no `client_name`. Return type extended to include `client_name`. Outbound Connect messages send `client_name: "amux-cli"`.
+- **`crates/amux/src/server/handlers.rs`** — Reauth handler uses same per-client-name lookup.
+- **`crates/amux/src/server/connection.rs`** — `ConnectionContext` now has `client_name: Option<String>` and `client_version: Option<String>`.
+- **`crates/amux/src/cloud.rs`** — Outbound cloud Connect sends `client_name: "amux-cli"`.
+- **`crates/amux/src/server/cloud.rs`**, **`crates/amux/src/server/mod.rs`** — Updated ConnectionContext construction in test helpers.
+- **`CLOUD_ARCHITECTURE.md`** — Updated handshake docs.
+
+### Decisions Made
+- **Optional fields, no committed semantics**: `client_name` and `client_version` are purely informational. The server may or may not enforce minimums based on them. This keeps the door open to moving version checks elsewhere (e.g. REST API, manifest) without a breaking protocol change.
+- **Per-client map over single minimum**: The CLI and mobile app have different version numbers and release cadences. A flat minimum would force lockstep versioning.
+- **Permissive default**: Clients that don't send `client_name` bypass version checks entirely. This is intentional for forward compatibility with new or unknown clients.
+
+### Verification
+- `cargo check && cargo fmt && cargo clippy --workspace --all-targets -- -D warnings && cargo test` — 304 tests pass, zero warnings.
+
+---
+
 ## 2026-04-14: Add forward-compatibility Unknown variants and flatten AgentProtocol
 
 ### Summary

@@ -190,7 +190,8 @@ impl CloudConnection {
             link_name: link_name.clone(),
             token: Some(conn.token),
             version: PROTOCOL_VERSION,
-            client_version: env!("CARGO_PKG_VERSION").to_string(),
+            client_name: Some("amux-cli".to_string()),
+            client_version: Some(env!("CARGO_PKG_VERSION").to_string()),
         };
         let payload = connect.encode().map_err(AmuxError::SerializationEncode)?;
         transport.write_frame(&payload).await?;

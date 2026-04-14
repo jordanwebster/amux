@@ -13,8 +13,12 @@ pub struct Connect {
     #[serde(skip_serializing_if = "Option::is_none", default)]
     pub token: Option<String>,
     pub version: u32,
+    /// Identifier for the client implementation (e.g. "amux-cli", "amux-app-ios").
+    #[serde(skip_serializing_if = "Option::is_none", default)]
+    pub client_name: Option<String>,
     /// Semantic version of the client binary (e.g. "0.1.29").
-    pub client_version: String,
+    #[serde(skip_serializing_if = "Option::is_none", default)]
+    pub client_version: Option<String>,
 }
 
 impl Connect {
@@ -57,14 +61,16 @@ mod tests {
             link_name: "term-123".to_string(),
             token: Some("jwt".to_string()),
             version: PROTOCOL_VERSION,
-            client_version: "0.1.29".to_string(),
+            client_name: Some("amux-cli".to_string()),
+            client_version: Some("0.1.29".to_string()),
         };
         let encoded = msg.encode().unwrap();
         let decoded = Connect::decode(&encoded).unwrap();
         assert_eq!(decoded.link_name, "term-123");
         assert_eq!(decoded.token.as_deref(), Some("jwt"));
         assert_eq!(decoded.version, PROTOCOL_VERSION);
-        assert_eq!(decoded.client_version, "0.1.29");
+        assert_eq!(decoded.client_name.as_deref(), Some("amux-cli"));
+        assert_eq!(decoded.client_version.as_deref(), Some("0.1.29"));
     }
 
     #[test]
@@ -84,21 +90,23 @@ mod tests {
     }
 
     #[test]
-    fn connect_requires_client_version_field() {
+    fn connect_without_client_name_or_version_decodes() {
         #[derive(Serialize)]
-        struct NoClientVersion {
+        struct MinimalConnect {
             link_name: String,
-            token: Option<String>,
             version: u32,
         }
 
-        let old = NoClientVersion {
-            link_name: "old-client".to_string(),
-            token: None,
+        let minimal = MinimalConnect {
+            link_name: "app-client".to_string(),
             version: PROTOCOL_VERSION,
         };
-        let encoded = rmp_serde::to_vec_named(&old).unwrap();
-        assert!(Connect::decode(&encoded).is_err());
+        let encoded = rmp_serde::to_vec_named(&minimal).unwrap();
+        let decoded = Connect::decode(&encoded).unwrap();
+        assert_eq!(decoded.link_name, "app-client");
+        assert_eq!(decoded.version, PROTOCOL_VERSION);
+        assert!(decoded.client_name.is_none());
+        assert!(decoded.client_version.is_none());
     }
 
     #[test]
