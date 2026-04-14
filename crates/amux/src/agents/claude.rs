@@ -7,6 +7,8 @@
 use super::{LocalAgentNameSource, PtyHandle, SessionEvent, spawn_pty_agent};
 use crate::buffer::MultiplexStructuredReader;
 use crate::claude::structured_log_source::StructuredLogSource;
+#[cfg(test)]
+use crate::claude::types::HookCommon;
 use crate::claude::types::{ClaudeHook, Hook};
 use crate::debug::DebugView;
 use crate::error::Result;
@@ -358,12 +360,8 @@ impl ClaudeSession {
                 }
                 log_source.write(value).await;
             }
-            Hook::Claude(ClaudeHook::Notification(ref n), raw) => {
-                tracing::debug!(
-                    agent_id = %self.agent_id,
-                    notification_type = %n.notification_type,
-                    "notification"
-                );
+            Hook::Claude(ClaudeHook::Notification(_), raw) => {
+                tracing::debug!(agent_id = %self.agent_id, "notification");
                 let mut value = raw;
                 if let Some(obj) = value.as_object_mut() {
                     obj.insert("type".to_string(), json!("hook.notification"));
@@ -495,22 +493,13 @@ mod tests {
         let mut session = ClaudeSession::new_readonly(Uuid::new_v4(), dir.path().to_path_buf());
 
         session
-            .handle_hook(Hook::from_claude(ClaudeHook::PermissionRequest(Box::new(
-                crate::claude::types::ClaudePermissionRequest {
+            .handle_hook(Hook::from_claude(ClaudeHook::PermissionRequest(
+                HookCommon {
                     session_id,
                     transcript_path: transcript_path_str.clone(),
                     cwd: cwd.clone(),
-                    tool: crate::claude::types::ClaudePermissionTool::Bash {
-                        tool_input: crate::claude::types::BashToolInput {
-                            command: "echo hi".to_string(),
-                            description: Some("test".to_string()),
-                            timeout: None,
-                            run_in_background: None,
-                            dangerously_disable_sandbox: None,
-                        },
-                    },
                 },
-            ))))
+            )))
             .await
             .unwrap();
 
@@ -528,15 +517,11 @@ mod tests {
 
         let seq_after_first_hook = session.current_seq().await;
         session
-            .handle_hook(Hook::from_claude(ClaudeHook::Stop(
-                crate::claude::types::ClaudeStop {
-                    session_id,
-                    stop_hook_active: false,
-                    last_assistant_message: String::new(),
-                    transcript_path: transcript_path_str,
-                    cwd,
-                },
-            )))
+            .handle_hook(Hook::from_claude(ClaudeHook::Stop(HookCommon {
+                session_id,
+                transcript_path: transcript_path_str,
+                cwd,
+            })))
             .await
             .unwrap();
 
@@ -566,26 +551,22 @@ mod tests {
         let transcript_path = dir.path().join("transcript.jsonl");
         tokio::fs::write(&transcript_path, "").await.unwrap();
         session
-            .handle_hook(Hook::from_claude(ClaudeHook::SessionStart(
-                crate::claude::types::ClaudeSessionStart {
-                    session_id,
-                    transcript_path: transcript_path.display().to_string(),
-                    cwd: cwd.clone(),
-                },
-            )))
+            .handle_hook(Hook::from_claude(ClaudeHook::SessionStart(HookCommon {
+                session_id,
+                transcript_path: transcript_path.display().to_string(),
+                cwd: cwd.clone(),
+            })))
             .await
             .unwrap();
 
         let seq_before = session.current_seq().await;
 
         session
-            .handle_hook(Hook::from_claude(ClaudeHook::SessionEnd(
-                crate::claude::types::ClaudeSessionEnd {
-                    session_id,
-                    transcript_path: transcript_path.display().to_string(),
-                    cwd,
-                },
-            )))
+            .handle_hook(Hook::from_claude(ClaudeHook::SessionEnd(HookCommon {
+                session_id,
+                transcript_path: transcript_path.display().to_string(),
+                cwd,
+            })))
             .await
             .unwrap();
 

@@ -8,7 +8,7 @@
 //! For external sessions (no AMUX_AGENT_ID), uses the hook's session_id as
 //! the agent_id so the server can create a readonly session.
 
-use amux::protocol::{ClaudeHook, Command, Hook, Message, PreToolUse};
+use amux::protocol::{ClaudeHook, Command, Hook, Message};
 use amux::{Config, ConnectPolicy, connect};
 use serde_json::Value;
 use std::io::{self, BufRead};
@@ -69,11 +69,6 @@ fn handle_claude_hook_inner(config: &Config) -> io::Result<()> {
         }
     };
 
-    if let ClaudeHook::PermissionRequest(ref p) = claude_hook
-        && matches!(p.tool, PreToolUse::Unknown)
-    {
-        tracing::warn!(input = %input, "unrecognized permission request tool");
-    }
     tracing::debug!(hook = %claude_hook, "received hook");
 
     let hook = Hook::Claude(claude_hook, raw);

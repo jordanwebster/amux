@@ -38,6 +38,23 @@ One paragraph describing what was done.
 
 ---
 
+## 2026-04-14: Strip claude/types.rs to production essentials
+
+### Summary
+Gutted `claude/types.rs` down to the three types the server actually needs: `Hook`, `ClaudeHook`, and `HookCommon`. Removed all tool input types (`PreToolUse`, `BashToolInput`, `EditToolInput`, etc.), all tool output types (`PostToolUse`, `*ToolOutput`, `PatchHunk`, etc.), and all specialized hook structs (`ClaudePermissionRequest`, `ClaudeStop`, `ClaudeNotification`, etc.). The server forwards all structured output as opaque `serde_json::Value` blobs and only needs to discriminate hook variants and extract `session_id`/`transcript_path`/`cwd` — all variants now carry a single `HookCommon` struct. Also removed the vestigial unknown-tool warning from CLI hooks.
+
+### Changes
+- **`crates/amux/src/claude/types.rs`** — Collapsed from ~1580 lines to ~190. Replaced per-variant structs with shared `HookCommon`. Removed `PreToolUse`, `ClaudePermissionTool`, all `*ToolInput` structs (26), all `*ToolOutput` structs (25), `PostToolUse`, `PatchHunk`, `GitDiff`, and associated Display impls and tests.
+- **`crates/amux/src/claude/mod.rs`** — Updated module doc comment.
+- **`crates/amux/src/agents/claude.rs`** — Updated hook construction in tests to use `HookCommon`. Removed `notification_type` field access (was debug-log only).
+- **`crates/amux/src/server/handlers.rs`** — Updated hook construction in tests to use `HookCommon`.
+- **`crates/amux-cli/src/hooks.rs`** — Removed `PreToolUse` import and vestigial unknown-tool warning.
+
+### Verification
+- `cargo check && cargo fmt && cargo clippy --workspace --all-targets -- -D warnings && cargo test` — 286 tests pass, zero warnings.
+
+---
+
 ## 2026-04-14: Make client_name/client_version optional, per-client minimum versions
 
 ### Summary

@@ -1491,10 +1491,7 @@ async fn handle_direct(
 mod tests {
     use super::*;
     use crate::agents::{AgentSession, LocalAgentNameSource, SessionEvent};
-    use crate::claude::types::{
-        BashToolInput, ClaudePermissionRequest, ClaudePermissionTool, ClaudeSessionEnd,
-        ClaudeSessionStart, ClaudeStop,
-    };
+    use crate::claude::types::HookCommon;
     use crate::message::{
         AgentType, Command, CreateAgentRequest, DirectMessage, RenameAgentRequest, SubscribeQuery,
     };
@@ -3834,7 +3831,7 @@ mod tests {
         let (tx, written) = mock_tx();
 
         let agent_id = Uuid::new_v4();
-        let hook = Hook::from_claude(ClaudeHook::SessionStart(ClaudeSessionStart {
+        let hook = Hook::from_claude(ClaudeHook::SessionStart(HookCommon {
             session_id: Uuid::new_v4(),
             transcript_path: "/tmp/transcript.jsonl".to_string(),
             cwd: "/tmp".to_string(),
@@ -3878,7 +3875,7 @@ mod tests {
         let (tx, written) = mock_tx();
 
         let agent_id = Uuid::new_v4();
-        let hook = Hook::from_claude(ClaudeHook::SessionEnd(ClaudeSessionEnd {
+        let hook = Hook::from_claude(ClaudeHook::SessionEnd(HookCommon {
             session_id: Uuid::new_v4(),
             transcript_path: "/tmp/transcript.jsonl".to_string(),
             cwd: "/tmp".to_string(),
@@ -3929,7 +3926,7 @@ mod tests {
         let ctx = test_ctx(state, user_state);
         let (tx, written) = mock_tx();
 
-        let hook = Hook::from_claude(ClaudeHook::SessionStart(ClaudeSessionStart {
+        let hook = Hook::from_claude(ClaudeHook::SessionStart(HookCommon {
             session_id: Uuid::new_v4(),
             transcript_path: "/tmp/nonexistent_transcript.jsonl".to_string(),
             cwd: "/tmp".to_string(),
@@ -3970,22 +3967,11 @@ mod tests {
         let (tx, written) = mock_tx();
 
         let agent_id = Uuid::new_v4();
-        let hook = Hook::from_claude(ClaudeHook::PermissionRequest(Box::new(
-            ClaudePermissionRequest {
-                session_id: Uuid::new_v4(),
-                transcript_path: "/tmp".to_string(),
-                cwd: "/tmp".to_string(),
-                tool: ClaudePermissionTool::Bash {
-                    tool_input: BashToolInput {
-                        command: "ls".to_string(),
-                        description: None,
-                        timeout: None,
-                        run_in_background: None,
-                        dangerously_disable_sandbox: None,
-                    },
-                },
-            },
-        )));
+        let hook = Hook::from_claude(ClaudeHook::PermissionRequest(HookCommon {
+            session_id: Uuid::new_v4(),
+            transcript_path: "/tmp".to_string(),
+            cwd: "/tmp".to_string(),
+        }));
 
         handle_command(
             &tx,
@@ -4028,23 +4014,11 @@ mod tests {
         let ctx = test_ctx(state, user_state);
         let (tx, written) = mock_tx();
 
-        let tool = ClaudePermissionTool::Bash {
-            tool_input: BashToolInput {
-                command: "cargo test".to_string(),
-                description: Some("Run tests".to_string()),
-                timeout: None,
-                run_in_background: None,
-                dangerously_disable_sandbox: None,
-            },
-        };
-        let hook = Hook::from_claude(ClaudeHook::PermissionRequest(Box::new(
-            ClaudePermissionRequest {
-                session_id: Uuid::new_v4(),
-                transcript_path: "/tmp".to_string(),
-                cwd: "/tmp".to_string(),
-                tool: tool.clone(),
-            },
-        )));
+        let hook = Hook::from_claude(ClaudeHook::PermissionRequest(HookCommon {
+            session_id: Uuid::new_v4(),
+            transcript_path: "/tmp".to_string(),
+            cwd: "/tmp".to_string(),
+        }));
 
         handle_command(
             &tx,
@@ -4081,10 +4055,8 @@ mod tests {
         let (tx, written) = mock_tx();
 
         let agent_id = Uuid::new_v4();
-        let hook = Hook::from_claude(ClaudeHook::Stop(ClaudeStop {
+        let hook = Hook::from_claude(ClaudeHook::Stop(HookCommon {
             session_id: Uuid::new_v4(),
-            stop_hook_active: true,
-            last_assistant_message: "Done.".to_string(),
             transcript_path: "/tmp".to_string(),
             cwd: "/tmp".to_string(),
         }));
@@ -4129,10 +4101,8 @@ mod tests {
         let ctx = test_ctx(state, user_state);
         let (tx, written) = mock_tx();
 
-        let hook = Hook::from_claude(ClaudeHook::Stop(ClaudeStop {
+        let hook = Hook::from_claude(ClaudeHook::Stop(HookCommon {
             session_id: Uuid::new_v4(),
-            stop_hook_active: true,
-            last_assistant_message: "I've completed the refactoring.".to_string(),
             transcript_path: "/tmp".to_string(),
             cwd: "/tmp".to_string(),
         }));
@@ -4183,7 +4153,7 @@ mod tests {
             us.registry.register_local(info).unwrap();
         }
 
-        let hook = Hook::from_claude(ClaudeHook::SessionEnd(ClaudeSessionEnd {
+        let hook = Hook::from_claude(ClaudeHook::SessionEnd(HookCommon {
             session_id: Uuid::new_v4(),
             transcript_path: "/tmp/transcript.jsonl".to_string(),
             cwd: "/tmp".to_string(),
@@ -4248,7 +4218,7 @@ mod tests {
         let mut peer_rx = add_peer_link(&user_state, "peer-a").await;
 
         let agent_id = Uuid::new_v4();
-        let hook = Hook::from_claude(ClaudeHook::SessionStart(ClaudeSessionStart {
+        let hook = Hook::from_claude(ClaudeHook::SessionStart(HookCommon {
             session_id: Uuid::new_v4(),
             transcript_path: "/tmp/transcript.jsonl".to_string(),
             cwd: "/tmp".to_string(),
