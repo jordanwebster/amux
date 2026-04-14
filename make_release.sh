@@ -2,7 +2,7 @@
 set -euo pipefail
 
 # Usage: ./make_release.sh [version]
-# If version is not provided, bumps the patch version of the current release.
+# If version is not provided, bumps the minor version of the current release.
 
 # Get current version from amux-cli Cargo.toml
 current=$(grep '^version = ' crates/amux-cli/Cargo.toml | head -1 | sed 's/version = "\(.*\)"/\1/')
@@ -10,9 +10,9 @@ current=$(grep '^version = ' crates/amux-cli/Cargo.toml | head -1 | sed 's/versi
 if [ -n "${1:-}" ]; then
     new_version="$1"
 else
-    # Bump patch version
+    # Bump minor version
     IFS='.' read -r major minor patch <<< "$current"
-    new_version="${major}.${minor}.$((patch + 1))"
+    new_version="${major}.$((minor + 1)).0"
 fi
 
 echo "Releasing v${new_version} (current: v${current})"
