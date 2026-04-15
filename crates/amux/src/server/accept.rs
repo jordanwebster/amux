@@ -22,7 +22,8 @@ use std::sync::atomic::AtomicU64;
 use std::time::Duration;
 use tokio::net::TcpStream;
 use tokio::sync::{RwLock, mpsc};
-use tokio_tungstenite::accept_async;
+use tokio_tungstenite::accept_async_with_config;
+use tokio_tungstenite::tungstenite::protocol::WebSocketConfig;
 use tracing::Instrument;
 use uuid::Uuid;
 
@@ -38,6 +39,23 @@ async fn write_connect_result<T: Transport>(
     let response = ConnectResult { error };
     let payload = response.encode().map_err(AmuxError::SerializationEncode)?;
     transport.write_frame(&payload).await
+}
+
+/// Validate a proposed link name: non-empty, max 128 bytes, `[a-zA-Z0-9_-]` only.
+fn validate_link_name(name: &str) -> std::result::Result<(), &'static str> {
+    if name.is_empty() {
+        return Err("must not be empty");
+    }
+    if name.len() > 128 {
+        return Err("exceeds 128 byte limit");
+    }
+    if !name
+        .bytes()
+        .all(|b| b.is_ascii_alphanumeric() || b == b'-' || b == b'_')
+    {
+        return Err("must contain only alphanumeric, hyphen, or underscore characters");
+    }
+    Ok(())
 }
 
 /// Accept-side handshake: client proposes link name, we validate against routes.
@@ -133,12 +151,12 @@ pub(super) async fn accept_handshake<T: Transport>(
             }
         }
 
-        if proposed_link.contains('.') {
-            tracing::warn!(link = %proposed_link, "rejecting invalid link name (contains '.')");
+        if let Err(reason) = validate_link_name(&proposed_link) {
+            tracing::warn!(link = %proposed_link, reason, "rejecting invalid link name");
             write_connect_result(transport, Some(ProtocolError::InvalidLinkName)).await?;
             return Err(AmuxError::Config(format!(
-                "Invalid link name '{}': must not contain '.'",
-                proposed_link
+                "Invalid link name '{}': {}",
+                proposed_link, reason
             )));
         }
 
@@ -400,16 +418,24 @@ pub(super) async fn websocket_accept(
     event_tx: mpsc::Sender<super::SessionEvent>,
     verify_token: bool,
 ) -> Result<()> {
-    let ws_stream = tokio::time::timeout(HANDSHAKE_TIMEOUT, accept_async(stream))
-        .await
-        .map_err(|_| {
-            tracing::warn!("WebSocket upgrade timed out");
-            AmuxError::HandshakeTimeout
-        })?
-        .map_err(|e| {
-            tracing::warn!(error = %e, "WebSocket upgrade failed");
-            AmuxError::Io(std::io::Error::other(e.to_string()))
-        })?;
+    let ws_config = WebSocketConfig {
+        max_message_size: Some(crate::transport::MAX_FRAME_SIZE),
+        max_frame_size: Some(crate::transport::MAX_FRAME_SIZE),
+        ..WebSocketConfig::default()
+    };
+    let ws_stream = tokio::time::timeout(
+        HANDSHAKE_TIMEOUT,
+        accept_async_with_config(stream, Some(ws_config)),
+    )
+    .await
+    .map_err(|_| {
+        tracing::warn!("WebSocket upgrade timed out");
+        AmuxError::HandshakeTimeout
+    })?
+    .map_err(|e| {
+        tracing::warn!(error = %e, "WebSocket upgrade failed");
+        AmuxError::Io(std::io::Error::other(e.to_string()))
+    })?;
     let transport = WebSocketTransport::new(ws_stream);
     accept_connection(transport, state, event_tx, verify_token, false, "websocket").await
 }

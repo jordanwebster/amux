@@ -291,6 +291,14 @@ impl Config {
             )));
         }
 
+        // Server link names are "{hostname}-{4 chars}", max 128 bytes total
+        if self.host_name.len() > 123 {
+            return Err(AmuxError::Config(format!(
+                "host_name is {} bytes, max 123 (link names add a 5-byte suffix)",
+                self.host_name.len()
+            )));
+        }
+
         // Cloud servers must have TCP and WebSocket ports configured
         if is_cloud {
             if self.tcp_port.is_none() {
@@ -303,6 +311,12 @@ impl Config {
                     "cloud mode requires websocket_port to be set".into(),
                 ));
             }
+        }
+
+        // Release builds must use HTTPS for cloud URLs to protect tokens in transit
+        #[cfg(not(any(debug_assertions, test)))]
+        if !self.cloud_url.starts_with("https://") {
+            return Err(AmuxError::Config("cloud_url must use HTTPS".into()));
         }
 
         // Validate all minimum_client_versions values are valid semver

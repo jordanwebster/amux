@@ -38,6 +38,35 @@ One paragraph describing what was done.
 
 ---
 
+## 2026-04-15: Pre-release security hardening
+
+### Summary
+Security audit identified several hardening gaps. Fixed four issues: WebSocket frame size was unbounded (DoS vector on cloud servers), `suspended.yaml` was created with default permissions instead of 0o600, link names had no length/charset validation, and `cloud_url` could be set to HTTP in release builds.
+
+### Changes
+- **`crates/amux/src/server/accept.rs`** — Replaced `accept_async` with `accept_async_with_config`, setting `max_message_size` and `max_frame_size` to `MAX_FRAME_SIZE` (16MB) matching TCP/Unix transports. Added `validate_link_name` function enforcing non-empty, max 128 bytes, `[a-zA-Z0-9_-]` only; replaces the old `.contains('.')` check.
+- **`crates/amux/src/transport/mod.rs`** — Made `MAX_FRAME_SIZE` `pub(crate)` so `accept.rs` can reference it for WebSocket config.
+- **`crates/amux/src/state.rs`** — `save_suspended` now uses `OpenOptions` with `mode(0o600)` instead of `fs::write`, matching how `state.yaml` is written.
+- **`crates/amux/src/config.rs`** — `Config::validate` now rejects non-HTTPS `cloud_url` in release builds (`#[cfg(not(any(debug_assertions, test)))]`).
+- **`crates/amux-cli/src/plugin.rs`** — Fixed pre-existing clippy `collapsible_if` warning.
+
+### Decisions Made
+- Link name charset `[a-zA-Z0-9_-]` matches what generators produce; strict enough to prevent log injection and routing edge cases.
+- HTTPS enforcement is unconditional (not gated on `is_cloud`) since local servers also send tokens to `cloud_url`. Only gated on release builds so `http://localhost` works in dev.
+- WebSocket size limits match the existing TCP/Unix 16MB `MAX_FRAME_SIZE` for consistency.
+
+### Verification
+- `cargo check && cargo fmt && cargo clippy --workspace --all-targets -- -D warnings` — clean
+- `cargo test` — 286 unit tests pass
+- `cargo build --workspace && cargo run -p e2e-runner -- run` — 12 E2E tests pass
+
+### Next Steps
+- Consider OS keychain integration for refresh token storage (currently plaintext in 0o600 file)
+- Consider per-IP rate limiting for cloud server connections
+- Consider audit logging for security-relevant events
+
+---
+
 ## 2026-04-15: Bundle Claude marketplace locally and track applied plugin state
 
 ### Summary

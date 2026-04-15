@@ -141,7 +141,14 @@ pub fn save_suspended(
         fs::create_dir_all(parent)?;
     }
     let yaml = serde_yaml::to_string(state)?;
-    fs::write(&suspended_path, yaml)?;
+
+    let mut opts = OpenOptions::new();
+    opts.write(true).create(true).truncate(true);
+    #[cfg(unix)]
+    opts.mode(0o600);
+    let mut file = opts.open(&suspended_path)?;
+    file.write_all(yaml.as_bytes())?;
+
     tracing::info!(path = %suspended_path.display(), count = state.agents.len(), "saved suspended agents");
     Ok(())
 }

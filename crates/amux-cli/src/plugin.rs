@@ -187,13 +187,13 @@ pub async fn ensure_plugin_installed() {
         }
     };
 
-    if plugin.needs_materialization(expected_version) {
-        if let Err(e) = plugin.materialize_bundle() {
-            let action = plugin
-                .required_action(expected_version)
-                .unwrap_or(PluginAction::Install);
-            exit_with_plugin_error(action, e);
-        }
+    if plugin.needs_materialization(expected_version)
+        && let Err(e) = plugin.materialize_bundle()
+    {
+        let action = plugin
+            .required_action(expected_version)
+            .unwrap_or(PluginAction::Install);
+        exit_with_plugin_error(action, e);
     }
 
     let Some(action) = plugin.required_action(expected_version) else {

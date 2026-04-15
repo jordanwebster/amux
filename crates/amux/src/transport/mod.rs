@@ -25,8 +25,8 @@ use crate::error::Result;
 use crate::message::Message;
 use std::future::Future;
 
-/// 16MB limit to prevent DoS via huge length prefix
-const MAX_FRAME_SIZE: usize = 16 * 1024 * 1024;
+/// 16MB limit to prevent DoS via huge frames (length-prefixed and WebSocket).
+pub(crate) const MAX_FRAME_SIZE: usize = 16 * 1024 * 1024;
 
 /// Transport trait for reading and writing messages
 pub trait Transport: Send + Sync {
