@@ -30,6 +30,11 @@ pub(crate) fn xdg_dir(env_var: &str, default_suffix: &str) -> PathBuf {
     home_dir().join(default_suffix)
 }
 
+/// Resolve the amux application directory within an XDG base directory.
+pub(crate) fn amux_xdg_dir(env_var: &str, default_suffix: &str) -> PathBuf {
+    xdg_dir(env_var, default_suffix).join("amux")
+}
+
 /// Resolve `$HOME`, panics if unset (same as `dirs::home_dir`).
 #[cfg(unix)]
 fn home_dir() -> PathBuf {
@@ -100,9 +105,15 @@ fn default_state_path() -> PathBuf {
     State::default_path()
 }
 
+/// Default data directory: `$XDG_DATA_HOME/amux`,
+/// falling back to `~/.local/share/amux`.
+pub fn default_data_dir() -> PathBuf {
+    amux_xdg_dir("XDG_DATA_HOME", ".local/share")
+}
+
 /// Default log path: `$XDG_STATE_HOME/amux/amux.log` (co-located with state.yaml).
 pub fn default_log_path() -> PathBuf {
-    xdg_dir("XDG_STATE_HOME", ".local/state").join("amux/amux.log")
+    amux_xdg_dir("XDG_STATE_HOME", ".local/state").join("amux.log")
 }
 
 /// A control-key leader parsed from the `ctrl+<char>` format (e.g. `ctrl+a`).
@@ -266,7 +277,7 @@ impl Config {
     /// Default config file path: `$XDG_CONFIG_HOME/amux/config.yaml`,
     /// falling back to `~/.config/amux/config.yaml`.
     pub fn default_path() -> PathBuf {
-        xdg_dir("XDG_CONFIG_HOME", ".config").join("amux/config.yaml")
+        amux_xdg_dir("XDG_CONFIG_HOME", ".config").join("config.yaml")
     }
 
     /// Validate config. Call early to surface errors before any work begins.

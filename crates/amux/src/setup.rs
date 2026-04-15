@@ -1,11 +1,18 @@
 use crate::config::Config;
 use crate::oauth;
 use crate::state::{CloudState, State, StateError};
+use std::path::{Path, PathBuf};
 
 #[derive(Debug)]
 pub struct CloudSetupState {
     pub use_cloud_mode: Option<bool>,
     pub has_refresh_token: bool,
+}
+
+#[derive(Debug, Clone, Default)]
+pub struct ClaudePluginSetupState {
+    pub applied_plugin_version: Option<String>,
+    pub applied_marketplace_path: Option<PathBuf>,
 }
 
 #[derive(Debug, thiserror::Error)]
@@ -60,19 +67,28 @@ pub async fn authenticate_cloud(config: &Config) -> Result<(), SetupError> {
     Ok(())
 }
 
-/// Current Claude plugin version tracked in state (if present).
-pub fn claude_plugin_version() -> Option<u32> {
+/// Read Claude plugin setup state persisted for Claude Code integration.
+pub fn claude_plugin_setup_state() -> ClaudePluginSetupState {
     let state_path = State::default_path();
     State::load(&state_path)
         .ok()
-        .and_then(|s| s.claude.plugin_version)
+        .map(|s| ClaudePluginSetupState {
+            applied_plugin_version: s.claude.applied_plugin_version,
+            applied_marketplace_path: s.claude.applied_marketplace_path,
+        })
+        .unwrap_or_default()
 }
 
-/// Persist Claude plugin version to state.
-pub fn set_claude_plugin_version(version: u32) -> Result<(), SetupError> {
+/// Persist the Claude plugin version and marketplace path last successfully
+/// applied to Claude Code.
+pub fn set_claude_plugin_setup_state(
+    version: &str,
+    marketplace_path: &Path,
+) -> Result<(), SetupError> {
     let state_path = State::default_path();
     State::update(&state_path, |s| {
-        s.claude.plugin_version = Some(version);
+        s.claude.applied_plugin_version = Some(version.to_string());
+        s.claude.applied_marketplace_path = Some(marketplace_path.to_path_buf());
     })?;
     Ok(())
 }

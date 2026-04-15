@@ -45,15 +45,17 @@ pub struct CloudState {
 /// Claude-specific state
 #[derive(Debug, Clone, Serialize, Deserialize, Default)]
 pub struct ClaudeState {
-    /// Installed plugin version (None = not installed, triggers install)
-    pub plugin_version: Option<u32>,
+    /// Plugin version last successfully applied to Claude Code.
+    pub applied_plugin_version: Option<String>,
+    /// Marketplace source path last successfully applied to Claude Code.
+    pub applied_marketplace_path: Option<PathBuf>,
 }
 
 impl State {
     /// Default state path: `$XDG_STATE_HOME/amux/state.yaml`,
     /// falling back to `~/.local/state/amux/state.yaml`.
     pub fn default_path() -> PathBuf {
-        crate::config::xdg_dir("XDG_STATE_HOME", ".local/state").join("amux/state.yaml")
+        crate::config::amux_xdg_dir("XDG_STATE_HOME", ".local/state").join("state.yaml")
     }
 
     /// Load state with shared lock (allows concurrent reads)
@@ -231,7 +233,8 @@ mod tests {
         assert!(loaded.host_id.is_none());
         assert_eq!(loaded.cloud.use_cloud_mode, Some(true));
         // Claude section should be default
-        assert!(loaded.claude.plugin_version.is_none());
+        assert!(loaded.claude.applied_plugin_version.is_none());
+        assert!(loaded.claude.applied_marketplace_path.is_none());
     }
 
     #[test]

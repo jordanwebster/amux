@@ -38,6 +38,35 @@ One paragraph describing what was done.
 
 ---
 
+## 2026-04-15: Bundle Claude marketplace locally and track applied plugin state
+
+### Summary
+Reworked the Claude plugin install/update flow so amux no longer adds the marketplace from GitHub. The CLI now embeds the marketplace and plugin assets into the binary, materializes them into an amux-managed local marketplace directory, derives the expected plugin version from the bundled `plugin.json`, and tracks the last Claude-applied plugin version separately from the generated files on disk. This keeps `amux new claude` on a cheap local fast path while avoiding false-success cases after failed installs.
+
+### Changes
+- **`crates/amux-cli/src/plugin.rs`** — Replaced the old `PLUGIN_VERSION: u32` sentinel with a structured local plugin manager. Added bundled marketplace/plugin/hook assets via `include_str!`, local materialization under the amux data dir, manifest-derived version parsing, explicit `Install` / `Update` / `Rebind` actions, and strict success-only persistence of applied state.
+- **`crates/amux/src/state.rs`** — Replaced `claude.plugin_version: Option<u32>` with `claude.applied_plugin_version: Option<String>` and added `claude.applied_marketplace_path: Option<PathBuf>`.
+- **`crates/amux/src/setup.rs`** — Replaced the old version-only getters/setters with `ClaudePluginSetupState` so version and marketplace path are loaded and persisted together.
+- **`crates/amux/src/config.rs` / `crates/amux/src/state.rs` / `crates/amux/src/lib.rs`** — Added a shared `amux_xdg_dir()` helper and routed config/state/log/data paths through it so amux-owned directories are resolved consistently.
+- **`crates/amux-cli/Cargo.toml` / `Cargo.lock`** — Added `tempfile` as a CLI test dependency for the new plugin materialization tests.
+
+### Decisions Made
+- **Bundle the marketplace/plugin into the binary**: Avoids cloning the whole amux repo just to install Claude hooks and keeps the plugin tightly coupled to the amux release artifact.
+- **Use the bundled manifest version as the expected version**: Removes the split between a private integer sentinel and Claude’s plugin metadata version.
+- **Track applied state separately from materialized files**: Writing generated files to disk is not the same as Claude successfully installing/updating them, so the fast path now requires both the materialized bundle and the last successfully applied state to match.
+- **Rebind when the marketplace source path changes**: A plain `claude plugin marketplace update amux` refreshes the existing registered source, so if the local marketplace path changes amux now removes and re-adds the marketplace before reinstalling the plugin.
+- **Self-heal corrupt generated manifests**: Invalid JSON in the materialized `plugin.json` is treated as stale generated state and rewritten from the embedded bundle instead of hard-failing before repair.
+- **Keep strict failure behavior**: Claude command failures still stop the flow immediately; the new logic only hardens amux-owned generated state.
+
+### Verification
+- `cargo fmt`
+- `cargo test -p amux -p amux-cli`
+- Result: all tests passed, including new coverage for incomplete bundles, corrupt materialized manifests, and marketplace-path rebinds.
+
+### Next Steps
+- Consider an `amux doctor` or explicit repair command later for Claude-side drift caused by manual user actions outside amux.
+- Decide whether the materialized marketplace should eventually get a more explicit release/version layout if amux needs to support multiple concurrent plugin channels.
+
 ## 2026-04-15: Refactor CLI client split and centralize daemon spawning
 
 ### Summary
