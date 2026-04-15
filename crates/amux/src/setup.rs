@@ -90,7 +90,7 @@ pub fn prevent_idle_sleep_preference(config: &Config) -> Result<Option<bool>, Se
     let map = read_config_mapping(&path)?;
 
     Ok(map
-        .get(&Value::String("prevent_idle_sleep".to_string()))
+        .get(Value::String("prevent_idle_sleep".to_string()))
         .and_then(Value::as_bool))
 }
 

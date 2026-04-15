@@ -239,7 +239,7 @@ impl Executor {
                 .clone()
                 .unwrap_or_else(|| test_case.name.clone());
             let yaml_content = format!(
-                "host_name: '{}'\nsocket_path: '{}'\ntcp_port: {}\nwebsocket_port: {}\nrandomise_link_name: false\nstate_path: '{}'\n",
+                "host_name: '{}'\nsocket_path: '{}'\ntcp_port: {}\nwebsocket_port: {}\nrandomise_link_name: false\nprevent_idle_sleep: false\nstate_path: '{}'\n",
                 host_name,
                 socket_path.display(),
                 tcp_port,

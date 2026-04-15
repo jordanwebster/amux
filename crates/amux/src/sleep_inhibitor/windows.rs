@@ -51,6 +51,11 @@ struct PowerRequest {
     request_type: POWER_REQUEST_TYPE,
 }
 
+// SAFETY: A Windows power-request handle is an owned kernel handle. Moving this
+// wrapper to another thread does not invalidate the handle, and releasing it
+// from Drop on another thread is supported by the Windows handle model.
+unsafe impl Send for PowerRequest {}
+
 impl PowerRequest {
     fn new_system_required(reason: &str) -> Result<Self, String> {
         let mut wide_reason: Vec<u16> = OsStr::new(reason).encode_wide().chain(once(0)).collect();
