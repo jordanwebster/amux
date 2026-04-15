@@ -8,6 +8,7 @@ description = "Agent multiplexer - library for building amux clients and servers
 portable-pty = { workspace = true }
 tokio = { workspace = true }
 serde = { workspace = true }
+serde_bytes = { workspace = true }
 serde_json = { workspace = true }
 serde_yaml = { workspace = true }
 rmp-serde = { workspace = true }

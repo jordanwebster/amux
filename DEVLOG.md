@@ -38,6 +38,28 @@ One paragraph describing what was done.
 
 ---
 
+## 2026-04-15: Fix MessagePack deserialization of byte fields in internally tagged enums
+
+### Summary
+Messages were failing to deserialize because internally tagged serde enums (`#[serde(tag = "...")]`) buffer all fields into a generic intermediate representation before decoding. MessagePack `bin` data in `Vec<u8>` fields gets buffered as a sequence of integers rather than a byte blob, causing type mismatches on replay. Added `#[serde(with = "serde_bytes")]` to all `Vec<u8>` fields inside tagged enums so binary data survives the buffer-and-replay cycle.
+
+### Changes
+- **`Cargo.toml`** — Added `serde_bytes = "0.11"` to workspace dependencies
+- **`crates/amux/Cargo.toml`** — Added `serde_bytes` dependency
+- **`crates/amux/src/message.rs`** — Added `#[serde(with = "serde_bytes")]` to `Message::Routable::payload`, `RoutableMessage::RawInput::data`, and `RoutableMessage::RawOutput::data`
+
+### Decisions Made
+- Kept internal tagging + `serde_bytes` rather than reverting `Message` to external tagging, for consistency across all enums. All enums use internal tagging; byte fields get `serde_bytes`.
+- `RoutableMessage` must stay internally tagged because `#[serde(other)]` on `Unknown` (forward compatibility) only works with internal/adjacent tagging.
+- Performance overhead of internal tagging's buffer-and-replay is negligible for this workload (terminal multiplexer, not millions of messages per second).
+
+### Verification
+- `cargo check && cargo fmt && cargo clippy --workspace --all-targets -- -D warnings` — clean
+- `cargo test` — 286 unit tests pass
+- `cargo build --workspace && cargo run -p e2e-runner -- run` — 12 E2E tests pass
+
+---
+
 ## 2026-04-15: Pre-release security hardening
 
 ### Summary

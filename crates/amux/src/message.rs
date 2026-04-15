@@ -226,10 +226,12 @@ pub enum RoutableMessage {
     },
     RawInput {
         agent_id: Uuid,
+        #[serde(with = "serde_bytes")]
         data: Vec<u8>,
     },
     RawOutput {
         subscription_id: SubscriptionId,
+        #[serde(with = "serde_bytes")]
         data: Vec<u8>,
     },
     StructuredOutput {
@@ -436,6 +438,7 @@ pub enum Message {
         src: Route,
         dst: Route,
         request_id: u64,
+        #[serde(with = "serde_bytes")]
         payload: Vec<u8>,
     },
     Direct {
