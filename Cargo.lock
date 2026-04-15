@@ -16,6 +16,7 @@ name = "amux"
 version = "0.1.32"
 dependencies = [
  "chrono",
+ "core-foundation",
  "fs2",
  "futures-util",
  "gethostname",
@@ -41,6 +42,7 @@ dependencies = [
  "tracing",
  "uuid",
  "webpki-roots 0.26.11",
+ "windows-sys 0.61.2",
 ]
 
 [[package]]

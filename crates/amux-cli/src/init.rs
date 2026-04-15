@@ -51,7 +51,7 @@ pub fn needs_init(config: &Config) -> bool {
 }
 
 /// Run the initialization flow.
-pub async fn run_init(config: &Config, reset: bool) -> Result<(), InitError> {
+pub async fn run_init(config: &mut Config, reset: bool) -> Result<(), InitError> {
     if reset {
         setup::reset_cloud_state(config)?;
         println!("State cleared.");
@@ -80,7 +80,6 @@ pub async fn run_init(config: &Config, reset: bool) -> Result<(), InitError> {
 
         if !use_cloud {
             println!("\nCloud mode disabled. You can run 'amux init' anytime to reconfigure.");
-            return Ok(());
         }
 
         status = setup::cloud_setup_state(config)?;
@@ -94,5 +93,122 @@ pub async fn run_init(config: &Config, reset: bool) -> Result<(), InitError> {
         println!("Your local amux server will now connect to the cloud automatically.");
     }
 
+    maybe_prompt_prevent_idle_sleep(config)?;
+
     Ok(())
+}
+
+fn maybe_prompt_prevent_idle_sleep(config: &mut Config) -> Result<(), InitError> {
+    if !needs_prevent_idle_sleep_setup(config) {
+        return Ok(());
+    }
+
+    println!();
+    println!("To keep your agents reachable remotely, amux can keep this machine");
+    println!("awake while it runs in the background.");
+    println!();
+    println!("This prevents idle sleep, but the display can still sleep.");
+    println!("On laptops, this may use more battery.");
+    println!();
+    println!("Do you want amux to keep this machine awake?");
+    println!("  1. Yes (recommended for remote access)");
+    println!("  2. No");
+    let enabled = prompt_prevent_idle_sleep_choice()?;
+
+    setup::set_prevent_idle_sleep(config, enabled)?;
+    config.prevent_idle_sleep = enabled;
+
+    if !enabled {
+        println!();
+        println!("Remote access will stop when this machine goes to sleep.");
+        println!(
+            "You can change this later by setting `prevent_idle_sleep: true` in your amux config."
+        );
+    }
+
+    Ok(())
+}
+
+fn prompt_prevent_idle_sleep_choice() -> Result<bool, InitError> {
+    loop {
+        print!("\nChoice [1]: ");
+        io::stdout().flush()?;
+
+        let mut input = String::new();
+        io::stdin().read_line(&mut input)?;
+
+        match parse_prevent_idle_sleep_choice(&input) {
+            Some(enabled) => return Ok(enabled),
+            None => {
+                println!("Please enter 1 or 2.");
+            }
+        }
+    }
+}
+
+fn needs_prevent_idle_sleep_setup(config: &Config) -> bool {
+    setup::prevent_idle_sleep_supported()
+        && matches!(setup::prevent_idle_sleep_preference(config), Ok(None))
+}
+
+fn parse_prevent_idle_sleep_choice(input: &str) -> Option<bool> {
+    let choice = input.trim().to_ascii_lowercase();
+    match choice.as_str() {
+        "" | "1" | "y" | "yes" => Some(true),
+        "2" | "n" | "no" => Some(false),
+        _ => None,
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::{needs_init, parse_prevent_idle_sleep_choice};
+    use amux::Config;
+    use amux::setup;
+    use tempfile::tempdir;
+
+    #[test]
+    fn needs_init_when_prevent_idle_sleep_is_unset() {
+        if !setup::prevent_idle_sleep_supported() {
+            return;
+        }
+
+        let dir = tempdir().unwrap();
+        let config = Config {
+            path: Some(dir.path().join("config.yaml")),
+            state_path: dir.path().join("state.yaml"),
+            ..Config::default()
+        };
+        setup::set_use_cloud_mode(&config, false).unwrap();
+
+        assert!(needs_init(&config));
+    }
+
+    #[test]
+    fn sleep_preference_completion_does_not_force_reinit() {
+        if !setup::prevent_idle_sleep_supported() {
+            return;
+        }
+
+        let dir = tempdir().unwrap();
+        let config = Config {
+            path: Some(dir.path().join("config.yaml")),
+            state_path: dir.path().join("state.yaml"),
+            ..Config::default()
+        };
+        setup::set_use_cloud_mode(&config, false).unwrap();
+        setup::set_prevent_idle_sleep(&config, false).unwrap();
+
+        assert!(!needs_init(&config));
+    }
+
+    #[test]
+    fn prevent_idle_sleep_choice_parsing_is_conservative() {
+        assert_eq!(parse_prevent_idle_sleep_choice(""), Some(true));
+        assert_eq!(parse_prevent_idle_sleep_choice("1"), Some(true));
+        assert_eq!(parse_prevent_idle_sleep_choice("yes"), Some(true));
+        assert_eq!(parse_prevent_idle_sleep_choice("n"), Some(false));
+        assert_eq!(parse_prevent_idle_sleep_choice("2"), Some(false));
+        assert_eq!(parse_prevent_idle_sleep_choice("maybe"), None);
+    }
 }

@@ -237,7 +237,7 @@ fn command_server_mode(command: &Commands) -> ServerMode {
     }
 }
 
-async fn run_command(command: Commands, config: Config) -> Result<()> {
+async fn run_command(command: Commands, mut config: Config) -> Result<()> {
     match command {
         Commands::New {
             agent_type,
@@ -245,7 +245,7 @@ async fn run_command(command: Commands, config: Config) -> Result<()> {
             args,
         } => {
             let agent_type = parse_agent_type(&agent_type)?;
-            ensure_initialized(&config).await?;
+            ensure_initialized(&mut config).await?;
             check_upgrade_required(&config);
             match agent_type {
                 protocol::AgentType::Claude => {
@@ -260,7 +260,7 @@ async fn run_command(command: Commands, config: Config) -> Result<()> {
             session_client::new_agent(name.as_deref(), agent_type, args, &config).await?;
         }
         Commands::Attach { name } => {
-            ensure_initialized(&config).await?;
+            ensure_initialized(&mut config).await?;
             session_client::attach(name.as_deref(), &config).await?;
         }
         Commands::List => session_client::list_agents(&config).await?,
@@ -273,13 +273,13 @@ async fn run_command(command: Commands, config: Config) -> Result<()> {
             }
             ServerCommands::Stop => server_client::stop_server(&config).await?,
             ServerCommands::Connect { address } => {
-                ensure_initialized(&config).await?;
+                ensure_initialized(&mut config).await?;
                 server_client::connect_remote(&address, &config).await?;
             }
             ServerCommands::Suspend => server_client::suspend_server(&config).await?,
             ServerCommands::Resume => server_client::resume_server(&config).await?,
         },
-        Commands::Init { reset } => init::run_init(&config, reset).await?,
+        Commands::Init { reset } => init::run_init(&mut config, reset).await?,
         Commands::Update => update::run_update(&config).await?,
         Commands::Debug { verbose, format } => {
             let dump = server_client::debug(&config, verbose, format.into()).await?;
@@ -296,7 +296,7 @@ async fn run_command(command: Commands, config: Config) -> Result<()> {
 }
 
 /// Ensure initialization is complete (cloud mode, authentication)
-async fn ensure_initialized(config: &Config) -> Result<()> {
+async fn ensure_initialized(config: &mut Config) -> Result<()> {
     if init::needs_init(config) {
         println!("First-time setup required.\n");
         init::run_init(config, false)

@@ -237,6 +237,10 @@ pub struct Config {
     #[serde(default = "default_enforce_tls_in_cloud_mode")]
     pub enforce_tls_in_cloud_mode: bool,
 
+    /// Whether to prevent idle system sleep while the server is running.
+    #[serde(default)]
+    pub prevent_idle_sleep: bool,
+
     /// Per-client minimum version requirements (e.g. {"amux-cli": "0.2.0"}).
     /// Clients whose client_name matches a key and whose client_version is
     /// below the value will be rejected with UpgradeRequired.
@@ -262,6 +266,7 @@ impl Default for Config {
             randomise_link_name: default_randomise_link_name(),
             state_path: default_state_path(),
             enforce_tls_in_cloud_mode: default_enforce_tls_in_cloud_mode(),
+            prevent_idle_sleep: false,
             minimum_client_versions: HashMap::new(),
             keybinds: Keybinds::default(),
             path: None,
@@ -431,6 +436,18 @@ mod tests {
         let config = Config::default();
         assert_eq!(config.tcp_port, None);
         assert_eq!(config.websocket_port, None);
+        assert!(!config.prevent_idle_sleep);
+    }
+
+    #[test]
+    fn prevent_idle_sleep_yaml_roundtrip() {
+        let yaml = "prevent_idle_sleep: true\n";
+        let config: Config = serde_yaml::from_str(yaml).unwrap();
+        assert!(config.prevent_idle_sleep);
+
+        let serialized = serde_yaml::to_string(&config).unwrap();
+        let parsed: Config = serde_yaml::from_str(&serialized).unwrap();
+        assert!(parsed.prevent_idle_sleep);
     }
 
     #[test]

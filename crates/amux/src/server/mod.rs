@@ -318,7 +318,7 @@ impl Server {
     /// - TCP connections use TLS
     /// - All connections require valid JWT tokens
     pub async fn run(&mut self, is_cloud_server: bool) -> Result<()> {
-        let (socket_path, tcp_port, ws_port, cloud_url, enforce_tls) = {
+        let (socket_path, tcp_port, ws_port, cloud_url, enforce_tls, prevent_idle_sleep) = {
             let state = self.state.read().await;
             (
                 state.config.socket_path.clone(),
@@ -326,6 +326,7 @@ impl Server {
                 state.config.websocket_port,
                 state.config.cloud_url.clone(),
                 state.config.enforce_tls_in_cloud_mode,
+                state.config.prevent_idle_sleep,
             )
         };
 
@@ -334,6 +335,8 @@ impl Server {
             let state = self.state.read().await;
             state.config.validate(is_cloud_server)?;
         }
+
+        let _sleep_inhibitor = crate::sleep_inhibitor::SleepInhibitor::new(prevent_idle_sleep);
 
         // Configure cloud server: enable JWT validation (and optionally TLS)
         let tls_acceptor: Option<TlsAcceptor> = if is_cloud_server {

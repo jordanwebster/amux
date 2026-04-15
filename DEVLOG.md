@@ -38,6 +38,36 @@ One paragraph describing what was done.
 
 ---
 
+## 2026-04-15: Add server-level idle sleep prevention and persist onboarding preference
+
+### Summary
+Added a cross-platform server-owned idle sleep inhibitor controlled by a new `prevent_idle_sleep` config flag, and taught `amux init` to persist that preference into the active config file. The server now holds the inhibitor for the full `Server::run()` lifetime, macOS uses native IOKit `PreventUserIdleSystemSleep`, Linux selects the first available backend from an ordered list, and Windows uses a native power request. Follow-up fixes made onboarding ask for the preference independently of cloud mode, treat blank/comment-only config files as “unset”, conservatively parse prompt input, and surface clearer errors when writing the active config file fails.
+
+### Changes
+- **`crates/amux/src/config.rs`** — Added `prevent_idle_sleep: bool` with serde/default coverage and tests.
+- **`crates/amux/src/sleep_inhibitor/`** — New module directory with shared `mod.rs`, macOS IOKit backend, Linux ordered backend selection (`systemd-inhibit`, `gnome-session-inhibit`), Windows power-request backend, dummy backend, and colocated `iokit_bindings.rs`.
+- **`crates/amux/src/server/mod.rs`** — Server now creates a sleep inhibitor for the duration of `Server::run()` based on config.
+- **`crates/amux/src/setup.rs`** — Added helpers to read/write `prevent_idle_sleep` in `config.yaml`, runtime support detection, blank/comment-only config handling, and clearer active-config-file persistence errors.
+- **`crates/amux-cli/src/init.rs` / `crates/amux-cli/src/main.rs`** — `init` now prompts for `prevent_idle_sleep` when unset, even for local-only users, updates in-memory config immediately, and re-prompts on invalid input.
+- **`crates/amux/Cargo.toml` / `Cargo.lock`** — Added platform dependencies for macOS `core-foundation` and Windows power APIs.
+
+### Decisions Made
+- **Server lifetime, not agent lifetime**: The inhibitor belongs to the server so remote create/attach still works even when no agent is currently active.
+- **`--config` is authoritative and writable**: Setup choices are persisted back into the active config file; write failures are surfaced to the user instead of silently falling back elsewhere.
+- **Native macOS semantics**: Use `IOPMAssertionCreateWithName(..., "PreventUserIdleSystemSleep", ...)` rather than shelling out to `caffeinate`.
+- **Shared Linux backend ordering**: Prompt gating and runtime acquisition both use the same ordered backend selection logic to avoid drift.
+- **Blank config means “unset”**: Empty or comment-only YAML should not suppress onboarding for the new preference.
+
+### Verification
+- `cargo fmt`
+- `cargo test -p amux prevent_idle_sleep`
+- `cargo test -p amux-cli`
+- Result: all tests passed, including new coverage for blank/comment-only config handling, conservative prompt parsing, and active-config-file persistence errors.
+
+### Next Steps
+- Consider replacing the Linux wrapper backends with a native logind D-Bus inhibitor later.
+- Consider documenting explicitly that `--config` selects the authoritative writable config file used by `amux init`.
+
 ## 2026-04-15: Fix MessagePack deserialization of byte fields in internally tagged enums
 
 ### Summary

@@ -16,6 +16,7 @@ pub mod protocol;
 mod route;
 mod server;
 pub mod setup;
+mod sleep_inhibitor;
 mod state;
 mod transport;
 pub mod update;
