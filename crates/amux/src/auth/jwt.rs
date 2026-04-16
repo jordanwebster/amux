@@ -15,7 +15,7 @@ use tokio::sync::RwLock;
 const JWKS_CACHE_TTL: Duration = Duration::from_secs(3600);
 
 #[derive(Debug, Error)]
-pub enum JwtError {
+pub(crate) enum JwtError {
     #[error("HTTP error: {0}")]
     Http(#[from] reqwest::Error),
 
@@ -34,13 +34,13 @@ pub enum JwtError {
 
 /// Claims from a connection token
 #[derive(Debug, Deserialize)]
-pub struct ConnectionClaims {
+pub(crate) struct ConnectionClaims {
     /// User ID (subject)
-    pub sub: String,
+    pub(crate) sub: String,
     /// Expected host this token is for
-    pub host: String,
+    pub(crate) host: String,
     /// Expected port this token is for
-    pub port: u16,
+    pub(crate) port: u16,
 }
 
 /// JWKS key set structure
@@ -59,7 +59,7 @@ struct Jwk {
 }
 
 /// JWT validator with JWKS caching
-pub struct JwtValidator {
+pub(crate) struct JwtValidator {
     jwks_url: String,
     http_client: Client,
     keys: Arc<RwLock<HashMap<String, DecodingKey>>>,
@@ -68,7 +68,7 @@ pub struct JwtValidator {
 
 impl JwtValidator {
     /// Create a new validator for the given cloud URL
-    pub fn new(cloud_url: &str) -> Self {
+    pub(crate) fn new(cloud_url: &str) -> Self {
         Self {
             jwks_url: format!("{}/.well-known/openid-configuration/jwks", cloud_url),
             http_client: Client::new(),
@@ -78,7 +78,7 @@ impl JwtValidator {
     }
 
     /// Validate a connection token
-    pub async fn validate(
+    pub(crate) async fn validate(
         &self,
         token: &str,
         expected_host: &str,

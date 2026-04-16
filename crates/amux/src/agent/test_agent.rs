@@ -3,19 +3,18 @@
 //! Only available in debug/test builds. Spawns an arbitrary command
 //! (typically `test-agent`) without Claude-specific environment or hooks.
 
-use super::{AgentError, PtyHandle, spawn_pty_agent};
-use crate::agent::claude::log_source::StructuredLogSource;
+use super::{PtyHandle, spawn_pty_agent};
+use crate::agent::StructuredLogSource;
 use crate::buffer::MultiplexStructuredReader;
 use crate::debug::DebugView;
 use crate::protocol::message::{CreateAgentRequest, SubscribeQuery};
+use anyhow::Result;
 use chrono::{DateTime, Utc};
 use serde::{Serialize, Serializer, ser::SerializeMap};
 use std::path::PathBuf;
 use uuid::Uuid;
 
-type Result<T> = std::result::Result<T, AgentError>;
-
-pub struct TestAgentSession {
+pub(crate) struct TestAgentSession {
     pub(super) agent_id: Uuid,
     pub(super) name: Option<String>,
     pub(super) command: String,
@@ -31,7 +30,7 @@ pub struct TestAgentSession {
 impl TestAgentSession {
     /// Create a new TestAgentSession.
     /// Does not spawn the process — call [`start`] afterwards.
-    pub fn new(req: &CreateAgentRequest, cmd: String) -> Self {
+    pub(crate) fn new(req: &CreateAgentRequest, cmd: String) -> Self {
         Self {
             agent_id: req.agent_id,
             name: req.name.clone(),
@@ -41,6 +40,23 @@ impl TestAgentSession {
             log_source: None,
             terminal_size: req.terminal_size,
             created_at: Utc::now(),
+        }
+    }
+
+    pub(super) fn from_suspended(
+        req: &CreateAgentRequest,
+        cmd: String,
+        created_at: DateTime<Utc>,
+    ) -> Self {
+        Self {
+            agent_id: req.agent_id,
+            name: req.name.clone(),
+            command: cmd,
+            working_dir: req.working_dir.clone(),
+            pty: None,
+            log_source: None,
+            terminal_size: req.terminal_size,
+            created_at,
         }
     }
 
@@ -60,26 +76,14 @@ impl TestAgentSession {
         Ok(exit_handle)
     }
 
-    /// Return the current structured output sequence number.
-    pub async fn current_seq(&self) -> u64 {
-        match &self.log_source {
-            Some(log_source) => log_source.current_seq().await,
-            None => 0,
-        }
-    }
-
-    pub fn log_source(&self) -> Option<StructuredLogSource> {
+    #[cfg(test)]
+    pub(crate) fn log_source(&self) -> Option<StructuredLogSource> {
         self.log_source.clone()
-    }
-
-    /// Subscribe to structured log output.
-    pub async fn subscribe(&self) -> Option<MultiplexStructuredReader> {
-        self.log_source.as_ref()?.subscribe().await
     }
 
     /// Subscribe to structured log output with an optional query filter
     /// and return the matching seq.
-    pub async fn subscribe_with_query(
+    pub(crate) async fn subscribe_with_query(
         &self,
         query: Option<SubscribeQuery>,
     ) -> Option<(MultiplexStructuredReader, u64)> {
@@ -87,7 +91,7 @@ impl TestAgentSession {
     }
 
     /// Shut down the session: close PTY and log source.
-    pub async fn stop(&self) {
+    pub(crate) async fn stop(&self) {
         tracing::info!(agent_id = %self.agent_id, "shutting down test agent session");
         if let Some(pty) = &self.pty {
             pty.close().await;

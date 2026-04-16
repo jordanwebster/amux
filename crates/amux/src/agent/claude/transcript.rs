@@ -17,7 +17,7 @@ use tokio::task::JoinHandle;
 // ============================================================================
 
 /// Tails a Claude transcript file and writes raw JSON entries to a buffer.
-pub struct TranscriptTailer {
+pub(in crate::agent) struct TranscriptTailer {
     path: PathBuf,
     buffer: Arc<MultiplexStructuredBuffer>,
     shutdown_tx: watch::Sender<bool>,
@@ -25,7 +25,7 @@ pub struct TranscriptTailer {
 
 impl TranscriptTailer {
     /// Create a new TranscriptTailer for the given transcript path.
-    pub fn new(path: PathBuf, buffer: Arc<MultiplexStructuredBuffer>) -> Self {
+    pub(in crate::agent) fn new(path: PathBuf, buffer: Arc<MultiplexStructuredBuffer>) -> Self {
         let (shutdown_tx, _) = watch::channel(false);
         Self {
             path,
@@ -35,7 +35,7 @@ impl TranscriptTailer {
     }
 
     /// Start tailing the transcript file in a background task.
-    pub fn start(&self) -> JoinHandle<()> {
+    pub(in crate::agent) fn start(&self) -> JoinHandle<()> {
         let path = self.path.clone();
         let buffer = self.buffer.clone();
         let mut shutdown_rx = self.shutdown_tx.subscribe();
@@ -48,7 +48,7 @@ impl TranscriptTailer {
     }
 
     /// Signal the tailer to stop.
-    pub fn stop(&self) {
+    pub(in crate::agent) fn stop(&self) {
         let _ = self.shutdown_tx.send(true);
     }
 }

@@ -24,7 +24,7 @@ use tokio_rustls::client::TlsStream;
 const CONNECT_TIMEOUT: StdDuration = StdDuration::from_secs(10);
 
 #[derive(Debug, Error)]
-pub enum CloudError {
+pub(crate) enum CloudError {
     #[error("Not authenticated - run 'amux init' to authenticate")]
     NotAuthenticated,
     #[error("Cloud mode is disabled")]
@@ -125,11 +125,11 @@ fn check_reauth_result(msg: &Message) -> std::result::Result<(), CloudError> {
     }
 }
 
-/// Refresh the OAuth token and get connection details from the cloud API.
+/// Refresh the OAuth token and fetch connection details from the cloud API.
 ///
 /// Shared by both initial connection and token refresh to avoid duplicating
 /// the load-state → extract-token → refresh → rotate → get-connection sequence.
-async fn refresh_and_get_connection(
+async fn refresh_and_fetch_connection(
     config: &Config,
 ) -> std::result::Result<oauth::ConnectResult, CloudError> {
     let state = State::load(&config.state_path)?;
@@ -144,11 +144,11 @@ async fn refresh_and_get_connection(
             s.cloud.refresh_token = Some(new_token);
         })?;
     }
-    Ok(oauth::get_connection(&config.cloud_url, &access_token).await?)
+    Ok(oauth::fetch_connection(&config.cloud_url, &access_token).await?)
 }
 
 /// Cloud connection state
-pub struct CloudConnection {
+pub(crate) struct CloudConnection {
     config: Config,
     transport: TcpTransport<TlsStream<TcpStream>>,
     link_name: String,
@@ -165,7 +165,7 @@ impl CloudConnection {
     /// 2. Exchange it for an access token
     /// 3. Get connection details from cloud API
     /// 4. Connect via TLS and send Connect message with JWT
-    pub async fn connect(config: &Config) -> std::result::Result<Self, CloudError> {
+    pub(crate) async fn connect(config: &Config) -> std::result::Result<Self, CloudError> {
         let state = State::load(&config.state_path)?;
 
         // Check if cloud mode is enabled
@@ -173,7 +173,7 @@ impl CloudConnection {
             return Err(CloudError::CloudDisabled);
         }
 
-        let conn = refresh_and_get_connection(config).await?;
+        let conn = refresh_and_fetch_connection(config).await?;
 
         // Connect via TLS
         tracing::info!(host = %conn.host, port = conn.port, "connecting to cloud");
@@ -219,7 +219,7 @@ impl CloudConnection {
     /// Extract the underlying transport and token refresh state.
     /// This consumes the CloudConnection, allowing the transport to be
     /// used directly by the server's peer loop with token refresh.
-    pub fn into_parts(self) -> (TcpTransport<TlsStream<TcpStream>>, TokenRefreshState) {
+    pub(crate) fn into_parts(self) -> (TcpTransport<TlsStream<TcpStream>>, TokenRefreshState) {
         let refresh_state = TokenRefreshState {
             config: self.config,
             link_name: self.link_name,
@@ -236,9 +236,9 @@ impl CloudConnection {
 ///
 /// This is passed to connection_loop to enable automatic token refresh
 /// on cloud connections. For non-cloud connections, None is passed.
-pub struct TokenRefreshState {
+pub(crate) struct TokenRefreshState {
     config: Config,
-    pub link_name: String,
+    pub(crate) link_name: String,
     current_host: String,
     current_port: u16,
     token_expires_at: DateTime<Utc>,
@@ -249,7 +249,7 @@ pub struct TokenRefreshState {
 impl TokenRefreshState {
     /// Calculate when the token refresh should occur (as tokio Instant).
     /// Refresh happens 5 minutes before expiry.
-    pub fn refresh_deadline(&self) -> tokio::time::Instant {
+    pub(crate) fn refresh_deadline(&self) -> tokio::time::Instant {
         let refresh_at = self.token_expires_at - Duration::minutes(5);
         let now = Utc::now();
 
@@ -264,11 +264,11 @@ impl TokenRefreshState {
 
     /// Refresh the OAuth token and send a Reauth message through the outgoing channel.
     /// The ReauthResult will be intercepted by connection_loop.
-    pub async fn send_reauth(
+    pub(crate) async fn send_reauth(
         &mut self,
         tx: &mpsc::Sender<Message>,
     ) -> std::result::Result<(), CloudError> {
-        let conn = refresh_and_get_connection(&self.config).await?;
+        let conn = refresh_and_fetch_connection(&self.config).await?;
 
         // Check if host changed - requires full reconnection
         if conn.host != self.current_host || conn.port != self.current_port {
@@ -292,7 +292,10 @@ impl TokenRefreshState {
 
     /// Handle a ReauthResult received after send_reauth.
     /// Updates token_expires_at on success using the expires_at stored during send_reauth.
-    pub fn handle_reauth_result(&mut self, msg: &Message) -> std::result::Result<(), CloudError> {
+    pub(crate) fn handle_reauth_result(
+        &mut self,
+        msg: &Message,
+    ) -> std::result::Result<(), CloudError> {
         check_reauth_result(msg)?;
         tracing::debug!("token refreshed");
         if let Some(expires_at) = self.pending_expires_at.take() {

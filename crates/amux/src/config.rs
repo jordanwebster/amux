@@ -1,4 +1,4 @@
-use crate::state::State;
+use crate::paths::{amux_xdg_dir, default_state_path};
 use gethostname::gethostname;
 use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
@@ -12,51 +12,6 @@ pub enum ConfigError {
     Io(#[from] std::io::Error),
     #[error("{0}")]
     Invalid(String),
-}
-
-/// Resolve an XDG base directory: `$env_var` if set, otherwise `$HOME/{default_suffix}`.
-///
-/// On Windows, maps XDG conventions to standard Windows directories:
-/// `.config` → `%APPDATA%`, `.local/state` → `%LOCALAPPDATA%` (fallback `%APPDATA%`).
-pub(crate) fn xdg_dir(env_var: &str, default_suffix: &str) -> PathBuf {
-    if let Ok(val) = std::env::var(env_var) {
-        return PathBuf::from(val);
-    }
-    #[cfg(windows)]
-    {
-        let win_base = if default_suffix.starts_with(".config") {
-            std::env::var("APPDATA").ok()
-        } else {
-            std::env::var("LOCALAPPDATA")
-                .ok()
-                .or_else(|| std::env::var("APPDATA").ok())
-        };
-        if let Some(base) = win_base {
-            return PathBuf::from(base);
-        }
-    }
-    home_dir().join(default_suffix)
-}
-
-/// Resolve the amux application directory within an XDG base directory.
-pub(crate) fn amux_xdg_dir(env_var: &str, default_suffix: &str) -> PathBuf {
-    xdg_dir(env_var, default_suffix).join("amux")
-}
-
-/// Resolve `$HOME`, panics if unset (same as `dirs::home_dir`).
-#[cfg(unix)]
-fn home_dir() -> PathBuf {
-    std::env::var("HOME")
-        .map(PathBuf::from)
-        .expect("$HOME is not set")
-}
-
-/// Resolve the current user's home directory.
-#[cfg(windows)]
-fn home_dir() -> PathBuf {
-    std::env::var("USERPROFILE")
-        .map(PathBuf::from)
-        .expect("%USERPROFILE% is not set")
 }
 
 const DEFAULT_CLOUD_URL: &str = "https://amux.sh";
@@ -107,21 +62,6 @@ fn default_randomise_link_name() -> bool {
 
 fn default_enforce_tls_in_cloud_mode() -> bool {
     true
-}
-
-fn default_state_path() -> PathBuf {
-    State::default_path()
-}
-
-/// Default data directory: `$XDG_DATA_HOME/amux`,
-/// falling back to `~/.local/share/amux`.
-pub fn default_data_dir() -> PathBuf {
-    amux_xdg_dir("XDG_DATA_HOME", ".local/share")
-}
-
-/// Default log path: `$XDG_STATE_HOME/amux/amux.log` (co-located with state.yaml).
-pub fn default_log_path() -> PathBuf {
-    amux_xdg_dir("XDG_STATE_HOME", ".local/state").join("amux.log")
 }
 
 /// A control-key leader parsed from the `ctrl+<char>` format (e.g. `ctrl+a`).

@@ -190,7 +190,7 @@ fn sanitize_host_name(host_name: &str) -> String {
 /// Generate a server link name: "{hostname}" or "{hostname}-{rand}".
 /// If randomise is true, appends a random suffix for uniqueness.
 /// The hostname is sanitized (periods replaced with hyphens).
-pub fn generate_server_link(host_name: &str, randomise: bool) -> String {
+pub(crate) fn generate_server_link(host_name: &str, randomise: bool) -> String {
     let sanitized = sanitize_host_name(host_name);
     if randomise {
         format!("{}-{}", sanitized, generate_link_suffix())
@@ -200,7 +200,7 @@ pub fn generate_server_link(host_name: &str, randomise: bool) -> String {
 }
 
 /// Generate a terminal link name: "term-{rand}".
-pub fn generate_terminal_link() -> String {
+pub(crate) fn generate_terminal_link() -> String {
     format!("term-{}", generate_link_suffix())
 }
 

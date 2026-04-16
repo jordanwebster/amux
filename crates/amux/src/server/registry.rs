@@ -1,83 +1,10 @@
 use crate::agent::Agent;
-use crate::protocol::message::{DirectMessage, Host};
+use crate::protocol::message::Host;
 use crate::protocol::route::Route;
-use chrono::{DateTime, Utc};
 use serde::Deserialize;
 use std::collections::HashMap;
-use std::path::PathBuf;
 use thiserror::Error;
 use uuid::Uuid;
-
-/// Internal registry record. Remote agents store only host identity; route is
-/// derived from the host table when materializing an [`Agent`] view.
-#[derive(Debug, Clone)]
-pub(crate) struct StoredAgent {
-    pub id: Uuid,
-    pub host_id: Uuid,
-    pub name: Option<String>,
-    pub command: String,
-    pub working_dir: PathBuf,
-    pub agent_type: String,
-    pub structured_protocol: Option<String>,
-    pub readonly: bool,
-    pub args: Vec<String>,
-    pub created_at: DateTime<Utc>,
-    remote: bool,
-}
-
-impl StoredAgent {
-    fn from_public(info: Agent, remote: bool) -> Self {
-        Self {
-            id: info.id,
-            host_id: info.host_id,
-            name: info.name,
-            command: info.command,
-            working_dir: info.working_dir,
-            agent_type: info.agent_type,
-            structured_protocol: info.structured_protocol,
-            readonly: info.readonly,
-            args: info.args,
-            created_at: info.created_at,
-            remote,
-        }
-    }
-
-    pub fn is_remote(&self) -> bool {
-        self.remote
-    }
-
-    /// Build the `DirectMessage::AnnounceAgent` for this entry.
-    pub fn announce_message(&self) -> DirectMessage {
-        DirectMessage::AnnounceAgent {
-            agent_id: self.id,
-            host_id: self.host_id,
-            name: self.name.clone(),
-            command: self.command.clone(),
-            working_dir: self.working_dir.clone(),
-            agent_type: self.agent_type.clone(),
-            structured_protocol: self.structured_protocol.clone(),
-            readonly: self.readonly,
-            args: self.args.clone(),
-            created_at: self.created_at,
-        }
-    }
-
-    fn materialize(&self, route: Route) -> Agent {
-        Agent {
-            id: self.id,
-            host_id: self.host_id,
-            name: self.name.clone(),
-            command: self.command.clone(),
-            working_dir: self.working_dir.clone(),
-            route,
-            agent_type: self.agent_type.clone(),
-            structured_protocol: self.structured_protocol.clone(),
-            readonly: self.readonly,
-            args: self.args.clone(),
-            created_at: self.created_at,
-        }
-    }
-}
 
 /// Centralized agent tracking with bidirectional name<->UUID mapping.
 /// Tracks both local and remote agents. Routes for remote agents are derived
@@ -85,11 +12,11 @@ impl StoredAgent {
 pub(crate) struct AgentRegistry {
     name_to_uuid: HashMap<String, Uuid>,
     uuid_to_name: HashMap<Uuid, String>,
-    entries: HashMap<Uuid, StoredAgent>,
+    entries: HashMap<Uuid, Agent>,
 }
 
 #[derive(Debug, Error)]
-pub enum AgentRegistryError {
+pub(crate) enum AgentRegistryError {
     #[error("Cannot update remote agent: {0}")]
     IsRemote(String),
     #[error("Agent not found: {0}")]
@@ -99,7 +26,7 @@ pub enum AgentRegistryError {
 }
 
 impl AgentRegistry {
-    pub fn new() -> Self {
+    pub(crate) fn new() -> Self {
         Self {
             name_to_uuid: HashMap::new(),
             uuid_to_name: HashMap::new(),
@@ -108,7 +35,7 @@ impl AgentRegistry {
     }
 
     /// Register a local agent. Errors if UUID exists or name is taken.
-    pub fn register_local(&mut self, info: Agent) -> Result<(), AgentRegistryError> {
+    pub(crate) fn register_local(&mut self, info: Agent) -> Result<(), AgentRegistryError> {
         if self.entries.contains_key(&info.id) {
             return Err(AgentRegistryError::AlreadyExists(info.id.to_string()));
         }
@@ -119,15 +46,14 @@ impl AgentRegistry {
             self.name_to_uuid.insert(name.clone(), info.id);
             self.uuid_to_name.insert(info.id, name.clone());
         }
-        self.entries
-            .insert(info.id, StoredAgent::from_public(info, false));
+        self.entries.insert(info.id, info);
         Ok(())
     }
 
     /// Register a remote agent. Upserts by UUID; clears old name on re-announce.
     /// Stores the latest metadata for the UUID, but keeps alias ownership unique:
     /// a colliding alias stays with its current owner.
-    pub fn register_remote(&mut self, info: Agent) -> Result<(), AgentRegistryError> {
+    pub(crate) fn register_remote(&mut self, info: Agent) -> Result<(), AgentRegistryError> {
         // On re-announce (same UUID), clear the old name mapping
         if let Some(old_name) = self.uuid_to_name.remove(&info.id) {
             // Only remove from name_to_uuid if it still points to this UUID
@@ -145,8 +71,7 @@ impl AgentRegistry {
         }
         // else: silently skip — name is taken by another agent
 
-        self.entries
-            .insert(info.id, StoredAgent::from_public(info, true));
+        self.entries.insert(info.id, info);
         Ok(())
     }
 
@@ -154,7 +79,7 @@ impl AgentRegistry {
     ///
     /// The entry must already exist locally. Alias ownership stays unique:
     /// renaming to a colliding alias fails without mutating the registry.
-    pub fn update_local(&mut self, info: Agent) -> Result<(), AgentRegistryError> {
+    pub(crate) fn update_local(&mut self, info: Agent) -> Result<(), AgentRegistryError> {
         let Some(existing) = self.entries.get(&info.id) else {
             return Err(AgentRegistryError::NotFound(info.id.to_string()));
         };
@@ -180,13 +105,12 @@ impl AgentRegistry {
             self.uuid_to_name.insert(info.id, name.clone());
         }
 
-        self.entries
-            .insert(info.id, StoredAgent::from_public(info, false));
+        self.entries.insert(info.id, info);
         Ok(())
     }
 
     /// Remove an agent by UUID. Returns the removed entry if found.
-    pub fn remove(&mut self, uuid: &Uuid) -> Option<StoredAgent> {
+    pub(crate) fn remove(&mut self, uuid: &Uuid) -> Option<Agent> {
         let info = self.entries.remove(uuid)?;
         if let Some(name) = self.uuid_to_name.remove(uuid)
             && self.name_to_uuid.get(&name) == Some(uuid)
@@ -201,7 +125,7 @@ impl AgentRegistry {
     ///
     /// `host_route` resolves a host_id to its route; agents whose host is
     /// unknown (returns `None`) are skipped.
-    pub fn remove_where(
+    pub(crate) fn remove_where(
         &mut self,
         host_route: impl Fn(Uuid) -> Option<Route>,
         predicate: impl Fn(&Route) -> bool,
@@ -226,7 +150,7 @@ impl AgentRegistry {
     /// 1. "route:id" — parse route, resolve id recursively, return with explicit route
     /// 2. UUID — look up directly
     /// 3. Name — look up via name_to_uuid
-    pub fn resolve(&self, hosts: &HashMap<Uuid, Host>, identifier: &str) -> Option<Agent> {
+    pub(crate) fn resolve(&self, hosts: &HashMap<Uuid, Host>, identifier: &str) -> Option<Agent> {
         // Try splitting on last ':' for route:id format
         match identifier.rsplit_once(':') {
             Some((route_str, id)) => {
@@ -256,33 +180,33 @@ impl AgentRegistry {
     }
 
     /// Get a stored entry by UUID.
-    pub fn get(&self, uuid: &Uuid) -> Option<&StoredAgent> {
+    pub(crate) fn get(&self, uuid: &Uuid) -> Option<&Agent> {
         self.entries.get(uuid)
     }
 
     /// Materialize an entry with its effective route.
-    pub fn materialize(&self, hosts: &HashMap<Uuid, Host>, uuid: &Uuid) -> Option<Agent> {
-        let entry = self.entries.get(uuid)?;
-        Some(if entry.is_remote() {
-            let route = hosts.get(&entry.host_id)?.route.clone();
-            entry.materialize(route)
+    pub(crate) fn materialize(&self, hosts: &HashMap<Uuid, Host>, uuid: &Uuid) -> Option<Agent> {
+        let mut info = self.entries.get(uuid)?.clone();
+        if info.is_remote() {
+            info.route = hosts.get(&info.host_id)?.route.clone();
         } else {
-            entry.materialize(Route::empty())
-        })
+            info.route = Route::empty();
+        }
+        Some(info)
     }
 
     /// Check if a UUID is registered
-    pub fn contains(&self, uuid: &Uuid) -> bool {
+    pub(crate) fn contains(&self, uuid: &Uuid) -> bool {
         self.entries.contains_key(uuid)
     }
 
     /// Check if an name is taken
-    pub fn name_taken(&self, name: &str) -> bool {
+    pub(crate) fn name_taken(&self, name: &str) -> bool {
         self.name_to_uuid.contains_key(name)
     }
 
     /// List all agents with effective routes populated.
-    pub fn list_all(&self, hosts: &HashMap<Uuid, Host>) -> Vec<Agent> {
+    pub(crate) fn list_all(&self, hosts: &HashMap<Uuid, Host>) -> Vec<Agent> {
         self.entries
             .keys()
             .filter_map(|uuid| self.materialize(hosts, uuid))
@@ -290,12 +214,12 @@ impl AgentRegistry {
     }
 
     /// Count of remote agents
-    pub fn count_remote(&self) -> usize {
+    pub(crate) fn count_remote(&self) -> usize {
         self.entries.values().filter(|e| e.is_remote()).count()
     }
 
     /// Iterate over all entries (for send_initial_announcements)
-    pub fn iter_entries(&self) -> impl Iterator<Item = (&Uuid, &StoredAgent)> {
+    pub(crate) fn iter_entries(&self) -> impl Iterator<Item = (&Uuid, &Agent)> {
         self.entries.iter()
     }
 }
@@ -303,6 +227,7 @@ impl AgentRegistry {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use chrono::Utc;
     use std::collections::HashMap;
     use std::path::PathBuf;
 

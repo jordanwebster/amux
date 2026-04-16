@@ -6,9 +6,8 @@
 
 use super::connection::{ConnectionContext, ConnectionError, HeartbeatRole, run_connection};
 use super::routing::send_initial_announcements;
-use super::{
-    ConnectionHandle, LOCAL_USER_ID, ServerState, ServerUserState, get_or_create_user_state,
-};
+use super::{ConnectionHandle, LOCAL_USER_ID, ServerState, ServerUserState, ensure_user_state};
+use crate::agent::SessionEvent;
 use crate::auth::cloud::{CloudConnection, CloudError};
 use crate::config::Config;
 use crate::protocol::message::{Command, Message, ShutdownReason};
@@ -35,7 +34,7 @@ const BACKOFF_RESET_AFTER_ESTABLISHED: Duration = Duration::from_secs(30);
 pub(super) fn establish_cloud_connection(
     config: Config,
     state: Arc<RwLock<ServerState>>,
-    event_tx: mpsc::Sender<super::SessionEvent>,
+    event_tx: mpsc::Sender<SessionEvent>,
 ) {
     let cloud_span = tracing::info_span!("cloud", url = %config.cloud_url);
     tokio::spawn(
@@ -50,7 +49,7 @@ pub(super) fn establish_cloud_connection(
             }
 
             // Get the default user state for cloud connections
-            let user_state = get_or_create_user_state(&state, LOCAL_USER_ID).await;
+            let user_state = ensure_user_state(&state, LOCAL_USER_ID).await;
 
             let mut backoff = INITIAL_BACKOFF;
 
@@ -163,7 +162,7 @@ async fn run_cloud_connection(
     config: &Config,
     state: Arc<RwLock<ServerState>>,
     user_state: Arc<RwLock<ServerUserState>>,
-    event_tx: mpsc::Sender<super::SessionEvent>,
+    event_tx: mpsc::Sender<SessionEvent>,
 ) -> std::result::Result<(), CloudConnectionError> {
     let conn = match CloudConnection::connect(config).await {
         Ok(conn) => conn,

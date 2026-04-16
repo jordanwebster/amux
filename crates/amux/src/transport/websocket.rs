@@ -15,12 +15,12 @@ use tokio_tungstenite::WebSocketStream;
 use tokio_tungstenite::tungstenite::protocol::Message as WsMessage;
 
 /// WebSocket transport with binary MessagePack serialization
-pub struct WebSocketTransport {
+pub(crate) struct WebSocketTransport {
     stream: WebSocketStream<TcpStream>,
 }
 
 impl WebSocketTransport {
-    pub fn new(stream: WebSocketStream<TcpStream>) -> Self {
+    pub(crate) fn new(stream: WebSocketStream<TcpStream>) -> Self {
         Self { stream }
     }
 }
@@ -73,7 +73,7 @@ type WsSplitStream = futures_util::stream::SplitStream<WebSocketStream<TcpStream
 
 /// Read half of a split WebSocket transport.
 /// Forwards Ping payloads to the writer via a channel since the reader can't write.
-pub struct WsMessageReader {
+pub(crate) struct WsMessageReader {
     stream: WsSplitStream,
     pong_tx: mpsc::Sender<Vec<u8>>,
 }
@@ -108,7 +108,7 @@ impl MessageReader for WsMessageReader {
 
 /// Write half of a split WebSocket transport.
 /// Also drains a pong channel to send Pong frames in response to Pings.
-pub struct WsMessageWriter {
+pub(crate) struct WsMessageWriter {
     sink: WsSplitSink,
     pong_rx: mpsc::Receiver<Vec<u8>>,
 }

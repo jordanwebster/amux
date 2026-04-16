@@ -4,6 +4,7 @@ mod buffer;
 mod client;
 mod config;
 mod debug;
+mod paths;
 pub mod protocol;
 mod server;
 pub mod setup;
@@ -13,14 +14,13 @@ mod suspend;
 mod transport;
 pub mod update;
 
-pub use agent::claude::hooks::ClaudeHook;
 pub use client::{
     ConnectError, ConnectPolicy, Connection, DaemonOptions, ServerMode, connect, spawn_daemon,
 };
-pub use config::{Config, ConfigError, Keybinds, LeaderKey, default_data_dir, default_log_path};
+pub use config::{Config, ConfigError, Keybinds, LeaderKey};
+pub use paths::{default_data_dir, default_log_path};
 pub use protocol::Route;
 pub use server::ServerError;
-pub use suspend::{SuspendedAgent, SuspendedServerState};
 pub use transport::TransportError;
 
 /// Run the amux server with the provided config.

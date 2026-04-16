@@ -15,7 +15,7 @@ use serde::Deserialize;
 use thiserror::Error;
 
 #[derive(Debug, Error)]
-pub enum OAuthError {
+pub(crate) enum OAuthError {
     #[error("OAuth configuration error: {0}")]
     Config(String),
     #[error("OAuth request error: {0}")]
@@ -32,21 +32,21 @@ pub enum OAuthError {
 
 /// Response from /api/connect endpoint
 #[derive(Debug, Deserialize)]
-pub struct ConnectResult {
+pub(crate) struct ConnectResult {
     /// Cloud server hostname to connect to
-    pub host: String,
+    pub(crate) host: String,
     /// Cloud server port
-    pub port: u16,
+    pub(crate) port: u16,
     /// JWT token for this connection
-    pub token: String,
+    pub(crate) token: String,
     /// When the token expires
-    pub expires_at: DateTime<Utc>,
+    pub(crate) expires_at: DateTime<Utc>,
 }
 
 /// Run the OAuth 2.0 device authorization flow.
 ///
 /// Returns a refresh token on success.
-pub async fn device_flow(cloud_url: &str) -> Result<String, OAuthError> {
+pub(crate) async fn device_flow(cloud_url: &str) -> Result<String, OAuthError> {
     let auth_url = AuthUrl::new(format!("{}/connect/authorize", cloud_url))
         .map_err(|e| OAuthError::Config(e.to_string()))?;
     let token_url = TokenUrl::new(format!("{}/connect/token", cloud_url))
@@ -105,7 +105,7 @@ pub async fn device_flow(cloud_url: &str) -> Result<String, OAuthError> {
 ///
 /// Returns (access_token, new_refresh_token) where new_refresh_token is Some
 /// if the server rotated the refresh token.
-pub async fn refresh_access_token(
+pub(crate) async fn refresh_access_token(
     cloud_url: &str,
     refresh_token: &str,
 ) -> Result<(String, Option<String>), OAuthError> {
@@ -147,10 +147,10 @@ pub async fn refresh_access_token(
     Ok((access_token, new_refresh))
 }
 
-/// Get cloud connection details using an access token.
+/// Fetch cloud connection details using an access token.
 ///
 /// Calls /api/connect to get the specific server and JWT token for this connection.
-pub async fn get_connection(
+pub(crate) async fn fetch_connection(
     cloud_url: &str,
     access_token: &str,
 ) -> Result<ConnectResult, OAuthError> {

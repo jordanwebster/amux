@@ -3,6 +3,7 @@
 //! State is stored in `~/.local/state/amux/state.yaml` and persists across sessions.
 //! Includes cloud authentication state and other persistent preferences.
 
+use crate::paths::default_state_path;
 use fs2::FileExt;
 use serde::{Deserialize, Serialize};
 use std::fs::{self, File, OpenOptions};
@@ -14,7 +15,7 @@ use thiserror::Error;
 use uuid::Uuid;
 
 #[derive(Debug, Error)]
-pub enum StateError {
+pub(crate) enum StateError {
     #[error("IO error: {0}")]
     Io(#[from] std::io::Error),
     #[error("Failed to parse state file: {0}")]
@@ -23,43 +24,43 @@ pub enum StateError {
 
 /// Persistent state for amux
 #[derive(Debug, Clone, Serialize, Deserialize, Default)]
-pub struct State {
+pub(crate) struct State {
     /// Stable host identifier for this amux state directory.
     #[serde(default)]
-    pub host_id: Option<Uuid>,
+    pub(crate) host_id: Option<Uuid>,
     #[serde(default)]
-    pub cloud: CloudState,
+    pub(crate) cloud: CloudState,
     #[serde(default)]
-    pub claude: ClaudeState,
+    pub(crate) claude: ClaudeState,
 }
 
 /// Cloud authentication state
 #[derive(Debug, Clone, Serialize, Deserialize, Default)]
-pub struct CloudState {
+pub(crate) struct CloudState {
     /// Whether cloud mode is enabled (None = not yet configured)
-    pub use_cloud_mode: Option<bool>,
+    pub(crate) use_cloud_mode: Option<bool>,
     /// OAuth refresh token for cloud authentication
-    pub refresh_token: Option<String>,
+    pub(crate) refresh_token: Option<String>,
 }
 
 /// Claude-specific state
 #[derive(Debug, Clone, Serialize, Deserialize, Default)]
-pub struct ClaudeState {
+pub(crate) struct ClaudeState {
     /// Plugin version last successfully applied to Claude Code.
-    pub applied_plugin_version: Option<String>,
+    pub(crate) applied_plugin_version: Option<String>,
     /// Marketplace source path last successfully applied to Claude Code.
-    pub applied_marketplace_path: Option<PathBuf>,
+    pub(crate) applied_marketplace_path: Option<PathBuf>,
 }
 
 impl State {
     /// Default state path: `$XDG_STATE_HOME/amux/state.yaml`,
     /// falling back to `~/.local/state/amux/state.yaml`.
-    pub fn default_path() -> PathBuf {
-        crate::config::amux_xdg_dir("XDG_STATE_HOME", ".local/state").join("state.yaml")
+    pub(crate) fn default_path() -> PathBuf {
+        default_state_path()
     }
 
     /// Load state with shared lock (allows concurrent reads)
-    pub fn load(path: &Path) -> Result<Self, StateError> {
+    pub(crate) fn load(path: &Path) -> Result<Self, StateError> {
         if !path.exists() {
             return Ok(Self::default());
         }
@@ -78,7 +79,7 @@ impl State {
     }
 
     /// Atomic load-modify-save with exclusive lock held throughout
-    pub fn update<F, T>(path: &Path, f: F) -> Result<T, StateError>
+    pub(crate) fn update<F, T>(path: &Path, f: F) -> Result<T, StateError>
     where
         F: FnOnce(&mut State) -> T,
     {
@@ -116,7 +117,7 @@ impl State {
 }
 
 /// Load the persisted host ID, creating and saving one if this is the first run.
-pub fn load_or_create_host_id(path: &Path) -> Result<Uuid, StateError> {
+pub(crate) fn load_or_create_host_id(path: &Path) -> Result<Uuid, StateError> {
     if let Some(host_id) = State::load(path)?.host_id {
         return Ok(host_id);
     }

@@ -9,11 +9,47 @@
 //! the agent_id so the server can create a readonly session.
 
 use amux::protocol::{Command, HookProvider, Message};
-use amux::{ClaudeHook, Config, ConnectPolicy, connect};
+use amux::{Config, ConnectPolicy, connect};
 use anyhow::Result;
+use serde::Deserialize;
 use serde_json::Value;
 use std::io::{self, BufRead};
 use uuid::Uuid;
+
+#[derive(Debug, Deserialize)]
+#[serde(tag = "hook_event_name")]
+enum ExternalClaudeHook {
+    SessionStart(ExternalHookCommon),
+    PermissionRequest(ExternalHookCommon),
+    Stop(ExternalHookCommon),
+    SessionEnd(ExternalHookCommon),
+    Notification(ExternalHookCommon),
+    #[serde(other)]
+    Unknown,
+}
+
+impl ExternalClaudeHook {
+    fn session_id(self) -> Option<Uuid> {
+        match self {
+            Self::SessionStart(common)
+            | Self::PermissionRequest(common)
+            | Self::Stop(common)
+            | Self::SessionEnd(common)
+            | Self::Notification(common) => Some(common.session_id),
+            Self::Unknown => None,
+        }
+    }
+}
+
+#[derive(Debug, Deserialize)]
+struct ExternalHookCommon {
+    session_id: Uuid,
+}
+
+fn parse_external_agent_id(payload: &[u8]) -> std::result::Result<Option<Uuid>, serde_json::Error> {
+    let hook: ExternalClaudeHook = serde_json::from_slice(payload)?;
+    Ok(hook.session_id())
+}
 
 /// Handle Claude Code hook event.
 /// Reads JSON from stdin and sends HookEvent to server.
@@ -40,18 +76,8 @@ fn handle_claude_hook_inner(config: &Config) -> io::Result<()> {
         }
     };
 
-    let claude_hook: ClaudeHook = match serde_json::from_value(raw.clone()) {
-        Ok(hook) => hook,
-        Err(e) => {
-            tracing::error!(error = %e, "hook typed parse failed");
-            return Err(io::Error::new(io::ErrorKind::InvalidData, e.to_string()));
-        }
-    };
-
-    if matches!(claude_hook, ClaudeHook::Unknown) {
-        tracing::warn!(input = %input, "unrecognized hook event");
-        return Ok(());
-    }
+    let payload = serde_json::to_vec(&raw)
+        .map_err(|e| io::Error::new(io::ErrorKind::InvalidData, e.to_string()))?;
 
     // Determine agent_id: AMUX_AGENT_ID for managed sessions, session_id for external
     let (agent_id, external) = match std::env::var("AMUX_AGENT_ID") {
@@ -65,21 +91,27 @@ fn handle_claude_hook_inner(config: &Config) -> io::Result<()> {
             })
             .map(|id| (id, false))?,
         Err(_) => {
-            // External session — use session_id as agent_id
-            let Some(session_id) = claude_hook.session_id() else {
-                return Ok(());
+            // External session — use the parsed session_id as agent_id.
+            let session_id = match parse_external_agent_id(&payload) {
+                Ok(Some(session_id)) => session_id,
+                Ok(None) => return Ok(()),
+                Err(error) => {
+                    tracing::error!(error = %error, "external hook parse failed");
+                    return Err(io::Error::new(
+                        io::ErrorKind::InvalidData,
+                        error.to_string(),
+                    ));
+                }
             };
             (session_id, true)
         }
     };
 
-    tracing::debug!(hook = %claude_hook, "received hook");
+    tracing::debug!(%agent_id, external, "received hook");
 
     // Fire-and-forget: connect, send, don't wait for ack.
     // Hooks must exit quickly so Claude Code is never blocked.
     let config = config.clone();
-    let payload = serde_json::to_vec(&raw)
-        .map_err(|e| io::Error::new(io::ErrorKind::InvalidData, e.to_string()))?;
     tokio::task::block_in_place(|| {
         tokio::runtime::Handle::current().block_on(async {
             if let Err(e) = send_hook_event(&config, agent_id, payload, external).await {
@@ -108,4 +140,38 @@ async fn send_hook_event(
     })
     .await?;
     Ok(())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::parse_external_agent_id;
+    use uuid::Uuid;
+
+    #[test]
+    fn parses_known_external_hook_session_id() {
+        let session_id = Uuid::new_v4();
+        let payload = format!(
+            r#"{{"hook_event_name":"SessionStart","session_id":"{session_id}","cwd":"/tmp","transcript_path":"/tmp/transcript.jsonl"}}"#
+        );
+
+        let parsed = parse_external_agent_id(payload.as_bytes()).unwrap();
+
+        assert_eq!(parsed, Some(session_id));
+    }
+
+    #[test]
+    fn ignores_unknown_external_hook() {
+        let payload = br#"{"hook_event_name":"FutureHook","session_id":"00000000-0000-0000-0000-000000000001"}"#;
+
+        let parsed = parse_external_agent_id(payload).unwrap();
+
+        assert_eq!(parsed, None);
+    }
+
+    #[test]
+    fn rejects_malformed_external_hook_payload() {
+        let payload = br#"{"hook_event_name":"SessionStart","session_id":"not-a-uuid"}"#;
+
+        assert!(parse_external_agent_id(payload).is_err());
+    }
 }

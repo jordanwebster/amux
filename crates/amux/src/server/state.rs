@@ -5,7 +5,6 @@ use crate::protocol::message::{Host, Message, SubscriptionId};
 use crate::protocol::route::Route;
 use crate::server::registry::AgentRegistry;
 use std::collections::{HashMap, HashSet};
-use std::path::Path;
 use std::sync::Arc;
 use std::sync::atomic::{AtomicU64, Ordering};
 use std::time::Duration;
@@ -148,12 +147,12 @@ impl ServerState {
         }
     }
 
-    pub(crate) fn get_user_state(&self, user_id: &Uuid) -> Option<Arc<RwLock<ServerUserState>>> {
+    pub(crate) fn user_state(&self, user_id: &Uuid) -> Option<Arc<RwLock<ServerUserState>>> {
         self.users.get(user_id).cloned()
     }
 }
 
-pub(crate) async fn get_or_create_user_state(
+pub(crate) async fn ensure_user_state(
     state: &Arc<RwLock<ServerState>>,
     user_id: Uuid,
 ) -> Arc<RwLock<ServerUserState>> {
@@ -169,57 +168,4 @@ pub(crate) async fn get_or_create_user_state(
         .entry(user_id)
         .or_insert_with(|| Arc::new(RwLock::new(ServerUserState::new())))
         .clone()
-}
-
-/// Platform-abstracted local IPC listener.
-pub(crate) struct LocalListener {
-    #[cfg(unix)]
-    inner: tokio::net::UnixListener,
-    #[cfg(windows)]
-    pipe_name: String,
-}
-
-impl LocalListener {
-    pub fn bind(socket_path: &Path) -> Result<Self, std::io::Error> {
-        #[cfg(unix)]
-        {
-            if let Some(parent) = socket_path.parent()
-                && !parent.exists()
-            {
-                std::fs::create_dir_all(parent)?;
-                use std::os::unix::fs::PermissionsExt;
-                std::fs::set_permissions(parent, std::fs::Permissions::from_mode(0o700))?;
-            }
-            let _ = std::fs::remove_file(socket_path);
-            let listener = tokio::net::UnixListener::bind(socket_path)?;
-            {
-                use std::os::unix::fs::PermissionsExt;
-                std::fs::set_permissions(socket_path, std::fs::Permissions::from_mode(0o600))?;
-            }
-            Ok(Self { inner: listener })
-        }
-        #[cfg(windows)]
-        {
-            Ok(Self {
-                pipe_name: socket_path.to_string_lossy().into_owned(),
-            })
-        }
-    }
-
-    pub async fn accept(&self) -> std::io::Result<impl crate::transport::TransportSplit + use<>> {
-        #[cfg(unix)]
-        {
-            let (stream, _) = self.inner.accept().await?;
-            Ok(crate::transport::unix::UnixTransport::new(stream))
-        }
-        #[cfg(windows)]
-        {
-            use tokio::net::windows::named_pipe::ServerOptions;
-            let server = ServerOptions::new().create(&self.pipe_name)?;
-            server.connect().await?;
-            Ok(crate::transport::named_pipe::NamedPipeTransport::new(
-                server,
-            ))
-        }
-    }
 }

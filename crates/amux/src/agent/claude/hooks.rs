@@ -7,37 +7,37 @@ use serde_json::Value;
 use uuid::Uuid;
 
 #[derive(Debug, Clone)]
-pub struct ParsedClaudeHook {
-    pub hook: ClaudeHook,
-    pub raw: Value,
+pub(crate) struct ParsedClaudeHook {
+    pub(crate) hook: ClaudeHook,
+    pub(crate) raw: Value,
 }
 
 impl ParsedClaudeHook {
     #[cfg(test)]
-    pub fn from_typed(hook: ClaudeHook) -> Self {
+    pub(crate) fn from_typed(hook: ClaudeHook) -> Self {
         let raw = serde_json::to_value(&hook).unwrap_or(Value::Null);
         Self { hook, raw }
     }
 
-    pub fn parse_payload(payload: &[u8]) -> Result<Self, serde_json::Error> {
+    pub(crate) fn parse_payload(payload: &[u8]) -> Result<Self, serde_json::Error> {
         let raw: Value = serde_json::from_slice(payload)?;
         let hook = serde_json::from_value(raw.clone())?;
         Ok(Self { hook, raw })
     }
 
-    pub fn is_unknown(&self) -> bool {
+    pub(crate) fn is_unknown(&self) -> bool {
         matches!(self.hook, ClaudeHook::Unknown)
     }
 
-    pub fn is_session_end(&self) -> bool {
+    pub(crate) fn is_session_end(&self) -> bool {
         matches!(self.hook, ClaudeHook::SessionEnd(_))
     }
 
-    pub fn cwd(&self) -> Option<&str> {
+    pub(crate) fn cwd(&self) -> Option<&str> {
         self.hook.cwd()
     }
 
-    pub fn transcript_path(&self) -> Option<&str> {
+    pub(crate) fn transcript_path(&self) -> Option<&str> {
         self.hook.transcript_path()
     }
 }
@@ -50,7 +50,7 @@ impl ParsedClaudeHook {
 /// hook-specific payload fields.
 #[derive(Serialize, Deserialize, Debug, Clone)]
 #[serde(tag = "hook_event_name")]
-pub enum ClaudeHook {
+pub(crate) enum ClaudeHook {
     SessionStart(HookCommon),
     PermissionRequest(HookCommon),
     Stop(HookCommon),
@@ -61,15 +61,15 @@ pub enum ClaudeHook {
 }
 
 impl ClaudeHook {
-    pub fn session_id(&self) -> Option<Uuid> {
+    pub(crate) fn session_id(&self) -> Option<Uuid> {
         self.common().map(|c| c.session_id)
     }
 
-    pub fn cwd(&self) -> Option<&str> {
+    pub(crate) fn cwd(&self) -> Option<&str> {
         self.common().map(|c| c.cwd.as_str())
     }
 
-    pub fn transcript_path(&self) -> Option<&str> {
+    pub(crate) fn transcript_path(&self) -> Option<&str> {
         self.common().map(|c| c.transcript_path.as_str())
     }
 
@@ -110,10 +110,10 @@ impl std::fmt::Display for ClaudeHook {
 
 /// Common fields present on all Claude Code hook events.
 #[derive(Debug, Clone, Deserialize, Serialize)]
-pub struct HookCommon {
-    pub session_id: Uuid,
-    pub transcript_path: String,
-    pub cwd: String,
+pub(crate) struct HookCommon {
+    pub(crate) session_id: Uuid,
+    pub(crate) transcript_path: String,
+    pub(crate) cwd: String,
 }
 
 #[cfg(test)]

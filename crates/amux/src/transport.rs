@@ -7,19 +7,21 @@
 //! WebSocket transport uses binary MessagePack frames.
 
 mod framing;
-pub mod local;
+mod handshake;
+mod local;
 #[cfg(windows)]
-pub mod named_pipe;
+mod named_pipe;
 mod tcp;
 mod tls;
 #[cfg(unix)]
-pub mod unix;
+mod unix;
 mod websocket;
 
-pub use local::{LocalMessageReader, LocalMessageWriter, LocalTransport};
-pub use tcp::TcpTransport;
-pub use tls::{create_tls_acceptor, tls_connect};
-pub use websocket::WebSocketTransport;
+pub(crate) use handshake::{HandshakeError, connect_handshake};
+pub(crate) use local::{LocalListener, LocalMessageReader, LocalMessageWriter, LocalTransport};
+pub(crate) use tcp::TcpTransport;
+pub(crate) use tls::{create_tls_acceptor, tls_connect};
+pub(crate) use websocket::WebSocketTransport;
 
 use crate::protocol::message::Message;
 use std::future::Future;
@@ -41,11 +43,8 @@ pub enum TransportError {
     Config(String),
 }
 
-/// 16MB limit to prevent DoS via huge frames (length-prefixed and WebSocket).
-pub(crate) const MAX_FRAME_SIZE: usize = 16 * 1024 * 1024;
-
 /// Transport trait for reading and writing messages
-pub trait Transport: Send + Sync {
+pub(crate) trait Transport: Send + Sync {
     /// Read one raw frame from the transport (length-prefixed or WebSocket binary frame).
     fn read_frame(&mut self) -> impl Future<Output = Result<Vec<u8>>> + Send;
 
@@ -62,12 +61,12 @@ pub trait Transport: Send + Sync {
 }
 
 /// Read half of a split transport
-pub trait MessageReader: Send {
+pub(crate) trait MessageReader: Send {
     fn read_message(&mut self) -> impl Future<Output = Result<Message>> + Send;
 }
 
 /// Write half of a split transport
-pub trait MessageWriter: Send {
+pub(crate) trait MessageWriter: Send {
     fn write_message(&mut self, msg: &Message) -> impl Future<Output = Result<()>> + Send;
 
     /// Perform background I/O (e.g., WebSocket pong responses).
@@ -79,24 +78,12 @@ pub trait MessageWriter: Send {
 
 /// A transport that can be split into independent reader/writer halves.
 /// The reader can live in a dedicated task that is never cancelled by select!.
-pub trait TransportSplit: Transport {
+pub(crate) trait TransportSplit: Transport {
     type Reader: MessageReader + 'static;
     type Writer: MessageWriter + 'static;
     fn into_split(self) -> (Self::Reader, Self::Writer);
 }
 
-pub(crate) use framing::LengthPrefixed;
-
-/// Configure TCP keepalive on a stream: 30s idle before first probe, 10s between probes.
-pub(crate) fn configure_tcp_keepalive(stream: &tokio::net::TcpStream) {
-    use socket2::SockRef;
-    use std::time::Duration;
-
-    let sock = SockRef::from(stream);
-    let keepalive = socket2::TcpKeepalive::new()
-        .with_time(Duration::from_secs(30))
-        .with_interval(Duration::from_secs(10));
-    if let Err(e) = sock.set_tcp_keepalive(&keepalive) {
-        tracing::warn!(error = %e, "failed to set TCP keepalive");
-    }
-}
+pub(in crate::transport) use framing::LengthPrefixed;
+pub(crate) use framing::MAX_FRAME_SIZE;
+pub(crate) use tcp::configure_tcp_keepalive;

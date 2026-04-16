@@ -1,7 +1,7 @@
-pub mod agent;
-pub mod handshake;
-pub mod message;
-pub mod route;
+pub(crate) mod agent;
+pub(crate) mod handshake;
+pub(crate) mod message;
+pub(crate) mod route;
 
 pub use agent::Agent;
 pub use handshake::{Connect, ConnectResult, PROTOCOL_VERSION};

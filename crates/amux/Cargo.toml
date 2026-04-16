@@ -5,6 +5,7 @@ edition.workspace = true
 description = "Agent multiplexer - library for building amux clients and servers"
 
 [dependencies]
+anyhow = { workspace = true }
 portable-pty = { workspace = true }
 tokio = { workspace = true }
 serde = { workspace = true }

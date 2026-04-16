@@ -14,7 +14,7 @@ use tokio::io::{AsyncRead, AsyncWrite};
 /// TCP transport with length-prefixed framing (for server-to-server connections).
 ///
 /// Generic over stream type to support both plain TCP and TLS streams.
-pub struct TcpTransport<S>
+pub(crate) struct TcpTransport<S>
 where
     S: AsyncRead + AsyncWrite + Unpin + Send,
 {
@@ -25,7 +25,7 @@ impl<S> TcpTransport<S>
 where
     S: AsyncRead + AsyncWrite + Unpin + Send,
 {
-    pub fn new(stream: S) -> Self {
+    pub(crate) fn new(stream: S) -> Self {
         let (reader, writer) = tokio::io::split(stream);
         Self {
             framed: LengthPrefixed::new(reader, writer, true),
@@ -57,7 +57,7 @@ where
 }
 
 /// Read half of a split TCP transport
-pub struct TcpMessageReader<S> {
+pub(crate) struct TcpMessageReader<S> {
     reader: FrameReader<tokio::io::ReadHalf<S>>,
 }
 
@@ -69,7 +69,7 @@ impl<S: AsyncRead + Unpin + Send> MessageReader for TcpMessageReader<S> {
 }
 
 /// Write half of a split TCP transport
-pub struct TcpMessageWriter<S> {
+pub(crate) struct TcpMessageWriter<S> {
     writer: FrameWriter<tokio::io::WriteHalf<S>>,
 }
 
@@ -90,5 +90,19 @@ where
     fn into_split(self) -> (Self::Reader, Self::Writer) {
         let (reader, writer) = self.framed.into_split();
         (TcpMessageReader { reader }, TcpMessageWriter { writer })
+    }
+}
+
+/// Configure TCP keepalive on a stream: 30s idle before first probe, 10s between probes.
+pub(crate) fn configure_tcp_keepalive(stream: &tokio::net::TcpStream) {
+    use socket2::SockRef;
+    use std::time::Duration;
+
+    let sock = SockRef::from(stream);
+    let keepalive = socket2::TcpKeepalive::new()
+        .with_time(Duration::from_secs(30))
+        .with_interval(Duration::from_secs(10));
+    if let Err(error) = sock.set_tcp_keepalive(&keepalive) {
+        tracing::warn!(error = %error, "failed to set TCP keepalive");
     }
 }

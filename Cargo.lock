@@ -15,6 +15,7 @@ dependencies = [
 name = "amux"
 version = "0.1.32"
 dependencies = [
+ "anyhow",
  "chrono",
  "core-foundation",
  "fs2",

@@ -1,4 +1,3 @@
-use crate::agent;
 use crate::protocol::Route;
 use chrono::{DateTime, Utc};
 use serde::{Deserialize, Serialize};
@@ -24,23 +23,5 @@ pub struct Agent {
 impl Agent {
     pub fn is_remote(&self) -> bool {
         self.route.peek().is_some()
-    }
-}
-
-impl From<agent::Agent> for Agent {
-    fn from(agent: agent::Agent) -> Self {
-        Self {
-            id: agent.id,
-            host_id: agent.host_id,
-            name: agent.name,
-            command: agent.command,
-            working_dir: agent.working_dir,
-            route: agent.route,
-            agent_type: agent.agent_type,
-            structured_protocol: agent.structured_protocol,
-            readonly: agent.readonly,
-            args: agent.args,
-            created_at: agent.created_at,
-        }
     }
 }

@@ -38,6 +38,77 @@ One paragraph describing what was done.
 
 ---
 
+## 2026-04-16: Finish post-facade housekeeping and tighten the remaining internal seams
+
+### Summary
+Completed the follow-up cleanup after the facade/module split. The server and Claude session giants were split where the seams were real, handler tests were moved next to their implementations, `super::super::` imports were replaced with absolute crate paths, `get_`-prefixed action names were corrected, the remaining internal-only error plumbing and visibility leaks were reduced, and the HOME-less XDG fallback no longer points at a shared temp-root `amux` directory.
+
+### Changes
+- **Import and naming cleanup** — Replaced nested `super::super::...` imports under `server/handlers/` and `server/routing/` with `crate::server::...` paths, and renamed `get_connection`/`refresh_and_get_connection`/`get_or_create_user_state` to `fetch_connection`/`refresh_and_fetch_connection`/`ensure_user_state`.
+- **Handler test colocation** — Split the old monolithic `crates/amux/src/server/handlers/tests.rs` into per-handler `#[cfg(test)]` blocks in `command.rs`, `direct.rs`, `routable.rs`, and `subscription.rs`, keeping only shared fixtures and the genuinely cross-cutting test in the shared test module.
+- **`server/connection` split** — Broke `crates/amux/src/server/connection.rs` into a facade plus `context.rs`, `driver.rs`, `heartbeat.rs`, `reauth.rs`, and `subscription.rs`, keeping the message loop, heartbeat policy, and token-refresh flow as separate units with narrower visibility.
+- **`agent/claude/session` split** — Broke `crates/amux/src/agent/claude/session.rs` into a facade plus `core.rs`, `hooks.rs`, `input.rs`, and `name_sniffer.rs`, isolating lifecycle, hook handling, structured input, and name sniffing.
+- **Error and visibility audit** — Removed the crate-wide internal `AgentError`, collapsed `CreateAgentError` and `LocalAgentRenameError` into boundary strings backed by contextual internal errors, dropped the dead `HookError::Handling` variant, narrowed `OAuthError` and `StateError`, made route-link generators crate-internal, and reduced the generated macOS IOKit bindings from `pub` to `pub(super)`.
+- **HOME-less path fallback** — Changed `crates/amux/src/paths.rs` so missing home-directory variables now fall back to the relative XDG suffix (for example `.local/state`) instead of the shared temp root, avoiding cross-user state/config collisions in scrubbed environments.
+
+### Decisions Made
+- **Split only where the seams were real**: `server/connection` and `agent/claude/session` were split because the resulting files have coherent responsibilities; this was not done as a line-count exercise.
+- **Keep concrete errors when callers branch on shape**: `ConnectError`, `CloudError`, `HandshakeError`, `ConnectionError`, `SubscribeError`, `AgentRegistryError`, and the public-facing config/setup/transport errors stayed concrete because callers match on specific variants.
+- **Collapse plumbing that only became strings**: agent startup/rename internals now use contextual internal errors and convert to user-facing messages only at the module boundary that actually needs them.
+- **Facade ownership stays explicit**: deep modules no longer expose `pub` names unless that path is intentionally public; helper paths and generated bindings were reduced to the narrowest visibility that still compiles.
+
+### Verification
+- `cargo check`
+- `cargo fmt`
+- `cargo clippy --workspace --all-targets -- -D warnings`
+- `cargo test`
+- `cargo build --workspace`
+- `cargo run -p e2e-runner -- run`
+- Result: all checks passed. The E2E run needed an unrestricted rerun because the sandbox could not allocate local TCP ports.
+
+### Next Steps
+- The refactor follow-through requested in the housekeeping pass is complete.
+- Remaining work should be feature-driven or come from new concrete pain points rather than more structural cleanup.
+
+## 2026-04-16: Complete refactor-plan boundary cleanup and split the remaining server giants
+
+### Summary
+Finished the refactor-plan pass that turns the earlier domain reshuffle into real compiler-enforced boundaries. All `crates/amux/src/**/mod.rs` files are gone, the layering and suspend/resume cycles are broken, `server/handlers.rs` and `server/routing.rs` are now thin facades with responsibility-based submodules, the Claude hook API exposed to the CLI was reduced to a narrow helper instead of the full enum, large inline server test blocks were moved into sibling test files, and internal leaf modules were tightened to `pub(crate)` or narrower unless they are part of a true public API.
+
+### Changes
+- **Module facades** — Replaced `mod.rs` with named roots across `agent`, `auth`, `client`, `protocol`, `server`, `sleep_inhibitor`, and `transport`, and kept the new root files thin.
+- **`crates/amux/src/paths.rs`** — New shared XDG/path helper module used by config/state/log path code.
+- **`crates/amux/src/protocol/agent.rs` / `crates/amux/src/agent/session.rs`** — Moved `From<agent::Agent> for protocol::Agent` out of `protocol` and removed serde derives from the internal agent metadata type.
+- **`crates/amux/src/transport/handshake.rs` / `client/connect.rs` / `server/accept.rs`** — Extracted neutral handshake logic out of the client/server domains.
+- **`crates/amux/src/suspend.rs` / `crates/amux/src/agent/session.rs` / `crates/amux/src/agent/claude/session.rs` / `crates/amux/src/agent/test_agent.rs`** — Broke the suspend/agent cycle by keeping suspend DTOs/filesystem logic in `suspend.rs` and recreating sessions inside the agent layer.
+- **`crates/amux/src/server/registry.rs`** — Removed the extra stored wrapper and now track `Agent` directly.
+- **`crates/amux/src/server/handlers/`** — Split message handling into `command.rs`, `direct.rs`, `routable.rs`, and `subscription.rs`; `handlers.rs` is now a 49-line facade and the large test block moved to `server/handlers/tests.rs`.
+- **`crates/amux/src/server/routing/`** — Split agent lifecycle, peer propagation, and naming into `agents.rs`, `peers.rs`, and `naming.rs`; `routing.rs` is now a 30-line facade and its tests live in `server/routing/tests.rs`.
+- **`crates/amux/src/agent/log_source.rs`** — Moved `StructuredLogSource` out of `agent/claude/` so the test agent no longer depends on Claude internals.
+- **`crates/amux/src/agent/claude/hooks.rs` / `crates/amux-cli/src/hooks.rs` / `crates/amux/src/lib.rs`** — Removed the root `ClaudeHook` leak and replaced it with `extract_external_agent_id(payload)` for the CLI path.
+- **`crates/amux/src/server.rs` / `agent.rs` / `transport.rs` / `client.rs` / `protocol.rs` / `auth.rs` plus internal leaf modules** — Facades now determine what is visible; broad internal `pub` items were downgraded to `pub(crate)` or narrower, and dead root re-exports like suspended-state DTOs were removed.
+
+### Decisions Made
+- **Breaking changes are acceptable**: No effort was spent preserving old internal paths or overexposed APIs; the code now favors cleaner boundaries.
+- **Facade files own exposure**: Root module files determine visibility, and leaf modules are only as visible as their actual callers require.
+- **Wire types stay in `protocol`, runtime types stay outside it**: Internal metadata and runtime behavior no longer leak back down into the protocol layer.
+- **Resume sanitization belongs with session construction**: Suspended state stays dumb/serializable; turning it back into a live session is agent-layer logic.
+- **The CLI only gets the one Claude capability it actually needs**: extracting an external session ID is a stable boundary; the full Claude hook enum remains an internal agent detail.
+- **Do not split large single-purpose files just for line count**: `server/runtime.rs` and `server/connection.rs` were reviewed after the server splits and left intact for now because they still represent cohesive orchestration units, unlike the old mixed handler/routing files.
+
+### Verification
+- `cargo fmt --all`
+- `cargo check --workspace`
+- `cargo clippy --workspace --all-targets -- -D warnings`
+- `cargo test --workspace`
+- `cargo build --workspace`
+- `cargo run -p e2e-runner -- run`
+- Result: all checks passed; workspace tests passed (`amux` 296, `amux-cli` 9, `e2e-runner` 9), and the E2E runner passed all 12 scenarios. The E2E command required an unrestricted rerun because the sandbox could not open local TCP ports.
+
+### Next Steps
+- The documented refactor-plan cleanup is complete.
+- Further changes should be normal follow-up work driven by features or concrete pain points rather than more tree-shuffling.
+
 ## 2026-04-16: Reshuffle amux domains and make hook handling opaque
 
 ### Summary

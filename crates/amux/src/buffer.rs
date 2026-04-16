@@ -19,9 +19,9 @@ use tokio::sync::{RwLock, mpsc};
 /// server rejects input with a stale seq. The payload is opaque JSON —
 /// amux transports it without interpreting the schema.
 #[derive(Debug, Clone, PartialEq)]
-pub struct StructuredOutput {
-    pub seq: u64,
-    pub payload: Value,
+pub(crate) struct StructuredOutput {
+    pub(crate) seq: u64,
+    pub(crate) payload: Value,
 }
 
 /// Extra channel capacity beyond the replay snapshot size.
@@ -39,7 +39,7 @@ const CHANNEL_HEADROOM: usize = 256;
 ///
 /// Two implementations are provided: [`BytePolicy`] for contiguous byte
 /// streams and [`StructuredPolicy`] for structured entries.
-pub trait BufferPolicy: Send + Sync + 'static {
+pub(crate) trait BufferPolicy: Send + Sync + 'static {
     /// The caller-provided value published into the buffer.
     type Input: Send + 'static;
     /// The message type sent through subscriber channels.
@@ -72,7 +72,7 @@ pub trait BufferPolicy: Send + Sync + 'static {
 ///
 /// Bytes are appended to a single `Vec<u8>` and truncated by total byte
 /// count. Replay sends the entire buffer as one chunk.
-pub struct BytePolicy;
+pub(crate) struct BytePolicy;
 
 impl BufferPolicy for BytePolicy {
     type Input = Vec<u8>;
@@ -116,11 +116,11 @@ impl BufferPolicy for BytePolicy {
 /// Entries are stored in a `Vec` and truncated by entry count. The storage also
 /// tracks the most recently published sequence number. Replay sends each entry
 /// individually to preserve message boundaries.
-pub struct StructuredPolicy;
+pub(crate) struct StructuredPolicy;
 
 #[derive(Default)]
 #[doc(hidden)]
-pub struct StructuredStorage {
+pub(crate) struct StructuredStorage {
     entries: Vec<StructuredOutput>,
     last_seq: u64,
 }
@@ -194,7 +194,7 @@ impl BufferPolicy for StructuredPolicy {
 ///
 /// Use via the type aliases [`MultiplexByteBuffer`] (bytes) or
 /// [`MultiplexStructuredBuffer`] (structured entries).
-pub struct BroadcastBuffer<P: BufferPolicy> {
+pub(crate) struct BroadcastBuffer<P: BufferPolicy> {
     inner: Arc<BroadcastInner<P>>,
 }
 
@@ -211,7 +211,7 @@ impl<P: BufferPolicy> BroadcastBuffer<P> {
     ///
     /// For byte buffers, capacity is the maximum byte count.
     /// For entry buffers, capacity is the maximum entry count.
-    pub fn new(capacity: usize) -> Self {
+    pub(crate) fn new(capacity: usize) -> Self {
         Self {
             inner: Arc::new(BroadcastInner {
                 storage: RwLock::new(P::Storage::default()),
@@ -227,7 +227,7 @@ impl<P: BufferPolicy> BroadcastBuffer<P> {
     /// Holds the storage write lock during both publication and broadcast,
     /// ensuring atomicity with `subscribe()`. Dead or full subscribers are
     /// automatically cleaned up.
-    pub async fn write(&self, input: P::Input) -> Option<P::Item> {
+    pub(crate) async fn write(&self, input: P::Input) -> Option<P::Item> {
         let mut storage = self.inner.storage.write().await;
         let item = P::publish(&mut storage, input, self.inner.capacity)?;
 
@@ -246,22 +246,10 @@ impl<P: BufferPolicy> BroadcastBuffer<P> {
     /// registration, ensuring atomicity with `write()` and `close()`.
     ///
     /// Returns `None` if the buffer has been closed.
-    pub async fn subscribe(&self) -> Option<BroadcastReader<P>> {
+    pub(crate) async fn subscribe(&self) -> Option<BroadcastReader<P>> {
         self.subscribe_filtered(P::Filter::default(), |_| ())
             .await
             .map(|(reader, ())| reader)
-    }
-
-    /// Subscribe to the buffer and read a policy-specific snapshot under the
-    /// same storage lock used for replay.
-    ///
-    /// The returned snapshot is consistent with the replayed data.
-    pub async fn subscribe_with_snapshot<R>(
-        &self,
-        snapshot: impl FnOnce(&P::Storage) -> R,
-    ) -> Option<(BroadcastReader<P>, R)> {
-        self.subscribe_filtered(P::Filter::default(), snapshot)
-            .await
     }
 
     /// Subscribe with a replay filter and a snapshot function.
@@ -269,7 +257,7 @@ impl<P: BufferPolicy> BroadcastBuffer<P> {
     /// The filter controls which stored entries are replayed. The default
     /// filter replays everything. The snapshot is read under the same storage
     /// lock to ensure consistency.
-    pub async fn subscribe_filtered<R>(
+    pub(crate) async fn subscribe_filtered<R>(
         &self,
         filter: P::Filter,
         snapshot: impl FnOnce(&P::Storage) -> R,
@@ -295,7 +283,7 @@ impl<P: BufferPolicy> BroadcastBuffer<P> {
     }
 
     /// Inspect storage under the buffer's read lock.
-    pub async fn inspect<R>(&self, inspect: impl FnOnce(&P::Storage) -> R) -> R {
+    pub(crate) async fn inspect<R>(&self, inspect: impl FnOnce(&P::Storage) -> R) -> R {
         let storage = self.inner.storage.read().await;
         inspect(&storage)
     }
@@ -304,7 +292,7 @@ impl<P: BufferPolicy> BroadcastBuffer<P> {
     ///
     /// Existing subscribers remain connected and will receive future writes.
     /// Late subscribers will only see data written after the clear.
-    pub async fn clear(&self) {
+    pub(crate) async fn clear(&self) {
         let mut storage = self.inner.storage.write().await;
         P::clear(&mut storage);
     }
@@ -314,7 +302,7 @@ impl<P: BufferPolicy> BroadcastBuffer<P> {
     /// Acquires the storage write lock first to synchronize with subscribe(),
     /// which holds the storage read lock. This prevents a race where subscribe()
     /// registers a new subscriber after close() has already cleared the list.
-    pub async fn close(&self) {
+    pub(crate) async fn close(&self) {
         let _storage = self.inner.storage.write().await;
         *self.inner.closed.write().await = true;
         self.inner.subscribers.write().await.clear();
@@ -336,7 +324,7 @@ impl<P: BufferPolicy> Clone for BroadcastBuffer<P> {
 /// Each reader receives items independently. When created via `subscribe()`,
 /// the reader first receives all existing buffer contents, then any new items
 /// written after subscription.
-pub struct BroadcastReader<P: BufferPolicy> {
+pub(crate) struct BroadcastReader<P: BufferPolicy> {
     rx: mpsc::Receiver<P::Item>,
 }
 
@@ -345,7 +333,7 @@ impl<P: BufferPolicy> BroadcastReader<P> {
     ///
     /// Returns `Some(item)` when data is available, or `None` when the
     /// buffer has been closed and no more data will arrive.
-    pub async fn read(&mut self) -> Option<P::Item> {
+    pub(crate) async fn read(&mut self) -> Option<P::Item> {
         self.rx.recv().await
     }
 }
@@ -353,26 +341,26 @@ impl<P: BufferPolicy> BroadcastReader<P> {
 // ── Type aliases ────────────────────────────────────────────────────────
 
 /// Byte-stream broadcast buffer for PTY output (replay + broadcast).
-pub type MultiplexByteBuffer = BroadcastBuffer<BytePolicy>;
+pub(crate) type MultiplexByteBuffer = BroadcastBuffer<BytePolicy>;
 /// Reader for [`MultiplexByteBuffer`].
-pub type MultiplexByteReader = BroadcastReader<BytePolicy>;
+pub(crate) type MultiplexByteReader = BroadcastReader<BytePolicy>;
 
 /// Structured broadcast buffer for Claude structured I/O (replay + broadcast).
-pub type MultiplexStructuredBuffer = BroadcastBuffer<StructuredPolicy>;
+pub(crate) type MultiplexStructuredBuffer = BroadcastBuffer<StructuredPolicy>;
 /// Reader for structured output (yields sequenced envelopes).
-pub type MultiplexStructuredReader = BroadcastReader<StructuredPolicy>;
+pub(crate) type MultiplexStructuredReader = BroadcastReader<StructuredPolicy>;
 
 impl BroadcastBuffer<StructuredPolicy> {
     /// Return the current structured output sequence number.
     ///
     /// Returns 0 if no entries have been published.
-    pub async fn current_seq(&self) -> u64 {
+    pub(crate) async fn current_seq(&self) -> u64 {
         self.inspect(|storage| storage.last_seq).await
     }
 
     /// Subscribe to structured output with an optional query filter and return
     /// the sequence number that matches the replayed snapshot.
-    pub async fn subscribe_with_query(
+    pub(crate) async fn subscribe_with_query(
         &self,
         query: Option<SubscribeQuery>,
     ) -> Option<(MultiplexStructuredReader, u64)> {

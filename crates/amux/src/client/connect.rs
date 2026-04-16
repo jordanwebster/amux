@@ -1,11 +1,9 @@
-use crate::client::connection::Connection;
+use super::Connection;
 use crate::config::Config;
 use crate::config::ConfigError;
-use crate::protocol::handshake::{Connect, ConnectResult, PROTOCOL_VERSION};
 use crate::protocol::message::ProtocolError;
 use crate::protocol::route::generate_terminal_link;
-use crate::server::Server;
-use crate::transport::{LocalTransport, Transport, TransportError};
+use crate::transport::{HandshakeError, LocalTransport, TransportError, connect_handshake};
 use std::path::PathBuf;
 use std::process::Stdio;
 use std::time::Duration;
@@ -53,6 +51,10 @@ pub enum ConnectError {
     InvalidHandshake(String),
     #[error("server rejected connection: {0}")]
     Protocol(ProtocolError),
+    #[error(
+        "handshake failed after 5 link-name collisions — this is usually transient, retry the command"
+    )]
+    HandshakeTooManyAttempts,
     #[error("{0}")]
     Start(String),
 }
@@ -63,12 +65,22 @@ impl From<bool> for ServerMode {
     }
 }
 
+impl From<HandshakeError> for ConnectError {
+    fn from(error: HandshakeError) -> Self {
+        match error {
+            HandshakeError::Transport(error) => Self::Transport(error),
+            HandshakeError::Timeout => Self::HandshakeTimeout,
+            HandshakeError::InvalidMessage(message) => Self::InvalidHandshake(message),
+            HandshakeError::Protocol(error) => Self::Protocol(error),
+            HandshakeError::TooManyAttempts => Self::HandshakeTooManyAttempts,
+        }
+    }
+}
+
 /// Policy for how `connect()` reaches the amux server.
 pub enum ConnectPolicy {
     /// Connect to existing server, spawn a managed `amux server start` daemon if needed.
     SpawnDaemon(DaemonOptions),
-    /// Start server in-process on a background task, connect via socket.
-    Embedded,
     /// Connect to existing server only, fail if not running.
     ExistingOnly,
 }
@@ -83,7 +95,6 @@ pub async fn connect(
     match policy {
         ConnectPolicy::ExistingOnly => connect_existing(config).await,
         ConnectPolicy::SpawnDaemon(options) => connect_daemon(config, options).await,
-        ConnectPolicy::Embedded => connect_embedded(config).await,
     }
 }
 
@@ -124,7 +135,9 @@ async fn connect_existing(config: &Config) -> Result<Connection> {
     let mut transport = connect_local_transport(config)
         .await
         .map_err(TransportError::from)?;
-    let link_name = connect_handshake(&mut transport, generate_terminal_link).await?;
+    let link_name = connect_handshake(&mut transport, generate_terminal_link)
+        .await
+        .map_err(ConnectError::from)?;
     tracing::info!(link = %link_name, "connected");
     Ok(Connection::new(transport, link_name))
 }
@@ -147,39 +160,6 @@ async fn connect_daemon(config: &Config, options: DaemonOptions) -> Result<Conne
     }
 
     spawn_daemon_and_connect(config, &options, ServerMode::Local).await
-}
-
-/// Start server in-process on a background task, then connect.
-async fn connect_embedded(config: &Config) -> Result<Connection> {
-    // Validate before spawning so callers see the real error, not a timeout
-    config.validate(false)?;
-
-    #[cfg(unix)]
-    if config.socket_path.exists() {
-        let _ = std::fs::remove_file(&config.socket_path);
-    }
-
-    let mut server =
-        Server::with_config(config.clone()).map_err(|e| ConnectError::Start(e.to_string()))?;
-    tokio::spawn(async move {
-        if let Err(e) = server.run(false).await {
-            tracing::error!(error = %e, "embedded server exited with error");
-        }
-    });
-
-    for _ in 0..50 {
-        match connect_existing(config).await {
-            Ok(conn) => return Ok(conn),
-            Err(ConnectError::Transport(TransportError::Io(_))) => {
-                tokio::time::sleep(Duration::from_millis(100)).await
-            }
-            Err(e) => return Err(e),
-        }
-    }
-
-    Err(ConnectError::Start(
-        "embedded server failed to start within 5s".to_string(),
-    ))
 }
 
 async fn spawn_daemon_and_connect(
@@ -252,56 +232,21 @@ async fn wait_for_server_connection(config: &Config) -> Result<Connection> {
     }
 
     let log_path = std::env::var("AMUX_LOG")
-        .unwrap_or_else(|_| crate::config::default_log_path().display().to_string());
+        .unwrap_or_else(|_| crate::default_log_path().display().to_string());
     Err(ConnectError::Start(format!(
         "server failed to start within 5s — check {} for details",
         log_path
     )))
 }
 
-const HANDSHAKE_TIMEOUT: Duration = Duration::from_secs(10);
+#[cfg(test)]
+mod tests {
+    use super::{ConnectError, HandshakeError};
 
-pub(crate) async fn connect_handshake<T, F>(
-    transport: &mut T,
-    mut generate_link: F,
-) -> Result<String>
-where
-    T: Transport,
-    F: FnMut() -> String,
-{
-    for attempt in 0..5 {
-        let proposed_link = generate_link();
+    #[test]
+    fn maps_handshake_collision_to_dedicated_connect_error() {
+        let error = ConnectError::from(HandshakeError::TooManyAttempts);
 
-        let connect = Connect {
-            link_name: proposed_link.clone(),
-            token: None,
-            version: PROTOCOL_VERSION,
-            client_name: Some("amux-cli".to_string()),
-            client_version: Some(env!("CARGO_PKG_VERSION").to_string()),
-        };
-        let payload = connect
-            .encode()
-            .map_err(TransportError::SerializationEncode)?;
-        transport.write_frame(&payload).await?;
-
-        let payload = tokio::time::timeout(HANDSHAKE_TIMEOUT, transport.read_frame())
-            .await
-            .map_err(|_| ConnectError::HandshakeTimeout)??;
-        let response = ConnectResult::decode(&payload).map_err(|e| {
-            ConnectError::InvalidHandshake(format!("expected ConnectResult during handshake: {e}"))
-        })?;
-
-        match response.error {
-            None => return Ok(proposed_link),
-            Some(ProtocolError::LinkNameTaken) => {
-                tracing::debug!(link = %proposed_link, attempt = attempt + 1, "link name taken, retrying");
-                continue;
-            }
-            Some(other) => return Err(ConnectError::Protocol(other)),
-        }
+        assert!(matches!(error, ConnectError::HandshakeTooManyAttempts));
     }
-
-    Err(ConnectError::Start(
-        "handshake failed after 5 link-name collisions — this is usually transient, retry the command".to_string(),
-    ))
 }

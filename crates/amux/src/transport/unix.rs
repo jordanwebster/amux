@@ -11,12 +11,12 @@ use crate::transport::{Result, TransportError};
 use tokio::net::UnixStream;
 
 /// Unix socket transport with length-prefixed framing
-pub struct UnixTransport {
+pub(crate) struct UnixTransport {
     framed: LengthPrefixed<tokio::net::unix::OwnedReadHalf, tokio::net::unix::OwnedWriteHalf>,
 }
 
 impl UnixTransport {
-    pub fn new(stream: UnixStream) -> Self {
+    pub(crate) fn new(stream: UnixStream) -> Self {
         let (reader, writer) = stream.into_split();
         Self {
             framed: LengthPrefixed::new(reader, writer, false),
@@ -45,7 +45,7 @@ impl Transport for UnixTransport {
 }
 
 /// Read half of a split Unix transport
-pub struct UnixMessageReader {
+pub(crate) struct UnixMessageReader {
     reader: FrameReader<tokio::net::unix::OwnedReadHalf>,
 }
 
@@ -57,7 +57,7 @@ impl MessageReader for UnixMessageReader {
 }
 
 /// Write half of a split Unix transport
-pub struct UnixMessageWriter {
+pub(crate) struct UnixMessageWriter {
     writer: FrameWriter<tokio::net::unix::OwnedWriteHalf>,
 }
 

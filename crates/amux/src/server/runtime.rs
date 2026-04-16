@@ -5,6 +5,10 @@
 //! isolation in [`ServerUserState`] (keyed by JWT-derived user ID, or [`LOCAL_USER_ID`]
 //! for unauthenticated local connections).
 
+use super::accept::{local_accept, tcp_accept, websocket_accept};
+use super::cloud::establish_cloud_connection;
+use super::routing::{apply_local_name_candidate, shutdown_server, suspend_server, withdraw_agent};
+use super::{LOCAL_USER_ID, ServerState, ServerUserState, ShutdownRequest, SubscriptionEntry};
 use crate::agent::{SessionEvent, StopPolicy};
 use crate::auth::jwt::JwtValidator;
 use crate::config::{Config, ConfigError};
@@ -13,8 +17,7 @@ use crate::protocol::message::{
     SubscriptionCloseReason,
 };
 use crate::protocol::route::Route;
-use crate::transport::{TcpTransport, TransportError, create_tls_acceptor};
-use routing::{apply_local_name_candidate, shutdown_server, suspend_server};
+use crate::transport::{LocalListener, TcpTransport, TransportError, create_tls_acceptor};
 use std::net::SocketAddr;
 use std::sync::Arc;
 use std::time::Duration;
@@ -35,24 +38,6 @@ const MAX_CONNECTIONS: usize = 16384;
 
 const SUBSCRIPTION_SWEEP_INTERVAL: Duration = Duration::from_secs(10);
 
-mod accept;
-mod cloud;
-mod connection;
-mod debug;
-mod handlers;
-mod registry;
-mod routing;
-mod state;
-
-use accept::{local_accept, tcp_accept, websocket_accept};
-use cloud::establish_cloud_connection;
-use routing::withdraw_agent;
-pub(crate) use state::{
-    ConnectionHandle, LOCAL_USER_ID, LocalListener, SUBSCRIPTION_LEASE_DURATION, ServerState,
-    ServerUserState, ShutdownRequest, SubscriptionEntry, SubscriptionMode,
-    get_or_create_user_state, subscription_lease_ms,
-};
-
 type Result<T> = std::result::Result<T, ServerError>;
 
 #[derive(Debug, Error)]
@@ -72,7 +57,7 @@ pub enum ServerError {
 }
 
 /// The amux server
-pub struct Server {
+pub(crate) struct Server {
     state: Arc<RwLock<ServerState>>,
     event_tx: mpsc::Sender<SessionEvent>,
     event_rx: Option<mpsc::Receiver<SessionEvent>>,
@@ -80,7 +65,7 @@ pub struct Server {
 }
 
 impl Server {
-    pub fn with_config(config: Config) -> Result<Self> {
+    pub(crate) fn with_config(config: Config) -> Result<Self> {
         let host_id = crate::state::load_or_create_host_id(&config.state_path)
             .map_err(|e| ServerError::State(format!("failed to load host state: {e}")))?;
         let (event_tx, event_rx) = mpsc::channel::<SessionEvent>(256);
@@ -249,7 +234,8 @@ impl Server {
                         ShutdownRequest::Shutdown { reply, link_name } => {
                             let user_state = {
                                 let s = self.state.read().await;
-                                s.get_user_state(&LOCAL_USER_ID).unwrap()
+                                s.user_state(&LOCAL_USER_ID)
+                                    .expect("local user state is always initialized")
                             };
                             // Notify before shutdown so clients see it before streams close
                             notify_other_clients(
@@ -270,7 +256,8 @@ impl Server {
                         ShutdownRequest::Suspend { reply, link_name } => {
                             let user_state = {
                                 let s = self.state.read().await;
-                                s.get_user_state(&LOCAL_USER_ID).unwrap()
+                                s.user_state(&LOCAL_USER_ID)
+                                    .expect("local user state is always initialized")
                             };
                             // Notify before suspend so clients see it before streams close
                             notify_other_clients(
@@ -479,7 +466,7 @@ async fn notify_other_clients(
     }
 }
 
-pub(super) async fn send_routable_via_full_dst(
+pub(crate) async fn send_routable_via_full_dst(
     user_state: &Arc<RwLock<ServerUserState>>,
     full_dst: &Route,
     message: &RoutableMessage,
@@ -507,7 +494,7 @@ pub(super) async fn send_routable_via_full_dst(
         .is_ok()
 }
 
-pub(super) async fn try_send_routable_via_full_dst(
+pub(crate) async fn try_send_routable_via_full_dst(
     user_state: &Arc<RwLock<ServerUserState>>,
     full_dst: &Route,
     message: &RoutableMessage,
@@ -532,7 +519,7 @@ pub(super) async fn try_send_routable_via_full_dst(
     route_handle.try_send(Message::routable(src, dst, request_id, message))
 }
 
-pub(super) async fn sweep_expired_subscriptions(state: &Arc<RwLock<ServerState>>) {
+pub(crate) async fn sweep_expired_subscriptions(state: &Arc<RwLock<ServerState>>) {
     let user_states: Vec<_> = {
         let s = state.read().await;
         s.users.values().cloned().collect()
@@ -585,12 +572,12 @@ pub(super) async fn sweep_expired_subscriptions(state: &Arc<RwLock<ServerState>>
     }
 }
 
-async fn handle_session_event(state: &Arc<RwLock<ServerState>>, event: SessionEvent) {
+pub(crate) async fn handle_session_event(state: &Arc<RwLock<ServerState>>, event: SessionEvent) {
     match event {
         SessionEvent::Ended { agent_id, user_id } => {
             let user_state = {
                 let s = state.read().await;
-                s.get_user_state(&user_id)
+                s.user_state(&user_id)
             };
             if let Some(user_state) = user_state {
                 let mut us = user_state.write().await;
@@ -611,7 +598,7 @@ async fn handle_session_event(state: &Arc<RwLock<ServerState>>, event: SessionEv
             {
                 let user_state = {
                     let s = state.read().await;
-                    s.get_user_state(&user_id)
+                    s.user_state(&user_id)
                 };
                 if let Some(user_state) = user_state {
                     let withdrawn_session = {
@@ -643,7 +630,7 @@ async fn handle_session_event(state: &Arc<RwLock<ServerState>>, event: SessionEv
         } => {
             let (user_state, host_id) = {
                 let s = state.read().await;
-                (s.get_user_state(&user_id), s.host_id)
+                (s.user_state(&user_id), s.host_id)
             };
             if let Some(user_state) = user_state {
                 let outcome = {
@@ -663,16 +650,16 @@ async fn handle_session_event(state: &Arc<RwLock<ServerState>>, event: SessionEv
 }
 
 #[cfg(test)]
-pub(super) mod test_helpers {
-    use super::connection::{ConnectionContext, HeartbeatRole};
+pub(crate) mod test_helpers {
     use super::{LOCAL_USER_ID, ServerState, ServerUserState};
     use crate::config::Config;
+    use crate::server::connection::{ConnectionContext, HeartbeatRole};
     use std::sync::Arc;
     use std::sync::atomic::AtomicU64;
     use tokio::sync::{RwLock, mpsc};
     use uuid::Uuid;
 
-    pub(super) fn test_ctx(
+    pub(crate) fn test_ctx(
         state: Arc<RwLock<ServerState>>,
         user_state: Arc<RwLock<ServerUserState>>,
     ) -> ConnectionContext {
@@ -691,7 +678,7 @@ pub(super) mod test_helpers {
         }
     }
 
-    pub(super) async fn test_state() -> (Arc<RwLock<ServerState>>, Arc<RwLock<ServerUserState>>) {
+    pub(crate) async fn test_state() -> (Arc<RwLock<ServerState>>, Arc<RwLock<ServerUserState>>) {
         let (shutdown_tx, _shutdown_rx) = mpsc::channel(1);
         let state = Arc::new(RwLock::new(ServerState::new(
             Config::default(),
@@ -700,7 +687,8 @@ pub(super) mod test_helpers {
         )));
         let user_state = {
             let s = state.read().await;
-            s.get_user_state(&LOCAL_USER_ID).unwrap()
+            s.user_state(&LOCAL_USER_ID)
+                .expect("local user state is always initialized")
         };
         (state, user_state)
     }
@@ -708,11 +696,11 @@ pub(super) mod test_helpers {
 
 #[cfg(test)]
 mod tests {
-    use super::{
-        ConnectionHandle, ServerUserState, handle_session_event, test_helpers::test_state,
-    };
     use crate::agent::{AgentSession, LocalAgentNameSource, SessionEvent};
     use crate::protocol::message::{AgentType, CreateAgentRequest, DirectMessage, Message};
+    use crate::server::{
+        ConnectionHandle, ServerUserState, handle_session_event, test_helpers::test_state,
+    };
     use std::path::PathBuf;
     use std::sync::Arc;
     use std::sync::atomic::AtomicU64;
@@ -759,7 +747,7 @@ mod tests {
             terminal_size: None,
             args,
         };
-        let mut session = AgentSession::Claude(crate::agent::ClaudeSession::new(&req));
+        let mut session = AgentSession::try_new(&req).expect("known agent type");
         session.set_local_name(name.map(str::to_owned), source);
         let info = session.to_agent(host_id);
 

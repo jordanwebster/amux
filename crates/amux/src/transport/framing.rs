@@ -7,6 +7,9 @@
 use crate::transport::{Result, TransportError};
 use tokio::io::{AsyncRead, AsyncReadExt, AsyncWrite, AsyncWriteExt};
 
+/// 16MB limit to prevent DoS via huge frames (length-prefixed and WebSocket).
+pub(crate) const MAX_FRAME_SIZE: usize = 16 * 1024 * 1024;
+
 /// Maximum initial allocation for a frame buffer. Frames larger than this are
 /// read incrementally in chunks so that a malicious length prefix (e.g. 16MB)
 /// cannot force a large allocation before any payload data arrives.
@@ -61,7 +64,7 @@ async fn write_frame_impl<W: AsyncWrite + Unpin>(
 }
 
 /// Length-prefixed framing for transports.
-pub struct LengthPrefixed<R, W>
+pub(crate) struct LengthPrefixed<R, W>
 where
     R: AsyncRead + Unpin + Send,
     W: AsyncWrite + Unpin + Send,
@@ -76,7 +79,7 @@ where
     R: AsyncRead + Unpin + Send,
     W: AsyncWrite + Unpin + Send,
 {
-    pub fn new(reader: R, writer: W, flush: bool) -> Self {
+    pub(in crate::transport) fn new(reader: R, writer: W, flush: bool) -> Self {
         Self {
             reader,
             writer,
@@ -84,15 +87,15 @@ where
         }
     }
 
-    pub async fn read_frame(&mut self, max_size: usize) -> Result<Vec<u8>> {
+    pub(in crate::transport) async fn read_frame(&mut self, max_size: usize) -> Result<Vec<u8>> {
         read_frame_impl(&mut self.reader, max_size).await
     }
 
-    pub async fn write_frame(&mut self, data: &[u8]) -> Result<()> {
+    pub(in crate::transport) async fn write_frame(&mut self, data: &[u8]) -> Result<()> {
         write_frame_impl(&mut self.writer, data, self.flush).await
     }
 
-    pub fn into_split(self) -> (FrameReader<R>, FrameWriter<W>) {
+    pub(in crate::transport) fn into_split(self) -> (FrameReader<R>, FrameWriter<W>) {
         (
             FrameReader {
                 reader: self.reader,
@@ -106,24 +109,24 @@ where
 }
 
 /// Read half of length-prefixed framing.
-pub struct FrameReader<R> {
+pub(in crate::transport) struct FrameReader<R> {
     reader: R,
 }
 
 impl<R: AsyncRead + Unpin + Send> FrameReader<R> {
-    pub async fn read_frame(&mut self, max_size: usize) -> Result<Vec<u8>> {
+    pub(in crate::transport) async fn read_frame(&mut self, max_size: usize) -> Result<Vec<u8>> {
         read_frame_impl(&mut self.reader, max_size).await
     }
 }
 
 /// Write half of length-prefixed framing.
-pub struct FrameWriter<W> {
+pub(in crate::transport) struct FrameWriter<W> {
     writer: W,
     flush: bool,
 }
 
 impl<W: AsyncWrite + Unpin + Send> FrameWriter<W> {
-    pub async fn write_frame(&mut self, data: &[u8]) -> Result<()> {
+    pub(in crate::transport) async fn write_frame(&mut self, data: &[u8]) -> Result<()> {
         write_frame_impl(&mut self.writer, data, self.flush).await
     }
 }

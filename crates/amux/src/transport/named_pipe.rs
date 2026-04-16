@@ -14,10 +14,10 @@ use tokio::net::windows::named_pipe::NamedPipeClient;
 type NamedPipeReadHalf<S> = ReadHalf<S>;
 type NamedPipeWriteHalf<S> = WriteHalf<S>;
 
-pub type NamedPipeClientTransport = NamedPipeTransport<NamedPipeClient>;
+pub(crate) type NamedPipeClientTransport = NamedPipeTransport<NamedPipeClient>;
 
 /// Named-pipe transport with length-prefixed framing.
-pub struct NamedPipeTransport<S>
+pub(crate) struct NamedPipeTransport<S>
 where
     S: AsyncRead + AsyncWrite + Unpin + Send + Sync + 'static,
 {
@@ -28,7 +28,7 @@ impl<S> NamedPipeTransport<S>
 where
     S: AsyncRead + AsyncWrite + Unpin + Send + Sync + 'static,
 {
-    pub fn new(stream: S) -> Self {
+    pub(crate) fn new(stream: S) -> Self {
         let (reader, writer) = split(stream);
         Self {
             framed: LengthPrefixed::new(reader, writer, false),
@@ -59,7 +59,7 @@ where
     }
 }
 
-pub struct NamedPipeMessageReader<S>
+pub(crate) struct NamedPipeMessageReader<S>
 where
     S: AsyncRead + AsyncWrite + Unpin + Send + Sync + 'static,
 {
@@ -76,7 +76,7 @@ where
     }
 }
 
-pub struct NamedPipeMessageWriter<S>
+pub(crate) struct NamedPipeMessageWriter<S>
 where
     S: AsyncRead + AsyncWrite + Unpin + Send + Sync + 'static,
 {

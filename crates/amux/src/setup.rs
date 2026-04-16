@@ -1,6 +1,6 @@
 use crate::auth::oauth;
 use crate::config::Config;
-use crate::state::{CloudState, State, StateError};
+use crate::state::{CloudState, State};
 use serde_yaml::{Mapping, Value};
 use std::fs;
 use std::path::{Path, PathBuf};
@@ -20,9 +20,9 @@ pub struct ClaudePluginSetupState {
 #[derive(Debug, thiserror::Error)]
 pub enum SetupError {
     #[error("state error: {0}")]
-    State(#[from] StateError),
+    State(String),
     #[error("oauth error: {0}")]
-    OAuth(#[from] oauth::OAuthError),
+    OAuth(String),
     #[error("config error: {0}")]
     Config(String),
 }
@@ -45,7 +45,7 @@ pub fn needs_init(config: &Config) -> bool {
 
 /// Read current cloud onboarding state.
 pub fn cloud_setup_state(config: &Config) -> Result<CloudSetupState, SetupError> {
-    let state = State::load(&config.state_path)?;
+    let state = State::load(&config.state_path).map_err(|e| SetupError::State(e.to_string()))?;
     Ok(CloudSetupState {
         use_cloud_mode: state.cloud.use_cloud_mode,
         has_refresh_token: state.cloud.refresh_token.is_some(),
@@ -56,7 +56,8 @@ pub fn cloud_setup_state(config: &Config) -> Result<CloudSetupState, SetupError>
 pub fn reset_cloud_state(config: &Config) -> Result<(), SetupError> {
     State::update(&config.state_path, |s| {
         s.cloud = CloudState::default();
-    })?;
+    })
+    .map_err(|e| SetupError::State(e.to_string()))?;
     Ok(())
 }
 
@@ -64,16 +65,20 @@ pub fn reset_cloud_state(config: &Config) -> Result<(), SetupError> {
 pub fn set_use_cloud_mode(config: &Config, use_cloud_mode: bool) -> Result<(), SetupError> {
     State::update(&config.state_path, |s| {
         s.cloud.use_cloud_mode = Some(use_cloud_mode);
-    })?;
+    })
+    .map_err(|e| SetupError::State(e.to_string()))?;
     Ok(())
 }
 
 /// Run OAuth device flow and persist refresh token.
 pub async fn authenticate_cloud(config: &Config) -> Result<(), SetupError> {
-    let refresh_token = oauth::device_flow(&config.cloud_url).await?;
+    let refresh_token = oauth::device_flow(&config.cloud_url)
+        .await
+        .map_err(|e| SetupError::OAuth(e.to_string()))?;
     State::update(&config.state_path, |s| {
         s.cloud.refresh_token = Some(refresh_token);
-    })?;
+    })
+    .map_err(|e| SetupError::State(e.to_string()))?;
     Ok(())
 }
 
@@ -145,7 +150,8 @@ pub fn set_claude_plugin_setup_state(
     State::update(&state_path, |s| {
         s.claude.applied_plugin_version = Some(version.to_string());
         s.claude.applied_marketplace_path = Some(marketplace_path.to_path_buf());
-    })?;
+    })
+    .map_err(|e| SetupError::State(e.to_string()))?;
     Ok(())
 }
 

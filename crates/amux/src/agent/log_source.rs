@@ -6,7 +6,7 @@
 //! is stopped, the buffer is cleared, and a new tailer begins writing
 //! to the same buffer — keeping existing subscribers connected.
 
-use super::transcript::TranscriptTailer;
+use crate::agent::claude::transcript::TranscriptTailer;
 use crate::buffer::{MultiplexStructuredBuffer, MultiplexStructuredReader};
 use crate::debug::{DebugView, LossyPath};
 use crate::protocol::message::SubscribeQuery;
@@ -31,13 +31,13 @@ struct StructuredLogSourceInner {
 
 /// Owns a structured log buffer and an optional transcript tailer.
 #[derive(Clone)]
-pub struct StructuredLogSource {
+pub(crate) struct StructuredLogSource {
     inner: Arc<StructuredLogSourceInner>,
 }
 
 impl StructuredLogSource {
     /// Create a new source with an empty buffer.
-    pub fn new() -> Self {
+    pub(crate) fn new() -> Self {
         Self {
             inner: Arc::new(StructuredLogSourceInner {
                 buffer: Arc::new(MultiplexStructuredBuffer::new(MAX_LOG_ENTRIES)),
@@ -55,7 +55,7 @@ impl StructuredLogSource {
     /// connected and receive entries from the new transcript.
     ///
     /// Calls with the same path as the current link are ignored.
-    pub async fn link_transcript(&self, path: PathBuf) {
+    pub(crate) async fn link_transcript(&self, path: PathBuf) {
         {
             let current_path = self.inner.current_path.lock().expect("mutex poisoned");
             if current_path.as_ref() == Some(&path) {
@@ -85,13 +85,13 @@ impl StructuredLogSource {
     }
 
     /// Subscribe to the structured log buffer immediately.
-    pub async fn subscribe(&self) -> Option<MultiplexStructuredReader> {
+    pub(crate) async fn subscribe(&self) -> Option<MultiplexStructuredReader> {
         self.inner.buffer.subscribe().await
     }
 
     /// Subscribe to the structured log buffer with an optional query filter
     /// and return the matching seq.
-    pub async fn subscribe_with_query(
+    pub(crate) async fn subscribe_with_query(
         &self,
         query: Option<SubscribeQuery>,
     ) -> Option<(MultiplexStructuredReader, u64)> {
@@ -99,22 +99,17 @@ impl StructuredLogSource {
     }
 
     /// Write a structured output entry directly (e.g. hook events).
-    pub async fn write(&self, payload: Value) {
+    pub(crate) async fn write(&self, payload: Value) {
         self.inner.buffer.write(payload).await;
     }
 
     /// Return the current sequence number.
-    pub async fn current_seq(&self) -> u64 {
+    pub(crate) async fn current_seq(&self) -> u64 {
         self.inner.buffer.current_seq().await
     }
 
-    /// Access the underlying buffer (needed by child waiter task).
-    pub fn buffer(&self) -> &Arc<MultiplexStructuredBuffer> {
-        &self.inner.buffer
-    }
-
     /// Stop the tailer and close the buffer.
-    pub async fn close(&self) {
+    pub(crate) async fn close(&self) {
         let tailer = {
             let mut guard = self.inner.tailer.lock().await;
             guard.take()

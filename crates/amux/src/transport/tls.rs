@@ -13,7 +13,7 @@ use tokio_rustls::client::TlsStream as ClientTlsStream;
 use tokio_rustls::{TlsAcceptor, TlsConnector};
 
 /// Connect to a TLS-enabled server and return a transport
-pub async fn tls_connect(
+pub(crate) async fn tls_connect(
     host: &str,
     port: u16,
 ) -> Result<TcpTransport<ClientTlsStream<TcpStream>>> {
@@ -40,7 +40,7 @@ pub async fn tls_connect(
 
 /// Create a TLS acceptor for cloud server mode.
 /// Requires TLS certificate and private key files.
-pub fn create_tls_acceptor(cert_pem: &[u8], key_pem: &[u8]) -> Result<TlsAcceptor> {
+pub(crate) fn create_tls_acceptor(cert_pem: &[u8], key_pem: &[u8]) -> Result<TlsAcceptor> {
     use rustls::pki_types::CertificateDer;
     use rustls_pemfile::{certs, private_key};
     use std::io::BufReader;

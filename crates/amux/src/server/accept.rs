@@ -9,15 +9,14 @@
 
 use super::connection::{ConnectionContext, HeartbeatRole, run_connection};
 use super::routing::send_initial_announcements;
-use super::{
-    ConnectionHandle, LOCAL_USER_ID, ServerState, ServerUserState, get_or_create_user_state,
-};
-use crate::client::connect::{ConnectError, connect_handshake};
+use super::{ConnectionHandle, LOCAL_USER_ID, ServerState, ServerUserState, ensure_user_state};
+use crate::agent::SessionEvent;
 use crate::protocol::handshake::{Connect, ConnectResult, PROTOCOL_VERSION};
 use crate::protocol::message::{Message, ProtocolError};
 use crate::protocol::route::generate_server_link;
 use crate::transport::{
-    TcpTransport, Transport, TransportError, TransportSplit, WebSocketTransport,
+    HandshakeError, TcpTransport, Transport, TransportError, TransportSplit, WebSocketTransport,
+    connect_handshake,
 };
 use std::sync::Arc;
 use std::sync::atomic::AtomicU64;
@@ -69,31 +68,30 @@ pub(super) enum AcceptError {
     HandshakeTimeout,
 }
 
-fn map_connect_error(error: ConnectError) -> AcceptError {
+fn map_handshake_error(error: HandshakeError) -> AcceptError {
     match error {
-        ConnectError::Config(err) => AcceptError::Config(err.to_string()),
-        ConnectError::Transport(err) => AcceptError::Transport(err),
-        ConnectError::HandshakeTimeout => AcceptError::HandshakeTimeout,
-        ConnectError::InvalidHandshake(message) => AcceptError::InvalidHandshake(message),
-        ConnectError::Protocol(ProtocolError::InvalidCredentials) => {
+        HandshakeError::Transport(err) => AcceptError::Transport(err),
+        HandshakeError::Timeout => AcceptError::HandshakeTimeout,
+        HandshakeError::InvalidMessage(message) => AcceptError::InvalidHandshake(message),
+        HandshakeError::Protocol(ProtocolError::InvalidCredentials) => {
             AcceptError::InvalidCredentials
         }
-        ConnectError::Protocol(ProtocolError::ProtocolMismatch {
+        HandshakeError::Protocol(ProtocolError::ProtocolMismatch {
             server_version,
             client_version,
         }) => AcceptError::ProtocolMismatch {
             server_version,
             client_version,
         },
-        ConnectError::Protocol(ProtocolError::UpgradeRequired {
+        HandshakeError::Protocol(ProtocolError::UpgradeRequired {
             minimum_version,
             client_version,
         }) => AcceptError::UpgradeRequired {
             minimum_version,
             client_version,
         },
-        ConnectError::Protocol(other) => AcceptError::Config(other.to_string()),
-        ConnectError::Start(message) => AcceptError::Config(message),
+        HandshakeError::Protocol(other) => AcceptError::Config(other.to_string()),
+        HandshakeError::TooManyAttempts => AcceptError::TooManyHandshakeAttempts,
     }
 }
 
@@ -273,7 +271,7 @@ pub(super) async fn accept_handshake<T: Transport>(
         };
 
         // Get or create user state (read lock fast path, write lock only on first connection)
-        let user_state = get_or_create_user_state(state, user_id).await;
+        let user_state = ensure_user_state(state, user_id).await;
 
         // Check uniqueness under user state lock
         let link_taken = {
@@ -330,7 +328,7 @@ pub(super) async fn accept_handshake<T: Transport>(
 pub(super) async fn accept_connection<T: TransportSplit>(
     mut transport: T,
     state: Arc<RwLock<ServerState>>,
-    event_tx: mpsc::Sender<super::SessionEvent>,
+    event_tx: mpsc::Sender<SessionEvent>,
     verify_token: bool,
     is_local: bool,
     log_label: &str,
@@ -409,7 +407,7 @@ pub(super) async fn accept_connection<T: TransportSplit>(
 pub(super) async fn websocket_accept(
     stream: TcpStream,
     state: Arc<RwLock<ServerState>>,
-    event_tx: mpsc::Sender<super::SessionEvent>,
+    event_tx: mpsc::Sender<SessionEvent>,
     verify_token: bool,
 ) -> Result<()> {
     let ws_config = WebSocketConfig {
@@ -438,7 +436,7 @@ pub(super) async fn websocket_accept(
 pub(super) async fn local_accept(
     transport: impl TransportSplit,
     state: Arc<RwLock<ServerState>>,
-    event_tx: mpsc::Sender<super::SessionEvent>,
+    event_tx: mpsc::Sender<SessionEvent>,
 ) -> Result<()> {
     accept_connection(transport, state, event_tx, false, true, "local").await
 }
@@ -450,7 +448,7 @@ pub(super) async fn local_accept(
 pub(super) async fn tcp_accept<T: TransportSplit>(
     transport: T,
     state: Arc<RwLock<ServerState>>,
-    event_tx: mpsc::Sender<super::SessionEvent>,
+    event_tx: mpsc::Sender<SessionEvent>,
     verify_token: bool,
 ) -> Result<()> {
     accept_connection(transport, state, event_tx, verify_token, false, "tcp").await
@@ -462,7 +460,7 @@ pub(super) async fn tcp_connect(
     state: &Arc<RwLock<ServerState>>,
     user_state: &Arc<RwLock<ServerUserState>>,
     user_id: Uuid,
-    event_tx: mpsc::Sender<super::SessionEvent>,
+    event_tx: mpsc::Sender<SessionEvent>,
 ) -> Result<()> {
     let addr: std::net::SocketAddr = address
         .parse()
@@ -490,7 +488,7 @@ pub(super) async fn tcp_connect(
         generate_server_link(&hostname, randomise)
     })
     .await
-    .map_err(map_connect_error)?;
+    .map_err(map_handshake_error)?;
 
     let conn_span = tracing::info_span!(
         "connection",
