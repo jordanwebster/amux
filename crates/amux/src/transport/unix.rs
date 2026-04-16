@@ -6,8 +6,8 @@ use super::framing::{FrameReader, FrameWriter};
 use super::{
     LengthPrefixed, MAX_FRAME_SIZE, MessageReader, MessageWriter, Transport, TransportSplit,
 };
-use crate::error::{AmuxError, Result};
-use crate::message::Message;
+use crate::protocol::message::Message;
+use crate::transport::{Result, TransportError};
 use tokio::net::UnixStream;
 
 /// Unix socket transport with length-prefixed framing
@@ -35,11 +35,11 @@ impl Transport for UnixTransport {
 
     async fn read_message(&mut self) -> Result<Message> {
         let data = self.read_frame().await?;
-        Message::decode(&data).map_err(AmuxError::SerializationDecode)
+        Message::decode(&data).map_err(TransportError::SerializationDecode)
     }
 
     async fn write_message(&mut self, msg: &Message) -> Result<()> {
-        let data = msg.encode().map_err(AmuxError::SerializationEncode)?;
+        let data = msg.encode().map_err(TransportError::SerializationEncode)?;
         self.write_frame(&data).await
     }
 }
@@ -52,7 +52,7 @@ pub struct UnixMessageReader {
 impl MessageReader for UnixMessageReader {
     async fn read_message(&mut self) -> Result<Message> {
         let data = self.reader.read_frame(MAX_FRAME_SIZE).await?;
-        Message::decode(&data).map_err(AmuxError::SerializationDecode)
+        Message::decode(&data).map_err(TransportError::SerializationDecode)
     }
 }
 
@@ -63,7 +63,7 @@ pub struct UnixMessageWriter {
 
 impl MessageWriter for UnixMessageWriter {
     async fn write_message(&mut self, msg: &Message) -> Result<()> {
-        let data = msg.encode().map_err(AmuxError::SerializationEncode)?;
+        let data = msg.encode().map_err(TransportError::SerializationEncode)?;
         self.writer.write_frame(&data).await
     }
 }
@@ -81,8 +81,8 @@ impl TransportSplit for UnixTransport {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::message::{AgentType, CreateAgentRequest, RoutableMessage, TerminalSize};
-    use crate::route::Route;
+    use crate::protocol::message::{AgentType, CreateAgentRequest, RoutableMessage, TerminalSize};
+    use crate::protocol::route::Route;
     use uuid::Uuid;
 
     async fn create_socket_pair() -> (UnixTransport, UnixTransport) {

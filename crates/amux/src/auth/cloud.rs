@@ -5,14 +5,13 @@
 //! - Automatic token refresh before expiry
 //! - Message forwarding between local server and cloud
 
+use crate::auth::oauth;
 use crate::config::Config;
-use crate::error::AmuxError;
-use crate::handshake::{Connect, ConnectResult, PROTOCOL_VERSION};
-use crate::message::{DirectMessage, Message, ProtocolError};
-use crate::oauth;
-use crate::route::generate_server_link;
+use crate::protocol::handshake::{Connect, ConnectResult, PROTOCOL_VERSION};
+use crate::protocol::message::{DirectMessage, Message, ProtocolError};
+use crate::protocol::route::generate_server_link;
 use crate::state::State;
-use crate::transport::{TcpTransport, Transport, tls_connect};
+use crate::transport::{TcpTransport, Transport, TransportError, tls_connect};
 use chrono::{DateTime, Duration, Utc};
 use std::time::Duration as StdDuration;
 use thiserror::Error;
@@ -39,7 +38,7 @@ pub enum CloudError {
     #[error("OAuth error: {0}")]
     OAuth(#[from] oauth::OAuthError),
     #[error("Transport error: {0}")]
-    Transport(#[from] AmuxError),
+    Transport(#[from] TransportError),
     #[error("State error: {0}")]
     State(#[from] crate::state::StateError),
     #[error(
@@ -193,7 +192,9 @@ impl CloudConnection {
             client_name: Some("amux-cli".to_string()),
             client_version: Some(env!("CARGO_PKG_VERSION").to_string()),
         };
-        let payload = connect.encode().map_err(AmuxError::SerializationEncode)?;
+        let payload = connect
+            .encode()
+            .map_err(TransportError::SerializationEncode)?;
         transport.write_frame(&payload).await?;
 
         // Wait for response with timeout to prevent hanging on unresponsive peers
@@ -406,9 +407,9 @@ mod tests {
 
         // Not a ReauthResult at all — should be rejected
         let msg = Message::Command {
-            command: crate::message::Command::Debug {
+            command: crate::protocol::message::Command::Debug {
                 verbose: false,
-                format: crate::message::DebugFormat::Yaml,
+                format: crate::protocol::message::DebugFormat::Yaml,
             },
         };
         let result = state.handle_reauth_result(&msg);

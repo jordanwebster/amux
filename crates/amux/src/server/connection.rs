@@ -9,19 +9,45 @@
 
 use super::handlers::handle_message;
 use super::{ServerState, ServerUserState, SubscriptionEntry, SubscriptionMode};
-use crate::agents::SessionEvent;
-use crate::cloud::{CloudError, TokenRefreshState};
-use crate::error::{AmuxError, Result};
-use crate::message::{DirectMessage, Message, SubscriptionId};
-use crate::route::Route;
-use crate::transport::{MessageReader, TransportSplit};
+use crate::agent::SessionEvent;
+use crate::auth::cloud::{CloudError, TokenRefreshState};
+use crate::protocol::message::{DirectMessage, Message, SubscriptionId};
+use crate::protocol::route::Route;
+use crate::transport::{MessageReader, MessageWriter, TransportError, TransportSplit};
 use std::sync::Arc;
 use std::sync::atomic::AtomicU64;
 use std::time::Duration;
+use thiserror::Error;
 use tokio::sync::{RwLock, mpsc, oneshot};
 use tokio::time::Instant;
 use tracing::Instrument;
 use uuid::Uuid;
+
+pub(super) type Result<T> = std::result::Result<T, ConnectionError>;
+
+#[derive(Debug, Error)]
+pub(super) enum ConnectionError {
+    #[error(transparent)]
+    Transport(#[from] TransportError),
+    #[error("{0}")]
+    Config(String),
+    #[error("Invalid or missing credentials")]
+    InvalidCredentials,
+    #[error(
+        "protocol mismatch (server protocol v{server_version}, client protocol v{client_version})"
+    )]
+    ProtocolMismatch {
+        server_version: u32,
+        client_version: u32,
+    },
+    #[error("amux upgrade required (minimum v{minimum_version}, you have v{client_version})")]
+    UpgradeRequired {
+        minimum_version: String,
+        client_version: String,
+    },
+    #[error("heartbeat timed out")]
+    HeartbeatTimeout,
+}
 
 /// Context for connection handlers.
 pub(super) struct ConnectionContext {
@@ -78,7 +104,7 @@ impl MessageMetadata {
 pub(super) enum Incoming {
     Msg(Box<Message>),
     Wrote(MessageMetadata),
-    TransportErr(AmuxError),
+    TransportErr(TransportError),
     Eof,
 }
 
@@ -96,11 +122,11 @@ pub(super) async fn reader_loop<R: MessageReader>(mut reader: R, tx: mpsc::Sende
                     break;
                 }
             }
-            Err(AmuxError::Io(e)) if e.kind() == std::io::ErrorKind::UnexpectedEof => {
+            Err(TransportError::Io(e)) if e.kind() == std::io::ErrorKind::UnexpectedEof => {
                 let _ = tx.send(Incoming::Eof).await;
                 break;
             }
-            Err(AmuxError::SerializationDecode(e)) => {
+            Err(TransportError::SerializationDecode(e)) => {
                 // The frame was fully consumed by the framing layer, so the
                 // stream position is correct for the next read. Skip undecodable
                 // top-level frames to keep the connection alive.
@@ -116,7 +142,7 @@ pub(super) async fn reader_loop<R: MessageReader>(mut reader: R, tx: mpsc::Sende
 
 /// Writer task: drains message channel, writes to transport.
 /// Also handles transport-specific background I/O (e.g., WebSocket pong responses).
-pub(super) async fn writer_loop<W: crate::transport::MessageWriter>(
+pub(super) async fn writer_loop<W: MessageWriter>(
     mut writer: W,
     mut rx: mpsc::Receiver<Message>,
     tx: mpsc::Sender<Incoming>,
@@ -266,7 +292,7 @@ impl TokenRefresher {
         self.inner
             .send_reauth(tx)
             .await
-            .map_err(cloud_err_to_amux)?;
+            .map_err(cloud_err_to_connection)?;
         self.awaiting_since = Some(tokio::time::Instant::now());
         Ok(())
     }
@@ -288,7 +314,7 @@ impl TokenRefresher {
         }
         self.inner
             .handle_reauth_result(msg)
-            .map_err(cloud_err_to_amux)?;
+            .map_err(cloud_err_to_connection)?;
         self.deadline = self.inner.refresh_deadline();
         self.awaiting_since = None;
         Ok(true)
@@ -412,10 +438,10 @@ impl HeartbeatState {
                 })
                 .await
                 .map_err(|_| {
-                    AmuxError::Io(std::io::Error::new(
+                    ConnectionError::Transport(TransportError::Io(std::io::Error::new(
                         std::io::ErrorKind::BrokenPipe,
                         "outgoing channel closed while sending heartbeat",
-                    ))
+                    )))
                 })?;
                 Ok(())
             }
@@ -454,17 +480,32 @@ fn refresh_has_priority(
         || refresh_deadline.is_some_and(|deadline| deadline <= tokio::time::Instant::now())
 }
 
-fn cloud_err_to_amux(e: CloudError) -> AmuxError {
+fn cloud_err_to_connection(e: CloudError) -> ConnectionError {
     match e {
         CloudError::HostChanged => {
             tracing::warn!("cloud host changed, reconnection required");
-            AmuxError::Config(
+            ConnectionError::Config(
                 "cloud host changed — will reconnect to new host automatically".to_string(),
             )
         }
+        CloudError::ProtocolMismatch {
+            server_version,
+            client_version,
+        } => ConnectionError::ProtocolMismatch {
+            server_version,
+            client_version,
+        },
+        CloudError::UpgradeRequired {
+            minimum_version,
+            client_version,
+        } => ConnectionError::UpgradeRequired {
+            minimum_version,
+            client_version,
+        },
+        CloudError::Auth(_) => ConnectionError::InvalidCredentials,
         other => {
             tracing::error!(error = %other, "token refresh failed");
-            AmuxError::Config(format!("token refresh failed: {other}"))
+            ConnectionError::Config(format!("token refresh failed: {other}"))
         }
     }
 }
@@ -563,7 +604,7 @@ async fn connection_loop_with_heartbeat(
                             heartbeat.as_ref(),
                             refresher.as_ref(),
                         );
-                        return Err(e);
+                        return Err(e.into());
                     }
                 }
             }
@@ -575,7 +616,7 @@ async fn connection_loop_with_heartbeat(
             }
             _ = maybe_sleep_until(refresh_timeout), if refresh_timeout.is_some() => {
                 tracing::error!("token refresh response timeout");
-                return Err(AmuxError::Config(format!(
+                return Err(ConnectionError::Config(format!(
                     "cloud token refresh timed out after {}s — the cloud server may be unresponsive",
                     REFRESH_RESPONSE_TIMEOUT.as_secs()
                 )));
@@ -592,7 +633,7 @@ async fn connection_loop_with_heartbeat(
                     heartbeat.as_ref(),
                     refresher.as_ref(),
                 );
-                return Err(AmuxError::HeartbeatTimeout);
+                return Err(ConnectionError::HeartbeatTimeout);
             }
         }
     }
@@ -751,7 +792,7 @@ pub(super) fn cancel_subscriptions_matching(
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::message::{Command, DirectMessage, Message};
+    use crate::protocol::message::{Command, DirectMessage, Message};
     use crate::server::LOCAL_USER_ID;
     use crate::server::test_helpers::{test_ctx, test_state};
     use std::sync::Arc;
@@ -762,11 +803,11 @@ mod tests {
 
     /// A mock reader that yields a pre-configured sequence of results then EOF.
     struct MockReader {
-        results: std::collections::VecDeque<crate::error::Result<Message>>,
+        results: std::collections::VecDeque<crate::transport::Result<Message>>,
     }
 
     impl MockReader {
-        fn new(results: Vec<crate::error::Result<Message>>) -> Self {
+        fn new(results: Vec<crate::transport::Result<Message>>) -> Self {
             Self {
                 results: results.into(),
             }
@@ -774,10 +815,10 @@ mod tests {
     }
 
     impl crate::transport::MessageReader for MockReader {
-        async fn read_message(&mut self) -> crate::error::Result<Message> {
+        async fn read_message(&mut self) -> crate::transport::Result<Message> {
             match self.results.pop_front() {
                 Some(result) => result,
-                None => Err(AmuxError::Io(std::io::Error::new(
+                None => Err(TransportError::Io(std::io::Error::new(
                     std::io::ErrorKind::UnexpectedEof,
                     "mock reader exhausted",
                 ))),
@@ -790,7 +831,7 @@ mod tests {
     }
 
     impl crate::transport::MessageWriter for MockWriter {
-        async fn write_message(&mut self, msg: &Message) -> crate::error::Result<()> {
+        async fn write_message(&mut self, msg: &Message) -> crate::transport::Result<()> {
             self.written
                 .lock()
                 .unwrap()
@@ -860,7 +901,7 @@ mod tests {
             Ok(Message::Command {
                 command: Command::Debug {
                     verbose: false,
-                    format: crate::message::DebugFormat::Yaml,
+                    format: crate::protocol::message::DebugFormat::Yaml,
                 },
             }),
             // MockReader auto-sends EOF when exhausted
@@ -875,7 +916,7 @@ mod tests {
 
     #[tokio::test]
     async fn reader_loop_eof_sends_eof_variant() {
-        let reader = MockReader::new(vec![Err(AmuxError::Io(std::io::Error::new(
+        let reader = MockReader::new(vec![Err(TransportError::Io(std::io::Error::new(
             std::io::ErrorKind::UnexpectedEof,
             "connection closed",
         )))]);
@@ -895,11 +936,11 @@ mod tests {
             Ok(Message::Command {
                 command: Command::ListAgents,
             }),
-            Err(AmuxError::SerializationDecode(decode_err)),
+            Err(TransportError::SerializationDecode(decode_err)),
             Ok(Message::Command {
                 command: Command::Debug {
                     verbose: false,
-                    format: crate::message::DebugFormat::Yaml,
+                    format: crate::protocol::message::DebugFormat::Yaml,
                 },
             }),
         ]);
@@ -918,7 +959,7 @@ mod tests {
 
     #[tokio::test]
     async fn reader_loop_fatal_io_error_sends_transport_err() {
-        let reader = MockReader::new(vec![Err(AmuxError::Io(std::io::Error::new(
+        let reader = MockReader::new(vec![Err(TransportError::Io(std::io::Error::new(
             std::io::ErrorKind::ConnectionReset,
             "peer reset",
         )))]);
@@ -950,7 +991,7 @@ mod tests {
             .send(Message::Command {
                 command: Command::Debug {
                     verbose: false,
-                    format: crate::message::DebugFormat::Yaml,
+                    format: crate::protocol::message::DebugFormat::Yaml,
                 },
             })
             .await
@@ -1040,14 +1081,17 @@ mod tests {
 
         let io_err = std::io::Error::new(std::io::ErrorKind::ConnectionReset, "peer reset");
         incoming_tx
-            .send(Incoming::TransportErr(AmuxError::Io(io_err)))
+            .send(Incoming::TransportErr(TransportError::Io(io_err)))
             .await
             .unwrap();
 
         let result = connection_loop(incoming_rx, response_tx, ctx, None).await;
         assert!(result.is_err(), "TransportErr should propagate as Err");
         assert!(
-            matches!(result, Err(AmuxError::Io(_))),
+            matches!(
+                result,
+                Err(ConnectionError::Transport(TransportError::Io(_)))
+            ),
             "should preserve Io error variant"
         );
     }
@@ -1306,7 +1350,7 @@ mod tests {
 
         let result = handle.await.unwrap();
         assert!(
-            matches!(result, Err(AmuxError::HeartbeatTimeout)),
+            matches!(result, Err(ConnectionError::HeartbeatTimeout)),
             "expected heartbeat timeout, got {:?}",
             result
         );
@@ -1343,7 +1387,7 @@ mod tests {
 
         let result = handle.await.unwrap();
         assert!(
-            matches!(result, Err(AmuxError::HeartbeatTimeout)),
+            matches!(result, Err(ConnectionError::HeartbeatTimeout)),
             "expected heartbeat timeout without a write callback, got {:?}",
             result
         );
@@ -1369,7 +1413,7 @@ mod tests {
         .await;
 
         assert!(
-            matches!(result, Err(AmuxError::HeartbeatTimeout)),
+            matches!(result, Err(ConnectionError::HeartbeatTimeout)),
             "expected acceptor heartbeat timeout, got {:?}",
             result
         );

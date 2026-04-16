@@ -1,9 +1,10 @@
 use crate::client_common::{cli_daemon_policy, daemon_options, print_update_banner};
 use amux::protocol::{Command, DebugFormat, Message, ShutdownReason};
 use amux::{
-    AmuxError, Config, ConnectPolicy, Connection, DaemonOptions, Result, ServerMode, connect,
-    run_server, spawn_daemon,
+    Config, ConnectError, ConnectPolicy, Connection, DaemonOptions, ServerMode, TransportError,
+    connect, run_server, spawn_daemon,
 };
+use anyhow::{Result, anyhow};
 use std::io;
 use std::path::Path;
 
@@ -41,7 +42,10 @@ pub async fn start_server(config: &Config, options: StartOptions) -> Result<()> 
     config.validate(options.mode.is_cloud())?;
 
     match options.style {
-        StartStyle::Foreground => run_server(config.clone(), options.mode.is_cloud()).await,
+        StartStyle::Foreground => {
+            run_server(config.clone(), options.mode.is_cloud()).await?;
+            Ok(())
+        }
         StartStyle::Background => {
             spawn_daemon(config, &daemon_options()?, options.mode).await?;
             println!("Server started.");
@@ -125,7 +129,7 @@ pub async fn resume_server_with_executable(config: &Config, executable: &Path) -
                 },
         } => {
             if let Some(error) = error {
-                return Err(AmuxError::ServerError(format!("resume failed: {error}")));
+                return Err(anyhow!("resume failed: {error}"));
             }
             print!("Resumed {resumed_count} agent(s).");
             if failed_count > 0 {
@@ -134,10 +138,10 @@ pub async fn resume_server_with_executable(config: &Config, executable: &Path) -
             println!();
             Ok(())
         }
-        other => Err(AmuxError::InvalidMessage(format!(
+        other => Err(anyhow!(
             "unexpected response to Resume: {}",
             other.type_label()
-        ))),
+        )),
     }
 }
 
@@ -161,20 +165,18 @@ pub async fn connect_remote(address: &str, config: &Config) -> Result<()> {
         }
         Message::Command {
             command: Command::ConnectToServerResult { error: Some(e) },
-        } => Err(AmuxError::ServerError(format!(
-            "failed to connect to {address}: {e}"
-        ))),
-        other => Err(AmuxError::InvalidMessage(format!(
+        } => Err(anyhow!("failed to connect to {address}: {e}")),
+        other => Err(anyhow!(
             "expected ConnectToServerResult, got {}",
             other.type_label()
-        ))),
+        )),
     }
 }
 
 /// Get server debug information as a pre-rendered string in the requested format.
 pub async fn debug(config: &Config, verbose: bool, format: DebugFormat) -> Result<String> {
     let Some(conn) = existing_server(config).await? else {
-        return Err(AmuxError::ServerError("No server running".to_string()));
+        return Err(anyhow!("No server running"));
     };
 
     conn.send(&Message::Command {
@@ -186,10 +188,7 @@ pub async fn debug(config: &Config, verbose: bool, format: DebugFormat) -> Resul
         Message::Command {
             command: Command::DebugResult { dump },
         } => Ok(dump),
-        other => Err(AmuxError::InvalidMessage(format!(
-            "expected DebugResult, got {}",
-            other.type_label()
-        ))),
+        other => Err(anyhow!("expected DebugResult, got {}", other.type_label())),
     }
 }
 
@@ -197,13 +196,17 @@ async fn existing_server(config: &Config) -> Result<Option<Connection>> {
     match connect(config, ConnectPolicy::ExistingOnly).await {
         Ok(conn) => Ok(Some(conn)),
         #[cfg(unix)]
-        Err(AmuxError::Io(e)) if config.socket_path.exists() && is_server_unavailable(&e) => {
+        Err(ConnectError::Transport(TransportError::Io(e)))
+            if config.socket_path.exists() && is_server_unavailable(&e) =>
+        {
             tracing::warn!(error = %e, "stale local socket detected, removing");
             let _ = std::fs::remove_file(&config.socket_path);
             Ok(None)
         }
-        Err(AmuxError::Io(e)) if is_server_unavailable(&e) => Ok(None),
-        Err(e) => Err(e),
+        Err(ConnectError::Transport(TransportError::Io(e))) if is_server_unavailable(&e) => {
+            Ok(None)
+        }
+        Err(e) => Err(e.into()),
     }
 }
 
@@ -222,17 +225,17 @@ async fn suspend_connected_server(conn: Connection) -> Result<bool> {
                 },
         }) => {
             if let Some(error) = error {
-                return Err(AmuxError::ServerError(format!("suspend failed: {error}")));
+                return Err(anyhow!("suspend failed: {error}"));
             }
             println!("Suspended {suspended_count} agent(s).");
             Ok(true)
         }
-        Err(AmuxError::Io(_)) => Ok(true),
-        Err(e) => Err(e),
-        Ok(other) => Err(AmuxError::InvalidMessage(format!(
+        Err(TransportError::Io(_)) => Ok(true),
+        Err(e) => Err(e.into()),
+        Ok(other) => Err(anyhow!(
             "unexpected response to Suspend: {}",
             other.type_label()
-        ))),
+        )),
     }
 }
 

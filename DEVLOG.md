@@ -38,6 +38,38 @@ One paragraph describing what was done.
 
 ---
 
+## 2026-04-16: Reshuffle amux domains and make hook handling opaque
+
+### Summary
+Reshuffled `crates/amux` into clearer top-level domains (`agent`, `auth`, `client`, `protocol`, `server`) and finished the follow-up cleanup needed to make that split real instead of cosmetic. The wire-level `HandleHook` command now carries `agent_id`, `provider`, opaque `payload`, and an explicit `external` flag; provider-specific hook parsing and readonly bootstrap live under the agent layer instead of `server`. The refactor also split generic debug helpers from server debug rendering, extracted suspended snapshot persistence into `suspend.rs`, removed the crate-wide `AmuxError` export, and migrated `amux-cli` off the old root error API so the workspace builds and tests cleanly again.
+
+### Changes
+- **`crates/amux/src/lib.rs`** — Replaced the old flat module layout with domain modules and removed the root `AmuxError` export.
+- **`crates/amux/src/protocol/`** — Split wire DTOs into dedicated modules (`agent`, `handshake`, `message`, `route`) and kept protocol hook payloads opaque.
+- **`crates/amux/src/agent/`** — Moved agent/session implementations under a dedicated domain, including Claude hook parsing/bootstrap and the test agent.
+- **`crates/amux/src/server/`** — Added `debug.rs`, `registry.rs`, and `state.rs`; updated handlers/routing to use the new agent and protocol boundaries.
+- **`crates/amux/src/debug.rs`** — Reduced to shared debug helpers such as `DebugView` and `LossyPath`.
+- **`crates/amux/src/suspend.rs`** — New shared module for suspended snapshot types and persistence helpers.
+- **`crates/amux/src/server/accept.rs` / `client/connect.rs` / `server/connection.rs` / related modules** — Converted away from the old crate-wide error pattern toward local concrete error types.
+- **`crates/amux-cli/src/*.rs`** — Migrated CLI code off `amux::AmuxError` / `amux::Result` and onto the new library error surface.
+
+### Decisions Made
+- **Directional boundaries over perfect APIs**: The main goal was to make ownership clear enough that the next cleanup pass can target specific ugly APIs, rather than to over-design abstractions up front.
+- **Opaque hook payloads at the protocol layer**: `protocol` now carries only `agent_id`, `provider`, `payload`, and `external`; Claude-specific parsing and readonly bootstrap live in the agent layer.
+- **Keep `provider` and `external`**: `provider` is needed to route unknown-agent external hooks to the correct implementation; `external` remains a CLI-sourced hint and must not be inferred from lookup failure.
+- **Shared helpers stay shared**: Generic debug helpers stay top-level, while server-specific dump rendering moved under `server`.
+- **No new global error enum**: Removing `AmuxError` was intentional; module-local concrete errors are a better fit for the new domain split, and the CLI now owns its own adaptation layer.
+
+### Verification
+- `cargo test -p amux`
+- `cargo test -p amux-cli`
+- `cargo test`
+- `rg -n "amux::AmuxError|amux::Result" crates/amux-cli/src`
+- Result: all test commands passed; the ripgrep check returned no remaining CLI references to the removed root error API.
+
+### Next Steps
+- The reshuffle is in place; future work should focus on cleaning up any awkward internal APIs exposed by the new boundaries rather than moving modules around again.
+
 ## 2026-04-15: Add server-level idle sleep prevention and persist onboarding preference
 
 ### Summary

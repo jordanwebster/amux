@@ -5,44 +5,25 @@
 //! isolation in [`ServerUserState`] (keyed by JWT-derived user ID, or [`LOCAL_USER_ID`]
 //! for unauthenticated local connections).
 
-use crate::agent_registry::AgentRegistry;
-use crate::agents::{AgentSession, SessionEvent, StopPolicy};
-use crate::config::Config;
-use crate::error::{AmuxError, Result};
-use crate::jwt::JwtValidator;
-use crate::message::{
-    AgentType, Command, Host, Message, ProtocolError, RoutableMessage, ShutdownReason,
-    SubscriptionCloseReason, SubscriptionId,
+use crate::agent::{SessionEvent, StopPolicy};
+use crate::auth::jwt::JwtValidator;
+use crate::config::{Config, ConfigError};
+use crate::protocol::message::{
+    AgentType, Command, Message, ProtocolError, RoutableMessage, ShutdownReason,
+    SubscriptionCloseReason,
 };
-use crate::route::Route;
-use crate::transport::{TcpTransport, TransportSplit, create_tls_acceptor};
+use crate::protocol::route::Route;
+use crate::transport::{TcpTransport, TransportError, create_tls_acceptor};
 use routing::{apply_local_name_candidate, shutdown_server, suspend_server};
-use std::collections::{HashMap, HashSet};
 use std::net::SocketAddr;
-use std::path::Path;
 use std::sync::Arc;
-use std::sync::atomic::{AtomicU64, Ordering};
 use std::time::Duration;
+use thiserror::Error;
 use tokio::net::TcpListener;
-use tokio::sync::{RwLock, Semaphore, mpsc, oneshot};
+use tokio::sync::{RwLock, Semaphore, mpsc};
 use tokio::time::{Instant, MissedTickBehavior};
 use tokio_rustls::TlsAcceptor;
 use uuid::Uuid;
-
-/// Request from a connection handler to shut down or suspend the server.
-/// Sent to `Server::run()` via `ServerState::shutdown_tx` so that the main
-/// loop can orchestrate cleanup (stop/suspend agents, remove socket, grace
-/// period) instead of `process::exit` from within a spawned connection task.
-pub(super) enum ShutdownRequest {
-    Shutdown {
-        reply: mpsc::Sender<Message>,
-        link_name: String,
-    },
-    Suspend {
-        reply: mpsc::Sender<Message>,
-        link_name: String,
-    },
-}
 
 /// Maximum time allowed for a TLS handshake to complete.
 const TLS_HANDSHAKE_TIMEOUT: Duration = Duration::from_secs(10);
@@ -52,242 +33,42 @@ const TLS_HANDSHAKE_TIMEOUT: Duration = Duration::from_secs(10);
 /// semaphore permit for its lifetime; new connections are rejected at capacity.
 const MAX_CONNECTIONS: usize = 16384;
 
-pub(super) const SUBSCRIPTION_LEASE_DURATION: Duration = Duration::from_secs(300);
 const SUBSCRIPTION_SWEEP_INTERVAL: Duration = Duration::from_secs(10);
-
-/// Platform-abstracted local IPC listener (Unix socket on Unix, named pipe on Windows).
-pub(crate) struct LocalListener {
-    #[cfg(unix)]
-    inner: tokio::net::UnixListener,
-    #[cfg(windows)]
-    pipe_name: String,
-}
-
-impl LocalListener {
-    /// Bind to the local transport (Unix socket or named pipe).
-    pub fn bind(socket_path: &Path) -> Result<Self> {
-        #[cfg(unix)]
-        {
-            if let Some(parent) = socket_path.parent()
-                && !parent.exists()
-            {
-                std::fs::create_dir_all(parent)?;
-                use std::os::unix::fs::PermissionsExt;
-                std::fs::set_permissions(parent, std::fs::Permissions::from_mode(0o700))?;
-            }
-            let _ = std::fs::remove_file(socket_path);
-            let listener = tokio::net::UnixListener::bind(socket_path)?;
-            {
-                use std::os::unix::fs::PermissionsExt;
-                std::fs::set_permissions(socket_path, std::fs::Permissions::from_mode(0o600))?;
-            }
-            Ok(Self { inner: listener })
-        }
-        #[cfg(windows)]
-        {
-            Ok(Self {
-                pipe_name: socket_path.to_string_lossy().into_owned(),
-            })
-        }
-    }
-
-    /// Accept one incoming connection, returning a transport that implements TransportSplit.
-    pub async fn accept(&self) -> std::io::Result<impl TransportSplit + use<>> {
-        #[cfg(unix)]
-        {
-            let (stream, _) = self.inner.accept().await?;
-            Ok(crate::transport::unix::UnixTransport::new(stream))
-        }
-        #[cfg(windows)]
-        {
-            use tokio::net::windows::named_pipe::ServerOptions;
-            let server = ServerOptions::new().create(&self.pipe_name)?;
-            server.connect().await?;
-            Ok(crate::transport::named_pipe::NamedPipeTransport::new(
-                server,
-            ))
-        }
-    }
-}
 
 mod accept;
 mod cloud;
 mod connection;
+mod debug;
 mod handlers;
+mod registry;
 mod routing;
+mod state;
 
-pub use accept::connect_handshake;
 use accept::{local_accept, tcp_accept, websocket_accept};
 use cloud::establish_cloud_connection;
 use routing::withdraw_agent;
+pub(crate) use state::{
+    ConnectionHandle, LOCAL_USER_ID, LocalListener, SUBSCRIPTION_LEASE_DURATION, ServerState,
+    ServerUserState, ShutdownRequest, SubscriptionEntry, SubscriptionMode,
+    get_or_create_user_state, subscription_lease_ms,
+};
 
-/// Default user for non-authenticated connections. Local amux servers are
-/// single-user: all state (agents, routes, registry) lives under this ID.
-/// User isolation is enforced on the cloud server via JWT authentication.
-pub(crate) const LOCAL_USER_ID: Uuid = Uuid::nil();
+type Result<T> = std::result::Result<T, ServerError>;
 
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
-pub(crate) enum SubscriptionMode {
-    Raw,
-    Structured,
-}
-
-impl SubscriptionMode {
-    pub(super) fn as_str(self) -> &'static str {
-        match self {
-            Self::Raw => "raw",
-            Self::Structured => "structured",
-        }
-    }
-}
-
-#[derive(Clone)]
-pub(super) struct ConnectionHandle {
-    tx: mpsc::Sender<Message>,
-    next_request_id: Arc<AtomicU64>,
-}
-
-impl ConnectionHandle {
-    pub(super) fn new(tx: mpsc::Sender<Message>, next_request_id: Arc<AtomicU64>) -> Self {
-        Self {
-            tx,
-            next_request_id,
-        }
-    }
-
-    pub(super) fn sender(&self) -> mpsc::Sender<Message> {
-        self.tx.clone()
-    }
-
-    pub(super) fn request_counter(&self) -> Arc<AtomicU64> {
-        self.next_request_id.clone()
-    }
-
-    pub(super) fn next_request_id(&self) -> u64 {
-        self.next_request_id.fetch_add(1, Ordering::Relaxed)
-    }
-
-    pub(super) async fn send(
-        &self,
-        msg: Message,
-    ) -> std::result::Result<(), mpsc::error::SendError<Message>> {
-        self.tx.send(msg).await
-    }
-
-    pub(super) fn try_send(&self, msg: Message) -> bool {
-        self.tx.try_send(msg).is_ok()
-    }
-}
-
-/// An active subscription that can be cancelled.
-/// Dropping the entry drops `cancel`, which signals the stream task via `oneshot::Receiver`.
-pub(crate) struct SubscriptionEntry {
-    pub subscription_id: SubscriptionId,
-    pub agent_id: Uuid,
-    pub mode: SubscriptionMode,
-    #[allow(dead_code)] // Held for drop: dropping Sender cancels the oneshot Receiver
-    pub cancel: oneshot::Sender<()>,
-    /// Full destination route for this subscription, including the immediate next hop.
-    pub dst: Route,
-    pub lease_deadline: Instant,
-}
-
-/// Per-user state. Each authenticated user gets isolated agents, routes,
-/// registry, peer links, and streams. JWT authentication at connection time
-/// determines the user_id; all operations are scoped to that user's state.
-/// This provides complete user isolation without per-message authorization checks.
-pub(crate) struct ServerUserState {
-    pub(crate) agents: HashMap<Uuid, AgentSession>,
-    /// Per-user routing table. Link names are globally unique (random suffixes).
-    /// Per-user for security: prevents cross-user message forwarding without
-    /// explicit authorization.
-    pub(crate) routes: HashMap<String, ConnectionHandle>,
-    /// Centralized agent registry (local + remote agents, name mapping)
-    pub(crate) registry: AgentRegistry,
-    /// Link names of peer connections (non-local connections that receive announcements)
-    pub(crate) peer_links: HashSet<String>,
-    /// Known remote hosts (announced via AnnounceHost)
-    pub(crate) hosts: HashMap<Uuid, Host>,
-    /// Active subscriptions keyed by server-assigned subscription_id.
-    pub(crate) active_subscriptions: HashMap<SubscriptionId, SubscriptionEntry>,
-}
-
-impl ServerUserState {
-    fn new() -> Self {
-        Self {
-            agents: HashMap::new(),
-            routes: HashMap::new(),
-            registry: AgentRegistry::new(),
-            peer_links: HashSet::new(),
-            hosts: HashMap::new(),
-            active_subscriptions: HashMap::new(),
-        }
-    }
-}
-
-pub(super) fn subscription_lease_ms() -> u64 {
-    SUBSCRIPTION_LEASE_DURATION
-        .as_millis()
-        .try_into()
-        .expect("subscription lease should fit in u64 milliseconds")
-}
-
-/// Global server state. Per-user state (agents, routes, registry, streams, peer_links)
-/// lives in `ServerUserState`, providing user isolation via JWT authentication.
-pub(crate) struct ServerState {
-    pub(crate) config: Config,
-    /// Stable host ID loaded from persistent state
-    pub(crate) host_id: Uuid,
-    /// Whether this server is a cloud relay (`amux server start --cloud`)
-    pub(crate) is_cloud_server: bool,
-    /// JWT validator for cloud mode (validates incoming tokens)
-    pub(super) jwt_validator: Option<Arc<JwtValidator>>,
-    /// Per-user state map. Each authenticated user gets isolated state.
-    pub(crate) users: HashMap<Uuid, Arc<RwLock<ServerUserState>>>,
-    /// Channel for connection handlers to request server shutdown/suspend
-    pub(super) shutdown_tx: mpsc::Sender<ShutdownRequest>,
-}
-
-impl ServerState {
-    fn new(config: Config, host_id: Uuid, shutdown_tx: mpsc::Sender<ShutdownRequest>) -> Self {
-        let mut users = HashMap::new();
-        users.insert(LOCAL_USER_ID, Arc::new(RwLock::new(ServerUserState::new())));
-        Self {
-            config,
-            host_id,
-            is_cloud_server: false,
-            jwt_validator: None,
-            users,
-            shutdown_tx,
-        }
-    }
-
-    /// Look up existing user state (read-only, no creation).
-    pub(super) fn get_user_state(&self, user_id: &Uuid) -> Option<Arc<RwLock<ServerUserState>>> {
-        self.users.get(user_id).cloned()
-    }
-}
-
-/// Get or create per-user state. Tries a read lock first (fast path for existing
-/// users), falling back to a write lock only when the user_id is seen for the
-/// first time.
-pub(super) async fn get_or_create_user_state(
-    state: &Arc<RwLock<ServerState>>,
-    user_id: Uuid,
-) -> Arc<RwLock<ServerUserState>> {
-    // Fast path: user already exists
-    {
-        let s = state.read().await;
-        if let Some(us) = s.users.get(&user_id) {
-            return us.clone();
-        }
-    }
-    // Slow path: create under write lock, re-check for races
-    let mut s = state.write().await;
-    s.users
-        .entry(user_id)
-        .or_insert_with(|| Arc::new(RwLock::new(ServerUserState::new())))
-        .clone()
+#[derive(Debug, Error)]
+pub enum ServerError {
+    #[error("IO error: {0}")]
+    Io(#[from] std::io::Error),
+    #[error(transparent)]
+    Config(#[from] ConfigError),
+    #[error(transparent)]
+    Transport(#[from] TransportError),
+    #[error("accept error: {0}")]
+    Accept(String),
+    #[error("connection error: {0}")]
+    Connection(String),
+    #[error("{0}")]
+    State(String),
 }
 
 /// The amux server
@@ -301,7 +82,7 @@ pub struct Server {
 impl Server {
     pub fn with_config(config: Config) -> Result<Self> {
         let host_id = crate::state::load_or_create_host_id(&config.state_path)
-            .map_err(|e| AmuxError::Config(format!("failed to load host state: {e}")))?;
+            .map_err(|e| ServerError::State(format!("failed to load host state: {e}")))?;
         let (event_tx, event_rx) = mpsc::channel::<SessionEvent>(256);
         let (shutdown_tx, shutdown_rx) = mpsc::channel::<ShutdownRequest>(1);
         Ok(Self {
@@ -347,21 +128,27 @@ impl Server {
             if enforce_tls {
                 // Cloud mode requires TLS certificates via environment variables
                 let cert_path = std::env::var("AMUX_TLS_CERT").map_err(|_| {
-                    AmuxError::Config(
+                    ServerError::Config(ConfigError::Invalid(
                         "AMUX_TLS_CERT environment variable required for cloud mode".into(),
-                    )
+                    ))
                 })?;
                 let key_path = std::env::var("AMUX_TLS_KEY").map_err(|_| {
-                    AmuxError::Config(
+                    ServerError::Config(ConfigError::Invalid(
                         "AMUX_TLS_KEY environment variable required for cloud mode".into(),
-                    )
+                    ))
                 })?;
 
                 let cert_pem = std::fs::read(&cert_path).map_err(|e| {
-                    AmuxError::Config(format!("Failed to read TLS cert from {}: {}", cert_path, e))
+                    ServerError::Config(ConfigError::Invalid(format!(
+                        "Failed to read TLS cert from {}: {}",
+                        cert_path, e
+                    )))
                 })?;
                 let key_pem = std::fs::read(&key_path).map_err(|e| {
-                    AmuxError::Config(format!("Failed to read TLS key from {}: {}", key_path, e))
+                    ServerError::Config(ConfigError::Invalid(format!(
+                        "Failed to read TLS key from {}: {}",
+                        key_path, e
+                    )))
                 })?;
 
                 let acceptor = create_tls_acceptor(&cert_pem, &key_pem)?;
@@ -506,7 +293,7 @@ impl Server {
                                     state.config.state_path.clone()
                                 };
                                 if let Err(e) =
-                                    crate::state::save_suspended(&state_path, &suspended)
+                                    crate::suspend::save_suspended(&state_path, &suspended)
                                 {
                                     tracing::error!(error = %e, "failed to save suspended agents");
                                     let _ = reply
@@ -924,8 +711,8 @@ mod tests {
     use super::{
         ConnectionHandle, ServerUserState, handle_session_event, test_helpers::test_state,
     };
-    use crate::agents::{AgentSession, LocalAgentNameSource, SessionEvent};
-    use crate::message::{AgentType, CreateAgentRequest, DirectMessage, Message};
+    use crate::agent::{AgentSession, LocalAgentNameSource, SessionEvent};
+    use crate::protocol::message::{AgentType, CreateAgentRequest, DirectMessage, Message};
     use std::path::PathBuf;
     use std::sync::Arc;
     use std::sync::atomic::AtomicU64;
@@ -972,7 +759,7 @@ mod tests {
             terminal_size: None,
             args,
         };
-        let mut session = AgentSession::Claude(crate::agents::ClaudeSession::new(&req));
+        let mut session = AgentSession::Claude(crate::agent::ClaudeSession::new(&req));
         session.set_local_name(name.map(str::to_owned), source);
         let info = session.to_agent(host_id);
 

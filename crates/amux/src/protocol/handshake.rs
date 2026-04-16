@@ -1,4 +1,4 @@
-use crate::message::ProtocolError;
+use crate::protocol::message::ProtocolError;
 use serde::{Deserialize, Serialize};
 
 /// Protocol version for the Connect handshake.

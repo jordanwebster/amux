@@ -8,8 +8,9 @@
 //! For external sessions (no AMUX_AGENT_ID), uses the hook's session_id as
 //! the agent_id so the server can create a readonly session.
 
-use amux::protocol::{ClaudeHook, Command, Hook, Message};
-use amux::{Config, ConnectPolicy, connect};
+use amux::protocol::{Command, HookProvider, Message};
+use amux::{ClaudeHook, Config, ConnectPolicy, connect};
+use anyhow::Result;
 use serde_json::Value;
 use std::io::{self, BufRead};
 use uuid::Uuid;
@@ -53,32 +54,35 @@ fn handle_claude_hook_inner(config: &Config) -> io::Result<()> {
     }
 
     // Determine agent_id: AMUX_AGENT_ID for managed sessions, session_id for external
-    let agent_id = match std::env::var("AMUX_AGENT_ID") {
-        Ok(id) => id.parse::<Uuid>().map_err(|e| {
-            io::Error::new(
-                io::ErrorKind::InvalidData,
-                format!("invalid AMUX_AGENT_ID: {e}"),
-            )
-        })?,
+    let (agent_id, external) = match std::env::var("AMUX_AGENT_ID") {
+        Ok(id) => id
+            .parse::<Uuid>()
+            .map_err(|e| {
+                io::Error::new(
+                    io::ErrorKind::InvalidData,
+                    format!("invalid AMUX_AGENT_ID: {e}"),
+                )
+            })
+            .map(|id| (id, false))?,
         Err(_) => {
             // External session — use session_id as agent_id
             let Some(session_id) = claude_hook.session_id() else {
                 return Ok(());
             };
-            session_id
+            (session_id, true)
         }
     };
 
     tracing::debug!(hook = %claude_hook, "received hook");
 
-    let hook = Hook::Claude(claude_hook, raw);
-
     // Fire-and-forget: connect, send, don't wait for ack.
     // Hooks must exit quickly so Claude Code is never blocked.
     let config = config.clone();
+    let payload = serde_json::to_vec(&raw)
+        .map_err(|e| io::Error::new(io::ErrorKind::InvalidData, e.to_string()))?;
     tokio::task::block_in_place(|| {
         tokio::runtime::Handle::current().block_on(async {
-            if let Err(e) = send_hook_event(&config, agent_id, hook).await {
+            if let Err(e) = send_hook_event(&config, agent_id, payload, external).await {
                 tracing::debug!(error = %e, "server not running or hook delivery failed");
             }
         });
@@ -87,12 +91,19 @@ fn handle_claude_hook_inner(config: &Config) -> io::Result<()> {
     Ok(())
 }
 
-async fn send_hook_event(config: &Config, agent_id: Uuid, hook: Hook) -> amux::Result<()> {
+async fn send_hook_event(
+    config: &Config,
+    agent_id: Uuid,
+    payload: Vec<u8>,
+    external: bool,
+) -> Result<()> {
     let conn = connect(config, ConnectPolicy::ExistingOnly).await?;
     conn.send(&Message::Command {
         command: Command::HandleHook {
             agent_id,
-            hook: Box::new(hook),
+            provider: HookProvider::Claude,
+            payload,
+            external,
         },
     })
     .await?;

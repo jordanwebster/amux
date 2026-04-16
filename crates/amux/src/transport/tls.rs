@@ -5,7 +5,7 @@
 //! (used by cloud server mode).
 
 use super::{TcpTransport, configure_tcp_keepalive};
-use crate::error::{AmuxError, Result};
+use crate::transport::{Result, TransportError};
 use rustls::pki_types::ServerName;
 use std::sync::Arc;
 use tokio::net::TcpStream;
@@ -32,7 +32,7 @@ pub async fn tls_connect(
     configure_tcp_keepalive(&stream);
 
     let domain = ServerName::try_from(host.to_string())
-        .map_err(|_| AmuxError::Config(format!("Invalid DNS name: {}", host)))?;
+        .map_err(|_| TransportError::Config(format!("Invalid DNS name: {}", host)))?;
     let tls_stream = connector.connect(domain, stream).await?;
 
     Ok(TcpTransport::new(tls_stream))
@@ -50,19 +50,19 @@ pub fn create_tls_acceptor(cert_pem: &[u8], key_pem: &[u8]) -> Result<TlsAccepto
         .collect();
 
     if certs.is_empty() {
-        return Err(AmuxError::Config(
+        return Err(TransportError::Config(
             "No certificates found in PEM".to_string(),
         ));
     }
 
     let key = private_key(&mut BufReader::new(key_pem))
-        .map_err(|e| AmuxError::Config(format!("Failed to parse private key: {}", e)))?
-        .ok_or_else(|| AmuxError::Config("No private key found in PEM".to_string()))?;
+        .map_err(|e| TransportError::Config(format!("Failed to parse private key: {}", e)))?
+        .ok_or_else(|| TransportError::Config("No private key found in PEM".to_string()))?;
 
     let config = rustls::ServerConfig::builder()
         .with_no_client_auth()
         .with_single_cert(certs, key)
-        .map_err(|e| AmuxError::Config(format!("TLS config error: {}", e)))?;
+        .map_err(|e| TransportError::Config(format!("TLS config error: {}", e)))?;
 
     Ok(TlsAcceptor::from(Arc::new(config)))
 }

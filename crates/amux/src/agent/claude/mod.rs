@@ -4,15 +4,19 @@
 //! [`ClaudeSession::start`] spawns the PTY process. Hook handling and structured
 //! PTY input transport are encapsulated here.
 
+pub(crate) mod hooks;
+pub(crate) mod log_source;
+pub(crate) mod transcript;
+
+use super::{AgentError, HookError, HookOutcome};
 use super::{LocalAgentNameSource, PtyHandle, SessionEvent, spawn_pty_agent};
-use crate::buffer::MultiplexStructuredReader;
-use crate::claude::structured_log_source::StructuredLogSource;
 #[cfg(test)]
-use crate::claude::types::HookCommon;
-use crate::claude::types::{ClaudeHook, Hook};
+use crate::agent::claude::hooks::HookCommon;
+use crate::agent::claude::hooks::{ClaudeHook, ParsedClaudeHook};
+use crate::agent::claude::log_source::StructuredLogSource;
+use crate::buffer::MultiplexStructuredReader;
 use crate::debug::DebugView;
-use crate::error::Result;
-use crate::message::{CreateAgentRequest, ProtocolError, SubscribeQuery};
+use crate::protocol::message::{CreateAgentRequest, HookProvider, ProtocolError, SubscribeQuery};
 use chrono::{DateTime, Utc};
 use serde::{Deserialize, Serialize, Serializer, ser::SerializeMap};
 use serde_json::{Value, json};
@@ -21,6 +25,8 @@ use std::time::Duration;
 use tokio::sync::mpsc;
 use tokio::task::{AbortHandle, JoinHandle};
 use uuid::Uuid;
+
+type Result<T> = std::result::Result<T, AgentError>;
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
 #[serde(deny_unknown_fields)]
@@ -136,17 +142,17 @@ pub struct ClaudeSession {
     log_source: Option<StructuredLogSource>,
 
     // Stored for deferred start()
-    pub(super) terminal_size: Option<crate::message::TerminalSize>,
+    pub(super) terminal_size: Option<crate::protocol::message::TerminalSize>,
     /// Claude session ID. Set from SessionStart hook during normal operation,
     /// or pre-set before `start()` for resume (triggers `--resume <id>`).
-    pub(super) session_id: Option<Uuid>,
+    pub(crate) session_id: Option<Uuid>,
     /// True for externally-started sessions (no PTY, transcript-only)
     pub(super) readonly: bool,
     /// Extra arguments passed to the claude command
     pub(super) args: Vec<String>,
     name_source: LocalAgentNameSource,
     name_sniffer_abort: Option<AbortHandle>,
-    pub(super) created_at: DateTime<Utc>,
+    pub(crate) created_at: DateTime<Utc>,
 }
 
 impl ClaudeSession {
@@ -249,7 +255,7 @@ impl ClaudeSession {
     /// Spawn the Claude Code process. Returns an exit handle that completes
     /// when the process exits. If `session_id` is set, passes `--resume <id>`.
     /// Extra args from creation are appended.
-    pub fn start(&mut self) -> Result<tokio::task::JoinHandle<()>> {
+    pub(crate) fn start(&mut self) -> Result<tokio::task::JoinHandle<()>> {
         let env = [("AMUX_AGENT_ID", self.agent_id.to_string())];
         let mut args: Vec<String> = match self.session_id {
             Some(id) => vec!["--resume".to_string(), id.to_string()],
@@ -321,6 +327,75 @@ impl ClaudeSession {
         Ok(())
     }
 
+    pub(crate) async fn handle_hook_payload(
+        &mut self,
+        payload: &[u8],
+    ) -> std::result::Result<HookOutcome, HookError> {
+        let hook =
+            ParsedClaudeHook::parse_payload(payload).map_err(|e| HookError::InvalidPayload {
+                provider: HookProvider::Claude,
+                message: e.to_string(),
+            })?;
+        let is_unknown = hook.is_unknown();
+        let is_session_end = hook.is_session_end();
+        if is_unknown {
+            tracing::warn!(agent_id = %self.agent_id, "received unknown Claude hook variant");
+        }
+        self.handle_hook(hook)
+            .await
+            .map_err(|e| HookError::Handling {
+                provider: HookProvider::Claude,
+                message: e.to_string(),
+            })?;
+        Ok(match (is_unknown, self.readonly && is_session_end) {
+            (true, _) => HookOutcome::Noop,
+            (false, true) => HookOutcome::WithdrawSession,
+            (false, false) => HookOutcome::KeepSession,
+        })
+    }
+
+    pub(crate) async fn bootstrap_external_hook(
+        agent_id: Uuid,
+        payload: &[u8],
+    ) -> std::result::Result<Option<Self>, HookError> {
+        let hook =
+            ParsedClaudeHook::parse_payload(payload).map_err(|e| HookError::InvalidPayload {
+                provider: HookProvider::Claude,
+                message: e.to_string(),
+            })?;
+
+        if hook.is_unknown() {
+            tracing::warn!(%agent_id, "received unknown external Claude hook variant");
+            return Ok(None);
+        }
+
+        if hook.is_session_end() {
+            tracing::debug!(%agent_id, "ignoring external Claude SessionEnd for unknown session");
+            return Ok(None);
+        }
+
+        let cwd = hook.cwd().ok_or(HookError::MissingBootstrapField {
+            provider: HookProvider::Claude,
+            field: "cwd",
+        })?;
+        if hook.transcript_path().is_none() {
+            return Err(HookError::MissingBootstrapField {
+                provider: HookProvider::Claude,
+                field: "transcript_path",
+            });
+        }
+
+        let mut session = Self::new_readonly(agent_id, PathBuf::from(cwd));
+        session
+            .handle_hook(hook)
+            .await
+            .map_err(|e| HookError::Handling {
+                provider: HookProvider::Claude,
+                message: e.to_string(),
+            })?;
+        Ok(Some(session))
+    }
+
     /// Handle a hook event.
     ///
     /// Internal side effects (session_id, transcript linking) use the typed
@@ -329,14 +404,16 @@ impl ClaudeSession {
     /// JSON with a `type` field injected — no field loss from typed
     /// round-tripping. `SessionEnd` is internal-only (agent cleanup) and is
     /// not emitted as structured output.
-    pub async fn handle_hook(&mut self, hook: Hook) -> Result<()> {
-        let Hook::Claude(ref claude_hook, _) = hook;
-        self.sync_hook_metadata(claude_hook).await?;
+    pub(crate) async fn handle_hook(&mut self, hook: ParsedClaudeHook) -> Result<()> {
+        self.sync_hook_metadata(&hook.hook).await?;
         let Some(log_source) = &self.log_source else {
             return Ok(());
         };
         match hook {
-            Hook::Claude(ClaudeHook::SessionStart(session_start), _) => {
+            ParsedClaudeHook {
+                hook: ClaudeHook::SessionStart(session_start),
+                ..
+            } => {
                 tracing::debug!(
                     agent_id = %self.agent_id,
                     session_id = %session_start.session_id,
@@ -344,7 +421,10 @@ impl ClaudeSession {
                     "session started"
                 );
             }
-            Hook::Claude(ClaudeHook::PermissionRequest(_), raw) => {
+            ParsedClaudeHook {
+                hook: ClaudeHook::PermissionRequest(_),
+                raw,
+            } => {
                 tracing::debug!(agent_id = %self.agent_id, "permission request");
                 let mut value = raw;
                 if let Some(obj) = value.as_object_mut() {
@@ -352,7 +432,10 @@ impl ClaudeSession {
                 }
                 log_source.write(value).await;
             }
-            Hook::Claude(ClaudeHook::Stop(_), raw) => {
+            ParsedClaudeHook {
+                hook: ClaudeHook::Stop(_),
+                raw,
+            } => {
                 tracing::debug!(agent_id = %self.agent_id, "agent stopped");
                 let mut value = raw;
                 if let Some(obj) = value.as_object_mut() {
@@ -360,7 +443,10 @@ impl ClaudeSession {
                 }
                 log_source.write(value).await;
             }
-            Hook::Claude(ClaudeHook::Notification(_), raw) => {
+            ParsedClaudeHook {
+                hook: ClaudeHook::Notification(_),
+                raw,
+            } => {
                 tracing::debug!(agent_id = %self.agent_id, "notification");
                 let mut value = raw;
                 if let Some(obj) = value.as_object_mut() {
@@ -368,11 +454,17 @@ impl ClaudeSession {
                 }
                 log_source.write(value).await;
             }
-            Hook::Claude(ClaudeHook::SessionEnd(_), _) => {
+            ParsedClaudeHook {
+                hook: ClaudeHook::SessionEnd(_),
+                ..
+            } => {
                 // Internal cleanup only — not emitted as structured output
                 tracing::debug!(agent_id = %self.agent_id, "session ended");
             }
-            Hook::Claude(ClaudeHook::Unknown, _) => {}
+            ParsedClaudeHook {
+                hook: ClaudeHook::Unknown,
+                ..
+            } => {}
         }
         Ok(())
     }
@@ -447,7 +539,7 @@ impl Serialize for DebugView<'_, ClaudeSession> {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::agents::{LocalAgentNameSource, SessionEvent};
+    use crate::agent::{LocalAgentNameSource, SessionEvent};
     use tempfile::tempdir;
     use tokio::sync::mpsc;
 
@@ -493,7 +585,7 @@ mod tests {
         let mut session = ClaudeSession::new_readonly(Uuid::new_v4(), dir.path().to_path_buf());
 
         session
-            .handle_hook(Hook::from_claude(ClaudeHook::PermissionRequest(
+            .handle_hook(ParsedClaudeHook::from_typed(ClaudeHook::PermissionRequest(
                 HookCommon {
                     session_id,
                     transcript_path: transcript_path_str.clone(),
@@ -517,7 +609,7 @@ mod tests {
 
         let seq_after_first_hook = session.current_seq().await;
         session
-            .handle_hook(Hook::from_claude(ClaudeHook::Stop(HookCommon {
+            .handle_hook(ParsedClaudeHook::from_typed(ClaudeHook::Stop(HookCommon {
                 session_id,
                 transcript_path: transcript_path_str,
                 cwd,
@@ -551,22 +643,26 @@ mod tests {
         let transcript_path = dir.path().join("transcript.jsonl");
         tokio::fs::write(&transcript_path, "").await.unwrap();
         session
-            .handle_hook(Hook::from_claude(ClaudeHook::SessionStart(HookCommon {
-                session_id,
-                transcript_path: transcript_path.display().to_string(),
-                cwd: cwd.clone(),
-            })))
+            .handle_hook(ParsedClaudeHook::from_typed(ClaudeHook::SessionStart(
+                HookCommon {
+                    session_id,
+                    transcript_path: transcript_path.display().to_string(),
+                    cwd: cwd.clone(),
+                },
+            )))
             .await
             .unwrap();
 
         let seq_before = session.current_seq().await;
 
         session
-            .handle_hook(Hook::from_claude(ClaudeHook::SessionEnd(HookCommon {
-                session_id,
-                transcript_path: transcript_path.display().to_string(),
-                cwd,
-            })))
+            .handle_hook(ParsedClaudeHook::from_typed(ClaudeHook::SessionEnd(
+                HookCommon {
+                    session_id,
+                    transcript_path: transcript_path.display().to_string(),
+                    cwd,
+                },
+            )))
             .await
             .unwrap();
 

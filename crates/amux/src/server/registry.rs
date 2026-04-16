@@ -1,35 +1,12 @@
-use crate::message::{DirectMessage, Host};
-use crate::route::Route;
+use crate::agent::Agent;
+use crate::protocol::message::{DirectMessage, Host};
+use crate::protocol::route::Route;
 use chrono::{DateTime, Utc};
-use serde::{Deserialize, Serialize};
+use serde::Deserialize;
 use std::collections::HashMap;
 use std::path::PathBuf;
 use thiserror::Error;
 use uuid::Uuid;
-
-/// Information about a running agent
-#[derive(Serialize, Deserialize, Debug, Clone)]
-pub struct Agent {
-    pub id: Uuid,
-    pub host_id: Uuid,
-    pub name: Option<String>,
-    pub command: String,
-    pub working_dir: PathBuf,
-    pub route: Route,
-    pub agent_type: String,
-    pub structured_protocol: Option<String>,
-    pub readonly: bool,
-    pub args: Vec<String>,
-    pub created_at: DateTime<Utc>,
-}
-
-impl Agent {
-    /// A remote agent has a non-empty route (at least one hop to reach it).
-    /// Local agents have an empty route — they live on this server.
-    pub fn is_remote(&self) -> bool {
-        self.route.peek().is_some()
-    }
-}
 
 /// Internal registry record. Remote agents store only host identity; route is
 /// derived from the host table when materializing an [`Agent`] view.

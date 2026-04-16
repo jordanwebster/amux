@@ -1,11 +1,10 @@
-use crate::agent_registry::Agent;
-use crate::route::Route;
+use crate::protocol::agent::Agent;
+use crate::protocol::route::Route;
 use chrono::{DateTime, Utc};
 use serde::{Deserialize, Serialize};
 use std::path::PathBuf;
 use uuid::Uuid;
 
-use crate::claude::types::Hook;
 use serde_json::Value;
 
 /// Information about a connected host (machine running amux server).
@@ -31,6 +30,14 @@ pub enum AgentType {
     /// Test agent for E2E tests (only available in dev/test builds)
     #[cfg(any(debug_assertions, test))]
     TestAgent { command: String },
+    #[serde(other)]
+    Unknown,
+}
+
+#[derive(Serialize, Deserialize, Debug, Clone, Copy, PartialEq, Eq)]
+#[serde(rename_all = "snake_case")]
+pub enum HookProvider {
+    Claude,
     #[serde(other)]
     Unknown,
 }
@@ -385,7 +392,10 @@ pub enum Command {
     },
     HandleHook {
         agent_id: Uuid,
-        hook: Box<Hook>,
+        provider: HookProvider,
+        #[serde(with = "serde_bytes")]
+        payload: Vec<u8>,
+        external: bool,
     },
     HandleHookResult {
         error: Option<ProtocolError>,

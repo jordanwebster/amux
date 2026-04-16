@@ -9,7 +9,7 @@
 use super::transcript::TranscriptTailer;
 use crate::buffer::{MultiplexStructuredBuffer, MultiplexStructuredReader};
 use crate::debug::{DebugView, LossyPath};
-use crate::message::SubscribeQuery;
+use crate::protocol::message::SubscribeQuery;
 use serde::{Serialize, Serializer, ser::SerializeMap};
 use serde_json::Value;
 use std::path::PathBuf;

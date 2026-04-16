@@ -6,21 +6,21 @@
 //! that creates the PTY, spawns reader/writer/exit-monitor tasks, and returns a
 //! `PtyHandle` + `StructuredLogSource`.
 
-mod claude;
+pub(crate) mod claude;
 #[cfg(any(debug_assertions, test))]
-mod testagent;
+pub(crate) mod test_agent;
 
 pub use claude::ClaudeSession;
 #[cfg(any(debug_assertions, test))]
-pub use testagent::TestAgentSession;
+pub use test_agent::TestAgentSession;
 
-use crate::agent_registry::Agent;
+use crate::agent::claude::log_source::StructuredLogSource;
 use crate::buffer::{MultiplexByteBuffer, MultiplexByteReader, MultiplexStructuredReader};
-use crate::claude::structured_log_source::StructuredLogSource;
-use crate::claude::types::Hook;
-use crate::error::{AmuxError, Result};
-use crate::message::{AgentType, CreateAgentRequest, ProtocolError, SubscribeQuery, TerminalSize};
-use crate::route::Route;
+use crate::protocol::message::{
+    AgentType, HookProvider, ProtocolError, SubscribeQuery, TerminalSize,
+};
+use crate::protocol::route::Route;
+use crate::suspend::SuspendedAgent;
 use chrono::{DateTime, Utc};
 use portable_pty::{CommandBuilder, MasterPty, PtySize, native_pty_system};
 use serde::{Deserialize, Serialize};
@@ -28,12 +28,91 @@ use serde_json::Value;
 use std::io::{Read, Write};
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
+use thiserror::Error;
 use tokio::sync::{Mutex, mpsc};
 use tracing::Instrument;
 use uuid::Uuid;
 
 /// Maximum replay buffer size for PTY bytes
 const MAX_REPLAY_BUFFER: usize = 10 * 1024 * 1024; // 10MB
+
+type Result<T> = std::result::Result<T, AgentError>;
+
+#[derive(Debug, Error)]
+pub(crate) enum AgentError {
+    #[error("PTY error: {0}")]
+    Pty(String),
+    #[error("{0}")]
+    InvalidState(String),
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(crate) enum HookOutcome {
+    Noop,
+    KeepSession,
+    WithdrawSession,
+}
+
+pub(crate) enum ExternalHookBootstrap {
+    Noop,
+    Register(AgentSession),
+}
+
+#[derive(Debug, Error)]
+pub(crate) enum HookError {
+    #[error("hook provider mismatch: expected {expected:?}, got {actual:?}")]
+    ProviderMismatch {
+        expected: HookProvider,
+        actual: HookProvider,
+    },
+    #[error("unsupported hook provider: {0:?}")]
+    UnsupportedProvider(HookProvider),
+    #[error("invalid {provider:?} hook payload: {message}")]
+    InvalidPayload {
+        provider: HookProvider,
+        message: String,
+    },
+    #[error("external {provider:?} hook missing required field '{field}'")]
+    MissingBootstrapField {
+        provider: HookProvider,
+        field: &'static str,
+    },
+    #[error("failed to handle {provider:?} hook: {message}")]
+    Handling {
+        provider: HookProvider,
+        message: String,
+    },
+}
+
+impl HookError {
+    pub(crate) fn into_protocol_error(self) -> ProtocolError {
+        ProtocolError::ServerError {
+            message: self.to_string(),
+        }
+    }
+}
+
+/// Internal agent metadata owned by the runtime.
+#[derive(Serialize, Deserialize, Debug, Clone)]
+pub struct Agent {
+    pub id: Uuid,
+    pub host_id: Uuid,
+    pub name: Option<String>,
+    pub command: String,
+    pub working_dir: PathBuf,
+    pub route: Route,
+    pub agent_type: String,
+    pub structured_protocol: Option<String>,
+    pub readonly: bool,
+    pub args: Vec<String>,
+    pub created_at: DateTime<Utc>,
+}
+
+impl Agent {
+    pub fn is_remote(&self) -> bool {
+        self.route.peek().is_some()
+    }
+}
 
 /// Local-only provenance for an agent session's current display name.
 ///
@@ -103,11 +182,11 @@ pub struct PtyHandle {
 
 impl PtyHandle {
     /// Send raw input bytes to the PTY.
-    pub async fn send_input(&self, data: Vec<u8>) -> Result<()> {
+    pub(crate) async fn send_input(&self, data: Vec<u8>) -> Result<()> {
         self.input_tx
             .send(data)
             .await
-            .map_err(|_| AmuxError::Pty("session closed".to_string()))
+            .map_err(|_| AgentError::Pty("session closed".to_string()))
     }
 
     /// Subscribe to PTY output (replay + live).
@@ -118,7 +197,7 @@ impl PtyHandle {
     }
 
     /// Resize the PTY.
-    pub async fn resize(&self, rows: u16, cols: u16) -> Result<()> {
+    pub(crate) async fn resize(&self, rows: u16, cols: u16) -> Result<()> {
         let mut current = self.current_size.lock().await;
         if *current != (rows, cols) {
             let master_guard = self.pty_master.lock().await;
@@ -130,7 +209,7 @@ impl PtyHandle {
                         pixel_width: 0,
                         pixel_height: 0,
                     })
-                    .map_err(|e| AmuxError::Pty(format!("failed to resize pty: {e}")))?;
+                    .map_err(|e| AgentError::Pty(format!("failed to resize pty: {e}")))?;
                 tracing::debug!(cols, rows, "pty resized");
                 *current = (rows, cols);
             }
@@ -170,7 +249,7 @@ pub(crate) fn spawn_pty_agent(
             pixel_width: 0,
             pixel_height: 0,
         })
-        .map_err(|e| AmuxError::Pty(format!("failed to open pty: {e}")))?;
+        .map_err(|e| AgentError::Pty(format!("failed to open pty: {e}")))?;
 
     let mut cmd = CommandBuilder::new(command);
     for arg in args {
@@ -183,16 +262,16 @@ pub(crate) fn spawn_pty_agent(
     let mut child = pair
         .slave
         .spawn_command(cmd)
-        .map_err(|e| AmuxError::Pty(format!("failed to spawn '{command}': {e}")))?;
+        .map_err(|e| AgentError::Pty(format!("failed to spawn '{command}': {e}")))?;
     drop(pair.slave);
 
     let master = pair.master;
     let mut pty_reader = master
         .try_clone_reader()
-        .map_err(|e| AmuxError::Pty(format!("failed to clone pty reader: {e}")))?;
+        .map_err(|e| AgentError::Pty(format!("failed to clone pty reader: {e}")))?;
     let mut pty_writer = master
         .take_writer()
-        .map_err(|e| AmuxError::Pty(format!("failed to open pty writer: {e}")))?;
+        .map_err(|e| AgentError::Pty(format!("failed to open pty writer: {e}")))?;
 
     let master: Arc<Mutex<Option<Box<dyn MasterPty + Send>>>> = Arc::new(Mutex::new(Some(master)));
     let current_size: Arc<Mutex<(u16, u16)>> = Arc::new(Mutex::new((size.rows, size.cols)));
@@ -317,7 +396,7 @@ impl AgentSession {
 
     /// Start the agent process (two-phase init: new() stores metadata, start() spawns).
     /// Returns an exit handle that completes when the agent process exits.
-    pub fn start(&mut self) -> Result<tokio::task::JoinHandle<()>> {
+    pub(crate) fn start(&mut self) -> Result<tokio::task::JoinHandle<()>> {
         match self {
             Self::Claude(s) => s.start(),
             #[cfg(any(debug_assertions, test))]
@@ -413,12 +492,43 @@ impl AgentSession {
         }
     }
 
-    /// Handle a hook event for this agent.
-    pub async fn handle_hook(&mut self, hook: Hook) -> Result<()> {
+    /// Handle an opaque hook payload for this agent.
+    pub(crate) async fn handle_hook(
+        &mut self,
+        provider: HookProvider,
+        payload: &[u8],
+    ) -> std::result::Result<HookOutcome, HookError> {
         match self {
-            Self::Claude(s) => s.handle_hook(hook).await,
+            Self::Claude(s) => {
+                if provider != HookProvider::Claude {
+                    return Err(HookError::ProviderMismatch {
+                        expected: HookProvider::Claude,
+                        actual: provider,
+                    });
+                }
+                s.handle_hook_payload(payload).await
+            }
             #[cfg(any(debug_assertions, test))]
-            Self::TestAgent(_) => Ok(()),
+            Self::TestAgent(_) => Err(HookError::ProviderMismatch {
+                expected: HookProvider::Unknown,
+                actual: provider,
+            }),
+        }
+    }
+
+    pub(crate) async fn bootstrap_external_hook(
+        agent_id: Uuid,
+        provider: HookProvider,
+        payload: &[u8],
+    ) -> std::result::Result<ExternalHookBootstrap, HookError> {
+        match provider {
+            HookProvider::Claude => ClaudeSession::bootstrap_external_hook(agent_id, payload)
+                .await
+                .map(|session| match session {
+                    Some(session) => ExternalHookBootstrap::Register(Self::Claude(session)),
+                    None => ExternalHookBootstrap::Noop,
+                }),
+            HookProvider::Unknown => Err(HookError::UnsupportedProvider(provider)),
         }
     }
 
@@ -490,13 +600,13 @@ impl AgentSession {
 
     /// Suspend this session: stop the agent and return serializable state.
     /// Consumes self.
-    pub async fn suspend(self) -> Result<SuspendedAgent> {
+    pub(crate) async fn suspend(self) -> Result<SuspendedAgent> {
         match self {
             Self::Claude(s) => {
                 s.stop(StopPolicy::Interrupt).await;
                 let name_source = s.name_source();
                 let session_id = s.session_id.ok_or_else(|| {
-                    AmuxError::ServerError(format!(
+                    AgentError::InvalidState(format!(
                         "cannot suspend claude agent {}: no session_id (SessionStart hook not received)",
                         s.agent_id
                     ))
@@ -545,153 +655,11 @@ impl serde::Serialize for crate::debug::DebugView<'_, AgentSession> {
     }
 }
 
-/// All suspended agent sessions, serialized to disk across server restarts.
-#[derive(Serialize, Deserialize, Debug, Clone)]
-pub struct SuspendedServerState {
-    pub agents: Vec<SuspendedAgent>,
-}
-
-/// Serializable representation of a suspended agent session.
-/// Used to persist agent state across server restarts (e.g., during `amux update`).
-#[derive(Serialize, Deserialize, Debug, Clone)]
-pub enum SuspendedAgent {
-    Claude {
-        agent_id: Uuid,
-        name: Option<String>,
-        name_source: LocalAgentNameSource,
-        working_dir: PathBuf,
-        terminal_size: Option<TerminalSize>,
-        args: Vec<String>,
-        session_id: Uuid,
-        created_at: DateTime<Utc>,
-    },
-    #[cfg(any(debug_assertions, test))]
-    TestAgent {
-        agent_id: Uuid,
-        name: Option<String>,
-        command: String,
-        working_dir: PathBuf,
-        terminal_size: Option<TerminalSize>,
-        created_at: DateTime<Utc>,
-    },
-}
-
-fn sanitize_claude_resume_args(args: Vec<String>) -> Vec<String> {
-    fn skip_flag_with_optional_value(args: &[String], i: &mut usize) {
-        *i += 1;
-        if *i < args.len() && !args[*i].starts_with('-') {
-            *i += 1;
-        }
-    }
-
-    let mut sanitized = Vec::with_capacity(args.len());
-    let mut i = 0;
-    while i < args.len() {
-        match args[i].as_str() {
-            "--fork-session" | "-c" | "--continue" => i += 1,
-            "-r" | "--resume" | "--from-pr" | "--session-id" | "-w" | "--worktree" | "--tmux" => {
-                skip_flag_with_optional_value(&args, &mut i)
-            }
-            arg if arg.starts_with("--resume=")
-                || arg.starts_with("--from-pr=")
-                || arg.starts_with("--session-id=")
-                || arg.starts_with("--worktree=")
-                || arg.starts_with("--tmux=") =>
-            {
-                let _ = arg;
-                i += 1;
-            }
-            arg if arg.starts_with("-r") && arg.len() > 2 => i += 1,
-            arg if arg.starts_with("-w") && arg.len() > 2 => i += 1,
-            _ => {
-                sanitized.push(args[i].clone());
-                i += 1;
-            }
-        }
-    }
-    sanitized
-}
-
-impl SuspendedAgent {
-    /// Get the agent_id from the suspended agent.
-    pub fn agent_id(&self) -> Uuid {
-        match self {
-            Self::Claude { agent_id, .. } => *agent_id,
-            #[cfg(any(debug_assertions, test))]
-            Self::TestAgent { agent_id, .. } => *agent_id,
-        }
-    }
-
-    /// Get the name from the suspended agent.
-    pub fn name(&self) -> Option<&str> {
-        match self {
-            Self::Claude { name, .. } => name.as_deref(),
-            #[cfg(any(debug_assertions, test))]
-            Self::TestAgent { name, .. } => name.as_deref(),
-        }
-    }
-
-    /// Create an unstarted AgentSession from this suspended agent.
-    /// For Claude agents, sets `session_id` so `start()` passes `--resume`.
-    /// Caller must call `session.start()` to spawn the process.
-    pub fn into_session(self) -> AgentSession {
-        match self {
-            Self::Claude {
-                agent_id,
-                name,
-                name_source,
-                working_dir,
-                terminal_size,
-                args,
-                session_id,
-                created_at,
-            } => {
-                let args = sanitize_claude_resume_args(args);
-                let req = CreateAgentRequest {
-                    agent_id,
-                    name,
-                    agent_type: crate::message::AgentType::Claude,
-                    working_dir,
-                    terminal_size,
-                    args,
-                };
-                let mut session = ClaudeSession::new(&req);
-                session.session_id = Some(session_id);
-                session.created_at = created_at;
-                session.set_name_and_source(req.name, name_source);
-                AgentSession::Claude(session)
-            }
-            #[cfg(any(debug_assertions, test))]
-            Self::TestAgent {
-                agent_id,
-                name,
-                command,
-                working_dir,
-                terminal_size,
-                created_at,
-            } => {
-                let req = CreateAgentRequest {
-                    agent_id,
-                    name,
-                    agent_type: crate::message::AgentType::TestAgent {
-                        command: command.clone(),
-                    },
-                    working_dir,
-                    terminal_size,
-                    args: vec![],
-                };
-                let mut session = TestAgentSession::new(&req, command);
-                session.created_at = created_at;
-                AgentSession::TestAgent(session)
-            }
-        }
-    }
-}
-
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::message::AgentType;
+    use crate::protocol::CreateAgentRequest;
+    use crate::protocol::message::AgentType;
     use serde_json::json;
 
     #[tokio::test]

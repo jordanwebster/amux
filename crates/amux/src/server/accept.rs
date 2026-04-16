@@ -12,14 +12,17 @@ use super::routing::send_initial_announcements;
 use super::{
     ConnectionHandle, LOCAL_USER_ID, ServerState, ServerUserState, get_or_create_user_state,
 };
-use crate::error::{AmuxError, Result};
-use crate::handshake::{Connect, ConnectResult, PROTOCOL_VERSION};
-use crate::message::{Message, ProtocolError};
-use crate::route::generate_server_link;
-use crate::transport::{TcpTransport, Transport, TransportSplit, WebSocketTransport};
+use crate::client::connect::{ConnectError, connect_handshake};
+use crate::protocol::handshake::{Connect, ConnectResult, PROTOCOL_VERSION};
+use crate::protocol::message::{Message, ProtocolError};
+use crate::protocol::route::generate_server_link;
+use crate::transport::{
+    TcpTransport, Transport, TransportError, TransportSplit, WebSocketTransport,
+};
 use std::sync::Arc;
 use std::sync::atomic::AtomicU64;
 use std::time::Duration;
+use thiserror::Error;
 use tokio::net::TcpStream;
 use tokio::sync::{RwLock, mpsc};
 use tokio_tungstenite::accept_async_with_config;
@@ -32,13 +35,78 @@ use uuid::Uuid;
 /// (or slowly trickles) handshake data, holding a server task indefinitely.
 const HANDSHAKE_TIMEOUT: Duration = Duration::from_secs(10);
 
+pub(super) type Result<T> = std::result::Result<T, AcceptError>;
+
+#[derive(Debug, Error)]
+pub(super) enum AcceptError {
+    #[error(transparent)]
+    Transport(#[from] TransportError),
+    #[error(transparent)]
+    Connection(#[from] super::connection::ConnectionError),
+    #[error("invalid handshake message: {0}")]
+    InvalidHandshake(String),
+    #[error("{0}")]
+    Config(String),
+    #[error(
+        "Too many handshake attempts (link name collision) — this is usually transient, retry the command"
+    )]
+    TooManyHandshakeAttempts,
+    #[error("Invalid or missing credentials")]
+    InvalidCredentials,
+    #[error(
+        "protocol mismatch (server protocol v{server_version}, client protocol v{client_version})"
+    )]
+    ProtocolMismatch {
+        server_version: u32,
+        client_version: u32,
+    },
+    #[error("amux upgrade required (minimum v{minimum_version}, you have v{client_version})")]
+    UpgradeRequired {
+        minimum_version: String,
+        client_version: String,
+    },
+    #[error("handshake timed out")]
+    HandshakeTimeout,
+}
+
+fn map_connect_error(error: ConnectError) -> AcceptError {
+    match error {
+        ConnectError::Config(err) => AcceptError::Config(err.to_string()),
+        ConnectError::Transport(err) => AcceptError::Transport(err),
+        ConnectError::HandshakeTimeout => AcceptError::HandshakeTimeout,
+        ConnectError::InvalidHandshake(message) => AcceptError::InvalidHandshake(message),
+        ConnectError::Protocol(ProtocolError::InvalidCredentials) => {
+            AcceptError::InvalidCredentials
+        }
+        ConnectError::Protocol(ProtocolError::ProtocolMismatch {
+            server_version,
+            client_version,
+        }) => AcceptError::ProtocolMismatch {
+            server_version,
+            client_version,
+        },
+        ConnectError::Protocol(ProtocolError::UpgradeRequired {
+            minimum_version,
+            client_version,
+        }) => AcceptError::UpgradeRequired {
+            minimum_version,
+            client_version,
+        },
+        ConnectError::Protocol(other) => AcceptError::Config(other.to_string()),
+        ConnectError::Start(message) => AcceptError::Config(message),
+    }
+}
+
 async fn write_connect_result<T: Transport>(
     transport: &mut T,
     error: Option<ProtocolError>,
 ) -> Result<()> {
     let response = ConnectResult { error };
-    let payload = response.encode().map_err(AmuxError::SerializationEncode)?;
-    transport.write_frame(&payload).await
+    let payload = response
+        .encode()
+        .map_err(TransportError::SerializationEncode)?;
+    transport.write_frame(&payload).await?;
+    Ok(())
 }
 
 /// Validate a proposed link name: non-empty, max 128 bytes, `[a-zA-Z0-9_-]` only.
@@ -81,7 +149,7 @@ pub(super) async fn accept_handshake<T: Transport>(
     for _attempt in 0..5 {
         let payload = transport.read_frame().await?;
         let connect = Connect::decode(&payload).map_err(|e| {
-            AmuxError::InvalidMessage(format!("expected Connect during handshake: {e}"))
+            AcceptError::InvalidHandshake(format!("expected Connect during handshake: {e}"))
         })?;
         let Connect {
             link_name: proposed_link,
@@ -105,10 +173,10 @@ pub(super) async fn accept_handshake<T: Transport>(
                 }),
             )
             .await?;
-            return Err(AmuxError::ProtocolMismatch(format!(
-                "protocol v{}, client v{}",
-                PROTOCOL_VERSION, version
-            )));
+            return Err(AcceptError::ProtocolMismatch {
+                server_version: PROTOCOL_VERSION,
+                client_version: version,
+            });
         }
 
         // Check minimum client version if configured for this client_name
@@ -143,7 +211,7 @@ pub(super) async fn accept_handshake<T: Transport>(
                         }),
                     )
                     .await?;
-                    return Err(AmuxError::UpgradeRequired {
+                    return Err(AcceptError::UpgradeRequired {
                         minimum_version: min_ver_str.clone(),
                         client_version: cv,
                     });
@@ -154,7 +222,7 @@ pub(super) async fn accept_handshake<T: Transport>(
         if let Err(reason) = validate_link_name(&proposed_link) {
             tracing::warn!(link = %proposed_link, reason, "rejecting invalid link name");
             write_connect_result(transport, Some(ProtocolError::InvalidLinkName)).await?;
-            return Err(AmuxError::Config(format!(
+            return Err(AcceptError::Config(format!(
                 "Invalid link name '{}': {}",
                 proposed_link, reason
             )));
@@ -174,7 +242,7 @@ pub(super) async fn accept_handshake<T: Transport>(
 
             let token = token.ok_or_else(|| {
                 tracing::warn!("token required but none provided");
-                AmuxError::InvalidCredentials
+                AcceptError::InvalidCredentials
             })?;
 
             match validator.validate(&token, &host, tcp_port).await {
@@ -189,7 +257,7 @@ pub(super) async fn accept_handshake<T: Transport>(
                                 Some(ProtocolError::InvalidCredentials),
                             )
                             .await?;
-                            return Err(AmuxError::InvalidCredentials);
+                            return Err(AcceptError::InvalidCredentials);
                         }
                     }
                 }
@@ -197,7 +265,7 @@ pub(super) async fn accept_handshake<T: Transport>(
                     tracing::warn!(error = %e, "token validation failed");
                     write_connect_result(transport, Some(ProtocolError::InvalidCredentials))
                         .await?;
-                    return Err(AmuxError::InvalidCredentials);
+                    return Err(AcceptError::InvalidCredentials);
                 }
             }
         } else {
@@ -254,82 +322,7 @@ pub(super) async fn accept_handshake<T: Transport>(
     }
 
     tracing::warn!("handshake failed after 5 link-name retries");
-    Err(AmuxError::TooManyHandshakeAttempts)
-}
-
-/// Connect-side handshake: we propose link name, remote validates.
-/// Returns the accepted link name on success.
-///
-/// Used by both the CLI client (local transport) and server-to-server peering (TCP).
-/// Retries up to 5 times on link name collision before giving up.
-pub async fn connect_handshake<T, F>(transport: &mut T, mut generate_link: F) -> Result<String>
-where
-    T: Transport,
-    F: FnMut() -> String,
-{
-    for attempt in 0..5 {
-        let proposed_link = generate_link();
-
-        let connect = Connect {
-            link_name: proposed_link.clone(),
-            token: None,
-            version: PROTOCOL_VERSION,
-            client_name: Some("amux-cli".to_string()),
-            client_version: Some(env!("CARGO_PKG_VERSION").to_string()),
-        };
-        let payload = connect.encode().map_err(AmuxError::SerializationEncode)?;
-        transport.write_frame(&payload).await?;
-
-        let payload = tokio::time::timeout(HANDSHAKE_TIMEOUT, transport.read_frame())
-            .await
-            .map_err(|_| AmuxError::HandshakeTimeout)??;
-        let response = ConnectResult::decode(&payload).map_err(|e| {
-            AmuxError::InvalidMessage(format!("expected ConnectResult during handshake: {e}"))
-        })?;
-
-        match response.error {
-            None => return Ok(proposed_link),
-            Some(ProtocolError::LinkNameTaken) => {
-                tracing::debug!(link = %proposed_link, attempt = attempt + 1, "link name taken, retrying");
-                continue;
-            }
-            Some(ProtocolError::InvalidCredentials) => {
-                tracing::error!("authentication failed");
-                return Err(AmuxError::InvalidCredentials);
-            }
-            Some(ProtocolError::InvalidLinkName) => {
-                return Err(AmuxError::Config(
-                    ProtocolError::InvalidLinkName.to_string(),
-                ));
-            }
-            Some(ProtocolError::ProtocolMismatch {
-                server_version,
-                client_version,
-            }) => {
-                return Err(AmuxError::ProtocolMismatch(format!(
-                    "protocol v{}, client v{}",
-                    server_version, client_version
-                )));
-            }
-            Some(ProtocolError::UpgradeRequired {
-                minimum_version,
-                client_version,
-            }) => {
-                return Err(AmuxError::UpgradeRequired {
-                    minimum_version,
-                    client_version,
-                });
-            }
-            Some(other) => {
-                let msg = other.to_string();
-                return Err(AmuxError::Config(msg));
-            }
-        }
-    }
-
-    Err(AmuxError::Config(
-        "handshake failed after 5 link-name collisions — this is usually transient, retry the command".to_string(),
-    ))
+    Err(AcceptError::TooManyHandshakeAttempts)
 }
 
 /// Accept a connection with transport split: handshake, then spawn reader/writer tasks
@@ -356,7 +349,7 @@ pub(super) async fn accept_connection<T: TransportSplit>(
                 Ok(result) => result,
                 Err(_) => {
                     tracing::warn!("handshake timed out");
-                    Err(AmuxError::HandshakeTimeout)
+                    Err(AcceptError::HandshakeTimeout)
                 }
             }
         }
@@ -408,7 +401,8 @@ pub(super) async fn accept_connection<T: TransportSplit>(
         None,
         conn_span,
     )
-    .await
+    .await?;
+    Ok(())
 }
 
 /// WebSocket connection bootstrap - accept, upgrade, and handshake
@@ -430,11 +424,11 @@ pub(super) async fn websocket_accept(
     .await
     .map_err(|_| {
         tracing::warn!("WebSocket upgrade timed out");
-        AmuxError::HandshakeTimeout
+        AcceptError::HandshakeTimeout
     })?
     .map_err(|e| {
         tracing::warn!(error = %e, "WebSocket upgrade failed");
-        AmuxError::Io(std::io::Error::other(e.to_string()))
+        AcceptError::Transport(TransportError::Io(std::io::Error::other(e.to_string())))
     })?;
     let transport = WebSocketTransport::new(ws_stream);
     accept_connection(transport, state, event_tx, verify_token, false, "websocket").await
@@ -472,10 +466,12 @@ pub(super) async fn tcp_connect(
 ) -> Result<()> {
     let addr: std::net::SocketAddr = address
         .parse()
-        .map_err(|_| AmuxError::Config(format!("Invalid address: {}", address)))?;
+        .map_err(|_| AcceptError::Config(format!("Invalid address: {}", address)))?;
 
-    let stream = TcpStream::connect(addr).await?;
-    stream.set_nodelay(true)?;
+    let stream = TcpStream::connect(addr)
+        .await
+        .map_err(TransportError::from)?;
+    stream.set_nodelay(true).map_err(TransportError::from)?;
     crate::transport::configure_tcp_keepalive(&stream);
 
     tracing::info!(addr = %addr, "connected to remote server");
@@ -493,7 +489,8 @@ pub(super) async fn tcp_connect(
     let link_name = connect_handshake(&mut transport, || {
         generate_server_link(&hostname, randomise)
     })
-    .await?;
+    .await
+    .map_err(map_connect_error)?;
 
     let conn_span = tracing::info_span!(
         "connection",

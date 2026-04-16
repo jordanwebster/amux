@@ -1,5 +1,5 @@
+use crate::auth::oauth;
 use crate::config::Config;
-use crate::oauth;
 use crate::state::{CloudState, State, StateError};
 use serde_yaml::{Mapping, Value};
 use std::fs;

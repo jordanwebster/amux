@@ -6,8 +6,8 @@
 //! forwards ping payloads to the writer via a channel.
 
 use super::{MessageReader, MessageWriter, Transport, TransportSplit};
-use crate::error::{AmuxError, Result};
-use crate::message::Message;
+use crate::protocol::message::Message;
+use crate::transport::{Result, TransportError};
 use futures_util::{SinkExt, StreamExt};
 use tokio::net::TcpStream;
 use tokio::sync::mpsc;
@@ -31,7 +31,7 @@ impl Transport for WebSocketTransport {
             match self.stream.next().await {
                 Some(Ok(WsMessage::Binary(data))) => return Ok(data.to_vec()),
                 Some(Ok(WsMessage::Close(_))) | None => {
-                    return Err(AmuxError::Io(std::io::Error::new(
+                    return Err(TransportError::Io(std::io::Error::new(
                         std::io::ErrorKind::UnexpectedEof,
                         "WebSocket closed",
                     )));
@@ -43,7 +43,7 @@ impl Transport for WebSocketTransport {
                     continue;
                 }
                 Some(Err(e)) => {
-                    return Err(AmuxError::Io(std::io::Error::other(e.to_string())));
+                    return Err(TransportError::Io(std::io::Error::other(e.to_string())));
                 }
             }
         }
@@ -53,17 +53,17 @@ impl Transport for WebSocketTransport {
         self.stream
             .send(WsMessage::Binary(data.to_vec()))
             .await
-            .map_err(|e| AmuxError::Io(std::io::Error::other(e.to_string())))?;
+            .map_err(|e| TransportError::Io(std::io::Error::other(e.to_string())))?;
         Ok(())
     }
 
     async fn read_message(&mut self) -> Result<Message> {
         let data = self.read_frame().await?;
-        Message::decode(&data).map_err(AmuxError::SerializationDecode)
+        Message::decode(&data).map_err(TransportError::SerializationDecode)
     }
 
     async fn write_message(&mut self, msg: &Message) -> Result<()> {
-        let data = msg.encode().map_err(AmuxError::SerializationEncode)?;
+        let data = msg.encode().map_err(TransportError::SerializationEncode)?;
         self.write_frame(&data).await
     }
 }
@@ -83,10 +83,10 @@ impl MessageReader for WsMessageReader {
         loop {
             match self.stream.next().await {
                 Some(Ok(WsMessage::Binary(data))) => {
-                    return Message::decode(&data).map_err(AmuxError::SerializationDecode);
+                    return Message::decode(&data).map_err(TransportError::SerializationDecode);
                 }
                 Some(Ok(WsMessage::Close(_))) | None => {
-                    return Err(AmuxError::Io(std::io::Error::new(
+                    return Err(TransportError::Io(std::io::Error::new(
                         std::io::ErrorKind::UnexpectedEof,
                         "WebSocket closed",
                     )));
@@ -99,7 +99,7 @@ impl MessageReader for WsMessageReader {
                     continue;
                 }
                 Some(Err(e)) => {
-                    return Err(AmuxError::Io(std::io::Error::other(e.to_string())));
+                    return Err(TransportError::Io(std::io::Error::other(e.to_string())));
                 }
             }
         }
@@ -120,11 +120,11 @@ impl MessageWriter for WsMessageWriter {
             let _ = self.sink.send(WsMessage::Pong(data)).await;
         }
 
-        let data = msg.encode().map_err(AmuxError::SerializationEncode)?;
+        let data = msg.encode().map_err(TransportError::SerializationEncode)?;
         self.sink
             .send(WsMessage::Binary(data))
             .await
-            .map_err(|e| AmuxError::Io(std::io::Error::other(e.to_string())))?;
+            .map_err(|e| TransportError::Io(std::io::Error::other(e.to_string())))?;
         Ok(())
     }
 

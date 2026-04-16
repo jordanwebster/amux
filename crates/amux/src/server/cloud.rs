@@ -4,15 +4,14 @@
 //! Handles exponential backoff on retriable errors, stops on auth failures, and
 //! exits the process on protocol version mismatch (after notifying attached terminals).
 
-use super::connection::{ConnectionContext, HeartbeatRole, run_connection};
+use super::connection::{ConnectionContext, ConnectionError, HeartbeatRole, run_connection};
 use super::routing::send_initial_announcements;
 use super::{
     ConnectionHandle, LOCAL_USER_ID, ServerState, ServerUserState, get_or_create_user_state,
 };
-use crate::cloud::{CloudConnection, CloudError};
+use crate::auth::cloud::{CloudConnection, CloudError};
 use crate::config::Config;
-use crate::error::AmuxError;
-use crate::message::{Command, Message, ShutdownReason};
+use crate::protocol::message::{Command, Message, ShutdownReason};
 use crate::state::State;
 use std::sync::Arc;
 use std::sync::atomic::AtomicU64;
@@ -170,7 +169,7 @@ async fn run_cloud_connection(
         Ok(conn) => conn,
         Err(CloudError::NotAuthenticated)
         | Err(CloudError::Auth(_))
-        | Err(CloudError::OAuth(crate::oauth::OAuthError::RefreshTokenExpired)) => {
+        | Err(CloudError::OAuth(crate::auth::oauth::OAuthError::RefreshTokenExpired)) => {
             return Err(CloudConnectionError::NonRetriable(
                 "Authentication failed — run 'amux init' to re-authenticate".to_string(),
             ));
@@ -262,14 +261,17 @@ async fn run_cloud_connection(
 
     match result {
         Ok(()) => Ok(()),
-        Err(AmuxError::InvalidCredentials) => Err(CloudConnectionError::NonRetriable(
+        Err(ConnectionError::InvalidCredentials) => Err(CloudConnectionError::NonRetriable(
             "Invalid credentials — run 'amux init' to re-authenticate".to_string(),
         )),
-        Err(AmuxError::ProtocolMismatch(_)) => Err(CloudConnectionError::ProtocolMismatch {
-            server_version: 0,
-            client_version: crate::handshake::PROTOCOL_VERSION,
+        Err(ConnectionError::ProtocolMismatch {
+            server_version,
+            client_version,
+        }) => Err(CloudConnectionError::ProtocolMismatch {
+            server_version,
+            client_version,
         }),
-        Err(AmuxError::UpgradeRequired {
+        Err(ConnectionError::UpgradeRequired {
             minimum_version,
             client_version,
         }) => Err(CloudConnectionError::UpgradeRequired {

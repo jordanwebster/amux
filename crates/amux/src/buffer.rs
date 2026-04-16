@@ -7,7 +7,7 @@
 //! Key invariant: `write()` and `subscribe()` are mutually exclusive via the
 //! storage lock, ensuring no data loss or duplication between replay and live data.
 
-use crate::message::SubscribeQuery;
+use crate::protocol::message::SubscribeQuery;
 use serde_json::Value;
 use std::sync::Arc;
 use tokio::sync::{RwLock, mpsc};

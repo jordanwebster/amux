@@ -7,8 +7,8 @@ use super::framing::{FrameReader, FrameWriter};
 use super::{
     LengthPrefixed, MAX_FRAME_SIZE, MessageReader, MessageWriter, Transport, TransportSplit,
 };
-use crate::error::{AmuxError, Result};
-use crate::message::Message;
+use crate::protocol::message::Message;
+use crate::transport::{Result, TransportError};
 use tokio::io::{AsyncRead, AsyncWrite};
 
 /// TCP transport with length-prefixed framing (for server-to-server connections).
@@ -47,11 +47,11 @@ where
 
     async fn read_message(&mut self) -> Result<Message> {
         let data = self.read_frame().await?;
-        Message::decode(&data).map_err(AmuxError::SerializationDecode)
+        Message::decode(&data).map_err(TransportError::SerializationDecode)
     }
 
     async fn write_message(&mut self, msg: &Message) -> Result<()> {
-        let data = msg.encode().map_err(AmuxError::SerializationEncode)?;
+        let data = msg.encode().map_err(TransportError::SerializationEncode)?;
         self.write_frame(&data).await
     }
 }
@@ -64,7 +64,7 @@ pub struct TcpMessageReader<S> {
 impl<S: AsyncRead + Unpin + Send> MessageReader for TcpMessageReader<S> {
     async fn read_message(&mut self) -> Result<Message> {
         let data = self.reader.read_frame(MAX_FRAME_SIZE).await?;
-        Message::decode(&data).map_err(AmuxError::SerializationDecode)
+        Message::decode(&data).map_err(TransportError::SerializationDecode)
     }
 }
 
@@ -75,7 +75,7 @@ pub struct TcpMessageWriter<S> {
 
 impl<S: AsyncWrite + Unpin + Send> MessageWriter for TcpMessageWriter<S> {
     async fn write_message(&mut self, msg: &Message) -> Result<()> {
-        let data = msg.encode().map_err(AmuxError::SerializationEncode)?;
+        let data = msg.encode().map_err(TransportError::SerializationEncode)?;
         self.writer.write_frame(&data).await
     }
 }

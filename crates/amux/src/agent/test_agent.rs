@@ -3,16 +3,17 @@
 //! Only available in debug/test builds. Spawns an arbitrary command
 //! (typically `test-agent`) without Claude-specific environment or hooks.
 
-use super::{PtyHandle, spawn_pty_agent};
+use super::{AgentError, PtyHandle, spawn_pty_agent};
+use crate::agent::claude::log_source::StructuredLogSource;
 use crate::buffer::MultiplexStructuredReader;
-use crate::claude::structured_log_source::StructuredLogSource;
 use crate::debug::DebugView;
-use crate::error::Result;
-use crate::message::{CreateAgentRequest, SubscribeQuery};
+use crate::protocol::message::{CreateAgentRequest, SubscribeQuery};
 use chrono::{DateTime, Utc};
 use serde::{Serialize, Serializer, ser::SerializeMap};
 use std::path::PathBuf;
 use uuid::Uuid;
+
+type Result<T> = std::result::Result<T, AgentError>;
 
 pub struct TestAgentSession {
     pub(super) agent_id: Uuid,
@@ -23,8 +24,8 @@ pub struct TestAgentSession {
     log_source: Option<StructuredLogSource>,
 
     // Stored for deferred start()
-    pub(super) terminal_size: Option<crate::message::TerminalSize>,
-    pub(super) created_at: DateTime<Utc>,
+    pub(super) terminal_size: Option<crate::protocol::message::TerminalSize>,
+    pub(crate) created_at: DateTime<Utc>,
 }
 
 impl TestAgentSession {
@@ -45,7 +46,7 @@ impl TestAgentSession {
 
     /// Spawn the test agent process. Returns an exit handle that completes
     /// when the process exits.
-    pub fn start(&mut self) -> Result<tokio::task::JoinHandle<()>> {
+    pub(crate) fn start(&mut self) -> Result<tokio::task::JoinHandle<()>> {
         let (pty, log_source, exit_handle) = spawn_pty_agent(
             self.agent_id,
             &self.command,

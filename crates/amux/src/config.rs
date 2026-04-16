@@ -1,10 +1,18 @@
-use crate::error::{AmuxError, Result};
 use crate::state::State;
 use gethostname::gethostname;
 use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
 use std::fmt;
 use std::path::{Path, PathBuf};
+use thiserror::Error;
+
+#[derive(Debug, Error)]
+pub enum ConfigError {
+    #[error("IO error: {0}")]
+    Io(#[from] std::io::Error),
+    #[error("{0}")]
+    Invalid(String),
+}
 
 /// Resolve an XDG base directory: `$env_var` if set, otherwise `$HOME/{default_suffix}`.
 ///
@@ -287,18 +295,18 @@ impl Config {
 
     /// Validate config. Call early to surface errors before any work begins.
     /// When `is_cloud` is true, also validates cloud-server requirements.
-    pub fn validate(&self, is_cloud: bool) -> Result<()> {
+    pub fn validate(&self, is_cloud: bool) -> std::result::Result<(), ConfigError> {
         // Leader key must be ctrl+<a-z>
         let ch = self.keybinds.leader.char;
         if !ch.is_ascii_lowercase() {
-            return Err(AmuxError::Config(format!(
+            return Err(ConfigError::Invalid(format!(
                 "invalid leader key: byte 0x{ch:02x} is not a lowercase letter (expected ctrl+<a-z>)"
             )));
         }
 
         // Server link names are "{hostname}-{4 chars}", max 128 bytes total
         if self.host_name.len() > 123 {
-            return Err(AmuxError::Config(format!(
+            return Err(ConfigError::Invalid(format!(
                 "host_name is {} bytes, max 123 (link names add a 5-byte suffix)",
                 self.host_name.len()
             )));
@@ -307,12 +315,12 @@ impl Config {
         // Cloud servers must have TCP and WebSocket ports configured
         if is_cloud {
             if self.tcp_port.is_none() {
-                return Err(AmuxError::Config(
+                return Err(ConfigError::Invalid(
                     "cloud mode requires tcp_port to be set".into(),
                 ));
             }
             if self.websocket_port.is_none() {
-                return Err(AmuxError::Config(
+                return Err(ConfigError::Invalid(
                     "cloud mode requires websocket_port to be set".into(),
                 ));
             }
@@ -321,13 +329,13 @@ impl Config {
         // Release builds must use HTTPS for cloud URLs to protect tokens in transit
         #[cfg(not(any(debug_assertions, test)))]
         if !self.cloud_url.starts_with("https://") {
-            return Err(AmuxError::Config("cloud_url must use HTTPS".into()));
+            return Err(ConfigError::Invalid("cloud_url must use HTTPS".into()));
         }
 
         // Validate all minimum_client_versions values are valid semver
         for (name, version) in &self.minimum_client_versions {
             if semver::Version::parse(version).is_err() {
-                return Err(AmuxError::Config(format!(
+                return Err(ConfigError::Invalid(format!(
                     "invalid minimum_client_versions['{name}']: '{version}' is not valid semver (e.g. \"0.2.0\")"
                 )));
             }
@@ -337,10 +345,10 @@ impl Config {
     }
 
     /// Load config from a YAML file
-    pub fn from_file(path: &Path) -> Result<Self> {
+    pub fn from_file(path: &Path) -> std::result::Result<Self, ConfigError> {
         let contents = std::fs::read_to_string(path)?;
         let mut config: Config =
-            serde_yaml::from_str(&contents).map_err(|e| AmuxError::Config(e.to_string()))?;
+            serde_yaml::from_str(&contents).map_err(|e| ConfigError::Invalid(e.to_string()))?;
         config.path = Some(path.to_path_buf());
         Ok(config)
     }

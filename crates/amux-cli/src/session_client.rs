@@ -3,7 +3,8 @@ use amux::protocol::{
     AgentType, Command, CreateAgentRequest, Message, ProtocolError, RoutableMessage,
     ShutdownReason, SubscriptionId, TerminalSize,
 };
-use amux::{AmuxError, Config, Connection, LeaderKey, Result, Route, connect};
+use amux::{Config, ConnectError, Connection, LeaderKey, Route, TransportError, connect};
+use anyhow::{Result, anyhow};
 use crossterm::terminal;
 use std::io::{self, Read, Write};
 use std::path::Path;
@@ -26,7 +27,7 @@ enum ExitReason {
     Detached,
     SessionEnded,
     Shutdown(ShutdownReason),
-    Error(AmuxError),
+    Error(TransportError),
 }
 
 struct AttachedSession {
@@ -51,7 +52,8 @@ impl AttachedSession {
             self.request_counter.fetch_add(1, Ordering::Relaxed),
             &message,
         ))
-        .await
+        .await?;
+        Ok(())
     }
 
     async fn send_raw_input(&self, conn: &Connection, data: Vec<u8>) -> Result<()> {
@@ -130,18 +132,18 @@ pub async fn new_agent(
                 )
                 .await
             }
-            RoutableMessage::CreateAgentResult { error: Some(e), .. } => Err(
-                AmuxError::ServerError(format!("failed to create agent: {e}")),
-            ),
-            other => Err(AmuxError::InvalidMessage(format!(
+            RoutableMessage::CreateAgentResult { error: Some(e), .. } => {
+                Err(anyhow!("failed to create agent: {e}"))
+            }
+            other => Err(anyhow!(
                 "expected CreateAgentResult, got {}",
                 other.type_label()
-            ))),
+            )),
         },
-        other => Err(AmuxError::InvalidMessage(format!(
+        other => Err(anyhow!(
             "expected Routable(CreateAgentResult), got {}",
             other.type_label()
-        ))),
+        )),
     }
 }
 
@@ -168,12 +170,12 @@ pub async fn attach(target: Option<&str>, config: &Config) -> Result<()> {
                 } => (info.route, info.id),
                 Message::Command {
                     command: Command::ResolveAgentResult { agent: None },
-                } => return Err(AmuxError::AgentNotFound(identifier.to_string())),
+                } => return Err(anyhow!("agent not found: {identifier}")),
                 other => {
-                    return Err(AmuxError::InvalidMessage(format!(
+                    return Err(anyhow!(
                         "expected ResolveAgentResult, got {}",
                         other.type_label()
-                    )));
+                    ));
                 }
             }
         }
@@ -194,10 +196,10 @@ pub async fn attach(target: Option<&str>, config: &Config) -> Result<()> {
                     return Ok(());
                 }
                 other => {
-                    return Err(AmuxError::InvalidMessage(format!(
+                    return Err(anyhow!(
                         "expected ListAgentsResult, got {}",
                         other.type_label()
-                    )));
+                    ));
                 }
             }
         }
@@ -222,14 +224,14 @@ pub async fn attach(target: Option<&str>, config: &Config) -> Result<()> {
 pub async fn list_agents(config: &Config) -> Result<()> {
     let conn = match connect(config, cli_daemon_policy()?).await {
         Ok(conn) => conn,
-        Err(AmuxError::Io(e))
+        Err(ConnectError::Transport(TransportError::Io(e)))
             if e.kind() == io::ErrorKind::NotFound
                 || e.kind() == io::ErrorKind::ConnectionRefused =>
         {
             println!("No agents running.");
             return Ok(());
         }
-        Err(e) => return Err(e),
+        Err(e) => return Err(e.into()),
     };
 
     conn.send(&Message::Command {
@@ -269,10 +271,10 @@ pub async fn list_agents(config: &Config) -> Result<()> {
             }
         }
         other => {
-            return Err(AmuxError::InvalidMessage(format!(
+            return Err(anyhow!(
                 "expected ListAgentsResult, got {}",
                 other.type_label()
-            )));
+            ));
         }
     }
 
@@ -318,17 +320,17 @@ async fn subscribe_and_stream(
                 return Ok(());
             }
             other => {
-                return Err(AmuxError::InvalidMessage(format!(
+                return Err(anyhow!(
                     "expected SubscribeRawResult, got {}",
                     other.type_label()
-                )));
+                ));
             }
         },
         other => {
-            return Err(AmuxError::InvalidMessage(format!(
+            return Err(anyhow!(
                 "expected Routable(SubscribeRawResult), got {}",
                 other.type_label()
-            )));
+            ));
         }
     };
 
@@ -554,7 +556,7 @@ async fn run_attached(
     drop(raw_mode_guard);
 
     match exit_reason {
-        ExitReason::Error(e) => return Err(e),
+        ExitReason::Error(e) => return Err(e.into()),
         ExitReason::Shutdown(reason) => {
             println!("\n[{}]", reason);
             if reason != ShutdownReason::Updating {

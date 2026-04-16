@@ -21,9 +21,25 @@ pub use tcp::TcpTransport;
 pub use tls::{create_tls_acceptor, tls_connect};
 pub use websocket::WebSocketTransport;
 
-use crate::error::Result;
-use crate::message::Message;
+use crate::protocol::message::Message;
 use std::future::Future;
+use thiserror::Error;
+
+pub(crate) type Result<T> = std::result::Result<T, TransportError>;
+
+#[derive(Debug, Error)]
+pub enum TransportError {
+    #[error("IO error: {0}")]
+    Io(#[from] std::io::Error),
+    #[error("Serialization error: {0}")]
+    SerializationEncode(#[from] rmp_serde::encode::Error),
+    #[error("Deserialization error: {0}")]
+    SerializationDecode(#[from] rmp_serde::decode::Error),
+    #[error("Invalid message: {0}")]
+    InvalidMessage(String),
+    #[error("Transport config error: {0}")]
+    Config(String),
+}
 
 /// 16MB limit to prevent DoS via huge frames (length-prefixed and WebSocket).
 pub(crate) const MAX_FRAME_SIZE: usize = 16 * 1024 * 1024;

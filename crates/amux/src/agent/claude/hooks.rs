@@ -1,29 +1,44 @@
 //! Claude Code hook types.
 //!
-//! Hooks carry both a typed parse (for variant matching and metadata
-//! extraction) and the original raw JSON (for lossless passthrough to
-//! structured output). The server never interprets tool-specific fields;
-//! it only needs the hook kind and the common metadata.
+//! Claude-specific hook parsing and metadata helpers.
 
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
 use uuid::Uuid;
 
-/// Hook event carrying both a typed parse (for internal side effects) and
-/// the original raw JSON (for lossless structured output passthrough).
-#[derive(Serialize, Deserialize, Debug, Clone)]
-pub enum Hook {
-    Claude(ClaudeHook, Value),
+#[derive(Debug, Clone)]
+pub struct ParsedClaudeHook {
+    pub hook: ClaudeHook,
+    pub raw: Value,
 }
 
-impl Hook {
-    /// Construct a Hook from a ClaudeHook, serializing it to produce the raw Value.
-    /// In production the raw Value comes from the original stdin JSON (lossless).
-    /// This helper is for tests and internal construction where the typed struct
-    /// is the source of truth.
-    pub fn from_claude(hook: ClaudeHook) -> Self {
+impl ParsedClaudeHook {
+    #[cfg(test)]
+    pub fn from_typed(hook: ClaudeHook) -> Self {
         let raw = serde_json::to_value(&hook).unwrap_or(Value::Null);
-        Hook::Claude(hook, raw)
+        Self { hook, raw }
+    }
+
+    pub fn parse_payload(payload: &[u8]) -> Result<Self, serde_json::Error> {
+        let raw: Value = serde_json::from_slice(payload)?;
+        let hook = serde_json::from_value(raw.clone())?;
+        Ok(Self { hook, raw })
+    }
+
+    pub fn is_unknown(&self) -> bool {
+        matches!(self.hook, ClaudeHook::Unknown)
+    }
+
+    pub fn is_session_end(&self) -> bool {
+        matches!(self.hook, ClaudeHook::SessionEnd(_))
+    }
+
+    pub fn cwd(&self) -> Option<&str> {
+        self.hook.cwd()
+    }
+
+    pub fn transcript_path(&self) -> Option<&str> {
+        self.hook.transcript_path()
     }
 }
 
@@ -154,10 +169,10 @@ mod tests {
 
     #[test]
     fn hook_message_msgpack_roundtrip() {
-        use crate::message::{Command, Message};
+        use crate::protocol::message::{Command, HookProvider, Message};
 
         let agent_id = Uuid::new_v4();
-        let hook = Hook::from_claude(ClaudeHook::SessionStart(HookCommon {
+        let hook = ParsedClaudeHook::from_typed(ClaudeHook::SessionStart(HookCommon {
             session_id: Uuid::new_v4(),
             transcript_path: "/tmp/transcript.jsonl".to_string(),
             cwd: "/tmp".to_string(),
@@ -165,7 +180,9 @@ mod tests {
         let msg = Message::Command {
             command: Command::HandleHook {
                 agent_id,
-                hook: Box::new(hook),
+                provider: HookProvider::Claude,
+                payload: serde_json::to_vec(&hook.raw).unwrap(),
+                external: true,
             },
         };
         let encoded = msg.encode().unwrap();
@@ -174,16 +191,18 @@ mod tests {
             command:
                 Command::HandleHook {
                     agent_id: decoded_id,
-                    hook: decoded_hook,
+                    provider,
+                    payload,
+                    external,
                 },
         } = decoded
         else {
             panic!("Expected HandleHook, got {decoded:?}");
         };
         assert_eq!(decoded_id, agent_id);
-        assert!(matches!(
-            *decoded_hook,
-            Hook::Claude(ClaudeHook::SessionStart(_), _)
-        ));
+        assert_eq!(provider, HookProvider::Claude);
+        assert!(external);
+        let parsed = ParsedClaudeHook::parse_payload(&payload).unwrap();
+        assert!(matches!(parsed.hook, ClaudeHook::SessionStart(_)));
     }
 }

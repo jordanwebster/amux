@@ -1,12 +1,15 @@
+use crate::client::connection::Connection;
 use crate::config::Config;
-use crate::connection::Connection;
-use crate::error::{AmuxError, Result};
-use crate::route::generate_terminal_link;
-use crate::server;
-use crate::transport::LocalTransport;
+use crate::config::ConfigError;
+use crate::protocol::handshake::{Connect, ConnectResult, PROTOCOL_VERSION};
+use crate::protocol::message::ProtocolError;
+use crate::protocol::route::generate_terminal_link;
+use crate::server::Server;
+use crate::transport::{LocalTransport, Transport, TransportError};
 use std::path::PathBuf;
 use std::process::Stdio;
 use std::time::Duration;
+use thiserror::Error;
 
 #[cfg(windows)]
 use tokio::net::windows::named_pipe::ClientOptions;
@@ -36,6 +39,24 @@ impl ServerMode {
     }
 }
 
+type Result<T> = std::result::Result<T, ConnectError>;
+
+#[derive(Debug, Error)]
+pub enum ConnectError {
+    #[error(transparent)]
+    Config(#[from] ConfigError),
+    #[error(transparent)]
+    Transport(#[from] TransportError),
+    #[error("handshake timed out")]
+    HandshakeTimeout,
+    #[error("invalid handshake message: {0}")]
+    InvalidHandshake(String),
+    #[error("server rejected connection: {0}")]
+    Protocol(ProtocolError),
+    #[error("{0}")]
+    Start(String),
+}
+
 impl From<bool> for ServerMode {
     fn from(cloud: bool) -> Self {
         if cloud { Self::Cloud } else { Self::Local }
@@ -55,7 +76,10 @@ pub enum ConnectPolicy {
 /// Connect to an amux server according to the given policy.
 ///
 /// Returns a [`Connection`] that can send and receive messages.
-pub async fn connect(config: &Config, policy: ConnectPolicy) -> Result<Connection> {
+pub async fn connect(
+    config: &Config,
+    policy: ConnectPolicy,
+) -> std::result::Result<Connection, ConnectError> {
     match policy {
         ConnectPolicy::ExistingOnly => connect_existing(config).await,
         ConnectPolicy::SpawnDaemon(options) => connect_daemon(config, options).await,
@@ -67,7 +91,7 @@ pub async fn spawn_daemon(
     config: &Config,
     options: &DaemonOptions,
     mode: ServerMode,
-) -> Result<()> {
+) -> std::result::Result<(), ConnectError> {
     let _ = spawn_daemon_and_connect(config, options, mode).await?;
     Ok(())
 }
@@ -97,8 +121,10 @@ async fn connect_local_transport(config: &Config) -> std::io::Result<LocalTransp
 
 /// Connect to an existing server via the local control-plane transport and perform handshake.
 async fn connect_existing(config: &Config) -> Result<Connection> {
-    let mut transport = connect_local_transport(config).await?;
-    let link_name = server::connect_handshake(&mut transport, generate_terminal_link).await?;
+    let mut transport = connect_local_transport(config)
+        .await
+        .map_err(TransportError::from)?;
+    let link_name = connect_handshake(&mut transport, generate_terminal_link).await?;
     tracing::info!(link = %link_name, "connected");
     Ok(Connection::new(transport, link_name))
 }
@@ -108,7 +134,7 @@ async fn connect_daemon(config: &Config, options: DaemonOptions) -> Result<Conne
     match connect_existing(config).await {
         Ok(conn) => return Ok(conn),
         #[cfg(unix)]
-        Err(AmuxError::Io(e))
+        Err(ConnectError::Transport(TransportError::Io(e)))
             if config.socket_path.exists()
                 && (e.kind() == std::io::ErrorKind::ConnectionRefused
                     || e.kind() == std::io::ErrorKind::NotFound) =>
@@ -116,7 +142,7 @@ async fn connect_daemon(config: &Config, options: DaemonOptions) -> Result<Conne
             tracing::warn!(error = %e, "stale local socket detected, removing");
             let _ = std::fs::remove_file(&config.socket_path);
         }
-        Err(AmuxError::Io(_)) => {}
+        Err(ConnectError::Transport(TransportError::Io(_))) => {}
         Err(e) => return Err(e),
     }
 
@@ -133,7 +159,8 @@ async fn connect_embedded(config: &Config) -> Result<Connection> {
         let _ = std::fs::remove_file(&config.socket_path);
     }
 
-    let mut server = server::Server::with_config(config.clone())?;
+    let mut server =
+        Server::with_config(config.clone()).map_err(|e| ConnectError::Start(e.to_string()))?;
     tokio::spawn(async move {
         if let Err(e) = server.run(false).await {
             tracing::error!(error = %e, "embedded server exited with error");
@@ -143,12 +170,14 @@ async fn connect_embedded(config: &Config) -> Result<Connection> {
     for _ in 0..50 {
         match connect_existing(config).await {
             Ok(conn) => return Ok(conn),
-            Err(AmuxError::Io(_)) => tokio::time::sleep(Duration::from_millis(100)).await,
+            Err(ConnectError::Transport(TransportError::Io(_))) => {
+                tokio::time::sleep(Duration::from_millis(100)).await
+            }
             Err(e) => return Err(e),
         }
     }
 
-    Err(AmuxError::Config(
+    Err(ConnectError::Start(
         "embedded server failed to start within 5s".to_string(),
     ))
 }
@@ -163,12 +192,12 @@ async fn spawn_daemon_and_connect(
     tracing::info!(?mode, "starting server");
 
     let config_yaml = serde_yaml::to_string(config)
-        .map_err(|e| AmuxError::Config(format!("failed to serialize config: {e}")))?;
+        .map_err(|e| ConnectError::Start(format!("failed to serialize config: {e}")))?;
 
     let mut cmd = daemon_command(options, mode);
     let mut child = cmd
         .spawn()
-        .map_err(|e| AmuxError::Config(format!("failed to start server: {e}")))?;
+        .map_err(|e| ConnectError::Start(format!("failed to start server: {e}")))?;
 
     if let Some(mut stdin) = child.stdin.take() {
         use std::io::Write;
@@ -215,15 +244,64 @@ async fn wait_for_server_connection(config: &Config) -> Result<Connection> {
     for _ in 0..50 {
         match connect_existing(config).await {
             Ok(conn) => return Ok(conn),
-            Err(AmuxError::Io(_)) => tokio::time::sleep(Duration::from_millis(100)).await,
+            Err(ConnectError::Transport(TransportError::Io(_))) => {
+                tokio::time::sleep(Duration::from_millis(100)).await
+            }
             Err(e) => return Err(e),
         }
     }
 
     let log_path = std::env::var("AMUX_LOG")
         .unwrap_or_else(|_| crate::config::default_log_path().display().to_string());
-    Err(AmuxError::Config(format!(
+    Err(ConnectError::Start(format!(
         "server failed to start within 5s — check {} for details",
         log_path
     )))
+}
+
+const HANDSHAKE_TIMEOUT: Duration = Duration::from_secs(10);
+
+pub(crate) async fn connect_handshake<T, F>(
+    transport: &mut T,
+    mut generate_link: F,
+) -> Result<String>
+where
+    T: Transport,
+    F: FnMut() -> String,
+{
+    for attempt in 0..5 {
+        let proposed_link = generate_link();
+
+        let connect = Connect {
+            link_name: proposed_link.clone(),
+            token: None,
+            version: PROTOCOL_VERSION,
+            client_name: Some("amux-cli".to_string()),
+            client_version: Some(env!("CARGO_PKG_VERSION").to_string()),
+        };
+        let payload = connect
+            .encode()
+            .map_err(TransportError::SerializationEncode)?;
+        transport.write_frame(&payload).await?;
+
+        let payload = tokio::time::timeout(HANDSHAKE_TIMEOUT, transport.read_frame())
+            .await
+            .map_err(|_| ConnectError::HandshakeTimeout)??;
+        let response = ConnectResult::decode(&payload).map_err(|e| {
+            ConnectError::InvalidHandshake(format!("expected ConnectResult during handshake: {e}"))
+        })?;
+
+        match response.error {
+            None => return Ok(proposed_link),
+            Some(ProtocolError::LinkNameTaken) => {
+                tracing::debug!(link = %proposed_link, attempt = attempt + 1, "link name taken, retrying");
+                continue;
+            }
+            Some(other) => return Err(ConnectError::Protocol(other)),
+        }
+    }
+
+    Err(ConnectError::Start(
+        "handshake failed after 5 link-name collisions — this is usually transient, retry the command".to_string(),
+    ))
 }

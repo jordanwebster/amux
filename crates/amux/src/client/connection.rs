@@ -1,5 +1,5 @@
-use crate::error::Result;
-use crate::message::Message;
+use crate::TransportError;
+use crate::protocol::message::Message;
 use crate::transport::{
     LocalMessageReader, LocalMessageWriter, LocalTransport, MessageReader, MessageWriter,
     TransportSplit,
@@ -32,13 +32,13 @@ impl Connection {
     }
 
     /// Send a message to the server.
-    pub async fn send(&self, message: &Message) -> Result<()> {
+    pub async fn send(&self, message: &Message) -> std::result::Result<(), TransportError> {
         let writer: &mut LocalMessageWriter = &mut *self.writer.lock().await;
         writer.write_message(message).await
     }
 
     /// Receive a message from the server.
-    pub async fn recv(&self) -> Result<Message> {
+    pub async fn recv(&self) -> std::result::Result<Message, TransportError> {
         let reader: &mut LocalMessageReader = &mut *self.reader.lock().await;
         reader.read_message().await
     }

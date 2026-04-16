@@ -4,7 +4,7 @@
 //! bytes. Used by [`UnixTransport`](super::unix::UnixTransport) and
 //! [`TcpTransport`](super::tcp::TcpTransport); WebSocket uses its own framing.
 
-use crate::error::{AmuxError, Result};
+use crate::transport::{Result, TransportError};
 use tokio::io::{AsyncRead, AsyncReadExt, AsyncWrite, AsyncWriteExt};
 
 /// Maximum initial allocation for a frame buffer. Frames larger than this are
@@ -19,7 +19,7 @@ async fn read_frame_impl<R: AsyncRead + Unpin>(reader: &mut R, max_size: usize) 
     let len = u32::from_be_bytes(len_buf) as usize;
 
     if len > max_size {
-        return Err(AmuxError::InvalidMessage(format!(
+        return Err(TransportError::InvalidMessage(format!(
             "frame too large: {} bytes exceeds {} byte limit",
             len, max_size
         )));
@@ -188,7 +188,7 @@ mod tests {
         let payload = vec![0xAB; max_size + 1];
         write_frame_impl(&mut a, &payload, true).await.unwrap();
         let err = read_frame_impl(&mut b, max_size).await.unwrap_err();
-        assert!(matches!(err, AmuxError::InvalidMessage(_)));
+        assert!(matches!(err, TransportError::InvalidMessage(_)));
     }
 
     #[tokio::test]
@@ -196,7 +196,7 @@ mod tests {
         let (a, mut b) = tokio::io::duplex(4096);
         drop(a);
         let err = read_frame_impl(&mut b, 1024).await.unwrap_err();
-        assert!(matches!(err, AmuxError::Io(_)));
+        assert!(matches!(err, TransportError::Io(_)));
     }
 
     #[tokio::test]
@@ -206,7 +206,7 @@ mod tests {
         a.write_all(&100u32.to_be_bytes()).await.unwrap();
         drop(a);
         let err = read_frame_impl(&mut b, 1024).await.unwrap_err();
-        assert!(matches!(err, AmuxError::Io(_)));
+        assert!(matches!(err, TransportError::Io(_)));
     }
 
     #[tokio::test]
@@ -246,6 +246,6 @@ mod tests {
         a.write_all(&partial).await.unwrap();
         drop(a);
         let err = read_frame_impl(&mut b, claimed_size).await.unwrap_err();
-        assert!(matches!(err, AmuxError::Io(_)));
+        assert!(matches!(err, TransportError::Io(_)));
     }
 }

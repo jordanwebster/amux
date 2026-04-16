@@ -6,29 +6,27 @@
 
 use super::accept::tcp_connect;
 use super::connection::{
-    ConnectionContext, cancel_subscriptions_matching, cleanup_subscription, extend_subscription,
-    register_subscription, unsubscribe_subscription,
+    ConnectionContext, ConnectionError, cancel_subscriptions_matching, cleanup_subscription,
+    extend_subscription, register_subscription, unsubscribe_subscription,
 };
 use super::routing::{
-    announce_agent_message, broadcast_to_peers, connection_tx, create_agent, delete_local_agent,
-    handle_subscribe, rename_local_agent, resume_agents, withdraw_agent,
+    CreateAgentError, SubscribeError, announce_agent_message, broadcast_to_peers, connection_tx,
+    create_agent, delete_local_agent, handle_subscribe, rename_local_agent, resume_agents,
+    withdraw_agent,
 };
 use super::{
     SUBSCRIPTION_LEASE_DURATION, SubscriptionMode, send_routable_via_full_dst,
     subscription_lease_ms,
 };
-use crate::agent_registry::Agent;
-use crate::agents::{AgentSession, ClaudeSession, StopPolicy};
+use crate::agent::{Agent, AgentSession, ExternalHookBootstrap, HookOutcome, StopPolicy};
 use crate::buffer::{BroadcastReader, BufferPolicy};
-use crate::claude::types::{ClaudeHook, Hook};
-use crate::error::{AmuxError, Result};
-use crate::message::{
+use crate::protocol::message::{
     Command, DirectMessage, Message, ProtocolError, RoutableMessage, SubscribeQuery,
     SubscriptionCloseReason, SubscriptionId,
 };
-use crate::route::Route;
+use crate::protocol::route::Route;
+use crate::transport::TransportError;
 use std::future::Future;
-use std::path::PathBuf;
 use std::sync::atomic::Ordering;
 use tokio::sync::{mpsc, oneshot};
 use tokio::time::Instant;
@@ -178,9 +176,9 @@ async fn spawn_subscription_stream<R: SubscriptionReader>(
     );
 }
 
-fn subscribe_error(err: &AmuxError) -> ProtocolError {
+fn subscribe_error(err: &SubscribeError) -> ProtocolError {
     match err {
-        AmuxError::AgentNotFound(_) => ProtocolError::NoAgentFound,
+        SubscribeError::AgentNotFound(_) => ProtocolError::NoAgentFound,
         _ => ProtocolError::ServerError {
             message: err.to_string(),
         },
@@ -241,7 +239,7 @@ pub(super) async fn handle_message(
     tx: &mpsc::Sender<Message>,
     msg: Message,
     ctx: &ConnectionContext,
-) -> Result<()> {
+) -> super::connection::Result<()> {
     match &msg {
         Message::Routable { .. } => tracing::trace!("received routable"),
         _ => tracing::debug!(msg_type = msg.type_label(), "received message"),
@@ -286,7 +284,7 @@ async fn handle_routable(
     request_id: u64,
     payload: Vec<u8>,
     ctx: &ConnectionContext,
-) -> Result<()> {
+) -> super::connection::Result<()> {
     // Check if this message needs forwarding — payload forwarded verbatim
     if let Some(next_hop) = dst.pop() {
         let route_tx = {
@@ -679,9 +677,10 @@ async fn handle_routable(
                 (state.host_id, state.is_cloud_server)
             };
             let result = if is_cloud_server {
-                Err(AmuxError::ServerError(
-                    "cloud relays do not host local agents".to_string(),
-                ))
+                Err(CreateAgentError::RegisterLocal {
+                    agent_id,
+                    message: "cloud relays do not host local agents".to_string(),
+                })
             } else {
                 create_agent(&ctx.user_state, &ctx.event_tx, req, ctx.user_id, host_id).await
             };
@@ -840,7 +839,7 @@ async fn handle_command(
     tx: &mpsc::Sender<Message>,
     command: Command,
     ctx: &ConnectionContext,
-) -> Result<()> {
+) -> super::connection::Result<()> {
     match command {
         Command::Shutdown => {
             tracing::info!("shutdown requested");
@@ -886,7 +885,7 @@ async fn handle_command(
         }
 
         Command::Debug { verbose, format } => {
-            let dump = crate::debug::dump_server_debug_info(&ctx.state, format, verbose).await;
+            let dump = super::debug::dump_server_debug_info(&ctx.state, format, verbose).await;
             let _ = tx
                 .send(Message::Command {
                     command: Command::DebugResult { dump },
@@ -903,70 +902,41 @@ async fn handle_command(
             let _ = tx
                 .send(Message::Command {
                     command: Command::ListAgentsResult {
-                        agents: agents.into_iter().collect(),
+                        agents: agents.into_iter().map(Into::into).collect(),
                     },
                 })
                 .await;
             Ok(())
         }
 
-        Command::HandleHook { agent_id, hook } => {
-            let hook_type = match hook.as_ref() {
-                Hook::Claude(ClaudeHook::SessionStart(_), _) => "SessionStart",
-                Hook::Claude(ClaudeHook::PermissionRequest(_), _) => "PermissionRequest",
-                Hook::Claude(ClaudeHook::Stop(_), _) => "Stop",
-                Hook::Claude(ClaudeHook::SessionEnd(_), _) => "SessionEnd",
-                Hook::Claude(ClaudeHook::Notification(_), _) => "Notification",
-                Hook::Claude(ClaudeHook::Unknown, _) => "Unknown",
-            };
-            tracing::debug!(hook_type, %agent_id, "received hook event");
-
-            // Unknown hook variants should be filtered client-side; warn and ack
-            if matches!(hook.as_ref(), Hook::Claude(ClaudeHook::Unknown, _)) {
-                tracing::warn!(%agent_id, "received unknown hook variant");
-                let _ = tx
-                    .send(Message::Command {
-                        command: Command::HandleHookResult { error: None },
-                    })
-                    .await;
-                return Ok(());
-            }
+        Command::HandleHook {
+            agent_id,
+            provider,
+            payload,
+            external,
+        } => {
+            tracing::debug!(%agent_id, ?provider, external, "received hook event");
 
             let mut session_to_stop = None;
             let result = {
                 let mut us = ctx.user_state.write().await;
-                let is_session_end =
-                    matches!(hook.as_ref(), Hook::Claude(ClaudeHook::SessionEnd(_), _));
                 if let Some(session) = us.agents.get_mut(&agent_id) {
-                    let is_readonly = session.readonly();
-                    let r =
-                        session
-                            .handle_hook(*hook)
-                            .await
-                            .map_err(|e| ProtocolError::ServerError {
-                                message: format!("hook handling failed: {e}"),
-                            });
-                    if r.is_ok() && is_session_end && is_readonly {
-                        session_to_stop = withdraw_agent(&mut us, agent_id);
+                    match session.handle_hook(provider, &payload).await {
+                        Ok(HookOutcome::Noop | HookOutcome::KeepSession) => Ok(()),
+                        Ok(HookOutcome::WithdrawSession) => {
+                            session_to_stop = withdraw_agent(&mut us, agent_id);
+                            Ok(())
+                        }
+                        Err(error) => Err(error.into_protocol_error()),
                     }
-                    r
-                } else if is_session_end {
-                    tracing::debug!(%agent_id, "ignoring SessionEnd for unknown session");
-                    Ok(())
+                } else if !external {
+                    tracing::warn!(%agent_id, ?provider, "hook target not found");
+                    Err(ProtocolError::NoAgentFound)
                 } else {
-                    // External session — create readonly agent from hook data
-                    let Hook::Claude(claude_hook, _) = hook.as_ref();
-                    if let Some(cwd) = claude_hook.cwd()
-                        && let Some(_transcript_path) = claude_hook.transcript_path()
+                    match AgentSession::bootstrap_external_hook(agent_id, provider, &payload).await
                     {
-                        let wd = PathBuf::from(cwd);
-                        let mut session =
-                            AgentSession::Claude(ClaudeSession::new_readonly(agent_id, wd.clone()));
-                        if let Err(e) = session.handle_hook(*hook).await {
-                            Err(ProtocolError::ServerError {
-                                message: format!("hook handling failed: {e}"),
-                            })
-                        } else {
+                        Ok(ExternalHookBootstrap::Noop) => Ok(()),
+                        Ok(ExternalHookBootstrap::Register(session)) => {
                             let host_id = {
                                 let state = ctx.state.read().await;
                                 state.host_id
@@ -975,6 +945,7 @@ async fn handle_command(
                             let announce = announce_agent_message(&info);
                             us.agents.insert(agent_id, session);
                             if let Err(e) = us.registry.register_local(info) {
+                                us.agents.remove(&agent_id);
                                 Err(ProtocolError::ServerError {
                                     message: format!(
                                         "failed to register readonly agent {agent_id}: {e}"
@@ -985,15 +956,11 @@ async fn handle_command(
                                     session.maybe_start_name_sniffer(ctx.user_id, &ctx.event_tx);
                                 }
                                 broadcast_to_peers(&mut us, &announce, None);
-                                tracing::info!(%agent_id, "created readonly session from external hook");
+                                tracing::info!(%agent_id, ?provider, "created readonly session from external hook");
                                 Ok(())
                             }
                         }
-                    } else {
-                        tracing::warn!(%agent_id, "no agent found for hook");
-                        Err(ProtocolError::ServerError {
-                            message: format!("No agent found with agent_id: {agent_id}"),
-                        })
+                        Err(error) => Err(error.into_protocol_error()),
                     }
                 }
             };
@@ -1016,7 +983,7 @@ async fn handle_command(
 
         Command::ResolveAgent { identifier } => {
             let us = ctx.user_state.read().await;
-            let agent = us.registry.resolve(&us.hosts, &identifier);
+            let agent = us.registry.resolve(&us.hosts, &identifier).map(Into::into);
             let _ = tx
                 .send(Message::Command {
                     command: Command::ResolveAgentResult { agent },
@@ -1064,7 +1031,7 @@ async fn handle_command(
                     .await;
                 return Ok(());
             }
-            let suspended = match crate::state::load_and_remove_suspended(&state_path) {
+            let suspended = match crate::suspend::load_and_remove_suspended(&state_path) {
                 Ok(s) => s,
                 Err(e) => {
                     tracing::error!(error = %e, "failed to load suspended agents");
@@ -1125,7 +1092,7 @@ async fn handle_direct(
     tx: &mpsc::Sender<Message>,
     message: DirectMessage,
     ctx: &ConnectionContext,
-) -> Result<()> {
+) -> super::connection::Result<()> {
     match message {
         // In-band re-authentication for token refresh on established connections.
         DirectMessage::Reauth { token } => {
@@ -1167,7 +1134,7 @@ async fn handle_direct(
                                 },
                             })
                             .await;
-                        return Err(AmuxError::UpgradeRequired {
+                        return Err(ConnectionError::UpgradeRequired {
                             minimum_version: min_ver_str.clone(),
                             client_version: cv,
                         });
@@ -1191,7 +1158,7 @@ async fn handle_direct(
                     Ok(claims) => {
                         let token_user_id = claims.sub.parse::<uuid::Uuid>().map_err(|_| {
                             tracing::error!(sub = %claims.sub, "re-auth invalid user_id");
-                            AmuxError::InvalidCredentials
+                            ConnectionError::InvalidCredentials
                         })?;
                         if token_user_id != ctx.user_id {
                             tracing::error!("re-auth user_id mismatch");
@@ -1202,7 +1169,7 @@ async fn handle_direct(
                                     },
                                 })
                                 .await;
-                            return Err(AmuxError::InvalidCredentials);
+                            return Err(ConnectionError::InvalidCredentials);
                         }
                         tracing::debug!("re-authenticated");
                     }
@@ -1344,7 +1311,7 @@ async fn handle_direct(
             let mut our_route = received_route;
             our_route.push(&ctx.link_name);
 
-            let info = crate::message::Host {
+            let info = crate::protocol::message::Host {
                 id,
                 name: name.clone(),
                 route: our_route.clone(),
@@ -1464,10 +1431,10 @@ async fn handle_direct(
             })
             .await
             .map_err(|_| {
-                AmuxError::Io(std::io::Error::new(
+                ConnectionError::Transport(TransportError::Io(std::io::Error::new(
                     std::io::ErrorKind::BrokenPipe,
                     "outgoing channel closed while sending heartbeat ack",
-                ))
+                )))
             })?;
             Ok(())
         }
@@ -1490,12 +1457,13 @@ async fn handle_direct(
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::agents::{AgentSession, LocalAgentNameSource, SessionEvent};
-    use crate::claude::types::HookCommon;
-    use crate::message::{
-        AgentType, Command, CreateAgentRequest, DirectMessage, RenameAgentRequest, SubscribeQuery,
+    use crate::agent::claude::hooks::{ClaudeHook, HookCommon, ParsedClaudeHook};
+    use crate::agent::{AgentSession, ClaudeSession, LocalAgentNameSource, SessionEvent};
+    use crate::protocol::message::{
+        AgentType, Command, CreateAgentRequest, DirectMessage, HookProvider, RenameAgentRequest,
+        SubscribeQuery,
     };
-    use crate::route::Route;
+    use crate::protocol::route::Route;
     use crate::server::test_helpers::{test_ctx, test_state};
     use crate::server::{
         ConnectionHandle, LOCAL_USER_ID, SUBSCRIPTION_LEASE_DURATION, ServerUserState,
@@ -1535,13 +1503,23 @@ mod tests {
         Some("claude_pty_v1".to_string())
     }
 
+    fn claude_hook_command(agent_id: Uuid, hook: ClaudeHook, external: bool) -> Command {
+        let parsed = ParsedClaudeHook::from_typed(hook);
+        Command::HandleHook {
+            agent_id,
+            provider: HookProvider::Claude,
+            payload: serde_json::to_vec(&parsed.raw).unwrap(),
+            external,
+        }
+    }
+
     /// Create an AgentSession::TestAgent from a CreateAgentRequest.
-    fn create_test_session(req: &crate::message::CreateAgentRequest) -> AgentSession {
+    fn create_test_session(req: &crate::protocol::message::CreateAgentRequest) -> AgentSession {
         let cmd = match &req.agent_type {
-            crate::message::AgentType::TestAgent { command: cmd } => cmd.clone(),
+            crate::protocol::message::AgentType::TestAgent { command: cmd } => cmd.clone(),
             _ => panic!("expected TestAgent"),
         };
-        let mut inner = crate::agents::TestAgentSession::new(req, cmd);
+        let mut inner = crate::agent::TestAgentSession::new(req, cmd);
         inner.start().unwrap();
         AgentSession::TestAgent(inner)
     }
@@ -1577,7 +1555,7 @@ mod tests {
         let mut us = user_state.write().await;
         us.hosts
             .entry(info.host_id)
-            .or_insert_with(|| crate::message::Host {
+            .or_insert_with(|| crate::protocol::message::Host {
                 id: info.host_id,
                 name: format!("host-{}", info.host_id),
                 route: info.route.clone(),
@@ -1600,7 +1578,7 @@ mod tests {
             terminal_size: None,
             args: vec![],
         };
-        let mut session = AgentSession::Claude(crate::agents::ClaudeSession::new(&req));
+        let mut session = AgentSession::Claude(crate::agent::ClaudeSession::new(&req));
         session.set_local_name(name.map(str::to_owned), source);
         let info = session.to_agent(Uuid::new_v4());
 
@@ -1730,7 +1708,7 @@ mod tests {
         let mut us = user_state.write().await;
         us.hosts.insert(
             remote_host_id,
-            crate::message::Host {
+            crate::protocol::message::Host {
                 id: remote_host_id,
                 name: "remote-host".to_string(),
                 route: Route::from_link("peer-debug"),
@@ -1778,7 +1756,7 @@ mod tests {
             &tx,
             Command::Debug {
                 verbose: true,
-                format: crate::message::DebugFormat::Yaml,
+                format: crate::protocol::message::DebugFormat::Yaml,
             },
             &ctx,
         )
@@ -1811,7 +1789,7 @@ mod tests {
             &tx,
             Command::Debug {
                 verbose: true,
-                format: crate::message::DebugFormat::Json,
+                format: crate::protocol::message::DebugFormat::Json,
             },
             &ctx,
         )
@@ -1845,7 +1823,7 @@ mod tests {
             let mut us = user_state.write().await;
             us.hosts.insert(
                 remote_host_id,
-                crate::message::Host {
+                crate::protocol::message::Host {
                     id: remote_host_id,
                     name: "remote-host".to_string(),
                     route: Route::from_link("test-link"),
@@ -1894,7 +1872,7 @@ mod tests {
             route.push("test-link");
             us.hosts.insert(
                 host_id,
-                crate::message::Host {
+                crate::protocol::message::Host {
                     id: host_id,
                     name: "remote-host".to_string(),
                     route,
@@ -1938,7 +1916,7 @@ mod tests {
             let mut us = user_state.write().await;
             us.hosts.insert(
                 host_id,
-                crate::message::Host {
+                crate::protocol::message::Host {
                     id: host_id,
                     name: "remote-host".to_string(),
                     route: Route::from_link("other-link"),
@@ -1981,7 +1959,7 @@ mod tests {
             let mut us = user_state.write().await;
             us.hosts.insert(
                 host_id,
-                crate::message::Host {
+                crate::protocol::message::Host {
                     id: host_id,
                     name: "remote-host".to_string(),
                     route: Route::from_link("other-link"),
@@ -2037,14 +2015,14 @@ mod tests {
         let agent_id = Uuid::new_v4();
         {
             let mut us = user_state.write().await;
-            let req = crate::message::CreateAgentRequest {
+            let req = crate::protocol::message::CreateAgentRequest {
                 agent_id,
                 name: Some("local".to_string()),
-                agent_type: crate::message::AgentType::TestAgent {
+                agent_type: crate::protocol::message::AgentType::TestAgent {
                     command: dummy_pty_command(),
                 },
                 working_dir: dummy_working_dir(),
-                terminal_size: Some(crate::message::TerminalSize { rows: 24, cols: 80 }),
+                terminal_size: Some(crate::protocol::message::TerminalSize { rows: 24, cols: 80 }),
                 args: vec![],
             };
             let session = create_test_session(&req);
@@ -2160,7 +2138,7 @@ mod tests {
             let mut us = user_state.write().await;
             us.hosts.insert(
                 first_host_id,
-                crate::message::Host {
+                crate::protocol::message::Host {
                     id: first_host_id,
                     name: "first-host".to_string(),
                     route: Route::from_link("test-link"),
@@ -2169,7 +2147,7 @@ mod tests {
             );
             us.hosts.insert(
                 second_host_id,
-                crate::message::Host {
+                crate::protocol::message::Host {
                     id: second_host_id,
                     name: "second-host".to_string(),
                     route: Route::from_link("test-link"),
@@ -2435,7 +2413,7 @@ mod tests {
         let mut peer_rx = add_peer_link(&user_state, "peer-a").await;
 
         let agent_id = Uuid::new_v4();
-        let session = AgentSession::Claude(crate::agents::ClaudeSession::new_readonly(
+        let session = AgentSession::Claude(crate::agent::ClaudeSession::new_readonly(
             agent_id,
             PathBuf::from("/tmp"),
         ));
@@ -2683,7 +2661,7 @@ mod tests {
             let mut us = user_state.write().await;
             us.hosts.insert(
                 host_id,
-                crate::message::Host {
+                crate::protocol::message::Host {
                     id: host_id,
                     name: "remote-parent".to_string(),
                     route: Route::from_link("old-link"),
@@ -2692,7 +2670,7 @@ mod tests {
             );
             us.hosts.insert(
                 child_host_id,
-                crate::message::Host {
+                crate::protocol::message::Host {
                     id: child_host_id,
                     name: "remote-child".to_string(),
                     route: child_route.clone(),
@@ -2701,7 +2679,7 @@ mod tests {
             );
             us.hosts.insert(
                 grandchild_host_id,
-                crate::message::Host {
+                crate::protocol::message::Host {
                     id: grandchild_host_id,
                     name: "remote-grandchild".to_string(),
                     route: grandchild_route,
@@ -2804,7 +2782,7 @@ mod tests {
             let mut us = user_state.write().await;
             us.hosts.insert(
                 host_id,
-                crate::message::Host {
+                crate::protocol::message::Host {
                     id: host_id,
                     name: "remote".to_string(),
                     route: Route::from_link("test-link"),
@@ -2840,7 +2818,7 @@ mod tests {
             let mut us = user_state.write().await;
             us.hosts.insert(
                 host_id,
-                crate::message::Host {
+                crate::protocol::message::Host {
                     id: host_id,
                     name: "mobile".to_string(),
                     route: full_route.clone(),
@@ -2895,7 +2873,7 @@ mod tests {
             let mut us = user_state.write().await;
             us.hosts.insert(
                 host_id,
-                crate::message::Host {
+                crate::protocol::message::Host {
                     id: host_id,
                     name: "remote".to_string(),
                     route: Route::from_link("other-link"),
@@ -2904,7 +2882,7 @@ mod tests {
             );
             us.hosts.insert(
                 child_host_id,
-                crate::message::Host {
+                crate::protocol::message::Host {
                     id: child_host_id,
                     name: "stale-child".to_string(),
                     route: child_route.clone(),
@@ -2968,7 +2946,7 @@ mod tests {
             let mut us = user_state.write().await;
             us.hosts.insert(
                 child_host_id,
-                crate::message::Host {
+                crate::protocol::message::Host {
                     id: child_host_id,
                     name: "orphan-child".to_string(),
                     route: child_route.clone(),
@@ -3568,7 +3546,7 @@ mod tests {
         let (tx, written) = mock_tx();
 
         let agent_id = Uuid::new_v4();
-        let session = AgentSession::Claude(crate::agents::ClaudeSession::new_readonly(
+        let session = AgentSession::Claude(crate::agent::ClaudeSession::new_readonly(
             agent_id,
             PathBuf::from("/tmp"),
         ));
@@ -3619,7 +3597,7 @@ mod tests {
         let _route_rx = setup_route(&user_state).await;
 
         let agent_id = Uuid::new_v4();
-        let session = AgentSession::Claude(crate::agents::ClaudeSession::new_readonly(
+        let session = AgentSession::Claude(crate::agent::ClaudeSession::new_readonly(
             agent_id,
             PathBuf::from("/tmp"),
         ));
@@ -3696,7 +3674,7 @@ mod tests {
             let mut us = user_state.write().await;
             us.hosts.insert(
                 host_id,
-                crate::message::Host {
+                crate::protocol::message::Host {
                     id: host_id,
                     name: "remote".to_string(),
                     route: Route::from_link("test-link"),
@@ -3705,7 +3683,7 @@ mod tests {
             );
             us.hosts.insert(
                 deep_host_id,
-                crate::message::Host {
+                crate::protocol::message::Host {
                     id: deep_host_id,
                     name: "deep-remote".to_string(),
                     route: deep_route.clone(),
@@ -3714,7 +3692,7 @@ mod tests {
             );
             us.hosts.insert(
                 other_host_id,
-                crate::message::Host {
+                crate::protocol::message::Host {
                     id: other_host_id,
                     name: "other-remote".to_string(),
                     route: Route::from_link("other-link"),
@@ -3810,14 +3788,14 @@ mod tests {
     /// Insert a local test session into user_state.agents.
     async fn insert_test_session(user_state: &Arc<RwLock<ServerUserState>>, agent_id: Uuid) {
         let mut us = user_state.write().await;
-        let req = crate::message::CreateAgentRequest {
+        let req = crate::protocol::message::CreateAgentRequest {
             agent_id,
             name: Some("hook-test".to_string()),
-            agent_type: crate::message::AgentType::TestAgent {
+            agent_type: crate::protocol::message::AgentType::TestAgent {
                 command: dummy_pty_command(),
             },
             working_dir: dummy_working_dir(),
-            terminal_size: Some(crate::message::TerminalSize { rows: 24, cols: 80 }),
+            terminal_size: Some(crate::protocol::message::TerminalSize { rows: 24, cols: 80 }),
             args: vec![],
         };
         let session = create_test_session(&req);
@@ -3831,22 +3809,15 @@ mod tests {
         let (tx, written) = mock_tx();
 
         let agent_id = Uuid::new_v4();
-        let hook = Hook::from_claude(ClaudeHook::SessionStart(HookCommon {
+        let hook = ClaudeHook::SessionStart(HookCommon {
             session_id: Uuid::new_v4(),
             transcript_path: "/tmp/transcript.jsonl".to_string(),
             cwd: "/tmp".to_string(),
-        }));
+        });
 
-        handle_command(
-            &tx,
-            Command::HandleHook {
-                agent_id,
-                hook: Box::new(hook),
-            },
-            &ctx,
-        )
-        .await
-        .unwrap();
+        handle_command(&tx, claude_hook_command(agent_id, hook, true), &ctx)
+            .await
+            .unwrap();
 
         tokio::task::yield_now().await;
 
@@ -3875,22 +3846,15 @@ mod tests {
         let (tx, written) = mock_tx();
 
         let agent_id = Uuid::new_v4();
-        let hook = Hook::from_claude(ClaudeHook::SessionEnd(HookCommon {
+        let hook = ClaudeHook::SessionEnd(HookCommon {
             session_id: Uuid::new_v4(),
             transcript_path: "/tmp/transcript.jsonl".to_string(),
             cwd: "/tmp".to_string(),
-        }));
+        });
 
-        handle_command(
-            &tx,
-            Command::HandleHook {
-                agent_id,
-                hook: Box::new(hook),
-            },
-            &ctx,
-        )
-        .await
-        .unwrap();
+        handle_command(&tx, claude_hook_command(agent_id, hook, true), &ctx)
+            .await
+            .unwrap();
 
         tokio::task::yield_now().await;
 
@@ -3921,27 +3885,26 @@ mod tests {
         let (state, user_state) = test_state().await;
 
         let agent_id = Uuid::new_v4();
-        insert_test_session(&user_state, agent_id).await;
+        insert_local_claude(
+            &user_state,
+            agent_id,
+            Some("hook-test"),
+            LocalAgentNameSource::Amux,
+        )
+        .await;
 
         let ctx = test_ctx(state, user_state);
         let (tx, written) = mock_tx();
 
-        let hook = Hook::from_claude(ClaudeHook::SessionStart(HookCommon {
+        let hook = ClaudeHook::SessionStart(HookCommon {
             session_id: Uuid::new_v4(),
             transcript_path: "/tmp/nonexistent_transcript.jsonl".to_string(),
             cwd: "/tmp".to_string(),
-        }));
+        });
 
-        handle_command(
-            &tx,
-            Command::HandleHook {
-                agent_id,
-                hook: Box::new(hook),
-            },
-            &ctx,
-        )
-        .await
-        .unwrap();
+        handle_command(&tx, claude_hook_command(agent_id, hook, true), &ctx)
+            .await
+            .unwrap();
 
         tokio::task::yield_now().await;
 
@@ -3967,22 +3930,15 @@ mod tests {
         let (tx, written) = mock_tx();
 
         let agent_id = Uuid::new_v4();
-        let hook = Hook::from_claude(ClaudeHook::PermissionRequest(HookCommon {
+        let hook = ClaudeHook::PermissionRequest(HookCommon {
             session_id: Uuid::new_v4(),
             transcript_path: "/tmp".to_string(),
             cwd: "/tmp".to_string(),
-        }));
+        });
 
-        handle_command(
-            &tx,
-            Command::HandleHook {
-                agent_id,
-                hook: Box::new(hook),
-            },
-            &ctx,
-        )
-        .await
-        .unwrap();
+        handle_command(&tx, claude_hook_command(agent_id, hook, true), &ctx)
+            .await
+            .unwrap();
 
         tokio::task::yield_now().await;
 
@@ -4009,27 +3965,26 @@ mod tests {
         let (state, user_state) = test_state().await;
 
         let agent_id = Uuid::new_v4();
-        insert_test_session(&user_state, agent_id).await;
+        insert_local_claude(
+            &user_state,
+            agent_id,
+            Some("hook-test"),
+            LocalAgentNameSource::Amux,
+        )
+        .await;
 
         let ctx = test_ctx(state, user_state);
         let (tx, written) = mock_tx();
 
-        let hook = Hook::from_claude(ClaudeHook::PermissionRequest(HookCommon {
+        let hook = ClaudeHook::PermissionRequest(HookCommon {
             session_id: Uuid::new_v4(),
             transcript_path: "/tmp".to_string(),
             cwd: "/tmp".to_string(),
-        }));
+        });
 
-        handle_command(
-            &tx,
-            Command::HandleHook {
-                agent_id,
-                hook: Box::new(hook),
-            },
-            &ctx,
-        )
-        .await
-        .unwrap();
+        handle_command(&tx, claude_hook_command(agent_id, hook, true), &ctx)
+            .await
+            .unwrap();
 
         tokio::task::yield_now().await;
 
@@ -4055,22 +4010,15 @@ mod tests {
         let (tx, written) = mock_tx();
 
         let agent_id = Uuid::new_v4();
-        let hook = Hook::from_claude(ClaudeHook::Stop(HookCommon {
+        let hook = ClaudeHook::Stop(HookCommon {
             session_id: Uuid::new_v4(),
             transcript_path: "/tmp".to_string(),
             cwd: "/tmp".to_string(),
-        }));
+        });
 
-        handle_command(
-            &tx,
-            Command::HandleHook {
-                agent_id,
-                hook: Box::new(hook),
-            },
-            &ctx,
-        )
-        .await
-        .unwrap();
+        handle_command(&tx, claude_hook_command(agent_id, hook, true), &ctx)
+            .await
+            .unwrap();
 
         tokio::task::yield_now().await;
 
@@ -4096,27 +4044,26 @@ mod tests {
         let (state, user_state) = test_state().await;
 
         let agent_id = Uuid::new_v4();
-        insert_test_session(&user_state, agent_id).await;
+        insert_local_claude(
+            &user_state,
+            agent_id,
+            Some("hook-test"),
+            LocalAgentNameSource::Amux,
+        )
+        .await;
 
         let ctx = test_ctx(state, user_state);
         let (tx, written) = mock_tx();
 
-        let hook = Hook::from_claude(ClaudeHook::Stop(HookCommon {
+        let hook = ClaudeHook::Stop(HookCommon {
             session_id: Uuid::new_v4(),
             transcript_path: "/tmp".to_string(),
             cwd: "/tmp".to_string(),
-        }));
+        });
 
-        handle_command(
-            &tx,
-            Command::HandleHook {
-                agent_id,
-                hook: Box::new(hook),
-            },
-            &ctx,
-        )
-        .await
-        .unwrap();
+        handle_command(&tx, claude_hook_command(agent_id, hook, true), &ctx)
+            .await
+            .unwrap();
 
         tokio::task::yield_now().await;
 
@@ -4142,7 +4089,7 @@ mod tests {
         let (tx, written) = mock_tx();
 
         let agent_id = Uuid::new_v4();
-        let session = AgentSession::Claude(crate::agents::ClaudeSession::new_readonly(
+        let session = AgentSession::Claude(crate::agent::ClaudeSession::new_readonly(
             agent_id,
             PathBuf::from("/tmp"),
         ));
@@ -4153,22 +4100,15 @@ mod tests {
             us.registry.register_local(info).unwrap();
         }
 
-        let hook = Hook::from_claude(ClaudeHook::SessionEnd(HookCommon {
+        let hook = ClaudeHook::SessionEnd(HookCommon {
             session_id: Uuid::new_v4(),
             transcript_path: "/tmp/transcript.jsonl".to_string(),
             cwd: "/tmp".to_string(),
-        }));
+        });
 
-        handle_command(
-            &tx,
-            Command::HandleHook {
-                agent_id,
-                hook: Box::new(hook),
-            },
-            &ctx,
-        )
-        .await
-        .unwrap();
+        handle_command(&tx, claude_hook_command(agent_id, hook, true), &ctx)
+            .await
+            .unwrap();
 
         tokio::task::yield_now().await;
 
@@ -4199,6 +4139,118 @@ mod tests {
     }
 
     #[tokio::test]
+    async fn handle_hook_existing_session_with_wrong_provider_returns_error() {
+        let (state, user_state) = test_state().await;
+        let ctx = test_ctx(state, user_state.clone());
+        let (tx, written) = mock_tx();
+
+        let agent_id = Uuid::new_v4();
+        insert_test_session(&user_state, agent_id).await;
+
+        let hook = ClaudeHook::SessionStart(HookCommon {
+            session_id: Uuid::new_v4(),
+            transcript_path: "/tmp/transcript.jsonl".to_string(),
+            cwd: "/tmp".to_string(),
+        });
+
+        handle_command(&tx, claude_hook_command(agent_id, hook, true), &ctx)
+            .await
+            .unwrap();
+
+        tokio::task::yield_now().await;
+
+        let msgs = written.lock().await;
+        assert_eq!(msgs.len(), 1);
+        let Message::Command {
+            command: Command::HandleHookResult { error },
+        } = &msgs[0]
+        else {
+            panic!("expected HandleHookResult, got {:?}", msgs[0]);
+        };
+        assert!(matches!(
+            error,
+            Some(ProtocolError::ServerError { message })
+                if message.contains("hook provider mismatch")
+        ));
+    }
+
+    #[tokio::test]
+    async fn handle_hook_unknown_session_with_external_false_returns_no_agent_found() {
+        let (state, user_state) = test_state().await;
+        let ctx = test_ctx(state, user_state.clone());
+        let (tx, written) = mock_tx();
+
+        let agent_id = Uuid::new_v4();
+        let hook = ClaudeHook::SessionStart(HookCommon {
+            session_id: Uuid::new_v4(),
+            transcript_path: "/tmp/transcript.jsonl".to_string(),
+            cwd: "/tmp".to_string(),
+        });
+
+        handle_command(&tx, claude_hook_command(agent_id, hook, false), &ctx)
+            .await
+            .unwrap();
+
+        tokio::task::yield_now().await;
+
+        let msgs = written.lock().await;
+        assert_eq!(msgs.len(), 1);
+        let Message::Command {
+            command: Command::HandleHookResult { error },
+        } = &msgs[0]
+        else {
+            panic!("expected HandleHookResult, got {:?}", msgs[0]);
+        };
+        assert_eq!(error, &Some(ProtocolError::NoAgentFound));
+        drop(msgs);
+
+        let us = user_state.read().await;
+        assert!(!us.agents.contains_key(&agent_id));
+    }
+
+    #[tokio::test]
+    async fn handle_hook_unknown_variant_is_acked_without_creating_session() {
+        let (state, user_state) = test_state().await;
+        let ctx = test_ctx(state, user_state.clone());
+        let (tx, written) = mock_tx();
+
+        let agent_id = Uuid::new_v4();
+        let command = Command::HandleHook {
+            agent_id,
+            provider: HookProvider::Claude,
+            payload: serde_json::to_vec(&json!({
+                "hook_event_name": "SomeFutureEvent",
+                "session_id": Uuid::new_v4(),
+                "transcript_path": "/tmp/transcript.jsonl",
+                "cwd": "/tmp"
+            }))
+            .unwrap(),
+            external: true,
+        };
+
+        handle_command(&tx, command, &ctx).await.unwrap();
+
+        tokio::task::yield_now().await;
+
+        let msgs = written.lock().await;
+        assert_eq!(msgs.len(), 1);
+        let Message::Command {
+            command: Command::HandleHookResult { error },
+        } = &msgs[0]
+        else {
+            panic!("expected HandleHookResult, got {:?}", msgs[0]);
+        };
+        assert!(error.is_none(), "unknown Claude hook variants should ack");
+        drop(msgs);
+
+        let us = user_state.read().await;
+        assert!(
+            !us.agents.contains_key(&agent_id),
+            "unknown variants should not create readonly sessions"
+        );
+    }
+
+    #[tokio::test]
     async fn readonly_external_claude_session_gets_name_updates() {
         let (state, user_state) = test_state().await;
         let (event_tx, mut event_rx) = mpsc::channel(16);
@@ -4218,22 +4270,15 @@ mod tests {
         let mut peer_rx = add_peer_link(&user_state, "peer-a").await;
 
         let agent_id = Uuid::new_v4();
-        let hook = Hook::from_claude(ClaudeHook::SessionStart(HookCommon {
+        let hook = ClaudeHook::SessionStart(HookCommon {
             session_id: Uuid::new_v4(),
             transcript_path: "/tmp/transcript.jsonl".to_string(),
             cwd: "/tmp".to_string(),
-        }));
+        });
 
-        handle_command(
-            &tx,
-            Command::HandleHook {
-                agent_id,
-                hook: Box::new(hook),
-            },
-            &ctx,
-        )
-        .await
-        .unwrap();
+        handle_command(&tx, claude_hook_command(agent_id, hook, true), &ctx)
+            .await
+            .unwrap();
 
         tokio::task::yield_now().await;
 
@@ -4264,7 +4309,7 @@ mod tests {
             SessionEvent::NameCandidateChanged {
                 agent_id: id,
                 ref name,
-                source: crate::agents::LocalAgentNameSource::ProviderSlug,
+                source: crate::agent::LocalAgentNameSource::ProviderSlug,
                 ..
             } if id == agent_id && name == "readonly-slug"
         ));
@@ -4683,7 +4728,7 @@ mod tests {
         let mut route_rx = setup_route(&user_state).await;
 
         let agent_id = Uuid::new_v4();
-        let session = AgentSession::Claude(crate::agents::ClaudeSession::new_readonly(
+        let session = AgentSession::Claude(crate::agent::ClaudeSession::new_readonly(
             agent_id,
             PathBuf::from("/tmp"),
         ));

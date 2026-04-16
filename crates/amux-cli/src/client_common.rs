@@ -1,10 +1,10 @@
-use amux::{AmuxError, ConnectPolicy, DaemonOptions, Result};
+use amux::{ConnectPolicy, DaemonOptions};
+use anyhow::{Context, Result};
 use std::path::Path;
 
 pub(super) fn daemon_options() -> Result<DaemonOptions> {
-    let executable = std::env::current_exe().map_err(|e| {
-        AmuxError::Config(format!("failed to determine current executable path: {e}"))
-    })?;
+    let executable =
+        std::env::current_exe().context("failed to determine current executable path")?;
     Ok(DaemonOptions::new(executable))
 }
 
