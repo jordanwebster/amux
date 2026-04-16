@@ -5,13 +5,13 @@ mod direct;
 mod routable;
 mod subscription;
 
-use super::connection::ConnectionContext;
-use crate::protocol::message::Message;
-use tokio::sync::mpsc;
-
 use command::handle_command;
 use direct::handle_direct;
 use routable::handle_routable;
+use tokio::sync::mpsc;
+
+use super::connection::ConnectionContext;
+use crate::protocol::message::Message;
 
 pub(super) async fn handle_message(
     tx: &mpsc::Sender<Message>,

@@ -19,7 +19,6 @@ pub use client::{
 };
 pub use config::{Config, ConfigError, Keybinds, LeaderKey};
 pub use paths::{default_data_dir, default_log_path};
-pub use protocol::Route;
 pub use server::ServerError;
 pub use transport::TransportError;
 

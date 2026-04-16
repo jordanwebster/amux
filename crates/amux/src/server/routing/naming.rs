@@ -1,10 +1,11 @@
+use anyhow::{Result as AnyhowResult, anyhow};
+use uuid::Uuid;
+
 use super::peers::{announce_agent_message, broadcast_to_peers};
 use crate::agent::{Agent, LocalAgentNameSource};
 use crate::protocol::message::RenameAgentRequest;
 use crate::server::ServerUserState;
 use crate::server::registry::AgentRegistryError;
-use anyhow::{Result as AnyhowResult, anyhow};
-use uuid::Uuid;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub(in crate::server) enum LocalNameUpdateOutcome {
@@ -86,7 +87,7 @@ fn rename_local_agent_inner(
 
     us.agents
         .get_mut(&req.agent_id)
-        .unwrap()
+        .expect("agent present: read-only validation above confirmed it")
         .set_local_name(current_name, LocalAgentNameSource::Amux);
     Ok(LocalAgentRenameOutcome::ProvenanceUpdated)
 }
@@ -119,7 +120,7 @@ pub(in crate::server) fn apply_local_name_candidate(
         if source.rank() > current_source.rank() {
             us.agents
                 .get_mut(&agent_id)
-                .unwrap()
+                .expect("agent present: session borrow above proved it")
                 .set_local_name(Some(name), source);
             return LocalNameUpdateOutcome::ProvenanceUpdated;
         }

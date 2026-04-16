@@ -4,13 +4,15 @@
 //! [`create_tls_acceptor`] builds a `TlsAcceptor` from PEM-encoded cert/key
 //! (used by cloud server mode).
 
-use super::{TcpTransport, configure_tcp_keepalive};
-use crate::transport::{Result, TransportError};
-use rustls::pki_types::ServerName;
 use std::sync::Arc;
+
+use rustls::pki_types::ServerName;
 use tokio::net::TcpStream;
 use tokio_rustls::client::TlsStream as ClientTlsStream;
 use tokio_rustls::{TlsAcceptor, TlsConnector};
+
+use super::{TcpTransport, configure_tcp_keepalive};
+use crate::transport::{Result, TransportError};
 
 /// Connect to a TLS-enabled server and return a transport
 pub(crate) async fn tls_connect(
@@ -41,9 +43,10 @@ pub(crate) async fn tls_connect(
 /// Create a TLS acceptor for cloud server mode.
 /// Requires TLS certificate and private key files.
 pub(crate) fn create_tls_acceptor(cert_pem: &[u8], key_pem: &[u8]) -> Result<TlsAcceptor> {
+    use std::io::BufReader;
+
     use rustls::pki_types::CertificateDer;
     use rustls_pemfile::{certs, private_key};
-    use std::io::BufReader;
 
     let certs: Vec<CertificateDer<'static>> = certs(&mut BufReader::new(cert_pem))
         .filter_map(|r| r.ok())

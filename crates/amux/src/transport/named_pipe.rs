@@ -2,14 +2,15 @@
 
 #![cfg(windows)]
 
+use tokio::io::{AsyncRead, AsyncWrite, ReadHalf, WriteHalf, split};
+use tokio::net::windows::named_pipe::NamedPipeClient;
+
 use super::framing::{FrameReader, FrameWriter};
 use super::{
     LengthPrefixed, MAX_FRAME_SIZE, MessageReader, MessageWriter, Transport, TransportSplit,
 };
 use crate::protocol::message::Message;
 use crate::transport::{Result, TransportError};
-use tokio::io::{AsyncRead, AsyncWrite, ReadHalf, WriteHalf, split};
-use tokio::net::windows::named_pipe::NamedPipeClient;
 
 type NamedPipeReadHalf<S> = ReadHalf<S>;
 type NamedPipeWriteHalf<S> = WriteHalf<S>;

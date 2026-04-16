@@ -72,8 +72,9 @@ fn home_dir() -> Option<PathBuf> {
 
 #[cfg(test)]
 mod tests {
-    use super::xdg_dir_with_home;
     use std::path::PathBuf;
+
+    use super::xdg_dir_with_home;
 
     #[cfg(unix)]
     #[test]

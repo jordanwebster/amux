@@ -4,10 +4,10 @@
 //! - Cloud mode configuration (yes/no prompt)
 //! - OAuth device flow authentication
 
-use amux::Config;
-use amux::setup;
-use amux::setup::SetupError;
 use std::io::{self, Write};
+
+use amux::setup::SetupError;
+use amux::{Config, setup};
 
 #[derive(Debug)]
 pub enum InitError {
@@ -59,7 +59,7 @@ pub async fn run_init(config: &mut Config, reset: bool) -> Result<(), InitError>
 
     let mut status = setup::cloud_setup_state(config)?;
 
-    if status.use_cloud_mode.is_none() {
+    if matches!(status, setup::CloudState::NotConfigured) {
         println!();
         println!("amux can connect your local machine to the cloud, allowing you to");
         println!("access your agents from anywhere (mobile, web, other machines).");
@@ -85,7 +85,7 @@ pub async fn run_init(config: &mut Config, reset: bool) -> Result<(), InitError>
         status = setup::cloud_setup_state(config)?;
     }
 
-    if status.use_cloud_mode == Some(true) && !status.has_refresh_token {
+    if matches!(status, setup::CloudState::Unauthenticated) {
         println!("\nStarting authentication...");
         setup::authenticate_cloud(config).await?;
 
@@ -162,10 +162,10 @@ fn parse_prevent_idle_sleep_choice(input: &str) -> Option<bool> {
 
 #[cfg(test)]
 mod tests {
-    use super::{needs_init, parse_prevent_idle_sleep_choice};
-    use amux::Config;
-    use amux::setup;
+    use amux::{Config, setup};
     use tempfile::tempdir;
+
+    use super::{needs_init, parse_prevent_idle_sleep_choice};
 
     #[test]
     fn needs_init_when_prevent_idle_sleep_is_unset() {

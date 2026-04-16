@@ -1,22 +1,24 @@
+use std::collections::HashMap;
+
+use serde::Deserialize;
+use thiserror::Error;
+use uuid::Uuid;
+
 use crate::agent::Agent;
 use crate::protocol::message::Host;
 use crate::protocol::route::Route;
-use serde::Deserialize;
-use std::collections::HashMap;
-use thiserror::Error;
-use uuid::Uuid;
 
 /// Centralized agent tracking with bidirectional name<->UUID mapping.
 /// Tracks both local and remote agents. Routes for remote agents are derived
 /// from the host table at read time.
-pub(crate) struct AgentRegistry {
+pub(super) struct AgentRegistry {
     name_to_uuid: HashMap<String, Uuid>,
     uuid_to_name: HashMap<Uuid, String>,
     entries: HashMap<Uuid, Agent>,
 }
 
 #[derive(Debug, Error)]
-pub(crate) enum AgentRegistryError {
+pub(super) enum AgentRegistryError {
     #[error("Cannot update remote agent: {0}")]
     IsRemote(String),
     #[error("Agent not found: {0}")]
@@ -26,7 +28,7 @@ pub(crate) enum AgentRegistryError {
 }
 
 impl AgentRegistry {
-    pub(crate) fn new() -> Self {
+    pub(super) fn new() -> Self {
         Self {
             name_to_uuid: HashMap::new(),
             uuid_to_name: HashMap::new(),
@@ -35,7 +37,7 @@ impl AgentRegistry {
     }
 
     /// Register a local agent. Errors if UUID exists or name is taken.
-    pub(crate) fn register_local(&mut self, info: Agent) -> Result<(), AgentRegistryError> {
+    pub(super) fn register_local(&mut self, info: Agent) -> Result<(), AgentRegistryError> {
         if self.entries.contains_key(&info.id) {
             return Err(AgentRegistryError::AlreadyExists(info.id.to_string()));
         }
@@ -53,7 +55,7 @@ impl AgentRegistry {
     /// Register a remote agent. Upserts by UUID; clears old name on re-announce.
     /// Stores the latest metadata for the UUID, but keeps alias ownership unique:
     /// a colliding alias stays with its current owner.
-    pub(crate) fn register_remote(&mut self, info: Agent) -> Result<(), AgentRegistryError> {
+    pub(super) fn register_remote(&mut self, info: Agent) -> Result<(), AgentRegistryError> {
         // On re-announce (same UUID), clear the old name mapping
         if let Some(old_name) = self.uuid_to_name.remove(&info.id) {
             // Only remove from name_to_uuid if it still points to this UUID
@@ -79,7 +81,7 @@ impl AgentRegistry {
     ///
     /// The entry must already exist locally. Alias ownership stays unique:
     /// renaming to a colliding alias fails without mutating the registry.
-    pub(crate) fn update_local(&mut self, info: Agent) -> Result<(), AgentRegistryError> {
+    pub(super) fn update_local(&mut self, info: Agent) -> Result<(), AgentRegistryError> {
         let Some(existing) = self.entries.get(&info.id) else {
             return Err(AgentRegistryError::NotFound(info.id.to_string()));
         };
@@ -110,7 +112,7 @@ impl AgentRegistry {
     }
 
     /// Remove an agent by UUID. Returns the removed entry if found.
-    pub(crate) fn remove(&mut self, uuid: &Uuid) -> Option<Agent> {
+    pub(super) fn remove(&mut self, uuid: &Uuid) -> Option<Agent> {
         let info = self.entries.remove(uuid)?;
         if let Some(name) = self.uuid_to_name.remove(uuid)
             && self.name_to_uuid.get(&name) == Some(uuid)
@@ -125,7 +127,7 @@ impl AgentRegistry {
     ///
     /// `host_route` resolves a host_id to its route; agents whose host is
     /// unknown (returns `None`) are skipped.
-    pub(crate) fn remove_where(
+    pub(super) fn remove_where(
         &mut self,
         host_route: impl Fn(Uuid) -> Option<Route>,
         predicate: impl Fn(&Route) -> bool,
@@ -150,14 +152,14 @@ impl AgentRegistry {
     /// 1. "route:id" — parse route, resolve id recursively, return with explicit route
     /// 2. UUID — look up directly
     /// 3. Name — look up via name_to_uuid
-    pub(crate) fn resolve(&self, hosts: &HashMap<Uuid, Host>, identifier: &str) -> Option<Agent> {
+    pub(super) fn resolve(&self, hosts: &HashMap<Uuid, Host>, identifier: &str) -> Option<Agent> {
         // Try splitting on last ':' for route:id format
         match identifier.rsplit_once(':') {
             Some((route_str, id)) => {
                 let deserializer =
                     serde::de::value::StrDeserializer::<serde::de::value::Error>::new(route_str);
-                let supplied_route: Route =
-                    Route::deserialize(deserializer).expect("Route deserialization cannot fail");
+                // A malformed route prefix (e.g. "bad..hop:agent") is a lookup miss, not a bug.
+                let supplied_route: Route = Route::deserialize(deserializer).ok()?;
                 match self.resolve_inner(hosts, id) {
                     // If a fully qualified route is supplied, it must match the one that exists
                     // in the routing table.
@@ -180,12 +182,12 @@ impl AgentRegistry {
     }
 
     /// Get a stored entry by UUID.
-    pub(crate) fn get(&self, uuid: &Uuid) -> Option<&Agent> {
+    pub(super) fn get(&self, uuid: &Uuid) -> Option<&Agent> {
         self.entries.get(uuid)
     }
 
     /// Materialize an entry with its effective route.
-    pub(crate) fn materialize(&self, hosts: &HashMap<Uuid, Host>, uuid: &Uuid) -> Option<Agent> {
+    pub(super) fn materialize(&self, hosts: &HashMap<Uuid, Host>, uuid: &Uuid) -> Option<Agent> {
         let mut info = self.entries.get(uuid)?.clone();
         if info.is_remote() {
             info.route = hosts.get(&info.host_id)?.route.clone();
@@ -196,17 +198,17 @@ impl AgentRegistry {
     }
 
     /// Check if a UUID is registered
-    pub(crate) fn contains(&self, uuid: &Uuid) -> bool {
+    pub(super) fn contains(&self, uuid: &Uuid) -> bool {
         self.entries.contains_key(uuid)
     }
 
     /// Check if an name is taken
-    pub(crate) fn name_taken(&self, name: &str) -> bool {
+    pub(super) fn name_taken(&self, name: &str) -> bool {
         self.name_to_uuid.contains_key(name)
     }
 
     /// List all agents with effective routes populated.
-    pub(crate) fn list_all(&self, hosts: &HashMap<Uuid, Host>) -> Vec<Agent> {
+    pub(super) fn list_all(&self, hosts: &HashMap<Uuid, Host>) -> Vec<Agent> {
         self.entries
             .keys()
             .filter_map(|uuid| self.materialize(hosts, uuid))
@@ -214,22 +216,25 @@ impl AgentRegistry {
     }
 
     /// Count of remote agents
-    pub(crate) fn count_remote(&self) -> usize {
+    pub(super) fn count_remote(&self) -> usize {
         self.entries.values().filter(|e| e.is_remote()).count()
     }
 
     /// Iterate over all entries (for send_initial_announcements)
-    pub(crate) fn iter_entries(&self) -> impl Iterator<Item = (&Uuid, &Agent)> {
+    pub(super) fn iter_entries(&self) -> impl Iterator<Item = (&Uuid, &Agent)> {
         self.entries.iter()
     }
 }
 
 #[cfg(test)]
 mod tests {
-    use super::*;
-    use chrono::Utc;
     use std::collections::HashMap;
     use std::path::PathBuf;
+
+    use chrono::Utc;
+
+    use super::*;
+    use crate::protocol::link::Link;
 
     fn make_info(uuid: Uuid, name: Option<&str>) -> Agent {
         Agent {
@@ -363,12 +368,12 @@ mod tests {
         let mut reg = AgentRegistry::new();
         let id = Uuid::new_v4();
         let host_id = Uuid::new_v4();
-        let hosts = hosts(&[(host_id, Route::from_link("peer-a"))]);
+        let hosts = hosts(&[(host_id, Route::from_link(Link::new("peer-a").unwrap()))]);
         reg.register_remote(make_remote_info(
             id,
             host_id,
             Some("remote1"),
-            Route::from_link("peer-a"),
+            Route::from_link(Link::new("peer-a").unwrap()),
         ))
         .unwrap();
 
@@ -385,21 +390,21 @@ mod tests {
         let host1 = Uuid::new_v4();
         let host2 = Uuid::new_v4();
         let hosts = hosts(&[
-            (host1, Route::from_link("a")),
-            (host2, Route::from_link("b")),
+            (host1, Route::from_link(Link::new("a").unwrap())),
+            (host2, Route::from_link(Link::new("b").unwrap())),
         ]);
         reg.register_remote(make_remote_info(
             id1,
             host1,
             Some("shared"),
-            Route::from_link("a"),
+            Route::from_link(Link::new("a").unwrap()),
         ))
         .unwrap();
         reg.register_remote(make_remote_info(
             id2,
             host2,
             Some("shared"),
-            Route::from_link("b"),
+            Route::from_link(Link::new("b").unwrap()),
         ))
         .unwrap();
 
@@ -417,19 +422,19 @@ mod tests {
         let mut reg = AgentRegistry::new();
         let id = Uuid::new_v4();
         let host_id = Uuid::new_v4();
-        let hosts = hosts(&[(host_id, Route::from_link("a"))]);
+        let hosts = hosts(&[(host_id, Route::from_link(Link::new("a").unwrap()))]);
         reg.register_remote(make_remote_info(
             id,
             host_id,
             Some("old-name"),
-            Route::from_link("a"),
+            Route::from_link(Link::new("a").unwrap()),
         ))
         .unwrap();
         reg.register_remote(make_remote_info(
             id,
             host_id,
             Some("new-name"),
-            Route::from_link("a"),
+            Route::from_link(Link::new("a").unwrap()),
         ))
         .unwrap();
 
@@ -456,7 +461,7 @@ mod tests {
             remote_id,
             remote_host_id,
             Some("old-remote"),
-            Route::from_link("peer-a"),
+            Route::from_link(Link::new("peer-a").unwrap()),
         ))
         .unwrap();
 
@@ -464,7 +469,7 @@ mod tests {
             remote_id,
             remote_host_id,
             Some("taken"),
-            Route::from_link("peer-a"),
+            Route::from_link(Link::new("peer-a").unwrap()),
         ))
         .unwrap();
 
@@ -499,33 +504,33 @@ mod tests {
         let host2 = Uuid::new_v4();
         let host3 = Uuid::new_v4();
         let hosts = hosts(&[
-            (host1, Route::from_link("dead")),
-            (host2, Route::from_link("dead")),
-            (host3, Route::from_link("alive")),
+            (host1, Route::from_link(Link::new("dead").unwrap())),
+            (host2, Route::from_link(Link::new("dead").unwrap())),
+            (host3, Route::from_link(Link::new("alive").unwrap())),
         ]);
         reg.register_remote(make_remote_info(
             id1,
             host1,
             Some("a1"),
-            Route::from_link("dead"),
+            Route::from_link(Link::new("dead").unwrap()),
         ))
         .unwrap();
         reg.register_remote(make_remote_info(
             id2,
             host2,
             Some("a2"),
-            Route::from_link("dead"),
+            Route::from_link(Link::new("dead").unwrap()),
         ))
         .unwrap();
         reg.register_remote(make_remote_info(
             id3,
             host3,
             Some("a3"),
-            Route::from_link("alive"),
+            Route::from_link(Link::new("alive").unwrap()),
         ))
         .unwrap();
 
-        let prefix = Route::from_link("dead");
+        let prefix = Route::from_link(Link::new("dead").unwrap());
         let removed = reg.remove_where(
             |hid| hosts.get(&hid).map(|h| h.route.clone()),
             |r| r.starts_with_route(&prefix),
@@ -541,19 +546,19 @@ mod tests {
         let mut reg = AgentRegistry::new();
         let id = Uuid::new_v4();
         let host_id = Uuid::new_v4();
-        let hosts = hosts(&[(host_id, Route::from_link("host-b"))]);
+        let hosts = hosts(&[(host_id, Route::from_link(Link::new("host-b").unwrap()))]);
         reg.register_remote(make_remote_info(
             id,
             host_id,
             Some("myagent"),
-            Route::from_link("host-b"),
+            Route::from_link(Link::new("host-b").unwrap()),
         ))
         .unwrap();
 
         // "host-b:myagent" should resolve when route matches
         let info = reg.resolve(&hosts, "host-b:myagent").unwrap();
         assert_eq!(info.id, id);
-        assert_eq!(info.route.peek(), Some("host-b"));
+        assert_eq!(info.route.peek(), Some(&Link::new("host-b").unwrap()));
     }
 
     #[test]
@@ -561,12 +566,12 @@ mod tests {
         let mut reg = AgentRegistry::new();
         let id = Uuid::new_v4();
         let host_id = Uuid::new_v4();
-        let hosts = hosts(&[(host_id, Route::from_link("host-a"))]);
+        let hosts = hosts(&[(host_id, Route::from_link(Link::new("host-a").unwrap()))]);
         reg.register_remote(make_remote_info(
             id,
             host_id,
             Some("myagent"),
-            Route::from_link("host-a"),
+            Route::from_link(Link::new("host-a").unwrap()),
         ))
         .unwrap();
 
@@ -579,8 +584,8 @@ mod tests {
         let mut reg = AgentRegistry::new();
         let id = Uuid::new_v4();
         let host_id = Uuid::new_v4();
-        let mut route = Route::from_link("host-b");
-        route.push("host-a");
+        let mut route = Route::from_link(Link::new("host-b").unwrap());
+        route.push(Link::new("host-a").unwrap());
         let hosts = hosts(&[(host_id, route.clone())]);
         reg.register_remote(make_remote_info(id, host_id, Some("agent1"), route))
             .unwrap();
@@ -588,8 +593,8 @@ mod tests {
         let info = reg.resolve(&hosts, "host-a.host-b:agent1").unwrap();
         assert_eq!(info.id, id);
         let mut route = info.route;
-        assert_eq!(route.pop(), Some("host-a".to_string()));
-        assert_eq!(route.pop(), Some("host-b".to_string()));
+        assert_eq!(route.pop(), Some(Link::new("host-a").unwrap()));
+        assert_eq!(route.pop(), Some(Link::new("host-b").unwrap()));
     }
 
     #[test]
@@ -604,14 +609,14 @@ mod tests {
         let local_id = Uuid::new_v4();
         let remote_id = Uuid::new_v4();
         let remote_host_id = Uuid::new_v4();
-        let hosts = hosts(&[(remote_host_id, Route::from_link("peer"))]);
+        let hosts = hosts(&[(remote_host_id, Route::from_link(Link::new("peer").unwrap()))]);
         reg.register_local(make_info(local_id, Some("local")))
             .unwrap();
         reg.register_remote(make_remote_info(
             remote_id,
             remote_host_id,
             Some("remote"),
-            Route::from_link("peer"),
+            Route::from_link(Link::new("peer").unwrap()),
         ))
         .unwrap();
 
@@ -632,8 +637,13 @@ mod tests {
         let id2 = Uuid::new_v4();
         let host_id = Uuid::new_v4();
         reg.register_local(make_info(id1, None)).unwrap();
-        reg.register_remote(make_remote_info(id2, host_id, None, Route::from_link("a")))
-            .unwrap();
+        reg.register_remote(make_remote_info(
+            id2,
+            host_id,
+            None,
+            Route::from_link(Link::new("a").unwrap()),
+        ))
+        .unwrap();
         assert_eq!(reg.count_remote(), 1);
     }
 
@@ -659,33 +669,33 @@ mod tests {
         let host2 = Uuid::new_v4();
         let host3 = Uuid::new_v4();
         let hosts = hosts(&[
-            (host1, Route::from_link("host-a")),
-            (host2, Route::from_link("host-a")),
-            (host3, Route::from_link("host-b")),
+            (host1, Route::from_link(Link::new("host-a").unwrap())),
+            (host2, Route::from_link(Link::new("host-a").unwrap())),
+            (host3, Route::from_link(Link::new("host-b").unwrap())),
         ]);
         reg.register_remote(make_remote_info(
             id1,
             host1,
             Some("a1"),
-            Route::from_link("host-a"),
+            Route::from_link(Link::new("host-a").unwrap()),
         ))
         .unwrap();
         reg.register_remote(make_remote_info(
             id2,
             host2,
             Some("a2"),
-            Route::from_link("host-a"),
+            Route::from_link(Link::new("host-a").unwrap()),
         ))
         .unwrap();
         reg.register_remote(make_remote_info(
             id3,
             host3,
             Some("a3"),
-            Route::from_link("host-b"),
+            Route::from_link(Link::new("host-b").unwrap()),
         ))
         .unwrap();
 
-        let prefix = Route::from_link("host-a");
+        let prefix = Route::from_link(Link::new("host-a").unwrap());
         let removed = reg.remove_where(
             |hid| hosts.get(&hid).map(|h| h.route.clone()),
             |r| r.starts_with_route(&prefix),
@@ -706,9 +716,12 @@ mod tests {
         let host1 = Uuid::new_v4();
         let host2 = Uuid::new_v4();
 
-        let mut route1 = Route::from_link("host-b");
-        route1.push("host-a");
-        let hosts = hosts(&[(host1, route1.clone()), (host2, Route::from_link("host-a"))]);
+        let mut route1 = Route::from_link(Link::new("host-b").unwrap());
+        route1.push(Link::new("host-a").unwrap());
+        let hosts = hosts(&[
+            (host1, route1.clone()),
+            (host2, Route::from_link(Link::new("host-a").unwrap())),
+        ]);
         reg.register_remote(make_remote_info(id1, host1, Some("deep"), route1))
             .unwrap();
 
@@ -716,12 +729,12 @@ mod tests {
             id2,
             host2,
             Some("shallow"),
-            Route::from_link("host-a"),
+            Route::from_link(Link::new("host-a").unwrap()),
         ))
         .unwrap();
 
         // Prefix "host-a" matches both (route starts with host-a)
-        let prefix = Route::from_link("host-a");
+        let prefix = Route::from_link(Link::new("host-a").unwrap());
         let removed = reg.remove_where(
             |hid| hosts.get(&hid).map(|h| h.route.clone()),
             |r| r.starts_with_route(&prefix),
@@ -737,14 +750,17 @@ mod tests {
         let local_id = Uuid::new_v4();
         let remote_id = Uuid::new_v4();
         let remote_host_id = Uuid::new_v4();
-        let hosts = hosts(&[(remote_host_id, Route::from_link("host-a"))]);
+        let hosts = hosts(&[(
+            remote_host_id,
+            Route::from_link(Link::new("host-a").unwrap()),
+        )]);
         reg.register_local(make_info(local_id, Some("local")))
             .unwrap();
         reg.register_remote(make_remote_info(
             remote_id,
             remote_host_id,
             Some("remote"),
-            Route::from_link("host-a"),
+            Route::from_link(Link::new("host-a").unwrap()),
         ))
         .unwrap();
 

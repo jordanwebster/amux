@@ -1,15 +1,12 @@
-use crate::auth::oauth;
-use crate::config::Config;
-use crate::state::{CloudState, State};
-use serde_yaml::{Mapping, Value};
 use std::fs;
 use std::path::{Path, PathBuf};
 
-#[derive(Debug)]
-pub struct CloudSetupState {
-    pub use_cloud_mode: Option<bool>,
-    pub has_refresh_token: bool,
-}
+use serde::{Deserialize, Serialize};
+use serde_yaml::{Mapping, Value};
+
+use crate::auth::oauth;
+use crate::config::Config;
+use crate::state::{CloudState as PersistedCloudState, State};
 
 #[derive(Debug, Clone, Default)]
 pub struct ClaudePluginSetupState {
@@ -27,16 +24,51 @@ pub enum SetupError {
     Config(String),
 }
 
+/// Public cloud onboarding state.
+///
+/// This intentionally redacts persisted credentials. Library callers that need
+/// to know whether cloud auth exists can distinguish `Authenticated` without
+/// ever receiving the refresh token itself.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum CloudState {
+    /// Cloud mode has not been configured. Initial state before `amux init`.
+    NotConfigured,
+    /// The user explicitly opted out of cloud mode.
+    Disabled,
+    /// Cloud mode is enabled but the user has not authenticated.
+    Unauthenticated,
+    /// Cloud mode is enabled and authenticated.
+    Authenticated,
+}
+
+impl CloudState {
+    /// True when cloud mode is turned on (whether or not authenticated).
+    pub fn is_enabled(&self) -> bool {
+        matches!(self, Self::Unauthenticated | Self::Authenticated)
+    }
+
+    /// True when cloud onboarding still needs user input.
+    pub fn needs_init(&self) -> bool {
+        matches!(self, Self::NotConfigured | Self::Unauthenticated)
+    }
+}
+
+impl From<&PersistedCloudState> for CloudState {
+    fn from(value: &PersistedCloudState) -> Self {
+        match value {
+            PersistedCloudState::NotConfigured => Self::NotConfigured,
+            PersistedCloudState::Disabled => Self::Disabled,
+            PersistedCloudState::Unauthenticated => Self::Unauthenticated,
+            PersistedCloudState::Authenticated { .. } => Self::Authenticated,
+        }
+    }
+}
+
 /// Check whether cloud onboarding is incomplete.
 pub fn needs_init(config: &Config) -> bool {
     let state = State::load(&config.state_path).unwrap_or_default();
-    let cloud_needs_init = match state.cloud.use_cloud_mode {
-        None => true,
-        Some(true) => state.cloud.refresh_token.is_none(),
-        Some(false) => false,
-    };
-
-    cloud_needs_init
+    state.cloud.needs_init()
         || (prevent_idle_sleep_supported()
             && prevent_idle_sleep_preference(config)
                 .map(|preference| preference.is_none())
@@ -44,27 +76,32 @@ pub fn needs_init(config: &Config) -> bool {
 }
 
 /// Read current cloud onboarding state.
-pub fn cloud_setup_state(config: &Config) -> Result<CloudSetupState, SetupError> {
+pub fn cloud_setup_state(config: &Config) -> Result<CloudState, SetupError> {
     let state = State::load(&config.state_path).map_err(|e| SetupError::State(e.to_string()))?;
-    Ok(CloudSetupState {
-        use_cloud_mode: state.cloud.use_cloud_mode,
-        has_refresh_token: state.cloud.refresh_token.is_some(),
-    })
+    Ok((&state.cloud).into())
 }
 
 /// Reset cloud onboarding fields in persistent state.
 pub fn reset_cloud_state(config: &Config) -> Result<(), SetupError> {
     State::update(&config.state_path, |s| {
-        s.cloud = CloudState::default();
+        s.cloud = PersistedCloudState::default();
     })
     .map_err(|e| SetupError::State(e.to_string()))?;
     Ok(())
 }
 
-/// Persist cloud mode preference.
+/// Persist cloud mode preference. Preserves an existing refresh token when
+/// re-enabling cloud mode; clears it when disabling.
 pub fn set_use_cloud_mode(config: &Config, use_cloud_mode: bool) -> Result<(), SetupError> {
     State::update(&config.state_path, |s| {
-        s.cloud.use_cloud_mode = Some(use_cloud_mode);
+        s.cloud = if use_cloud_mode {
+            match std::mem::take(&mut s.cloud) {
+                authed @ PersistedCloudState::Authenticated { .. } => authed,
+                _ => PersistedCloudState::Unauthenticated,
+            }
+        } else {
+            PersistedCloudState::Disabled
+        };
     })
     .map_err(|e| SetupError::State(e.to_string()))?;
     Ok(())
@@ -76,7 +113,7 @@ pub async fn authenticate_cloud(config: &Config) -> Result<(), SetupError> {
         .await
         .map_err(|e| SetupError::OAuth(e.to_string()))?;
     State::update(&config.state_path, |s| {
-        s.cloud.refresh_token = Some(refresh_token);
+        s.cloud = PersistedCloudState::Authenticated { refresh_token };
     })
     .map_err(|e| SetupError::State(e.to_string()))?;
     Ok(())
@@ -194,8 +231,9 @@ fn wrap_config_persistence_error(path: &Path, error: SetupError) -> SetupError {
 
 #[cfg(test)]
 mod tests {
-    use super::*;
     use tempfile::tempdir;
+
+    use super::*;
 
     #[test]
     fn prevent_idle_sleep_preference_is_none_when_config_missing() {
@@ -208,6 +246,28 @@ mod tests {
 
         let preference = prevent_idle_sleep_preference(&config).unwrap();
         assert_eq!(preference, None);
+    }
+
+    #[test]
+    fn cloud_setup_state_redacts_refresh_token() {
+        let dir = tempdir().unwrap();
+        let config = Config {
+            state_path: dir.path().join("state.yaml"),
+            ..Config::default()
+        };
+
+        State::update(&config.state_path, |s| {
+            s.cloud = PersistedCloudState::Authenticated {
+                refresh_token: "test_token".to_string(),
+            };
+        })
+        .unwrap();
+
+        let status = cloud_setup_state(&config).unwrap();
+        assert_eq!(status, CloudState::Authenticated);
+
+        let json = serde_json::to_string(&status).unwrap();
+        assert!(!json.contains("test_token"));
     }
 
     #[test]

@@ -1,9 +1,11 @@
+use uuid::Uuid;
+
 use crate::agent::Agent;
+use crate::protocol::link::Link;
 use crate::protocol::message::{DirectMessage, Message};
 use crate::protocol::route::Route;
 use crate::server::ServerUserState;
 use crate::server::connection::cancel_subscriptions_matching;
-use uuid::Uuid;
 
 pub(in crate::server) fn announce_agent_message(info: &Agent) -> DirectMessage {
     DirectMessage::AnnounceAgent {
@@ -24,7 +26,7 @@ pub(in crate::server) fn announce_agent_message(info: &Agent) -> DirectMessage {
 pub(in crate::server) fn broadcast_to_peers(
     us: &mut ServerUserState,
     msg: &DirectMessage,
-    exclude_link: Option<&str>,
+    exclude_link: Option<&Link>,
 ) {
     let wire_msg = Message::Direct {
         message: msg.clone(),
@@ -32,7 +34,7 @@ pub(in crate::server) fn broadcast_to_peers(
     let mut sent = 0usize;
     let mut failed = 0usize;
     for link in &us.peer_links {
-        if exclude_link == Some(link.as_str()) {
+        if exclude_link == Some(link) {
             continue;
         }
         if let Some(handle) = us.routes.get(link) {
@@ -52,7 +54,7 @@ pub(in crate::server) fn broadcast_to_peers(
 /// Returns the number of agents announced.
 pub(in crate::server::routing) fn send_initial_agent_announcements(
     us: &ServerUserState,
-    peer_link: &str,
+    peer_link: &Link,
 ) -> usize {
     let Some(handle) = us.routes.get(peer_link) else {
         return 0;
@@ -92,7 +94,7 @@ pub(in crate::server::routing) fn send_initial_host_announcements(
     host_id: Uuid,
     host_name: &str,
     is_cloud_server: bool,
-    peer_link: &str,
+    peer_link: &Link,
 ) -> usize {
     let Some(handle) = us.routes.get(peer_link) else {
         return 0;
@@ -138,7 +140,7 @@ pub(in crate::server::routing) fn send_initial_host_announcements(
     count
 }
 
-fn send_initial_sync_complete(us: &ServerUserState, peer_link: &str) -> bool {
+fn send_initial_sync_complete(us: &ServerUserState, peer_link: &Link) -> bool {
     let Some(handle) = us.routes.get(peer_link) else {
         return false;
     };
@@ -161,7 +163,7 @@ pub(in crate::server) fn send_initial_announcements(
     host_id: Uuid,
     host_name: &str,
     is_cloud_server: bool,
-    peer_link: &str,
+    peer_link: &Link,
 ) {
     let hosts = send_initial_host_announcements(us, host_id, host_name, is_cloud_server, peer_link);
     let agents = send_initial_agent_announcements(us, peer_link);
@@ -175,8 +177,8 @@ pub(in crate::server) fn send_initial_announcements(
     );
 }
 
-fn disconnected_hosts(us: &ServerUserState, link_name: &str) -> Vec<(Uuid, Route)> {
-    let prefix = Route::from_link(link_name);
+fn disconnected_hosts(us: &ServerUserState, link: &Link) -> Vec<(Uuid, Route)> {
+    let prefix = Route::from_link(link.clone());
     let mut hosts: Vec<_> = us
         .hosts
         .iter()
@@ -206,46 +208,47 @@ fn disconnected_host_roots(hosts: &[(Uuid, Route)]) -> Vec<(Uuid, Route)> {
 
 /// Handle a peer disconnecting: remove route, peer_links entry, remote agents,
 /// cancel unreachable streams, and propagate withdrawals to remaining peers.
-pub(in crate::server) fn handle_peer_disconnect(us: &mut ServerUserState, link_name: &str) {
-    tracing::info!(peer = %link_name, "peer disconnected");
+pub(in crate::server) fn handle_peer_disconnect(us: &mut ServerUserState, link: &Link) {
+    tracing::info!(peer = %link, "peer disconnected");
 
-    us.routes.remove(link_name);
-    us.peer_links.remove(link_name);
+    us.routes.remove(link);
+    us.peer_links.remove(link);
 
     // Cancel streams spawned for subscribers on this link (they hold cloned senders
     // to the link's outgoing channel — must be dropped for writer task to exit)
     // and streams whose route passes through this link (unreachable).
-    let cancelled = cancel_subscriptions_matching(us, |entry| entry.dst.contains_link(link_name));
+    let cancelled =
+        cancel_subscriptions_matching(us, |entry| entry.dst.contains_link(link.as_str()));
     if !cancelled.is_empty() {
         tracing::info!(
             count = cancelled.len(),
-            peer = %link_name,
+            peer = %link,
             "cancelled subscriptions for disconnected peer"
         );
     }
 
-    let prefix = Route::from_link(link_name);
+    let prefix = Route::from_link(link.clone());
     let hosts = &us.hosts;
     let removed_ids = us.registry.remove_where(
         |hid| hosts.get(&hid).map(|h| h.route.clone()),
         |r| r.starts_with_route(&prefix),
     );
     if !removed_ids.is_empty() {
-        tracing::info!(count = removed_ids.len(), peer = %link_name, "removed agents for disconnected peer");
+        tracing::info!(count = removed_ids.len(), peer = %link, "removed agents for disconnected peer");
     }
 
     // Propagate one withdrawal per disconnected root host. Descendants are local
     // bookkeeping and are removed from each receiver's host table independently.
-    let removed_hosts = disconnected_hosts(us, link_name);
+    let removed_hosts = disconnected_hosts(us, link);
     let withdrawn_roots = disconnected_host_roots(&removed_hosts);
     if !removed_hosts.is_empty() {
-        tracing::info!(count = removed_hosts.len(), peer = %link_name, "removed hosts for disconnected peer");
+        tracing::info!(count = removed_hosts.len(), peer = %link, "removed hosts for disconnected peer");
     }
     for (id, _) in &removed_hosts {
         us.hosts.remove(id);
     }
     for (id, route) in withdrawn_roots {
-        tracing::info!(host_id = %id, peer = %link_name, "withdrawing host");
+        tracing::info!(host_id = %id, peer = %link, "withdrawing host");
         broadcast_to_peers(us, &DirectMessage::WithdrawHost { id, route }, None);
     }
 }

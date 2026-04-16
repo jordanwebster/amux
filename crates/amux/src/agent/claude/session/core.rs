@@ -1,3 +1,14 @@
+use std::path::PathBuf;
+use std::time::Duration;
+
+use anyhow::Result;
+use chrono::{DateTime, Utc};
+use serde::ser::SerializeMap;
+use serde::{Serialize, Serializer};
+use tokio::sync::mpsc;
+use tokio::task::AbortHandle;
+use uuid::Uuid;
+
 use super::input::sanitize_resume_args;
 use super::name_sniffer::spawn_name_sniffer;
 use crate::agent::{
@@ -6,14 +17,6 @@ use crate::agent::{
 use crate::buffer::MultiplexStructuredReader;
 use crate::debug::DebugView;
 use crate::protocol::message::{CreateAgentRequest, SubscribeQuery};
-use anyhow::Result;
-use chrono::{DateTime, Utc};
-use serde::{Serialize, Serializer, ser::SerializeMap};
-use std::path::PathBuf;
-use std::time::Duration;
-use tokio::sync::mpsc;
-use tokio::task::AbortHandle;
-use uuid::Uuid;
 
 pub(crate) struct ClaudeSession {
     pub(in crate::agent) agent_id: Uuid,

@@ -1,16 +1,18 @@
-use super::*;
-use crate::Route;
-use crate::agent::{Agent, AgentSession};
-use crate::protocol::message::{DirectMessage, Host};
-use crate::server::{SUBSCRIPTION_LEASE_DURATION, SubscriptionEntry, SubscriptionMode};
-use chrono::Utc;
 use std::path::PathBuf;
+
+use chrono::Utc;
 use tokio::sync::{mpsc, oneshot};
 use tokio::time::Instant;
 use uuid::Uuid;
 
 use super::agents::MAX_LOCAL_AGENTS;
 use super::peers::{send_initial_agent_announcements, send_initial_host_announcements};
+use super::*;
+use crate::agent::{Agent, AgentSession};
+use crate::protocol::Route;
+use crate::protocol::link::Link;
+use crate::protocol::message::{DirectMessage, Host, SubscriptionId};
+use crate::server::{SUBSCRIPTION_LEASE_DURATION, SubscriptionEntry, SubscriptionMode};
 
 fn dummy_pty_command() -> String {
     #[cfg(unix)]
@@ -32,10 +34,10 @@ fn dummy_working_dir() -> PathBuf {
 fn add_peer(us: &mut ServerUserState, name: &str) -> mpsc::Receiver<Message> {
     let (tx, rx) = mpsc::channel::<Message>(64);
     us.routes.insert(
-        name.to_string(),
+        Link::new(name).unwrap(),
         ConnectionHandle::new(tx, Arc::new(std::sync::atomic::AtomicU64::new(1))),
     );
-    us.peer_links.insert(name.to_string());
+    us.peer_links.insert(Link::new(name).unwrap());
     rx
 }
 
@@ -48,7 +50,7 @@ fn add_remote_agent(us: &mut ServerUserState, link: &str, name: Option<&str>) ->
         Host {
             id: host_id,
             name: format!("host-{host_id}"),
-            route: Route::from_link(link),
+            route: Route::from_link(Link::new(link).unwrap()),
             version: "0.1.0".to_string(),
         },
     );
@@ -59,7 +61,7 @@ fn add_remote_agent(us: &mut ServerUserState, link: &str, name: Option<&str>) ->
             name: name.map(String::from),
             command: "test".to_string(),
             working_dir: PathBuf::from("/tmp"),
-            route: Route::from_link(link),
+            route: Route::from_link(Link::new(link).unwrap()),
             agent_type: "test_agent".to_string(),
             structured_protocol: None,
             readonly: false,
@@ -78,7 +80,7 @@ fn add_host(us: &mut ServerUserState, link: &str, name: &str) -> Uuid {
         Host {
             id,
             name: name.to_string(),
-            route: Route::from_link(link),
+            route: Route::from_link(Link::new(link).unwrap()),
             version: "0.1.0".to_string(),
         },
     );
@@ -90,8 +92,8 @@ fn add_subscription(
     us: &mut ServerUserState,
     agent_id: Uuid,
     dst: Route,
-) -> (Uuid, oneshot::Receiver<()>) {
-    let subscription_id = Uuid::new_v4();
+) -> (SubscriptionId, oneshot::Receiver<()>) {
+    let subscription_id = SubscriptionId::random();
     let (cancel_tx, cancel_rx) = oneshot::channel();
     us.active_subscriptions.insert(
         subscription_id,
@@ -118,8 +120,11 @@ fn withdraw_agent_preserves_subscriptions_and_returns_session() {
     us.agents.insert(agent_id, session);
     us.registry.register_local(info).unwrap();
 
-    let (_subscription_id, mut cancel_rx) =
-        add_subscription(&mut us, agent_id, Route::from_link("peer-a"));
+    let (_subscription_id, mut cancel_rx) = add_subscription(
+        &mut us,
+        agent_id,
+        Route::from_link(Link::new("peer-a").unwrap()),
+    );
 
     let removed = withdraw_agent(&mut us, agent_id);
 
@@ -161,7 +166,7 @@ fn peer_disconnect_removes_route_and_peer_link() {
     let _rx = add_peer(&mut us, "dead-peer");
     let _rx2 = add_peer(&mut us, "alive-peer");
 
-    handle_peer_disconnect(&mut us, "dead-peer");
+    handle_peer_disconnect(&mut us, &Link::new("dead-peer").unwrap());
 
     assert!(!us.routes.contains_key("dead-peer"));
     assert!(!us.peer_links.contains("dead-peer"));
@@ -175,18 +180,27 @@ fn peer_disconnect_cancels_subscriptions_on_link() {
     let _rx = add_peer(&mut us, "dead-peer");
 
     let agent_id = Uuid::new_v4();
-    let (_dead_id, mut cancel_rx_dead) =
-        add_subscription(&mut us, agent_id, Route::from_link("dead-peer"));
-    let (alive_id, _cancel_rx_alive) =
-        add_subscription(&mut us, agent_id, Route::from_link("alive-link"));
+    let (_dead_id, mut cancel_rx_dead) = add_subscription(
+        &mut us,
+        agent_id,
+        Route::from_link(Link::new("dead-peer").unwrap()),
+    );
+    let (alive_id, _cancel_rx_alive) = add_subscription(
+        &mut us,
+        agent_id,
+        Route::from_link(Link::new("alive-link").unwrap()),
+    );
 
-    handle_peer_disconnect(&mut us, "dead-peer");
+    handle_peer_disconnect(&mut us, &Link::new("dead-peer").unwrap());
 
     // Subscription on dead-peer should be cancelled (sender dropped)
     assert!(cancel_rx_dead.try_recv().is_err());
     // Subscription on alive-link survives
     let remaining = us.active_subscriptions.get(&alive_id).unwrap();
-    assert_eq!(remaining.dst, Route::from_link("alive-link"));
+    assert_eq!(
+        remaining.dst,
+        Route::from_link(Link::new("alive-link").unwrap())
+    );
 }
 
 #[test]
@@ -196,12 +210,12 @@ fn peer_disconnect_cancels_subscriptions_routed_through_link() {
 
     let agent_id = Uuid::new_v4();
     // Stream whose dst route passes through dead-peer (but originates from a different link)
-    let mut through_route = Route::from_link("host-b");
-    through_route.push("dead-peer");
-    through_route.push("local-link");
+    let mut through_route = Route::from_link(Link::new("host-b").unwrap());
+    through_route.push(Link::new("dead-peer").unwrap());
+    through_route.push(Link::new("local-link").unwrap());
     let (_subscription_id, mut cancel_rx) = add_subscription(&mut us, agent_id, through_route);
 
-    handle_peer_disconnect(&mut us, "dead-peer");
+    handle_peer_disconnect(&mut us, &Link::new("dead-peer").unwrap());
 
     // Subscription routed through dead-peer should be cancelled
     assert!(cancel_rx.try_recv().is_err());
@@ -220,7 +234,7 @@ fn peer_disconnect_removes_agents_for_link() {
     let (dead_agent, _dead_host) = add_remote_agent(&mut us, "dead-peer", Some("doomed"));
     let (alive_agent, _alive_host) = add_remote_agent(&mut us, "other-peer", Some("safe"));
 
-    handle_peer_disconnect(&mut us, "dead-peer");
+    handle_peer_disconnect(&mut us, &Link::new("dead-peer").unwrap());
 
     assert!(!us.registry.contains(&dead_agent));
     assert!(us.registry.contains(&alive_agent));
@@ -235,7 +249,7 @@ fn peer_disconnect_withdraws_hosts_and_propagates() {
     let dead_host = add_host(&mut us, "dead-peer", "remote-laptop");
     let alive_host = add_host(&mut us, "alive-peer", "other-laptop");
 
-    handle_peer_disconnect(&mut us, "dead-peer");
+    handle_peer_disconnect(&mut us, &Link::new("dead-peer").unwrap());
 
     assert!(!us.hosts.contains_key(&dead_host));
     assert!(us.hosts.contains_key(&alive_host));
@@ -249,7 +263,7 @@ fn peer_disconnect_withdraws_hosts_and_propagates() {
             message: DirectMessage::WithdrawHost { id, route },
         } => {
             assert_eq!(id, dead_host);
-            assert_eq!(route, Route::from_link("dead-peer"));
+            assert_eq!(route, Route::from_link(Link::new("dead-peer").unwrap()));
         }
         other => panic!("expected WithdrawHost, got {:?}", other),
     }
@@ -265,13 +279,13 @@ fn peer_disconnect_withdraws_only_root_hosts() {
     let child_a = Uuid::new_v4();
     let root_b = Uuid::new_v4();
 
-    let mut root_a_route = Route::from_link("a");
-    root_a_route.push("dead-peer");
-    let mut child_a_route = Route::from_link("child");
-    child_a_route.push("a");
-    child_a_route.push("dead-peer");
-    let mut root_b_route = Route::from_link("b");
-    root_b_route.push("dead-peer");
+    let mut root_a_route = Route::from_link(Link::new("a").unwrap());
+    root_a_route.push(Link::new("dead-peer").unwrap());
+    let mut child_a_route = Route::from_link(Link::new("child").unwrap());
+    child_a_route.push(Link::new("a").unwrap());
+    child_a_route.push(Link::new("dead-peer").unwrap());
+    let mut root_b_route = Route::from_link(Link::new("b").unwrap());
+    root_b_route.push(Link::new("dead-peer").unwrap());
 
     us.hosts.insert(
         root_a,
@@ -301,7 +315,7 @@ fn peer_disconnect_withdraws_only_root_hosts() {
         },
     );
 
-    handle_peer_disconnect(&mut us, "dead-peer");
+    handle_peer_disconnect(&mut us, &Link::new("dead-peer").unwrap());
 
     assert!(!us.hosts.contains_key(&root_a));
     assert!(!us.hosts.contains_key(&child_a));
@@ -341,12 +355,15 @@ fn peer_disconnect_full_cascade() {
     let mut alive_rx = add_peer(&mut us, "alive-peer");
 
     let (dead_agent, dead_host) = add_remote_agent(&mut us, "dead-peer", Some("remote-agent"));
-    let (_subscription_id, mut cancel_rx) =
-        add_subscription(&mut us, dead_agent, Route::from_link("dead-peer"));
+    let (_subscription_id, mut cancel_rx) = add_subscription(
+        &mut us,
+        dead_agent,
+        Route::from_link(Link::new("dead-peer").unwrap()),
+    );
 
     let (alive_agent, alive_host) = add_remote_agent(&mut us, "alive-peer", Some("local-agent"));
 
-    handle_peer_disconnect(&mut us, "dead-peer");
+    handle_peer_disconnect(&mut us, &Link::new("dead-peer").unwrap());
 
     // All dead state cleaned up
     assert!(!us.routes.contains_key("dead-peer"));
@@ -374,7 +391,7 @@ fn peer_disconnect_full_cascade() {
         msg,
         Message::Direct {
             message: DirectMessage::WithdrawHost { id, route }
-        } if id == dead_host && route == Route::from_link("dead-peer")
+        } if id == dead_host && route == Route::from_link(Link::new("dead-peer").unwrap())
     ));
 }
 
@@ -390,7 +407,7 @@ fn broadcast_to_peers_excludes_specified_link() {
     broadcast_to_peers(
         &mut us,
         &DirectMessage::WithdrawAgent { agent_id },
-        Some("peer-a"),
+        Some(&Link::new("peer-a").unwrap()),
     );
 
     assert!(rx_a.try_recv().is_err(), "excluded peer should not receive");
@@ -429,7 +446,7 @@ fn initial_announcements_filter_agent_echo_back() {
     let (forwarded_id, _forwarded_host) =
         add_remote_agent(&mut us, "peer-b", Some("forward-agent"));
 
-    let count = send_initial_agent_announcements(&us, "peer-a");
+    let count = send_initial_agent_announcements(&us, &Link::new("peer-a").unwrap());
 
     assert_eq!(count, 1, "only non-echo agents should be announced");
     let msg = rx.try_recv().expect("should receive one announcement");
@@ -455,7 +472,13 @@ fn initial_announcements_filter_host_echo_back() {
     let forwarded_host = add_host(&mut us, "peer-b", "forward-host");
 
     let host_id = Uuid::new_v4();
-    let count = send_initial_host_announcements(&us, host_id, "myhost", false, "peer-a");
+    let count = send_initial_host_announcements(
+        &us,
+        host_id,
+        "myhost",
+        false,
+        &Link::new("peer-a").unwrap(),
+    );
 
     // Should announce: forward-host + own host = 2
     assert_eq!(count, 2);
@@ -485,7 +508,13 @@ fn initial_announcements_cloud_skips_own_host() {
     let mut rx = add_peer(&mut us, "peer-a");
 
     let host_id = Uuid::new_v4();
-    send_initial_announcements(&us, host_id, "cloud-server", true, "peer-a");
+    send_initial_announcements(
+        &us,
+        host_id,
+        "cloud-server",
+        true,
+        &Link::new("peer-a").unwrap(),
+    );
 
     assert!(matches!(
         rx.try_recv(),
@@ -582,13 +611,14 @@ async fn resume_agents_uses_current_host_id_for_registry_and_announce() {
     assert_eq!(resumed, 1);
     assert_eq!(failed, 0);
 
-    let us = user_state.read().await;
-    let entry = us
-        .registry
-        .get(&agent_id)
-        .expect("resumed agent should register");
-    assert_eq!(entry.host_id, host_id);
-    drop(us);
+    {
+        let us = user_state.read().await;
+        let entry = us
+            .registry
+            .get(&agent_id)
+            .expect("resumed agent should register");
+        assert_eq!(entry.host_id, host_id);
+    }
 
     let msg = peer_rx
         .try_recv()
@@ -617,7 +647,13 @@ fn initial_announcements_non_cloud_includes_own_host() {
     let mut rx = add_peer(&mut us, "peer-a");
 
     let host_id = Uuid::new_v4();
-    send_initial_announcements(&us, host_id, "my-laptop", false, "peer-a");
+    send_initial_announcements(
+        &us,
+        host_id,
+        "my-laptop",
+        false,
+        &Link::new("peer-a").unwrap(),
+    );
 
     let msg = rx.try_recv().expect("should announce own host");
     match msg {
@@ -661,7 +697,13 @@ fn initial_announcements_finish_with_sync_complete() {
         })
         .unwrap();
 
-    send_initial_announcements(&us, host_id, "my-laptop", false, "peer-a");
+    send_initial_announcements(
+        &us,
+        host_id,
+        "my-laptop",
+        false,
+        &Link::new("peer-a").unwrap(),
+    );
 
     assert!(matches!(
         rx.try_recv(),

@@ -1,5 +1,6 @@
-use serde::{Serialize, Serializer};
 use std::path::Path;
+
+use serde::{Serialize, Serializer};
 
 /// Serde-driven debug rendering wrapper used across domains.
 pub(crate) struct DebugView<'a, T: ?Sized> {

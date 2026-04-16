@@ -6,26 +6,26 @@
 //! that creates the PTY, spawns reader/writer/exit-monitor tasks, and returns a
 //! `PtyHandle` + `StructuredLogSource`.
 
+use std::path::{Path, PathBuf};
+
+use anyhow::{Result, anyhow};
+use chrono::{DateTime, Utc};
+use serde_json::Value;
+use tokio::sync::mpsc;
+use uuid::Uuid;
+
 #[cfg(any(debug_assertions, test))]
 use super::TestAgentSession;
-use super::{
-    ClaudeSession, ExternalHookBootstrap, HookError, HookOutcome, LocalAgentNameSource, PtyHandle,
-};
+use super::claude::ClaudeSession;
+use super::{ExternalHookBootstrap, HookError, HookOutcome, LocalAgentNameSource, PtyHandle};
 #[cfg(test)]
 use crate::agent::StructuredLogSource;
-use anyhow::{Result, anyhow};
-
 use crate::buffer::MultiplexStructuredReader;
 use crate::protocol::message::{
     AgentType, CreateAgentRequest, DirectMessage, HookProvider, ProtocolError, SubscribeQuery,
 };
 use crate::protocol::route::Route;
 use crate::suspend::SuspendedAgent;
-use chrono::{DateTime, Utc};
-use serde_json::Value;
-use std::path::{Path, PathBuf};
-use tokio::sync::mpsc;
-use uuid::Uuid;
 
 /// Internal agent metadata owned by the runtime.
 #[derive(Debug, Clone)]
@@ -459,11 +459,12 @@ impl serde::Serialize for crate::debug::DebugView<'_, AgentSession> {
 
 #[cfg(test)]
 mod tests {
+    use serde_json::json;
+
     use super::*;
     use crate::protocol::CreateAgentRequest;
     use crate::protocol::message::AgentType;
     use crate::suspend::SuspendedLocalAgentNameSource;
-    use serde_json::json;
 
     #[tokio::test]
     #[cfg(any(debug_assertions, test))]

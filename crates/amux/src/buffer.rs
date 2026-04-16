@@ -7,10 +7,12 @@
 //! Key invariant: `write()` and `subscribe()` are mutually exclusive via the
 //! storage lock, ensuring no data loss or duplication between replay and live data.
 
-use crate::protocol::message::SubscribeQuery;
-use serde_json::Value;
 use std::sync::Arc;
+
+use serde_json::Value;
 use tokio::sync::{RwLock, mpsc};
+
+use crate::protocol::message::SubscribeQuery;
 
 /// Sequenced envelope for structured output entries.
 ///
@@ -371,10 +373,12 @@ impl BroadcastBuffer<StructuredPolicy> {
 
 #[cfg(test)]
 mod tests {
-    use super::*;
-    use serde_json::Value;
     use std::time::Duration;
+
+    use serde_json::Value;
     use tokio::time::timeout;
+
+    use super::*;
 
     // ── Byte buffer tests ───────────────────────────────────────────
 

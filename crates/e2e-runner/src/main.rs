@@ -2,9 +2,10 @@ mod executor;
 mod parser;
 mod terminal;
 
+use std::path::{Path, PathBuf};
+
 use clap::{Parser, Subcommand};
 use executor::{Executor, ExecutorConfig};
-use std::path::{Path, PathBuf};
 
 fn debug_binary_path(name: &str) -> PathBuf {
     PathBuf::from(format!(

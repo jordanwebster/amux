@@ -1,8 +1,10 @@
-use crate::protocol::Route;
+use std::path::PathBuf;
+
 use chrono::{DateTime, Utc};
 use serde::{Deserialize, Serialize};
-use std::path::PathBuf;
 use uuid::Uuid;
+
+use crate::protocol::Route;
 
 /// Wire-format agent DTO used in protocol command responses.
 #[derive(Serialize, Deserialize, Debug, Clone)]

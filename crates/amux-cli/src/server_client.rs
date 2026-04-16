@@ -1,12 +1,14 @@
-use crate::client_common::{cli_daemon_policy, daemon_options, print_update_banner};
+use std::io;
+use std::path::Path;
+
 use amux::protocol::{Command, DebugFormat, Message, ShutdownReason};
 use amux::{
     Config, ConnectError, ConnectPolicy, Connection, DaemonOptions, ServerMode, TransportError,
     connect, run_server, spawn_daemon,
 };
 use anyhow::{Result, anyhow};
-use std::io;
-use std::path::Path;
+
+use crate::client_common::{cli_daemon_policy, daemon_options, print_update_banner};
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub(crate) enum StartStyle {

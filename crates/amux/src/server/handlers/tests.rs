@@ -1,17 +1,20 @@
+use std::path::PathBuf;
+use std::sync::Arc;
+use std::sync::atomic::AtomicU64;
+
+use tokio::sync::{RwLock, mpsc};
+use uuid::Uuid;
+
 use super::*;
 use crate::agent::claude::hooks::{ClaudeHook, ParsedClaudeHook};
 use crate::agent::{Agent, AgentSession, LocalAgentNameSource, SessionEvent};
 use crate::protocol::RoutableMessage;
+use crate::protocol::link::Link;
 use crate::protocol::message::{
     AgentType, Command, CreateAgentRequest, DirectMessage, HookProvider, Message, TerminalSize,
 };
 pub(super) use crate::server::test_helpers::{test_ctx, test_state};
 use crate::server::{ConnectionHandle, LOCAL_USER_ID, ServerUserState};
-use std::path::PathBuf;
-use std::sync::Arc;
-use std::sync::atomic::AtomicU64;
-use tokio::sync::{RwLock, mpsc};
-use uuid::Uuid;
 
 pub(super) fn dummy_pty_command() -> String {
     #[cfg(unix)]
@@ -70,15 +73,15 @@ pub(super) fn mock_tx() -> (mpsc::Sender<Message>, Arc<tokio::sync::Mutex<Vec<Me
 
 pub(super) async fn add_peer_link(
     user_state: &Arc<RwLock<ServerUserState>>,
-    link_name: &str,
+    link: &str,
 ) -> mpsc::Receiver<Message> {
     let (tx, rx) = mpsc::channel::<Message>(16);
     let mut us = user_state.write().await;
     us.routes.insert(
-        link_name.to_string(),
+        Link::new(link).unwrap(),
         ConnectionHandle::new(tx, Arc::new(AtomicU64::new(1))),
     );
-    us.peer_links.insert(link_name.to_string());
+    us.peer_links.insert(Link::new(link).unwrap());
     rx
 }
 
@@ -154,12 +157,12 @@ pub(super) async fn insert_test_session(user_state: &Arc<RwLock<ServerUserState>
 
 pub(super) async fn setup_named_route(
     user_state: &Arc<RwLock<ServerUserState>>,
-    link_name: &str,
+    link: &str,
 ) -> mpsc::Receiver<Message> {
     let (route_tx, route_rx) = mpsc::channel::<Message>(64);
     let mut us = user_state.write().await;
     us.routes.insert(
-        link_name.to_string(),
+        Link::new(link).unwrap(),
         ConnectionHandle::new(route_tx, Arc::new(AtomicU64::new(1))),
     );
     route_rx
@@ -191,7 +194,7 @@ async fn command_from_remote_peer_is_rejected() {
         user_state,
         user_id: LOCAL_USER_ID,
         event_tx,
-        link_name: "remote-peer".to_string(),
+        link: Link::new("remote-peer").unwrap(),
         is_local: false,
         heartbeat_role: crate::server::connection::HeartbeatRole::Acceptor,
         next_request_id: Arc::new(AtomicU64::new(1)),

@@ -1,5 +1,6 @@
-use crate::protocol::message::{HookProvider, ProtocolError};
 use thiserror::Error;
+
+use crate::protocol::message::{HookProvider, ProtocolError};
 
 pub(crate) enum ExternalHookBootstrap {
     Noop,

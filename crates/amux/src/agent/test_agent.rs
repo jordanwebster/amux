@@ -3,16 +3,19 @@
 //! Only available in debug/test builds. Spawns an arbitrary command
 //! (typically `test-agent`) without Claude-specific environment or hooks.
 
+use std::path::PathBuf;
+
+use anyhow::Result;
+use chrono::{DateTime, Utc};
+use serde::ser::SerializeMap;
+use serde::{Serialize, Serializer};
+use uuid::Uuid;
+
 use super::{PtyHandle, spawn_pty_agent};
 use crate::agent::StructuredLogSource;
 use crate::buffer::MultiplexStructuredReader;
 use crate::debug::DebugView;
 use crate::protocol::message::{CreateAgentRequest, SubscribeQuery};
-use anyhow::Result;
-use chrono::{DateTime, Utc};
-use serde::{Serialize, Serializer, ser::SerializeMap};
-use std::path::PathBuf;
-use uuid::Uuid;
 
 pub(crate) struct TestAgentSession {
     pub(super) agent_id: Uuid,

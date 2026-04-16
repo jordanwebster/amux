@@ -38,6 +38,139 @@ One paragraph describing what was done.
 
 ---
 
+## 2026-04-17: Review follow-ups — LinkName→Link rename, three panic fixes
+
+### Summary
+Addressed review comments on the Idiomatic-Rust refactor. Renamed `LinkName` → `Link` / `link_name` field → `link` across the code (kept `InvalidLinkName` and `LinkNameTaken` error variants). Fixed three reachable panics / regressions the test suite hadn't caught: `Route::deserialize` panicking from `AgentRegistry::resolve`, `Connect::decode` rejecting malformed link names before the server could reply with `InvalidLinkName`, and `generate_server_link` panicking on empty `host_name`. Removed the silent-ID-minting `Default` impl on `SubscriptionId` and renamed its constructor `new()` → `random()` to avoid the `new_without_default` lint without reintroducing the footgun.
+
+### Changes
+
+- **Rename** (`\bLinkName\b → Link`, `\blink_name\b → link`, word-boundary preserves `InvalidLinkName`, `LinkNameTaken`, `randomise_link_name`, `validate_link_name`, `link_name_rejects_period`): applied across 28 `.rs` files. One shadowing collision fixed in `server/connection/driver.rs` (`Some(link) if *link == link` → `Some(hop) if *hop == link`).
+- **Fix C1** `server/registry.rs`: `Route::deserialize(...).expect("Route deserialization cannot fail")` → `Route::deserialize(...).ok()?`. Malformed route-qualified identifiers like `"bad..hop:agent"` are lookup misses, not panics.
+- **Fix C2** `protocol/handshake.rs` + `server/accept.rs`: reverted `Connect.link` to `String` so `Connect::decode` accepts empty/dotted names and `validate_link_name` can reply with `ProtocolError::InvalidLinkName`. Construction into `Link` happens after validation (`Link::new(proposed_link).expect(...)` — validator enforces the invariants). Added `connect_decodes_invalid_link_names` regression test. Updated `transport/handshake.rs` and `auth/cloud.rs` to encode `link.as_str().to_string()`.
+- **Fix C3** `config.rs:Config::validate`: added non-empty check for `host_name`. `generate_server_link` was calling `Link::new("").expect(...)` → panic during outbound cloud/peer connect when `host_name: ""` + `randomise_link_name: false`. Added `validate_rejects_empty_host_name` regression test.
+- **S1** `protocol/message/common.rs`: removed `impl Default for SubscriptionId` (silent random-UUID minting was a footgun via `#[derive(Default)]` / `unwrap_or_default()`). Renamed `SubscriptionId::new()` → `SubscriptionId::random()` to avoid the `new_without_default` clippy lint without reintroducing `Default`. ~15 call sites updated.
+
+### Decisions made
+
+- **Keep `InvalidLinkName` / `LinkNameTaken` error variants unchanged.** The error describes an issue with the *name string* (non-empty, no `.`, collision), not the link itself.
+- **`Connect.link` is `String` on the wire, `Link` in memory.** The newtype invariant is enforced at the server boundary after `validate_link_name` succeeds. Moving the invariant into serde (which the refactor attempted) turned a structured `ProtocolError::InvalidLinkName` reply into a generic invalid-handshake disconnect — a behavioral regression on malformed input.
+- **Replaced `SubscriptionId::new()` with `random()` rather than re-adding `Default`.** The CLAUDE.md "no `#[allow(clippy::...)]`" policy ruled out suppressing `new_without_default`; the rename is more explicit anyway.
+
+### Verification
+- `cargo check --workspace --all-targets` — clean.
+- `cargo +nightly fmt --all` — applied.
+- `cargo clippy --workspace --all-targets -- -D warnings` — clean.
+- `cargo test --workspace` — 304 lib tests passed (up from 302; added the two regression tests above), all other targets clean.
+- `cargo run -p e2e-runner -- run` — 12 passed, 0 failed.
+
+### Next steps
+- None blocking. Reviewer-1 polish items (dead `try_routable` decision, `remove_subscription_if_reply_failed` inline, `Message::type_label` delegating to `Command::type_label`, doc comments on validation layering) are left for an opportunistic pass.
+
+---
+
+## 2026-04-16: Idiomatic-Rust refactor — follow-up pass
+
+### Summary
+Continued the refactor plan from `notes/amux-refactor-plan.md`, landing the remaining items that pass the "encodes a real invariant" bar. Also reverted four plan items that turned out to be ceremony over substance: `#[non_exhaustive]`, `AgentType` / `StructuredProtocol` enums on propagated protocol fields, `SubscriptionCancel` newtype around `oneshot::Sender<()>`, and `Arc<Config>` in `ServerState`. Updated the plan to capture why.
+
+### Changes
+
+**Phase 3 — type modeling**
+- **`CloudState` phase enum** (`state.rs`, `setup.rs`, `auth/cloud.rs`, `server/{debug,cloud}.rs`, `amux-cli/src/{init,main}.rs`): replaced the `Option<bool>` / `Option<String>` pair with a 4-variant tagged enum (`NotConfigured`, `Disabled`, `Unauthenticated`, `Authenticated { refresh_token }`). Added `is_enabled`, `needs_init`, `refresh_token` methods. Collapsed four states (one illegal) to exhaustive variants. `state.yaml` wire format changed (`use_cloud_mode: bool` → `status: enum`) — acceptable pre-release. `e2e-runner/src/executor.rs` fixture updated to the new format.
+- **`LinkName` newtype** (new `protocol/link.rs`): non-empty, no `.`, validated at construction. Custom `Serialize` (bare string) to preserve `Route`'s dotted wire format; `Deserialize` validates. `Borrow<str>` for `HashMap`/`HashSet` lookups by `&str`. Threaded through `Route` internals (`VecDeque<LinkName>`), `Connect.link_name`, `ShutdownRequest::{Shutdown,Suspend}.link_name`, `TokenRefreshState.link_name`, `ConnectionContext.link_name`, `ServerUserState.routes`/`peer_links` keys, `generate_server_link`/`generate_terminal_link` return types. **`Route::from_link(link: LinkName) -> Self` is now infallible by construction** — the `debug_assert!` chain is gone. ~40 call sites updated across the amux + amux-cli crates + e2e-runner.
+
+**Phase 4 — visibility**
+- `notify_other_clients` narrowed from `pub(in crate::server)` to `pub(super)` — it's only called from inside `runtime.rs`. Remaining `pub(in crate::server)` items verified to have cross-submodule consumers.
+
+**Phase 5 — RAII extractions**
+- **`ServerUserState::try_reserve_link(link_name)`** method on the type that owns the routes map. Atomically test-and-inserts a new connection handle; returns the reserved `ConnectionHandle` + `Receiver`, or the original `LinkName` on conflict. `server/accept.rs` replaces its read-then-write double-check pattern (with explicit `drop(us)`) with a single write-lock call to the new method.
+- **`notify_local_clients(user_state, reason)`** helper in `server/runtime/notify.rs`, paired with the existing `notify_other_clients`. `server/cloud.rs` replaces its inline `let us = user_state.read().await; for ...; drop(us); sleep; exit` block with a call to the helper.
+- **Test-scope block-scope rewrite**: swept 33 `drop(msgs)` / `drop(us)` test patterns into `{ let x = ...; ... }` blocks across `server/routing/tests.rs`, `server/handlers/{routable,direct,command}.rs`, `server/runtime.rs`. The lock guard now falls out of scope at the block boundary — no explicit drop, no chance of accidentally holding across an `.await` added later.
+- **`server/connection/driver.rs:119`**: `drop(cancel_subscriptions_matching(...))` rewritten as `let _cancelled = ...` with a comment explaining that dropping the returned `Vec<SubscriptionEntry>` fires each entry's cancel sender. Intent-as-name instead of intent-as-drop.
+
+### Reverted items (with plan updated to explain why)
+
+- **`#[non_exhaustive]` on 13 public enums** (Phase 1 from the prior commit): removed. Would have forced downstream `_ =>` arms that silently absorb future variants; for the amux protocol we *want* downstream to fail to compile when a new variant is added so every call site handles it explicitly.
+- **`AgentType` / `StructuredProtocol` as typed wire enums**: reverted mid-session. `agent_type` and `structured_protocol` on `DirectMessage::AnnounceAgent` and `RoutableMessage::SubscribeStructuredResult` stay as opaque `String`s because intermediate routing servers propagate them without parsing — only the source and sink of a given flow need to agree on the value. Typing them would force every relay to understand every variant, which is the opposite of the design. Plan updated with this architectural invariant.
+- **`SubscriptionCancel` newtype around `oneshot::Sender<()>`**: attempted, then reverted. `oneshot::Sender::drop` is already the RAII cancel signal. Wrapping it in a `fn cancel(self)` consume-method is pure ceremony — same runtime behavior, added API surface, no new type-level guarantee. The existing `drop(cancel)` call sites are fine as-is.
+- **`Arc<Config>` in `ServerState`**: attempted, then reverted. The "10 clones saved" claim was wrong: only two whole-struct `Config::clone()` calls exist in the codebase (in the cloud-connect path, which runs once at startup and on rare reconnects). The remaining "config clones" are field-level clones (`state.config.host_name.clone()`, etc.) that Arc doesn't help with — those still produce owned `String`/`PathBuf`. Threading `Arc<Config>` through four type signatures for a one-off startup cost fails the guide §14 test: `Arc<T>` is for "shared ownership genuinely in the model," not reflexive wrapping.
+
+### Decisions made
+
+- **Don't wrap a type to make its intent "more explicit" if the wrap adds no compile-time guarantee.** Rust's RAII, `Option`, and channel-drop semantics are already expressive. Wrapping them in a facade is ceremony that fragments the vocabulary without buying safety. This killed the `SubscriptionCancel` and `Arc<Config>` items, and guided the decision to skip `AgentName`, `HostName`, and `Arc<LinkName>`.
+- **Opacity is an architectural invariant, not a backwards-compat concern.** Even with all peers on the same version, intermediate routing servers should not need to parse `agent_type` or `structured_protocol` to propagate an `AnnounceAgent`. Pluggability of agent kinds lives at the endpoints, not at every hop. This principle is now documented in the refactor plan to prevent the same mistake next time.
+- **Test drops become block scopes, not helpers.** A closure-based `with_locked(|msgs| { ... })` would structurally prevent hold-across-await bugs, but the test bodies vary too much for a single helper, and block scopes are the minimal intervention that achieves the same release-at-end semantics. 33 sites rewritten mechanically.
+- **Skipped `AgentName`, `HostName`, `Arc<LinkName>`**: their validation invariants are weak (non-empty names nobody constructs, derived host-name limits already enforced at the link layer) and they primarily trade one kind of ceremony for another. If profiling later identifies a specific clone or swap-bug hotspot, address it then.
+
+### Verification
+- `cargo check --workspace` — clean.
+- `cargo fmt` — applied.
+- `cargo clippy --workspace --all-targets -- -D warnings` — clean.
+- `cargo test -p amux --lib` — 302 passed, 0 failed.
+- `cargo run -p e2e-runner -- run` — 12 passed, 0 failed.
+
+### Next steps
+- Nothing blocking. The plan in `notes/amux-refactor-plan.md` reflects what was done and what was deliberately skipped. If clone traffic becomes a measured problem later, profile first and Arc-wrap the specific value the profile points at.
+
+---
+
+## 2026-04-16: Idiomatic-Rust refactor pass (phases 1, 2, 4, partial 3 & 5)
+
+### Summary
+Executed the multi-phase refactor plan from `notes/amux-refactor-plan.md` in a single commit. Completed the quick wins, all four structural splits, the visibility sweep, and the two most self-contained items from the type-modeling and RAII phases. Deferred the remaining Phase 3 newtypes (LinkName, AgentName, HostName, CloudState, AgentType enum-everywhere, StructuredProtocol) and the bulk of the Phase 5 redesigns (test helpers, SubscriptionCancel, try_reserve_link, Arc<Config>, by-value bindings) since each would touch 15–50+ sites and warrants its own pass.
+
+### Changes
+
+**Phase 1 — quick wins**
+- Added `Route::len()` alongside `is_empty()`.
+- Removed the `lib.rs` `pub use protocol::Route` hybrid and the `agent.rs` `pub(crate) use claude::ClaudeSession` hybrid; updated `amux-cli/src/session_client.rs` and `agent/session.rs` to use the canonical module paths.
+- Converted 5 invariant-assertion `.unwrap()` calls to `.expect("…")` with messages in `server/connection/driver.rs` and `server/routing/naming.rs`.
+- Removed 5 no-op `drop(permit)` calls in `server/runtime.rs` (the async block already drops the permit on exit).
+- Added intent comments to the remaining deliberate `drop(…)` sites (`agent/pty.rs::slave`, `server/runtime.rs::listeners`, `client/connection.rs::send`).
+
+**Phase 2 — structural splits**
+- Split `crates/amux/src/protocol/message.rs` (836 lines) into a facade plus `message/{common,routable,direct,command,envelope}.rs`.
+- Split `crates/amux/src/server/runtime.rs` free helpers into `runtime/{notify,forward,sweep,events}.rs`; `Server::{with_config, run}` stays intact.
+- Split `crates/amux/src/server/handlers/routable.rs` into a facade plus eight per-arm files under `routable/{subscribe_raw,subscribe_structured,extend,unsubscribe,create_agent,rename_agent,delete_agent,io}.rs`; the big dispatch match and tests stay in `routable.rs`. `io::handle_structured_input` takes a `StructuredInputReply` struct to stay under the clippy arg limit.
+- Split `crates/amux/src/server/handlers/direct.rs` into a facade plus `direct/{reauth,agent,host}.rs`; trivial arms (Heartbeat, HeartbeatAck, InitialSyncComplete, ReauthResult, Unknown) stay inline.
+
+**Phase 3 — type modeling (partial)**
+- Promoted `SubscriptionId` from `type SubscriptionId = Uuid` to a `#[serde(transparent)]` newtype in `protocol/message/common.rs` with `new`, `nil`, `as_uuid`, and `Default`/`Display` impls. Updated ~30 call sites across handlers, connection, tests, and transport to construct via `SubscriptionId::new()` / `SubscriptionId::nil()` and index into it via `.as_uuid()` where needed. Wire format bytes unchanged.
+- Added `Message::try_routable(…) -> Result<…>` as the fallible constructor for routable messages; `Message::routable(…)` now delegates to it and keeps the panic on encode failure.
+- Deferred: `LinkName`, `AgentName`, `HostName`, `CloudState` phase enum, `AgentType`-everywhere, `StructuredProtocol`. Each is a multi-file change (15–50 sites) that merits its own commit.
+
+**Phase 4 — visibility sweep**
+- Demoted `pub(crate)` items in `server/state.rs`, `server/registry.rs`, `server/debug.rs`, and the new `server/runtime/{forward,sweep,events}.rs` to `pub(in crate::server)` so they are only visible within `crate::server`.
+- Updated `server.rs` facade re-exports to `pub(in crate::server) use …` for internal items and kept `pub(crate) use runtime::Server` / `pub use runtime::ServerError` for the items that must cross the server boundary.
+- Left `TcpMessageReader/Writer` and `WsMessageReader/Writer` at `pub(crate)` because they're named in `TransportSplit` associated types (E0446 would fire on any narrower visibility).
+
+**Phase 5 — RAII + clone redesigns (partial)**
+- `PtyHandle::resize` now takes a `TerminalSize` instead of two `u16` args. Updated the single in-tree caller.
+- Split the JWKS cache-check into `JwtValidator::is_cache_fresh` + `JwtValidator::refresh_jwks`, with `ensure_jwks_fresh` as the two-line composition. Removes the awkward `drop(last); … write().await` pattern.
+- Deferred: test-helper extraction (42 `drop(g)` sites), `SubscriptionCancel` newtype, `ServerUserState::try_reserve_link`, `Arc<Config>` in `ServerState`, by-value `AnnounceAgent`/`AnnounceHost` bindings, `Arc<LinkName>` in `ConnectionContext` (depends on deferred `LinkName`).
+
+### Decisions Made
+- **Single commit as instructed**, contrary to the plan's 15–19 PR breakdown.
+- **Prod LOC, not total LOC**, is what drives split decisions: the plan's own "oversized" list already excluded `handlers/command.rs`, `buffer.rs`, `server/connection.rs`, and `server/registry.rs` because their prod surfaces are small, and `server/runtime.rs::run()` because it's sequential ceremony around a `tokio::select!`.
+- **`pub(in crate::server)` over `pub(super)`** for the server facade re-exports. At the crate root, `pub(super) use` equals `pub(crate) use`, which is strictly wider than the `pub(in crate::server)` source items; the compiler rejects the widening. Using `pub(in crate::server)` on both sides keeps the contract tight.
+- **Kept transport Reader/Writer types at `pub(crate)`**: they're exposed via `TransportSplit`'s associated types, which enforces visibility ≥ the trait's.
+- **Deferred the heavy Phase 3 newtypes** rather than rushing them: each one is a cross-cutting rename across 15–50 call sites, and getting them wrong in a single monster commit is harder to review and bisect than skipping them now.
+
+### Verification
+- `cargo check` — clean.
+- `cargo fmt` — applied (6 files reformatted by the import-grouping config).
+- `cargo clippy --workspace --all-targets -- -D warnings` — clean.
+- `cargo test --lib -p amux` — 299 passed, 0 failed.
+- `cargo build --workspace` — clean.
+- `cargo run -p e2e-runner -- run` — 12 passed, 0 failed.
+
+### Next Steps
+- Revisit the deferred Phase 3 newtypes as separate passes: `LinkName` first (unlocks infallible `Route::from_link` per plan §3 Option B), then `AgentName`, `HostName`, `AgentType`-everywhere, `StructuredProtocol`, `CloudState` enum.
+- Revisit deferred Phase 5 items as separate passes: test-helper extraction collapses 42 `drop(g)` sites; `Arc<Config>` / by-value bindings / `Arc<LinkName>` eliminate the clone hotspots the plan identified.
+
+---
+
 ## 2026-04-16: Finish post-facade housekeeping and tighten the remaining internal seams
 
 ### Summary

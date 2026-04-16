@@ -5,19 +5,22 @@
 //! - Automatic token refresh before expiry
 //! - Message forwarding between local server and cloud
 
-use crate::auth::oauth;
-use crate::config::Config;
-use crate::protocol::handshake::{Connect, ConnectResult, PROTOCOL_VERSION};
-use crate::protocol::message::{DirectMessage, Message, ProtocolError};
-use crate::protocol::route::generate_server_link;
-use crate::state::State;
-use crate::transport::{TcpTransport, Transport, TransportError, tls_connect};
-use chrono::{DateTime, Duration, Utc};
 use std::time::Duration as StdDuration;
+
+use chrono::{DateTime, Duration, Utc};
 use thiserror::Error;
 use tokio::net::TcpStream;
 use tokio::sync::mpsc;
 use tokio_rustls::client::TlsStream;
+
+use crate::auth::oauth;
+use crate::config::Config;
+use crate::protocol::handshake::{Connect, ConnectResult, PROTOCOL_VERSION};
+use crate::protocol::link::Link;
+use crate::protocol::message::{DirectMessage, Message, ProtocolError};
+use crate::protocol::route::generate_server_link;
+use crate::state::{CloudState, State};
+use crate::transport::{TcpTransport, Transport, TransportError, tls_connect};
 
 /// Maximum time to wait for a handshake response from a cloud server.
 /// Prevents hanging forever if the remote accepts TCP but never responds.
@@ -135,13 +138,16 @@ async fn refresh_and_fetch_connection(
     let state = State::load(&config.state_path)?;
     let refresh_token = state
         .cloud
-        .refresh_token
-        .ok_or(CloudError::NotAuthenticated)?;
+        .refresh_token()
+        .ok_or(CloudError::NotAuthenticated)?
+        .to_string();
     let (access_token, new_refresh) =
         oauth::refresh_access_token(&config.cloud_url, &refresh_token).await?;
     if let Some(new_token) = new_refresh {
         State::update(&config.state_path, |s| {
-            s.cloud.refresh_token = Some(new_token);
+            if let CloudState::Authenticated { refresh_token } = &mut s.cloud {
+                *refresh_token = new_token;
+            }
         })?;
     }
     Ok(oauth::fetch_connection(&config.cloud_url, &access_token).await?)
@@ -151,7 +157,7 @@ async fn refresh_and_fetch_connection(
 pub(crate) struct CloudConnection {
     config: Config,
     transport: TcpTransport<TlsStream<TcpStream>>,
-    link_name: String,
+    link: Link,
     current_host: String,
     current_port: u16,
     token_expires_at: DateTime<Utc>,
@@ -169,7 +175,7 @@ impl CloudConnection {
         let state = State::load(&config.state_path)?;
 
         // Check if cloud mode is enabled
-        if state.cloud.use_cloud_mode != Some(true) {
+        if !state.cloud.is_enabled() {
             return Err(CloudError::CloudDisabled);
         }
 
@@ -182,11 +188,11 @@ impl CloudConnection {
             .map_err(|e| CloudError::Connection(e.to_string()))?;
 
         // Generate link name for this server
-        let link_name = generate_server_link(&config.host_name, config.randomise_link_name);
+        let link = generate_server_link(&config.host_name, config.randomise_link_name);
 
         // Send Connect handshake with token
         let connect = Connect {
-            link_name: link_name.clone(),
+            link: link.as_str().to_string(),
             token: Some(conn.token),
             version: PROTOCOL_VERSION,
             client_name: Some("amux-cli".to_string()),
@@ -204,12 +210,12 @@ impl CloudConnection {
         let response = ConnectResult::decode(&payload)
             .map_err(|e| CloudError::Connection(format!("invalid ConnectResult: {e}")))?;
         check_handshake_connect_result(&response)?;
-        tracing::info!(host = %conn.host, link = %link_name, "cloud connected");
+        tracing::info!(host = %conn.host, link = %link, "cloud connected");
 
         Ok(Self {
             config: config.clone(),
             transport,
-            link_name,
+            link,
             current_host: conn.host,
             current_port: conn.port,
             token_expires_at: conn.expires_at,
@@ -222,7 +228,7 @@ impl CloudConnection {
     pub(crate) fn into_parts(self) -> (TcpTransport<TlsStream<TcpStream>>, TokenRefreshState) {
         let refresh_state = TokenRefreshState {
             config: self.config,
-            link_name: self.link_name,
+            link: self.link,
             current_host: self.current_host,
             current_port: self.current_port,
             token_expires_at: self.token_expires_at,
@@ -238,7 +244,7 @@ impl CloudConnection {
 /// on cloud connections. For non-cloud connections, None is passed.
 pub(crate) struct TokenRefreshState {
     config: Config,
-    pub(crate) link_name: String,
+    pub(crate) link: Link,
     current_host: String,
     current_port: u16,
     token_expires_at: DateTime<Utc>,
@@ -312,7 +318,7 @@ mod tests {
     fn test_refresh_state(expires_at: DateTime<Utc>) -> TokenRefreshState {
         TokenRefreshState {
             config: Config::default(),
-            link_name: "test-link".to_string(),
+            link: Link::new("test-link").unwrap(),
             current_host: "test-host".to_string(),
             current_port: 9001,
             token_expires_at: expires_at,

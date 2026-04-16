@@ -1,14 +1,15 @@
-use crate::server_client;
+use std::collections::HashMap;
+#[cfg(unix)]
+use std::os::unix::fs::PermissionsExt;
+use std::path::{Path, PathBuf};
+
 use amux::Config;
 use anyhow::{Context, Result, bail};
 use semver::Version;
 use serde::Deserialize;
 use sha2::{Digest, Sha256};
-use std::collections::HashMap;
-use std::path::{Path, PathBuf};
 
-#[cfg(unix)]
-use std::os::unix::fs::PermissionsExt;
+use crate::server_client;
 
 #[derive(Deserialize)]
 struct Manifest {

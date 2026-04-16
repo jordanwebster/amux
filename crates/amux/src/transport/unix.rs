@@ -2,13 +2,14 @@
 //!
 //! Used for local CLI-to-server communication (commands, hook events, terminal attach).
 
+use tokio::net::UnixStream;
+
 use super::framing::{FrameReader, FrameWriter};
 use super::{
     LengthPrefixed, MAX_FRAME_SIZE, MessageReader, MessageWriter, Transport, TransportSplit,
 };
 use crate::protocol::message::Message;
 use crate::transport::{Result, TransportError};
-use tokio::net::UnixStream;
 
 /// Unix socket transport with length-prefixed framing
 pub(crate) struct UnixTransport {
@@ -80,10 +81,14 @@ impl TransportSplit for UnixTransport {
 
 #[cfg(test)]
 mod tests {
-    use super::*;
-    use crate::protocol::message::{AgentType, CreateAgentRequest, RoutableMessage, TerminalSize};
-    use crate::protocol::route::Route;
     use uuid::Uuid;
+
+    use super::*;
+    use crate::protocol::link::Link;
+    use crate::protocol::message::{
+        AgentType, CreateAgentRequest, RoutableMessage, SubscriptionId, TerminalSize,
+    };
+    use crate::protocol::route::Route;
 
     async fn create_socket_pair() -> (UnixTransport, UnixTransport) {
         let (client_stream, server_stream) = UnixStream::pair().unwrap();
@@ -100,7 +105,7 @@ mod tests {
 
         let test_uuid = Uuid::new_v4();
         let msg = Message::routable(
-            Route::from_link("term-abc"),
+            Route::from_link(Link::new("term-abc").unwrap()),
             Route::empty(),
             0,
             &RoutableMessage::CreateAgent(CreateAgentRequest {
@@ -136,11 +141,11 @@ mod tests {
         let (mut client, mut server) = create_socket_pair().await;
 
         let msg = Message::routable(
-            Route::from_link("host-a"),
-            Route::from_link("host-b"),
+            Route::from_link(Link::new("host-a").unwrap()),
+            Route::from_link(Link::new("host-b").unwrap()),
             0,
             &RoutableMessage::RawOutput {
-                subscription_id: Uuid::new_v4(),
+                subscription_id: SubscriptionId::random(),
                 data: b"hello world".to_vec(),
             },
         );
@@ -166,8 +171,8 @@ mod tests {
         let (mut client, mut server) = create_socket_pair().await;
 
         let msg = Message::routable(
-            Route::from_link("host-a"),
-            Route::from_link("host-b"),
+            Route::from_link(Link::new("host-a").unwrap()),
+            Route::from_link(Link::new("host-b").unwrap()),
             0,
             &RoutableMessage::RawInput {
                 agent_id: Uuid::new_v4(),

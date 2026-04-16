@@ -1,6 +1,7 @@
+use std::path::Path;
+
 use amux::{ConnectPolicy, DaemonOptions};
 use anyhow::{Context, Result};
-use std::path::Path;
 
 pub(super) fn daemon_options() -> Result<DaemonOptions> {
     let executable =

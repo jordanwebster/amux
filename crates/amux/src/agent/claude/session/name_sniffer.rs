@@ -1,8 +1,9 @@
-use crate::agent::{LocalAgentNameSource, SessionEvent, StructuredLogSource};
 use serde_json::Value;
 use tokio::sync::mpsc;
 use tokio::task::JoinHandle;
 use uuid::Uuid;
+
+use crate::agent::{LocalAgentNameSource, SessionEvent, StructuredLogSource};
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 struct EffectiveNameCandidate {

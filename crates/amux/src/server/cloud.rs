@@ -4,20 +4,23 @@
 //! Handles exponential backoff on retriable errors, stops on auth failures, and
 //! exits the process on protocol version mismatch (after notifying attached terminals).
 
+use std::sync::Arc;
+use std::sync::atomic::AtomicU64;
+use std::time::Duration;
+
+use tokio::sync::{RwLock, mpsc};
+use tracing::Instrument;
+use uuid::Uuid;
+
 use super::connection::{ConnectionContext, ConnectionError, HeartbeatRole, run_connection};
 use super::routing::send_initial_announcements;
+use super::runtime::notify_local_clients;
 use super::{ConnectionHandle, LOCAL_USER_ID, ServerState, ServerUserState, ensure_user_state};
 use crate::agent::SessionEvent;
 use crate::auth::cloud::{CloudConnection, CloudError};
 use crate::config::Config;
-use crate::protocol::message::{Command, Message, ShutdownReason};
+use crate::protocol::message::{Message, ShutdownReason};
 use crate::state::State;
-use std::sync::Arc;
-use std::sync::atomic::AtomicU64;
-use std::time::Duration;
-use tokio::sync::{RwLock, mpsc};
-use tracing::Instrument;
-use uuid::Uuid;
 
 const INITIAL_BACKOFF: Duration = Duration::from_secs(1);
 const MAX_BACKOFF: Duration = Duration::from_secs(300);
@@ -40,7 +43,7 @@ pub(super) fn establish_cloud_connection(
     tokio::spawn(
         async move {
             let should_connect = State::load(&config.state_path)
-                .map(|s| s.cloud.use_cloud_mode == Some(true))
+                .map(|s| s.cloud.is_enabled())
                 .unwrap_or(false);
 
             if !should_connect {
@@ -72,18 +75,7 @@ pub(super) fn establish_cloud_connection(
                         client_version,
                     }) => {
                         tracing::error!(server_version, client_version, "cloud protocol mismatch");
-                        // Notify all attached terminals to exit cleanly
-                        let us = user_state.read().await;
-                        for (link, tx) in &us.routes {
-                            if !us.peer_links.contains(link) {
-                                let _ = tx.try_send(Message::Command {
-                                    command: Command::ShutdownNotification {
-                                        reason: ShutdownReason::ProtocolMismatch,
-                                    },
-                                });
-                            }
-                        }
-                        drop(us);
+                        notify_local_clients(&user_state, ShutdownReason::ProtocolMismatch).await;
                         // Give writer tasks time to flush notifications to transports.
                         // try_send only places messages in channel buffers; without this
                         // yield, process::exit kills the runtime before writers can drain
@@ -119,7 +111,7 @@ pub(super) fn establish_cloud_connection(
                 }
 
                 let should_reconnect = State::load(&config.state_path)
-                    .map(|s| s.cloud.use_cloud_mode == Some(true))
+                    .map(|s| s.cloud.is_enabled())
                     .unwrap_or(false);
 
                 if !should_reconnect {
@@ -208,7 +200,7 @@ async fn run_cloud_connection(
     crate::update::clear_upgrade_required(&config.state_path);
 
     let (transport, token_refresh) = conn.into_parts();
-    let link_name = token_refresh.link_name.clone();
+    let link = token_refresh.link.clone();
 
     let (outgoing_tx, outgoing_rx) = mpsc::channel::<Message>(256);
     let next_request_id = Arc::new(AtomicU64::new(1));
@@ -219,15 +211,15 @@ async fn run_cloud_connection(
         };
         let mut us = user_state.write().await;
         us.routes.insert(
-            link_name.clone(),
+            link.clone(),
             ConnectionHandle::new(outgoing_tx.clone(), next_request_id.clone()),
         );
-        us.peer_links.insert(link_name.clone());
-        send_initial_announcements(&us, host_id, &host_name, is_cloud_server, &link_name);
+        us.peer_links.insert(link.clone());
+        send_initial_announcements(&us, host_id, &host_name, is_cloud_server, &link);
     }
     let conn_span = tracing::info_span!(
         "connection",
-        link = %link_name,
+        link = %link,
         transport = "cloud",
         user_id = %LOCAL_USER_ID,
         heartbeat_role = HeartbeatRole::Dialer.as_str(),
@@ -239,7 +231,7 @@ async fn run_cloud_connection(
         user_state,
         user_id: LOCAL_USER_ID,
         event_tx,
-        link_name: link_name.clone(),
+        link: link.clone(),
         is_local: false,
         heartbeat_role: HeartbeatRole::Dialer,
         next_request_id,
@@ -320,11 +312,12 @@ fn should_reset_backoff_after_connection(connection_uptime: Duration) -> bool {
 
 #[cfg(test)]
 mod tests {
+    use std::time::Duration;
+
     use super::{
         ABSOLUTE_JITTER_MAX, BACKOFF_RESET_AFTER_ESTABLISHED, INITIAL_BACKOFF, MAX_BACKOFF,
         jittered_backoff_with_samples, next_backoff, should_reset_backoff_after_connection,
     };
-    use std::time::Duration;
 
     #[test]
     fn jittered_backoff_applies_relative_and_absolute_jitter() {

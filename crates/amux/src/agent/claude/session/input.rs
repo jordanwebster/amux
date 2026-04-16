@@ -1,8 +1,10 @@
-use super::core::ClaudeSession;
-use crate::protocol::message::ProtocolError;
+use std::time::Duration;
+
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
-use std::time::Duration;
+
+use super::core::ClaudeSession;
+use crate::protocol::message::ProtocolError;
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
 #[serde(deny_unknown_fields)]

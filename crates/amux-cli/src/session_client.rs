@@ -1,18 +1,20 @@
-use crate::client_common::{cli_daemon_policy, print_update_banner};
-use amux::protocol::{
-    AgentType, Command, CreateAgentRequest, Message, ProtocolError, RoutableMessage,
-    ShutdownReason, SubscriptionId, TerminalSize,
-};
-use amux::{Config, ConnectError, Connection, LeaderKey, Route, TransportError, connect};
-use anyhow::{Result, anyhow};
-use crossterm::terminal;
 use std::io::{self, Read, Write};
 use std::path::Path;
 use std::sync::Arc;
 use std::sync::atomic::{AtomicU64, Ordering};
 use std::time::Duration;
+
+use amux::protocol::{
+    AgentType, Command, CreateAgentRequest, Message, ProtocolError, RoutableMessage, Route,
+    ShutdownReason, SubscriptionId, TerminalSize,
+};
+use amux::{Config, ConnectError, Connection, LeaderKey, TransportError, connect};
+use anyhow::{Result, anyhow};
+use crossterm::terminal;
 use tokio::sync::mpsc;
 use uuid::Uuid;
+
+use crate::client_common::{cli_daemon_policy, print_update_banner};
 
 /// Events from stdin reading task
 enum StdinEvent {
@@ -97,7 +99,7 @@ pub async fn new_agent(
 
     tracing::info!(agent_id = %agent_id, ?name, "creating agent");
 
-    let full_route = Route::from_link(conn.link_name());
+    let full_route = Route::from_link(conn.link().clone());
     let (src, dst) =
         Route::send(full_route.clone()).expect("full_route should have at least one link");
 
@@ -205,7 +207,7 @@ pub async fn attach(target: Option<&str>, config: &Config) -> Result<()> {
         }
     };
 
-    route_suffix.push(conn.link_name());
+    route_suffix.push(conn.link().clone());
     tracing::info!(agent_id = %agent_id, route = %route_suffix, "attaching");
 
     subscribe_and_stream(

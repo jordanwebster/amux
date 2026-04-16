@@ -1,17 +1,18 @@
+use std::sync::Arc;
+
+use serde::ser::{SerializeMap, SerializeSeq};
+use serde::{Serialize, Serializer};
+use tokio::sync::{RwLock, RwLockReadGuard};
+use uuid::Uuid;
+
 use crate::agent::Agent;
 use crate::debug::{DebugView, LossyPath};
+use crate::protocol::link::Link;
 use crate::protocol::message::{DebugFormat, Host};
 use crate::server::{
     LOCAL_USER_ID, ServerState, ServerUserState, SubscriptionEntry, SubscriptionMode,
 };
 use crate::state::State;
-use serde::{
-    Serialize, Serializer,
-    ser::{SerializeMap, SerializeSeq},
-};
-use std::sync::Arc;
-use tokio::sync::{RwLock, RwLockReadGuard};
-use uuid::Uuid;
 
 /// Top-level entry point: gather read-locks across the server, then serialize
 /// the resulting view in the requested format.
@@ -20,7 +21,7 @@ use uuid::Uuid;
 /// every per-user state). Once we have the guards, the rest is purely sync —
 /// the `Serialize` impls cannot await, so every dumped value must be reachable
 /// without an `.await`.
-pub(crate) async fn dump_server_debug_info(
+pub(super) async fn dump_server_debug_info(
     state: &Arc<RwLock<ServerState>>,
     format: DebugFormat,
     verbose: bool,
@@ -28,7 +29,7 @@ pub(crate) async fn dump_server_debug_info(
     let state_guard = state.read().await;
 
     let use_cloud_mode = State::load(&state_guard.config.state_path)
-        .map(|s| s.cloud.use_cloud_mode == Some(true))
+        .map(|s| s.cloud.is_enabled())
         .unwrap_or(false);
 
     // Acquire per-user read guards up front so the sync Serialize phase can
@@ -183,7 +184,7 @@ impl Serialize for UserView<'_> {
             agent_name_by_id.insert(agent.id, agent.name.clone());
         }
 
-        let mut peer_links: Vec<&str> = us.peer_links.iter().map(String::as_str).collect();
+        let mut peer_links: Vec<&str> = us.peer_links.iter().map(Link::as_str).collect();
         peer_links.sort_unstable();
 
         let mut map = serializer.serialize_map(None)?;
@@ -237,30 +238,30 @@ struct RoutesView<'a> {
 impl Serialize for RoutesView<'_> {
     fn serialize<S: Serializer>(&self, serializer: S) -> Result<S::Ok, S::Error> {
         let us = self.user_state;
-        let mut entries: Vec<(&String, bool, usize, usize)> = us
+        let mut entries: Vec<(&Link, bool, usize, usize)> = us
             .routes
             .keys()
-            .map(|link_name| {
-                let is_peer = us.peer_links.contains(link_name);
+            .map(|link| {
+                let is_peer = us.peer_links.contains(link);
                 let direct_host_count = us
                     .hosts
                     .values()
-                    .filter(|host| host.route.to_string() == *link_name)
+                    .filter(|host| host.route.to_string() == link.as_str())
                     .count();
                 let routed_host_count = us
                     .hosts
                     .values()
-                    .filter(|host| host.route.peek() == Some(link_name.as_str()))
+                    .filter(|host| host.route.peek() == Some(link))
                     .count();
-                (link_name, is_peer, direct_host_count, routed_host_count)
+                (link, is_peer, direct_host_count, routed_host_count)
             })
             .collect();
         entries.sort_unstable_by(|a, b| a.0.cmp(b.0));
 
         let mut seq = serializer.serialize_seq(Some(entries.len()))?;
-        for (link_name, is_peer, direct_host_count, routed_host_count) in entries {
+        for (link, is_peer, direct_host_count, routed_host_count) in entries {
             seq.serialize_element(&RouteEntry {
-                link_name,
+                link: link.as_str(),
                 kind: if is_peer { "peer" } else { "local_client" },
                 direct_host_count,
                 routed_host_count,
@@ -271,7 +272,7 @@ impl Serialize for RoutesView<'_> {
 }
 
 struct RouteEntry<'a> {
-    link_name: &'a str,
+    link: &'a str,
     kind: &'static str,
     direct_host_count: usize,
     routed_host_count: usize,
@@ -280,7 +281,7 @@ struct RouteEntry<'a> {
 impl Serialize for RouteEntry<'_> {
     fn serialize<S: Serializer>(&self, serializer: S) -> Result<S::Ok, S::Error> {
         let mut map = serializer.serialize_map(Some(4))?;
-        map.serialize_entry("link_name", self.link_name)?;
+        map.serialize_entry("link", self.link)?;
         map.serialize_entry("kind", self.kind)?;
         map.serialize_entry("direct_host_count", &self.direct_host_count)?;
         map.serialize_entry("routed_host_count", &self.routed_host_count)?;
@@ -462,8 +463,9 @@ impl Serialize for SubscriptionsView<'_> {
                 .cmp(&b.agent_id.as_u128())
                 .then_with(|| {
                     a.subscription_id
+                        .as_uuid()
                         .as_u128()
-                        .cmp(&b.subscription_id.as_u128())
+                        .cmp(&b.subscription_id.as_uuid().as_u128())
                 })
         });
 

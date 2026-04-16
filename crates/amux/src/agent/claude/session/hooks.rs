@@ -1,10 +1,12 @@
+use std::path::PathBuf;
+
+use serde_json::json;
+use uuid::Uuid;
+
 use super::core::ClaudeSession;
 use crate::agent::claude::hooks::{ClaudeHook, ParsedClaudeHook};
 use crate::agent::{HookError, HookOutcome};
 use crate::protocol::message::HookProvider;
-use serde_json::json;
-use std::path::PathBuf;
-use uuid::Uuid;
 
 impl ClaudeSession {
     /// Link a transcript file for structured output tailing.

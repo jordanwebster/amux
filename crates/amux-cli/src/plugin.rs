@@ -1,9 +1,10 @@
-use amux::{default_data_dir, setup};
-use serde::Deserialize;
 use std::ffi::OsString;
 use std::fs;
 use std::path::{Path, PathBuf};
 use std::sync::OnceLock;
+
+use amux::{default_data_dir, setup};
+use serde::Deserialize;
 
 const MARKETPLACE_NAME: &str = "amux";
 const PLUGIN_REF: &str = "amux@amux";
@@ -351,8 +352,9 @@ fn exit_with_plugin_error(action: PluginAction, error: String) -> ! {
 
 #[cfg(test)]
 mod tests {
-    use super::*;
     use tempfile::TempDir;
+
+    use super::*;
 
     #[test]
     fn bundled_manifest_has_version() {

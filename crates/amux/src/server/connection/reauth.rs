@@ -1,8 +1,10 @@
+use std::time::Duration;
+
+use tokio::sync::mpsc;
+
 use super::context::{ConnectionError, Result};
 use crate::auth::cloud::{CloudError, TokenRefreshState};
 use crate::protocol::message::{DirectMessage, Message};
-use std::time::Duration;
-use tokio::sync::mpsc;
 
 pub(super) const REFRESH_RESPONSE_TIMEOUT: Duration = Duration::from_secs(15);
 

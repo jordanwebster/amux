@@ -12,12 +12,12 @@ mod state;
 
 pub(crate) use runtime::Server;
 pub use runtime::ServerError;
-pub(crate) use runtime::send_routable_via_full_dst;
+pub(in crate::server) use runtime::send_routable_via_full_dst;
 #[cfg(test)]
-pub(crate) use runtime::test_helpers;
+pub(in crate::server) use runtime::test_helpers;
 #[cfg(test)]
-pub(crate) use runtime::{handle_session_event, sweep_expired_subscriptions};
-pub(crate) use state::{
+pub(in crate::server) use runtime::{handle_session_event, sweep_expired_subscriptions};
+pub(in crate::server) use state::{
     ConnectionHandle, LOCAL_USER_ID, SUBSCRIPTION_LEASE_DURATION, ServerState, ServerUserState,
     ShutdownRequest, SubscriptionEntry, SubscriptionMode, ensure_user_state, subscription_lease_ms,
 };

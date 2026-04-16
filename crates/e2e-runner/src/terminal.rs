@@ -1,9 +1,10 @@
-use portable_pty::{CommandBuilder, MasterPty, PtySize, native_pty_system};
 use std::collections::HashMap;
 use std::io::{Read, Write};
 use std::path::Path;
 use std::sync::mpsc;
 use std::time::Duration;
+
+use portable_pty::{CommandBuilder, MasterPty, PtySize, native_pty_system};
 
 // Note: We disable PTY echo (stty -echo) when spawning commands.
 // PTY echo causes input to be echoed back before the command's response.

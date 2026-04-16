@@ -6,22 +6,16 @@ mod server_client;
 mod session_client;
 mod update;
 
-use amux::protocol;
-use amux::run_server;
-use amux::setup;
-use amux::{Config, ServerMode};
-use anyhow::Context;
-use anyhow::Result;
-use anyhow::anyhow;
-use clap::CommandFactory;
-use clap::Parser;
-use clap::Subcommand;
-use clap::ValueEnum;
 use std::fs::OpenOptions;
 use std::io::Read;
 use std::path::PathBuf;
+
+use amux::{Config, ServerMode, protocol, run_server, setup};
+use anyhow::{Context, Result, anyhow};
+use clap::{CommandFactory, Parser, Subcommand, ValueEnum};
 use tracing_appender::non_blocking::WorkerGuard;
-use tracing_subscriber::{EnvFilter, fmt, prelude::*};
+use tracing_subscriber::prelude::*;
+use tracing_subscriber::{EnvFilter, fmt};
 
 /// Agent multiplexer - terminal multiplexer for AI agents
 #[derive(Debug, Parser)]
@@ -381,7 +375,7 @@ fn check_upgrade_required(config: &Config) {
         Ok(s) => s,
         Err(_) => return,
     };
-    if cloud_state.use_cloud_mode != Some(true) {
+    if !cloud_state.is_enabled() {
         return;
     }
 

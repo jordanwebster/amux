@@ -5,14 +5,15 @@
 //! no length prefix is needed. Ping/Pong handling is split: the reader
 //! forwards ping payloads to the writer via a channel.
 
-use super::{MessageReader, MessageWriter, Transport, TransportSplit};
-use crate::protocol::message::Message;
-use crate::transport::{Result, TransportError};
 use futures_util::{SinkExt, StreamExt};
 use tokio::net::TcpStream;
 use tokio::sync::mpsc;
 use tokio_tungstenite::WebSocketStream;
 use tokio_tungstenite::tungstenite::protocol::Message as WsMessage;
+
+use super::{MessageReader, MessageWriter, Transport, TransportSplit};
+use crate::protocol::message::Message;
+use crate::transport::{Result, TransportError};
 
 /// WebSocket transport with binary MessagePack serialization
 pub(crate) struct WebSocketTransport {

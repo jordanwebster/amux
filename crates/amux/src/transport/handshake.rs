@@ -1,8 +1,11 @@
+use std::time::Duration;
+
+use thiserror::Error;
+
 use crate::protocol::handshake::{Connect, ConnectResult, PROTOCOL_VERSION};
+use crate::protocol::link::Link;
 use crate::protocol::message::ProtocolError;
 use crate::transport::{Transport, TransportError};
-use std::time::Duration;
-use thiserror::Error;
 
 const HANDSHAKE_TIMEOUT: Duration = Duration::from_secs(10);
 
@@ -24,19 +27,16 @@ pub(crate) enum HandshakeError {
     TooManyAttempts,
 }
 
-pub(crate) async fn connect_handshake<T, F>(
-    transport: &mut T,
-    mut generate_link: F,
-) -> Result<String>
+pub(crate) async fn connect_handshake<T, F>(transport: &mut T, mut generate_link: F) -> Result<Link>
 where
     T: Transport,
-    F: FnMut() -> String,
+    F: FnMut() -> Link,
 {
     for attempt in 0..5 {
         let proposed_link = generate_link();
 
         let connect = Connect {
-            link_name: proposed_link.clone(),
+            link: proposed_link.as_str().to_string(),
             token: None,
             version: PROTOCOL_VERSION,
             client_name: Some("amux-cli".to_string()),

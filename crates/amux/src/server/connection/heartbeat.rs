@@ -1,8 +1,10 @@
+use std::time::Duration;
+
+use tokio::sync::mpsc;
+
 use super::context::{ConnectionError, HeartbeatRole, MessageMetadata, Result};
 use crate::protocol::message::{DirectMessage, Message};
 use crate::transport::TransportError;
-use std::time::Duration;
-use tokio::sync::mpsc;
 
 const HEARTBEAT_IDLE_INTERVAL: Duration = Duration::from_secs(60);
 const HEARTBEAT_ACK_TIMEOUT: Duration = Duration::from_secs(10);

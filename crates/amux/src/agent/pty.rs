@@ -1,14 +1,16 @@
-use super::StructuredLogSource;
-use crate::buffer::{MultiplexByteBuffer, MultiplexByteReader};
-use crate::protocol::message::TerminalSize;
-use anyhow::{Context, Result, anyhow};
-use portable_pty::{CommandBuilder, MasterPty, PtySize, native_pty_system};
 use std::io::{Read, Write};
 use std::path::Path;
 use std::sync::Arc;
+
+use anyhow::{Context, Result, anyhow};
+use portable_pty::{CommandBuilder, MasterPty, PtySize, native_pty_system};
 use tokio::sync::{Mutex, mpsc};
 use tracing::Instrument;
 use uuid::Uuid;
+
+use super::StructuredLogSource;
+use crate::buffer::{MultiplexByteBuffer, MultiplexByteReader};
+use crate::protocol::message::TerminalSize;
 
 /// Maximum replay buffer size for PTY bytes.
 const MAX_REPLAY_BUFFER: usize = 10 * 1024 * 1024; // 10MB
@@ -38,21 +40,21 @@ impl PtyHandle {
     }
 
     /// Resize the PTY.
-    pub(crate) async fn resize(&self, rows: u16, cols: u16) -> Result<()> {
+    pub(crate) async fn resize(&self, size: TerminalSize) -> Result<()> {
         let mut current = self.current_size.lock().await;
-        if *current != (rows, cols) {
+        if *current != (size.rows, size.cols) {
             let master_guard = self.pty_master.lock().await;
             if let Some(master) = master_guard.as_ref() {
                 master
                     .resize(PtySize {
-                        rows,
-                        cols,
+                        rows: size.rows,
+                        cols: size.cols,
                         pixel_width: 0,
                         pixel_height: 0,
                     })
                     .context("failed to resize pty")?;
-                tracing::debug!(cols, rows, "pty resized");
-                *current = (rows, cols);
+                tracing::debug!(cols = size.cols, rows = size.rows, "pty resized");
+                *current = (size.rows, size.cols);
             }
         }
         Ok(())
@@ -104,6 +106,7 @@ pub(crate) fn spawn_pty_agent(
         .slave
         .spawn_command(cmd)
         .with_context(|| format!("failed to spawn '{command}'"))?;
+    // Close the slave pty handle in the parent so EOF propagates to the child on exit.
     drop(pair.slave);
 
     let master = pair.master;

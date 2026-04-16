@@ -22,6 +22,12 @@ pub(super) use subscription::{
 
 #[cfg(test)]
 mod tests {
+    use std::sync::atomic::AtomicU64;
+    use std::sync::{Arc, Mutex};
+    use std::time::Duration;
+
+    use tokio::sync::{RwLock, mpsc};
+
     use super::context::{Incoming, MessageMetadata};
     use super::driver::{
         connection_loop, connection_loop_with_heartbeat, reader_loop, writer_loop,
@@ -31,15 +37,11 @@ mod tests {
         refresh_has_priority,
     };
     use super::*;
+    use crate::protocol::link::Link;
     use crate::protocol::message::{Command, DirectMessage, Message};
     use crate::server::test_helpers::{test_ctx, test_state};
     use crate::server::{LOCAL_USER_ID, ServerState, ServerUserState};
     use crate::transport::TransportError;
-    use std::sync::Arc;
-    use std::sync::Mutex;
-    use std::sync::atomic::AtomicU64;
-    use std::time::Duration;
-    use tokio::sync::{RwLock, mpsc};
 
     // --- Mock MessageReader for reader_loop tests ---
 
@@ -106,7 +108,7 @@ mod tests {
             user_state,
             user_id: LOCAL_USER_ID,
             event_tx,
-            link_name: "test-peer".to_string(),
+            link: Link::new("test-peer").unwrap(),
             is_local: false,
             heartbeat_role: HeartbeatRole::Dialer,
             next_request_id: Arc::new(AtomicU64::new(1)),
@@ -125,7 +127,7 @@ mod tests {
             user_state,
             user_id: LOCAL_USER_ID,
             event_tx,
-            link_name: "accepted-peer".to_string(),
+            link: Link::new("accepted-peer").unwrap(),
             is_local: false,
             heartbeat_role: HeartbeatRole::Acceptor,
             next_request_id: Arc::new(AtomicU64::new(1)),

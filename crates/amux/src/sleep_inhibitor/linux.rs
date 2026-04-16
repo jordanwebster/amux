@@ -2,6 +2,7 @@ use std::env;
 use std::ffi::OsStr;
 use std::os::unix::process::CommandExt;
 use std::process::{Child, Command, Stdio};
+
 use tracing::{info, warn};
 
 const ASSERTION_REASON: &str = "amux server is running";
@@ -204,8 +205,9 @@ fn command_in_path(command: &str, path: Option<&OsStr>) -> bool {
 
 #[cfg(test)]
 mod tests {
-    use super::{LinuxBackend, command_in_path};
     use std::ffi::OsString;
+
+    use super::{LinuxBackend, command_in_path};
 
     #[test]
     fn command_lookup_reports_false_for_empty_path() {

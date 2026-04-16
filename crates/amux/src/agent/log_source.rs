@@ -6,16 +6,19 @@
 //! is stopped, the buffer is cleared, and a new tailer begins writing
 //! to the same buffer — keeping existing subscribers connected.
 
+use std::path::PathBuf;
+use std::sync::{Arc, Mutex as StdMutex};
+
+use serde::ser::SerializeMap;
+use serde::{Serialize, Serializer};
+use serde_json::Value;
+use tokio::sync::Mutex;
+use tokio::task::JoinHandle;
+
 use crate::agent::claude::transcript::TranscriptTailer;
 use crate::buffer::{MultiplexStructuredBuffer, MultiplexStructuredReader};
 use crate::debug::{DebugView, LossyPath};
 use crate::protocol::message::SubscribeQuery;
-use serde::{Serialize, Serializer, ser::SerializeMap};
-use serde_json::Value;
-use std::path::PathBuf;
-use std::sync::{Arc, Mutex as StdMutex};
-use tokio::sync::Mutex;
-use tokio::task::JoinHandle;
 
 /// Maximum number of structured log entries to keep
 const MAX_LOG_ENTRIES: usize = 1000;
@@ -142,9 +145,10 @@ impl Serialize for DebugView<'_, StructuredLogSource> {
 
 #[cfg(test)]
 mod tests {
-    use super::*;
     use serde_json::json;
     use tempfile::tempdir;
+
+    use super::*;
 
     #[tokio::test]
     async fn subscribe_immediately_returns_empty_snapshot_before_transcript_exists() {

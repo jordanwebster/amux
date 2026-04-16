@@ -1,3 +1,11 @@
+use std::future::Future;
+use std::sync::atomic::Ordering;
+
+use tokio::sync::{mpsc, oneshot};
+use tokio::time::Instant;
+use tracing::Instrument;
+use uuid::Uuid;
+
 use crate::buffer::{BroadcastReader, BufferPolicy};
 use crate::protocol::message::{
     Message, ProtocolError, RoutableMessage, SubscriptionCloseReason, SubscriptionId,
@@ -8,12 +16,6 @@ use crate::server::connection::{
 };
 use crate::server::routing::{SubscribeError, connection_tx};
 use crate::server::{SUBSCRIPTION_LEASE_DURATION, SubscriptionMode};
-use std::future::Future;
-use std::sync::atomic::Ordering;
-use tokio::sync::{mpsc, oneshot};
-use tokio::time::Instant;
-use tracing::Instrument;
-use uuid::Uuid;
 
 /// A readable subscription stream. Implemented for all [`BroadcastReader`]
 /// instantiations to enable shared stream spawning logic.
@@ -49,7 +51,7 @@ impl SubscriptionHandle {
     ) -> (Self, oneshot::Receiver<()>) {
         let (cancel_tx, cancel_rx) = oneshot::channel::<()>();
         let mut full_dst = reply_dst.clone();
-        full_dst.push(ctx.link_name.clone());
+        full_dst.push(ctx.link.clone());
         let mut us = ctx.user_state.write().await;
         register_subscription(
             &mut us,
@@ -106,7 +108,7 @@ pub(super) async fn spawn_subscription_stream<R: SubscriptionReader>(
     wrap_item: fn(SubscriptionId, R::Item) -> RoutableMessage,
     ctx: &ConnectionContext,
 ) {
-    let Some(tx) = connection_tx(&ctx.user_state, &ctx.link_name).await else {
+    let Some(tx) = connection_tx(&ctx.user_state, &ctx.link).await else {
         let _ = cleanup_subscription(&ctx.user_state, handle.subscription_id).await;
         return;
     };
@@ -177,9 +179,20 @@ pub(super) async fn remove_subscription_if_reply_failed(
 
 #[cfg(test)]
 mod tests {
+    use std::future::Future;
+    use std::path::PathBuf;
+    use std::sync::Arc;
+    use std::sync::atomic::AtomicU64;
+    use std::time::Duration;
+
+    use tokio::sync::{mpsc, oneshot};
+    use tokio::time::Instant;
+    use uuid::Uuid;
+
     use super::super::tests::*;
     use super::*;
     use crate::agent::AgentSession;
+    use crate::protocol::link::Link;
     use crate::protocol::message::{DirectMessage, Message};
     use crate::protocol::route::Route;
     use crate::protocol::{RoutableMessage, SubscriptionCloseReason};
@@ -189,14 +202,6 @@ mod tests {
         ConnectionHandle, SUBSCRIPTION_LEASE_DURATION, SubscriptionMode,
         sweep_expired_subscriptions,
     };
-    use std::future::Future;
-    use std::path::PathBuf;
-    use std::sync::Arc;
-    use std::sync::atomic::AtomicU64;
-    use std::time::Duration;
-    use tokio::sync::{mpsc, oneshot};
-    use tokio::time::Instant;
-    use uuid::Uuid;
 
     struct MockReader {
         rx: mpsc::Receiver<Vec<u8>>,
@@ -213,7 +218,7 @@ mod tests {
     async fn register_test_subscription(
         ctx: &ConnectionContext,
         agent_id: Uuid,
-        subscription_id: Uuid,
+        subscription_id: SubscriptionId,
         reply_src: Route,
         reply_dst: &Route,
         mode: SubscriptionMode,
@@ -236,13 +241,13 @@ mod tests {
         let mut route_rx = setup_route(&user_state).await;
 
         let agent_id = Uuid::new_v4();
-        let subscription_id = Uuid::new_v4();
-        let reply_dst = Route::from_link("client");
+        let subscription_id = SubscriptionId::random();
+        let reply_dst = Route::from_link(Link::new("client").unwrap());
         let (handle, cancel_rx) = register_test_subscription(
             &ctx,
             agent_id,
             subscription_id,
-            Route::from_link("server"),
+            Route::from_link(Link::new("server").unwrap()),
             &reply_dst,
             SubscriptionMode::Raw,
         )
@@ -303,13 +308,13 @@ mod tests {
             us.registry.register_local(info).unwrap();
         }
 
-        let subscription_id = Uuid::new_v4();
-        let reply_dst = Route::from_link("client");
+        let subscription_id = SubscriptionId::random();
+        let reply_dst = Route::from_link(Link::new("client").unwrap());
         let (handle, cancel_rx) = register_test_subscription(
             &ctx,
             agent_id,
             subscription_id,
-            Route::from_link("server"),
+            Route::from_link(Link::new("server").unwrap()),
             &reply_dst,
             SubscriptionMode::Raw,
         )
@@ -363,13 +368,13 @@ mod tests {
         let mut route_rx = setup_route(&user_state).await;
 
         let agent_id = Uuid::new_v4();
-        let subscription_id = Uuid::new_v4();
-        let reply_dst = Route::from_link("client");
+        let subscription_id = SubscriptionId::random();
+        let reply_dst = Route::from_link(Link::new("client").unwrap());
         let (handle, cancel_rx) = register_test_subscription(
             &ctx,
             agent_id,
             subscription_id,
-            Route::from_link("server"),
+            Route::from_link(Link::new("server").unwrap()),
             &reply_dst,
             SubscriptionMode::Raw,
         )
@@ -407,15 +412,15 @@ mod tests {
         let ctx = test_ctx(state, user_state.clone());
 
         let agent_id = Uuid::new_v4();
-        let subscription_id = Uuid::new_v4();
+        let subscription_id = SubscriptionId::random();
         let (_cancel_tx, cancel_rx) = oneshot::channel::<()>();
         let (_mock_tx, mock_rx) = mpsc::channel::<Vec<u8>>(16);
         let handle = SubscriptionHandle {
             subscription_id,
             agent_id,
             mode: SubscriptionMode::Raw,
-            reply_src: Route::from_link("server"),
-            reply_dst: Route::from_link("client"),
+            reply_src: Route::from_link(Link::new("server").unwrap()),
+            reply_dst: Route::from_link(Link::new("client").unwrap()),
         };
 
         spawn_subscription_stream(
@@ -443,10 +448,10 @@ mod tests {
         let mut route_rx = setup_route(&user_state).await;
 
         let agent_id = Uuid::new_v4();
-        let subscription_id = Uuid::new_v4();
+        let subscription_id = SubscriptionId::random();
         let (cancel_tx, mut cancel_rx) = oneshot::channel();
-        let mut full_dst = Route::from_link("client");
-        full_dst.push("test-link");
+        let mut full_dst = Route::from_link(Link::new("client").unwrap());
+        full_dst.push(Link::new("test-link").unwrap());
 
         {
             let mut us = user_state.write().await;
@@ -493,16 +498,16 @@ mod tests {
         {
             let mut us = user_state.write().await;
             us.routes.insert(
-                "test-link".to_string(),
+                Link::new("test-link").unwrap(),
                 ConnectionHandle::new(route_tx, Arc::new(AtomicU64::new(1))),
             );
         }
 
         let agent_id = Uuid::new_v4();
-        let subscription_id = Uuid::new_v4();
+        let subscription_id = SubscriptionId::random();
         let (cancel_tx, _cancel_rx) = oneshot::channel();
-        let mut full_dst = Route::from_link("client");
-        full_dst.push("test-link");
+        let mut full_dst = Route::from_link(Link::new("client").unwrap());
+        full_dst.push(Link::new("test-link").unwrap());
 
         {
             let mut us = user_state.write().await;
@@ -534,10 +539,10 @@ mod tests {
         let mut route_rx = setup_named_route(&user_state, "peer-hop").await;
 
         let agent_id = Uuid::new_v4();
-        let subscription_id = Uuid::new_v4();
+        let subscription_id = SubscriptionId::random();
         let (cancel_tx, _cancel_rx) = oneshot::channel();
-        let mut full_dst = Route::from_link("client-link");
-        full_dst.push("peer-hop");
+        let mut full_dst = Route::from_link(Link::new("client-link").unwrap());
+        full_dst.push(Link::new("peer-hop").unwrap());
 
         {
             let mut us = user_state.write().await;

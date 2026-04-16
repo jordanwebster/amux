@@ -1,5 +1,6 @@
-use serde::Deserialize;
 use std::path::Path;
+
+use serde::Deserialize;
 
 /// Directory definition in test environment
 #[derive(Debug, Clone, Deserialize)]

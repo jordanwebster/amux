@@ -4,8 +4,11 @@
 //! - Before sending through link X: pop X from dst, push X to src
 //! - On receive: match dst.pop() { None → process locally, Some(link) → route to link }
 
-use serde::{Deserialize, Deserializer, Serialize, Serializer};
 use std::collections::VecDeque;
+
+use serde::{Deserialize, Deserializer, Serialize, Serializer};
+
+use crate::protocol::link::Link;
 
 /// Alphabet for generating random link suffixes (lowercase + digits)
 const LINK_ALPHABET: [char; 36] = [
@@ -19,7 +22,7 @@ const LINK_ALPHABET: [char; 36] = [
 /// Serializes as "AB.BC.CD" where AB is the top (first hop).
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct Route {
-    links: VecDeque<String>,
+    links: VecDeque<Link>,
 }
 
 impl Route {
@@ -35,47 +38,36 @@ impl Route {
         self.links.is_empty()
     }
 
+    /// Number of hops in this route.
+    pub fn len(&self) -> usize {
+        self.links.len()
+    }
+
     /// Create a route with a single link.
-    ///
-    /// # Panics
-    /// Debug-asserts that the link name does not contain "." (the route separator).
-    pub fn from_link(link: impl Into<String>) -> Self {
-        let link = link.into();
-        debug_assert!(
-            !link.contains('.'),
-            "link name must not contain '.': {link}"
-        );
+    pub fn from_link(link: Link) -> Self {
         let mut links = VecDeque::new();
         links.push_back(link);
         Self { links }
     }
 
     /// Push a link onto the front of the route (becomes the new top).
-    ///
-    /// # Panics
-    /// Debug-asserts that the link name does not contain "." (the route separator).
-    pub fn push(&mut self, link: impl Into<String>) {
-        let link = link.into();
-        debug_assert!(
-            !link.contains('.'),
-            "link name must not contain '.': {link}"
-        );
+    pub fn push(&mut self, link: Link) {
         self.links.push_front(link);
     }
 
     /// Pop the top link from the route (the next hop).
-    pub fn pop(&mut self) -> Option<String> {
+    pub fn pop(&mut self) -> Option<Link> {
         self.links.pop_front()
     }
 
     /// Peek at the first hop without consuming it.
-    pub fn peek(&self) -> Option<&str> {
-        self.links.front().map(|s| s.as_str())
+    pub fn peek(&self) -> Option<&Link> {
+        self.links.front()
     }
 
     /// Check if this route passes through a given link name.
     pub fn contains_link(&self, link: &str) -> bool {
-        self.links.iter().any(|l| l == link)
+        self.links.iter().any(|l| l.as_str() == link)
     }
 
     /// Check if this route starts with all links from the given prefix route, in order.
@@ -139,7 +131,7 @@ impl std::fmt::Display for Route {
         let s: String = self
             .links
             .iter()
-            .map(|s| s.as_str())
+            .map(|l| l.as_str())
             .collect::<Vec<_>>()
             .join(".");
         f.write_str(&s)
@@ -167,8 +159,10 @@ impl<'de> Deserialize<'de> for Route {
                 links: VecDeque::new(),
             });
         }
-        let links: VecDeque<String> = s.split('.').map(|s| s.to_string()).collect();
-        Ok(Route { links })
+        let links: Result<VecDeque<Link>, _> = s.split('.').map(Link::new).collect();
+        Ok(Route {
+            links: links.map_err(serde::de::Error::custom)?,
+        })
     }
 }
 
@@ -190,23 +184,29 @@ fn sanitize_host_name(host_name: &str) -> String {
 /// Generate a server link name: "{hostname}" or "{hostname}-{rand}".
 /// If randomise is true, appends a random suffix for uniqueness.
 /// The hostname is sanitized (periods replaced with hyphens).
-pub(crate) fn generate_server_link(host_name: &str, randomise: bool) -> String {
+pub(crate) fn generate_server_link(host_name: &str, randomise: bool) -> Link {
     let sanitized = sanitize_host_name(host_name);
-    if randomise {
+    let raw = if randomise {
         format!("{}-{}", sanitized, generate_link_suffix())
     } else {
         sanitized
-    }
+    };
+    Link::new(raw).expect("generated server link is well-formed")
 }
 
 /// Generate a terminal link name: "term-{rand}".
-pub(crate) fn generate_terminal_link() -> String {
-    format!("term-{}", generate_link_suffix())
+pub(crate) fn generate_terminal_link() -> Link {
+    Link::new(format!("term-{}", generate_link_suffix()))
+        .expect("generated terminal link is well-formed")
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    fn link(name: &str) -> Link {
+        Link::new(name).unwrap()
+    }
 
     #[test]
     fn test_route_empty() {
@@ -214,8 +214,8 @@ mod tests {
         assert_eq!(route.pop(), None);
 
         // Push onto empty produces single-link route
-        route.push("host-a");
-        assert_eq!(route.pop(), Some("host-a".to_string()));
+        route.push(link("host-a"));
+        assert_eq!(route.pop(), Some(link("host-a")));
         assert_eq!(route.pop(), None);
     }
 
@@ -229,28 +229,28 @@ mod tests {
     #[test]
     fn test_route_push_pop() {
         // Build route AB.BC.CD by starting with CD and pushing
-        let mut route = Route::from_link("CD");
-        route.push("BC");
-        route.push("AB");
+        let mut route = Route::from_link(link("CD"));
+        route.push(link("BC"));
+        route.push(link("AB"));
 
-        assert_eq!(route.pop(), Some("AB".to_string()));
-        assert_eq!(route.pop(), Some("BC".to_string()));
-        assert_eq!(route.pop(), Some("CD".to_string()));
+        assert_eq!(route.pop(), Some(link("AB")));
+        assert_eq!(route.pop(), Some(link("BC")));
+        assert_eq!(route.pop(), Some(link("CD")));
         assert_eq!(route.pop(), None);
     }
 
     #[test]
     fn test_route_from_link() {
-        let mut route = Route::from_link("single");
-        assert_eq!(route.pop(), Some("single".to_string()));
+        let mut route = Route::from_link(link("single"));
+        assert_eq!(route.pop(), Some(link("single")));
         assert_eq!(route.pop(), None);
     }
 
     #[test]
     fn test_route_serialize() {
-        let mut route = Route::from_link("CD");
-        route.push("BC");
-        route.push("AB");
+        let mut route = Route::from_link(link("CD"));
+        route.push(link("BC"));
+        route.push(link("AB"));
 
         let serialized = serde_json::to_string(&route).unwrap();
         assert_eq!(serialized, "\"AB.BC.CD\"");
@@ -258,7 +258,7 @@ mod tests {
 
     #[test]
     fn test_route_serialize_single() {
-        let route = Route::from_link("AB");
+        let route = Route::from_link(link("AB"));
         let serialized = serde_json::to_string(&route).unwrap();
         assert_eq!(serialized, "\"AB\"");
     }
@@ -267,9 +267,9 @@ mod tests {
     fn test_route_deserialize() {
         let route: Route = serde_json::from_str("\"AB.BC.CD\"").unwrap();
         let mut route = route;
-        assert_eq!(route.pop(), Some("AB".to_string()));
-        assert_eq!(route.pop(), Some("BC".to_string()));
-        assert_eq!(route.pop(), Some("CD".to_string()));
+        assert_eq!(route.pop(), Some(link("AB")));
+        assert_eq!(route.pop(), Some(link("BC")));
+        assert_eq!(route.pop(), Some(link("CD")));
     }
 
     #[test]
@@ -280,9 +280,9 @@ mod tests {
 
     #[test]
     fn test_route_roundtrip() {
-        let mut original = Route::from_link("CD");
-        original.push("BC");
-        original.push("AB");
+        let mut original = Route::from_link(link("CD"));
+        original.push(link("BC"));
+        original.push(link("AB"));
 
         let serialized = serde_json::to_string(&original).unwrap();
         let deserialized: Route = serde_json::from_str(&serialized).unwrap();
@@ -302,21 +302,21 @@ mod tests {
     #[test]
     fn test_generate_server_link_randomised() {
         let link = generate_server_link("myhost", true);
-        assert!(link.starts_with("myhost-"));
-        assert_eq!(link.len(), "myhost-".len() + 4);
+        assert!(link.as_str().starts_with("myhost-"));
+        assert_eq!(link.as_str().len(), "myhost-".len() + 4);
     }
 
     #[test]
     fn test_generate_server_link_deterministic() {
         let link = generate_server_link("myhost", false);
-        assert_eq!(link, "myhost");
+        assert_eq!(link.as_str(), "myhost");
     }
 
     #[test]
     fn test_generate_terminal_link() {
         let link = generate_terminal_link();
-        assert!(link.starts_with("term-"));
-        assert_eq!(link.len(), "term-".len() + 4);
+        assert!(link.as_str().starts_with("term-"));
+        assert_eq!(link.as_str().len(), "term-".len() + 4);
     }
 
     #[test]
@@ -337,32 +337,24 @@ mod tests {
     #[test]
     fn test_generate_server_link_sanitizes_periods() {
         let link = generate_server_link("my.laptop.local", false);
-        assert_eq!(link, "my-laptop-local");
-        assert!(!link.contains('.'));
+        assert_eq!(link.as_str(), "my-laptop-local");
+        assert!(!link.as_str().contains('.'));
 
         let link = generate_server_link("my.laptop.local", true);
-        assert!(link.starts_with("my-laptop-local-"));
-        assert!(!link.contains('.'));
+        assert!(link.as_str().starts_with("my-laptop-local-"));
+        assert!(!link.as_str().contains('.'));
     }
 
     #[test]
-    #[should_panic(expected = "link name must not contain '.'")]
-    fn test_from_link_rejects_period() {
-        Route::from_link("bad.link");
-    }
-
-    #[test]
-    #[should_panic(expected = "link name must not contain '.'")]
-    fn test_push_rejects_period() {
-        let mut route = Route::from_link("good");
-        route.push("bad.link");
+    fn link_name_rejects_period() {
+        assert!(Link::new("bad.link").is_err());
     }
 
     #[test]
     fn test_contains_link() {
-        let mut route = Route::from_link("CD");
-        route.push("BC");
-        route.push("AB");
+        let mut route = Route::from_link(link("CD"));
+        route.push(link("BC"));
+        route.push(link("AB"));
 
         assert!(route.contains_link("AB"));
         assert!(route.contains_link("BC"));
@@ -378,50 +370,50 @@ mod tests {
 
     #[test]
     fn test_starts_with_route_exact_match() {
-        let route = Route::from_link("AB");
-        let prefix = Route::from_link("AB");
+        let route = Route::from_link(link("AB"));
+        let prefix = Route::from_link(link("AB"));
         assert!(route.starts_with_route(&prefix));
     }
 
     #[test]
     fn test_starts_with_route_partial_prefix() {
-        let mut route = Route::from_link("CD");
-        route.push("BC");
-        route.push("AB");
-        let prefix = Route::from_link("AB");
+        let mut route = Route::from_link(link("CD"));
+        route.push(link("BC"));
+        route.push(link("AB"));
+        let prefix = Route::from_link(link("AB"));
         assert!(route.starts_with_route(&prefix));
     }
 
     #[test]
     fn test_starts_with_route_mismatch() {
-        let route = Route::from_link("AB");
-        let prefix = Route::from_link("XX");
+        let route = Route::from_link(link("AB"));
+        let prefix = Route::from_link(link("XX"));
         assert!(!route.starts_with_route(&prefix));
     }
 
     #[test]
     fn test_starts_with_route_empty_prefix() {
-        let route = Route::from_link("AB");
+        let route = Route::from_link(link("AB"));
         assert!(route.starts_with_route(&Route::empty()));
     }
 
     #[test]
     fn test_starts_with_route_longer_prefix() {
-        let route = Route::from_link("AB");
-        let mut prefix = Route::from_link("CD");
-        prefix.push("AB");
+        let route = Route::from_link(link("AB"));
+        let mut prefix = Route::from_link(link("CD"));
+        prefix.push(link("AB"));
         assert!(!route.starts_with_route(&prefix));
     }
 
     #[test]
     fn test_replace_prefix() {
-        let mut route = Route::from_link("CD");
-        route.push("BC");
-        route.push("AB");
+        let mut route = Route::from_link(link("CD"));
+        route.push(link("BC"));
+        route.push(link("AB"));
 
-        let mut old_prefix = Route::from_link("BC");
-        old_prefix.push("AB");
-        let new_prefix = Route::from_link("XY");
+        let mut old_prefix = Route::from_link(link("BC"));
+        old_prefix.push(link("AB"));
+        let new_prefix = Route::from_link(link("XY"));
 
         assert!(route.replace_prefix(&old_prefix, &new_prefix));
         assert_eq!(route.to_string(), "XY.CD");
@@ -429,12 +421,12 @@ mod tests {
 
     #[test]
     fn test_replace_prefix_no_match() {
-        let mut route = Route::from_link("CD");
-        route.push("BC");
-        route.push("AB");
+        let mut route = Route::from_link(link("CD"));
+        route.push(link("BC"));
+        route.push(link("AB"));
 
-        let old_prefix = Route::from_link("ZZ");
-        let new_prefix = Route::from_link("XY");
+        let old_prefix = Route::from_link(link("ZZ"));
+        let new_prefix = Route::from_link(link("XY"));
 
         assert!(!route.replace_prefix(&old_prefix, &new_prefix));
         assert_eq!(route.to_string(), "AB.BC.CD");

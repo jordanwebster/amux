@@ -1,15 +1,17 @@
+use std::collections::HashMap;
+use std::sync::Arc;
+
+use anyhow::{Context, Result as AnyhowResult, bail};
+use thiserror::Error;
+use tokio::sync::{RwLock, mpsc};
+use uuid::Uuid;
+
 use super::peers::{announce_agent_message, broadcast_to_peers};
 use crate::agent::{AgentSession, SessionEvent, StopPolicy};
 use crate::buffer::MultiplexByteReader;
 use crate::protocol::message::{AgentType, DirectMessage, TerminalSize};
 use crate::server::ServerUserState;
 use crate::suspend::SuspendedServerState;
-use anyhow::{Context, Result as AnyhowResult, bail};
-use std::collections::HashMap;
-use std::sync::Arc;
-use thiserror::Error;
-use tokio::sync::{RwLock, mpsc};
-use uuid::Uuid;
 
 /// Maximum local agents per user. Each agent holds a PTY and several tokio
 /// tasks, so this provides an upper bound on per-user resource consumption.
@@ -174,7 +176,7 @@ pub(in crate::server) async fn handle_subscribe(
         .ok_or(SubscribeError::MissingPty(*agent_id))?;
 
     if let Some(size) = terminal_size {
-        pty.resize(size.rows, size.cols)
+        pty.resize(size)
             .await
             .map_err(|error| SubscribeError::Operation(error.to_string()))?;
     }

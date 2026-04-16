@@ -5,28 +5,35 @@
 //! isolation in [`ServerUserState`] (keyed by JWT-derived user ID, or [`LOCAL_USER_ID`]
 //! for unauthenticated local connections).
 
-use super::accept::{local_accept, tcp_accept, websocket_accept};
-use super::cloud::establish_cloud_connection;
-use super::routing::{apply_local_name_candidate, shutdown_server, suspend_server, withdraw_agent};
-use super::{LOCAL_USER_ID, ServerState, ServerUserState, ShutdownRequest, SubscriptionEntry};
-use crate::agent::{SessionEvent, StopPolicy};
-use crate::auth::jwt::JwtValidator;
-use crate::config::{Config, ConfigError};
-use crate::protocol::message::{
-    AgentType, Command, Message, ProtocolError, RoutableMessage, ShutdownReason,
-    SubscriptionCloseReason,
-};
-use crate::protocol::route::Route;
-use crate::transport::{LocalListener, TcpTransport, TransportError, create_tls_acceptor};
+mod events;
+mod forward;
+mod notify;
+mod sweep;
+
 use std::net::SocketAddr;
 use std::sync::Arc;
 use std::time::Duration;
+
+pub(in crate::server) use events::handle_session_event;
+pub(in crate::server) use forward::send_routable_via_full_dst;
+pub(in crate::server) use notify::notify_local_clients;
+pub(in crate::server) use sweep::sweep_expired_subscriptions;
 use thiserror::Error;
 use tokio::net::TcpListener;
 use tokio::sync::{RwLock, Semaphore, mpsc};
-use tokio::time::{Instant, MissedTickBehavior};
+use tokio::time::MissedTickBehavior;
 use tokio_rustls::TlsAcceptor;
-use uuid::Uuid;
+
+use self::notify::notify_other_clients;
+use super::accept::{local_accept, tcp_accept, websocket_accept};
+use super::cloud::establish_cloud_connection;
+use super::routing::{shutdown_server, suspend_server};
+use super::{LOCAL_USER_ID, ServerState, ShutdownRequest};
+use crate::agent::SessionEvent;
+use crate::auth::jwt::JwtValidator;
+use crate::config::{Config, ConfigError};
+use crate::protocol::message::{Command, Message, ProtocolError, ShutdownReason};
+use crate::transport::{LocalListener, TcpTransport, TransportError, create_tls_acceptor};
 
 /// Maximum time allowed for a TLS handshake to complete.
 const TLS_HANDSHAKE_TIMEOUT: Duration = Duration::from_secs(10);
@@ -231,7 +238,7 @@ impl Server {
                 // Shutdown/suspend request from a connection handler
                 Some(req) = shutdown_rx.recv() => {
                     match req {
-                        ShutdownRequest::Shutdown { reply, link_name } => {
+                        ShutdownRequest::Shutdown { reply, link } => {
                             let user_state = {
                                 let s = self.state.read().await;
                                 s.user_state(&LOCAL_USER_ID)
@@ -240,7 +247,7 @@ impl Server {
                             // Notify before shutdown so clients see it before streams close
                             notify_other_clients(
                                 &user_state,
-                                &link_name,
+                                &link,
                                 ShutdownReason::UserRequested,
                             ).await;
                             shutdown_server(&user_state).await;
@@ -253,7 +260,7 @@ impl Server {
                                 },
                             ));
                         }
-                        ShutdownRequest::Suspend { reply, link_name } => {
+                        ShutdownRequest::Suspend { reply, link } => {
                             let user_state = {
                                 let s = self.state.read().await;
                                 s.user_state(&LOCAL_USER_ID)
@@ -262,7 +269,7 @@ impl Server {
                             // Notify before suspend so clients see it before streams close
                             notify_other_clients(
                                 &user_state,
-                                &link_name,
+                                &link,
                                 ShutdownReason::Updating,
                             ).await;
                             let (suspended, errors) = suspend_server(&user_state).await;
@@ -354,6 +361,7 @@ impl Server {
                             if let Some(ref acceptor) = tls_acceptor {
                                 let acceptor = acceptor.clone();
                                 tokio::spawn(async move {
+                                    let _permit = permit;
                                     let tls_result = tokio::time::timeout(
                                         TLS_HANDSHAKE_TIMEOUT,
                                         acceptor.accept(stream),
@@ -362,23 +370,20 @@ impl Server {
                                         Ok(Ok(tls_stream)) => {
                                             let transport = TcpTransport::new(tls_stream);
                                             let _ = tcp_accept(transport, state, event_tx, verify_token).await;
-                                            drop(permit);
                                         }
                                         Ok(Err(e)) => {
-                                            drop(permit);
                                             tracing::warn!(peer = %addr, error = %e, "TLS handshake failed");
                                         }
                                         Err(_) => {
-                                            drop(permit);
                                             tracing::warn!(peer = %addr, "TLS handshake timed out");
                                         }
                                     }
                                 });
                             } else {
                                 tokio::spawn(async move {
+                                    let _permit = permit;
                                     let transport = TcpTransport::new(stream);
                                     let _ = tcp_accept(transport, state, event_tx, verify_token).await;
-                                    drop(permit);
                                 });
                             }
                         }
@@ -410,8 +415,8 @@ impl Server {
                             let event_tx = self.event_tx.clone();
                             let verify_token = is_cloud_server;
                             tokio::spawn(async move {
+                                let _permit = permit;
                                 let _ = websocket_accept(stream, state, event_tx, verify_token).await;
-                                drop(permit);
                             });
                         }
                         Err(e) => {
@@ -444,220 +449,18 @@ impl Server {
     }
 }
 
-/// Best-effort notification for attached clients on shutdown/suspend.
-///
-/// This intentionally uses `try_send` so server shutdown does not block on a
-/// slow or backlogged client link. Missing this notice only affects the exit
-/// banner; update availability still comes from the marker file.
-async fn notify_other_clients(
-    user_state: &Arc<RwLock<ServerUserState>>,
-    exclude_link: &str,
-    reason: ShutdownReason,
-) {
-    let us = user_state.read().await;
-    let msg = Message::Command {
-        command: Command::ShutdownNotification { reason },
-    };
-    for (link, handle) in &us.routes {
-        if link == exclude_link {
-            continue;
-        }
-        let _ = handle.try_send(msg.clone());
-    }
-}
-
-pub(crate) async fn send_routable_via_full_dst(
-    user_state: &Arc<RwLock<ServerUserState>>,
-    full_dst: &Route,
-    message: &RoutableMessage,
-) -> bool {
-    let Some((src, dst)) = Route::send(full_dst.clone()) else {
-        return false;
-    };
-    let Some(next_hop) = src.peek() else {
-        return false;
-    };
-
-    let route_handle = {
-        let us = user_state.read().await;
-        us.routes.get(next_hop).cloned()
-    };
-
-    let Some(route_handle) = route_handle else {
-        return false;
-    };
-
-    let request_id = route_handle.next_request_id();
-    route_handle
-        .send(Message::routable(src, dst, request_id, message))
-        .await
-        .is_ok()
-}
-
-pub(crate) async fn try_send_routable_via_full_dst(
-    user_state: &Arc<RwLock<ServerUserState>>,
-    full_dst: &Route,
-    message: &RoutableMessage,
-) -> bool {
-    let Some((src, dst)) = Route::send(full_dst.clone()) else {
-        return false;
-    };
-    let Some(next_hop) = src.peek() else {
-        return false;
-    };
-
-    let route_handle = {
-        let us = user_state.read().await;
-        us.routes.get(next_hop).cloned()
-    };
-
-    let Some(route_handle) = route_handle else {
-        return false;
-    };
-
-    let request_id = route_handle.next_request_id();
-    route_handle.try_send(Message::routable(src, dst, request_id, message))
-}
-
-pub(crate) async fn sweep_expired_subscriptions(state: &Arc<RwLock<ServerState>>) {
-    let user_states: Vec<_> = {
-        let s = state.read().await;
-        s.users.values().cloned().collect()
-    };
-    let now = Instant::now();
-
-    for user_state in user_states {
-        let expired = {
-            let mut us = user_state.write().await;
-            let expired_ids: Vec<_> = us
-                .active_subscriptions
-                .iter()
-                .filter_map(|(subscription_id, entry)| {
-                    (entry.lease_deadline <= now).then_some(*subscription_id)
-                })
-                .collect();
-
-            expired_ids
-                .into_iter()
-                .filter_map(|subscription_id| us.active_subscriptions.remove(&subscription_id))
-                .collect::<Vec<_>>()
-        };
-
-        for entry in expired {
-            let SubscriptionEntry {
-                subscription_id,
-                agent_id,
-                mode,
-                cancel,
-                dst,
-                ..
-            } = entry;
-            drop(cancel);
-            tracing::info!(
-                subscription_id = %subscription_id,
-                agent_id = %agent_id,
-                mode = mode.as_str(),
-                "subscription lease expired"
-            );
-            let _ = try_send_routable_via_full_dst(
-                &user_state,
-                &dst,
-                &RoutableMessage::SubscriptionClosed {
-                    subscription_id,
-                    reason: SubscriptionCloseReason::LeaseExpired,
-                },
-            )
-            .await;
-        }
-    }
-}
-
-pub(crate) async fn handle_session_event(state: &Arc<RwLock<ServerState>>, event: SessionEvent) {
-    match event {
-        SessionEvent::Ended { agent_id, user_id } => {
-            let user_state = {
-                let s = state.read().await;
-                s.user_state(&user_id)
-            };
-            if let Some(user_state) = user_state {
-                let mut us = user_state.write().await;
-                let _ = withdraw_agent(&mut us, agent_id);
-            }
-        }
-        SessionEvent::Created {
-            agent_id,
-            user_id,
-            agent_type,
-            args,
-        } => {
-            if matches!(agent_type, AgentType::Claude)
-                && args.contains(&"--fork-session".to_string())
-                && let Some(pos) = args.iter().position(|a| a == "--resume")
-                && let Some(source_id_str) = args.get(pos + 1)
-                && let Ok(source_id) = source_id_str.parse::<Uuid>()
-            {
-                let user_state = {
-                    let s = state.read().await;
-                    s.user_state(&user_id)
-                };
-                if let Some(user_state) = user_state {
-                    let withdrawn_session = {
-                        let mut us = user_state.write().await;
-                        let is_readonly = us.agents.get(&source_id).is_some_and(|s| s.readonly());
-                        if is_readonly {
-                            withdraw_agent(&mut us, source_id)
-                        } else {
-                            None
-                        }
-                    };
-                    if let Some(session) = withdrawn_session {
-                        session.stop(StopPolicy::Interrupt).await;
-                        tracing::info!(
-                            source = %source_id,
-                            fork = %agent_id,
-                            "withdrew readonly session (forked)"
-                        );
-                    }
-                }
-            }
-            tracing::debug!(agent_id = %agent_id, ?agent_type, ?args, "session created");
-        }
-        SessionEvent::NameCandidateChanged {
-            agent_id,
-            user_id,
-            name,
-            source,
-        } => {
-            let (user_state, host_id) = {
-                let s = state.read().await;
-                (s.user_state(&user_id), s.host_id)
-            };
-            if let Some(user_state) = user_state {
-                let outcome = {
-                    let mut us = user_state.write().await;
-                    apply_local_name_candidate(&mut us, host_id, agent_id, name.clone(), source)
-                };
-                tracing::debug!(
-                    agent_id = %agent_id,
-                    candidate = %name,
-                    ?source,
-                    ?outcome,
-                    "processed local name candidate"
-                );
-            }
-        }
-    }
-}
-
 #[cfg(test)]
 pub(crate) mod test_helpers {
-    use super::{LOCAL_USER_ID, ServerState, ServerUserState};
-    use crate::config::Config;
-    use crate::server::connection::{ConnectionContext, HeartbeatRole};
     use std::sync::Arc;
     use std::sync::atomic::AtomicU64;
+
     use tokio::sync::{RwLock, mpsc};
     use uuid::Uuid;
+
+    use crate::config::Config;
+    use crate::protocol::link::Link;
+    use crate::server::connection::{ConnectionContext, HeartbeatRole};
+    use crate::server::{LOCAL_USER_ID, ServerState, ServerUserState};
 
     pub(crate) fn test_ctx(
         state: Arc<RwLock<ServerState>>,
@@ -669,7 +472,7 @@ pub(crate) mod test_helpers {
             user_state,
             user_id: LOCAL_USER_ID,
             event_tx,
-            link_name: "test-link".to_string(),
+            link: Link::new("test-link").unwrap(),
             is_local: true,
             heartbeat_role: HeartbeatRole::Disabled,
             next_request_id: Arc::new(AtomicU64::new(1)),
@@ -696,28 +499,30 @@ pub(crate) mod test_helpers {
 
 #[cfg(test)]
 mod tests {
-    use crate::agent::{AgentSession, LocalAgentNameSource, SessionEvent};
-    use crate::protocol::message::{AgentType, CreateAgentRequest, DirectMessage, Message};
-    use crate::server::{
-        ConnectionHandle, ServerUserState, handle_session_event, test_helpers::test_state,
-    };
     use std::path::PathBuf;
     use std::sync::Arc;
     use std::sync::atomic::AtomicU64;
+
     use tokio::sync::{RwLock, mpsc};
     use uuid::Uuid;
 
+    use crate::agent::{AgentSession, LocalAgentNameSource, SessionEvent};
+    use crate::protocol::link::Link;
+    use crate::protocol::message::{AgentType, CreateAgentRequest, DirectMessage, Message};
+    use crate::server::test_helpers::test_state;
+    use crate::server::{ConnectionHandle, ServerUserState, handle_session_event};
+
     async fn add_peer(
         user_state: &Arc<RwLock<ServerUserState>>,
-        link_name: &str,
+        link: &str,
     ) -> mpsc::Receiver<Message> {
         let (tx, rx) = mpsc::channel(16);
         let mut us = user_state.write().await;
         us.routes.insert(
-            link_name.to_string(),
+            Link::new(link).unwrap(),
             ConnectionHandle::new(tx, Arc::new(AtomicU64::new(1))),
         );
-        us.peer_links.insert(link_name.to_string());
+        us.peer_links.insert(Link::new(link).unwrap());
         rx
     }
 
@@ -786,14 +591,15 @@ mod tests {
         )
         .await;
 
-        let us = user_state.read().await;
-        let entry = us.registry.get(&agent_id).unwrap();
-        assert_eq!(entry.name.as_deref(), Some("merry-slug"));
-        assert_eq!(
-            us.agents.get(&agent_id).and_then(|session| session.name()),
-            Some("merry-slug")
-        );
-        drop(us);
+        {
+            let us = user_state.read().await;
+            let entry = us.registry.get(&agent_id).unwrap();
+            assert_eq!(entry.name.as_deref(), Some("merry-slug"));
+            assert_eq!(
+                us.agents.get(&agent_id).and_then(|session| session.name()),
+                Some("merry-slug")
+            );
+        }
 
         let msg = peer_rx
             .try_recv()
@@ -856,16 +662,17 @@ mod tests {
         )
         .await;
 
-        let us = user_state.read().await;
-        let entry = us.registry.get(&agent_id).unwrap();
-        assert_eq!(entry.name.as_deref(), Some("final-agent-name"));
-        assert_eq!(
-            us.agents
-                .get(&agent_id)
-                .and_then(|session| session.local_name_source()),
-            Some(LocalAgentNameSource::ProviderName)
-        );
-        drop(us);
+        {
+            let us = user_state.read().await;
+            let entry = us.registry.get(&agent_id).unwrap();
+            assert_eq!(entry.name.as_deref(), Some("final-agent-name"));
+            assert_eq!(
+                us.agents
+                    .get(&agent_id)
+                    .and_then(|session| session.local_name_source()),
+                Some(LocalAgentNameSource::ProviderName)
+            );
+        }
 
         let msg = peer_rx
             .try_recv()
@@ -916,16 +723,17 @@ mod tests {
             .await;
         }
 
-        let us = user_state.read().await;
-        let entry = us.registry.get(&agent_id).unwrap();
-        assert_eq!(entry.name.as_deref(), Some("fixed-name"));
-        assert_eq!(
-            us.agents
-                .get(&agent_id)
-                .and_then(|session| session.local_name_source()),
-            Some(LocalAgentNameSource::Amux)
-        );
-        drop(us);
+        {
+            let us = user_state.read().await;
+            let entry = us.registry.get(&agent_id).unwrap();
+            assert_eq!(entry.name.as_deref(), Some("fixed-name"));
+            assert_eq!(
+                us.agents
+                    .get(&agent_id)
+                    .and_then(|session| session.local_name_source()),
+                Some(LocalAgentNameSource::Amux)
+            );
+        }
         assert!(
             peer_rx.try_recv().is_err(),
             "blocked updates should not announce"
@@ -961,16 +769,17 @@ mod tests {
         )
         .await;
 
-        let us = user_state.read().await;
-        let entry = us.registry.get(&agent_id).unwrap();
-        assert_eq!(entry.name.as_deref(), Some("shared-name"));
-        assert_eq!(
-            us.agents
-                .get(&agent_id)
-                .and_then(|session| session.local_name_source()),
-            Some(LocalAgentNameSource::ProviderName)
-        );
-        drop(us);
+        {
+            let us = user_state.read().await;
+            let entry = us.registry.get(&agent_id).unwrap();
+            assert_eq!(entry.name.as_deref(), Some("shared-name"));
+            assert_eq!(
+                us.agents
+                    .get(&agent_id)
+                    .and_then(|session| session.local_name_source()),
+                Some(LocalAgentNameSource::ProviderName)
+            );
+        }
         assert!(
             peer_rx.try_recv().is_err(),
             "provenance-only upgrades should not announce"
@@ -1015,19 +824,20 @@ mod tests {
         )
         .await;
 
-        let us = user_state.read().await;
-        assert_eq!(
-            us.registry.resolve(&us.hosts, "taken-name").unwrap().id,
-            owner_id
-        );
-        assert_eq!(us.registry.get(&candidate_id).unwrap().name, None);
-        assert_eq!(
-            us.agents
-                .get(&candidate_id)
-                .and_then(|session| session.name()),
-            None
-        );
-        drop(us);
+        {
+            let us = user_state.read().await;
+            assert_eq!(
+                us.registry.resolve(&us.hosts, "taken-name").unwrap().id,
+                owner_id
+            );
+            assert_eq!(us.registry.get(&candidate_id).unwrap().name, None);
+            assert_eq!(
+                us.agents
+                    .get(&candidate_id)
+                    .and_then(|session| session.name()),
+                None
+            );
+        }
         assert!(peer_rx.try_recv().is_err(), "collision should not announce");
     }
 }

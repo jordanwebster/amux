@@ -3,13 +3,14 @@
 //! Generic over the stream type (`TcpStream` or `TlsStream<TcpStream>`) so the
 //! same framing logic serves both plain and TLS connections.
 
+use tokio::io::{AsyncRead, AsyncWrite};
+
 use super::framing::{FrameReader, FrameWriter};
 use super::{
     LengthPrefixed, MAX_FRAME_SIZE, MessageReader, MessageWriter, Transport, TransportSplit,
 };
 use crate::protocol::message::Message;
 use crate::transport::{Result, TransportError};
-use tokio::io::{AsyncRead, AsyncWrite};
 
 /// TCP transport with length-prefixed framing (for server-to-server connections).
 ///
@@ -95,8 +96,9 @@ where
 
 /// Configure TCP keepalive on a stream: 30s idle before first probe, 10s between probes.
 pub(crate) fn configure_tcp_keepalive(stream: &tokio::net::TcpStream) {
-    use socket2::SockRef;
     use std::time::Duration;
+
+    use socket2::SockRef;
 
     let sock = SockRef::from(stream);
     let keepalive = socket2::TcpKeepalive::new()

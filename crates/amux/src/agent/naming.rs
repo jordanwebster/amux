@@ -1,5 +1,6 @@
-use crate::suspend::SuspendedLocalAgentNameSource;
 use serde::{Deserialize, Serialize};
+
+use crate::suspend::SuspendedLocalAgentNameSource;
 
 /// Local-only provenance for an agent session's current display name.
 ///

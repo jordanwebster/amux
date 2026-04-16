@@ -17,15 +17,16 @@ mod tls;
 mod unix;
 mod websocket;
 
+use std::future::Future;
+
 pub(crate) use handshake::{HandshakeError, connect_handshake};
 pub(crate) use local::{LocalListener, LocalMessageReader, LocalMessageWriter, LocalTransport};
 pub(crate) use tcp::TcpTransport;
+use thiserror::Error;
 pub(crate) use tls::{create_tls_acceptor, tls_connect};
 pub(crate) use websocket::WebSocketTransport;
 
 use crate::protocol::message::Message;
-use std::future::Future;
-use thiserror::Error;
 
 pub(crate) type Result<T> = std::result::Result<T, TransportError>;
 

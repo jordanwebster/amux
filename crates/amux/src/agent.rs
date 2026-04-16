@@ -9,7 +9,6 @@ mod session;
 #[cfg(any(debug_assertions, test))]
 mod test_agent;
 
-pub(crate) use claude::ClaudeSession;
 pub(crate) use hook::{ExternalHookBootstrap, HookError, HookOutcome};
 pub(crate) use log_source::StructuredLogSource;
 pub(crate) use naming::LocalAgentNameSource;

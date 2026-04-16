@@ -2,12 +2,13 @@
 //!
 //! Validates connection tokens using JWKS from the cloud service.
 
-use jsonwebtoken::{DecodingKey, Validation, decode, decode_header};
-use reqwest::Client;
-use serde::Deserialize;
 use std::collections::HashMap;
 use std::sync::Arc;
 use std::time::{Duration, Instant};
+
+use jsonwebtoken::{DecodingKey, Validation, decode, decode_header};
+use reqwest::Client;
+use serde::Deserialize;
 use thiserror::Error;
 use tokio::sync::RwLock;
 
@@ -112,15 +113,17 @@ impl JwtValidator {
     }
 
     async fn ensure_jwks_fresh(&self) -> Result<(), JwtError> {
-        let last = self.last_fetch.read().await;
-        if let Some(t) = *last
-            && t.elapsed() < JWKS_CACHE_TTL
-        {
-            return Ok(()); // Cache still valid
+        if self.is_cache_fresh().await {
+            return Ok(());
         }
-        drop(last);
+        self.refresh_jwks().await
+    }
 
-        // Fetch JWKS
+    async fn is_cache_fresh(&self) -> bool {
+        matches!(*self.last_fetch.read().await, Some(t) if t.elapsed() < JWKS_CACHE_TTL)
+    }
+
+    async fn refresh_jwks(&self) -> Result<(), JwtError> {
         tracing::debug!("fetching JWKS");
         let response = self.http_client.get(&self.jwks_url).send().await?;
         let jwks: JwkSet = response.json().await?;

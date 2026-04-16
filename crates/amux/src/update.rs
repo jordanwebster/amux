@@ -4,8 +4,9 @@
 //! the result to a marker file next to `state.yaml`. Clients read this file to
 //! decide whether to show an upgrade banner.
 
-use serde::Deserialize;
 use std::path::{Path, PathBuf};
+
+use serde::Deserialize;
 
 /// Result of an update check.
 #[derive(Debug, Clone)]

@@ -8,12 +8,13 @@
 //! For external sessions (no AMUX_AGENT_ID), uses the hook's session_id as
 //! the agent_id so the server can create a readonly session.
 
+use std::io::{self, BufRead};
+
 use amux::protocol::{Command, HookProvider, Message};
 use amux::{Config, ConnectPolicy, connect};
 use anyhow::Result;
 use serde::Deserialize;
 use serde_json::Value;
-use std::io::{self, BufRead};
 use uuid::Uuid;
 
 #[derive(Debug, Deserialize)]
@@ -144,8 +145,9 @@ async fn send_hook_event(
 
 #[cfg(test)]
 mod tests {
-    use super::parse_external_agent_id;
     use uuid::Uuid;
+
+    use super::parse_external_agent_id;
 
     #[test]
     fn parses_known_external_hook_session_id() {

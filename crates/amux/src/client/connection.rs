@@ -1,4 +1,5 @@
 use crate::TransportError;
+use crate::protocol::link::Link;
 use crate::protocol::message::Message;
 use crate::transport::{
     LocalMessageReader, LocalMessageWriter, LocalTransport, MessageReader, MessageWriter,
@@ -13,25 +14,28 @@ use crate::transport::{
 pub struct Connection {
     reader: tokio::sync::Mutex<LocalMessageReader>,
     writer: tokio::sync::Mutex<LocalMessageWriter>,
-    link_name: String,
+    link: Link,
 }
 
 impl Connection {
-    pub(crate) fn new(transport: LocalTransport, link_name: String) -> Self {
+    pub(crate) fn new(transport: LocalTransport, link: Link) -> Self {
         let (reader, writer) = transport.into_split();
         Self {
             reader: tokio::sync::Mutex::new(reader),
             writer: tokio::sync::Mutex::new(writer),
-            link_name,
+            link,
         }
     }
 
     /// The link name assigned during handshake.
-    pub fn link_name(&self) -> &str {
-        &self.link_name
+    pub fn link(&self) -> &Link {
+        &self.link
     }
 
     /// Send a message to the server.
+    ///
+    /// Holds the writer lock across the write to preserve frame-level atomicity —
+    /// concurrent callers are serialized so length-prefixed frames can't interleave.
     pub async fn send(&self, message: &Message) -> std::result::Result<(), TransportError> {
         let writer: &mut LocalMessageWriter = &mut *self.writer.lock().await;
         writer.write_message(message).await

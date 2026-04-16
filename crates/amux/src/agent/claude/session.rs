@@ -5,11 +5,12 @@
 //! PTY input transport are encapsulated here.
 
 #[cfg(test)]
+use serde_json::json;
+
+#[cfg(test)]
 use crate::agent::StructuredLogSource;
 #[cfg(test)]
 use crate::agent::claude::hooks::{ClaudeHook, HookCommon, ParsedClaudeHook};
-#[cfg(test)]
-use serde_json::json;
 
 mod core;
 mod hooks;
@@ -17,6 +18,7 @@ mod input;
 mod name_sniffer;
 
 pub(crate) use core::ClaudeSession;
+
 #[cfg(test)]
 use input::PtyInput;
 #[cfg(test)]
@@ -24,11 +26,12 @@ use name_sniffer::spawn_name_sniffer;
 
 #[cfg(test)]
 mod tests {
-    use super::*;
-    use crate::agent::{LocalAgentNameSource, SessionEvent};
     use tempfile::tempdir;
     use tokio::sync::mpsc;
     use uuid::Uuid;
+
+    use super::*;
+    use crate::agent::{LocalAgentNameSource, SessionEvent};
 
     #[test]
     fn test_pty_input_deserializes() {

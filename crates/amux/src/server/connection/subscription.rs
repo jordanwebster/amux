@@ -1,10 +1,12 @@
-use super::super::{ServerUserState, SubscriptionEntry, SubscriptionMode};
-use crate::protocol::message::SubscriptionId;
-use crate::protocol::route::Route;
 use std::sync::Arc;
+
 use tokio::sync::{RwLock, oneshot};
 use tokio::time::Instant;
 use uuid::Uuid;
+
+use super::super::{ServerUserState, SubscriptionEntry, SubscriptionMode};
+use crate::protocol::message::SubscriptionId;
+use crate::protocol::route::Route;
 
 /// Register a subscription entry in active_subscriptions.
 pub(in crate::server) fn register_subscription(

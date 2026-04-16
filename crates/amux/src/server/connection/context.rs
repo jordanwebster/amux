@@ -1,12 +1,15 @@
-use super::super::{ServerState, ServerUserState};
-use crate::agent::SessionEvent;
-use crate::protocol::message::{DirectMessage, Message};
-use crate::transport::TransportError;
 use std::sync::Arc;
 use std::sync::atomic::AtomicU64;
+
 use thiserror::Error;
 use tokio::sync::{RwLock, mpsc};
 use uuid::Uuid;
+
+use super::super::{ServerState, ServerUserState};
+use crate::agent::SessionEvent;
+use crate::protocol::link::Link;
+use crate::protocol::message::{DirectMessage, Message};
+use crate::transport::TransportError;
 
 pub(in crate::server) type Result<T> = std::result::Result<T, ConnectionError>;
 
@@ -40,7 +43,7 @@ pub(crate) struct ConnectionContext {
     pub(crate) user_state: Arc<RwLock<ServerUserState>>,
     pub(crate) user_id: Uuid,
     pub(crate) event_tx: mpsc::Sender<SessionEvent>,
-    pub(crate) link_name: String,
+    pub(crate) link: Link,
     pub(crate) is_local: bool,
     pub(crate) heartbeat_role: HeartbeatRole,
     pub(crate) next_request_id: Arc<AtomicU64>,

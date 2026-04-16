@@ -7,20 +7,10 @@
 //! lifecycle. [`tcp_connect`] handles the outbound (client-side) direction for
 //! server-to-server peering.
 
-use super::connection::{ConnectionContext, HeartbeatRole, run_connection};
-use super::routing::send_initial_announcements;
-use super::{ConnectionHandle, LOCAL_USER_ID, ServerState, ServerUserState, ensure_user_state};
-use crate::agent::SessionEvent;
-use crate::protocol::handshake::{Connect, ConnectResult, PROTOCOL_VERSION};
-use crate::protocol::message::{Message, ProtocolError};
-use crate::protocol::route::generate_server_link;
-use crate::transport::{
-    HandshakeError, TcpTransport, Transport, TransportError, TransportSplit, WebSocketTransport,
-    connect_handshake,
-};
 use std::sync::Arc;
 use std::sync::atomic::AtomicU64;
 use std::time::Duration;
+
 use thiserror::Error;
 use tokio::net::TcpStream;
 use tokio::sync::{RwLock, mpsc};
@@ -28,6 +18,19 @@ use tokio_tungstenite::accept_async_with_config;
 use tokio_tungstenite::tungstenite::protocol::WebSocketConfig;
 use tracing::Instrument;
 use uuid::Uuid;
+
+use super::connection::{ConnectionContext, HeartbeatRole, run_connection};
+use super::routing::send_initial_announcements;
+use super::{ConnectionHandle, LOCAL_USER_ID, ServerState, ServerUserState, ensure_user_state};
+use crate::agent::SessionEvent;
+use crate::protocol::handshake::{Connect, ConnectResult, PROTOCOL_VERSION};
+use crate::protocol::link::Link;
+use crate::protocol::message::{Message, ProtocolError};
+use crate::protocol::route::generate_server_link;
+use crate::transport::{
+    HandshakeError, TcpTransport, Transport, TransportError, TransportSplit, WebSocketTransport,
+    connect_handshake,
+};
 
 /// Maximum time allowed for a connection to complete its handshake.
 /// Prevents slow-loris attacks where a client connects but never sends
@@ -136,7 +139,7 @@ pub(super) async fn accept_handshake<T: Transport>(
     state: &Arc<RwLock<ServerState>>,
     verify_token: bool,
 ) -> Result<(
-    String,
+    Link,
     ConnectionHandle,
     mpsc::Receiver<Message>,
     Uuid,
@@ -150,7 +153,7 @@ pub(super) async fn accept_handshake<T: Transport>(
             AcceptError::InvalidHandshake(format!("expected Connect during handshake: {e}"))
         })?;
         let Connect {
-            link_name: proposed_link,
+            link: proposed_link,
             token,
             version,
             client_name,
@@ -217,7 +220,7 @@ pub(super) async fn accept_handshake<T: Transport>(
             }
         }
 
-        if let Err(reason) = validate_link_name(&proposed_link) {
+        if let Err(reason) = validate_link_name(proposed_link.as_str()) {
             tracing::warn!(link = %proposed_link, reason, "rejecting invalid link name");
             write_connect_result(transport, Some(ProtocolError::InvalidLinkName)).await?;
             return Err(AcceptError::Config(format!(
@@ -225,6 +228,9 @@ pub(super) async fn accept_handshake<T: Transport>(
                 proposed_link, reason
             )));
         }
+        // validate_link_name rejects empty and `.`, so Link::new cannot fail here.
+        let proposed_link =
+            Link::new(proposed_link).expect("validate_link_name enforces Link::new invariants");
 
         let user_id = if verify_token {
             let (validator, host, tcp_port) = {
@@ -233,7 +239,6 @@ pub(super) async fn accept_handshake<T: Transport>(
                     .jwt_validator
                     .clone()
                     .expect("verify_token=true requires jwt_validator");
-                // Safe: cloud mode validation guarantees tcp_port is Some
                 let tcp_port = state.config.tcp_port.expect("cloud mode requires tcp_port");
                 (validator, state.config.host_name.clone(), tcp_port)
             };
@@ -273,31 +278,16 @@ pub(super) async fn accept_handshake<T: Transport>(
         // Get or create user state (read lock fast path, write lock only on first connection)
         let user_state = ensure_user_state(state, user_id).await;
 
-        // Check uniqueness under user state lock
-        let link_taken = {
-            let us = user_state.read().await;
-            us.routes.contains_key(&proposed_link)
-        };
-
-        if link_taken {
-            write_connect_result(transport, Some(ProtocolError::LinkNameTaken)).await?;
-            continue;
-        }
-
-        let outgoing_rx = {
+        let reservation = {
             let mut us = user_state.write().await;
-            // Re-check under write lock to close the race window
-            if us.routes.contains_key(&proposed_link) {
-                drop(us);
+            us.try_reserve_link(proposed_link.clone())
+        };
+        let (handle, outgoing_rx) = match reservation {
+            Ok(pair) => pair,
+            Err(_) => {
                 write_connect_result(transport, Some(ProtocolError::LinkNameTaken)).await?;
                 continue;
             }
-
-            let (outgoing_tx, outgoing_rx) = mpsc::channel::<Message>(256);
-            let next_request_id = Arc::new(AtomicU64::new(1));
-            let handle = ConnectionHandle::new(outgoing_tx, next_request_id);
-            us.routes.insert(proposed_link.clone(), handle.clone());
-            (handle, outgoing_rx)
         };
 
         // Route is inserted — if the success write fails, clean up the stale route
@@ -307,7 +297,6 @@ pub(super) async fn accept_handshake<T: Transport>(
             return Err(e);
         }
 
-        let (handle, outgoing_rx) = outgoing_rx;
         return Ok((
             proposed_link,
             handle,
@@ -336,7 +325,7 @@ pub(super) async fn accept_connection<T: TransportSplit>(
     // Handshake uses the transport directly (safe — no select! involved).
     // Timeout prevents slow-loris: clients that connect but never send handshake data.
     // The span gives all handshake-phase logs transport context (before conn_span exists).
-    let (link_name, route_handle, outgoing_rx, user_id, user_state, client_name, client_version) =
+    let (link, route_handle, outgoing_rx, user_id, user_state, client_name, client_version) =
         async {
             match tokio::time::timeout(
                 HANDSHAKE_TIMEOUT,
@@ -361,7 +350,7 @@ pub(super) async fn accept_connection<T: TransportSplit>(
     };
     let conn_span = tracing::info_span!(
         "connection",
-        link = %link_name,
+        link = %link,
         transport = log_label,
         user_id = %user_id,
         heartbeat_role = heartbeat_role.as_str(),
@@ -374,8 +363,8 @@ pub(super) async fn accept_connection<T: TransportSplit>(
             (s.host_id, s.config.host_name.clone(), s.is_cloud_server)
         };
         let mut us = user_state.write().await;
-        us.peer_links.insert(link_name.clone());
-        send_initial_announcements(&us, host_id, &host_name, is_cloud_server, &link_name);
+        us.peer_links.insert(link.clone());
+        send_initial_announcements(&us, host_id, &host_name, is_cloud_server, &link);
     }
 
     let ctx = ConnectionContext {
@@ -383,7 +372,7 @@ pub(super) async fn accept_connection<T: TransportSplit>(
         user_state: user_state.clone(),
         user_id,
         event_tx,
-        link_name: link_name.clone(),
+        link: link.clone(),
         is_local,
         heartbeat_role,
         next_request_id: route_handle.request_counter(),
@@ -484,7 +473,7 @@ pub(super) async fn tcp_connect(
         )
     };
 
-    let link_name = connect_handshake(&mut transport, || {
+    let link = connect_handshake(&mut transport, || {
         generate_server_link(&hostname, randomise)
     })
     .await
@@ -492,7 +481,7 @@ pub(super) async fn tcp_connect(
 
     let conn_span = tracing::info_span!(
         "connection",
-        link = %link_name,
+        link = %link,
         transport = "tcp",
         user_id = %user_id,
         heartbeat_role = HeartbeatRole::Dialer.as_str(),
@@ -508,11 +497,11 @@ pub(super) async fn tcp_connect(
         };
         let mut us = user_state.write().await;
         us.routes.insert(
-            link_name.clone(),
+            link.clone(),
             ConnectionHandle::new(outgoing_tx.clone(), next_request_id.clone()),
         );
-        us.peer_links.insert(link_name.clone());
-        send_initial_announcements(&us, host_id, &host_name, is_cloud_server, &link_name);
+        us.peer_links.insert(link.clone());
+        send_initial_announcements(&us, host_id, &host_name, is_cloud_server, &link);
     }
 
     let state = state.clone();
@@ -523,7 +512,7 @@ pub(super) async fn tcp_connect(
             user_state,
             user_id,
             event_tx,
-            link_name: link_name.clone(),
+            link: link.clone(),
             is_local: false,
             heartbeat_role: HeartbeatRole::Dialer,
             next_request_id,

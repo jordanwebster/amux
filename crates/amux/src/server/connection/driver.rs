@@ -1,3 +1,6 @@
+use tokio::sync::mpsc;
+use tracing::Instrument;
+
 use super::context::{ConnectionContext, ConnectionError, Incoming, MessageMetadata, Result};
 use super::heartbeat::{
     ConnectionActivity, HeartbeatConfig, HeartbeatState, heartbeat_config_for_role,
@@ -9,8 +12,6 @@ use crate::auth::cloud::TokenRefreshState;
 use crate::protocol::message::Message;
 use crate::server::handlers::handle_message;
 use crate::transport::{MessageReader, MessageWriter, TransportSplit};
-use tokio::sync::mpsc;
-use tracing::Instrument;
 
 /// Reader task: reads from transport, sends to channel. Never cancelled.
 ///
@@ -91,7 +92,7 @@ pub(in crate::server) async fn run_connection<T: TransportSplit>(
     span: tracing::Span,
 ) -> Result<()> {
     let user_state = ctx.user_state.clone();
-    let link_name = ctx.link_name.clone();
+    let link = ctx.link.clone();
     let is_local = ctx.is_local;
 
     let (reader, writer) = transport.into_split();
@@ -113,13 +114,14 @@ pub(in crate::server) async fn run_connection<T: TransportSplit>(
     {
         let mut us = user_state.write().await;
         if !is_local {
-            crate::server::routing::handle_peer_disconnect(&mut us, &link_name);
+            crate::server::routing::handle_peer_disconnect(&mut us, &link);
         } else {
-            us.routes.remove(&link_name);
-            drop(cancel_subscriptions_matching(
+            us.routes.remove(&link);
+            // Dropping the returned entries cancels their streams.
+            let _cancelled = cancel_subscriptions_matching(
                 &mut us,
-                |entry| matches!(entry.dst.peek(), Some(link) if link == link_name),
-            ));
+                |entry| matches!(entry.dst.peek(), Some(hop) if *hop == link),
+            );
         }
     }
 
@@ -175,7 +177,7 @@ pub(super) async fn connection_loop_with_heartbeat(
         if refresh_has_priority && !refresh_awaiting_response {
             refresher
                 .as_mut()
-                .unwrap()
+                .expect("refresher present")
                 .send_refresh(&response_tx)
                 .await?;
             if let Some(ref mut heartbeat) = heartbeat {
@@ -230,7 +232,11 @@ pub(super) async fn connection_loop_with_heartbeat(
                 }
             }
             _ = maybe_sleep_until(refresh_deadline), if refresh_deadline.is_some() => {
-                refresher.as_mut().unwrap().send_refresh(&response_tx).await?;
+                refresher
+                    .as_mut()
+                    .expect("refresher present")
+                    .send_refresh(&response_tx)
+                    .await?;
                 if let Some(ref mut heartbeat) = heartbeat {
                     heartbeat.pause_for_refresh();
                 }
@@ -243,7 +249,11 @@ pub(super) async fn connection_loop_with_heartbeat(
                 )));
             }
             _ = maybe_sleep_until(heartbeat_deadline), if heartbeat_deadline.is_some() => {
-                heartbeat.as_mut().unwrap().queue_heartbeat(&response_tx).await?;
+                heartbeat
+                    .as_mut()
+                    .expect("heartbeat present")
+                    .queue_heartbeat(&response_tx)
+                    .await?;
             }
             _ = maybe_sleep_until(heartbeat_timeout), if heartbeat_timeout.is_some() => {
                 log_connection_state_for_heartbeat_timeout(

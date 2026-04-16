@@ -1,3 +1,5 @@
+use tokio::sync::mpsc;
+
 use crate::agent::{AgentSession, ExternalHookBootstrap, HookOutcome, StopPolicy};
 use crate::protocol::message::{Command, Message, ProtocolError};
 use crate::server::accept::tcp_connect;
@@ -6,7 +8,6 @@ use crate::server::routing::{
     announce_agent_message, broadcast_to_peers, resume_agents, withdraw_agent,
 };
 use crate::server::{self, ShutdownRequest};
-use tokio::sync::mpsc;
 
 pub(super) async fn handle_command(
     tx: &mpsc::Sender<Message>,
@@ -23,7 +24,7 @@ pub(super) async fn handle_command(
             let _ = shutdown_tx
                 .send(ShutdownRequest::Shutdown {
                     reply: tx.clone(),
-                    link_name: ctx.link_name.clone(),
+                    link: ctx.link.clone(),
                 })
                 .await;
             Ok(())
@@ -174,7 +175,7 @@ pub(super) async fn handle_command(
             let _ = shutdown_tx
                 .send(ShutdownRequest::Suspend {
                     reply: tx.clone(),
-                    link_name: ctx.link_name.clone(),
+                    link: ctx.link.clone(),
                 })
                 .await;
             Ok(())
@@ -263,25 +264,28 @@ pub(super) async fn handle_command(
 
 #[cfg(test)]
 mod tests {
+    use std::path::PathBuf;
+    use std::sync::Arc;
+    use std::sync::atomic::AtomicU64;
+    use std::time::Duration;
+
+    use chrono::Utc;
+    use serde_json::json;
+    use tokio::sync::{RwLock, mpsc, oneshot};
+    use tokio::time::Instant;
+    use uuid::Uuid;
+
     use super::super::tests::*;
     use super::*;
     use crate::agent::claude::hooks::{ClaudeHook, HookCommon};
     use crate::agent::{Agent, AgentSession, LocalAgentNameSource, SessionEvent};
     use crate::protocol::ProtocolError;
-    use crate::protocol::message::{Command, DirectMessage, HookProvider, Message};
+    use crate::protocol::link::Link;
+    use crate::protocol::message::{Command, DirectMessage, HookProvider, Message, SubscriptionId};
     use crate::protocol::route::Route;
     use crate::server::{
         LOCAL_USER_ID, SUBSCRIPTION_LEASE_DURATION, ServerState, ServerUserState, SubscriptionMode,
     };
-    use chrono::Utc;
-    use serde_json::json;
-    use std::path::PathBuf;
-    use std::sync::Arc;
-    use std::sync::atomic::AtomicU64;
-    use std::time::Duration;
-    use tokio::sync::{RwLock, mpsc, oneshot};
-    use tokio::time::Instant;
-    use uuid::Uuid;
 
     async fn populate_debug_state(
         state: &Arc<RwLock<ServerState>>,
@@ -305,7 +309,7 @@ mod tests {
             crate::protocol::message::Host {
                 id: remote_host_id,
                 name: "remote-host".to_string(),
-                route: Route::from_link("peer-debug"),
+                route: Route::from_link(Link::new("peer-debug").unwrap()),
                 version: "9.9.9".to_string(),
             },
         );
@@ -318,7 +322,7 @@ mod tests {
                 name: Some("remote-agent".to_string()),
                 command: "claude".to_string(),
                 working_dir: PathBuf::from("/tmp/remote-agent"),
-                route: Route::from_link("peer-debug"),
+                route: Route::from_link(Link::new("peer-debug").unwrap()),
                 agent_type: claude_agent_type(),
                 structured_protocol: claude_structured_protocol(),
                 readonly: false,
@@ -330,11 +334,11 @@ mod tests {
         let (raw_cancel_tx, _raw_cancel_rx) = oneshot::channel();
         crate::server::connection::register_subscription(
             &mut us,
-            Uuid::new_v4(),
+            SubscriptionId::random(),
             local_agent_id,
             SubscriptionMode::Raw,
             raw_cancel_tx,
-            Route::from_link("term-debug"),
+            Route::from_link(Link::new("term-debug").unwrap()),
             Instant::now() + SUBSCRIPTION_LEASE_DURATION,
         );
     }
@@ -418,7 +422,7 @@ mod tests {
                 name: Some("my-agent".to_string()),
                 command: "claude".to_string(),
                 working_dir: PathBuf::from("/tmp"),
-                route: Route::from_link("peer-a"),
+                route: Route::from_link(Link::new("peer-a").unwrap()),
                 agent_type: claude_agent_type(),
                 structured_protocol: claude_structured_protocol(),
                 readonly: false,
@@ -574,20 +578,21 @@ mod tests {
 
         tokio::task::yield_now().await;
 
-        let msgs = written.lock().await;
-        assert_eq!(msgs.len(), 1);
-        let Message::Command {
-            command: Command::HandleHookResult { error },
-        } = &msgs[0]
-        else {
-            panic!("expected HandleHookResult, got {:?}", msgs[0]);
-        };
-        assert!(
-            error.is_none(),
-            "SessionEnd for an unknown session should be ignored: {:?}",
-            error
-        );
-        drop(msgs);
+        {
+            let msgs = written.lock().await;
+            assert_eq!(msgs.len(), 1);
+            let Message::Command {
+                command: Command::HandleHookResult { error },
+            } = &msgs[0]
+            else {
+                panic!("expected HandleHookResult, got {:?}", msgs[0]);
+            };
+            assert!(
+                error.is_none(),
+                "SessionEnd for an unknown session should be ignored: {:?}",
+                error
+            );
+        }
 
         let us = user_state.read().await;
         assert!(
@@ -824,20 +829,21 @@ mod tests {
 
         tokio::task::yield_now().await;
 
-        let msgs = written.lock().await;
-        assert_eq!(msgs.len(), 1);
-        let Message::Command {
-            command: Command::HandleHookResult { error },
-        } = &msgs[0]
-        else {
-            panic!("expected HandleHookResult, got {:?}", msgs[0]);
-        };
-        assert!(
-            error.is_none(),
-            "SessionEnd for a readonly session should succeed: {:?}",
-            error
-        );
-        drop(msgs);
+        {
+            let msgs = written.lock().await;
+            assert_eq!(msgs.len(), 1);
+            let Message::Command {
+                command: Command::HandleHookResult { error },
+            } = &msgs[0]
+            else {
+                panic!("expected HandleHookResult, got {:?}", msgs[0]);
+            };
+            assert!(
+                error.is_none(),
+                "SessionEnd for a readonly session should succeed: {:?}",
+                error
+            );
+        }
 
         let us = user_state.read().await;
         assert!(
@@ -905,16 +911,17 @@ mod tests {
 
         tokio::task::yield_now().await;
 
-        let msgs = written.lock().await;
-        assert_eq!(msgs.len(), 1);
-        let Message::Command {
-            command: Command::HandleHookResult { error },
-        } = &msgs[0]
-        else {
-            panic!("expected HandleHookResult, got {:?}", msgs[0]);
-        };
-        assert_eq!(error, &Some(ProtocolError::NoAgentFound));
-        drop(msgs);
+        {
+            let msgs = written.lock().await;
+            assert_eq!(msgs.len(), 1);
+            let Message::Command {
+                command: Command::HandleHookResult { error },
+            } = &msgs[0]
+            else {
+                panic!("expected HandleHookResult, got {:?}", msgs[0]);
+            };
+            assert_eq!(error, &Some(ProtocolError::NoAgentFound));
+        }
 
         let us = user_state.read().await;
         assert!(!us.agents.contains_key(&agent_id));
@@ -944,16 +951,17 @@ mod tests {
 
         tokio::task::yield_now().await;
 
-        let msgs = written.lock().await;
-        assert_eq!(msgs.len(), 1);
-        let Message::Command {
-            command: Command::HandleHookResult { error },
-        } = &msgs[0]
-        else {
-            panic!("expected HandleHookResult, got {:?}", msgs[0]);
-        };
-        assert!(error.is_none(), "unknown Claude hook variants should ack");
-        drop(msgs);
+        {
+            let msgs = written.lock().await;
+            assert_eq!(msgs.len(), 1);
+            let Message::Command {
+                command: Command::HandleHookResult { error },
+            } = &msgs[0]
+            else {
+                panic!("expected HandleHookResult, got {:?}", msgs[0]);
+            };
+            assert!(error.is_none(), "unknown Claude hook variants should ack");
+        }
 
         let us = user_state.read().await;
         assert!(
@@ -971,7 +979,7 @@ mod tests {
             user_state: user_state.clone(),
             user_id: LOCAL_USER_ID,
             event_tx,
-            link_name: "test-link".to_string(),
+            link: Link::new("test-link").unwrap(),
             is_local: true,
             heartbeat_role: crate::server::connection::HeartbeatRole::Disabled,
             next_request_id: Arc::new(AtomicU64::new(1)),
@@ -1028,25 +1036,27 @@ mod tests {
 
         crate::server::handle_session_event(&state, event).await;
 
-        let msgs = written.lock().await;
-        assert_eq!(msgs.len(), 1);
-        let Message::Command {
-            command: Command::HandleHookResult { error },
-        } = &msgs[0]
-        else {
-            panic!("expected HandleHookResult, got {:?}", msgs[0]);
-        };
-        assert!(error.is_none());
-        drop(msgs);
+        {
+            let msgs = written.lock().await;
+            assert_eq!(msgs.len(), 1);
+            let Message::Command {
+                command: Command::HandleHookResult { error },
+            } = &msgs[0]
+            else {
+                panic!("expected HandleHookResult, got {:?}", msgs[0]);
+            };
+            assert!(error.is_none());
+        }
 
-        let us = user_state.read().await;
-        let entry = us.registry.get(&agent_id).unwrap();
-        assert_eq!(entry.name.as_deref(), Some("readonly-slug"));
-        assert_eq!(
-            us.agents.get(&agent_id).and_then(|session| session.name()),
-            Some("readonly-slug")
-        );
-        drop(us);
+        {
+            let us = user_state.read().await;
+            let entry = us.registry.get(&agent_id).unwrap();
+            assert_eq!(entry.name.as_deref(), Some("readonly-slug"));
+            assert_eq!(
+                us.agents.get(&agent_id).and_then(|session| session.name()),
+                Some("readonly-slug")
+            );
+        }
 
         let initial = peer_rx
             .try_recv()

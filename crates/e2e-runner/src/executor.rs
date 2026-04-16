@@ -1,12 +1,14 @@
 use crate::parser::{Directory, Terminal, TestCase, TestConfig, TestStep};
 
 type PreparedEnvironment = (Vec<Directory>, Vec<TestConfig>, Vec<Terminal>);
-use crate::terminal::TestTerminal;
 use std::collections::HashMap;
 use std::path::{Path, PathBuf};
 use std::process::Command;
 use std::time::Duration;
+
 use tempfile::TempDir;
+
+use crate::terminal::TestTerminal;
 
 #[derive(Debug)]
 struct ResolvedCommand {
@@ -226,7 +228,7 @@ impl Executor {
             std::fs::create_dir_all(&state_dir)
                 .map_err(|e| format!("Failed to create state dir: {}", e))?;
             let state_path = state_dir.join("state.yaml");
-            std::fs::write(&state_path, "cloud:\n  use_cloud_mode: false\n")
+            std::fs::write(&state_path, "cloud:\n  status: disabled\n")
                 .map_err(|e| format!("Failed to write state file: {}", e))?;
 
             // Generate YAML config file.

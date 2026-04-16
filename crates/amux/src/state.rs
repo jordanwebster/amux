@@ -3,16 +3,18 @@
 //! State is stored in `~/.local/state/amux/state.yaml` and persists across sessions.
 //! Includes cloud authentication state and other persistent preferences.
 
-use crate::paths::default_state_path;
-use fs2::FileExt;
-use serde::{Deserialize, Serialize};
 use std::fs::{self, File, OpenOptions};
 use std::io::{Read, Seek, SeekFrom, Write};
 #[cfg(unix)]
 use std::os::unix::fs::OpenOptionsExt;
 use std::path::{Path, PathBuf};
+
+use fs2::FileExt;
+use serde::{Deserialize, Serialize};
 use thiserror::Error;
 use uuid::Uuid;
+
+use crate::paths::default_state_path;
 
 #[derive(Debug, Error)]
 pub(crate) enum StateError {
@@ -34,13 +36,34 @@ pub(crate) struct State {
     pub(crate) claude: ClaudeState,
 }
 
-/// Cloud authentication state
-#[derive(Debug, Clone, Serialize, Deserialize, Default)]
-pub(crate) struct CloudState {
-    /// Whether cloud mode is enabled (None = not yet configured)
-    pub(crate) use_cloud_mode: Option<bool>,
-    /// OAuth refresh token for cloud authentication
-    pub(crate) refresh_token: Option<String>,
+/// Cloud authentication state. Stored under `cloud:` in `state.yaml`.
+#[derive(Debug, Clone, Default, Serialize, Deserialize)]
+#[serde(tag = "status", rename_all = "snake_case")]
+pub enum CloudState {
+    #[default]
+    NotConfigured,
+    Disabled,
+    Unauthenticated,
+    Authenticated {
+        refresh_token: String,
+    },
+}
+
+impl CloudState {
+    pub fn is_enabled(&self) -> bool {
+        matches!(self, Self::Unauthenticated | Self::Authenticated { .. })
+    }
+
+    pub fn needs_init(&self) -> bool {
+        matches!(self, Self::NotConfigured | Self::Unauthenticated)
+    }
+
+    pub(crate) fn refresh_token(&self) -> Option<&str> {
+        match self {
+            Self::Authenticated { refresh_token } => Some(refresh_token.as_str()),
+            _ => None,
+        }
+    }
 }
 
 /// Claude-specific state
@@ -134,15 +157,15 @@ pub(crate) fn load_or_create_host_id(path: &Path) -> Result<Uuid, StateError> {
 
 #[cfg(test)]
 mod tests {
-    use super::*;
     use tempfile::TempDir;
+
+    use super::*;
 
     #[test]
     fn test_state_default() {
         let state = State::default();
         assert!(state.host_id.is_none());
-        assert!(state.cloud.use_cloud_mode.is_none());
-        assert!(state.cloud.refresh_token.is_none());
+        assert!(matches!(state.cloud, CloudState::NotConfigured));
     }
 
     #[test]
@@ -151,7 +174,7 @@ mod tests {
         let path = temp.path().join("state.yaml");
         let state = State::load(&path).unwrap();
         assert!(state.host_id.is_none());
-        assert!(state.cloud.use_cloud_mode.is_none());
+        assert!(matches!(state.cloud, CloudState::NotConfigured));
     }
 
     #[test]
@@ -160,15 +183,17 @@ mod tests {
         let path = temp.path().join("state.yaml");
 
         State::update(&path, |s| {
-            s.cloud.use_cloud_mode = Some(true);
-            s.cloud.refresh_token = Some("test_token".to_string());
+            s.cloud = CloudState::Authenticated {
+                refresh_token: "test_token".to_string(),
+            };
         })
         .unwrap();
 
         let loaded = State::load(&path).unwrap();
         assert!(loaded.host_id.is_none());
-        assert_eq!(loaded.cloud.use_cloud_mode, Some(true));
-        assert_eq!(loaded.cloud.refresh_token, Some("test_token".to_string()));
+        assert!(
+            matches!(&loaded.cloud, CloudState::Authenticated { refresh_token } if refresh_token == "test_token")
+        );
     }
 
     #[test]
@@ -177,13 +202,13 @@ mod tests {
         let path = temp.path().join("state.yaml");
 
         State::update(&path, |s| {
-            s.cloud.use_cloud_mode = Some(false);
+            s.cloud = CloudState::Disabled;
         })
         .unwrap();
 
         let loaded = State::load(&path).unwrap();
         assert!(loaded.host_id.is_none());
-        assert_eq!(loaded.cloud.use_cloud_mode, Some(false));
+        assert!(matches!(loaded.cloud, CloudState::Disabled));
     }
 
     #[test]
@@ -192,11 +217,11 @@ mod tests {
         let path = temp.path().join("state.yaml");
 
         // Write partial YAML (only cloud section)
-        fs::write(&path, "cloud:\n  use_cloud_mode: true\n").unwrap();
+        fs::write(&path, "cloud:\n  status: unauthenticated\n").unwrap();
 
         let loaded = State::load(&path).unwrap();
         assert!(loaded.host_id.is_none());
-        assert_eq!(loaded.cloud.use_cloud_mode, Some(true));
+        assert!(matches!(loaded.cloud, CloudState::Unauthenticated));
         // Claude section should be default
         assert!(loaded.claude.applied_plugin_version.is_none());
         assert!(loaded.claude.applied_marketplace_path.is_none());

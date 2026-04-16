@@ -1,12 +1,14 @@
-use crate::protocol::message::TerminalSize;
-use chrono::{DateTime, Utc};
-use serde::{Deserialize, Serialize};
 use std::fs::{self, OpenOptions};
 use std::io::Write;
 #[cfg(unix)]
 use std::os::unix::fs::OpenOptionsExt;
 use std::path::{Path, PathBuf};
+
+use chrono::{DateTime, Utc};
+use serde::{Deserialize, Serialize};
 use uuid::Uuid;
+
+use crate::protocol::message::TerminalSize;
 
 /// All suspended agent sessions, serialized to disk across server restarts.
 #[derive(Serialize, Deserialize, Debug, Clone)]
@@ -117,8 +119,9 @@ fn suspended_path(state_path: &Path) -> PathBuf {
 
 #[cfg(test)]
 mod tests {
-    use super::*;
     use tempfile::TempDir;
+
+    use super::*;
 
     #[test]
     fn test_suspended_agent_roundtrip() {

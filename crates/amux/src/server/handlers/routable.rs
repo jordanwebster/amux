@@ -1,23 +1,17 @@
-use super::subscription::{
-    SubscriptionHandle, remove_subscription_if_reply_failed, spawn_subscription_stream,
-    subscribe_error,
-};
-use crate::agent::StopPolicy;
-use crate::protocol::message::{
-    Message, ProtocolError, RoutableMessage, SubscribeQuery, SubscriptionCloseReason,
-};
-use crate::protocol::route::Route;
-use crate::server::connection::{ConnectionContext, extend_subscription, unsubscribe_subscription};
-use crate::server::routing::{
-    create_agent, delete_local_agent, handle_subscribe, rename_local_agent,
-};
-use crate::server::{
-    SUBSCRIPTION_LEASE_DURATION, SubscriptionEntry, SubscriptionMode, send_routable_via_full_dst,
-    subscription_lease_ms,
-};
+mod create_agent;
+mod delete_agent;
+mod extend;
+mod io;
+mod rename_agent;
+mod subscribe_raw;
+mod subscribe_structured;
+mod unsubscribe;
+
 use tokio::sync::mpsc;
-use tokio::time::Instant;
-use uuid::Uuid;
+
+use crate::protocol::message::{Message, RoutableMessage};
+use crate::protocol::route::Route;
+use crate::server::connection::ConnectionContext;
 
 fn reply_routes(src: Route, msg_type: &str) -> Option<(Route, Route)> {
     match Route::reply(src) {
@@ -46,7 +40,8 @@ pub(super) async fn handle_routable(
 
         match route_tx {
             Some(route_tx) => {
-                src.push(&next_hop);
+                let hop_name = next_hop.clone();
+                src.push(next_hop);
                 if route_tx
                     .send(Message::Routable {
                         src,
@@ -57,7 +52,7 @@ pub(super) async fn handle_routable(
                     .await
                     .is_err()
                 {
-                    tracing::debug!(next_hop = %next_hop, "forwarding failed (channel closed)");
+                    tracing::debug!(next_hop = %hop_name, "forwarding failed (channel closed)");
                 }
             }
             None => {
@@ -133,399 +128,60 @@ pub(super) async fn handle_routable(
             let Some((reply_src, reply_dst)) = reply_routes(src, "SubscribeRaw") else {
                 return Ok(());
             };
-            let result = handle_subscribe(&ctx.user_state, &agent_id, terminal_size).await;
-
-            match result {
-                Ok(buffer_reader) => {
-                    let subscription_id = Uuid::new_v4();
-                    let (handle, cancel_rx) = SubscriptionHandle::register(
-                        ctx,
-                        subscription_id,
-                        agent_id,
-                        SubscriptionMode::Raw,
-                        reply_src.clone(),
-                        reply_dst.clone(),
-                    )
-                    .await;
-                    if tx
-                        .send(Message::routable(
-                            reply_src.clone(),
-                            reply_dst.clone(),
-                            request_id,
-                            &RoutableMessage::SubscribeRawResult {
-                                subscription_id,
-                                lease_ms: subscription_lease_ms(),
-                                error: None,
-                            },
-                        ))
-                        .await
-                        .is_err()
-                    {
-                        remove_subscription_if_reply_failed(&ctx.user_state, subscription_id).await;
-                        tracing::debug!(
-                            subscription_id = %subscription_id,
-                            agent_id = %agent_id,
-                            "subscribe result send failed before stream spawn"
-                        );
-                        return Ok(());
-                    }
-
-                    tracing::info!(
-                        subscription_id = %subscription_id,
-                        agent_id = %agent_id,
-                        mode = SubscriptionMode::Raw.as_str(),
-                        lease_ms = subscription_lease_ms(),
-                        "subscription created"
-                    );
-
-                    spawn_subscription_stream(
-                        buffer_reader,
-                        handle,
-                        cancel_rx,
-                        |subscription_id, data| RoutableMessage::RawOutput {
-                            subscription_id,
-                            data,
-                        },
-                        ctx,
-                    )
-                    .await;
-
-                    Ok(())
-                }
-                Err(e) => {
-                    let _ = tx
-                        .send(Message::routable(
-                            reply_src,
-                            reply_dst,
-                            request_id,
-                            &RoutableMessage::SubscribeRawResult {
-                                subscription_id: Uuid::nil(),
-                                lease_ms: 0,
-                                error: Some(subscribe_error(&e)),
-                            },
-                        ))
-                        .await;
-                    Ok(())
-                }
-            }
+            subscribe_raw::handle(
+                tx,
+                reply_src,
+                reply_dst,
+                request_id,
+                agent_id,
+                terminal_size,
+                ctx,
+            )
+            .await
         }
 
         RoutableMessage::SubscribeStructured { agent_id, query } => {
             let Some((reply_src, reply_dst)) = reply_routes(src, "SubscribeStructured") else {
                 return Ok(());
             };
-            if matches!(query, Some(SubscribeQuery::Unknown)) {
-                let _ = tx
-                    .send(Message::routable(
-                        reply_src,
-                        reply_dst,
-                        request_id,
-                        &RoutableMessage::SubscribeStructuredResult {
-                            subscription_id: Uuid::nil(),
-                            seq: 0,
-                            structured_protocol: None,
-                            lease_ms: 0,
-                            error: Some(ProtocolError::UnsupportedSubscribeQuery),
-                        },
-                    ))
-                    .await;
-                return Ok(());
-            }
-            let subscribed = {
-                let us = ctx.user_state.read().await;
-                let Some(session) = us.agents.get(&agent_id) else {
-                    let _ = tx
-                        .send(Message::routable(
-                            reply_src,
-                            reply_dst,
-                            request_id,
-                            &RoutableMessage::SubscribeStructuredResult {
-                                subscription_id: Uuid::nil(),
-                                seq: 0,
-                                structured_protocol: None,
-                                lease_ms: 0,
-                                error: Some(ProtocolError::NoAgentFound),
-                            },
-                        ))
-                        .await;
-                    return Ok(());
-                };
-                session
-                    .subscribe_with_query(query)
-                    .await
-                    .map(|(reader, current_seq)| {
-                        (reader, current_seq, session.structured_protocol())
-                    })
-            };
-
-            let Some((reader, current_seq, structured_protocol)) = subscribed else {
-                let _ = tx
-                    .send(Message::routable(
-                        reply_src,
-                        reply_dst,
-                        request_id,
-                        &RoutableMessage::SubscribeStructuredResult {
-                            subscription_id: Uuid::nil(),
-                            seq: 0,
-                            structured_protocol: None,
-                            lease_ms: 0,
-                            error: Some(ProtocolError::NoAgentFound),
-                        },
-                    ))
-                    .await;
-                return Ok(());
-            };
-
-            let subscription_id = Uuid::new_v4();
-            let (handle, cancel_rx) = SubscriptionHandle::register(
-                ctx,
-                subscription_id,
-                agent_id,
-                SubscriptionMode::Structured,
-                reply_src.clone(),
-                reply_dst.clone(),
-            )
-            .await;
-            if tx
-                .send(Message::routable(
-                    reply_src.clone(),
-                    reply_dst.clone(),
-                    request_id,
-                    &RoutableMessage::SubscribeStructuredResult {
-                        subscription_id,
-                        seq: current_seq,
-                        structured_protocol,
-                        lease_ms: subscription_lease_ms(),
-                        error: None,
-                    },
-                ))
+            subscribe_structured::handle(tx, reply_src, reply_dst, request_id, agent_id, query, ctx)
                 .await
-                .is_err()
-            {
-                remove_subscription_if_reply_failed(&ctx.user_state, subscription_id).await;
-                tracing::debug!(
-                    subscription_id = %subscription_id,
-                    agent_id = %agent_id,
-                    "subscribe result send failed before stream spawn"
-                );
-                return Ok(());
-            }
-
-            tracing::info!(
-                subscription_id = %subscription_id,
-                agent_id = %agent_id,
-                mode = SubscriptionMode::Structured.as_str(),
-                lease_ms = subscription_lease_ms(),
-                "subscription created"
-            );
-
-            spawn_subscription_stream(
-                reader,
-                handle,
-                cancel_rx,
-                |subscription_id, envelope| RoutableMessage::StructuredOutput {
-                    subscription_id,
-                    seq: envelope.seq,
-                    payload: envelope.payload,
-                },
-                ctx,
-            )
-            .await;
-
-            Ok(())
         }
 
         RoutableMessage::ExtendSubscription { subscription_id } => {
             let Some((reply_src, reply_dst)) = reply_routes(src, "ExtendSubscription") else {
                 return Ok(());
             };
-
-            let lease_deadline = Instant::now() + SUBSCRIPTION_LEASE_DURATION;
-            let response_message = match extend_subscription(
-                &ctx.user_state,
-                subscription_id,
-                lease_deadline,
-            )
-            .await
-            {
-                Some(agent_id) => {
-                    tracing::debug!(
-                        subscription_id = %subscription_id,
-                        agent_id = %agent_id,
-                        lease_ms = subscription_lease_ms(),
-                        "subscription extended"
-                    );
-                    RoutableMessage::ExtendSubscriptionResult {
-                        subscription_id,
-                        lease_ms: subscription_lease_ms(),
-                        error: None,
-                    }
-                }
-                None => {
-                    tracing::debug!(subscription_id = %subscription_id, "late or unknown extend");
-                    RoutableMessage::ExtendSubscriptionResult {
-                        subscription_id,
-                        lease_ms: 0,
-                        error: Some(ProtocolError::UnknownSubscription),
-                    }
-                }
-            };
-
-            let _ = tx
-                .send(Message::routable(
-                    reply_src,
-                    reply_dst,
-                    request_id,
-                    &response_message,
-                ))
-                .await;
-            Ok(())
+            extend::handle(tx, reply_src, reply_dst, request_id, subscription_id, ctx).await
         }
 
         RoutableMessage::Unsubscribe { subscription_id } => {
-            if let Some(entry) = unsubscribe_subscription(&ctx.user_state, subscription_id).await {
-                let SubscriptionEntry {
-                    subscription_id,
-                    agent_id,
-                    cancel,
-                    dst,
-                    ..
-                } = entry;
-                drop(cancel);
-                tracing::info!(
-                    subscription_id = %subscription_id,
-                    agent_id = %agent_id,
-                    "explicit unsubscribe handled"
-                );
-                let _ = send_routable_via_full_dst(
-                    &ctx.user_state,
-                    &dst,
-                    &RoutableMessage::SubscriptionClosed {
-                        subscription_id,
-                        reason: SubscriptionCloseReason::Unsubscribed,
-                    },
-                )
-                .await;
-            } else {
-                tracing::debug!(subscription_id = %subscription_id, "late or unknown unsubscribe");
-            }
-            Ok(())
+            unsubscribe::handle(subscription_id, ctx).await
         }
 
         RoutableMessage::CreateAgent(req) => {
             let Some((reply_src, reply_dst)) = reply_routes(src, "CreateAgent") else {
                 return Ok(());
             };
-            let agent_id = req.agent_id;
-            let (host_id, is_cloud_server) = {
-                let state = ctx.state.read().await;
-                (state.host_id, state.is_cloud_server)
-            };
-            let error = if is_cloud_server {
-                Some("cloud relays do not host local agents".to_string())
-            } else {
-                create_agent(&ctx.user_state, &ctx.event_tx, req, ctx.user_id, host_id)
-                    .await
-                    .err()
-            };
-            let response_message = match error {
-                None => RoutableMessage::CreateAgentResult {
-                    agent_id,
-                    error: None,
-                },
-                Some(message) => RoutableMessage::CreateAgentResult {
-                    agent_id,
-                    error: Some(ProtocolError::ServerError { message }),
-                },
-            };
-            let _ = tx
-                .send(Message::routable(
-                    reply_src,
-                    reply_dst,
-                    request_id,
-                    &response_message,
-                ))
-                .await;
-            Ok(())
+            create_agent::handle(tx, reply_src, reply_dst, request_id, req, ctx).await
         }
 
         RoutableMessage::RenameAgent(req) => {
             let Some((reply_src, reply_dst)) = reply_routes(src, "RenameAgent") else {
                 return Ok(());
             };
-            let agent_id = req.agent_id;
-            let host_id = {
-                let state = ctx.state.read().await;
-                state.host_id
-            };
-            let response_message = {
-                let mut us = ctx.user_state.write().await;
-                match rename_local_agent(&mut us, host_id, &req) {
-                    Ok(_) => RoutableMessage::RenameAgentResult {
-                        agent_id,
-                        error: None,
-                    },
-                    Err(e) => RoutableMessage::RenameAgentResult {
-                        agent_id,
-                        error: Some(ProtocolError::ServerError {
-                            message: e.to_string(),
-                        }),
-                    },
-                }
-            };
-            let _ = tx
-                .send(Message::routable(
-                    reply_src,
-                    reply_dst,
-                    request_id,
-                    &response_message,
-                ))
-                .await;
-            Ok(())
+            rename_agent::handle(tx, reply_src, reply_dst, request_id, req, ctx).await
         }
 
         RoutableMessage::DeleteAgent { agent_id } => {
             let Some((reply_src, reply_dst)) = reply_routes(src, "DeleteAgent") else {
                 return Ok(());
             };
-            let session_to_stop = {
-                let mut us = ctx.user_state.write().await;
-                delete_local_agent(&mut us, agent_id)
-            };
-            let response_message = match session_to_stop {
-                Some(session) => {
-                    session.stop(StopPolicy::Interrupt).await;
-                    RoutableMessage::DeleteAgentResult {
-                        agent_id,
-                        error: None,
-                    }
-                }
-                None => RoutableMessage::DeleteAgentResult {
-                    agent_id,
-                    error: Some(ProtocolError::ServerError {
-                        message: format!("Agent not found: {agent_id}"),
-                    }),
-                },
-            };
-            let _ = tx
-                .send(Message::routable(
-                    reply_src,
-                    reply_dst,
-                    request_id,
-                    &response_message,
-                ))
-                .await;
-            Ok(())
+            delete_agent::handle(tx, reply_src, reply_dst, request_id, agent_id, ctx).await
         }
 
         RoutableMessage::RawInput { agent_id, data } => {
-            let us = ctx.user_state.read().await;
-            if let Some(session) = us.agents.get(&agent_id)
-                && let Some(pty) = session.pty_handle()
-            {
-                let _ = pty.send_input(data).await;
-            }
-            Ok(())
+            io::handle_raw_input(agent_id, data, ctx).await
         }
 
         RoutableMessage::StructuredInput {
@@ -533,29 +189,22 @@ pub(super) async fn handle_routable(
             seq: client_seq,
             payload,
         } => {
-            tracing::debug!(%agent_id, client_seq, "structured input received");
             let Some((reply_src, reply_dst)) = reply_routes(src, "StructuredInput") else {
                 return Ok(());
             };
-            let us = ctx.user_state.read().await;
-            let error = if let Some(session) = us.agents.get(&agent_id) {
-                session
-                    .send_structured_input(client_seq, payload)
-                    .await
-                    .err()
-            } else {
-                tracing::warn!(%agent_id, "structured input rejected: agent not found");
-                Some(ProtocolError::NoAgentFound)
-            };
-            let _ = tx
-                .send(Message::routable(
-                    reply_src,
-                    reply_dst,
+            io::handle_structured_input(
+                tx,
+                io::StructuredInputReply {
+                    src: reply_src,
+                    dst: reply_dst,
                     request_id,
-                    &RoutableMessage::StructuredInputResult { agent_id, error },
-                ))
-                .await;
-            Ok(())
+                },
+                agent_id,
+                client_seq,
+                payload,
+                ctx,
+            )
+            .await
         }
 
         // Response messages that arrived at their destination (empty dst)
@@ -578,26 +227,32 @@ pub(super) async fn handle_routable(
 
 #[cfg(test)]
 mod tests {
-    use super::super::{handle_message, tests::*};
-    use crate::agent::{Agent, AgentSession, LocalAgentNameSource};
-    use crate::protocol::message::{
-        AgentType, CreateAgentRequest, DirectMessage, Message, RenameAgentRequest, SubscribeQuery,
-    };
-    use crate::protocol::route::Route;
-    use crate::protocol::{ProtocolError, RoutableMessage, SubscriptionCloseReason};
-    use crate::server::{
-        ConnectionHandle, SUBSCRIPTION_LEASE_DURATION, SubscriptionMode, subscription_lease_ms,
-    };
-    use chrono::Utc;
-    use serde::Serialize;
-    use serde_json::json;
     use std::path::PathBuf;
     use std::sync::Arc;
     use std::sync::atomic::AtomicU64;
     use std::time::Duration;
+
+    use chrono::Utc;
+    use serde::Serialize;
+    use serde_json::json;
     use tokio::sync::{mpsc, oneshot};
     use tokio::time::Instant;
     use uuid::Uuid;
+
+    use super::super::handle_message;
+    use super::super::tests::*;
+    use crate::agent::{Agent, AgentSession, LocalAgentNameSource};
+    use crate::protocol::link::Link;
+    use crate::protocol::message::{
+        AgentType, CreateAgentRequest, DirectMessage, Message, RenameAgentRequest, SubscribeQuery,
+    };
+    use crate::protocol::route::Route;
+    use crate::protocol::{
+        ProtocolError, RoutableMessage, SubscriptionCloseReason, SubscriptionId,
+    };
+    use crate::server::{
+        ConnectionHandle, SUBSCRIPTION_LEASE_DURATION, SubscriptionMode, subscription_lease_ms,
+    };
 
     #[tokio::test]
     async fn rename_agent_renames_local_agent_and_reannounces() {
@@ -610,7 +265,7 @@ mod tests {
         insert_local_claude(&user_state, agent_id, None, LocalAgentNameSource::Unset).await;
 
         let msg = Message::routable(
-            Route::from_link("client"),
+            Route::from_link(Link::new("client").unwrap()),
             Route::empty(),
             1,
             &RoutableMessage::RenameAgent(RenameAgentRequest {
@@ -622,27 +277,29 @@ mod tests {
         handle_message(&tx, msg, &ctx).await.unwrap();
         tokio::task::yield_now().await;
 
-        let msgs = written.lock().await;
-        assert_eq!(msgs.len(), 1);
-        assert!(matches!(
-            decode_written_routable(&msgs[0]),
-            RoutableMessage::RenameAgentResult {
-                agent_id: id,
-                error: None,
-            } if id == agent_id
-        ));
-        drop(msgs);
+        {
+            let msgs = written.lock().await;
+            assert_eq!(msgs.len(), 1);
+            assert!(matches!(
+                decode_written_routable(&msgs[0]),
+                RoutableMessage::RenameAgentResult {
+                    agent_id: id,
+                    error: None,
+                } if id == agent_id
+            ));
+        }
 
-        let us = user_state.read().await;
-        let entry = us.registry.get(&agent_id).unwrap();
-        assert_eq!(entry.name.as_deref(), Some("renamed-agent"));
-        assert_eq!(
-            us.agents
-                .get(&agent_id)
-                .and_then(|session| session.local_name_source()),
-            Some(LocalAgentNameSource::Amux)
-        );
-        drop(us);
+        {
+            let us = user_state.read().await;
+            let entry = us.registry.get(&agent_id).unwrap();
+            assert_eq!(entry.name.as_deref(), Some("renamed-agent"));
+            assert_eq!(
+                us.agents
+                    .get(&agent_id)
+                    .and_then(|session| session.local_name_source()),
+                Some(LocalAgentNameSource::Amux)
+            );
+        }
 
         let forwarded = peer_rx
             .try_recv()
@@ -676,7 +333,7 @@ mod tests {
         .await;
 
         let msg = Message::routable(
-            Route::from_link("client"),
+            Route::from_link(Link::new("client").unwrap()),
             Route::empty(),
             1,
             &RoutableMessage::RenameAgent(RenameAgentRequest {
@@ -688,29 +345,31 @@ mod tests {
         handle_message(&tx, msg, &ctx).await.unwrap();
         tokio::task::yield_now().await;
 
-        let msgs = written.lock().await;
-        assert_eq!(msgs.len(), 1);
-        assert!(matches!(
-            decode_written_routable(&msgs[0]),
-            RoutableMessage::RenameAgentResult {
-                agent_id: id,
-                error: None,
-            } if id == agent_id
-        ));
-        drop(msgs);
+        {
+            let msgs = written.lock().await;
+            assert_eq!(msgs.len(), 1);
+            assert!(matches!(
+                decode_written_routable(&msgs[0]),
+                RoutableMessage::RenameAgentResult {
+                    agent_id: id,
+                    error: None,
+                } if id == agent_id
+            ));
+        }
 
-        let us = user_state.read().await;
-        assert_eq!(
-            us.registry.get(&agent_id).unwrap().name.as_deref(),
-            Some("shared-name")
-        );
-        assert_eq!(
-            us.agents
-                .get(&agent_id)
-                .and_then(|session| session.local_name_source()),
-            Some(LocalAgentNameSource::Amux)
-        );
-        drop(us);
+        {
+            let us = user_state.read().await;
+            assert_eq!(
+                us.registry.get(&agent_id).unwrap().name.as_deref(),
+                Some("shared-name")
+            );
+            assert_eq!(
+                us.agents
+                    .get(&agent_id)
+                    .and_then(|session| session.local_name_source()),
+                Some(LocalAgentNameSource::Amux)
+            );
+        }
 
         assert!(
             peer_rx.try_recv().is_err(),
@@ -737,7 +396,7 @@ mod tests {
         insert_local_claude(&user_state, candidate_id, None, LocalAgentNameSource::Unset).await;
 
         let msg = Message::routable(
-            Route::from_link("client"),
+            Route::from_link(Link::new("client").unwrap()),
             Route::empty(),
             1,
             &RoutableMessage::RenameAgent(RenameAgentRequest {
@@ -749,24 +408,26 @@ mod tests {
         handle_message(&tx, msg, &ctx).await.unwrap();
         tokio::task::yield_now().await;
 
-        let msgs = written.lock().await;
-        assert_eq!(msgs.len(), 1);
-        assert!(matches!(
-            decode_written_routable(&msgs[0]),
-            RoutableMessage::RenameAgentResult {
-                agent_id: id,
-                error: Some(ProtocolError::ServerError { message: ref err }),
-            } if id == candidate_id && err == "Agent already exists: taken-name"
-        ));
-        drop(msgs);
+        {
+            let msgs = written.lock().await;
+            assert_eq!(msgs.len(), 1);
+            assert!(matches!(
+                decode_written_routable(&msgs[0]),
+                RoutableMessage::RenameAgentResult {
+                    agent_id: id,
+                    error: Some(ProtocolError::ServerError { message: ref err }),
+                } if id == candidate_id && err == "Agent already exists: taken-name"
+            ));
+        }
 
-        let us = user_state.read().await;
-        assert_eq!(
-            us.registry.resolve(&us.hosts, "taken-name").unwrap().id,
-            owner_id
-        );
-        assert_eq!(us.registry.get(&candidate_id).unwrap().name, None);
-        drop(us);
+        {
+            let us = user_state.read().await;
+            assert_eq!(
+                us.registry.resolve(&us.hosts, "taken-name").unwrap().id,
+                owner_id
+            );
+            assert_eq!(us.registry.get(&candidate_id).unwrap().name, None);
+        }
 
         assert!(
             peer_rx.try_recv().is_err(),
@@ -791,7 +452,7 @@ mod tests {
         }
 
         let msg = Message::routable(
-            Route::from_link("client"),
+            Route::from_link(Link::new("client").unwrap()),
             Route::empty(),
             1,
             &RoutableMessage::DeleteAgent { agent_id },
@@ -800,21 +461,23 @@ mod tests {
         handle_message(&tx, msg, &ctx).await.unwrap();
         tokio::task::yield_now().await;
 
-        let msgs = written.lock().await;
-        assert_eq!(msgs.len(), 1);
-        assert!(matches!(
-            decode_written_routable(&msgs[0]),
-            RoutableMessage::DeleteAgentResult {
-                agent_id: id,
-                error: None,
-            } if id == agent_id
-        ));
-        drop(msgs);
+        {
+            let msgs = written.lock().await;
+            assert_eq!(msgs.len(), 1);
+            assert!(matches!(
+                decode_written_routable(&msgs[0]),
+                RoutableMessage::DeleteAgentResult {
+                    agent_id: id,
+                    error: None,
+                } if id == agent_id
+            ));
+        }
 
-        let us = user_state.read().await;
-        assert!(!us.agents.contains_key(&agent_id));
-        assert!(us.registry.get(&agent_id).is_none());
-        drop(us);
+        {
+            let us = user_state.read().await;
+            assert!(!us.agents.contains_key(&agent_id));
+            assert!(us.registry.get(&agent_id).is_none());
+        }
 
         let forwarded = peer_rx
             .try_recv()
@@ -843,7 +506,7 @@ mod tests {
                 name: Some("remote-agent".to_string()),
                 command: "claude".to_string(),
                 working_dir: PathBuf::from("/tmp"),
-                route: Route::from_link("upstream"),
+                route: Route::from_link(Link::new("upstream").unwrap()),
                 agent_type: claude_agent_type(),
                 structured_protocol: claude_structured_protocol(),
                 readonly: false,
@@ -854,7 +517,7 @@ mod tests {
         .await;
 
         let msg = Message::routable(
-            Route::from_link("client"),
+            Route::from_link(Link::new("client").unwrap()),
             Route::empty(),
             1,
             &RoutableMessage::DeleteAgent { agent_id },
@@ -863,20 +526,22 @@ mod tests {
         handle_message(&tx, msg, &ctx).await.unwrap();
         tokio::task::yield_now().await;
 
-        let msgs = written.lock().await;
-        assert_eq!(msgs.len(), 1);
-        assert!(matches!(
-            decode_written_routable(&msgs[0]),
-            RoutableMessage::DeleteAgentResult {
-                agent_id: id,
-                error: Some(ProtocolError::ServerError { message: ref err }),
-            } if id == agent_id && err == &format!("Agent not found: {agent_id}")
-        ));
-        drop(msgs);
+        {
+            let msgs = written.lock().await;
+            assert_eq!(msgs.len(), 1);
+            assert!(matches!(
+                decode_written_routable(&msgs[0]),
+                RoutableMessage::DeleteAgentResult {
+                    agent_id: id,
+                    error: Some(ProtocolError::ServerError { message: ref err }),
+                } if id == agent_id && err == &format!("Agent not found: {agent_id}")
+            ));
+        }
 
-        let us = user_state.read().await;
-        assert!(us.registry.contains(&agent_id));
-        drop(us);
+        {
+            let us = user_state.read().await;
+            assert!(us.registry.contains(&agent_id));
+        }
 
         assert!(
             peer_rx.try_recv().is_err(),
@@ -891,8 +556,8 @@ mod tests {
         let (tx, written) = mock_tx();
 
         let msg = Message::routable(
-            Route::from_link("sender"),
-            Route::from_link("nonexistent-hop"),
+            Route::from_link(Link::new("sender").unwrap()),
+            Route::from_link(Link::new("nonexistent-hop").unwrap()),
             42,
             &RoutableMessage::RawInput {
                 agent_id: Uuid::new_v4(),
@@ -931,7 +596,7 @@ mod tests {
         {
             let mut us = user_state.write().await;
             us.routes.insert(
-                "dead-peer".to_string(),
+                Link::new("dead-peer").unwrap(),
                 ConnectionHandle::new(peer_tx, Arc::new(AtomicU64::new(1))),
             );
         }
@@ -941,8 +606,8 @@ mod tests {
         let (tx, written) = mock_tx();
 
         let msg = Message::routable(
-            Route::from_link("sender"),
-            Route::from_link("dead-peer"),
+            Route::from_link(Link::new("sender").unwrap()),
+            Route::from_link(Link::new("dead-peer").unwrap()),
             7,
             &RoutableMessage::SubscribeRaw {
                 agent_id: Uuid::new_v4(),
@@ -969,7 +634,7 @@ mod tests {
 
         let msg = Message::Routable {
             src: Route::empty(),
-            dst: Route::from_link("nonexistent"),
+            dst: Route::from_link(Link::new("nonexistent").unwrap()),
             request_id: 1,
             payload: vec![0x41],
         };
@@ -992,7 +657,7 @@ mod tests {
         let (tx, written) = mock_tx();
 
         let msg = Message::Routable {
-            src: Route::from_link("sender"),
+            src: Route::from_link(Link::new("sender").unwrap()),
             dst: Route::empty(),
             request_id: 42,
             payload: vec![0xFF, 0xFE, 0xFD],
@@ -1030,7 +695,7 @@ mod tests {
         let payload =
             rmp_serde::to_vec_named(&FutureRoutableMessage::FancyPing { seq: 7 }).unwrap();
         let msg = Message::Routable {
-            src: Route::from_link("sender"),
+            src: Route::from_link(Link::new("sender").unwrap()),
             dst: Route::empty(),
             request_id: 42,
             payload,
@@ -1114,7 +779,7 @@ mod tests {
         {
             let mut us = user_state.write().await;
             us.routes.insert(
-                "peer-a".to_string(),
+                Link::new("peer-a").unwrap(),
                 ConnectionHandle::new(peer_tx, Arc::new(AtomicU64::new(1))),
             );
         }
@@ -1123,8 +788,8 @@ mod tests {
         let (tx, _written) = mock_tx();
 
         let msg = Message::routable(
-            Route::from_link("sender"),
-            Route::from_link("peer-a"),
+            Route::from_link(Link::new("sender").unwrap()),
+            Route::from_link(Link::new("peer-a").unwrap()),
             1,
             &RoutableMessage::RawInput {
                 agent_id: Uuid::new_v4(),
@@ -1146,8 +811,8 @@ mod tests {
 
         assert!(dst.is_empty());
         let mut src = src;
-        assert_eq!(src.pop(), Some("peer-a".to_string()));
-        assert_eq!(src.pop(), Some("sender".to_string()));
+        assert_eq!(src.pop(), Some(Link::new("peer-a").unwrap()));
+        assert_eq!(src.pop(), Some(Link::new("sender").unwrap()));
 
         let inner = RoutableMessage::decode(&payload).unwrap();
         assert!(matches!(inner, RoutableMessage::RawInput { .. }));
@@ -1161,19 +826,19 @@ mod tests {
 
         let responses = vec![
             RoutableMessage::SubscribeRawResult {
-                subscription_id: Uuid::new_v4(),
+                subscription_id: SubscriptionId::random(),
                 lease_ms: subscription_lease_ms(),
                 error: None,
             },
             RoutableMessage::SubscribeStructuredResult {
-                subscription_id: Uuid::new_v4(),
+                subscription_id: SubscriptionId::random(),
                 seq: 0,
                 structured_protocol: None,
                 lease_ms: subscription_lease_ms(),
                 error: None,
             },
             RoutableMessage::ExtendSubscriptionResult {
-                subscription_id: Uuid::new_v4(),
+                subscription_id: SubscriptionId::random(),
                 lease_ms: subscription_lease_ms(),
                 error: None,
             },
@@ -1190,11 +855,11 @@ mod tests {
                 error: None,
             },
             RoutableMessage::RawOutput {
-                subscription_id: Uuid::new_v4(),
+                subscription_id: SubscriptionId::random(),
                 data: vec![0x41],
             },
             RoutableMessage::StructuredOutput {
-                subscription_id: Uuid::new_v4(),
+                subscription_id: SubscriptionId::random(),
                 seq: 1,
                 payload: json!({"type": "hook.stop", "cwd": "/tmp", "stop_hook_active": false}),
             },
@@ -1203,7 +868,7 @@ mod tests {
                 error: None,
             },
             RoutableMessage::SubscriptionClosed {
-                subscription_id: Uuid::new_v4(),
+                subscription_id: SubscriptionId::random(),
                 reason: SubscriptionCloseReason::SourceClosed,
             },
             RoutableMessage::Unreachable { request_id: 99 },
@@ -1213,7 +878,12 @@ mod tests {
 
         for response in responses {
             let response_type = response.type_label().to_string();
-            let msg = Message::routable(Route::from_link("sender"), Route::empty(), 1, &response);
+            let msg = Message::routable(
+                Route::from_link(Link::new("sender").unwrap()),
+                Route::empty(),
+                1,
+                &response,
+            );
             handle_message(&tx, msg, &ctx).await.unwrap();
             tokio::task::yield_now().await;
 
@@ -1239,7 +909,7 @@ mod tests {
 
         let agent_id = Uuid::new_v4();
         let msg = Message::routable(
-            Route::from_link("client"),
+            Route::from_link(Link::new("client").unwrap()),
             Route::empty(),
             1,
             &RoutableMessage::CreateAgent(CreateAgentRequest {
@@ -1257,16 +927,17 @@ mod tests {
         handle_message(&tx, msg, &ctx).await.unwrap();
         tokio::task::yield_now().await;
 
-        let msgs = written.lock().await;
-        assert_eq!(msgs.len(), 1);
-        assert!(matches!(
-            decode_written_routable(&msgs[0]),
-            RoutableMessage::CreateAgentResult {
-                agent_id: id,
-                error: Some(ProtocolError::ServerError { message: ref msg }),
-            } if id == agent_id && msg.contains("cloud relays do not host local agents")
-        ));
-        drop(msgs);
+        {
+            let msgs = written.lock().await;
+            assert_eq!(msgs.len(), 1);
+            assert!(matches!(
+                decode_written_routable(&msgs[0]),
+                RoutableMessage::CreateAgentResult {
+                    agent_id: id,
+                    error: Some(ProtocolError::ServerError { message: ref msg }),
+                } if id == agent_id && msg.contains("cloud relays do not host local agents")
+            ));
+        }
 
         let us = user_state.read().await;
         assert!(!us.agents.contains_key(&agent_id));
@@ -1281,7 +952,7 @@ mod tests {
 
         let agent_id = Uuid::new_v4();
         let msg = Message::routable(
-            Route::from_link("client"),
+            Route::from_link(Link::new("client").unwrap()),
             Route::empty(),
             1,
             &RoutableMessage::SubscribeStructured {
@@ -1315,7 +986,7 @@ mod tests {
 
         let agent_id = Uuid::new_v4();
         let msg = Message::routable(
-            Route::from_link("client"),
+            Route::from_link(Link::new("client").unwrap()),
             Route::empty(),
             1,
             &RoutableMessage::SubscribeStructured {
@@ -1362,7 +1033,7 @@ mod tests {
         }
 
         let msg = Message::routable(
-            Route::from_link("client"),
+            Route::from_link(Link::new("client").unwrap()),
             Route::empty(),
             1,
             &RoutableMessage::SubscribeStructured {
@@ -1405,7 +1076,7 @@ mod tests {
         }
 
         let msg = Message::routable(
-            Route::from_link("client"),
+            Route::from_link(Link::new("client").unwrap()),
             Route::empty(),
             1,
             &RoutableMessage::SubscribeStructured {
@@ -1421,28 +1092,29 @@ mod tests {
 
         tokio::task::yield_now().await;
 
-        let msgs = written.lock().await;
-        assert_eq!(msgs.len(), 1);
-        let Message::Routable { payload, .. } = &msgs[0] else {
-            panic!("expected Routable, got {:?}", msgs[0]);
-        };
-        let response = RoutableMessage::decode(payload).unwrap();
-        let subscription_id = match response {
-            RoutableMessage::SubscribeStructuredResult {
-                subscription_id: id,
-                seq: 0,
-                structured_protocol: Some(protocol),
-                lease_ms,
-                error: None,
-            } if !id.is_nil()
-                && lease_ms == subscription_lease_ms()
-                && protocol == "claude_pty_v1" =>
-            {
-                id
+        let subscription_id = {
+            let msgs = written.lock().await;
+            assert_eq!(msgs.len(), 1);
+            let Message::Routable { payload, .. } = &msgs[0] else {
+                panic!("expected Routable, got {:?}", msgs[0]);
+            };
+            let response = RoutableMessage::decode(payload).unwrap();
+            match response {
+                RoutableMessage::SubscribeStructuredResult {
+                    subscription_id: id,
+                    seq: 0,
+                    structured_protocol: Some(protocol),
+                    lease_ms,
+                    error: None,
+                } if !id.is_nil()
+                    && lease_ms == subscription_lease_ms()
+                    && protocol == "claude_pty_v1" =>
+                {
+                    id
+                }
+                other => panic!("expected SubscribeStructuredResult, got {:?}", other),
             }
-            other => panic!("expected SubscribeStructuredResult, got {:?}", other),
         };
-        drop(msgs);
 
         let us = user_state.read().await;
         let entry = us
@@ -1464,7 +1136,7 @@ mod tests {
         insert_test_session(&user_state, agent_id).await;
 
         let msg = Message::routable(
-            Route::from_link("client"),
+            Route::from_link(Link::new("client").unwrap()),
             Route::empty(),
             1,
             &RoutableMessage::SubscribeRaw {
@@ -1476,20 +1148,21 @@ mod tests {
         handle_message(&tx, msg, &ctx).await.unwrap();
         tokio::task::yield_now().await;
 
-        let msgs = written.lock().await;
-        assert_eq!(msgs.len(), 1);
-        let subscription_id = match decode_written_routable(&msgs[0]) {
-            RoutableMessage::SubscribeRawResult {
-                subscription_id,
-                lease_ms,
-                error: None,
-            } => {
-                assert_eq!(lease_ms, subscription_lease_ms());
-                subscription_id
+        let subscription_id = {
+            let msgs = written.lock().await;
+            assert_eq!(msgs.len(), 1);
+            match decode_written_routable(&msgs[0]) {
+                RoutableMessage::SubscribeRawResult {
+                    subscription_id,
+                    lease_ms,
+                    error: None,
+                } => {
+                    assert_eq!(lease_ms, subscription_lease_ms());
+                    subscription_id
+                }
+                other => panic!("expected SubscribeRawResult, got {:?}", other),
             }
-            other => panic!("expected SubscribeRawResult, got {:?}", other),
         };
-        drop(msgs);
 
         let us = user_state.read().await;
         let entry = us
@@ -1507,7 +1180,7 @@ mod tests {
         let (tx, written) = mock_tx();
 
         let agent_id = Uuid::new_v4();
-        let subscription_id = Uuid::new_v4();
+        let subscription_id = SubscriptionId::random();
         let old_deadline = Instant::now() + Duration::from_secs(1);
         let (cancel_tx, _cancel_rx) = oneshot::channel();
 
@@ -1519,13 +1192,13 @@ mod tests {
                 agent_id,
                 SubscriptionMode::Raw,
                 cancel_tx,
-                Route::from_link("test-link"),
+                Route::from_link(Link::new("test-link").unwrap()),
                 old_deadline,
             );
         }
 
         let msg = Message::routable(
-            Route::from_link("client"),
+            Route::from_link(Link::new("client").unwrap()),
             Route::empty(),
             1,
             &RoutableMessage::ExtendSubscription { subscription_id },
@@ -1534,17 +1207,18 @@ mod tests {
         handle_message(&tx, msg, &ctx).await.unwrap();
         tokio::task::yield_now().await;
 
-        let msgs = written.lock().await;
-        assert_eq!(msgs.len(), 1);
-        assert!(matches!(
-            decode_written_routable(&msgs[0]),
-            RoutableMessage::ExtendSubscriptionResult {
-                subscription_id: id,
-                lease_ms,
-                error: None,
-            } if id == subscription_id && lease_ms == subscription_lease_ms()
-        ));
-        drop(msgs);
+        {
+            let msgs = written.lock().await;
+            assert_eq!(msgs.len(), 1);
+            assert!(matches!(
+                decode_written_routable(&msgs[0]),
+                RoutableMessage::ExtendSubscriptionResult {
+                    subscription_id: id,
+                    lease_ms,
+                    error: None,
+                } if id == subscription_id && lease_ms == subscription_lease_ms()
+            ));
+        }
 
         let us = user_state.read().await;
         let entry = us.active_subscriptions.get(&subscription_id).unwrap();
@@ -1557,9 +1231,9 @@ mod tests {
         let ctx = test_ctx(state, user_state);
         let (tx, written) = mock_tx();
 
-        let subscription_id = Uuid::new_v4();
+        let subscription_id = SubscriptionId::random();
         let msg = Message::routable(
-            Route::from_link("client"),
+            Route::from_link(Link::new("client").unwrap()),
             Route::empty(),
             1,
             &RoutableMessage::ExtendSubscription { subscription_id },
@@ -1588,10 +1262,10 @@ mod tests {
         let mut route_rx = setup_route(&user_state).await;
 
         let agent_id = Uuid::new_v4();
-        let subscription_id = Uuid::new_v4();
+        let subscription_id = SubscriptionId::random();
         let (cancel_tx, mut cancel_rx) = oneshot::channel();
-        let mut full_dst = Route::from_link("client");
-        full_dst.push("test-link");
+        let mut full_dst = Route::from_link(Link::new("client").unwrap());
+        full_dst.push(Link::new("test-link").unwrap());
 
         {
             let mut us = user_state.write().await;
@@ -1607,7 +1281,7 @@ mod tests {
         }
 
         let msg = Message::routable(
-            Route::from_link("client"),
+            Route::from_link(Link::new("client").unwrap()),
             Route::empty(),
             1,
             &RoutableMessage::Unsubscribe { subscription_id },
@@ -1628,9 +1302,10 @@ mod tests {
             } if id == subscription_id
         ));
 
-        let us = user_state.read().await;
-        assert!(!us.active_subscriptions.contains_key(&subscription_id));
-        drop(us);
+        {
+            let us = user_state.read().await;
+            assert!(!us.active_subscriptions.contains_key(&subscription_id));
+        }
 
         let msgs = written.lock().await;
         assert!(msgs.is_empty(), "unsubscribe should not emit an ack");
@@ -1644,10 +1319,10 @@ mod tests {
         let mut route_rx = setup_route(&user_state).await;
 
         let agent_id = Uuid::new_v4();
-        let subscription_id = Uuid::new_v4();
+        let subscription_id = SubscriptionId::random();
         let (cancel_tx, _cancel_rx) = oneshot::channel();
-        let mut full_dst = Route::from_link("client");
-        full_dst.push("test-link");
+        let mut full_dst = Route::from_link(Link::new("client").unwrap());
+        full_dst.push(Link::new("test-link").unwrap());
 
         {
             let mut us = user_state.write().await;
@@ -1663,7 +1338,7 @@ mod tests {
         }
 
         let msg = Message::routable(
-            Route::from_link("client"),
+            Route::from_link(Link::new("client").unwrap()),
             Route::empty(),
             1,
             &RoutableMessage::Unsubscribe { subscription_id },
@@ -1678,9 +1353,10 @@ mod tests {
             route_rx.try_recv().is_err(),
             "duplicate unsubscribe should not emit another close"
         );
-        let us = user_state.read().await;
-        assert!(!us.active_subscriptions.contains_key(&subscription_id));
-        drop(us);
+        {
+            let us = user_state.read().await;
+            assert!(!us.active_subscriptions.contains_key(&subscription_id));
+        }
 
         let msgs = written.lock().await;
         assert!(msgs.is_empty(), "unsubscribe remains fire-and-forget");
@@ -1696,22 +1372,22 @@ mod tests {
         {
             let mut us = relay_user_state.write().await;
             us.routes.insert(
-                "peer-hop".to_string(),
+                Link::new("peer-hop").unwrap(),
                 ConnectionHandle::new(peer_tx, Arc::new(AtomicU64::new(1))),
             );
         }
 
         let (owner_state, owner_user_state) = test_state().await;
         let mut owner_ctx = test_ctx(owner_state, owner_user_state.clone());
-        owner_ctx.link_name = "peer-hop".to_string();
+        owner_ctx.link = Link::new("peer-hop").unwrap();
         let (owner_tx, _owner_written) = mock_tx();
         let _owner_route_rx = setup_named_route(&owner_user_state, "peer-hop").await;
 
         let agent_id = Uuid::new_v4();
-        let subscription_id = Uuid::new_v4();
+        let subscription_id = SubscriptionId::random();
         let (cancel_tx, _cancel_rx) = oneshot::channel();
-        let mut full_dst = Route::from_link("client-link");
-        full_dst.push("peer-hop");
+        let mut full_dst = Route::from_link(Link::new("client-link").unwrap());
+        full_dst.push(Link::new("peer-hop").unwrap());
         {
             let mut us = owner_user_state.write().await;
             crate::server::connection::register_subscription(
@@ -1726,8 +1402,8 @@ mod tests {
         }
 
         let msg = Message::routable(
-            Route::from_link("client-link"),
-            Route::from_link("peer-hop"),
+            Route::from_link(Link::new("client-link").unwrap()),
+            Route::from_link(Link::new("peer-hop").unwrap()),
             1,
             &RoutableMessage::Unsubscribe { subscription_id },
         );

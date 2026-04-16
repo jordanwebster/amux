@@ -1,10 +1,12 @@
-use crate::paths::{amux_xdg_dir, default_state_path};
-use gethostname::gethostname;
-use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
 use std::fmt;
 use std::path::{Path, PathBuf};
+
+use gethostname::gethostname;
+use serde::{Deserialize, Serialize};
 use thiserror::Error;
+
+use crate::paths::{amux_xdg_dir, default_state_path};
 
 #[derive(Debug, Error)]
 pub enum ConfigError {
@@ -244,6 +246,9 @@ impl Config {
             )));
         }
 
+        if self.host_name.is_empty() {
+            return Err(ConfigError::Invalid("host_name must not be empty".into()));
+        }
         // Server link names are "{hostname}-{4 chars}", max 128 bytes total
         if self.host_name.len() > 123 {
             return Err(ConfigError::Invalid(format!(
@@ -449,6 +454,16 @@ mod tests {
             ..Config::default()
         };
         assert!(config.validate(false).is_ok());
+    }
+
+    #[test]
+    fn validate_rejects_empty_host_name() {
+        let config = Config {
+            host_name: String::new(),
+            ..Config::default()
+        };
+        let err = config.validate(false).unwrap_err();
+        assert!(err.to_string().contains("host_name"));
     }
 
     #[test]

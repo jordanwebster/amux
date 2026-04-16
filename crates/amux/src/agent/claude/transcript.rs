@@ -4,13 +4,15 @@
 //! line as an opaque `serde_json::Value` to the structured output buffer.
 //! amux does not interpret transcript semantics — that is the client's job.
 
-use crate::buffer::MultiplexStructuredBuffer;
 use std::path::PathBuf;
 use std::sync::Arc;
+
 use tokio::fs::File;
 use tokio::io::{AsyncBufReadExt, AsyncSeekExt, BufReader};
 use tokio::sync::watch;
 use tokio::task::JoinHandle;
+
+use crate::buffer::MultiplexStructuredBuffer;
 
 // ============================================================================
 // TranscriptTailer
