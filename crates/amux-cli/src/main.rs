@@ -262,7 +262,12 @@ async fn run_command(command: Commands, mut config: Config) -> Result<()> {
             ServerCommands::Start {
                 cloud, foreground, ..
             } => {
-                ensure_initialized(&mut config).await?;
+                // Cloud servers run non-interactively (e.g. under systemd) and
+                // have no user-facing prompts to answer; the defaults via
+                // `unwrap_or(...)` at consumption sites are sufficient.
+                if !cloud {
+                    ensure_initialized(&mut config).await?;
+                }
                 let options = server_client::StartOptions::from_flags(cloud, foreground);
                 server_client::start_server(&config, options).await?
             }
