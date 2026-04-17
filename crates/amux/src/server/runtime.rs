@@ -200,16 +200,21 @@ impl Server {
             establish_cloud_connection(config, self.state.clone(), self.event_tx.clone());
 
             // Task: Periodic update check (every hour)
-            let state_path = {
+            let (state_path, check_for_updates) = {
                 let state = self.state.read().await;
-                state.config.state_path.clone()
+                (
+                    state.config.state_path.clone(),
+                    state.config.check_for_updates,
+                )
             };
-            crate::update::spawn_update_checker(
-                cloud_url.clone(),
-                env!("CARGO_PKG_VERSION").to_string(),
-                Duration::from_secs(3600),
-                state_path,
-            );
+            if check_for_updates {
+                crate::update::spawn_update_checker(
+                    cloud_url.clone(),
+                    env!("CARGO_PKG_VERSION").to_string(),
+                    Duration::from_secs(3600),
+                    state_path,
+                );
+            }
         }
 
         // Network connection limiter (TCP + WebSocket): each connection holds a

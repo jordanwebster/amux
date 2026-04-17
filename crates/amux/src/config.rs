@@ -70,6 +70,10 @@ fn default_idle_timeout_secs() -> u32 {
     180
 }
 
+fn default_check_for_updates() -> bool {
+    true
+}
+
 /// A control-key leader parsed from the `ctrl+<char>` format (e.g. `ctrl+a`).
 #[derive(Debug, Clone)]
 pub struct LeaderKey {
@@ -186,6 +190,12 @@ pub struct Config {
     #[cfg_attr(not(any(debug_assertions, test)), serde(skip_deserializing))]
     pub state_path: PathBuf,
 
+    /// Whether the local server should periodically check for updates.
+    /// Only configurable in debug/test builds; release always uses default.
+    #[serde(default = "default_check_for_updates")]
+    #[cfg_attr(not(any(debug_assertions, test)), serde(skip_deserializing))]
+    pub check_for_updates: bool,
+
     /// Whether the cloud server should handle TLS itself (default: true).
     /// Set to false when TLS is terminated by a reverse proxy (e.g. nginx).
     #[serde(default = "default_enforce_tls_in_cloud_mode")]
@@ -233,6 +243,7 @@ impl Default for Config {
             websocket_port: None,
             randomise_link_name: default_randomise_link_name(),
             state_path: default_state_path(),
+            check_for_updates: default_check_for_updates(),
             enforce_tls_in_cloud_mode: default_enforce_tls_in_cloud_mode(),
             enable_cloud_mode: None,
             prevent_idle_sleep: None,
@@ -411,6 +422,18 @@ mod tests {
         assert_eq!(config.websocket_port, None);
         assert_eq!(config.prevent_idle_sleep, None);
         assert_eq!(config.enable_cloud_mode, None);
+        assert!(config.check_for_updates);
+    }
+
+    #[test]
+    fn check_for_updates_yaml_roundtrip() {
+        let yaml = "check_for_updates: false\n";
+        let config: Config = serde_yaml::from_str(yaml).unwrap();
+        assert!(!config.check_for_updates);
+
+        let serialized = serde_yaml::to_string(&config).unwrap();
+        let parsed: Config = serde_yaml::from_str(&serialized).unwrap();
+        assert!(!parsed.check_for_updates);
     }
 
     #[test]

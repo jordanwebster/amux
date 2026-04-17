@@ -239,12 +239,13 @@ impl Executor {
             //
             // `enable_cloud_mode: false` and `prevent_idle_sleep: false` keep
             // `amux init` from prompting during test runs.
+            // `check_for_updates: false` keeps e2e output hermetic.
             let host_name = cfg
                 .host_name
                 .clone()
                 .unwrap_or_else(|| test_case.name.clone());
             let yaml_content = format!(
-                "host_name: '{}'\nsocket_path: '{}'\ntcp_port: {}\nwebsocket_port: {}\nrandomise_link_name: false\nenable_cloud_mode: false\nprevent_idle_sleep: false\nstate_path: '{}'\n",
+                "host_name: '{}'\nsocket_path: '{}'\ntcp_port: {}\nwebsocket_port: {}\nrandomise_link_name: false\nenable_cloud_mode: false\nprevent_idle_sleep: false\ncheck_for_updates: false\nstate_path: '{}'\n",
                 host_name,
                 socket_path.display(),
                 tcp_port,
