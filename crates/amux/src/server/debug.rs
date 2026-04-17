@@ -37,7 +37,7 @@ pub(super) async fn dump_server_debug_info(
         .iter()
         .map(|(id, us)| (*id, us.clone()))
         .collect();
-    users.sort_unstable_by(|a, b| a.0.as_u128().cmp(&b.0.as_u128()));
+    users.sort_unstable_by_key(|a| a.0.as_u128());
     let mut user_guards: Vec<(Uuid, RwLockReadGuard<'_, ServerUserState>)> =
         Vec::with_capacity(users.len());
     for (id, us) in &users {
