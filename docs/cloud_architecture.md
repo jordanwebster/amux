@@ -1,10 +1,10 @@
 # amux Cloud Architecture
 
-This document describes the cloud deployment architecture for amux. For internal server design, see [ARCHITECTURE.md](ARCHITECTURE.md).
+This document describes the cloud deployment architecture for amux. For internal server design, see [architecture.md](architecture.md).
 
 ## Overall Architecture
 
-![Global Architecture](images/global_architecture.png)
+![Global Architecture](../images/global_architecture.png)
 
 amux is a federated network of servers that enable remote access to AI agent sessions. While the initial implementation targets Claude, the system is designed to support any terminal-based AI agent (Codex, OpenCode, AMP, etc.).
 
@@ -91,7 +91,7 @@ struct ConnectionClaims {
 
 The `host` and `port` claims bind the token to a specific cloud server, preventing token replay across servers.
 
-See `src/jwt.rs`, `src/oauth.rs`, `src/cloud.rs`.
+See `crates/amux/src/auth/jwt.rs`, `crates/amux/src/auth/oauth.rs`, `crates/amux/src/auth/cloud.rs`.
 
 ---
 
@@ -186,40 +186,45 @@ Route: VecDeque<String>  // Serializes as "AB.BC.CD" (dot-separated)
 
 Agents are propagated to connected peers via `AnnounceAgent`/`WithdrawAgent` direct messages. `list` returns both local and remote agents. Remote agents include their route for multi-hop routing.
 
-Hosts are propagated via `AnnounceHost`/`WithdrawHost`. When a peer connection is lost, `WithdrawHost` propagates through the network and each server bulk-removes agents reachable via the withdrawn host.
+Hosts are propagated via `AnnounceHost`/`WithdrawHost`. When a peer connection is lost, `WithdrawHost` propagates through the network and each server bulk-removes agents reachable via the withdrawn host and cancels any matching subscriptions.
 
-Idle peer links also run symmetric application heartbeats: after 60 seconds
-with no inbound traffic, a peer sends `Heartbeat` and expects inbound traffic
-within 10 seconds. If not, the connection is closed and the existing
-`WithdrawHost` propagation handles cleanup.
+Idle peer links run a symmetric heartbeat driven by a per-connection idle
+timeout negotiated in the `ConnectResult` handshake (pulled from
+`Config::idle_timeout_secs`, default 180s; `None` for local Unix sockets).
+After the handshake, both peers apply the same rule: if no inbound message
+has been seen for the negotiated timeout, the connection is closed and the
+normal `WithdrawHost` cleanup path runs. Only the dialer sends `Heartbeat`,
+at its own cadence (currently `idle_timeout / 3`); the acceptor replies with
+`HeartbeatAck`, which counts as inbound traffic.
 
-Routing uses the per-user routes table: `HashMap<String, mpsc::Sender<Message>>`. When a client wants to reach an agent on a remote server, the route is resolved from the agent registry (e.g. `"cloud-server.local-host"`) and the message is forwarded hop-by-hop using the stack-based routing algorithm described in [ARCHITECTURE.md](ARCHITECTURE.md).
+Routing uses the per-user routes table: `HashMap<Link, ConnectionHandle>`, where a `ConnectionHandle` bundles the `mpsc::Sender<Message>` for the connection's writer task with its request-id counter. When a client wants to reach an agent on a remote server, the route is resolved from the agent registry (e.g. `"cloud-server.local-host"`) and the message is forwarded hop-by-hop using the stack-based routing algorithm described in [architecture.md](architecture.md).
 
 ---
 
 ## State Management
 
-Persistent state is stored at `~/.local/state/amux/state.yaml` (configurable via `state_path` in config). Uses file locking (shared for reads, exclusive for writes) to prevent corruption from concurrent access.
+Persistent state is stored at `$XDG_STATE_HOME/amux/state.yaml` (falling back to `~/.local/state/amux/state.yaml`; configurable via `state_path` in config). Uses file locking (shared for reads, exclusive for writes) to prevent corruption from concurrent access.
 
 ```rust
 struct State {
+    host_id: Option<Uuid>,          // Stable per-installation host ID, generated on first run
     cloud: CloudState,
     claude: ClaudeState,
 }
 
 struct CloudState {
-    use_cloud_mode: Option<bool>,      // None = not configured, Some(true/false)
-    refresh_token: Option<String>,     // OAuth refresh token
+    refresh_token: Option<String>,  // OAuth refresh token; absent until auth completes
 }
 
 struct ClaudeState {
-    is_plugin_installed: Option<String>, // Version of amux plugin in Claude
+    applied_plugin_version: Option<String>,    // Plugin version last applied to Claude Code
+    applied_marketplace_path: Option<PathBuf>, // Marketplace source path last applied
 }
 ```
 
-`State::update()` provides atomic load-modify-save with an exclusive lock held throughout, preventing TOCTOU races.
+Whether the user has opted into cloud mode lives in `Config::enable_cloud_mode` in `config.yaml`, not in state. `State::update()` provides atomic load-modify-save with an exclusive lock held throughout, preventing TOCTOU races.
 
-See `src/state.rs`.
+See `crates/amux/src/state.rs`.
 
 ---
 
@@ -257,11 +262,14 @@ Starts the server in cloud mode:
 
 ### `amux debug`
 
-Shows internal server state including cloud connection status:
+Shows internal server state including cloud connection status. Accepts
+`--verbose` and `--format=yaml|json` flags; the server responds with a
+`DebugResult { dump }` string shaped like:
 
 ```yaml
 is_cloud_server: false
-use_cloud_mode: true
+host_id: 6b6c…
+enable_cloud_mode: true
 agent_count: 1
 route_count: 2
 routes:
@@ -273,6 +281,7 @@ config:
   socket_path: $TMPDIR/amux/amux.sock  # macOS (per-user)
   tcp_port: 9001
   websocket_port: 9002
+  idle_timeout_secs: 180
 ```
 
 ---

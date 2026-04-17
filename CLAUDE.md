@@ -8,7 +8,7 @@ AMUX IS IN ACTIVE DEVELOPMENT AND IS NOT CURRENTLY RELEASED. DO NOT CONCERN YOUR
 
 1. **Read DEVLOG.md** - See recent work, decisions made, and current state
 2. **Read this file** - Understand code style and project structure
-3. **Skim ARCHITECTURE.md** - Canonical design for the system
+3. **Skim docs/architecture.md** - Canonical design for the system
 
 ## After Completing Work
 
@@ -35,13 +35,13 @@ AMUX IS IN ACTIVE DEVELOPMENT AND IS NOT CURRENTLY RELEASED. DO NOT CONCERN YOUR
 - OAuth 2.0 device flow + JWT authentication for cloud
 - TLS for server-to-server connections
 
-**Source of truth:** ARCHITECTURE.md is the canonical design document for server internals. CLOUD_ARCHITECTURE.md covers the cloud deployment model.
+**Source of truth:** docs/architecture.md is the canonical design document for server internals. docs/cloud_architecture.md covers the cloud deployment model.
 
 ## Getting Oriented
 
 1. **Start with the README** - Understand what amux does at a product level
-2. **Read ARCHITECTURE.md** - This is the detailed internal design document covering data structures, message flow, and the task model
-3. **Skim CLOUD_ARCHITECTURE.md** - Understand the cloud deployment model (stateless servers, token auth, TTL-based routing)
+2. **Read docs/architecture.md** - This is the detailed internal design document covering data structures, message flow, and the task model
+3. **Skim docs/cloud_architecture.md** - Understand the cloud deployment model (stateless servers, token auth, TTL-based routing)
 4. **Explore src/** - The current prototype implementation
 
 ## Key Concepts
