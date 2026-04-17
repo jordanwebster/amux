@@ -38,6 +38,53 @@ One paragraph describing what was done.
 
 ---
 
+## 2026-04-17: Init flow + cloud-state reshape
+
+### Summary
+Walked back yesterday's `CloudState` enum in `state.yaml`. The enum mixed a user preference ("do I want cloud mode?") with a runtime credential (refresh token), and its `NotConfigured` / `Unauthenticated` variants encoded init-flow state into what should just be cloud state — which is why past AI contributors assumed init was cloud-specific. Split the two concerns, rewrote `amux-cli/src/init.rs` as a pure-function state machine, and extended implicit init coverage to `amux server start`.
+
+### Changes
+
+**Data split**
+- `state.rs` — `CloudState` enum deleted. Replaced with a `CloudState` *struct* namespaced under `cloud:` in `state.yaml` (mirrors the existing `claude:` block), currently just `{ refresh_token: Option<String> }`. The struct is a pure runtime-credential container — no preference or phase state. Future cloud-runtime fields have a natural home.
+- `config.rs` — added `enable_cloud_mode: Option<bool>`. Changed `prevent_idle_sleep: bool` → `Option<bool>`. `None` means "user has not been prompted"; `Some(true/false)` means "user gave an explicit answer." Runtime consumers (`server/runtime.rs:102`) `.unwrap_or(false)` at the call site; by design init always runs before these are read.
+- `setup.rs` — public `CloudState` mirror, `cloud_setup_state`, `reset_cloud_state`, and the smelly `prevent_idle_sleep_preference` raw-YAML reader are gone. New helpers: `cloud_enabled(config)`, `cloud_refresh_token(config)`, `set_enable_cloud_mode`, `set_prevent_idle_sleep`, `clear_enable_cloud_mode`, `clear_prevent_idle_sleep`, `set_cloud_refresh_token`. One generic `write_config_bool(key, Some/None)` backs the set/clear pair for each config field.
+
+**Init as a state machine**
+- `amux-cli/src/init.rs` — rewrote `run_init` around a pure `next_step(config, has_refresh_token, ctx) -> InitStep` function. The whole state-machine graph lives in one place; step functions (`prompt_cloud_mode`, `authenticate`, `prompt_idle_sleep`) only know how to execute their step, not whether they should run. The loop calls `next_step`, dispatches, and re-evaluates until `InitStep::Done`. No more per-step `needs_*` predicates, no re-reading config after each step to "refresh" status.
+- New `InitContext { explicit: bool }` struct threaded through `run_init`. `amux init` passes `InitContext::explicit()`; `ensure_initialized` passes `InitContext::implicit()`. Today's three steps ignore the flag — it's there so future "show prompt"-style steps (e.g. a "will you use Claude?" prompt) can self-gate inside `next_step` without touching call sites.
+
+**Entry points**
+- `amux-cli/src/main.rs` — `ensure_initialized` now runs on `amux server start` as well (was previously a gap; server started regardless of init state). Init runs in the interactive CLI process before daemon spawn.
+- `ensure_initialized` fast path: a pure `next_step` check against the in-memory config plus one `state.yaml` read. Zero extra IO when init is already done.
+- When init is needed but a server is already running, skip prompting. The running server's config is frozen at startup — persisting new answers now would confuse the user. Added `server_client::server_is_running(config) -> bool` as a thin wrapper over the existing `existing_server` probe. The probe only runs in the rare init-needed case, not on every command.
+- Explicit `amux init` with a running server: run init normally, then print a "restart the server to apply" notice at the end.
+
+**Call-site follow-ups**
+- `auth/cloud.rs` — reads `state.cloud_refresh_token` directly; uses `setup::cloud_enabled(config)` in `CloudConnection::connect`.
+- `server/cloud.rs`, `server/debug.rs` — `state.cloud.is_enabled()` → `setup::cloud_enabled(config)`.
+- `amux-cli/src/main.rs:check_upgrade_required` — same substitution.
+- `e2e-runner/src/executor.rs` — fixture now sets `enable_cloud_mode: false` + `prevent_idle_sleep: false` in the generated `config.yaml` instead of seeding `cloud: { status: disabled }` in `state.yaml`.
+
+### Decisions made
+
+- **`Option<bool>` on `Config`, not raw-YAML sniffing for absence.** Previously `prevent_idle_sleep: bool` paired with a `prevent_idle_sleep_preference()` helper that read the deserialized-config-bypassing raw YAML mapping to distinguish "unset" from "false." Two code paths reading the same field differently; init and runtime drifted. Making both `enable_cloud_mode` and `prevent_idle_sleep` `Option<bool>` on `Config` itself is honest about the tristate at the type level and collapses to one read path.
+- **Pure `next_step` over mutation-based control flow.** Yesterday's init flow was `let mut status = cloud_setup_state(...); if matches!(status, NotConfigured) { ...; status = cloud_setup_state(...); }` — mutating state and re-reading to advance. The new design is a loop around a pure function that maps current state to "what runs next"; steps only own their own prompt/persist work. Adding a step is three additions (enum variant, `next_step` arm, `run_init` arm); future steps that only apply in explicit init gate on `ctx.explicit` inside `next_step`.
+- **Plugin install stays a separate call-site step.** The three-line cadence at `amux new claude` (`ensure_initialized` → `check_upgrade_required` → `ensure_plugin_installed`) reads cleanly and keeps the three concerns independent. Folding plugin install into the init loop would have required threading `agent_type` through `InitContext` for a concern that's already command-specific and idempotent.
+- **Probe-and-skip only when init is needed.** The socket connect is cheap (~1ms) but not free. `next_step` is pure and ~instant; running it first means the probe only happens in the rare "init incomplete but something else is going on" case.
+
+### Verification
+- `cargo check --workspace` — clean.
+- `cargo +nightly fmt --all` — applied.
+- `cargo clippy --workspace --all-targets -- -D warnings` — clean.
+- `cargo test --workspace` — 307 amux-lib tests (up from 304, added six `next_step` + setup-helper tests, retired the old raw-YAML preference reader tests). 18 amux-cli tests pass (added five `next_step` pure-function tests). All other targets clean.
+- `cargo run -p e2e-runner -- run` — 12 passed, 0 failed.
+
+### Next steps
+- None blocking. Future "will you use Claude?" preference prompt is now an additive change: new `InitStep` variant, new arm in `next_step` gated on `ctx.explicit && config.claude_preference.is_none()`, new step function. No call-site migration needed.
+
+---
+
 ## 2026-04-17: Review follow-ups — LinkName→Link rename, three panic fixes
 
 ### Summary

@@ -36,34 +36,17 @@ pub(crate) struct State {
     pub(crate) claude: ClaudeState,
 }
 
-/// Cloud authentication state. Stored under `cloud:` in `state.yaml`.
-#[derive(Debug, Clone, Default, Serialize, Deserialize)]
-#[serde(tag = "status", rename_all = "snake_case")]
-pub enum CloudState {
-    #[default]
-    NotConfigured,
-    Disabled,
-    Unauthenticated,
-    Authenticated {
-        refresh_token: String,
-    },
-}
-
-impl CloudState {
-    pub fn is_enabled(&self) -> bool {
-        matches!(self, Self::Unauthenticated | Self::Authenticated { .. })
-    }
-
-    pub fn needs_init(&self) -> bool {
-        matches!(self, Self::NotConfigured | Self::Unauthenticated)
-    }
-
-    pub(crate) fn refresh_token(&self) -> Option<&str> {
-        match self {
-            Self::Authenticated { refresh_token } => Some(refresh_token.as_str()),
-            _ => None,
-        }
-    }
+/// Runtime-scoped cloud state. Namespaced under `cloud:` in `state.yaml`.
+///
+/// Contains only values that are a function of the cloud runtime (e.g. the
+/// current refresh token). User preferences about cloud mode live in
+/// `Config::enable_cloud_mode` in `config.yaml`, not here.
+#[derive(Debug, Clone, Serialize, Deserialize, Default)]
+pub(crate) struct CloudState {
+    /// OAuth refresh token. Present iff the user has completed authentication;
+    /// absent otherwise.
+    #[serde(default)]
+    pub(crate) refresh_token: Option<String>,
 }
 
 /// Claude-specific state
@@ -165,7 +148,7 @@ mod tests {
     fn test_state_default() {
         let state = State::default();
         assert!(state.host_id.is_none());
-        assert!(matches!(state.cloud, CloudState::NotConfigured));
+        assert!(state.cloud.refresh_token.is_none());
     }
 
     #[test]
@@ -174,7 +157,7 @@ mod tests {
         let path = temp.path().join("state.yaml");
         let state = State::load(&path).unwrap();
         assert!(state.host_id.is_none());
-        assert!(matches!(state.cloud, CloudState::NotConfigured));
+        assert!(state.cloud.refresh_token.is_none());
     }
 
     #[test]
@@ -183,32 +166,31 @@ mod tests {
         let path = temp.path().join("state.yaml");
 
         State::update(&path, |s| {
-            s.cloud = CloudState::Authenticated {
-                refresh_token: "test_token".to_string(),
-            };
+            s.cloud.refresh_token = Some("test_token".to_string());
         })
         .unwrap();
 
         let loaded = State::load(&path).unwrap();
         assert!(loaded.host_id.is_none());
-        assert!(
-            matches!(&loaded.cloud, CloudState::Authenticated { refresh_token } if refresh_token == "test_token")
-        );
+        assert_eq!(loaded.cloud.refresh_token.as_deref(), Some("test_token"));
     }
 
     #[test]
-    fn test_state_update() {
+    fn test_state_update_clears_token() {
         let temp = TempDir::new().unwrap();
         let path = temp.path().join("state.yaml");
 
         State::update(&path, |s| {
-            s.cloud = CloudState::Disabled;
+            s.cloud.refresh_token = Some("t".to_string());
+        })
+        .unwrap();
+        State::update(&path, |s| {
+            s.cloud.refresh_token = None;
         })
         .unwrap();
 
         let loaded = State::load(&path).unwrap();
-        assert!(loaded.host_id.is_none());
-        assert!(matches!(loaded.cloud, CloudState::Disabled));
+        assert!(loaded.cloud.refresh_token.is_none());
     }
 
     #[test]
@@ -216,12 +198,12 @@ mod tests {
         let temp = TempDir::new().unwrap();
         let path = temp.path().join("state.yaml");
 
-        // Write partial YAML (only cloud section)
-        fs::write(&path, "cloud:\n  status: unauthenticated\n").unwrap();
+        // Write partial YAML (only cloud block)
+        fs::write(&path, "cloud:\n  refresh_token: abc123\n").unwrap();
 
         let loaded = State::load(&path).unwrap();
         assert!(loaded.host_id.is_none());
-        assert!(matches!(loaded.cloud, CloudState::Unauthenticated));
+        assert_eq!(loaded.cloud.refresh_token.as_deref(), Some("abc123"));
         // Claude section should be default
         assert!(loaded.claude.applied_plugin_version.is_none());
         assert!(loaded.claude.applied_marketplace_path.is_none());

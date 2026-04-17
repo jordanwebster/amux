@@ -187,9 +187,16 @@ pub struct Config {
     #[serde(default = "default_enforce_tls_in_cloud_mode")]
     pub enforce_tls_in_cloud_mode: bool,
 
-    /// Whether to prevent idle system sleep while the server is running.
-    #[serde(default)]
-    pub prevent_idle_sleep: bool,
+    /// Whether the user has opted into cloud mode. `None` = not yet asked (init
+    /// will prompt); `Some(true/false)` = explicit user choice.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub enable_cloud_mode: Option<bool>,
+
+    /// Whether to prevent idle system sleep while the server is running. `None`
+    /// = not yet asked (init will prompt); `Some(true/false)` = explicit user
+    /// choice.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub prevent_idle_sleep: Option<bool>,
 
     /// Per-client minimum version requirements (e.g. {"amux-cli": "0.2.0"}).
     /// Clients whose client_name matches a key and whose client_version is
@@ -216,7 +223,8 @@ impl Default for Config {
             randomise_link_name: default_randomise_link_name(),
             state_path: default_state_path(),
             enforce_tls_in_cloud_mode: default_enforce_tls_in_cloud_mode(),
-            prevent_idle_sleep: false,
+            enable_cloud_mode: None,
+            prevent_idle_sleep: None,
             minimum_client_versions: HashMap::new(),
             keybinds: Keybinds::default(),
             path: None,
@@ -389,18 +397,37 @@ mod tests {
         let config = Config::default();
         assert_eq!(config.tcp_port, None);
         assert_eq!(config.websocket_port, None);
-        assert!(!config.prevent_idle_sleep);
+        assert_eq!(config.prevent_idle_sleep, None);
+        assert_eq!(config.enable_cloud_mode, None);
     }
 
     #[test]
     fn prevent_idle_sleep_yaml_roundtrip() {
         let yaml = "prevent_idle_sleep: true\n";
         let config: Config = serde_yaml::from_str(yaml).unwrap();
-        assert!(config.prevent_idle_sleep);
+        assert_eq!(config.prevent_idle_sleep, Some(true));
 
         let serialized = serde_yaml::to_string(&config).unwrap();
         let parsed: Config = serde_yaml::from_str(&serialized).unwrap();
-        assert!(parsed.prevent_idle_sleep);
+        assert_eq!(parsed.prevent_idle_sleep, Some(true));
+    }
+
+    #[test]
+    fn prevent_idle_sleep_absent_deserializes_as_none() {
+        let yaml = "tcp_port: 9999\n";
+        let config: Config = serde_yaml::from_str(yaml).unwrap();
+        assert_eq!(config.prevent_idle_sleep, None);
+    }
+
+    #[test]
+    fn enable_cloud_mode_yaml_roundtrip() {
+        let yaml = "enable_cloud_mode: false\n";
+        let config: Config = serde_yaml::from_str(yaml).unwrap();
+        assert_eq!(config.enable_cloud_mode, Some(false));
+
+        let serialized = serde_yaml::to_string(&config).unwrap();
+        let parsed: Config = serde_yaml::from_str(&serialized).unwrap();
+        assert_eq!(parsed.enable_cloud_mode, Some(false));
     }
 
     #[test]

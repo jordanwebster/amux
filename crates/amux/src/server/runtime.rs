@@ -99,7 +99,7 @@ impl Server {
                 state.config.websocket_port,
                 state.config.cloud_url.clone(),
                 state.config.enforce_tls_in_cloud_mode,
-                state.config.prevent_idle_sleep,
+                state.config.prevent_idle_sleep.unwrap_or(false),
             )
         };
 

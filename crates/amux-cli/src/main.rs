@@ -262,6 +262,7 @@ async fn run_command(command: Commands, mut config: Config) -> Result<()> {
             ServerCommands::Start {
                 cloud, foreground, ..
             } => {
+                ensure_initialized(&mut config).await?;
                 let options = server_client::StartOptions::from_flags(cloud, foreground);
                 server_client::start_server(&config, options).await?
             }
@@ -273,7 +274,17 @@ async fn run_command(command: Commands, mut config: Config) -> Result<()> {
             ServerCommands::Suspend => server_client::suspend_server(&config).await?,
             ServerCommands::Resume => server_client::resume_server(&config).await?,
         },
-        Commands::Init { reset } => init::run_init(&mut config, reset).await?,
+        Commands::Init { reset } => {
+            let was_running = server_client::server_is_running(&config).await;
+            init::run_init(&mut config, init::InitContext::explicit(), reset).await?;
+            if was_running {
+                println!();
+                println!(
+                    "Note: a server is running with the previous configuration. \
+                     Restart it (`amux server stop` then `amux server start`) to apply any changes."
+                );
+            }
+        }
         Commands::Update => update::run_update(&config).await?,
         Commands::Debug { verbose, format } => {
             let dump = server_client::debug(&config, verbose, format.into()).await?;
@@ -289,14 +300,27 @@ async fn run_command(command: Commands, mut config: Config) -> Result<()> {
     Ok(())
 }
 
-/// Ensure initialization is complete (cloud mode, authentication)
+/// Ensure any pending init steps run before the current command executes.
+///
+/// Fast path: `init::needs_init` is a pure check against the in-memory config
+/// plus a single `state.yaml` read — no extra IO when init is already done.
+///
+/// If init is needed but a server is already running, its config was frozen at
+/// startup — prompting the user now would persist answers the running server
+/// will never honour. Skip in that case; the command proceeds against the
+/// already-running server.
 async fn ensure_initialized(config: &mut Config) -> Result<()> {
-    if init::needs_init(config) {
-        println!("First-time setup required.\n");
-        init::run_init(config, false)
-            .await
-            .context("initialization failed")?;
+    if !init::needs_init(config) {
+        return Ok(());
     }
+    if server_client::server_is_running(config).await {
+        tracing::info!("init incomplete but server is running; skipping prompts");
+        return Ok(());
+    }
+    println!("First-time setup required.\n");
+    init::run_init(config, init::InitContext::implicit(), false)
+        .await
+        .context("initialization failed")?;
     Ok(())
 }
 
@@ -371,11 +395,7 @@ fn init_tracing() -> WorkerGuard {
 /// Only shown when cloud mode is enabled and the user hasn't dismissed this version.
 fn check_upgrade_required(config: &Config) {
     // Only relevant if cloud mode is enabled
-    let cloud_state = match setup::cloud_setup_state(config) {
-        Ok(s) => s,
-        Err(_) => return,
-    };
-    if !cloud_state.is_enabled() {
+    if !setup::cloud_enabled(config) {
         return;
     }
 

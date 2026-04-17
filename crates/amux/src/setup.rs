@@ -1,12 +1,11 @@
 use std::fs;
 use std::path::{Path, PathBuf};
 
-use serde::{Deserialize, Serialize};
 use serde_yaml::{Mapping, Value};
 
 use crate::auth::oauth;
 use crate::config::Config;
-use crate::state::{CloudState as PersistedCloudState, State};
+use crate::state::State;
 
 #[derive(Debug, Clone, Default)]
 pub struct ClaudePluginSetupState {
@@ -24,140 +23,67 @@ pub enum SetupError {
     Config(String),
 }
 
-/// Public cloud onboarding state.
+/// Whether cloud mode is enabled (user opted in).
 ///
-/// This intentionally redacts persisted credentials. Library callers that need
-/// to know whether cloud auth exists can distinguish `Authenticated` without
-/// ever receiving the refresh token itself.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
-#[serde(rename_all = "snake_case")]
-pub enum CloudState {
-    /// Cloud mode has not been configured. Initial state before `amux init`.
-    NotConfigured,
-    /// The user explicitly opted out of cloud mode.
-    Disabled,
-    /// Cloud mode is enabled but the user has not authenticated.
-    Unauthenticated,
-    /// Cloud mode is enabled and authenticated.
-    Authenticated,
+/// `true` iff `enable_cloud_mode == Some(true)`. Absent or `Some(false)` both
+/// count as disabled.
+pub fn cloud_enabled(config: &Config) -> bool {
+    config.enable_cloud_mode == Some(true)
 }
 
-impl CloudState {
-    /// True when cloud mode is turned on (whether or not authenticated).
-    pub fn is_enabled(&self) -> bool {
-        matches!(self, Self::Unauthenticated | Self::Authenticated)
-    }
-
-    /// True when cloud onboarding still needs user input.
-    pub fn needs_init(&self) -> bool {
-        matches!(self, Self::NotConfigured | Self::Unauthenticated)
-    }
+/// Load the persisted cloud refresh token, if any.
+pub fn cloud_refresh_token(config: &Config) -> Option<String> {
+    State::load(&config.state_path)
+        .ok()
+        .and_then(|s| s.cloud.refresh_token)
 }
 
-impl From<&PersistedCloudState> for CloudState {
-    fn from(value: &PersistedCloudState) -> Self {
-        match value {
-            PersistedCloudState::NotConfigured => Self::NotConfigured,
-            PersistedCloudState::Disabled => Self::Disabled,
-            PersistedCloudState::Unauthenticated => Self::Unauthenticated,
-            PersistedCloudState::Authenticated { .. } => Self::Authenticated,
-        }
-    }
+/// Persist `enable_cloud_mode` to `config.yaml` and update the in-memory
+/// `Config`. Writes `config.yaml` as a merge so user-supplied keys are
+/// preserved.
+pub fn set_enable_cloud_mode(config: &mut Config, value: bool) -> Result<(), SetupError> {
+    write_config_bool(config, "enable_cloud_mode", Some(value))?;
+    config.enable_cloud_mode = Some(value);
+    Ok(())
 }
 
-/// Check whether cloud onboarding is incomplete.
-pub fn needs_init(config: &Config) -> bool {
-    let state = State::load(&config.state_path).unwrap_or_default();
-    state.cloud.needs_init()
-        || (prevent_idle_sleep_supported()
-            && prevent_idle_sleep_preference(config)
-                .map(|preference| preference.is_none())
-                .unwrap_or(false))
+/// Persist `prevent_idle_sleep` to `config.yaml` and update the in-memory
+/// `Config`.
+pub fn set_prevent_idle_sleep(config: &mut Config, value: bool) -> Result<(), SetupError> {
+    write_config_bool(config, "prevent_idle_sleep", Some(value))?;
+    config.prevent_idle_sleep = Some(value);
+    Ok(())
 }
 
-/// Read current cloud onboarding state.
-pub fn cloud_setup_state(config: &Config) -> Result<CloudState, SetupError> {
-    let state = State::load(&config.state_path).map_err(|e| SetupError::State(e.to_string()))?;
-    Ok((&state.cloud).into())
+/// Clear `enable_cloud_mode` from `config.yaml` (used by `amux init --reset`).
+pub fn clear_enable_cloud_mode(config: &mut Config) -> Result<(), SetupError> {
+    write_config_bool(config, "enable_cloud_mode", None)?;
+    config.enable_cloud_mode = None;
+    Ok(())
 }
 
-/// Reset cloud onboarding fields in persistent state.
-pub fn reset_cloud_state(config: &Config) -> Result<(), SetupError> {
-    State::update(&config.state_path, |s| {
-        s.cloud = PersistedCloudState::default();
+/// Clear `prevent_idle_sleep` from `config.yaml` (used by `amux init --reset`).
+pub fn clear_prevent_idle_sleep(config: &mut Config) -> Result<(), SetupError> {
+    write_config_bool(config, "prevent_idle_sleep", None)?;
+    config.prevent_idle_sleep = None;
+    Ok(())
+}
+
+/// Persist (or clear) the cloud refresh token in `state.yaml`.
+pub fn set_cloud_refresh_token(state_path: &Path, token: Option<String>) -> Result<(), SetupError> {
+    State::update(state_path, |s| {
+        s.cloud.refresh_token = token;
     })
     .map_err(|e| SetupError::State(e.to_string()))?;
     Ok(())
 }
 
-/// Persist cloud mode preference. Preserves an existing refresh token when
-/// re-enabling cloud mode; clears it when disabling.
-pub fn set_use_cloud_mode(config: &Config, use_cloud_mode: bool) -> Result<(), SetupError> {
-    State::update(&config.state_path, |s| {
-        s.cloud = if use_cloud_mode {
-            match std::mem::take(&mut s.cloud) {
-                authed @ PersistedCloudState::Authenticated { .. } => authed,
-                _ => PersistedCloudState::Unauthenticated,
-            }
-        } else {
-            PersistedCloudState::Disabled
-        };
-    })
-    .map_err(|e| SetupError::State(e.to_string()))?;
-    Ok(())
-}
-
-/// Run OAuth device flow and persist refresh token.
+/// Run OAuth device flow and persist the refresh token.
 pub async fn authenticate_cloud(config: &Config) -> Result<(), SetupError> {
     let refresh_token = oauth::device_flow(&config.cloud_url)
         .await
         .map_err(|e| SetupError::OAuth(e.to_string()))?;
-    State::update(&config.state_path, |s| {
-        s.cloud = PersistedCloudState::Authenticated { refresh_token };
-    })
-    .map_err(|e| SetupError::State(e.to_string()))?;
-    Ok(())
-}
-
-/// Read the persisted prevent-idle-sleep preference from config.yaml.
-///
-/// Returns `Ok(None)` when the config file does not exist or the field has not
-/// been set yet.
-pub fn prevent_idle_sleep_preference(config: &Config) -> Result<Option<bool>, SetupError> {
-    let path = config_file_path(config);
-    if !path.exists() {
-        return Ok(None);
-    }
-
-    let map = read_config_mapping(&path)?;
-
-    Ok(map
-        .get(Value::String("prevent_idle_sleep".to_string()))
-        .and_then(Value::as_bool))
-}
-
-/// Persist the prevent-idle-sleep preference in config.yaml.
-pub fn set_prevent_idle_sleep(config: &Config, enabled: bool) -> Result<(), SetupError> {
-    let path = config_file_path(config);
-    let mut map =
-        read_config_mapping(&path).map_err(|e| wrap_config_persistence_error(&path, e))?;
-
-    map.insert(
-        Value::String("prevent_idle_sleep".to_string()),
-        Value::Bool(enabled),
-    );
-
-    let yaml = serde_yaml::to_string(&Value::Mapping(map))
-        .map_err(|e| config_persistence_error(&path, format!("failed to serialize config: {e}")))?;
-    if let Some(parent) = path.parent() {
-        fs::create_dir_all(parent).map_err(|e| {
-            config_persistence_error(&path, format!("failed to create {}: {e}", parent.display()))
-        })?;
-    }
-    fs::write(&path, yaml).map_err(|e| {
-        config_persistence_error(&path, format!("failed to write {}: {e}", path.display()))
-    })?;
-    Ok(())
+    set_cloud_refresh_token(&config.state_path, Some(refresh_token))
 }
 
 /// Return whether prevent-idle-sleep support is actually available at runtime.
@@ -192,6 +118,42 @@ pub fn set_claude_plugin_setup_state(
     Ok(())
 }
 
+fn write_config_bool(config: &Config, key: &str, value: Option<bool>) -> Result<(), SetupError> {
+    let path = config_file_path(config);
+    let mut map =
+        read_config_mapping(&path).map_err(|e| wrap_config_persistence_error(&path, key, e))?;
+
+    match value {
+        Some(v) => {
+            map.insert(Value::String(key.to_string()), Value::Bool(v));
+        }
+        None => {
+            map.remove(Value::String(key.to_string()));
+        }
+    }
+
+    let yaml = serde_yaml::to_string(&Value::Mapping(map)).map_err(|e| {
+        config_persistence_error(&path, key, format!("failed to serialize config: {e}"))
+    })?;
+    if let Some(parent) = path.parent() {
+        fs::create_dir_all(parent).map_err(|e| {
+            config_persistence_error(
+                &path,
+                key,
+                format!("failed to create {}: {e}", parent.display()),
+            )
+        })?;
+    }
+    fs::write(&path, yaml).map_err(|e| {
+        config_persistence_error(
+            &path,
+            key,
+            format!("failed to write {}: {e}", path.display()),
+        )
+    })?;
+    Ok(())
+}
+
 fn config_file_path(config: &Config) -> PathBuf {
     config.path.clone().unwrap_or_else(Config::default_path)
 }
@@ -215,16 +177,16 @@ fn read_config_mapping(path: &Path) -> Result<Mapping, SetupError> {
     }
 }
 
-fn config_persistence_error(path: &Path, detail: String) -> SetupError {
+fn config_persistence_error(path: &Path, key: &str, detail: String) -> SetupError {
     SetupError::Config(format!(
-        "failed to save `prevent_idle_sleep` to {}: {detail}\n\namux init writes setup choices to the active config file.\nMake that file writable, or rerun with `--config` pointing to a writable config path.",
+        "failed to save `{key}` to {}: {detail}\n\namux init writes setup choices to the active config file.\nMake that file writable, or rerun with `--config` pointing to a writable config path.",
         path.display()
     ))
 }
 
-fn wrap_config_persistence_error(path: &Path, error: SetupError) -> SetupError {
+fn wrap_config_persistence_error(path: &Path, key: &str, error: SetupError) -> SetupError {
     match error {
-        SetupError::Config(detail) => config_persistence_error(path, detail),
+        SetupError::Config(detail) => config_persistence_error(path, key, detail),
         other => other,
     }
 }
@@ -236,131 +198,121 @@ mod tests {
     use super::*;
 
     #[test]
-    fn prevent_idle_sleep_preference_is_none_when_config_missing() {
+    fn cloud_enabled_requires_some_true() {
         let dir = tempdir().unwrap();
-        let path = dir.path().join("config.yaml");
-        let config = Config {
-            path: Some(path),
+        let mut config = Config {
+            path: Some(dir.path().join("config.yaml")),
+            state_path: dir.path().join("state.yaml"),
             ..Config::default()
         };
-
-        let preference = prevent_idle_sleep_preference(&config).unwrap();
-        assert_eq!(preference, None);
+        assert!(!cloud_enabled(&config));
+        config.enable_cloud_mode = Some(false);
+        assert!(!cloud_enabled(&config));
+        config.enable_cloud_mode = Some(true);
+        assert!(cloud_enabled(&config));
     }
 
     #[test]
-    fn cloud_setup_state_redacts_refresh_token() {
+    fn set_enable_cloud_mode_persists_and_updates_in_memory() {
         let dir = tempdir().unwrap();
-        let config = Config {
+        let path = dir.path().join("config.yaml");
+        fs::write(&path, "host_name: test-host\n").unwrap();
+        let mut config = Config {
+            path: Some(path.clone()),
             state_path: dir.path().join("state.yaml"),
             ..Config::default()
         };
 
-        State::update(&config.state_path, |s| {
-            s.cloud = PersistedCloudState::Authenticated {
-                refresh_token: "test_token".to_string(),
-            };
-        })
-        .unwrap();
-
-        let status = cloud_setup_state(&config).unwrap();
-        assert_eq!(status, CloudState::Authenticated);
-
-        let json = serde_json::to_string(&status).unwrap();
-        assert!(!json.contains("test_token"));
-    }
-
-    #[test]
-    fn prevent_idle_sleep_preference_is_none_when_config_blank() {
-        let dir = tempdir().unwrap();
-        let path = dir.path().join("config.yaml");
-        fs::write(&path, "  \n").unwrap();
-        let config = Config {
-            path: Some(path),
-            ..Config::default()
-        };
-
-        let preference = prevent_idle_sleep_preference(&config).unwrap();
-        assert_eq!(preference, None);
-    }
-
-    #[test]
-    fn prevent_idle_sleep_preference_is_none_when_config_comment_only() {
-        let dir = tempdir().unwrap();
-        let path = dir.path().join("config.yaml");
-        fs::write(&path, "# comment\n").unwrap();
-        let config = Config {
-            path: Some(path),
-            ..Config::default()
-        };
-
-        let preference = prevent_idle_sleep_preference(&config).unwrap();
-        assert_eq!(preference, None);
-    }
-
-    #[test]
-    fn set_prevent_idle_sleep_creates_and_updates_config() {
-        let dir = tempdir().unwrap();
-        let path = dir.path().join("config.yaml");
-        fs::write(&path, "host_name: test-host\n").unwrap();
-        let config = Config {
-            path: Some(path.clone()),
-            ..Config::default()
-        };
-
-        set_prevent_idle_sleep(&config, true).unwrap();
-        assert_eq!(prevent_idle_sleep_preference(&config).unwrap(), Some(true));
+        set_enable_cloud_mode(&mut config, true).unwrap();
+        assert_eq!(config.enable_cloud_mode, Some(true));
 
         let persisted = Config::from_file(&path).unwrap();
+        assert_eq!(persisted.enable_cloud_mode, Some(true));
         assert_eq!(persisted.host_name, "test-host");
-        assert!(persisted.prevent_idle_sleep);
+    }
+
+    #[test]
+    fn set_prevent_idle_sleep_persists_and_updates_in_memory() {
+        let dir = tempdir().unwrap();
+        let path = dir.path().join("config.yaml");
+        let mut config = Config {
+            path: Some(path.clone()),
+            state_path: dir.path().join("state.yaml"),
+            ..Config::default()
+        };
+
+        set_prevent_idle_sleep(&mut config, true).unwrap();
+        assert_eq!(config.prevent_idle_sleep, Some(true));
+
+        let persisted = Config::from_file(&path).unwrap();
+        assert_eq!(persisted.prevent_idle_sleep, Some(true));
     }
 
     #[test]
     fn set_prevent_idle_sleep_persists_false_explicitly() {
         let dir = tempdir().unwrap();
         let path = dir.path().join("config.yaml");
-        let config = Config {
+        let mut config = Config {
             path: Some(path.clone()),
+            state_path: dir.path().join("state.yaml"),
             ..Config::default()
         };
 
-        set_prevent_idle_sleep(&config, false).unwrap();
-        assert_eq!(prevent_idle_sleep_preference(&config).unwrap(), Some(false));
+        set_prevent_idle_sleep(&mut config, false).unwrap();
+        assert_eq!(config.prevent_idle_sleep, Some(false));
 
         let yaml = fs::read_to_string(path).unwrap();
         assert!(yaml.contains("prevent_idle_sleep: false"));
     }
 
     #[test]
-    fn set_prevent_idle_sleep_updates_blank_config() {
+    fn clear_enable_cloud_mode_removes_the_key() {
         let dir = tempdir().unwrap();
         let path = dir.path().join("config.yaml");
-        fs::write(&path, "\n").unwrap();
-        let config = Config {
+        let mut config = Config {
             path: Some(path.clone()),
+            state_path: dir.path().join("state.yaml"),
             ..Config::default()
         };
 
-        set_prevent_idle_sleep(&config, true).unwrap();
+        set_enable_cloud_mode(&mut config, true).unwrap();
+        clear_enable_cloud_mode(&mut config).unwrap();
+        assert_eq!(config.enable_cloud_mode, None);
 
-        let persisted = Config::from_file(&path).unwrap();
-        assert!(persisted.prevent_idle_sleep);
+        let yaml = fs::read_to_string(path).unwrap();
+        assert!(!yaml.contains("enable_cloud_mode"));
     }
 
     #[test]
-    fn set_prevent_idle_sleep_error_mentions_active_config_file() {
+    fn set_and_read_refresh_token_roundtrip() {
         let dir = tempdir().unwrap();
-        let path = dir.path().join("config-dir");
-        fs::create_dir(&path).unwrap();
+        let state_path = dir.path().join("state.yaml");
         let config = Config {
-            path: Some(path.clone()),
+            state_path: state_path.clone(),
             ..Config::default()
         };
 
-        let err = set_prevent_idle_sleep(&config, true).unwrap_err();
+        assert_eq!(cloud_refresh_token(&config), None);
+        set_cloud_refresh_token(&state_path, Some("tok".to_string())).unwrap();
+        assert_eq!(cloud_refresh_token(&config).as_deref(), Some("tok"));
+        set_cloud_refresh_token(&state_path, None).unwrap();
+        assert_eq!(cloud_refresh_token(&config), None);
+    }
+
+    #[test]
+    fn set_enable_cloud_mode_error_mentions_active_config_file() {
+        let dir = tempdir().unwrap();
+        let path = dir.path().join("config-dir");
+        fs::create_dir(&path).unwrap();
+        let mut config = Config {
+            path: Some(path.clone()),
+            state_path: dir.path().join("state.yaml"),
+            ..Config::default()
+        };
+
+        let err = set_enable_cloud_mode(&mut config, true).unwrap_err();
         let msg = err.to_string();
-        assert!(msg.contains("failed to save `prevent_idle_sleep`"));
+        assert!(msg.contains("failed to save `enable_cloud_mode`"));
         assert!(msg.contains("active config file"));
         assert!(msg.contains("--config"));
         assert!(msg.contains(&path.display().to_string()));

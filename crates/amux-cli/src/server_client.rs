@@ -194,6 +194,15 @@ pub async fn debug(config: &Config, verbose: bool, format: DebugFormat) -> Resul
     }
 }
 
+/// Probe whether a local amux server is running. Also removes a stale socket
+/// file if one is found, as a side effect of the underlying `existing_server`
+/// check. Any connect error that isn't "server not running" is treated as a
+/// non-probe; we conservatively return `false` so callers don't block on
+/// ambiguous state.
+pub(crate) async fn server_is_running(config: &Config) -> bool {
+    matches!(existing_server(config).await, Ok(Some(_)))
+}
+
 async fn existing_server(config: &Config) -> Result<Option<Connection>> {
     match connect(config, ConnectPolicy::ExistingOnly).await {
         Ok(conn) => Ok(Some(conn)),

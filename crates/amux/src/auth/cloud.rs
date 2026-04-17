@@ -19,7 +19,8 @@ use crate::protocol::handshake::{Connect, ConnectResult, PROTOCOL_VERSION};
 use crate::protocol::link::Link;
 use crate::protocol::message::{DirectMessage, Message, ProtocolError};
 use crate::protocol::route::generate_server_link;
-use crate::state::{CloudState, State};
+use crate::setup;
+use crate::state::State;
 use crate::transport::{TcpTransport, Transport, TransportError, tls_connect};
 
 /// Maximum time to wait for a handshake response from a cloud server.
@@ -138,16 +139,13 @@ async fn refresh_and_fetch_connection(
     let state = State::load(&config.state_path)?;
     let refresh_token = state
         .cloud
-        .refresh_token()
-        .ok_or(CloudError::NotAuthenticated)?
-        .to_string();
+        .refresh_token
+        .ok_or(CloudError::NotAuthenticated)?;
     let (access_token, new_refresh) =
         oauth::refresh_access_token(&config.cloud_url, &refresh_token).await?;
     if let Some(new_token) = new_refresh {
         State::update(&config.state_path, |s| {
-            if let CloudState::Authenticated { refresh_token } = &mut s.cloud {
-                *refresh_token = new_token;
-            }
+            s.cloud.refresh_token = Some(new_token);
         })?;
     }
     Ok(oauth::fetch_connection(&config.cloud_url, &access_token).await?)
@@ -172,10 +170,8 @@ impl CloudConnection {
     /// 3. Get connection details from cloud API
     /// 4. Connect via TLS and send Connect message with JWT
     pub(crate) async fn connect(config: &Config) -> std::result::Result<Self, CloudError> {
-        let state = State::load(&config.state_path)?;
-
         // Check if cloud mode is enabled
-        if !state.cloud.is_enabled() {
+        if !setup::cloud_enabled(config) {
             return Err(CloudError::CloudDisabled);
         }
 

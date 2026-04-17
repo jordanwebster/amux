@@ -12,7 +12,7 @@ use crate::protocol::message::{DebugFormat, Host};
 use crate::server::{
     LOCAL_USER_ID, ServerState, ServerUserState, SubscriptionEntry, SubscriptionMode,
 };
-use crate::state::State;
+use crate::setup;
 
 /// Top-level entry point: gather read-locks across the server, then serialize
 /// the resulting view in the requested format.
@@ -28,9 +28,7 @@ pub(super) async fn dump_server_debug_info(
 ) -> String {
     let state_guard = state.read().await;
 
-    let use_cloud_mode = State::load(&state_guard.config.state_path)
-        .map(|s| s.cloud.is_enabled())
-        .unwrap_or(false);
+    let use_cloud_mode = setup::cloud_enabled(&state_guard.config);
 
     // Acquire per-user read guards up front so the sync Serialize phase can
     // borrow them without further awaits. Sort by user_id for stable output.

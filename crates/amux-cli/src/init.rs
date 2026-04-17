@@ -1,8 +1,10 @@
 //! Initialization flow for amux.
 //!
-//! Handles first-time setup including:
-//! - Cloud mode configuration (yes/no prompt)
-//! - OAuth device flow authentication
+//! `run_init` is a state-machine loop driven by a pure `next_step` function:
+//! `next_step` inspects the current `Config` + `State` and decides what piece
+//! of setup (if any) still needs to happen. Each step function prompts the
+//! user (or performs work), persists to disk, updates the in-memory `Config`,
+//! and returns — then the loop re-evaluates.
 
 use std::io::{self, Write};
 
@@ -45,64 +47,114 @@ impl From<SetupError> for InitError {
     }
 }
 
-/// Check if initialization is needed.
-pub fn needs_init(config: &Config) -> bool {
-    setup::needs_init(config)
+/// Carries entry-point context through the init loop so individual steps can
+/// gate on "was this triggered from explicit `amux init`, or implicitly from a
+/// command-time precondition?". Today's steps don't consult `explicit`, but
+/// the field is present so future preference prompts (e.g. "will you use
+/// Claude?") can self-gate without touching call sites.
+#[derive(Debug, Clone, Copy)]
+pub struct InitContext {
+    pub explicit: bool,
 }
 
-/// Run the initialization flow.
-pub async fn run_init(config: &mut Config, reset: bool) -> Result<(), InitError> {
+impl InitContext {
+    pub fn explicit() -> Self {
+        Self { explicit: true }
+    }
+
+    pub fn implicit() -> Self {
+        Self { explicit: false }
+    }
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum InitStep {
+    PromptCloudMode,
+    Authenticate,
+    PromptIdleSleep,
+    Done,
+}
+
+/// Pure-ish: map (config, has_refresh_token) → the next step init needs to
+/// perform. The whole state-machine graph lives in one function.
+///
+/// `has_refresh_token` is sourced from disk by the caller so this function
+/// itself stays testable without IO.
+fn next_step(config: &Config, has_refresh_token: bool, _ctx: &InitContext) -> InitStep {
+    if config.enable_cloud_mode.is_none() {
+        return InitStep::PromptCloudMode;
+    }
+    if config.enable_cloud_mode == Some(true) && !has_refresh_token {
+        return InitStep::Authenticate;
+    }
+    if setup::prevent_idle_sleep_supported() && config.prevent_idle_sleep.is_none() {
+        return InitStep::PromptIdleSleep;
+    }
+    InitStep::Done
+}
+
+fn has_refresh_token(config: &Config) -> bool {
+    setup::cloud_refresh_token(config).is_some()
+}
+
+/// True iff at least one init step would run given the current state.
+pub fn needs_init(config: &Config) -> bool {
+    next_step(config, has_refresh_token(config), &InitContext::implicit()) != InitStep::Done
+}
+
+/// Drive the init state machine to completion.
+pub async fn run_init(config: &mut Config, ctx: InitContext, reset: bool) -> Result<(), InitError> {
+    tracing::debug!(explicit = ctx.explicit, reset, "running init");
     if reset {
-        setup::reset_cloud_state(config)?;
+        setup::clear_enable_cloud_mode(config)?;
+        setup::clear_prevent_idle_sleep(config)?;
+        setup::set_cloud_refresh_token(&config.state_path, None)?;
         println!("State cleared.");
     }
 
-    let mut status = setup::cloud_setup_state(config)?;
-
-    if matches!(status, setup::CloudState::NotConfigured) {
-        println!();
-        println!("amux can connect your local machine to the cloud, allowing you to");
-        println!("access your agents from anywhere (mobile, web, other machines).");
-        println!();
-        println!("Do you want to enable cloud mode?");
-        println!("  1. Yes (recommended)");
-        println!("  2. No (local only)");
-        print!("\nChoice [1]: ");
-        io::stdout().flush()?;
-
-        let mut input = String::new();
-        io::stdin().read_line(&mut input)?;
-        let choice = input.trim();
-
-        let use_cloud = choice.is_empty() || choice == "1";
-
-        setup::set_use_cloud_mode(config, use_cloud)?;
-
-        if !use_cloud {
-            println!("\nCloud mode disabled. You can run 'amux init' anytime to reconfigure.");
+    loop {
+        match next_step(config, has_refresh_token(config), &ctx) {
+            InitStep::PromptCloudMode => prompt_cloud_mode(config)?,
+            InitStep::Authenticate => authenticate(config).await?,
+            InitStep::PromptIdleSleep => prompt_idle_sleep(config)?,
+            InitStep::Done => return Ok(()),
         }
-
-        status = setup::cloud_setup_state(config)?;
     }
+}
 
-    if matches!(status, setup::CloudState::Unauthenticated) {
-        println!("\nStarting authentication...");
-        setup::authenticate_cloud(config).await?;
+fn prompt_cloud_mode(config: &mut Config) -> Result<(), InitError> {
+    println!();
+    println!("amux can connect your local machine to the cloud, allowing you to");
+    println!("access your agents from anywhere (mobile, web, other machines).");
+    println!();
+    println!("Do you want to enable cloud mode?");
+    println!("  1. Yes (recommended)");
+    println!("  2. No (local only)");
+    print!("\nChoice [1]: ");
+    io::stdout().flush()?;
 
-        println!("\nAuthentication successful!");
-        println!("Your local amux server will now connect to the cloud automatically.");
+    let mut input = String::new();
+    io::stdin().read_line(&mut input)?;
+    let choice = input.trim();
+    let enabled = choice.is_empty() || choice == "1";
+
+    setup::set_enable_cloud_mode(config, enabled)?;
+
+    if !enabled {
+        println!("\nCloud mode disabled. You can run 'amux init' anytime to reconfigure.");
     }
-
-    maybe_prompt_prevent_idle_sleep(config)?;
-
     Ok(())
 }
 
-fn maybe_prompt_prevent_idle_sleep(config: &mut Config) -> Result<(), InitError> {
-    if !needs_prevent_idle_sleep_setup(config) {
-        return Ok(());
-    }
+async fn authenticate(config: &mut Config) -> Result<(), InitError> {
+    println!("\nStarting authentication...");
+    setup::authenticate_cloud(config).await?;
+    println!("\nAuthentication successful!");
+    println!("Your local amux server will now connect to the cloud automatically.");
+    Ok(())
+}
 
+fn prompt_idle_sleep(config: &mut Config) -> Result<(), InitError> {
     println!();
     println!("To keep your agents reachable remotely, amux can keep this machine");
     println!("awake while it runs in the background.");
@@ -113,10 +165,19 @@ fn maybe_prompt_prevent_idle_sleep(config: &mut Config) -> Result<(), InitError>
     println!("Do you want amux to keep this machine awake?");
     println!("  1. Yes (recommended for remote access)");
     println!("  2. No");
-    let enabled = prompt_prevent_idle_sleep_choice()?;
+
+    let enabled = loop {
+        print!("\nChoice [1]: ");
+        io::stdout().flush()?;
+        let mut input = String::new();
+        io::stdin().read_line(&mut input)?;
+        match parse_idle_sleep_choice(&input) {
+            Some(v) => break v,
+            None => println!("Please enter 1 or 2."),
+        }
+    };
 
     setup::set_prevent_idle_sleep(config, enabled)?;
-    config.prevent_idle_sleep = enabled;
 
     if !enabled {
         println!();
@@ -125,35 +186,11 @@ fn maybe_prompt_prevent_idle_sleep(config: &mut Config) -> Result<(), InitError>
             "You can change this later by setting `prevent_idle_sleep: true` in your amux config."
         );
     }
-
     Ok(())
 }
 
-fn prompt_prevent_idle_sleep_choice() -> Result<bool, InitError> {
-    loop {
-        print!("\nChoice [1]: ");
-        io::stdout().flush()?;
-
-        let mut input = String::new();
-        io::stdin().read_line(&mut input)?;
-
-        match parse_prevent_idle_sleep_choice(&input) {
-            Some(enabled) => return Ok(enabled),
-            None => {
-                println!("Please enter 1 or 2.");
-            }
-        }
-    }
-}
-
-fn needs_prevent_idle_sleep_setup(config: &Config) -> bool {
-    setup::prevent_idle_sleep_supported()
-        && matches!(setup::prevent_idle_sleep_preference(config), Ok(None))
-}
-
-fn parse_prevent_idle_sleep_choice(input: &str) -> Option<bool> {
-    let choice = input.trim().to_ascii_lowercase();
-    match choice.as_str() {
+fn parse_idle_sleep_choice(input: &str) -> Option<bool> {
+    match input.trim().to_ascii_lowercase().as_str() {
         "" | "1" | "y" | "yes" => Some(true),
         "2" | "n" | "no" => Some(false),
         _ => None,
@@ -165,50 +202,113 @@ mod tests {
     use amux::{Config, setup};
     use tempfile::tempdir;
 
-    use super::{needs_init, parse_prevent_idle_sleep_choice};
+    use super::{InitContext, InitStep, needs_init, next_step, parse_idle_sleep_choice};
 
-    #[test]
-    fn needs_init_when_prevent_idle_sleep_is_unset() {
-        if !setup::prevent_idle_sleep_supported() {
-            return;
-        }
-
-        let dir = tempdir().unwrap();
-        let config = Config {
+    fn test_config(dir: &tempfile::TempDir) -> Config {
+        Config {
             path: Some(dir.path().join("config.yaml")),
             state_path: dir.path().join("state.yaml"),
             ..Config::default()
-        };
-        setup::set_use_cloud_mode(&config, false).unwrap();
-
-        assert!(needs_init(&config));
+        }
     }
 
     #[test]
-    fn sleep_preference_completion_does_not_force_reinit() {
+    fn next_step_fresh_config_wants_cloud_mode_prompt() {
+        let config = Config::default();
+        assert_eq!(
+            next_step(&config, false, &InitContext::implicit()),
+            InitStep::PromptCloudMode
+        );
+    }
+
+    #[test]
+    fn next_step_cloud_on_no_token_wants_authenticate() {
+        let config = Config {
+            enable_cloud_mode: Some(true),
+            prevent_idle_sleep: Some(false),
+            ..Config::default()
+        };
+        assert_eq!(
+            next_step(&config, false, &InitContext::implicit()),
+            InitStep::Authenticate
+        );
+    }
+
+    #[test]
+    fn next_step_cloud_off_wants_idle_sleep_if_unset_and_supported() {
         if !setup::prevent_idle_sleep_supported() {
             return;
         }
-
-        let dir = tempdir().unwrap();
         let config = Config {
-            path: Some(dir.path().join("config.yaml")),
-            state_path: dir.path().join("state.yaml"),
+            enable_cloud_mode: Some(false),
             ..Config::default()
         };
-        setup::set_use_cloud_mode(&config, false).unwrap();
-        setup::set_prevent_idle_sleep(&config, false).unwrap();
+        assert_eq!(
+            next_step(&config, false, &InitContext::implicit()),
+            InitStep::PromptIdleSleep
+        );
+    }
 
+    #[test]
+    fn next_step_all_set_is_done() {
+        let config = Config {
+            enable_cloud_mode: Some(false),
+            prevent_idle_sleep: Some(false),
+            ..Config::default()
+        };
+        assert_eq!(
+            next_step(&config, false, &InitContext::implicit()),
+            InitStep::Done
+        );
+    }
+
+    #[test]
+    fn next_step_authenticated_skips_authenticate_step() {
+        let config = Config {
+            enable_cloud_mode: Some(true),
+            prevent_idle_sleep: Some(false),
+            ..Config::default()
+        };
+        assert_eq!(
+            next_step(&config, true, &InitContext::implicit()),
+            InitStep::Done
+        );
+    }
+
+    #[test]
+    fn next_step_explicit_flag_does_not_affect_todays_steps() {
+        let config = Config::default();
+        assert_eq!(
+            next_step(&config, false, &InitContext::implicit()),
+            next_step(&config, false, &InitContext::explicit())
+        );
+    }
+
+    #[test]
+    fn needs_init_false_when_everything_set() {
+        let dir = tempdir().unwrap();
+        let mut config = test_config(&dir);
+        setup::set_enable_cloud_mode(&mut config, false).unwrap();
+        if setup::prevent_idle_sleep_supported() {
+            setup::set_prevent_idle_sleep(&mut config, false).unwrap();
+        }
         assert!(!needs_init(&config));
     }
 
     #[test]
-    fn prevent_idle_sleep_choice_parsing_is_conservative() {
-        assert_eq!(parse_prevent_idle_sleep_choice(""), Some(true));
-        assert_eq!(parse_prevent_idle_sleep_choice("1"), Some(true));
-        assert_eq!(parse_prevent_idle_sleep_choice("yes"), Some(true));
-        assert_eq!(parse_prevent_idle_sleep_choice("n"), Some(false));
-        assert_eq!(parse_prevent_idle_sleep_choice("2"), Some(false));
-        assert_eq!(parse_prevent_idle_sleep_choice("maybe"), None);
+    fn needs_init_true_when_cloud_mode_unset() {
+        let dir = tempdir().unwrap();
+        let config = test_config(&dir);
+        assert!(needs_init(&config));
+    }
+
+    #[test]
+    fn idle_sleep_choice_parsing_is_conservative() {
+        assert_eq!(parse_idle_sleep_choice(""), Some(true));
+        assert_eq!(parse_idle_sleep_choice("1"), Some(true));
+        assert_eq!(parse_idle_sleep_choice("yes"), Some(true));
+        assert_eq!(parse_idle_sleep_choice("n"), Some(false));
+        assert_eq!(parse_idle_sleep_choice("2"), Some(false));
+        assert_eq!(parse_idle_sleep_choice("maybe"), None);
     }
 }

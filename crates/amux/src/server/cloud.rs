@@ -20,7 +20,7 @@ use crate::agent::SessionEvent;
 use crate::auth::cloud::{CloudConnection, CloudError};
 use crate::config::Config;
 use crate::protocol::message::{Message, ShutdownReason};
-use crate::state::State;
+use crate::setup;
 
 const INITIAL_BACKOFF: Duration = Duration::from_secs(1);
 const MAX_BACKOFF: Duration = Duration::from_secs(300);
@@ -42,11 +42,7 @@ pub(super) fn establish_cloud_connection(
     let cloud_span = tracing::info_span!("cloud", url = %config.cloud_url);
     tokio::spawn(
         async move {
-            let should_connect = State::load(&config.state_path)
-                .map(|s| s.cloud.is_enabled())
-                .unwrap_or(false);
-
-            if !should_connect {
+            if !setup::cloud_enabled(&config) {
                 tracing::info!("cloud mode not enabled");
                 return;
             }
@@ -110,11 +106,7 @@ pub(super) fn establish_cloud_connection(
                     }
                 }
 
-                let should_reconnect = State::load(&config.state_path)
-                    .map(|s| s.cloud.is_enabled())
-                    .unwrap_or(false);
-
-                if !should_reconnect {
+                if !setup::cloud_enabled(&config) {
                     tracing::info!("cloud mode disabled, stopping reconnection");
                     return;
                 }

@@ -223,25 +223,28 @@ impl Executor {
                 }
             };
 
-            // Generate state file with cloud mode disabled
+            // Allocate a state-file path so each test has an isolated state
+            // dir. Left unwritten: init flags live in the config file below;
+            // state.yaml is seeded on first write by the binary under test.
             let state_dir = temp_dir.path().join(format!("{}_state", cfg.name));
             std::fs::create_dir_all(&state_dir)
                 .map_err(|e| format!("Failed to create state dir: {}", e))?;
             let state_path = state_dir.join("state.yaml");
-            std::fs::write(&state_path, "cloud:\n  status: disabled\n")
-                .map_err(|e| format!("Failed to write state file: {}", e))?;
 
             // Generate YAML config file.
             // Use single quotes for paths: YAML double-quoted strings treat
             // backslashes as escape characters, so Windows paths like
             // `C:\Users` produce invalid `\U` escapes. Single-quoted YAML
             // strings are literal (no escape processing).
+            //
+            // `enable_cloud_mode: false` and `prevent_idle_sleep: false` keep
+            // `amux init` from prompting during test runs.
             let host_name = cfg
                 .host_name
                 .clone()
                 .unwrap_or_else(|| test_case.name.clone());
             let yaml_content = format!(
-                "host_name: '{}'\nsocket_path: '{}'\ntcp_port: {}\nwebsocket_port: {}\nrandomise_link_name: false\nprevent_idle_sleep: false\nstate_path: '{}'\n",
+                "host_name: '{}'\nsocket_path: '{}'\ntcp_port: {}\nwebsocket_port: {}\nrandomise_link_name: false\nenable_cloud_mode: false\nprevent_idle_sleep: false\nstate_path: '{}'\n",
                 host_name,
                 socket_path.display(),
                 tcp_port,
