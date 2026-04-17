@@ -36,7 +36,7 @@ where
         let proposed_link = generate_link();
 
         let connect = Connect {
-            link: proposed_link.as_str().to_string(),
+            link_name: proposed_link.as_str().to_string(),
             token: None,
             version: PROTOCOL_VERSION,
             client_name: Some("amux-cli".to_string()),

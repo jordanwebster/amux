@@ -153,7 +153,7 @@ pub(super) async fn accept_handshake<T: Transport>(
             AcceptError::InvalidHandshake(format!("expected Connect during handshake: {e}"))
         })?;
         let Connect {
-            link: proposed_link,
+            link_name: proposed_link,
             token,
             version,
             client_name,

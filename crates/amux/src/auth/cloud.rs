@@ -188,7 +188,7 @@ impl CloudConnection {
 
         // Send Connect handshake with token
         let connect = Connect {
-            link: link.as_str().to_string(),
+            link_name: link.as_str().to_string(),
             token: Some(conn.token),
             version: PROTOCOL_VERSION,
             client_name: Some("amux-cli".to_string()),

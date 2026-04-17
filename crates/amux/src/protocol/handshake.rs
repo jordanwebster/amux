@@ -7,12 +7,12 @@ pub const PROTOCOL_VERSION: u32 = 1;
 
 /// Initial connection handshake request.
 ///
-/// `link` is wire-typed as `String` so malformed names reach the server, which
-/// replies with `ProtocolError::InvalidLinkName` rather than dropping the
-/// connection as an invalid handshake.
+/// `link_name` stays wire-typed as `String` so malformed names reach the
+/// server, which replies with `ProtocolError::InvalidLinkName` rather than
+/// dropping the connection as an invalid handshake.
 #[derive(Serialize, Deserialize, Debug, Clone)]
 pub struct Connect {
-    pub link: String,
+    pub link_name: String,
     #[serde(skip_serializing_if = "Option::is_none", default)]
     pub token: Option<String>,
     pub version: u32,
@@ -61,7 +61,7 @@ mod tests {
     #[test]
     fn connect_roundtrip() {
         let msg = Connect {
-            link: "term-123".to_string(),
+            link_name: "term-123".to_string(),
             token: Some("jwt".to_string()),
             version: PROTOCOL_VERSION,
             client_name: Some("amux-cli".to_string()),
@@ -69,7 +69,7 @@ mod tests {
         };
         let encoded = msg.encode().unwrap();
         let decoded = Connect::decode(&encoded).unwrap();
-        assert_eq!(decoded.link, "term-123");
+        assert_eq!(decoded.link_name, "term-123");
         assert_eq!(decoded.token.as_deref(), Some("jwt"));
         assert_eq!(decoded.version, PROTOCOL_VERSION);
         assert_eq!(decoded.client_name.as_deref(), Some("amux-cli"));
@@ -80,12 +80,12 @@ mod tests {
     fn connect_requires_version_field() {
         #[derive(Serialize)]
         struct OldConnect {
-            link: String,
+            link_name: String,
             token: Option<String>,
         }
 
         let old = OldConnect {
-            link: "old-client".to_string(),
+            link_name: "old-client".to_string(),
             token: None,
         };
         let encoded = rmp_serde::to_vec_named(&old).unwrap();
@@ -96,17 +96,17 @@ mod tests {
     fn connect_without_client_name_or_version_decodes() {
         #[derive(Serialize)]
         struct MinimalConnect {
-            link: String,
+            link_name: String,
             version: u32,
         }
 
         let minimal = MinimalConnect {
-            link: "app-client".to_string(),
+            link_name: "app-client".to_string(),
             version: PROTOCOL_VERSION,
         };
         let encoded = rmp_serde::to_vec_named(&minimal).unwrap();
         let decoded = Connect::decode(&encoded).unwrap();
-        assert_eq!(decoded.link, "app-client");
+        assert_eq!(decoded.link_name, "app-client");
         assert_eq!(decoded.version, PROTOCOL_VERSION);
         assert!(decoded.client_name.is_none());
         assert!(decoded.client_version.is_none());
@@ -119,7 +119,7 @@ mod tests {
         // connection as an invalid handshake.
         for bad in ["", "bad.link", "a.b.c"] {
             let msg = Connect {
-                link: bad.to_string(),
+                link_name: bad.to_string(),
                 token: None,
                 version: PROTOCOL_VERSION,
                 client_name: None,
@@ -127,7 +127,7 @@ mod tests {
             };
             let encoded = msg.encode().unwrap();
             let decoded = Connect::decode(&encoded).unwrap();
-            assert_eq!(decoded.link, bad);
+            assert_eq!(decoded.link_name, bad);
         }
     }
 
