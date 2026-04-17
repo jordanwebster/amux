@@ -19,7 +19,7 @@ use tokio_tungstenite::tungstenite::protocol::WebSocketConfig;
 use tracing::Instrument;
 use uuid::Uuid;
 
-use super::connection::{ConnectionContext, HeartbeatRole, run_connection};
+use super::connection::{ConnectionContext, HeartbeatRole, HeartbeatSetup, run_connection};
 use super::routing::send_initial_announcements;
 use super::{ConnectionHandle, LOCAL_USER_ID, ServerState, ServerUserState, ensure_user_state};
 use crate::agent::SessionEvent;
@@ -101,8 +101,12 @@ fn map_handshake_error(error: HandshakeError) -> AcceptError {
 async fn write_connect_result<T: Transport>(
     transport: &mut T,
     error: Option<ProtocolError>,
+    idle_timeout_secs: Option<u32>,
 ) -> Result<()> {
-    let response = ConnectResult { error };
+    let response = ConnectResult {
+        error,
+        idle_timeout_secs,
+    };
     let payload = response
         .encode()
         .map_err(TransportError::SerializationEncode)?;
@@ -138,6 +142,7 @@ pub(super) async fn accept_handshake<T: Transport>(
     transport: &mut T,
     state: &Arc<RwLock<ServerState>>,
     verify_token: bool,
+    idle_timeout_secs: Option<u32>,
 ) -> Result<(
     Link,
     ConnectionHandle,
@@ -172,6 +177,7 @@ pub(super) async fn accept_handshake<T: Transport>(
                     server_version: PROTOCOL_VERSION,
                     client_version: version,
                 }),
+                None,
             )
             .await?;
             return Err(AcceptError::ProtocolMismatch {
@@ -210,6 +216,7 @@ pub(super) async fn accept_handshake<T: Transport>(
                             minimum_version: min_ver_str.clone(),
                             client_version: cv.clone(),
                         }),
+                        None,
                     )
                     .await?;
                     return Err(AcceptError::UpgradeRequired {
@@ -222,7 +229,7 @@ pub(super) async fn accept_handshake<T: Transport>(
 
         if let Err(reason) = validate_link_name(proposed_link.as_str()) {
             tracing::warn!(link = %proposed_link, reason, "rejecting invalid link name");
-            write_connect_result(transport, Some(ProtocolError::InvalidLinkName)).await?;
+            write_connect_result(transport, Some(ProtocolError::InvalidLinkName), None).await?;
             return Err(AcceptError::Config(format!(
                 "Invalid link name '{}': {}",
                 proposed_link, reason
@@ -258,6 +265,7 @@ pub(super) async fn accept_handshake<T: Transport>(
                             write_connect_result(
                                 transport,
                                 Some(ProtocolError::InvalidCredentials),
+                                None,
                             )
                             .await?;
                             return Err(AcceptError::InvalidCredentials);
@@ -266,7 +274,7 @@ pub(super) async fn accept_handshake<T: Transport>(
                 }
                 Err(e) => {
                     tracing::warn!(error = %e, "token validation failed");
-                    write_connect_result(transport, Some(ProtocolError::InvalidCredentials))
+                    write_connect_result(transport, Some(ProtocolError::InvalidCredentials), None)
                         .await?;
                     return Err(AcceptError::InvalidCredentials);
                 }
@@ -285,13 +293,13 @@ pub(super) async fn accept_handshake<T: Transport>(
         let (handle, outgoing_rx) = match reservation {
             Ok(pair) => pair,
             Err(_) => {
-                write_connect_result(transport, Some(ProtocolError::LinkNameTaken)).await?;
+                write_connect_result(transport, Some(ProtocolError::LinkNameTaken), None).await?;
                 continue;
             }
         };
 
         // Route is inserted — if the success write fails, clean up the stale route
-        if let Err(e) = write_connect_result(transport, None).await {
+        if let Err(e) = write_connect_result(transport, None, idle_timeout_secs).await {
             let mut us = user_state.write().await;
             us.routes.remove(&proposed_link);
             return Err(e);
@@ -322,6 +330,12 @@ pub(super) async fn accept_connection<T: TransportSplit>(
     is_local: bool,
     log_label: &str,
 ) -> Result<()> {
+    let idle_timeout_secs = if is_local {
+        None
+    } else {
+        Some(state.read().await.config.idle_timeout_secs)
+    };
+
     // Handshake uses the transport directly (safe — no select! involved).
     // Timeout prevents slow-loris: clients that connect but never send handshake data.
     // The span gives all handshake-phase logs transport context (before conn_span exists).
@@ -329,7 +343,7 @@ pub(super) async fn accept_connection<T: TransportSplit>(
         async {
             match tokio::time::timeout(
                 HANDSHAKE_TIMEOUT,
-                accept_handshake(&mut transport, &state, verify_token),
+                accept_handshake(&mut transport, &state, verify_token, idle_timeout_secs),
             )
             .await
             {
@@ -343,17 +357,16 @@ pub(super) async fn accept_connection<T: TransportSplit>(
         .instrument(tracing::info_span!("handshake", transport = log_label))
         .await?;
 
-    let heartbeat_role = if is_local {
-        HeartbeatRole::Disabled
-    } else {
-        HeartbeatRole::Acceptor
-    };
+    let heartbeat = idle_timeout_secs.map(|secs| HeartbeatSetup {
+        role: HeartbeatRole::Acceptor,
+        idle_timeout: std::time::Duration::from_secs(secs.into()),
+    });
     let conn_span = tracing::info_span!(
         "connection",
         link = %link,
         transport = log_label,
         user_id = %user_id,
-        heartbeat_role = heartbeat_role.as_str(),
+        heartbeat_role = heartbeat.map(|h| h.role.as_str()).unwrap_or("disabled"),
     );
     tracing::info!(parent: &conn_span, "connection established");
 
@@ -374,7 +387,7 @@ pub(super) async fn accept_connection<T: TransportSplit>(
         event_tx,
         link: link.clone(),
         is_local,
-        heartbeat_role,
+        heartbeat,
         next_request_id: route_handle.request_counter(),
         client_name,
         client_version,
@@ -473,18 +486,23 @@ pub(super) async fn tcp_connect(
         )
     };
 
-    let link = connect_handshake(&mut transport, || {
+    let outcome = connect_handshake(&mut transport, || {
         generate_server_link(&hostname, randomise)
     })
     .await
     .map_err(map_handshake_error)?;
+    let link = outcome.link;
+    let heartbeat = outcome.idle_timeout_secs.map(|secs| HeartbeatSetup {
+        role: HeartbeatRole::Dialer,
+        idle_timeout: std::time::Duration::from_secs(secs.into()),
+    });
 
     let conn_span = tracing::info_span!(
         "connection",
         link = %link,
         transport = "tcp",
         user_id = %user_id,
-        heartbeat_role = HeartbeatRole::Dialer.as_str(),
+        heartbeat_role = heartbeat.map(|h| h.role.as_str()).unwrap_or("disabled"),
     );
     tracing::info!(parent: &conn_span, "peer handshake complete");
 
@@ -514,7 +532,7 @@ pub(super) async fn tcp_connect(
             event_tx,
             link: link.clone(),
             is_local: false,
-            heartbeat_role: HeartbeatRole::Dialer,
+            heartbeat,
             next_request_id,
             client_name: Some("amux-cli".to_string()),
             client_version: Some(env!("CARGO_PKG_VERSION").to_string()),

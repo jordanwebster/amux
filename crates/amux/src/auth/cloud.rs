@@ -159,6 +159,8 @@ pub(crate) struct CloudConnection {
     current_host: String,
     current_port: u16,
     token_expires_at: DateTime<Utc>,
+    /// Negotiated idle timeout from the cloud server's ConnectResult.
+    idle_timeout_secs: Option<u32>,
 }
 
 impl CloudConnection {
@@ -215,7 +217,13 @@ impl CloudConnection {
             current_host: conn.host,
             current_port: conn.port,
             token_expires_at: conn.expires_at,
+            idle_timeout_secs: response.idle_timeout_secs,
         })
+    }
+
+    /// Negotiated idle timeout advertised by the cloud server.
+    pub(crate) fn idle_timeout_secs(&self) -> Option<u32> {
+        self.idle_timeout_secs
     }
 
     /// Extract the underlying transport and token refresh state.

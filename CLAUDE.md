@@ -12,7 +12,7 @@ AMUX IS IN ACTIVE DEVELOPMENT AND IS NOT CURRENTLY RELEASED. DO NOT CONCERN YOUR
 
 ## After Completing Work
 
-1. Run `cargo check && cargo +nightly fmt --all && cargo clippy --workspace --all-targets -- -D warnings && cargo test`
+1. Run `cargo check && cargo +nightly fmt --all && cargo +nightly clippy --workspace --all-targets -- -D warnings && cargo test`
 2. **Update DEVLOG.md** - Add an entry describing what was done (see template in DEVLOG.md)
 
 ## Git Commits
@@ -223,7 +223,7 @@ tokio::task::spawn_blocking(move || { ... });
 ```bash
 cargo check             # Fast type-check
 cargo +nightly fmt --all   # Format code (nightly required for unstable rustfmt options in rustfmt.toml)
-cargo clippy --workspace --all-targets -- -D warnings   # Lint (warnings are errors — zero tolerance)
+cargo +nightly clippy --workspace --all-targets -- -D warnings   # Lint (warnings are errors — zero tolerance; nightly for consistency with CI)
 cargo test              # Run all tests
 cargo build --workspace && cargo run -p e2e-runner -- run   # Build all binaries then run E2E tests (workspace build avoids stale amux/test-agent binaries)
 ```

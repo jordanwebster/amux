@@ -38,6 +38,56 @@ One paragraph describing what was done.
 
 ---
 
+## 2026-04-17: Negotiated idle timeout for heartbeats
+
+### Summary
+Replaced the hardcoded `60s idle + 10s ack_timeout` heartbeat model with a single negotiated `idle_timeout`. The acceptor publishes the timeout in `ConnectResult` (from config, default 180s), both peers drop the connection on inbound silence past the timeout, and the dialer keeps it alive by sending `Heartbeat` at its own cadence (currently `idle_timeout / 3`, not on the wire). `HeartbeatRole::Disabled` is gone — absence of a negotiated timeout (Unix sockets) means heartbeats are off entirely.
+
+### Changes
+
+**Protocol**
+- `protocol/handshake.rs` — `ConnectResult` gains `idle_timeout_secs: Option<u32>`. `None` means heartbeats disabled. Added a serde-default test so older payloads decode with `None`.
+- `transport/handshake.rs` — `connect_handshake` now returns `HandshakeOutcome { link, idle_timeout_secs }` instead of just `Link`. Dialer-side callers extract the negotiated value.
+
+**Config**
+- `config.rs` — new `idle_timeout_secs: u32` field, default 180 via `default_idle_timeout_secs()`.
+
+**Heartbeat model**
+- `server/connection/context.rs` — dropped `HeartbeatRole::Disabled`. `HeartbeatRole` is now just `{ Dialer, Acceptor }`. Added `HeartbeatSetup { role, idle_timeout }`. `ConnectionContext::heartbeat_role` became `heartbeat: Option<HeartbeatSetup>` — `None` = disabled.
+- `server/connection/heartbeat.rs` — removed `HEARTBEAT_IDLE_INTERVAL`, `HEARTBEAT_ACK_TIMEOUT`, `HeartbeatConfig`, `heartbeat_config_for_role`, `DialerHeartbeatState::probe_deadline`, `HeartbeatState::pause_for_refresh`, `HeartbeatState::ack_pending`, `HeartbeatState::note_inbound_activity`. Inbound tracking lives solely in `ConnectionActivity::last_inbound_at` — `HeartbeatState::deadlines` now takes `&ConnectionActivity` and computes the kill deadline from it. The dialer keeps its own `last_tx_at` for the preemptive send-deadline update, since that can't be derived from the write-callback-driven `last_outbound_at` without racing. Switched `HeartbeatState` to struct-style variants.
+- `server/connection/driver.rs` — merged `connection_loop_with_heartbeat` back into `connection_loop` (setup is on the ctx). Removed `pause_for_refresh` calls and the redundant `heartbeat.note_inbound_activity()` call. Log helpers no longer reference `ack_pending` or the dead `Disabled` arm.
+
+**Plumbing**
+- `server/accept.rs` — acceptor reads `config.idle_timeout_secs` (`None` for Unix) and passes it into `accept_handshake`, which echoes it in the success `ConnectResult`. Constructs `HeartbeatSetup` for the context.
+- `auth/cloud.rs` — `CloudConnection` stores `idle_timeout_secs` from the cloud server's `ConnectResult` and exposes it via `idle_timeout_secs()`.
+- `server/cloud.rs` — consumes `CloudConnection::idle_timeout_secs()` to build the dialer's `HeartbeatSetup`.
+
+**Tests**
+- `server/connection.rs` — rewrote heartbeat tests for the new symmetric model: `dialer_times_out_on_inbound_idle`, `acceptor_times_out_when_peer_is_silent`. Removed tests that exercised the dead `probe_deadline` / `pause_for_refresh` paths.
+- `protocol/handshake.rs` — new test confirms older `ConnectResult` payloads missing `idle_timeout_secs` decode to `None`.
+- Test helpers updated throughout (`runtime.rs`, `handlers/tests.rs`, `handlers/command.rs`).
+
+**Docs**
+- `ARCHITECTURE.md` — rewrote the heartbeat paragraph to describe the negotiated timeout and symmetric kill rule.
+
+### Decisions Made
+- **Acceptor publishes, dialer adopts.** The acceptor is authoritative because it's the party that will actually drop the connection. A two-way proposal was discussed (Connect proposes a client-side timeout, take min) but there's no current caller that benefits, so it's one-sided.
+- **Cadence is not wire-level.** Dialer picks its own heartbeat interval (T/3 today). Letting it drift or tune per-transport doesn't require a protocol change.
+- **No `ack_timeout`.** The old 10s probe window caught silent peers faster than the idle interval alone, but the acceptor already replies to every `Heartbeat` with `HeartbeatAck`, so the dialer's inbound-idle timer naturally fires within `idle_timeout` of any dead peer. One timer, one knob.
+- **Default 180s, not 60s.** The old default was aggressive for networks with transient blips. Three minutes gives more tolerance; users can tune via `idle_timeout_secs` in `config.yaml`.
+- **`Option<HeartbeatSetup>` over keeping `Disabled`.** Dropping the third enum variant eliminated the `unreachable!("disabled connections...")` arm and an entire log-state branch. Absence-as-disabled is the tidier model.
+
+### Verification
+- `cargo check --workspace --all-targets`: clean
+- `cargo clippy --workspace --all-targets -- -D warnings`: clean
+- `cargo test -p amux --lib`: 305 passed, 0 failed
+- `cargo run -p e2e-runner -- run`: 12 passed, 0 failed
+
+### Next Steps
+None.
+
+---
+
 ## 2026-04-17: Init flow + cloud-state reshape
 
 ### Summary

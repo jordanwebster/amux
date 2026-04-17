@@ -27,7 +27,18 @@ pub(crate) enum HandshakeError {
     TooManyAttempts,
 }
 
-pub(crate) async fn connect_handshake<T, F>(transport: &mut T, mut generate_link: F) -> Result<Link>
+/// Outcome of a successful client-initiated handshake.
+pub(crate) struct HandshakeOutcome {
+    pub(crate) link: Link,
+    /// Negotiated idle timeout. `None` means heartbeats are disabled on this
+    /// connection.
+    pub(crate) idle_timeout_secs: Option<u32>,
+}
+
+pub(crate) async fn connect_handshake<T, F>(
+    transport: &mut T,
+    mut generate_link: F,
+) -> Result<HandshakeOutcome>
 where
     T: Transport,
     F: FnMut() -> Link,
@@ -55,7 +66,12 @@ where
         })?;
 
         match response.error {
-            None => return Ok(proposed_link),
+            None => {
+                return Ok(HandshakeOutcome {
+                    link: proposed_link,
+                    idle_timeout_secs: response.idle_timeout_secs,
+                });
+            }
             Some(ProtocolError::LinkNameTaken) => {
                 tracing::debug!(link = %proposed_link, attempt = attempt + 1, "link name taken, retrying");
                 continue;

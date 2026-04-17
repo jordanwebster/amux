@@ -66,6 +66,10 @@ fn default_enforce_tls_in_cloud_mode() -> bool {
     true
 }
 
+fn default_idle_timeout_secs() -> u32 {
+    180
+}
+
 /// A control-key leader parsed from the `ctrl+<char>` format (e.g. `ctrl+a`).
 #[derive(Debug, Clone)]
 pub struct LeaderKey {
@@ -204,6 +208,13 @@ pub struct Config {
     #[serde(default, skip_serializing_if = "HashMap::is_empty")]
     pub minimum_client_versions: HashMap<String, String>,
 
+    /// Idle timeout in seconds for non-Unix connections. Both peers drop
+    /// the connection after this many seconds without inbound traffic. The
+    /// dialer sends heartbeats at its own cadence (currently idle_timeout / 3)
+    /// to keep the connection alive.
+    #[serde(default = "default_idle_timeout_secs")]
+    pub idle_timeout_secs: u32,
+
     /// Keybind configuration
     #[serde(default)]
     pub keybinds: Keybinds,
@@ -226,6 +237,7 @@ impl Default for Config {
             enable_cloud_mode: None,
             prevent_idle_sleep: None,
             minimum_client_versions: HashMap::new(),
+            idle_timeout_secs: default_idle_timeout_secs(),
             keybinds: Keybinds::default(),
             path: None,
         }

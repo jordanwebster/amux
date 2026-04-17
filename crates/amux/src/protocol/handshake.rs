@@ -37,9 +37,15 @@ impl Connect {
 }
 
 /// Initial connection handshake response.
+///
+/// `idle_timeout_secs` is the negotiated idle timeout. Both peers drop the
+/// connection after this many seconds without inbound traffic. `None` means
+/// heartbeats are disabled (used for local Unix-socket connections).
 #[derive(Serialize, Deserialize, Debug, Clone)]
 pub struct ConnectResult {
     pub error: Option<ProtocolError>,
+    #[serde(skip_serializing_if = "Option::is_none", default)]
+    pub idle_timeout_secs: Option<u32>,
 }
 
 impl ConnectResult {
@@ -133,9 +139,25 @@ mod tests {
 
     #[test]
     fn connect_result_roundtrip() {
-        let msg = ConnectResult { error: None };
+        let msg = ConnectResult {
+            error: None,
+            idle_timeout_secs: Some(180),
+        };
         let encoded = msg.encode().unwrap();
         let decoded = ConnectResult::decode(&encoded).unwrap();
         assert!(decoded.error.is_none());
+        assert_eq!(decoded.idle_timeout_secs, Some(180));
+    }
+
+    #[test]
+    fn connect_result_omitted_idle_timeout_decodes_as_none() {
+        #[derive(Serialize)]
+        struct MinimalResult {
+            error: Option<ProtocolError>,
+        }
+
+        let encoded = rmp_serde::to_vec_named(&MinimalResult { error: None }).unwrap();
+        let decoded = ConnectResult::decode(&encoded).unwrap();
+        assert!(decoded.idle_timeout_secs.is_none());
     }
 }

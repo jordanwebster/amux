@@ -1,5 +1,6 @@
 use std::sync::Arc;
 use std::sync::atomic::AtomicU64;
+use std::time::Duration;
 
 use thiserror::Error;
 use tokio::sync::{RwLock, mpsc};
@@ -45,7 +46,9 @@ pub(crate) struct ConnectionContext {
     pub(crate) event_tx: mpsc::Sender<SessionEvent>,
     pub(crate) link: Link,
     pub(crate) is_local: bool,
-    pub(crate) heartbeat_role: HeartbeatRole,
+    /// Negotiated heartbeat setup for this connection. `None` disables
+    /// heartbeats entirely (used for local Unix-socket connections).
+    pub(crate) heartbeat: Option<HeartbeatSetup>,
     pub(crate) next_request_id: Arc<AtomicU64>,
     /// Client implementation name (from Connect handshake, e.g. "amux-cli").
     pub(crate) client_name: Option<String>,
@@ -55,7 +58,6 @@ pub(crate) struct ConnectionContext {
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub(crate) enum HeartbeatRole {
-    Disabled,
     Dialer,
     Acceptor,
 }
@@ -63,11 +65,19 @@ pub(crate) enum HeartbeatRole {
 impl HeartbeatRole {
     pub(in crate::server) fn as_str(self) -> &'static str {
         match self {
-            Self::Disabled => "disabled",
             Self::Dialer => "dialer",
             Self::Acceptor => "acceptor",
         }
     }
+}
+
+/// Negotiated heartbeat configuration for a connection. Both peers drop the
+/// connection after `idle_timeout` seconds without inbound traffic. Only the
+/// dialer initiates heartbeats; the acceptor replies via `HeartbeatAck`.
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub(crate) struct HeartbeatSetup {
+    pub(crate) role: HeartbeatRole,
+    pub(crate) idle_timeout: Duration,
 }
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]

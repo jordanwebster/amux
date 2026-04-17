@@ -981,7 +981,7 @@ mod tests {
             event_tx,
             link: Link::new("test-link").unwrap(),
             is_local: true,
-            heartbeat_role: crate::server::connection::HeartbeatRole::Disabled,
+            heartbeat: None,
             next_request_id: Arc::new(AtomicU64::new(1)),
             client_name: Some("amux-cli".to_string()),
             client_version: Some(env!("CARGO_PKG_VERSION").to_string()),

@@ -3,8 +3,7 @@ use tracing::Instrument;
 
 use super::context::{ConnectionContext, ConnectionError, Incoming, MessageMetadata, Result};
 use super::heartbeat::{
-    ConnectionActivity, HeartbeatConfig, HeartbeatState, heartbeat_config_for_role,
-    heartbeat_deadlines, refresh_has_priority,
+    ConnectionActivity, HeartbeatState, heartbeat_deadlines, refresh_has_priority,
 };
 use super::reauth::{REFRESH_RESPONSE_TIMEOUT, TokenRefresher};
 use super::subscription::cancel_subscriptions_matching;
@@ -135,33 +134,14 @@ pub(in crate::server) async fn run_connection<T: TransportSplit>(
 
 /// Shared connection loop for all transports. Pure channel I/O — cancellation-safe.
 pub(super) async fn connection_loop(
-    incoming_rx: mpsc::Receiver<Incoming>,
-    response_tx: mpsc::Sender<Message>,
-    ctx: ConnectionContext,
-    token_refresh: Option<TokenRefreshState>,
-) -> Result<()> {
-    let heartbeat_config = heartbeat_config_for_role(ctx.heartbeat_role);
-    connection_loop_with_heartbeat(
-        incoming_rx,
-        response_tx,
-        ctx,
-        token_refresh,
-        heartbeat_config,
-    )
-    .await
-}
-
-pub(super) async fn connection_loop_with_heartbeat(
     mut incoming_rx: mpsc::Receiver<Incoming>,
     response_tx: mpsc::Sender<Message>,
     ctx: ConnectionContext,
     token_refresh: Option<TokenRefreshState>,
-    heartbeat_config: Option<HeartbeatConfig>,
 ) -> Result<()> {
     let mut refresher = token_refresh.map(TokenRefresher::new);
     let mut activity = ConnectionActivity::new();
-    let mut heartbeat =
-        heartbeat_config.and_then(|config| HeartbeatState::new(ctx.heartbeat_role, config));
+    let mut heartbeat = ctx.heartbeat.map(HeartbeatState::new);
 
     loop {
         let (refresh_deadline, refresh_timeout) = refresher
@@ -180,22 +160,16 @@ pub(super) async fn connection_loop_with_heartbeat(
                 .expect("refresher present")
                 .send_refresh(&response_tx)
                 .await?;
-            if let Some(ref mut heartbeat) = heartbeat {
-                heartbeat.pause_for_refresh();
-            }
             continue;
         }
         let (heartbeat_deadline, heartbeat_timeout) =
-            heartbeat_deadlines(heartbeat.as_ref(), refresh_has_priority);
+            heartbeat_deadlines(heartbeat.as_ref(), &activity, refresh_has_priority);
 
         tokio::select! {
             incoming = incoming_rx.recv() => {
                 match incoming {
                     Some(Incoming::Msg(msg)) => {
                         activity.note_inbound();
-                        if let Some(ref mut heartbeat) = heartbeat {
-                            heartbeat.note_inbound_activity();
-                        }
                         if let Some(ref mut r) = refresher
                             && r.try_intercept(&msg)?
                         {
@@ -212,7 +186,6 @@ pub(super) async fn connection_loop_with_heartbeat(
                     Some(Incoming::Eof) | None => {
                         log_connection_state(
                             "disconnected",
-                            ctx.heartbeat_role,
                             &activity,
                             heartbeat.as_ref(),
                             refresher.as_ref(),
@@ -222,7 +195,6 @@ pub(super) async fn connection_loop_with_heartbeat(
                     Some(Incoming::TransportErr(e)) => {
                         log_connection_state(
                             "transport error",
-                            ctx.heartbeat_role,
                             &activity,
                             heartbeat.as_ref(),
                             refresher.as_ref(),
@@ -237,9 +209,6 @@ pub(super) async fn connection_loop_with_heartbeat(
                     .expect("refresher present")
                     .send_refresh(&response_tx)
                     .await?;
-                if let Some(ref mut heartbeat) = heartbeat {
-                    heartbeat.pause_for_refresh();
-                }
             }
             _ = maybe_sleep_until(refresh_timeout), if refresh_timeout.is_some() => {
                 tracing::error!("token refresh response timeout");
@@ -269,7 +238,6 @@ pub(super) async fn connection_loop_with_heartbeat(
 
 fn log_connection_state(
     event: &'static str,
-    heartbeat_role: super::HeartbeatRole,
     activity: &ConnectionActivity,
     heartbeat: Option<&HeartbeatState>,
     refresher: Option<&TokenRefresher>,
@@ -283,12 +251,12 @@ fn log_connection_state(
         refresher,
         Some(refresher) if refresher.is_awaiting_response()
     );
+    let heartbeat_role = heartbeat.map(|h| h.role().as_str()).unwrap_or("disabled");
     tracing::debug!(
-        heartbeat_role = heartbeat_role.as_str(),
+        heartbeat_role,
         event,
         time_since_last_inbound = ?now.duration_since(activity.last_inbound_at),
         time_since_last_outbound = ?now.duration_since(activity.last_outbound_at),
-        heartbeat_ack_pending = heartbeat.is_some_and(HeartbeatState::ack_pending),
         token_refresh_suppressed = refresh_has_priority(refresh_deadline, refresh_awaiting_response),
         "connection state"
     );
@@ -309,31 +277,13 @@ fn log_connection_state_for_heartbeat_timeout(
         Some(refresher) if refresher.is_awaiting_response()
     );
     let heartbeat = heartbeat.expect("heartbeat timeout requires heartbeat state");
-    match heartbeat.role() {
-        super::HeartbeatRole::Dialer => {
-            tracing::warn!(
-                heartbeat_role = super::HeartbeatRole::Dialer.as_str(),
-                time_since_last_inbound = ?now.duration_since(activity.last_inbound_at),
-                time_since_last_outbound = ?now.duration_since(activity.last_outbound_at),
-                heartbeat_ack_pending = heartbeat.ack_pending(),
-                token_refresh_suppressed = refresh_has_priority(refresh_deadline, refresh_awaiting_response),
-                "heartbeat ack timed out"
-            );
-        }
-        super::HeartbeatRole::Acceptor => {
-            tracing::warn!(
-                heartbeat_role = super::HeartbeatRole::Acceptor.as_str(),
-                time_since_last_inbound = ?now.duration_since(activity.last_inbound_at),
-                time_since_last_outbound = ?now.duration_since(activity.last_outbound_at),
-                heartbeat_ack_pending = heartbeat.ack_pending(),
-                token_refresh_suppressed = refresh_has_priority(refresh_deadline, refresh_awaiting_response),
-                "peer heartbeat overdue"
-            );
-        }
-        super::HeartbeatRole::Disabled => {
-            unreachable!("disabled connections do not schedule heartbeat timeouts")
-        }
-    }
+    tracing::warn!(
+        heartbeat_role = heartbeat.role().as_str(),
+        time_since_last_inbound = ?now.duration_since(activity.last_inbound_at),
+        time_since_last_outbound = ?now.duration_since(activity.last_outbound_at),
+        token_refresh_suppressed = refresh_has_priority(refresh_deadline, refresh_awaiting_response),
+        "peer idle timeout exceeded"
+    );
 }
 
 async fn maybe_sleep_until(deadline: Option<tokio::time::Instant>) {

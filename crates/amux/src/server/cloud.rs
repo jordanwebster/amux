@@ -12,7 +12,9 @@ use tokio::sync::{RwLock, mpsc};
 use tracing::Instrument;
 use uuid::Uuid;
 
-use super::connection::{ConnectionContext, ConnectionError, HeartbeatRole, run_connection};
+use super::connection::{
+    ConnectionContext, ConnectionError, HeartbeatRole, HeartbeatSetup, run_connection,
+};
 use super::routing::send_initial_announcements;
 use super::runtime::notify_local_clients;
 use super::{ConnectionHandle, LOCAL_USER_ID, ServerState, ServerUserState, ensure_user_state};
@@ -191,6 +193,10 @@ async fn run_cloud_connection(
     // Handshake succeeded — clear any stale upgrade-required marker
     crate::update::clear_upgrade_required(&config.state_path);
 
+    let heartbeat = conn.idle_timeout_secs().map(|secs| HeartbeatSetup {
+        role: HeartbeatRole::Dialer,
+        idle_timeout: Duration::from_secs(secs.into()),
+    });
     let (transport, token_refresh) = conn.into_parts();
     let link = token_refresh.link.clone();
 
@@ -214,7 +220,7 @@ async fn run_cloud_connection(
         link = %link,
         transport = "cloud",
         user_id = %LOCAL_USER_ID,
-        heartbeat_role = HeartbeatRole::Dialer.as_str(),
+        heartbeat_role = heartbeat.map(|h| h.role.as_str()).unwrap_or("disabled"),
     );
     tracing::info!(parent: &conn_span, "cloud route established");
 
@@ -225,7 +231,7 @@ async fn run_cloud_connection(
         event_tx,
         link: link.clone(),
         is_local: false,
-        heartbeat_role: HeartbeatRole::Dialer,
+        heartbeat,
         next_request_id,
         client_name: Some("amux-cli".to_string()),
         client_version: Some(env!("CARGO_PKG_VERSION").to_string()),

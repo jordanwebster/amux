@@ -13,7 +13,9 @@ mod heartbeat;
 mod reauth;
 mod subscription;
 
-pub(super) use context::{ConnectionContext, ConnectionError, HeartbeatRole, Result};
+pub(super) use context::{
+    ConnectionContext, ConnectionError, HeartbeatRole, HeartbeatSetup, Result,
+};
 pub(super) use driver::run_connection;
 pub(super) use subscription::{
     cancel_subscriptions_matching, cleanup_subscription, extend_subscription,
@@ -29,12 +31,9 @@ mod tests {
     use tokio::sync::{RwLock, mpsc};
 
     use super::context::{Incoming, MessageMetadata};
-    use super::driver::{
-        connection_loop, connection_loop_with_heartbeat, reader_loop, writer_loop,
-    };
+    use super::driver::{connection_loop, reader_loop, writer_loop};
     use super::heartbeat::{
-        DialerHeartbeatState, HeartbeatConfig, HeartbeatState, heartbeat_deadlines,
-        refresh_has_priority,
+        ConnectionActivity, HeartbeatState, heartbeat_deadlines, refresh_has_priority,
     };
     use super::*;
     use crate::protocol::link::Link;
@@ -101,6 +100,7 @@ mod tests {
     fn test_peer_ctx(
         state: Arc<RwLock<ServerState>>,
         user_state: Arc<RwLock<ServerUserState>>,
+        idle_timeout: Duration,
     ) -> ConnectionContext {
         let (event_tx, _event_rx) = mpsc::channel(16);
         ConnectionContext {
@@ -110,7 +110,10 @@ mod tests {
             event_tx,
             link: Link::new("test-peer").unwrap(),
             is_local: false,
-            heartbeat_role: HeartbeatRole::Dialer,
+            heartbeat: Some(HeartbeatSetup {
+                role: HeartbeatRole::Dialer,
+                idle_timeout,
+            }),
             next_request_id: Arc::new(AtomicU64::new(1)),
             client_name: Some("amux-cli".to_string()),
             client_version: Some(env!("CARGO_PKG_VERSION").to_string()),
@@ -120,6 +123,7 @@ mod tests {
     fn test_acceptor_ctx(
         state: Arc<RwLock<ServerState>>,
         user_state: Arc<RwLock<ServerUserState>>,
+        idle_timeout: Duration,
     ) -> ConnectionContext {
         let (event_tx, _event_rx) = mpsc::channel(16);
         ConnectionContext {
@@ -129,7 +133,10 @@ mod tests {
             event_tx,
             link: Link::new("accepted-peer").unwrap(),
             is_local: false,
-            heartbeat_role: HeartbeatRole::Acceptor,
+            heartbeat: Some(HeartbeatSetup {
+                role: HeartbeatRole::Acceptor,
+                idle_timeout,
+            }),
             next_request_id: Arc::new(AtomicU64::new(1)),
             client_name: Some("amux-cli".to_string()),
             client_version: Some(env!("CARGO_PKG_VERSION").to_string()),
@@ -436,21 +443,13 @@ mod tests {
 
     #[tokio::test]
     async fn connection_loop_sends_heartbeat_after_idle_period() {
+        // idle_timeout=60ms → dialer sends heartbeat at ~20ms (T/3).
         let (state, user_state) = test_state().await;
-        let ctx = test_peer_ctx(state, user_state);
+        let ctx = test_peer_ctx(state, user_state, Duration::from_millis(60));
         let (incoming_tx, incoming_rx) = mpsc::channel(16);
         let (response_tx, mut response_rx) = mpsc::channel(16);
 
-        let handle = tokio::spawn(connection_loop_with_heartbeat(
-            incoming_rx,
-            response_tx,
-            ctx,
-            None,
-            Some(HeartbeatConfig {
-                idle_interval: Duration::from_millis(20),
-                ack_timeout: Duration::from_millis(100),
-            }),
-        ));
+        let handle = tokio::spawn(connection_loop(incoming_rx, response_tx, ctx, None));
 
         let msg = tokio::time::timeout(Duration::from_millis(80), response_rx.recv())
             .await
@@ -470,21 +469,14 @@ mod tests {
 
     #[tokio::test]
     async fn connection_loop_dialer_inbound_traffic_does_not_delay_heartbeat() {
+        // idle_timeout=75ms → dialer send deadline at ~25ms. Inbound activity
+        // resets the kill timer, but must not push back the send deadline.
         let (state, user_state) = test_state().await;
-        let ctx = test_peer_ctx(state, user_state);
+        let ctx = test_peer_ctx(state, user_state, Duration::from_millis(75));
         let (incoming_tx, incoming_rx) = mpsc::channel(16);
         let (response_tx, mut response_rx) = mpsc::channel(16);
 
-        let handle = tokio::spawn(connection_loop_with_heartbeat(
-            incoming_rx,
-            response_tx,
-            ctx,
-            None,
-            Some(HeartbeatConfig {
-                idle_interval: Duration::from_millis(25),
-                ack_timeout: Duration::from_millis(100),
-            }),
-        ));
+        let handle = tokio::spawn(connection_loop(incoming_rx, response_tx, ctx, None));
 
         tokio::time::sleep(Duration::from_millis(10)).await;
         incoming_tx
@@ -512,21 +504,14 @@ mod tests {
 
     #[tokio::test]
     async fn connection_loop_dialer_outbound_write_resets_heartbeat_timer() {
+        // idle_timeout=120ms → send deadline at ~40ms. Non-heartbeat outbound
+        // write at 20ms should defer the next send by another ~40ms.
         let (state, user_state) = test_state().await;
-        let ctx = test_peer_ctx(state, user_state);
+        let ctx = test_peer_ctx(state, user_state, Duration::from_millis(120));
         let (incoming_tx, incoming_rx) = mpsc::channel(16);
         let (response_tx, mut response_rx) = mpsc::channel(16);
 
-        let handle = tokio::spawn(connection_loop_with_heartbeat(
-            incoming_rx,
-            response_tx,
-            ctx,
-            None,
-            Some(HeartbeatConfig {
-                idle_interval: Duration::from_millis(40),
-                ack_timeout: Duration::from_millis(100),
-            }),
-        ));
+        let handle = tokio::spawn(connection_loop(incoming_rx, response_tx, ctx, None));
 
         tokio::time::sleep(Duration::from_millis(20)).await;
         incoming_tx
@@ -559,40 +544,22 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn connection_loop_times_out_when_dialer_heartbeat_unacked() {
+    async fn connection_loop_dialer_times_out_on_inbound_idle() {
+        // idle_timeout=40ms. Dialer heartbeats at ~13ms intervals, but without
+        // any inbound traffic the kill deadline (last_rx_at + 40ms from
+        // connection start) should fire.
         let (state, user_state) = test_state().await;
-        let ctx = test_peer_ctx(state, user_state);
-        let (incoming_tx, incoming_rx) = mpsc::channel(16);
-        let (response_tx, mut response_rx) = mpsc::channel(16);
+        let ctx = test_peer_ctx(state, user_state, Duration::from_millis(40));
+        let (_incoming_tx, incoming_rx) = mpsc::channel(16);
+        let (response_tx, _response_rx) = mpsc::channel(16);
 
-        let handle = tokio::spawn(connection_loop_with_heartbeat(
-            incoming_rx,
-            response_tx,
-            ctx,
-            None,
-            Some(HeartbeatConfig {
-                idle_interval: Duration::from_millis(15),
-                ack_timeout: Duration::from_millis(15),
-            }),
-        ));
+        let result = tokio::time::timeout(
+            Duration::from_millis(200),
+            connection_loop(incoming_rx, response_tx, ctx, None),
+        )
+        .await
+        .expect("connection loop should terminate within test timeout");
 
-        let msg = tokio::time::timeout(Duration::from_millis(60), response_rx.recv())
-            .await
-            .expect("heartbeat should be queued before timeout")
-            .expect("response channel should remain open");
-        assert!(matches!(
-            msg,
-            Message::Direct {
-                message: DirectMessage::Heartbeat
-            }
-        ));
-
-        incoming_tx
-            .send(Incoming::Wrote(MessageMetadata { is_heartbeat: true }))
-            .await
-            .unwrap();
-
-        let result = handle.await.unwrap();
         assert!(
             matches!(result, Err(ConnectionError::HeartbeatTimeout)),
             "expected heartbeat timeout, got {:?}",
@@ -601,60 +568,20 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn connection_loop_times_out_when_heartbeat_write_callback_never_arrives() {
+    async fn connection_loop_acceptor_times_out_when_peer_is_silent() {
+        // idle_timeout=40ms. Acceptor never sends anything; silent peer means
+        // kill deadline fires.
         let (state, user_state) = test_state().await;
-        let ctx = test_peer_ctx(state, user_state);
+        let ctx = test_acceptor_ctx(state, user_state, Duration::from_millis(40));
         let (_incoming_tx, incoming_rx) = mpsc::channel(16);
         let (response_tx, mut response_rx) = mpsc::channel(16);
 
-        let handle = tokio::spawn(connection_loop_with_heartbeat(
-            incoming_rx,
-            response_tx,
-            ctx,
-            None,
-            Some(HeartbeatConfig {
-                idle_interval: Duration::from_millis(15),
-                ack_timeout: Duration::from_millis(15),
-            }),
-        ));
-
-        let msg = tokio::time::timeout(Duration::from_millis(60), response_rx.recv())
-            .await
-            .expect("heartbeat should be queued before timeout")
-            .expect("response channel should remain open");
-        assert!(matches!(
-            msg,
-            Message::Direct {
-                message: DirectMessage::Heartbeat
-            }
-        ));
-
-        let result = handle.await.unwrap();
-        assert!(
-            matches!(result, Err(ConnectionError::HeartbeatTimeout)),
-            "expected heartbeat timeout without a write callback, got {:?}",
-            result
-        );
-    }
-
-    #[tokio::test]
-    async fn connection_loop_acceptor_times_out_when_peer_heartbeat_is_overdue() {
-        let (state, user_state) = test_state().await;
-        let ctx = test_acceptor_ctx(state, user_state);
-        let (_incoming_tx, incoming_rx) = mpsc::channel(16);
-        let (response_tx, mut response_rx) = mpsc::channel(16);
-
-        let result = connection_loop_with_heartbeat(
-            incoming_rx,
-            response_tx,
-            ctx,
-            None,
-            Some(HeartbeatConfig {
-                idle_interval: Duration::from_millis(20),
-                ack_timeout: Duration::from_millis(20),
-            }),
+        let result = tokio::time::timeout(
+            Duration::from_millis(200),
+            connection_loop(incoming_rx, response_tx, ctx, None),
         )
-        .await;
+        .await
+        .expect("connection loop should terminate within test timeout");
 
         assert!(
             matches!(result, Err(ConnectionError::HeartbeatTimeout)),
@@ -668,73 +595,15 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn connection_loop_inbound_message_clears_pending_heartbeat_ack() {
-        let (state, user_state) = test_state().await;
-        let ctx = test_peer_ctx(state, user_state);
-        let (incoming_tx, incoming_rx) = mpsc::channel(16);
-        let (response_tx, mut response_rx) = mpsc::channel(16);
-
-        let handle = tokio::spawn(connection_loop_with_heartbeat(
-            incoming_rx,
-            response_tx,
-            ctx,
-            None,
-            Some(HeartbeatConfig {
-                idle_interval: Duration::from_millis(120),
-                ack_timeout: Duration::from_millis(60),
-            }),
-        ));
-
-        let msg = tokio::time::timeout(Duration::from_millis(200), response_rx.recv())
-            .await
-            .expect("heartbeat should be queued before timeout")
-            .expect("response channel should remain open");
-        assert!(matches!(
-            msg,
-            Message::Direct {
-                message: DirectMessage::Heartbeat
-            }
-        ));
-
-        // The ack arrives before the writer reports the heartbeat write. That
-        // late write callback must not expose a stale idle deadline or queue a
-        // second heartbeat immediately.
-        incoming_tx
-            .send(Incoming::Msg(Box::new(Message::Direct {
-                message: DirectMessage::HeartbeatAck,
-            })))
-            .await
-            .unwrap();
-        incoming_tx
-            .send(Incoming::Wrote(MessageMetadata { is_heartbeat: true }))
-            .await
-            .unwrap();
-        tokio::time::sleep(Duration::from_millis(80)).await;
-
-        incoming_tx.send(Incoming::Eof).await.unwrap();
-        let result = handle.await.unwrap();
-        assert!(
-            result.is_ok(),
-            "inbound activity should clear the pending heartbeat timeout"
-        );
-        assert!(
-            response_rx.try_recv().is_err(),
-            "no second heartbeat should be sent before the next idle interval"
-        );
-    }
-
-    #[tokio::test]
     async fn heartbeat_deadlines_are_suppressed_while_refresh_response_is_pending() {
-        let heartbeat = HeartbeatState::Dialer(DialerHeartbeatState {
-            config: HeartbeatConfig {
-                idle_interval: Duration::from_millis(50),
-                ack_timeout: Duration::from_millis(20),
-            },
+        let heartbeat = HeartbeatState::Dialer {
+            idle_timeout: Duration::from_millis(60),
             last_tx_at: tokio::time::Instant::now(),
-            probe_deadline: Some(tokio::time::Instant::now() + Duration::from_millis(20)),
-        });
+        };
+        let activity = ConnectionActivity::new();
 
-        let (heartbeat_deadline, heartbeat_timeout) = heartbeat_deadlines(Some(&heartbeat), true);
+        let (heartbeat_deadline, heartbeat_timeout) =
+            heartbeat_deadlines(Some(&heartbeat), &activity, true);
 
         assert!(
             heartbeat_deadline.is_none(),
@@ -742,7 +611,7 @@ mod tests {
         );
         assert!(
             heartbeat_timeout.is_none(),
-            "pending heartbeat acks should not time out while awaiting ReauthResult"
+            "kill deadline should be paused while awaiting ReauthResult"
         );
     }
 
@@ -753,33 +622,6 @@ mod tests {
         assert!(
             refresh_has_priority(refresh_deadline, false),
             "a due refresh should preempt heartbeat timeout handling"
-        );
-    }
-
-    #[tokio::test]
-    async fn heartbeat_pause_for_refresh_clears_pending_ack() {
-        let mut heartbeat = HeartbeatState::Dialer(DialerHeartbeatState {
-            config: HeartbeatConfig {
-                idle_interval: Duration::from_millis(50),
-                ack_timeout: Duration::from_millis(20),
-            },
-            last_tx_at: tokio::time::Instant::now(),
-            probe_deadline: Some(tokio::time::Instant::now() + Duration::from_millis(20)),
-        });
-        let previous_last_tx_at = match &heartbeat {
-            HeartbeatState::Dialer(state) => state.last_tx_at,
-            HeartbeatState::Acceptor(_) => unreachable!(),
-        };
-
-        heartbeat.pause_for_refresh();
-
-        assert!(
-            !heartbeat.ack_pending(),
-            "refresh start should clear any pending heartbeat ack timeout"
-        );
-        assert!(
-            matches!(&heartbeat, HeartbeatState::Dialer(state) if state.last_tx_at == previous_last_tx_at),
-            "refresh suppression should not invent outbound activity before the Reauth write succeeds"
         );
     }
 }

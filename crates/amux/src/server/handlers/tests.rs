@@ -196,7 +196,10 @@ async fn command_from_remote_peer_is_rejected() {
         event_tx,
         link: Link::new("remote-peer").unwrap(),
         is_local: false,
-        heartbeat_role: crate::server::connection::HeartbeatRole::Acceptor,
+        heartbeat: Some(crate::server::connection::HeartbeatSetup {
+            role: crate::server::connection::HeartbeatRole::Acceptor,
+            idle_timeout: std::time::Duration::from_secs(180),
+        }),
         next_request_id: Arc::new(AtomicU64::new(1)),
         client_name: Some("amux-cli".to_string()),
         client_version: Some(env!("CARGO_PKG_VERSION").to_string()),

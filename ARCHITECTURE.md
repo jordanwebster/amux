@@ -215,11 +215,19 @@ enum DirectMessage {
 }
 ```
 
-Idle peer links send `Heartbeat` after 60 seconds without inbound traffic. Any
-inbound message counts as liveness, so `HeartbeatAck` is only needed when both
-sides are otherwise idle. If no inbound traffic arrives within 10 seconds after
-sending a heartbeat, the connection is closed and the normal `WithdrawHost`
-cleanup path runs.
+Heartbeats are governed by a per-connection **idle timeout** negotiated during
+the handshake. The acceptor publishes `idle_timeout_secs` in `ConnectResult`
+(pulled from server config, default 180s; `None` for local Unix sockets).
+After the handshake, both peers apply the same rule symmetrically: if no
+inbound message has been seen for `idle_timeout` seconds, the connection is
+closed and the normal `WithdrawHost` cleanup path runs.
+
+Only the dialer initiates heartbeats — it sends `Heartbeat` whenever its own
+outbound link has been idle, at its own cadence (currently `idle_timeout / 3`).
+The cadence is not part of the wire protocol; the dialer is free to pick any
+rate as long as something is sent within the idle window. The acceptor replies
+to each `Heartbeat` with `HeartbeatAck`, which counts as inbound traffic and
+resets the dialer's kill deadline.
 
 ### Handshake
 
@@ -236,6 +244,8 @@ struct Connect {
 
 struct ConnectResult {
     error: Option<ProtocolError>,
+    // None disables heartbeats (Unix); Some(t) negotiates a t-second idle timeout.
+    idle_timeout_secs: Option<u32>,
 }
 ```
 

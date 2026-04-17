@@ -459,7 +459,7 @@ pub(crate) mod test_helpers {
 
     use crate::config::Config;
     use crate::protocol::link::Link;
-    use crate::server::connection::{ConnectionContext, HeartbeatRole};
+    use crate::server::connection::ConnectionContext;
     use crate::server::{LOCAL_USER_ID, ServerState, ServerUserState};
 
     pub(crate) fn test_ctx(
@@ -474,7 +474,7 @@ pub(crate) mod test_helpers {
             event_tx,
             link: Link::new("test-link").unwrap(),
             is_local: true,
-            heartbeat_role: HeartbeatRole::Disabled,
+            heartbeat: None,
             next_request_id: Arc::new(AtomicU64::new(1)),
             client_name: Some("amux-cli".to_string()),
             client_version: Some(env!("CARGO_PKG_VERSION").to_string()),
