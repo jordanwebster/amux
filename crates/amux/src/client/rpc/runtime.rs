@@ -325,6 +325,18 @@ impl OutboundRoutedStream {
         self.send_payload_or_remove(payload).await
     }
 
+    pub(super) async fn send_initial_stream_payload(
+        &self,
+        payload: Vec<u8>,
+        method: &'static str,
+    ) -> Result<(), RpcClientError> {
+        match self.call.state() {
+            Some(OutboundCallState::AwaitingResponse | OutboundCallState::ActiveStream) => {}
+            _ => return Err(outbound_call_not_active_error(method)),
+        }
+        self.send_payload_or_remove(payload).await
+    }
+
     pub(super) async fn send_cancel_payload(
         &self,
         payload: Vec<u8>,

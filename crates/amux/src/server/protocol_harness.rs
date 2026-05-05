@@ -187,34 +187,37 @@ impl Topology {
         link: Link,
         transport: MemoryTransport,
     ) -> JoinHandle<super::connection::Result<()>> {
-        let (route_handle, outgoing_rx, initial_messages) = {
+        let (route_handle, outgoing_rx, initial_messages, routing_call_id) = {
             let mut user_state = self.user_state.write().await;
             let (route_handle, outgoing_rx) = user_state
                 .try_reserve_link(link.clone())
                 .expect("test peer link should be unique");
             user_state.topology.mark_peer_link(link.clone());
             let routing_call_id = RoutedCallId::from(Uuid::new_v4());
-            user_state
-                .rpc
-                .register_peer_stream_outbound(RpcPeerStreamOutboundStart {
-                    call_id: routing_call_id.clone(),
-                    counterparty_route: Route::from_link(link.clone()),
-                    method: method::ROUTING_SUBSCRIBE_EVENTS,
-                })
-                .expect("fresh routing call id should not collide");
             let initial_messages = vec![Message::Peer(PeerFrame {
-                call_id: routing_call_id,
+                call_id: routing_call_id.clone(),
                 body: FrameBody::Request(RequestFrame {
                     method: method::ROUTING_SUBSCRIBE_EVENTS_NAME.to_string(),
                     payload: wire::SubscribeRoutingEventsRequest {}.encode_to_vec(),
                 }),
             })];
-            (route_handle, outgoing_rx, initial_messages)
+            (route_handle, outgoing_rx, initial_messages, routing_call_id)
         };
+        self.user_state
+            .read()
+            .await
+            .rpc
+            .register_peer_stream_outbound(RpcPeerStreamOutboundStart {
+                call_id: routing_call_id,
+                counterparty_route: Route::from_link(link.clone()),
+                method: method::ROUTING_SUBSCRIBE_EVENTS,
+            })
+            .expect("fresh routing call id should not collide");
 
         let ctx = ConnectionContext {
             state: self.state.clone(),
             user_state: self.user_state.clone(),
+            rpc: self.user_state.read().await.rpc.clone(),
             user_id: LOCAL_USER_ID,
             event_tx: self.event_tx.clone(),
             link: link.clone(),
@@ -266,6 +269,7 @@ impl Topology {
         let ctx = ConnectionContext {
             state: self.state.clone(),
             user_state: self.user_state.clone(),
+            rpc: self.user_state.read().await.rpc.clone(),
             user_id: LOCAL_USER_ID,
             event_tx: self.event_tx.clone(),
             link: link.clone(),
@@ -456,7 +460,12 @@ impl TestConnection {
         let call_id = self.next_call_id();
         self.send_local_routed_payload(
             call_id.clone(),
-            open_session::encode_open_session_request(agent_id, io_protocol, None).unwrap(),
+            open_session::encode_open_session_request().unwrap(),
+        )
+        .await;
+        self.send_local_routed_payload(
+            call_id.clone(),
+            open_session::encode_open_session_open(agent_id, io_protocol, None).unwrap(),
         )
         .await;
         self.send_local_routed_payload(
@@ -874,7 +883,6 @@ impl TestRpcSession {
             self.recv().await,
             OpenSessionServerFrame::Event(OpenSessionOutputEvent::Output {
                 payload: bytes.to_vec(),
-                cursor: None,
             })
         );
     }
@@ -951,7 +959,6 @@ impl QueuedOpenSession {
             self.recv(client).await,
             OpenSessionServerFrame::Event(OpenSessionOutputEvent::Output {
                 payload: bytes.to_vec(),
-                cursor: None,
             })
         );
     }

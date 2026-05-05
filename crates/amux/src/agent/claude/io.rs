@@ -1,6 +1,6 @@
 //! Claude-owned IO protocol payloads for `AgentService/OpenSession`.
 //!
-//! The core protocol treats `OpenSessionRequest.args`, `SessionInput.payload`,
+//! The core protocol treats `SessionOpen.args`, `SessionInput.payload`,
 //! `SessionOutput.payload`, and cursors as opaque bytes. This module owns the
 //! first-party Claude schemas for those bytes.
 
@@ -22,6 +22,11 @@ pub struct ClaudeRawV1Args {
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum ClaudeRawV1ReplayQuery {
     TailBytes { count: u64 },
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum ClaudeRawV1Control {
+    Resize(TerminalSize),
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -68,7 +73,7 @@ pub fn encode_raw_v1_open(
         terminal_size,
         replay_query,
     });
-    open_session::encode_open_session_request(agent_id, RAW_V1, args)
+    open_session::encode_open_session_open(agent_id, RAW_V1, args)
 }
 
 pub fn decode_raw_v1_args(args: Option<&[u8]>) -> Result<ClaudeRawV1Args, ProtocolError> {
@@ -111,6 +116,37 @@ pub fn encode_raw_v1_args(args: ClaudeRawV1Args) -> Option<Vec<u8>> {
         }
         .encode_to_vec(),
     )
+}
+
+pub fn encode_raw_v1_control(control: ClaudeRawV1Control) -> Vec<u8> {
+    wire::ClaudeRawV1Control {
+        control: Some(match control {
+            ClaudeRawV1Control::Resize(size) => {
+                wire::claude_raw_v1_control::Control::Resize(terminal_size_to_wire(size))
+            }
+        }),
+    }
+    .encode_to_vec()
+}
+
+pub fn decode_raw_v1_control(payload: &[u8]) -> Result<ClaudeRawV1Control, ProtocolError> {
+    let control = wire::ClaudeRawV1Control::decode(payload).map_err(|error| {
+        ProtocolError::InvalidArgument {
+            message: format!(
+                "`{RAW_V1}` control payload must be ClaudeRawV1Control protobuf: {error}"
+            ),
+        }
+    })?;
+    let control = control
+        .control
+        .ok_or_else(|| ProtocolError::InvalidArgument {
+            message: format!("`{RAW_V1}` control payload missing control"),
+        })?;
+    match control {
+        wire::claude_raw_v1_control::Control::Resize(size) => {
+            Ok(ClaudeRawV1Control::Resize(terminal_size_from_wire(size)?))
+        }
+    }
 }
 
 pub fn decode_pty_transcript_v1_args(
@@ -266,7 +302,7 @@ where
 {
     match args {
         Some(args) => M::decode(args).map_err(|error| ProtocolError::InvalidArgument {
-            message: format!("`{io_protocol}` OpenSessionRequest args must be protobuf: {error}"),
+            message: format!("`{io_protocol}` SessionOpen args must be protobuf: {error}"),
         }),
         None => Ok(M::default()),
     }
@@ -302,7 +338,7 @@ mod tests {
     use crate::protocol::wire;
 
     #[test]
-    fn raw_open_payload_decodes_to_open_session_request() {
+    fn raw_open_payload_decodes_to_open_session_open_event() {
         let agent_id = Uuid::new_v4();
         let payload = encode_raw_v1_open(
             agent_id,
@@ -311,13 +347,19 @@ mod tests {
         )
         .unwrap();
 
-        let crate::protocol::message::FrameBody::Request(request) =
+        let crate::protocol::message::FrameBody::StreamItem(payload) =
             wire::decode_frame_body(&payload).unwrap()
         else {
-            panic!("expected OpenSession request");
+            panic!("expected OpenSession open stream item");
         };
-        let open = wire::decode_open_session_request(&request).unwrap();
-        assert_eq!(open.agent_id, agent_id);
+        let event = wire::OpenSessionRequest::decode(payload.as_slice())
+            .unwrap()
+            .event
+            .unwrap();
+        let wire::open_session_request::Event::Open(open) = event else {
+            panic!("expected open event");
+        };
+        assert_eq!(open.agent_id.as_slice(), agent_id.as_bytes());
         assert_eq!(open.io_protocol, RAW_V1);
         assert_eq!(
             decode_raw_v1_args(open.args.as_deref()).unwrap(),

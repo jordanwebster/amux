@@ -29,6 +29,7 @@ pub(crate) fn encode_protocol_error(error: &ProtocolError) -> Error {
         ProtocolError::Cancelled { message } => simple_error(1, message.clone()),
         ProtocolError::InvalidArgument { message } => simple_error(2, message.clone()),
         ProtocolError::AlreadyExists { message } => simple_error(4, message.clone()),
+        ProtocolError::PermissionDenied { message } => simple_error(5, message.clone()),
         ProtocolError::Unreachable { message } => simple_error(12, message.clone()),
         ProtocolError::ServerError { message } => simple_error(13, message.clone()),
         ProtocolError::InvalidCredentials => simple_error(6, error.to_string()),
@@ -105,6 +106,9 @@ pub(crate) fn decode_protocol_error(error: Error) -> ProtocolError {
         },
         3 => ProtocolError::NoAgentFound,
         4 => ProtocolError::AlreadyExists {
+            message: error.message,
+        },
+        5 => ProtocolError::PermissionDenied {
             message: error.message,
         },
         6 => ProtocolError::InvalidCredentials,
@@ -224,5 +228,22 @@ where
             r#type: detail_type.to_string(),
             value: detail.encode_to_vec(),
         }],
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn permission_denied_uses_stable_wire_code() {
+        let error = ProtocolError::PermissionDenied {
+            message: "wrong scope".to_string(),
+        };
+
+        let encoded = encode_protocol_error(&error);
+        assert_eq!(encoded.code, 5);
+        assert!(encoded.details.is_empty());
+        assert_eq!(decode_protocol_error(encoded), error);
     }
 }

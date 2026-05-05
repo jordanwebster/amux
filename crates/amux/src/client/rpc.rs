@@ -235,8 +235,17 @@ impl RpcClient {
                 full_route,
                 open_session_payload(
                     method::AGENT_OPEN_SESSION_NAME,
-                    open_session::encode_open_session_request(agent_id, io_protocol, args),
+                    open_session::encode_open_session_request(),
                 )?,
+            )
+            .await?;
+        stream
+            .send_initial_stream_payload(
+                open_session_payload(
+                    method::AGENT_OPEN_SESSION_NAME,
+                    open_session::encode_open_session_open(agent_id, io_protocol, args),
+                )?,
+                method::AGENT_OPEN_SESSION_NAME,
             )
             .await?;
         let session = OpenSessionClient { stream };

@@ -106,6 +106,9 @@ pub enum ProtocolError {
     /// The requested resource already exists.
     #[error("{message}")]
     AlreadyExists { message: String },
+    /// The method exists, but the caller is not allowed to invoke it in this scope.
+    #[error("{message}")]
+    PermissionDenied { message: String },
     /// The routed call could not be delivered to its destination.
     #[error("{message}")]
     Unreachable { message: String },

@@ -34,6 +34,7 @@ pub(crate) enum AgentLifecycleResponse {
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub(crate) enum OpenSessionInputEvent {
     Input { input_id: Vec<u8>, payload: Vec<u8> },
+    Control { payload: Vec<u8> },
 }
 
 #[derive(Debug, Clone, PartialEq)]
@@ -41,8 +42,8 @@ pub(crate) enum OpenSessionOutputEvent {
     Opened,
     Output {
         payload: Vec<u8>,
-        cursor: Option<Vec<u8>>,
     },
+    /// Protocol-defined acknowledgement for a prior input event.
     InputResult {
         input_id: Vec<u8>,
         result: Result<(), ProtocolError>,
@@ -54,7 +55,9 @@ pub(crate) enum OpenSessionOutputEvent {
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub(crate) enum OpenSessionClientFrame {
+    Open(SessionOpenRequest),
     Input(OpenSessionInputEvent),
+    Control { payload: Vec<u8> },
     Cancel,
 }
 
@@ -371,13 +374,24 @@ pub(crate) fn encode_routed_error_response(
     Ok(error_response_body(error).encode_to_vec())
 }
 
-pub(crate) fn encode_open_session_request(
-    request: &SessionOpenRequest,
-) -> Result<Vec<u8>, wire::EncodeError> {
+pub(crate) fn encode_open_session_request() -> Result<Vec<u8>, wire::EncodeError> {
     Ok(FrameBody {
         kind: Some(frame_body::Kind::Request(Request {
             method: method::AGENT_OPEN_SESSION_NAME.to_string(),
-            payload: open_session_request_to_wire(request).encode_to_vec(),
+            payload: wire::Empty {}.encode_to_vec(),
+        })),
+    }
+    .encode_to_vec())
+}
+
+pub(crate) fn encode_open_session_open_event(
+    request: &SessionOpenRequest,
+) -> Result<Vec<u8>, wire::EncodeError> {
+    Ok(FrameBody {
+        kind: Some(frame_body::Kind::StreamItem(wire::StreamItem {
+            payload: open_session_client_frame_to_payload(&OpenSessionClientFrame::Open(
+                request.clone(),
+            ))?,
         })),
     }
     .encode_to_vec())
@@ -385,14 +399,14 @@ pub(crate) fn encode_open_session_request(
 
 pub(crate) fn decode_open_session_request(
     request: &DomainRequestFrame,
-) -> Result<SessionOpenRequest, wire::DecodeError> {
+) -> Result<(), wire::DecodeError> {
     decode_open_session_request_parts(&request.method, &request.payload)
 }
 
 fn decode_open_session_request_parts(
     method_name: &str,
     payload: &[u8],
-) -> Result<SessionOpenRequest, wire::DecodeError> {
+) -> Result<(), wire::DecodeError> {
     if method_name != method::AGENT_OPEN_SESSION_NAME {
         return Err(wire::DecodeError::Invalid(format!(
             "expected OpenSession request method {}, got {}",
@@ -400,13 +414,17 @@ fn decode_open_session_request_parts(
             method_name
         )));
     }
-    let request = wire::OpenSessionRequest::decode(payload)?;
-    open_session_request_from_wire(request)
+    if !payload.is_empty() {
+        return Err(wire::DecodeError::Invalid(
+            "OpenSession request payload must be Empty".to_string(),
+        ));
+    }
+    Ok(())
 }
 
 pub(crate) fn decode_open_session_request_if_present(
     payload: &[u8],
-) -> Result<Option<SessionOpenRequest>, OpenSessionDecodeError> {
+) -> Result<Option<()>, OpenSessionDecodeError> {
     let Ok(body) = FrameBody::decode(payload) else {
         return Ok(None);
     };
@@ -417,7 +435,7 @@ pub(crate) fn decode_open_session_request_if_present(
         return Ok(None);
     }
     decode_open_session_request_parts(&request.method, &request.payload)
-        .map(Some)
+        .map(|()| Some(()))
         .map_err(|source| OpenSessionDecodeError { source })
 }
 
@@ -426,7 +444,9 @@ pub(crate) fn encode_open_session_input_event(
 ) -> Result<Vec<u8>, wire::EncodeError> {
     Ok(FrameBody {
         kind: Some(frame_body::Kind::StreamItem(wire::StreamItem {
-            payload: session_input_event_to_wire(event)?.encode_to_vec(),
+            payload: open_session_client_frame_to_payload(&OpenSessionClientFrame::Input(
+                event.clone(),
+            ))?,
         })),
     }
     .encode_to_vec())
@@ -450,8 +470,18 @@ pub(crate) fn decode_open_session_input_event(
 pub(crate) fn decode_open_session_input_payload(
     payload: &[u8],
 ) -> Result<OpenSessionInputEvent, wire::DecodeError> {
-    let event = wire::SessionInputEvent::decode(payload)?;
-    session_input_event_from_wire(event)
+    match decode_open_session_client_frame_payload(payload)? {
+        OpenSessionClientFrame::Input(event) => Ok(event),
+        OpenSessionClientFrame::Control { .. } => Err(wire::DecodeError::Invalid(
+            "OpenSession stream item payload must be an input client event".to_string(),
+        )),
+        OpenSessionClientFrame::Open(_) => Err(wire::DecodeError::Invalid(
+            "OpenSession stream item payload must be an input client event".to_string(),
+        )),
+        OpenSessionClientFrame::Cancel => Err(wire::DecodeError::Invalid(
+            "OpenSession stream item payload cannot be cancel".to_string(),
+        )),
+    }
 }
 
 pub(crate) fn encode_open_session_cancel() -> Result<Vec<u8>, wire::EncodeError> {
@@ -469,18 +499,22 @@ pub(crate) fn decode_open_session_client_frame(
         .kind
         .ok_or_else(|| wire::DecodeError::Invalid("missing routed FrameBody kind".into()))?
     {
-        frame_body::Kind::StreamItem(item) => {
-            let event = wire::SessionInputEvent::decode(item.payload.as_slice())?;
-            Ok(OpenSessionClientFrame::Input(
-                session_input_event_from_wire(event)?,
+        frame_body::Kind::Request(request) => {
+            decode_open_session_request(&DomainRequestFrame {
+                method: request.method,
+                payload: request.payload,
+            })?;
+            Err(wire::DecodeError::Invalid(
+                "OpenSession request frame does not carry a client stream event".to_string(),
             ))
+        }
+        frame_body::Kind::StreamItem(item) => {
+            decode_open_session_client_frame_payload(&item.payload)
         }
         frame_body::Kind::Cancel(_) => Ok(OpenSessionClientFrame::Cancel),
-        frame_body::Kind::Request(_) | frame_body::Kind::Response(_) => {
-            Err(wire::DecodeError::Invalid(
-                "OpenSession client frame must be a stream item or cancel".to_string(),
-            ))
-        }
+        frame_body::Kind::Response(_) => Err(wire::DecodeError::Invalid(
+            "OpenSession client frame must be a request, stream item, or cancel".to_string(),
+        )),
     }
 }
 
@@ -491,12 +525,20 @@ pub(crate) fn decode_open_session_client_frame_if_present(
         return Ok(None);
     };
     match body.kind {
+        Some(frame_body::Kind::Request(request))
+            if request.method == method::AGENT_OPEN_SESSION_NAME =>
+        {
+            decode_open_session_request(&DomainRequestFrame {
+                method: request.method,
+                payload: request.payload,
+            })
+            .map(|()| None)
+            .map_err(|source| OpenSessionDecodeError { source })
+        }
         Some(frame_body::Kind::StreamItem(item)) => {
-            let event = wire::SessionInputEvent::decode(item.payload.as_slice())
-                .map_err(wire::DecodeError::from)
-                .and_then(session_input_event_from_wire)
-                .map_err(|source| OpenSessionDecodeError { source })?;
-            Ok(Some(OpenSessionClientFrame::Input(event)))
+            decode_open_session_client_frame_payload(&item.payload)
+                .map(Some)
+                .map_err(|source| OpenSessionDecodeError { source })
         }
         Some(frame_body::Kind::Cancel(_)) => Ok(Some(OpenSessionClientFrame::Cancel)),
         Some(frame_body::Kind::Request(_)) | Some(frame_body::Kind::Response(_)) | None => Ok(None),
@@ -530,14 +572,14 @@ pub(crate) fn decode_open_session_output_event(
             "OpenSession output must be a stream item".to_string(),
         ));
     };
-    let event = wire::SessionOutputEvent::decode(item.payload.as_slice())?;
+    let event = wire::OpenSessionResponse::decode(item.payload.as_slice())?;
     session_output_event_from_wire(event)
 }
 
 pub(crate) fn decode_open_session_output_event_payload(
     payload: &[u8],
 ) -> Result<OpenSessionOutputEvent, wire::DecodeError> {
-    let event = wire::SessionOutputEvent::decode(payload)?;
+    let event = wire::OpenSessionResponse::decode(payload)?;
     session_output_event_from_wire(event)
 }
 
@@ -733,41 +775,51 @@ fn create_agent_request_to_wire(
 
 fn session_input_event_to_wire(
     event: &OpenSessionInputEvent,
-) -> Result<wire::SessionInputEvent, wire::EncodeError> {
+) -> Result<wire::OpenSessionRequest, wire::EncodeError> {
     let event = match event {
         OpenSessionInputEvent::Input { input_id, payload } => {
-            wire::session_input_event::Event::Input(wire::SessionInput {
+            wire::open_session_request::Event::Input(wire::SessionInput {
                 input_id: input_id.clone(),
                 payload: payload.clone(),
             })
         }
+        OpenSessionInputEvent::Control { payload } => {
+            wire::open_session_request::Event::Control(wire::SessionControl {
+                payload: payload.clone(),
+            })
+        }
     };
-    Ok(wire::SessionInputEvent { event: Some(event) })
+    Ok(wire::OpenSessionRequest { event: Some(event) })
 }
 
 fn session_input_event_from_wire(
-    event: wire::SessionInputEvent,
+    event: wire::OpenSessionRequest,
 ) -> Result<OpenSessionInputEvent, wire::DecodeError> {
     let event = event
         .event
-        .ok_or_else(|| wire::DecodeError::Invalid("SessionInputEvent missing event".into()))?;
+        .ok_or_else(|| wire::DecodeError::Invalid("OpenSessionRequest missing event".into()))?;
     match event {
-        wire::session_input_event::Event::Input(input) => Ok(OpenSessionInputEvent::Input {
+        wire::open_session_request::Event::Input(input) => Ok(OpenSessionInputEvent::Input {
             input_id: input.input_id,
             payload: input.payload,
         }),
+        wire::open_session_request::Event::Control(control) => Ok(OpenSessionInputEvent::Control {
+            payload: control.payload,
+        }),
+        wire::open_session_request::Event::Open(_) => Err(wire::DecodeError::Invalid(
+            "OpenSessionRequest open event is not a session input event".to_string(),
+        )),
     }
 }
 
-fn session_output_event_to_wire(event: &OpenSessionOutputEvent) -> wire::SessionOutputEvent {
+fn session_output_event_to_wire(event: &OpenSessionOutputEvent) -> wire::OpenSessionResponse {
     let event = match event {
         OpenSessionOutputEvent::Opened => {
-            wire::session_output_event::Event::Opened(wire::SessionOpened {})
+            wire::open_session_response::Event::Opened(wire::SessionOpened {})
         }
-        OpenSessionOutputEvent::Output { payload, cursor } => {
-            wire::session_output_event::Event::Output(wire::SessionOutput {
+        OpenSessionOutputEvent::Output { payload } => {
+            wire::open_session_response::Event::Output(wire::SessionOutput {
                 payload: payload.clone(),
-                cursor: cursor.clone(),
             })
         }
         OpenSessionOutputEvent::InputResult { input_id, result } => {
@@ -777,33 +829,32 @@ fn session_output_event_to_wire(event: &OpenSessionOutputEvent) -> wire::Session
                     wire::session_input_result::Outcome::Error(wire::encode_protocol_error(error))
                 }
             };
-            wire::session_output_event::Event::InputResult(wire::SessionInputResult {
+            wire::open_session_response::Event::InputResult(wire::SessionInputResult {
                 input_id: input_id.clone(),
                 outcome: Some(outcome),
             })
         }
         OpenSessionOutputEvent::ReplayComplete { cursor } => {
-            wire::session_output_event::Event::ReplayComplete(wire::ReplayComplete {
+            wire::open_session_response::Event::ReplayComplete(wire::ReplayComplete {
                 cursor: cursor.clone(),
             })
         }
     };
-    wire::SessionOutputEvent { event: Some(event) }
+    wire::OpenSessionResponse { event: Some(event) }
 }
 
 fn session_output_event_from_wire(
-    event: wire::SessionOutputEvent,
+    event: wire::OpenSessionResponse,
 ) -> Result<OpenSessionOutputEvent, wire::DecodeError> {
     let event = event
         .event
-        .ok_or_else(|| wire::DecodeError::Invalid("SessionOutputEvent missing event".into()))?;
+        .ok_or_else(|| wire::DecodeError::Invalid("OpenSessionResponse missing event".into()))?;
     match event {
-        wire::session_output_event::Event::Opened(_) => Ok(OpenSessionOutputEvent::Opened),
-        wire::session_output_event::Event::Output(output) => Ok(OpenSessionOutputEvent::Output {
+        wire::open_session_response::Event::Opened(_) => Ok(OpenSessionOutputEvent::Opened),
+        wire::open_session_response::Event::Output(output) => Ok(OpenSessionOutputEvent::Output {
             payload: output.payload,
-            cursor: output.cursor,
         }),
-        wire::session_output_event::Event::InputResult(input_result) => {
+        wire::open_session_response::Event::InputResult(input_result) => {
             let outcome = input_result.outcome.ok_or_else(|| {
                 wire::DecodeError::Invalid("SessionInputResult missing outcome".into())
             })?;
@@ -818,7 +869,7 @@ fn session_output_event_from_wire(
                 result,
             })
         }
-        wire::session_output_event::Event::ReplayComplete(replay_complete) => {
+        wire::open_session_response::Event::ReplayComplete(replay_complete) => {
             Ok(OpenSessionOutputEvent::ReplayComplete {
                 cursor: replay_complete.cursor,
             })
@@ -826,8 +877,8 @@ fn session_output_event_from_wire(
     }
 }
 
-fn open_session_request_to_wire(request: &SessionOpenRequest) -> wire::OpenSessionRequest {
-    wire::OpenSessionRequest {
+fn open_session_request_to_wire(request: &SessionOpenRequest) -> wire::SessionOpen {
+    wire::SessionOpen {
         agent_id: uuid_to_bytes(request.agent_id),
         io_protocol: request.io_protocol.clone(),
         args: request.args.clone(),
@@ -835,13 +886,63 @@ fn open_session_request_to_wire(request: &SessionOpenRequest) -> wire::OpenSessi
 }
 
 fn open_session_request_from_wire(
-    request: wire::OpenSessionRequest,
+    request: wire::SessionOpen,
 ) -> Result<SessionOpenRequest, wire::DecodeError> {
     Ok(SessionOpenRequest {
         agent_id: required_uuid_from_bytes("agent_id", request.agent_id)?,
         io_protocol: request.io_protocol,
         args: request.args,
     })
+}
+
+fn open_session_client_frame_to_payload(
+    frame: &OpenSessionClientFrame,
+) -> Result<Vec<u8>, wire::EncodeError> {
+    let event = match frame {
+        OpenSessionClientFrame::Open(request) => {
+            wire::open_session_request::Event::Open(open_session_request_to_wire(request))
+        }
+        OpenSessionClientFrame::Input(event) => {
+            session_input_event_to_wire(event)?.event.ok_or_else(|| {
+                wire::EncodeError::Invalid("OpenSessionRequest missing event".to_string())
+            })?
+        }
+        OpenSessionClientFrame::Control { payload } => {
+            wire::open_session_request::Event::Control(wire::SessionControl {
+                payload: payload.clone(),
+            })
+        }
+        OpenSessionClientFrame::Cancel => {
+            return Err(wire::EncodeError::Invalid(
+                "OpenSession cancel is encoded as a routed Cancel frame".to_string(),
+            ));
+        }
+    };
+    Ok(wire::OpenSessionRequest { event: Some(event) }.encode_to_vec())
+}
+
+pub(crate) fn decode_open_session_client_frame_payload(
+    payload: &[u8],
+) -> Result<OpenSessionClientFrame, wire::DecodeError> {
+    let event = wire::OpenSessionRequest::decode(payload)?
+        .event
+        .ok_or_else(|| wire::DecodeError::Invalid("OpenSessionRequest missing event".into()))?;
+    match event {
+        wire::open_session_request::Event::Open(request) => Ok(OpenSessionClientFrame::Open(
+            open_session_request_from_wire(request)?,
+        )),
+        wire::open_session_request::Event::Input(input) => Ok(OpenSessionClientFrame::Input(
+            OpenSessionInputEvent::Input {
+                input_id: input.input_id,
+                payload: input.payload,
+            },
+        )),
+        wire::open_session_request::Event::Control(control) => {
+            Ok(OpenSessionClientFrame::Control {
+                payload: control.payload,
+            })
+        }
+    }
 }
 
 fn create_agent_request_from_wire(
@@ -1231,16 +1332,37 @@ mod tests {
 
     #[test]
     fn open_session_request_is_recognized_strictly() {
-        let request = SessionOpenRequest {
+        let encoded = encode_open_session_request().unwrap();
+        let FrameBody {
+            kind: Some(frame_body::Kind::Request(wire_request)),
+        } = FrameBody::decode(encoded.as_slice()).unwrap()
+        else {
+            panic!("expected OpenSession request frame");
+        };
+        assert_eq!(wire_request.method, method::AGENT_OPEN_SESSION_NAME);
+        assert!(wire_request.payload.is_empty());
+        assert_eq!(
+            decode_open_session_request_if_present(&encoded).unwrap(),
+            Some(())
+        );
+
+        let open = SessionOpenRequest {
             agent_id: Uuid::new_v4(),
             io_protocol: "claude_raw_v1".to_string(),
             args: Some(vec![1, 2, 3]),
         };
-        let encoded = encode_open_session_request(&request).unwrap();
-        assert_eq!(
-            decode_open_session_request_if_present(&encoded).unwrap(),
-            Some(request)
-        );
+        let encoded_open = encode_open_session_open_event(&open).unwrap();
+        let FrameBody {
+            kind: Some(frame_body::Kind::StreamItem(item)),
+        } = FrameBody::decode(encoded_open.as_slice()).unwrap()
+        else {
+            panic!("expected OpenSession open stream item");
+        };
+        let client_event = wire::OpenSessionRequest::decode(item.payload.as_slice()).unwrap();
+        let Some(wire::open_session_request::Event::Open(decoded_open)) = client_event.event else {
+            panic!("expected open event");
+        };
+        assert_eq!(open_session_request_from_wire(decoded_open).unwrap(), open);
 
         let body = FrameBody {
             kind: Some(frame_body::Kind::Request(Request {
@@ -1261,7 +1383,7 @@ mod tests {
         };
         let err = decode_open_session_request_if_present(&body.encode_to_vec()).unwrap_err();
         assert!(
-            err.source().to_string().contains("failed to decode"),
+            err.source().to_string().contains("must be Empty"),
             "unexpected error: {}",
             err.source()
         );
@@ -1269,15 +1391,36 @@ mod tests {
 
     #[test]
     fn open_session_input_events_roundtrip() {
-        let events = [OpenSessionInputEvent::Input {
-            input_id: Uuid::new_v4().as_bytes().to_vec(),
-            payload: b"hello".to_vec(),
-        }];
+        let events = [
+            OpenSessionInputEvent::Input {
+                input_id: Uuid::new_v4().as_bytes().to_vec(),
+                payload: b"hello".to_vec(),
+            },
+            OpenSessionInputEvent::Control {
+                payload: b"resize".to_vec(),
+            },
+        ];
 
         for event in events {
             let encoded = encode_open_session_input_event(&event).unwrap();
-            let decoded = decode_open_session_input_event(&encoded).unwrap();
-            assert_eq!(decoded, event);
+            let FrameBody {
+                kind: Some(frame_body::Kind::StreamItem(item)),
+            } = FrameBody::decode(encoded.as_slice()).unwrap()
+            else {
+                panic!("expected OpenSession input stream item");
+            };
+            let client_event = wire::OpenSessionRequest::decode(item.payload.as_slice()).unwrap();
+            assert!(matches!(
+                client_event.event,
+                Some(
+                    wire::open_session_request::Event::Input(_)
+                        | wire::open_session_request::Event::Control(_)
+                )
+            ));
+            if matches!(event, OpenSessionInputEvent::Input { .. }) {
+                let decoded = decode_open_session_input_event(&encoded).unwrap();
+                assert_eq!(decoded, event);
+            }
         }
     }
 
@@ -1287,7 +1430,6 @@ mod tests {
             OpenSessionOutputEvent::Opened,
             OpenSessionOutputEvent::Output {
                 payload: b"hello".to_vec(),
-                cursor: Some(b"cursor-1".to_vec()),
             },
             OpenSessionOutputEvent::InputResult {
                 input_id: Uuid::new_v4().as_bytes().to_vec(),

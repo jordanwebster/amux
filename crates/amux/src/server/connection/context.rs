@@ -5,7 +5,7 @@ use thiserror::Error;
 use tokio::sync::{RwLock, mpsc};
 use uuid::Uuid;
 
-use super::super::{ServerState, ServerUserState};
+use super::super::{RpcDispatcher, ServerState, ServerUserState};
 use crate::agent::SessionEvent;
 use crate::protocol::link::Link;
 use crate::protocol::message::Message;
@@ -44,6 +44,7 @@ pub(crate) enum ConnectionError {
 pub(crate) struct ConnectionContext {
     pub(crate) state: Arc<RwLock<ServerState>>,
     pub(crate) user_state: Arc<RwLock<ServerUserState>>,
+    pub(crate) rpc: RpcDispatcher,
     pub(crate) user_id: Uuid,
     pub(crate) event_tx: mpsc::Sender<SessionEvent>,
     pub(crate) link: Link,
@@ -55,6 +56,12 @@ pub(crate) struct ConnectionContext {
     pub(crate) client_name: Option<String>,
     /// Semantic version of the connecting client (from Connect handshake).
     pub(crate) client_version: Option<String>,
+}
+
+impl ConnectionContext {
+    pub(in crate::server) fn rpc(&self) -> RpcDispatcher {
+        self.rpc.clone()
+    }
 }
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]

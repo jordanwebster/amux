@@ -49,6 +49,7 @@ pub(super) async fn handle_withdraw(
     received_route: Route,
     ctx: &ConnectionContext,
 ) -> crate::server::connection::Result<()> {
+    let rpc = ctx.rpc();
     let (cleanup_jobs, local_origin_messages, withdraw_message) = {
         let mut us = ctx.user_state.write().await;
 
@@ -71,7 +72,8 @@ pub(super) async fn handle_withdraw(
                 unreachable!("host-down topology change returned non-host-route effect");
             };
             let local_origin_messages = drain_local_origin_routed_unreachable_for_route(
-                &mut us,
+                &rpc,
+                &us,
                 route_prefix,
                 "route withdrawn",
             );

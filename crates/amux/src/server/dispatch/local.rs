@@ -5,6 +5,7 @@ use crate::protocol::message::{
     DebugFormat, FrameBody, HookProvider, LocalFrame, Message, ProtocolError, RequestFrame,
     ResponseFrame, RoutedCallId, ShutdownReason,
 };
+use crate::protocol::method::{MethodLookupError, MethodScope};
 use crate::protocol::{method, wire};
 use crate::server::ShutdownRequest;
 use crate::server::accept::tcp_connect;
@@ -33,6 +34,30 @@ async fn handle_local_request_inner(
     request: RequestFrame,
     ctx: &ConnectionContext,
 ) -> LocalResult<()> {
+    match method::find_for_scope(&request.method, MethodScope::Local) {
+        Ok(_) => {}
+        Err(MethodLookupError::WrongScope {
+            spec,
+            requested_scope,
+        }) => {
+            return Err(ProtocolError::PermissionDenied {
+                message: format!(
+                    "method {} is {} scoped and not valid in {} scope",
+                    request.method,
+                    spec.scope.as_str(),
+                    requested_scope.as_str()
+                ),
+            }
+            .into());
+        }
+        Err(MethodLookupError::Unknown) => {
+            return Err(ProtocolError::Unimplemented {
+                message: format!("unknown local method {}", request.method),
+            }
+            .into());
+        }
+    }
+
     match request.method.as_str() {
         method::ADMIN_SHUTDOWN_NAME => {
             decode_payload::<wire::ShutdownRequest>(&request)?;
@@ -435,7 +460,8 @@ mod tests {
         let (event_tx, _event_rx) = mpsc::channel(16);
         ConnectionContext {
             state,
-            user_state,
+            rpc: user_state.read().await.rpc.clone(),
+            user_state: user_state.clone(),
             user_id: LOCAL_USER_ID,
             event_tx,
             link: Link::new("test-link").unwrap(),
@@ -491,6 +517,46 @@ mod tests {
             panic!("expected suspend shutdown request");
         };
         reason
+    }
+
+    #[tokio::test]
+    async fn known_wrong_scope_local_method_returns_permission_denied() {
+        let (tx, rx) = mpsc::channel(1);
+        let call_id = RoutedCallId::from(Uuid::new_v4());
+        let request = RequestFrame {
+            method: method::AGENT_CREATE_NAME.to_string(),
+            payload: Vec::new(),
+        };
+
+        handle_local_request(&tx, call_id.clone(), request, &test_ctx().await)
+            .await
+            .unwrap();
+
+        assert!(matches!(
+            expect_local_error(rx, &call_id).await,
+            ProtocolError::PermissionDenied { message }
+                if message.contains("not valid in local scope")
+        ));
+    }
+
+    #[tokio::test]
+    async fn unknown_local_method_returns_unimplemented() {
+        let (tx, rx) = mpsc::channel(1);
+        let call_id = RoutedCallId::from(Uuid::new_v4());
+        let request = RequestFrame {
+            method: "/amux.v1.Missing/Nope".to_string(),
+            payload: Vec::new(),
+        };
+
+        handle_local_request(&tx, call_id.clone(), request, &test_ctx().await)
+            .await
+            .unwrap();
+
+        assert!(matches!(
+            expect_local_error(rx, &call_id).await,
+            ProtocolError::Unimplemented { message }
+                if message.contains("unknown local method")
+        ));
     }
 
     #[tokio::test]

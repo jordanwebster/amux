@@ -12,6 +12,7 @@ mod protocol_harness;
 mod protocol_tests;
 mod registry;
 mod routing;
+mod rpc_dispatcher;
 mod runtime;
 mod state;
 
@@ -32,6 +33,8 @@ pub(crate) use routing::{
     CreateAgentError, RenameAgentError, broadcast_topology_event, create_agent_record,
     delete_local_agent, initial_routing_events, rename_local_agent_record, withdraw_agent,
 };
+pub(crate) use rpc_dispatcher::RpcDispatcher;
+pub(in crate::server) use rpc_dispatcher::RpcInboundCloseTarget;
 pub(crate) use runtime::Server;
 pub use runtime::ServerError;
 #[cfg(test)]

@@ -21,11 +21,11 @@ use crate::protocol::message::{FrameBody, ProtocolError};
 use crate::protocol::method;
 use crate::protocol::wire::{
     OpenSessionClientFrame, OpenSessionInputEvent, OpenSessionOutputEvent, SessionOpenRequest,
-    decode_open_session_input_payload, encode_open_session_output_event_payload,
+    decode_open_session_client_frame_payload, encode_open_session_output_event_payload,
 };
 use crate::rpc::{
-    RpcInboundBidi, RpcRoutedSendError, RpcStreamCodec, RpcStreamEncoder, RpcTypedRoutedSink,
-    RpcTypedStreamReader,
+    RegisterCallError, RpcInboundBidi, RpcRoutedSendError, RpcStreamCodec, RpcStreamEncoder,
+    RpcTypedRoutedSink, RpcTypedStreamReader,
 };
 use crate::server::{
     OpenSessionRuntime, OpenSessionStructuredInput, OpenSessionStructuredInputJob,
@@ -34,11 +34,10 @@ use crate::server::{
 
 impl AgentService {
     pub(crate) async fn open_session(
-        open: SessionOpenRequest,
         call: OpenSessionCall,
         ctx: &AgentServiceCtx,
     ) -> std::result::Result<(), crate::server::ConnectionError> {
-        run_open_session(open, call, ctx).await
+        run_open_session(call, ctx).await
     }
 }
 
@@ -68,17 +67,31 @@ impl OpenSessionCall {
 }
 
 async fn run_open_session(
-    open: SessionOpenRequest,
     call: OpenSessionCall,
     ctx: &AgentServiceCtx,
 ) -> std::result::Result<(), crate::server::ConnectionError> {
     let OpenSessionCall {
         runtime,
-        input: stream_reader,
+        input: mut stream_reader,
         output,
     } = call;
     if !runtime.is_active(ctx.user_state()).await {
         return Ok(());
+    }
+
+    let Some(open) = recv_initial_session_open(&mut stream_reader, &runtime, ctx).await? else {
+        return Ok(());
+    };
+    match runtime
+        .reserve_dedup_for_agent(ctx.user_state(), open.agent_id)
+        .await
+    {
+        Ok(true) => {}
+        Ok(false) => return Ok(()),
+        Err(error) => {
+            return terminate_open_session_call(runtime, open_session_dedup_error(error), ctx)
+                .await;
+        }
     }
 
     let (input_gate_tx, input_gate_rx) = watch::channel(OpenSessionInputGate::Preparing);
@@ -148,6 +161,42 @@ async fn run_open_session(
     Ok(())
 }
 
+async fn recv_initial_session_open(
+    stream_reader: &mut OpenSessionInputStream,
+    runtime: &OpenSessionRuntime,
+    ctx: &AgentServiceCtx,
+) -> std::result::Result<Option<SessionOpenRequest>, crate::server::ConnectionError> {
+    tokio::select! {
+        biased;
+        () = runtime.cancelled() => Ok(None),
+        frame = stream_reader.recv() => {
+            match frame {
+                Some(Ok(OpenSessionClientFrame::Open(open))) => Ok(Some(open)),
+                Some(Ok(OpenSessionClientFrame::Input(_)))
+                | Some(Ok(OpenSessionClientFrame::Control { .. })) => {
+                    terminate_open_session_call(
+                        runtime.clone(),
+                        ProtocolError::InvalidArgument {
+                            message: "first OpenSession stream item must be SessionOpen".to_string(),
+                        },
+                        ctx,
+                    ).await?;
+                    Ok(None)
+                }
+                Some(Ok(OpenSessionClientFrame::Cancel)) => {
+                    handle_open_session_cancel(runtime.clone(), ctx).await?;
+                    Ok(None)
+                }
+                Some(Err(error)) => {
+                    terminate_open_session_call(runtime.clone(), error, ctx).await?;
+                    Ok(None)
+                }
+                None => Ok(None),
+            }
+        }
+    }
+}
+
 #[derive(Clone)]
 enum OpenSessionInputHandler {
     Raw {
@@ -198,6 +247,16 @@ fn spawn_open_session_input_dispatcher(
                                 return;
                             };
                             match frame {
+                                OpenSessionClientFrame::Open(_) => {
+                                    if let Err(error) = terminate_open_session_call(
+                                        runtime.clone(),
+                                        duplicate_open_session_open_error(),
+                                        &ctx,
+                                    ).await {
+                                        tracing::warn!(error = %error, "OpenSession input dispatcher failed");
+                                    }
+                                    return;
+                                }
                                 OpenSessionClientFrame::Input(event) => {
                                     if pending_inputs.len() >= PRE_ACTIVATION_INPUT_CAPACITY {
                                         if let Err(error) = terminate_open_session_call(
@@ -212,6 +271,23 @@ fn spawn_open_session_input_dispatcher(
                                         return;
                                     }
                                     pending_inputs.push_back(event);
+                                }
+                                OpenSessionClientFrame::Control { payload } => {
+                                    if pending_inputs.len() >= PRE_ACTIVATION_INPUT_CAPACITY {
+                                        if let Err(error) = terminate_open_session_call(
+                                            runtime.clone(),
+                                            ProtocolError::ResourceExhausted {
+                                                message: "OpenSession input queue is full before activation".to_string(),
+                                            },
+                                            &ctx,
+                                        ).await {
+                                            tracing::warn!(error = %error, "OpenSession input dispatcher failed");
+                                        }
+                                        return;
+                                    }
+                                    pending_inputs.push_back(OpenSessionInputEvent::Control {
+                                        payload,
+                                    });
                                 }
                                 OpenSessionClientFrame::Cancel => {
                                     if let Err(error) = handle_open_session_cancel(runtime.clone(), &ctx).await {
@@ -295,14 +371,10 @@ impl RpcStreamCodec for OpenSessionInputCodec {
 
     fn decode_frame(frame: FrameBody) -> Result<Self::Item, ProtocolError> {
         match frame {
-            FrameBody::StreamItem(payload) => {
-                let event = decode_open_session_input_payload(&payload).map_err(|error| {
-                    ProtocolError::InvalidArgument {
-                        message: error.to_string(),
-                    }
-                })?;
-                Ok(OpenSessionClientFrame::Input(event))
-            }
+            FrameBody::StreamItem(payload) => decode_open_session_client_frame_payload(&payload)
+                .map_err(|error| ProtocolError::InvalidArgument {
+                    message: error.to_string(),
+                }),
             FrameBody::Cancel => Ok(OpenSessionClientFrame::Cancel),
             FrameBody::Request(_) | FrameBody::Response(_) => Err(ProtocolError::InvalidArgument {
                 message: "OpenSession stream accepts only stream items or cancel frames"
@@ -329,10 +401,61 @@ async fn handle_open_session_client_frame(
     ctx: &AgentServiceCtx,
 ) -> std::result::Result<(), crate::server::ConnectionError> {
     match frame {
+        OpenSessionClientFrame::Open(_) => {
+            terminate_open_session_call(runtime, duplicate_open_session_open_error(), ctx).await
+        }
         OpenSessionClientFrame::Input(event) => {
             handle_open_session_input_event(runtime, input_handler, event, ctx).await
         }
+        OpenSessionClientFrame::Control { payload } => {
+            handle_open_session_input_event(
+                runtime,
+                input_handler,
+                OpenSessionInputEvent::Control { payload },
+                ctx,
+            )
+            .await
+        }
         OpenSessionClientFrame::Cancel => handle_open_session_cancel(runtime, ctx).await,
+    }
+}
+
+fn duplicate_open_session_open_error() -> ProtocolError {
+    ProtocolError::InvalidArgument {
+        message: "SessionOpen is only valid as the first OpenSession stream item".to_string(),
+    }
+}
+
+fn open_session_dedup_error(error: RegisterCallError) -> ProtocolError {
+    match error {
+        RegisterCallError::DuplicateDedupKey {
+            key:
+                crate::rpc::DedupKey::OpenSession {
+                    counterparty_route,
+                    agent_id,
+                },
+            call_id,
+            ..
+        } => ProtocolError::AlreadyExists {
+            message: format!(
+                "duplicate OpenSession for agent {agent_id} from {counterparty_route}; existing call id {:?}",
+                call_id.as_bytes()
+            ),
+        },
+        RegisterCallError::DuplicateCallId {
+            counterparty_route,
+            call_id,
+        }
+        | RegisterCallError::DuplicateDedupKey {
+            counterparty_route,
+            call_id,
+            ..
+        } => ProtocolError::AlreadyExists {
+            message: format!(
+                "duplicate active OpenSession call {:?} from {counterparty_route}",
+                call_id.as_bytes()
+            ),
+        },
     }
 }
 
@@ -679,6 +802,42 @@ async fn handle_raw_open_session_input_event(
                 }
             }
         }
+        OpenSessionInputEvent::Control { payload } => {
+            handle_raw_open_session_control_event(target, pty, runtime, payload, ctx).await
+        }
+    }
+}
+
+async fn handle_raw_open_session_control_event(
+    target: OpenSessionInputTarget,
+    pty: &PtyHandle,
+    runtime: &OpenSessionRuntime,
+    payload: Vec<u8>,
+    ctx: &AgentServiceCtx,
+) -> std::result::Result<(), crate::server::ConnectionError> {
+    let control = claude_io::decode_raw_v1_control(&payload);
+    let size = match control {
+        Ok(claude_io::ClaudeRawV1Control::Resize(size)) => size,
+        Err(error) => {
+            return target.terminate_current(error, ctx).await;
+        }
+    };
+    tokio::select! {
+        biased;
+        () = runtime.cancelled() => Ok(()),
+        result = pty.resize(size) => {
+            if let Err(error) = result {
+                return target
+                    .terminate_current(
+                        ProtocolError::ServerError {
+                            message: error.to_string(),
+                        },
+                        ctx,
+                    )
+                    .await;
+            }
+            Ok(())
+        }
     }
 }
 
@@ -722,6 +881,19 @@ async fn handle_structured_open_session_input_event(
                         .await
                 }
             }
+        }
+        OpenSessionInputEvent::Control { .. } => {
+            target
+                .terminate_current(
+                    ProtocolError::InvalidArgument {
+                        message: format!(
+                            "`{}` does not accept OpenSession control events",
+                            claude_io::PTY_TRANSCRIPT_V1
+                        ),
+                    },
+                    ctx,
+                )
+                .await
         }
     }
 }
@@ -888,10 +1060,7 @@ async fn read_open_session_output_event(
         OpenSessionOutputReader::Raw(reader) => {
             reader.read_event().await.map(|event| match event {
                 BroadcastRead::ReplayItem(payload) | BroadcastRead::LiveItem(payload) => {
-                    Ok(OpenSessionOutputEvent::Output {
-                        payload,
-                        cursor: None,
-                    })
+                    Ok(OpenSessionOutputEvent::Output { payload })
                 }
                 BroadcastRead::ReplayComplete => {
                     Ok(OpenSessionOutputEvent::ReplayComplete { cursor: None })
@@ -923,10 +1092,7 @@ fn structured_output_event(
         seq_id: output.seq,
         payload: payload_json,
     });
-    Ok(OpenSessionOutputEvent::Output {
-        payload,
-        cursor: Some(encode_transcript_cursor(output.seq)),
-    })
+    Ok(OpenSessionOutputEvent::Output { payload })
 }
 
 async fn send_open_session_output_event_if_current(
@@ -1016,7 +1182,7 @@ mod tests {
         let stale_generation = Uuid::new_v4();
 
         {
-            let mut us = user_state.write().await;
+            let us = user_state.read().await;
             us.rpc
                 .register_routed_bidi(RpcRoutedBidiStart {
                     tx: output_tx,
@@ -1075,7 +1241,7 @@ mod tests {
         let counterparty_route = route("client");
         let routed_call_id = call_id(42);
         let call = {
-            let mut us = user_state.write().await;
+            let us = user_state.read().await;
             us.rpc
                 .register_routed_bidi(RpcRoutedBidiStart {
                     tx: output_tx,

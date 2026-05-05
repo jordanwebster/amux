@@ -2,7 +2,7 @@ use uuid::Uuid;
 
 use crate::protocol::link::Link;
 use crate::protocol::message::{FrameBody, Message, PeerFrame, RoutedCallId, RoutingEvent};
-use crate::protocol::wire;
+use crate::protocol::{Route, method, wire};
 use crate::server::ServerUserState;
 use crate::server::routing::TopologyEvent;
 
@@ -28,7 +28,10 @@ pub(in crate::server) fn broadcast_to_peers(
         if exclude_link == Some(&link) {
             continue;
         }
-        let Some(call_id) = us.inbound_peer_routing_subscription_call_id(&link) else {
+        let Some(call_id) = us.rpc.active_inbound_call_id_for_route_and_method(
+            &Route::from_link(link.clone()),
+            method::ROUTING_SUBSCRIBE_EVENTS,
+        ) else {
             tracing::warn!(peer = %link, "peer has no routing stream call id");
             failed += 1;
             continue;

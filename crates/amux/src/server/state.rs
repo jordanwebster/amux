@@ -9,8 +9,7 @@ use crate::auth::jwt::JwtValidator;
 use crate::config::Config;
 use crate::protocol::link::Link;
 use crate::protocol::message::{Message, RoutedCallId};
-use crate::protocol::route::Route;
-use crate::rpc::RpcState;
+use crate::server::RpcDispatcher;
 use crate::server::routing::Topology;
 
 pub(in crate::server) const LOCAL_USER_ID: Uuid = Uuid::nil();
@@ -86,7 +85,7 @@ impl ConnectionHandle {
 }
 
 pub(crate) struct ServerUserState {
-    pub(crate) rpc: RpcState,
+    pub(crate) rpc: RpcDispatcher,
     pub(in crate::server) topology: Topology,
     pub(crate) agents: HashMap<Uuid, AgentSession>,
 }
@@ -94,57 +93,10 @@ pub(crate) struct ServerUserState {
 impl ServerUserState {
     pub(in crate::server) fn new() -> Self {
         Self {
-            rpc: RpcState::new(),
+            rpc: RpcDispatcher::new(),
             topology: Topology::new(),
             agents: HashMap::new(),
         }
-    }
-
-    pub(crate) fn finish_outbound_peer_routing_subscription(
-        &mut self,
-        link: &Link,
-        call_id: &RoutedCallId,
-    ) -> bool {
-        let route = Route::from_link(link.clone());
-        self.rpc
-            .remove_outbound_for_route_if(&route, call_id, |call| {
-                call.method == crate::protocol::method::ROUTING_SUBSCRIBE_EVENTS
-            })
-            .is_some()
-    }
-
-    pub(crate) fn finish_inbound_peer_routing_subscription(
-        &mut self,
-        link: &Link,
-        call_id: &RoutedCallId,
-    ) -> bool {
-        self.rpc
-            .remove_inbound_for_route_if(&Route::from_link(link.clone()), call_id, |call| {
-                call.method == crate::protocol::method::ROUTING_SUBSCRIBE_EVENTS
-            })
-            .is_some()
-    }
-
-    pub(crate) fn inbound_peer_routing_subscription_call_id(
-        &self,
-        link: &Link,
-    ) -> Option<RoutedCallId> {
-        self.rpc.active_inbound_call_id_for_route_and_method(
-            &Route::from_link(link.clone()),
-            crate::protocol::method::ROUTING_SUBSCRIBE_EVENTS,
-        )
-    }
-
-    pub(in crate::server) fn remove_peer_routing_calls_for_link(&mut self, link: &Link) {
-        let route = Route::from_link(link.clone());
-        self.rpc.remove_inbound_calls_if(|call| {
-            call.counterparty_route == route
-                && call.method == crate::protocol::method::ROUTING_SUBSCRIBE_EVENTS
-        });
-        self.rpc.remove_outbound_calls_if(|call| {
-            call.counterparty_route == route
-                && call.method == crate::protocol::method::ROUTING_SUBSCRIBE_EVENTS
-        });
     }
 
     pub(crate) fn is_peer_link(&self, link: &Link) -> bool {
@@ -269,7 +221,7 @@ pub(in crate::server) async fn ensure_user_state(
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::protocol::method;
+    use crate::protocol::{Route, method};
     use crate::rpc::{OutboundCallState, RpcLocalOriginOutboundStart, RpcRoutedUnaryStart};
 
     #[test]
@@ -304,7 +256,11 @@ mod tests {
             })
             .unwrap();
 
-        assert!(!user_state.finish_inbound_peer_routing_subscription(&link, &call_id));
+        assert!(
+            !user_state
+                .rpc
+                .finish_inbound_peer_routing_subscription(&link, &call_id)
+        );
 
         assert!(matches!(
             user_state
@@ -335,7 +291,11 @@ mod tests {
             })
             .unwrap();
 
-        assert!(!user_state.finish_outbound_peer_routing_subscription(&link, &call_id));
+        assert!(
+            !user_state
+                .rpc
+                .finish_outbound_peer_routing_subscription(&link, &call_id)
+        );
 
         assert!(matches!(
             user_state

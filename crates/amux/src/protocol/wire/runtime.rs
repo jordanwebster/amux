@@ -35,7 +35,7 @@ pub(crate) fn encode_routing_event(event: &RoutingEvent) -> Result<Vec<u8>, wire
 }
 
 pub(crate) fn decode_routing_event(payload: &[u8]) -> Result<RoutingEvent, wire::DecodeError> {
-    let event = wire::RoutingEvent::decode(payload)?;
+    let event = wire::SubscribeRoutingEventsResponse::decode(payload)?;
     routing_event_from_wire(event)
 }
 
@@ -260,10 +260,14 @@ fn route_from_wire(route: wire::Route) -> Result<Route, wire::DecodeError> {
         .map_err(|e| wire::DecodeError::Invalid(format!("invalid route: {e}")))
 }
 
-fn routing_event_to_wire(event: &RoutingEvent) -> Result<wire::RoutingEvent, wire::EncodeError> {
+fn routing_event_to_wire(
+    event: &RoutingEvent,
+) -> Result<wire::SubscribeRoutingEventsResponse, wire::EncodeError> {
     let event = match event {
         RoutingEvent::SnapshotComplete => {
-            wire::routing_event::Event::SnapshotComplete(wire::SnapshotComplete {})
+            wire::subscribe_routing_events_response::Event::SnapshotComplete(
+                wire::SnapshotComplete {},
+            )
         }
         RoutingEvent::AgentUp {
             agent_id,
@@ -276,7 +280,7 @@ fn routing_event_to_wire(event: &RoutingEvent) -> Result<wire::RoutingEvent, wir
             readonly,
             args,
             created_at,
-        } => wire::routing_event::Event::AgentUp(wire::AgentUp {
+        } => wire::subscribe_routing_events_response::Event::AgentUp(wire::AgentUp {
             agent: Some(wire::Agent {
                 agent_id: uuid_to_bytes(*agent_id),
                 host_id: uuid_to_bytes(*host_id),
@@ -291,7 +295,7 @@ fn routing_event_to_wire(event: &RoutingEvent) -> Result<wire::RoutingEvent, wir
             }),
         }),
         RoutingEvent::AgentDown { agent_id } => {
-            wire::routing_event::Event::AgentDown(wire::AgentDown {
+            wire::subscribe_routing_events_response::Event::AgentDown(wire::AgentDown {
                 agent_id: uuid_to_bytes(*agent_id),
                 reason: None,
             })
@@ -301,7 +305,7 @@ fn routing_event_to_wire(event: &RoutingEvent) -> Result<wire::RoutingEvent, wir
             name,
             route,
             version,
-        } => wire::routing_event::Event::HostUp(wire::HostUp {
+        } => wire::subscribe_routing_events_response::Event::HostUp(wire::HostUp {
             host: Some(wire::Host {
                 host_id: uuid_to_bytes(*id),
                 name: name.clone(),
@@ -310,7 +314,7 @@ fn routing_event_to_wire(event: &RoutingEvent) -> Result<wire::RoutingEvent, wir
             }),
         }),
         RoutingEvent::HostDown { id, route } => {
-            wire::routing_event::Event::HostDown(wire::HostDown {
+            wire::subscribe_routing_events_response::Event::HostDown(wire::HostDown {
                 host_id: uuid_to_bytes(*id),
                 route: Some(route_to_wire(route)),
                 reason: None,
@@ -322,46 +326,54 @@ fn routing_event_to_wire(event: &RoutingEvent) -> Result<wire::RoutingEvent, wir
             ));
         }
     };
-    Ok(wire::RoutingEvent { event: Some(event) })
+    Ok(wire::SubscribeRoutingEventsResponse { event: Some(event) })
 }
 
-fn routing_event_from_wire(event: wire::RoutingEvent) -> Result<RoutingEvent, wire::DecodeError> {
+fn routing_event_from_wire(
+    event: wire::SubscribeRoutingEventsResponse,
+) -> Result<RoutingEvent, wire::DecodeError> {
     let event = event
         .event
         .ok_or_else(|| wire::DecodeError::Invalid("missing RoutingEvent event".into()))?;
     match event {
-        wire::routing_event::Event::HostUp(event) => {
+        wire::subscribe_routing_events_response::Event::HostUp(event) => {
             let host = event
                 .host
                 .ok_or_else(|| wire::DecodeError::Invalid("missing HostUp host".into()))?;
             host_event_from_wire(host)
         }
-        wire::routing_event::Event::HostUpdated(event) => {
+        wire::subscribe_routing_events_response::Event::HostUpdated(event) => {
             let host = event
                 .host
                 .ok_or_else(|| wire::DecodeError::Invalid("missing HostUpdated host".into()))?;
             host_event_from_wire(host)
         }
-        wire::routing_event::Event::HostDown(event) => Ok(RoutingEvent::HostDown {
-            id: uuid_from_bytes("host_id", event.host_id)?,
-            route: required_route_from_wire("HostDown.route", event.route)?,
-        }),
-        wire::routing_event::Event::AgentUp(event) => {
+        wire::subscribe_routing_events_response::Event::HostDown(event) => {
+            Ok(RoutingEvent::HostDown {
+                id: uuid_from_bytes("host_id", event.host_id)?,
+                route: required_route_from_wire("HostDown.route", event.route)?,
+            })
+        }
+        wire::subscribe_routing_events_response::Event::AgentUp(event) => {
             let agent = event
                 .agent
                 .ok_or_else(|| wire::DecodeError::Invalid("missing AgentUp agent".into()))?;
             agent_event_from_wire(agent)
         }
-        wire::routing_event::Event::AgentUpdated(event) => {
+        wire::subscribe_routing_events_response::Event::AgentUpdated(event) => {
             let agent = event
                 .agent
                 .ok_or_else(|| wire::DecodeError::Invalid("missing AgentUpdated agent".into()))?;
             agent_event_from_wire(agent)
         }
-        wire::routing_event::Event::AgentDown(event) => Ok(RoutingEvent::AgentDown {
-            agent_id: uuid_from_bytes("agent_id", event.agent_id)?,
-        }),
-        wire::routing_event::Event::SnapshotComplete(_) => Ok(RoutingEvent::SnapshotComplete),
+        wire::subscribe_routing_events_response::Event::AgentDown(event) => {
+            Ok(RoutingEvent::AgentDown {
+                agent_id: uuid_from_bytes("agent_id", event.agent_id)?,
+            })
+        }
+        wire::subscribe_routing_events_response::Event::SnapshotComplete(_) => {
+            Ok(RoutingEvent::SnapshotComplete)
+        }
     }
 }
 

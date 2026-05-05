@@ -427,16 +427,19 @@ pub(super) async fn accept_connection<T: TransportSplit>(
     tracing::info!(parent: &conn_span, "connection established");
 
     let initial_messages = if !is_local {
-        let mut us = user_state.write().await;
-        us.topology.mark_peer_link(link.clone());
+        let rpc = user_state.read().await.rpc.clone();
+        user_state
+            .write()
+            .await
+            .topology
+            .mark_peer_link(link.clone());
         let routing_call_id = crate::protocol::RoutedCallId::from(Uuid::new_v4());
-        us.rpc
-            .register_peer_stream_outbound(RpcPeerStreamOutboundStart {
-                call_id: routing_call_id.clone(),
-                counterparty_route: Route::from_link(link.clone()),
-                method: method::ROUTING_SUBSCRIBE_EVENTS,
-            })
-            .expect("fresh peer routing call id should not collide");
+        rpc.register_peer_stream_outbound(RpcPeerStreamOutboundStart {
+            call_id: routing_call_id.clone(),
+            counterparty_route: Route::from_link(link.clone()),
+            method: method::ROUTING_SUBSCRIBE_EVENTS,
+        })
+        .expect("fresh peer routing call id should not collide");
         vec![Message::Peer(PeerFrame {
             call_id: routing_call_id,
             body: FrameBody::Request(RequestFrame {
@@ -451,6 +454,7 @@ pub(super) async fn accept_connection<T: TransportSplit>(
     let ctx = ConnectionContext {
         state: state.clone(),
         user_state: user_state.clone(),
+        rpc: user_state.read().await.rpc.clone(),
         user_id,
         event_tx,
         link: link.clone(),
@@ -575,35 +579,37 @@ pub(super) async fn tcp_connect(
     );
     tracing::info!(parent: &conn_span, "peer handshake complete");
 
-    let (route_handle, outgoing_rx, initial_messages) = {
+    let (route_handle, outgoing_rx, initial_messages, routing_call_id) = {
         let mut us = user_state.write().await;
         let (route_handle, outgoing_rx) = us.try_reserve_link(link.clone()).map_err(|_| {
             AcceptError::Config(format!("assigned link `{link}` is already connected"))
         })?;
         us.topology.mark_peer_link(link.clone());
         let routing_call_id = crate::protocol::RoutedCallId::from(Uuid::new_v4());
-        us.rpc
-            .register_peer_stream_outbound(RpcPeerStreamOutboundStart {
-                call_id: routing_call_id.clone(),
-                counterparty_route: Route::from_link(link.clone()),
-                method: method::ROUTING_SUBSCRIBE_EVENTS,
-            })
-            .expect("fresh peer routing call id should not collide");
         let initial_messages = vec![Message::Peer(PeerFrame {
-            call_id: routing_call_id,
+            call_id: routing_call_id.clone(),
             body: FrameBody::Request(RequestFrame {
                 method: method::ROUTING_SUBSCRIBE_EVENTS_NAME.to_string(),
                 payload: wire::SubscribeRoutingEventsRequest {}.encode_to_vec(),
             }),
         })];
-        (route_handle, outgoing_rx, initial_messages)
+        (route_handle, outgoing_rx, initial_messages, routing_call_id)
     };
+    let rpc = user_state.read().await.rpc.clone();
+    rpc.register_peer_stream_outbound(RpcPeerStreamOutboundStart {
+        call_id: routing_call_id.clone(),
+        counterparty_route: Route::from_link(link.clone()),
+        method: method::ROUTING_SUBSCRIBE_EVENTS,
+    })
+    .expect("fresh peer routing call id should not collide");
 
     let state = state.clone();
     let user_state = user_state.clone();
     tokio::spawn(async move {
+        let rpc = user_state.read().await.rpc.clone();
         let ctx = ConnectionContext {
             state,
+            rpc,
             user_state,
             user_id,
             event_tx,

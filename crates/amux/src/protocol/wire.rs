@@ -27,11 +27,11 @@ pub(crate) use routed::{
     CreateAgentRpcRequest, OpenSessionClientFrame, OpenSessionInputEvent, OpenSessionOutputEvent,
     SessionOpenRequest, agent_entry_from_domain, agent_entry_to_domain,
     decode_agent_lifecycle_request_payload, decode_agent_lifecycle_response,
-    decode_open_session_input_payload, decode_open_session_output_event_payload,
+    decode_open_session_client_frame_payload, decode_open_session_output_event_payload,
     decode_open_session_request, encode_agent_lifecycle_request,
     encode_agent_lifecycle_response_frame, encode_open_session_cancel,
-    encode_open_session_input_event, encode_open_session_output_event_payload,
-    encode_open_session_request,
+    encode_open_session_input_event, encode_open_session_open_event,
+    encode_open_session_output_event_payload, encode_open_session_request,
 };
 pub(crate) use runtime::{
     decode_frame_body, decode_message, decode_routing_event, encode_frame_body, encode_message,

@@ -3,13 +3,14 @@ use std::sync::Arc;
 use tokio::sync::{RwLock, mpsc};
 use uuid::Uuid;
 
+use super::RpcDispatcher;
 use super::state::ServerUserState;
 use crate::protocol::message::{ProtocolError, RoutedCallId};
 use crate::protocol::method;
 use crate::protocol::route::Route;
 use crate::rpc::{
-    DedupKey, InboundCallResources, InboundCallState, RpcCallCancellation, RpcInboundCallHandle,
-    RpcInboundClosing, RpcRoutedSendError,
+    DedupKey, InboundCallResources, InboundCallState, RegisterCallError, RpcCallCancellation,
+    RpcInboundCallHandle, RpcInboundClosing, RpcRoutedSendError,
 };
 
 #[derive(Debug, Clone, PartialEq, Eq, Hash)]
@@ -82,8 +83,9 @@ impl OpenSessionRuntime {
     }
 
     pub(crate) async fn is_active(&self, user_state: &Arc<RwLock<ServerUserState>>) -> bool {
-        let us = user_state.read().await;
-        open_session_call_is_active_for_handle(&us, &self.handle)
+        rpc_for_user_state(user_state)
+            .await
+            .inbound_call_is_active_for_handle(self.handle.call())
     }
 
     pub(crate) fn is_cancelled(&self) -> bool {
@@ -99,10 +101,10 @@ impl OpenSessionRuntime {
         user_state: &Arc<RwLock<ServerUserState>>,
         error: ProtocolError,
     ) -> Result<(), RpcRoutedSendError> {
-        let closing = {
-            let mut us = user_state.write().await;
-            begin_open_session_closing_for_handle_if(&mut us, &self.handle, |_| true)
-        };
+        let closing = rpc_for_user_state(user_state)
+            .await
+            .begin_inbound_closing_for_handle_if(self.handle.call(), |_, _| true)
+            .and_then(open_session_closing_from_rpc_closing);
 
         let Some(closing) = closing else {
             return Ok(());
@@ -111,15 +113,31 @@ impl OpenSessionRuntime {
         send_terminal_and_finish_open_session(user_state, closing, Err(error)).await
     }
 
+    pub(crate) async fn reserve_dedup_for_agent(
+        &self,
+        user_state: &Arc<RwLock<ServerUserState>>,
+        agent_id: Uuid,
+    ) -> Result<bool, RegisterCallError> {
+        rpc_for_user_state(user_state)
+            .await
+            .reserve_inbound_dedup_for_handle(
+                self.handle.call(),
+                DedupKey::OpenSession {
+                    counterparty_route: self.handle.call.counterparty_route.clone(),
+                    agent_id,
+                },
+            )
+    }
+
     pub(crate) async fn finish_output_source(
         &self,
         user_state: &Arc<RwLock<ServerUserState>>,
         source_result: Result<bool, ProtocolError>,
     ) -> Result<(), RpcRoutedSendError> {
-        let closing = {
-            let mut us = user_state.write().await;
-            begin_open_session_closing_for_handle_if(&mut us, &self.handle, |_| true)
-        };
+        let closing = rpc_for_user_state(user_state)
+            .await
+            .begin_inbound_closing_for_handle_if(self.handle.call(), |_, _| true)
+            .and_then(open_session_closing_from_rpc_closing);
 
         let Some(closing) = closing else {
             return Ok(());
@@ -153,6 +171,11 @@ pub(in crate::server) struct OpenSessionCleanupFinish {
     call: RpcInboundClosing,
 }
 
+async fn rpc_for_user_state(user_state: &Arc<RwLock<ServerUserState>>) -> RpcDispatcher {
+    user_state.read().await.rpc.clone()
+}
+
+#[cfg(test)]
 fn open_session_resources(
     us: &ServerUserState,
     key: &OpenSessionKey,
@@ -182,13 +205,6 @@ pub(crate) fn open_session_active_resources(
     call.resources.clone()
 }
 
-fn open_session_call_is_active_for_handle(
-    us: &ServerUserState,
-    handle: &OpenSessionRuntimeHandle,
-) -> bool {
-    us.rpc.inbound_call_is_active_for_handle(handle.call())
-}
-
 #[cfg(test)]
 fn open_session_call_is_closing(us: &ServerUserState, key: &OpenSessionKey) -> bool {
     us.rpc
@@ -199,58 +215,45 @@ fn open_session_call_is_closing(us: &ServerUserState, key: &OpenSessionKey) -> b
         })
 }
 
+#[cfg(test)]
 fn begin_open_session_closing_if(
     us: &mut ServerUserState,
     key: &OpenSessionKey,
     predicate: impl FnOnce(&InboundCallResources) -> bool,
 ) -> Option<OpenSessionClosing> {
-    let preview_resources = open_session_resources(us, key)?;
-    if !predicate(&preview_resources) {
-        return None;
-    }
-
-    let call =
-        us.rpc
-            .begin_inbound_closing_for_route_if(&key.counterparty, &key.call_id, |call, _| {
-                call.method == method::AGENT_OPEN_SESSION
-            })?;
+    let call = us.rpc.begin_inbound_closing_for_route_if(
+        &key.counterparty,
+        &key.call_id,
+        |call, resources| {
+            call.method == method::AGENT_OPEN_SESSION
+                && matches!(call.state, InboundCallState::Active)
+                && predicate(resources)
+        },
+    )?;
 
     Some(OpenSessionClosing { call })
 }
 
-fn begin_open_session_closing_for_handle_if(
-    us: &mut ServerUserState,
-    handle: &OpenSessionRuntimeHandle,
-    predicate: impl FnOnce(&InboundCallResources) -> bool,
-) -> Option<OpenSessionClosing> {
-    let call = us
-        .rpc
-        .begin_inbound_closing_for_handle_if(handle.call(), |_, resources| predicate(resources))?;
-    Some(OpenSessionClosing { call })
+fn open_session_call_matches_agent(call: &crate::rpc::InboundCall, agent_id: Uuid) -> bool {
+    call.method == method::AGENT_OPEN_SESSION
+        && matches!(call.state, InboundCallState::Active)
+        && matches!(
+            &call.dedup_key,
+            Some(DedupKey::OpenSession {
+                agent_id: dedup_agent_id,
+                ..
+            }) if *dedup_agent_id == agent_id
+        )
 }
 
 pub(crate) fn begin_open_sessions_closing_for_agent(
     us: &mut ServerUserState,
     agent_id: Uuid,
 ) -> Vec<OpenSessionClosing> {
-    let keys = us.rpc.inbound_call_keys_if(|call| {
-        call.method == method::AGENT_OPEN_SESSION
-            && matches!(call.state, InboundCallState::Active)
-            && call.resources.is_some()
-            && matches!(
-                &call.dedup_key,
-                Some(DedupKey::OpenSession {
-                    agent_id: dedup_agent_id,
-                    ..
-                }) if *dedup_agent_id == agent_id
-            )
-    });
-
-    keys.into_iter()
-        .filter_map(|(counterparty, call_id)| {
-            let key = OpenSessionKey::new(counterparty, call_id);
-            begin_open_session_closing_if(us, &key, |_| true)
-        })
+    us.rpc
+        .begin_inbound_closing_calls_if(|call, _| open_session_call_matches_agent(call, agent_id))
+        .into_iter()
+        .filter_map(open_session_closing_from_rpc_closing)
         .collect()
 }
 
@@ -274,20 +277,15 @@ pub(crate) fn begin_open_session_closing_or_absent(
     }
 }
 
-fn finish_open_session_closing(us: &mut ServerUserState, call: &RpcInboundClosing) -> bool {
-    debug_assert_eq!(call.handle.method, method::AGENT_OPEN_SESSION);
-    us.rpc.finish_inbound_closing(call).is_some()
-}
-
 pub(crate) async fn send_terminal_and_finish_open_session(
     user_state: &Arc<RwLock<ServerUserState>>,
     closing: OpenSessionClosing,
     terminal: Result<(), ProtocolError>,
 ) -> Result<(), RpcRoutedSendError> {
+    let rpc = rpc_for_user_state(user_state).await;
     let result = closing.call.send_empty_response_result(terminal).await;
 
-    let mut us = user_state.write().await;
-    finish_open_session_closing(&mut us, &closing.call);
+    rpc.finish_inbound_closing(&closing.call);
 
     result
 }
@@ -307,17 +305,18 @@ async fn finish_open_session_closing_silently(
     user_state: &Arc<RwLock<ServerUserState>>,
     closing: OpenSessionClosing,
 ) {
-    let mut us = user_state.write().await;
-    finish_open_session_closing(&mut us, &closing.call);
+    rpc_for_user_state(user_state)
+        .await
+        .finish_inbound_closing(&closing.call);
 }
 
 pub(crate) async fn finish_open_session_closing_after_output_flush(
     user_state: &Arc<RwLock<ServerUserState>>,
     call: RpcInboundClosing,
 ) {
+    let rpc = rpc_for_user_state(user_state).await;
     call.with_send_gate(|| async {
-        let mut us = user_state.write().await;
-        finish_open_session_closing(&mut us, &call);
+        rpc.finish_inbound_closing(&call);
     })
     .await;
 }
@@ -341,35 +340,24 @@ pub(in crate::server) fn cancel_open_sessions_matching(
     us: &mut ServerUserState,
     predicate: impl Fn(&OpenSessionKey, &InboundCallResources) -> bool,
 ) -> (usize, Vec<OpenSessionCleanupFinish>) {
-    let cancelled_keys: Vec<_> = us
-        .rpc
-        .inbound_call_keys_if(|call| {
-            call.method == method::AGENT_OPEN_SESSION
-                && matches!(call.state, InboundCallState::Active)
-                && call.resources.is_some()
-        })
+    let closings = us.rpc.begin_inbound_closing_calls_if(|call, resources| {
+        if call.method != method::AGENT_OPEN_SESSION
+            || !matches!(call.state, InboundCallState::Active)
+        {
+            return false;
+        }
+
+        let key = OpenSessionKey::new(call.counterparty_route.clone(), call.call_id.clone());
+        predicate(&key, resources)
+    });
+
+    let finish_jobs = closings
         .into_iter()
-        .filter_map(|(counterparty, call_id)| {
-            let key = OpenSessionKey::new(counterparty, call_id);
-            let resources = open_session_resources(us, &key)?;
-            predicate(&key, &resources).then_some(key)
-        })
-        .collect();
+        .filter_map(open_session_closing_from_rpc_closing)
+        .map(|closing| OpenSessionCleanupFinish { call: closing.call })
+        .collect::<Vec<_>>();
 
-    let mut cancelled = 0;
-    let mut finish_jobs = Vec::new();
-    for key in cancelled_keys {
-        let Some(closing) =
-            begin_open_session_closing_if(us, &key, |resources| predicate(&key, resources))
-        else {
-            continue;
-        };
-
-        finish_jobs.push(OpenSessionCleanupFinish { call: closing.call });
-        cancelled += 1;
-    }
-
-    (cancelled, finish_jobs)
+    (finish_jobs.len(), finish_jobs)
 }
 
 pub(in crate::server) fn cancel_open_sessions_for_closed_link(

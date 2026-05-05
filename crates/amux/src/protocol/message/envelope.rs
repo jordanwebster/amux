@@ -219,9 +219,9 @@ mod tests {
         let msg = Message::Peer(PeerFrame {
             call_id: call_id.clone(),
             body: FrameBody::StreamItem(
-                crate::protocol::wire::RoutingEvent {
+                crate::protocol::wire::SubscribeRoutingEventsResponse {
                     event: Some(
-                        crate::protocol::wire::routing_event::Event::SnapshotComplete(
+                        crate::protocol::wire::subscribe_routing_events_response::Event::SnapshotComplete(
                             crate::protocol::wire::SnapshotComplete {},
                         ),
                     ),

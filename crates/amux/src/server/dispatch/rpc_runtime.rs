@@ -5,7 +5,7 @@ use crate::protocol::message::{
     FrameBody, Message, ProtocolError, RequestFrame, ResponseFrame, RoutedCallId, RoutedFrame,
     RoutedFrameMessage,
 };
-use crate::protocol::method::{self, MethodScope, MethodSpec};
+use crate::protocol::method::{self, MethodLookupError, MethodScope, MethodSpec};
 use crate::protocol::wire::{
     AgentLifecycleRequest, AgentLifecycleResponse, AgentRecord,
     decode_agent_lifecycle_request_payload, encode_agent_lifecycle_response_frame,
@@ -16,7 +16,10 @@ use crate::rpc::{
     RpcRoutedBidiStart, RpcRoutedUnaryStart, RpcStreamWriter,
 };
 use crate::server::connection::ConnectionContext;
-use crate::server::{open_session_closing_from_rpc_closing, send_terminal_and_finish_open_session};
+use crate::server::{
+    RpcInboundCloseTarget, open_session_closing_from_rpc_closing,
+    send_terminal_and_finish_open_session,
+};
 use crate::services::{AgentService, AgentServiceCtx, OpenSessionCall};
 
 fn reply_routes(src: Route, msg_type: &str) -> Option<(Route, Route)> {
@@ -75,9 +78,8 @@ pub(super) async fn register_local_origin_routed_request_if_any(
         return LocalOriginRoutedRegistration::Continue;
     };
 
-    let mut us = ctx.user_state.write().await;
-    match us
-        .rpc
+    match ctx
+        .rpc()
         .register_local_origin_outbound(RpcLocalOriginOutboundStart {
             call_id: call_id.clone(),
             counterparty_route: counterparty_route.clone(),
@@ -213,8 +215,7 @@ impl<'a> RoutedEndpointCall<'a> {
         &self,
         method: MethodSpec,
     ) -> Result<RpcInboundUnary, RegisterCallError> {
-        let mut us = self.ctx.user_state.write().await;
-        us.rpc.register_routed_unary(RpcRoutedUnaryStart {
+        self.ctx.rpc().register_routed_unary(RpcRoutedUnaryStart {
             tx: self.tx.clone(),
             owner_link: self.ctx.link.clone(),
             reply_src: self.reply_src.clone(),
@@ -231,8 +232,7 @@ impl<'a> RoutedEndpointCall<'a> {
         dedup_key: Option<DedupKey>,
         stream_capacity: usize,
     ) -> Result<RpcInboundBidi, RegisterCallError> {
-        let mut us = self.ctx.user_state.write().await;
-        us.rpc.register_routed_bidi(RpcRoutedBidiStart {
+        self.ctx.rpc().register_routed_bidi(RpcRoutedBidiStart {
             tx: self.tx.clone(),
             owner_link: self.ctx.link.clone(),
             reply_src: self.reply_src.clone(),
@@ -250,18 +250,16 @@ impl<'a> RoutedEndpointCall<'a> {
         call: RpcInboundUnary,
         response: ResponseFrame,
     ) -> crate::server::connection::Result<()> {
-        let closing = {
-            let mut us = self.ctx.user_state.write().await;
-            us.rpc
-                .begin_inbound_closing_for_handle_if(&call.handle, |_, _| true)
-        };
+        let closing = self
+            .ctx
+            .rpc()
+            .begin_inbound_closing_for_handle_if(&call.handle, |_, _| true);
         let Some(closing) = closing else {
             return Ok(());
         };
 
         let result = closing.send_response(response).await;
-        let mut us = self.ctx.user_state.write().await;
-        us.rpc.finish_inbound_closing(&closing);
+        self.ctx.rpc().finish_inbound_closing(&closing);
         result.map_err(routed_response_send_error)
     }
 }
@@ -270,30 +268,22 @@ async fn terminate_routed_call_if_currently_present_or_send(
     endpoint: &RoutedEndpointCall<'_>,
     error: ProtocolError,
 ) -> crate::server::connection::Result<()> {
-    let close_target = {
-        let mut us = endpoint.ctx.user_state.write().await;
-        let close = us.rpc.begin_inbound_closing_for_route_if(
-            &endpoint.counterparty,
-            &endpoint.call_id,
-            |_, _| true,
-        );
-        match close {
-            Some(closing) if closing.handle.method == method::AGENT_OPEN_SESSION => {
-                match open_session_closing_from_rpc_closing(closing) {
-                    Some(closing) => RoutedCallCloseTarget::OpenSession(closing),
-                    None => RoutedCallCloseTarget::AlreadyClosing,
-                }
+    let close_target = match endpoint
+        .ctx
+        .rpc()
+        .begin_inbound_closing_for_route(&endpoint.counterparty, &endpoint.call_id)
+    {
+        RpcInboundCloseTarget::Closing(closing)
+            if closing.handle.method == method::AGENT_OPEN_SESSION =>
+        {
+            match open_session_closing_from_rpc_closing(closing) {
+                Some(closing) => RoutedCallCloseTarget::OpenSession(closing),
+                None => RoutedCallCloseTarget::AlreadyClosing,
             }
-            Some(closing) => RoutedCallCloseTarget::Generic(closing),
-            None if us
-                .rpc
-                .inbound_for_route(&endpoint.counterparty, &endpoint.call_id)
-                .is_some_and(|call| matches!(call.state, InboundCallState::Closing)) =>
-            {
-                RoutedCallCloseTarget::AlreadyClosing
-            }
-            None => RoutedCallCloseTarget::Absent,
         }
+        RpcInboundCloseTarget::Closing(closing) => RoutedCallCloseTarget::Generic(closing),
+        RpcInboundCloseTarget::AlreadyClosing => RoutedCallCloseTarget::AlreadyClosing,
+        RpcInboundCloseTarget::Absent => RoutedCallCloseTarget::Absent,
     };
 
     match close_target {
@@ -306,8 +296,7 @@ async fn terminate_routed_call_if_currently_present_or_send(
         }
         RoutedCallCloseTarget::Generic(closing) => {
             let result = closing.send_empty_response_result(Err(error)).await;
-            let mut us = endpoint.ctx.user_state.write().await;
-            us.rpc.finish_inbound_closing(&closing);
+            endpoint.ctx.rpc().finish_inbound_closing(&closing);
             result.map_err(routed_response_send_error)
         }
     }
@@ -328,13 +317,9 @@ pub(super) async fn handle_routed_endpoint_frame(
     body: FrameBody,
     ctx: &ConnectionContext,
 ) -> crate::server::connection::Result<()> {
-    let target = {
-        ctx.user_state
-            .read()
-            .await
-            .rpc
-            .inbound_frame_target_for_route(&counterparty, &call_id)
-    };
+    let target = ctx
+        .rpc()
+        .inbound_frame_target_for_route(&counterparty, &call_id);
     if let Some(target) = target {
         return match target {
             RpcInboundFrameTarget::ActiveStream {
@@ -398,28 +383,52 @@ async fn handle_routed_request(
         return Ok(());
     };
 
-    match method::find(&request.method) {
-        Some(spec) if spec.scope != MethodScope::Routed => {
+    let spec = match method::find_for_scope(&request.method, MethodScope::Routed) {
+        Ok(spec) => spec,
+        Err(MethodLookupError::WrongScope {
+            spec,
+            requested_scope,
+        }) => {
             return endpoint
-                .send_error(ProtocolError::Unimplemented {
-                    message: format!("method {} is not valid in routed scope", request.method),
+                .send_error(ProtocolError::PermissionDenied {
+                    message: format!(
+                        "method {} is {} scoped and not valid in {} scope",
+                        request.method,
+                        spec.scope.as_str(),
+                        requested_scope.as_str()
+                    ),
                 })
                 .await;
         }
-        None => {
+        Err(MethodLookupError::Unknown) => {
             return endpoint
                 .send_error(ProtocolError::Unimplemented {
                     message: format!("unknown routed method {}", request.method),
                 })
                 .await;
         }
-        Some(_) => {}
-    }
+    };
 
-    match request.method.as_str() {
+    match spec.kind {
+        method::MethodKind::Unary => handle_routed_unary_request(&endpoint, spec, request).await,
+        method::MethodKind::ServerStreaming => {
+            send_unsupported_routed_method(&endpoint, spec.name).await
+        }
+        method::MethodKind::BidiStreaming => {
+            handle_routed_bidi_request(&endpoint, spec, request, ctx).await
+        }
+    }
+}
+
+async fn handle_routed_unary_request(
+    endpoint: &RoutedEndpointCall<'_>,
+    spec: MethodSpec,
+    request: RequestFrame,
+) -> crate::server::connection::Result<()> {
+    match spec.name {
         method::AGENT_CREATE_NAME | method::AGENT_RENAME_NAME | method::AGENT_DELETE_NAME => {
             match decode_agent_lifecycle_request_payload(&request.method, &request.payload) {
-                Ok(request) => handle_agent_lifecycle_request(&endpoint, request).await,
+                Ok(request) => handle_agent_lifecycle_request(endpoint, request).await,
                 Err(error) => {
                     tracing::warn!(
                         method = request.method,
@@ -434,27 +443,26 @@ async fn handle_routed_request(
                 }
             }
         }
+        method => send_unsupported_routed_method(endpoint, method).await,
+    }
+}
+
+async fn handle_routed_bidi_request(
+    endpoint: &RoutedEndpointCall<'_>,
+    spec: MethodSpec,
+    request: RequestFrame,
+    ctx: &ConnectionContext,
+) -> crate::server::connection::Result<()> {
+    match spec.name {
         method::AGENT_OPEN_SESSION_NAME => {
-            let open = match crate::protocol::wire::decode_open_session_request(&request) {
-                Ok(open) => open,
-                Err(error) => {
-                    return endpoint
-                        .send_error(ProtocolError::InvalidArgument {
-                            message: error.to_string(),
-                        })
-                        .await;
-                }
-            };
-            let call = endpoint
-                .register_bidi(
-                    method::AGENT_OPEN_SESSION,
-                    Some(DedupKey::OpenSession {
-                        counterparty_route: endpoint.counterparty.clone(),
-                        agent_id: open.agent_id,
-                    }),
-                    256,
-                )
-                .await;
+            if let Err(error) = crate::protocol::wire::decode_open_session_request(&request) {
+                return endpoint
+                    .send_error(ProtocolError::InvalidArgument {
+                        message: error.to_string(),
+                    })
+                    .await;
+            }
+            let call = endpoint.register_bidi(spec, None, 256).await;
             let call = match call {
                 Ok(call) => call,
                 Err(error) => {
@@ -465,21 +473,26 @@ async fn handle_routed_request(
                 .expect("OpenSession dispatch registered non-OpenSession RPC call");
             let agent_ctx = agent_service_ctx(ctx).await;
             tokio::spawn(async move {
-                if let Err(error) = AgentService::open_session(open, call, &agent_ctx).await {
+                if let Err(error) = AgentService::open_session(call, &agent_ctx).await {
                     tracing::warn!(error = %error, "OpenSession service task failed");
                 }
             });
             Ok(())
         }
-        method => {
-            tracing::warn!(method, "unsupported routed protobuf request");
-            endpoint
-                .send_error(ProtocolError::Unimplemented {
-                    message: format!("routed method {method} is not implemented"),
-                })
-                .await
-        }
+        method => send_unsupported_routed_method(endpoint, method).await,
     }
+}
+
+async fn send_unsupported_routed_method(
+    endpoint: &RoutedEndpointCall<'_>,
+    method: &str,
+) -> crate::server::connection::Result<()> {
+    tracing::warn!(method, "unsupported routed protobuf request");
+    endpoint
+        .send_error(ProtocolError::Unimplemented {
+            message: format!("routed method {method} is not implemented"),
+        })
+        .await
 }
 
 async fn handle_active_routed_no_input_followup(
@@ -755,6 +768,31 @@ mod tests {
         RoutedCallId::from(Uuid::from_u128(n))
     }
 
+    async fn expect_routed_error(
+        rx: &mut mpsc::Receiver<Message>,
+        call_id: &RoutedCallId,
+    ) -> ProtocolError {
+        let msg = timeout(Duration::from_secs(1), rx.recv())
+            .await
+            .expect("timed out waiting for routed error response")
+            .expect("expected routed error response");
+        let Message::Routed(RoutedFrame {
+            call_id: response_call_id,
+            message: RoutedFrameMessage::Payload(payload),
+            ..
+        }) = msg
+        else {
+            panic!("expected routed error response");
+        };
+        assert_eq!(&response_call_id, call_id);
+        let FrameBody::Response(ResponseFrame::Error(error)) =
+            crate::protocol::wire::decode_frame_body(&payload).unwrap()
+        else {
+            panic!("expected routed error frame body");
+        };
+        error
+    }
+
     #[tokio::test]
     async fn closing_inbound_call_is_not_routed_stream_target() {
         let (_state, user_state) = test_helpers::test_state().await;
@@ -763,7 +801,7 @@ mod tests {
         let (tx, _rx) = mpsc::channel(1);
 
         {
-            let mut us = user_state.write().await;
+            let us = user_state.read().await;
             let call = us
                 .rpc
                 .register_routed_bidi(RpcRoutedBidiStart {
@@ -796,11 +834,127 @@ mod tests {
     }
 
     #[tokio::test]
+    async fn known_wrong_scope_routed_method_returns_permission_denied() {
+        let (state, user_state) = test_helpers::test_state().await;
+        let (event_tx, _event_rx) = mpsc::channel(16);
+        let ctx = ConnectionContext {
+            state,
+            rpc: user_state.read().await.rpc.clone(),
+            user_state: user_state.clone(),
+            user_id: LOCAL_USER_ID,
+            event_tx,
+            link: Link::new("owner").unwrap(),
+            is_local: true,
+            heartbeat: None,
+            client_name: None,
+            client_version: None,
+        };
+        let counterparty = route("client");
+        let key_call_id = call_id(42);
+        let (tx, mut rx) = mpsc::channel(2);
+
+        handle_routed_endpoint_frame(
+            &tx,
+            counterparty,
+            key_call_id.clone(),
+            FrameBody::Request(RequestFrame {
+                method: method::AGENT_LIST_NAME.to_string(),
+                payload: Vec::new(),
+            }),
+            &ctx,
+        )
+        .await
+        .unwrap();
+
+        assert!(matches!(
+            expect_routed_error(&mut rx, &key_call_id).await,
+            ProtocolError::PermissionDenied { message }
+                if message.contains("not valid in routed scope")
+        ));
+    }
+
+    #[tokio::test]
+    async fn unknown_routed_method_returns_unimplemented() {
+        let (state, user_state) = test_helpers::test_state().await;
+        let (event_tx, _event_rx) = mpsc::channel(16);
+        let ctx = ConnectionContext {
+            state,
+            rpc: user_state.read().await.rpc.clone(),
+            user_state: user_state.clone(),
+            user_id: LOCAL_USER_ID,
+            event_tx,
+            link: Link::new("owner").unwrap(),
+            is_local: true,
+            heartbeat: None,
+            client_name: None,
+            client_version: None,
+        };
+        let counterparty = route("client");
+        let key_call_id = call_id(42);
+        let (tx, mut rx) = mpsc::channel(2);
+
+        handle_routed_endpoint_frame(
+            &tx,
+            counterparty,
+            key_call_id.clone(),
+            FrameBody::Request(RequestFrame {
+                method: "/amux.v1.Missing/Nope".to_string(),
+                payload: Vec::new(),
+            }),
+            &ctx,
+        )
+        .await
+        .unwrap();
+
+        assert!(matches!(
+            expect_routed_error(&mut rx, &key_call_id).await,
+            ProtocolError::Unimplemented { message }
+                if message.contains("unknown routed method")
+        ));
+    }
+
+    #[tokio::test]
+    async fn unknown_routed_response_stream_item_and_cancel_are_dropped() {
+        let (state, user_state) = test_helpers::test_state().await;
+        let (event_tx, _event_rx) = mpsc::channel(16);
+        let ctx = ConnectionContext {
+            state,
+            rpc: user_state.read().await.rpc.clone(),
+            user_state: user_state.clone(),
+            user_id: LOCAL_USER_ID,
+            event_tx,
+            link: Link::new("owner").unwrap(),
+            is_local: true,
+            heartbeat: None,
+            client_name: None,
+            client_version: None,
+        };
+        let counterparty = route("client");
+        let (tx, mut rx) = mpsc::channel(2);
+
+        for body in [
+            FrameBody::Response(ResponseFrame::Payload(Vec::new())),
+            FrameBody::StreamItem(b"stale".to_vec()),
+            FrameBody::Cancel,
+        ] {
+            handle_routed_endpoint_frame(&tx, counterparty.clone(), call_id(42), body, &ctx)
+                .await
+                .unwrap();
+        }
+
+        assert!(matches!(
+            rx.try_recv(),
+            Err(mpsc::error::TryRecvError::Empty)
+        ));
+    }
+
+    #[tokio::test]
     async fn duplicate_request_for_closing_inbound_call_is_dropped() {
         let (state, user_state) = test_helpers::test_state().await;
         let (event_tx, _event_rx) = mpsc::channel(16);
         let ctx = ConnectionContext {
             state,
+            rpc: user_state.read().await.rpc.clone(),
             user_state: user_state.clone(),
             user_id: LOCAL_USER_ID,
             event_tx,
@@ -815,7 +969,7 @@ mod tests {
         let (tx, mut rx) = mpsc::channel(2);
 
         {
-            let mut us = user_state.write().await;
+            let us = user_state.read().await;
             let call = us
                 .rpc
                 .register_routed_bidi(RpcRoutedBidiStart {
@@ -835,9 +989,7 @@ mod tests {
                 .unwrap();
         }
 
-        let payload =
-            open_session::encode_open_session_request(Uuid::new_v4(), "test_echo_v1", None)
-                .unwrap();
+        let payload = open_session::encode_open_session_request().unwrap();
         let FrameBody::Request(request) =
             crate::protocol::wire::decode_frame_body(&payload).unwrap()
         else {
@@ -866,6 +1018,7 @@ mod tests {
         let (event_tx, _event_rx) = mpsc::channel(16);
         let ctx = ConnectionContext {
             state,
+            rpc: user_state.read().await.rpc.clone(),
             user_state: user_state.clone(),
             user_id: LOCAL_USER_ID,
             event_tx,
@@ -943,6 +1096,7 @@ mod tests {
         let (event_tx, _event_rx) = mpsc::channel(16);
         let ctx = ConnectionContext {
             state,
+            rpc: user_state.read().await.rpc.clone(),
             user_state: user_state.clone(),
             user_id: LOCAL_USER_ID,
             event_tx,
@@ -1018,6 +1172,7 @@ mod tests {
         let (event_tx, _event_rx) = mpsc::channel(16);
         let ctx = ConnectionContext {
             state,
+            rpc: user_state.read().await.rpc.clone(),
             user_state: user_state.clone(),
             user_id: LOCAL_USER_ID,
             event_tx,
@@ -1091,6 +1246,7 @@ mod tests {
         let (event_tx, _event_rx) = mpsc::channel(16);
         let ctx = ConnectionContext {
             state,
+            rpc: user_state.read().await.rpc.clone(),
             user_state: user_state.clone(),
             user_id: LOCAL_USER_ID,
             event_tx,
@@ -1171,6 +1327,7 @@ mod tests {
         let (event_tx, _event_rx) = mpsc::channel(16);
         let ctx = ConnectionContext {
             state,
+            rpc: user_state.read().await.rpc.clone(),
             user_state: user_state.clone(),
             user_id: LOCAL_USER_ID,
             event_tx,

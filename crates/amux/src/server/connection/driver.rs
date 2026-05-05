@@ -16,7 +16,7 @@ use crate::protocol::route::Route;
 use crate::server::dispatch::handle_message;
 use crate::server::routing::{TopologyEffect, broadcast_topology_event};
 use crate::server::{
-    ConnectionHandle, ServerUserState, cancel_open_sessions_for_closed_link,
+    ConnectionHandle, RpcDispatcher, ServerUserState, cancel_open_sessions_for_closed_link,
     cancel_open_sessions_for_owner_link, finish_open_session_cleanup_jobs,
 };
 use crate::transport::{MessageReader, MessageWriter, TransportSplit};
@@ -151,6 +151,7 @@ pub(in crate::server) async fn run_connection<T: TransportSplit>(
         span,
     } = args;
     let user_state = ctx.user_state.clone();
+    let rpc = ctx.rpc();
     let link = ctx.link.clone();
     let is_local = ctx.is_local;
 
@@ -186,21 +187,22 @@ pub(in crate::server) async fn run_connection<T: TransportSplit>(
         if !is_local {
             tracing::info!(peer = %link, "peer disconnected");
             let change = us.topology.apply_link_closed(&link);
-            us.remove_peer_routing_calls_for_link(&link);
+            rpc.remove_peer_routing_calls_for_link(&link);
 
             let TopologyEffect::CancelSessionsForClosedLink { link: closed_link } = &change.effect
             else {
                 unreachable!("link-close topology change returned non-link-close effect");
             };
             let local_origin_messages = drain_local_origin_routed_unreachable_for_route(
-                &mut us,
+                &rpc,
+                &us,
                 &Route::from_link(closed_link.clone()),
                 "route closed",
             );
             let (cancelled_open_sessions, cleanup_jobs) =
                 cancel_open_sessions_for_closed_link(&mut us, closed_link);
             let removed_inbound_rpc_calls =
-                remove_generic_inbound_rpc_calls_for_owner_link(&mut us, closed_link);
+                remove_generic_inbound_rpc_calls_for_owner_link(&rpc, closed_link);
             if cancelled_open_sessions != 0 {
                 tracing::info!(
                     count = cancelled_open_sessions,
@@ -227,11 +229,11 @@ pub(in crate::server) async fn run_connection<T: TransportSplit>(
             }
             (cleanup_jobs, local_origin_messages)
         } else {
-            let local_origin_messages = drain_local_origin_routed_cancels(&mut us, &link);
+            let local_origin_messages = drain_local_origin_routed_cancels(&rpc, &us, &link);
             us.topology.remove_link(&link);
             let (_cancelled_open_sessions, cleanup_jobs) =
                 cancel_open_sessions_for_owner_link(&mut us, &link);
-            remove_generic_inbound_rpc_calls_for_owner_link(&mut us, &link);
+            remove_generic_inbound_rpc_calls_for_owner_link(&rpc, &link);
             (cleanup_jobs, local_origin_messages)
         }
     };
@@ -240,15 +242,12 @@ pub(in crate::server) async fn run_connection<T: TransportSplit>(
     }
     finish_open_session_cleanup_jobs(&user_state, open_session_cleanup_jobs).await;
 
-    let (rpc_inbound_calls, rpc_outbound_calls, rpc_inbound_dedup_keys, rpc_snapshot) = {
-        let us = user_state.read().await;
-        (
-            us.rpc.inbound_len(),
-            us.rpc.outbound_len(),
-            us.rpc.dedup_len(),
-            us.rpc.debug_snapshot(),
-        )
-    };
+    let (rpc_inbound_calls, rpc_outbound_calls, rpc_inbound_dedup_keys, rpc_snapshot) = (
+        rpc.inbound_len(),
+        rpc.outbound_len(),
+        rpc.dedup_len(),
+        rpc.debug_snapshot(),
+    );
     tracing::debug!(
         parent: &span,
         rpc_inbound_calls,
@@ -267,7 +266,8 @@ pub(in crate::server) async fn run_connection<T: TransportSplit>(
 }
 
 fn drain_local_origin_routed_cancels(
-    us: &mut ServerUserState,
+    rpc: &RpcDispatcher,
+    us: &ServerUserState,
     owner_link: &Link,
 ) -> Vec<(ConnectionHandle, Message)> {
     let cancel_payload = match crate::protocol::wire::encode_frame_body(&FrameBody::Cancel) {
@@ -277,9 +277,7 @@ fn drain_local_origin_routed_cancels(
             return Vec::new();
         }
     };
-    let calls = us
-        .rpc
-        .remove_local_origin_outbound_for_owner_link(owner_link);
+    let calls = rpc.remove_local_origin_outbound_for_owner_link(owner_link);
 
     calls
         .into_iter()
@@ -303,22 +301,20 @@ fn drain_local_origin_routed_cancels(
 }
 
 fn remove_generic_inbound_rpc_calls_for_owner_link(
-    us: &mut ServerUserState,
+    rpc: &RpcDispatcher,
     owner_link: &Link,
 ) -> usize {
-    us.rpc
-        .remove_inbound_for_owner_link_except_method(owner_link, method::AGENT_OPEN_SESSION)
+    rpc.remove_inbound_for_owner_link_except_method(owner_link, method::AGENT_OPEN_SESSION)
         .len()
 }
 
 pub(in crate::server) fn drain_local_origin_routed_unreachable_for_route(
-    us: &mut ServerUserState,
+    rpc: &RpcDispatcher,
+    us: &ServerUserState,
     route_prefix: &Route,
     reason: &str,
 ) -> Vec<(ConnectionHandle, Message)> {
-    let calls = us
-        .rpc
-        .remove_local_origin_outbound_for_route_prefix(route_prefix);
+    let calls = rpc.remove_local_origin_outbound_for_route_prefix(route_prefix);
 
     calls
         .into_iter()
@@ -630,8 +626,9 @@ mod tests {
             method::AGENT_CREATE,
         );
 
+        let rpc = us.rpc.clone();
         assert_eq!(
-            remove_generic_inbound_rpc_calls_for_owner_link(&mut us, &owner),
+            remove_generic_inbound_rpc_calls_for_owner_link(&rpc, &owner),
             1
         );
 
@@ -678,7 +675,8 @@ mod tests {
             method::AGENT_CREATE,
         );
 
-        let messages = drain_local_origin_routed_cancels(&mut us, &owner);
+        let rpc = us.rpc.clone();
+        let messages = drain_local_origin_routed_cancels(&rpc, &us, &owner);
 
         assert_eq!(messages.len(), 1);
         assert!(
@@ -731,8 +729,10 @@ mod tests {
             method::AGENT_CREATE,
         );
 
+        let rpc = us.rpc.clone();
         let messages = drain_local_origin_routed_unreachable_for_route(
-            &mut us,
+            &rpc,
+            &us,
             &route("peer"),
             "route withdrawn",
         );

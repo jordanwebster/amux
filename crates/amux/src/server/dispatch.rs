@@ -20,6 +20,7 @@ use crate::protocol::message::{
     FrameBody, Message, PeerFrame, ProtocolError, RequestFrame, ResponseFrame, RoutedCallId,
     RoutingEvent,
 };
+use crate::protocol::method::{MethodLookupError, MethodScope};
 use crate::protocol::route::Route;
 use crate::protocol::{method, wire};
 use crate::rpc::{
@@ -66,6 +67,38 @@ async fn handle_peer_request(
             "rejecting peer request from local connection"
         );
         return Ok(());
+    }
+
+    match method::find_for_scope(&request.method, MethodScope::Peer) {
+        Ok(_) => {}
+        Err(MethodLookupError::WrongScope {
+            spec,
+            requested_scope,
+        }) => {
+            return send_peer_response(
+                tx,
+                call_id,
+                Some(ProtocolError::PermissionDenied {
+                    message: format!(
+                        "method {} is {} scoped and not valid in {} scope",
+                        request.method,
+                        spec.scope.as_str(),
+                        requested_scope.as_str()
+                    ),
+                }),
+            )
+            .await;
+        }
+        Err(MethodLookupError::Unknown) => {
+            return send_peer_response(
+                tx,
+                call_id,
+                Some(ProtocolError::Unimplemented {
+                    message: format!("unknown peer method {}", request.method),
+                }),
+            )
+            .await;
+        }
     }
 
     match request.method.as_str() {
@@ -151,8 +184,7 @@ async fn register_peer_routing_stream(
     call_id: RoutedCallId,
     ctx: &ConnectionContext,
 ) -> std::result::Result<RpcInboundServerStream, PeerRoutingStreamStartError> {
-    let mut us = ctx.user_state.write().await;
-    if !us.is_peer_link(&ctx.link) {
+    if !ctx.user_state.read().await.is_peer_link(&ctx.link) {
         return Err(PeerRoutingStreamStartError::ResponseThenClose {
             error: ProtocolError::InvalidArgument {
                 message: "routing event subscription is only valid for peer connections"
@@ -163,7 +195,7 @@ async fn register_peer_routing_stream(
     }
 
     let peer_route = Route::from_link(ctx.link.clone());
-    us.rpc
+    ctx.rpc()
         .register_server_stream(RpcServerStreamStart {
             tx: tx.clone(),
             counterparty_route: peer_route.clone(),
@@ -201,21 +233,11 @@ fn peer_routing_start_error(error: RegisterCallError) -> PeerRoutingStreamStartE
 }
 
 async fn remove_inbound_peer_stream(ctx: &ConnectionContext, stream: &RpcInboundServerStream) {
-    ctx.user_state
-        .write()
-        .await
-        .rpc
-        .remove_inbound_for_handle(&stream.handle);
+    ctx.rpc().remove_inbound_for_handle(&stream.handle);
 }
 
 async fn activate_inbound_peer_stream(ctx: &ConnectionContext, stream: &RpcInboundServerStream) {
-    if !ctx
-        .user_state
-        .write()
-        .await
-        .rpc
-        .activate_inbound_for_handle(&stream.handle)
-    {
+    if !ctx.rpc().activate_inbound_for_handle(&stream.handle) {
         tracing::warn!(
             peer = %ctx.link,
             "routing event stream was removed before initial snapshot activation"
@@ -228,13 +250,12 @@ async fn accept_peer_routing_event(
     call_id: &RoutedCallId,
     event: &RoutingEvent,
 ) -> bool {
-    let mut us = ctx.user_state.write().await;
     let peer_route = Route::from_link(ctx.link.clone());
-    let active = us.is_peer_link(&ctx.link)
-        && us
-            .rpc
-            .outbound_for_route(&peer_route, call_id)
-            .is_some_and(|call| {
+    let is_peer_link = ctx.user_state.read().await.is_peer_link(&ctx.link);
+    let active = is_peer_link
+        && ctx
+            .rpc()
+            .outbound_for_route_matches(&peer_route, call_id, |call| {
                 call.method == method::ROUTING_SUBSCRIBE_EVENTS
                     && matches!(
                         call.state,
@@ -242,8 +263,11 @@ async fn accept_peer_routing_event(
                     )
             });
     if active {
-        us.rpc
-            .set_outbound_state_for_route(&peer_route, call_id, OutboundCallState::ActiveStream);
+        ctx.rpc().set_outbound_state_for_route(
+            &peer_route,
+            call_id,
+            OutboundCallState::ActiveStream,
+        );
         return true;
     }
     tracing::warn!(
@@ -265,9 +289,7 @@ async fn finish_outbound_peer_routing_subscription(
         tracing::warn!(peer = %ctx.link, "peer routing subscription completed");
     }
     let matched = ctx
-        .user_state
-        .write()
-        .await
+        .rpc()
         .finish_outbound_peer_routing_subscription(&ctx.link, call_id);
     if matched {
         Err("peer routing subscription ended before connection close".to_string())
@@ -284,9 +306,8 @@ async fn cancel_inbound_peer_routing_subscription(
     ctx: &ConnectionContext,
     call_id: &RoutedCallId,
 ) -> bool {
-    ctx.user_state
-        .write()
-        .await
+    let _us = ctx.user_state.write().await;
+    ctx.rpc()
         .finish_inbound_peer_routing_subscription(&ctx.link, call_id)
 }
 

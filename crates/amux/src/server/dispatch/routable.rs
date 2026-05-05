@@ -165,16 +165,14 @@ pub(super) async fn handle_routing_error(
     if let Some(next_hop) = dst.pop() {
         let hop_name = next_hop.clone();
         let route_tx = {
-            let mut us = ctx.user_state.write().await;
+            let us = ctx.user_state.read().await;
             let route_tx = us.topology.route(&hop_name);
             if route_tx.is_some() && !us.topology.peer_links.contains(&hop_name) {
-                us.rpc
-                    .remove_outbound_for_route_if(&failed_route, &call_id, |call| {
-                        call.resources
-                            .as_ref()
-                            .and_then(|resources| resources.local_origin())
-                            .is_some_and(|(owner_link, _, _)| *owner_link == hop_name)
-                    });
+                us.rpc.remove_local_origin_outbound_for_return_hop(
+                    &failed_route,
+                    &call_id,
+                    &hop_name,
+                );
             }
             route_tx
         };
@@ -238,7 +236,6 @@ mod tests {
     use uuid::Uuid;
 
     use super::*;
-    use crate::agent::{AgentSession, TEST_ECHO_V1, TestAgentSession};
     use crate::protocol::Link;
     use crate::protocol::message::{
         FrameBody, RequestFrame, ResponseFrame, RoutedFrame, RoutedFrameMessage,
@@ -251,7 +248,8 @@ mod tests {
         let (event_tx, _event_rx) = mpsc::channel(16);
         ConnectionContext {
             state,
-            user_state,
+            rpc: user_state.read().await.rpc.clone(),
+            user_state: user_state.clone(),
             user_id: LOCAL_USER_ID,
             event_tx,
             link: Link::new("test-link").unwrap(),
@@ -305,15 +303,6 @@ mod tests {
 
     fn encode_frame_body(body: FrameBody) -> Vec<u8> {
         crate::protocol::wire::encode_frame_body(&body).unwrap()
-    }
-
-    async fn insert_test_echo_agent(ctx: &ConnectionContext) -> Uuid {
-        let agent_id = Uuid::new_v4();
-        ctx.user_state.write().await.agents.insert(
-            agent_id,
-            AgentSession::TestAgent(TestAgentSession::echo_for_tests(agent_id, None)),
-        );
-        agent_id
     }
 
     fn expect_no_message(rx: &mut mpsc::Receiver<Message>) {
@@ -454,7 +443,6 @@ mod tests {
         let (tx, mut rx) = mpsc::channel(4);
         let call_id = RoutedCallId::from(Uuid::new_v4());
         let ctx = test_ctx().await;
-        let agent_id = insert_test_echo_agent(&ctx).await;
         let src = Route::from_link(Link::new("client-link").unwrap());
 
         handle_routable(
@@ -462,7 +450,7 @@ mod tests {
             src.clone(),
             Route::empty(),
             call_id.clone(),
-            open_session::encode_open_session_request(agent_id, TEST_ECHO_V1, None).unwrap(),
+            open_session::encode_open_session_request().unwrap(),
             &ctx,
         )
         .await
@@ -493,7 +481,6 @@ mod tests {
         let (tx, mut rx) = mpsc::channel(4);
         let call_id = RoutedCallId::from(Uuid::new_v4());
         let ctx = test_ctx().await;
-        let agent_id = insert_test_echo_agent(&ctx).await;
         let src = Route::from_link(Link::new("client-link").unwrap());
 
         handle_routable(
@@ -501,7 +488,7 @@ mod tests {
             src.clone(),
             Route::empty(),
             call_id.clone(),
-            open_session::encode_open_session_request(agent_id, TEST_ECHO_V1, None).unwrap(),
+            open_session::encode_open_session_request().unwrap(),
             &ctx,
         )
         .await
@@ -572,7 +559,6 @@ mod tests {
         let (tx, mut rx) = mpsc::channel(4);
         let call_id = RoutedCallId::from(Uuid::new_v4());
         let ctx = test_ctx().await;
-        let agent_id = insert_test_echo_agent(&ctx).await;
         let src = Route::from_link(Link::new("client-link").unwrap());
 
         handle_routable(
@@ -580,7 +566,7 @@ mod tests {
             src.clone(),
             Route::empty(),
             call_id.clone(),
-            open_session::encode_open_session_request(agent_id, TEST_ECHO_V1, None).unwrap(),
+            open_session::encode_open_session_request().unwrap(),
             &ctx,
         )
         .await

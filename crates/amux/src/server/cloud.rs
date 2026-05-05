@@ -212,13 +212,6 @@ async fn run_cloud_connection(
                     reset_backoff: false,
                 })?;
         us.topology.mark_peer_link(link.clone());
-        us.rpc
-            .register_peer_stream_outbound(RpcPeerStreamOutboundStart {
-                call_id: routing_call_id.clone(),
-                counterparty_route: Route::from_link(link.clone()),
-                method: method::ROUTING_SUBSCRIBE_EVENTS,
-            })
-            .expect("fresh peer routing call id should not collide");
         let initial_messages = vec![Message::Peer(PeerFrame {
             call_id: routing_call_id.clone(),
             body: FrameBody::Request(RequestFrame {
@@ -228,6 +221,13 @@ async fn run_cloud_connection(
         })];
         (route_handle, outgoing_rx, initial_messages)
     };
+    let rpc = user_state.read().await.rpc.clone();
+    rpc.register_peer_stream_outbound(RpcPeerStreamOutboundStart {
+        call_id: routing_call_id.clone(),
+        counterparty_route: Route::from_link(link.clone()),
+        method: method::ROUTING_SUBSCRIBE_EVENTS,
+    })
+    .expect("fresh peer routing call id should not collide");
     let conn_span = tracing::info_span!(
         "connection",
         link = %link,
@@ -237,8 +237,10 @@ async fn run_cloud_connection(
     );
     tracing::info!(parent: &conn_span, "cloud route established");
 
+    let rpc = user_state.read().await.rpc.clone();
     let ctx = ConnectionContext {
         state,
+        rpc,
         user_state,
         user_id: LOCAL_USER_ID,
         event_tx,

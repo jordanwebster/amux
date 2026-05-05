@@ -8,8 +8,8 @@ pub enum OpenSessionOutputEvent {
     Opened,
     Output {
         payload: Vec<u8>,
-        cursor: Option<Vec<u8>>,
     },
+    /// Protocol-defined acknowledgement for a prior input event.
     InputResult {
         input_id: Vec<u8>,
         result: Result<(), ProtocolError>,
@@ -33,12 +33,17 @@ pub enum OpenSessionCodecError {
     Decode(String),
 }
 
-pub fn encode_open_session_request(
+pub fn encode_open_session_request() -> Result<Vec<u8>, OpenSessionCodecError> {
+    wire::encode_open_session_request()
+        .map_err(|error| OpenSessionCodecError::Encode(error.to_string()))
+}
+
+pub fn encode_open_session_open(
     agent_id: Uuid,
     io_protocol: impl Into<String>,
     args: Option<Vec<u8>>,
 ) -> Result<Vec<u8>, OpenSessionCodecError> {
-    wire::encode_open_session_request(&wire::SessionOpenRequest {
+    wire::encode_open_session_open_event(&wire::SessionOpenRequest {
         agent_id,
         io_protocol: io_protocol.into(),
         args,
@@ -97,9 +102,7 @@ impl From<wire::OpenSessionOutputEvent> for OpenSessionOutputEvent {
     fn from(event: wire::OpenSessionOutputEvent) -> Self {
         match event {
             wire::OpenSessionOutputEvent::Opened => Self::Opened,
-            wire::OpenSessionOutputEvent::Output { payload, cursor } => {
-                Self::Output { payload, cursor }
-            }
+            wire::OpenSessionOutputEvent::Output { payload } => Self::Output { payload },
             wire::OpenSessionOutputEvent::InputResult { input_id, result } => {
                 Self::InputResult { input_id, result }
             }
@@ -120,14 +123,12 @@ mod tests {
         let output =
             wire::encode_open_session_output_event(&wire::OpenSessionOutputEvent::Output {
                 payload: b"hello".to_vec(),
-                cursor: None,
             })
             .unwrap();
         assert_eq!(
             decode_open_session_server_frame(&output).unwrap(),
             OpenSessionServerFrame::Event(OpenSessionOutputEvent::Output {
                 payload: b"hello".to_vec(),
-                cursor: None,
             })
         );
 

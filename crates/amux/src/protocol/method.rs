@@ -14,6 +14,16 @@ pub(crate) enum MethodScope {
     Routed,
 }
 
+impl MethodScope {
+    pub(crate) fn as_str(self) -> &'static str {
+        match self {
+            MethodScope::Local => "local",
+            MethodScope::Peer => "peer",
+            MethodScope::Routed => "routed",
+        }
+    }
+}
+
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub(crate) enum MethodKind {
     Unary,
@@ -78,7 +88,7 @@ pub(crate) const AGENT_DELETE: MethodSpec = MethodSpec {
 pub(crate) const AGENT_OPEN_SESSION: MethodSpec = MethodSpec {
     name: AGENT_OPEN_SESSION_NAME,
     scope: MethodScope::Routed,
-    kind: MethodKind::ServerStreaming,
+    kind: MethodKind::BidiStreaming,
 };
 
 pub(crate) const HOOK_HANDLE: MethodSpec = MethodSpec {
@@ -135,6 +145,29 @@ pub(crate) const ALL: &[MethodSpec] = &[
 
 pub(crate) fn find(name: &str) -> Option<MethodSpec> {
     ALL.iter().copied().find(|spec| spec.name == name)
+}
+
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub(crate) enum MethodLookupError {
+    Unknown,
+    WrongScope {
+        spec: MethodSpec,
+        requested_scope: MethodScope,
+    },
+}
+
+pub(crate) fn find_for_scope(
+    name: &str,
+    requested_scope: MethodScope,
+) -> Result<MethodSpec, MethodLookupError> {
+    match find(name) {
+        Some(spec) if spec.scope == requested_scope => Ok(spec),
+        Some(spec) => Err(MethodLookupError::WrongScope {
+            spec,
+            requested_scope,
+        }),
+        None => Err(MethodLookupError::Unknown),
+    }
 }
 
 #[cfg(test)]
@@ -209,6 +242,25 @@ mod tests {
 
         assert_eq!(find(AGENT_CREATE_NAME), Some(AGENT_CREATE));
         assert_eq!(find("/amux.v1.Missing/Nope"), None);
+    }
+
+    #[test]
+    fn method_lookup_distinguishes_unknown_from_wrong_scope() {
+        assert_eq!(
+            find_for_scope(AGENT_LIST_NAME, MethodScope::Local),
+            Ok(AGENT_LIST)
+        );
+        assert_eq!(
+            find_for_scope(AGENT_LIST_NAME, MethodScope::Routed),
+            Err(MethodLookupError::WrongScope {
+                spec: AGENT_LIST,
+                requested_scope: MethodScope::Routed,
+            })
+        );
+        assert_eq!(
+            find_for_scope("/amux.v1.Missing/Nope", MethodScope::Routed),
+            Err(MethodLookupError::Unknown)
+        );
     }
 
     #[test]

@@ -1,36 +1,31 @@
-// amux protocol schema.
+// amux protocol vNext.
 //
-// This crate-owned source is used for code generation. Historical design notes
-// live under notes/.
+// This file is the canonical protobuf source. Generated Rust types live in
+// crates/amux/src/protocol/wire/generated.rs and must be wrapped in domain
+// types from crates/amux/src/protocol/types/ before being used by application
+// code.
 //
-// This file describes the amux wire contract. It is intentionally not a gRPC
-// transport commitment: amux owns the connection, frame routing, multiplexing,
-// authorization, and dispatch machinery.
+// The amux runtime owns connection setup, frame routing, multiplexing,
+// authorization, and dispatch. This is not a gRPC commitment.
 //
-// Service return types describe successful RPC payloads only. Endpoint-delivered
-// calls are carried by FrameBody and normally end with Response:
-//
-//   - Response.payload contains the encoded successful return message.
-//   - Response.error contains the call failure.
-//   - Cancel requests cancellation; the receiver normally acknowledges by
-//     ending the call with Response.error(ERROR_CODE_CANCELLED).
-//
-// Therefore `rpc DeleteAgent(...) returns (Empty)` means Result<(), Error>, not
-// "this method is infallible".
+// Service return types describe successful payloads. Endpoint-delivered calls
+// are carried by FrameBody and normally end with Response:
+//   - Response.payload contains the encoded successful return message
+//   - Response.error contains the call failure
+//   - Cancel requests cancellation; the receiver normally ends the call with
+//     Response.error(ERROR_CODE_CANCELLED).
 //
 // Routed calls may also end before service delivery with a relay-generated
-// RoutingError, for example when an intermediate hop cannot forward the frame.
-// Receivers treat RoutingError as terminal for the routed call_id.
+// RoutingError. Endpoints map RoutingError to local call failure, usually
+// ERROR_CODE_UNREACHABLE.
 //
 // Method scopes are part of the protocol contract:
+//   - LOCAL  methods must arrive in LocalFrame from a trusted local connection
+//   - PEER   methods must arrive in PeerFrame from an adjacent peer
+//   - ROUTED methods must arrive in RoutedFrame and may cross hops
 //
-//   - LOCAL-scoped methods must arrive in LocalFrame from a trusted local
-//     connection.
-//   - PEER-scoped methods must arrive in PeerFrame from an adjacent peer.
-//   - ROUTED-scoped methods must arrive in RoutedFrame and may cross hops.
-//
-// The dispatcher enforces method scope. The frame type enforces provenance.
-// Both checks are needed.
+// The dispatcher enforces method scope, the frame type enforces provenance,
+// and routed frames also validate src.peek() == ctx.link.
 
 syntax = "proto3";
 
@@ -42,14 +37,12 @@ package amux.v1;
 
 message Empty {}
 
-// In-band marker that a routing snapshot has been flushed. Events after this
-// marker are live incremental updates.
+// In-band marker that a routing snapshot has been flushed.
 message SnapshotComplete {}
 
-// In-band marker that a session replay has been flushed. Events after this
-// marker are live session output.
+// In-band marker that a session replay has been flushed.
 message ReplayComplete {
-  // Opaque position at the replay boundary when the selected protocol has one.
+  // Opaque position at the replay boundary when the io_protocol has one.
   optional bytes cursor = 1;
 }
 
@@ -135,13 +128,13 @@ message ConnectRequest {
   // returns it in ConnectAccepted, or rejects the connection.
   repeated uint32 supported_protocol_versions = 1;
 
-  // A hint for the link name the client proposes. The listener returns the
-  // final assigned name in ConnectAccepted.assigned_link_name and may override this.
+  // Hint for the link name. The listener returns the final assigned name
+  // in ConnectAccepted.assigned_link_name and may override this.
   string proposed_link_name = 2;
 
   optional ClientInfo client = 3;
 
-  // Usually a JWT. Kept as string because the expected shape is textual.
+  // Usually a JWT.
   optional string auth_token = 4;
 
   Capabilities capabilities = 5;
@@ -157,7 +150,7 @@ message ConnectResponse {
 message ConnectAccepted {
   uint32 protocol_version = 1;
 
-  // The link name assigned by the listener for this direct connection.
+  // Link name assigned by the listener for this direct connection.
   string assigned_link_name = 2;
 
   // Absence disables heartbeat. idle_timeout_ms = 0 is invalid.
@@ -166,17 +159,15 @@ message ConnectAccepted {
 }
 
 message HeartbeatConfig {
-  // From the receiver's perspective: HEARTBEAT_DIALER means the receiver sends Ping.
+  // From the receiver's perspective: HEARTBEAT_ROLE_DIALER means the receiver sends Ping.
   HeartbeatRole role = 1;
-
-  // The connection is unhealthy if it is idle longer than this.
   uint32 idle_timeout_ms = 2;
 }
 
 enum HeartbeatRole {
   HEARTBEAT_ROLE_UNSPECIFIED = 0;
-  HEARTBEAT_DIALER = 1;
-  HEARTBEAT_RESPONDER = 2;
+  HEARTBEAT_ROLE_DIALER = 1;
+  HEARTBEAT_ROLE_RESPONDER = 2;
 }
 
 message ClientInfo {
@@ -185,7 +176,6 @@ message ClientInfo {
 }
 
 message Capabilities {
-  // Coarse-grained feature names. These are public protocol surface.
   repeated string features = 1;
 }
 
@@ -196,8 +186,7 @@ message TransportMessage {
     PeerFrame peer = 2;
     RoutedFrame routed = 3;
 
-    // Transport-control messages are hop-local. They are never routed and
-    // never reach a service dispatcher.
+    // Transport-control messages are hop-local. They are never routed.
     Ping ping = 10;
     Pong pong = 11;
     ReauthRequest reauth = 12;
@@ -207,7 +196,6 @@ message TransportMessage {
 }
 
 message Ping {}
-
 message Pong {}
 
 message ReauthRequest {
@@ -221,8 +209,6 @@ message ReauthResponse {
   }
 }
 
-// Graceful transport shutdown. The receiver should stop opening new calls and
-// expect this connection to close.
 message GoAway {
   GoAwayReason reason = 1;
   optional Error error = 2;
@@ -245,18 +231,14 @@ enum GoAwayReason {
 // ---------------------------------------------------------------------------
 
 message LocalFrame {
-  // 128-bit call id, typically UUIDv4 bytes. All frames for one logical call
-  // use the same call_id. Valid only on trusted local connections.
+  // 16-byte non-zero call id. Valid only on trusted local connections.
   bytes call_id = 1;
-
   FrameBody body = 2;
 }
 
 message PeerFrame {
-  // 128-bit call id, typically UUIDv4 bytes. All frames for one logical call
-  // use the same call_id. PeerFrame has no routes by construction.
+  // 16-byte non-zero call id. PeerFrame has no routes by construction.
   bytes call_id = 1;
-
   FrameBody body = 2;
 }
 
@@ -264,26 +246,29 @@ message RoutedFrame {
   Route src = 1;
   Route dst = 2;
 
-  // 128-bit call id, typically UUIDv4 bytes. Relays preserve this value.
+  // 16-byte non-zero call id. Relays preserve this value exactly.
   bytes call_id = 3;
 
   oneof message {
-    // Opaque routed payload. Endpoint decode decides whether this is encoded
-    // FrameBody, encrypted bytes, or a future routed body encoding.
+    // Opaque routed payload. Endpoint decode decides whether this is an
+    // encoded FrameBody, encrypted bytes, or a future routed body encoding.
     bytes payload = 10;
     RoutingError routing_error = 11;
   }
 }
 
-// Routing-layer failure generated by a relay before the call reaches the target
-// service. This is terminal for the routed call_id. Services never receive or
-// emit RoutingError; endpoints map it to local call failure, usually
-// ERROR_CODE_UNREACHABLE.
+// Routing-layer failure generated by a relay before the call reaches the
+// service. Terminal for the routed call_id. Services never receive or emit
+// RoutingError.
+//
+// `failed_route` is the original counterparty route the call was destined
+// for, reconstructed by the relay at the failure point as
+// `reverse(src) + missing_next_hop + remaining_dst_after_pop`. Endpoints can
+// include it in surfaced error messages and use it for defense-in-depth
+// matching alongside `call_id` (against a peer that knows a `call_id` but
+// not the original target route).
 message RoutingError {
   Error error = 1;
-  // Full route that failed, relative to the original routed call endpoint.
-  // Endpoints use this to terminate exactly the affected in-flight call state
-  // when call_id values collide across independent counterparties.
   Route failed_route = 2;
 }
 
@@ -300,25 +285,19 @@ message Request {
   // Fully-qualified RPC name, e.g. "/amux.v1.AgentService/CreateAgent".
   string method = 1;
 
-  // Proto-encoded request message for this method. Streaming methods still use
-  // this for their initial request parameters; stream values follow as
-  // StreamItem.payload.
+  // Proto-encoded request message. For streaming methods this is encoded
+  // Empty; stream values follow as StreamItem.payload.
   bytes payload = 2;
 }
 
 message Response {
   oneof outcome {
-    // Encoded successful response message. For no-data success, this is Empty.
-    // Successful terminal responses also use Empty unless a method defines a
-    // final summary.
     bytes payload = 1;
     Error error = 2;
   }
 }
 
 message StreamItem {
-  // Encoded stream item. The concrete type is determined by method and stream
-  // direction.
   bytes payload = 1;
 }
 
@@ -326,24 +305,21 @@ message StreamItem {
 message Cancel {}
 
 // ---------------------------------------------------------------------------
-// Routing service: hosts, routes, and topology
+// Routing service
 // ---------------------------------------------------------------------------
 
 service RoutingService {
-  // PEER-scoped. Host routes are hop-relative; this stream must only run
-  // between adjacent peers. Receivers rewrite inbound routes using the link
-  // the event arrived on before storing or rebroadcasting.
-  // Host events that make an agent routable must come before that agent's AgentUp
-  // or AgentUpdated event. Agent events MUST NOT be used to update routing information.
-  // Initial snapshots are sent as hosts first, agents second, then SnapshotComplete.
-  rpc SubscribeRoutingEvents(SubscribeRoutingEventsRequest) returns (stream RoutingEvent);
+  // PEER-scoped. Host routes are hop-relative; receivers rewrite inbound
+  // routes using the link the event arrived on before storing or
+  // rebroadcasting. Host events that make an agent routable must precede
+  // that agent's AgentUp/AgentUpdated. Initial snapshot order is
+  // hosts, agents, then SnapshotComplete.
+  rpc SubscribeRoutingEvents(SubscribeRoutingEventsRequest) returns (stream SubscribeRoutingEventsResponse);
 }
 
 message SubscribeRoutingEventsRequest {}
 
-message RoutingEvent {
-  // uint64 seq = 1; // leaving this field open for future use
-
+message SubscribeRoutingEventsResponse {
   oneof event {
     HostUp host_up = 10;
     HostUpdated host_updated = 11;
@@ -358,7 +334,6 @@ message RoutingEvent {
 }
 
 message Host {
-  // 16-byte UUID.
   bytes host_id = 1;
   string name = 2;
   Route route = 3;
@@ -368,35 +343,23 @@ message Host {
 message HostUp {
   Host host = 1;
 }
-
 message HostUpdated {
-  // Full current state, not a patch.
   Host host = 1;
 }
-
 message HostDown {
-  // 16-byte UUID.
   bytes host_id = 1;
   Route route = 2;
   optional string reason = 3;
 }
 
 message Agent {
-  // 16-byte UUID.
   bytes agent_id = 1;
-  // 16-byte UUID.
   bytes host_id = 2;
   optional string name = 3;
   string command = 4;
   string working_dir = 5;
-
-  // Opaque type name. Intermediate servers do not need to know every agent
-  // implementation to route or propagate metadata.
   string agent_type = 6;
-
-  // Names the session payload protocols this agent supports.
   repeated string io_protocols = 7;
-
   bool readonly = 8;
   repeated string args = 9;
   int64 created_at_unix_ms = 10;
@@ -405,20 +368,16 @@ message Agent {
 message AgentUp {
   Agent agent = 1;
 }
-
 message AgentUpdated {
-  // Full current state, not a patch.
   Agent agent = 1;
 }
-
 message AgentDown {
-  // 16-byte UUID.
   bytes agent_id = 1;
   optional string reason = 2;
 }
 
 // ---------------------------------------------------------------------------
-// Agent service: agent metadata and lifecycle
+// Agent service
 // ---------------------------------------------------------------------------
 
 service AgentService {
@@ -429,14 +388,10 @@ service AgentService {
   // ROUTED-scoped. Empty dst means "the receiving host".
   rpc CreateAgent(CreateAgentRequest) returns (CreateAgentResponse);
   rpc RenameAgent(RenameAgentRequest) returns (RenameAgentResponse);
-  rpc DeleteAgent(DeleteAgentRequest) returns (Empty);
+  rpc DeleteAgent(DeleteAgentRequest) returns (DeleteAgentResponse);
 
-  // ROUTED-scoped. Request.payload is OpenSessionRequest. The call remains
-  // bidi in amux's lightweight RPC layer: after the request, client StreamItem
-  // payloads are SessionInputEvent and server StreamItem payloads are
-  // SessionOutputEvent. The selected io_protocol owns payload shape, sequence
-  // numbers, replay cursor semantics, and any structured input/output rules.
-  rpc OpenSession(OpenSessionRequest) returns (stream SessionOutputEvent);
+  // ROUTED-scoped. First client StreamItem must be SessionOpen.
+  rpc OpenSession(stream OpenSessionRequest) returns (stream OpenSessionResponse);
 }
 
 message AgentEntry {
@@ -445,31 +400,26 @@ message AgentEntry {
 }
 
 message ListAgentsRequest {}
-
 message ListAgentsResponse {
   repeated AgentEntry agents = 1;
 }
 
 message ResolveAgentRequest {
   oneof identifier {
-    // 16-byte UUID.
     bytes agent_id = 1;
     string agent_name = 2;
   }
 }
-
 message ResolveAgentResponse {
   AgentEntry agent = 1;
 }
 
 message CreateAgentRequest {
-  // 16-byte UUID. If empty, the target host may generate one.
   bytes agent_id = 1;
   optional string name = 2;
 
   oneof agent {
     ClaudeCreateConfig claude = 10;
-
     // Dev/test only. Production servers MUST reject this with UNIMPLEMENTED.
     TestAgentCreateConfig test_agent = 100;
   }
@@ -478,7 +428,6 @@ message CreateAgentRequest {
 message ClaudeCreateConfig {
   string working_dir = 1;
   repeated string args = 2;
-
   oneof runtime {
     ClaudePtyRuntime pty = 10;
     ClaudeSdkRuntime sdk = 11;
@@ -502,35 +451,32 @@ message CreateAgentResponse {
 }
 
 message RenameAgentRequest {
-  // 16-byte UUID.
   bytes agent_id = 1;
   string name = 2;
 }
-
 message RenameAgentResponse {
   Agent agent = 1;
 }
 
 message DeleteAgentRequest {
-  // 16-byte UUID.
   bytes agent_id = 1;
 }
 
+message DeleteAgentResponse {}
+
 // ---------------------------------------------------------------------------
-// Agent sessions: interactive raw and protocol-specific I/O
+// Sessions
 // ---------------------------------------------------------------------------
 
-message SessionInputEvent {
+message OpenSessionRequest {
   oneof event {
-    SessionInput input = 1;
-    // No explicit SessionClose here because Cancel requests stream
-    // cancellation and the call normally terminates with Response(CANCELLED).
-    // Revisit if a domain-specific close event becomes useful.
+    SessionOpen open = 1;
+    SessionInput input = 2;
+    SessionControl control = 3;
   }
 }
 
-message OpenSessionRequest {
-  // 16-byte UUID.
+message SessionOpen {
   bytes agent_id = 1;
   string io_protocol = 2;
   // Opaque arguments. The selected io_protocol defines the contents.
@@ -538,21 +484,25 @@ message OpenSessionRequest {
 }
 
 message SessionInput {
-  // Client-generated id for optimistic UI correlation.
+  // Client-generated id for correlating protocol-defined input results.
   bytes input_id = 1;
-
   // Opaque input payload. The selected io_protocol defines the contents.
   bytes payload = 2;
 }
 
-message SessionOutputEvent {
+// Side-channel control event (resize, focus, etc.). Distinct from
+// `SessionInput` because it isn't data flowing through the agent's I/O -
+// it's a directive about the session itself. Vocabulary is io_protocol-defined.
+message SessionControl {
+  bytes payload = 1;
+}
+
+message OpenSessionResponse {
   oneof event {
     SessionOpened opened = 1;
     SessionOutput output = 2;
     SessionInputResult input_result = 3;
     ReplayComplete replay_complete = 4;
-    // No explicit SessionClosed because the stream normally closes with a final
-    // Response. Revisit if this would simplify clients later.
   }
 }
 
@@ -561,14 +511,12 @@ message SessionOpened {}
 message SessionOutput {
   // Opaque output payload. The selected io_protocol defines the contents.
   bytes payload = 1;
-
-  // Opaque replay cursor. The selected io_protocol defines the contents.
-  optional bytes cursor = 2;
 }
 
 message SessionInputResult {
+  // Echoes SessionInput.input_id when the selected io_protocol reports
+  // per-input acceptance or rejection. Not all io_protocols emit input results.
   bytes input_id = 1;
-
   oneof outcome {
     Empty accepted = 2;
     Error error = 3;
@@ -576,11 +524,11 @@ message SessionInputResult {
 }
 
 // ---------------------------------------------------------------------------
-// First-party IO protocol payloads
+// First-party io_protocol payloads
 // ---------------------------------------------------------------------------
 
-// Args for OpenSessionRequest.args when OpenSessionRequest.io_protocol is
-// "claude_raw_v1".
+// `claude_raw_v1` - opaque PTY bytes. Input payload is bytes-to-stdin;
+// output payload is bytes-from-stdout. Replay is the retained byte buffer.
 message ClaudeRawV1Args {
   optional TerminalSize terminal_size = 1;
   optional ClaudeRawV1ReplayQuery replay_query = 2;
@@ -592,8 +540,14 @@ message ClaudeRawV1ReplayQuery {
   }
 }
 
-// Args for OpenSessionRequest.args when OpenSessionRequest.io_protocol is
-// "claude_pty_transcript_v1".
+message ClaudeRawV1Control {
+  oneof control {
+    TerminalSize resize = 1;
+  }
+}
+
+// `claude_pty_transcript_v1` - structured transcript stream with sequence
+// ids. Input is action-structured (`write` / `delay_ms`).
 message ClaudePtyTranscriptV1Args {
   optional TerminalSize terminal_size = 1;
   optional ClaudePtyTranscriptV1ReplayQuery replay_query = 2;
@@ -601,7 +555,6 @@ message ClaudePtyTranscriptV1Args {
 
 message ClaudePtyTranscriptV1ReplayQuery {
   oneof query {
-    // Last transcript sequence observed by the client. Replay resumes after it.
     uint64 since = 1;
     uint64 tail_count = 2;
   }
@@ -611,13 +564,10 @@ message ClaudePtyTranscriptV1Cursor {
   uint64 seq_id = 1;
 }
 
-// Payload for SessionInput.payload when OpenSessionRequest.io_protocol is
-// "claude_pty_transcript_v1".
 message ClaudePtyTranscriptV1Input {
-  // Transcript sequence observed by the client before composing this input.
-  // This is a concurrency precondition, not a correlation id.
+  // Concurrency precondition: the sequence the client observed before
+  // composing this input. Not a correlation id.
   uint64 expected_seq = 1;
-
   repeated ClaudePtyTranscriptV1Action actions = 2;
 }
 
@@ -628,32 +578,32 @@ message ClaudePtyTranscriptV1Action {
   }
 }
 
-// Payload for SessionOutput.payload when OpenSessionRequest.io_protocol is
-// "claude_pty_transcript_v1".
 message ClaudePtyTranscriptV1Output {
-  // Transcript sequence assigned by the runtime.
   uint64 seq_id = 1;
-
-  // JSON encoded Claude transcript row, matching the existing app domain type.
+  // JSON-encoded Claude transcript row.
   bytes payload = 2;
 }
 
+// `test_echo_v1` - test-only io_protocol. No args, no controls; input
+// payload bytes are echoed back verbatim as output payload bytes.
+
 // ---------------------------------------------------------------------------
-// Admin and hook services
+// Hook and admin
 // ---------------------------------------------------------------------------
 
 service HookService {
-  // LOCAL-scoped. Hook events are accepted only from trusted local processes.
-  rpc HandleHook(HandleHookRequest) returns (Empty);
+  // LOCAL-scoped.
+  rpc HandleHook(HandleHookRequest) returns (HandleHookResponse);
 }
 
 message HandleHookRequest {
-  // 16-byte UUID.
   bytes agent_id = 1;
   HookProvider provider = 2;
   bytes payload = 3;
   bool external = 4;
 }
+
+message HandleHookResponse {}
 
 enum HookProvider {
   HOOK_PROVIDER_UNSPECIFIED = 0;
@@ -663,14 +613,10 @@ enum HookProvider {
 service AdminService {
   // LOCAL-scoped.
   rpc Debug(DebugRequest) returns (DebugResponse);
-  // LOCAL-scoped.
-  rpc Shutdown(ShutdownRequest) returns (Empty);
-  // LOCAL-scoped.
+  rpc Shutdown(ShutdownRequest) returns (ShutdownResponse);
   rpc Suspend(SuspendRequest) returns (SuspendResponse);
-  // LOCAL-scoped.
   rpc Resume(ResumeRequest) returns (ResumeResponse);
-  // LOCAL-scoped.
-  rpc ConnectToServer(ConnectToServerRequest) returns (Empty);
+  rpc ConnectToServer(ConnectToServerRequest) returns (ConnectToServerResponse);
 }
 
 message DebugRequest {
@@ -689,26 +635,21 @@ message DebugResponse {
 }
 
 message ShutdownRequest {}
-
+message ShutdownResponse {}
 message SuspendRequest {
-  // Why attached clients are being disconnected as part of this suspend.
   SuspendReason reason = 1;
 }
 
 enum SuspendReason {
   SUSPEND_REASON_UNSPECIFIED = 0;
-  // Manual `amux server suspend`.
   SUSPEND_REASON_USER = 1;
-  // `amux update`, where suspend is part of an update/restart flow.
   SUSPEND_REASON_UPDATE = 2;
 }
 
 message SuspendResponse {
   uint64 suspended_count = 1;
 }
-
 message ResumeRequest {}
-
 message ResumeResponse {
   uint64 resumed_count = 1;
   uint64 failed_count = 2;
@@ -717,3 +658,4 @@ message ResumeResponse {
 message ConnectToServerRequest {
   string address = 1;
 }
+message ConnectToServerResponse {}

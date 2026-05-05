@@ -66,18 +66,14 @@ pub(in crate::server) async fn forward_routed_payload_or_endpoint(
     src.push(next_hop);
 
     let route_tx = {
-        let mut us = user_state.write().await;
+        let us = user_state.read().await;
         let route_tx = us.topology.route(&hop_name);
         if route_tx.is_some()
             && !us.topology.peer_links.contains(&hop_name)
             && is_terminal_response_payload(&payload)
         {
-            us.rpc.remove_outbound_for_route_if(&src, &call_id, |call| {
-                call.resources
-                    .as_ref()
-                    .and_then(|resources| resources.local_origin())
-                    .is_some_and(|(owner_link, _, _)| *owner_link == hop_name)
-            });
+            us.rpc
+                .remove_local_origin_outbound_for_return_hop(&src, &call_id, &hop_name);
         }
         route_tx
     };
@@ -139,9 +135,8 @@ async fn remove_tracked_outbound_for_routing_error(
     failed_route: &Route,
     call_id: &RoutedCallId,
 ) {
-    let mut us = user_state.write().await;
-    us.rpc
-        .remove_outbound_for_route_if(failed_route, call_id, |call| call.resources.is_some());
+    let rpc = user_state.read().await.rpc.clone();
+    rpc.remove_tracked_outbound_for_route(failed_route, call_id);
 }
 
 fn is_terminal_response_payload(payload: &[u8]) -> bool {
@@ -226,7 +221,7 @@ mod tests {
             Route::from_links([local.as_str().to_string(), peer.as_str().to_string()]).unwrap();
         let user_state = Arc::new(RwLock::new(ServerUserState::new()));
         {
-            let mut us = user_state.write().await;
+            let us = user_state.read().await;
             us.rpc
                 .register_local_origin_outbound(RpcLocalOriginOutboundStart {
                     call_id: call_id.clone(),
