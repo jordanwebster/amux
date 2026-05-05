@@ -1,10 +1,10 @@
 use std::io;
 use std::path::Path;
 
-use amux::protocol::{Command, DebugFormat, Message, ShutdownReason};
+use amux::protocol::DebugFormat;
 use amux::{
-    Config, ConnectError, ConnectPolicy, Connection, DaemonOptions, ServerMode, TransportError,
-    connect, run_server, spawn_daemon,
+    Config, ConnectError, ConnectPolicy, Connection, DaemonOptions, RpcClient, RpcClientError,
+    ServerMode, TransportError, connect, run_server, spawn_daemon,
 };
 use anyhow::{Result, anyhow};
 
@@ -20,6 +20,12 @@ pub(crate) enum StartStyle {
 pub(crate) struct StartOptions {
     mode: ServerMode,
     style: StartStyle,
+}
+
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+enum SuspendIntent {
+    User,
+    Update,
 }
 
 impl StartOptions {
@@ -63,20 +69,9 @@ pub async fn stop_server(config: &Config) -> Result<()> {
         return Ok(());
     };
 
-    conn.send(&Message::Command {
-        command: Command::Shutdown,
-    })
-    .await?;
-
-    match conn.recv().await {
-        Ok(Message::Command {
-            command:
-                Command::ShutdownNotification {
-                    reason: ShutdownReason::UserRequested,
-                },
-        }) => {}
-        Ok(other) => tracing::warn!(?other, "unexpected shutdown response"),
-        Err(e) => tracing::warn!(error = %e, "error reading shutdown response"),
+    let mut client = RpcClient::new(conn);
+    if let Err(error) = client.shutdown().await {
+        tracing::warn!(%error, "error reading shutdown response");
     }
 
     println!("Server shutting down.");
@@ -90,16 +85,16 @@ pub async fn suspend_server(config: &Config) -> Result<()> {
         println!("No server running.");
         return Ok(());
     };
-    let _ = suspend_connected_server(conn).await?;
+    let _ = suspend_connected_server(conn, SuspendIntent::User).await?;
     Ok(())
 }
 
-/// Suspend all agents and stop the server if it is currently running.
-pub async fn suspend_server_if_running(config: &Config) -> Result<bool> {
+/// Suspend all agents for an update if the server is currently running.
+pub async fn suspend_server_for_update_if_running(config: &Config) -> Result<bool> {
     let Some(conn) = existing_server(config).await? else {
         return Ok(false);
     };
-    suspend_connected_server(conn).await
+    suspend_connected_server(conn, SuspendIntent::Update).await
 }
 
 /// Resume any previously suspended agents, spawning the daemon if needed.
@@ -116,63 +111,24 @@ pub async fn resume_server_with_executable(config: &Config, executable: &Path) -
     )
     .await?;
 
-    conn.send(&Message::Command {
-        command: Command::Resume,
-    })
-    .await?;
-
-    match conn.recv().await? {
-        Message::Command {
-            command:
-                Command::ResumeResult {
-                    resumed_count,
-                    failed_count,
-                    error,
-                },
-        } => {
-            if let Some(error) = error {
-                return Err(anyhow!("resume failed: {error}"));
-            }
-            print!("Resumed {resumed_count} agent(s).");
-            if failed_count > 0 {
-                print!(" ({failed_count} failed to resume)");
-            }
-            println!();
-            Ok(())
-        }
-        other => Err(anyhow!(
-            "unexpected response to Resume: {}",
-            other.type_label()
-        )),
+    let mut client = RpcClient::new(conn);
+    let summary = client.resume().await?;
+    print!("Resumed {} agent(s).", summary.resumed_count);
+    if summary.failed_count > 0 {
+        print!(" ({} failed to resume)", summary.failed_count);
     }
+    println!();
+    Ok(())
 }
 
 /// Connect to a remote amux server
 pub async fn connect_remote(address: &str, config: &Config) -> Result<()> {
     let conn = connect(config, cli_daemon_policy()?).await?;
 
-    conn.send(&Message::Command {
-        command: Command::ConnectToServer {
-            address: address.to_string(),
-        },
-    })
-    .await?;
-
-    match conn.recv().await? {
-        Message::Command {
-            command: Command::ConnectToServerResult { error: None },
-        } => {
-            println!("Connected to {}", address);
-            Ok(())
-        }
-        Message::Command {
-            command: Command::ConnectToServerResult { error: Some(e) },
-        } => Err(anyhow!("failed to connect to {address}: {e}")),
-        other => Err(anyhow!(
-            "expected ConnectToServerResult, got {}",
-            other.type_label()
-        )),
-    }
+    let mut client = RpcClient::new(conn);
+    client.connect_to_server(address.to_string()).await?;
+    println!("Connected to {}", address);
+    Ok(())
 }
 
 /// Get server debug information as a pre-rendered string in the requested format.
@@ -181,17 +137,8 @@ pub async fn debug(config: &Config, verbose: bool, format: DebugFormat) -> Resul
         return Err(anyhow!("No server running"));
     };
 
-    conn.send(&Message::Command {
-        command: Command::Debug { verbose, format },
-    })
-    .await?;
-
-    match conn.recv().await? {
-        Message::Command {
-            command: Command::DebugResult { dump },
-        } => Ok(dump),
-        other => Err(anyhow!("expected DebugResult, got {}", other.type_label())),
-    }
+    let mut client = RpcClient::new(conn);
+    Ok(client.debug(verbose, format).await?)
 }
 
 /// Probe whether a local amux server is running. Also removes a stale socket
@@ -221,32 +168,19 @@ async fn existing_server(config: &Config) -> Result<Option<Connection>> {
     }
 }
 
-async fn suspend_connected_server(conn: Connection) -> Result<bool> {
-    conn.send(&Message::Command {
-        command: Command::Suspend,
-    })
-    .await?;
-
-    match conn.recv().await {
-        Ok(Message::Command {
-            command:
-                Command::SuspendResult {
-                    suspended_count,
-                    error,
-                },
-        }) => {
-            if let Some(error) = error {
-                return Err(anyhow!("suspend failed: {error}"));
-            }
-            println!("Suspended {suspended_count} agent(s).");
+async fn suspend_connected_server(conn: Connection, intent: SuspendIntent) -> Result<bool> {
+    let mut client = RpcClient::new(conn);
+    let result = match intent {
+        SuspendIntent::User => client.suspend().await,
+        SuspendIntent::Update => client.suspend_for_update().await,
+    };
+    match result {
+        Ok(summary) => {
+            println!("Suspended {} agent(s).", summary.suspended_count);
             Ok(true)
         }
-        Err(TransportError::Io(_)) => Ok(true),
+        Err(RpcClientError::Transport(TransportError::Io(_))) => Ok(true),
         Err(e) => Err(e.into()),
-        Ok(other) => Err(anyhow!(
-            "unexpected response to Suspend: {}",
-            other.type_label()
-        )),
     }
 }
 

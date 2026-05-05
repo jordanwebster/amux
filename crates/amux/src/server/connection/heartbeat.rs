@@ -3,7 +3,7 @@ use std::time::Duration;
 use tokio::sync::mpsc;
 
 use super::context::{ConnectionError, HeartbeatRole, HeartbeatSetup, MessageMetadata, Result};
-use crate::protocol::message::{DirectMessage, Message};
+use crate::protocol::message::Message;
 use crate::transport::TransportError;
 
 #[derive(Clone, Copy)]
@@ -106,11 +106,7 @@ impl HeartbeatState {
             Self::Dialer { last_tx_at, .. } => {
                 tracing::debug!(role = HeartbeatRole::Dialer.as_str(), "sending heartbeat");
                 *last_tx_at = tokio::time::Instant::now();
-                tx.send(Message::Direct {
-                    message: DirectMessage::Heartbeat,
-                })
-                .await
-                .map_err(|_| {
+                tx.send(Message::Ping).await.map_err(|_| {
                     ConnectionError::Transport(TransportError::Io(std::io::Error::new(
                         std::io::ErrorKind::BrokenPipe,
                         "outgoing channel closed while sending heartbeat",

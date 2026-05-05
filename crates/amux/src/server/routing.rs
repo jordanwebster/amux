@@ -1,31 +1,22 @@
 //! Agent lifecycle, peer management, and route-level operations.
 
 mod agents;
+mod forwarding;
 mod naming;
 mod peers;
+mod topology;
 
-use std::sync::Arc;
-
-pub(super) use agents::{
-    SubscribeError, create_agent, delete_local_agent, handle_subscribe, resume_agents,
-    shutdown_server, suspend_server, withdraw_agent,
+pub(crate) use agents::{
+    CreateAgentError, create_agent_record, delete_local_agent, withdraw_agent,
 };
-pub(super) use naming::{apply_local_name_candidate, rename_local_agent};
-pub(super) use peers::{
-    announce_agent_message, broadcast_to_peers, handle_peer_disconnect, send_initial_announcements,
+pub(super) use agents::{resume_agents, shutdown_server, suspend_server};
+pub(in crate::server) use forwarding::{
+    ForwardedRoutedPayload, forward_routed_payload_or_endpoint,
 };
-use tokio::sync::{RwLock, mpsc};
-
-use super::{ConnectionHandle, ServerUserState};
-use crate::protocol::message::Message;
-
-pub(super) async fn connection_tx(
-    user_state: &Arc<RwLock<ServerUserState>>,
-    link: &crate::protocol::link::Link,
-) -> Option<mpsc::Sender<Message>> {
-    let us = user_state.read().await;
-    us.routes.get(link).map(ConnectionHandle::sender)
-}
-
-#[cfg(test)]
-mod tests;
+pub(super) use naming::apply_local_name_candidate;
+pub(crate) use naming::{RenameAgentError, rename_local_agent_record};
+pub(crate) use peers::{broadcast_topology_event, initial_routing_events};
+pub(crate) use topology::TopologyEvent;
+pub(in crate::server) use topology::{
+    PeerAgentDownIgnored, PeerAgentUpIgnored, Topology, TopologyEffect,
+};

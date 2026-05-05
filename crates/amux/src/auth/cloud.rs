@@ -17,7 +17,7 @@ use crate::auth::oauth;
 use crate::config::Config;
 use crate::protocol::handshake::{Connect, ConnectResult, PROTOCOL_VERSION};
 use crate::protocol::link::Link;
-use crate::protocol::message::{DirectMessage, Message, ProtocolError};
+use crate::protocol::message::{Message, ProtocolError, ReauthRequest, ReauthResponse};
 use crate::protocol::route::generate_server_link;
 use crate::setup;
 use crate::state::State;
@@ -52,8 +52,8 @@ pub(crate) enum CloudError {
         server_version: u32,
         client_version: u32,
     },
-    #[error("amux upgrade required (minimum v{minimum_version}, you have v{client_version})")]
-    UpgradeRequired {
+    #[error("amux update required (minimum v{minimum_version}, you have v{client_version})")]
+    UpdateRequired {
         minimum_version: String,
         client_version: String,
     },
@@ -67,16 +67,16 @@ fn check_handshake_connect_result(result: &ConnectResult) -> std::result::Result
             Err(CloudError::Auth("invalid credentials".to_string()))
         }
         Some(ProtocolError::ProtocolMismatch {
-            server_version,
-            client_version,
+            supported_versions,
+            peer_supported_versions,
         }) => Err(CloudError::ProtocolMismatch {
-            server_version: *server_version,
-            client_version: *client_version,
+            server_version: first_protocol_version(supported_versions),
+            client_version: first_protocol_version(peer_supported_versions),
         }),
-        Some(ProtocolError::UpgradeRequired {
+        Some(ProtocolError::UpdateRequired {
             minimum_version,
             client_version,
-        }) => Err(CloudError::UpgradeRequired {
+        }) => Err(CloudError::UpdateRequired {
             minimum_version: minimum_version.clone(),
             client_version: client_version.clone(),
         }),
@@ -84,47 +84,40 @@ fn check_handshake_connect_result(result: &ConnectResult) -> std::result::Result
     }
 }
 
+fn first_protocol_version(versions: &[u32]) -> u32 {
+    versions.first().copied().unwrap_or_default()
+}
+
 /// Check a session ReauthResult message, mapping protocol errors to CloudError.
 fn check_reauth_result(msg: &Message) -> std::result::Result<(), CloudError> {
     match msg {
-        Message::Direct {
-            message: DirectMessage::ReauthResult { error: None },
-        } => Ok(()),
-        Message::Direct {
-            message:
-                DirectMessage::ReauthResult {
-                    error: Some(ProtocolError::InvalidCredentials),
-                },
-        } => Err(CloudError::Auth("invalid credentials".to_string())),
-        Message::Direct {
-            message:
-                DirectMessage::ReauthResult {
-                    error:
-                        Some(ProtocolError::ProtocolMismatch {
-                            server_version,
-                            client_version,
-                        }),
-                },
-        } => Err(CloudError::ProtocolMismatch {
-            server_version: *server_version,
-            client_version: *client_version,
+        Message::ReauthResponse(ReauthResponse { error: None }) => Ok(()),
+        Message::ReauthResponse(ReauthResponse {
+            error: Some(ProtocolError::InvalidCredentials),
+        }) => Err(CloudError::Auth("invalid credentials".to_string())),
+        Message::ReauthResponse(ReauthResponse {
+            error:
+                Some(ProtocolError::ProtocolMismatch {
+                    supported_versions,
+                    peer_supported_versions,
+                }),
+        }) => Err(CloudError::ProtocolMismatch {
+            server_version: first_protocol_version(supported_versions),
+            client_version: first_protocol_version(peer_supported_versions),
         }),
-        Message::Direct {
-            message:
-                DirectMessage::ReauthResult {
-                    error:
-                        Some(ProtocolError::UpgradeRequired {
-                            minimum_version,
-                            client_version,
-                        }),
-                },
-        } => Err(CloudError::UpgradeRequired {
+        Message::ReauthResponse(ReauthResponse {
+            error:
+                Some(ProtocolError::UpdateRequired {
+                    minimum_version,
+                    client_version,
+                }),
+        }) => Err(CloudError::UpdateRequired {
             minimum_version: minimum_version.clone(),
             client_version: client_version.clone(),
         }),
-        Message::Direct {
-            message: DirectMessage::ReauthResult { error: Some(e) },
-        } => Err(CloudError::Connection(format!("server rejected: {e}"))),
+        Message::ReauthResponse(ReauthResponse { error: Some(e) }) => {
+            Err(CloudError::Connection(format!("server rejected: {e}")))
+        }
         _ => Err(CloudError::Connection("expected ReauthResult".to_string())),
     }
 }
@@ -193,12 +186,11 @@ impl CloudConnection {
             link_name: link.as_str().to_string(),
             token: Some(conn.token),
             version: PROTOCOL_VERSION,
+            supported_versions: vec![PROTOCOL_VERSION],
             client_name: Some("amux-cli".to_string()),
             client_version: Some(env!("CARGO_PKG_VERSION").to_string()),
         };
-        let payload = connect
-            .encode()
-            .map_err(TransportError::SerializationEncode)?;
+        let payload = connect.encode().map_err(TransportError::from)?;
         transport.write_frame(&payload).await?;
 
         // Wait for response with timeout to prevent hanging on unresponsive peers
@@ -208,12 +200,23 @@ impl CloudConnection {
         let response = ConnectResult::decode(&payload)
             .map_err(|e| CloudError::Connection(format!("invalid ConnectResult: {e}")))?;
         check_handshake_connect_result(&response)?;
-        tracing::info!(host = %conn.host, link = %link, "cloud connected");
+        let accepted_link = response
+            .assigned_link_name
+            .ok_or_else(|| {
+                CloudError::Connection(
+                    "accepted ConnectResponse omitted assigned_link_name".to_string(),
+                )
+            })
+            .and_then(|link| {
+                Link::new(link)
+                    .map_err(|e| CloudError::Connection(format!("invalid assigned link: {e}")))
+            })?;
+        tracing::info!(host = %conn.host, link = %accepted_link, "cloud connected");
 
         Ok(Self {
             config: config.clone(),
             transport,
-            link,
+            link: accepted_link,
             current_host: conn.host,
             current_port: conn.port,
             token_expires_at: conn.expires_at,
@@ -289,13 +292,11 @@ impl TokenRefreshState {
         self.pending_expires_at = Some(conn.expires_at);
 
         // Send Reauth with fresh token through the outgoing channel
-        tx.send(Message::Direct {
-            message: DirectMessage::Reauth { token: conn.token },
-        })
-        .await
-        .map_err(|_| {
-            CloudError::Connection("Outgoing channel closed during token refresh".to_string())
-        })?;
+        tx.send(Message::Reauth(ReauthRequest { token: conn.token }))
+            .await
+            .map_err(|_| {
+                CloudError::Connection("Outgoing channel closed during token refresh".to_string())
+            })?;
 
         Ok(())
     }
@@ -337,9 +338,7 @@ mod tests {
         let mut state = test_refresh_state(initial_expiry);
         state.pending_expires_at = Some(new_expiry);
 
-        let msg = Message::Direct {
-            message: DirectMessage::ReauthResult { error: None },
-        };
+        let msg = Message::ReauthResponse(ReauthResponse { error: None });
         let result = state.handle_reauth_result(&msg);
 
         assert!(result.is_ok());
@@ -352,9 +351,7 @@ mod tests {
         let initial_expiry = Utc::now() + Duration::hours(1);
         let mut state = test_refresh_state(initial_expiry);
 
-        let msg = Message::Direct {
-            message: DirectMessage::ReauthResult { error: None },
-        };
+        let msg = Message::ReauthResponse(ReauthResponse { error: None });
         let result = state.handle_reauth_result(&msg);
 
         assert!(result.is_ok());
@@ -365,11 +362,9 @@ mod tests {
     fn handle_reauth_result_invalid_credentials() {
         let mut state = test_refresh_state(Utc::now() + Duration::hours(1));
 
-        let msg = Message::Direct {
-            message: DirectMessage::ReauthResult {
-                error: Some(ProtocolError::InvalidCredentials),
-            },
-        };
+        let msg = Message::ReauthResponse(ReauthResponse {
+            error: Some(ProtocolError::InvalidCredentials),
+        });
         let result = state.handle_reauth_result(&msg);
 
         assert!(matches!(result, Err(CloudError::Auth(_))));
@@ -379,14 +374,12 @@ mod tests {
     fn handle_reauth_result_protocol_mismatch() {
         let mut state = test_refresh_state(Utc::now() + Duration::hours(1));
 
-        let msg = Message::Direct {
-            message: DirectMessage::ReauthResult {
-                error: Some(ProtocolError::ProtocolMismatch {
-                    server_version: 4,
-                    client_version: 3,
-                }),
-            },
-        };
+        let msg = Message::ReauthResponse(ReauthResponse {
+            error: Some(ProtocolError::ProtocolMismatch {
+                supported_versions: vec![4],
+                peer_supported_versions: vec![3],
+            }),
+        });
         let result = state.handle_reauth_result(&msg);
 
         assert!(matches!(
@@ -402,13 +395,11 @@ mod tests {
     fn handle_reauth_result_generic_server_error() {
         let mut state = test_refresh_state(Utc::now() + Duration::hours(1));
 
-        let msg = Message::Direct {
-            message: DirectMessage::ReauthResult {
-                error: Some(ProtocolError::ServerError {
-                    message: "something broke".to_string(),
-                }),
-            },
-        };
+        let msg = Message::ReauthResponse(ReauthResponse {
+            error: Some(ProtocolError::ServerError {
+                message: "something broke".to_string(),
+            }),
+        });
         let result = state.handle_reauth_result(&msg);
 
         assert!(matches!(result, Err(CloudError::Connection(_))));
@@ -418,13 +409,8 @@ mod tests {
     fn handle_reauth_result_non_reauth_result_returns_error() {
         let mut state = test_refresh_state(Utc::now() + Duration::hours(1));
 
-        // Not a ReauthResult at all — should be rejected
-        let msg = Message::Command {
-            command: crate::protocol::message::Command::Debug {
-                verbose: false,
-                format: crate::protocol::message::DebugFormat::Yaml,
-            },
-        };
+        // Not a ReauthResponse at all; should be rejected.
+        let msg = Message::Ping;
         let result = state.handle_reauth_result(&msg);
 
         assert!(matches!(result, Err(CloudError::Connection(_))));

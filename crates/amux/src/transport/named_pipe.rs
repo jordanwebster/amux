@@ -51,11 +51,11 @@ where
 
     async fn read_message(&mut self) -> Result<Message> {
         let data = self.read_frame().await?;
-        Message::decode(&data).map_err(TransportError::SerializationDecode)
+        Message::decode(&data).map_err(TransportError::from)
     }
 
     async fn write_message(&mut self, msg: &Message) -> Result<()> {
-        let data = msg.encode().map_err(TransportError::SerializationEncode)?;
+        let data = msg.encode().map_err(TransportError::from)?;
         self.write_frame(&data).await
     }
 }
@@ -73,7 +73,7 @@ where
 {
     async fn read_message(&mut self) -> Result<Message> {
         let data = self.reader.read_frame(MAX_FRAME_SIZE).await?;
-        Message::decode(&data).map_err(TransportError::SerializationDecode)
+        Message::decode(&data).map_err(TransportError::from)
     }
 }
 
@@ -89,7 +89,7 @@ where
     S: AsyncRead + AsyncWrite + Unpin + Send + Sync + 'static,
 {
     async fn write_message(&mut self, msg: &Message) -> Result<()> {
-        let data = msg.encode().map_err(TransportError::SerializationEncode)?;
+        let data = msg.encode().map_err(TransportError::from)?;
         self.writer.write_frame(&data).await
     }
 }

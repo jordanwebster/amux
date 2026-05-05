@@ -10,8 +10,8 @@
 
 use std::io::{self, BufRead};
 
-use amux::protocol::{Command, HookProvider, Message};
-use amux::{Config, ConnectPolicy, connect};
+use amux::protocol::HookProvider;
+use amux::{Config, ConnectPolicy, RpcClient, connect};
 use anyhow::Result;
 use serde::Deserialize;
 use serde_json::Value;
@@ -131,15 +131,10 @@ async fn send_hook_event(
     external: bool,
 ) -> Result<()> {
     let conn = connect(config, ConnectPolicy::ExistingOnly).await?;
-    conn.send(&Message::Command {
-        command: Command::HandleHook {
-            agent_id,
-            provider: HookProvider::Claude,
-            payload,
-            external,
-        },
-    })
-    .await?;
+    let mut client = RpcClient::new(conn);
+    client
+        .enqueue_hook(agent_id, HookProvider::Claude, payload, external)
+        .await?;
     Ok(())
 }
 

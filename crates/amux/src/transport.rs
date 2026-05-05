@@ -4,11 +4,13 @@
 //! - 4-byte big-endian length prefix
 //! - Followed by payload bytes
 //!
-//! WebSocket transport uses binary MessagePack frames.
+//! WebSocket transport uses binary protobuf frames.
 
 mod framing;
 mod handshake;
 mod local;
+#[cfg(test)]
+pub(crate) mod memory;
 #[cfg(windows)]
 mod named_pipe;
 mod tcp;
@@ -34,14 +36,26 @@ pub(crate) type Result<T> = std::result::Result<T, TransportError>;
 pub enum TransportError {
     #[error("IO error: {0}")]
     Io(#[from] std::io::Error),
-    #[error("Serialization error: {0}")]
-    SerializationEncode(#[from] rmp_serde::encode::Error),
-    #[error("Deserialization error: {0}")]
-    SerializationDecode(#[from] rmp_serde::decode::Error),
+    #[error("Protocol encode error: {0}")]
+    ProtocolEncode(String),
+    #[error("Protocol decode error: {0}")]
+    ProtocolDecode(String),
     #[error("Invalid message: {0}")]
     InvalidMessage(String),
     #[error("Transport config error: {0}")]
     Config(String),
+}
+
+impl From<crate::protocol::wire::EncodeError> for TransportError {
+    fn from(error: crate::protocol::wire::EncodeError) -> Self {
+        Self::ProtocolEncode(error.to_string())
+    }
+}
+
+impl From<crate::protocol::wire::DecodeError> for TransportError {
+    fn from(error: crate::protocol::wire::DecodeError) -> Self {
+        Self::ProtocolDecode(error.to_string())
+    }
 }
 
 /// Transport trait for reading and writing messages

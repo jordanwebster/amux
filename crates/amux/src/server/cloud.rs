@@ -5,23 +5,25 @@
 //! exits the process on protocol version mismatch (after notifying attached terminals).
 
 use std::sync::Arc;
-use std::sync::atomic::AtomicU64;
 use std::time::Duration;
 
+use prost::Message as _;
 use tokio::sync::{RwLock, mpsc};
 use tracing::Instrument;
 use uuid::Uuid;
 
 use super::connection::{
-    ConnectionContext, ConnectionError, HeartbeatRole, HeartbeatSetup, run_connection,
+    ConnectionContext, ConnectionError, HeartbeatRole, HeartbeatSetup, RunConnection,
+    run_connection,
 };
-use super::routing::send_initial_announcements;
 use super::runtime::notify_local_clients;
-use super::{ConnectionHandle, LOCAL_USER_ID, ServerState, ServerUserState, ensure_user_state};
+use super::{LOCAL_USER_ID, ServerState, ServerUserState, ensure_user_state};
 use crate::agent::SessionEvent;
 use crate::auth::cloud::{CloudConnection, CloudError};
 use crate::config::Config;
-use crate::protocol::message::{Message, ShutdownReason};
+use crate::protocol::message::{FrameBody, Message, PeerFrame, RequestFrame, ShutdownReason};
+use crate::protocol::{Route, method, wire};
+use crate::rpc::RpcPeerStreamOutboundStart;
 use crate::setup;
 
 const INITIAL_BACKOFF: Duration = Duration::from_secs(1);
@@ -73,15 +75,15 @@ pub(super) fn establish_cloud_connection(
                         client_version,
                     }) => {
                         tracing::error!(server_version, client_version, "cloud protocol mismatch");
-                        notify_local_clients(&user_state, ShutdownReason::ProtocolMismatch).await;
+                        notify_local_clients(&user_state, ShutdownReason::UpdateRequired).await;
                         // Give writer tasks time to flush notifications to transports.
                         // try_send only places messages in channel buffers; without this
                         // yield, process::exit kills the runtime before writers can drain
-                        // them, so terminals see "connection reset" not "amux upgrade required".
+                        // them, so terminals see "connection reset" not "amux update required".
                         tokio::time::sleep(Duration::from_millis(100)).await;
                         std::process::exit(1);
                     }
-                    Err(CloudConnectionError::UpgradeRequired {
+                    Err(CloudConnectionError::UpdateRequired {
                         minimum_version,
                         client_version,
                     }) => {
@@ -90,7 +92,7 @@ pub(super) fn establish_cloud_connection(
                             client_version = %client_version,
                             "cloud requires newer client version"
                         );
-                        crate::update::write_upgrade_required(
+                        crate::update::write_update_required(
                             &config.state_path,
                             &minimum_version,
                         );
@@ -134,8 +136,8 @@ enum CloudConnectionError {
         server_version: u32,
         client_version: u32,
     },
-    /// Client binary version is below the server's minimum requirement
-    UpgradeRequired {
+    /// Client binary version is below the server's minimum requirement.
+    UpdateRequired {
         minimum_version: String,
         client_version: String,
     },
@@ -173,11 +175,11 @@ async fn run_cloud_connection(
                 client_version,
             });
         }
-        Err(CloudError::UpgradeRequired {
+        Err(CloudError::UpdateRequired {
             minimum_version,
             client_version,
         }) => {
-            return Err(CloudConnectionError::UpgradeRequired {
+            return Err(CloudConnectionError::UpdateRequired {
                 minimum_version,
                 client_version,
             });
@@ -190,8 +192,8 @@ async fn run_cloud_connection(
         }
     };
 
-    // Handshake succeeded — clear any stale upgrade-required marker
-    crate::update::clear_upgrade_required(&config.state_path);
+    // Handshake succeeded: clear any stale update-required marker.
+    crate::update::clear_update_required(&config.state_path);
 
     let heartbeat = conn.idle_timeout_secs().map(|secs| HeartbeatSetup {
         role: HeartbeatRole::Dialer,
@@ -200,21 +202,32 @@ async fn run_cloud_connection(
     let (transport, token_refresh) = conn.into_parts();
     let link = token_refresh.link.clone();
 
-    let (outgoing_tx, outgoing_rx) = mpsc::channel::<Message>(256);
-    let next_request_id = Arc::new(AtomicU64::new(1));
-    {
-        let (host_id, host_name, is_cloud_server) = {
-            let s = state.read().await;
-            (s.host_id, s.config.host_name.clone(), s.is_cloud_server)
-        };
+    let routing_call_id = crate::protocol::RoutedCallId::from(Uuid::new_v4());
+    let (route_handle, outgoing_rx, initial_messages) = {
         let mut us = user_state.write().await;
-        us.routes.insert(
-            link.clone(),
-            ConnectionHandle::new(outgoing_tx.clone(), next_request_id.clone()),
-        );
-        us.peer_links.insert(link.clone());
-        send_initial_announcements(&us, host_id, &host_name, is_cloud_server, &link);
-    }
+        let (route_handle, outgoing_rx) =
+            us.try_reserve_link(link.clone())
+                .map_err(|_| CloudConnectionError::Retriable {
+                    msg: format!("cloud assigned link `{link}` is already connected"),
+                    reset_backoff: false,
+                })?;
+        us.topology.mark_peer_link(link.clone());
+        us.rpc
+            .register_peer_stream_outbound(RpcPeerStreamOutboundStart {
+                call_id: routing_call_id.clone(),
+                counterparty_route: Route::from_link(link.clone()),
+                method: method::ROUTING_SUBSCRIBE_EVENTS,
+            })
+            .expect("fresh peer routing call id should not collide");
+        let initial_messages = vec![Message::Peer(PeerFrame {
+            call_id: routing_call_id.clone(),
+            body: FrameBody::Request(RequestFrame {
+                method: method::ROUTING_SUBSCRIBE_EVENTS_NAME.to_string(),
+                payload: wire::SubscribeRoutingEventsRequest {}.encode_to_vec(),
+            }),
+        })];
+        (route_handle, outgoing_rx, initial_messages)
+    };
     let conn_span = tracing::info_span!(
         "connection",
         link = %link,
@@ -232,20 +245,21 @@ async fn run_cloud_connection(
         link: link.clone(),
         is_local: false,
         heartbeat,
-        next_request_id,
         client_name: Some("amux-cli".to_string()),
         client_version: Some(env!("CARGO_PKG_VERSION").to_string()),
     };
 
     let connected_at = std::time::Instant::now();
-    let result = run_connection(
+    let result = run_connection(RunConnection {
         transport,
         outgoing_rx,
-        outgoing_tx,
+        initial_messages,
+        response_tx: route_handle.sender(),
+        close_rx: route_handle.close_receiver(),
         ctx,
-        Some(token_refresh),
-        conn_span,
-    )
+        token_refresh: Some(token_refresh),
+        span: conn_span,
+    })
     .await;
 
     match result {
@@ -260,10 +274,10 @@ async fn run_cloud_connection(
             server_version,
             client_version,
         }),
-        Err(ConnectionError::UpgradeRequired {
+        Err(ConnectionError::UpdateRequired {
             minimum_version,
             client_version,
-        }) => Err(CloudConnectionError::UpgradeRequired {
+        }) => Err(CloudConnectionError::UpdateRequired {
             minimum_version,
             client_version,
         }),

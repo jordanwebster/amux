@@ -166,43 +166,4 @@ mod tests {
         let hook: ClaudeHook = serde_json::from_str(json).unwrap();
         assert!(matches!(hook, ClaudeHook::PermissionRequest(_)));
     }
-
-    #[test]
-    fn hook_message_msgpack_roundtrip() {
-        use crate::protocol::message::{Command, HookProvider, Message};
-
-        let agent_id = Uuid::new_v4();
-        let hook = ParsedClaudeHook::from_typed(ClaudeHook::SessionStart(HookCommon {
-            session_id: Uuid::new_v4(),
-            transcript_path: "/tmp/transcript.jsonl".to_string(),
-            cwd: "/tmp".to_string(),
-        }));
-        let msg = Message::Command {
-            command: Command::HandleHook {
-                agent_id,
-                provider: HookProvider::Claude,
-                payload: serde_json::to_vec(&hook.raw).unwrap(),
-                external: true,
-            },
-        };
-        let encoded = msg.encode().unwrap();
-        let decoded = Message::decode(&encoded).unwrap();
-        let Message::Command {
-            command:
-                Command::HandleHook {
-                    agent_id: decoded_id,
-                    provider,
-                    payload,
-                    external,
-                },
-        } = decoded
-        else {
-            panic!("Expected HandleHook, got {decoded:?}");
-        };
-        assert_eq!(decoded_id, agent_id);
-        assert_eq!(provider, HookProvider::Claude);
-        assert!(external);
-        let parsed = ParsedClaudeHook::parse_payload(&payload).unwrap();
-        assert!(matches!(parsed.hook, ClaudeHook::SessionStart(_)));
-    }
 }

@@ -1,4 +1,4 @@
-mod agent;
+pub mod agent;
 mod auth;
 mod buffer;
 mod client;
@@ -6,7 +6,9 @@ mod config;
 mod debug;
 mod paths;
 pub mod protocol;
+mod rpc;
 mod server;
+mod services;
 pub mod setup;
 mod sleep_inhibitor;
 mod state;
@@ -15,7 +17,8 @@ mod transport;
 pub mod update;
 
 pub use client::{
-    ConnectError, ConnectPolicy, Connection, DaemonOptions, ServerMode, connect, spawn_daemon,
+    ConnectError, ConnectPolicy, Connection, DaemonOptions, OpenSessionClient, ResumeSummary,
+    RpcClient, RpcClientError, ServerMode, SuspendSummary, connect, spawn_daemon,
 };
 pub use config::{Config, ConfigError, Keybinds, LeaderKey};
 pub use paths::{default_data_dir, default_log_path};

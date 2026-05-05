@@ -16,7 +16,7 @@ pub(super) fn cli_daemon_policy() -> Result<ConnectPolicy> {
 /// Check the update marker file and print a banner if a valid update is available.
 /// The marker is ignored (and deleted) if its current_version doesn't match our binary.
 pub(super) fn print_update_banner(state_path: &Path) {
-    if let Some(minimum_version) = amux::update::read_upgrade_required(state_path) {
+    if let Some(minimum_version) = amux::update::read_update_required(state_path) {
         let current = env!("CARGO_PKG_VERSION");
         println!(
             "An update is REQUIRED for cloud connectivity (minimum v{minimum_version}, \

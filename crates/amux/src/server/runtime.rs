@@ -6,22 +6,18 @@
 //! for unauthenticated local connections).
 
 mod events;
-mod forward;
 mod notify;
-mod sweep;
 
 use std::net::SocketAddr;
 use std::sync::Arc;
 use std::time::Duration;
 
 pub(in crate::server) use events::handle_session_event;
-pub(in crate::server) use forward::send_routable_via_full_dst;
 pub(in crate::server) use notify::notify_local_clients;
-pub(in crate::server) use sweep::sweep_expired_subscriptions;
+use prost::Message as _;
 use thiserror::Error;
 use tokio::net::TcpListener;
 use tokio::sync::{RwLock, Semaphore, mpsc};
-use tokio::time::MissedTickBehavior;
 use tokio_rustls::TlsAcceptor;
 
 use self::notify::notify_other_clients;
@@ -32,7 +28,10 @@ use super::{LOCAL_USER_ID, ServerState, ShutdownRequest};
 use crate::agent::SessionEvent;
 use crate::auth::jwt::JwtValidator;
 use crate::config::{Config, ConfigError};
-use crate::protocol::message::{Command, Message, ProtocolError, ShutdownReason};
+use crate::protocol::message::{
+    FrameBody, LocalFrame, Message, ProtocolError, ResponseFrame, ShutdownReason,
+};
+use crate::protocol::wire;
 use crate::transport::{LocalListener, TcpTransport, TransportError, create_tls_acceptor};
 
 /// Maximum time allowed for a TLS handshake to complete.
@@ -42,8 +41,6 @@ const TLS_HANDSHAKE_TIMEOUT: Duration = Duration::from_secs(10);
 /// Safety net against resource exhaustion. Each network connection holds a
 /// semaphore permit for its lifetime; new connections are rejected at capacity.
 const MAX_CONNECTIONS: usize = 16384;
-
-const SUBSCRIPTION_SWEEP_INTERVAL: Duration = Duration::from_secs(10);
 
 type Result<T> = std::result::Result<T, ServerError>;
 
@@ -227,23 +224,16 @@ impl Server {
         );
 
         let mut shutdown_rx = self.shutdown_rx.take().expect("run() called twice");
-        let mut subscription_sweep = tokio::time::interval(SUBSCRIPTION_SWEEP_INTERVAL);
-        subscription_sweep.set_missed_tick_behavior(MissedTickBehavior::Skip);
-        subscription_sweep.tick().await;
-
         // Deferred reply: built inside the select arm, sent after listener teardown
         // so clients can't reconnect to the old socket before it's removed.
         let mut deferred_reply: Option<(mpsc::Sender<Message>, Message)> = None;
 
         loop {
             tokio::select! {
-                _ = subscription_sweep.tick() => {
-                    sweep_expired_subscriptions(&self.state).await;
-                }
                 // Shutdown/suspend request from a connection handler
                 Some(req) = shutdown_rx.recv() => {
                     match req {
-                        ShutdownRequest::Shutdown { reply, link } => {
+                        ShutdownRequest::Shutdown { reply, reply_call_id, link } => {
                             let user_state = {
                                 let s = self.state.read().await;
                                 s.user_state(&LOCAL_USER_ID)
@@ -256,16 +246,23 @@ impl Server {
                                 ShutdownReason::UserRequested,
                             ).await;
                             shutdown_server(&user_state).await;
+                            let message = Message::Local(LocalFrame {
+                                call_id: reply_call_id,
+                                body: FrameBody::Response(ResponseFrame::Payload(
+                                    wire::Empty {}.encode_to_vec(),
+                                )),
+                            });
                             deferred_reply = Some((
                                 reply,
-                                Message::Command {
-                                    command: Command::ShutdownNotification {
-                                        reason: ShutdownReason::UserRequested,
-                                    },
-                                },
+                                message,
                             ));
                         }
-                        ShutdownRequest::Suspend { reply, link } => {
+                        ShutdownRequest::Suspend {
+                            reply,
+                            reply_call_id,
+                            link,
+                            reason,
+                        } => {
                             let user_state = {
                                 let s = self.state.read().await;
                                 s.user_state(&LOCAL_USER_ID)
@@ -275,7 +272,7 @@ impl Server {
                             notify_other_clients(
                                 &user_state,
                                 &link,
-                                ShutdownReason::Updating,
+                                reason,
                             ).await;
                             let (suspended, errors) = suspend_server(&user_state).await;
                             let suspended_count = suspended.agents.len();
@@ -296,14 +293,14 @@ impl Server {
                                 {
                                     tracing::error!(error = %e, "failed to save suspended agents");
                                     let _ = reply
-                                        .send(Message::Command {
-                                            command: Command::SuspendResult {
-                                                suspended_count: 0,
-                                                error: Some(ProtocolError::ServerError {
+                                        .send(Message::Local(LocalFrame {
+                                            call_id: reply_call_id,
+                                            body: FrameBody::Response(ResponseFrame::Error(
+                                                ProtocolError::ServerError {
                                                     message: format!("failed to save state: {e}"),
-                                                }),
-                                            },
-                                        })
+                                                },
+                                            )),
+                                        }))
                                         .await;
                                     // Don't shut down on save failure
                                     continue;
@@ -311,12 +308,15 @@ impl Server {
                             }
                             deferred_reply = Some((
                                 reply,
-                                Message::Command {
-                                    command: Command::SuspendResult {
+                                Message::Local(LocalFrame {
+                                    call_id: reply_call_id,
+                                    body: FrameBody::Response(match error {
+                                        Some(error) => ResponseFrame::Error(error),
+                                        None => ResponseFrame::Payload(wire::SuspendResponse {
                                         suspended_count: suspended_count as u64,
-                                        error,
-                                    },
-                                },
+                                    }.encode_to_vec()),
+                                    }),
+                                }),
                             ));
                         }
                     }
@@ -457,34 +457,12 @@ impl Server {
 #[cfg(test)]
 pub(crate) mod test_helpers {
     use std::sync::Arc;
-    use std::sync::atomic::AtomicU64;
 
     use tokio::sync::{RwLock, mpsc};
     use uuid::Uuid;
 
     use crate::config::Config;
-    use crate::protocol::link::Link;
-    use crate::server::connection::ConnectionContext;
     use crate::server::{LOCAL_USER_ID, ServerState, ServerUserState};
-
-    pub(crate) fn test_ctx(
-        state: Arc<RwLock<ServerState>>,
-        user_state: Arc<RwLock<ServerUserState>>,
-    ) -> ConnectionContext {
-        let (event_tx, _event_rx) = mpsc::channel(16);
-        ConnectionContext {
-            state,
-            user_state,
-            user_id: LOCAL_USER_ID,
-            event_tx,
-            link: Link::new("test-link").unwrap(),
-            is_local: true,
-            heartbeat: None,
-            next_request_id: Arc::new(AtomicU64::new(1)),
-            client_name: Some("amux-cli".to_string()),
-            client_version: Some(env!("CARGO_PKG_VERSION").to_string()),
-        }
-    }
 
     pub(crate) async fn test_state() -> (Arc<RwLock<ServerState>>, Arc<RwLock<ServerUserState>>) {
         let (shutdown_tx, _shutdown_rx) = mpsc::channel(1);
@@ -499,350 +477,5 @@ pub(crate) mod test_helpers {
                 .expect("local user state is always initialized")
         };
         (state, user_state)
-    }
-}
-
-#[cfg(test)]
-mod tests {
-    use std::path::PathBuf;
-    use std::sync::Arc;
-    use std::sync::atomic::AtomicU64;
-
-    use tokio::sync::{RwLock, mpsc};
-    use uuid::Uuid;
-
-    use crate::agent::{AgentSession, LocalAgentNameSource, SessionEvent};
-    use crate::protocol::link::Link;
-    use crate::protocol::message::{AgentType, CreateAgentRequest, DirectMessage, Message};
-    use crate::server::test_helpers::test_state;
-    use crate::server::{ConnectionHandle, ServerUserState, handle_session_event};
-
-    async fn add_peer(
-        user_state: &Arc<RwLock<ServerUserState>>,
-        link: &str,
-    ) -> mpsc::Receiver<Message> {
-        let (tx, rx) = mpsc::channel(16);
-        let mut us = user_state.write().await;
-        us.routes.insert(
-            Link::new(link).unwrap(),
-            ConnectionHandle::new(tx, Arc::new(AtomicU64::new(1))),
-        );
-        us.peer_links.insert(Link::new(link).unwrap());
-        rx
-    }
-
-    async fn insert_local_claude(
-        user_state: &Arc<RwLock<ServerUserState>>,
-        host_id: Uuid,
-        agent_id: Uuid,
-        name: Option<&str>,
-        source: LocalAgentNameSource,
-    ) {
-        insert_local_claude_with_args(user_state, host_id, agent_id, name, source, vec![]).await;
-    }
-
-    async fn insert_local_claude_with_args(
-        user_state: &Arc<RwLock<ServerUserState>>,
-        host_id: Uuid,
-        agent_id: Uuid,
-        name: Option<&str>,
-        source: LocalAgentNameSource,
-        args: Vec<String>,
-    ) {
-        let req = CreateAgentRequest {
-            agent_id,
-            name: name.map(str::to_owned),
-            agent_type: AgentType::Claude,
-            working_dir: PathBuf::from("/tmp"),
-            terminal_size: None,
-            args,
-        };
-        let mut session = AgentSession::try_new(&req).expect("known agent type");
-        session.set_local_name(name.map(str::to_owned), source);
-        let info = session.to_agent(host_id);
-
-        let mut us = user_state.write().await;
-        us.agents.insert(agent_id, session);
-        us.registry.register_local(info).unwrap();
-    }
-
-    #[tokio::test]
-    async fn unnamed_local_claude_agent_gets_slug_rename_and_rebroadcast() {
-        let (state, user_state) = test_state().await;
-        let mut peer_rx = add_peer(&user_state, "peer-a").await;
-        let host_id = {
-            let s = state.read().await;
-            s.host_id
-        };
-        let agent_id = Uuid::new_v4();
-        insert_local_claude_with_args(
-            &user_state,
-            host_id,
-            agent_id,
-            None,
-            LocalAgentNameSource::Unset,
-            vec!["--dangerously-skip-permissions".to_string()],
-        )
-        .await;
-
-        handle_session_event(
-            &state,
-            SessionEvent::NameCandidateChanged {
-                agent_id,
-                user_id: super::LOCAL_USER_ID,
-                name: "merry-slug".to_string(),
-                source: LocalAgentNameSource::ProviderSlug,
-            },
-        )
-        .await;
-
-        {
-            let us = user_state.read().await;
-            let entry = us.registry.get(&agent_id).unwrap();
-            assert_eq!(entry.name.as_deref(), Some("merry-slug"));
-            assert_eq!(
-                us.agents.get(&agent_id).and_then(|session| session.name()),
-                Some("merry-slug")
-            );
-        }
-
-        let msg = peer_rx
-            .try_recv()
-            .expect("peer should receive rename announce");
-        assert!(matches!(
-            msg,
-            Message::Direct {
-                message: DirectMessage::AnnounceAgent {
-                    agent_id: id,
-                    host_id: announced_host_id,
-                    name: Some(name),
-                    args,
-                    ..
-                }
-            } if id == agent_id
-                && announced_host_id == host_id
-                && name == "merry-slug"
-                && args == vec!["--dangerously-skip-permissions".to_string()]
-        ));
-    }
-
-    #[tokio::test]
-    async fn later_agent_name_overrides_earlier_slug_rename_and_rebroadcast() {
-        let (state, user_state) = test_state().await;
-        let mut peer_rx = add_peer(&user_state, "peer-a").await;
-        let host_id = {
-            let s = state.read().await;
-            s.host_id
-        };
-        let agent_id = Uuid::new_v4();
-        insert_local_claude(
-            &user_state,
-            host_id,
-            agent_id,
-            None,
-            LocalAgentNameSource::Unset,
-        )
-        .await;
-
-        handle_session_event(
-            &state,
-            SessionEvent::NameCandidateChanged {
-                agent_id,
-                user_id: super::LOCAL_USER_ID,
-                name: "slug-name".to_string(),
-                source: LocalAgentNameSource::ProviderSlug,
-            },
-        )
-        .await;
-        let _ = peer_rx.try_recv().expect("slug rename should announce");
-
-        handle_session_event(
-            &state,
-            SessionEvent::NameCandidateChanged {
-                agent_id,
-                user_id: super::LOCAL_USER_ID,
-                name: "final-agent-name".to_string(),
-                source: LocalAgentNameSource::ProviderName,
-            },
-        )
-        .await;
-
-        {
-            let us = user_state.read().await;
-            let entry = us.registry.get(&agent_id).unwrap();
-            assert_eq!(entry.name.as_deref(), Some("final-agent-name"));
-            assert_eq!(
-                us.agents
-                    .get(&agent_id)
-                    .and_then(|session| session.local_name_source()),
-                Some(LocalAgentNameSource::ProviderName)
-            );
-        }
-
-        let msg = peer_rx
-            .try_recv()
-            .expect("agent-name rename should announce");
-        assert!(matches!(
-            msg,
-            Message::Direct {
-                message: DirectMessage::AnnounceAgent {
-                    agent_id: id,
-                    name: Some(name),
-                    ..
-                }
-            } if id == agent_id && name == "final-agent-name"
-        ));
-    }
-
-    #[tokio::test]
-    async fn amux_supplied_name_blocks_slug_and_agent_name_updates() {
-        let (state, user_state) = test_state().await;
-        let mut peer_rx = add_peer(&user_state, "peer-a").await;
-        let host_id = {
-            let s = state.read().await;
-            s.host_id
-        };
-        let agent_id = Uuid::new_v4();
-        insert_local_claude(
-            &user_state,
-            host_id,
-            agent_id,
-            Some("fixed-name"),
-            LocalAgentNameSource::Amux,
-        )
-        .await;
-
-        for (name, source) in [
-            ("slug-name", LocalAgentNameSource::ProviderSlug),
-            ("agent-name", LocalAgentNameSource::ProviderName),
-        ] {
-            handle_session_event(
-                &state,
-                SessionEvent::NameCandidateChanged {
-                    agent_id,
-                    user_id: super::LOCAL_USER_ID,
-                    name: name.to_string(),
-                    source,
-                },
-            )
-            .await;
-        }
-
-        {
-            let us = user_state.read().await;
-            let entry = us.registry.get(&agent_id).unwrap();
-            assert_eq!(entry.name.as_deref(), Some("fixed-name"));
-            assert_eq!(
-                us.agents
-                    .get(&agent_id)
-                    .and_then(|session| session.local_name_source()),
-                Some(LocalAgentNameSource::Amux)
-            );
-        }
-        assert!(
-            peer_rx.try_recv().is_err(),
-            "blocked updates should not announce"
-        );
-    }
-
-    #[tokio::test]
-    async fn same_string_higher_precedence_source_upgrades_provenance_without_announce() {
-        let (state, user_state) = test_state().await;
-        let mut peer_rx = add_peer(&user_state, "peer-a").await;
-        let host_id = {
-            let s = state.read().await;
-            s.host_id
-        };
-        let agent_id = Uuid::new_v4();
-        insert_local_claude(
-            &user_state,
-            host_id,
-            agent_id,
-            Some("shared-name"),
-            LocalAgentNameSource::ProviderSlug,
-        )
-        .await;
-
-        handle_session_event(
-            &state,
-            SessionEvent::NameCandidateChanged {
-                agent_id,
-                user_id: super::LOCAL_USER_ID,
-                name: "shared-name".to_string(),
-                source: LocalAgentNameSource::ProviderName,
-            },
-        )
-        .await;
-
-        {
-            let us = user_state.read().await;
-            let entry = us.registry.get(&agent_id).unwrap();
-            assert_eq!(entry.name.as_deref(), Some("shared-name"));
-            assert_eq!(
-                us.agents
-                    .get(&agent_id)
-                    .and_then(|session| session.local_name_source()),
-                Some(LocalAgentNameSource::ProviderName)
-            );
-        }
-        assert!(
-            peer_rx.try_recv().is_err(),
-            "provenance-only upgrades should not announce"
-        );
-    }
-
-    #[tokio::test]
-    async fn candidate_rename_collision_is_skipped_and_not_announced() {
-        let (state, user_state) = test_state().await;
-        let mut peer_rx = add_peer(&user_state, "peer-a").await;
-        let host_id = {
-            let s = state.read().await;
-            s.host_id
-        };
-        let owner_id = Uuid::new_v4();
-        let candidate_id = Uuid::new_v4();
-        insert_local_claude(
-            &user_state,
-            host_id,
-            owner_id,
-            Some("taken-name"),
-            LocalAgentNameSource::Amux,
-        )
-        .await;
-        insert_local_claude(
-            &user_state,
-            host_id,
-            candidate_id,
-            None,
-            LocalAgentNameSource::Unset,
-        )
-        .await;
-
-        handle_session_event(
-            &state,
-            SessionEvent::NameCandidateChanged {
-                agent_id: candidate_id,
-                user_id: super::LOCAL_USER_ID,
-                name: "taken-name".to_string(),
-                source: LocalAgentNameSource::ProviderSlug,
-            },
-        )
-        .await;
-
-        {
-            let us = user_state.read().await;
-            assert_eq!(
-                us.registry.resolve(&us.hosts, "taken-name").unwrap().id,
-                owner_id
-            );
-            assert_eq!(us.registry.get(&candidate_id).unwrap().name, None);
-            assert_eq!(
-                us.agents
-                    .get(&candidate_id)
-                    .and_then(|session| session.name()),
-                None
-            );
-        }
-        assert!(peer_rx.try_recv().is_err(), "collision should not announce");
     }
 }

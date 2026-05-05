@@ -2,7 +2,7 @@
 //!
 //! The server spawns a periodic task that calls [`check_for_update`] and writes
 //! the result to a marker file next to `state.yaml`. Clients read this file to
-//! decide whether to show an upgrade banner.
+//! decide whether to show an update banner.
 
 use std::path::{Path, PathBuf};
 
@@ -89,30 +89,30 @@ pub fn clear_update_marker(marker_path: &Path) {
     let _ = std::fs::remove_file(marker_path);
 }
 
-// --- Upgrade-required marker ---
+// --- Update-required marker ---
 //
-// Written by the server when a cloud connection is rejected with UpgradeRequired.
+// Written by the server when a cloud connection is rejected with UpdateRequired.
 // Read by the CLI for the pre-command warning and exit banner.
 
-/// Derive the upgrade-required marker path from the state file path.
-pub fn upgrade_required_marker_path(state_path: &Path) -> PathBuf {
+/// Derive the update-required marker path from the state file path.
+pub fn update_required_marker_path(state_path: &Path) -> PathBuf {
     state_path
         .parent()
         .unwrap_or(Path::new("."))
-        .join("upgrade-required")
+        .join("update-required")
 }
 
-/// Derive the upgrade-dismissed marker path from the state file path.
-fn upgrade_dismissed_marker_path(state_path: &Path) -> PathBuf {
+/// Derive the update-dismissed marker path from the state file path.
+fn update_dismissed_marker_path(state_path: &Path) -> PathBuf {
     state_path
         .parent()
         .unwrap_or(Path::new("."))
-        .join("upgrade-dismissed")
+        .join("update-dismissed")
 }
 
-/// Read the upgrade-required marker. Returns the minimum version string, or None.
-pub fn read_upgrade_required(state_path: &Path) -> Option<String> {
-    let contents = std::fs::read_to_string(upgrade_required_marker_path(state_path)).ok()?;
+/// Read the update-required marker. Returns the minimum version string, or None.
+pub fn read_update_required(state_path: &Path) -> Option<String> {
+    let contents = std::fs::read_to_string(update_required_marker_path(state_path)).ok()?;
     let version = contents.trim().to_string();
     if version.is_empty() {
         None
@@ -121,32 +121,32 @@ pub fn read_upgrade_required(state_path: &Path) -> Option<String> {
     }
 }
 
-/// Write the upgrade-required marker with the minimum version.
-pub fn write_upgrade_required(state_path: &Path, minimum_version: &str) {
-    let path = upgrade_required_marker_path(state_path);
+/// Write the update-required marker with the minimum version.
+pub fn write_update_required(state_path: &Path, minimum_version: &str) {
+    let path = update_required_marker_path(state_path);
     if let Err(e) = std::fs::write(&path, format!("{minimum_version}\n")) {
-        tracing::warn!(error = %e, "failed to write upgrade-required marker");
+        tracing::warn!(error = %e, "failed to write update-required marker");
     }
 }
 
-/// Clear both upgrade-required and upgrade-dismissed markers.
-pub fn clear_upgrade_required(state_path: &Path) {
-    let _ = std::fs::remove_file(upgrade_required_marker_path(state_path));
-    let _ = std::fs::remove_file(upgrade_dismissed_marker_path(state_path));
+/// Clear both update-required and update-dismissed markers.
+pub fn clear_update_required(state_path: &Path) {
+    let _ = std::fs::remove_file(update_required_marker_path(state_path));
+    let _ = std::fs::remove_file(update_dismissed_marker_path(state_path));
 }
 
 /// Check whether the user has dismissed the warning for the given minimum version.
-pub fn is_upgrade_dismissed(state_path: &Path, minimum_version: &str) -> bool {
-    let path = upgrade_dismissed_marker_path(state_path);
+pub fn is_update_dismissed(state_path: &Path, minimum_version: &str) -> bool {
+    let path = update_dismissed_marker_path(state_path);
     match std::fs::read_to_string(&path) {
         Ok(contents) => contents.trim() == minimum_version,
         Err(_) => false,
     }
 }
 
-/// Dismiss the upgrade warning for the given minimum version.
-pub fn dismiss_upgrade(state_path: &Path, minimum_version: &str) {
-    let path = upgrade_dismissed_marker_path(state_path);
+/// Dismiss the update-required warning for the given minimum version.
+pub fn dismiss_update_required(state_path: &Path, minimum_version: &str) {
+    let path = update_dismissed_marker_path(state_path);
     let _ = std::fs::write(&path, format!("{minimum_version}\n"));
 }
 

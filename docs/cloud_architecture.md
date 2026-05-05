@@ -2,6 +2,12 @@
 
 This document describes the cloud deployment architecture for amux. For internal server design, see [architecture.md](architecture.md).
 
+> **Protocol note:** Some message examples below still describe the historical
+> MessagePack / `DirectMessage` protocol. The current wire protocol is
+> protobuf: raw protobuf handshake frames followed by protobuf
+> `TransportMessage` frames over existing Unix/TCP/WebSocket transports. See
+> `crates/amux/proto/amux/v1/amux.proto` and `notes/PROTO_REFACTOR.md`.
+
 ## Overall Architecture
 
 ![Global Architecture](../images/global_architecture.png)

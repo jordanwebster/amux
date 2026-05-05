@@ -1,15 +1,13 @@
 use std::collections::HashMap;
 use std::sync::Arc;
 
-use anyhow::{Context, Result as AnyhowResult, bail};
 use thiserror::Error;
 use tokio::sync::{RwLock, mpsc};
 use uuid::Uuid;
 
-use super::peers::{announce_agent_message, broadcast_to_peers};
-use crate::agent::{AgentSession, SessionEvent, StopPolicy};
-use crate::buffer::MultiplexByteReader;
-use crate::protocol::message::{AgentType, DirectMessage, TerminalSize};
+use super::peers::broadcast_topology_event;
+use crate::agent::{Agent, AgentSession, SessionEvent, StopPolicy};
+use crate::protocol::message::AgentType;
 use crate::server::ServerUserState;
 use crate::suspend::SuspendedServerState;
 
@@ -18,72 +16,69 @@ use crate::suspend::SuspendedServerState;
 pub(in crate::server::routing) const MAX_LOCAL_AGENTS: usize = 1024;
 
 #[derive(Debug, Error)]
-pub(in crate::server) enum SubscribeError {
-    #[error("Agent not found: {0}")]
-    AgentNotFound(String),
-    #[error("agent {0} has no PTY")]
-    MissingPty(Uuid),
-    #[error("agent {0} session has ended")]
-    SessionEnded(Uuid),
+pub(crate) enum CreateAgentError {
+    #[error("agent limit reached ({max} max)")]
+    LimitReached { max: usize },
+    #[error("Agent already exists: {0}")]
+    AlreadyExists(String),
+    #[error("unknown agent type")]
+    UnknownAgentType,
     #[error("{0}")]
-    Operation(String),
+    Start(String),
+    #[error("{0}")]
+    Register(String),
 }
 
-pub(in crate::server) async fn create_agent(
+pub(crate) async fn create_agent_record(
     user_state: &Arc<RwLock<ServerUserState>>,
     event_tx: &mpsc::Sender<SessionEvent>,
     req: crate::protocol::CreateAgentRequest,
     user_id: Uuid,
     host_id: Uuid,
-) -> std::result::Result<(), String> {
-    create_agent_inner(user_state, event_tx, req, user_id, host_id)
-        .await
-        .map_err(|error| error.to_string())
-}
-
-async fn create_agent_inner(
-    user_state: &Arc<RwLock<ServerUserState>>,
-    event_tx: &mpsc::Sender<SessionEvent>,
-    req: crate::protocol::CreateAgentRequest,
-    user_id: Uuid,
-    host_id: Uuid,
-) -> AnyhowResult<()> {
+) -> std::result::Result<Agent, CreateAgentError> {
     let agent_type = req.agent_type.clone();
     let args = req.args.clone();
     let agent_id = req.agent_id;
     let req_name = req.name.clone();
 
-    let agent_count = {
+    let (agent_count, info) = {
         let mut us = user_state.write().await;
 
         if us.agents.len() >= MAX_LOCAL_AGENTS {
-            bail!("agent limit reached ({MAX_LOCAL_AGENTS} max)");
+            return Err(CreateAgentError::LimitReached {
+                max: MAX_LOCAL_AGENTS,
+            });
         }
 
-        if us.registry.contains(&req.agent_id) {
-            bail!("Agent already exists: {}", req.agent_id);
+        if us.topology.registry.contains(&req.agent_id) {
+            return Err(CreateAgentError::AlreadyExists(req.agent_id.to_string()));
         }
 
         if let Some(ref a) = req.name
-            && us.registry.name_taken(a)
+            && us.topology.registry.name_taken(a)
         {
-            bail!("Agent already exists: {a}");
+            return Err(CreateAgentError::AlreadyExists(a.clone()));
         }
 
         if matches!(req.agent_type, AgentType::Unknown) {
-            bail!("unknown agent type");
+            return Err(CreateAgentError::UnknownAgentType);
         }
 
-        let mut session = AgentSession::try_new(&req)?;
-        let exit_handle = session
-            .start()
-            .with_context(|| format!("failed to start local agent {agent_id}"))?;
+        let mut session = AgentSession::try_new(&req)
+            .map_err(|error| CreateAgentError::Start(error.to_string()))?;
+        let exit_handle = session.start().map_err(|error| {
+            CreateAgentError::Start(format!("failed to start local agent {agent_id}: {error}"))
+        })?;
         let info = session.to_agent(host_id);
-        let announce = announce_agent_message(&info);
+        let announce = us
+            .topology
+            .register_local_agent(info.clone())
+            .map_err(|error| {
+                CreateAgentError::Register(format!(
+                    "failed to register local agent {agent_id}: {error}"
+                ))
+            })?;
         us.agents.insert(agent_id, session);
-        us.registry
-            .register_local(info)
-            .with_context(|| format!("failed to register local agent {agent_id}"))?;
         if let Some(session) = us.agents.get_mut(&agent_id) {
             session.maybe_start_name_sniffer(user_id, event_tx);
         }
@@ -97,9 +92,9 @@ async fn create_agent_inner(
                 .await;
         });
 
-        broadcast_to_peers(&mut us, &announce, None);
+        broadcast_topology_event(&mut us, &announce, None);
 
-        us.agents.len()
+        (us.agents.len(), info)
     }; // write lock dropped here
 
     let _ = event_tx
@@ -118,72 +113,30 @@ async fn create_agent_inner(
         agents = agent_count,
         "agent created"
     );
-    Ok(())
+    Ok(info)
 }
 
 /// Remove an agent from local state and broadcast withdrawal.
-///
-/// Active subscriptions are left registered until their underlying buffers
-/// close and each stream task can emit its terminal EOF notification before
-/// cleaning itself up.
-pub(in crate::server) fn withdraw_agent(
-    us: &mut ServerUserState,
-    agent_id: Uuid,
-) -> Option<AgentSession> {
+pub(crate) fn withdraw_agent(us: &mut ServerUserState, agent_id: Uuid) -> Option<AgentSession> {
     if !us.agents.contains_key(&agent_id) {
         return None;
     }
-    let name = us.registry.get(&agent_id).and_then(|a| a.name.clone());
     let session = us.agents.remove(&agent_id);
-    us.registry.remove(&agent_id);
-    let active_subscriptions = us
-        .active_subscriptions
-        .values()
-        .filter(|entry| entry.agent_id == agent_id)
-        .count();
-    broadcast_to_peers(us, &DirectMessage::WithdrawAgent { agent_id }, None);
+    let removed = us.topology.remove_agent(agent_id);
+    if let Some(change) = &removed {
+        broadcast_topology_event(us, &change.event, None);
+    }
     tracing::info!(
         %agent_id,
-        ?name,
-        active_subscriptions,
+        name = ?removed.as_ref().and_then(|change| change.agent.name.clone()),
         remaining = us.agents.len(),
         "agent withdrawn"
     );
     session
 }
 
-pub(in crate::server) fn delete_local_agent(
-    us: &mut ServerUserState,
-    agent_id: Uuid,
-) -> Option<AgentSession> {
+pub(crate) fn delete_local_agent(us: &mut ServerUserState, agent_id: Uuid) -> Option<AgentSession> {
     withdraw_agent(us, agent_id)
-}
-
-/// Handle subscribe request by UUID.
-pub(in crate::server) async fn handle_subscribe(
-    user_state: &Arc<RwLock<ServerUserState>>,
-    agent_id: &Uuid,
-    terminal_size: Option<TerminalSize>,
-) -> std::result::Result<MultiplexByteReader, SubscribeError> {
-    let us = user_state.read().await;
-    let session = us
-        .agents
-        .get(agent_id)
-        .ok_or_else(|| SubscribeError::AgentNotFound(agent_id.to_string()))?;
-
-    let pty = session
-        .pty_handle()
-        .ok_or(SubscribeError::MissingPty(*agent_id))?;
-
-    if let Some(size) = terminal_size {
-        pty.resize(size)
-            .await
-            .map_err(|error| SubscribeError::Operation(error.to_string()))?;
-    }
-
-    pty.subscribe()
-        .await
-        .ok_or(SubscribeError::SessionEnded(*agent_id))
 }
 
 /// Shutdown the server — shuts down all agents for the given user state
@@ -215,12 +168,9 @@ pub(in crate::server) async fn suspend_server(
         // Remove from registry before suspending
         {
             let mut us = user_state.write().await;
-            us.registry.remove(&id);
-            broadcast_to_peers(
-                &mut us,
-                &DirectMessage::WithdrawAgent { agent_id: id },
-                None,
-            );
+            if let Some(change) = us.topology.remove_agent(id) {
+                broadcast_topology_event(&mut us, &change.event, None);
+            }
         }
 
         tracing::info!(agent_id = %id, "suspending agent");
@@ -255,16 +205,42 @@ pub(in crate::server) async fn resume_agents(
         match session.start() {
             Ok(exit_handle) => {
                 let info = session.to_agent(host_id);
-                let announce = announce_agent_message(&info);
-                {
+                let mut session = Some(session);
+                let registered = {
                     let mut us = user_state.write().await;
-                    us.agents.insert(agent_id, session);
-                    if let Err(e) = us.registry.register_local(info) {
-                        tracing::error!(agent_id = %agent_id, error = %e, "failed to register resumed agent");
-                    } else if let Some(session) = us.agents.get_mut(&agent_id) {
-                        session.maybe_start_name_sniffer(user_id, event_tx);
+                    if us.agents.contains_key(&agent_id) {
+                        tracing::error!(agent_id = %agent_id, "failed to register resumed agent: local session already exists");
+                        false
+                    } else {
+                        match us.topology.register_local_agent(info) {
+                            Ok(announce) => {
+                                us.agents.insert(
+                                    agent_id,
+                                    session
+                                        .take()
+                                        .expect("resumed session should still be available"),
+                                );
+                                if let Some(session) = us.agents.get_mut(&agent_id) {
+                                    session.maybe_start_name_sniffer(user_id, event_tx);
+                                }
+                                broadcast_topology_event(&mut us, &announce, None);
+                                true
+                            }
+                            Err(e) => {
+                                tracing::error!(agent_id = %agent_id, error = %e, "failed to register resumed agent");
+                                false
+                            }
+                        }
                     }
-                    broadcast_to_peers(&mut us, &announce, None);
+                };
+
+                if !registered {
+                    if let Some(session) = session {
+                        session.stop(StopPolicy::Interrupt).await;
+                    }
+                    exit_handle.abort();
+                    failed += 1;
+                    continue;
                 }
 
                 // Task: Monitor exit handle and notify server when agent exits
@@ -287,4 +263,58 @@ pub(in crate::server) async fn resume_agents(
 
     tracing::info!(resumed, failed, "resume complete");
     (resumed, failed)
+}
+
+#[cfg(test)]
+mod tests {
+    use chrono::Utc;
+
+    use super::*;
+    use crate::agent::{TEST_ECHO_COMMAND, TestAgentSession};
+    use crate::suspend::SuspendedAgent;
+
+    #[tokio::test]
+    async fn resume_registration_failure_does_not_replace_existing_agent_session() {
+        let user_state = Arc::new(RwLock::new(ServerUserState::new()));
+        let (event_tx, _event_rx) = mpsc::channel(16);
+        let user_id = Uuid::new_v4();
+        let host_id = Uuid::new_v4();
+        let agent_id = Uuid::new_v4();
+
+        {
+            let mut us = user_state.write().await;
+            let session = AgentSession::TestAgent(TestAgentSession::echo_for_tests(
+                agent_id,
+                Some("existing".to_string()),
+            ));
+            let info = session.to_agent(host_id);
+            us.insert_registered_local_agent(agent_id, session, info)
+                .unwrap();
+        }
+
+        let suspended = SuspendedAgent::TestAgent {
+            agent_id,
+            name: Some("resumed".to_string()),
+            command: TEST_ECHO_COMMAND.to_string(),
+            working_dir: std::env::temp_dir(),
+            terminal_size: None,
+            created_at: Utc::now(),
+        };
+
+        let (resumed, failed) =
+            resume_agents(&user_state, &event_tx, user_id, vec![suspended], host_id).await;
+
+        assert_eq!(resumed, 0);
+        assert_eq!(failed, 1);
+
+        let us = user_state.read().await;
+        assert_eq!(us.agents.len(), 1);
+        assert_eq!(
+            us.topology
+                .registry
+                .get(&agent_id)
+                .and_then(|agent| agent.name.as_deref()),
+            Some("existing")
+        );
+    }
 }

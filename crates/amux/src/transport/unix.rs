@@ -36,11 +36,11 @@ impl Transport for UnixTransport {
 
     async fn read_message(&mut self) -> Result<Message> {
         let data = self.read_frame().await?;
-        Message::decode(&data).map_err(TransportError::SerializationDecode)
+        Message::decode(&data).map_err(TransportError::from)
     }
 
     async fn write_message(&mut self, msg: &Message) -> Result<()> {
-        let data = msg.encode().map_err(TransportError::SerializationEncode)?;
+        let data = msg.encode().map_err(TransportError::from)?;
         self.write_frame(&data).await
     }
 }
@@ -53,7 +53,7 @@ pub(crate) struct UnixMessageReader {
 impl MessageReader for UnixMessageReader {
     async fn read_message(&mut self) -> Result<Message> {
         let data = self.reader.read_frame(MAX_FRAME_SIZE).await?;
-        Message::decode(&data).map_err(TransportError::SerializationDecode)
+        Message::decode(&data).map_err(TransportError::from)
     }
 }
 
@@ -64,7 +64,7 @@ pub(crate) struct UnixMessageWriter {
 
 impl MessageWriter for UnixMessageWriter {
     async fn write_message(&mut self, msg: &Message) -> Result<()> {
-        let data = msg.encode().map_err(TransportError::SerializationEncode)?;
+        let data = msg.encode().map_err(TransportError::from)?;
         self.writer.write_frame(&data).await
     }
 }
@@ -85,9 +85,7 @@ mod tests {
 
     use super::*;
     use crate::protocol::link::Link;
-    use crate::protocol::message::{
-        AgentType, CreateAgentRequest, RoutableMessage, SubscriptionId, TerminalSize,
-    };
+    use crate::protocol::message::{RoutedCallId, RoutedFrame, RoutedFrameMessage};
     use crate::protocol::route::Route;
 
     async fn create_socket_pair() -> (UnixTransport, UnixTransport) {
@@ -103,36 +101,25 @@ mod tests {
     async fn test_message_roundtrip() {
         let (mut client, mut server) = create_socket_pair().await;
 
-        let test_uuid = Uuid::new_v4();
-        let msg = Message::routable(
-            Route::from_link(Link::new("term-abc").unwrap()),
-            Route::empty(),
-            0,
-            &RoutableMessage::CreateAgent(CreateAgentRequest {
-                agent_id: test_uuid,
-                name: Some("test".to_string()),
-                agent_type: AgentType::Claude,
-                working_dir: std::path::PathBuf::from("/tmp"),
-                terminal_size: Some(TerminalSize { rows: 24, cols: 80 }),
-                args: vec![],
-            }),
-        );
+        let payload = b"hello".to_vec();
+        let msg = Message::Routed(RoutedFrame {
+            src: Route::from_link(Link::new("term-abc").unwrap()),
+            dst: Route::empty(),
+            call_id: RoutedCallId::from(Uuid::new_v4()),
+            message: RoutedFrameMessage::Payload(payload.clone()),
+        });
 
         client.write_message(&msg).await.unwrap();
 
         let received = server.read_message().await.unwrap();
-        if let Message::Routable { payload, .. } = received {
-            let RoutableMessage::CreateAgent(req) = RoutableMessage::decode(&payload).unwrap()
-            else {
-                panic!("Expected CreateAgent");
-            };
-            assert_eq!(req.agent_id, test_uuid);
-            assert_eq!(req.name, Some("test".to_string()));
-            assert_eq!(req.agent_type, AgentType::Claude);
-            assert_eq!(req.working_dir, std::path::PathBuf::from("/tmp"));
-            assert_eq!(req.terminal_size, Some(TerminalSize { rows: 24, cols: 80 }));
+        if let Message::Routed(RoutedFrame {
+            message: RoutedFrameMessage::Payload(decoded),
+            ..
+        }) = received
+        {
+            assert_eq!(decoded, payload);
         } else {
-            panic!("Expected CreateAgent");
+            panic!("Expected routed payload");
         }
     }
 
@@ -140,29 +127,25 @@ mod tests {
     async fn test_output_message_roundtrip() {
         let (mut client, mut server) = create_socket_pair().await;
 
-        let msg = Message::routable(
-            Route::from_link(Link::new("host-a").unwrap()),
-            Route::from_link(Link::new("host-b").unwrap()),
-            0,
-            &RoutableMessage::RawOutput {
-                subscription_id: SubscriptionId::random(),
-                data: b"hello world".to_vec(),
-            },
-        );
+        let payload = b"hello world".to_vec();
+        let msg = Message::Routed(RoutedFrame {
+            src: Route::from_link(Link::new("host-a").unwrap()),
+            dst: Route::from_link(Link::new("host-b").unwrap()),
+            call_id: RoutedCallId::from(Uuid::new_v4()),
+            message: RoutedFrameMessage::Payload(payload.clone()),
+        });
 
         client.write_message(&msg).await.unwrap();
 
         let received = server.read_message().await.unwrap();
-        if let Message::Routable { payload, .. } = received {
-            if let RoutableMessage::RawOutput { data, .. } =
-                RoutableMessage::decode(&payload).unwrap()
-            {
-                assert_eq!(data, b"hello world");
-            } else {
-                panic!("Expected RawOutput");
-            }
+        if let Message::Routed(RoutedFrame {
+            message: RoutedFrameMessage::Payload(decoded),
+            ..
+        }) = received
+        {
+            assert_eq!(decoded, payload);
         } else {
-            panic!("Expected Routable");
+            panic!("Expected routed payload");
         }
     }
 
@@ -170,29 +153,25 @@ mod tests {
     async fn test_input_message_roundtrip() {
         let (mut client, mut server) = create_socket_pair().await;
 
-        let msg = Message::routable(
-            Route::from_link(Link::new("host-a").unwrap()),
-            Route::from_link(Link::new("host-b").unwrap()),
-            0,
-            &RoutableMessage::RawInput {
-                agent_id: Uuid::new_v4(),
-                data: b"user input".to_vec(),
-            },
-        );
+        let payload = b"user input".to_vec();
+        let msg = Message::Routed(RoutedFrame {
+            src: Route::from_link(Link::new("host-a").unwrap()),
+            dst: Route::from_link(Link::new("host-b").unwrap()),
+            call_id: RoutedCallId::from(Uuid::new_v4()),
+            message: RoutedFrameMessage::Payload(payload.clone()),
+        });
 
         client.write_message(&msg).await.unwrap();
 
         let received = server.read_message().await.unwrap();
-        if let Message::Routable { payload, .. } = received {
-            if let RoutableMessage::RawInput { data, .. } =
-                RoutableMessage::decode(&payload).unwrap()
-            {
-                assert_eq!(data, b"user input");
-            } else {
-                panic!("Expected RawInput");
-            }
+        if let Message::Routed(RoutedFrame {
+            message: RoutedFrameMessage::Payload(decoded),
+            ..
+        }) = received
+        {
+            assert_eq!(decoded, payload);
         } else {
-            panic!("Expected Routable");
+            panic!("Expected routed payload");
         }
     }
 }

@@ -17,6 +17,7 @@ pub enum ConfigError {
 }
 
 const DEFAULT_CLOUD_URL: &str = "https://amux.sh";
+const MAX_IDLE_TIMEOUT_SECS: u32 = u32::MAX / 1000;
 
 fn default_host_name() -> String {
     gethostname()
@@ -214,7 +215,7 @@ pub struct Config {
 
     /// Per-client minimum version requirements (e.g. {"amux-cli": "0.2.0"}).
     /// Clients whose client_name matches a key and whose client_version is
-    /// below the value will be rejected with UpgradeRequired.
+    /// below the value will be rejected with UpdateRequired.
     #[serde(default, skip_serializing_if = "HashMap::is_empty")]
     pub minimum_client_versions: HashMap<String, String>,
 
@@ -280,11 +281,15 @@ impl Config {
         if self.host_name.is_empty() {
             return Err(ConfigError::Invalid("host_name must not be empty".into()));
         }
-        // Server link names are "{hostname}-{4 chars}", max 128 bytes total
-        if self.host_name.len() > 123 {
+
+        if self.idle_timeout_secs == 0 {
+            return Err(ConfigError::Invalid(
+                "idle_timeout_secs must be greater than zero".into(),
+            ));
+        }
+        if self.idle_timeout_secs > MAX_IDLE_TIMEOUT_SECS {
             return Err(ConfigError::Invalid(format!(
-                "host_name is {} bytes, max 123 (link names add a 5-byte suffix)",
-                self.host_name.len()
+                "idle_timeout_secs must be at most {MAX_IDLE_TIMEOUT_SECS}"
             )));
         }
 
@@ -526,6 +531,35 @@ mod tests {
         };
         let err = config.validate(false).unwrap_err();
         assert!(err.to_string().contains("host_name"));
+    }
+
+    #[test]
+    fn validate_accepts_long_host_name() {
+        let config = Config {
+            host_name: "a".repeat(200),
+            ..Config::default()
+        };
+        assert!(config.validate(false).is_ok());
+    }
+
+    #[test]
+    fn validate_rejects_zero_idle_timeout() {
+        let config = Config {
+            idle_timeout_secs: 0,
+            ..Config::default()
+        };
+        let err = config.validate(false).unwrap_err();
+        assert!(err.to_string().contains("idle_timeout_secs"));
+    }
+
+    #[test]
+    fn validate_rejects_idle_timeout_that_overflows_milliseconds() {
+        let config = Config {
+            idle_timeout_secs: MAX_IDLE_TIMEOUT_SECS + 1,
+            ..Config::default()
+        };
+        let err = config.validate(false).unwrap_err();
+        assert!(err.to_string().contains(&MAX_IDLE_TIMEOUT_SECS.to_string()));
     }
 
     #[test]

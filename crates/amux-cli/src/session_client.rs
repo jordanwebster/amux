@@ -1,14 +1,12 @@
 use std::io::{self, Read, Write};
 use std::path::Path;
-use std::sync::Arc;
-use std::sync::atomic::{AtomicU64, Ordering};
-use std::time::Duration;
 
-use amux::protocol::{
-    AgentType, Command, CreateAgentRequest, Message, ProtocolError, RoutableMessage, Route,
-    ShutdownReason, SubscriptionId, TerminalSize,
+use amux::protocol::open_session::{OpenSessionOutputEvent, OpenSessionServerFrame};
+use amux::protocol::{AgentType, CreateAgentRequest, Route, ShutdownReason, TerminalSize};
+use amux::{
+    Config, ConnectError, LeaderKey, OpenSessionClient, RpcClient, RpcClientError, TransportError,
+    connect,
 };
-use amux::{Config, ConnectError, Connection, LeaderKey, TransportError, connect};
 use anyhow::{Result, anyhow};
 use crossterm::terminal;
 use tokio::sync::mpsc;
@@ -29,45 +27,7 @@ enum ExitReason {
     Detached,
     SessionEnded,
     Shutdown(ShutdownReason),
-    Error(TransportError),
-}
-
-struct AttachedSession {
-    agent_id: Uuid,
-    subscription_id: SubscriptionId,
-    lease_ms: u64,
-    full_route: Route,
-    request_counter: Arc<AtomicU64>,
-}
-
-impl AttachedSession {
-    fn renewal_interval(&self) -> Duration {
-        Duration::from_millis((self.lease_ms / 3).max(1))
-    }
-
-    async fn send(&self, conn: &Connection, message: RoutableMessage) -> Result<()> {
-        let (src, dst) =
-            Route::send(self.full_route.clone()).expect("full_route should have at least one link");
-        conn.send(&Message::routable(
-            src,
-            dst,
-            self.request_counter.fetch_add(1, Ordering::Relaxed),
-            &message,
-        ))
-        .await?;
-        Ok(())
-    }
-
-    async fn send_raw_input(&self, conn: &Connection, data: Vec<u8>) -> Result<()> {
-        self.send(
-            conn,
-            RoutableMessage::RawInput {
-                agent_id: self.agent_id,
-                data,
-            },
-        )
-        .await
-    }
+    Error(anyhow::Error),
 }
 
 /// Find a subsequence within a slice, returns the starting index if found
@@ -91,7 +51,7 @@ pub async fn new_agent(
     args: Vec<String>,
     config: &Config,
 ) -> Result<()> {
-    let conn = connect(config, cli_daemon_policy()?).await?;
+    let mut rpc = RpcClient::new(connect(config, cli_daemon_policy()?).await?);
     let terminal_size = get_terminal_size();
     let working_dir = std::env::current_dir()?;
 
@@ -99,123 +59,59 @@ pub async fn new_agent(
 
     tracing::info!(agent_id = %agent_id, ?name, "creating agent");
 
-    let full_route = Route::from_link(conn.link().clone());
-    let (src, dst) =
-        Route::send(full_route.clone()).expect("full_route should have at least one link");
-
-    let request_counter = Arc::new(AtomicU64::new(1));
-
-    conn.send(&Message::routable(
-        src,
-        dst,
-        request_counter.fetch_add(1, Ordering::Relaxed),
-        &RoutableMessage::CreateAgent(CreateAgentRequest {
+    let agent = rpc
+        .create_agent(&CreateAgentRequest {
             agent_id,
             name: name.map(|s| s.to_string()),
             agent_type,
             working_dir: working_dir.clone(),
             terminal_size: Some(terminal_size),
             args,
-        }),
-    ))
-    .await?;
+        })
+        .await
+        .map_err(|error| anyhow!("failed to create agent: {error}"))?;
 
-    match conn.recv().await? {
-        Message::Routable { payload, .. } => match RoutableMessage::decode(&payload)? {
-            RoutableMessage::CreateAgentResult { error: None, .. } => {
-                subscribe_and_stream(
-                    conn,
-                    agent_id,
-                    full_route,
-                    Some(terminal_size),
-                    request_counter,
-                    config.keybinds.leader.clone(),
-                    &config.state_path,
-                )
-                .await
-            }
-            RoutableMessage::CreateAgentResult { error: Some(e), .. } => {
-                Err(anyhow!("failed to create agent: {e}"))
-            }
-            other => Err(anyhow!(
-                "expected CreateAgentResult, got {}",
-                other.type_label()
-            )),
-        },
-        other => Err(anyhow!(
-            "expected Routable(CreateAgentResult), got {}",
-            other.type_label()
-        )),
-    }
+    subscribe_and_stream(
+        rpc,
+        agent.id,
+        agent.route,
+        Some(terminal_size),
+        config.keybinds.leader.clone(),
+        &config.state_path,
+    )
+    .await
 }
 
 /// Attach to an existing agent
 pub async fn attach(target: Option<&str>, config: &Config) -> Result<()> {
-    let conn = connect(config, cli_daemon_policy()?).await?;
+    let mut rpc = RpcClient::new(connect(config, cli_daemon_policy()?).await?);
     let terminal_size = get_terminal_size();
 
-    let (mut route_suffix, agent_id) = match target {
+    let (route_suffix, agent_id) = match target {
         Some(identifier) => {
-            conn.send(&Message::Command {
-                command: Command::ResolveAgent {
-                    identifier: identifier.to_string(),
-                },
-            })
-            .await?;
-
-            match conn.recv().await? {
-                Message::Command {
-                    command:
-                        Command::ResolveAgentResult {
-                            agent: Some(info), ..
-                        },
-                } => (info.route, info.id),
-                Message::Command {
-                    command: Command::ResolveAgentResult { agent: None },
-                } => return Err(anyhow!("agent not found: {identifier}")),
-                other => {
-                    return Err(anyhow!(
-                        "expected ResolveAgentResult, got {}",
-                        other.type_label()
-                    ));
-                }
-            }
+            let Some(info) = rpc.resolve_agent(identifier).await? else {
+                return Err(anyhow!("agent not found: {identifier}"));
+            };
+            (info.route, info.id)
         }
         None => {
-            conn.send(&Message::Command {
-                command: Command::ListAgents,
-            })
-            .await?;
-
-            match conn.recv().await? {
-                Message::Command {
-                    command: Command::ListAgentsResult { agents },
-                } if !agents.is_empty() => (agents[0].route.clone(), agents[0].id),
-                Message::Command {
-                    command: Command::ListAgentsResult { .. },
-                } => {
-                    eprintln!("No agents running. Use 'amux new' to create one.");
-                    return Ok(());
-                }
-                other => {
-                    return Err(anyhow!(
-                        "expected ListAgentsResult, got {}",
-                        other.type_label()
-                    ));
-                }
+            let agents = rpc.list_agents().await?;
+            if let Some(info) = agents.first() {
+                (info.route.clone(), info.id)
+            } else {
+                eprintln!("No agents running. Use 'amux new' to create one.");
+                return Ok(());
             }
         }
     };
 
-    route_suffix.push(conn.link().clone());
     tracing::info!(agent_id = %agent_id, route = %route_suffix, "attaching");
 
     subscribe_and_stream(
-        conn,
+        rpc,
         agent_id,
         route_suffix,
         Some(terminal_size),
-        Arc::new(AtomicU64::new(1)),
         config.keybinds.leader.clone(),
         &config.state_path,
     )
@@ -236,47 +132,32 @@ pub async fn list_agents(config: &Config) -> Result<()> {
         Err(e) => return Err(e.into()),
     };
 
-    conn.send(&Message::Command {
-        command: Command::ListAgents,
-    })
-    .await?;
-
-    match conn.recv().await? {
-        Message::Command {
-            command: Command::ListAgentsResult { mut agents },
-        } => {
-            if agents.is_empty() {
-                println!("No agents running.");
+    let mut rpc = RpcClient::new(conn);
+    let mut agents = rpc.list_agents().await?;
+    if agents.is_empty() {
+        println!("No agents running.");
+    } else {
+        agents.sort_by(|a, b| {
+            let a_id = a.id.to_string();
+            let b_id = b.id.to_string();
+            let a_name = a.name.as_deref().unwrap_or(&a_id);
+            let b_name = b.name.as_deref().unwrap_or(&b_id);
+            a_name.cmp(b_name)
+        });
+        println!("Running agents:");
+        for agent in agents {
+            let agent_id_str = agent.id.to_string();
+            let display_name = agent.name.as_deref().unwrap_or(&agent_id_str);
+            if agent.is_remote() {
+                println!(
+                    "  {} - {} (via {})",
+                    display_name,
+                    agent.working_dir.display(),
+                    agent.route
+                );
             } else {
-                agents.sort_by(|a, b| {
-                    let a_id = a.id.to_string();
-                    let b_id = b.id.to_string();
-                    let a_name = a.name.as_deref().unwrap_or(&a_id);
-                    let b_name = b.name.as_deref().unwrap_or(&b_id);
-                    a_name.cmp(b_name)
-                });
-                println!("Running agents:");
-                for agent in agents {
-                    let agent_id_str = agent.id.to_string();
-                    let display_name = agent.name.as_deref().unwrap_or(&agent_id_str);
-                    if agent.is_remote() {
-                        println!(
-                            "  {} - {} (via {})",
-                            display_name,
-                            agent.working_dir.display(),
-                            agent.route
-                        );
-                    } else {
-                        println!("  {} - {}", display_name, agent.working_dir.display());
-                    }
-                }
+                println!("  {} - {}", display_name, agent.working_dir.display());
             }
-        }
-        other => {
-            return Err(anyhow!(
-                "expected ListAgentsResult, got {}",
-                other.type_label()
-            ));
         }
     }
 
@@ -285,79 +166,41 @@ pub async fn list_agents(config: &Config) -> Result<()> {
 }
 
 async fn subscribe_and_stream(
-    conn: Connection,
+    mut rpc: RpcClient,
     agent_id: Uuid,
-    full_route: Route,
+    route: Route,
     terminal_size: Option<TerminalSize>,
-    request_counter: Arc<AtomicU64>,
     leader: LeaderKey,
     state_path: &Path,
 ) -> Result<()> {
-    let (src, dst) =
-        Route::send(full_route.clone()).expect("full_route should have at least one link");
+    let session = rpc
+        .open_raw_session(agent_id, route, terminal_size, None)
+        .await
+        .map_err(|error| anyhow!("failed to open session: {error}"))?;
 
-    conn.send(&Message::routable(
-        src,
-        dst,
-        request_counter.fetch_add(1, Ordering::Relaxed),
-        &RoutableMessage::SubscribeRaw {
-            agent_id,
-            terminal_size,
-        },
-    ))
-    .await?;
+    tracing::info!(agent_id = %agent_id, "opened raw session");
 
-    let (subscription_id, lease_ms) = match conn.recv().await? {
-        Message::Routable { payload, .. } => match RoutableMessage::decode(&payload)? {
-            RoutableMessage::SubscribeRawResult {
-                subscription_id,
-                lease_ms,
-                error: None,
-            } => {
-                tracing::info!(agent_id = %agent_id, subscription_id = %subscription_id, lease_ms, "subscribed");
-                (subscription_id, lease_ms)
-            }
-            RoutableMessage::SubscribeRawResult { error: Some(e), .. } => {
-                eprintln!("Failed to subscribe: {}", e);
-                return Ok(());
-            }
-            other => {
-                return Err(anyhow!(
-                    "expected SubscribeRawResult, got {}",
-                    other.type_label()
-                ));
-            }
-        },
-        other => {
-            return Err(anyhow!(
-                "expected Routable(SubscribeRawResult), got {}",
-                other.type_label()
-            ));
+    run_attached(session, leader, state_path).await
+}
+
+fn handle_open_session_event(event: OpenSessionOutputEvent) {
+    match event {
+        OpenSessionOutputEvent::Output { payload, .. } => {
+            io::stdout().write_all(&payload).ok();
+            io::stdout().flush().ok();
         }
-    };
-
-    let session = AttachedSession {
-        agent_id,
-        subscription_id,
-        lease_ms,
-        full_route,
-        request_counter,
-    };
-
-    run_attached(conn, session, leader, state_path).await
+        OpenSessionOutputEvent::Opened
+        | OpenSessionOutputEvent::ReplayComplete { .. }
+        | OpenSessionOutputEvent::InputResult { .. } => {}
+    }
 }
 
 async fn run_attached(
-    conn: Connection,
-    mut session: AttachedSession,
+    session: OpenSessionClient,
     leader: LeaderKey,
     state_path: &Path,
 ) -> Result<()> {
     let raw_mode_guard = RawModeGuard::new()?;
-
-    let conn = Arc::new(conn);
-    let renewal_timer = tokio::time::sleep(session.renewal_interval());
-    tokio::pin!(renewal_timer);
 
     let (input_tx, mut input_rx) = mpsc::channel::<StdinEvent>(256);
 
@@ -468,97 +311,49 @@ async fn run_attached(
         tokio::select! {
             event = input_rx.recv() => match event {
                 Some(StdinEvent::Data(data)) => {
-                    if session.send_raw_input(&conn, data).await.is_err() {
+                    if session.send_raw_input(data).await.is_err() {
                         break ExitReason::SessionEnded;
                     }
                 }
                 Some(StdinEvent::Detach) => break ExitReason::Detached,
                 None => break ExitReason::SessionEnded,
             },
-            _ = &mut renewal_timer => {
-                if session
-                    .send(
-                        &conn,
-                        RoutableMessage::ExtendSubscription {
-                            subscription_id: session.subscription_id,
-                        },
-                    )
-                    .await
-                    .is_err()
-                {
+            frame = session.recv() => match frame {
+                Ok(OpenSessionServerFrame::Event(event)) => {
+                    handle_open_session_event(event);
+                }
+                Ok(OpenSessionServerFrame::Response(Ok(()))) => {
+                    tracing::info!("agent ended");
                     break ExitReason::SessionEnded;
                 }
-                renewal_timer
-                    .as_mut()
-                    .reset(tokio::time::Instant::now() + session.renewal_interval());
-            }
-            msg = conn.recv() => match msg {
-                Ok(Message::Routable { payload, .. }) => match RoutableMessage::decode(&payload) {
-                    Ok(RoutableMessage::RawOutput { subscription_id: id, data }) if id == session.subscription_id => {
-                        io::stdout().write_all(&data).ok();
-                        io::stdout().flush().ok();
-                    }
-                    Ok(RoutableMessage::SubscriptionClosed { subscription_id: id, .. }) if id == session.subscription_id => {
-                        tracing::info!("agent ended");
-                        break ExitReason::SessionEnded;
-                    }
-                    Ok(RoutableMessage::ExtendSubscriptionResult {
-                        subscription_id: id,
-                        lease_ms,
-                        error: None,
-                    }) if id == session.subscription_id => {
-                        session.lease_ms = lease_ms;
-                        renewal_timer
-                            .as_mut()
-                            .reset(tokio::time::Instant::now() + session.renewal_interval());
-                    }
-                    Ok(RoutableMessage::ExtendSubscriptionResult {
-                        subscription_id: id,
-                        error: Some(ProtocolError::UnknownSubscription),
-                        ..
-                    }) if id == session.subscription_id => {
-                        tracing::info!(subscription_id = %session.subscription_id, "subscription no longer exists");
-                        break ExitReason::SessionEnded;
-                    }
-                    Ok(RoutableMessage::ExtendSubscriptionResult {
-                        subscription_id: id,
-                        error: Some(error),
-                        ..
-                    }) if id == session.subscription_id => {
-                        tracing::debug!(subscription_id = %session.subscription_id, error = %error, "subscription renewal failed");
-                    }
-                    _ => {}
-                },
-                Ok(Message::Command {
-                    command: Command::ShutdownNotification { reason },
-                }) => {
+                Ok(OpenSessionServerFrame::Response(Err(error))) => {
+                    tracing::info!(error = %error, "session ended with error");
+                    break ExitReason::SessionEnded;
+                }
+                Err(RpcClientError::ServerShutdown(reason)) => {
                     tracing::info!(reason = %reason, "server shutdown");
                     break ExitReason::Shutdown(reason);
                 }
-                Err(e) => {
-                    tracing::warn!(error = %e, "read error");
-                    break ExitReason::Error(e);
+                Err(error) => {
+                    if let RpcClientError::Protocol(error) = &error {
+                        tracing::info!(error = %error, "session route failed");
+                    } else {
+                        tracing::warn!(error = %error, "session read error");
+                    }
+                    break ExitReason::Error(error.into());
                 }
-                _ => {}
             }
         }
     };
 
     if matches!(exit_reason, ExitReason::Detached) {
-        let _ = session
-            .send(
-                &conn,
-                RoutableMessage::Unsubscribe {
-                    subscription_id: session.subscription_id,
-                },
-            )
-            .await;
+        let _ = session.cancel().await;
     }
 
     drop(raw_mode_guard);
 
     match exit_reason {
-        ExitReason::Error(e) => return Err(e.into()),
+        ExitReason::Error(e) => return Err(e),
         ExitReason::Shutdown(reason) => {
             println!("\n[{}]", reason);
             if reason != ShutdownReason::Updating {

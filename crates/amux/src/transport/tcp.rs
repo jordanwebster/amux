@@ -48,11 +48,11 @@ where
 
     async fn read_message(&mut self) -> Result<Message> {
         let data = self.read_frame().await?;
-        Message::decode(&data).map_err(TransportError::SerializationDecode)
+        Message::decode(&data).map_err(TransportError::from)
     }
 
     async fn write_message(&mut self, msg: &Message) -> Result<()> {
-        let data = msg.encode().map_err(TransportError::SerializationEncode)?;
+        let data = msg.encode().map_err(TransportError::from)?;
         self.write_frame(&data).await
     }
 }
@@ -65,7 +65,7 @@ pub(crate) struct TcpMessageReader<S> {
 impl<S: AsyncRead + Unpin + Send> MessageReader for TcpMessageReader<S> {
     async fn read_message(&mut self) -> Result<Message> {
         let data = self.reader.read_frame(MAX_FRAME_SIZE).await?;
-        Message::decode(&data).map_err(TransportError::SerializationDecode)
+        Message::decode(&data).map_err(TransportError::from)
     }
 }
 
@@ -76,7 +76,7 @@ pub(crate) struct TcpMessageWriter<S> {
 
 impl<S: AsyncWrite + Unpin + Send> MessageWriter for TcpMessageWriter<S> {
     async fn write_message(&mut self, msg: &Message) -> Result<()> {
-        let data = msg.encode().map_err(TransportError::SerializationEncode)?;
+        let data = msg.encode().map_err(TransportError::from)?;
         self.writer.write_frame(&data).await
     }
 }

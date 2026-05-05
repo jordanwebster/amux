@@ -4,6 +4,7 @@ use serde::{Deserialize, Serialize};
 use serde_json::Value;
 
 use super::core::ClaudeSession;
+use crate::agent::{PtyHandle, StructuredInputCancel, StructuredLogSource};
 use crate::protocol::message::ProtocolError;
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
@@ -48,18 +49,38 @@ pub(super) fn sanitize_resume_args(args: Vec<String>) -> Vec<String> {
     sanitized
 }
 
-impl ClaudeSession {
-    /// Validate seq and send structured input to Claude Code.
-    pub async fn send_structured_input(
+#[derive(Clone)]
+pub(crate) struct ClaudeStructuredInputTarget {
+    readonly: bool,
+    log_source: Option<StructuredLogSource>,
+    pty: Option<PtyHandle>,
+}
+
+impl ClaudeStructuredInputTarget {
+    async fn current_seq(&self) -> u64 {
+        match &self.log_source {
+            Some(log_source) => log_source.current_seq().await,
+            None => 0,
+        }
+    }
+
+    pub(crate) async fn send_structured_input_cancellable(
         &self,
         client_seq: u64,
         payload: Value,
+        cancel: StructuredInputCancel,
     ) -> std::result::Result<(), ProtocolError> {
         if self.readonly {
             return Err(ProtocolError::ServerError {
                 message: "session is readonly".to_string(),
             });
         }
+        let pty = self
+            .pty
+            .as_ref()
+            .ok_or_else(|| ProtocolError::ServerError {
+                message: "structured input requires an active PTY".to_string(),
+            })?;
         let current_seq = self.current_seq().await;
         if client_seq != current_seq {
             return Err(ProtocolError::SequenceNumberMismatch {
@@ -69,35 +90,58 @@ impl ClaudeSession {
         }
 
         let actions: Vec<PtyInput> =
-            serde_json::from_value(payload).map_err(|e| ProtocolError::ServerError {
+            serde_json::from_value(payload).map_err(|e| ProtocolError::InvalidArgument {
                 message: format!("invalid pty input: {e}"),
             })?;
 
         tracing::info!(
-            agent_id = %self.agent_id,
             client_seq,
             action_count = actions.len(),
             "structured input accepted"
         );
 
-        let Some(pty) = &self.pty else {
-            return Ok(());
-        };
         for action in &actions {
+            if cancel.is_cancelled() {
+                return Err(cancelled_error());
+            }
             match action {
                 PtyInput::Bytes(bytes) => {
-                    pty.send_input(bytes.clone())
-                        .await
-                        .map_err(|e| ProtocolError::ServerError {
-                            message: e.to_string(),
-                        })?
+                    tokio::select! {
+                        biased;
+                        () = cancel.cancelled() => return Err(cancelled_error()),
+                        result = pty.send_input(bytes.clone()) => {
+                            result.map_err(|e| ProtocolError::ServerError {
+                                message: e.to_string(),
+                            })?
+                        }
+                    }
                 }
                 PtyInput::Delay(ms) => {
                     let clamped = (*ms).min(5000);
-                    tokio::time::sleep(Duration::from_millis(u64::from(clamped))).await
+                    tokio::select! {
+                        biased;
+                        () = cancel.cancelled() => return Err(cancelled_error()),
+                        () = tokio::time::sleep(Duration::from_millis(u64::from(clamped))) => {}
+                    }
                 }
             }
         }
         Ok(())
+    }
+}
+
+fn cancelled_error() -> ProtocolError {
+    ProtocolError::Cancelled {
+        message: "structured input cancelled".to_string(),
+    }
+}
+
+impl ClaudeSession {
+    pub(in crate::agent) fn structured_input_target(&self) -> ClaudeStructuredInputTarget {
+        ClaudeStructuredInputTarget {
+            readonly: self.readonly,
+            log_source: self.log_source.clone(),
+            pty: self.pty.clone(),
+        }
     }
 }

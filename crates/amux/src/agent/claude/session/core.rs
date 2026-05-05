@@ -14,9 +14,8 @@ use super::name_sniffer::spawn_name_sniffer;
 use crate::agent::{
     LocalAgentNameSource, PtyHandle, SessionEvent, StopPolicy, StructuredLogSource, spawn_pty_agent,
 };
-use crate::buffer::MultiplexStructuredReader;
 use crate::debug::DebugView;
-use crate::protocol::message::{CreateAgentRequest, SubscribeQuery};
+use crate::protocol::message::CreateAgentRequest;
 
 pub(crate) struct ClaudeSession {
     pub(in crate::agent) agent_id: Uuid,
@@ -168,6 +167,7 @@ impl ClaudeSession {
     }
 
     /// Return the current structured output sequence number.
+    #[cfg(test)]
     pub(super) async fn current_seq(&self) -> u64 {
         match &self.log_source {
             Some(log_source) => log_source.current_seq().await,
@@ -175,18 +175,8 @@ impl ClaudeSession {
         }
     }
 
-    #[cfg(test)]
     pub(in crate::agent) fn log_source(&self) -> Option<StructuredLogSource> {
         self.log_source.clone()
-    }
-
-    /// Subscribe to structured log output with an optional query filter
-    /// and return the matching seq.
-    pub(in crate::agent) async fn subscribe_with_query(
-        &self,
-        query: Option<SubscribeQuery>,
-    ) -> Option<(MultiplexStructuredReader, u64)> {
-        self.log_source.as_ref()?.subscribe_with_query(query).await
     }
 
     /// Shut down the session according to the given policy.

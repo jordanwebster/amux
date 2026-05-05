@@ -1,4 +1,4 @@
-//! WebSocket transport with binary MessagePack frames.
+//! WebSocket transport with binary protobuf frames.
 //!
 //! Used for browser-based clients and cloud relay connections. Unlike the
 //! byte-stream transports, WebSocket provides its own message framing so
@@ -15,7 +15,7 @@ use super::{MessageReader, MessageWriter, Transport, TransportSplit};
 use crate::protocol::message::Message;
 use crate::transport::{Result, TransportError};
 
-/// WebSocket transport with binary MessagePack serialization
+/// WebSocket transport with binary protobuf serialization.
 pub(crate) struct WebSocketTransport {
     stream: WebSocketStream<TcpStream>,
 }
@@ -60,11 +60,11 @@ impl Transport for WebSocketTransport {
 
     async fn read_message(&mut self) -> Result<Message> {
         let data = self.read_frame().await?;
-        Message::decode(&data).map_err(TransportError::SerializationDecode)
+        Message::decode(&data).map_err(TransportError::from)
     }
 
     async fn write_message(&mut self, msg: &Message) -> Result<()> {
-        let data = msg.encode().map_err(TransportError::SerializationEncode)?;
+        let data = msg.encode().map_err(TransportError::from)?;
         self.write_frame(&data).await
     }
 }
@@ -84,7 +84,7 @@ impl MessageReader for WsMessageReader {
         loop {
             match self.stream.next().await {
                 Some(Ok(WsMessage::Binary(data))) => {
-                    return Message::decode(&data).map_err(TransportError::SerializationDecode);
+                    return Message::decode(&data).map_err(TransportError::from);
                 }
                 Some(Ok(WsMessage::Close(_))) | None => {
                     return Err(TransportError::Io(std::io::Error::new(
@@ -121,7 +121,7 @@ impl MessageWriter for WsMessageWriter {
             let _ = self.sink.send(WsMessage::Pong(data)).await;
         }
 
-        let data = msg.encode().map_err(TransportError::SerializationEncode)?;
+        let data = msg.encode().map_err(TransportError::from)?;
         self.sink
             .send(WsMessage::Binary(data))
             .await

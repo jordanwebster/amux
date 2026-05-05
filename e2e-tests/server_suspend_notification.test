@@ -1,0 +1,26 @@
+# test: server_suspend_notification
+# description: Attached sessions are told that the server is suspending
+
+## Environment
+
+terminal:
+  name: T1
+
+terminal:
+  name: T2
+
+## Test
+
+@T1
+> amux new test-agent --name suspend-notify
+> keepalive
+
+@T2
+> amux server suspend
+Suspended 1 agent(s).
+
+@T1
+keepalive
+echo: keepalive
+
+[server suspending]

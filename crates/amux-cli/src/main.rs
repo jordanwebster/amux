@@ -240,7 +240,7 @@ async fn run_command(command: Commands, mut config: Config) -> Result<()> {
         } => {
             let agent_type = parse_agent_type(&agent_type)?;
             ensure_initialized(&mut config).await?;
-            check_upgrade_required(&config);
+            check_update_required(&config);
             match agent_type {
                 protocol::AgentType::Claude => {
                     plugin::ensure_plugin_installed().await;
@@ -398,18 +398,18 @@ fn init_tracing() -> WorkerGuard {
 
 /// Show a blocking warning if the cloud server requires a newer version.
 /// Only shown when cloud mode is enabled and the user hasn't dismissed this version.
-fn check_upgrade_required(config: &Config) {
+fn check_update_required(config: &Config) {
     // Only relevant if cloud mode is enabled
     if !setup::cloud_enabled(config) {
         return;
     }
 
-    let minimum_version = match amux::update::read_upgrade_required(&config.state_path) {
+    let minimum_version = match amux::update::read_update_required(&config.state_path) {
         Some(v) => v,
         None => return,
     };
 
-    if amux::update::is_upgrade_dismissed(&config.state_path, &minimum_version) {
+    if amux::update::is_update_dismissed(&config.state_path, &minimum_version) {
         return;
     }
 
@@ -427,7 +427,7 @@ fn check_upgrade_required(config: &Config) {
 
     let mut input = String::new();
     if std::io::stdin().read_line(&mut input).is_ok() && input.trim().eq_ignore_ascii_case("d") {
-        amux::update::dismiss_upgrade(&config.state_path, &minimum_version);
+        amux::update::dismiss_update_required(&config.state_path, &minimum_version);
     }
 }
 

@@ -9,13 +9,14 @@ use tracing::Instrument;
 use uuid::Uuid;
 
 use super::StructuredLogSource;
-use crate::buffer::{MultiplexByteBuffer, MultiplexByteReader};
+use crate::buffer::{ByteReplayQuery, MultiplexByteBuffer, MultiplexByteReader};
 use crate::protocol::message::TerminalSize;
 
 /// Maximum replay buffer size for PTY bytes.
 const MAX_REPLAY_BUFFER: usize = 10 * 1024 * 1024; // 10MB
 
 /// PTY I/O handle — input, output subscription, resize.
+#[derive(Clone)]
 pub(crate) struct PtyHandle {
     input_tx: mpsc::Sender<Vec<u8>>,
     pty_master: Arc<Mutex<Option<Box<dyn MasterPty + Send>>>>,
@@ -24,6 +25,26 @@ pub(crate) struct PtyHandle {
 }
 
 impl PtyHandle {
+    #[cfg(test)]
+    pub(crate) fn test_echo() -> Self {
+        let (input_tx, mut input_rx) = mpsc::channel::<Vec<u8>>(256);
+        let buffer = Arc::new(MultiplexByteBuffer::new(MAX_REPLAY_BUFFER));
+        let echo_buffer = buffer.clone();
+        tokio::spawn(async move {
+            while let Some(data) = input_rx.recv().await {
+                echo_buffer.write(data).await;
+            }
+            echo_buffer.close().await;
+        });
+
+        Self {
+            input_tx,
+            pty_master: Arc::new(Mutex::new(None)),
+            current_size: Arc::new(Mutex::new((24, 80))),
+            buffer,
+        }
+    }
+
     /// Send raw input bytes to the PTY.
     pub(crate) async fn send_input(&self, data: Vec<u8>) -> Result<()> {
         self.input_tx
@@ -32,11 +53,11 @@ impl PtyHandle {
             .map_err(|_| anyhow!("session closed"))
     }
 
-    /// Subscribe to PTY output (replay + live).
-    ///
-    /// Returns `None` if the session has ended.
-    pub(crate) async fn subscribe(&self) -> Option<MultiplexByteReader> {
-        self.buffer.subscribe().await
+    pub(crate) async fn subscribe_with_query(
+        &self,
+        query: Option<ByteReplayQuery>,
+    ) -> Option<MultiplexByteReader> {
+        self.buffer.subscribe_with_query(query).await
     }
 
     /// Resize the PTY.

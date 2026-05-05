@@ -18,8 +18,14 @@ pub struct Link(String);
 pub enum InvalidLinkName {
     #[error("link name must not be empty")]
     Empty,
+    #[error("link name exceeds 128 byte limit: {0} bytes")]
+    TooLong(usize),
     #[error("link name must not contain '.' (route separator): {0}")]
     ReservedSeparator(String),
+    #[error(
+        "link name must contain only ASCII alphanumeric, hyphen, or underscore characters: {0}"
+    )]
+    InvalidCharacters(String),
 }
 
 impl Link {
@@ -29,8 +35,17 @@ impl Link {
         if value.is_empty() {
             return Err(InvalidLinkName::Empty);
         }
+        if value.len() > 128 {
+            return Err(InvalidLinkName::TooLong(value.len()));
+        }
         if value.contains('.') {
             return Err(InvalidLinkName::ReservedSeparator(value));
+        }
+        if !value
+            .bytes()
+            .all(|b| b.is_ascii_alphanumeric() || b == b'-' || b == b'_')
+        {
+            return Err(InvalidLinkName::InvalidCharacters(value));
         }
         Ok(Self(value))
     }
@@ -91,6 +106,24 @@ mod tests {
             Link::new("a.b"),
             Err(InvalidLinkName::ReservedSeparator("a.b".to_string()))
         );
+    }
+
+    #[test]
+    fn invalid_characters_are_rejected() {
+        assert_eq!(
+            Link::new("bad link"),
+            Err(InvalidLinkName::InvalidCharacters("bad link".to_string()))
+        );
+        assert_eq!(
+            Link::new("cafe\u{e9}"),
+            Err(InvalidLinkName::InvalidCharacters("cafe\u{e9}".to_string()))
+        );
+    }
+
+    #[test]
+    fn overlong_names_are_rejected() {
+        let value = "a".repeat(129);
+        assert_eq!(Link::new(value), Err(InvalidLinkName::TooLong(129)));
     }
 
     #[test]

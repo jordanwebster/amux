@@ -3,7 +3,7 @@ use std::sync::Arc;
 use tokio::sync::RwLock;
 
 use crate::protocol::link::Link;
-use crate::protocol::message::{Command, Message, ShutdownReason};
+use crate::protocol::message::{GoAway, Message, ShutdownReason};
 use crate::server::ServerUserState;
 
 /// Best-effort notification for attached clients on shutdown/suspend.
@@ -17,10 +17,8 @@ pub(super) async fn notify_other_clients(
     reason: ShutdownReason,
 ) {
     let us = user_state.read().await;
-    let msg = Message::Command {
-        command: Command::ShutdownNotification { reason },
-    };
-    for (link, handle) in &us.routes {
+    let msg = Message::GoAway(GoAway { reason });
+    for (link, handle) in &us.topology.routes {
         if link == exclude_link {
             continue;
         }
@@ -38,11 +36,9 @@ pub(in crate::server) async fn notify_local_clients(
     reason: ShutdownReason,
 ) {
     let us = user_state.read().await;
-    let msg = Message::Command {
-        command: Command::ShutdownNotification { reason },
-    };
-    for (link, handle) in &us.routes {
-        if us.peer_links.contains(link) {
+    let msg = Message::GoAway(GoAway { reason });
+    for (link, handle) in &us.topology.routes {
+        if us.topology.peer_links.contains(link) {
             continue;
         }
         let _ = handle.try_send(msg.clone());

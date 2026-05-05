@@ -2,16 +2,38 @@ mod executor;
 mod parser;
 mod terminal;
 
+use std::ffi::OsString;
 use std::path::{Path, PathBuf};
 
 use clap::{Parser, Subcommand};
 use executor::{Executor, ExecutorConfig};
 
-fn debug_binary_path(name: &str) -> PathBuf {
-    PathBuf::from(format!(
-        "target/debug/{name}{}",
-        std::env::consts::EXE_SUFFIX
-    ))
+fn workspace_root() -> PathBuf {
+    let manifest_dir = PathBuf::from(env!("CARGO_MANIFEST_DIR"));
+    manifest_dir
+        .parent()
+        .and_then(Path::parent)
+        .map(Path::to_path_buf)
+        .unwrap_or_else(|| std::env::current_dir().unwrap_or_else(|_| PathBuf::from(".")))
+}
+
+fn cargo_target_dir() -> PathBuf {
+    if let Some(path) = std::env::var_os("CARGO_TARGET_DIR") {
+        let path = PathBuf::from(path);
+        if path.is_absolute() {
+            path
+        } else {
+            workspace_root().join(path)
+        }
+    } else {
+        workspace_root().join("target")
+    }
+}
+
+fn debug_binary_path(name: &str, target_dir: &Path) -> PathBuf {
+    target_dir
+        .join("debug")
+        .join(format!("{name}{}", std::env::consts::EXE_SUFFIX))
 }
 
 #[cfg(unix)]
@@ -93,6 +115,36 @@ fn find_test_files(test_dir: &Path, filter: &str) -> Vec<PathBuf> {
         .collect()
 }
 
+fn build_default_binaries(build_amux: bool, build_test_agent: bool, target_dir: &Path) {
+    if !build_amux && !build_test_agent {
+        return;
+    }
+
+    let cargo = std::env::var_os("CARGO").unwrap_or_else(|| OsString::from("cargo"));
+    let mut command = std::process::Command::new(cargo);
+    command
+        .current_dir(workspace_root())
+        .arg("build")
+        .arg("--target-dir")
+        .arg(target_dir);
+    if build_amux {
+        command.args(["-p", "amux-cli"]);
+    }
+    if build_test_agent {
+        command.args(["-p", "test-agent"]);
+    }
+
+    eprintln!("Building default e2e binaries...");
+    let status = command.status().unwrap_or_else(|error| {
+        eprintln!("failed to run cargo build for e2e binaries: {error}");
+        std::process::exit(1);
+    });
+    if !status.success() {
+        eprintln!("cargo build for e2e binaries failed");
+        std::process::exit(status.code().unwrap_or(1));
+    }
+}
+
 fn run_tests(
     test_dir: PathBuf,
     filter: String,
@@ -114,24 +166,19 @@ fn run_tests(
         std::process::exit(1);
     }
 
-    // Find binaries and convert to absolute paths
-    let amux_binary = amux_binary.unwrap_or_else(|| {
-        let debug_path = debug_binary_path("amux");
-        if debug_path.exists() {
-            make_binary_path_absolute(debug_path)
-        } else {
-            PathBuf::from("amux")
-        }
-    });
+    let build_amux = amux_binary.is_none();
+    let build_test_agent = test_agent_binary.is_none();
+    let target_dir = cargo_target_dir();
+    build_default_binaries(build_amux, build_test_agent, &target_dir);
 
-    let test_agent_binary = test_agent_binary.unwrap_or_else(|| {
-        let debug_path = debug_binary_path("test-agent");
-        if debug_path.exists() {
-            make_binary_path_absolute(debug_path)
-        } else {
-            PathBuf::from("test-agent")
-        }
-    });
+    // Find binaries and convert to absolute paths
+    let amux_binary = make_binary_path_absolute(
+        amux_binary.unwrap_or_else(|| debug_binary_path("amux", &target_dir)),
+    );
+
+    let test_agent_binary = make_binary_path_absolute(
+        test_agent_binary.unwrap_or_else(|| debug_binary_path("test-agent", &target_dir)),
+    );
 
     // Check binaries exist
     if !amux_binary.exists() && amux_binary != Path::new("amux") {

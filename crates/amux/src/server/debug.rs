@@ -9,9 +9,7 @@ use crate::agent::Agent;
 use crate::debug::{DebugView, LossyPath};
 use crate::protocol::link::Link;
 use crate::protocol::message::{DebugFormat, Host};
-use crate::server::{
-    LOCAL_USER_ID, ServerState, ServerUserState, SubscriptionEntry, SubscriptionMode,
-};
+use crate::server::{LOCAL_USER_ID, ServerState, ServerUserState};
 use crate::setup;
 
 /// Top-level entry point: gather read-locks across the server, then serialize
@@ -21,7 +19,7 @@ use crate::setup;
 /// every per-user state). Once we have the guards, the rest is purely sync —
 /// the `Serialize` impls cannot await, so every dumped value must be reachable
 /// without an `.await`.
-pub(super) async fn dump_server_debug_info(
+pub(crate) async fn dump_server_debug_info(
     state: &Arc<RwLock<ServerState>>,
     format: DebugFormat,
     verbose: bool,
@@ -77,14 +75,12 @@ impl Serialize for ServerDebugView<'_> {
         let mut host_count = 0usize;
         let mut route_count = 0usize;
         let mut peer_link_count = 0usize;
-        let mut subscription_count = 0usize;
         for (_, us) in self.users {
             agent_count += us.agents.len();
-            remote_agent_count += us.registry.count_remote();
-            host_count += us.hosts.len();
-            route_count += us.routes.len();
-            peer_link_count += us.peer_links.len();
-            subscription_count += us.active_subscriptions.len();
+            remote_agent_count += us.topology.registry.count_remote();
+            host_count += us.topology.hosts.len();
+            route_count += us.topology.routes.len();
+            peer_link_count += us.topology.peer_links.len();
         }
 
         let mut map = serializer.serialize_map(None)?;
@@ -96,7 +92,6 @@ impl Serialize for ServerDebugView<'_> {
         map.serialize_entry("host_count", &host_count)?;
         map.serialize_entry("route_count", &route_count)?;
         map.serialize_entry("peer_link_count", &peer_link_count)?;
-        map.serialize_entry("subscription_count", &subscription_count)?;
         map.serialize_entry("config", &self.state.config)?;
 
         if self.verbose {
@@ -160,7 +155,7 @@ impl Serialize for UsersListView<'_> {
 }
 
 /// Per-user view: counts plus verbose details (peer_links, routes, hosts,
-/// agents, subscriptions). Reads `ServerUserState` directly via the guard.
+/// agents). Reads `ServerUserState` directly via the guard.
 struct UserView<'a> {
     state: &'a ServerState,
     user_id: Uuid,
@@ -171,18 +166,15 @@ struct UserView<'a> {
 impl Serialize for UserView<'_> {
     fn serialize<S: Serializer>(&self, serializer: S) -> Result<S::Ok, S::Error> {
         let us = self.user_state;
-        let agents = us.registry.list_all(&us.hosts);
+        let agents = us.topology.registry.list_all(&us.topology.hosts);
 
         let mut host_agent_counts: std::collections::HashMap<Uuid, usize> =
             std::collections::HashMap::new();
-        let mut agent_name_by_id: std::collections::HashMap<Uuid, Option<String>> =
-            std::collections::HashMap::new();
         for agent in &agents {
             *host_agent_counts.entry(agent.host_id).or_default() += 1;
-            agent_name_by_id.insert(agent.id, agent.name.clone());
         }
 
-        let mut peer_links: Vec<&str> = us.peer_links.iter().map(Link::as_str).collect();
+        let mut peer_links: Vec<&str> = us.topology.peer_links.iter().map(Link::as_str).collect();
         peer_links.sort_unstable();
 
         let mut map = serializer.serialize_map(None)?;
@@ -195,11 +187,10 @@ impl Serialize for UserView<'_> {
             },
         )?;
         map.serialize_entry("agent_count", &us.agents.len())?;
-        map.serialize_entry("remote_agent_count", &us.registry.count_remote())?;
-        map.serialize_entry("host_count", &us.hosts.len())?;
-        map.serialize_entry("route_count", &us.routes.len())?;
-        map.serialize_entry("peer_link_count", &us.peer_links.len())?;
-        map.serialize_entry("subscription_count", &us.active_subscriptions.len())?;
+        map.serialize_entry("remote_agent_count", &us.topology.registry.count_remote())?;
+        map.serialize_entry("host_count", &us.topology.hosts.len())?;
+        map.serialize_entry("route_count", &us.topology.routes.len())?;
+        map.serialize_entry("peer_link_count", &us.topology.peer_links.len())?;
         map.serialize_entry("peer_links", &peer_links)?;
         map.serialize_entry("routes", &RoutesView { user_state: us })?;
         map.serialize_entry(
@@ -218,13 +209,6 @@ impl Serialize for UserView<'_> {
                 verbose: self.verbose,
             },
         )?;
-        map.serialize_entry(
-            "subscriptions",
-            &SubscriptionsView {
-                user_state: us,
-                agent_name_by_id: &agent_name_by_id,
-            },
-        )?;
         map.end()
     }
 }
@@ -237,16 +221,19 @@ impl Serialize for RoutesView<'_> {
     fn serialize<S: Serializer>(&self, serializer: S) -> Result<S::Ok, S::Error> {
         let us = self.user_state;
         let mut entries: Vec<(&Link, bool, usize, usize)> = us
+            .topology
             .routes
             .keys()
             .map(|link| {
-                let is_peer = us.peer_links.contains(link);
+                let is_peer = us.topology.peer_links.contains(link);
                 let direct_host_count = us
+                    .topology
                     .hosts
                     .values()
                     .filter(|host| host.route.to_string() == link.as_str())
                     .count();
                 let routed_host_count = us
+                    .topology
                     .hosts
                     .values()
                     .filter(|host| host.route.peek() == Some(link))
@@ -294,7 +281,7 @@ struct HostsView<'a> {
 
 impl Serialize for HostsView<'_> {
     fn serialize<S: Serializer>(&self, serializer: S) -> Result<S::Ok, S::Error> {
-        let mut hosts: Vec<&Host> = self.user_state.hosts.values().collect();
+        let mut hosts: Vec<&Host> = self.user_state.topology.hosts.values().collect();
         hosts.sort_unstable_by(|a, b| {
             a.route
                 .to_string()
@@ -345,18 +332,6 @@ impl Serialize for AgentsView<'_> {
     fn serialize<S: Serializer>(&self, serializer: S) -> Result<S::Ok, S::Error> {
         let us = self.user_state;
 
-        // Subscription counts per agent — used by the per-agent entry below.
-        let mut sub_counts: std::collections::HashMap<Uuid, (usize, usize, usize)> =
-            std::collections::HashMap::new();
-        for entry in us.active_subscriptions.values() {
-            let counts = sub_counts.entry(entry.agent_id).or_default();
-            counts.0 += 1;
-            match entry.mode {
-                SubscriptionMode::Raw => counts.1 += 1,
-                SubscriptionMode::Structured => counts.2 += 1,
-            }
-        }
-
         let mut sorted: Vec<&Agent> = self.agents.iter().collect();
         sorted.sort_unstable_by(|a, b| {
             a.is_remote()
@@ -376,15 +351,14 @@ impl Serialize for AgentsView<'_> {
             let host_name = if agent.host_id == self.state.host_id {
                 Some(self.state.config.host_name.as_str())
             } else {
-                us.hosts.get(&agent.host_id).map(|host| host.name.as_str())
+                us.topology
+                    .hosts
+                    .get(&agent.host_id)
+                    .map(|host| host.name.as_str())
             };
-            let counts = sub_counts.get(&agent.id).copied().unwrap_or_default();
             seq.serialize_element(&AgentEntry {
                 agent,
                 host_name,
-                subscription_count: counts.0,
-                raw_subscription_count: counts.1,
-                structured_subscription_count: counts.2,
                 session: us.agents.get(&agent.id),
                 verbose: self.verbose,
             })?;
@@ -396,9 +370,6 @@ impl Serialize for AgentsView<'_> {
 struct AgentEntry<'a> {
     agent: &'a Agent,
     host_name: Option<&'a str>,
-    subscription_count: usize,
-    raw_subscription_count: usize,
-    structured_subscription_count: usize,
     session: Option<&'a crate::agent::AgentSession>,
     verbose: bool,
 }
@@ -424,98 +395,15 @@ impl Serialize for AgentEntry<'_> {
             map.serialize_entry("via", via)?;
         }
         map.serialize_entry("agent_type", &agent.agent_type)?;
-        if let Some(structured_protocol) = &agent.structured_protocol {
-            map.serialize_entry("structured_protocol", structured_protocol)?;
-        }
+        map.serialize_entry("io_protocols", &agent.io_protocols)?;
         map.serialize_entry("readonly", &agent.readonly)?;
         map.serialize_entry("command", &agent.command)?;
         map.serialize_entry("working_dir", &LossyPath(&agent.working_dir))?;
         map.serialize_entry("args", &agent.args)?;
         map.serialize_entry("created_at", &agent.created_at)?;
-        map.serialize_entry("subscription_count", &self.subscription_count)?;
-        map.serialize_entry("raw_subscription_count", &self.raw_subscription_count)?;
-        map.serialize_entry(
-            "structured_subscription_count",
-            &self.structured_subscription_count,
-        )?;
         if let Some(session) = self.session {
             map.serialize_entry("session", &DebugView::new(session, self.verbose))?;
         }
-        map.end()
-    }
-}
-
-struct SubscriptionsView<'a> {
-    user_state: &'a ServerUserState,
-    agent_name_by_id: &'a std::collections::HashMap<Uuid, Option<String>>,
-}
-
-impl Serialize for SubscriptionsView<'_> {
-    fn serialize<S: Serializer>(&self, serializer: S) -> Result<S::Ok, S::Error> {
-        let now = tokio::time::Instant::now();
-        let mut entries: Vec<&SubscriptionEntry> =
-            self.user_state.active_subscriptions.values().collect();
-        entries.sort_unstable_by(|a, b| {
-            a.agent_id
-                .as_u128()
-                .cmp(&b.agent_id.as_u128())
-                .then_with(|| {
-                    a.subscription_id
-                        .as_uuid()
-                        .as_u128()
-                        .cmp(&b.subscription_id.as_uuid().as_u128())
-                })
-        });
-
-        let mut seq = serializer.serialize_seq(Some(entries.len()))?;
-        for entry in entries {
-            let lease_remaining_ms: u64 = entry
-                .lease_deadline
-                .checked_duration_since(now)
-                .unwrap_or_default()
-                .as_millis()
-                .try_into()
-                .unwrap_or(u64::MAX);
-            seq.serialize_element(&SubscriptionEntryView {
-                entry,
-                agent_name: self
-                    .agent_name_by_id
-                    .get(&entry.agent_id)
-                    .and_then(|n| n.as_deref()),
-                lease_remaining_ms,
-            })?;
-        }
-        seq.end()
-    }
-}
-
-struct SubscriptionEntryView<'a> {
-    entry: &'a SubscriptionEntry,
-    agent_name: Option<&'a str>,
-    lease_remaining_ms: u64,
-}
-
-impl Serialize for SubscriptionEntryView<'_> {
-    fn serialize<S: Serializer>(&self, serializer: S) -> Result<S::Ok, S::Error> {
-        let entry = self.entry;
-        let mut map = serializer.serialize_map(None)?;
-        map.serialize_entry("id", &entry.subscription_id)?;
-        map.serialize_entry("agent_id", &entry.agent_id)?;
-        if let Some(name) = self.agent_name {
-            map.serialize_entry("agent_name", name)?;
-        }
-        map.serialize_entry(
-            "mode",
-            match entry.mode {
-                SubscriptionMode::Raw => "raw",
-                SubscriptionMode::Structured => "structured",
-            },
-        )?;
-        map.serialize_entry("dst", &entry.dst)?;
-        if let Some(via) = entry.dst.peek() {
-            map.serialize_entry("via", via)?;
-        }
-        map.serialize_entry("lease_remaining_ms", &self.lease_remaining_ms)?;
         map.end()
     }
 }

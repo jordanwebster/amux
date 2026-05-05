@@ -8,11 +8,11 @@ AMUX IS IN ACTIVE DEVELOPMENT AND IS NOT CURRENTLY RELEASED. DO NOT CONCERN YOUR
 
 1. **Read DEVLOG.md** - See recent work, decisions made, and current state
 2. **Read this file** - Understand code style and project structure
-3. **Skim docs/architecture.md** - Canonical design for the system
+3. **Skim docs/architecture.md** - Older architecture context; protocol details there may be historical
 
 ## After Completing Work
 
-1. Run `cargo check && cargo +nightly fmt --all && cargo +nightly clippy --workspace --all-targets -- -D warnings && cargo test`
+1. Run `cargo check --workspace --all-targets && cargo +nightly fmt --all && cargo +nightly clippy --workspace --all-targets -- -D warnings && cargo test --workspace`
 2. **Update DEVLOG.md** - Add an entry describing what was done (see template in DEVLOG.md)
 
 ## Git Commits
@@ -23,24 +23,24 @@ AMUX IS IN ACTIVE DEVELOPMENT AND IS NOT CURRENTLY RELEASED. DO NOT CONCERN YOUR
 
 ## Current State
 
-**Milestones 1-3 are complete.** The codebase implements local terminal connections, server-to-server routing, cloud relay, and the v3 protocol:
+**The protobuf protocol refactor is complete.** The codebase implements local terminal connections, server-to-server routing, cloud relay, and the protobuf runtime protocol:
 
-- Protocol v3 with three-variant Message enum (Routable/Direct/Command)
+- Protobuf handshake frames (`ConnectRequest` / `ConnectResponse`) before runtime messages
+- Protobuf runtime frames (`LocalFrame`, `PeerFrame`, `RoutedFrame`, `Ping`, `Pong`, `Reauth`, `ReauthResponse`, `GoAway`)
 - Opaque payload routing (intermediate hops don't deserialize)
-- Per-connection request_id counters
+- 128-bit call IDs managed by the RPC/client/runtime layers
 - Per-user state isolation (for cloud multi-tenancy)
-- AnnounceHost/WithdrawHost as single source of routing truth
-- Agent discovery propagation via AnnounceAgent/WithdrawAgent
-- MessagePack serialization for all transports (Unix, TCP, WebSocket)
+- Peer routing events as the single source of host/agent propagation
+- Protobuf serialization for all transports (Unix, TCP, WebSocket binary frames)
 - OAuth 2.0 device flow + JWT authentication for cloud
 - TLS for server-to-server connections
 
-**Source of truth:** docs/architecture.md is the canonical design document for server internals. docs/cloud_architecture.md covers the cloud deployment model.
+**Protocol source of truth:** `crates/amux/proto/amux/v1/amux.proto`, generated through `crates/amux/build.rs`, with conversion helpers behind `crates/amux/src/protocol/wire`. `notes/PROTO_REFACTOR.md` records the protobuf refactor decisions and protocol-definition test strategy. `docs/architecture.md` and `docs/cloud_architecture.md` are useful context but still contain historical pre-protobuf sections.
 
 ## Getting Oriented
 
 1. **Start with the README** - Understand what amux does at a product level
-2. **Read docs/architecture.md** - This is the detailed internal design document covering data structures, message flow, and the task model
+2. **Read notes/PROTO_REFACTOR.md** - Current protobuf protocol/refactor decisions and test strategy
 3. **Skim docs/cloud_architecture.md** - Understand the cloud deployment model (stateless servers, token auth, TTL-based routing)
 4. **Explore src/** - The current prototype implementation
 
@@ -58,7 +58,7 @@ Terminal ──Unix socket──> Local amux server ──TCP──> Cloud amux 
                                │
                           [owns agents]
                           [routing table]
-                          [subscriptions]
+                          [OpenSession streams]
 ```
 
 **Core types:**
@@ -66,7 +66,7 @@ Terminal ──Unix socket──> Local amux server ──TCP──> Cloud amux 
 - `Route` - stack of link names (`VecDeque<String>`) for multi-hop routing
 - `LocalAgentSession` - a running agent with PTY and replay buffers
 - `AgentRegistry` - centralized tracking of local + remote agents with name mapping
-- `Host` - remote host info propagated via AnnounceHost/WithdrawHost
+- `Host` - remote host info propagated via peer routing events
 
 ## Code Style
 
@@ -74,7 +74,7 @@ Terminal ──Unix socket──> Local amux server ──TCP──> Cloud amux 
 
 - Use `thiserror` for error types
 - Use `tokio` for async runtime
-- Use `serde` with `rmp-serde` / MessagePack for all transports (Unix, TCP, WebSocket)
+- Keep wire serialization in protobuf. Generated prost types live behind `protocol::wire`; convert to ergonomic domain/RPC types at boundaries.
 - Prefer `Arc<Mutex<T>>` or `Arc<RwLock<T>>` for shared state
 - Use channels (`mpsc`, `broadcast`) for task communication
 
@@ -94,33 +94,27 @@ crates/
 ├── amux/                       # Library crate — public API + protocol/server/transport
 │   └── src/
 │       ├── lib.rs              # Public API: connect(), Connection, ConnectPolicy
-│       ├── connect.rs          # connect() function, ConnectPolicy enum
-│       ├── connection.rs       # Connection struct (wraps split transport)
-│       ├── message.rs          # Protocol messages (Message, RoutableMessage, DirectMessage, Command)
-│       ├── route.rs            # Route type (stack-based multi-hop routing)
+│       ├── client/             # connect(), Connection, RpcClient
+│       ├── protocol/           # domain protocol types + protobuf wire boundary
+│       ├── rpc.rs              # shared RPC call lifecycle state
 │       ├── config.rs           # Config struct
-│       ├── agents/
-│       │   ├── mod.rs          # AgentSession enum, PtyHandle, StopPolicy, spawn_pty_agent
-│       │   ├── claude.rs       # ClaudeSession (hook handling, structured input)
-│       │   └── testagent.rs    # TestAgentSession (#[cfg(any(debug_assertions, test))])
+│       ├── agent.rs            # AgentSession enum + provider dispatch
+│       ├── agent/
+│       │   ├── claude.rs       # Claude integration
+│       │   ├── pty.rs          # PtyHandle and PTY spawning
+│       │   ├── session.rs      # Session domain helpers
+│       │   └── test_agent.rs   # TestAgentSession
 │       ├── buffer.rs           # BroadcastBuffer<P> (generic byte + entry buffers)
-│       ├── agent_registry.rs   # AgentRegistry (local + remote agent tracking)
-│       ├── error.rs            # Error types with thiserror
-│       ├── cloud.rs            # Cloud connection management, token refresh
-│       ├── oauth.rs            # OAuth 2.0 device flow
-│       ├── jwt.rs              # JWT validation (JWKS)
-│       ├── handshake.rs        # Connect/ConnectResult handshake types
+│       ├── auth/
+│       │   ├── cloud.rs        # Cloud connection lookup/token refresh helpers
+│       │   ├── oauth.rs        # OAuth 2.0 device flow
+│       │   └── jwt.rs          # JWT validation (JWKS)
 │       ├── state.rs            # Persistent state (refresh tokens, etc.)
-│       ├── claude/
-│       │   ├── mod.rs          # Claude Code integration module root
-│       │   ├── types.rs        # Hook events, permissions, tool inputs, structured I/O
-│       │   ├── structured_log_source.rs  # Structured log source for agents
-│       │   └── transcript.rs   # TranscriptTailer for JSONL transcript files
 │       ├── server/
 │       │   ├── mod.rs          # Server struct, ServerState, ServerUserState
 │       │   ├── accept.rs       # Connection acceptance, handshake
 │       │   ├── connection.rs   # Connection loop, reader/writer tasks, stream management
-│       │   ├── handlers.rs     # Message dispatch (handle_routable, handle_command, handle_direct)
+│       │   ├── dispatch.rs     # Local/peer/routed frame dispatch
 │       │   ├── routing.rs      # Route management, peer disconnect, agent creation
 │       │   └── cloud.rs        # Cloud connection establishment
 │       └── transport/
@@ -129,11 +123,13 @@ crates/
 │           ├── unix.rs         # UnixTransport
 │           ├── tcp.rs          # TcpTransport (generic over stream type)
 │           ├── tls.rs          # TLS support (rustls)
-│           └── websocket.rs    # WebSocketTransport (MessagePack over binary frames)
+│           └── websocket.rs    # WebSocketTransport (protobuf over binary frames)
 ├── amux-cli/                   # Binary crate → produces `amux` binary
 │   └── src/
 │       ├── main.rs             # CLI parsing, server startup
-│       ├── client.rs           # Client-side protocol (new, attach, list, etc.)
+│       ├── client_common.rs    # Shared client helpers
+│       ├── session_client.rs   # CLI session flows (new, attach, list)
+│       ├── server_client.rs    # CLI server/admin operations
 │       ├── init.rs             # `amux init` command
 │       ├── hooks.rs            # Client-side hook handler (`amux hooks claude <event>`)
 │       └── plugin.rs           # Plugin installation and update management
@@ -191,18 +187,21 @@ tokio::task::spawn_blocking(move || { ... });
 
 ## Common Tasks
 
-### Adding a new routable message type
+### Adding a new routed/local/peer RPC method
 
-1. Add variant to `RoutableMessage` enum in `crates/amux/src/message.rs`
-2. Handle in `handle_routable()` in `crates/amux/src/server/handlers.rs`
-3. Update `crates/amux-cli/src/client.rs` if the client needs to send/receive it
+1. Add or update the protobuf schema in `crates/amux/proto/amux/v1/amux.proto`
+2. Add/update codecs under `crates/amux/src/protocol/wire/` or the relevant protocol module
+3. Register the method/scope in `crates/amux/src/protocol/method.rs`
+4. Add operation-level client handling through `RpcClient`
+5. Put server application behavior in a module named after the protobuf service (`AgentService`, `RoutingService`, `HookService`, `AdminService`) when extracting it; keep frame-scope decoding/forwarding in `server::dispatch`
+6. Cover settled semantics in `server::protocol_tests` without exposing call IDs or frame internals in the scenario body
 
-### Adding a new command
+### Adding a new local admin/client command
 
-1. Add variant to `Command` enum in `crates/amux/src/message.rs`
-2. Handle in `handle_command()` in `crates/amux/src/server/handlers.rs`
-3. Update `crates/amux-cli/src/client.rs` for the CLI side
-4. Update `Command::type_label()` and `Message::type_label()` in `crates/amux/src/message.rs`
+1. Add the protobuf request/response shape if one does not already exist
+2. Handle frame decoding in `server::dispatch::local`; extract behavior under `AdminService` when introducing service modules
+3. Expose it through `RpcClient`
+4. Update CLI code to call the operation API rather than constructing protocol frames
 
 ### Adding a new transport
 
@@ -213,19 +212,20 @@ tokio::task::spawn_blocking(move || { ... });
 ### Modifying routing behavior
 
 1. Update `crates/amux/src/server/routing.rs` for route management
-2. Update `handle_routable()` in `crates/amux/src/server/handlers.rs` for forwarding logic
-3. Update `WithdrawHost` handler for cleanup behavior
+2. Update routed forwarding or peer routing-event handling in `server::dispatch`
+3. Update peer disconnect/withdrawal cleanup behavior
+4. Add or update protocol-definition tests in `server::protocol_tests`
 
 ## Building and Testing
 
 **After making any code changes, always run:**
 
 ```bash
-cargo check             # Fast type-check
+cargo check --workspace --all-targets  # Fast type-check
 cargo +nightly fmt --all   # Format code (nightly required for unstable rustfmt options in rustfmt.toml)
 cargo +nightly clippy --workspace --all-targets -- -D warnings   # Lint (warnings are errors — zero tolerance; nightly for consistency with CI)
-cargo test              # Run all tests
-cargo build --workspace && cargo run -p e2e-runner -- run   # Build all binaries then run E2E tests (workspace build avoids stale amux/test-agent binaries)
+cargo test --workspace  # Run all tests; root default-members only cover the CLI crate
+cargo run -p e2e-runner -- run   # Builds default amux/test-agent binaries, then runs E2E tests
 ```
 
 **Clippy policy:** All clippy warnings must be fixed, not suppressed. Do not add `#[allow(clippy::...)]` attributes — fix the underlying issue instead.
@@ -235,7 +235,7 @@ cargo build --workspace && cargo run -p e2e-runner -- run   # Build all binaries
 
 Additional commands:
 ```bash
-cargo test -- --nocapture  # See println output in tests
+cargo test --workspace -- --nocapture  # See println output in tests
 cargo build --release   # Build optimized binary
 cargo run -p e2e-runner -- run <filter>  # Run specific E2E test
 ```

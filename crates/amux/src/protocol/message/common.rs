@@ -5,8 +5,43 @@ use uuid::Uuid;
 
 use crate::protocol::route::Route;
 
+/// Routed call identity carried by `RoutedFrame.call_id`.
+///
+/// The protobuf contract uses 128-bit non-zero call IDs.
+#[derive(Debug, Clone, PartialEq, Eq, Hash)]
+pub struct RoutedCallId(Vec<u8>);
+
+impl RoutedCallId {
+    pub const LEN: usize = 16;
+
+    pub fn from_bytes(bytes: Vec<u8>) -> Result<Self, String> {
+        if bytes.len() != Self::LEN {
+            return Err(format!(
+                "routed call_id must be {} bytes, got {}",
+                Self::LEN,
+                bytes.len()
+            ));
+        }
+        if bytes.iter().all(|byte| *byte == 0) {
+            return Err("routed call_id must be non-zero".to_string());
+        }
+        Ok(Self(bytes))
+    }
+
+    pub fn as_bytes(&self) -> &[u8] {
+        &self.0
+    }
+}
+
+impl From<Uuid> for RoutedCallId {
+    fn from(uuid: Uuid) -> Self {
+        assert_ne!(uuid, Uuid::nil(), "routed call_id must be non-zero");
+        Self(uuid.as_bytes().to_vec())
+    }
+}
+
 /// Information about a connected host (machine running amux server).
-/// Propagated via AnnounceHost/WithdrawHost between peers.
+/// Propagated via peer routing events between servers.
 #[derive(Serialize, Deserialize, Debug, Clone)]
 pub struct Host {
     /// Stable ID loaded from state and announced to peers
@@ -40,39 +75,10 @@ pub enum HookProvider {
     Unknown,
 }
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, serde::Serialize, serde::Deserialize)]
-#[serde(transparent)]
-pub struct SubscriptionId(pub Uuid);
-
-impl SubscriptionId {
-    pub fn random() -> Self {
-        Self(Uuid::new_v4())
-    }
-
-    pub fn as_uuid(&self) -> Uuid {
-        self.0
-    }
-
-    pub fn nil() -> Self {
-        Self(Uuid::nil())
-    }
-
-    pub fn is_nil(&self) -> bool {
-        self.0.is_nil()
-    }
-}
-
-impl std::fmt::Display for SubscriptionId {
-    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        self.0.fmt(f)
-    }
-}
-
-/// Query parameter for structured subscriptions, controlling which entries
-/// are replayed on subscribe.
+/// Replay query for sequenced output buffers.
 #[derive(Serialize, Deserialize, Debug, Clone, PartialEq, Eq)]
 #[serde(tag = "type", rename_all = "snake_case")]
-pub enum SubscribeQuery {
+pub enum SequencedReplayQuery {
     /// Replay entries with `seq >= seq`. O(log n) seek + O(k) replay.
     Since { seq: u64 },
     /// Replay only the last `count` entries. O(count) replay.
@@ -88,33 +94,44 @@ pub enum ProtocolError {
     /// The requested agent session is no longer available on this connection.
     #[error("No agent found")]
     NoAgentFound,
-    /// The requested subscription is unknown or has already ended.
-    #[error("Unknown subscription")]
-    UnknownSubscription,
-    /// The requested structured subscribe query is not supported by this peer.
-    #[error("Unsupported subscribe query")]
-    UnsupportedSubscribeQuery,
+    /// The requested protocol method or variant is not implemented by this peer.
+    #[error("{message}")]
+    Unimplemented { message: String },
+    /// The active call was cancelled by its caller.
+    #[error("{message}")]
+    Cancelled { message: String },
+    /// The request payload or arguments are invalid.
+    #[error("{message}")]
+    InvalidArgument { message: String },
+    /// The requested resource already exists.
+    #[error("{message}")]
+    AlreadyExists { message: String },
+    /// The routed call could not be delivered to its destination.
+    #[error("{message}")]
+    Unreachable { message: String },
     /// Generic server error with message
     #[error("{message}")]
     ServerError { message: String },
-    /// The proposed link name is already in use
-    #[error("Link name already in use")]
-    LinkNameTaken,
     /// Invalid or missing authentication credentials
     #[error("Invalid or missing credentials")]
     InvalidCredentials,
-    /// The proposed link name is invalid (e.g., contains "." which is the route separator)
-    #[error("Invalid link name (must not contain '.')")]
-    InvalidLinkName,
+    /// The receiver was unable to allocate a required protocol resource.
+    #[error("{message}")]
+    ResourceExhausted { message: String },
+    /// The proposed link name is invalid.
+    #[error("invalid link name `{name}`: {reason}")]
+    InvalidLinkName { name: String, reason: String },
     /// Protocol version mismatch between client and server
-    #[error("amux upgrade required (protocol v{server_version}, client v{client_version})")]
+    #[error(
+        "amux update required (supported protocol versions {supported_versions:?}, peer supports {peer_supported_versions:?})"
+    )]
     ProtocolMismatch {
-        server_version: u32,
-        client_version: u32,
+        supported_versions: Vec<u32>,
+        peer_supported_versions: Vec<u32>,
     },
-    /// Client binary version is below the server's minimum requirement
-    #[error("amux upgrade required (minimum v{minimum_version}, you have v{client_version})")]
-    UpgradeRequired {
+    /// Client binary version is below the server's minimum requirement.
+    #[error("amux update required (minimum v{minimum_version}, you have v{client_version})")]
+    UpdateRequired {
         minimum_version: String,
         client_version: String,
     },
@@ -139,25 +156,25 @@ pub enum DebugFormat {
 #[derive(Serialize, Deserialize, Debug, Clone, PartialEq)]
 #[serde(rename_all = "snake_case")]
 pub enum ShutdownReason {
-    ProtocolMismatch,
+    UpdateRequired,
+    ProtocolError,
     UserRequested,
     Updating,
-}
-
-#[derive(Serialize, Deserialize, Debug, Clone, Copy, PartialEq, Eq)]
-#[serde(rename_all = "snake_case")]
-pub enum SubscriptionCloseReason {
-    SourceClosed,
-    Unsubscribed,
-    LeaseExpired,
+    Suspending,
+    Restarting,
+    AuthExpired,
 }
 
 impl std::fmt::Display for ShutdownReason {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         match self {
-            ShutdownReason::ProtocolMismatch => write!(f, "amux upgrade required"),
+            ShutdownReason::UpdateRequired => write!(f, "amux update required"),
+            ShutdownReason::ProtocolError => write!(f, "protocol error"),
             ShutdownReason::UserRequested => write!(f, "server shutting down"),
             ShutdownReason::Updating => write!(f, "server updating"),
+            ShutdownReason::Suspending => write!(f, "server suspending"),
+            ShutdownReason::Restarting => write!(f, "server restarting"),
+            ShutdownReason::AuthExpired => write!(f, "authentication expired"),
         }
     }
 }

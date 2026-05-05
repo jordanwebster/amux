@@ -20,14 +20,14 @@ const LINK_ALPHABET: [char; 36] = [
 ///
 /// The top of the stack (front of deque) is the next hop.
 /// Serializes as "AB.BC.CD" where AB is the top (first hop).
-#[derive(Debug, Clone, PartialEq, Eq)]
+#[derive(Debug, Clone, PartialEq, Eq, Hash)]
 pub struct Route {
     links: VecDeque<Link>,
 }
 
 impl Route {
     /// Create an empty route (no hops).
-    /// Used in AnnounceAgent to indicate the agent is local to the sender.
+    /// Used in routing events to indicate the agent or host is local to the sender.
     pub fn empty() -> Self {
         Self {
             links: VecDeque::new(),
@@ -50,6 +50,16 @@ impl Route {
         Self { links }
     }
 
+    pub(crate) fn from_links(
+        links: impl IntoIterator<Item = String>,
+    ) -> Result<Self, crate::protocol::link::InvalidLinkName> {
+        let links = links
+            .into_iter()
+            .map(Link::new)
+            .collect::<Result<VecDeque<_>, _>>()?;
+        Ok(Self { links })
+    }
+
     /// Push a link onto the front of the route (becomes the new top).
     pub fn push(&mut self, link: Link) {
         self.links.push_front(link);
@@ -63,6 +73,10 @@ impl Route {
     /// Peek at the first hop without consuming it.
     pub fn peek(&self) -> Option<&Link> {
         self.links.front()
+    }
+
+    pub fn iter(&self) -> impl Iterator<Item = &Link> {
+        self.links.iter()
     }
 
     /// Check if this route passes through a given link name.
@@ -176,16 +190,33 @@ fn generate_link_suffix() -> String {
 }
 
 /// Sanitize a hostname for use in link names.
-/// Replaces periods with hyphens since "." is the route separator.
+/// Keeps only the ASCII characters accepted by `Link`; every other character
+/// becomes `-`.
 fn sanitize_host_name(host_name: &str) -> String {
-    host_name.replace('.', "-")
+    host_name
+        .chars()
+        .map(|ch| {
+            if ch.is_ascii_alphanumeric() || ch == '-' || ch == '_' {
+                ch
+            } else {
+                '-'
+            }
+        })
+        .collect()
 }
 
 /// Generate a server link name: "{hostname}" or "{hostname}-{rand}".
 /// If randomise is true, appends a random suffix for uniqueness.
-/// The hostname is sanitized (periods replaced with hyphens).
+/// The hostname is sanitized and truncated if needed.
 pub(crate) fn generate_server_link(host_name: &str, randomise: bool) -> Link {
     let sanitized = sanitize_host_name(host_name);
+    let sanitized = if sanitized.is_empty() {
+        "host".to_string()
+    } else {
+        sanitized
+    };
+    let max_base_len = if randomise { 123 } else { 128 };
+    let sanitized: String = sanitized.chars().take(max_base_len).collect();
     let raw = if randomise {
         format!("{}-{}", sanitized, generate_link_suffix())
     } else {
@@ -332,6 +363,24 @@ mod tests {
     fn test_sanitize_host_name_no_periods() {
         assert_eq!(sanitize_host_name("myhost"), "myhost");
         assert_eq!(sanitize_host_name("my-host"), "my-host");
+    }
+
+    #[test]
+    fn test_sanitize_host_name_replaces_invalid_link_characters() {
+        assert_eq!(sanitize_host_name("my host"), "my-host");
+        assert_eq!(sanitize_host_name("café"), "caf-");
+    }
+
+    #[test]
+    fn test_generate_server_link_truncates_to_link_limit() {
+        let long = "a".repeat(200);
+
+        let deterministic = generate_server_link(&long, false);
+        assert_eq!(deterministic.as_str().len(), 128);
+
+        let randomised = generate_server_link(&long, true);
+        assert_eq!(randomised.as_str().len(), 128);
+        assert_eq!(randomised.as_str().chars().nth(123), Some('-'));
     }
 
     #[test]

@@ -44,14 +44,19 @@ fn is_oneshot_amux_command(command: &ResolvedCommand) -> bool {
     }
 }
 
-fn default_socket_path(test_name: &str, config_name: &str) -> PathBuf {
+fn default_socket_path(base_dir: &Path, test_name: &str, config_name: &str) -> PathBuf {
+    let pid = std::process::id();
     #[cfg(unix)]
     {
-        std::env::temp_dir().join(format!("amux-test-{test_name}-{config_name}.sock"))
+        let _ = base_dir;
+        std::env::temp_dir().join(format!("amux-test-{pid}-{test_name}-{config_name}.sock"))
     }
     #[cfg(windows)]
     {
-        PathBuf::from(format!(r"\\.\pipe\amux-test-{test_name}-{config_name}"))
+        let _ = base_dir;
+        PathBuf::from(format!(
+            r"\\.\pipe\amux-test-{pid}-{test_name}-{config_name}"
+        ))
     }
 }
 
@@ -188,7 +193,7 @@ impl Executor {
             // Determine socket path
             let socket_path = match &cfg.socket_path {
                 Some(p) if p != "auto" => PathBuf::from(p),
-                _ => default_socket_path(&test_case.name, &cfg.name),
+                _ => default_socket_path(temp_dir.path(), &test_case.name, &cfg.name),
             };
 
             // Clean up any existing socket

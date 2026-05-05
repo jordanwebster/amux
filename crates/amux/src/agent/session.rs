@@ -16,13 +16,16 @@ use uuid::Uuid;
 
 #[cfg(any(debug_assertions, test))]
 use super::TestAgentSession;
-use super::claude::ClaudeSession;
-use super::{ExternalHookBootstrap, HookError, HookOutcome, LocalAgentNameSource, PtyHandle};
+use super::claude::{ClaudeSession, ClaudeStructuredInputTarget};
+use super::{
+    ExternalHookBootstrap, HookError, HookOutcome, LocalAgentNameSource, PtyHandle,
+    StructuredInputCancel, StructuredLogSource,
+};
 #[cfg(test)]
-use crate::agent::StructuredLogSource;
-use crate::buffer::MultiplexStructuredReader;
+use crate::agent::TEST_ECHO_V1;
+use crate::agent::claude::io as claude_io;
 use crate::protocol::message::{
-    AgentType, CreateAgentRequest, DirectMessage, HookProvider, ProtocolError, SubscribeQuery,
+    AgentType, CreateAgentRequest, HookProvider, ProtocolError, RoutingEvent,
 };
 use crate::protocol::route::Route;
 use crate::suspend::SuspendedAgent;
@@ -37,7 +40,7 @@ pub(crate) struct Agent {
     pub(crate) working_dir: PathBuf,
     pub(crate) route: Route,
     pub(crate) agent_type: String,
-    pub(crate) structured_protocol: Option<String>,
+    pub(crate) io_protocols: Vec<String>,
     pub(crate) readonly: bool,
     pub(crate) args: Vec<String>,
     pub(crate) created_at: DateTime<Utc>,
@@ -48,15 +51,15 @@ impl Agent {
         self.route.peek().is_some()
     }
 
-    pub(crate) fn announce_message(&self) -> DirectMessage {
-        DirectMessage::AnnounceAgent {
+    pub(crate) fn routing_event(&self) -> RoutingEvent {
+        RoutingEvent::AgentUp {
             agent_id: self.id,
             host_id: self.host_id,
             name: self.name.clone(),
             command: self.command.clone(),
             working_dir: self.working_dir.clone(),
             agent_type: self.agent_type.clone(),
-            structured_protocol: self.structured_protocol.clone(),
+            io_protocols: self.io_protocols.clone(),
             readonly: self.readonly,
             args: self.args.clone(),
             created_at: self.created_at,
@@ -74,7 +77,7 @@ impl From<Agent> for crate::protocol::Agent {
             working_dir: agent.working_dir,
             route: agent.route,
             agent_type: agent.agent_type,
-            structured_protocol: agent.structured_protocol,
+            io_protocols: agent.io_protocols.clone(),
             readonly: agent.readonly,
             args: agent.args,
             created_at: agent.created_at,
@@ -116,6 +119,34 @@ pub(crate) enum AgentSession {
     TestAgent(TestAgentSession),
 }
 
+#[derive(Clone)]
+pub(crate) enum StructuredInputTarget {
+    Claude(ClaudeStructuredInputTarget),
+    #[cfg(any(debug_assertions, test))]
+    Unsupported,
+}
+
+impl StructuredInputTarget {
+    pub(crate) async fn send_structured_input_cancellable(
+        &self,
+        client_seq: u64,
+        payload: Value,
+        cancel: StructuredInputCancel,
+    ) -> std::result::Result<(), ProtocolError> {
+        match self {
+            Self::Claude(target) => {
+                target
+                    .send_structured_input_cancellable(client_seq, payload, cancel)
+                    .await
+            }
+            #[cfg(any(debug_assertions, test))]
+            Self::Unsupported => Err(ProtocolError::ServerError {
+                message: "structured input not supported".to_string(),
+            }),
+        }
+    }
+}
+
 impl AgentSession {
     pub(crate) fn try_new(req: &CreateAgentRequest) -> Result<Self> {
         match &req.agent_type {
@@ -126,11 +157,6 @@ impl AgentSession {
             }
             AgentType::Unknown => Err(anyhow!("unknown agent type")),
         }
-    }
-
-    #[cfg(test)]
-    pub(crate) fn new_readonly_claude(agent_id: Uuid, working_dir: PathBuf) -> Self {
-        Self::Claude(ClaudeSession::new_readonly(agent_id, working_dir))
     }
 
     pub(crate) fn agent_id(&self) -> Uuid {
@@ -197,8 +223,10 @@ impl AgentSession {
         user_id: Uuid,
         event_tx: &mpsc::Sender<SessionEvent>,
     ) {
-        if let Self::Claude(s) = self {
-            s.maybe_start_name_sniffer(user_id, event_tx);
+        match self {
+            Self::Claude(s) => s.maybe_start_name_sniffer(user_id, event_tx),
+            #[cfg(any(debug_assertions, test))]
+            Self::TestAgent(_) => {}
         }
     }
 
@@ -218,7 +246,6 @@ impl AgentSession {
         }
     }
 
-    #[cfg(test)]
     pub(crate) fn log_source(&self) -> Option<StructuredLogSource> {
         match self {
             Self::Claude(s) => s.log_source(),
@@ -227,40 +254,40 @@ impl AgentSession {
         }
     }
 
-    /// Subscribe to structured log output with an optional query filter
-    /// and return the matching seq.
-    pub(crate) async fn subscribe_with_query(
-        &self,
-        query: Option<SubscribeQuery>,
-    ) -> Option<(MultiplexStructuredReader, u64)> {
-        match self {
-            Self::Claude(s) => s.subscribe_with_query(query).await,
-            #[cfg(any(debug_assertions, test))]
-            Self::TestAgent(s) => s.subscribe_with_query(query).await,
+    pub(crate) fn io_protocols(&self) -> Vec<String> {
+        let mut protocols = Vec::new();
+        if self.pty_handle().is_some() {
+            protocols.push(claude_io::RAW_V1.to_string());
         }
+        match self {
+            Self::Claude(_) => protocols.push(claude_io::PTY_TRANSCRIPT_V1.to_string()),
+            #[cfg(any(debug_assertions, test))]
+            Self::TestAgent(_) => {
+                #[cfg(test)]
+                protocols.push(TEST_ECHO_V1.to_string());
+            }
+        }
+        protocols
     }
 
-    pub(crate) fn structured_protocol(&self) -> Option<String> {
+    pub(crate) fn structured_input_target(&self) -> StructuredInputTarget {
         match self {
-            Self::Claude(_) => Some("claude_pty_v1".to_string()),
+            Self::Claude(s) => StructuredInputTarget::Claude(s.structured_input_target()),
             #[cfg(any(debug_assertions, test))]
-            Self::TestAgent(_) => None,
+            Self::TestAgent(_) => StructuredInputTarget::Unsupported,
         }
     }
 
     /// Validate seq and send structured input to the agent.
+    #[cfg(test)]
     pub(crate) async fn send_structured_input(
         &self,
         client_seq: u64,
         payload: Value,
     ) -> std::result::Result<(), ProtocolError> {
-        match self {
-            Self::Claude(s) => s.send_structured_input(client_seq, payload).await,
-            #[cfg(any(debug_assertions, test))]
-            Self::TestAgent(_) => Err(ProtocolError::ServerError {
-                message: "structured input not supported".to_string(),
-            }),
-        }
+        self.structured_input_target()
+            .send_structured_input_cancellable(client_seq, payload, StructuredInputCancel::new())
+            .await
     }
 
     /// Handle an opaque hook payload for this agent.
@@ -342,7 +369,7 @@ impl AgentSession {
                 #[cfg(any(debug_assertions, test))]
                 Self::TestAgent(_) => "test_agent".to_string(),
             },
-            structured_protocol: self.structured_protocol(),
+            io_protocols: self.io_protocols(),
             readonly: self.readonly(),
             args: self.args().to_vec(),
             created_at: self.created_at(),

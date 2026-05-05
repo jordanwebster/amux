@@ -220,7 +220,7 @@ impl AgentRegistry {
         self.entries.values().filter(|e| e.is_remote()).count()
     }
 
-    /// Iterate over all entries (for send_initial_announcements)
+    /// Iterate over all entries (for initial routing snapshots).
     pub(super) fn iter_entries(&self) -> impl Iterator<Item = (&Uuid, &Agent)> {
         self.entries.iter()
     }
@@ -234,6 +234,7 @@ mod tests {
     use chrono::Utc;
 
     use super::*;
+    use crate::agent::claude::io as claude_io;
     use crate::protocol::link::Link;
 
     fn make_info(uuid: Uuid, name: Option<&str>) -> Agent {
@@ -245,7 +246,7 @@ mod tests {
             working_dir: PathBuf::from("/tmp"),
             route: Route::empty(),
             agent_type: "claude".to_string(),
-            structured_protocol: Some("claude_pty_v1".to_string()),
+            io_protocols: vec![claude_io::PTY_TRANSCRIPT_V1.to_string()],
             readonly: false,
             args: vec![],
             created_at: Utc::now(),
@@ -261,7 +262,7 @@ mod tests {
             working_dir: PathBuf::from("/tmp"),
             route,
             agent_type: "claude".to_string(),
-            structured_protocol: Some("claude_pty_v1".to_string()),
+            io_protocols: vec![claude_io::PTY_TRANSCRIPT_V1.to_string()],
             readonly: false,
             args: vec![],
             created_at: Utc::now(),

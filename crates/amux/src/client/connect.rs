@@ -51,10 +51,6 @@ pub enum ConnectError {
     InvalidHandshake(String),
     #[error("server rejected connection: {0}")]
     Protocol(ProtocolError),
-    #[error(
-        "handshake failed after 5 link-name collisions — this is usually transient, retry the command"
-    )]
-    HandshakeTooManyAttempts,
     #[error("{0}")]
     Start(String),
 }
@@ -72,7 +68,6 @@ impl From<HandshakeError> for ConnectError {
             HandshakeError::Timeout => Self::HandshakeTimeout,
             HandshakeError::InvalidMessage(message) => Self::InvalidHandshake(message),
             HandshakeError::Protocol(error) => Self::Protocol(error),
-            HandshakeError::TooManyAttempts => Self::HandshakeTooManyAttempts,
         }
     }
 }
@@ -347,15 +342,6 @@ fn format_startup_diagnostics(contents: &str) -> Option<String> {
 
 #[cfg(test)]
 mod tests {
-    use super::{ConnectError, HandshakeError};
-
-    #[test]
-    fn maps_handshake_collision_to_dedicated_connect_error() {
-        let error = ConnectError::from(HandshakeError::TooManyAttempts);
-
-        assert!(matches!(error, ConnectError::HandshakeTooManyAttempts));
-    }
-
     #[test]
     fn trims_empty_startup_diagnostics() {
         assert_eq!(super::format_startup_diagnostics(" \n\t "), None);

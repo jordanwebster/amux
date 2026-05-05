@@ -18,7 +18,7 @@ use tokio::task::JoinHandle;
 use crate::agent::claude::transcript::TranscriptTailer;
 use crate::buffer::{MultiplexStructuredBuffer, MultiplexStructuredReader};
 use crate::debug::{DebugView, LossyPath};
-use crate::protocol::message::SubscribeQuery;
+use crate::protocol::message::SequencedReplayQuery;
 
 /// Maximum number of structured log entries to keep
 const MAX_LOG_ENTRIES: usize = 1000;
@@ -96,7 +96,7 @@ impl StructuredLogSource {
     /// and return the matching seq.
     pub(crate) async fn subscribe_with_query(
         &self,
-        query: Option<SubscribeQuery>,
+        query: Option<SequencedReplayQuery>,
     ) -> Option<(MultiplexStructuredReader, u64)> {
         self.inner.buffer.subscribe_with_query(query).await
     }

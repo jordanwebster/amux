@@ -5,7 +5,6 @@ use serde::{Deserialize, Serialize};
 use uuid::Uuid;
 
 use crate::protocol::Route;
-
 /// Wire-format agent DTO used in protocol command responses.
 #[derive(Serialize, Deserialize, Debug, Clone)]
 pub struct Agent {
@@ -16,7 +15,8 @@ pub struct Agent {
     pub working_dir: PathBuf,
     pub route: Route,
     pub agent_type: String,
-    pub structured_protocol: Option<String>,
+    #[serde(default)]
+    pub io_protocols: Vec<String>,
     pub readonly: bool,
     pub args: Vec<String>,
     pub created_at: DateTime<Utc>,

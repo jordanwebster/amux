@@ -117,7 +117,7 @@ pub async fn run_update(config: &Config) -> Result<()> {
         println!("Already up to date (v{current}).");
         let marker_path = amux::update::update_marker_path(&config.state_path);
         amux::update::clear_update_marker(&marker_path);
-        amux::update::clear_upgrade_required(&config.state_path);
+        amux::update::clear_update_required(&config.state_path);
         return Ok(());
     }
 
@@ -142,15 +142,15 @@ pub async fn run_update(config: &Config) -> Result<()> {
     println!("Downloading...");
     let tmp_path = download_and_verify(&binary.url, &binary.sha256, &exe_dir).await?;
 
-    let was_running = server_client::suspend_server_if_running(config).await?;
+    let was_running = server_client::suspend_server_for_update_if_running(config).await?;
 
     replace_binary(&tmp_path, &current_exe)?;
     println!("Updated to v{latest}.");
 
-    // Clear update and upgrade markers so stale banners don't persist
+    // Clear update markers so stale banners don't persist.
     let marker_path = amux::update::update_marker_path(&config.state_path);
     amux::update::clear_update_marker(&marker_path);
-    amux::update::clear_upgrade_required(&config.state_path);
+    amux::update::clear_update_required(&config.state_path);
 
     if was_running {
         println!("Restarting server...");

@@ -4,20 +4,39 @@ mod accept;
 mod cloud;
 mod connection;
 mod debug;
-mod handlers;
+mod dispatch;
+mod open_session_lifecycle;
+#[cfg(test)]
+mod protocol_harness;
+#[cfg(test)]
+mod protocol_tests;
 mod registry;
 mod routing;
 mod runtime;
 mod state;
 
+pub(crate) use connection::ConnectionError;
+pub(crate) use debug::dump_server_debug_info;
+pub(crate) use open_session_lifecycle::{
+    OpenSessionRuntime, OpenSessionStructuredInput, OpenSessionStructuredInputJob,
+    OpenSessionStructuredInputPayload, begin_open_sessions_closing_for_agent,
+    finish_open_sessions_with_error,
+};
+pub(in crate::server) use open_session_lifecycle::{
+    cancel_open_session_for_route_and_call, cancel_open_sessions_for_closed_link,
+    cancel_open_sessions_for_owner_link, cancel_open_sessions_for_route_prefix,
+    finish_open_session_cleanup_jobs, open_session_closing_from_rpc_closing,
+    send_terminal_and_finish_open_session,
+};
+pub(crate) use routing::{
+    CreateAgentError, RenameAgentError, broadcast_topology_event, create_agent_record,
+    delete_local_agent, initial_routing_events, rename_local_agent_record, withdraw_agent,
+};
 pub(crate) use runtime::Server;
 pub use runtime::ServerError;
-pub(in crate::server) use runtime::send_routable_via_full_dst;
 #[cfg(test)]
-pub(in crate::server) use runtime::test_helpers;
-#[cfg(test)]
-pub(in crate::server) use runtime::{handle_session_event, sweep_expired_subscriptions};
+pub(crate) use runtime::test_helpers;
 pub(in crate::server) use state::{
-    ConnectionHandle, LOCAL_USER_ID, SUBSCRIPTION_LEASE_DURATION, ServerState, ServerUserState,
-    ShutdownRequest, SubscriptionEntry, SubscriptionMode, ensure_user_state, subscription_lease_ms,
+    ConnectionHandle, LOCAL_USER_ID, ShutdownRequest, ensure_user_state,
 };
+pub(crate) use state::{ServerState, ServerUserState};

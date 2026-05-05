@@ -1,7 +1,7 @@
-use anyhow::{Result as AnyhowResult, anyhow};
+use thiserror::Error;
 use uuid::Uuid;
 
-use super::peers::{announce_agent_message, broadcast_to_peers};
+use super::peers::broadcast_topology_event;
 use crate::agent::{Agent, LocalAgentNameSource};
 use crate::protocol::message::RenameAgentRequest;
 use crate::server::ServerUserState;
@@ -22,9 +22,14 @@ pub(in crate::server) enum LocalAgentRenameOutcome {
     Unchanged,
 }
 
-fn reannounce_local_agent(us: &mut ServerUserState, updated: Agent) {
-    let announce = announce_agent_message(&updated);
-    broadcast_to_peers(us, &announce, None);
+#[derive(Debug, Error)]
+pub(crate) enum RenameAgentError {
+    #[error("Agent not found: {0}")]
+    NotFound(Uuid),
+    #[error("Agent already exists: {0}")]
+    AlreadyExists(String),
+    #[error("failed to update local agent metadata: {0}")]
+    Update(String),
 }
 
 fn commit_local_name_update(
@@ -33,31 +38,23 @@ fn commit_local_name_update(
     source: LocalAgentNameSource,
 ) -> std::result::Result<(), AgentRegistryError> {
     let agent_id = updated.id;
-    us.registry.update_local(updated.clone())?;
+    let event = us.topology.update_local_agent(updated.clone())?;
     if let Some(session) = us.agents.get_mut(&agent_id) {
         session.set_local_name(updated.name.clone(), source);
     }
-    reannounce_local_agent(us, updated);
+    broadcast_topology_event(us, &event, None);
     Ok(())
-}
-
-pub(in crate::server) fn rename_local_agent(
-    us: &mut ServerUserState,
-    host_id: Uuid,
-    req: &RenameAgentRequest,
-) -> std::result::Result<LocalAgentRenameOutcome, String> {
-    rename_local_agent_inner(us, host_id, req).map_err(|error| error.to_string())
 }
 
 fn rename_local_agent_inner(
     us: &mut ServerUserState,
     host_id: Uuid,
     req: &RenameAgentRequest,
-) -> AnyhowResult<LocalAgentRenameOutcome> {
+) -> std::result::Result<LocalAgentRenameOutcome, RenameAgentError> {
     let session = us
         .agents
         .get(&req.agent_id)
-        .ok_or_else(|| anyhow!("Agent not found: {}", req.agent_id))?;
+        .ok_or(RenameAgentError::NotFound(req.agent_id))?;
 
     let current_name = session.name().map(str::to_owned);
     let current_source = session.local_name_source();
@@ -80,8 +77,8 @@ fn rename_local_agent_inner(
         return commit_local_name_update(us, updated, LocalAgentNameSource::Amux)
             .map(|()| LocalAgentRenameOutcome::Updated)
             .map_err(|err| match err {
-                AgentRegistryError::AlreadyExists(name) => anyhow!("Agent already exists: {name}"),
-                other => anyhow!("failed to update local agent metadata: {other}"),
+                AgentRegistryError::AlreadyExists(name) => RenameAgentError::AlreadyExists(name),
+                other => RenameAgentError::Update(other.to_string()),
             });
     }
 
@@ -90,6 +87,19 @@ fn rename_local_agent_inner(
         .expect("agent present: read-only validation above confirmed it")
         .set_local_name(current_name, LocalAgentNameSource::Amux);
     Ok(LocalAgentRenameOutcome::ProvenanceUpdated)
+}
+
+pub(crate) fn rename_local_agent_record(
+    us: &mut ServerUserState,
+    host_id: Uuid,
+    req: &RenameAgentRequest,
+) -> std::result::Result<Agent, RenameAgentError> {
+    rename_local_agent_inner(us, host_id, req)?;
+    us.topology
+        .registry
+        .get(&req.agent_id)
+        .cloned()
+        .ok_or(RenameAgentError::NotFound(req.agent_id))
 }
 
 pub(in crate::server) fn apply_local_name_candidate(

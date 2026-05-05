@@ -4,7 +4,7 @@ use tokio::sync::mpsc;
 
 use super::context::{ConnectionError, Result};
 use crate::auth::cloud::{CloudError, TokenRefreshState};
-use crate::protocol::message::{DirectMessage, Message};
+use crate::protocol::message::Message;
 
 pub(super) const REFRESH_RESPONSE_TIMEOUT: Duration = Duration::from_secs(15);
 
@@ -61,12 +61,7 @@ impl TokenRefresher {
     /// Try to consume an incoming ReauthResult as a refresh response.
     /// Returns `true` if consumed, `false` if the message is not a ReauthResult.
     pub(super) fn try_intercept(&mut self, msg: &Message) -> Result<bool> {
-        if !matches!(
-            msg,
-            Message::Direct {
-                message: DirectMessage::ReauthResult { .. }
-            }
-        ) {
+        if !matches!(msg, Message::ReauthResponse(_)) {
             return Ok(false);
         }
         if self.awaiting_since.is_none() {
@@ -97,10 +92,10 @@ fn cloud_err_to_connection(e: CloudError) -> ConnectionError {
             server_version,
             client_version,
         },
-        CloudError::UpgradeRequired {
+        CloudError::UpdateRequired {
             minimum_version,
             client_version,
-        } => ConnectionError::UpgradeRequired {
+        } => ConnectionError::UpdateRequired {
             minimum_version,
             client_version,
         },

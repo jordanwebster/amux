@@ -2,6 +2,13 @@
 
 A detailed design for the amux server internals covering data structures, message flow, routing, and the task model.
 
+> **Protocol note:** This document still contains historical pre-protobuf
+> protocol sections, including MessagePack and `Routable`/`Direct`/`Command`
+> examples. The current wire protocol is defined by
+> `crates/amux/proto/amux/v1/amux.proto`, generated via `crates/amux/build.rs`,
+> and summarized in `notes/PROTO_REFACTOR.md`. Treat the old wire-shape sections
+> below as design history until this architecture document is fully rewritten.
+
 ## Quick Overview
 
 **What is amux?** A multiplexer for AI agent sessions (Claude, Codex, etc.) that enables:
@@ -541,7 +548,7 @@ task to stop.
 
 **Hosts:** `HashMap<Uuid, Host>` tracks known remote hosts announced via `AnnounceHost`. When a host is withdrawn, all agents reachable via that host's route are bulk-removed from the registry and all matching subscriptions are cancelled.
 
-See `crates/amux/src/server/` (`state.rs`, `runtime.rs`, `accept.rs`, `handlers/`, `routing/`).
+See `crates/amux/src/server/` (`state.rs`, `runtime.rs`, `accept.rs`, `dispatch/`, `routing/`).
 
 ---
 
@@ -759,7 +766,7 @@ which remains the single source of routing truth.
 - **Agent death:** Server sends `SubscriptionClosed { reason: SourceClosed }` to matching subscribers, sends `WithdrawAgent` per peer (discovery cleanup only), removes the agent from the registry. No route changes.
 - `AnnounceAgent`/`WithdrawAgent` are pure discovery — they update the agent registry for `ListAgents`/`ResolveAgent` but have zero routing side effects.
 
-See `crates/amux/src/protocol/route.rs`, `crates/amux/src/server/handlers/`, `crates/amux/src/server/routing/`.
+See `crates/amux/src/protocol/route.rs`, `crates/amux/src/server/dispatch/`, `crates/amux/src/server/routing/`.
 
 ---
 

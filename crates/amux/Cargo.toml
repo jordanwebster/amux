@@ -9,10 +9,9 @@ anyhow = { workspace = true }
 portable-pty = { workspace = true }
 tokio = { workspace = true }
 serde = { workspace = true }
-serde_bytes = { workspace = true }
 serde_json = { workspace = true }
 serde_yaml = { workspace = true }
-rmp-serde = { workspace = true }
+prost = { workspace = true }
 thiserror = { workspace = true }
 uuid = { workspace = true }
 tokio-tungstenite = { workspace = true }
@@ -47,3 +46,8 @@ windows-sys = { version = "0.61.2", features = [
 
 [dev-dependencies]
 tempfile = { workspace = true }
+prost-types = { workspace = true }
+
+[build-dependencies]
+prost-build = { workspace = true }
+protoc-bin-vendored = { workspace = true }

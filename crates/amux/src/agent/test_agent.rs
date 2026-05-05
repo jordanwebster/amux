@@ -13,9 +13,18 @@ use uuid::Uuid;
 
 use super::{PtyHandle, spawn_pty_agent};
 use crate::agent::StructuredLogSource;
+#[cfg(test)]
 use crate::buffer::MultiplexStructuredReader;
 use crate::debug::DebugView;
-use crate::protocol::message::{CreateAgentRequest, SubscribeQuery};
+use crate::protocol::message::CreateAgentRequest;
+#[cfg(test)]
+use crate::protocol::message::SequencedReplayQuery;
+
+#[cfg(test)]
+pub(crate) mod io {
+    pub(crate) const TEST_ECHO_COMMAND: &str = "__amux_test_echo__";
+    pub(crate) const TEST_ECHO_V1: &str = "test_echo_v1";
+}
 
 pub(crate) struct TestAgentSession {
     pub(super) agent_id: Uuid,
@@ -46,6 +55,20 @@ impl TestAgentSession {
         }
     }
 
+    #[cfg(test)]
+    pub(crate) fn echo_for_tests(agent_id: Uuid, name: Option<String>) -> Self {
+        Self {
+            agent_id,
+            name,
+            command: "test-echo".to_string(),
+            working_dir: std::env::temp_dir(),
+            pty: Some(PtyHandle::test_echo()),
+            log_source: None,
+            terminal_size: None,
+            created_at: Utc::now(),
+        }
+    }
+
     pub(super) fn from_suspended(
         req: &CreateAgentRequest,
         cmd: String,
@@ -66,6 +89,12 @@ impl TestAgentSession {
     /// Spawn the test agent process. Returns an exit handle that completes
     /// when the process exits.
     pub(crate) fn start(&mut self) -> Result<tokio::task::JoinHandle<()>> {
+        #[cfg(test)]
+        if self.command == io::TEST_ECHO_COMMAND {
+            self.pty = Some(PtyHandle::test_echo());
+            return Ok(tokio::spawn(async {}));
+        }
+
         let (pty, log_source, exit_handle) = spawn_pty_agent(
             self.agent_id,
             &self.command,
@@ -79,16 +108,16 @@ impl TestAgentSession {
         Ok(exit_handle)
     }
 
-    #[cfg(test)]
     pub(crate) fn log_source(&self) -> Option<StructuredLogSource> {
         self.log_source.clone()
     }
 
     /// Subscribe to structured log output with an optional query filter
     /// and return the matching seq.
+    #[cfg(test)]
     pub(crate) async fn subscribe_with_query(
         &self,
-        query: Option<SubscribeQuery>,
+        query: Option<SequencedReplayQuery>,
     ) -> Option<(MultiplexStructuredReader, u64)> {
         self.log_source.as_ref()?.subscribe_with_query(query).await
     }

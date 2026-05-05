@@ -1,5 +1,4 @@
 use std::sync::Arc;
-use std::sync::atomic::AtomicU64;
 use std::time::Duration;
 
 use thiserror::Error;
@@ -9,13 +8,13 @@ use uuid::Uuid;
 use super::super::{ServerState, ServerUserState};
 use crate::agent::SessionEvent;
 use crate::protocol::link::Link;
-use crate::protocol::message::{DirectMessage, Message};
+use crate::protocol::message::Message;
 use crate::transport::TransportError;
 
 pub(in crate::server) type Result<T> = std::result::Result<T, ConnectionError>;
 
 #[derive(Debug, Error)]
-pub(in crate::server) enum ConnectionError {
+pub(crate) enum ConnectionError {
     #[error(transparent)]
     Transport(#[from] TransportError),
     #[error("{0}")]
@@ -29,16 +28,19 @@ pub(in crate::server) enum ConnectionError {
         server_version: u32,
         client_version: u32,
     },
-    #[error("amux upgrade required (minimum v{minimum_version}, you have v{client_version})")]
-    UpgradeRequired {
+    #[error("amux update required (minimum v{minimum_version}, you have v{client_version})")]
+    UpdateRequired {
         minimum_version: String,
         client_version: String,
     },
+    #[error("protocol error: {0}")]
+    Protocol(String),
     #[error("heartbeat timed out")]
     HeartbeatTimeout,
 }
 
-/// Context for connection handlers.
+/// Context passed from the connection driver into protocol services.
+#[derive(Clone)]
 pub(crate) struct ConnectionContext {
     pub(crate) state: Arc<RwLock<ServerState>>,
     pub(crate) user_state: Arc<RwLock<ServerUserState>>,
@@ -49,7 +51,6 @@ pub(crate) struct ConnectionContext {
     /// Negotiated heartbeat setup for this connection. `None` disables
     /// heartbeats entirely (used for local Unix-socket connections).
     pub(crate) heartbeat: Option<HeartbeatSetup>,
-    pub(crate) next_request_id: Arc<AtomicU64>,
     /// Client implementation name (from Connect handshake, e.g. "amux-cli").
     pub(crate) client_name: Option<String>,
     /// Semantic version of the connecting client (from Connect handshake).
@@ -88,12 +89,7 @@ pub(super) struct MessageMetadata {
 impl MessageMetadata {
     pub(super) fn from_message(msg: &Message) -> Self {
         Self {
-            is_heartbeat: matches!(
-                msg,
-                Message::Direct {
-                    message: DirectMessage::Heartbeat
-                }
-            ),
+            is_heartbeat: matches!(msg, Message::Ping),
         }
     }
 }
