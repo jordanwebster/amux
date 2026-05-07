@@ -1,562 +1,499 @@
 # Architecture
 
-A detailed design for the amux server internals covering data structures, message flow, routing, and the task model.
+This document describes the current amux server architecture: identity,
+routing, protobuf framing, scoped services, connection lifecycle, server
+state, and agent I/O.
 
-> **Protocol note:** This document still contains historical pre-protobuf
-> protocol sections, including MessagePack and `Routable`/`Direct`/`Command`
-> examples. The current wire protocol is defined by
-> `crates/amux/proto/amux/v1/amux.proto`, generated via `crates/amux/build.rs`,
-> and summarized in `notes/PROTO_REFACTOR.md`. Treat the old wire-shape sections
-> below as design history until this architecture document is fully rewritten.
+The canonical wire schema is
+`crates/amux/proto/amux/v1/amux.proto`. Generated protobuf types live in
+`crates/amux/src/protocol/wire/generated.rs`; runtime-facing wrappers and
+encoders live under `crates/amux/src/protocol/message/` and
+`crates/amux/src/protocol/wire/`.
 
 ## Quick Overview
 
-**What is amux?** A multiplexer for AI agent sessions (Claude, Codex, etc.) that enables:
-- Multiple terminals attaching to the same agent
-- Remote access via cloud relay
-- Rich clients (mobile/web) receiving structured logs via WebSocket
+amux is a multiplexer for long-running AI agent sessions. One server owns
+local agent processes and exposes them to local terminals, peer servers, cloud
+relays, and richer clients.
 
-**Core concepts:**
-- **Server** - manages connections, agents, and routing
-- **Connection** - Unix socket (or Windows named pipe), TCP, or WebSocket; all use the same framed message protocol
-- **AgentSession** - a running agent; wraps a provider-specific session (e.g. `ClaudeSession`) with its PTY, replay buffer, and structured-log pipeline
-- **Routing Table** - maps links to per-connection handles for forwarding messages
+The main moving parts are:
 
-**Key design choices:**
-- All connections (local and remote) use framed messages with length-prefixed encoding (or native WebSocket binary frames)
-- Connections are identified by validated `Link`s (e.g. `"term-abc1"`, `"myhost-xyz2"`)
-- Messages are `Routable` (carry src/dst routes + opaque payload, forwarded across hops), `Direct` (peer-to-peer, handled by directly connected server), or `Command` (CLI-only, rejected from remote peers)
-- Serialization uses MessagePack (named / map format) for all transports (Unix, TCP, WebSocket)
-- Subscriptions are explicit and lease-renewed; Structured I/O payloads are opaque `serde_json::Value`
+- `Server` - starts listeners, owns global state, and handles session events.
+- `Connection` - a local socket, named pipe, TCP/TLS stream, or WebSocket,
+  all using the same protobuf message protocol after handshake.
+- `AgentSession` - a local provider-specific agent session, currently Claude
+  plus test agents in dev/test builds.
+- `Topology` - per-user connection links, peer links, known hosts, and the
+  local/remote agent registry.
+- `RpcDispatcher` - active inbound/outbound call state for unary and streaming
+  RPCs.
+- `BroadcastBuffer` - replay plus live fanout for PTY bytes and structured
+  transcript entries.
 
----
+Cloud servers are relay-oriented. They authenticate network connections and
+forward routed frames, but they do not host routed agent-service endpoints.
 
-## Glossary
+## Identity And Routes
 
-| Term | Description |
-|------|-------------|
-| **agent_id** | UUID identifying an agent session. Optional human-readable name can be set via `--name` flag. |
-| **Link** | Validated connection name (newtype over `String`, rejects `.`). Used as keys in the routing table. |
-| **Route** | A stack of `Link`s (`VecDeque<Link>`) representing a multi-hop path. Serializes as `"AB.BC.CD"` (dot-separated). |
-| **RoutableMessage** | A message that carries `src` and `dst` routes and can be forwarded across hops. |
-| **DirectMessage** | A message handled only by the directly connected server (no routing). |
-| **SubscriptionId** | Transparent UUID newtype identifying one subscribe call. Lease-renewed by the client; owns the output-stream task. |
-| **host_id** | Stable UUID for an amux server instance, persisted in `state.yaml` and propagated via `AnnounceHost`. |
-| **PTY** | Pseudo-terminal — the interface used to run interactive CLI agents like Claude. |
+### Agents
 
----
-
-## Core Identity Types
+Agents are identified by UUID. A local agent may also have a human-readable
+name.
 
 ```rust
-// Agents are identified by UUID, with an optional human-readable name
-agent_id: Uuid           // e.g. 550e8400-e29b-41d4-a716-446655440000
-name: Option<String>     // e.g. "my-session" (set via --name flag)
-
-// Connections are identified by validated link names
-struct Link(String);     // e.g. "term-abc1", "myhost-xyz2" (rejects names containing '.')
+agent_id: Uuid
+name: Option<String>
 ```
 
-`Link` is a newtype wrapper that rejects names containing `.` (the route
-separator) at construction, so downstream code can treat a `Link` as a
-well-formed name without re-validating. Handshake frames still carry the raw
-`String` so the server can respond with `InvalidLinkName` rather than drop the
-connection.
-
-### Route
-
-A route is a stack of links representing a path through the network. The top of the stack (front of deque) is the next hop.
+Runtime agent metadata is represented by `agent::Agent` and includes:
 
 ```rust
-/// Serializes as "AB.BC.CD" where AB is the first hop.
+struct Agent {
+    id: Uuid,
+    host_id: Uuid,
+    name: Option<String>,
+    command: String,
+    working_dir: PathBuf,
+    route: Route,
+    agent_type: String,
+    io_protocols: Vec<String>,
+    readonly: bool,
+    args: Vec<String>,
+    created_at: DateTime<Utc>,
+}
+```
+
+For local agents, `route` materializes as empty. For remote agents, the route
+is derived from the owning host entry in `Topology::hosts`.
+
+### Links
+
+A `Link` names one direct connection hop. It is validated at construction:
+
+- non-empty
+- at most 128 bytes
+- ASCII alphanumeric, hyphen, or underscore only
+- no `.`, because `.` is the route separator
+
+Terminal links are generated as `term-{rand}`. Server links are generated from
+the configured host name, with unsupported characters converted to `-`, and
+usually with a random suffix.
+
+The handshake carries the proposed link as a raw string so the server can
+return an `InvalidLinkName` error instead of dropping the connection. The
+acceptor is authoritative: it may assign the proposed link or a suffixed
+variant if the proposal is already reserved.
+
+See `crates/amux/src/protocol/link.rs` and
+`crates/amux/src/protocol/route.rs`.
+
+### Routes
+
+A `Route` is a stack of `Link`s. `links[0]` is the next hop. The display and
+serde string form is dot-separated, for example `cloud.local-host`.
+
+```rust
 struct Route {
     links: VecDeque<Link>,
 }
-
-impl Route {
-    fn empty() -> Self;
-    fn is_empty(&self) -> bool;
-    fn len(&self) -> usize;
-    fn from_link(link: Link) -> Self;            // Single-hop route
-    fn push(&mut self, link: Link);              // Push link to front (new next hop)
-    fn pop(&mut self) -> Option<Link>;           // Pop next hop
-    fn peek(&self) -> Option<&Link>;             // Peek without consuming
-    fn contains_link(&self, link: &str) -> bool;
-    fn starts_with_route(&self, prefix: &Route) -> bool;
-    fn replace_prefix(&mut self, old: &Route, new: &Route) -> bool;
-
-    /// Prepare to send: pops from dst, creates src from the popped link.
-    /// Returns (src, dst) for the message.
-    fn send(dst: Route) -> Option<(Route, Route)>;
-
-    /// Prepare a reply: literally just send(src). The src route accumulated
-    /// hop links on the way in, so sending through it reverses the path.
-    fn reply(src: Route) -> Option<(Route, Route)>;
-}
 ```
 
-Link names are generated with random suffixes for uniqueness:
-- Terminal connections: `"term-{rand}"` (4 lowercase alphanumeric chars)
-- Server connections: `"{hostname}-{rand}"` or just `"{hostname}"` if `randomise_link_name` is false (periods in the hostname are replaced with hyphens)
+Forwarding is stack-based:
 
-Hook invocations do not open their own connections; the client-side hook
-handler reuses the existing CLI Unix-socket connection (see
-[Hooks System](#hooks-system)).
+1. Pop the next hop from `dst`.
+2. Push that hop onto `src`.
+3. Forward the frame to the connection registered under that hop.
+4. If `dst` is empty, the frame has reached its endpoint.
 
-See `crates/amux/src/protocol/route.rs`, `crates/amux/src/protocol/link.rs`.
-
----
-
-## Transport Abstraction
-
-Each transport exposes raw frame I/O plus the same message-level read/write,
-with split support for the reader/writer task architecture:
+Replies use the same operation on the incoming `src` route:
 
 ```rust
-trait Transport: Send + Sync {
-    fn read_frame(&mut self)  -> impl Future<Output = Result<Vec<u8>>> + Send;
-    fn write_frame(&mut self, data: &[u8]) -> impl Future<Output = Result<()>> + Send;
-    fn read_message(&mut self) -> impl Future<Output = Result<Message>> + Send;
-    fn write_message(&mut self, msg: &Message) -> impl Future<Output = Result<()>> + Send;
-}
-
-trait MessageReader: Send {
-    fn read_message(&mut self) -> impl Future<Output = Result<Message>> + Send;
-}
-
-trait MessageWriter: Send {
-    fn write_message(&mut self, msg: &Message) -> impl Future<Output = Result<()>> + Send;
-    fn background(&mut self) -> impl Future<Output = ()> + Send { std::future::pending() }
-}
-
-trait TransportSplit: Transport {
-    type Reader: MessageReader + 'static;
-    type Writer: MessageWriter + 'static;
-    fn into_split(self) -> (Self::Reader, Self::Writer);
-}
+Route::reply(src) == Route::send(src)
 ```
 
-`read_frame`/`write_frame` are the low-level escape hatch the handshake uses
-(before there is a valid `Message` to exchange). Once the handshake succeeds,
-the reader/writer tasks only ever call the message-level methods.
+This makes the accumulated source route the return path.
 
-Implementations:
+## Wire Protocol
 
-| Transport | Stream | Serialization | Framing | Flush |
-|-----------|--------|---------------|---------|-------|
-| `LocalTransport` | Unix socket (unix) or named pipe (windows), split into read/write halves | MessagePack | Length-prefixed | No |
-| `TcpTransport<S>` | Generic over `AsyncRead + AsyncWrite` (plain TCP or TLS) | MessagePack | Length-prefixed | Yes |
-| `WebSocketTransport` | `WebSocketStream<TcpStream>` | MessagePack | WebSocket native (binary frames) | N/A |
+amux uses protobuf for the handshake and for every post-handshake transport
+message.
 
-`TcpTransport` is generic over the stream type, allowing it to wrap both plain TCP and TLS streams (e.g. `TcpTransport<ClientTlsStream<TcpStream>>`).
-
-See `crates/amux/src/transport.rs` and `crates/amux/src/transport/`.
-
----
-
-## Message Types
-
-The protocol uses a tagged top-level enum (serde tag `kind`, snake_case):
+Current protocol version:
 
 ```rust
-enum Message {
-    /// Routed messages with opaque payload. Intermediate servers forward
-    /// the payload without deserializing it.
-    Routable {
-        src: Route,          // Return path (built up as message travels)
-        dst: Route,          // Forward path (consumed as message travels)
-        request_id: u64,     // Monotonically increasing per-connection counter
-        payload: Vec<u8>,    // Serialized RoutableMessage (opaque to intermediate hops)
-    },
-    /// Peer-to-peer messages handled by the directly connected server.
-    Direct  { message: DirectMessage },
-    /// CLI-only commands. MUST be rejected if received over TCP or WebSocket.
-    Command { command: Command },
-    /// Forward-compatibility fallback: any unknown `kind` tag decodes here.
-    #[serde(other)]
-    Unknown,
-}
+pub const PROTOCOL_VERSION: u32 = 3;
 ```
-
-`Message::routable(src, dst, request_id, &routable_message)` encodes the
-`RoutableMessage` into the opaque payload. It panics on encode failure; use
-`Message::try_routable` at sites that carry user-supplied `serde_json::Value`
-payloads (e.g. `StructuredInput`/`StructuredOutput`).
-
-### RoutableMessage
-
-Messages that carry routing information and can be forwarded across server hops. Deserialized from `payload` at the final destination only. Serde tag `type`, snake_case:
-
-```rust
-enum RoutableMessage {
-    // Subscribing to agent output (lease-based; see Subscriptions)
-    SubscribeRaw         { agent_id: Uuid, terminal_size: Option<TerminalSize> },
-    SubscribeRawResult   { subscription_id: SubscriptionId, lease_ms: u64, error: Option<ProtocolError> },
-    SubscribeStructured  { agent_id: Uuid, query: Option<SubscribeQuery> },
-    SubscribeStructuredResult {
-        subscription_id: SubscriptionId,
-        seq: u64,                               // Current seq at subscribe time
-        structured_protocol: Option<String>,    // Agent-declared protocol tag, if any
-        lease_ms: u64,
-        error: Option<ProtocolError>,
-    },
-    ExtendSubscription       { subscription_id: SubscriptionId },
-    ExtendSubscriptionResult { subscription_id: SubscriptionId, lease_ms: u64, error: Option<ProtocolError> },
-    Unsubscribe              { subscription_id: SubscriptionId },
-
-    // Agent lifecycle
-    CreateAgent(CreateAgentRequest),
-    CreateAgentResult   { agent_id: Uuid, error: Option<ProtocolError> },
-    RenameAgent(RenameAgentRequest),
-    RenameAgentResult   { agent_id: Uuid, error: Option<ProtocolError> },
-    DeleteAgent         { agent_id: Uuid },
-    DeleteAgentResult   { agent_id: Uuid, error: Option<ProtocolError> },
-
-    // Input
-    RawInput            { agent_id: Uuid, data: Vec<u8> },
-    StructuredInput     { agent_id: Uuid, seq: u64, payload: serde_json::Value },
-    StructuredInputResult { agent_id: Uuid, error: Option<ProtocolError> },
-
-    // Output
-    RawOutput           { subscription_id: SubscriptionId, data: Vec<u8> },
-    StructuredOutput    { subscription_id: SubscriptionId, seq: u64, payload: serde_json::Value },
-
-    // Subscription lifecycle
-    SubscriptionClosed  { subscription_id: SubscriptionId, reason: SubscriptionCloseReason },
-
-    /// Sent by an intermediate hop when it cannot forward a message. The
-    /// original sender matches on `request_id` to fail the pending request.
-    Unreachable { request_id: u64 },
-
-    UnsupportedMessage,   // Parsed payload with a known-but-unsupported tag
-    InvalidMessage,       // Malformed / undecodable payload bytes
-    #[serde(other)]
-    Unknown,              // Forward-compat fallback
-}
-
-enum SubscribeQuery {
-    Since { seq: u64 },      // Replay entries with `seq >= seq`
-    Tail  { count: u64 },    // Replay only the last `count` entries
-}
-
-enum SubscriptionCloseReason {
-    SourceClosed,            // The underlying buffer / agent ended
-    Unsubscribed,            // The client sent Unsubscribe
-    LeaseExpired,            // No ExtendSubscription arrived before the lease
-}
-
-struct SubscriptionId(Uuid);    // Transparent newtype; identifies one subscribe call
-```
-
-Structured I/O payloads are opaque `serde_json::Value`. Agent-specific schemas
-(e.g. Claude's `UserMessage` / `AssistantMessage` / `PermissionRequest` /
-permission-tool inputs, or the Claude `PermissionResponse` / `SubmitMessage`
-reply shapes) live on each side of the wire and are exchanged as JSON. The
-`structured_protocol` field on `SubscribeStructuredResult` identifies the
-schema (e.g. `"claude_pty_v1"`) so clients can version their parsers.
-
-`RoutableMessage` has its own `encode()`/`decode()` methods for the two-step serialization used with opaque payloads.
-
-### DirectMessage
-
-Peer-to-peer session messages between directly connected servers (no routing):
-
-```rust
-enum DirectMessage {
-    // In-session authentication refresh (cloud links)
-    Reauth { token: String },
-    ReauthResult { error: Option<ProtocolError> },
-
-    // Heartbeats (negotiated idle timeout; see Heartbeats)
-    Heartbeat,
-    HeartbeatAck,
-
-    /// Marks the end of the initial host/agent discovery snapshot for a
-    /// connection. Lets a peer know it has seen the full existing state and
-    /// can distinguish new announcements from replayed ones.
-    InitialSyncComplete,
-
-    // Agent discovery (pure registry, no routing side effects).
-    AnnounceAgent {
-        agent_id: Uuid,
-        host_id: Uuid,                    // Stable ID of the host that owns the agent
-        name: Option<String>,
-        command: String,
-        working_dir: PathBuf,
-        agent_type: String,
-        structured_protocol: Option<String>,
-        readonly: bool,                   // True for externally-started (transcript-only) sessions
-        args: Vec<String>,                // Extra args passed to the agent command
-        created_at: DateTime<Utc>,
-    },
-    WithdrawAgent { agent_id: Uuid },
-
-    // Host/route management (single source of routing truth)
-    AnnounceHost { id: Uuid, name: String, route: Route, version: String },
-    WithdrawHost { id: Uuid, route: Route },
-
-    #[serde(other)]
-    Unknown,
-}
-```
-
-`AnnounceAgent` does not itself carry a route — routes are built up implicitly
-as the message traverses peer links (each hop prepends its own link to the
-advertised `host_id`'s known route via `AnnounceHost`).
-
-Heartbeats are governed by a per-connection **idle timeout** negotiated during
-the handshake. The acceptor publishes `idle_timeout_secs` in `ConnectResult`
-(pulled from server config, default 180s; `None` for local Unix sockets).
-After the handshake, both peers apply the same rule symmetrically: if no
-inbound message has been seen for `idle_timeout` seconds, the connection is
-closed and the normal `WithdrawHost` cleanup path runs.
-
-Only the dialer initiates heartbeats — it sends `Heartbeat` whenever its own
-outbound link has been idle, at its own cadence (currently `idle_timeout / 3`).
-The cadence is not part of the wire protocol; the dialer is free to pick any
-rate as long as something is sent within the idle window. The acceptor replies
-to each `Heartbeat` with `HeartbeatAck`, which counts as inbound traffic and
-resets the dialer's kill deadline.
 
 ### Handshake
 
-Connection bootstrap is a separate wire protocol (not part of `Message`):
+The connecting side writes one raw protobuf `ConnectRequest` frame. The
+listener replies with one raw protobuf `ConnectResponse` frame. These frames
+are exchanged with `read_frame`/`write_frame` before the connection is split
+into reader and writer tasks.
 
-```rust
-const PROTOCOL_VERSION: u32 = 1;
-
-struct Connect {
-    link_name: String,                  // Wire-typed as String so malformed names
-                                        // reach the server and get InvalidLinkName
-    token: Option<String>,              // JWT for cloud; None for local/LAN
-    version: u32,                       // Must equal PROTOCOL_VERSION
-    client_name: Option<String>,        // e.g. "amux-cli", "amux-app-ios"
-    client_version: Option<String>,     // Semver; checked against minimum_client_versions
+```protobuf
+message ConnectRequest {
+  repeated uint32 supported_protocol_versions = 1;
+  string proposed_link_name = 2;
+  optional ClientInfo client = 3;
+  optional string auth_token = 4;
+  Capabilities capabilities = 5;
 }
 
-struct ConnectResult {
-    error: Option<ProtocolError>,
-    // None disables heartbeats (Unix); Some(t) negotiates a t-second idle timeout.
-    idle_timeout_secs: Option<u32>,
-}
-```
-
-Handshake frames use MessagePack map encoding and are exchanged (as raw
-frames, via `read_frame`/`write_frame`) before the connection enters the
-normal session message loop.
-
-### Command
-
-CLI-only messages sent over Unix socket. Servers reject these if received over TCP or WebSocket:
-
-```rust
-enum Command {
-    ListAgents,
-    ListAgentsResult   { agents: Vec<Agent> },
-    ResolveAgent       { identifier: String },
-    ResolveAgentResult { agent: Option<Agent> },
-
-    Shutdown,
-    ShutdownNotification { reason: ShutdownReason },
-
-    Debug              { verbose: bool, format: DebugFormat }, // Yaml | Json
-    DebugResult        { dump: String },
-
-    ConnectToServer       { address: String },
-    ConnectToServerResult { error: Option<ProtocolError> },
-
-    /// Deliver an agent-provider hook payload to a specific agent.
-    /// `payload` is opaque bytes (e.g. Claude Code's hook JSON) that the
-    /// receiving session parses based on `provider`.
-    HandleHook {
-        agent_id: Uuid,
-        provider: HookProvider,     // Claude | Unknown
-        payload: Vec<u8>,
-        external: bool,             // True for hooks from externally-started sessions
-    },
-    HandleHookResult { error: Option<ProtocolError> },
-
-    // Suspend / resume owned agents (persist / restore across server restarts)
-    Suspend,
-    SuspendResult { suspended_count: u64, error: Option<ProtocolError> },
-    Resume,
-    ResumeResult  { resumed_count: u64, failed_count: u64, error: Option<ProtocolError> },
-
-    #[serde(other)]
-    Unknown,
+message ConnectResponse {
+  oneof outcome {
+    ConnectAccepted accepted = 1;
+    Error error = 2;
+  }
 }
 
-enum ShutdownReason {
-    ProtocolMismatch,  // Server received version mismatch from cloud
-    UserRequested,     // User ran `amux shutdown`
-    Updating,          // Server is restarting to apply an update
+message ConnectAccepted {
+  uint32 protocol_version = 1;
+  string assigned_link_name = 2;
+  optional HeartbeatConfig heartbeat = 3;
+  Capabilities capabilities = 4;
 }
 ```
 
-### Supporting Types
+The acceptor:
+
+1. Decodes `ConnectRequest`.
+2. Checks `PROTOCOL_VERSION` is supported.
+3. Checks configured minimum client versions when `client.name` matches.
+4. Validates JWT credentials for cloud-mode network connections.
+5. Validates and reserves the assigned link in per-user topology.
+6. Returns `ConnectAccepted` with the final link name and optional heartbeat
+   config.
+
+Local connections use `LOCAL_USER_ID` and no heartbeat. Cloud-mode network
+connections authenticate to a JWT-derived per-user `ServerUserState`; non-cloud
+network links use the local user state.
+
+See `crates/amux/src/protocol/handshake.rs`,
+`crates/amux/src/transport/handshake.rs`, and
+`crates/amux/src/server/accept.rs`.
+
+### TransportMessage
+
+After the handshake, every frame decodes to a runtime `Message` wrapper around
+protobuf `TransportMessage`.
 
 ```rust
-enum ProtocolError {
-    // Routable-delivery failures
-    NoAgentFound,
-    UnknownSubscription,
-    UnsupportedSubscribeQuery,
-    SequenceNumberMismatch { client_seq: u64, current_seq: u64 },
+enum Message {
+    Local(LocalFrame),
+    Peer(PeerFrame),
+    Routed(RoutedFrame),
+    Ping,
+    Pong,
+    Reauth(ReauthRequest),
+    ReauthResponse(ReauthResponse),
+    GoAway(GoAway),
 
-    // Generic / handshake
-    ServerError { message: String },
-    LinkNameTaken,
-    InvalidCredentials,
-    InvalidLinkName,
-    ProtocolMismatch { server_version: u32, client_version: u32 },
-    UpgradeRequired  { minimum_version: String, client_version: String },
-
-    #[serde(other)]
-    Unknown,
+    // Internal batching helper, never encoded on the wire.
+    PeerSnapshot { messages: Vec<Message> },
 }
 ```
 
-### Serialization
+The three frame scopes are the protocol security boundary:
 
-Messages are serialized using MessagePack (rmp-serde) in named/map format for all transports:
+- `LocalFrame` is valid only on trusted local transports. It carries local
+  CLI/admin calls.
+- `PeerFrame` is valid only between adjacent peer servers. It carries peer
+  routing-event streams.
+- `RoutedFrame` may cross hops. Its payload is opaque to relays until it
+  reaches the endpoint.
+
+Each `LocalFrame`, `PeerFrame`, and `RoutedFrame` carries a 16-byte non-zero
+`call_id`. `FrameBody` provides request/response/stream/cancel semantics:
 
 ```rust
-impl Message {
-    fn encode(&self) -> Result<Vec<u8>> {
-        rmp_serde::to_vec_named(self)
-    }
-    fn decode(data: &[u8]) -> Result<Self> {
-        rmp_serde::from_slice(data)
-    }
+enum FrameBody {
+    Request(RequestFrame),
+    Response(ResponseFrame),
+    StreamItem(Vec<u8>),
+    Cancel,
+}
+
+enum ResponseFrame {
+    Payload(Vec<u8>),
+    Error(ProtocolError),
 }
 ```
 
-See `crates/amux/src/protocol/message/` (`envelope.rs`, `routable.rs`, `direct.rs`, `command.rs`, `common.rs`).
+Endpoint-delivered routed calls are encoded as
+`RoutedFrameMessage::Payload`, where the payload is an encoded `FrameBody`.
+Relay-generated delivery failures use
+`RoutedFrameMessage::RoutingError { failed_route, error }`.
 
----
+See `crates/amux/src/protocol/message/envelope.rs` and
+`crates/amux/src/protocol/wire/runtime.rs`.
 
-## Connection Handling
+### Method Scopes
 
-All connections (Unix, TCP, WebSocket) use a split transport architecture with three tasks:
+Every protobuf RPC method has an explicit scope in
+`crates/amux/src/protocol/method.rs`.
 
-1. **Reader task** (`reader_loop`) — reads from transport, sends `Incoming` events to a channel. Never cancelled by `select!`.
-2. **Writer task** (`writer_loop`) — drains a message channel, writes to transport. Also handles transport-specific background I/O (e.g., WebSocket pong responses).
-3. **Connection loop** (`connection_loop`) — pure channel I/O, cancellation-safe. Uses `tokio::select!` on:
-   - `incoming_rx.recv()` — incoming messages from the reader task
-   - Token refresh deadline (cloud connections only)
-   - Token refresh response timeout
+| Scope | Methods | Frame |
+| --- | --- | --- |
+| Local | `AgentService/ListAgents`, `AgentService/ResolveAgent`, `HookService/HandleHook`, `AdminService/*` | `LocalFrame` |
+| Peer | `RoutingService/SubscribeRoutingEvents` | `PeerFrame` |
+| Routed | `AgentService/CreateAgent`, `RenameAgent`, `DeleteAgent`, `OpenSession` | `RoutedFrame` |
 
-Incoming messages are dispatched by `handle_message`:
-- `Message::Routable { src, dst, request_id, payload }` → `handle_routable()` (routing + local delivery)
-- `Message::Direct(msg)` → `handle_direct()` (peer-to-peer handling)
-- `Message::Command(cmd)` → `handle_command()` (CLI-only, rejected if `!is_local`)
+Dispatch rejects known methods used in the wrong scope with
+`PermissionDenied`, and unknown methods with `Unimplemented`.
 
-### Per-Connection State
+### Errors
+
+Wire errors use protobuf `Error { code, message, details }`. The Rust runtime
+maps these to `ProtocolError`, including typed details such as
+`ProtocolVersionMismatch`, `UpdateRequired`, `InvalidLinkName`, and
+`SequenceNumberMismatch`.
+
+See `crates/amux/src/protocol/wire/error.rs`.
+
+## Transports
+
+All transports implement the same `Transport` trait:
 
 ```rust
-struct ConnectionContext {
-    state:       Arc<RwLock<ServerState>>,      // Global server state
-    user_state:  Arc<RwLock<ServerUserState>>,  // Per-user state (agents, routes, registry)
-    user_id:     Uuid,                          // Authenticated user ID (LOCAL_USER_ID for Unix)
-    event_tx:    mpsc::Sender<SessionEvent>,    // Channel to notify server of session events
-    link:        Link,                          // This connection's link name
-    is_local:    bool,                          // True for Unix socket connections
-    heartbeat:   Option<HeartbeatSetup>,        // Negotiated idle-timeout/role; None disables heartbeats
-    next_request_id: Arc<AtomicU64>,            // Per-connection counter for outgoing messages
-    client_name:    Option<String>,             // From Connect handshake
-    client_version: Option<String>,             // From Connect handshake
-}
-
-struct HeartbeatSetup {
-    role: HeartbeatRole,            // Dialer | Acceptor
-    idle_timeout: Duration,
+trait Transport {
+    async fn read_frame(&mut self) -> Result<Vec<u8>>;
+    async fn write_frame(&mut self, data: &[u8]) -> Result<()>;
+    async fn read_message(&mut self) -> Result<Message>;
+    async fn write_message(&mut self, msg: &Message) -> Result<()>;
 }
 ```
 
-Each connection has a `ConnectionHandle` stored in the routes table, bundling
-an `mpsc::Sender<Message>` with the `Arc<AtomicU64>` request-id counter. Other
-tasks send messages to a connection by looking up its `Link` in the routes
-table and sending through the handle.
+`TransportSplit` produces a reader and writer half so the connection driver
+can keep transport reads in a task that is never cancelled by `select!`.
 
-For cloud connections, the loop extends with token refresh support: a `select!` branch fires when the JWT token is nearing expiry, triggering in-band re-authentication via `DirectMessage::Reauth`.
+| Transport | Stream | Serialization | Framing |
+| --- | --- | --- | --- |
+| `LocalTransport` | Unix socket or Windows named pipe | protobuf | 4-byte big-endian length prefix |
+| `TcpTransport<S>` | plain TCP or TLS stream | protobuf | 4-byte big-endian length prefix |
+| `WebSocketTransport` | WebSocket stream | protobuf | native binary WebSocket frames |
 
-See `crates/amux/src/server/connection/` (`context.rs`, `driver.rs`, `heartbeat.rs`, `reauth.rs`, `subscription.rs`).
+Maximum binary frame size is `MAX_FRAME_SIZE` (16 MiB). TCP sockets are
+configured with `TCP_NODELAY` and keepalive.
 
----
+See `crates/amux/src/transport.rs` and `crates/amux/src/transport/`.
 
-## Server
+## Connection Lifecycle
+
+Each accepted or outbound connection uses the same driver:
+
+1. Run the handshake on the unsplit transport.
+2. Reserve the connection link in `Topology::routes`.
+3. Mark non-local links as peer links and start a peer routing-event stream.
+4. Split the transport.
+5. Spawn `reader_loop` and `writer_loop`.
+6. Run `connection_loop` over channels.
+7. On exit, remove the route, cancel affected RPC/OpenSession state, withdraw
+   affected topology, and let the writer drain.
+
+The task split is:
+
+- `reader_loop` reads decoded `Message`s and sends `Incoming::Msg`.
+- `writer_loop` drains the per-connection outgoing channel and writes frames.
+  It also handles transport background I/O such as WebSocket pongs.
+- `connection_loop` handles incoming messages, heartbeat deadlines, token
+  refresh deadlines, and explicit close requests.
+
+Top-level protobuf decode errors close the connection. The driver queues a
+`GoAway` with reason `ProtocolError` before closing when possible.
+
+### Heartbeats
+
+Non-local connections negotiate an idle timeout. Both peers close the
+connection after that timeout without inbound traffic.
+
+Only the dialer sends `Ping`, currently at `idle_timeout / 3` after its last
+non-heartbeat outbound write. The acceptor replies with `Pong`. Local
+connections disable heartbeats.
+
+### Token Refresh
+
+Cloud connections refresh JWTs before expiry. The local side obtains a new
+token from the cloud API and sends in-band `ReauthRequest`; the cloud side
+validates it and replies with `ReauthResponse`.
+
+See `crates/amux/src/server/connection/`.
+
+## Server State
+
+Global state is small and mostly configuration:
 
 ```rust
-/// Global server state
 struct ServerState {
     config: Config,
-    host_id: Uuid,                                       // Stable ID persisted in state.yaml
+    host_id: Uuid,
     is_cloud_server: bool,
     jwt_validator: Option<Arc<JwtValidator>>,
-    users: HashMap<Uuid, Arc<RwLock<ServerUserState>>>,  // Per-user isolation
-    shutdown_tx: mpsc::Sender<ShutdownRequest>,          // Shutdown / Suspend requests from handlers
+    users: HashMap<Uuid, Arc<RwLock<ServerUserState>>>,
+    shutdown_tx: mpsc::Sender<ShutdownRequest>,
+}
+```
+
+Each authenticated user gets isolated routing, RPC, and agent state. Local
+Unix/named-pipe clients use `LOCAL_USER_ID` (`Uuid::nil()`).
+
+```rust
+struct ServerUserState {
+    rpc: RpcDispatcher,
+    topology: Topology,
+    agents: HashMap<Uuid, AgentSession>,
 }
 
-/// Per-user state. Each authenticated user gets isolated agents, routes,
-/// registry, peer links, hosts, and subscriptions. LOCAL_USER_ID
-/// (`Uuid::nil()`) is used for non-authenticated Unix-socket connections.
-/// User isolation is enforced on cloud servers via JWT authentication.
-struct ServerUserState {
-    agents:     HashMap<Uuid, AgentSession>,            // Local sessions only
-    routes:     HashMap<Link, ConnectionHandle>,         // One entry per live connection
-    registry:   AgentRegistry,                           // Local + remote agents, name mapping
-    peer_links: HashSet<Link>,                           // Links that receive announcements
-    hosts:      HashMap<Uuid, Host>,                     // Known remote hosts by host_id
-    active_subscriptions: HashMap<SubscriptionId, SubscriptionEntry>,
+struct Topology {
+    routes: HashMap<Link, ConnectionHandle>,
+    registry: AgentRegistry,
+    peer_links: HashSet<Link>,
+    hosts: HashMap<Uuid, Host>,
 }
 
 struct ConnectionHandle {
     tx: mpsc::Sender<Message>,
-    next_request_id: Arc<AtomicU64>,
-}
-
-struct SubscriptionEntry {
-    subscription_id: SubscriptionId,
-    agent_id: Uuid,
-    mode: SubscriptionMode,         // Raw | Structured
-    cancel: oneshot::Sender<()>,    // Dropping cancels the stream task
-    dst: Route,                     // Reply route (= original src reversed)
-    lease_deadline: Instant,        // Extended via ExtendSubscription
+    close_tx: watch::Sender<Option<String>>,
 }
 ```
 
-The server's `run()` method:
-1. Binds the local listener (Unix socket or named pipe), TCP, and WebSocket listeners
-2. Optionally sets up TLS (cloud mode, using `AMUX_TLS_CERT`/`AMUX_TLS_KEY` env vars)
-3. Optionally establishes cloud connection (local mode with cloud enabled)
-4. Enters main `select!` loop handling: listener accepts, session events, shutdown signal
+`ConnectionHandle` is the only object stored in the routes table. Other tasks
+send to a connection by looking up a `Link` and enqueueing a `Message`.
 
-**Routes table:** `HashMap<Link, ConnectionHandle>` keyed by link name, per-user. When a connection disconnects, its route is removed and its request-id counter goes with it.
+`AgentRegistry` tracks local and remote agents by UUID and maintains unique
+name aliases. Remote agent routes are materialized from `Topology::hosts`
+when listing or resolving agents.
 
-**Subscriptions:** Explicit, lease-based. Each successful `SubscribeRaw` /
-`SubscribeStructured` inserts a `SubscriptionEntry` into
-`active_subscriptions`, keyed by a fresh `SubscriptionId`. A paired output
-stream task reads from the agent's buffer and sends `RawOutput` /
-`StructuredOutput` messages back along the stored `dst` route. Clients keep
-the subscription alive with `ExtendSubscription`; if the lease expires (default
-`SUBSCRIPTION_LEASE_DURATION = 300s`), the server sends `SubscriptionClosed {
-reason: LeaseExpired }` and drops the entry. `Unsubscribe` and host withdrawal
-also tear down the entry; in all cases the `cancel` oneshot signals the stream
-task to stop.
+See `crates/amux/src/server/state.rs`,
+`crates/amux/src/server/routing/topology.rs`, and
+`crates/amux/src/server/registry.rs`.
 
-**Agent Registry:** `AgentRegistry` provides centralized tracking of both local and remote agents with bidirectional name-to-UUID mapping. Used for `ListAgents`, `ResolveAgent`, and agent discovery propagation.
+## RPC State
 
-**Hosts:** `HashMap<Uuid, Host>` tracks known remote hosts announced via `AnnounceHost`. When a host is withdrawn, all agents reachable via that host's route are bulk-removed from the registry and all matching subscriptions are cancelled.
+`RpcDispatcher` tracks active calls separately from topology. Calls are keyed
+by `(counterparty_route, call_id)`.
 
-See `crates/amux/src/server/` (`state.rs`, `runtime.rs`, `accept.rs`, `dispatch/`, `routing/`).
+Inbound calls are endpoint-owned work started by a received request. Outbound
+calls are work this node is waiting on. State tracks whether a call is waiting
+for a response, has an active stream, or is closing.
 
----
+The dispatcher also owns deduplication keys for streams that must be unique,
+notably:
 
-## Agent Session
+- one active peer routing-event stream per peer route
+- one active `OpenSession` per `(counterparty_route, agent_id)`
 
-`AgentSession` is the top-level enum the server holds for each locally-owned
-agent. Each variant wraps a concrete, provider-specific session type; PTY I/O
-is encapsulated in a shared `PtyHandle` set up by `spawn_pty_agent`.
+When routes close or withdraw, the server uses RPC state to send cancels or
+routing errors for locally originated calls and to terminate affected
+`OpenSession` streams.
+
+See `crates/amux/src/rpc/`.
+
+## Routing And Discovery
+
+Peer topology is propagated through the peer-scoped
+`RoutingService/SubscribeRoutingEvents` server-streaming RPC.
+
+Initial snapshot order is:
+
+1. hosts
+2. agents
+3. `SnapshotComplete`
+
+Events are:
+
+```rust
+enum RoutingEvent {
+    HostUp { id, name, route, version },
+    HostDown { id, route },
+    AgentUp { agent_id, host_id, name, command, working_dir,
+              agent_type, io_protocols, readonly, args, created_at },
+    AgentDown { agent_id },
+    SnapshotComplete,
+}
+```
+
+Host routes are hop-relative. When a peer event arrives, the receiver prepends
+the inbound peer link before storing or rebroadcasting it.
+
+Important topology rules:
+
+- Cloud relays do not announce themselves as hosts in initial snapshots.
+- `HostUp` must exist before an `AgentUp` for that host is accepted.
+- `AgentUp`/`AgentDown` are discovery events; they do not reserve or remove
+  connection links.
+- `HostDown` and link closure remove reachable remote hosts, remove remote
+  agents under those hosts, and cancel affected OpenSession/RPC state.
+- Announcements learned from one peer are not echoed back to the same peer.
+
+See `crates/amux/src/services/routing.rs`,
+`crates/amux/src/server/routing/peers.rs`, and
+`crates/amux/src/server/dispatch/peer/`.
+
+## Routed Forwarding
+
+When a `RoutedFrame::Payload` arrives:
+
+1. Non-local connections must have `src.peek() == ctx.link`; otherwise the
+   frame is dropped as spoofed.
+2. If `dst` has a next hop, the relay pops it, pushes it onto `src`, and sends
+   the unchanged payload to that connection.
+3. If the next hop is missing or the channel is closed, the relay sends a
+   `RoutingError` back along the accumulated return path.
+4. If `dst` is empty, the payload is decoded as a protobuf `FrameBody` and
+   dispatched to the routed endpoint.
+
+Cloud servers reject endpoint routed payloads because cloud relays are not
+agent hosts.
+
+Routing failures include a reconstructed `failed_route`, built from the
+reverse accumulated source path plus the missing hop and remaining destination
+path. Endpoints use the `call_id` and failed route for cleanup.
+
+See `crates/amux/src/server/routing/forwarding.rs` and
+`crates/amux/src/server/dispatch/routable.rs`.
+
+## Services
+
+### Local Services
+
+Local services are trusted-control calls carried by `LocalFrame`.
+
+- `AgentService/ListAgents`
+- `AgentService/ResolveAgent`
+- `HookService/HandleHook`
+- `AdminService/Debug`
+- `AdminService/Shutdown`
+- `AdminService/Suspend`
+- `AdminService/Resume`
+- `AdminService/ConnectToServer`
+
+Network peers cannot invoke local methods.
+
+### Peer Services
+
+`RoutingService/SubscribeRoutingEvents` runs only on peer links. It is a
+server-streaming RPC carried by `PeerFrame`. The stream stays open for the
+connection lifetime and carries topology changes.
+
+### Routed Agent Services
+
+Routed agent services are endpoint calls to an agent host:
+
+- `CreateAgent`
+- `RenameAgent`
+- `DeleteAgent`
+- `OpenSession`
+
+`CreateAgent` supports Claude PTY runtime and dev/test agents. The protobuf
+schema also contains `ClaudeSdkRuntime`, but the service currently returns
+`Unimplemented` for that runtime.
+
+See `crates/amux/src/services/`.
+
+## Agent Sessions
+
+`AgentSession` is the server-owned handle for a local agent:
 
 ```rust
 enum AgentSession {
@@ -564,533 +501,246 @@ enum AgentSession {
     #[cfg(any(debug_assertions, test))]
     TestAgent(TestAgentSession),
 }
-
-struct ClaudeSession {
-    agent_id:      Uuid,
-    name:          Option<String>,
-    command:       String,                         // Always "claude"
-    working_dir:   PathBuf,
-    pty:           Option<PtyHandle>,              // None until start()
-    log_source:    Option<StructuredLogSource>,    // Structured entry pipeline
-    terminal_size: Option<TerminalSize>,
-    session_id:    Option<Uuid>,                   // Claude session ID (--resume / SessionStart)
-    readonly:      bool,                           // True for externally-started (transcript-only)
-    args:          Vec<String>,                    // Extra args for the claude command
-    name_source:   LocalAgentNameSource,
-    name_sniffer_abort: Option<AbortHandle>,
-    created_at:    DateTime<Utc>,
-}
-
-struct PtyHandle {
-    // Owns the PTY master, the input channel, and the reader/writer/exit tasks.
-    // Exposes: subscribe() -> (MultiplexByteReader, mpsc::Sender<Vec<u8>>),
-    //          resize(rows, cols), stop(StopPolicy), ...
-}
 ```
 
-`AgentSession::try_new(req)` dispatches on `req.agent_type` to construct the
-right variant; `ClaudeSession::start()` is the second phase that actually
-spawns the `claude` process. Hook delivery (`HandleHook`) is dispatched to the
-session, which parses the opaque payload into a provider-specific `ClaudeHook`
-and either links a transcript or appends a structured entry via
-`StructuredLogSource`.
+`AgentSession::try_new(req)` constructs the provider-specific session.
+`start()` spawns the underlying process and returns an exit-monitor handle.
 
-### CreateAgentRequest
+For Claude, the session stores:
 
 ```rust
-struct CreateAgentRequest {
-    agent_id:      Uuid,
-    name:          Option<String>,
-    agent_type:    AgentType,
-    working_dir:   PathBuf,
-    terminal_size: Option<TerminalSize>,   // None means use defaults
-    args:          Vec<String>,            // Extra args (e.g. --fork-session, --resume <id>)
-}
-
-struct TerminalSize { rows: u16, cols: u16 }   // Defaults to 24×80
-
-enum AgentType {
-    Claude,                                // Spawns `claude` with --session-id / --resume
-    #[cfg(any(debug_assertions, test))]
-    TestAgent { command: String },         // Dev/test only
-    #[serde(other)]
-    Unknown,
+struct ClaudeSession {
+    agent_id: Uuid,
+    name: Option<String>,
+    command: String,              // "claude"
+    working_dir: PathBuf,
+    pty: Option<PtyHandle>,
+    log_source: Option<StructuredLogSource>,
+    terminal_size: Option<TerminalSize>,
+    session_id: Option<Uuid>,
+    readonly: bool,
+    args: Vec<String>,
+    name_source: LocalAgentNameSource,
+    name_sniffer_abort: Option<AbortHandle>,
+    created_at: DateTime<Utc>,
 }
 ```
 
-See `crates/amux/src/agent/` (`session.rs`, `pty.rs`, `claude/session/*.rs`, `test_agent.rs`).
+Managed Claude sessions spawn `claude` in a PTY with `AMUX_AGENT_ID` set.
+Resumed sessions pass `--resume <session_id>` and sanitized resume args.
+Readonly Claude sessions are created from external hooks; they have transcript
+tailing but no PTY.
 
----
+Creating a local agent:
+
+1. Checks per-user local agent limit.
+2. Checks UUID and name uniqueness.
+3. Constructs and starts the `AgentSession`.
+4. Registers the local agent in topology.
+5. Broadcasts `AgentUp`.
+6. Starts a task that sends `SessionEvent::Ended` when the process exits.
+
+Deleting or process exit withdraws the agent, broadcasts `AgentDown`, closes
+matching OpenSession calls, and stops the session as needed.
+
+See `crates/amux/src/agent/` and
+`crates/amux/src/server/routing/agents.rs`.
+
+## PTY And Buffers
+
+`spawn_pty_agent` creates the PTY and starts three background tasks:
+
+- PTY reader: blocking read from PTY stdout, writes to `MultiplexByteBuffer`.
+- input forwarder: receives input bytes and writes them to PTY stdin.
+- exit monitor: waits for the child, drops the PTY master, closes byte and
+  structured buffers.
+
+`PtyHandle` owns the PTY input channel, resize support, current size, and the
+byte replay buffer.
+
+`BroadcastBuffer<P>` backs both byte and structured output. Its key invariant
+is that `write()` and `subscribe()` are synchronized through the storage lock,
+so a subscriber receives a coherent replay snapshot followed by live items
+without gaps or duplicates.
+
+Concrete buffers:
+
+- `MultiplexByteBuffer` stores a bounded byte vector and replays as one chunk.
+- `MultiplexStructuredBuffer` stores bounded structured entries with
+  monotonically increasing sequence numbers.
+
+See `crates/amux/src/agent/pty.rs` and `crates/amux/src/buffer.rs`.
+
+## OpenSession
+
+Agent I/O is exposed through the routed bidirectional
+`AgentService/OpenSession` RPC. The first client stream item must be
+`SessionOpen`; later items are `SessionInput`, `SessionControl`, or routed
+`Cancel`.
+
+```protobuf
+message SessionOpen {
+  bytes agent_id = 1;
+  string io_protocol = 2;
+  optional bytes args = 3;
+}
+
+message SessionInput {
+  bytes input_id = 1;
+  bytes payload = 2;
+}
+
+message OpenSessionResponse {
+  oneof event {
+    SessionOpened opened = 1;
+    SessionOutput output = 2;
+    SessionInputResult input_result = 3;
+    ReplayComplete replay_complete = 4;
+  }
+}
+```
+
+The core protocol treats `args`, input payloads, output payloads, controls,
+and replay cursors as opaque bytes. The selected `io_protocol` defines those
+payloads.
+
+### `claude_raw_v1`
+
+Raw PTY protocol:
+
+- `SessionOpen.args` may contain terminal size and a tail-bytes replay query.
+- `SessionInput.payload` is written directly to PTY stdin.
+- `SessionControl.payload` supports terminal resize.
+- `SessionOutput.payload` is raw PTY stdout bytes.
+- `ReplayComplete.cursor` is absent.
+
+### `claude_pty_transcript_v1`
+
+Structured Claude transcript protocol:
+
+- `SessionOpen.args` may contain terminal size plus replay `since` or
+  `tail_count`.
+- Replay `since` uses the last sequence observed by the client; the server
+  resumes after it.
+- `SessionOutput.payload` is `ClaudePtyTranscriptV1Output { seq_id, payload }`,
+  where `payload` is JSON-encoded Claude transcript or hook output.
+- `ReplayComplete.cursor` is a protobuf cursor containing the sequence at the
+  replay boundary.
+- `SessionInput.payload` is `ClaudePtyTranscriptV1Input { expected_seq,
+  actions }`.
+- Structured input actions are translated to PTY writes and bounded delays.
+- The server rejects stale structured input with `SequenceNumberMismatch` when
+  `expected_seq` differs from the current structured log sequence.
+- Accepted or rejected structured inputs emit `SessionInputResult` correlated
+  by `input_id`.
+
+Only one active `OpenSession` per `(counterparty_route, agent_id)` is allowed.
+
+See `crates/amux/src/services/agent/open_session.rs`,
+`crates/amux/src/protocol/open_session.rs`, and
+`crates/amux/src/agent/claude/io.rs`.
+
+## Structured Logs And Hooks
+
+`StructuredLogSource` owns a `MultiplexStructuredBuffer` plus an optional
+Claude transcript tailer. Linking a new transcript stops the old tailer,
+clears stored entries, and starts tailing the new file while keeping existing
+subscribers connected.
+
+Claude hooks are delivered through local
+`HookService/HandleHook { agent_id, provider, payload, external }`.
+
+The CLI resolves the target agent as follows:
+
+- managed sessions use `AMUX_AGENT_ID`
+- external sessions use the Claude hook `session_id`
+
+For managed sessions, the hook is dispatched to the existing `ClaudeSession`.
+For external sessions, a non-session-end hook can bootstrap a readonly Claude
+session when the hook contains the required working directory and transcript
+path.
+
+Claude hook handling:
+
+- `SessionStart` records `session_id` and links the transcript.
+- `PermissionRequest`, `Stop`, and `Notification` are appended to the
+  structured log with an injected `type`.
+- `SessionEnd` withdraws readonly external sessions.
+
+See `crates/amux/src/services/hook.rs`,
+`crates/amux/src/agent/claude/session/hooks.rs`, and
+`crates/amux-cli/src/hooks.rs`.
 
 ## Config
 
+Config is loaded from `$XDG_CONFIG_HOME/amux/config.yaml`, falling back to
+`~/.config/amux/config.yaml`, or from an explicit `--config` path.
+
+Important fields:
+
 ```rust
 struct Config {
-    host_name: String,                  // Hostname for generating link names (default: system hostname)
-    cloud_url: String,                  // Cloud API URL (default: "https://amux.sh")
-    socket_path: PathBuf,               // Unix socket / named pipe path (default: per-user runtime dir)
-    tcp_port: Option<u16>,              // TCP port for server-to-server (None = don't listen)
-    websocket_port: Option<u16>,        // WebSocket port for rich clients (None = don't listen)
-    randomise_link_name: bool,          // Add random suffix to link names (default: true; test-only override)
-    state_path: PathBuf,                // Path to persistent state file
-    enforce_tls_in_cloud_mode: bool,    // Whether cloud server handles TLS itself (default: true)
-
-    enable_cloud_mode: Option<bool>,    // User preference; None until `amux init` prompts
-    prevent_idle_sleep: Option<bool>,   // User preference; None until `amux init` prompts
-    minimum_client_versions: HashMap<String, String>,  // e.g. {"amux-cli": "0.2.0"}
-    idle_timeout_secs: u32,             // Heartbeat idle timeout (default: 180)
-    keybinds: Keybinds,                 // Leader key etc.
-    path: Option<PathBuf>,              // Source file (runtime-only)
+    host_name: String,
+    cloud_url: String,
+    socket_path: PathBuf,
+    tcp_port: Option<u16>,
+    websocket_port: Option<u16>,
+    randomise_link_name: bool,
+    state_path: PathBuf,
+    check_for_updates: bool,
+    enforce_tls_in_cloud_mode: bool,
+    enable_cloud_mode: Option<bool>,
+    prevent_idle_sleep: Option<bool>,
+    minimum_client_versions: HashMap<String, String>,
+    idle_timeout_secs: u32,
+    keybinds: Keybinds,
+    path: Option<PathBuf>,
 }
 ```
 
-Cloud servers must have both `tcp_port` and `websocket_port` set; `validate(is_cloud: bool)` enforces this.
-
-Config is loaded from a YAML file at `$XDG_CONFIG_HOME/amux/config.yaml`
-(falling back to `~/.config/amux/config.yaml`) or via `--config` flag. All
-fields have serde defaults.
+Cloud servers must configure both `tcp_port` and `websocket_port`. Release
+builds require HTTPS cloud URLs. `idle_timeout_secs` must fit into protobuf
+heartbeat milliseconds.
 
 See `crates/amux/src/config.rs`.
 
----
+## Runtime Task Model
 
-## Structured I/O
+High-level server runtime:
 
-`StructuredInput` and `StructuredOutput` on the wire carry an opaque
-`serde_json::Value` plus an `agent_id`/`subscription_id` and a `seq` number.
-The protocol deliberately does not know about agent-specific message shapes:
-the sending side serializes them as JSON and the receiving side parses them
-based on the `structured_protocol` identifier advertised in
-`SubscribeStructuredResult` (e.g. `"claude_pty_v1"`).
+```text
+Server::run
+  local listener
+  optional TCP listener
+  optional WebSocket listener
+  optional cloud outbound connection task
+  session event task
+  update checker task in local mode
+  shutdown/suspend control loop
 
-For Claude, the current payload shapes include:
+Per connection
+  handshake
+  reserve link
+  optional peer routing-event stream setup
+  reader_loop
+  writer_loop
+  connection_loop
+  cleanup topology/RPC/OpenSession state
 
-- Output entries such as `UserMessage`, `AssistantMessage`, and
-  `PermissionRequest` (with a tool-specific `tool_input`, e.g. `Edit`,
-  `Bash`, `WebFetch`, `Skill`, `ExitPlanMode`, …).
-- Input entries such as `PermissionResponse` (the user's reply to a
-  permission request, translated to a keystroke) and `SubmitMessage` (rich
-  client text input, delivered to the PTY with a short delay and a trailing
-  carriage return).
+Per local agent
+  PTY reader
+  PTY input forwarder
+  child exit monitor
+  optional transcript tailer
+  optional name sniffer
 
-On the agent side, a `TranscriptTailer` watches Claude Code's transcript
-JSONL file and pushes parsed entries into a `StructuredLogSource`, which
-drives the `MultiplexStructuredBuffer` that feeds active structured
-subscriptions. Permission-request hook events are appended to the same log
-source when received via `HandleHook`.
-
-See `crates/amux/src/agent/claude/transcript.rs`, `crates/amux/src/agent/claude/session/*.rs`.
-
----
-
-## BroadcastBuffer
-
-The core abstraction for agent output replay and broadcast, parameterized by a `BufferPolicy` that controls storage, truncation, and replay semantics. Supports multiple concurrent readers with atomic subscribe (no data loss or duplication between replay and live output).
-
-Two concrete instantiations via type aliases:
-- `MultiplexByteBuffer` (`BroadcastBuffer<BytePolicy>`) — contiguous byte stream for PTY output
-- `MultiplexStructuredBuffer` (`BroadcastBuffer<StructuredPolicy>`) — discrete structured entries for Claude I/O
-
-```rust
-struct BroadcastBuffer<P: BufferPolicy> {
-    inner: Arc<BroadcastInner<P>>,
-}
-
-struct BroadcastInner<P: BufferPolicy> {
-    storage: RwLock<P::Storage>,
-    subscribers: RwLock<Vec<mpsc::Sender<P::Item>>>,   // Bounded channels
-    capacity: usize,
-    closed: RwLock<bool>,
-}
-
-impl<P: BufferPolicy> BroadcastBuffer<P> {
-    /// Publish an input into the buffer and broadcast the resulting item.
-    /// Holds the storage write lock during both publication and broadcast,
-    /// ensuring atomicity with subscribe(). Slow / dead subscribers are
-    /// cleaned up (bounded backpressure).
-    async fn write(&self, input: P::Input) -> Option<P::Item>;
-
-    /// Subscribe: returns a reader that receives all existing items
-    /// then live updates. Holds the read lock during subscribe for atomicity
-    /// with write(). Returns None if the buffer is closed.
-    async fn subscribe(&self) -> Option<BroadcastReader<P>>;
-
-    /// Close: drops all subscriber channels, prevents new subscriptions.
-    async fn close(&self);
-}
+Per OpenSession
+  input dispatcher
+  output stream task
+  optional structured input worker
 ```
 
-The key invariant: `write()` and `subscribe()` are mutually exclusive via the storage lock. This ensures a new subscriber sees exactly all items written before it subscribed, with no gaps and no duplicates in the transition to live data.
-
-See `crates/amux/src/buffer.rs`.
-
----
-
-## Routing Table
-
-The routing table is a `HashMap<String, mpsc::Sender<Message>>` keyed by link name. Each entry is the send-half of a per-connection channel.
-
-### Forwarding Algorithm
-
-When a `Routable` message arrives at `handle_routable`:
-
-1. **Pop** the next hop from `dst`
-2. **If `Some(next_hop)`:** This message needs forwarding
-   - Push `next_hop` onto `src` (building the return path)
-   - Look up `next_hop` in `user_state.routes`
-   - Forward the `Message::Routable` with opaque `payload` verbatim (no deserialization)
-   - On channel send failure: log at debug level and drop silently
-3. **If `None`:** This message has arrived at its destination
-   - Deserialize `payload` into `RoutableMessage` (two-step deserialization)
-   - Deliver locally (subscribe, input, output, etc.)
-   - On parsed-but-unknown routable tag: send `RoutableMessage::UnsupportedMessage`
-   - On malformed / undecodable payload bytes: send `RoutableMessage::InvalidMessage`
-
-### Reply Routing
-
-`Route::reply(src)` is literally `Route::send(src)` — the same pop-and-push operation applied to the incoming `src` route instead of `dst`. This works because `src` accumulated each hop's link name as the message traveled inward, so "sending" through `src` naturally reverses the path. This symmetry is the entire routing algorithm: there is no separate reply mechanism.
-
-### Routing Failure Handling
-
-When a routable message can't be forwarded (next hop not in routes table or
-channel closed), an intermediate hop sends a `RoutableMessage::Unreachable {
-request_id }` back along the accumulated src route so the original sender can
-fail the pending request. Route cleanup itself flows from `WithdrawHost`,
-which remains the single source of routing truth.
-
-### Route Lifecycle
-
-`AnnounceHost`/`WithdrawHost` are the single source of routing truth:
-
-- **Connection loss:** Server identifies hosts reachable via the dead link, broadcasts `WithdrawHost` per host. Upon receiving `WithdrawHost`, each server removes the host, bulk-removes agents whose route passes through that host, cancels matching subscriptions, and propagates the withdrawal.
-- **Agent death:** Server sends `SubscriptionClosed { reason: SourceClosed }` to matching subscribers, sends `WithdrawAgent` per peer (discovery cleanup only), removes the agent from the registry. No route changes.
-- `AnnounceAgent`/`WithdrawAgent` are pure discovery — they update the agent registry for `ListAgents`/`ResolveAgent` but have zero routing side effects.
-
-See `crates/amux/src/protocol/route.rs`, `crates/amux/src/server/dispatch/`, `crates/amux/src/server/routing/`.
-
----
-
-## Agent Lifecycle
-
-### Spawning
-
-`AgentSession::try_new(req)` constructs the right variant; `ClaudeSession::start()` (or `TestAgentSession::start()`) actually spawns the process. Both delegate to `spawn_pty_agent`, which creates the PTY and spawns three background tasks:
-
-```
-Task 1: PTY Reader (spawn_blocking)
-  - Reads PTY stdout in a blocking loop
-  - Writes bytes to the MultiplexByteBuffer owned by PtyHandle (broadcasts to all subscribers)
-
-Task 2: Input Forwarder (spawn)
-  - Reads from the input_rx channel
-  - Writes to PTY stdin
-
-Task 3: Exit Monitor (spawn_blocking)
-  - Waits for child process to exit
-  - Drops PTY master
-  - Closes the MultiplexByteBuffer (disconnects all subscribers)
-  - Sends SessionEvent::Ended to the server
-```
-
-The agent type determines the command and arguments:
-- `AgentType::Claude` → runs `claude` with `--session-id={agent_id}` (or `--resume <id>` when resuming); any extra `args` are appended.
-- `AgentType::TestAgent { command }` → runs the given command (dev/test only)
-
-### Termination
-
-1. Child process exits
-2. Exit monitor detects exit, drops PTY master, closes buffers
-3. `SessionEvent::Ended { agent_id, user_id }` sent to the server via the event channel
-4. Server removes the agent from the registry and broadcasts `WithdrawAgent` to peers
-5. Output streaming tasks detect buffer closure and send `RoutableMessage::SubscriptionClosed { reason: SourceClosed }` to their subscribers
-
-See `crates/amux/src/agent/session.rs`, `crates/amux/src/agent/pty.rs`.
-
----
-
-## Connection Lifecycle
-
-### Accepting Connections (Server-Side)
-
-`accept_handshake()` handles the initial handshake:
-
-1. Read first frame, decode `Connect { link_name, token, version, client_name?, client_version? }`
-2. Check protocol version (`version` must match `PROTOCOL_VERSION`), replying with `ProtocolMismatch` otherwise
-3. If `client_name` matches an entry in `minimum_client_versions`, check `client_version`, replying with `UpgradeRequired` if below
-4. If cloud mode: validate JWT token via JWKS, determine `user_id` from claims
-5. Reserve the link via `user_state.try_reserve_link(link)` — this validates the name, checks uniqueness, and atomically inserts the `ConnectionHandle` into the routes table (returns the receive half of the outgoing channel)
-6. Send `ConnectResult { error: None, idle_timeout_secs: <negotiated> }`
-7. Return `(link, outgoing_rx)` for use in `connection_loop`
-
-On link name collision, the server responds with `ConnectResult { error: Some(LinkNameTaken) }`. The client retries with a new random suffix (up to 5 attempts).
-
-After handshake, the driver splits the transport into reader/writer halves, spawns the reader and writer tasks, runs `connection_loop()` until disconnection, then removes the route from `user_state.routes`.
-
-### Connecting to Peers (Client-Side)
-
-`connect_handshake()` sends `Connect { link_name, token, version: PROTOCOL_VERSION, client_name, client_version }` and waits for `ConnectResult`. On `LinkNameTaken`, it regenerates the link name and retries (up to 5 attempts).
-
-### Cleanup
-
-When a connection drops:
-1. The `ConnectionHandle` is removed from `user_state.routes`
-2. If this link was a peer link, `WithdrawHost` is broadcast for every host reachable via it
-3. Any subscriptions whose `dst` passed through this link are cancelled
-4. The output stream tasks detect the dropped `cancel` oneshot and stop
-
-See `crates/amux/src/server/accept.rs`, `crates/amux/src/server/connection/driver.rs`.
-
----
-
-## Framing (TCP/Unix)
-
-Binary transports use length-prefixed framing via the `LengthPrefixed<R, W>` helper:
-
-```
-+---------------------------+-------------------+
-| length (4 bytes, big-endian) | payload (N bytes) |
-+---------------------------+-------------------+
-```
-
-- Maximum frame size: 16MB (prevents DoS)
-- TCP transports flush after each write (for TCP_NODELAY latency)
-- Unix transports do not flush (not applicable)
-- Payload is MessagePack-encoded `Message`
-
-WebSocket handles framing natively; `WebSocketTransport` reads/writes binary MessagePack frames directly.
-
-See `crates/amux/src/transport/framing.rs`.
-
----
-
-## Input Forwarding
-
-Two input paths, both routable:
-
-- **`RawInput { agent_id, data }`** — Raw keystroke bytes from terminals, delivered directly to PTY stdin.
-- **`StructuredInput { agent_id, seq, payload }`** — A JSON payload from a rich client interpreted by the receiving session based on its advertised `structured_protocol`. For Claude, the payload is one of:
-  - `SubmitMessage` — rich-client text input; the session writes it to the PTY with a short delay and a trailing carriage return (`\r`).
-  - `PermissionResponse` — the user's reply to a permission request; translated to a keystroke and written to the PTY.
-
-Structured inputs carry `seq`, which the server checks against the current
-output seq to reject stale submissions with `SequenceNumberMismatch`; the
-result is reported via `StructuredInputResult`.
-
-Input messages are forwarded via generic `handle_routable` routing. When delivered locally, the agent is resolved by UUID and the session's input channel is written.
-
----
-
-## Task Model
-
-```
-┌────────────────────────────────────────────────────────────────────────┐
-│                              Server                                    │
-│                                                                        │
-│  ┌──────────────────┐  ┌──────────────────┐  ┌──────────────────────┐ │
-│  │ Unix Listener    │  │ TCP Listener     │  │ WebSocket Listener   │ │
-│  └────────┬─────────┘  └────────┬─────────┘  └──────────┬───────────┘ │
-│           │                     │                        │             │
-│           └─────────────────────┼────────────────────────┘             │
-│                                 │                                      │
-│                    spawns per connection                                │
-│                                 ▼                                      │
-│           ┌─────────────────────────────────────────┐                  │
-│           │       Connection Handler Task            │                  │
-│           │                                          │                  │
-│           │  tokio::select! {                        │                  │
-│           │    transport.read_message() => dispatch   │                  │
-│           │    outgoing_rx.recv() => write to socket  │                  │
-│           │    token_refresh => re-authenticate       │                  │
-│           │  }                                        │                  │
-│           └─────────────────────────────────────────┘                  │
-│                                                                        │
-│  Per Subscribe (spawned on subscribe):                                 │
-│  ┌──────────────────────────────────────────────────────────────────┐  │
-│  │ Output Stream Task                                                │  │
-│  │ Reads MultiplexByteBuffer / MultiplexStructuredBuffer → sends     │  │
-│  │ RawOutput / StructuredOutput routable messages along dst route.   │  │
-│  │ Cancelled via oneshot when subscription is dropped/expired.       │  │
-│  └──────────────────────────────────────────────────────────────────┘  │
-│                                                                        │
-│  Per Local Agent (via spawn_pty_agent):                                │
-│  ┌──────────────────┐  ┌──────────────────┐  ┌──────────────────────┐ │
-│  │ PTY Reader       │  │ Input Forwarder  │  │ Exit Monitor         │ │
-│  │ (spawn_blocking) │  │ (spawn)          │  │ (spawn_blocking)     │ │
-│  │                  │  │                  │  │                      │ │
-│  │ PTY stdout →     │  │ input_rx →       │  │ Waits for exit →     │ │
-│  │ MultiplexByteBuffer│ │ PTY stdin        │  │ SessionEvent::Ended  │ │
-│  └──────────────────┘  └──────────────────┘  └──────────────────────┘ │
-│                                                                        │
-│  Optional:                                                             │
-│  ┌──────────────────────────────────────────────────────────────────┐  │
-│  │ Cloud Connection Task (local servers only)                        │  │
-│  │ TLS connect → handshake → connection_loop with token refresh      │  │
-│  └──────────────────────────────────────────────────────────────────┘  │
-│                                                                        │
-│  ┌──────────────────────────────────────────────────────────────────┐  │
-│  │ Session Event Handler                                             │  │
-│  │ Receives SessionEvent::Ended → removes agent from state          │  │
-│  └──────────────────────────────────────────────────────────────────┘  │
-│                                                                        │
-│  Per Agent with Transcript:                                            │
-│  ┌──────────────────────────────────────────────────────────────────┐  │
-│  │ Transcript Tailer                                                 │  │
-│  │ Watches JSONL file → parses → pushes to StructuredLogSource →     │  │
-│  │ MultiplexStructuredBuffer                                         │  │
-│  └──────────────────────────────────────────────────────────────────┘  │
-│                                                                        │
-└────────────────────────────────────────────────────────────────────────┘
-```
-
-**Data flow for local terminal subscription:**
-```
-Terminal ──SubscribeRaw──> Connection Handler
-                                │
-                                ▼
-                         handle_routable → local delivery
-                                │
-                                ├─> PtyHandle.subscribe() → MultiplexByteReader
-                                ├─> Register SubscriptionEntry + send SubscribeRawResult
-                                └─> Spawn output stream task (paired with cancel oneshot)
-                                      │
-                                      └─> MultiplexByteReader.read() → RawOutput msg → reply-routed to subscriber
-
-Terminal ──RawInput──> Connection Handler → PtyHandle input channel → PTY stdin
-```
-
-**Data flow for proxied subscription:**
-```
-App ──SubscribeRaw──> Cloud Handler ──SubscribeRaw──> Local Handler
-                           │                              │
-                      (pops dst,                     (dst empty,
-                       pushes src,                    local delivery)
-                       forwards)                          │
-                                                     Subscribe agent
-                                                     Spawn output task
-
-Local PTY → MultiplexByteBuffer → Output Stream Task → RawOutput msg
-    → Cloud routes table → Cloud connection → App
-```
-
----
-
-## Hooks System
-
-amux integrates with Claude Code via hooks — shell commands that Claude Code calls on specific events.
-
-### Wire shape
-
-Hooks are delivered via `Command::HandleHook`, which carries an opaque byte
-payload tagged by `HookProvider`. The protocol intentionally does not know the
-hook shape:
-
-```rust
-enum HookProvider { Claude, Unknown }
-
-// Command variant:
-HandleHook {
-    agent_id: Uuid,          // Pre-resolved by the client (via AMUX_AGENT_ID or session_id)
-    provider: HookProvider,
-    payload: Vec<u8>,        // Provider-specific bytes (e.g. Claude Code's hook JSON)
-    external: bool,          // True for hooks from externally-started Claude sessions
-}
-```
-
-For the `Claude` provider, the session parses the payload into a provider-internal
-`ClaudeHook` (e.g. `SessionStart`, `PermissionRequest`, etc.) and acts on it.
-
-### Hook Connection Flow
-
-1. Claude Code invokes `amux hooks claude <event>` (reads hook JSON from stdin).
-2. The CLI resolves the agent ID — either from the `AMUX_AGENT_ID` env var (amux-managed sessions) or from the hook JSON's `session_id` (external sessions).
-3. The CLI opens a connection to the local server via `ConnectPolicy::ExistingOnly` (it does not start a server). The link name follows the normal terminal-style `term-{rand}` form — there is no special "hook-" prefix.
-4. The CLI sends `Command::HandleHook { agent_id, provider: Claude, payload, external }`.
-5. The server dispatches to the matching `ClaudeSession`, which parses the payload and either links a transcript file or appends a structured entry for subscribers.
-
-### Permission Request Flow
-
-```
-Claude Code → `amux hooks claude permission-request` → Command::HandleHook → server
-    → ClaudeSession parses payload → StructuredLogSource push (JSON permission-request entry)
-    → MultiplexStructuredBuffer → rich client via StructuredOutput → user sees UI
-    → StructuredInput (PermissionResponse payload) routable → server → writes keystroke to PTY
-```
-
-See `crates/amux-cli/src/hooks.rs`, `crates/amux/src/agent/claude/hooks.rs`, `crates/amux/src/agent/claude/session/hooks.rs`.
-
----
-
-## Key Design Decisions
-
-### 1. Unified connection_loop for all transports
-
-Rather than separate `LocalConnection` and `RemoteConnection` types with different behavior, all connections use the same `connection_loop`. The `Transport` trait abstracts away the underlying stream. This eliminates code duplication and ensures protocol consistency across transports.
-
-### 2. BroadcastBuffer atomic subscribe
-
-The original design had a race condition window between getting the replay buffer and starting to receive live data. `BroadcastBuffer` (instantiated as `MultiplexByteBuffer` and `MultiplexStructuredBuffer`) solves this by holding a lock during both the snapshot and subscriber registration, ensuring zero gaps or duplicates. This is the core correctness guarantee for late-joining terminals and structured subscribers.
-
-### 3. MessagePack serialization
-
-MessagePack (rmp-serde with named/map format) replaced bincode for all transports. Named format provides forward/backward compatibility when fields are added, unlike bincode's positional encoding. Binary frames handle byte blobs cleanly without base64 encoding.
-
-### 4. Handshake-based connection establishment
-
-Connections start with standalone `Connect` / `ConnectResult` handshake frames (outside the `Message` enum). This:
-- Assigns link names at connect time (used for routing)
-- Carries JWT tokens for cloud authentication
-- Supports link name collision retry
-
-### 5. Lease-based subscriptions
-
-Subscriptions are tracked explicitly in `active_subscriptions: HashMap<SubscriptionId, SubscriptionEntry>`, keyed by a fresh `SubscriptionId` returned to the client. Each entry owns a cancellation oneshot, the reply `dst` route, and a `lease_deadline`. A paired output stream task reads from the buffer and sends along the stored `dst`; the client keeps the subscription alive with `ExtendSubscription`. Subscriptions end via `Unsubscribe`, lease expiry, host withdrawal, or buffer closure, always emitting `SubscriptionClosed { reason, ... }` to the subscriber.
-
-### 6. Routable/Direct/Command message split
-
-The `Message` enum has three variants that encode routing capability and trust level in the type system:
-- `Routable { src, dst, request_id, payload }` - Can be forwarded across hops. Payload is opaque `Vec<u8>` that intermediate servers copy verbatim. Generic forwarding logic handles all routable message types uniformly.
-- `Direct(message)` - Peer-to-peer session messages handled by the directly connected server. Cannot be forwarded. Used for discovery and in-session control (for example, `Reauth`).
-- `Command(command)` - CLI-only messages from local Unix socket clients. Rejected if received over TCP or WebSocket. Prevents remote peers from sending privileged commands (Shutdown, Debug, etc.).
-
-This collapses forwarding into one generic path in `handle_routable` and provides security boundaries via the Command/Direct split.
-
-### 7. Stack-based routing
-
-Routes are stacks (VecDeque) of link names rather than flat `Route::Remote { via }` entries. At each hop, the next link is popped from `dst` and pushed to `src`. This naturally:
-- Builds the return path as the message travels
-- Supports multi-hop forwarding without each intermediate server needing full topology knowledge
-- Enables reply routing by simply swapping src/dst
-
----
-
-## Proxying / Multi-hop Subscriptions
-
-When a client subscribes to an agent on a remote server, messages are forwarded through intermediate servers:
-
-```
-App ──SubscribeRaw──> Cloud Server ──SubscribeRaw──> Local Server
-                           │                              │
-                           │                         (owns agent)
-                           │                              │
-App <──RawOutput──────── Cloud <────RawOutput──────────── ┘ (ongoing)
-App ──RawInput─────────> Cloud ────RawInput──────────────>│
-```
-
-All forwarding is handled by generic `handle_routable`:
-1. Pop next hop from `dst`
-2. Push it to `src`
-3. Look up in routes table
-4. Send through channel
-
-The same code forwards all routable messages by forwarding the opaque `payload` verbatim. No message-type-specific forwarding logic needed — intermediate hops never deserialize the payload.
-
----
-
-## What's NOT Here (intentionally deferred)
-
-- **Multi-user access** - Cross-user collaboration (user A accessing user B's agents)
-- **Local network discovery** - Automatic discovery of amux servers on LAN
-- **Reconnection logic** - Client-side reconnect after disconnect
-- **Rate limiting** - Beyond token quotas
-
----
+The architecture deliberately keeps topology reachability, RPC call lifecycle,
+and agent process lifecycle separate. Topology says what can be reached. RPC
+state says which calls are active. Agent sessions own local process and I/O
+resources.
