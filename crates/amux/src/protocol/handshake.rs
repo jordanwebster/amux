@@ -199,7 +199,6 @@ mod tests {
             id: Uuid::from_u128(7),
             name: "host-a".to_string(),
             version: "0.1.29".to_string(),
-            client_name: "amux-cli".to_string(),
             capabilities: Capabilities {
                 features: Vec::new(),
                 supported_agent_types: vec![

@@ -403,7 +403,6 @@ pub(crate) fn host_to_wire(host: &Host) -> wire::Host {
         host_id: uuid_to_bytes(host.id),
         name: host.name.clone(),
         version: host.version.clone(),
-        client_name: host.client_name.clone(),
         capabilities: Some(capabilities_to_wire(&host.capabilities)),
     }
 }
@@ -413,7 +412,6 @@ pub(crate) fn host_from_wire(host: wire::Host) -> Result<Host, wire::DecodeError
         id: uuid_from_bytes("host_id", host.host_id)?,
         name: host.name,
         version: host.version,
-        client_name: host.client_name,
         capabilities: capabilities_from_wire(host.capabilities),
     })
 }

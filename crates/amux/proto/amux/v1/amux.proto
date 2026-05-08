@@ -339,8 +339,7 @@ message Host {
   bytes host_id = 1;
   string name = 2;
   string version = 3;
-  string client_name = 4;
-  Capabilities capabilities = 5;
+  Capabilities capabilities = 4;
 }
 
 message HostUp {

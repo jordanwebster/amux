@@ -86,7 +86,7 @@ impl Topology {
 
     pub(super) async fn require_minimum_client_version(
         &self,
-        client_name: &str,
+        client_id: &str,
         minimum_version: &str,
     ) {
         self.state
@@ -94,7 +94,7 @@ impl Topology {
             .await
             .config
             .minimum_client_versions
-            .insert(client_name.to_string(), minimum_version.to_string());
+            .insert(client_id.to_string(), minimum_version.to_string());
     }
 
     pub(super) async fn host_id(&self) -> Uuid {
@@ -285,7 +285,6 @@ impl Topology {
                         id: Uuid::new_v4(),
                         name: link.as_str().to_string(),
                         version: env!("CARGO_PKG_VERSION").to_string(),
-                        client_name: "amux-protocol-test".to_string(),
                         capabilities: Default::default(),
                     },
                 );
@@ -521,18 +520,6 @@ impl TestConnection {
         );
     }
 
-    pub(super) async fn expect_reauth_update_required(&mut self, minimum_version: &str) {
-        assert_eq!(
-            self.recv().await,
-            Message::ReauthResponse(crate::protocol::message::ReauthResponse {
-                error: Some(ProtocolError::UpdateRequired {
-                    minimum_version: minimum_version.to_string(),
-                    client_version: env!("CARGO_PKG_VERSION").to_string(),
-                }),
-            })
-        );
-    }
-
     pub(super) async fn expect_heartbeat_timeout(self) {
         let TestConnection {
             task, transport, ..
@@ -543,24 +530,6 @@ impl TestConnection {
             .expect("timed out waiting for heartbeat timeout")
             .expect("connection task panicked");
         assert!(matches!(result, Err(ConnectionError::HeartbeatTimeout)));
-    }
-
-    pub(super) async fn expect_update_required_closed(self, minimum_version: &str) {
-        let TestConnection {
-            task, transport, ..
-        } = self;
-        let _transport = transport;
-        let result = tokio::time::timeout(EXPECT_TIMEOUT, task)
-            .await
-            .expect("timed out waiting for update-required close")
-            .expect("connection task panicked");
-        assert!(matches!(
-            result,
-            Err(ConnectionError::UpdateRequired {
-                minimum_version: actual_minimum,
-                client_version,
-            }) if actual_minimum == minimum_version && client_version == env!("CARGO_PKG_VERSION")
-        ));
     }
 
     pub(super) async fn send_to_missing_route(

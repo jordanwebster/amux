@@ -65,8 +65,6 @@ pub struct Host {
     pub name: String,
     /// amux version of the host
     pub version: String,
-    /// Name of the host/client implementation.
-    pub client_name: String,
     /// Host-level protocol and agent creation capabilities.
     pub capabilities: Capabilities,
 }

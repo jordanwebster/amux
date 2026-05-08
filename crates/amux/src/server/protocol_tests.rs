@@ -192,15 +192,14 @@ async fn reauth_is_accepted_on_non_cloud_peer_connection() {
 }
 
 #[tokio::test]
-async fn reauth_update_required_reports_error_and_closes_connection() {
+async fn reauth_on_non_cloud_peer_does_not_apply_cloud_client_minimum_version() {
     let net = Topology::new().await;
-    net.require_minimum_client_version("amux-protocol-test", "999.0.0")
-        .await;
+    net.require_minimum_client_version("cli", "999.0.0").await;
     let mut peer = net.connect_peer("peer").await;
 
     peer.send_reauth("refreshed-token").await;
-    peer.expect_reauth_update_required("999.0.0").await;
-    peer.expect_update_required_closed("999.0.0").await;
+    peer.expect_reauth_accepted().await;
+    peer.close().await.unwrap();
 }
 
 #[tokio::test]

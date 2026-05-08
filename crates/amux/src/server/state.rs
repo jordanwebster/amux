@@ -1172,7 +1172,6 @@ mod tests {
             id,
             name: name.to_string(),
             version: version.to_string(),
-            client_name: "amux-test".to_string(),
             capabilities: Default::default(),
         }
     }

@@ -213,9 +213,9 @@ pub struct Config {
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub prevent_idle_sleep: Option<bool>,
 
-    /// Per-client minimum version requirements (e.g. {"amux-cli": "0.2.0"}).
-    /// Clients whose client_name matches a key and whose client_version is
-    /// below the value will be rejected with UpdateRequired.
+    /// Per-OAuth-client minimum version requirements (e.g. {"cli": "0.2.0"}).
+    /// Cloud peers whose token client_id matches a key and whose host version
+    /// is below the value will be rejected with UpdateRequired.
     #[serde(default, skip_serializing_if = "HashMap::is_empty")]
     pub minimum_client_versions: HashMap<String, String>,
 
@@ -517,7 +517,7 @@ mod tests {
     #[test]
     fn validate_minimum_client_versions_valid() {
         let config = Config {
-            minimum_client_versions: HashMap::from([("amux-cli".to_string(), "0.2.0".to_string())]),
+            minimum_client_versions: HashMap::from([("cli".to_string(), "0.2.0".to_string())]),
             ..Config::default()
         };
         assert!(config.validate(false).is_ok());
@@ -565,14 +565,11 @@ mod tests {
     #[test]
     fn validate_minimum_client_versions_invalid() {
         let config = Config {
-            minimum_client_versions: HashMap::from([(
-                "amux-cli".to_string(),
-                "v0.2.0".to_string(),
-            )]),
+            minimum_client_versions: HashMap::from([("cli".to_string(), "v0.2.0".to_string())]),
             ..Config::default()
         };
         let err = config.validate(false).unwrap_err();
         assert!(err.to_string().contains("minimum_client_versions"));
-        assert!(err.to_string().contains("amux-cli"));
+        assert!(err.to_string().contains("cli"));
     }
 }

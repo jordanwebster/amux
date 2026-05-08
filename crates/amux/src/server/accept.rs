@@ -267,15 +267,11 @@ pub(super) async fn accept_handshake<T: Transport>(
         }
     };
 
-    // Check minimum client version if configured for this host implementation.
+    // Direct peer identity is established by the handshake, not by routed HostUp events.
     if let Some(ref host) = peer_host {
-        let name = &host.client_name;
-        let (local_host_id, min_version) = {
+        let local_host_id = {
             let s = state.read().await;
-            (
-                s.host_id(),
-                s.config.minimum_client_versions.get(name).cloned(),
-            )
+            s.host_id()
         };
         if host.id == local_host_id {
             write_connect_result(
@@ -291,41 +287,6 @@ pub(super) async fn accept_handshake<T: Transport>(
             return Err(AcceptError::InvalidHandshake(
                 "peer host_id matched local host_id".to_string(),
             ));
-        }
-        if let Some(ref min_ver_str) = min_version {
-            let cv = host.version.as_str();
-            let reject = match (
-                semver::Version::parse(cv),
-                semver::Version::parse(min_ver_str),
-            ) {
-                (Ok(client), Ok(minimum)) => client < minimum,
-                // Missing or unparseable client version is treated as below minimum
-                _ => true,
-            };
-            if reject {
-                let cv = cv.to_string();
-                tracing::warn!(
-                    client_name = %name,
-                    client_version = %cv,
-                    minimum_version = %min_ver_str,
-                    "client version below minimum"
-                );
-                write_connect_result(
-                    transport,
-                    Some(ProtocolError::UpdateRequired {
-                        minimum_version: min_ver_str.clone(),
-                        client_version: cv.clone(),
-                    }),
-                    None,
-                    None,
-                    None,
-                )
-                .await?;
-                return Err(AcceptError::UpdateRequired {
-                    minimum_version: min_ver_str.clone(),
-                    client_version: cv,
-                });
-            }
         }
     }
 
@@ -373,7 +334,7 @@ pub(super) async fn accept_handshake<T: Transport>(
         match validator.validate(&token, &host, tcp_port).await {
             Ok(claims) => {
                 tracing::info!(user_id = %claims.sub, "authenticated");
-                match claims.sub.parse::<Uuid>() {
+                let user_id = match claims.sub.parse::<Uuid>() {
                     Ok(user_id) => user_id,
                     Err(_) => {
                         tracing::error!(sub = %claims.sub, "invalid user_id in token");
@@ -387,7 +348,52 @@ pub(super) async fn accept_handshake<T: Transport>(
                         .await?;
                         return Err(AcceptError::InvalidCredentials);
                     }
+                };
+
+                if let Some(ref host) = peer_host {
+                    let client_id = &claims.client_id;
+                    let min_version = {
+                        let state = state.read().await;
+                        state.config.minimum_client_versions.get(client_id).cloned()
+                    };
+                    if let Some(ref min_ver_str) = min_version {
+                        let cv = host.version.as_str();
+                        let reject = match (
+                            semver::Version::parse(cv),
+                            semver::Version::parse(min_ver_str),
+                        ) {
+                            (Ok(client), Ok(minimum)) => client < minimum,
+                            // Missing or unparseable client version is treated as below minimum
+                            _ => true,
+                        };
+                        if reject {
+                            let cv = cv.to_string();
+                            tracing::warn!(
+                                client_id = %client_id,
+                                client_version = %cv,
+                                minimum_version = %min_ver_str,
+                                "client version below minimum"
+                            );
+                            write_connect_result(
+                                transport,
+                                Some(ProtocolError::UpdateRequired {
+                                    minimum_version: min_ver_str.clone(),
+                                    client_version: cv.clone(),
+                                }),
+                                None,
+                                None,
+                                None,
+                            )
+                            .await?;
+                            return Err(AcceptError::UpdateRequired {
+                                minimum_version: min_ver_str.clone(),
+                                client_version: cv,
+                            });
+                        }
+                    }
                 }
+
+                user_id
             }
             Err(e) => {
                 tracing::warn!(error = %e, "token validation failed");
@@ -876,8 +882,8 @@ mod tests {
 
         assert_eq!(link, Link::new("peer-link").unwrap());
         assert_eq!(
-            peer_host.as_ref().map(|host| host.client_name.as_str()),
-            Some("amux-cli")
+            peer_host.as_ref().map(|host| host.name.as_str()),
+            Some("peer")
         );
         assert_eq!(
             peer_host.as_ref().map(|host| host.version.as_str()),

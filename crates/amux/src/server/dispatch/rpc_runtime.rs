@@ -847,7 +847,6 @@ mod tests {
             id,
             name: name.to_string(),
             version: "v1".to_string(),
-            client_name: "amux-test".to_string(),
             capabilities: Default::default(),
         }
     }

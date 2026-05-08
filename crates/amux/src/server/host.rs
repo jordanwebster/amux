@@ -2,7 +2,6 @@ use uuid::Uuid;
 
 use crate::protocol::message::{AGENT_TYPE_CLAUDE, Capabilities, Host, SupportedAgentType};
 
-pub(crate) const AMUX_CLIENT_NAME: &str = "amux-cli";
 pub(crate) const MAX_SUPPORTED_AGENT_TYPES: usize = 64;
 
 pub(crate) fn local_host(host_id: Uuid, host_name: &str) -> Host {
@@ -10,7 +9,6 @@ pub(crate) fn local_host(host_id: Uuid, host_name: &str) -> Host {
         id: host_id,
         name: host_name.to_string(),
         version: env!("CARGO_PKG_VERSION").to_string(),
-        client_name: AMUX_CLIENT_NAME.to_string(),
         capabilities: local_capabilities(),
     }
 }
@@ -24,9 +22,6 @@ pub(in crate::server) fn validate_remote_host(host: &Host) -> std::result::Resul
     }
     if host.version.is_empty() {
         return Err("host version must be non-empty".to_string());
-    }
-    if host.client_name.is_empty() {
-        return Err("host client_name must be non-empty".to_string());
     }
     if host.capabilities.supported_agent_types.len() > MAX_SUPPORTED_AGENT_TYPES {
         return Err(format!(

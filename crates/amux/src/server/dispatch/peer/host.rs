@@ -190,8 +190,7 @@ mod tests {
         let host = Host {
             id: Uuid::from_u128(123),
             name: "remote".to_string(),
-            version: "0.3.0".to_string(),
-            client_name: String::new(),
+            version: String::new(),
             capabilities: Default::default(),
         };
 
@@ -203,7 +202,7 @@ mod tests {
         .await;
 
         assert!(
-            matches!(result, Err(ConnectionError::Protocol(message)) if message.contains("client_name"))
+            matches!(result, Err(ConnectionError::Protocol(message)) if message.contains("version"))
         );
         assert_eq!(user_state.read().await.host_count(), 0);
     }

@@ -31,6 +31,9 @@ pub(crate) enum JwtError {
 
     #[error("Token host/port mismatch")]
     HostMismatch,
+
+    #[error("Missing client_id in token")]
+    MissingClientId,
 }
 
 /// Claims from a connection token
@@ -38,6 +41,8 @@ pub(crate) enum JwtError {
 pub(crate) struct ConnectionClaims {
     /// User ID (subject)
     pub(crate) sub: String,
+    /// OAuth client that requested the cloud connection token
+    pub(crate) client_id: String,
     /// Expected host this token is for
     pub(crate) host: String,
     /// Expected port this token is for
@@ -102,6 +107,10 @@ impl JwtValidator {
 
         let token_data = decode::<ConnectionClaims>(token, key, &validation)?;
         let claims = token_data.claims;
+
+        if claims.client_id.is_empty() {
+            return Err(JwtError::MissingClientId);
+        }
 
         // Verify host/port match
         if claims.host != expected_host || claims.port != expected_port {

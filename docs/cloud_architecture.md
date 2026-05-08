@@ -60,10 +60,10 @@ After initial OAuth setup, cloud connections use JWT tokens:
 3. Call GET {cloud_url}/api/connect with access_token
    Returns: { host, port, token (JWT), expires_at }
 4. Connect via TLS to host:port
-5. Send protobuf `ConnectRequest { proposed_link_name, auth_token: JWT, supported_protocol_versions, client? }`
+5. Send protobuf `ConnectRequest { proposed_link_name, auth_token: JWT, supported_protocol_versions, host }`
 6. Cloud server validates protocol version and JWT via JWKS
    - Checks version matches PROTOCOL_VERSION (rejects with ProtocolMismatch if not)
-   - If client_name is present and listed in minimum_client_versions config, checks client_version against that minimum (rejects with UpgradeRequired if below)
+   - If token client_id is listed in minimum_client_versions config, checks host version against that minimum (rejects with UpgradeRequired if below)
    - Fetches keys from {cloud_url}/.well-known/openid-configuration/jwks
    - Caches keys for 1 hour
    - Validates signature, audience ("amux_token"), expiry
@@ -88,6 +88,7 @@ The refresh token itself may be rotated by the OAuth server; if a new refresh to
 ```rust
 struct ConnectionClaims {
     sub: String,   // User ID
+    client_id: String, // OAuth client ID that requested the connection token
     host: String,  // Expected server hostname
     port: u16,     // Expected server port
 }
@@ -110,7 +111,7 @@ When a local server starts with cloud mode enabled:
 2. Exchange refresh_token for access_token (OAuth)
 3. Call /api/connect → { host, port, token, expires_at }
 4. TLS connect to host:port (rustls, webpki root certs)
-5. Send protobuf `ConnectRequest { proposed_link_name: "{hostname}-{rand}", auth_token: JWT, supported_protocol_versions }`
+5. Send protobuf `ConnectRequest { proposed_link_name: "{hostname}-{rand}", auth_token: JWT, supported_protocol_versions, host }`
 6. Cloud validates protocol version, JWT (JWKS), checks link_name uniqueness
 7. Cloud responds with protobuf `ConnectResponse::accepted`
 8. Enter connection_loop with token refresh enabled
