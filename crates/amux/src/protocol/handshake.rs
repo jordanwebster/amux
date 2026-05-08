@@ -1,7 +1,7 @@
 use prost::Message as ProstMessage;
 
 use crate::protocol::link::Link;
-use crate::protocol::message::ProtocolError;
+use crate::protocol::message::{Host, ProtocolError};
 use crate::protocol::wire;
 
 /// Protocol version for the Connect handshake.
@@ -18,22 +18,14 @@ pub struct Connect {
     pub token: Option<String>,
     pub version: u32,
     pub supported_versions: Vec<u32>,
-    /// Identifier for the client implementation (e.g. "amux-cli", "amux-app-ios").
-    pub client_name: Option<String>,
-    /// Semantic version of the client binary (e.g. "0.1.29").
-    pub client_version: Option<String>,
+    /// Host identity for peer/cloud/server connections. Local terminal/client
+    /// connections omit this because they are already on the same host.
+    pub host: Option<Host>,
 }
 
 impl Connect {
     /// Encode handshake request to protobuf bytes.
     pub(crate) fn encode(&self) -> Result<Vec<u8>, wire::EncodeError> {
-        let client = match (&self.client_name, &self.client_version) {
-            (None, None) => None,
-            (name, version) => Some(wire::ClientInfo {
-                name: name.clone().unwrap_or_default(),
-                version: version.clone().unwrap_or_default(),
-            }),
-        };
         let supported_versions = if self.supported_versions.is_empty() {
             vec![self.version]
         } else {
@@ -42,11 +34,8 @@ impl Connect {
         let request = wire::ConnectRequest {
             supported_protocol_versions: supported_versions,
             proposed_link_name: self.link_name.clone(),
-            client,
             auth_token: self.token.clone(),
-            capabilities: Some(wire::Capabilities {
-                features: Vec::new(),
-            }),
+            host: self.host.as_ref().map(wire::host_to_wire),
         };
         Ok(request.encode_to_vec())
     }
@@ -66,23 +55,14 @@ impl Connect {
                 .copied()
                 .unwrap_or_default()
         };
-        let (client_name, client_version) = request
-            .client
-            .map(|client| {
-                (
-                    empty_string_to_none(client.name),
-                    empty_string_to_none(client.version),
-                )
-            })
-            .unwrap_or((None, None));
+        let host = request.host.map(wire::host_from_wire).transpose()?;
 
         Ok(Self {
             link_name: request.proposed_link_name,
             token: request.auth_token,
             version,
             supported_versions: request.supported_protocol_versions,
-            client_name,
-            client_version,
+            host,
         })
     }
 }
@@ -97,6 +77,10 @@ pub struct ConnectResult {
     pub error: Option<ProtocolError>,
     pub idle_timeout_secs: Option<u32>,
     pub assigned_link_name: Option<String>,
+    /// Host identity for the accepting endpoint. Peer/server connections use
+    /// this to learn the direct counterparty; local connections and non-host
+    /// relays omit it.
+    pub host: Option<Host>,
 }
 
 impl ConnectResult {
@@ -140,9 +124,7 @@ impl ConnectResult {
                     protocol_version: PROTOCOL_VERSION,
                     assigned_link_name,
                     heartbeat,
-                    capabilities: Some(wire::Capabilities {
-                        features: Vec::new(),
-                    }),
+                    host: self.host.as_ref().map(wire::host_to_wire),
                 })
             }
         };
@@ -193,34 +175,54 @@ impl ConnectResult {
                     error: None,
                     idle_timeout_secs,
                     assigned_link_name: Some(accepted.assigned_link_name),
+                    host: accepted.host.map(wire::host_from_wire).transpose()?,
                 })
             }
             wire::connect_response::Outcome::Error(error) => Ok(Self {
                 error: Some(wire::decode_protocol_error(error)),
                 idle_timeout_secs: None,
                 assigned_link_name: None,
+                host: None,
             }),
         }
     }
 }
 
-fn empty_string_to_none(value: String) -> Option<String> {
-    if value.is_empty() { None } else { Some(value) }
-}
-
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::protocol::message::{AGENT_TYPE_CLAUDE, Capabilities, SupportedAgentType};
+    use uuid::Uuid;
+
+    fn sample_host() -> Host {
+        Host {
+            id: Uuid::from_u128(7),
+            name: "host-a".to_string(),
+            version: "0.1.29".to_string(),
+            client_name: "amux-cli".to_string(),
+            capabilities: Capabilities {
+                features: Vec::new(),
+                supported_agent_types: vec![
+                    SupportedAgentType {
+                        agent_type: AGENT_TYPE_CLAUDE.to_string(),
+                    },
+                    SupportedAgentType {
+                        agent_type: "third-party.example".to_string(),
+                    },
+                ],
+            },
+        }
+    }
 
     #[test]
     fn connect_request_roundtrip_uses_protobuf() {
+        let host = sample_host();
         let msg = Connect {
             link_name: "term-123".to_string(),
             token: Some("jwt".to_string()),
             version: PROTOCOL_VERSION,
             supported_versions: vec![PROTOCOL_VERSION],
-            client_name: Some("amux-cli".to_string()),
-            client_version: Some("0.1.29".to_string()),
+            host: Some(host.clone()),
         };
         let encoded = msg.encode().unwrap();
         let decoded = Connect::decode(&encoded).unwrap();
@@ -228,8 +230,7 @@ mod tests {
         assert_eq!(decoded.token.as_deref(), Some("jwt"));
         assert_eq!(decoded.version, PROTOCOL_VERSION);
         assert_eq!(decoded.supported_versions, vec![PROTOCOL_VERSION]);
-        assert_eq!(decoded.client_name.as_deref(), Some("amux-cli"));
-        assert_eq!(decoded.client_version.as_deref(), Some("0.1.29"));
+        assert_eq!(decoded.host, Some(host));
     }
 
     #[test]
@@ -238,20 +239,18 @@ mod tests {
     }
 
     #[test]
-    fn connect_request_decodes_missing_client_info() {
+    fn connect_request_decodes_missing_host() {
         let request = wire::ConnectRequest {
             supported_protocol_versions: vec![PROTOCOL_VERSION],
             proposed_link_name: "app-client".to_string(),
-            client: None,
             auth_token: None,
-            capabilities: None,
+            host: None,
         };
         let encoded = request.encode_to_vec();
         let decoded = Connect::decode(&encoded).unwrap();
         assert_eq!(decoded.link_name, "app-client");
         assert_eq!(decoded.version, PROTOCOL_VERSION);
-        assert!(decoded.client_name.is_none());
-        assert!(decoded.client_version.is_none());
+        assert!(decoded.host.is_none());
     }
 
     #[test]
@@ -265,8 +264,7 @@ mod tests {
                 token: None,
                 version: PROTOCOL_VERSION,
                 supported_versions: vec![PROTOCOL_VERSION],
-                client_name: None,
-                client_version: None,
+                host: None,
             };
             let encoded = msg.encode().unwrap();
             let decoded = Connect::decode(&encoded).unwrap();
@@ -280,12 +278,14 @@ mod tests {
             error: None,
             idle_timeout_secs: Some(180),
             assigned_link_name: Some("accepted-link".to_string()),
+            host: Some(sample_host()),
         };
         let encoded = msg.encode().unwrap();
         let decoded = ConnectResult::decode(&encoded).unwrap();
         assert!(decoded.error.is_none());
         assert_eq!(decoded.idle_timeout_secs, Some(180));
         assert_eq!(decoded.assigned_link_name.as_deref(), Some("accepted-link"));
+        assert_eq!(decoded.host, msg.host);
     }
 
     #[test]
@@ -296,7 +296,7 @@ mod tests {
                     protocol_version: PROTOCOL_VERSION,
                     assigned_link_name: "accepted-link".to_string(),
                     heartbeat: None,
-                    capabilities: None,
+                    host: None,
                 },
             )),
         };
@@ -313,7 +313,7 @@ mod tests {
                     protocol_version: PROTOCOL_VERSION,
                     assigned_link_name: String::new(),
                     heartbeat: None,
-                    capabilities: None,
+                    host: None,
                 },
             )),
         };
@@ -329,7 +329,7 @@ mod tests {
                     protocol_version: PROTOCOL_VERSION,
                     assigned_link_name: "bad.link".to_string(),
                     heartbeat: None,
-                    capabilities: None,
+                    host: None,
                 },
             )),
         };
@@ -359,7 +359,7 @@ mod tests {
                         protocol_version: PROTOCOL_VERSION,
                         assigned_link_name: "accepted-link".to_string(),
                         heartbeat: Some(heartbeat),
-                        capabilities: None,
+                        host: None,
                     },
                 )),
             };
@@ -375,6 +375,7 @@ mod tests {
                 error: None,
                 idle_timeout_secs: None,
                 assigned_link_name: None,
+                host: None,
             }
             .encode()
             .is_err()
@@ -384,6 +385,7 @@ mod tests {
                 error: None,
                 idle_timeout_secs: Some(0),
                 assigned_link_name: Some("accepted-link".to_string()),
+                host: None,
             }
             .encode()
             .is_err()
@@ -393,6 +395,7 @@ mod tests {
                 error: None,
                 idle_timeout_secs: Some(u32::MAX),
                 assigned_link_name: Some("accepted-link".to_string()),
+                host: None,
             }
             .encode()
             .is_err()
@@ -408,6 +411,7 @@ mod tests {
             }),
             idle_timeout_secs: None,
             assigned_link_name: None,
+            host: None,
         };
         let encoded = msg.encode().unwrap();
         let decoded = ConnectResult::decode(&encoded).unwrap();

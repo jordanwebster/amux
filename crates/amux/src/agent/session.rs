@@ -25,7 +25,7 @@ use super::{
 use crate::agent::TEST_ECHO_V1;
 use crate::agent::claude::io as claude_io;
 use crate::protocol::message::{
-    AgentType, CreateAgentRequest, HookProvider, ProtocolError, RoutingEvent,
+    AGENT_TYPE_CLAUDE, AgentType, CreateAgentRequest, HookProvider, ProtocolError, RoutingEvent,
 };
 use crate::protocol::route::Route;
 use crate::suspend::SuspendedAgent;
@@ -365,9 +365,9 @@ impl AgentSession {
             working_dir: self.working_dir().to_path_buf(),
             route: Route::empty(),
             agent_type: match self {
-                Self::Claude(_) => "claude".to_string(),
+                Self::Claude(_) => AGENT_TYPE_CLAUDE.to_string(),
                 #[cfg(any(debug_assertions, test))]
-                Self::TestAgent(_) => "test_agent".to_string(),
+                Self::TestAgent(_) => crate::protocol::message::AGENT_TYPE_TEST_AGENT.to_string(),
             },
             io_protocols: self.io_protocols(),
             readonly: self.readonly(),

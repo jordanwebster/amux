@@ -130,7 +130,7 @@ async fn connect_existing(config: &Config) -> Result<Connection> {
     let mut transport = connect_local_transport(config)
         .await
         .map_err(TransportError::from)?;
-    let outcome = connect_handshake(&mut transport, generate_terminal_link)
+    let outcome = connect_handshake(&mut transport, generate_terminal_link, None)
         .await
         .map_err(ConnectError::from)?;
     let link = outcome.link;

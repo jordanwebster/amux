@@ -22,11 +22,14 @@ use uuid::Uuid;
 use super::connection::{
     ConnectionContext, HeartbeatRole, HeartbeatSetup, RunConnection, run_connection,
 };
-use super::{ConnectionHandle, LOCAL_USER_ID, ServerState, ServerUserState, ensure_user_state};
+use super::{
+    ConnectionHandle, LOCAL_USER_ID, ServerState, ServerUserState, ensure_user_state, local_host,
+    validate_remote_host,
+};
 use crate::agent::SessionEvent;
 use crate::protocol::handshake::{Connect, ConnectResult, PROTOCOL_VERSION};
 use crate::protocol::link::Link;
-use crate::protocol::message::{FrameBody, Message, PeerFrame, ProtocolError, RequestFrame};
+use crate::protocol::message::{FrameBody, Host, Message, PeerFrame, ProtocolError, RequestFrame};
 use crate::protocol::route::generate_server_link;
 use crate::protocol::{method, wire};
 use crate::rpc::RpcPeerStreamOutboundStart;
@@ -109,11 +112,13 @@ async fn write_connect_result<T: Transport>(
     error: Option<ProtocolError>,
     idle_timeout_secs: Option<u32>,
     assigned_link_name: Option<&Link>,
+    host: Option<&Host>,
 ) -> Result<()> {
     let payload = ConnectResult {
         error,
         idle_timeout_secs,
         assigned_link_name: assigned_link_name.map(|link| link.as_str().to_string()),
+        host: host.cloned(),
     }
     .encode()
     .map_err(TransportError::from)?;
@@ -170,6 +175,7 @@ pub(super) async fn accept_handshake<T: Transport>(
     transport: &mut T,
     state: &Arc<RwLock<ServerState>>,
     verify_token: bool,
+    is_local: bool,
     idle_timeout_secs: Option<u32>,
 ) -> Result<(
     Link,
@@ -177,8 +183,7 @@ pub(super) async fn accept_handshake<T: Transport>(
     mpsc::Receiver<Message>,
     Uuid,
     Arc<RwLock<ServerUserState>>,
-    Option<String>,
-    Option<String>,
+    Option<Host>,
 )> {
     let payload = transport.read_frame().await?;
     let connect = Connect::decode(&payload).map_err(|e| {
@@ -189,8 +194,7 @@ pub(super) async fn accept_handshake<T: Transport>(
         token,
         version,
         supported_versions,
-        client_name,
-        client_version,
+        host,
     } = connect;
 
     if version != PROTOCOL_VERSION {
@@ -213,14 +217,83 @@ pub(super) async fn accept_handshake<T: Transport>(
         });
     }
 
-    // Check minimum client version if configured for this client_name
-    if let Some(ref name) = client_name {
-        let min_version = {
+    let peer_host = match (is_local, host) {
+        (true, Some(_)) => {
+            write_connect_result(
+                transport,
+                Some(ProtocolError::InvalidArgument {
+                    message: "local connections must not send host identity".to_string(),
+                }),
+                None,
+                None,
+                None,
+            )
+            .await?;
+            return Err(AcceptError::InvalidHandshake(
+                "local connection sent host identity".to_string(),
+            ));
+        }
+        (true, None) => None,
+        (false, None) => {
+            write_connect_result(
+                transport,
+                Some(ProtocolError::InvalidArgument {
+                    message: "peer connections must send host identity".to_string(),
+                }),
+                None,
+                None,
+                None,
+            )
+            .await?;
+            return Err(AcceptError::InvalidHandshake(
+                "peer connection omitted host identity".to_string(),
+            ));
+        }
+        (false, Some(host)) => {
+            if let Err(message) = validate_remote_host(&host) {
+                write_connect_result(
+                    transport,
+                    Some(ProtocolError::InvalidArgument {
+                        message: message.clone(),
+                    }),
+                    None,
+                    None,
+                    None,
+                )
+                .await?;
+                return Err(AcceptError::InvalidHandshake(message));
+            }
+            Some(host)
+        }
+    };
+
+    // Check minimum client version if configured for this host implementation.
+    if let Some(ref host) = peer_host {
+        let name = &host.client_name;
+        let (local_host_id, min_version) = {
             let s = state.read().await;
-            s.config.minimum_client_versions.get(name).cloned()
+            (
+                s.host_id(),
+                s.config.minimum_client_versions.get(name).cloned(),
+            )
         };
+        if host.id == local_host_id {
+            write_connect_result(
+                transport,
+                Some(ProtocolError::InvalidArgument {
+                    message: "peer host_id must not match local host_id".to_string(),
+                }),
+                None,
+                None,
+                None,
+            )
+            .await?;
+            return Err(AcceptError::InvalidHandshake(
+                "peer host_id matched local host_id".to_string(),
+            ));
+        }
         if let Some(ref min_ver_str) = min_version {
-            let cv = client_version.as_deref().unwrap_or("");
+            let cv = host.version.as_str();
             let reject = match (
                 semver::Version::parse(cv),
                 semver::Version::parse(min_ver_str),
@@ -245,6 +318,7 @@ pub(super) async fn accept_handshake<T: Transport>(
                     }),
                     None,
                     None,
+                    None,
                 )
                 .await?;
                 return Err(AcceptError::UpdateRequired {
@@ -265,7 +339,7 @@ pub(super) async fn accept_handshake<T: Transport>(
                 wire::encode_connect_invalid_link_name_response(proposed_link.as_str(), &reason),
             )
             .await?;
-            return Err(AcceptError::Config(format!(
+            return Err(AcceptError::InvalidHandshake(format!(
                 "Invalid link name '{}': {}",
                 proposed_link, reason
             )));
@@ -278,6 +352,7 @@ pub(super) async fn accept_handshake<T: Transport>(
             write_connect_result(
                 transport,
                 Some(ProtocolError::InvalidCredentials),
+                None,
                 None,
                 None,
             )
@@ -307,6 +382,7 @@ pub(super) async fn accept_handshake<T: Transport>(
                             Some(ProtocolError::InvalidCredentials),
                             None,
                             None,
+                            None,
                         )
                         .await?;
                         return Err(AcceptError::InvalidCredentials);
@@ -318,6 +394,7 @@ pub(super) async fn accept_handshake<T: Transport>(
                 write_connect_result(
                     transport,
                     Some(ProtocolError::InvalidCredentials),
+                    None,
                     None,
                     None,
                 )
@@ -350,15 +427,29 @@ pub(super) async fn accept_handshake<T: Transport>(
                 }),
                 None,
                 None,
+                None,
             )
             .await?;
             return Err(AcceptError::TooManyHandshakeAttempts);
         }
     };
 
+    let accepted_host = if is_local {
+        None
+    } else {
+        let state = state.read().await;
+        (!state.is_cloud_server()).then(|| local_host(state.host_id(), state.host_name()))
+    };
+
     // Route is inserted — if the success write fails, clean up the stale route
-    if let Err(e) =
-        write_connect_result(transport, None, idle_timeout_secs, Some(&assigned_link)).await
+    if let Err(e) = write_connect_result(
+        transport,
+        None,
+        idle_timeout_secs,
+        Some(&assigned_link),
+        accepted_host.as_ref(),
+    )
+    .await
     {
         let mut us = user_state.write().await;
         us.remove_link(&assigned_link);
@@ -371,8 +462,7 @@ pub(super) async fn accept_handshake<T: Transport>(
         outgoing_rx,
         user_id,
         user_state,
-        client_name,
-        client_version,
+        peer_host,
     ))
 }
 
@@ -395,23 +485,28 @@ pub(super) async fn accept_connection<T: TransportSplit>(
     // Handshake uses the transport directly (safe — no select! involved).
     // Timeout prevents slow-loris: clients that connect but never send handshake data.
     // The span gives all handshake-phase logs transport context (before conn_span exists).
-    let (link, route_handle, outgoing_rx, user_id, user_state, client_name, client_version) =
-        async {
-            match tokio::time::timeout(
-                HANDSHAKE_TIMEOUT,
-                accept_handshake(&mut transport, &state, verify_token, idle_timeout_secs),
-            )
-            .await
-            {
-                Ok(result) => result,
-                Err(_) => {
-                    tracing::warn!("handshake timed out");
-                    Err(AcceptError::HandshakeTimeout)
-                }
+    let (link, route_handle, outgoing_rx, user_id, user_state, peer_host) = async {
+        match tokio::time::timeout(
+            HANDSHAKE_TIMEOUT,
+            accept_handshake(
+                &mut transport,
+                &state,
+                verify_token,
+                is_local,
+                idle_timeout_secs,
+            ),
+        )
+        .await
+        {
+            Ok(result) => result,
+            Err(_) => {
+                tracing::warn!("handshake timed out");
+                Err(AcceptError::HandshakeTimeout)
             }
         }
-        .instrument(tracing::info_span!("handshake", transport = log_label))
-        .await?;
+    }
+    .instrument(tracing::info_span!("handshake", transport = log_label))
+    .await?;
 
     let heartbeat = idle_timeout_secs.map(|secs| HeartbeatSetup {
         role: HeartbeatRole::Acceptor,
@@ -430,6 +525,12 @@ pub(super) async fn accept_connection<T: TransportSplit>(
         let rpc = {
             let mut us = user_state.write().await;
             us.mark_peer_link(link.clone());
+            if let Some(host) = peer_host.clone() {
+                let change = us.apply_direct_peer_host_up(&link, host);
+                for event in &change.events {
+                    super::broadcast_topology_event(&mut us, event, Some(&link));
+                }
+            }
             us.rpc_for_link(&link)
                 .expect("reserved peer route should have RPC state")
         };
@@ -464,8 +565,6 @@ pub(super) async fn accept_connection<T: TransportSplit>(
         link: link.clone(),
         is_local,
         heartbeat,
-        client_name,
-        client_version,
     };
 
     run_connection(RunConnection {
@@ -555,17 +654,21 @@ pub(super) async fn tcp_connect(
 
     let mut transport = TcpTransport::new(stream);
 
-    let (hostname, randomise) = {
+    let (host, randomise) = {
         let state = state.read().await;
         (
-            state.config.host_name.clone(),
+            local_host(state.host_id, &state.config.host_name),
             state.config.randomise_link_name,
         )
     };
 
-    let outcome = connect_handshake(&mut transport, || {
-        generate_server_link(&hostname, randomise)
-    })
+    let hostname = host.name.clone();
+    let local_host_id = host.id;
+    let outcome = connect_handshake(
+        &mut transport,
+        || generate_server_link(&hostname, randomise),
+        Some(host),
+    )
     .await
     .map_err(map_handshake_error)?;
     let link = outcome.link;
@@ -573,6 +676,19 @@ pub(super) async fn tcp_connect(
         role: HeartbeatRole::Dialer,
         idle_timeout: std::time::Duration::from_secs(secs.into()),
     });
+    let peer_host = outcome.host.ok_or_else(|| {
+        AcceptError::InvalidHandshake("accepted peer connection omitted host identity".to_string())
+    })?;
+    if let Err(message) = validate_remote_host(&peer_host) {
+        return Err(AcceptError::InvalidHandshake(format!(
+            "accepted peer host identity is invalid: {message}"
+        )));
+    }
+    if peer_host.id == local_host_id {
+        return Err(AcceptError::InvalidHandshake(
+            "accepted peer host_id matched local host_id".to_string(),
+        ));
+    }
 
     let conn_span = tracing::info_span!(
         "connection",
@@ -589,6 +705,10 @@ pub(super) async fn tcp_connect(
             AcceptError::Config(format!("assigned link `{link}` is already connected"))
         })?;
         us.mark_peer_link(link.clone());
+        let change = us.apply_direct_peer_host_up(&link, peer_host);
+        for event in &change.events {
+            super::broadcast_topology_event(&mut us, event, Some(&link));
+        }
         let routing_call_id = crate::protocol::CallId::from(Uuid::new_v4());
         let initial_messages = vec![Message::Peer(PeerFrame {
             call_id: routing_call_id.clone(),
@@ -628,8 +748,6 @@ pub(super) async fn tcp_connect(
             link: link.clone(),
             is_local: false,
             heartbeat,
-            client_name: Some("amux-cli".to_string()),
-            client_version: Some(env!("CARGO_PKG_VERSION").to_string()),
         };
         let _ = run_connection(RunConnection {
             transport,
@@ -695,13 +813,24 @@ mod tests {
     }
 
     fn connect_request(link_name: &str, versions: Vec<u32>) -> Vec<u8> {
+        connect_request_with_host(
+            link_name,
+            versions,
+            Some(local_host(Uuid::from_u128(77), "peer")),
+        )
+    }
+
+    fn connect_request_with_host(
+        link_name: &str,
+        versions: Vec<u32>,
+        host: Option<Host>,
+    ) -> Vec<u8> {
         Connect {
             link_name: link_name.to_string(),
             token: None,
             version: versions.first().copied().unwrap_or_default(),
             supported_versions: versions.clone(),
-            client_name: Some("amux-cli".to_string()),
-            client_version: Some(env!("CARGO_PKG_VERSION").to_string()),
+            host: host.clone(),
         }
         .encode()
         .map(|bytes| {
@@ -711,12 +840,8 @@ mod tests {
                 wire::ConnectRequest {
                     supported_protocol_versions: versions,
                     proposed_link_name: link_name.to_string(),
-                    client: Some(wire::ClientInfo {
-                        name: "amux-cli".to_string(),
-                        version: env!("CARGO_PKG_VERSION").to_string(),
-                    }),
                     auth_token: None,
-                    capabilities: None,
+                    host: host.as_ref().map(wire::host_to_wire),
                 }
                 .encode_to_vec()
             }
@@ -744,20 +869,93 @@ mod tests {
             vec![PROTOCOL_VERSION],
         ))]);
 
-        let (link, _handle, _outgoing_rx, _user_id, _user_state, client_name, client_version) =
-            accept_handshake(&mut transport, &state, false, Some(180))
+        let (link, _handle, _outgoing_rx, _user_id, _user_state, peer_host) =
+            accept_handshake(&mut transport, &state, false, false, Some(180))
                 .await
                 .unwrap();
 
         assert_eq!(link, Link::new("peer-link").unwrap());
-        assert_eq!(client_name.as_deref(), Some("amux-cli"));
-        assert_eq!(client_version.as_deref(), Some(env!("CARGO_PKG_VERSION")));
+        assert_eq!(
+            peer_host.as_ref().map(|host| host.client_name.as_str()),
+            Some("amux-cli")
+        );
+        assert_eq!(
+            peer_host.as_ref().map(|host| host.version.as_str()),
+            Some(env!("CARGO_PKG_VERSION"))
+        );
         assert_eq!(transport.writes.len(), 1);
 
         let response = decode_connect_result(&transport.writes[0]);
         assert!(response.error.is_none());
         assert_eq!(response.idle_timeout_secs, Some(180));
         assert_eq!(response.assigned_link_name.as_deref(), Some("peer-link"));
+        let accepted_host = response.host.expect("acceptor host should be present");
+        let state = state.read().await;
+        assert_eq!(accepted_host.id, state.host_id());
+        assert_eq!(accepted_host.name, state.host_name());
+    }
+
+    #[tokio::test]
+    async fn accept_handshake_rejects_peer_connection_without_host() {
+        let (state, _user_state) = crate::server::test_helpers::test_state().await;
+        let mut transport = FakeTransport::new(vec![Ok(connect_request_with_host(
+            "peer-link",
+            vec![PROTOCOL_VERSION],
+            None,
+        ))]);
+
+        let result = accept_handshake(&mut transport, &state, false, false, Some(180)).await;
+
+        assert!(matches!(result, Err(AcceptError::InvalidHandshake(_))));
+        let response = decode_connect_result(&transport.writes[0]);
+        assert_eq!(
+            response.error,
+            Some(ProtocolError::InvalidArgument {
+                message: "peer connections must send host identity".to_string(),
+            })
+        );
+    }
+
+    #[tokio::test]
+    async fn accept_handshake_rejects_local_connection_with_host() {
+        let (state, _user_state) = crate::server::test_helpers::test_state().await;
+        let mut transport = FakeTransport::new(vec![Ok(connect_request(
+            "local-link",
+            vec![PROTOCOL_VERSION],
+        ))]);
+
+        let result = accept_handshake(&mut transport, &state, false, true, None).await;
+
+        assert!(matches!(result, Err(AcceptError::InvalidHandshake(_))));
+        let response = decode_connect_result(&transport.writes[0]);
+        assert_eq!(
+            response.error,
+            Some(ProtocolError::InvalidArgument {
+                message: "local connections must not send host identity".to_string(),
+            })
+        );
+    }
+
+    #[tokio::test]
+    async fn accept_handshake_rejects_peer_connection_with_own_host_id() {
+        let (state, _user_state) = crate::server::test_helpers::test_state().await;
+        let own_host_id = state.read().await.host_id();
+        let mut transport = FakeTransport::new(vec![Ok(connect_request_with_host(
+            "peer-link",
+            vec![PROTOCOL_VERSION],
+            Some(local_host(own_host_id, "same-host")),
+        ))]);
+
+        let result = accept_handshake(&mut transport, &state, false, false, Some(180)).await;
+
+        assert!(matches!(result, Err(AcceptError::InvalidHandshake(_))));
+        let response = decode_connect_result(&transport.writes[0]);
+        assert_eq!(
+            response.error,
+            Some(ProtocolError::InvalidArgument {
+                message: "peer host_id must not match local host_id".to_string(),
+            })
+        );
     }
 
     #[tokio::test]
@@ -775,7 +973,7 @@ mod tests {
         ))]);
 
         let (link, _handle, _outgoing_rx, ..) =
-            accept_handshake(&mut transport, &state, false, Some(180))
+            accept_handshake(&mut transport, &state, false, false, Some(180))
                 .await
                 .unwrap();
 
@@ -794,9 +992,9 @@ mod tests {
             vec![PROTOCOL_VERSION],
         ))]);
 
-        let result = accept_handshake(&mut transport, &state, false, Some(180)).await;
+        let result = accept_handshake(&mut transport, &state, false, false, Some(180)).await;
 
-        assert!(matches!(result, Err(AcceptError::Config(_))));
+        assert!(matches!(result, Err(AcceptError::InvalidHandshake(_))));
         let response = decode_connect_result(&transport.writes[0]);
         assert_eq!(
             response.error,
@@ -824,7 +1022,7 @@ mod tests {
             vec![PROTOCOL_VERSION],
         ))]);
 
-        let result = accept_handshake(&mut transport, &state, true, Some(180)).await;
+        let result = accept_handshake(&mut transport, &state, true, false, Some(180)).await;
 
         assert!(matches!(result, Err(AcceptError::InvalidCredentials)));
         let response = decode_connect_result(&transport.writes[0]);
@@ -841,7 +1039,7 @@ mod tests {
             vec![PROTOCOL_VERSION - 2, PROTOCOL_VERSION - 1],
         ))]);
 
-        let result = accept_handshake(&mut transport, &state, false, Some(180)).await;
+        let result = accept_handshake(&mut transport, &state, false, false, Some(180)).await;
 
         assert!(matches!(result, Err(AcceptError::ProtocolMismatch { .. })));
         let response = decode_connect_result(&transport.writes[0]);

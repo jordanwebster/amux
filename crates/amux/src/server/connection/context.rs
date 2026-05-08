@@ -52,10 +52,6 @@ pub(crate) struct ConnectionContext {
     /// Negotiated heartbeat setup for this connection. `None` disables
     /// heartbeats entirely (used for local Unix-socket connections).
     pub(crate) heartbeat: Option<HeartbeatSetup>,
-    /// Client implementation name (from Connect handshake, e.g. "amux-cli").
-    pub(crate) client_name: Option<String>,
-    /// Semantic version of the connecting client (from Connect handshake).
-    pub(crate) client_version: Option<String>,
 }
 
 impl ConnectionContext {

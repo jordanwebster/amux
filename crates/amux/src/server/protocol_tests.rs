@@ -204,14 +204,11 @@ async fn reauth_update_required_reports_error_and_closes_connection() {
 }
 
 #[tokio::test]
-async fn peer_routing_subscription_sends_host_snapshot_then_complete() {
+async fn peer_routing_subscription_sends_snapshot_complete_without_self_host() {
     let net = Topology::new().await;
     let mut peer = net.connect_peer("peer").await;
     let subscription = peer.subscribe_routing_events().await;
 
-    subscription
-        .expect_local_host_snapshot(&mut peer, &net)
-        .await;
     subscription.expect_snapshot_complete(&mut peer).await;
     peer.close().await.unwrap();
 }
@@ -223,9 +220,6 @@ async fn peer_routing_subscription_snapshot_includes_existing_agents_before_comp
     let mut peer = net.connect_peer("peer").await;
     let subscription = peer.subscribe_routing_events().await;
 
-    subscription
-        .expect_local_host_snapshot(&mut peer, &net)
-        .await;
     subscription
         .expect_agent_up(&mut peer, agent_id, "echo", TEST_ECHO_V1)
         .await;
@@ -239,9 +233,6 @@ async fn duplicate_peer_routing_subscription_returns_already_exists() {
     let mut peer = net.connect_peer("peer").await;
     let subscription = peer.subscribe_routing_events().await;
 
-    subscription
-        .expect_local_host_snapshot(&mut peer, &net)
-        .await;
     subscription.expect_snapshot_complete(&mut peer).await;
     peer.expect_duplicate_routing_subscription_rejected().await;
     peer.close().await.unwrap();
@@ -253,9 +244,6 @@ async fn peer_routing_subscription_streams_live_agent_announcements_after_snapsh
     let mut peer = net.connect_peer("peer").await;
     let subscription = peer.subscribe_routing_events().await;
 
-    subscription
-        .expect_local_host_snapshot(&mut peer, &net)
-        .await;
     subscription.expect_snapshot_complete(&mut peer).await;
 
     let agent_id = net.spawn_test_echo_agent("echo").await;
@@ -277,9 +265,6 @@ async fn peer_routing_subscription_streams_remote_host_down_when_link_closes() {
     let mut observer = home.connect_peer("observer").await;
     let subscription = observer.subscribe_routing_events().await;
 
-    subscription
-        .expect_local_host_snapshot(&mut observer, &home)
-        .await;
     subscription.expect_snapshot_complete(&mut observer).await;
 
     let link = home.connect_peer_topology("host", &host).await;

@@ -11,13 +11,15 @@ use super::connection::{
     run_connection,
 };
 use super::routing::{broadcast_topology_event, withdraw_agent};
-use super::{ConnectionHandle, LOCAL_USER_ID, ServerState, ServerUserState, test_helpers};
+use super::{
+    ConnectionHandle, LOCAL_USER_ID, ServerState, ServerUserState, local_host, test_helpers,
+};
 use crate::agent::{AgentSession, SessionEvent, StopPolicy, TEST_ECHO_COMMAND, TestAgentSession};
 use crate::client::{Connection, OpenSessionClient, RpcClient, RpcClientError};
 use crate::config::Config;
 use crate::protocol::link::Link;
 use crate::protocol::message::{
-    CallId, FrameBody, GoAway, LocalFrame, Message, PeerFrame, ProtocolError, ReauthRequest,
+    CallId, FrameBody, GoAway, Host, LocalFrame, Message, PeerFrame, ProtocolError, ReauthRequest,
     RequestFrame, ResponseFrame, RoutedFrame, RoutedFrameMessage, RoutingEvent, ShutdownReason,
 };
 use crate::protocol::open_session::{self, OpenSessionOutputEvent, OpenSessionServerFrame};
@@ -99,6 +101,11 @@ impl Topology {
         self.state.read().await.host_id
     }
 
+    async fn local_host(&self) -> Host {
+        let state = self.state.read().await;
+        local_host(state.host_id, &state.config.host_name)
+    }
+
     pub(super) async fn connect_peer_topology(
         &self,
         link: &str,
@@ -106,12 +113,14 @@ impl Topology {
     ) -> PeerTopologyLink {
         let link = Link::new(link).unwrap();
         let (local_transport, peer_transport) = memory_transport_pair(256);
+        let local_host = self.local_host().await;
+        let peer_host = peer.local_host().await;
 
         let local_task = self
-            .start_peer_connection(link.clone(), local_transport)
+            .start_peer_connection(link.clone(), local_transport, peer_host)
             .await;
         let peer_task = peer
-            .start_peer_connection(link.clone(), peer_transport)
+            .start_peer_connection(link.clone(), peer_transport, local_host)
             .await;
 
         PeerTopologyLink {
@@ -180,6 +189,7 @@ impl Topology {
         &self,
         link: Link,
         transport: MemoryTransport,
+        peer_host: Host,
     ) -> JoinHandle<super::connection::Result<()>> {
         let (route_handle, outgoing_rx, initial_messages, routing_call_id) = {
             let mut user_state = self.user_state.write().await;
@@ -187,6 +197,10 @@ impl Topology {
                 .try_reserve_link(link.clone())
                 .expect("test peer link should be unique");
             user_state.mark_peer_link(link.clone());
+            let change = user_state.apply_direct_peer_host_up(&link, peer_host);
+            for event in &change.events {
+                broadcast_topology_event(&mut user_state, event, Some(&link));
+            }
             let routing_call_id = CallId::from(Uuid::new_v4());
             let initial_messages = vec![Message::Peer(PeerFrame {
                 call_id: routing_call_id.clone(),
@@ -223,8 +237,6 @@ impl Topology {
             link: link.clone(),
             is_local: false,
             heartbeat: None,
-            client_name: Some("amux-protocol-test".to_string()),
-            client_version: Some(env!("CARGO_PKG_VERSION").to_string()),
         };
         let response_tx = route_handle.sender();
         let close_rx = route_handle.close_receiver();
@@ -267,6 +279,19 @@ impl Topology {
             context.handle = route_handle.clone();
             if !is_local {
                 user_state.mark_peer_link(link.clone());
+                let change = user_state.apply_direct_peer_host_up(
+                    &link,
+                    Host {
+                        id: Uuid::new_v4(),
+                        name: link.as_str().to_string(),
+                        version: env!("CARGO_PKG_VERSION").to_string(),
+                        client_name: "amux-protocol-test".to_string(),
+                        capabilities: Default::default(),
+                    },
+                );
+                for event in &change.events {
+                    broadcast_topology_event(&mut user_state, event, Some(&link));
+                }
             }
         }
 
@@ -284,8 +309,6 @@ impl Topology {
             link: link.clone(),
             is_local,
             heartbeat,
-            client_name: Some("amux-protocol-test".to_string()),
-            client_version: Some(env!("CARGO_PKG_VERSION").to_string()),
         };
         let response_tx = route_handle.sender();
         let close_rx = route_handle.close_receiver();
@@ -1007,36 +1030,6 @@ pub(super) struct RoutingSubscription {
 }
 
 impl RoutingSubscription {
-    pub(super) async fn expect_local_host_snapshot(
-        &self,
-        peer: &mut TestConnection,
-        topology: &Topology,
-    ) {
-        let (host_id, host_name, version) = {
-            let state = topology.state.read().await;
-            (
-                state.host_id,
-                state.config.host_name.clone(),
-                env!("CARGO_PKG_VERSION").to_string(),
-            )
-        };
-
-        let event = expect_peer_routing_event(peer.recv().await, &self.call_id);
-        let RoutingEvent::HostUp {
-            id,
-            name,
-            route,
-            version: event_version,
-        } = event
-        else {
-            panic!("expected HostUp snapshot event, got {event:?}");
-        };
-        assert_eq!(id, host_id);
-        assert_eq!(name, host_name);
-        assert!(route.is_empty());
-        assert_eq!(event_version, version);
-    }
-
     pub(super) async fn expect_snapshot_complete(&self, peer: &mut TestConnection) {
         let event = expect_peer_routing_event(peer.recv().await, &self.call_id);
         assert!(matches!(event, RoutingEvent::SnapshotComplete));
@@ -1051,16 +1044,14 @@ impl RoutingSubscription {
     ) {
         let event = expect_peer_routing_event(peer.recv().await, &self.call_id);
         let RoutingEvent::HostUp {
-            id,
-            name: event_name,
+            host,
             route: event_route,
-            ..
         } = event
         else {
             panic!("expected HostUp live event, got {event:?}");
         };
-        assert_eq!(id, host_id);
-        assert_eq!(event_name, name);
+        assert_eq!(host.id, host_id);
+        assert_eq!(host.name, name);
         assert_eq!(event_route, route);
     }
 

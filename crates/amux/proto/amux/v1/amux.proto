@@ -132,12 +132,12 @@ message ConnectRequest {
   // in ConnectAccepted.assigned_link_name and may override this.
   string proposed_link_name = 2;
 
-  optional ClientInfo client = 3;
-
   // Usually a JWT.
-  optional string auth_token = 4;
+  optional string auth_token = 3;
 
-  Capabilities capabilities = 5;
+  // Present for peer/cloud/server connections. Must be absent for local
+  // terminal/client connections.
+  optional Host host = 4;
 }
 
 message ConnectResponse {
@@ -155,7 +155,10 @@ message ConnectAccepted {
 
   // Absence disables heartbeat. idle_timeout_ms = 0 is invalid.
   optional HeartbeatConfig heartbeat = 3;
-  Capabilities capabilities = 4;
+
+  // Present when the accepting endpoint is a host. Absent for local
+  // terminal/client connections and non-host relays.
+  optional Host host = 4;
 }
 
 message HeartbeatConfig {
@@ -170,13 +173,13 @@ enum HeartbeatRole {
   HEARTBEAT_ROLE_RESPONDER = 2;
 }
 
-message ClientInfo {
-  string name = 1;
-  string version = 2;
-}
-
 message Capabilities {
   repeated string features = 1;
+  repeated SupportedAgentType supported_agent_types = 2;
+}
+
+message SupportedAgentType {
+  string agent_type = 1;
 }
 
 // Top-level message exchanged after a successful handshake.
@@ -336,6 +339,8 @@ message Host {
   bytes host_id = 1;
   string name = 2;
   string version = 3;
+  string client_name = 4;
+  Capabilities capabilities = 5;
 }
 
 message HostUp {

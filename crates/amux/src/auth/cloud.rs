@@ -17,7 +17,7 @@ use crate::auth::oauth;
 use crate::config::Config;
 use crate::protocol::handshake::{Connect, ConnectResult, PROTOCOL_VERSION};
 use crate::protocol::link::Link;
-use crate::protocol::message::{Message, ProtocolError, ReauthRequest, ReauthResponse};
+use crate::protocol::message::{Host, Message, ProtocolError, ReauthRequest, ReauthResponse};
 use crate::protocol::route::generate_server_link;
 use crate::setup;
 use crate::state::State;
@@ -154,6 +154,7 @@ pub(crate) struct CloudConnection {
     token_expires_at: DateTime<Utc>,
     /// Negotiated idle timeout from the cloud server's ConnectResult.
     idle_timeout_secs: Option<u32>,
+    host: Option<Host>,
 }
 
 impl CloudConnection {
@@ -164,7 +165,10 @@ impl CloudConnection {
     /// 2. Exchange it for an access token
     /// 3. Get connection details from cloud API
     /// 4. Connect via TLS and send Connect message with JWT
-    pub(crate) async fn connect(config: &Config) -> std::result::Result<Self, CloudError> {
+    pub(crate) async fn connect(
+        config: &Config,
+        host: Host,
+    ) -> std::result::Result<Self, CloudError> {
         // Check if cloud mode is enabled
         if !setup::cloud_enabled(config) {
             return Err(CloudError::CloudDisabled);
@@ -187,8 +191,7 @@ impl CloudConnection {
             token: Some(conn.token),
             version: PROTOCOL_VERSION,
             supported_versions: vec![PROTOCOL_VERSION],
-            client_name: Some("amux-cli".to_string()),
-            client_version: Some(env!("CARGO_PKG_VERSION").to_string()),
+            host: Some(host),
         };
         let payload = connect.encode().map_err(TransportError::from)?;
         transport.write_frame(&payload).await?;
@@ -221,12 +224,17 @@ impl CloudConnection {
             current_port: conn.port,
             token_expires_at: conn.expires_at,
             idle_timeout_secs: response.idle_timeout_secs,
+            host: response.host,
         })
     }
 
     /// Negotiated idle timeout advertised by the cloud server.
     pub(crate) fn idle_timeout_secs(&self) -> Option<u32> {
         self.idle_timeout_secs
+    }
+
+    pub(crate) fn host(&self) -> Option<&Host> {
+        self.host.as_ref()
     }
 
     /// Extract the underlying transport and token refresh state.

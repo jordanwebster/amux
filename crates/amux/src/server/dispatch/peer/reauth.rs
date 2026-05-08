@@ -13,23 +13,28 @@ pub(super) async fn handle(
         state.is_cloud_server
     };
 
-    // Re-check minimum client version (config may have changed since connect)
-    if let Some(ref name) = ctx.client_name {
+    // Re-check minimum client version (config may have changed since connect).
+    // Non-host peers, such as cloud relays, have no direct host entry.
+    let peer_host = {
+        let user_state = ctx.user_state.read().await;
+        user_state.host_for_link(&ctx.link).cloned()
+    };
+    if let Some(host) = peer_host {
+        let name = host.client_name;
         let min_version = {
             let state = ctx.state.read().await;
-            state.config.minimum_client_versions.get(name).cloned()
+            state.config.minimum_client_versions.get(&name).cloned()
         };
         if let Some(ref min_ver_str) = min_version {
-            let cv = ctx.client_version.as_deref().unwrap_or("");
+            let cv = host.version;
             let reject = match (
-                semver::Version::parse(cv),
+                semver::Version::parse(&cv),
                 semver::Version::parse(min_ver_str),
             ) {
                 (Ok(client), Ok(minimum)) => client < minimum,
                 _ => true,
             };
             if reject {
-                let cv = cv.to_string();
                 tracing::warn!(
                     client_name = %name,
                     client_version = %cv,

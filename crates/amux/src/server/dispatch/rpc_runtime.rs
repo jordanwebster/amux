@@ -842,6 +842,16 @@ mod tests {
         CallId::from(Uuid::from_u128(n))
     }
 
+    fn test_host(id: Uuid, name: &str) -> crate::protocol::Host {
+        crate::protocol::Host {
+            id,
+            name: name.to_string(),
+            version: "v1".to_string(),
+            client_name: "amux-test".to_string(),
+            capabilities: Default::default(),
+        }
+    }
+
     async fn expect_routed_error(
         rx: &mut mpsc::Receiver<Message>,
         call_id: &CallId,
@@ -918,8 +928,6 @@ mod tests {
             link: Link::new("owner").unwrap(),
             is_local: true,
             heartbeat: None,
-            client_name: None,
-            client_version: None,
         };
         let counterparty = route("client");
         let key_call_id = call_id(42);
@@ -965,8 +973,6 @@ mod tests {
             link,
             is_local: false,
             heartbeat: None,
-            client_name: None,
-            client_version: None,
         };
         let counterparty = route_stack(&["peer", "client"]);
         let key_call_id = call_id(42);
@@ -1012,8 +1018,6 @@ mod tests {
             link: link.clone(),
             is_local: false,
             heartbeat: None,
-            client_name: None,
-            client_version: None,
         };
         let counterparty = route_stack(&["peer", "client"]);
         let (reply_src, reply_dst) = Route::reply(counterparty.clone()).unwrap();
@@ -1033,10 +1037,8 @@ mod tests {
             let mut us = user_state.write().await;
             us.apply_peer_host_up(
                 &link,
-                Uuid::from_u128(100),
-                "client-host".to_string(),
+                test_host(Uuid::from_u128(100), "client-host"),
                 route("client"),
-                "v1".to_string(),
             );
         }
 
@@ -1070,8 +1072,6 @@ mod tests {
             link: Link::new("owner").unwrap(),
             is_local: true,
             heartbeat: None,
-            client_name: None,
-            client_version: None,
         };
         let counterparty = route("client");
         let key_call_id = call_id(42);
@@ -1110,8 +1110,6 @@ mod tests {
             link: Link::new("owner").unwrap(),
             is_local: true,
             heartbeat: None,
-            client_name: None,
-            client_version: None,
         };
         let counterparty = route("client");
         let (tx, mut rx) = mpsc::channel(2);
@@ -1145,8 +1143,6 @@ mod tests {
             link: Link::new("owner").unwrap(),
             is_local: true,
             heartbeat: None,
-            client_name: None,
-            client_version: None,
         };
         let counterparty = route("client");
         let key_call_id = call_id(42);
@@ -1208,8 +1204,6 @@ mod tests {
             link: Link::new("owner").unwrap(),
             is_local: true,
             heartbeat: None,
-            client_name: None,
-            client_version: None,
         };
         let counterparty = route("client");
         let key_call_id = call_id(42);
@@ -1286,8 +1280,6 @@ mod tests {
             link: Link::new("owner").unwrap(),
             is_local: true,
             heartbeat: None,
-            client_name: None,
-            client_version: None,
         };
         let counterparty = route("client");
         let key_call_id = call_id(42);
@@ -1362,8 +1354,6 @@ mod tests {
             link: Link::new("owner").unwrap(),
             is_local: true,
             heartbeat: None,
-            client_name: None,
-            client_version: None,
         };
         let counterparty = route("client");
         let key_call_id = call_id(42);
@@ -1436,8 +1426,6 @@ mod tests {
             link: Link::new("owner").unwrap(),
             is_local: true,
             heartbeat: None,
-            client_name: None,
-            client_version: None,
         };
         let counterparty = route("client");
         let key_call_id = call_id(42);
@@ -1518,8 +1506,6 @@ mod tests {
             link: Link::new("owner").unwrap(),
             is_local: true,
             heartbeat: None,
-            client_name: None,
-            client_version: None,
         };
         let counterparty = route("client");
         let key_call_id = call_id(42);

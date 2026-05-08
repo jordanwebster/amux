@@ -5,6 +5,7 @@ mod cloud;
 mod connection;
 mod debug;
 mod dispatch;
+mod host;
 mod open_session_lifecycle;
 #[cfg(test)]
 mod protocol_harness;
@@ -17,6 +18,8 @@ mod state;
 
 pub(crate) use connection::ConnectionError;
 pub(crate) use debug::dump_server_debug_info;
+pub(crate) use host::local_host;
+pub(in crate::server) use host::validate_remote_host;
 pub(crate) use open_session_lifecycle::{
     OpenSessionRuntime, OpenSessionStructuredInput, OpenSessionStructuredInputJob,
     OpenSessionStructuredInputPayload, begin_open_sessions_closing_for_agent,

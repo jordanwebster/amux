@@ -1,5 +1,3 @@
-use uuid::Uuid;
-
 use crate::protocol::link::Link;
 use crate::protocol::message::{CallId, FrameBody, Message, PeerFrame, RoutingEvent};
 use crate::protocol::wire;
@@ -82,12 +80,8 @@ pub(in crate::server::routing) fn initial_agent_events(
 
 /// Build initial host events for a newly connected peer.
 /// Filters out hosts that were learned from this same peer (no echo-back).
-/// Cloud servers are stateless relays and don't announce themselves as hosts.
 pub(in crate::server::routing) fn initial_host_events(
     us: &ServerUserState,
-    host_id: Uuid,
-    host_name: &str,
-    is_cloud_server: bool,
     peer_link: &Link,
 ) -> Vec<RoutingEvent> {
     let mut events = Vec::new();
@@ -101,35 +95,16 @@ pub(in crate::server::routing) fn initial_host_events(
             continue;
         }
         events.push(RoutingEvent::HostUp {
-            id: info.id,
-            name: info.name.clone(),
+            host: info.clone(),
             route: route.clone(),
-            version: info.version.clone(),
-        });
-    }
-
-    if !is_cloud_server {
-        events.push(RoutingEvent::HostUp {
-            id: host_id,
-            name: host_name.to_string(),
-            route: crate::protocol::route::Route::empty(),
-            version: env!("CARGO_PKG_VERSION").to_string(),
         });
     }
     events
 }
 
 /// Build all initial routing events (hosts + agents + snapshot complete) for a newly connected peer.
-/// `host_id`, `host_name`, and `is_cloud_server` are extracted from global state by the caller
-/// to avoid holding both locks simultaneously.
-pub(crate) fn initial_routing_events(
-    us: &ServerUserState,
-    host_id: Uuid,
-    host_name: &str,
-    is_cloud_server: bool,
-    peer_link: &Link,
-) -> Vec<RoutingEvent> {
-    let mut events = initial_host_events(us, host_id, host_name, is_cloud_server, peer_link);
+pub(crate) fn initial_routing_events(us: &ServerUserState, peer_link: &Link) -> Vec<RoutingEvent> {
+    let mut events = initial_host_events(us, peer_link);
     let hosts = events.len();
     let agents = initial_agent_events(us, peer_link);
     let agent_count = agents.len();

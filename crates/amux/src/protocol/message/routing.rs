@@ -4,6 +4,7 @@ use chrono::{DateTime, Utc};
 use serde::{Deserialize, Serialize};
 use uuid::Uuid;
 
+use super::common::Host;
 use crate::protocol::route::Route;
 
 /// Peer-scoped routing stream events.
@@ -31,10 +32,8 @@ pub enum RoutingEvent {
         agent_id: Uuid,
     },
     HostUp {
-        id: Uuid,
-        name: String,
+        host: Host,
         route: Route,
-        version: String,
     },
     HostDown {
         id: Uuid,

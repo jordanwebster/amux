@@ -3,6 +3,10 @@ use std::path::PathBuf;
 use serde::{Deserialize, Serialize};
 use uuid::Uuid;
 
+pub const AGENT_TYPE_CLAUDE: &str = "claude";
+#[cfg(any(debug_assertions, test))]
+pub const AGENT_TYPE_TEST_AGENT: &str = "test-agent";
+
 /// RPC call identity carried by local, peer, and routed frames.
 ///
 /// The protobuf contract uses 128-bit non-zero call IDs.
@@ -38,9 +42,22 @@ impl From<Uuid> for CallId {
     }
 }
 
+#[derive(Serialize, Deserialize, Debug, Clone, PartialEq, Eq, Default)]
+pub struct Capabilities {
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub features: Vec<String>,
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub supported_agent_types: Vec<SupportedAgentType>,
+}
+
+#[derive(Serialize, Deserialize, Debug, Clone, PartialEq, Eq)]
+pub struct SupportedAgentType {
+    pub agent_type: String,
+}
+
 /// Information about a connected host (machine running amux server).
 /// Propagated via peer routing events between servers.
-#[derive(Serialize, Deserialize, Debug, Clone)]
+#[derive(Serialize, Deserialize, Debug, Clone, PartialEq, Eq)]
 pub struct Host {
     /// Stable ID loaded from state and announced to peers
     pub id: Uuid,
@@ -48,6 +65,10 @@ pub struct Host {
     pub name: String,
     /// amux version of the host
     pub version: String,
+    /// Name of the host/client implementation.
+    pub client_name: String,
+    /// Host-level protocol and agent creation capabilities.
+    pub capabilities: Capabilities,
 }
 
 /// Type of agent to spawn

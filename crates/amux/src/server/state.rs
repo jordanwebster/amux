@@ -184,6 +184,12 @@ impl ServerUserState {
         self.connections.get(link).map(ConnectionEntry::rpc)
     }
 
+    pub(in crate::server) fn host_for_link(&self, link: &Link) -> Option<&Host> {
+        let route = Route::from_link(link.clone());
+        let host_id = self.routes.get(&route)?.host_id;
+        self.hosts.get(&host_id).map(|context| &context.host)
+    }
+
     #[cfg(test)]
     pub(crate) fn route_rpc(&self, route: &Route) -> Option<RpcDispatcher> {
         self.routes.get(route).map(RouteContext::rpc)
@@ -879,15 +885,25 @@ impl ServerUserState {
     pub(in crate::server) fn apply_peer_host_up(
         &mut self,
         from: &Link,
-        id: Uuid,
-        name: String,
+        host: Host,
         received_route: Route,
-        version: String,
     ) -> PeerHostUpChange {
         let mut route = received_route;
         route.push(from.clone());
 
-        let host = Host { id, name, version };
+        self.upsert_host_at_route(host, route)
+    }
+
+    pub(in crate::server) fn apply_direct_peer_host_up(
+        &mut self,
+        link: &Link,
+        host: Host,
+    ) -> PeerHostUpChange {
+        self.upsert_host_at_route(host, Route::from_link(link.clone()))
+    }
+
+    fn upsert_host_at_route(&mut self, host: Host, route: Route) -> PeerHostUpChange {
+        let id = host.id;
         let route_host_id = self.routes.get(&route).map(|context| context.host_id);
         let event = match route_host_id {
             Some(existing_id) if existing_id == id => {
@@ -1151,6 +1167,16 @@ mod tests {
     };
     use chrono::Utc;
 
+    fn test_host(id: Uuid, name: &str, version: &str) -> Host {
+        Host {
+            id,
+            name: name.to_string(),
+            version: version.to_string(),
+            client_name: "amux-test".to_string(),
+            capabilities: Default::default(),
+        }
+    }
+
     #[test]
     fn connection_handle_retains_close_request_before_subscription() {
         let (tx, _rx) = mpsc::channel(1);
@@ -1171,17 +1197,13 @@ mod tests {
 
         let first = user_state.apply_peer_host_up(
             &peer_a,
-            root_id,
-            "old-root".to_string(),
+            test_host(root_id, "old-root", "v1"),
             Route::empty(),
-            "v1".to_string(),
         );
         let second = user_state.apply_peer_host_up(
             &peer_b,
-            root_id,
-            "new-root".to_string(),
+            test_host(root_id, "new-root", "v2"),
             Route::empty(),
-            "v2".to_string(),
         );
 
         assert_eq!(first.events.len(), 1);
@@ -1204,26 +1226,34 @@ mod tests {
     }
 
     #[test]
+    fn direct_peer_host_up_tracks_host_at_connection_route() {
+        let mut user_state = ServerUserState::new();
+        let peer = Link::new("peer-a").unwrap();
+        let host_id = Uuid::from_u128(10);
+
+        let change =
+            user_state.apply_direct_peer_host_up(&peer, test_host(host_id, "peer-host", "v1"));
+
+        assert_eq!(change.events.len(), 1);
+        assert!(matches!(
+            &change.events[0],
+            TopologyEvent::HostUp { host, route }
+                if host.id == host_id
+                    && host.name == "peer-host"
+                    && route == &Route::from_link(peer.clone())
+        ));
+        assert!(user_state.route_rpc(&Route::from_link(peer)).is_some());
+    }
+
+    #[test]
     fn agent_up_tracks_agent_on_host_reachable_by_multiple_routes() {
         let mut user_state = ServerUserState::new();
         let peer_a = Link::new("peer-a").unwrap();
         let peer_b = Link::new("peer-b").unwrap();
         let host_id = Uuid::from_u128(1);
         let agent_id = Uuid::from_u128(2);
-        user_state.apply_peer_host_up(
-            &peer_a,
-            host_id,
-            "host-a".to_string(),
-            Route::empty(),
-            "v1".to_string(),
-        );
-        user_state.apply_peer_host_up(
-            &peer_b,
-            host_id,
-            "host-b".to_string(),
-            Route::empty(),
-            "v1".to_string(),
-        );
+        user_state.apply_peer_host_up(&peer_a, test_host(host_id, "host-a", "v1"), Route::empty());
+        user_state.apply_peer_host_up(&peer_b, test_host(host_id, "host-b", "v1"), Route::empty());
 
         let agent = Agent {
             id: agent_id,
@@ -1262,20 +1292,8 @@ mod tests {
         let peer_b = Link::new("peer-b").unwrap();
         let host_id = Uuid::from_u128(1);
         let agent_id = Uuid::from_u128(2);
-        user_state.apply_peer_host_up(
-            &peer_a,
-            host_id,
-            "host".to_string(),
-            Route::empty(),
-            "v1".to_string(),
-        );
-        user_state.apply_peer_host_up(
-            &peer_b,
-            host_id,
-            "host".to_string(),
-            Route::empty(),
-            "v1".to_string(),
-        );
+        user_state.apply_peer_host_up(&peer_a, test_host(host_id, "host", "v1"), Route::empty());
+        user_state.apply_peer_host_up(&peer_b, test_host(host_id, "host", "v1"), Route::empty());
         user_state.apply_peer_agent_up(
             &peer_a,
             Agent {
@@ -1313,20 +1331,8 @@ mod tests {
         let host_a = Uuid::from_u128(1);
         let host_b = Uuid::from_u128(2);
         let agent_id = Uuid::from_u128(3);
-        user_state.apply_peer_host_up(
-            &peer_a,
-            host_a,
-            "host-a".to_string(),
-            Route::empty(),
-            "v1".to_string(),
-        );
-        user_state.apply_peer_host_up(
-            &peer_b,
-            host_b,
-            "host-b".to_string(),
-            Route::empty(),
-            "v1".to_string(),
-        );
+        user_state.apply_peer_host_up(&peer_a, test_host(host_a, "host-a", "v1"), Route::empty());
+        user_state.apply_peer_host_up(&peer_b, test_host(host_b, "host-b", "v1"), Route::empty());
         let agent = Agent {
             id: agent_id,
             host_id: host_a,
@@ -1381,20 +1387,8 @@ mod tests {
         let host_b = Uuid::from_u128(2);
         let first_agent_id = Uuid::from_u128(3);
         let second_agent_id = Uuid::from_u128(4);
-        user_state.apply_peer_host_up(
-            &peer_b,
-            host_b,
-            "z-host".to_string(),
-            Route::empty(),
-            "v1".to_string(),
-        );
-        user_state.apply_peer_host_up(
-            &peer_a,
-            host_a,
-            "a-host".to_string(),
-            Route::empty(),
-            "v1".to_string(),
-        );
+        user_state.apply_peer_host_up(&peer_b, test_host(host_b, "z-host", "v1"), Route::empty());
+        user_state.apply_peer_host_up(&peer_a, test_host(host_a, "a-host", "v1"), Route::empty());
 
         let mut first = Agent {
             id: first_agent_id,
@@ -1437,20 +1431,8 @@ mod tests {
         let host_b = Route::from_link(Link::new("host-b").unwrap());
         let host_id = Uuid::from_u128(1);
         let agent_id = Uuid::from_u128(2);
-        user_state.apply_peer_host_up(
-            &relay,
-            host_id,
-            "host-a".to_string(),
-            host_a.clone(),
-            "v1".to_string(),
-        );
-        user_state.apply_peer_host_up(
-            &relay,
-            host_id,
-            "host-b".to_string(),
-            host_b.clone(),
-            "v1".to_string(),
-        );
+        user_state.apply_peer_host_up(&relay, test_host(host_id, "host-a", "v1"), host_a.clone());
+        user_state.apply_peer_host_up(&relay, test_host(host_id, "host-b", "v1"), host_b.clone());
 
         let agent = Agent {
             id: agent_id,
@@ -1498,13 +1480,7 @@ mod tests {
         let call_id = CallId::from(Uuid::from_u128(2));
         user_state.try_reserve_link(peer.clone()).unwrap();
         user_state.mark_peer_link(peer.clone());
-        user_state.apply_peer_host_up(
-            &peer,
-            host_id,
-            "peer-host".to_string(),
-            Route::empty(),
-            "v1".to_string(),
-        );
+        user_state.apply_peer_host_up(&peer, test_host(host_id, "peer-host", "v1"), Route::empty());
         let rpc = user_state.rpc_for_link(&peer).unwrap();
         rpc.register_peer_stream_outbound(RpcPeerStreamOutboundStart {
             link: peer.clone(),

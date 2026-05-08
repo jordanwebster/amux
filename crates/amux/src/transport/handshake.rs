@@ -4,7 +4,7 @@ use thiserror::Error;
 
 use crate::protocol::handshake::{Connect, ConnectResult, PROTOCOL_VERSION};
 use crate::protocol::link::Link;
-use crate::protocol::message::ProtocolError;
+use crate::protocol::message::{Host, ProtocolError};
 use crate::transport::{Transport, TransportError};
 
 const HANDSHAKE_TIMEOUT: Duration = Duration::from_secs(10);
@@ -29,11 +29,13 @@ pub(crate) struct HandshakeOutcome {
     /// Negotiated idle timeout. `None` means heartbeats are disabled on this
     /// connection.
     pub(crate) idle_timeout_secs: Option<u32>,
+    pub(crate) host: Option<Host>,
 }
 
 pub(crate) async fn connect_handshake<T, F>(
     transport: &mut T,
     generate_link: F,
+    host: Option<Host>,
 ) -> Result<HandshakeOutcome>
 where
     T: Transport,
@@ -46,8 +48,7 @@ where
         token: None,
         version: PROTOCOL_VERSION,
         supported_versions: vec![PROTOCOL_VERSION],
-        client_name: Some("amux-cli".to_string()),
-        client_version: Some(env!("CARGO_PKG_VERSION").to_string()),
+        host,
     };
     let payload = connect.encode().map_err(TransportError::from)?;
     transport.write_frame(&payload).await?;
@@ -72,6 +73,7 @@ where
             Ok(HandshakeOutcome {
                 link,
                 idle_timeout_secs: response.idle_timeout_secs,
+                host: response.host,
             })
         }
         Some(error) => Err(HandshakeError::Protocol(error)),
@@ -131,6 +133,7 @@ mod tests {
             error: None,
             idle_timeout_secs,
             assigned_link_name: Some(link.to_string()),
+            host: None,
         }
         .encode()
         .unwrap()
@@ -146,7 +149,7 @@ mod tests {
                         role: 1,
                         idle_timeout_ms: ms,
                     }),
-                    capabilities: None,
+                    host: None,
                 },
             )),
         }
@@ -158,7 +161,7 @@ mod tests {
         let mut transport =
             FakeTransport::new(vec![Ok(accepted_response("server-link", Some(180)))]);
 
-        let outcome = connect_handshake(&mut transport, || Link::new("client-link").unwrap())
+        let outcome = connect_handshake(&mut transport, || Link::new("client-link").unwrap(), None)
             .await
             .unwrap();
 
@@ -169,9 +172,7 @@ mod tests {
         let request = wire::ConnectRequest::decode(transport.writes[0].as_slice()).unwrap();
         assert_eq!(request.proposed_link_name, "client-link");
         assert_eq!(request.supported_protocol_versions, vec![PROTOCOL_VERSION]);
-        let client = request.client.expect("client info should be present");
-        assert_eq!(client.name, "amux-cli");
-        assert_eq!(client.version, env!("CARGO_PKG_VERSION"));
+        assert!(request.host.is_none());
     }
 
     #[tokio::test]
@@ -179,7 +180,8 @@ mod tests {
         let mut transport =
             FakeTransport::new(vec![Ok(raw_accepted_response("bad.link", Some(180_000)))]);
 
-        let result = connect_handshake(&mut transport, || Link::new("client-link").unwrap()).await;
+        let result =
+            connect_handshake(&mut transport, || Link::new("client-link").unwrap(), None).await;
 
         assert!(matches!(result, Err(HandshakeError::InvalidMessage(_))));
     }

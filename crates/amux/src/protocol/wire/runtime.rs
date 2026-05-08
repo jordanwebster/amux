@@ -5,8 +5,9 @@ use prost::Message as ProstMessage;
 use uuid::Uuid;
 
 use crate::protocol::message::{
-    CallId, FrameBody, GoAway, LocalFrame, Message, PeerFrame, ProtocolError, ReauthRequest,
-    ReauthResponse, ResponseFrame, RoutedFrame, RoutedFrameMessage, RoutingEvent, ShutdownReason,
+    CallId, Capabilities, FrameBody, GoAway, Host, LocalFrame, Message, PeerFrame, ProtocolError,
+    ReauthRequest, ReauthResponse, ResponseFrame, RoutedFrame, RoutedFrameMessage, RoutingEvent,
+    ShutdownReason, SupportedAgentType,
 };
 use crate::protocol::route::Route;
 use crate::protocol::wire::{self, frame_body, response, transport_message};
@@ -299,19 +300,12 @@ fn routing_event_to_wire(
                 reason: None,
             })
         }
-        RoutingEvent::HostUp {
-            id,
-            name,
-            route,
-            version,
-        } => wire::subscribe_routing_events_response::Event::HostUp(wire::HostUp {
-            host: Some(wire::Host {
-                host_id: uuid_to_bytes(*id),
-                name: name.clone(),
-                version: version.clone(),
-            }),
-            route: Some(route_to_wire(route)),
-        }),
+        RoutingEvent::HostUp { host, route } => {
+            wire::subscribe_routing_events_response::Event::HostUp(wire::HostUp {
+                host: Some(host_to_wire(host)),
+                route: Some(route_to_wire(route)),
+            })
+        }
         RoutingEvent::HostDown { id, route } => {
             wire::subscribe_routing_events_response::Event::HostDown(wire::HostDown {
                 host_id: uuid_to_bytes(*id),
@@ -376,10 +370,8 @@ fn host_event_from_wire(
     route_field: &str,
 ) -> Result<RoutingEvent, wire::DecodeError> {
     Ok(RoutingEvent::HostUp {
-        id: uuid_from_bytes("host_id", host.host_id)?,
-        name: host.name,
+        host: host_from_wire(host)?,
         route: required_route_from_wire(route_field, route)?,
-        version: host.version,
     })
 }
 
@@ -404,6 +396,55 @@ fn agent_event_from_wire(agent: wire::Agent) -> Result<RoutingEvent, wire::Decod
 
 fn uuid_to_bytes(uuid: Uuid) -> Vec<u8> {
     uuid.as_bytes().to_vec()
+}
+
+pub(crate) fn host_to_wire(host: &Host) -> wire::Host {
+    wire::Host {
+        host_id: uuid_to_bytes(host.id),
+        name: host.name.clone(),
+        version: host.version.clone(),
+        client_name: host.client_name.clone(),
+        capabilities: Some(capabilities_to_wire(&host.capabilities)),
+    }
+}
+
+pub(crate) fn host_from_wire(host: wire::Host) -> Result<Host, wire::DecodeError> {
+    Ok(Host {
+        id: uuid_from_bytes("host_id", host.host_id)?,
+        name: host.name,
+        version: host.version,
+        client_name: host.client_name,
+        capabilities: capabilities_from_wire(host.capabilities),
+    })
+}
+
+pub(crate) fn capabilities_to_wire(capabilities: &Capabilities) -> wire::Capabilities {
+    wire::Capabilities {
+        features: capabilities.features.clone(),
+        supported_agent_types: capabilities
+            .supported_agent_types
+            .iter()
+            .map(|agent| wire::SupportedAgentType {
+                agent_type: agent.agent_type.clone(),
+            })
+            .collect(),
+    }
+}
+
+pub(crate) fn capabilities_from_wire(capabilities: Option<wire::Capabilities>) -> Capabilities {
+    let Some(capabilities) = capabilities else {
+        return Capabilities::default();
+    };
+    Capabilities {
+        features: capabilities.features,
+        supported_agent_types: capabilities
+            .supported_agent_types
+            .into_iter()
+            .map(|agent| SupportedAgentType {
+                agent_type: agent.agent_type,
+            })
+            .collect(),
+    }
 }
 
 fn uuid_from_bytes(name: &str, bytes: Vec<u8>) -> Result<Uuid, wire::DecodeError> {

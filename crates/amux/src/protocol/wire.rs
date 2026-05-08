@@ -35,5 +35,5 @@ pub(crate) use routed::{
 };
 pub(crate) use runtime::{
     decode_frame_body, decode_message, decode_routing_event, encode_frame_body, encode_message,
-    encode_routing_event,
+    encode_routing_event, host_from_wire, host_to_wire,
 };

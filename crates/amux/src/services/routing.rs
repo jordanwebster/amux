@@ -8,41 +8,23 @@ use crate::protocol::link::Link;
 use crate::protocol::message::{ProtocolError, RoutingEvent};
 use crate::protocol::wire;
 use crate::rpc::{RpcInboundServerStream, RpcPeerSnapshotSendError};
-use crate::server::{ServerState, ServerUserState, initial_routing_events};
+use crate::server::{ServerUserState, initial_routing_events};
 
 pub(crate) struct RoutingService;
 
 #[derive(Clone)]
 pub(crate) struct RoutingServiceCtx {
-    state: Arc<RwLock<ServerState>>,
     user_state: Arc<RwLock<ServerUserState>>,
     link: Link,
 }
 
 impl RoutingServiceCtx {
-    pub(crate) fn new(
-        state: Arc<RwLock<ServerState>>,
-        user_state: Arc<RwLock<ServerUserState>>,
-        link: Link,
-    ) -> Self {
-        Self {
-            state,
-            user_state,
-            link,
-        }
+    pub(crate) fn new(user_state: Arc<RwLock<ServerUserState>>, link: Link) -> Self {
+        Self { user_state, link }
     }
 
     fn link(&self) -> &Link {
         &self.link
-    }
-
-    async fn host_snapshot(&self) -> (uuid::Uuid, String, bool) {
-        let state = self.state.read().await;
-        (
-            state.host_id(),
-            state.host_name().to_string(),
-            state.is_cloud_server(),
-        )
     }
 
     fn user_state(&self) -> &Arc<RwLock<ServerUserState>> {
@@ -88,8 +70,6 @@ impl RoutingService {
         ctx: &RoutingServiceCtx,
         stream: &RpcInboundServerStream,
     ) -> Result<(), SubscribeRoutingEventsStartError> {
-        let (host_id, host_name, is_cloud_server) = ctx.host_snapshot().await;
-
         let us = ctx.user_state().read().await;
         if !us.is_peer_link(ctx.link()) {
             return Err(SubscribeRoutingEventsStartError::ResponseThenClose {
@@ -101,7 +81,7 @@ impl RoutingService {
             });
         }
 
-        let events = initial_routing_events(&us, host_id, &host_name, is_cloud_server, ctx.link());
+        let events = initial_routing_events(&us, ctx.link());
         match enqueue_initial_snapshot(stream, events) {
             Ok(()) => Ok(()),
             Err(PeerSnapshotEnqueueError::Full) => Err(SubscribeRoutingEventsStartError::Response(

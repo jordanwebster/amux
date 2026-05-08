@@ -167,7 +167,7 @@ async fn handle_peer_request(
 }
 
 fn routing_service_ctx(ctx: &ConnectionContext) -> RoutingServiceCtx {
-    RoutingServiceCtx::new(ctx.state.clone(), ctx.user_state.clone(), ctx.link.clone())
+    RoutingServiceCtx::new(ctx.user_state.clone(), ctx.link.clone())
 }
 
 enum PeerRoutingStreamStartError {
@@ -471,8 +471,6 @@ mod tests {
             link,
             is_local: false,
             heartbeat: None,
-            client_name: None,
-            client_version: None,
         }
     }
 

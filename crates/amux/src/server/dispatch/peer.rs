@@ -35,12 +35,7 @@ pub(super) async fn handle_peer_event(
     match event {
         event @ RoutingEvent::AgentUp { .. } => agent::handle_announce(event, ctx).await,
         RoutingEvent::AgentDown { agent_id } => agent::handle_withdraw(agent_id, ctx).await,
-        RoutingEvent::HostUp {
-            id,
-            name,
-            route,
-            version,
-        } => host::handle_announce(id, name, route, version, ctx).await,
+        RoutingEvent::HostUp { host, route } => host::handle_announce(host, route, ctx).await,
         RoutingEvent::HostDown { id, route } => host::handle_withdraw(id, route, ctx).await,
         RoutingEvent::SnapshotComplete => Ok(()),
         RoutingEvent::Unknown => {

@@ -1,19 +1,32 @@
 use uuid::Uuid;
 
+use crate::protocol::message::Host;
 use crate::protocol::route::Route;
 use crate::server::connection::{
-    ConnectionContext, drain_local_origin_routed_unreachable_for_route,
+    ConnectionContext, ConnectionError, drain_local_origin_routed_unreachable_for_route,
 };
 use crate::server::routing::broadcast_topology_event;
-use crate::server::{cancel_open_sessions_for_route_prefix, finish_open_session_cleanup_jobs};
+use crate::server::{
+    cancel_open_sessions_for_route_prefix, finish_open_session_cleanup_jobs, validate_remote_host,
+};
 
 pub(super) async fn handle_announce(
-    id: Uuid,
-    name: String,
+    host: Host,
     received_route: Route,
-    version: String,
     ctx: &ConnectionContext,
 ) -> crate::server::connection::Result<()> {
+    if received_route.is_empty() {
+        tracing::warn!(
+            host_id = %host.id,
+            peer = %ctx.link,
+            "invalid HostUp for direct peer route"
+        );
+        return Err(ConnectionError::Protocol(
+            "HostUp route must not be empty".to_string(),
+        ));
+    }
+
+    let id = host.id;
     let host_id = {
         let state = ctx.state.read().await;
         state.host_id
@@ -25,12 +38,19 @@ pub(super) async fn handle_announce(
         return Ok(());
     }
 
+    if let Err(message) = validate_remote_host(&host) {
+        tracing::warn!(host_id = %id, peer = %ctx.link, reason = %message, "invalid remote host announcement");
+        return Err(ConnectionError::Protocol(format!(
+            "invalid HostUp host: {message}"
+        )));
+    }
+
     let mut us = ctx.user_state.write().await;
-    let change = us.apply_peer_host_up(&ctx.link, id, name.clone(), received_route, version);
+    let change = us.apply_peer_host_up(&ctx.link, host.clone(), received_route);
 
     tracing::info!(
         host_id = %id,
-        name = %name,
+        name = %host.name,
         rewritten_descendants = change.rewritten_descendants,
         "stored remote host"
     );
@@ -47,6 +67,17 @@ pub(super) async fn handle_withdraw(
     received_route: Route,
     ctx: &ConnectionContext,
 ) -> crate::server::connection::Result<()> {
+    if received_route.is_empty() {
+        tracing::warn!(
+            host_id = %id,
+            peer = %ctx.link,
+            "invalid HostDown for direct peer route"
+        );
+        return Err(ConnectionError::Protocol(
+            "HostDown route must not be empty".to_string(),
+        ));
+    }
+
     let rpc = ctx.rpc();
     let (cleanup_jobs, local_origin_messages, withdraw_message) = {
         let mut us = ctx.user_state.write().await;
@@ -118,4 +149,113 @@ pub(super) async fn handle_withdraw(
     finish_open_session_cleanup_jobs(&ctx.user_state, cleanup_jobs).await;
 
     Ok(())
+}
+
+#[cfg(test)]
+mod tests {
+    use tokio::sync::mpsc;
+
+    use super::*;
+    use crate::protocol::Link;
+    use crate::server::{LOCAL_USER_ID, local_host, test_helpers};
+
+    async fn test_context() -> (ConnectionContext, ArcUserState) {
+        let (state, user_state) = test_helpers::test_state().await;
+        let (event_tx, _event_rx) = mpsc::channel(16);
+        let link = Link::new("peer").unwrap();
+        let rpc = {
+            let mut us = user_state.write().await;
+            let (_handle, _rx) = us.try_reserve_link(link.clone()).unwrap();
+            us.mark_peer_link(link.clone());
+            us.rpc_for_link(&link).unwrap()
+        };
+        let ctx = ConnectionContext {
+            state,
+            rpc,
+            user_state: user_state.clone(),
+            user_id: LOCAL_USER_ID,
+            event_tx,
+            link,
+            is_local: false,
+            heartbeat: None,
+        };
+        (ctx, user_state)
+    }
+
+    type ArcUserState = std::sync::Arc<tokio::sync::RwLock<crate::server::ServerUserState>>;
+
+    #[tokio::test]
+    async fn invalid_remote_host_up_is_rejected_without_storing_host() {
+        let (ctx, user_state) = test_context().await;
+        let host = Host {
+            id: Uuid::from_u128(123),
+            name: "remote".to_string(),
+            version: "0.3.0".to_string(),
+            client_name: String::new(),
+            capabilities: Default::default(),
+        };
+
+        let result = handle_announce(
+            host,
+            Route::from_link(Link::new("behind-peer").unwrap()),
+            &ctx,
+        )
+        .await;
+
+        assert!(
+            matches!(result, Err(ConnectionError::Protocol(message)) if message.contains("client_name"))
+        );
+        assert_eq!(user_state.read().await.host_count(), 0);
+    }
+
+    #[tokio::test]
+    async fn empty_route_host_up_is_rejected_without_changing_direct_host() {
+        let (ctx, user_state) = test_context().await;
+        let direct_host = local_host(Uuid::from_u128(123), "peer");
+        let announced_host = local_host(Uuid::from_u128(456), "other");
+        {
+            let mut us = user_state.write().await;
+            us.apply_direct_peer_host_up(&ctx.link, direct_host.clone());
+        }
+
+        let result = handle_announce(announced_host, Route::empty(), &ctx).await;
+
+        assert!(
+            matches!(result, Err(ConnectionError::Protocol(message)) if message.contains("HostUp route"))
+        );
+        assert_eq!(
+            user_state
+                .read()
+                .await
+                .host_for_link(&ctx.link)
+                .expect("direct host should remain")
+                .id,
+            direct_host.id
+        );
+    }
+
+    #[tokio::test]
+    async fn empty_route_host_down_is_rejected_without_removing_direct_host() {
+        let (ctx, user_state) = test_context().await;
+        let direct_host = local_host(Uuid::from_u128(123), "peer");
+        {
+            let mut us = user_state.write().await;
+            us.apply_direct_peer_host_up(&ctx.link, direct_host.clone());
+        }
+
+        let result = handle_withdraw(direct_host.id, Route::empty(), &ctx).await;
+
+        assert!(
+            matches!(result, Err(ConnectionError::Protocol(message)) if message.contains("HostDown route"))
+        );
+        assert_eq!(
+            user_state
+                .read()
+                .await
+                .host_for_link(&ctx.link)
+                .expect("direct host should remain")
+                .id,
+            direct_host.id
+        );
+    }
 }

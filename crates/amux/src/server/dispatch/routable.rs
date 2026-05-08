@@ -261,8 +261,6 @@ mod tests {
             link,
             is_local: true,
             heartbeat: None,
-            client_name: Some("amux-cli".to_string()),
-            client_version: Some(env!("CARGO_PKG_VERSION").to_string()),
         }
     }
 

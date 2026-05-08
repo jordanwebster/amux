@@ -17,7 +17,10 @@ use super::connection::{
     run_connection,
 };
 use super::runtime::notify_local_clients;
-use super::{LOCAL_USER_ID, ServerState, ServerUserState, ensure_user_state};
+use super::{
+    LOCAL_USER_ID, ServerState, ServerUserState, ensure_user_state, local_host,
+    validate_remote_host,
+};
 use crate::agent::SessionEvent;
 use crate::auth::cloud::{CloudConnection, CloudError};
 use crate::config::Config;
@@ -152,7 +155,12 @@ async fn run_cloud_connection(
     user_state: Arc<RwLock<ServerUserState>>,
     event_tx: mpsc::Sender<SessionEvent>,
 ) -> std::result::Result<(), CloudConnectionError> {
-    let conn = match CloudConnection::connect(config).await {
+    let host = {
+        let state = state.read().await;
+        local_host(state.host_id, &state.config.host_name)
+    };
+    let local_host_id = host.id;
+    let conn = match CloudConnection::connect(config, host).await {
         Ok(conn) => conn,
         Err(CloudError::NotAuthenticated)
         | Err(CloudError::Auth(_))
@@ -194,6 +202,21 @@ async fn run_cloud_connection(
 
     // Handshake succeeded: clear any stale update-required marker.
     crate::update::clear_update_required(&config.state_path);
+    let peer_host = conn.host().cloned();
+    if let Some(host) = peer_host.as_ref() {
+        if let Err(message) = validate_remote_host(host) {
+            return Err(CloudConnectionError::Retriable {
+                msg: format!("accepted cloud host identity is invalid: {message}"),
+                reset_backoff: false,
+            });
+        }
+        if host.id == local_host_id {
+            return Err(CloudConnectionError::Retriable {
+                msg: "accepted cloud host_id matched local host_id".to_string(),
+                reset_backoff: false,
+            });
+        }
+    }
 
     let heartbeat = conn.idle_timeout_secs().map(|secs| HeartbeatSetup {
         role: HeartbeatRole::Dialer,
@@ -212,6 +235,12 @@ async fn run_cloud_connection(
                     reset_backoff: false,
                 })?;
         us.mark_peer_link(link.clone());
+        if let Some(host) = peer_host.clone() {
+            let change = us.apply_direct_peer_host_up(&link, host);
+            for event in &change.events {
+                super::broadcast_topology_event(&mut us, event, Some(&link));
+            }
+        }
         let initial_messages = vec![Message::Peer(PeerFrame {
             call_id: routing_call_id.clone(),
             body: FrameBody::Request(RequestFrame {
@@ -255,8 +284,6 @@ async fn run_cloud_connection(
         link: link.clone(),
         is_local: false,
         heartbeat,
-        client_name: Some("amux-cli".to_string()),
-        client_version: Some(env!("CARGO_PKG_VERSION").to_string()),
     };
 
     let connected_at = std::time::Instant::now();

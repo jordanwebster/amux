@@ -86,10 +86,8 @@ impl TopologyEvent {
     pub(in crate::server) fn to_routing_event(&self) -> RoutingEvent {
         match self {
             Self::HostUp { host, route } => RoutingEvent::HostUp {
-                id: host.id,
-                name: host.name.clone(),
+                host: host.clone(),
                 route: route.clone(),
-                version: host.version.clone(),
             },
             Self::HostDown { id, route } => RoutingEvent::HostDown {
                 id: *id,
