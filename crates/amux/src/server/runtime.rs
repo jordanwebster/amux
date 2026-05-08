@@ -476,6 +476,10 @@ pub(crate) mod test_helpers {
             s.user_state(&LOCAL_USER_ID)
                 .expect("local user state is always initialized")
         };
+        user_state
+            .write()
+            .await
+            .ensure_route_rpc(crate::protocol::Route::empty());
         (state, user_state)
     }
 }

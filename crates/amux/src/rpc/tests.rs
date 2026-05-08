@@ -8,13 +8,13 @@ use crate::protocol::link::Link;
 use crate::protocol::message::{
     FrameBody, Message, ProtocolError, ResponseFrame, RoutedFrameMessage,
 };
-use crate::protocol::{Route, RoutedCallId, method};
+use crate::protocol::{CallId, Route, method};
 fn route(link: &str) -> Route {
     Route::from_link(Link::new(link).unwrap())
 }
 
-fn call_id(n: u128) -> RoutedCallId {
-    RoutedCallId::from(Uuid::from_u128(n))
+fn call_id(n: u128) -> CallId {
+    CallId::from(Uuid::from_u128(n))
 }
 
 fn routed_sink(tx: mpsc::Sender<Message>) -> RpcRoutedSink {
@@ -201,7 +201,6 @@ async fn register_routed_bidi_owns_call_state_stream_and_sink() {
             owner_link: Link::new("owner").unwrap(),
             reply_src: route("server"),
             reply_dst: counterparty.clone(),
-            counterparty_route: counterparty.clone(),
             call_id: call_id.clone(),
             method: method::AGENT_OPEN_SESSION,
             dedup_key: None,
@@ -209,7 +208,7 @@ async fn register_routed_bidi_owns_call_state_stream_and_sink() {
         })
         .unwrap();
 
-    let inbound = state.inbound_for_route(&counterparty, &call_id).unwrap();
+    let inbound = state.inbound_for_call(&call_id).unwrap();
     assert_eq!(inbound.method, method::AGENT_OPEN_SESSION);
     assert_eq!(inbound.state, InboundCallState::Active);
     assert_eq!(inbound.generation, call.handle.generation);
@@ -252,13 +251,12 @@ async fn register_routed_unary_owns_call_state_and_terminal_sink() {
             owner_link: Link::new("owner").unwrap(),
             reply_src: route("server"),
             reply_dst: counterparty.clone(),
-            counterparty_route: counterparty.clone(),
             call_id: call_id.clone(),
             method: method::AGENT_CREATE,
         })
         .unwrap();
 
-    let inbound = state.inbound_for_route(&counterparty, &call_id).unwrap();
+    let inbound = state.inbound_for_call(&call_id).unwrap();
     assert_eq!(inbound.method, method::AGENT_CREATE);
     assert_eq!(inbound.state, InboundCallState::Active);
     assert!(inbound.stream_writer.is_none());
@@ -270,7 +268,7 @@ async fn register_routed_unary_owns_call_state_and_terminal_sink() {
         .expect("active unary call should move to closing");
     assert!(
         state
-            .inbound_for_route(&counterparty, &call_id)
+            .inbound_for_call(&call_id)
             .unwrap()
             .cancellation
             .is_cancelled()
@@ -280,7 +278,7 @@ async fn register_routed_unary_owns_call_state_and_terminal_sink() {
         .await
         .unwrap();
     assert!(state.finish_inbound_closing(&closing).is_some());
-    assert!(state.inbound_for_route(&counterparty, &call_id).is_none());
+    assert!(state.inbound_for_call(&call_id).is_none());
 
     let payload = routed_payload(outbound_rx.recv().await.unwrap());
     assert_eq!(
@@ -293,51 +291,43 @@ async fn register_routed_unary_owns_call_state_and_terminal_sink() {
 fn register_server_stream_owns_no_input_call_state() {
     let (tx, _rx) = mpsc::channel(1);
     let mut state = RpcState::new();
-    let counterparty = route("peer");
+    let dedup_key = DedupKey::PeerRoutingSubscription {
+        link: Link::new("peer").unwrap(),
+    };
     let call_id = call_id(42);
 
     let stream = state
         .register_server_stream(RpcServerStreamStart {
             tx,
-            counterparty_route: counterparty.clone(),
             call_id: call_id.clone(),
             method: method::ROUTING_SUBSCRIBE_EVENTS,
-            dedup_key: None,
+            dedup_key: Some(dedup_key.clone()),
         })
         .unwrap();
 
-    let inbound = state.inbound_for_route(&counterparty, &call_id).unwrap();
+    let inbound = state.inbound_for_call(&call_id).unwrap();
     assert_eq!(inbound.method, method::ROUTING_SUBSCRIBE_EVENTS);
     assert_eq!(inbound.state, InboundCallState::Starting);
     assert_eq!(inbound.generation, stream.handle.generation);
     assert!(inbound.stream_writer.is_none());
     assert!(inbound.resources.is_none());
-    assert_eq!(
-        state.active_inbound_call_id_for_route_and_method(
-            &counterparty,
-            method::ROUTING_SUBSCRIBE_EVENTS
-        ),
-        None
-    );
+    assert_eq!(state.active_inbound_call_id_for_dedup_key(&dedup_key), None);
     assert!(matches!(
-        state.inbound_frame_target_for_route(&counterparty, &call_id),
+        state.inbound_frame_target_for_call(&call_id),
         Some(RpcInboundFrameTarget::NotAccepting {
             state: InboundCallState::Starting
         })
     ));
 
     assert!(state.activate_inbound_for_handle(&stream.handle));
-    let inbound = state.inbound_for_route(&counterparty, &call_id).unwrap();
+    let inbound = state.inbound_for_call(&call_id).unwrap();
     assert_eq!(inbound.state, InboundCallState::Active);
     assert_eq!(
-        state.active_inbound_call_id_for_route_and_method(
-            &counterparty,
-            method::ROUTING_SUBSCRIBE_EVENTS
-        ),
+        state.active_inbound_call_id_for_dedup_key(&dedup_key),
         Some(call_id.clone())
     );
     assert!(matches!(
-        state.inbound_frame_target_for_route(&counterparty, &call_id),
+        state.inbound_frame_target_for_call(&call_id),
         Some(RpcInboundFrameTarget::ActiveNoInput {
             method: method::ROUTING_SUBSCRIBE_EVENTS
         })
@@ -357,7 +347,6 @@ async fn inbound_frame_target_identifies_active_stream_calls() {
             owner_link: Link::new("owner").unwrap(),
             reply_src: route("server"),
             reply_dst: counterparty.clone(),
-            counterparty_route: counterparty.clone(),
             call_id: call_id.clone(),
             method: method::AGENT_OPEN_SESSION,
             dedup_key: None,
@@ -368,7 +357,7 @@ async fn inbound_frame_target_identifies_active_stream_calls() {
     let Some(RpcInboundFrameTarget::ActiveStream {
         method,
         stream_writer,
-    }) = state.inbound_frame_target_for_route(&counterparty, &call_id)
+    }) = state.inbound_frame_target_for_call(&call_id)
     else {
         panic!("expected active stream target");
     };
@@ -394,14 +383,13 @@ fn inbound_frame_target_identifies_active_no_input_calls() {
             owner_link: Link::new("owner").unwrap(),
             reply_src: route("server"),
             reply_dst: counterparty.clone(),
-            counterparty_route: counterparty.clone(),
             call_id: call_id.clone(),
             method: method::AGENT_CREATE,
         })
         .unwrap();
 
     assert!(matches!(
-        state.inbound_frame_target_for_route(&counterparty, &call_id),
+        state.inbound_frame_target_for_call(&call_id),
         Some(RpcInboundFrameTarget::ActiveNoInput {
             method: method::AGENT_CREATE
         })
@@ -420,7 +408,6 @@ fn inbound_frame_target_reports_closing_calls_as_not_accepting() {
             owner_link: Link::new("owner").unwrap(),
             reply_src: route("server"),
             reply_dst: counterparty.clone(),
-            counterparty_route: counterparty.clone(),
             call_id: call_id.clone(),
             method: method::AGENT_CREATE,
         })
@@ -431,7 +418,7 @@ fn inbound_frame_target_reports_closing_calls_as_not_accepting() {
         .unwrap();
 
     assert!(matches!(
-        state.inbound_frame_target_for_route(&counterparty, &call_id),
+        state.inbound_frame_target_for_call(&call_id),
         Some(RpcInboundFrameTarget::NotAccepting {
             state: InboundCallState::Closing
         })
@@ -454,7 +441,6 @@ async fn register_routed_bidi_rejects_duplicate_dedup_key() {
             owner_link: Link::new("owner").unwrap(),
             reply_src: route("server"),
             reply_dst: counterparty.clone(),
-            counterparty_route: counterparty.clone(),
             call_id: call_id(42),
             method: method::AGENT_OPEN_SESSION,
             dedup_key: Some(dedup_key.clone()),
@@ -468,7 +454,6 @@ async fn register_routed_bidi_rejects_duplicate_dedup_key() {
             owner_link: Link::new("owner").unwrap(),
             reply_src: route("server"),
             reply_dst: counterparty.clone(),
-            counterparty_route: counterparty.clone(),
             call_id: call_id(43),
             method: method::AGENT_OPEN_SESSION,
             dedup_key: Some(dedup_key.clone()),
@@ -480,7 +465,6 @@ async fn register_routed_bidi_rejects_duplicate_dedup_key() {
         error,
         RegisterCallError::DuplicateDedupKey {
             key: dedup_key,
-            counterparty_route: counterparty,
             call_id: call_id(42),
         }
     );
@@ -489,15 +473,13 @@ async fn register_routed_bidi_rejects_duplicate_dedup_key() {
 }
 
 #[test]
-fn begin_inbound_closing_for_route_moves_call_state_and_returns_close_token() {
+fn begin_inbound_closing_for_call_moves_call_state_and_returns_close_token() {
     let mut state = RpcState::new();
-    let counterparty = route("client");
     let call_id = call_id(42);
     let generation = Uuid::new_v4();
     state
         .register_inbound(InboundCall {
             call_id: call_id.clone(),
-            counterparty_route: counterparty.clone(),
             method: method::AGENT_OPEN_SESSION,
             generation,
             state: InboundCallState::Active,
@@ -509,39 +491,34 @@ fn begin_inbound_closing_for_route_moves_call_state_and_returns_close_token() {
         .unwrap();
 
     let closing = state
-        .begin_inbound_closing_for_route_if(&counterparty, &call_id, |call, resources| {
+        .begin_inbound_closing_for_call_if(&call_id, |call, resources| {
             call.method == method::AGENT_OPEN_SESSION
                 && call.generation == generation
                 && resources.owner_link == Link::new("owner").unwrap()
         })
         .expect("active call should move to closing");
 
-    assert_eq!(closing.handle.counterparty_route, counterparty);
     assert_eq!(closing.handle.call_id, call_id);
     assert_eq!(closing.handle.method, method::AGENT_OPEN_SESSION);
     assert_eq!(closing.handle.generation, generation);
     assert!(matches!(
-        state
-            .inbound_for_route(&counterparty, &call_id)
-            .map(|call| call.state),
+        state.inbound_for_call(&call_id).map(|call| call.state),
         Some(InboundCallState::Closing)
     ));
     assert!(
         state
-            .begin_inbound_closing_for_route_if(&counterparty, &call_id, |_, _| true)
+            .begin_inbound_closing_for_call_if(&call_id, |_, _| true)
             .is_none()
     );
 }
 
 #[test]
-fn begin_inbound_closing_for_route_respects_predicate() {
+fn begin_inbound_closing_for_call_respects_predicate() {
     let mut state = RpcState::new();
-    let counterparty = route("client");
     let call_id = call_id(42);
     state
         .register_inbound(InboundCall {
             call_id: call_id.clone(),
-            counterparty_route: counterparty.clone(),
             method: method::AGENT_OPEN_SESSION,
             generation: Uuid::new_v4(),
             state: InboundCallState::Active,
@@ -554,19 +531,17 @@ fn begin_inbound_closing_for_route_respects_predicate() {
 
     assert!(
         state
-            .begin_inbound_closing_for_route_if(&counterparty, &call_id, |_, _| false)
+            .begin_inbound_closing_for_call_if(&call_id, |_, _| false)
             .is_none()
     );
     assert!(matches!(
-        state
-            .inbound_for_route(&counterparty, &call_id)
-            .map(|call| call.state),
+        state.inbound_for_call(&call_id).map(|call| call.state),
         Some(InboundCallState::Active)
     ));
 }
 
 #[test]
-fn finish_inbound_closing_for_route_requires_generation_and_clears_dedup() {
+fn finish_inbound_closing_for_call_requires_generation_and_clears_dedup() {
     let mut state = RpcState::new();
     let counterparty = route("client");
     let call_id = call_id(42);
@@ -578,7 +553,6 @@ fn finish_inbound_closing_for_route_requires_generation_and_clears_dedup() {
     state
         .register_inbound(InboundCall {
             call_id: call_id.clone(),
-            counterparty_route: counterparty.clone(),
             method: method::AGENT_OPEN_SESSION,
             generation,
             state: InboundCallState::Active,
@@ -590,24 +564,21 @@ fn finish_inbound_closing_for_route_requires_generation_and_clears_dedup() {
         .unwrap();
 
     let closing = state
-        .begin_inbound_closing_for_route_if(&counterparty, &call_id, |_, _| true)
+        .begin_inbound_closing_for_call_if(&call_id, |_, _| true)
         .expect("active call should move to closing");
     let mut wrong_generation = closing.clone();
     wrong_generation.handle.generation = Uuid::new_v4();
 
     assert!(state.finish_inbound_closing(&wrong_generation).is_none());
-    assert_eq!(
-        state.dedup_call_key(&dedup_key),
-        Some((&counterparty, &call_id))
-    );
+    assert_eq!(state.dedup_call_id(&dedup_key), Some(&call_id));
 
     let removed = state
         .finish_inbound_closing(&closing)
         .expect("matching closing generation should remove call");
 
     assert_eq!(removed.call_id, call_id);
-    assert!(state.inbound_for_route(&counterparty, &call_id).is_none());
-    assert!(state.dedup_call_key(&dedup_key).is_none());
+    assert!(state.inbound_for_call(&call_id).is_none());
+    assert!(state.dedup_call_id(&dedup_key).is_none());
 }
 
 #[tokio::test]
@@ -639,7 +610,6 @@ fn inbound_dedup_key_rejects_second_active_call() {
     state
         .register_inbound(InboundCall {
             call_id: call_id(1),
-            counterparty_route: route("client-a"),
             method: method::AGENT_OPEN_SESSION,
             generation: Uuid::new_v4(),
             state: InboundCallState::Active,
@@ -653,7 +623,6 @@ fn inbound_dedup_key_rejects_second_active_call() {
     let err = state
         .register_inbound(InboundCall {
             call_id: call_id(2),
-            counterparty_route: route("client-a"),
             method: method::AGENT_OPEN_SESSION,
             generation: Uuid::new_v4(),
             state: InboundCallState::Active,
@@ -668,7 +637,6 @@ fn inbound_dedup_key_rejects_second_active_call() {
         err,
         RegisterCallError::DuplicateDedupKey {
             key,
-            counterparty_route: route("client-a"),
             call_id: call_id(1),
         }
     );
@@ -684,10 +652,6 @@ fn inbound_dedup_key_rejects_second_active_call() {
             .get(method::AGENT_OPEN_SESSION.name),
         Some(&1)
     );
-    assert_eq!(
-        snapshot.inbound_calls.by_counterparty.get("client-a"),
-        Some(&1)
-    );
 }
 
 #[test]
@@ -701,7 +665,6 @@ fn removing_inbound_call_clears_matching_dedup_key() {
     state
         .register_inbound(InboundCall {
             call_id: call_id(1),
-            counterparty_route: route("client-a"),
             method: method::AGENT_OPEN_SESSION,
             generation: Uuid::new_v4(),
             state: InboundCallState::Active,
@@ -712,12 +675,10 @@ fn removing_inbound_call_clears_matching_dedup_key() {
         })
         .unwrap();
 
-    let removed = state
-        .remove_inbound_for_route(&route("client-a"), &call_id(1))
-        .unwrap();
+    let removed = state.remove_inbound_for_call(&call_id(1)).unwrap();
 
     assert_eq!(removed.call_id, call_id(1));
-    assert!(state.dedup_call_key(&key).is_none());
+    assert!(state.dedup_call_id(&key).is_none());
     assert_eq!(state.inbound_len(), 0);
     assert_eq!(state.dedup_len(), 0);
 }
@@ -728,7 +689,6 @@ fn outbound_calls_are_tracked_separately_from_inbound_calls() {
     state
         .register_inbound(InboundCall {
             call_id: call_id(1),
-            counterparty_route: route("client-a"),
             method: method::AGENT_LIST,
             generation: Uuid::new_v4(),
             state: InboundCallState::Active,
@@ -741,72 +701,44 @@ fn outbound_calls_are_tracked_separately_from_inbound_calls() {
     state
         .register_outbound(OutboundCall {
             call_id: call_id(2),
-            counterparty_route: route("server-a"),
             method: method::AGENT_LIST,
             state: OutboundCallState::AwaitingResponse,
             resources: None,
         })
         .unwrap();
 
-    assert!(
-        state
-            .inbound_for_route(&route("client-a"), &call_id(1))
-            .is_some()
-    );
-    assert!(
-        state
-            .outbound_for_route(&route("server-a"), &call_id(2))
-            .is_some()
-    );
+    assert!(state.inbound_for_call(&call_id(1)).is_some());
+    assert!(state.outbound_for_call(&call_id(2)).is_some());
     assert_eq!(state.inbound_len(), 1);
     assert_eq!(state.outbound_len(), 1);
 
-    assert!(state.set_inbound_state_for_route_if(
-        &route("client-a"),
-        &call_id(1),
-        |_| true,
-        InboundCallState::Closing
-    ));
+    assert!(state.set_inbound_state_for_call_if(&call_id(1), |_| true, InboundCallState::Closing));
     assert!(matches!(
-        state
-            .inbound_for_route(&route("client-a"), &call_id(1))
-            .map(|call| call.state),
+        state.inbound_for_call(&call_id(1)).map(|call| call.state),
         Some(InboundCallState::Closing)
     ));
-    assert!(state.set_outbound_state_for_route(
-        &route("server-a"),
-        &call_id(2),
-        OutboundCallState::ActiveStream
-    ));
+    assert!(state.set_outbound_state_for_call(&call_id(2), OutboundCallState::ActiveStream));
     assert!(matches!(
-        state
-            .outbound_for_route(&route("server-a"), &call_id(2))
-            .map(|call| call.state),
+        state.outbound_for_call(&call_id(2)).map(|call| call.state),
         Some(OutboundCallState::ActiveStream)
     ));
     assert!(
         state
-            .remove_outbound_for_route_if(&route("server-a"), &call_id(2), |_| true)
+            .remove_outbound_for_call_if(&call_id(2), |_| true)
             .is_some()
     );
-    assert!(
-        state
-            .inbound_for_route(&route("client-a"), &call_id(1))
-            .is_some()
-    );
+    assert!(state.inbound_for_call(&call_id(1)).is_some());
     assert_eq!(state.inbound_len(), 1);
     assert_eq!(state.outbound_len(), 0);
 }
 
 #[test]
-fn duplicate_route_call_id_is_rejected_per_call_table() {
+fn duplicate_call_id_is_rejected_per_call_table() {
     let mut state = RpcState::new();
-    let counterparty = route("client-a");
     let call_id = call_id(1);
     state
         .register_inbound(InboundCall {
             call_id: call_id.clone(),
-            counterparty_route: counterparty.clone(),
             method: method::AGENT_LIST,
             generation: Uuid::new_v4(),
             state: InboundCallState::Active,
@@ -820,7 +752,6 @@ fn duplicate_route_call_id_is_rejected_per_call_table() {
     let inbound_error = state
         .register_inbound(InboundCall {
             call_id: call_id.clone(),
-            counterparty_route: counterparty.clone(),
             method: method::AGENT_OPEN_SESSION,
             generation: Uuid::new_v4(),
             state: InboundCallState::Active,
@@ -833,7 +764,6 @@ fn duplicate_route_call_id_is_rejected_per_call_table() {
     assert_eq!(
         inbound_error,
         RegisterCallError::DuplicateCallId {
-            counterparty_route: counterparty.clone(),
             call_id: call_id.clone(),
         }
     );
@@ -841,7 +771,6 @@ fn duplicate_route_call_id_is_rejected_per_call_table() {
     state
         .register_outbound(OutboundCall {
             call_id: call_id.clone(),
-            counterparty_route: counterparty.clone(),
             method: method::AGENT_LIST,
             state: OutboundCallState::AwaitingResponse,
             resources: None,
@@ -850,7 +779,6 @@ fn duplicate_route_call_id_is_rejected_per_call_table() {
     let outbound_error = state
         .register_outbound(OutboundCall {
             call_id: call_id.clone(),
-            counterparty_route: counterparty.clone(),
             method: method::AGENT_OPEN_SESSION,
             state: OutboundCallState::AwaitingResponse,
             resources: None,
@@ -859,22 +787,18 @@ fn duplicate_route_call_id_is_rejected_per_call_table() {
 
     assert_eq!(
         outbound_error,
-        RegisterCallError::DuplicateCallId {
-            counterparty_route: counterparty,
-            call_id,
-        }
+        RegisterCallError::DuplicateCallId { call_id }
     );
     assert_eq!(state.inbound_len(), 1);
     assert_eq!(state.outbound_len(), 1);
 }
 
 #[test]
-fn outbound_call_handle_guards_state_changes_by_route_call_and_method() {
+fn outbound_call_handle_guards_state_changes_by_call_and_method() {
     let mut state = RpcState::new();
     let handle = state
         .register_outbound_tracked(OutboundCall {
             call_id: call_id(2),
-            counterparty_route: route("server-a"),
             method: method::AGENT_OPEN_SESSION,
             state: OutboundCallState::AwaitingResponse,
             resources: None,
@@ -887,17 +811,13 @@ fn outbound_call_handle_guards_state_changes_by_route_call_and_method() {
 
     assert!(!state.set_outbound_state_for_handle(&wrong_method, OutboundCallState::ActiveStream));
     assert!(matches!(
-        state
-            .outbound_for_route(&route("server-a"), &call_id(2))
-            .map(|call| call.state),
+        state.outbound_for_call(&call_id(2)).map(|call| call.state),
         Some(OutboundCallState::AwaitingResponse)
     ));
 
     assert!(state.set_outbound_state_for_handle(&handle, OutboundCallState::ActiveStream));
     assert!(matches!(
-        state
-            .outbound_for_route(&route("server-a"), &call_id(2))
-            .map(|call| call.state),
+        state.outbound_for_call(&call_id(2)).map(|call| call.state),
         Some(OutboundCallState::ActiveStream)
     ));
     assert!(matches!(
@@ -925,13 +845,12 @@ fn outbound_call_handle_guards_state_changes_by_route_call_and_method() {
 }
 
 #[test]
-fn same_call_id_is_allowed_for_different_counterparty_routes() {
+fn same_call_id_is_rejected_even_with_different_dedup_keys() {
     let mut state = RpcState::new();
     let call_id = call_id(1);
     state
         .register_inbound(InboundCall {
             call_id: call_id.clone(),
-            counterparty_route: route("client-a"),
             method: method::AGENT_OPEN_SESSION,
             generation: Uuid::new_v4(),
             state: InboundCallState::Active,
@@ -944,10 +863,9 @@ fn same_call_id_is_allowed_for_different_counterparty_routes() {
             cancellation: RpcCallCancellation::new(),
         })
         .unwrap();
-    state
+    let error = state
         .register_inbound(InboundCall {
             call_id: call_id.clone(),
-            counterparty_route: route("client-b"),
             method: method::AGENT_OPEN_SESSION,
             generation: Uuid::new_v4(),
             state: InboundCallState::Active,
@@ -959,20 +877,16 @@ fn same_call_id_is_allowed_for_different_counterparty_routes() {
             resources: None,
             cancellation: RpcCallCancellation::new(),
         })
-        .unwrap();
+        .unwrap_err();
 
-    assert_eq!(state.inbound_len(), 2);
-    assert!(
-        state
-            .remove_inbound_for_route(&route("client-a"), &call_id)
-            .is_some()
+    assert_eq!(
+        error,
+        RegisterCallError::DuplicateCallId {
+            call_id: call_id.clone()
+        }
     );
     assert_eq!(state.inbound_len(), 1);
-    assert!(
-        state
-            .remove_inbound_for_route(&route("client-b"), &call_id)
-            .is_some()
-    );
+    assert!(state.remove_inbound_for_call(&call_id).is_some());
     assert_eq!(state.inbound_len(), 0);
 }
 
@@ -982,7 +896,6 @@ fn debug_snapshot_reports_all_call_states() {
     state
         .register_inbound(InboundCall {
             call_id: call_id(1),
-            counterparty_route: route("client-a"),
             method: method::AGENT_LIST,
             generation: Uuid::new_v4(),
             state: InboundCallState::Closing,
@@ -995,7 +908,6 @@ fn debug_snapshot_reports_all_call_states() {
     state
         .register_outbound(OutboundCall {
             call_id: call_id(2),
-            counterparty_route: route("server-a"),
             method: method::ROUTING_SUBSCRIBE_EVENTS,
             state: OutboundCallState::ActiveStream,
             resources: None,
@@ -1004,7 +916,6 @@ fn debug_snapshot_reports_all_call_states() {
     state
         .register_outbound(OutboundCall {
             call_id: call_id(3),
-            counterparty_route: route("server-a"),
             method: method::AGENT_OPEN_SESSION,
             state: OutboundCallState::Closing,
             resources: None,
@@ -1031,9 +942,5 @@ fn debug_snapshot_reports_all_call_states() {
             .by_method
             .get(method::ROUTING_SUBSCRIBE_EVENTS.name),
         Some(&1)
-    );
-    assert_eq!(
-        snapshot.outbound_calls.by_counterparty.get("server-a"),
-        Some(&2)
     );
 }

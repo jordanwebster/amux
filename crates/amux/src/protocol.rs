@@ -12,9 +12,9 @@ pub use agent::Agent;
 pub use handshake::{Connect, ConnectResult, PROTOCOL_VERSION};
 pub use link::{InvalidLinkName, Link};
 pub use message::{
-    AgentType, CreateAgentRequest, DebugFormat, FrameBody, GoAway, HookProvider, Host, LocalFrame,
-    Message, PeerFrame, ProtocolError, ReauthRequest, ReauthResponse, RenameAgentRequest,
-    RequestFrame, ResponseFrame, RoutedCallId, RoutedFrame, RoutedFrameMessage, RoutingEvent,
+    AgentType, CallId, CreateAgentRequest, DebugFormat, FrameBody, GoAway, HookProvider, Host,
+    LocalFrame, Message, PeerFrame, ProtocolError, ReauthRequest, ReauthResponse,
+    RenameAgentRequest, RequestFrame, ResponseFrame, RoutedFrame, RoutedFrameMessage, RoutingEvent,
     SequencedReplayQuery, ShutdownReason, TerminalSize,
 };
 pub use route::Route;

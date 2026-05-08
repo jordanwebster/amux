@@ -1,12 +1,12 @@
 use uuid::Uuid;
 
 use crate::protocol::link::Link;
-use crate::protocol::message::{FrameBody, Message, PeerFrame, RoutedCallId, RoutingEvent};
-use crate::protocol::{Route, method, wire};
+use crate::protocol::message::{CallId, FrameBody, Message, PeerFrame, RoutingEvent};
+use crate::protocol::wire;
 use crate::server::ServerUserState;
 use crate::server::routing::TopologyEvent;
 
-fn peer_event_message(call_id: RoutedCallId, event: &RoutingEvent) -> Message {
+fn peer_event_message(call_id: CallId, event: &RoutingEvent) -> Message {
     Message::Peer(PeerFrame {
         call_id,
         body: FrameBody::StreamItem(
@@ -23,33 +23,37 @@ pub(in crate::server) fn broadcast_to_peers(
 ) {
     let mut sent = 0usize;
     let mut failed = 0usize;
-    let links: Vec<_> = us.topology.peer_links.iter().cloned().collect();
+    let links = us.peer_links();
     for link in links {
         if exclude_link == Some(&link) {
             continue;
         }
-        let Some(call_id) = us.rpc.active_inbound_call_id_for_route_and_method(
-            &Route::from_link(link.clone()),
-            method::ROUTING_SUBSCRIBE_EVENTS,
+        let Some(context_rpc) = us.rpc_for_link(&link) else {
+            tracing::warn!(peer = %link, "peer has no route context");
+            failed += 1;
+            continue;
+        };
+        let Some(call_id) = context_rpc.active_inbound_call_id_for_dedup_key(
+            &crate::rpc::DedupKey::PeerRoutingSubscription { link: link.clone() },
         ) else {
             tracing::warn!(peer = %link, "peer has no routing stream call id");
             failed += 1;
             continue;
         };
-        if let Some(handle) = us.topology.route(&link) {
-            let wire_msg = peer_event_message(call_id, event);
-            if !handle.try_send_or_close(
-                wire_msg,
-                format!(
-                    "peer route queue overflow while broadcasting {}",
-                    event.type_label()
-                ),
-            ) {
-                tracing::warn!(peer = %link, "peer route queue unavailable; requested close");
-                failed += 1;
-            } else {
-                sent += 1;
-            }
+        let wire_msg = peer_event_message(call_id, event);
+        let route = crate::protocol::Route::from_link(link.clone());
+        if !us.send_via_route(
+            &route,
+            wire_msg,
+            format!(
+                "peer route queue overflow while broadcasting {}",
+                event.type_label()
+            ),
+        ) {
+            tracing::warn!(peer = %link, "peer route queue unavailable; requested close");
+            failed += 1;
+        } else {
+            sent += 1;
         }
     }
     tracing::debug!(sent, failed, "broadcast to peers");
@@ -70,22 +74,10 @@ pub(in crate::server::routing) fn initial_agent_events(
     us: &ServerUserState,
     peer_link: &Link,
 ) -> Vec<RoutingEvent> {
-    let mut events = Vec::new();
-    for (uuid, info) in us.topology.registry.iter_entries() {
-        if info.is_remote() {
-            let Some(host) = us.topology.hosts.get(&info.host_id) else {
-                tracing::debug!(agent_id = %uuid, host_id = %info.host_id, "skipping remote announce for agent with unknown host");
-                continue;
-            };
-            if let Some(link) = host.route.peek()
-                && link == peer_link
-            {
-                continue;
-            }
-        }
-        events.push(info.routing_event());
-    }
-    events
+    us.agents_for_peer_snapshot(peer_link)
+        .into_iter()
+        .map(|agent| agent.routing_event())
+        .collect()
 }
 
 /// Build initial host events for a newly connected peer.
@@ -99,8 +91,11 @@ pub(in crate::server::routing) fn initial_host_events(
     peer_link: &Link,
 ) -> Vec<RoutingEvent> {
     let mut events = Vec::new();
-    for info in us.topology.hosts.values() {
-        if let Some(link) = info.route.peek()
+    for (route, info, _) in us.host_contexts_sorted() {
+        if route.is_empty() {
+            continue;
+        }
+        if let Some(link) = route.peek()
             && link == peer_link
         {
             continue;
@@ -108,7 +103,7 @@ pub(in crate::server::routing) fn initial_host_events(
         events.push(RoutingEvent::HostUp {
             id: info.id,
             name: info.name.clone(),
-            route: info.route.clone(),
+            route: route.clone(),
             version: info.version.clone(),
         });
     }

@@ -10,7 +10,6 @@ mod open_session_lifecycle;
 mod protocol_harness;
 #[cfg(test)]
 mod protocol_tests;
-mod registry;
 mod routing;
 mod rpc_dispatcher;
 mod runtime;

@@ -2,8 +2,8 @@ use tokio::sync::mpsc;
 use uuid::Uuid;
 
 use crate::protocol::message::{
-    DebugFormat, FrameBody, HookProvider, LocalFrame, Message, ProtocolError, RequestFrame,
-    ResponseFrame, RoutedCallId, ShutdownReason,
+    CallId, DebugFormat, FrameBody, HookProvider, LocalFrame, Message, ProtocolError, RequestFrame,
+    ResponseFrame, ShutdownReason,
 };
 use crate::protocol::method::{MethodLookupError, MethodScope};
 use crate::protocol::{method, wire};
@@ -17,7 +17,7 @@ use crate::services::{
 
 pub(super) async fn handle_local_request(
     tx: &mpsc::Sender<Message>,
-    call_id: RoutedCallId,
+    call_id: CallId,
     request: RequestFrame,
     ctx: &ConnectionContext,
 ) -> crate::server::connection::Result<()> {
@@ -220,11 +220,11 @@ impl From<ConnectionError> for LocalRequestError {
 
 struct LocalEndpointCall<'a> {
     tx: &'a mpsc::Sender<Message>,
-    call_id: RoutedCallId,
+    call_id: CallId,
 }
 
 impl<'a> LocalEndpointCall<'a> {
-    fn new(tx: &'a mpsc::Sender<Message>, call_id: RoutedCallId) -> Self {
+    fn new(tx: &'a mpsc::Sender<Message>, call_id: CallId) -> Self {
         Self { tx, call_id }
     }
 
@@ -232,7 +232,7 @@ impl<'a> LocalEndpointCall<'a> {
         self.tx.clone()
     }
 
-    fn call_id(&self) -> RoutedCallId {
+    fn call_id(&self) -> CallId {
         self.call_id.clone()
     }
 
@@ -458,13 +458,21 @@ mod tests {
         user_state: Arc<RwLock<ServerUserState>>,
     ) -> ConnectionContext {
         let (event_tx, _event_rx) = mpsc::channel(16);
+        let link = Link::new("test-link").unwrap();
+        let rpc = {
+            let mut us = user_state.write().await;
+            if us.route(&link).is_none() {
+                let (_handle, _rx) = us.try_reserve_link(link.clone()).unwrap();
+            }
+            us.rpc_for_link(&link).unwrap()
+        };
         ConnectionContext {
             state,
-            rpc: user_state.read().await.rpc.clone(),
+            rpc,
             user_state: user_state.clone(),
             user_id: LOCAL_USER_ID,
             event_tx,
-            link: Link::new("test-link").unwrap(),
+            link,
             is_local: true,
             heartbeat: None,
             client_name: Some("amux-cli".to_string()),
@@ -474,7 +482,7 @@ mod tests {
 
     async fn expect_local_error(
         mut rx: mpsc::Receiver<Message>,
-        call_id: &RoutedCallId,
+        call_id: &CallId,
     ) -> ProtocolError {
         let msg = tokio::time::timeout(Duration::from_secs(1), rx.recv())
             .await
@@ -501,7 +509,7 @@ mod tests {
 
         handle_local_request(
             &tx,
-            RoutedCallId::from(Uuid::new_v4()),
+            CallId::from(Uuid::new_v4()),
             request,
             &test_ctx_with_shutdown_tx(shutdown_tx).await,
         )
@@ -522,7 +530,7 @@ mod tests {
     #[tokio::test]
     async fn known_wrong_scope_local_method_returns_permission_denied() {
         let (tx, rx) = mpsc::channel(1);
-        let call_id = RoutedCallId::from(Uuid::new_v4());
+        let call_id = CallId::from(Uuid::new_v4());
         let request = RequestFrame {
             method: method::AGENT_CREATE_NAME.to_string(),
             payload: Vec::new(),
@@ -542,7 +550,7 @@ mod tests {
     #[tokio::test]
     async fn unknown_local_method_returns_unimplemented() {
         let (tx, rx) = mpsc::channel(1);
-        let call_id = RoutedCallId::from(Uuid::new_v4());
+        let call_id = CallId::from(Uuid::new_v4());
         let request = RequestFrame {
             method: "/amux.v1.Missing/Nope".to_string(),
             payload: Vec::new(),
@@ -562,7 +570,7 @@ mod tests {
     #[tokio::test]
     async fn list_agents_rejects_invalid_request_payload() {
         let (tx, rx) = mpsc::channel(1);
-        let call_id = RoutedCallId::from(Uuid::new_v4());
+        let call_id = CallId::from(Uuid::new_v4());
         let request = RequestFrame {
             method: method::AGENT_LIST_NAME.to_string(),
             payload: vec![0xff],
@@ -580,7 +588,7 @@ mod tests {
     #[tokio::test]
     async fn resolve_missing_identifier_returns_invalid_argument_response() {
         let (tx, rx) = mpsc::channel(1);
-        let call_id = RoutedCallId::from(Uuid::new_v4());
+        let call_id = CallId::from(Uuid::new_v4());
         let request = RequestFrame {
             method: method::AGENT_RESOLVE_NAME.to_string(),
             payload: wire::ResolveAgentRequest { identifier: None }.encode_to_vec(),

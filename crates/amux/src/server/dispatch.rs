@@ -17,21 +17,20 @@ use tokio::sync::mpsc;
 
 use super::connection::ConnectionContext;
 use crate::protocol::message::{
-    FrameBody, Message, PeerFrame, ProtocolError, RequestFrame, ResponseFrame, RoutedCallId,
-    RoutingEvent,
+    CallId, FrameBody, Message, PeerFrame, ProtocolError, RequestFrame, ResponseFrame, RoutingEvent,
 };
 use crate::protocol::method::{MethodLookupError, MethodScope};
-use crate::protocol::route::Route;
 use crate::protocol::{method, wire};
 use crate::rpc::{
-    DedupKey, OutboundCallState, RegisterCallError, RpcInboundServerStream, RpcServerStreamStart,
+    DedupKey, OutboundCallResources, OutboundCallState, RegisterCallError, RpcInboundServerStream,
+    RpcServerStreamStart,
 };
 use crate::server::connection::{ConnectionError, Result};
 use crate::services::{RoutingService, RoutingServiceCtx, SubscribeRoutingEventsStartError};
 
 async fn send_peer_response(
     tx: &mpsc::Sender<Message>,
-    call_id: RoutedCallId,
+    call_id: CallId,
     error: Option<ProtocolError>,
 ) -> Result<()> {
     let response = match error {
@@ -57,7 +56,7 @@ fn peer_protocol_error(message: impl Into<String>) -> ConnectionError {
 
 async fn handle_peer_request(
     tx: &mpsc::Sender<Message>,
-    call_id: RoutedCallId,
+    call_id: CallId,
     request: RequestFrame,
     ctx: &ConnectionContext,
 ) -> Result<()> {
@@ -181,7 +180,7 @@ enum PeerRoutingStreamStartError {
 
 async fn register_peer_routing_stream(
     tx: &mpsc::Sender<Message>,
-    call_id: RoutedCallId,
+    call_id: CallId,
     ctx: &ConnectionContext,
 ) -> std::result::Result<RpcInboundServerStream, PeerRoutingStreamStartError> {
     if !ctx.user_state.read().await.is_peer_link(&ctx.link) {
@@ -194,15 +193,13 @@ async fn register_peer_routing_stream(
         });
     }
 
-    let peer_route = Route::from_link(ctx.link.clone());
     ctx.rpc()
         .register_server_stream(RpcServerStreamStart {
             tx: tx.clone(),
-            counterparty_route: peer_route.clone(),
             call_id,
             method: method::ROUTING_SUBSCRIBE_EVENTS,
             dedup_key: Some(DedupKey::PeerRoutingSubscription {
-                counterparty_route: peer_route,
+                link: ctx.link.clone(),
             }),
         })
         .map_err(peer_routing_start_error)
@@ -247,27 +244,26 @@ async fn activate_inbound_peer_stream(ctx: &ConnectionContext, stream: &RpcInbou
 
 async fn accept_peer_routing_event(
     ctx: &ConnectionContext,
-    call_id: &RoutedCallId,
+    call_id: &CallId,
     event: &RoutingEvent,
 ) -> bool {
-    let peer_route = Route::from_link(ctx.link.clone());
     let is_peer_link = ctx.user_state.read().await.is_peer_link(&ctx.link);
     let active = is_peer_link
-        && ctx
-            .rpc()
-            .outbound_for_route_matches(&peer_route, call_id, |call| {
-                call.method == method::ROUTING_SUBSCRIBE_EVENTS
-                    && matches!(
-                        call.state,
-                        OutboundCallState::AwaitingResponse | OutboundCallState::ActiveStream
-                    )
-            });
+        && ctx.rpc().outbound_for_call_matches(call_id, |call| {
+            call.method == method::ROUTING_SUBSCRIBE_EVENTS
+                && matches!(
+                    &call.resources,
+                    Some(OutboundCallResources::PeerRoutingSubscription { link })
+                        if link == &ctx.link
+                )
+                && matches!(
+                    call.state,
+                    OutboundCallState::AwaitingResponse | OutboundCallState::ActiveStream
+                )
+        });
     if active {
-        ctx.rpc().set_outbound_state_for_route(
-            &peer_route,
-            call_id,
-            OutboundCallState::ActiveStream,
-        );
+        ctx.rpc()
+            .set_outbound_state_for_call(call_id, OutboundCallState::ActiveStream);
         return true;
     }
     tracing::warn!(
@@ -280,7 +276,7 @@ async fn accept_peer_routing_event(
 
 async fn finish_outbound_peer_routing_subscription(
     ctx: &ConnectionContext,
-    call_id: &RoutedCallId,
+    call_id: &CallId,
     error: Option<&ProtocolError>,
 ) -> std::result::Result<(), String> {
     if let Some(error) = error {
@@ -304,7 +300,7 @@ async fn finish_outbound_peer_routing_subscription(
 
 async fn cancel_inbound_peer_routing_subscription(
     ctx: &ConnectionContext,
-    call_id: &RoutedCallId,
+    call_id: &CallId,
 ) -> bool {
     let _us = ctx.user_state.write().await;
     ctx.rpc()
@@ -312,7 +308,7 @@ async fn cancel_inbound_peer_routing_subscription(
 }
 
 async fn handle_peer_response(
-    call_id: RoutedCallId,
+    call_id: CallId,
     error: Option<ProtocolError>,
     ctx: &ConnectionContext,
 ) -> Result<()> {
@@ -328,7 +324,7 @@ async fn handle_peer_response(
 
 async fn handle_peer_cancel(
     tx: &mpsc::Sender<Message>,
-    call_id: RoutedCallId,
+    call_id: CallId,
     ctx: &ConnectionContext,
 ) -> Result<()> {
     if ctx.is_local {
@@ -443,5 +439,75 @@ pub(super) async fn handle_message(
                 }
             }
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use tokio::sync::mpsc;
+    use uuid::Uuid;
+
+    use super::*;
+    use crate::protocol::Link;
+    use crate::protocol::message::CallId;
+    use crate::rpc::RpcPeerStreamOutboundStart;
+    use crate::server::{LOCAL_USER_ID, test_helpers};
+
+    async fn test_peer_ctx(link: Link) -> ConnectionContext {
+        let (state, user_state) = test_helpers::test_state().await;
+        let (event_tx, _event_rx) = mpsc::channel(16);
+        let rpc = {
+            let mut us = user_state.write().await;
+            let (_handle, _rx) = us.try_reserve_link(link.clone()).unwrap();
+            us.mark_peer_link(link.clone());
+            us.rpc_for_link(&link).unwrap()
+        };
+        ConnectionContext {
+            state,
+            rpc,
+            user_state,
+            user_id: LOCAL_USER_ID,
+            event_tx,
+            link,
+            is_local: false,
+            heartbeat: None,
+            client_name: None,
+            client_version: None,
+        }
+    }
+
+    #[tokio::test]
+    async fn peer_routing_event_is_rejected_for_subscription_on_other_link() {
+        let subscribed_link = Link::new("peer-a").unwrap();
+        let event_link = Link::new("peer-b").unwrap();
+        let call_id = CallId::from(Uuid::new_v4());
+        let ctx = test_peer_ctx(event_link.clone()).await;
+
+        {
+            let mut us = ctx.user_state.write().await;
+            let (_handle, _rx) = us.try_reserve_link(subscribed_link.clone()).unwrap();
+            us.mark_peer_link(subscribed_link.clone());
+            us.mark_peer_link(event_link.clone());
+            us.rpc_for_link(&subscribed_link)
+                .unwrap()
+                .register_peer_stream_outbound(RpcPeerStreamOutboundStart {
+                    link: subscribed_link.clone(),
+                    call_id: call_id.clone(),
+                    method: method::ROUTING_SUBSCRIBE_EVENTS,
+                })
+                .unwrap();
+        }
+
+        assert!(!accept_peer_routing_event(&ctx, &call_id, &RoutingEvent::SnapshotComplete).await);
+        assert!(
+            ctx.user_state
+                .read()
+                .await
+                .rpc_for_link(&subscribed_link)
+                .unwrap()
+                .outbound_for_call_matches(&call_id, |call| {
+                    matches!(call.state, OutboundCallState::AwaitingResponse)
+                })
+        );
     }
 }

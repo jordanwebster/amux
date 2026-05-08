@@ -3,27 +3,25 @@ use std::path::PathBuf;
 use serde::{Deserialize, Serialize};
 use uuid::Uuid;
 
-use crate::protocol::route::Route;
-
-/// Routed call identity carried by `RoutedFrame.call_id`.
+/// RPC call identity carried by local, peer, and routed frames.
 ///
 /// The protobuf contract uses 128-bit non-zero call IDs.
 #[derive(Debug, Clone, PartialEq, Eq, Hash)]
-pub struct RoutedCallId(Vec<u8>);
+pub struct CallId(Vec<u8>);
 
-impl RoutedCallId {
+impl CallId {
     pub const LEN: usize = 16;
 
     pub fn from_bytes(bytes: Vec<u8>) -> Result<Self, String> {
         if bytes.len() != Self::LEN {
             return Err(format!(
-                "routed call_id must be {} bytes, got {}",
+                "call_id must be {} bytes, got {}",
                 Self::LEN,
                 bytes.len()
             ));
         }
         if bytes.iter().all(|byte| *byte == 0) {
-            return Err("routed call_id must be non-zero".to_string());
+            return Err("call_id must be non-zero".to_string());
         }
         Ok(Self(bytes))
     }
@@ -33,9 +31,9 @@ impl RoutedCallId {
     }
 }
 
-impl From<Uuid> for RoutedCallId {
+impl From<Uuid> for CallId {
     fn from(uuid: Uuid) -> Self {
-        assert_ne!(uuid, Uuid::nil(), "routed call_id must be non-zero");
+        assert_ne!(uuid, Uuid::nil(), "call_id must be non-zero");
         Self(uuid.as_bytes().to_vec())
     }
 }
@@ -48,8 +46,6 @@ pub struct Host {
     pub id: Uuid,
     /// Human-readable hostname from config
     pub name: String,
-    /// Route to reach this host (built up as it propagates)
-    pub route: Route,
     /// amux version of the host
     pub version: String,
 }

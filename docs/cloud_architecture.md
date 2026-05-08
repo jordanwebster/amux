@@ -2,11 +2,9 @@
 
 This document describes the cloud deployment architecture for amux. For internal server design, see [architecture.md](architecture.md).
 
-> **Protocol note:** Some message examples below still describe the historical
-> MessagePack / `DirectMessage` protocol. The current wire protocol is
-> protobuf: raw protobuf handshake frames followed by protobuf
-> `TransportMessage` frames over existing Unix/TCP/WebSocket transports. See
-> `crates/amux/proto/amux/v1/amux.proto` and `notes/PROTO_REFACTOR.md`.
+The current wire protocol is protobuf: raw protobuf handshake frames followed
+by protobuf `TransportMessage` frames over existing Unix/TCP/WebSocket
+transports. See `crates/amux/proto/amux/v1/amux.proto`.
 
 ## Overall Architecture
 
@@ -62,7 +60,7 @@ After initial OAuth setup, cloud connections use JWT tokens:
 3. Call GET {cloud_url}/api/connect with access_token
    Returns: { host, port, token (JWT), expires_at }
 4. Connect via TLS to host:port
-5. Send handshake `Connect { link_name, token: JWT, version: PROTOCOL_VERSION, client_name?, client_version? }`
+5. Send protobuf `ConnectRequest { proposed_link_name, auth_token: JWT, supported_protocol_versions, client? }`
 6. Cloud server validates protocol version and JWT via JWKS
    - Checks version matches PROTOCOL_VERSION (rejects with ProtocolMismatch if not)
    - If client_name is present and listed in minimum_client_versions config, checks client_version against that minimum (rejects with UpgradeRequired if below)
@@ -70,7 +68,7 @@ After initial OAuth setup, cloud connections use JWT tokens:
    - Caches keys for 1 hour
    - Validates signature, audience ("amux_token"), expiry
    - Verifies host/port in claims match the receiving server
-7. Cloud server responds with handshake `ConnectResult { error: None }`
+7. Cloud server responds with protobuf `ConnectResponse::accepted`
 ```
 
 ### Token Refresh
@@ -80,7 +78,7 @@ Tokens are refreshed automatically before expiry (5 minutes before `expires_at`)
 1. The `connection_loop` has a third `select!` branch on a refresh deadline
 2. When triggered: exchange refresh_token for new access_token
 3. Call `/api/connect` for new JWT
-4. If same host/port: send in-band `DirectMessage::Reauth { token }`
+4. If same host/port: send in-band `ReauthRequest { auth_token }`
 5. If host/port changed: return `CloudError::HostChanged`, requiring full reconnection
 
 The refresh token itself may be rotated by the OAuth server; if a new refresh token is returned, it is persisted to state.
@@ -112,9 +110,9 @@ When a local server starts with cloud mode enabled:
 2. Exchange refresh_token for access_token (OAuth)
 3. Call /api/connect → { host, port, token, expires_at }
 4. TLS connect to host:port (rustls, webpki root certs)
-5. Send handshake `Connect { link_name: "{hostname}-{rand}", token: JWT, version: PROTOCOL_VERSION }`
+5. Send protobuf `ConnectRequest { proposed_link_name: "{hostname}-{rand}", auth_token: JWT, supported_protocol_versions }`
 6. Cloud validates protocol version, JWT (JWKS), checks link_name uniqueness
-7. Cloud responds with handshake `ConnectResult { error: None }`
+7. Cloud responds with protobuf `ConnectResponse::accepted`
 8. Enter connection_loop with token refresh enabled
 ```
 
@@ -130,9 +128,9 @@ Rich clients (mobile, web) connect via WebSocket to the cloud server:
 
 ```
 1. WebSocket upgrade to ws://cloud:9002/
-2. Send handshake `Connect { link_name, token: null, version: PROTOCOL_VERSION }`
-3. Cloud responds with handshake `ConnectResult`
-4. Enter connection_loop (MessagePack binary frames over WebSocket)
+2. Send protobuf `ConnectRequest`
+3. Cloud responds with protobuf `ConnectResponse`
+4. Enter `connection_loop` (protobuf binary frames over WebSocket)
 ```
 
 Note: WebSocket cloud authentication is not yet implemented (tracked as future work). Currently WebSocket connections bypass token validation.
@@ -143,10 +141,10 @@ Terminal clients connect via Unix socket:
 
 ```
 1. Connect to the Unix socket (per-user runtime dir)
-2. Send handshake `Connect { link_name: "term-{rand}", token: null, version: PROTOCOL_VERSION }`
-3. Server checks link_name uniqueness, inserts route
-4. Server responds with handshake `ConnectResult { error: None }`
-5. Enter connection_loop (MessagePack over length-prefixed frames)
+2. Send protobuf `ConnectRequest` with proposed link name `term-{rand}`
+3. Server validates the assigned link name and reserves the connection
+4. Server responds with protobuf `ConnectResponse`
+5. Enter `connection_loop` (protobuf over length-prefixed frames)
 ```
 
 No token validation for Unix socket connections (local trust).
@@ -157,11 +155,14 @@ No token validation for Unix socket connections (local trust).
 
 | Client Type | Transport | Serialization | Framing |
 |-------------|-----------|---------------|---------|
-| Terminal clients | Unix socket | MessagePack (rmp-serde, named format) | Length-prefixed (4-byte BE) |
-| amux server → amux server | TCP with TLS + `TCP_NODELAY` | MessagePack (rmp-serde, named format) | Length-prefixed (4-byte BE) |
-| Rich clients (mobile, web) | WebSocket | MessagePack (rmp-serde, named format) | WebSocket native (binary frames) |
+| Terminal clients | Unix socket | protobuf | Length-prefixed (4-byte BE) |
+| amux server → amux server | TCP with TLS + `TCP_NODELAY` | protobuf | Length-prefixed (4-byte BE) |
+| Rich clients (mobile, web) | WebSocket | protobuf | WebSocket native (binary frames) |
 
-All transports use the same `Transport` trait and session `Message` enum after handshake. Handshake uses raw frame I/O (`read_frame`/`write_frame`) with standalone `Connect`/`ConnectResult` types, then transitions to `read_message`/`write_message`.
+All transports use the same `Transport` trait and runtime `Message` enum
+after handshake. Handshake uses raw frame I/O (`read_frame`/`write_frame`)
+with protobuf `ConnectRequest`/`ConnectResponse`, then transitions to
+`read_message`/`write_message`.
 
 ---
 
@@ -190,20 +191,35 @@ Route: VecDeque<String>  // Serializes as "AB.BC.CD" (dot-separated)
 
 ## Session Propagation
 
-Agents are propagated to connected peers via `AnnounceAgent`/`WithdrawAgent` direct messages. `list` returns both local and remote agents. Remote agents include their route for multi-hop routing.
+Agents are propagated to connected peers via
+`RoutingService/SubscribeRoutingEvents` stream items. `list` returns both
+local and remote agents. `AgentUp` and `AgentDown` are route-free host
+inventory updates; the agent's `host_id` is resolved through host route
+announcements.
 
-Hosts are propagated via `AnnounceHost`/`WithdrawHost`. When a peer connection is lost, `WithdrawHost` propagates through the network and each server bulk-removes agents reachable via the withdrawn host and cancels any matching subscriptions.
+Hosts are propagated via `HostUp`/`HostDown` routing events. `Host` is
+route-free identity and metadata; `HostUp` carries the route for that
+announcement. When a peer connection is lost, the server drops route contexts
+under that link, broadcasts matching `HostDown` events, removes host contexts
+and remote agents whose last route disappeared, and cancels affected
+RPC/OpenSession state.
 
 Idle peer links run a symmetric heartbeat driven by a per-connection idle
-timeout negotiated in the `ConnectResult` handshake (pulled from
+timeout negotiated in the `ConnectResponse` handshake (pulled from
 `Config::idle_timeout_secs`, default 180s; `None` for local Unix sockets).
 After the handshake, both peers apply the same rule: if no inbound message
 has been seen for the negotiated timeout, the connection is closed and the
-normal `WithdrawHost` cleanup path runs. Only the dialer sends `Heartbeat`,
+normal route cleanup path runs. Only the dialer sends `Ping`,
 at its own cadence (currently `idle_timeout / 3`); the acceptor replies with
-`HeartbeatAck`, which counts as inbound traffic.
+`Pong`, which counts as inbound traffic.
 
-Routing uses the per-user routes table: `HashMap<Link, ConnectionHandle>`, where a `ConnectionHandle` bundles the `mpsc::Sender<Message>` for the connection's writer task with its request-id counter. When a client wants to reach an agent on a remote server, the route is resolved from the agent registry (e.g. `"cloud-server.local-host"`) and the message is forwarded hop-by-hop using the stack-based routing algorithm described in [architecture.md](architecture.md).
+Routing uses three per-user tables: `connections: Link -> ConnectionEntry`
+owns the transport handle, `routes: Route -> RouteContext` owns advertised
+tunnels and route-scoped RPC state, and `hosts: HostId -> HostContext` owns
+remote host metadata plus agents. When a client wants to reach an agent on a
+remote server, the route is resolved from the agent's host (for example
+`"cloud-server.local-host"`) and the routed frame is forwarded hop-by-hop using
+the stack-based routing algorithm described in [architecture.md](architecture.md).
 
 ---
 

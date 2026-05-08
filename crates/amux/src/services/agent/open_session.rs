@@ -16,6 +16,7 @@ use crate::agent::claude::io::{
 };
 use crate::agent::{PtyHandle, StructuredInputCancel, StructuredInputTarget};
 use crate::buffer::{BroadcastRead, ByteReplayQuery, StructuredOutput};
+use crate::protocol::Route;
 use crate::protocol::message::{FrameBody, ProtocolError};
 #[cfg(test)]
 use crate::protocol::method;
@@ -29,7 +30,7 @@ use crate::rpc::{
 };
 use crate::server::{
     OpenSessionRuntime, OpenSessionStructuredInput, OpenSessionStructuredInputJob,
-    OpenSessionStructuredInputPayload,
+    OpenSessionStructuredInputPayload, RpcDispatcher,
 };
 
 impl AgentService {
@@ -56,10 +57,19 @@ pub(crate) struct OpenSessionCall {
 }
 
 impl OpenSessionCall {
-    pub(crate) fn from_rpc(call: RpcInboundBidi) -> Option<Self> {
+    pub(crate) fn from_rpc(
+        call: RpcInboundBidi,
+        counterparty_route: Route,
+        rpc: RpcDispatcher,
+    ) -> Option<Self> {
         let call = call.into_typed::<OpenSessionInputCodec, OpenSessionOutputCodec>();
         Some(Self {
-            runtime: OpenSessionRuntime::new(call.handle, call.cancellation)?,
+            runtime: OpenSessionRuntime::new(
+                call.handle,
+                counterparty_route,
+                call.cancellation,
+                rpc,
+            )?,
             input: call.input,
             output: call.output,
         })
@@ -442,19 +452,9 @@ fn open_session_dedup_error(error: RegisterCallError) -> ProtocolError {
                 call_id.as_bytes()
             ),
         },
-        RegisterCallError::DuplicateCallId {
-            counterparty_route,
-            call_id,
-        }
-        | RegisterCallError::DuplicateDedupKey {
-            counterparty_route,
-            call_id,
-            ..
-        } => ProtocolError::AlreadyExists {
-            message: format!(
-                "duplicate active OpenSession call {:?} from {counterparty_route}",
-                call_id.as_bytes()
-            ),
+        RegisterCallError::DuplicateCallId { call_id }
+        | RegisterCallError::DuplicateDedupKey { call_id, .. } => ProtocolError::AlreadyExists {
+            message: format!("duplicate active OpenSession call {:?}", call_id.as_bytes()),
         },
     }
 }
@@ -532,8 +532,9 @@ async fn prepare_raw_open_session(
     let pty = {
         let us = ctx.user_state().read().await;
         let session = us
-            .agents
+            .local_agents
             .get(&open.agent_id)
+            .map(|context| &context.session)
             .ok_or(ProtocolError::NoAgentFound)?;
         session
             .pty_handle()
@@ -568,8 +569,9 @@ async fn prepare_test_echo_open_session(
     let pty = {
         let us = ctx.user_state().read().await;
         let session = us
-            .agents
+            .local_agents
             .get(&open.agent_id)
+            .map(|context| &context.session)
             .ok_or(ProtocolError::NoAgentFound)?;
         if !session
             .io_protocols()
@@ -626,8 +628,9 @@ async fn prepare_structured_open_session(
     let (log_source, pty, input_target) = {
         let us = ctx.user_state().read().await;
         let session = us
-            .agents
+            .local_agents
             .get(&open.agent_id)
+            .map(|context| &context.session)
             .ok_or(ProtocolError::NoAgentFound)?;
         if !session
             .io_protocols()
@@ -1128,7 +1131,7 @@ mod tests {
 
     use super::*;
     use crate::protocol::Link;
-    use crate::protocol::message::{Message, ResponseFrame, RoutedCallId, RoutedFrameMessage};
+    use crate::protocol::message::{CallId, Message, ResponseFrame, RoutedFrameMessage};
     use crate::protocol::route::Route;
     use crate::rpc::{
         InboundCallState, RpcCallCancellation, RpcInboundCallHandle, RpcInboundFrameTarget,
@@ -1140,23 +1143,24 @@ mod tests {
         Route::from_link(Link::new(link).unwrap())
     }
 
-    fn call_id(n: u128) -> RoutedCallId {
-        RoutedCallId::from(Uuid::from_u128(n))
+    fn call_id(n: u128) -> CallId {
+        CallId::from(Uuid::from_u128(n))
     }
 
     fn runtime_for(
         counterparty_route: Route,
-        call_id: RoutedCallId,
+        call_id: CallId,
         generation: Uuid,
     ) -> OpenSessionRuntime {
         OpenSessionRuntime::new(
             RpcInboundCallHandle {
-                counterparty_route,
-                call_id,
                 method: method::AGENT_OPEN_SESSION,
+                call_id,
                 generation,
             },
+            counterparty_route,
             RpcCallCancellation::for_tests(),
+            RpcDispatcher::new(),
         )
         .unwrap()
     }
@@ -1182,14 +1186,13 @@ mod tests {
         let stale_generation = Uuid::new_v4();
 
         {
-            let us = user_state.read().await;
-            us.rpc
+            let mut us = user_state.write().await;
+            us.ensure_route_rpc(counterparty_route.clone())
                 .register_routed_bidi(RpcRoutedBidiStart {
                     tx: output_tx,
                     owner_link: Link::new("owner").unwrap(),
                     reply_src: route("server"),
                     reply_dst: route("client"),
-                    counterparty_route: counterparty_route.clone(),
                     call_id: routed_call_id.clone(),
                     method: method::AGENT_OPEN_SESSION,
                     dedup_key: None,
@@ -1211,7 +1214,9 @@ mod tests {
 
         let us = user_state.read().await;
         assert!(matches!(
-            us.rpc.inbound_for_route(&counterparty_route, &routed_call_id),
+            us.route_rpc(&counterparty_route)
+                .unwrap()
+                .inbound_for_call(&routed_call_id),
             Some(call)
                 if call.method == method::AGENT_OPEN_SESSION
                     && matches!(call.state, InboundCallState::Active)
@@ -1240,23 +1245,24 @@ mod tests {
         let (output_tx, mut output_rx) = mpsc::channel(4);
         let counterparty_route = route("client");
         let routed_call_id = call_id(42);
-        let call = {
-            let us = user_state.read().await;
-            us.rpc
+        let (call, rpc) = {
+            let mut us = user_state.write().await;
+            let rpc = us.ensure_route_rpc(counterparty_route.clone());
+            let call = rpc
                 .register_routed_bidi(RpcRoutedBidiStart {
                     tx: output_tx,
                     owner_link: Link::new("owner").unwrap(),
                     reply_src: route("server"),
                     reply_dst: route("client"),
-                    counterparty_route: counterparty_route.clone(),
                     call_id: routed_call_id.clone(),
                     method: method::AGENT_OPEN_SESSION,
                     dedup_key: None,
                     stream_capacity: 256,
                 })
-                .unwrap()
+                .unwrap();
+            (call, rpc)
         };
-        let open_call = OpenSessionCall::from_rpc(call).unwrap();
+        let open_call = OpenSessionCall::from_rpc(call, counterparty_route.clone(), rpc).unwrap();
         let (_input_gate_tx, input_gate_rx) = watch::channel(OpenSessionInputGate::Preparing);
         spawn_open_session_input_dispatcher(
             open_call.input,
@@ -1267,8 +1273,9 @@ mod tests {
         let stream_writer = {
             let us = user_state.read().await;
             let Some(RpcInboundFrameTarget::ActiveStream { stream_writer, .. }) = us
-                .rpc
-                .inbound_frame_target_for_route(&counterparty_route, &routed_call_id)
+                .route_rpc(&counterparty_route)
+                .unwrap()
+                .inbound_frame_target_for_call(&routed_call_id)
             else {
                 panic!("expected active OpenSession stream writer");
             };
@@ -1305,8 +1312,9 @@ mod tests {
             user_state
                 .read()
                 .await
-                .rpc
-                .inbound_for_route(&counterparty_route, &routed_call_id)
+                .route_rpc(&counterparty_route)
+                .unwrap()
+                .inbound_for_call(&routed_call_id)
                 .is_none()
         );
     }

@@ -2,7 +2,7 @@ use std::sync::{Arc, RwLock, RwLockReadGuard, RwLockWriteGuard};
 
 use crate::protocol::Route;
 use crate::protocol::link::Link;
-use crate::protocol::message::RoutedCallId;
+use crate::protocol::message::CallId;
 use crate::protocol::method::MethodSpec;
 use crate::rpc::{
     DedupKey, InboundCall, InboundCallResources, InboundCallState, OutboundCall, OutboundCallState,
@@ -12,7 +12,7 @@ use crate::rpc::{
     RpcRoutedUnaryStart, RpcServerStreamStart, RpcState,
 };
 
-#[derive(Clone, Default)]
+#[derive(Clone, Default, Debug)]
 pub(crate) struct RpcDispatcher {
     state: Arc<RwLock<RpcState>>,
 }
@@ -24,7 +24,7 @@ pub(in crate::server) enum RpcInboundCloseTarget {
 }
 
 impl RpcDispatcher {
-    pub(in crate::server) fn new() -> Self {
+    pub(crate) fn new() -> Self {
         Self::default()
     }
 
@@ -36,13 +36,11 @@ impl RpcDispatcher {
         self.state.write().expect("RPC state lock poisoned")
     }
 
-    pub(in crate::server) fn active_inbound_call_id_for_route_and_method(
+    pub(in crate::server) fn active_inbound_call_id_for_dedup_key(
         &self,
-        counterparty_route: &Route,
-        method: MethodSpec,
-    ) -> Option<RoutedCallId> {
-        self.read()
-            .active_inbound_call_id_for_route_and_method(counterparty_route, method)
+        key: &DedupKey,
+    ) -> Option<CallId> {
+        self.read().active_inbound_call_id_for_dedup_key(key)
     }
 
     pub(in crate::server) fn inbound_len(&self) -> usize {
@@ -59,6 +57,10 @@ impl RpcDispatcher {
 
     pub(in crate::server) fn debug_snapshot(&self) -> RpcDebugSnapshot {
         self.read().debug_snapshot()
+    }
+
+    pub(in crate::server) fn cancel_all(&self) {
+        self.write().cancel_all();
     }
 
     pub(in crate::server) fn register_routed_unary(
@@ -100,74 +102,55 @@ impl RpcDispatcher {
             .map(|_| ())
     }
 
-    pub(in crate::server) fn outbound_for_route_matches(
+    pub(in crate::server) fn outbound_for_call_matches(
         &self,
-        counterparty_route: &Route,
-        call_id: &RoutedCallId,
+        call_id: &CallId,
         predicate: impl FnOnce(&OutboundCall) -> bool,
     ) -> bool {
         self.read()
-            .outbound_for_route(counterparty_route, call_id)
+            .outbound_for_call(call_id)
             .is_some_and(predicate)
     }
 
     #[cfg(test)]
-    pub(crate) fn outbound_for_route(
-        &self,
-        counterparty_route: &Route,
-        call_id: &RoutedCallId,
-    ) -> Option<OutboundCall> {
-        self.read()
-            .outbound_for_route(counterparty_route, call_id)
-            .cloned()
+    pub(crate) fn outbound_for_call(&self, call_id: &CallId) -> Option<OutboundCall> {
+        self.read().outbound_for_call(call_id).cloned()
     }
 
-    pub(in crate::server) fn set_outbound_state_for_route(
+    pub(in crate::server) fn set_outbound_state_for_call(
         &self,
-        counterparty_route: &Route,
-        call_id: &RoutedCallId,
+        call_id: &CallId,
         state: OutboundCallState,
     ) -> bool {
-        self.write()
-            .set_outbound_state_for_route(counterparty_route, call_id, state)
+        self.write().set_outbound_state_for_call(call_id, state)
     }
 
-    pub(crate) fn inbound_frame_target_for_route(
+    pub(crate) fn inbound_frame_target_for_call(
         &self,
-        counterparty_route: &Route,
-        call_id: &RoutedCallId,
+        call_id: &CallId,
     ) -> Option<RpcInboundFrameTarget> {
-        self.read()
-            .inbound_frame_target_for_route(counterparty_route, call_id)
+        self.read().inbound_frame_target_for_call(call_id)
     }
 
     #[cfg(test)]
-    pub(crate) fn inbound_for_route(
-        &self,
-        counterparty_route: &Route,
-        call_id: &RoutedCallId,
-    ) -> Option<InboundCall> {
-        self.read()
-            .inbound_for_route(counterparty_route, call_id)
-            .cloned()
+    pub(crate) fn inbound_for_call(&self, call_id: &CallId) -> Option<InboundCall> {
+        self.read().inbound_for_call(call_id).cloned()
     }
 
     #[cfg(test)]
-    pub(in crate::server) fn inbound_call_keys_if(
+    pub(in crate::server) fn inbound_call_ids_if(
         &self,
         predicate: impl FnMut(&InboundCall) -> bool,
-    ) -> Vec<(Route, RoutedCallId)> {
-        self.read().inbound_call_keys_if(predicate)
+    ) -> Vec<CallId> {
+        self.read().inbound_call_ids_if(predicate)
     }
 
     #[cfg(test)]
-    pub(in crate::server) fn inbound_resources_for_route(
+    pub(in crate::server) fn inbound_resources_for_call(
         &self,
-        counterparty_route: &Route,
-        call_id: &RoutedCallId,
+        call_id: &CallId,
     ) -> Option<InboundCallResources> {
-        self.read()
-            .inbound_resources_for_route(counterparty_route, call_id)
+        self.read().inbound_resources_for_call(call_id)
     }
 
     pub(in crate::server) fn activate_inbound_for_handle(
@@ -200,30 +183,26 @@ impl RpcDispatcher {
     }
 
     #[cfg(test)]
-    pub(in crate::server) fn begin_inbound_closing_for_route_if(
+    pub(in crate::server) fn begin_inbound_closing_for_call_if(
         &self,
-        counterparty_route: &Route,
-        call_id: &RoutedCallId,
+        call_id: &CallId,
         predicate: impl FnOnce(&InboundCall, &InboundCallResources) -> bool,
     ) -> Option<RpcInboundClosing> {
         self.write()
-            .begin_inbound_closing_for_route_if(counterparty_route, call_id, predicate)
+            .begin_inbound_closing_for_call_if(call_id, predicate)
     }
 
-    pub(in crate::server) fn begin_inbound_closing_for_route(
+    pub(in crate::server) fn begin_inbound_closing_for_call(
         &self,
-        counterparty_route: &Route,
-        call_id: &RoutedCallId,
+        call_id: &CallId,
     ) -> RpcInboundCloseTarget {
         let mut state = self.write();
-        if let Some(closing) =
-            state.begin_inbound_closing_for_route_if(counterparty_route, call_id, |_, _| true)
-        {
+        if let Some(closing) = state.begin_inbound_closing_for_call_if(call_id, |_, _| true) {
             return RpcInboundCloseTarget::Closing(closing);
         }
 
         if state
-            .inbound_for_route(counterparty_route, call_id)
+            .inbound_for_call(call_id)
             .is_some_and(|call| matches!(call.state, InboundCallState::Closing))
         {
             RpcInboundCloseTarget::AlreadyClosing
@@ -237,15 +216,14 @@ impl RpcDispatcher {
         mut predicate: impl FnMut(&InboundCall, &InboundCallResources) -> bool,
     ) -> Vec<RpcInboundClosing> {
         let mut state = self.write();
-        let keys = state.inbound_call_keys_if(|call| {
+        let call_ids = state.inbound_call_ids_if(|call| {
             call.resources
                 .as_ref()
                 .is_some_and(|resources| predicate(call, resources))
         });
-        keys.into_iter()
-            .filter_map(|(counterparty_route, call_id)| {
-                state.begin_inbound_closing_for_route_if(&counterparty_route, &call_id, |_, _| true)
-            })
+        call_ids
+            .into_iter()
+            .filter_map(|call_id| state.begin_inbound_closing_for_call_if(&call_id, |_, _| true))
             .collect()
     }
 
@@ -268,12 +246,17 @@ impl RpcDispatcher {
     pub(in crate::server) fn finish_outbound_peer_routing_subscription(
         &self,
         link: &Link,
-        call_id: &RoutedCallId,
+        call_id: &CallId,
     ) -> bool {
-        let route = Route::from_link(link.clone());
         self.write()
-            .remove_outbound_for_route_if(&route, call_id, |call| {
+            .remove_outbound_for_call_if(call_id, |call| {
                 call.method == crate::protocol::method::ROUTING_SUBSCRIBE_EVENTS
+                    && matches!(
+                        &call.resources,
+                        Some(crate::rpc::OutboundCallResources::PeerRoutingSubscription {
+                            link: call_link
+                        }) if call_link == link
+                    )
             })
             .is_some()
     }
@@ -281,52 +264,72 @@ impl RpcDispatcher {
     pub(in crate::server) fn finish_inbound_peer_routing_subscription(
         &self,
         link: &Link,
-        call_id: &RoutedCallId,
+        call_id: &CallId,
     ) -> bool {
         self.write()
-            .remove_inbound_for_route_if(&Route::from_link(link.clone()), call_id, |call| {
+            .remove_inbound_for_call_if(call_id, |call| {
                 call.method == crate::protocol::method::ROUTING_SUBSCRIBE_EVENTS
+                    && call.dedup_key
+                        == Some(DedupKey::PeerRoutingSubscription { link: link.clone() })
             })
             .is_some()
     }
 
-    pub(in crate::server) fn remove_peer_routing_calls_for_link(&self, link: &Link) {
-        let route = Route::from_link(link.clone());
-        let mut state = self.write();
-        state.remove_inbound_calls_if(|call| {
-            call.counterparty_route == route
-                && call.method == crate::protocol::method::ROUTING_SUBSCRIBE_EVENTS
-        });
-        state.remove_outbound_calls_if(|call| {
-            call.counterparty_route == route
-                && call.method == crate::protocol::method::ROUTING_SUBSCRIBE_EVENTS
-        });
-    }
-
     pub(in crate::server) fn remove_local_origin_outbound_for_return_hop(
         &self,
-        counterparty_route: &Route,
-        call_id: &RoutedCallId,
+        call_id: &CallId,
         owner_link: &Link,
+        response_route: &Route,
     ) -> Option<OutboundCall> {
-        self.write()
-            .remove_outbound_for_route_if(counterparty_route, call_id, |call| {
-                call.resources
-                    .as_ref()
-                    .and_then(|resources| resources.local_origin())
-                    .is_some_and(|(call_owner_link, _, _)| call_owner_link == owner_link)
-            })
+        self.write().remove_outbound_for_call_if(call_id, |call| {
+            call.resources
+                .as_ref()
+                .and_then(|resources| resources.local_origin())
+                .is_some_and(|(call_owner_link, request_src, request_dst)| {
+                    call_owner_link == owner_link
+                        && local_origin_request_route_matches(
+                            request_src,
+                            request_dst,
+                            response_route,
+                        )
+                })
+        })
     }
 
-    pub(in crate::server) fn remove_tracked_outbound_for_route(
+    pub(in crate::server) fn remove_local_origin_outbound_for_return_hop_and_failed_route(
         &self,
-        counterparty_route: &Route,
-        call_id: &RoutedCallId,
+        call_id: &CallId,
+        owner_link: &Link,
+        failed_route: &Route,
     ) -> Option<OutboundCall> {
-        self.write()
-            .remove_outbound_for_route_if(counterparty_route, call_id, |call| {
-                call.resources.is_some()
-            })
+        self.write().remove_outbound_for_call_if(call_id, |call| {
+            call.resources
+                .as_ref()
+                .and_then(|resources| resources.local_origin())
+                .is_some_and(|(call_owner_link, request_src, request_dst)| {
+                    call_owner_link == owner_link
+                        && local_origin_request_route_matches(
+                            request_src,
+                            request_dst,
+                            failed_route,
+                        )
+                })
+        })
+    }
+
+    pub(in crate::server) fn remove_tracked_outbound_for_call(
+        &self,
+        call_id: &CallId,
+        failed_route: &Route,
+    ) -> Option<OutboundCall> {
+        self.write().remove_outbound_for_call_if(call_id, |call| {
+            call.resources
+                .as_ref()
+                .and_then(|resources| resources.local_origin())
+                .is_some_and(|(_, request_src, request_dst)| {
+                    local_origin_request_route_matches(request_src, request_dst, failed_route)
+                })
+        })
     }
 
     pub(in crate::server) fn remove_local_origin_outbound_for_owner_link(
@@ -353,4 +356,18 @@ impl RpcDispatcher {
         self.write()
             .remove_inbound_for_owner_link_except_method(owner_link, excluded_method)
     }
+}
+
+fn local_origin_request_route_matches(
+    request_src: &Route,
+    request_dst: &Route,
+    failed_route: &Route,
+) -> bool {
+    Route::from_links(
+        request_src
+            .iter()
+            .chain(request_dst.iter())
+            .map(|link| link.as_str().to_string()),
+    )
+    .is_ok_and(|route| route == *failed_route)
 }

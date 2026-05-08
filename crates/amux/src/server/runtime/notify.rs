@@ -18,8 +18,8 @@ pub(super) async fn notify_other_clients(
 ) {
     let us = user_state.read().await;
     let msg = Message::GoAway(GoAway { reason });
-    for (link, handle) in &us.topology.routes {
-        if link == exclude_link {
+    for (link, handle) in us.connected_links() {
+        if &link == exclude_link {
             continue;
         }
         let _ = handle.try_send(msg.clone());
@@ -37,10 +37,7 @@ pub(in crate::server) async fn notify_local_clients(
 ) {
     let us = user_state.read().await;
     let msg = Message::GoAway(GoAway { reason });
-    for (link, handle) in &us.topology.routes {
-        if us.topology.peer_links.contains(link) {
-            continue;
-        }
+    for (_link, handle) in us.connected_local_links() {
         let _ = handle.try_send(msg.clone());
     }
 }

@@ -322,7 +322,6 @@ message SubscribeRoutingEventsRequest {}
 message SubscribeRoutingEventsResponse {
   oneof event {
     HostUp host_up = 10;
-    HostUpdated host_updated = 11;
     HostDown host_down = 12;
 
     AgentUp agent_up = 20;
@@ -336,15 +335,12 @@ message SubscribeRoutingEventsResponse {
 message Host {
   bytes host_id = 1;
   string name = 2;
-  Route route = 3;
-  string version = 4;
+  string version = 3;
 }
 
 message HostUp {
   Host host = 1;
-}
-message HostUpdated {
-  Host host = 1;
+  Route route = 2;
 }
 message HostDown {
   bytes host_id = 1;

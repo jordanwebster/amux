@@ -7,7 +7,7 @@ use super::stream::{
 };
 use crate::protocol::Route;
 use crate::protocol::link::Link;
-use crate::protocol::message::{Message, RoutedCallId};
+use crate::protocol::message::{CallId, Message};
 use crate::protocol::method::MethodSpec;
 
 /// Method-specific deduplication key for inbound calls.
@@ -21,14 +21,13 @@ pub(crate) enum DedupKey {
         agent_id: Uuid,
     },
     PeerRoutingSubscription {
-        counterparty_route: Route,
+        link: Link,
     },
 }
 
 #[derive(Debug, Clone)]
 pub(crate) struct InboundCall {
-    pub(crate) call_id: RoutedCallId,
-    pub(crate) counterparty_route: Route,
+    pub(crate) call_id: CallId,
     pub(crate) method: MethodSpec,
     pub(crate) generation: Uuid,
     pub(crate) state: InboundCallState,
@@ -40,16 +39,14 @@ pub(crate) struct InboundCall {
 
 #[derive(Debug, Clone)]
 pub(crate) struct RpcInboundCallHandle {
-    pub(crate) counterparty_route: Route,
-    pub(crate) call_id: RoutedCallId,
+    pub(crate) call_id: CallId,
     pub(crate) method: MethodSpec,
     pub(crate) generation: Uuid,
 }
 
 #[derive(Debug, Clone)]
 pub(crate) struct RpcOutboundCallHandle {
-    pub(crate) counterparty_route: Route,
-    pub(crate) call_id: RoutedCallId,
+    pub(crate) call_id: CallId,
     pub(crate) method: MethodSpec,
 }
 
@@ -105,8 +102,7 @@ pub(crate) struct RpcRoutedBidiStart {
     pub(crate) owner_link: Link,
     pub(crate) reply_src: Route,
     pub(crate) reply_dst: Route,
-    pub(crate) counterparty_route: Route,
-    pub(crate) call_id: RoutedCallId,
+    pub(crate) call_id: CallId,
     pub(crate) method: MethodSpec,
     pub(crate) dedup_key: Option<DedupKey>,
     pub(crate) stream_capacity: usize,
@@ -117,30 +113,26 @@ pub(crate) struct RpcRoutedUnaryStart {
     pub(crate) owner_link: Link,
     pub(crate) reply_src: Route,
     pub(crate) reply_dst: Route,
-    pub(crate) counterparty_route: Route,
-    pub(crate) call_id: RoutedCallId,
+    pub(crate) call_id: CallId,
     pub(crate) method: MethodSpec,
 }
 
 pub(crate) struct RpcServerStreamStart {
     pub(crate) tx: mpsc::Sender<Message>,
-    pub(crate) counterparty_route: Route,
-    pub(crate) call_id: RoutedCallId,
+    pub(crate) call_id: CallId,
     pub(crate) method: MethodSpec,
     pub(crate) dedup_key: Option<DedupKey>,
 }
 
 pub(crate) struct RpcClientOutboundStart {
-    pub(crate) call_id: RoutedCallId,
-    pub(crate) counterparty_route: Route,
+    pub(crate) call_id: CallId,
     pub(crate) method: MethodSpec,
     pub(crate) state: OutboundCallState,
     pub(crate) inbox_tx: mpsc::Sender<Message>,
 }
 
 pub(crate) struct RpcLocalOriginOutboundStart {
-    pub(crate) call_id: RoutedCallId,
-    pub(crate) counterparty_route: Route,
+    pub(crate) call_id: CallId,
     pub(crate) method: MethodSpec,
     pub(crate) state: OutboundCallState,
     pub(crate) owner_link: Link,
@@ -149,8 +141,8 @@ pub(crate) struct RpcLocalOriginOutboundStart {
 }
 
 pub(crate) struct RpcPeerStreamOutboundStart {
-    pub(crate) counterparty_route: Route,
-    pub(crate) call_id: RoutedCallId,
+    pub(crate) link: Link,
+    pub(crate) call_id: CallId,
     pub(crate) method: MethodSpec,
 }
 
@@ -179,8 +171,7 @@ impl InboundCallState {
 
 #[derive(Debug, Clone)]
 pub(crate) struct OutboundCall {
-    pub(crate) call_id: RoutedCallId,
-    pub(crate) counterparty_route: Route,
+    pub(crate) call_id: CallId,
     pub(crate) method: MethodSpec,
     pub(crate) state: OutboundCallState,
     pub(crate) resources: Option<OutboundCallResources>,
@@ -196,12 +187,14 @@ pub(crate) enum OutboundCallResources {
     ClientInbox {
         tx: mpsc::Sender<Message>,
     },
+    PeerRoutingSubscription {
+        link: Link,
+    },
 }
 
 #[derive(Debug, Clone)]
 pub(crate) struct RpcLocalOriginOutboundCall {
-    pub(crate) call_id: RoutedCallId,
-    pub(crate) counterparty_route: Route,
+    pub(crate) call_id: CallId,
     pub(crate) owner_link: Link,
     pub(crate) request_src: Route,
     pub(crate) request_dst: Route,
@@ -215,7 +208,7 @@ impl OutboundCallResources {
                 request_src,
                 request_dst,
             } => Some((owner_link, request_src, request_dst)),
-            Self::ClientInbox { .. } => None,
+            Self::ClientInbox { .. } | Self::PeerRoutingSubscription { .. } => None,
         }
     }
 
@@ -226,7 +219,7 @@ impl OutboundCallResources {
                 request_src,
                 request_dst,
             } => Some((owner_link, request_src, request_dst)),
-            Self::ClientInbox { .. } => None,
+            Self::ClientInbox { .. } | Self::PeerRoutingSubscription { .. } => None,
         }
     }
 }
@@ -236,7 +229,6 @@ impl OutboundCall {
         let (owner_link, request_src, request_dst) = self.resources?.into_local_origin()?;
         Some(RpcLocalOriginOutboundCall {
             call_id: self.call_id,
-            counterparty_route: self.counterparty_route,
             owner_link,
             request_src,
             request_dst,
@@ -263,13 +255,6 @@ impl OutboundCallState {
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub(crate) enum RegisterCallError {
-    DuplicateCallId {
-        counterparty_route: Route,
-        call_id: RoutedCallId,
-    },
-    DuplicateDedupKey {
-        key: DedupKey,
-        counterparty_route: Route,
-        call_id: RoutedCallId,
-    },
+    DuplicateCallId { call_id: CallId },
+    DuplicateDedupKey { key: DedupKey, call_id: CallId },
 }

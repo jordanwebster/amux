@@ -44,18 +44,18 @@ pub(crate) async fn create_agent_record(
     let (agent_count, info) = {
         let mut us = user_state.write().await;
 
-        if us.agents.len() >= MAX_LOCAL_AGENTS {
+        if us.local_agents.len() >= MAX_LOCAL_AGENTS {
             return Err(CreateAgentError::LimitReached {
                 max: MAX_LOCAL_AGENTS,
             });
         }
 
-        if us.topology.registry.contains(&req.agent_id) {
+        if us.contains_agent_id(&req.agent_id) {
             return Err(CreateAgentError::AlreadyExists(req.agent_id.to_string()));
         }
 
         if let Some(ref a) = req.name
-            && us.topology.registry.name_taken(a)
+            && us.name_taken_by_other(a, req.agent_id)
         {
             return Err(CreateAgentError::AlreadyExists(a.clone()));
         }
@@ -71,16 +71,14 @@ pub(crate) async fn create_agent_record(
         })?;
         let info = session.to_agent(host_id);
         let announce = us
-            .topology
-            .register_local_agent(info.clone())
+            .register_local_agent_context(agent_id, session, info.clone())
             .map_err(|error| {
                 CreateAgentError::Register(format!(
                     "failed to register local agent {agent_id}: {error}"
                 ))
             })?;
-        us.agents.insert(agent_id, session);
-        if let Some(session) = us.agents.get_mut(&agent_id) {
-            session.maybe_start_name_sniffer(user_id, event_tx);
+        if let Some(context) = us.local_agents.get_mut(&agent_id) {
+            context.session.maybe_start_name_sniffer(user_id, event_tx);
         }
 
         // Task: Monitor exit handle and notify server when agent exits
@@ -94,7 +92,7 @@ pub(crate) async fn create_agent_record(
 
         broadcast_topology_event(&mut us, &announce, None);
 
-        (us.agents.len(), info)
+        (us.local_agents.len(), info)
     }; // write lock dropped here
 
     let _ = event_tx
@@ -118,21 +116,16 @@ pub(crate) async fn create_agent_record(
 
 /// Remove an agent from local state and broadcast withdrawal.
 pub(crate) fn withdraw_agent(us: &mut ServerUserState, agent_id: Uuid) -> Option<AgentSession> {
-    if !us.agents.contains_key(&agent_id) {
-        return None;
-    }
-    let session = us.agents.remove(&agent_id);
-    let removed = us.topology.remove_agent(agent_id);
-    if let Some(change) = &removed {
-        broadcast_topology_event(us, &change.event, None);
-    }
+    let context = us.local_agents.remove(&agent_id)?;
+    let event = crate::server::routing::TopologyEvent::AgentDown { agent_id };
+    broadcast_topology_event(us, &event, None);
     tracing::info!(
         %agent_id,
-        name = ?removed.as_ref().and_then(|change| change.agent.name.clone()),
-        remaining = us.agents.len(),
+        name = ?context.info.name,
+        remaining = us.local_agents.len(),
         "agent withdrawn"
     );
-    session
+    Some(context.session)
 }
 
 pub(crate) fn delete_local_agent(us: &mut ServerUserState, agent_id: Uuid) -> Option<AgentSession> {
@@ -143,7 +136,10 @@ pub(crate) fn delete_local_agent(us: &mut ServerUserState, agent_id: Uuid) -> Op
 pub(in crate::server) async fn shutdown_server(user_state: &Arc<RwLock<ServerUserState>>) {
     let sessions: HashMap<Uuid, AgentSession> = {
         let mut us = user_state.write().await;
-        std::mem::take(&mut us.agents)
+        std::mem::take(&mut us.local_agents)
+            .into_iter()
+            .map(|(id, context)| (id, context.session))
+            .collect()
     };
     for (id, session) in &sessions {
         tracing::info!(agent_id = %id, "shutting down agent");
@@ -158,21 +154,21 @@ pub(in crate::server) async fn suspend_server(
 ) -> (SuspendedServerState, Vec<String>) {
     let sessions: HashMap<Uuid, AgentSession> = {
         let mut us = user_state.write().await;
-        std::mem::take(&mut us.agents)
+        let contexts = std::mem::take(&mut us.local_agents);
+        for id in contexts.keys() {
+            let event = crate::server::routing::TopologyEvent::AgentDown { agent_id: *id };
+            broadcast_topology_event(&mut us, &event, None);
+        }
+        contexts
+            .into_iter()
+            .map(|(id, context)| (id, context.session))
+            .collect()
     };
 
     let mut suspended = Vec::new();
     let mut errors = Vec::new();
 
     for (id, session) in sessions {
-        // Remove from registry before suspending
-        {
-            let mut us = user_state.write().await;
-            if let Some(change) = us.topology.remove_agent(id) {
-                broadcast_topology_event(&mut us, &change.event, None);
-            }
-        }
-
         tracing::info!(agent_id = %id, "suspending agent");
         match session.suspend().await {
             Ok(sa) => suspended.push(sa),
@@ -208,28 +204,41 @@ pub(in crate::server) async fn resume_agents(
                 let mut session = Some(session);
                 let registered = {
                     let mut us = user_state.write().await;
-                    if us.agents.contains_key(&agent_id) {
-                        tracing::error!(agent_id = %agent_id, "failed to register resumed agent: local session already exists");
-                        false
+                    let registration = if us.contains_agent_id(&agent_id) {
+                        Err(format!("Agent already exists: {agent_id}"))
+                    } else if let Some(name) = &info.name {
+                        if us.name_taken_by_other(name, agent_id) {
+                            Err(format!("Agent already exists: {name}"))
+                        } else {
+                            us.register_local_agent_context(
+                                agent_id,
+                                session
+                                    .take()
+                                    .expect("resumed session should still be available"),
+                                info,
+                            )
+                        }
                     } else {
-                        match us.topology.register_local_agent(info) {
-                            Ok(announce) => {
-                                us.agents.insert(
-                                    agent_id,
-                                    session
-                                        .take()
-                                        .expect("resumed session should still be available"),
-                                );
-                                if let Some(session) = us.agents.get_mut(&agent_id) {
-                                    session.maybe_start_name_sniffer(user_id, event_tx);
-                                }
-                                broadcast_topology_event(&mut us, &announce, None);
-                                true
+                        us.register_local_agent_context(
+                            agent_id,
+                            session
+                                .take()
+                                .expect("resumed session should still be available"),
+                            info,
+                        )
+                    };
+
+                    match registration {
+                        Ok(announce) => {
+                            if let Some(context) = us.local_agents.get_mut(&agent_id) {
+                                context.session.maybe_start_name_sniffer(user_id, event_tx);
                             }
-                            Err(e) => {
-                                tracing::error!(agent_id = %agent_id, error = %e, "failed to register resumed agent");
-                                false
-                            }
+                            broadcast_topology_event(&mut us, &announce, None);
+                            true
+                        }
+                        Err(e) => {
+                            tracing::error!(agent_id = %agent_id, error = %e, "failed to register resumed agent");
+                            false
                         }
                     }
                 };
@@ -308,11 +317,9 @@ mod tests {
         assert_eq!(failed, 1);
 
         let us = user_state.read().await;
-        assert_eq!(us.agents.len(), 1);
+        assert_eq!(us.local_agents.len(), 1);
         assert_eq!(
-            us.topology
-                .registry
-                .get(&agent_id)
+            us.local_agent_info(&agent_id)
                 .and_then(|agent| agent.name.as_deref()),
             Some("existing")
         );

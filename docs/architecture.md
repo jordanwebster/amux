@@ -23,8 +23,8 @@ The main moving parts are:
   all using the same protobuf message protocol after handshake.
 - `AgentSession` - a local provider-specific agent session, currently Claude
   plus test agents in dev/test builds.
-- `Topology` - per-user connection links, peer links, known hosts, and the
-  local/remote agent registry.
+- `ServerUserState` - per-user connections, route contexts, local agents, and
+  RPC state.
 - `RpcDispatcher` - active inbound/outbound call state for unary and streaming
   RPCs.
 - `BroadcastBuffer` - replay plus live fanout for PTY bytes and structured
@@ -64,7 +64,7 @@ struct Agent {
 ```
 
 For local agents, `route` materializes as empty. For remote agents, the route
-is derived from the owning host entry in `Topology::hosts`.
+is derived from one available `RouteContext` for the agent's host.
 
 ### Links
 
@@ -91,6 +91,11 @@ See `crates/amux/src/protocol/link.rs` and
 
 A `Route` is a stack of `Link`s. `links[0]` is the next hop. The display and
 serde string form is dot-separated, for example `cloud.local-host`.
+
+Operationally, a route is the identity of a concrete tunnel/path through the
+network. Host IDs answer "which host is at the far end?"; routes answer
+"which exact path are we using to reach it?" A host may be reachable through
+multiple routes, and each route can have independent tunnel/RPC lifetime.
 
 ```rust
 struct Route {
@@ -161,7 +166,7 @@ The acceptor:
 2. Checks `PROTOCOL_VERSION` is supported.
 3. Checks configured minimum client versions when `client.name` matches.
 4. Validates JWT credentials for cloud-mode network connections.
-5. Validates and reserves the assigned link in per-user topology.
+5. Validates and reserves the assigned link in per-user connection state.
 6. Returns `ConnectAccepted` with the final link name and optional heartbeat
    config.
 
@@ -283,13 +288,15 @@ See `crates/amux/src/transport.rs` and `crates/amux/src/transport/`.
 Each accepted or outbound connection uses the same driver:
 
 1. Run the handshake on the unsplit transport.
-2. Reserve the connection link in `Topology::routes`.
-3. Mark non-local links as peer links and start a peer routing-event stream.
+2. Reserve the connection link in `ServerUserState::connections`.
+3. Mark non-local links as peer connections and start a peer routing-event
+   stream.
 4. Split the transport.
 5. Spawn `reader_loop` and `writer_loop`.
 6. Run `connection_loop` over channels.
-7. On exit, remove the route, cancel affected RPC/OpenSession state, withdraw
-   affected topology, and let the writer drain.
+7. On exit, remove the connection, drop affected route contexts, cancel
+   affected RPC/OpenSession state, withdraw affected topology, and let the
+   writer drain.
 
 The task split is:
 
@@ -339,16 +346,27 @@ Unix/named-pipe clients use `LOCAL_USER_ID` (`Uuid::nil()`).
 
 ```rust
 struct ServerUserState {
-    rpc: RpcDispatcher,
-    topology: Topology,
-    agents: HashMap<Uuid, AgentSession>,
+    connections: HashMap<Link, ConnectionEntry>,
+    routes: HashMap<Route, RouteContext>,
+    hosts: HashMap<Uuid, HostContext>,
+    remote_name_owners: HashMap<String, Uuid>,
+    local_agents: HashMap<Uuid, LocalAgentContext>,
 }
 
-struct Topology {
-    routes: HashMap<Link, ConnectionHandle>,
-    registry: AgentRegistry,
-    peer_links: HashSet<Link>,
-    hosts: HashMap<Uuid, Host>,
+struct ConnectionEntry {
+    handle: ConnectionHandle,
+    kind: ConnectionKind,
+    rpc: RpcDispatcher,
+}
+
+struct RouteContext {
+    host_id: Uuid,
+    rpc: RpcDispatcher,
+}
+
+struct HostContext {
+    host: Host,
+    agents: HashMap<Uuid, Agent>,
 }
 
 struct ConnectionHandle {
@@ -357,30 +375,60 @@ struct ConnectionHandle {
 }
 ```
 
-`ConnectionHandle` is the only object stored in the routes table. Other tasks
-send to a connection by looking up a `Link` and enqueueing a `Message`.
+`connections` is the canonical transport table. A connection is identified by
+the first-hop `Link`, records whether the connection is local or peer, and owns
+connection-scoped RPC state for direct local endpoint calls, peer control
+streams, and direct routed calls whose counterparty path starts at that
+connection but does not have a host route context yet.
 
-`AgentRegistry` tracks local and remote agents by UUID and maintains unique
-name aliases. Remote agent routes are materialized from `Topology::hosts`
-when listing or resolving agents.
+`routes` is the canonical tunnel table. A route context identifies the remote
+host at that exact route and owns the route-scoped RPC call table. A one-hop
+peer host is still represented as `Route::from_link(link)`, but the connection
+handle itself is owned by `connections`.
+
+`hosts` owns host metadata and the agents available at each host. Multiple
+route contexts may point at the same host context. The first `HostUp` for an
+exact route owns that route; a later `HostUp` for the same host at a different
+route creates another route context rather than rewriting the existing route.
+amux does not currently migrate live route contexts when a shorter or "better"
+route appears.
+
+Local agents live in `local_agents`; remote agents live in host contexts.
+Agent listing and resolution derive their view from `local_agents` plus host
+contexts, then choose a deterministic available route for each remote host.
+`remote_name_owners` is a small alias cache for unqualified remote name
+resolution: the first remote agent to claim a name keeps that name until it is
+withdrawn or re-announced under another name. Route-qualified lookup can still
+resolve duplicate remote names through the supplied route.
 
 See `crates/amux/src/server/state.rs`,
-`crates/amux/src/server/routing/topology.rs`, and
-`crates/amux/src/server/registry.rs`.
+`crates/amux/src/server/routing/topology.rs`, and the route dispatch modules.
 
 ## RPC State
 
-`RpcDispatcher` tracks active calls separately from topology. Calls are keyed
-by `(counterparty_route, call_id)`.
+`RpcDispatcher` tracks active calls within one call table. Route contexts own
+the call tables for advertised routed tunnels. Connection entries own call
+tables for direct local/peer control traffic and for raw direct-hop routed
+traffic before a host route exists. Calls are keyed by `CallId`; route lookup
+and hop selection stay in the routing layer.
+
+Endpoint routed RPC resolves the full counterparty return path to the longest
+known route-context prefix. For example, a frame arriving from `peer.client`
+uses the `peer` route context when `peer` is the advertised host route, while
+the OpenSession dedup key still stores the full `peer.client` counterparty
+route. If no route context exists yet, endpoint dispatch can fall back to the
+current connection's RPC table when the counterparty path starts with that
+connection link.
 
 Inbound calls are endpoint-owned work started by a received request. Outbound
 calls are work this node is waiting on. State tracks whether a call is waiting
 for a response, has an active stream, or is closing.
 
-The dispatcher also owns deduplication keys for streams that must be unique,
-notably:
+The dispatcher also owns method-specific deduplication keys for streams that
+must be unique. These keys are opaque to generic RPC state and are chosen by the
+application layer, notably:
 
-- one active peer routing-event stream per peer route
+- one active peer routing-event stream per peer link
 - one active `OpenSession` per `(counterparty_route, agent_id)`
 
 When routes close or withdraw, the server uses RPC state to send cancels or
@@ -413,18 +461,49 @@ enum RoutingEvent {
 }
 ```
 
-Host routes are hop-relative. When a peer event arrives, the receiver prepends
-the inbound peer link before storing or rebroadcasting it.
+Host routes are hop-relative. When a peer host event arrives, the receiver
+prepends the inbound peer link before storing or rebroadcasting it. Agent
+events are route-free host inventory updates; receivers accept them only after
+they know a route to the agent's `host_id` through the announcing peer.
+
+The protobuf `Host` message is route-free identity and metadata. `HostUp`
+carries the route for that announcement:
+
+```protobuf
+message Host {
+  bytes host_id = 1;
+  string name = 2;
+  string version = 3;
+}
+
+message HostUp {
+  Host host = 1;
+  Route route = 2;
+}
+
+message AgentUp {
+  Agent agent = 1;
+}
+
+message AgentDown {
+  bytes agent_id = 1;
+  optional string reason = 2;
+}
+```
 
 Important topology rules:
 
 - Cloud relays do not announce themselves as hosts in initial snapshots.
 - `HostUp` must exist before an `AgentUp` for that host is accepted.
-- `AgentUp`/`AgentDown` are discovery events; they do not reserve or remove
-  connection links.
-- `HostDown` and link closure remove reachable remote hosts, remove remote
-  agents under those hosts, and cancel affected OpenSession/RPC state.
+- `AgentUp`/`AgentDown` are host inventory events; they do not reserve or
+  remove connection links or route contexts.
+- `HostDown` and link closure remove route contexts and cancel affected
+  OpenSession/RPC state. A host context and its agents are removed only after
+  the last route to that host disappears.
 - Announcements learned from one peer are not echoed back to the same peer.
+- Route announcements are exact-route ownership, not migration. Re-announcing
+  the same host or agent at another route adds another available route; it
+  does not rewrite existing route contexts or move their RPC state.
 
 See `crates/amux/src/services/routing.rs`,
 `crates/amux/src/server/routing/peers.rs`, and
@@ -445,6 +524,13 @@ When a `RoutedFrame::Payload` arrives:
 
 Cloud servers reject endpoint routed payloads because cloud relays are not
 agent hosts.
+
+Endpoint dispatch uses the accumulated `src` as the counterparty return path.
+The RPC call table is selected by exact route context first, then by the
+longest advertised route prefix, with a connection-scoped fallback when the
+counterparty path starts with the current connection link. This keeps replies
+and OpenSession dedup keyed by the full counterparty route while tying
+route-scoped cleanup to the advertised tunnel that owns the call table.
 
 Routing failures include a reconstructed `failed_route`, built from the
 reverse accumulated source path plus the missing hop and remaining destination
@@ -536,7 +622,7 @@ Creating a local agent:
 1. Checks per-user local agent limit.
 2. Checks UUID and name uniqueness.
 3. Constructs and starts the `AgentSession`.
-4. Registers the local agent in topology.
+4. Registers the local agent in per-user local agent state.
 5. Broadcasts `AgentUp`.
 6. Starts a task that sends `SessionEvent::Ended` when the process exits.
 
@@ -740,7 +826,7 @@ Per OpenSession
   optional structured input worker
 ```
 
-The architecture deliberately keeps topology reachability, RPC call lifecycle,
-and agent process lifecycle separate. Topology says what can be reached. RPC
-state says which calls are active. Agent sessions own local process and I/O
+The architecture deliberately keeps routing reachability, RPC call lifecycle,
+and agent process lifecycle separate. Route contexts say what can be reached.
+RPC state says which calls are active. Agent sessions own local process and I/O
 resources.

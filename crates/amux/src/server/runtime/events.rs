@@ -42,7 +42,10 @@ pub(in crate::server) async fn handle_session_event(
                 if let Some(user_state) = user_state {
                     let withdrawn_session = {
                         let mut us = user_state.write().await;
-                        let is_readonly = us.agents.get(&source_id).is_some_and(|s| s.readonly());
+                        let is_readonly = us
+                            .local_agents
+                            .get(&source_id)
+                            .is_some_and(|context| context.session.readonly());
                         if is_readonly {
                             withdraw_agent(&mut us, source_id)
                         } else {

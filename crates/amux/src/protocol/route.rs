@@ -1,5 +1,10 @@
 //! Link-based stack routing for amux.
 //!
+//! A route names a concrete tunnel/path through the network. Host IDs identify
+//! the remote endpoint; routes identify the exact path used to reach it and
+//! therefore the tunnel whose routed RPC state is affected when that path
+//! disappears.
+//!
 //! Routes are stacks of link names that get popped/pushed at each hop:
 //! - Before sending through link X: pop X from dst, push X to src
 //! - On receive: match dst.pop() { None → process locally, Some(link) → route to link }

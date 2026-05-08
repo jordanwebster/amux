@@ -98,7 +98,7 @@ mod tests {
 
     use super::*;
     use crate::protocol::link::Link;
-    use crate::protocol::message::{RoutedCallId, RoutedFrame, RoutedFrameMessage};
+    use crate::protocol::message::{CallId, RoutedFrame, RoutedFrameMessage};
     use crate::protocol::route::Route;
 
     #[tokio::test]
@@ -107,7 +107,7 @@ mod tests {
         let msg = Message::Routed(RoutedFrame {
             src: Route::from_link(Link::new("a").unwrap()),
             dst: Route::from_link(Link::new("b").unwrap()),
-            call_id: RoutedCallId::from(Uuid::new_v4()),
+            call_id: CallId::from(Uuid::new_v4()),
             message: RoutedFrameMessage::Payload(b"opaque".to_vec()),
         });
 

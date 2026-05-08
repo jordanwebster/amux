@@ -1,8 +1,8 @@
 use uuid::Uuid;
 
 use crate::agent::Agent;
+use crate::protocol::Route;
 use crate::protocol::message::RoutingEvent;
-use crate::protocol::route::Route;
 use crate::server::connection::ConnectionContext;
 use crate::server::routing::{PeerAgentDownIgnored, PeerAgentUpIgnored, broadcast_topology_event};
 
@@ -42,7 +42,7 @@ pub(super) async fn handle_announce(
         args,
         created_at,
     };
-    let change = us.topology.apply_peer_agent_up(&ctx.link, info);
+    let change = us.apply_peer_agent_up(&ctx.link, info);
     if let Some(ignored) = change.ignored {
         match ignored {
             PeerAgentUpIgnored::LocalAgent => {
@@ -53,9 +53,6 @@ pub(super) async fn handle_announce(
             }
             PeerAgentUpIgnored::NonSelectedHostRoute => {
                 tracing::warn!(agent_id = %agent_id, host_id = %host_id, peer = %ctx.link, "ignoring remote agent announcement: non-selected host route");
-            }
-            PeerAgentUpIgnored::InvalidAgent { message } => {
-                tracing::warn!(error = %message, agent_id = %agent_id, "ignoring invalid remote announcement");
             }
         }
         return Ok(());
@@ -75,7 +72,7 @@ pub(super) async fn handle_withdraw(
     ctx: &ConnectionContext,
 ) -> crate::server::connection::Result<()> {
     let mut us = ctx.user_state.write().await;
-    let change = us.topology.apply_peer_agent_down(&ctx.link, agent_id);
+    let change = us.apply_peer_agent_down(&ctx.link, agent_id);
 
     if let Some(removed) = change.removed {
         tracing::info!(agent_id = %agent_id, "withdrew remote agent");

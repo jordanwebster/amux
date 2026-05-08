@@ -10,7 +10,7 @@ use super::call::{RpcInboundBidi, RpcInboundClosing, RpcTypedInboundBidi};
 use crate::protocol::message::{
     FrameBody, Message, PeerFrame, ProtocolError, ResponseFrame, RoutedFrame, RoutedFrameMessage,
 };
-use crate::protocol::{Route, RoutedCallId, wire};
+use crate::protocol::{CallId, Route, wire};
 
 #[derive(Debug, Clone)]
 pub(crate) struct RpcStreamWriter {
@@ -102,7 +102,7 @@ pub(crate) struct RpcRoutedSink {
     tx: mpsc::Sender<Message>,
     src: Route,
     dst: Route,
-    call_id: RoutedCallId,
+    call_id: CallId,
     send_gate: Arc<Mutex<()>>,
 }
 
@@ -115,7 +115,7 @@ pub(crate) struct RpcTypedRoutedSink<C> {
 #[derive(Debug, Clone)]
 pub(crate) struct RpcPeerStreamSink {
     pub(in crate::rpc) tx: mpsc::Sender<Message>,
-    pub(in crate::rpc) call_id: RoutedCallId,
+    pub(in crate::rpc) call_id: CallId,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -231,7 +231,7 @@ impl RpcRoutedSink {
         tx: mpsc::Sender<Message>,
         src: Route,
         dst: Route,
-        call_id: RoutedCallId,
+        call_id: CallId,
         send_gate: Arc<Mutex<()>>,
     ) -> Self {
         Self {

@@ -9,7 +9,7 @@ use super::RpcClientError;
 use crate::client::Connection;
 use crate::protocol::link::Link;
 use crate::protocol::message::{
-    FrameBody, LocalFrame, Message, RequestFrame, ResponseFrame, RoutedCallId, RoutedFrame,
+    CallId, FrameBody, LocalFrame, Message, RequestFrame, ResponseFrame, RoutedFrame,
     RoutedFrameMessage,
 };
 use crate::protocol::{Route, method, wire};
@@ -52,18 +52,18 @@ impl ClientRuntime {
         full_route: Route,
         payload: Vec<u8>,
     ) -> Result<OutboundRoutedStream, RpcClientError> {
-        let call_id = RoutedCallId::from(Uuid::new_v4());
+        let call_id = CallId::from(Uuid::new_v4());
         let outbound = register_outbound(
             &self.state,
             &self.reader_closed,
             spec,
             call_id.clone(),
-            full_route.clone(),
             OutboundCallState::AwaitingResponse,
         )?;
         let stream = OutboundRoutedStream::new(
             self.connection.clone_for_reader(),
             outbound,
+            full_route,
             self.reader_task.clone(),
         );
 
@@ -77,14 +77,13 @@ impl ClientRuntime {
         full_route: Route,
         payload: Vec<u8>,
     ) -> Result<Vec<u8>, RpcClientError> {
-        let call_id = RoutedCallId::from(Uuid::new_v4());
+        let call_id = CallId::from(Uuid::new_v4());
         let message = routed_payload_message(full_route.clone(), call_id.clone(), payload)?;
         let mut outbound = register_outbound(
             &self.state,
             &self.reader_closed,
             spec,
             call_id.clone(),
-            full_route.clone(),
             OutboundCallState::AwaitingResponse,
         )?;
         if let Err(error) = self.connection.send(&message).await {
@@ -95,13 +94,11 @@ impl ClientRuntime {
         loop {
             match recv_message_or_remove(&mut outbound.rx, &outbound.call).await? {
                 Message::Routed(RoutedFrame {
-                    src,
                     dst,
                     call_id: response_call_id,
                     message: RoutedFrameMessage::Payload(payload),
                     ..
                 }) if routed_response_matches_call(
-                    &src,
                     &dst,
                     &response_call_id,
                     outbound.call.handle(),
@@ -113,16 +110,11 @@ impl ClientRuntime {
                 Message::Routed(RoutedFrame {
                     dst,
                     call_id: response_call_id,
-                    message:
-                        RoutedFrameMessage::RoutingError {
-                            failed_route,
-                            error,
-                        },
+                    message: RoutedFrameMessage::RoutingError { error, .. },
                     ..
                 }) if routed_error_matches_call(
                     &dst,
                     &response_call_id,
-                    &failed_route,
                     outbound.call.handle(),
                 ) =>
                 {
@@ -150,7 +142,7 @@ impl ClientRuntime {
         method: &'static str,
         payload: Vec<u8>,
     ) -> Result<(), RpcClientError> {
-        let call_id = RoutedCallId::from(Uuid::new_v4());
+        let call_id = CallId::from(Uuid::new_v4());
         self.connection
             .send(&Message::Local(LocalFrame {
                 call_id,
@@ -179,14 +171,12 @@ impl ClientRuntime {
         spec: method::MethodSpec,
         payload: Vec<u8>,
     ) -> Result<ResponseFrame, RpcClientError> {
-        let call_id = RoutedCallId::from(Uuid::new_v4());
-        let counterparty_route = Route::from_link(self.connection.link().clone());
+        let call_id = CallId::from(Uuid::new_v4());
         let mut outbound = register_outbound(
             &self.state,
             &self.reader_closed,
             spec,
             call_id.clone(),
-            counterparty_route,
             OutboundCallState::AwaitingResponse,
         )?;
         if let Err(error) = self
@@ -260,20 +250,22 @@ struct RegisteredOutboundCall {
 struct OutboundRoutedSink {
     connection: Connection,
     call: RpcOutboundCallHandle,
+    full_route: Route,
 }
 
 impl OutboundRoutedSink {
-    fn new(connection: Connection, call: &OutboundCallGuard) -> Self {
+    fn new(connection: Connection, call: &OutboundCallGuard, full_route: Route) -> Self {
         Self {
             connection,
             call: call.handle().clone(),
+            full_route,
         }
     }
 
     async fn send_payload(&self, payload: Vec<u8>) -> Result<(), RpcClientError> {
         self.connection
             .send(&routed_payload_message(
-                self.call.counterparty_route.clone(),
+                self.full_route.clone(),
                 self.call.call_id.clone(),
                 payload,
             )?)
@@ -293,9 +285,10 @@ impl OutboundRoutedStream {
     fn new(
         connection: Connection,
         outbound: RegisteredOutboundCall,
+        full_route: Route,
         reader_task: Arc<RpcClientReaderTask>,
     ) -> Self {
-        let sink = OutboundRoutedSink::new(connection, &outbound.call);
+        let sink = OutboundRoutedSink::new(connection, &outbound.call, full_route);
         Self {
             call: outbound.call,
             sink,
@@ -355,11 +348,11 @@ impl OutboundRoutedStream {
         loop {
             match self.recv_message().await? {
                 Message::Routed(RoutedFrame {
-                    src,
                     dst,
                     call_id,
                     message: RoutedFrameMessage::Payload(payload),
-                }) if routed_response_matches_call(&src, &dst, &call_id, self.call.handle()) => {
+                    ..
+                }) if routed_response_matches_call(&dst, &call_id, self.call.handle()) => {
                     match wire::decode_frame_body(&payload) {
                         Ok(body) => return Ok(body),
                         Err(error) => {
@@ -374,19 +367,9 @@ impl OutboundRoutedStream {
                 Message::Routed(RoutedFrame {
                     dst,
                     call_id,
-                    message:
-                        RoutedFrameMessage::RoutingError {
-                            failed_route,
-                            error,
-                        },
+                    message: RoutedFrameMessage::RoutingError { error, .. },
                     ..
-                }) if routed_error_matches_call(
-                    &dst,
-                    &call_id,
-                    &failed_route,
-                    self.call.handle(),
-                ) =>
-                {
+                }) if routed_error_matches_call(&dst, &call_id, self.call.handle()) => {
                     self.finish();
                     return Err(error.into());
                 }
@@ -478,8 +461,7 @@ fn register_outbound(
     state: &Arc<Mutex<RpcState>>,
     reader_closed: &AtomicBool,
     method: method::MethodSpec,
-    call_id: RoutedCallId,
-    counterparty_route: Route,
+    call_id: CallId,
     call_state: OutboundCallState,
 ) -> Result<RegisteredOutboundCall, RpcClientError> {
     let mut rpc_state = lock_rpc_state(state);
@@ -493,7 +475,6 @@ fn register_outbound(
     let handle = rpc_state
         .register_client_outbound(RpcClientOutboundStart {
             call_id,
-            counterparty_route,
             method,
             state: call_state,
             inbox_tx: tx,
@@ -575,21 +556,15 @@ fn spawn_client_reader(
 }
 
 fn routed_response_matches_call(
-    src: &Route,
     dst: &Route,
-    call_id: &RoutedCallId,
+    call_id: &CallId,
     call: &RpcOutboundCallHandle,
 ) -> bool {
-    call_id == &call.call_id && dst.is_empty() && src == &call.counterparty_route
+    call_id == &call.call_id && dst.is_empty()
 }
 
-fn routed_error_matches_call(
-    dst: &Route,
-    call_id: &RoutedCallId,
-    failed_route: &Route,
-    call: &RpcOutboundCallHandle,
-) -> bool {
-    call_id == &call.call_id && dst.is_empty() && failed_route == &call.counterparty_route
+fn routed_error_matches_call(dst: &Route, call_id: &CallId, call: &RpcOutboundCallHandle) -> bool {
+    call_id == &call.call_id && dst.is_empty()
 }
 
 fn call_state_error(method: &'static str, error: RegisterCallError) -> RpcClientError {
@@ -608,7 +583,7 @@ fn outbound_call_not_active_error(method: &'static str) -> RpcClientError {
 
 fn routed_payload_message(
     full_route: Route,
-    call_id: RoutedCallId,
+    call_id: CallId,
     payload: Vec<u8>,
 ) -> Result<Message, RpcClientError> {
     let (src, dst) = Route::send(full_route).ok_or_else(|| RpcClientError::Unexpected {
@@ -627,12 +602,8 @@ fn routed_payload_message(
 mod tests {
     use super::*;
 
-    fn route(links: &[&str]) -> Route {
-        Route::from_links(links.iter().map(|link| (*link).to_string())).unwrap()
-    }
-
-    fn call_id(n: u128) -> RoutedCallId {
-        RoutedCallId::from(Uuid::from_u128(n))
+    fn call_id(n: u128) -> CallId {
+        CallId::from(Uuid::from_u128(n))
     }
 
     #[test]
@@ -645,7 +616,6 @@ mod tests {
                 &reader_closed,
                 method::AGENT_LIST,
                 call_id(1),
-                Route::from_link(Link::new("local").unwrap()),
                 OutboundCallState::AwaitingResponse,
             )
             .unwrap();
@@ -666,7 +636,6 @@ mod tests {
             &reader_closed,
             method::AGENT_LIST,
             call_id(1),
-            Route::from_link(Link::new("local").unwrap()),
             OutboundCallState::AwaitingResponse,
         );
 
@@ -675,27 +644,18 @@ mod tests {
     }
 
     #[test]
-    fn routed_response_matching_uses_route_scoped_call_identity() {
+    fn routed_response_matching_uses_call_id_identity() {
         let handle = RpcOutboundCallHandle {
-            counterparty_route: route(&["local", "peer"]),
             call_id: call_id(1),
             method: method::AGENT_OPEN_SESSION,
         };
 
         assert!(routed_response_matches_call(
-            &route(&["local", "peer"]),
             &Route::empty(),
             &call_id(1),
             &handle
         ));
         assert!(!routed_response_matches_call(
-            &route(&["local", "other"]),
-            &Route::empty(),
-            &call_id(1),
-            &handle
-        ));
-        assert!(!routed_response_matches_call(
-            &route(&["local", "peer"]),
             &Route::from_link(Link::new("next").unwrap()),
             &call_id(1),
             &handle
@@ -703,13 +663,6 @@ mod tests {
         assert!(routed_error_matches_call(
             &Route::empty(),
             &call_id(1),
-            &route(&["local", "peer"]),
-            &handle
-        ));
-        assert!(!routed_error_matches_call(
-            &Route::empty(),
-            &call_id(1),
-            &route(&["local", "other"]),
             &handle
         ));
     }

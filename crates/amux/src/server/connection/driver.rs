@@ -14,7 +14,7 @@ use crate::protocol::message::{
 use crate::protocol::method;
 use crate::protocol::route::Route;
 use crate::server::dispatch::handle_message;
-use crate::server::routing::{TopologyEffect, broadcast_topology_event};
+use crate::server::routing::broadcast_topology_event;
 use crate::server::{
     ConnectionHandle, RpcDispatcher, ServerUserState, cancel_open_sessions_for_closed_link,
     cancel_open_sessions_for_owner_link, finish_open_session_cleanup_jobs,
@@ -186,23 +186,18 @@ pub(in crate::server) async fn run_connection<T: TransportSplit>(
         let mut us = user_state.write().await;
         if !is_local {
             tracing::info!(peer = %link, "peer disconnected");
-            let change = us.topology.apply_link_closed(&link);
-            rpc.remove_peer_routing_calls_for_link(&link);
-
-            let TopologyEffect::CancelSessionsForClosedLink { link: closed_link } = &change.effect
-            else {
-                unreachable!("link-close topology change returned non-link-close effect");
-            };
+            let route_prefix = Route::from_link(link.clone());
             let local_origin_messages = drain_local_origin_routed_unreachable_for_route(
                 &rpc,
                 &us,
-                &Route::from_link(closed_link.clone()),
+                &route_prefix,
                 "route closed",
             );
             let (cancelled_open_sessions, cleanup_jobs) =
-                cancel_open_sessions_for_closed_link(&mut us, closed_link);
+                cancel_open_sessions_for_closed_link(&mut us, &link);
             let removed_inbound_rpc_calls =
-                remove_generic_inbound_rpc_calls_for_owner_link(&rpc, closed_link);
+                remove_generic_inbound_rpc_calls_for_owner_link(&us, &link);
+            let change = us.apply_link_closed(&link);
             if cancelled_open_sessions != 0 {
                 tracing::info!(
                     count = cancelled_open_sessions,
@@ -230,10 +225,10 @@ pub(in crate::server) async fn run_connection<T: TransportSplit>(
             (cleanup_jobs, local_origin_messages)
         } else {
             let local_origin_messages = drain_local_origin_routed_cancels(&rpc, &us, &link);
-            us.topology.remove_link(&link);
             let (_cancelled_open_sessions, cleanup_jobs) =
                 cancel_open_sessions_for_owner_link(&mut us, &link);
-            remove_generic_inbound_rpc_calls_for_owner_link(&rpc, &link);
+            remove_generic_inbound_rpc_calls_for_owner_link(&us, &link);
+            us.remove_link(&link);
             (cleanup_jobs, local_origin_messages)
         }
     };
@@ -266,7 +261,7 @@ pub(in crate::server) async fn run_connection<T: TransportSplit>(
 }
 
 fn drain_local_origin_routed_cancels(
-    rpc: &RpcDispatcher,
+    _rpc: &RpcDispatcher,
     us: &ServerUserState,
     owner_link: &Link,
 ) -> Vec<(ConnectionHandle, Message)> {
@@ -277,14 +272,14 @@ fn drain_local_origin_routed_cancels(
             return Vec::new();
         }
     };
-    let calls = rpc.remove_local_origin_outbound_for_owner_link(owner_link);
+    let calls = us.remove_local_origin_outbound_for_owner_link(owner_link);
 
     calls
         .into_iter()
         .filter_map(|call| {
             let mut dst = call.request_dst;
             let next_hop = dst.pop()?;
-            let handle = us.topology.route(&next_hop)?;
+            let handle = us.connection_for_route(&Route::from_link(next_hop.clone()))?;
             let mut src = call.request_src;
             src.push(next_hop);
             Some((
@@ -301,32 +296,43 @@ fn drain_local_origin_routed_cancels(
 }
 
 fn remove_generic_inbound_rpc_calls_for_owner_link(
-    rpc: &RpcDispatcher,
+    us: &ServerUserState,
     owner_link: &Link,
 ) -> usize {
-    rpc.remove_inbound_for_owner_link_except_method(owner_link, method::AGENT_OPEN_SESSION)
+    us.remove_inbound_for_owner_link_except_method(owner_link, method::AGENT_OPEN_SESSION)
         .len()
 }
 
+fn local_origin_failed_route(request_src: &Route, request_dst: &Route) -> Option<Route> {
+    Route::from_links(
+        request_src
+            .iter()
+            .chain(request_dst.iter())
+            .map(|link| link.as_str().to_string()),
+    )
+    .ok()
+}
+
 pub(in crate::server) fn drain_local_origin_routed_unreachable_for_route(
-    rpc: &RpcDispatcher,
+    _rpc: &RpcDispatcher,
     us: &ServerUserState,
     route_prefix: &Route,
     reason: &str,
 ) -> Vec<(ConnectionHandle, Message)> {
-    let calls = rpc.remove_local_origin_outbound_for_route_prefix(route_prefix);
+    let calls = us.remove_local_origin_outbound_for_route_prefix(route_prefix);
 
     calls
         .into_iter()
         .filter_map(|call| {
-            let handle = us.topology.route(&call.owner_link)?;
+            let handle = us.connection_for_route(&Route::from_link(call.owner_link.clone()))?;
+            let failed_route = local_origin_failed_route(&call.request_src, &call.request_dst)?;
             Some((
                 handle,
                 Message::routing_error_for_route(
                     Route::from_link(call.owner_link),
                     Route::empty(),
                     call.call_id,
-                    call.counterparty_route,
+                    failed_route,
                     crate::protocol::message::ProtocolError::Unreachable {
                         message: format!("{reason}: {route_prefix}"),
                     },
@@ -508,18 +514,21 @@ async fn maybe_sleep_until(deadline: Option<tokio::time::Instant>) {
 
 #[cfg(test)]
 mod tests {
+    use std::sync::Arc;
+
+    use tokio::sync::RwLock;
     use tokio::sync::mpsc;
     use uuid::Uuid;
 
     use super::*;
-    use crate::protocol::message::RoutedCallId;
+    use crate::protocol::message::CallId;
     use crate::protocol::method::MethodKind;
     use crate::rpc::{
         OutboundCallState, RpcLocalOriginOutboundStart, RpcRoutedBidiStart, RpcRoutedUnaryStart,
     };
 
-    fn call_id(n: u128) -> RoutedCallId {
-        RoutedCallId::from(Uuid::from_u128(n))
+    fn call_id(n: u128) -> CallId {
+        CallId::from(Uuid::from_u128(n))
     }
 
     fn route(link: &str) -> Route {
@@ -533,38 +542,35 @@ mod tests {
     fn register_call(
         us: &mut ServerUserState,
         owner_link: &str,
-        call_id: RoutedCallId,
+        call_id: CallId,
         method: crate::protocol::method::MethodSpec,
     ) {
         let (tx, _rx) = mpsc::channel(1);
+        let rpc = us.ensure_route_rpc(Route::empty());
         match method.kind {
             MethodKind::Unary => {
-                us.rpc
-                    .register_routed_unary(RpcRoutedUnaryStart {
-                        tx,
-                        owner_link: Link::new(owner_link).unwrap(),
-                        reply_src: route("server"),
-                        reply_dst: route("client"),
-                        counterparty_route: route("client"),
-                        call_id,
-                        method,
-                    })
-                    .unwrap();
+                rpc.register_routed_unary(RpcRoutedUnaryStart {
+                    tx,
+                    owner_link: Link::new(owner_link).unwrap(),
+                    reply_src: route("server"),
+                    reply_dst: route("client"),
+                    call_id,
+                    method,
+                })
+                .unwrap();
             }
             MethodKind::ServerStreaming | MethodKind::BidiStreaming => {
-                us.rpc
-                    .register_routed_bidi(RpcRoutedBidiStart {
-                        tx,
-                        owner_link: Link::new(owner_link).unwrap(),
-                        reply_src: route("server"),
-                        reply_dst: route("client"),
-                        counterparty_route: route("client"),
-                        call_id,
-                        method,
-                        dedup_key: None,
-                        stream_capacity: 1,
-                    })
-                    .unwrap();
+                rpc.register_routed_bidi(RpcRoutedBidiStart {
+                    tx,
+                    owner_link: Link::new(owner_link).unwrap(),
+                    reply_src: route("server"),
+                    reply_dst: route("client"),
+                    call_id,
+                    method,
+                    dedup_key: None,
+                    stream_capacity: 1,
+                })
+                .unwrap();
             }
         }
     }
@@ -573,7 +579,7 @@ mod tests {
         us: &mut ServerUserState,
         owner_link: &str,
         request_dst: Route,
-        call_id: RoutedCallId,
+        call_id: CallId,
         method: crate::protocol::method::MethodSpec,
     ) -> Route {
         let owner_link = Link::new(owner_link).unwrap();
@@ -585,17 +591,16 @@ mod tests {
                 .map(|link| link.as_str().to_string()),
         )
         .unwrap();
-        us.rpc
-            .register_local_origin_outbound(RpcLocalOriginOutboundStart {
-                call_id,
-                counterparty_route: counterparty_route.clone(),
-                method,
-                state: OutboundCallState::AwaitingResponse,
-                owner_link,
-                request_src,
-                request_dst,
-            })
-            .unwrap();
+        let rpc = us.ensure_route_rpc(request_dst.clone());
+        rpc.register_local_origin_outbound(RpcLocalOriginOutboundStart {
+            call_id,
+            method,
+            state: OutboundCallState::AwaitingResponse,
+            owner_link,
+            request_src,
+            request_dst,
+        })
+        .unwrap();
         counterparty_route
     }
 
@@ -626,48 +631,33 @@ mod tests {
             method::AGENT_CREATE,
         );
 
-        let rpc = us.rpc.clone();
         assert_eq!(
-            remove_generic_inbound_rpc_calls_for_owner_link(&rpc, &owner),
+            remove_generic_inbound_rpc_calls_for_owner_link(&us, &owner),
             1
         );
 
-        assert!(
-            us.rpc
-                .inbound_for_route(&route("client"), &generic_call_id)
-                .is_none()
-        );
-        assert!(
-            us.rpc
-                .inbound_for_route(&route("client"), &open_session_call_id)
-                .is_some()
-        );
-        assert!(
-            us.rpc
-                .inbound_for_route(&route("client"), &other_owner_call_id)
-                .is_some()
-        );
+        let rpc = us.ensure_route_rpc(Route::empty());
+        assert!(rpc.inbound_for_call(&generic_call_id).is_none());
+        assert!(rpc.inbound_for_call(&open_session_call_id).is_some());
+        assert!(rpc.inbound_for_call(&other_owner_call_id).is_some());
     }
 
     #[test]
     fn local_owner_cleanup_cancels_generic_local_origin_routed_calls() {
         let mut us = ServerUserState::new();
         let owner = Link::new("local").unwrap();
-        let (_peer_handle, _peer_rx) = us
-            .topology
-            .try_reserve_link(Link::new("peer").unwrap())
-            .unwrap();
+        let (_peer_handle, _peer_rx) = us.try_reserve_link(Link::new("peer").unwrap()).unwrap();
         let generic_call_id = call_id(10);
         let other_owner_call_id = call_id(11);
 
-        let generic_route = register_local_origin_call(
+        let _generic_route = register_local_origin_call(
             &mut us,
             "local",
             route("peer"),
             generic_call_id.clone(),
             method::AGENT_CREATE,
         );
-        let other_owner_route = register_local_origin_call(
+        let _other_owner_route = register_local_origin_call(
             &mut us,
             "other",
             route("peer"),
@@ -675,20 +665,13 @@ mod tests {
             method::AGENT_CREATE,
         );
 
-        let rpc = us.rpc.clone();
+        let rpc = us.ensure_route_rpc(Route::empty());
         let messages = drain_local_origin_routed_cancels(&rpc, &us, &owner);
 
         assert_eq!(messages.len(), 1);
-        assert!(
-            us.rpc
-                .outbound_for_route(&generic_route, &generic_call_id)
-                .is_none()
-        );
-        assert!(
-            us.rpc
-                .outbound_for_route(&other_owner_route, &other_owner_call_id)
-                .is_some()
-        );
+        let peer_rpc = us.route_rpc(&route("peer")).unwrap();
+        assert!(peer_rpc.outbound_for_call(&generic_call_id).is_none());
+        assert!(peer_rpc.outbound_for_call(&other_owner_call_id).is_some());
 
         let (_handle, message) = messages.into_iter().next().unwrap();
         let Message::Routed(frame) = message else {
@@ -710,7 +693,7 @@ mod tests {
     fn route_loss_sends_unreachable_for_generic_local_origin_routed_calls() {
         let mut us = ServerUserState::new();
         let owner = Link::new("local").unwrap();
-        let (_owner_handle, _owner_rx) = us.topology.try_reserve_link(owner.clone()).unwrap();
+        let (_owner_handle, _owner_rx) = us.try_reserve_link(owner.clone()).unwrap();
         let generic_call_id = call_id(20);
         let other_route_call_id = call_id(21);
 
@@ -721,7 +704,7 @@ mod tests {
             generic_call_id.clone(),
             method::AGENT_CREATE,
         );
-        let other_route = register_local_origin_call(
+        let _other_route = register_local_origin_call(
             &mut us,
             "local",
             route("other-peer"),
@@ -729,7 +712,7 @@ mod tests {
             method::AGENT_CREATE,
         );
 
-        let rpc = us.rpc.clone();
+        let rpc = us.ensure_route_rpc(Route::empty());
         let messages = drain_local_origin_routed_unreachable_for_route(
             &rpc,
             &us,
@@ -739,13 +722,15 @@ mod tests {
 
         assert_eq!(messages.len(), 1);
         assert!(
-            us.rpc
-                .outbound_for_route(&generic_route, &generic_call_id)
+            us.route_rpc(&route_stack(&["peer", "remote"]))
+                .unwrap()
+                .outbound_for_call(&generic_call_id)
                 .is_none()
         );
         assert!(
-            us.rpc
-                .outbound_for_route(&other_route, &other_route_call_id)
+            us.route_rpc(&route("other-peer"))
+                .unwrap()
+                .outbound_for_call(&other_route_call_id)
                 .is_some()
         );
 
@@ -768,5 +753,39 @@ mod tests {
             error,
             crate::protocol::message::ProtocolError::Unreachable { .. }
         ));
+    }
+
+    #[tokio::test]
+    async fn local_connection_cleanup_cancels_connection_scoped_open_session_before_removal() {
+        let user_state = Arc::new(RwLock::new(ServerUserState::new()));
+        let owner = Link::new("local").unwrap();
+        let open_session_call_id = call_id(30);
+        let (rpc, cleanup_jobs) = {
+            let mut us = user_state.write().await;
+            let (_handle, _rx) = us.try_reserve_link(owner.clone()).unwrap();
+            let rpc = us.rpc_for_link(&owner).unwrap();
+            let (tx, _rx) = mpsc::channel(1);
+            rpc.register_routed_bidi(RpcRoutedBidiStart {
+                tx,
+                owner_link: owner.clone(),
+                reply_src: route("server"),
+                reply_dst: route("client"),
+                call_id: open_session_call_id.clone(),
+                method: method::AGENT_OPEN_SESSION,
+                dedup_key: None,
+                stream_capacity: 1,
+            })
+            .unwrap();
+
+            let (cancelled, cleanup_jobs) = cancel_open_sessions_for_owner_link(&mut us, &owner);
+            assert_eq!(cancelled, 1);
+            assert_eq!(cleanup_jobs.len(), 1);
+            us.remove_link(&owner);
+            (rpc, cleanup_jobs)
+        };
+
+        finish_open_session_cleanup_jobs(&user_state, cleanup_jobs).await;
+
+        assert!(rpc.inbound_for_call(&open_session_call_id).is_none());
     }
 }

@@ -8,8 +8,8 @@ mod envelope;
 mod routing;
 
 pub use common::{
-    AgentType, CreateAgentRequest, DebugFormat, HookProvider, Host, ProtocolError,
-    RenameAgentRequest, RoutedCallId, SequencedReplayQuery, ShutdownReason, TerminalSize,
+    AgentType, CallId, CreateAgentRequest, DebugFormat, HookProvider, Host, ProtocolError,
+    RenameAgentRequest, SequencedReplayQuery, ShutdownReason, TerminalSize,
 };
 pub use envelope::{
     FrameBody, GoAway, LocalFrame, Message, PeerFrame, ReauthRequest, ReauthResponse, RequestFrame,

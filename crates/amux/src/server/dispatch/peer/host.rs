@@ -4,7 +4,7 @@ use crate::protocol::route::Route;
 use crate::server::connection::{
     ConnectionContext, drain_local_origin_routed_unreachable_for_route,
 };
-use crate::server::routing::{TopologyEffect, broadcast_topology_event};
+use crate::server::routing::broadcast_topology_event;
 use crate::server::{cancel_open_sessions_for_route_prefix, finish_open_session_cleanup_jobs};
 
 pub(super) async fn handle_announce(
@@ -26,9 +26,7 @@ pub(super) async fn handle_announce(
     }
 
     let mut us = ctx.user_state.write().await;
-    let change =
-        us.topology
-            .apply_peer_host_up(&ctx.link, id, name.clone(), received_route, version);
+    let change = us.apply_peer_host_up(&ctx.link, id, name.clone(), received_route, version);
 
     tracing::info!(
         host_id = %id,
@@ -52,33 +50,22 @@ pub(super) async fn handle_withdraw(
     let rpc = ctx.rpc();
     let (cleanup_jobs, local_origin_messages, withdraw_message) = {
         let mut us = ctx.user_state.write().await;
+        let mut route_prefix = received_route.clone();
+        route_prefix.push(ctx.link.clone());
+        let root_matches = us
+            .routes
+            .get(&route_prefix)
+            .is_some_and(|context| context.host_id == id);
 
-        let change = us
-            .topology
-            .apply_peer_host_down(&ctx.link, id, received_route);
-
-        tracing::info!(
-            host_id = %id,
-            root_matches = change.root_matches,
-            "received withdraw host"
-        );
-
-        if change.removed_agents != 0 {
-            tracing::info!(count = change.removed_agents, host_id = %id, "removed agents for withdrawn host");
-        }
-
-        let (cleanup_jobs, local_origin_messages) = if let Some(effect) = &change.effect {
-            let TopologyEffect::CancelSessionsForRoute { route_prefix } = effect else {
-                unreachable!("host-down topology change returned non-host-route effect");
-            };
+        let (cleanup_jobs, local_origin_messages) = if root_matches {
             let local_origin_messages = drain_local_origin_routed_unreachable_for_route(
                 &rpc,
                 &us,
-                route_prefix,
+                &route_prefix,
                 "route withdrawn",
             );
             let (cancelled_open_sessions, cleanup_jobs) =
-                cancel_open_sessions_for_route_prefix(&mut us, route_prefix);
+                cancel_open_sessions_for_route_prefix(&mut us, &route_prefix);
             if cancelled_open_sessions != 0 {
                 tracing::info!(
                     count = cancelled_open_sessions,
@@ -90,6 +77,18 @@ pub(super) async fn handle_withdraw(
         } else {
             (Vec::new(), Vec::new())
         };
+
+        let change = us.apply_peer_host_down(&ctx.link, id, received_route);
+
+        tracing::info!(
+            host_id = %id,
+            root_matches = change.root_matches,
+            "received withdraw host"
+        );
+
+        if change.removed_agents != 0 {
+            tracing::info!(count = change.removed_agents, host_id = %id, "removed agents for withdrawn host");
+        }
 
         if change.removed_descendants > 0 {
             tracing::info!(

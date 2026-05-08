@@ -85,7 +85,7 @@ mod tests {
 
     use super::*;
     use crate::protocol::link::Link;
-    use crate::protocol::message::{RoutedCallId, RoutedFrame, RoutedFrameMessage};
+    use crate::protocol::message::{CallId, RoutedFrame, RoutedFrameMessage};
     use crate::protocol::route::Route;
 
     async fn create_socket_pair() -> (UnixTransport, UnixTransport) {
@@ -105,7 +105,7 @@ mod tests {
         let msg = Message::Routed(RoutedFrame {
             src: Route::from_link(Link::new("term-abc").unwrap()),
             dst: Route::empty(),
-            call_id: RoutedCallId::from(Uuid::new_v4()),
+            call_id: CallId::from(Uuid::new_v4()),
             message: RoutedFrameMessage::Payload(payload.clone()),
         });
 
@@ -131,7 +131,7 @@ mod tests {
         let msg = Message::Routed(RoutedFrame {
             src: Route::from_link(Link::new("host-a").unwrap()),
             dst: Route::from_link(Link::new("host-b").unwrap()),
-            call_id: RoutedCallId::from(Uuid::new_v4()),
+            call_id: CallId::from(Uuid::new_v4()),
             message: RoutedFrameMessage::Payload(payload.clone()),
         });
 
@@ -157,7 +157,7 @@ mod tests {
         let msg = Message::Routed(RoutedFrame {
             src: Route::from_link(Link::new("host-a").unwrap()),
             dst: Route::from_link(Link::new("host-b").unwrap()),
-            call_id: RoutedCallId::from(Uuid::new_v4()),
+            call_id: CallId::from(Uuid::new_v4()),
             message: RoutedFrameMessage::Payload(payload.clone()),
         });
 

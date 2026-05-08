@@ -5,9 +5,8 @@ use prost::Message as ProstMessage;
 use uuid::Uuid;
 
 use crate::protocol::message::{
-    FrameBody, GoAway, LocalFrame, Message, PeerFrame, ProtocolError, ReauthRequest,
-    ReauthResponse, ResponseFrame, RoutedCallId, RoutedFrame, RoutedFrameMessage, RoutingEvent,
-    ShutdownReason,
+    CallId, FrameBody, GoAway, LocalFrame, Message, PeerFrame, ProtocolError, ReauthRequest,
+    ReauthResponse, ResponseFrame, RoutedFrame, RoutedFrameMessage, RoutingEvent, ShutdownReason,
 };
 use crate::protocol::route::Route;
 use crate::protocol::wire::{self, frame_body, response, transport_message};
@@ -122,7 +121,7 @@ fn routed_to_wire(frame: &RoutedFrame) -> wire::RoutedFrame {
 fn routed_from_wire(frame: wire::RoutedFrame) -> Result<RoutedFrame, wire::DecodeError> {
     let src = required_route_from_wire("RoutedFrame.src", frame.src)?;
     let dst = required_route_from_wire("RoutedFrame.dst", frame.dst)?;
-    let call_id = RoutedCallId::from_bytes(frame.call_id).map_err(wire::DecodeError::Invalid)?;
+    let call_id = CallId::from_bytes(frame.call_id).map_err(wire::DecodeError::Invalid)?;
     let message = match frame
         .message
         .ok_or_else(|| wire::DecodeError::Invalid("missing RoutedFrame message".into()))?
@@ -158,7 +157,7 @@ fn peer_to_wire(frame: &PeerFrame) -> wire::PeerFrame {
 
 fn peer_from_wire(frame: wire::PeerFrame) -> Result<PeerFrame, wire::DecodeError> {
     Ok(PeerFrame {
-        call_id: RoutedCallId::from_bytes(frame.call_id).map_err(wire::DecodeError::Invalid)?,
+        call_id: CallId::from_bytes(frame.call_id).map_err(wire::DecodeError::Invalid)?,
         body: frame_body_from_wire(frame.body)?,
     })
 }
@@ -172,7 +171,7 @@ fn local_to_wire(frame: &LocalFrame) -> wire::LocalFrame {
 
 fn local_from_wire(frame: wire::LocalFrame) -> Result<LocalFrame, wire::DecodeError> {
     Ok(LocalFrame {
-        call_id: RoutedCallId::from_bytes(frame.call_id).map_err(wire::DecodeError::Invalid)?,
+        call_id: CallId::from_bytes(frame.call_id).map_err(wire::DecodeError::Invalid)?,
         body: frame_body_from_wire(frame.body)?,
     })
 }
@@ -309,9 +308,9 @@ fn routing_event_to_wire(
             host: Some(wire::Host {
                 host_id: uuid_to_bytes(*id),
                 name: name.clone(),
-                route: Some(route_to_wire(route)),
                 version: version.clone(),
             }),
+            route: Some(route_to_wire(route)),
         }),
         RoutingEvent::HostDown { id, route } => {
             wire::subscribe_routing_events_response::Event::HostDown(wire::HostDown {
@@ -340,13 +339,7 @@ fn routing_event_from_wire(
             let host = event
                 .host
                 .ok_or_else(|| wire::DecodeError::Invalid("missing HostUp host".into()))?;
-            host_event_from_wire(host)
-        }
-        wire::subscribe_routing_events_response::Event::HostUpdated(event) => {
-            let host = event
-                .host
-                .ok_or_else(|| wire::DecodeError::Invalid("missing HostUpdated host".into()))?;
-            host_event_from_wire(host)
+            host_event_from_wire(host, event.route, "HostUp.route")
         }
         wire::subscribe_routing_events_response::Event::HostDown(event) => {
             Ok(RoutingEvent::HostDown {
@@ -377,11 +370,15 @@ fn routing_event_from_wire(
     }
 }
 
-fn host_event_from_wire(host: wire::Host) -> Result<RoutingEvent, wire::DecodeError> {
+fn host_event_from_wire(
+    host: wire::Host,
+    route: Option<wire::Route>,
+    route_field: &str,
+) -> Result<RoutingEvent, wire::DecodeError> {
     Ok(RoutingEvent::HostUp {
         id: uuid_from_bytes("host_id", host.host_id)?,
         name: host.name,
-        route: required_route_from_wire("Host.route", host.route)?,
+        route: required_route_from_wire(route_field, route)?,
         version: host.version,
     })
 }

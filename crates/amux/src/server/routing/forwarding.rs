@@ -3,7 +3,7 @@ use std::sync::Arc;
 use tokio::sync::{RwLock, mpsc};
 
 use crate::protocol::message::{
-    FrameBody, Message, ProtocolError, RoutedCallId, RoutedFrame, RoutedFrameMessage,
+    CallId, FrameBody, Message, ProtocolError, RoutedFrame, RoutedFrameMessage,
 };
 use crate::protocol::{Link, Route};
 use crate::server::ServerUserState;
@@ -12,17 +12,12 @@ pub(in crate::server) enum ForwardedRoutedPayload {
     Forwarded,
     Endpoint {
         src: Route,
-        call_id: RoutedCallId,
+        call_id: CallId,
         payload: Vec<u8>,
     },
 }
 
-fn routed_payload_message(
-    src: Route,
-    dst: Route,
-    call_id: RoutedCallId,
-    payload: Vec<u8>,
-) -> Message {
+fn routed_payload_message(src: Route, dst: Route, call_id: CallId, payload: Vec<u8>) -> Message {
     Message::Routed(RoutedFrame {
         src,
         dst,
@@ -39,6 +34,12 @@ fn failed_route_from_parts(src: &Route, next_hop: &Link, remaining_dst: &Route) 
     Route::from_links(links).expect("failed route is composed from already-validated links")
 }
 
+fn route_with_next_hop(src: &Route, next_hop: &Link) -> Route {
+    let mut route = src.clone();
+    route.push(next_hop.clone());
+    route
+}
+
 /// Forward a routed payload if `dst` still has a next hop.
 ///
 /// Relays stay stateless: this function rewrites route hops and forwards the
@@ -49,7 +50,7 @@ pub(in crate::server) async fn forward_routed_payload_or_endpoint(
     user_state: &Arc<RwLock<ServerUserState>>,
     mut src: Route,
     mut dst: Route,
-    call_id: RoutedCallId,
+    call_id: CallId,
     payload: Vec<u8>,
 ) -> ForwardedRoutedPayload {
     let Some(next_hop) = dst.pop() else {
@@ -63,17 +64,17 @@ pub(in crate::server) async fn forward_routed_payload_or_endpoint(
     let hop_name = next_hop.clone();
     let missing_failed_route = failed_route_from_parts(&src, &hop_name, &dst);
     let missing_reply = Route::reply(src.clone());
+    let response_route = route_with_next_hop(&src, &hop_name);
     src.push(next_hop);
 
     let route_tx = {
         let us = user_state.read().await;
-        let route_tx = us.topology.route(&hop_name);
+        let route_tx = us.connection_for_route(&Route::from_link(hop_name.clone()));
         if route_tx.is_some()
-            && !us.topology.peer_links.contains(&hop_name)
+            && !us.is_peer_link(&hop_name)
             && is_terminal_response_payload(&payload)
         {
-            us.rpc
-                .remove_local_origin_outbound_for_return_hop(&src, &call_id, &hop_name);
+            us.remove_local_origin_outbound_for_return_hop(&call_id, &hop_name, &response_route);
         }
         route_tx
     };
@@ -133,10 +134,12 @@ pub(in crate::server) async fn forward_routed_payload_or_endpoint(
 async fn remove_tracked_outbound_for_routing_error(
     user_state: &Arc<RwLock<ServerUserState>>,
     failed_route: &Route,
-    call_id: &RoutedCallId,
+    call_id: &CallId,
 ) {
-    let rpc = user_state.read().await.rpc.clone();
-    rpc.remove_tracked_outbound_for_route(failed_route, call_id);
+    user_state
+        .read()
+        .await
+        .remove_tracked_outbound_for_call(call_id, failed_route);
 }
 
 fn is_terminal_response_payload(payload: &[u8]) -> bool {
@@ -156,35 +159,52 @@ mod tests {
     use super::*;
     use crate::protocol::message::ResponseFrame;
     use crate::protocol::method;
-    use crate::rpc::{OutboundCallState, RpcLocalOriginOutboundStart};
+    use crate::rpc::{OutboundCallState, RpcLocalOriginOutboundStart, RpcPeerStreamOutboundStart};
+    use crate::server::state::{ConnectionEntry, ConnectionKind};
     use crate::server::{ConnectionHandle, ServerUserState};
+
+    fn insert_connection(us: &mut ServerUserState, link: Link, tx: mpsc::Sender<Message>) {
+        us.connections.insert(
+            link,
+            ConnectionEntry::new(ConnectionHandle::new(tx), ConnectionKind::LocalClient),
+        );
+    }
+
+    fn register_local_origin(
+        us: &mut ServerUserState,
+        call_id: CallId,
+        owner_link: Link,
+        request_dst: Route,
+    ) {
+        us.ensure_route_rpc(request_dst.clone())
+            .register_local_origin_outbound(RpcLocalOriginOutboundStart {
+                call_id,
+                method: method::AGENT_CREATE,
+                state: OutboundCallState::AwaitingResponse,
+                owner_link: owner_link.clone(),
+                request_src: Route::from_link(owner_link),
+                request_dst,
+            })
+            .unwrap();
+    }
 
     #[tokio::test]
     async fn terminal_response_to_local_link_removes_tracked_local_origin_call() {
         let local = Link::new("local").unwrap();
         let peer = Link::new("peer").unwrap();
-        let call_id = RoutedCallId::from(Uuid::new_v4());
-        let counterparty_route =
-            Route::from_links([local.as_str().to_string(), peer.as_str().to_string()]).unwrap();
+        let call_id = CallId::from(Uuid::new_v4());
         let user_state = Arc::new(RwLock::new(ServerUserState::new()));
         let (route_tx, mut route_rx) = mpsc::channel(8);
 
         {
             let mut us = user_state.write().await;
-            us.topology
-                .routes
-                .insert(local.clone(), ConnectionHandle::new(route_tx));
-            us.rpc
-                .register_local_origin_outbound(RpcLocalOriginOutboundStart {
-                    call_id: call_id.clone(),
-                    counterparty_route: counterparty_route.clone(),
-                    method: method::AGENT_CREATE,
-                    state: OutboundCallState::AwaitingResponse,
-                    owner_link: local.clone(),
-                    request_src: Route::from_link(local.clone()),
-                    request_dst: Route::from_link(peer.clone()),
-                })
-                .unwrap();
+            insert_connection(&mut us, local.clone(), route_tx);
+            register_local_origin(
+                &mut us,
+                call_id.clone(),
+                local.clone(),
+                Route::from_link(peer.clone()),
+            );
         }
 
         let payload = crate::protocol::wire::encode_frame_body(&FrameBody::Response(
@@ -209,30 +229,76 @@ mod tests {
         ));
 
         assert!(matches!(route_rx.try_recv(), Ok(Message::Routed(_))));
-        assert_eq!(user_state.read().await.rpc.outbound_len(), 0);
+        assert_eq!(user_state.read().await.total_outbound_len(), 0);
+    }
+
+    #[tokio::test]
+    async fn terminal_response_to_local_link_does_not_remove_local_origin_call_for_other_route() {
+        let local = Link::new("local").unwrap();
+        let intended_peer = Link::new("intended-peer").unwrap();
+        let unrelated_peer = Link::new("unrelated-peer").unwrap();
+        let call_id = CallId::from(Uuid::new_v4());
+        let user_state = Arc::new(RwLock::new(ServerUserState::new()));
+        let (route_tx, mut route_rx) = mpsc::channel(8);
+
+        {
+            let mut us = user_state.write().await;
+            insert_connection(&mut us, local.clone(), route_tx);
+            register_local_origin(
+                &mut us,
+                call_id.clone(),
+                local.clone(),
+                Route::from_link(intended_peer.clone()),
+            );
+        }
+
+        let payload = crate::protocol::wire::encode_frame_body(&FrameBody::Response(
+            ResponseFrame::Error(ProtocolError::Cancelled {
+                message: "closed".to_string(),
+            }),
+        ))
+        .unwrap();
+        let (tx, _rx) = mpsc::channel(1);
+
+        assert!(matches!(
+            forward_routed_payload_or_endpoint(
+                &tx,
+                &user_state,
+                Route::from_link(unrelated_peer),
+                Route::from_link(local),
+                call_id.clone(),
+                payload,
+            )
+            .await,
+            ForwardedRoutedPayload::Forwarded
+        ));
+
+        assert!(matches!(route_rx.try_recv(), Ok(Message::Routed(_))));
+        assert!(
+            user_state
+                .read()
+                .await
+                .route_rpc(&Route::from_link(intended_peer))
+                .unwrap()
+                .outbound_for_call(&call_id)
+                .is_some()
+        );
     }
 
     #[tokio::test]
     async fn origin_generated_routing_error_removes_tracked_local_origin_call() {
         let local = Link::new("local").unwrap();
         let peer = Link::new("peer").unwrap();
-        let call_id = RoutedCallId::from(Uuid::new_v4());
-        let counterparty_route =
-            Route::from_links([local.as_str().to_string(), peer.as_str().to_string()]).unwrap();
+        let call_id = CallId::from(Uuid::new_v4());
         let user_state = Arc::new(RwLock::new(ServerUserState::new()));
         {
-            let us = user_state.read().await;
-            us.rpc
-                .register_local_origin_outbound(RpcLocalOriginOutboundStart {
-                    call_id: call_id.clone(),
-                    counterparty_route: counterparty_route.clone(),
-                    method: method::AGENT_CREATE,
-                    state: OutboundCallState::AwaitingResponse,
-                    owner_link: local.clone(),
-                    request_src: Route::from_link(local.clone()),
-                    request_dst: Route::from_link(peer.clone()),
-                })
-                .unwrap();
+            let mut us = user_state.write().await;
+            register_local_origin(
+                &mut us,
+                call_id.clone(),
+                local.clone(),
+                Route::from_link(peer.clone()),
+            );
         }
         let (tx, mut rx) = mpsc::channel(1);
 
@@ -262,7 +328,109 @@ mod tests {
             panic!("expected routing error");
         };
         assert_eq!(response_call_id, call_id);
-        assert_eq!(failed_route, counterparty_route);
-        assert_eq!(user_state.read().await.rpc.outbound_len(), 0);
+        assert_eq!(
+            failed_route,
+            Route::from_links([local.as_str().to_string(), peer.as_str().to_string()]).unwrap()
+        );
+        assert_eq!(user_state.read().await.total_outbound_len(), 0);
+    }
+
+    #[tokio::test]
+    async fn origin_generated_routing_error_does_not_remove_non_local_origin_outbound_call() {
+        let local = Link::new("local").unwrap();
+        let missing_peer = Link::new("missing-peer").unwrap();
+        let subscription_peer = Link::new("subscription-peer").unwrap();
+        let call_id = CallId::from(Uuid::new_v4());
+        let user_state = Arc::new(RwLock::new(ServerUserState::new()));
+        {
+            let mut us = user_state.write().await;
+            us.ensure_route_rpc(Route::empty())
+                .register_peer_stream_outbound(RpcPeerStreamOutboundStart {
+                    link: subscription_peer,
+                    call_id: call_id.clone(),
+                    method: method::ROUTING_SUBSCRIBE_EVENTS,
+                })
+                .unwrap();
+        }
+        let (tx, mut rx) = mpsc::channel(1);
+
+        assert!(matches!(
+            forward_routed_payload_or_endpoint(
+                &tx,
+                &user_state,
+                Route::from_link(local),
+                Route::from_link(missing_peer),
+                call_id.clone(),
+                b"payload".to_vec(),
+            )
+            .await,
+            ForwardedRoutedPayload::Forwarded
+        ));
+
+        assert!(matches!(
+            rx.recv().await,
+            Some(Message::Routed(RoutedFrame {
+                message: RoutedFrameMessage::RoutingError { .. },
+                ..
+            }))
+        ));
+        assert!(
+            user_state
+                .read()
+                .await
+                .test_rpc()
+                .outbound_for_call(&call_id)
+                .is_some()
+        );
+    }
+
+    #[tokio::test]
+    async fn origin_generated_routing_error_does_not_remove_local_origin_call_for_other_route() {
+        let local = Link::new("local").unwrap();
+        let intended_peer = Link::new("intended-peer").unwrap();
+        let unrelated_source = Link::new("unrelated-source").unwrap();
+        let missing_peer = Link::new("missing-peer").unwrap();
+        let call_id = CallId::from(Uuid::new_v4());
+        let user_state = Arc::new(RwLock::new(ServerUserState::new()));
+        {
+            let mut us = user_state.write().await;
+            register_local_origin(
+                &mut us,
+                call_id.clone(),
+                local.clone(),
+                Route::from_link(intended_peer.clone()),
+            );
+        }
+        let (tx, mut rx) = mpsc::channel(1);
+
+        assert!(matches!(
+            forward_routed_payload_or_endpoint(
+                &tx,
+                &user_state,
+                Route::from_link(unrelated_source),
+                Route::from_link(missing_peer),
+                call_id.clone(),
+                b"payload".to_vec(),
+            )
+            .await,
+            ForwardedRoutedPayload::Forwarded
+        ));
+
+        assert!(matches!(
+            rx.recv().await,
+            Some(Message::Routed(RoutedFrame {
+                message: RoutedFrameMessage::RoutingError { .. },
+                ..
+            }))
+        ));
+        assert!(
+            user_state
+                .read()
+                .await
+                .route_rpc(&Route::from_link(intended_peer))
+                .unwrap()
+                .outbound_for_call(&call_id)
+                .is_some()
+        );
     }
 }

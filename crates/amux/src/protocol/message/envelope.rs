@@ -1,4 +1,4 @@
-use super::common::{ProtocolError, RoutedCallId, ShutdownReason};
+use super::common::{CallId, ProtocolError, ShutdownReason};
 use crate::protocol::route::Route;
 
 /// Protobuf-shaped transport message used after handshake.
@@ -19,7 +19,7 @@ pub enum Message {
 pub struct RoutedFrame {
     pub src: Route,
     pub dst: Route,
-    pub call_id: RoutedCallId,
+    pub call_id: CallId,
     pub message: RoutedFrameMessage,
 }
 
@@ -34,13 +34,13 @@ pub enum RoutedFrameMessage {
 
 #[derive(Debug, Clone, PartialEq)]
 pub struct PeerFrame {
-    pub call_id: RoutedCallId,
+    pub call_id: CallId,
     pub body: FrameBody,
 }
 
 #[derive(Debug, Clone, PartialEq)]
 pub struct LocalFrame {
-    pub call_id: RoutedCallId,
+    pub call_id: CallId,
     pub body: FrameBody,
 }
 
@@ -83,7 +83,7 @@ impl Message {
     pub fn routing_error_for_route(
         src: Route,
         dst: Route,
-        call_id: RoutedCallId,
+        call_id: CallId,
         failed_route: Route,
         error: ProtocolError,
     ) -> Self {
@@ -215,7 +215,7 @@ mod tests {
 
     #[test]
     fn peer_stream_item_roundtrips_with_payload() {
-        let call_id = RoutedCallId::from(uuid::Uuid::from_u128(8));
+        let call_id = CallId::from(uuid::Uuid::from_u128(8));
         let msg = Message::Peer(PeerFrame {
             call_id: call_id.clone(),
             body: FrameBody::StreamItem(
@@ -241,7 +241,7 @@ mod tests {
         let msg = Message::Routed(RoutedFrame {
             src: Route::from_link(Link::new("src-link").unwrap()),
             dst: Route::from_link(Link::new("dst-link").unwrap()),
-            call_id: RoutedCallId::from(uuid::Uuid::from_u128(9)),
+            call_id: CallId::from(uuid::Uuid::from_u128(9)),
             message: RoutedFrameMessage::Payload(b"opaque".to_vec()),
         });
 

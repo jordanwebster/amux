@@ -5,7 +5,6 @@ use super::peers::broadcast_topology_event;
 use crate::agent::{Agent, LocalAgentNameSource};
 use crate::protocol::message::RenameAgentRequest;
 use crate::server::ServerUserState;
-use crate::server::registry::AgentRegistryError;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub(in crate::server) enum LocalNameUpdateOutcome {
@@ -36,11 +35,11 @@ fn commit_local_name_update(
     us: &mut ServerUserState,
     updated: Agent,
     source: LocalAgentNameSource,
-) -> std::result::Result<(), AgentRegistryError> {
+) -> std::result::Result<(), String> {
     let agent_id = updated.id;
-    let event = us.topology.update_local_agent(updated.clone())?;
-    if let Some(session) = us.agents.get_mut(&agent_id) {
-        session.set_local_name(updated.name.clone(), source);
+    let event = us.update_local_agent_info(updated.clone())?;
+    if let Some(context) = us.local_agents.get_mut(&agent_id) {
+        context.session.set_local_name(updated.name.clone(), source);
     }
     broadcast_topology_event(us, &event, None);
     Ok(())
@@ -52,8 +51,9 @@ fn rename_local_agent_inner(
     req: &RenameAgentRequest,
 ) -> std::result::Result<LocalAgentRenameOutcome, RenameAgentError> {
     let session = us
-        .agents
+        .local_agents
         .get(&req.agent_id)
+        .map(|context| &context.session)
         .ok_or(RenameAgentError::NotFound(req.agent_id))?;
 
     let current_name = session.name().map(str::to_owned);
@@ -76,15 +76,13 @@ fn rename_local_agent_inner(
     if metadata_changed {
         return commit_local_name_update(us, updated, LocalAgentNameSource::Amux)
             .map(|()| LocalAgentRenameOutcome::Updated)
-            .map_err(|err| match err {
-                AgentRegistryError::AlreadyExists(name) => RenameAgentError::AlreadyExists(name),
-                other => RenameAgentError::Update(other.to_string()),
-            });
+            .map_err(update_error_to_rename_error);
     }
 
-    us.agents
+    us.local_agents
         .get_mut(&req.agent_id)
         .expect("agent present: read-only validation above confirmed it")
+        .session
         .set_local_name(current_name, LocalAgentNameSource::Amux);
     Ok(LocalAgentRenameOutcome::ProvenanceUpdated)
 }
@@ -95,9 +93,7 @@ pub(crate) fn rename_local_agent_record(
     req: &RenameAgentRequest,
 ) -> std::result::Result<Agent, RenameAgentError> {
     rename_local_agent_inner(us, host_id, req)?;
-    us.topology
-        .registry
-        .get(&req.agent_id)
+    us.local_agent_info(&req.agent_id)
         .cloned()
         .ok_or(RenameAgentError::NotFound(req.agent_id))
 }
@@ -110,8 +106,8 @@ pub(in crate::server) fn apply_local_name_candidate(
     source: LocalAgentNameSource,
 ) -> LocalNameUpdateOutcome {
     // Phase 1: read-only validation
-    let session = match us.agents.get(&agent_id) {
-        Some(s) => s,
+    let session = match us.local_agents.get(&agent_id) {
+        Some(context) => &context.session,
         None => return LocalNameUpdateOutcome::Skipped,
     };
     let Some(current_source) = session.local_name_source() else {
@@ -128,9 +124,10 @@ pub(in crate::server) fn apply_local_name_candidate(
 
     if current_name.as_deref() == Some(name.as_str()) {
         if source.rank() > current_source.rank() {
-            us.agents
+            us.local_agents
                 .get_mut(&agent_id)
                 .expect("agent present: session borrow above proved it")
+                .session
                 .set_local_name(Some(name), source);
             return LocalNameUpdateOutcome::ProvenanceUpdated;
         }
@@ -144,7 +141,7 @@ pub(in crate::server) fn apply_local_name_candidate(
     // Phase 2: registry + session mutation
     match commit_local_name_update(us, updated, source) {
         Ok(()) => LocalNameUpdateOutcome::Updated,
-        Err(AgentRegistryError::AlreadyExists(_)) => {
+        Err(err) if err.starts_with("Agent already exists:") => {
             tracing::info!(
                 agent_id = %agent_id,
                 candidate = %name,
@@ -165,5 +162,14 @@ pub(in crate::server) fn apply_local_name_candidate(
             );
             LocalNameUpdateOutcome::Skipped
         }
+    }
+}
+
+fn update_error_to_rename_error(error: String) -> RenameAgentError {
+    const PREFIX: &str = "Agent already exists: ";
+    if let Some(name) = error.strip_prefix(PREFIX) {
+        RenameAgentError::AlreadyExists(name.to_string())
+    } else {
+        RenameAgentError::Update(error)
     }
 }

@@ -22,7 +22,7 @@ use crate::agent::SessionEvent;
 use crate::auth::cloud::{CloudConnection, CloudError};
 use crate::config::Config;
 use crate::protocol::message::{FrameBody, Message, PeerFrame, RequestFrame, ShutdownReason};
-use crate::protocol::{Route, method, wire};
+use crate::protocol::{method, wire};
 use crate::rpc::RpcPeerStreamOutboundStart;
 use crate::setup;
 
@@ -202,7 +202,7 @@ async fn run_cloud_connection(
     let (transport, token_refresh) = conn.into_parts();
     let link = token_refresh.link.clone();
 
-    let routing_call_id = crate::protocol::RoutedCallId::from(Uuid::new_v4());
+    let routing_call_id = crate::protocol::CallId::from(Uuid::new_v4());
     let (route_handle, outgoing_rx, initial_messages) = {
         let mut us = user_state.write().await;
         let (route_handle, outgoing_rx) =
@@ -211,7 +211,7 @@ async fn run_cloud_connection(
                     msg: format!("cloud assigned link `{link}` is already connected"),
                     reset_backoff: false,
                 })?;
-        us.topology.mark_peer_link(link.clone());
+        us.mark_peer_link(link.clone());
         let initial_messages = vec![Message::Peer(PeerFrame {
             call_id: routing_call_id.clone(),
             body: FrameBody::Request(RequestFrame {
@@ -221,10 +221,14 @@ async fn run_cloud_connection(
         })];
         (route_handle, outgoing_rx, initial_messages)
     };
-    let rpc = user_state.read().await.rpc.clone();
+    let rpc = user_state
+        .read()
+        .await
+        .rpc_for_link(&link)
+        .expect("reserved cloud route should have RPC state");
     rpc.register_peer_stream_outbound(RpcPeerStreamOutboundStart {
         call_id: routing_call_id.clone(),
-        counterparty_route: Route::from_link(link.clone()),
+        link: link.clone(),
         method: method::ROUTING_SUBSCRIBE_EVENTS,
     })
     .expect("fresh peer routing call id should not collide");
@@ -237,7 +241,11 @@ async fn run_cloud_connection(
     );
     tracing::info!(parent: &conn_span, "cloud route established");
 
-    let rpc = user_state.read().await.rpc.clone();
+    let rpc = user_state
+        .read()
+        .await
+        .rpc_for_link(&link)
+        .expect("reserved cloud route should have RPC state");
     let ctx = ConnectionContext {
         state,
         rpc,

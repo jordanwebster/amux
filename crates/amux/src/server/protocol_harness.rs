@@ -17,8 +17,8 @@ use crate::client::{Connection, OpenSessionClient, RpcClient, RpcClientError};
 use crate::config::Config;
 use crate::protocol::link::Link;
 use crate::protocol::message::{
-    FrameBody, GoAway, LocalFrame, Message, PeerFrame, ProtocolError, ReauthRequest, RequestFrame,
-    ResponseFrame, RoutedCallId, RoutedFrame, RoutedFrameMessage, RoutingEvent, ShutdownReason,
+    CallId, FrameBody, GoAway, LocalFrame, Message, PeerFrame, ProtocolError, ReauthRequest,
+    RequestFrame, ResponseFrame, RoutedFrame, RoutedFrameMessage, RoutingEvent, ShutdownReason,
 };
 use crate::protocol::open_session::{self, OpenSessionOutputEvent, OpenSessionServerFrame};
 use crate::protocol::{Agent, AgentType, CreateAgentRequest, Route, method, wire};
@@ -122,20 +122,14 @@ impl Topology {
                 .user_state
                 .read()
                 .await
-                .topology
-                .routes
-                .get(&link)
-                .expect("local peer route should be registered")
-                .clone(),
+                .route(&link)
+                .expect("local peer route should be registered"),
             peer_handle: peer
                 .user_state
                 .read()
                 .await
-                .topology
-                .routes
-                .get(&link)
-                .expect("remote peer route should be registered")
-                .clone(),
+                .route(&link)
+                .expect("remote peer route should be registered"),
         }
     }
 
@@ -149,8 +143,9 @@ impl Topology {
         let agent = session.to_agent(host_id);
 
         let mut user_state = self.user_state.write().await;
-        let announcement = user_state.topology.register_local_agent(agent).unwrap();
-        user_state.agents.insert(agent_id, session);
+        let announcement = user_state
+            .register_local_agent_context(agent_id, session, agent)
+            .unwrap();
         broadcast_topology_event(&mut user_state, &announcement, None);
         agent_id
     }
@@ -169,8 +164,7 @@ impl Topology {
             loop {
                 let user_state = self.user_state.read().await;
                 let has_open_session_rpc = !user_state
-                    .rpc
-                    .inbound_call_keys_if(|call| call.method == method::AGENT_OPEN_SESSION)
+                    .inbound_call_ids_if(|call| call.method == method::AGENT_OPEN_SESSION)
                     .is_empty();
                 if !has_open_session_rpc {
                     return;
@@ -192,8 +186,8 @@ impl Topology {
             let (route_handle, outgoing_rx) = user_state
                 .try_reserve_link(link.clone())
                 .expect("test peer link should be unique");
-            user_state.topology.mark_peer_link(link.clone());
-            let routing_call_id = RoutedCallId::from(Uuid::new_v4());
+            user_state.mark_peer_link(link.clone());
+            let routing_call_id = CallId::from(Uuid::new_v4());
             let initial_messages = vec![Message::Peer(PeerFrame {
                 call_id: routing_call_id.clone(),
                 body: FrameBody::Request(RequestFrame {
@@ -206,10 +200,11 @@ impl Topology {
         self.user_state
             .read()
             .await
-            .rpc
+            .rpc_for_link(&link)
+            .expect("test peer route should have RPC state")
             .register_peer_stream_outbound(RpcPeerStreamOutboundStart {
                 call_id: routing_call_id,
-                counterparty_route: Route::from_link(link.clone()),
+                link: link.clone(),
                 method: method::ROUTING_SUBSCRIBE_EVENTS,
             })
             .expect("fresh routing call id should not collide");
@@ -217,7 +212,12 @@ impl Topology {
         let ctx = ConnectionContext {
             state: self.state.clone(),
             user_state: self.user_state.clone(),
-            rpc: self.user_state.read().await.rpc.clone(),
+            rpc: self
+                .user_state
+                .read()
+                .await
+                .rpc_for_link(&link)
+                .expect("test peer route should have RPC state"),
             user_id: LOCAL_USER_ID,
             event_tx: self.event_tx.clone(),
             link: link.clone(),
@@ -257,19 +257,28 @@ impl Topology {
 
         {
             let mut user_state = self.user_state.write().await;
-            user_state
-                .topology
-                .routes
-                .insert(link.clone(), route_handle.clone());
+            let (_reserved_handle, _reserved_rx) = user_state
+                .try_reserve_link(link.clone())
+                .expect("test link should be unique");
+            let context = user_state
+                .connections
+                .get_mut(&link)
+                .expect("reserved connection should exist");
+            context.handle = route_handle.clone();
             if !is_local {
-                user_state.topology.mark_peer_link(link.clone());
+                user_state.mark_peer_link(link.clone());
             }
         }
 
         let ctx = ConnectionContext {
             state: self.state.clone(),
             user_state: self.user_state.clone(),
-            rpc: self.user_state.read().await.rpc.clone(),
+            rpc: self
+                .user_state
+                .read()
+                .await
+                .rpc_for_link(&link)
+                .expect("test route should have RPC state"),
             user_id: LOCAL_USER_ID,
             event_tx: self.event_tx.clone(),
             link: link.clone(),
@@ -409,7 +418,7 @@ impl TestConnection {
         }
     }
 
-    fn next_call_id(&mut self) -> RoutedCallId {
+    fn next_call_id(&mut self) -> CallId {
         let id = self.next_call_id;
         self.next_call_id += 1;
         call_id(id)
@@ -476,7 +485,7 @@ impl TestConnection {
         QueuedOpenSession { call_id }
     }
 
-    async fn send_local_routed_payload(&mut self, call_id: RoutedCallId, payload: Vec<u8>) {
+    async fn send_local_routed_payload(&mut self, call_id: CallId, payload: Vec<u8>) {
         let (src, dst) = Route::send(Route::from_link(self.link()))
             .expect("local test route should include the client link");
         self.send(routed_payload(src, dst, call_id, payload)).await;
@@ -922,7 +931,7 @@ impl TestRpcSession {
 }
 
 pub(super) struct QueuedOpenSession {
-    call_id: RoutedCallId,
+    call_id: CallId,
 }
 
 impl QueuedOpenSession {
@@ -982,19 +991,19 @@ impl QueuedOpenSession {
 }
 
 pub(super) struct MissingRouteProbe {
-    call_id: RoutedCallId,
+    call_id: CallId,
     source: Link,
     missing: Link,
 }
 
 pub(super) struct ForwardedProbe {
-    call_id: RoutedCallId,
+    call_id: CallId,
     source: Link,
     next_hop: Link,
 }
 
 pub(super) struct RoutingSubscription {
-    call_id: RoutedCallId,
+    call_id: CallId,
 }
 
 impl RoutingSubscription {
@@ -1102,6 +1111,7 @@ impl RoutingSubscription {
         let event = expect_peer_routing_event(peer.recv().await, &self.call_id);
         let RoutingEvent::AgentDown {
             agent_id: event_agent_id,
+            ..
         } = event
         else {
             panic!("expected AgentDown live event, got {event:?}");
@@ -1110,11 +1120,11 @@ impl RoutingSubscription {
     }
 }
 
-fn call_id(value: u128) -> RoutedCallId {
-    RoutedCallId::from(Uuid::from_u128(value))
+fn call_id(value: u128) -> CallId {
+    CallId::from(Uuid::from_u128(value))
 }
 
-fn peer_request(call_id: RoutedCallId, method: &'static str, payload: Vec<u8>) -> Message {
+fn peer_request(call_id: CallId, method: &'static str, payload: Vec<u8>) -> Message {
     Message::Peer(PeerFrame {
         call_id,
         body: FrameBody::Request(RequestFrame {
@@ -1124,7 +1134,7 @@ fn peer_request(call_id: RoutedCallId, method: &'static str, payload: Vec<u8>) -
     })
 }
 
-fn routed_payload(src: Route, dst: Route, call_id: RoutedCallId, payload: Vec<u8>) -> Message {
+fn routed_payload(src: Route, dst: Route, call_id: CallId, payload: Vec<u8>) -> Message {
     Message::Routed(RoutedFrame {
         src,
         dst,
@@ -1133,7 +1143,7 @@ fn routed_payload(src: Route, dst: Route, call_id: RoutedCallId, payload: Vec<u8
     })
 }
 
-fn expect_peer_routing_event(msg: Message, call_id: &RoutedCallId) -> RoutingEvent {
+fn expect_peer_routing_event(msg: Message, call_id: &CallId) -> RoutingEvent {
     let Message::Peer(PeerFrame {
         call_id: response_call_id,
         body: FrameBody::StreamItem(payload),
@@ -1145,7 +1155,7 @@ fn expect_peer_routing_event(msg: Message, call_id: &RoutedCallId) -> RoutingEve
     wire::decode_routing_event(&payload).unwrap()
 }
 
-fn expect_peer_response_error(msg: Message, call_id: &RoutedCallId) -> ProtocolError {
+fn expect_peer_response_error(msg: Message, call_id: &CallId) -> ProtocolError {
     let Message::Peer(PeerFrame {
         call_id: response_call_id,
         body: FrameBody::Response(ResponseFrame::Error(error)),

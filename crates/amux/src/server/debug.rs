@@ -7,7 +7,6 @@ use uuid::Uuid;
 
 use crate::agent::Agent;
 use crate::debug::{DebugView, LossyPath};
-use crate::protocol::link::Link;
 use crate::protocol::message::{DebugFormat, Host};
 use crate::server::{LOCAL_USER_ID, ServerState, ServerUserState};
 use crate::setup;
@@ -76,11 +75,11 @@ impl Serialize for ServerDebugView<'_> {
         let mut route_count = 0usize;
         let mut peer_link_count = 0usize;
         for (_, us) in self.users {
-            agent_count += us.agents.len();
-            remote_agent_count += us.topology.registry.count_remote();
-            host_count += us.topology.hosts.len();
-            route_count += us.topology.routes.len();
-            peer_link_count += us.topology.peer_links.len();
+            agent_count += us.local_agents.len();
+            remote_agent_count += us.remote_agent_count();
+            host_count += us.host_count();
+            route_count += us.routes.len();
+            peer_link_count += us.peer_connection_count();
         }
 
         let mut map = serializer.serialize_map(None)?;
@@ -154,7 +153,7 @@ impl Serialize for UsersListView<'_> {
     }
 }
 
-/// Per-user view: counts plus verbose details (peer_links, routes, hosts,
+/// Per-user view: counts plus verbose details (peer links, routes, hosts,
 /// agents). Reads `ServerUserState` directly via the guard.
 struct UserView<'a> {
     state: &'a ServerState,
@@ -166,7 +165,7 @@ struct UserView<'a> {
 impl Serialize for UserView<'_> {
     fn serialize<S: Serializer>(&self, serializer: S) -> Result<S::Ok, S::Error> {
         let us = self.user_state;
-        let agents = us.topology.registry.list_all(&us.topology.hosts);
+        let agents = us.all_agents();
 
         let mut host_agent_counts: std::collections::HashMap<Uuid, usize> =
             std::collections::HashMap::new();
@@ -174,8 +173,11 @@ impl Serialize for UserView<'_> {
             *host_agent_counts.entry(agent.host_id).or_default() += 1;
         }
 
-        let mut peer_links: Vec<&str> = us.topology.peer_links.iter().map(Link::as_str).collect();
-        peer_links.sort_unstable();
+        let peer_links: Vec<String> = us
+            .peer_links()
+            .into_iter()
+            .map(|link| link.as_str().to_string())
+            .collect();
 
         let mut map = serializer.serialize_map(None)?;
         map.serialize_entry(
@@ -186,11 +188,11 @@ impl Serialize for UserView<'_> {
                 self.user_id.to_string()
             },
         )?;
-        map.serialize_entry("agent_count", &us.agents.len())?;
-        map.serialize_entry("remote_agent_count", &us.topology.registry.count_remote())?;
-        map.serialize_entry("host_count", &us.topology.hosts.len())?;
-        map.serialize_entry("route_count", &us.topology.routes.len())?;
-        map.serialize_entry("peer_link_count", &us.topology.peer_links.len())?;
+        map.serialize_entry("agent_count", &us.local_agents.len())?;
+        map.serialize_entry("remote_agent_count", &us.remote_agent_count())?;
+        map.serialize_entry("host_count", &us.host_count())?;
+        map.serialize_entry("route_count", &us.routes.len())?;
+        map.serialize_entry("peer_link_count", &us.peer_connection_count())?;
         map.serialize_entry("peer_links", &peer_links)?;
         map.serialize_entry("routes", &RoutesView { user_state: us })?;
         map.serialize_entry(
@@ -220,36 +222,34 @@ struct RoutesView<'a> {
 impl Serialize for RoutesView<'_> {
     fn serialize<S: Serializer>(&self, serializer: S) -> Result<S::Ok, S::Error> {
         let us = self.user_state;
-        let mut entries: Vec<(&Link, bool, usize, usize)> = us
-            .topology
-            .routes
-            .keys()
-            .map(|link| {
-                let is_peer = us.topology.peer_links.contains(link);
-                let direct_host_count = us
-                    .topology
-                    .hosts
-                    .values()
-                    .filter(|host| host.route.to_string() == link.as_str())
-                    .count();
+        let mut entries: Vec<_> = us
+            .connections
+            .iter()
+            .map(|(link, connection)| {
+                let route = crate::protocol::Route::from_link(link.clone());
+                let direct_host_count = usize::from(us.routes.get(&route).is_some());
                 let routed_host_count = us
-                    .topology
-                    .hosts
-                    .values()
-                    .filter(|host| host.route.peek() == Some(link))
+                    .host_contexts_sorted()
+                    .into_iter()
+                    .filter(|(route, _, _)| route.peek() == Some(link))
                     .count();
-                (link, is_peer, direct_host_count, routed_host_count)
+                (
+                    link.as_str().to_string(),
+                    connection.is_peer(),
+                    direct_host_count,
+                    routed_host_count,
+                )
             })
             .collect();
-        entries.sort_unstable_by(|a, b| a.0.cmp(b.0));
+        entries.sort_unstable_by(|a, b| a.0.cmp(&b.0));
 
         let mut seq = serializer.serialize_seq(Some(entries.len()))?;
-        for (link, is_peer, direct_host_count, routed_host_count) in entries {
+        for (link, is_peer, direct_host_count, routed_host_count) in &entries {
             seq.serialize_element(&RouteEntry {
-                link: link.as_str(),
-                kind: if is_peer { "peer" } else { "local_client" },
-                direct_host_count,
-                routed_host_count,
+                link,
+                kind: if *is_peer { "peer" } else { "local_client" },
+                direct_host_count: *direct_host_count,
+                routed_host_count: *routed_host_count,
             })?;
         }
         seq.end()
@@ -281,18 +281,24 @@ struct HostsView<'a> {
 
 impl Serialize for HostsView<'_> {
     fn serialize<S: Serializer>(&self, serializer: S) -> Result<S::Ok, S::Error> {
-        let mut hosts: Vec<&Host> = self.user_state.topology.hosts.values().collect();
-        hosts.sort_unstable_by(|a, b| {
-            a.route
+        let mut hosts: Vec<(&crate::protocol::Route, &Host)> = self
+            .user_state
+            .host_contexts_sorted()
+            .into_iter()
+            .map(|(route, host, _)| (route, host))
+            .collect();
+        hosts.sort_unstable_by(|(route_a, host_a), (route_b, host_b)| {
+            route_a
                 .to_string()
-                .cmp(&b.route.to_string())
-                .then_with(|| a.name.cmp(&b.name))
-                .then_with(|| a.id.as_u128().cmp(&b.id.as_u128()))
+                .cmp(&route_b.to_string())
+                .then_with(|| host_a.name.cmp(&host_b.name))
+                .then_with(|| host_a.id.as_u128().cmp(&host_b.id.as_u128()))
         });
 
         let mut seq = serializer.serialize_seq(Some(hosts.len()))?;
-        for host in hosts {
+        for (route, host) in hosts {
             seq.serialize_element(&HostEntry {
+                route,
                 host,
                 agent_count: self.host_agent_counts.get(&host.id).copied().unwrap_or(0),
             })?;
@@ -302,6 +308,7 @@ impl Serialize for HostsView<'_> {
 }
 
 struct HostEntry<'a> {
+    route: &'a crate::protocol::Route,
     host: &'a Host,
     agent_count: usize,
 }
@@ -312,8 +319,8 @@ impl Serialize for HostEntry<'_> {
         map.serialize_entry("id", &self.host.id)?;
         map.serialize_entry("name", &self.host.name)?;
         map.serialize_entry("version", &self.host.version)?;
-        map.serialize_entry("route", &self.host.route)?;
-        if let Some(via) = self.host.route.peek() {
+        map.serialize_entry("route", self.route)?;
+        if let Some(via) = self.route.peek() {
             map.serialize_entry("via", via)?;
         }
         map.serialize_entry("agent_count", &self.agent_count)?;
@@ -351,15 +358,19 @@ impl Serialize for AgentsView<'_> {
             let host_name = if agent.host_id == self.state.host_id {
                 Some(self.state.config.host_name.as_str())
             } else {
-                us.topology
-                    .hosts
-                    .get(&agent.host_id)
-                    .map(|host| host.name.as_str())
+                us.host_contexts_sorted()
+                    .into_iter()
+                    .find_map(|(_, host, _)| {
+                        (host.id == agent.host_id).then_some(host.name.as_str())
+                    })
             };
             seq.serialize_element(&AgentEntry {
                 agent,
                 host_name,
-                session: us.agents.get(&agent.id),
+                session: us
+                    .local_agents
+                    .get(&agent.id)
+                    .map(|context| &context.session),
                 verbose: self.verbose,
             })?;
         }

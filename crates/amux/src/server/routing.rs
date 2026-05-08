@@ -18,5 +18,6 @@ pub(crate) use naming::{RenameAgentError, rename_local_agent_record};
 pub(crate) use peers::{broadcast_topology_event, initial_routing_events};
 pub(crate) use topology::TopologyEvent;
 pub(in crate::server) use topology::{
-    PeerAgentDownIgnored, PeerAgentUpIgnored, Topology, TopologyEffect,
+    AgentRemovedChange, LinkClosedChange, PeerAgentDownChange, PeerAgentDownIgnored,
+    PeerAgentUpChange, PeerAgentUpIgnored, PeerHostDownChange, PeerHostUpChange,
 };
