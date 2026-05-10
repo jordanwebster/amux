@@ -227,7 +227,7 @@ impl Serialize for RoutesView<'_> {
             .iter()
             .map(|(link, connection)| {
                 let route = crate::protocol::Route::from_link(link.clone());
-                let direct_host_count = usize::from(us.routes.get(&route).is_some());
+                let direct_host_count = usize::from(us.routes.contains_key(&route));
                 let routed_host_count = us
                     .host_contexts_sorted()
                     .into_iter()

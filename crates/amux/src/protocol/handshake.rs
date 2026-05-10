@@ -258,9 +258,10 @@ impl ConnectResult {
 
 #[cfg(test)]
 mod tests {
+    use uuid::Uuid;
+
     use super::*;
     use crate::protocol::message::{AGENT_TYPE_CLAUDE, Capabilities, SupportedAgentType};
-    use uuid::Uuid;
 
     fn sample_host() -> Host {
         Host {

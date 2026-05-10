@@ -336,6 +336,12 @@ fn routed_response_send_error(
     ))
 }
 
+struct RoutedEndpointContext<'a> {
+    tx: &'a mpsc::Sender<Message>,
+    ctx: &'a ConnectionContext,
+    rpc: RpcDispatcher,
+}
+
 pub(super) async fn handle_routed_endpoint_frame(
     tx: &mpsc::Sender<Message>,
     counterparty: Route,
@@ -352,15 +358,14 @@ pub(super) async fn handle_routed_endpoint_frame(
                 method,
                 stream_writer,
             } => {
+                let endpoint = RoutedEndpointContext { tx, ctx, rpc };
                 handle_active_routed_stream_frame(
-                    tx,
+                    &endpoint,
                     counterparty,
                     call_id,
                     method,
                     stream_writer,
                     body,
-                    ctx,
-                    rpc,
                 )
                 .await
             }
@@ -576,14 +581,12 @@ async fn handle_active_routed_no_input_followup(
 }
 
 async fn handle_active_routed_stream_frame(
-    tx: &mpsc::Sender<Message>,
+    endpoint: &RoutedEndpointContext<'_>,
     counterparty: Route,
     call_id: CallId,
     method: MethodSpec,
     stream_writer: RpcStreamWriter,
     body: FrameBody,
-    ctx: &ConnectionContext,
-    rpc: RpcDispatcher,
 ) -> crate::server::connection::Result<()> {
     match body {
         FrameBody::StreamItem(payload) => {
@@ -604,9 +607,9 @@ async fn handle_active_routed_stream_frame(
         }
         FrameBody::Cancel => {
             let Some(endpoint) = RoutedEndpointCall::new(
-                tx,
-                ctx,
-                rpc,
+                endpoint.tx,
+                endpoint.ctx,
+                endpoint.rpc.clone(),
                 counterparty,
                 call_id,
                 "ActiveRoutedStreamCancel",
@@ -622,9 +625,9 @@ async fn handle_active_routed_stream_frame(
         body => {
             let body_kind = frame_body_kind(&body);
             let Some(endpoint) = RoutedEndpointCall::new(
-                tx,
-                ctx,
-                rpc,
+                endpoint.tx,
+                endpoint.ctx,
+                endpoint.rpc.clone(),
                 counterparty,
                 call_id,
                 "ActiveRoutedStreamFrame",

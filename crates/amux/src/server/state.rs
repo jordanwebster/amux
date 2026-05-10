@@ -312,7 +312,8 @@ impl ServerUserState {
         let mut links: Vec<_> = self
             .connections
             .iter()
-            .filter_map(|(link, connection)| connection.is_peer().then(|| link.clone()))
+            .filter(|(_, connection)| connection.is_peer())
+            .map(|(link, _)| link.clone())
             .collect();
         links.sort_unstable();
         links
@@ -996,9 +997,10 @@ impl ServerUserState {
         let mut routes: Vec<_> = self
             .routes
             .iter()
-            .filter_map(|(route, context)| (context.host_id == host_id).then(|| route.clone()))
+            .filter(|(_, context)| context.host_id == host_id)
+            .map(|(route, _)| route.clone())
             .collect();
-        routes.sort_unstable_by(|a, b| a.to_string().cmp(&b.to_string()));
+        routes.sort_unstable_by_key(|route| route.to_string());
         routes
     }
 
@@ -1159,13 +1161,14 @@ pub(in crate::server) async fn ensure_user_state(
 
 #[cfg(test)]
 mod tests {
+    use chrono::Utc;
+
     use super::*;
     use crate::protocol::{Route, method};
     use crate::rpc::{
         OutboundCallState, RpcLocalOriginOutboundStart, RpcPeerStreamOutboundStart,
         RpcRoutedUnaryStart,
     };
-    use chrono::Utc;
 
     fn test_host(id: Uuid, name: &str, version: &str) -> Host {
         Host {
@@ -1494,7 +1497,7 @@ mod tests {
         assert!(user_state.is_peer_link(&peer));
         assert!(user_state.route(&peer).is_some());
         let route = Route::from_link(peer.clone());
-        assert!(user_state.routes.get(&route).is_none());
+        assert!(!user_state.routes.contains_key(&route));
         assert!(
             user_state
                 .rpc_for_link(&peer)

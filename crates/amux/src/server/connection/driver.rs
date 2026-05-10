@@ -516,8 +516,7 @@ async fn maybe_sleep_until(deadline: Option<tokio::time::Instant>) {
 mod tests {
     use std::sync::Arc;
 
-    use tokio::sync::RwLock;
-    use tokio::sync::mpsc;
+    use tokio::sync::{RwLock, mpsc};
     use uuid::Uuid;
 
     use super::*;
