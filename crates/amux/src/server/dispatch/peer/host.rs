@@ -178,6 +178,7 @@ mod tests {
             link,
             is_local: false,
             heartbeat: None,
+            routing_role: crate::protocol::handshake::RoutingRole::Host,
         };
         (ctx, user_state)
     }

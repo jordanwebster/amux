@@ -15,7 +15,7 @@ use tokio_rustls::client::TlsStream;
 
 use crate::auth::oauth;
 use crate::config::Config;
-use crate::protocol::handshake::{Connect, ConnectResult, PROTOCOL_VERSION};
+use crate::protocol::handshake::{Connect, ConnectResult, PROTOCOL_VERSION, RoutingRole};
 use crate::protocol::link::Link;
 use crate::protocol::message::{Host, Message, ProtocolError, ReauthRequest, ReauthResponse};
 use crate::protocol::route::generate_server_link;
@@ -155,6 +155,7 @@ pub(crate) struct CloudConnection {
     /// Negotiated idle timeout from the cloud server's ConnectResult.
     idle_timeout_secs: Option<u32>,
     host: Option<Host>,
+    routing_role: RoutingRole,
 }
 
 impl CloudConnection {
@@ -192,6 +193,7 @@ impl CloudConnection {
             version: PROTOCOL_VERSION,
             supported_versions: vec![PROTOCOL_VERSION],
             host: Some(host),
+            routing_role: RoutingRole::Host,
         };
         let payload = connect.encode().map_err(TransportError::from)?;
         transport.write_frame(&payload).await?;
@@ -225,6 +227,9 @@ impl CloudConnection {
             token_expires_at: conn.expires_at,
             idle_timeout_secs: response.idle_timeout_secs,
             host: response.host,
+            routing_role: response.routing_role.ok_or_else(|| {
+                CloudError::Connection("accepted ConnectResponse omitted routing_role".to_string())
+            })?,
         })
     }
 
@@ -235,6 +240,10 @@ impl CloudConnection {
 
     pub(crate) fn host(&self) -> Option<&Host> {
         self.host.as_ref()
+    }
+
+    pub(crate) fn routing_role(&self) -> RoutingRole {
+        self.routing_role
     }
 
     /// Extract the underlying transport and token refresh state.

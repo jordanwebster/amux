@@ -2,7 +2,7 @@ use std::time::Duration;
 
 use thiserror::Error;
 
-use crate::protocol::handshake::{Connect, ConnectResult, PROTOCOL_VERSION};
+use crate::protocol::handshake::{Connect, ConnectResult, PROTOCOL_VERSION, RoutingRole};
 use crate::protocol::link::Link;
 use crate::protocol::message::{Host, ProtocolError};
 use crate::transport::{Transport, TransportError};
@@ -30,12 +30,14 @@ pub(crate) struct HandshakeOutcome {
     /// connection.
     pub(crate) idle_timeout_secs: Option<u32>,
     pub(crate) host: Option<Host>,
+    pub(crate) routing_role: RoutingRole,
 }
 
 pub(crate) async fn connect_handshake<T, F>(
     transport: &mut T,
     generate_link: F,
     host: Option<Host>,
+    routing_role: RoutingRole,
 ) -> Result<HandshakeOutcome>
 where
     T: Transport,
@@ -49,6 +51,7 @@ where
         version: PROTOCOL_VERSION,
         supported_versions: vec![PROTOCOL_VERSION],
         host,
+        routing_role,
     };
     let payload = connect.encode().map_err(TransportError::from)?;
     transport.write_frame(&payload).await?;
@@ -74,6 +77,11 @@ where
                 link,
                 idle_timeout_secs: response.idle_timeout_secs,
                 host: response.host,
+                routing_role: response.routing_role.ok_or_else(|| {
+                    HandshakeError::InvalidMessage(
+                        "accepted ConnectResponse omitted routing_role".to_string(),
+                    )
+                })?,
             })
         }
         Some(error) => Err(HandshakeError::Protocol(error)),
@@ -134,6 +142,7 @@ mod tests {
             idle_timeout_secs,
             assigned_link_name: Some(link.to_string()),
             host: None,
+            routing_role: Some(RoutingRole::Observer),
         }
         .encode()
         .unwrap()
@@ -150,6 +159,7 @@ mod tests {
                         idle_timeout_ms: ms,
                     }),
                     host: None,
+                    routing_role: wire::RoutingRole::Observer as i32,
                 },
             )),
         }
@@ -161,18 +171,25 @@ mod tests {
         let mut transport =
             FakeTransport::new(vec![Ok(accepted_response("server-link", Some(180)))]);
 
-        let outcome = connect_handshake(&mut transport, || Link::new("client-link").unwrap(), None)
-            .await
-            .unwrap();
+        let outcome = connect_handshake(
+            &mut transport,
+            || Link::new("client-link").unwrap(),
+            None,
+            RoutingRole::Observer,
+        )
+        .await
+        .unwrap();
 
         assert_eq!(outcome.link, Link::new("server-link").unwrap());
         assert_eq!(outcome.idle_timeout_secs, Some(180));
+        assert_eq!(outcome.routing_role, RoutingRole::Observer);
         assert_eq!(transport.writes.len(), 1);
 
         let request = wire::ConnectRequest::decode(transport.writes[0].as_slice()).unwrap();
         assert_eq!(request.proposed_link_name, "client-link");
         assert_eq!(request.supported_protocol_versions, vec![PROTOCOL_VERSION]);
         assert!(request.host.is_none());
+        assert_eq!(request.routing_role, wire::RoutingRole::Observer as i32);
     }
 
     #[tokio::test]
@@ -180,8 +197,13 @@ mod tests {
         let mut transport =
             FakeTransport::new(vec![Ok(raw_accepted_response("bad.link", Some(180_000)))]);
 
-        let result =
-            connect_handshake(&mut transport, || Link::new("client-link").unwrap(), None).await;
+        let result = connect_handshake(
+            &mut transport,
+            || Link::new("client-link").unwrap(),
+            None,
+            RoutingRole::Observer,
+        )
+        .await;
 
         assert!(matches!(result, Err(HandshakeError::InvalidMessage(_))));
     }

@@ -24,6 +24,7 @@ use super::{
 use crate::agent::SessionEvent;
 use crate::auth::cloud::{CloudConnection, CloudError};
 use crate::config::Config;
+use crate::protocol::handshake::RoutingRole;
 use crate::protocol::message::{FrameBody, Message, PeerFrame, RequestFrame, ShutdownReason};
 use crate::protocol::{method, wire};
 use crate::rpc::RpcPeerStreamOutboundStart;
@@ -202,21 +203,30 @@ async fn run_cloud_connection(
 
     // Handshake succeeded: clear any stale update-required marker.
     crate::update::clear_update_required(&config.state_path);
-    let peer_host = conn.host().cloned();
-    if let Some(host) = peer_host.as_ref() {
-        if let Err(message) = validate_remote_host(host) {
+    let remote_routing_role = conn.routing_role();
+    let peer_host = match conn.host().cloned() {
+        Some(host) => {
+            if let Err(message) = validate_remote_host(&host) {
+                return Err(CloudConnectionError::Retriable {
+                    msg: format!("accepted cloud host identity is invalid: {message}"),
+                    reset_backoff: false,
+                });
+            }
+            if host.id == local_host_id {
+                return Err(CloudConnectionError::Retriable {
+                    msg: "accepted cloud host_id matched local host_id".to_string(),
+                    reset_backoff: false,
+                });
+            }
+            Some(host)
+        }
+        None => {
             return Err(CloudConnectionError::Retriable {
-                msg: format!("accepted cloud host identity is invalid: {message}"),
+                msg: "accepted cloud connection omitted host identity".to_string(),
                 reset_backoff: false,
             });
         }
-        if host.id == local_host_id {
-            return Err(CloudConnectionError::Retriable {
-                msg: "accepted cloud host_id matched local host_id".to_string(),
-                reset_backoff: false,
-            });
-        }
-    }
+    };
 
     let heartbeat = conn.idle_timeout_secs().map(|secs| HeartbeatSetup {
         role: HeartbeatRole::Dialer,
@@ -225,7 +235,6 @@ async fn run_cloud_connection(
     let (transport, token_refresh) = conn.into_parts();
     let link = token_refresh.link.clone();
 
-    let routing_call_id = crate::protocol::CallId::from(Uuid::new_v4());
     let (route_handle, outgoing_rx, initial_messages) = {
         let mut us = user_state.write().await;
         let (route_handle, outgoing_rx) =
@@ -235,19 +244,28 @@ async fn run_cloud_connection(
                     reset_backoff: false,
                 })?;
         us.mark_peer_link(link.clone());
-        if let Some(host) = peer_host.clone() {
+        if remote_routing_role.is_direct_host() {
+            let host = peer_host
+                .clone()
+                .expect("host routing role requires host identity");
             let change = us.apply_direct_peer_host_up(&link, host);
             for event in &change.events {
                 super::broadcast_topology_event(&mut us, event, Some(&link));
             }
         }
-        let initial_messages = vec![Message::Peer(PeerFrame {
-            call_id: routing_call_id.clone(),
-            body: FrameBody::Request(RequestFrame {
-                method: method::ROUTING_SUBSCRIBE_EVENTS_NAME.to_string(),
-                payload: wire::SubscribeRoutingEventsRequest {}.encode_to_vec(),
-            }),
-        })];
+        let initial_messages: Vec<Message> = remote_routing_role
+            .serves_routing_events()
+            .then(|| {
+                Message::Peer(PeerFrame {
+                    call_id: crate::protocol::CallId::from(Uuid::new_v4()),
+                    body: FrameBody::Request(RequestFrame {
+                        method: method::ROUTING_SUBSCRIBE_EVENTS_NAME.to_string(),
+                        payload: wire::SubscribeRoutingEventsRequest {}.encode_to_vec(),
+                    }),
+                })
+            })
+            .into_iter()
+            .collect();
         (route_handle, outgoing_rx, initial_messages)
     };
     let rpc = user_state
@@ -255,18 +273,24 @@ async fn run_cloud_connection(
         .await
         .rpc_for_link(&link)
         .expect("reserved cloud route should have RPC state");
-    rpc.register_peer_stream_outbound(RpcPeerStreamOutboundStart {
-        call_id: routing_call_id.clone(),
-        link: link.clone(),
-        method: method::ROUTING_SUBSCRIBE_EVENTS,
-    })
-    .expect("fresh peer routing call id should not collide");
+    for message in &initial_messages {
+        if let Message::Peer(PeerFrame { call_id, .. }) = message {
+            rpc.register_peer_stream_outbound(RpcPeerStreamOutboundStart {
+                call_id: call_id.clone(),
+                link: link.clone(),
+                method: method::ROUTING_SUBSCRIBE_EVENTS,
+            })
+            .expect("fresh peer routing call id should not collide");
+        }
+    }
     let conn_span = tracing::info_span!(
         "connection",
         link = %link,
         transport = "cloud",
         user_id = %LOCAL_USER_ID,
         heartbeat_role = heartbeat.map(|h| h.role.as_str()).unwrap_or("disabled"),
+        local_routing_role = RoutingRole::Host.as_str(),
+        remote_routing_role = remote_routing_role.as_str(),
     );
     tracing::info!(parent: &conn_span, "cloud route established");
 
@@ -284,6 +308,7 @@ async fn run_cloud_connection(
         link: link.clone(),
         is_local: false,
         heartbeat,
+        routing_role: RoutingRole::Host,
     };
 
     let connected_at = std::time::Instant::now();

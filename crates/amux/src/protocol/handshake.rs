@@ -7,6 +7,53 @@ use crate::protocol::wire;
 /// Protocol version for the Connect handshake.
 pub const PROTOCOL_VERSION: u32 = 3;
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum RoutingRole {
+    Observer,
+    Host,
+    Relay,
+}
+
+impl RoutingRole {
+    pub(crate) fn serves_routing_events(self) -> bool {
+        matches!(self, Self::Host | Self::Relay)
+    }
+
+    pub(crate) fn is_direct_host(self) -> bool {
+        matches!(self, Self::Host)
+    }
+
+    pub(crate) fn as_str(self) -> &'static str {
+        match self {
+            Self::Observer => "observer",
+            Self::Host => "host",
+            Self::Relay => "relay",
+        }
+    }
+
+    pub(crate) fn to_wire(self) -> i32 {
+        match self {
+            Self::Observer => wire::RoutingRole::Observer as i32,
+            Self::Host => wire::RoutingRole::Host as i32,
+            Self::Relay => wire::RoutingRole::Relay as i32,
+        }
+    }
+
+    fn from_wire(value: i32, field: &str) -> Result<Self, wire::DecodeError> {
+        match wire::RoutingRole::try_from(value) {
+            Ok(wire::RoutingRole::Observer) => Ok(Self::Observer),
+            Ok(wire::RoutingRole::Host) => Ok(Self::Host),
+            Ok(wire::RoutingRole::Relay) => Ok(Self::Relay),
+            Ok(wire::RoutingRole::Unspecified) => Err(wire::DecodeError::Invalid(format!(
+                "{field} must not be ROUTING_ROLE_UNSPECIFIED"
+            ))),
+            Err(_) => Err(wire::DecodeError::Invalid(format!(
+                "{field} has unknown value {value}"
+            ))),
+        }
+    }
+}
+
 /// Initial connection handshake request.
 ///
 /// `link_name` stays wire-typed as `String` so malformed names reach the
@@ -18,9 +65,11 @@ pub struct Connect {
     pub token: Option<String>,
     pub version: u32,
     pub supported_versions: Vec<u32>,
-    /// Host identity for peer/cloud/server connections. Local terminal/client
-    /// connections omit this because they are already on the same host.
+    /// Host identity and capabilities for the connecting endpoint. Omitted
+    /// only for local same-host connections. This is orthogonal to
+    /// [`RoutingRole`].
     pub host: Option<Host>,
+    pub routing_role: RoutingRole,
 }
 
 impl Connect {
@@ -36,6 +85,7 @@ impl Connect {
             proposed_link_name: self.link_name.clone(),
             auth_token: self.token.clone(),
             host: self.host.as_ref().map(wire::host_to_wire),
+            routing_role: self.routing_role.to_wire(),
         };
         Ok(request.encode_to_vec())
     }
@@ -63,6 +113,10 @@ impl Connect {
             version,
             supported_versions: request.supported_protocol_versions,
             host,
+            routing_role: RoutingRole::from_wire(
+                request.routing_role,
+                "ConnectRequest.routing_role",
+            )?,
         })
     }
 }
@@ -77,10 +131,11 @@ pub struct ConnectResult {
     pub error: Option<ProtocolError>,
     pub idle_timeout_secs: Option<u32>,
     pub assigned_link_name: Option<String>,
-    /// Host identity for the accepting endpoint. Peer/server connections use
-    /// this to learn the direct counterparty; local connections and non-host
-    /// relays omit it.
+    /// Host identity and capabilities for the accepting endpoint. Omitted
+    /// only for local same-host connections. This is orthogonal to
+    /// [`RoutingRole`].
     pub host: Option<Host>,
+    pub routing_role: Option<RoutingRole>,
 }
 
 impl ConnectResult {
@@ -125,6 +180,14 @@ impl ConnectResult {
                     assigned_link_name,
                     heartbeat,
                     host: self.host.as_ref().map(wire::host_to_wire),
+                    routing_role: self
+                        .routing_role
+                        .ok_or_else(|| {
+                            wire::EncodeError::Invalid(
+                                "accepted ConnectResponse requires routing_role".to_string(),
+                            )
+                        })?
+                        .to_wire(),
                 })
             }
         };
@@ -176,6 +239,10 @@ impl ConnectResult {
                     idle_timeout_secs,
                     assigned_link_name: Some(accepted.assigned_link_name),
                     host: accepted.host.map(wire::host_from_wire).transpose()?,
+                    routing_role: Some(RoutingRole::from_wire(
+                        accepted.routing_role,
+                        "ConnectAccepted.routing_role",
+                    )?),
                 })
             }
             wire::connect_response::Outcome::Error(error) => Ok(Self {
@@ -183,6 +250,7 @@ impl ConnectResult {
                 idle_timeout_secs: None,
                 assigned_link_name: None,
                 host: None,
+                routing_role: None,
             }),
         }
     }
@@ -222,6 +290,7 @@ mod tests {
             version: PROTOCOL_VERSION,
             supported_versions: vec![PROTOCOL_VERSION],
             host: Some(host.clone()),
+            routing_role: RoutingRole::Host,
         };
         let encoded = msg.encode().unwrap();
         let decoded = Connect::decode(&encoded).unwrap();
@@ -230,6 +299,7 @@ mod tests {
         assert_eq!(decoded.version, PROTOCOL_VERSION);
         assert_eq!(decoded.supported_versions, vec![PROTOCOL_VERSION]);
         assert_eq!(decoded.host, Some(host));
+        assert_eq!(decoded.routing_role, RoutingRole::Host);
     }
 
     #[test]
@@ -244,12 +314,14 @@ mod tests {
             proposed_link_name: "app-client".to_string(),
             auth_token: None,
             host: None,
+            routing_role: wire::RoutingRole::Observer as i32,
         };
         let encoded = request.encode_to_vec();
         let decoded = Connect::decode(&encoded).unwrap();
         assert_eq!(decoded.link_name, "app-client");
         assert_eq!(decoded.version, PROTOCOL_VERSION);
         assert!(decoded.host.is_none());
+        assert_eq!(decoded.routing_role, RoutingRole::Observer);
     }
 
     #[test]
@@ -264,6 +336,7 @@ mod tests {
                 version: PROTOCOL_VERSION,
                 supported_versions: vec![PROTOCOL_VERSION],
                 host: None,
+                routing_role: RoutingRole::Observer,
             };
             let encoded = msg.encode().unwrap();
             let decoded = Connect::decode(&encoded).unwrap();
@@ -278,6 +351,7 @@ mod tests {
             idle_timeout_secs: Some(180),
             assigned_link_name: Some("accepted-link".to_string()),
             host: Some(sample_host()),
+            routing_role: Some(RoutingRole::Host),
         };
         let encoded = msg.encode().unwrap();
         let decoded = ConnectResult::decode(&encoded).unwrap();
@@ -285,6 +359,7 @@ mod tests {
         assert_eq!(decoded.idle_timeout_secs, Some(180));
         assert_eq!(decoded.assigned_link_name.as_deref(), Some("accepted-link"));
         assert_eq!(decoded.host, msg.host);
+        assert_eq!(decoded.routing_role, Some(RoutingRole::Host));
     }
 
     #[test]
@@ -296,6 +371,7 @@ mod tests {
                     assigned_link_name: "accepted-link".to_string(),
                     heartbeat: None,
                     host: None,
+                    routing_role: wire::RoutingRole::Observer as i32,
                 },
             )),
         };
@@ -313,6 +389,7 @@ mod tests {
                     assigned_link_name: String::new(),
                     heartbeat: None,
                     host: None,
+                    routing_role: wire::RoutingRole::Observer as i32,
                 },
             )),
         };
@@ -329,6 +406,7 @@ mod tests {
                     assigned_link_name: "bad.link".to_string(),
                     heartbeat: None,
                     host: None,
+                    routing_role: wire::RoutingRole::Observer as i32,
                 },
             )),
         };
@@ -359,6 +437,7 @@ mod tests {
                         assigned_link_name: "accepted-link".to_string(),
                         heartbeat: Some(heartbeat),
                         host: None,
+                        routing_role: wire::RoutingRole::Observer as i32,
                     },
                 )),
             };
@@ -375,6 +454,7 @@ mod tests {
                 idle_timeout_secs: None,
                 assigned_link_name: None,
                 host: None,
+                routing_role: Some(RoutingRole::Observer),
             }
             .encode()
             .is_err()
@@ -385,6 +465,7 @@ mod tests {
                 idle_timeout_secs: Some(0),
                 assigned_link_name: Some("accepted-link".to_string()),
                 host: None,
+                routing_role: Some(RoutingRole::Observer),
             }
             .encode()
             .is_err()
@@ -395,6 +476,7 @@ mod tests {
                 idle_timeout_secs: Some(u32::MAX),
                 assigned_link_name: Some("accepted-link".to_string()),
                 host: None,
+                routing_role: Some(RoutingRole::Observer),
             }
             .encode()
             .is_err()
@@ -411,6 +493,7 @@ mod tests {
             idle_timeout_secs: None,
             assigned_link_name: None,
             host: None,
+            routing_role: None,
         };
         let encoded = msg.encode().unwrap();
         let decoded = ConnectResult::decode(&encoded).unwrap();

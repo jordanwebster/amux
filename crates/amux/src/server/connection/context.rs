@@ -7,6 +7,7 @@ use uuid::Uuid;
 
 use super::super::{RpcDispatcher, ServerState, ServerUserState};
 use crate::agent::SessionEvent;
+use crate::protocol::handshake::RoutingRole;
 use crate::protocol::link::Link;
 use crate::protocol::message::Message;
 use crate::transport::TransportError;
@@ -49,6 +50,7 @@ pub(crate) struct ConnectionContext {
     pub(crate) event_tx: mpsc::Sender<SessionEvent>,
     pub(crate) link: Link,
     pub(crate) is_local: bool,
+    pub(crate) routing_role: RoutingRole,
     /// Negotiated heartbeat setup for this connection. `None` disables
     /// heartbeats entirely (used for local Unix-socket connections).
     pub(crate) heartbeat: Option<HeartbeatSetup>,

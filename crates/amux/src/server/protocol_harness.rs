@@ -17,6 +17,7 @@ use super::{
 use crate::agent::{AgentSession, SessionEvent, StopPolicy, TEST_ECHO_COMMAND, TestAgentSession};
 use crate::client::{Connection, OpenSessionClient, RpcClient, RpcClientError};
 use crate::config::Config;
+use crate::protocol::handshake::RoutingRole;
 use crate::protocol::link::Link;
 use crate::protocol::message::{
     CallId, FrameBody, GoAway, Host, LocalFrame, Message, PeerFrame, ProtocolError, ReauthRequest,
@@ -237,6 +238,7 @@ impl Topology {
             link: link.clone(),
             is_local: false,
             heartbeat: None,
+            routing_role: RoutingRole::Host,
         };
         let response_tx = route_handle.sender();
         let close_rx = route_handle.close_receiver();
@@ -308,6 +310,11 @@ impl Topology {
             link: link.clone(),
             is_local,
             heartbeat,
+            routing_role: if is_local {
+                RoutingRole::Observer
+            } else {
+                RoutingRole::Host
+            },
         };
         let response_tx = route_handle.sender();
         let close_rx = route_handle.close_receiver();

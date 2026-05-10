@@ -4,6 +4,7 @@ use std::sync::Arc;
 
 use tokio::sync::RwLock;
 
+use crate::protocol::handshake::RoutingRole;
 use crate::protocol::link::Link;
 use crate::protocol::message::{ProtocolError, RoutingEvent};
 use crate::protocol::wire;
@@ -16,11 +17,20 @@ pub(crate) struct RoutingService;
 pub(crate) struct RoutingServiceCtx {
     user_state: Arc<RwLock<ServerUserState>>,
     link: Link,
+    routing_role: RoutingRole,
 }
 
 impl RoutingServiceCtx {
-    pub(crate) fn new(user_state: Arc<RwLock<ServerUserState>>, link: Link) -> Self {
-        Self { user_state, link }
+    pub(crate) fn new(
+        user_state: Arc<RwLock<ServerUserState>>,
+        link: Link,
+        routing_role: RoutingRole,
+    ) -> Self {
+        Self {
+            user_state,
+            link,
+            routing_role,
+        }
     }
 
     fn link(&self) -> &Link {
@@ -29,6 +39,10 @@ impl RoutingServiceCtx {
 
     fn user_state(&self) -> &Arc<RwLock<ServerUserState>> {
         &self.user_state
+    }
+
+    fn serves_routing_events(&self) -> bool {
+        self.routing_role.serves_routing_events()
     }
 }
 
@@ -79,6 +93,14 @@ impl RoutingService {
                 },
                 reason: "received peer routing subscription on non-peer connection".to_string(),
             });
+        }
+        if !ctx.serves_routing_events() {
+            return Err(SubscribeRoutingEventsStartError::Response(
+                ProtocolError::FailedPrecondition {
+                    message: "peer did not advertise a routing role that serves routing events"
+                        .to_string(),
+                },
+            ));
         }
 
         let events = initial_routing_events(&us, ctx.link());

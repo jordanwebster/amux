@@ -475,6 +475,7 @@ mod tests {
             link,
             is_local: true,
             heartbeat: None,
+            routing_role: crate::protocol::handshake::RoutingRole::Observer,
         }
     }
 

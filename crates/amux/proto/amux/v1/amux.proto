@@ -135,9 +135,13 @@ message ConnectRequest {
   // Usually a JWT.
   optional string auth_token = 3;
 
-  // Present for peer/cloud/server connections. Must be absent for local
-  // terminal/client connections.
+  // Identity and capabilities for the connecting endpoint. Omitted only for
+  // local same-host connections. This is orthogonal to routing_role; only
+  // ROUTING_ROLE_HOST is propagated as a direct HostUp.
   optional Host host = 4;
+
+  // Role this connection takes in the routing protocol.
+  RoutingRole routing_role = 5;
 }
 
 message ConnectResponse {
@@ -156,9 +160,24 @@ message ConnectAccepted {
   // Absence disables heartbeat. idle_timeout_ms = 0 is invalid.
   optional HeartbeatConfig heartbeat = 3;
 
-  // Present when the accepting endpoint is a host. Absent for local
-  // terminal/client connections and non-host relays.
+  // Identity and capabilities for the accepting endpoint. Omitted only for
+  // local same-host connections. This is orthogonal to routing_role; only
+  // ROUTING_ROLE_HOST is propagated as a direct HostUp.
   optional Host host = 4;
+
+  // Role the accepting endpoint takes in the routing protocol.
+  RoutingRole routing_role = 5;
+}
+
+enum RoutingRole {
+  ROUTING_ROLE_UNSPECIFIED = 0;
+  // May subscribe to routing participants, but does not serve routing events
+  // and is not announced as a direct HostUp.
+  ROUTING_ROLE_OBSERVER = 1;
+  // Serves routing events and is announced by the peer as a direct HostUp.
+  ROUTING_ROLE_HOST = 2;
+  // Serves routing events, but is not announced as a direct HostUp.
+  ROUTING_ROLE_RELAY = 3;
 }
 
 message HeartbeatConfig {

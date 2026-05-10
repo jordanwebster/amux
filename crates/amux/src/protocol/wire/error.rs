@@ -30,6 +30,7 @@ pub(crate) fn encode_protocol_error(error: &ProtocolError) -> Error {
         ProtocolError::InvalidArgument { message } => simple_error(2, message.clone()),
         ProtocolError::AlreadyExists { message } => simple_error(4, message.clone()),
         ProtocolError::PermissionDenied { message } => simple_error(5, message.clone()),
+        ProtocolError::FailedPrecondition { message } => simple_error(7, message.clone()),
         ProtocolError::Unreachable { message } => simple_error(12, message.clone()),
         ProtocolError::ServerError { message } => simple_error(13, message.clone()),
         ProtocolError::InvalidCredentials => simple_error(6, error.to_string()),
@@ -112,6 +113,9 @@ pub(crate) fn decode_protocol_error(error: Error) -> ProtocolError {
             message: error.message,
         },
         6 => ProtocolError::InvalidCredentials,
+        7 => ProtocolError::FailedPrecondition {
+            message: error.message,
+        },
         9 => ProtocolError::ResourceExhausted {
             message: error.message,
         },

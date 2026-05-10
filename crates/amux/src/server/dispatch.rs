@@ -167,7 +167,7 @@ async fn handle_peer_request(
 }
 
 fn routing_service_ctx(ctx: &ConnectionContext) -> RoutingServiceCtx {
-    RoutingServiceCtx::new(ctx.user_state.clone(), ctx.link.clone())
+    RoutingServiceCtx::new(ctx.user_state.clone(), ctx.link.clone(), ctx.routing_role)
 }
 
 enum PeerRoutingStreamStartError {
@@ -471,6 +471,7 @@ mod tests {
             link,
             is_local: false,
             heartbeat: None,
+            routing_role: crate::protocol::handshake::RoutingRole::Host,
         }
     }
 
@@ -507,5 +508,67 @@ mod tests {
                     matches!(call.state, OutboundCallState::AwaitingResponse)
                 })
         );
+    }
+
+    #[tokio::test]
+    async fn observer_connection_rejects_routing_subscription_with_failed_precondition() {
+        let link = Link::new("observer").unwrap();
+        let mut ctx = test_peer_ctx(link).await;
+        ctx.routing_role = crate::protocol::handshake::RoutingRole::Observer;
+        let (tx, mut rx) = mpsc::channel(4);
+        let call_id = CallId::from(Uuid::new_v4());
+
+        handle_peer_request(
+            &tx,
+            call_id,
+            RequestFrame {
+                method: method::ROUTING_SUBSCRIBE_EVENTS_NAME.to_string(),
+                payload: wire::SubscribeRoutingEventsRequest {}.encode_to_vec(),
+            },
+            &ctx,
+        )
+        .await
+        .unwrap();
+
+        let Some(Message::Peer(PeerFrame {
+            body: FrameBody::Response(ResponseFrame::Error(error)),
+            ..
+        })) = rx.recv().await
+        else {
+            panic!("expected routing subscription error response");
+        };
+        assert_eq!(
+            error,
+            ProtocolError::FailedPrecondition {
+                message: "peer did not advertise a routing role that serves routing events"
+                    .to_string(),
+            }
+        );
+    }
+
+    #[tokio::test]
+    async fn relay_connection_serves_routing_subscription() {
+        let link = Link::new("relay").unwrap();
+        let mut ctx = test_peer_ctx(link).await;
+        ctx.routing_role = crate::protocol::handshake::RoutingRole::Relay;
+        let (tx, mut rx) = mpsc::channel(4);
+        let call_id = CallId::from(Uuid::new_v4());
+
+        handle_peer_request(
+            &tx,
+            call_id,
+            RequestFrame {
+                method: method::ROUTING_SUBSCRIBE_EVENTS_NAME.to_string(),
+                payload: wire::SubscribeRoutingEventsRequest {}.encode_to_vec(),
+            },
+            &ctx,
+        )
+        .await
+        .unwrap();
+
+        let Some(Message::PeerSnapshot { messages }) = rx.recv().await else {
+            panic!("expected routing subscription snapshot");
+        };
+        assert!(!messages.is_empty());
     }
 }

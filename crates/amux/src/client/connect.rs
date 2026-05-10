@@ -8,6 +8,7 @@ use tokio::net::windows::named_pipe::ClientOptions;
 
 use super::Connection;
 use crate::config::{Config, ConfigError};
+use crate::protocol::handshake::RoutingRole;
 use crate::protocol::message::ProtocolError;
 use crate::protocol::route::generate_terminal_link;
 use crate::transport::{HandshakeError, LocalTransport, TransportError, connect_handshake};
@@ -130,9 +131,14 @@ async fn connect_existing(config: &Config) -> Result<Connection> {
     let mut transport = connect_local_transport(config)
         .await
         .map_err(TransportError::from)?;
-    let outcome = connect_handshake(&mut transport, generate_terminal_link, None)
-        .await
-        .map_err(ConnectError::from)?;
+    let outcome = connect_handshake(
+        &mut transport,
+        generate_terminal_link,
+        None,
+        RoutingRole::Observer,
+    )
+    .await
+    .map_err(ConnectError::from)?;
     let link = outcome.link;
     tracing::info!(link = %link, "connected");
     Ok(Connection::new(transport, link))

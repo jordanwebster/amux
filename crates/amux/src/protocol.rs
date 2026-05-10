@@ -9,7 +9,7 @@ pub(crate) mod route;
 pub(crate) mod wire;
 
 pub use agent::Agent;
-pub use handshake::{Connect, ConnectResult, PROTOCOL_VERSION};
+pub use handshake::{Connect, ConnectResult, PROTOCOL_VERSION, RoutingRole};
 pub use link::{InvalidLinkName, Link};
 #[cfg(any(debug_assertions, test))]
 pub use message::AGENT_TYPE_TEST_AGENT;

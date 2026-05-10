@@ -927,6 +927,7 @@ mod tests {
             link: Link::new("owner").unwrap(),
             is_local: true,
             heartbeat: None,
+            routing_role: crate::protocol::handshake::RoutingRole::Observer,
         };
         let counterparty = route("client");
         let key_call_id = call_id(42);
@@ -972,6 +973,7 @@ mod tests {
             link,
             is_local: false,
             heartbeat: None,
+            routing_role: crate::protocol::handshake::RoutingRole::Host,
         };
         let counterparty = route_stack(&["peer", "client"]);
         let key_call_id = call_id(42);
@@ -1017,6 +1019,7 @@ mod tests {
             link: link.clone(),
             is_local: false,
             heartbeat: None,
+            routing_role: crate::protocol::handshake::RoutingRole::Host,
         };
         let counterparty = route_stack(&["peer", "client"]);
         let (reply_src, reply_dst) = Route::reply(counterparty.clone()).unwrap();
@@ -1071,6 +1074,7 @@ mod tests {
             link: Link::new("owner").unwrap(),
             is_local: true,
             heartbeat: None,
+            routing_role: crate::protocol::handshake::RoutingRole::Observer,
         };
         let counterparty = route("client");
         let key_call_id = call_id(42);
@@ -1109,6 +1113,7 @@ mod tests {
             link: Link::new("owner").unwrap(),
             is_local: true,
             heartbeat: None,
+            routing_role: crate::protocol::handshake::RoutingRole::Observer,
         };
         let counterparty = route("client");
         let (tx, mut rx) = mpsc::channel(2);
@@ -1142,6 +1147,7 @@ mod tests {
             link: Link::new("owner").unwrap(),
             is_local: true,
             heartbeat: None,
+            routing_role: crate::protocol::handshake::RoutingRole::Observer,
         };
         let counterparty = route("client");
         let key_call_id = call_id(42);
@@ -1203,6 +1209,7 @@ mod tests {
             link: Link::new("owner").unwrap(),
             is_local: true,
             heartbeat: None,
+            routing_role: crate::protocol::handshake::RoutingRole::Observer,
         };
         let counterparty = route("client");
         let key_call_id = call_id(42);
@@ -1279,6 +1286,7 @@ mod tests {
             link: Link::new("owner").unwrap(),
             is_local: true,
             heartbeat: None,
+            routing_role: crate::protocol::handshake::RoutingRole::Observer,
         };
         let counterparty = route("client");
         let key_call_id = call_id(42);
@@ -1353,6 +1361,7 @@ mod tests {
             link: Link::new("owner").unwrap(),
             is_local: true,
             heartbeat: None,
+            routing_role: crate::protocol::handshake::RoutingRole::Observer,
         };
         let counterparty = route("client");
         let key_call_id = call_id(42);
@@ -1425,6 +1434,7 @@ mod tests {
             link: Link::new("owner").unwrap(),
             is_local: true,
             heartbeat: None,
+            routing_role: crate::protocol::handshake::RoutingRole::Observer,
         };
         let counterparty = route("client");
         let key_call_id = call_id(42);
@@ -1505,6 +1515,7 @@ mod tests {
             link: Link::new("owner").unwrap(),
             is_local: true,
             heartbeat: None,
+            routing_role: crate::protocol::handshake::RoutingRole::Observer,
         };
         let counterparty = route("client");
         let key_call_id = call_id(42);
