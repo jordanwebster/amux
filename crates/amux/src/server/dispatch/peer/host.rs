@@ -7,7 +7,8 @@ use crate::server::connection::{
 };
 use crate::server::routing::{broadcast_topology_event, maybe_start_agent_subscription};
 use crate::server::{
-    cancel_open_sessions_for_route_prefix, finish_open_session_cleanup_jobs, validate_remote_host,
+    cancel_session_subscriptions_for_route_prefix, finish_session_subscription_cleanup_jobs,
+    validate_remote_host,
 };
 
 pub(super) async fn handle_announce(
@@ -98,13 +99,13 @@ pub(super) async fn handle_withdraw(
                 &route_prefix,
                 "route withdrawn",
             );
-            let (cancelled_open_sessions, cleanup_jobs) =
-                cancel_open_sessions_for_route_prefix(&mut us, &route_prefix);
-            if cancelled_open_sessions != 0 {
+            let (cancelled_session_subscriptions, cleanup_jobs) =
+                cancel_session_subscriptions_for_route_prefix(&mut us, &route_prefix);
+            if cancelled_session_subscriptions != 0 {
                 tracing::info!(
-                    count = cancelled_open_sessions,
+                    count = cancelled_session_subscriptions,
                     host_id = %id,
-                    "cancelled OpenSession calls for withdrawn host"
+                    "cancelled SubscribeSession calls for withdrawn host"
                 );
             }
             (cleanup_jobs, local_origin_messages)
@@ -151,7 +152,7 @@ pub(super) async fn handle_withdraw(
             maybe_start_agent_subscription(&mut us, id, is_cloud_server);
         }
     }
-    finish_open_session_cleanup_jobs(&ctx.user_state, cleanup_jobs).await;
+    finish_session_subscription_cleanup_jobs(&ctx.user_state, cleanup_jobs).await;
 
     Ok(())
 }

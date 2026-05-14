@@ -29,10 +29,10 @@ use super::{
 use crate::agent::SessionEvent;
 use crate::protocol::handshake::{Connect, ConnectResult, PROTOCOL_VERSION, RoutingRole};
 use crate::protocol::link::Link;
-use crate::protocol::message::{FrameBody, Host, Message, PeerFrame, ProtocolError, RequestFrame};
+use crate::protocol::message::{Frame, FrameBody, Host, Message, ProtocolError, RequestFrame};
 use crate::protocol::route::generate_server_link;
 use crate::protocol::{method, wire};
-use crate::rpc::RpcPeerStreamOutboundStart;
+use crate::server::PeerRoutingOutboundStart;
 use crate::transport::{
     HandshakeError, TcpTransport, Transport, TransportError, TransportSplit, WebSocketTransport,
     connect_handshake,
@@ -594,13 +594,15 @@ pub(super) async fn accept_connection<T: TransportSplit>(
         };
         if remote_routing_role.serves_routing_events() {
             let routing_call_id = crate::protocol::CallId::from(Uuid::new_v4());
-            rpc.register_peer_stream_outbound(RpcPeerStreamOutboundStart {
+            rpc.register_peer_routing_outbound(PeerRoutingOutboundStart {
                 call_id: routing_call_id.clone(),
                 link: link.clone(),
                 method: method::ROUTING_SUBSCRIBE_EVENTS,
             })
             .expect("fresh peer routing call id should not collide");
-            vec![Message::Peer(PeerFrame {
+            vec![Message::Frame(Frame {
+                src: crate::protocol::Route::from_link(link.clone()),
+                dst: crate::protocol::Route::empty(),
                 call_id: routing_call_id,
                 body: FrameBody::Request(RequestFrame {
                     method: method::ROUTING_SUBSCRIBE_EVENTS_NAME.to_string(),
@@ -799,7 +801,9 @@ pub(super) async fn tcp_connect(
         let initial_messages = routing_call_id
             .as_ref()
             .map(|call_id| {
-                Message::Peer(PeerFrame {
+                Message::Frame(Frame {
+                    src: crate::protocol::Route::from_link(link.clone()),
+                    dst: crate::protocol::Route::empty(),
                     call_id: call_id.clone(),
                     body: FrameBody::Request(RequestFrame {
                         method: method::ROUTING_SUBSCRIBE_EVENTS_NAME.to_string(),
@@ -817,7 +821,7 @@ pub(super) async fn tcp_connect(
         .rpc_for_link(&link)
         .expect("reserved peer route should have RPC state");
     if let Some(routing_call_id) = routing_call_id {
-        rpc.register_peer_stream_outbound(RpcPeerStreamOutboundStart {
+        rpc.register_peer_routing_outbound(PeerRoutingOutboundStart {
             call_id: routing_call_id.clone(),
             link: link.clone(),
             method: method::ROUTING_SUBSCRIBE_EVENTS,
@@ -1155,7 +1159,7 @@ mod tests {
         assert!(response.host.is_some());
 
         let initial = client.read_message().await.unwrap();
-        let Message::Peer(PeerFrame {
+        let Message::Frame(Frame {
             body: FrameBody::Request(request),
             ..
         }) = initial

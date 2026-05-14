@@ -45,12 +45,6 @@ impl StructuredInputCancel {
         }
     }
 
-    pub(crate) fn cancel(&self) {
-        if !self.inner.cancelled.swap(true, Ordering::SeqCst) {
-            let _ = self.inner.tx.send(true);
-        }
-    }
-
     pub(crate) fn is_cancelled(&self) -> bool {
         self.inner.cancelled.load(Ordering::SeqCst)
     }

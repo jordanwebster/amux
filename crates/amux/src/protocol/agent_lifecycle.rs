@@ -1,13 +1,15 @@
 use uuid::Uuid;
 
-use crate::protocol::message::{CreateAgentRequest, ProtocolError, RenameAgentRequest};
+use crate::protocol::message::{
+    CreateAgentRequest, ProtocolError, RenameAgentRequest, ResponseFrame,
+};
 use crate::protocol::{Route, method, wire};
 
 #[derive(Debug, thiserror::Error)]
 pub enum AgentLifecycleCodecError {
-    #[error("failed to encode agent lifecycle frame: {0}")]
+    #[error("failed to encode agent lifecycle request payload: {0}")]
     Encode(String),
-    #[error("failed to decode agent lifecycle frame: {0}")]
+    #[error("failed to decode agent lifecycle response: {0}")]
     Decode(String),
 }
 
@@ -16,15 +18,15 @@ pub fn encode_create_agent_request(
 ) -> Result<Vec<u8>, AgentLifecycleCodecError> {
     let request = wire::CreateAgentRpcRequest::from_domain(request)
         .map_err(|error| AgentLifecycleCodecError::Encode(error.to_string()))?;
-    wire::encode_agent_lifecycle_request(&wire::AgentLifecycleRequest::Create(request))
+    wire::encode_agent_lifecycle_request_payload(&wire::AgentLifecycleRequest::Create(request))
         .map_err(|error| AgentLifecycleCodecError::Encode(error.to_string()))
 }
 
 pub fn decode_create_agent_response(
-    payload: &[u8],
+    response: ResponseFrame,
     route: Route,
 ) -> Result<Result<crate::protocol::Agent, ProtocolError>, AgentLifecycleCodecError> {
-    match wire::decode_agent_lifecycle_response(method::AGENT_CREATE_NAME, payload)
+    match wire::decode_agent_lifecycle_response_frame(method::AGENT_CREATE_NAME, &response)
         .map_err(|error| AgentLifecycleCodecError::Decode(error.to_string()))?
     {
         wire::AgentLifecycleResponse::Create(Ok(agent)) => agent
@@ -42,15 +44,17 @@ pub fn decode_create_agent_response(
 pub fn encode_rename_agent_request(
     request: &RenameAgentRequest,
 ) -> Result<Vec<u8>, AgentLifecycleCodecError> {
-    wire::encode_agent_lifecycle_request(&wire::AgentLifecycleRequest::Rename(request.clone()))
-        .map_err(|error| AgentLifecycleCodecError::Encode(error.to_string()))
+    wire::encode_agent_lifecycle_request_payload(&wire::AgentLifecycleRequest::Rename(
+        request.clone(),
+    ))
+    .map_err(|error| AgentLifecycleCodecError::Encode(error.to_string()))
 }
 
 pub fn decode_rename_agent_response(
-    payload: &[u8],
+    response: ResponseFrame,
     route: crate::protocol::Route,
 ) -> Result<Result<crate::protocol::Agent, ProtocolError>, AgentLifecycleCodecError> {
-    match wire::decode_agent_lifecycle_response(method::AGENT_RENAME_NAME, payload)
+    match wire::decode_agent_lifecycle_response_frame(method::AGENT_RENAME_NAME, &response)
         .map_err(|error| AgentLifecycleCodecError::Decode(error.to_string()))?
     {
         wire::AgentLifecycleResponse::Rename(Ok(agent)) => agent
@@ -66,14 +70,14 @@ pub fn decode_rename_agent_response(
 }
 
 pub fn encode_delete_agent_request(agent_id: Uuid) -> Result<Vec<u8>, AgentLifecycleCodecError> {
-    wire::encode_agent_lifecycle_request(&wire::AgentLifecycleRequest::Delete { agent_id })
+    wire::encode_agent_lifecycle_request_payload(&wire::AgentLifecycleRequest::Delete { agent_id })
         .map_err(|error| AgentLifecycleCodecError::Encode(error.to_string()))
 }
 
 pub fn decode_delete_agent_response(
-    payload: &[u8],
+    response: ResponseFrame,
 ) -> Result<Result<(), ProtocolError>, AgentLifecycleCodecError> {
-    match wire::decode_agent_lifecycle_response(method::AGENT_DELETE_NAME, payload)
+    match wire::decode_agent_lifecycle_response_frame(method::AGENT_DELETE_NAME, &response)
         .map_err(|error| AgentLifecycleCodecError::Decode(error.to_string()))?
     {
         wire::AgentLifecycleResponse::Delete(result) => Ok(result),
@@ -108,9 +112,9 @@ mod tests {
         };
 
         let payload = encode_create_agent_request(&request).unwrap();
-        let decoded = wire::decode_agent_lifecycle_request_if_present(&payload)
-            .unwrap()
-            .expect("agent lifecycle request should be recognized");
+        let decoded =
+            wire::decode_agent_lifecycle_request_payload(method::AGENT_CREATE_NAME, &payload)
+                .unwrap();
 
         let AgentLifecycleRequest::Create(decoded) = decoded else {
             panic!("expected CreateAgent request");
@@ -132,8 +136,8 @@ mod tests {
 
     #[test]
     fn create_agent_response_decodes_success_and_error() {
-        let success = wire::encode_agent_lifecycle_response(&wire::AgentLifecycleResponse::Create(
-            Ok(wire::AgentRecord {
+        let success = wire::encode_agent_lifecycle_response_frame(
+            &wire::AgentLifecycleResponse::Create(Ok(wire::AgentRecord {
                 id: Uuid::new_v4(),
                 host_id: Uuid::new_v4(),
                 name: Some("worker".to_string()),
@@ -144,23 +148,23 @@ mod tests {
                 readonly: false,
                 args: Vec::new(),
                 created_at_unix_ms: 0,
-            }),
-        ))
+            })),
+        )
         .unwrap();
-        let decoded = decode_create_agent_response(&success, Route::empty())
+        let decoded = decode_create_agent_response(success, Route::empty())
             .unwrap()
             .unwrap();
         assert_eq!(decoded.name.as_deref(), Some("worker"));
         assert_eq!(decoded.route, Route::empty());
 
-        let error = wire::encode_agent_lifecycle_response(&wire::AgentLifecycleResponse::Create(
-            Err(ProtocolError::AlreadyExists {
+        let error = wire::encode_agent_lifecycle_response_frame(
+            &wire::AgentLifecycleResponse::Create(Err(ProtocolError::AlreadyExists {
                 message: "agent already exists".to_string(),
-            }),
-        ))
+            })),
+        )
         .unwrap();
         let Err(ProtocolError::AlreadyExists { message }) =
-            decode_create_agent_response(&error, Route::empty()).unwrap()
+            decode_create_agent_response(error, Route::empty()).unwrap()
         else {
             panic!("expected AlreadyExists error");
         };
@@ -182,9 +186,9 @@ mod tests {
         };
 
         let payload = encode_create_agent_request(&request).unwrap();
-        let decoded = wire::decode_agent_lifecycle_request_if_present(&payload)
-            .unwrap()
-            .expect("agent lifecycle request should be recognized");
+        let decoded =
+            wire::decode_agent_lifecycle_request_payload(method::AGENT_CREATE_NAME, &payload)
+                .unwrap();
 
         let AgentLifecycleRequest::Create(decoded) = decoded else {
             panic!("expected CreateAgent request");

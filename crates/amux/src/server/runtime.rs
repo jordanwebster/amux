@@ -28,8 +28,9 @@ use super::{LOCAL_USER_ID, ServerState, ShutdownRequest};
 use crate::agent::SessionEvent;
 use crate::auth::jwt::JwtValidator;
 use crate::config::{Config, ConfigError};
+use crate::protocol::Route;
 use crate::protocol::message::{
-    FrameBody, LocalFrame, Message, ProtocolError, ResponseFrame, ShutdownReason,
+    Frame, FrameBody, Message, ProtocolError, ResponseFrame, ShutdownReason,
 };
 use crate::protocol::wire;
 use crate::transport::{LocalListener, TcpTransport, TransportError, create_tls_acceptor};
@@ -246,7 +247,9 @@ impl Server {
                                 ShutdownReason::UserRequested,
                             ).await;
                             shutdown_server(&user_state).await;
-                            let message = Message::Local(LocalFrame {
+                            let message = Message::Frame(Frame {
+                                src: Route::from_link(link.clone()),
+                                dst: Route::empty(),
                                 call_id: reply_call_id,
                                 body: FrameBody::Response(ResponseFrame::Payload(
                                     wire::Empty {}.encode_to_vec(),
@@ -293,7 +296,9 @@ impl Server {
                                 {
                                     tracing::error!(error = %e, "failed to save suspended agents");
                                     let _ = reply
-                                        .send(Message::Local(LocalFrame {
+                                        .send(Message::Frame(Frame {
+                                            src: Route::from_link(link.clone()),
+                                            dst: Route::empty(),
                                             call_id: reply_call_id,
                                             body: FrameBody::Response(ResponseFrame::Error(
                                                 ProtocolError::ServerError {
@@ -308,7 +313,9 @@ impl Server {
                             }
                             deferred_reply = Some((
                                 reply,
-                                Message::Local(LocalFrame {
+                                Message::Frame(Frame {
+                                    src: Route::from_link(link.clone()),
+                                    dst: Route::empty(),
                                     call_id: reply_call_id,
                                     body: FrameBody::Response(match error {
                                         Some(error) => ResponseFrame::Error(error),

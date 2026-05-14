@@ -1,6 +1,6 @@
-//! Claude-owned IO protocol payloads for `AgentService/OpenSession`.
+//! Claude-owned IO protocol payloads for `AgentService/SubscribeSession` and `SendInput`.
 //!
-//! The core protocol treats `SessionOpen.args`, `SessionInput.payload`,
+//! The core protocol treats `SubscribeSessionRequest.args`, `SessionInput.payload`,
 //! `SessionOutput.payload`, and cursors as opaque bytes. This module owns the
 //! first-party Claude schemas for those bytes.
 
@@ -8,7 +8,7 @@ use prost::Message as ProstMessage;
 use uuid::Uuid;
 
 use crate::protocol::message::{ProtocolError, TerminalSize};
-use crate::protocol::{open_session, wire};
+use crate::protocol::{session, wire};
 
 pub const RAW_V1: &str = "claude_raw_v1";
 pub const PTY_TRANSCRIPT_V1: &str = "claude_pty_transcript_v1";
@@ -64,16 +64,16 @@ pub struct ClaudePtyTranscriptV1Output {
     pub payload: Vec<u8>,
 }
 
-pub fn encode_raw_v1_open(
+pub fn encode_raw_v1_subscribe(
     agent_id: Uuid,
     terminal_size: Option<TerminalSize>,
     replay_query: Option<ClaudeRawV1ReplayQuery>,
-) -> Result<Vec<u8>, open_session::OpenSessionCodecError> {
+) -> Result<Vec<u8>, session::SessionCodecError> {
     let args = encode_raw_v1_args(ClaudeRawV1Args {
         terminal_size,
         replay_query,
     });
-    open_session::encode_open_session_open(agent_id, RAW_V1, args)
+    session::encode_subscribe_session_request(agent_id, RAW_V1, args)
 }
 
 pub fn decode_raw_v1_args(args: Option<&[u8]>) -> Result<ClaudeRawV1Args, ProtocolError> {
@@ -302,7 +302,7 @@ where
 {
     match args {
         Some(args) => M::decode(args).map_err(|error| ProtocolError::InvalidArgument {
-            message: format!("`{io_protocol}` SessionOpen args must be protobuf: {error}"),
+            message: format!("`{io_protocol}` SubscribeSession args must be protobuf: {error}"),
         }),
         None => Ok(M::default()),
     }
@@ -338,31 +338,24 @@ mod tests {
     use crate::protocol::wire;
 
     #[test]
-    fn raw_open_payload_decodes_to_open_session_open_event() {
+    fn raw_subscribe_payload_decodes_to_subscribe_session_request() {
         let agent_id = Uuid::new_v4();
-        let payload = encode_raw_v1_open(
+        let payload = encode_raw_v1_subscribe(
             agent_id,
             Some(TerminalSize { rows: 24, cols: 80 }),
             Some(ClaudeRawV1ReplayQuery::TailBytes { count: 4096 }),
         )
         .unwrap();
 
-        let crate::protocol::message::FrameBody::StreamItem(payload) =
-            wire::decode_frame_body(&payload).unwrap()
-        else {
-            panic!("expected OpenSession open stream item");
+        let request = crate::protocol::message::RequestFrame {
+            method: crate::protocol::method::AGENT_SUBSCRIBE_SESSION_NAME.to_string(),
+            payload,
         };
-        let event = wire::OpenSessionRequest::decode(payload.as_slice())
-            .unwrap()
-            .event
-            .unwrap();
-        let wire::open_session_request::Event::Open(open) = event else {
-            panic!("expected open event");
-        };
-        assert_eq!(open.agent_id.as_slice(), agent_id.as_bytes());
-        assert_eq!(open.io_protocol, RAW_V1);
+        let request = wire::decode_subscribe_session_request(&request).unwrap();
+        assert_eq!(request.agent_id, agent_id);
+        assert_eq!(request.io_protocol, RAW_V1);
         assert_eq!(
-            decode_raw_v1_args(open.args.as_deref()).unwrap(),
+            decode_raw_v1_args(request.args.as_deref()).unwrap(),
             ClaudeRawV1Args {
                 terminal_size: Some(TerminalSize { rows: 24, cols: 80 }),
                 replay_query: Some(ClaudeRawV1ReplayQuery::TailBytes { count: 4096 }),

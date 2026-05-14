@@ -2,27 +2,25 @@ use std::sync::Arc;
 
 use tokio::sync::{RwLock, mpsc};
 
-use crate::protocol::message::{
-    CallId, FrameBody, Message, ProtocolError, RoutedFrame, RoutedFrameMessage,
-};
+use crate::protocol::message::{CallId, Frame, FrameBody, Message, ProtocolError};
 use crate::protocol::{Link, Route};
 use crate::server::ServerUserState;
 
-pub(in crate::server) enum ForwardedRoutedPayload {
+pub(in crate::server) enum FrameForwardingResult {
     Forwarded,
     Endpoint {
         src: Route,
         call_id: CallId,
-        payload: Vec<u8>,
+        body: FrameBody,
     },
 }
 
-fn routed_payload_message(src: Route, dst: Route, call_id: CallId, payload: Vec<u8>) -> Message {
-    Message::Routed(RoutedFrame {
+fn frame_message(src: Route, dst: Route, call_id: CallId, body: FrameBody) -> Message {
+    Message::Frame(Frame {
         src,
         dst,
         call_id,
-        message: RoutedFrameMessage::Payload(payload),
+        body,
     })
 }
 
@@ -40,25 +38,21 @@ fn route_with_next_hop(src: &Route, next_hop: &Link) -> Route {
     route
 }
 
-/// Forward a routed payload if `dst` still has a next hop.
+/// Forward an application frame if `dst` still has a next hop.
 ///
 /// Relays stay stateless: this function rewrites route hops and forwards the
-/// opaque payload bytes, or returns/synthesizes a routing-layer error when the
-/// next hop is unreachable. Endpoint service payloads are not decoded here.
-pub(in crate::server) async fn forward_routed_payload_or_endpoint(
+/// frame body, or returns/synthesizes a routing-layer error when the next hop
+/// is unreachable. Endpoint service payloads are not decoded here.
+pub(in crate::server) async fn forward_frame_or_endpoint(
     tx: &mpsc::Sender<Message>,
     user_state: &Arc<RwLock<ServerUserState>>,
     mut src: Route,
     mut dst: Route,
     call_id: CallId,
-    payload: Vec<u8>,
-) -> ForwardedRoutedPayload {
+    body: FrameBody,
+) -> FrameForwardingResult {
     let Some(next_hop) = dst.pop() else {
-        return ForwardedRoutedPayload::Endpoint {
-            src,
-            call_id,
-            payload,
-        };
+        return FrameForwardingResult::Endpoint { src, call_id, body };
     };
 
     let hop_name = next_hop.clone();
@@ -70,10 +64,7 @@ pub(in crate::server) async fn forward_routed_payload_or_endpoint(
     let route_tx = {
         let us = user_state.read().await;
         let route_tx = us.connection_for_route(&Route::from_link(hop_name.clone()));
-        if route_tx.is_some()
-            && !us.is_peer_link(&hop_name)
-            && is_terminal_response_payload(&payload)
-        {
+        if route_tx.is_some() && !us.is_peer_link(&hop_name) && is_terminal_response_body(&body) {
             us.remove_local_origin_outbound_for_return_hop(&call_id, &hop_name, &response_route);
         }
         route_tx
@@ -82,7 +73,7 @@ pub(in crate::server) async fn forward_routed_payload_or_endpoint(
     match route_tx {
         Some(route_tx) => {
             if route_tx
-                .send(routed_payload_message(src, dst, call_id.clone(), payload))
+                .send(frame_message(src, dst, call_id.clone(), body))
                 .await
                 .is_err()
             {
@@ -128,7 +119,7 @@ pub(in crate::server) async fn forward_routed_payload_or_endpoint(
         }
     }
 
-    ForwardedRoutedPayload::Forwarded
+    FrameForwardingResult::Forwarded
 }
 
 async fn remove_tracked_outbound_for_routing_error(
@@ -142,11 +133,8 @@ async fn remove_tracked_outbound_for_routing_error(
         .remove_tracked_outbound_for_call(call_id, failed_route);
 }
 
-fn is_terminal_response_payload(payload: &[u8]) -> bool {
-    matches!(
-        crate::protocol::wire::decode_frame_body(payload),
-        Ok(FrameBody::Response(_))
-    )
+fn is_terminal_response_body(body: &FrameBody) -> bool {
+    matches!(body, FrameBody::Response(_))
 }
 
 #[cfg(test)]
@@ -159,9 +147,10 @@ mod tests {
     use super::*;
     use crate::protocol::message::ResponseFrame;
     use crate::protocol::method;
-    use crate::rpc::{OutboundCallState, RpcLocalOriginOutboundStart, RpcPeerStreamOutboundStart};
+    use crate::rpc::OutboundCallState;
     use crate::server::state::{ConnectionEntry, ConnectionKind};
     use crate::server::{ConnectionHandle, ServerUserState};
+    use crate::server::{LocalOriginOutboundStart, PeerRoutingOutboundStart};
 
     fn insert_connection(us: &mut ServerUserState, link: Link, tx: mpsc::Sender<Message>) {
         us.connections.insert(
@@ -177,7 +166,7 @@ mod tests {
         request_dst: Route,
     ) {
         us.ensure_route_rpc(request_dst.clone())
-            .register_local_origin_outbound(RpcLocalOriginOutboundStart {
+            .register_local_origin_outbound(LocalOriginOutboundStart {
                 call_id,
                 method: method::AGENT_CREATE,
                 state: OutboundCallState::AwaitingResponse,
@@ -207,28 +196,25 @@ mod tests {
             );
         }
 
-        let payload = crate::protocol::wire::encode_frame_body(&FrameBody::Response(
-            ResponseFrame::Error(ProtocolError::Cancelled {
-                message: "closed".to_string(),
-            }),
-        ))
-        .unwrap();
+        let body = FrameBody::Response(ResponseFrame::Error(ProtocolError::Cancelled {
+            message: "closed".to_string(),
+        }));
         let (tx, _rx) = mpsc::channel(1);
 
         assert!(matches!(
-            forward_routed_payload_or_endpoint(
+            forward_frame_or_endpoint(
                 &tx,
                 &user_state,
                 Route::from_link(peer),
                 Route::from_link(local),
                 call_id.clone(),
-                payload,
+                body,
             )
             .await,
-            ForwardedRoutedPayload::Forwarded
+            FrameForwardingResult::Forwarded
         ));
 
-        assert!(matches!(route_rx.try_recv(), Ok(Message::Routed(_))));
+        assert!(matches!(route_rx.try_recv(), Ok(Message::Frame(_))));
         assert_eq!(user_state.read().await.total_outbound_len(), 0);
     }
 
@@ -252,28 +238,25 @@ mod tests {
             );
         }
 
-        let payload = crate::protocol::wire::encode_frame_body(&FrameBody::Response(
-            ResponseFrame::Error(ProtocolError::Cancelled {
-                message: "closed".to_string(),
-            }),
-        ))
-        .unwrap();
+        let body = FrameBody::Response(ResponseFrame::Error(ProtocolError::Cancelled {
+            message: "closed".to_string(),
+        }));
         let (tx, _rx) = mpsc::channel(1);
 
         assert!(matches!(
-            forward_routed_payload_or_endpoint(
+            forward_frame_or_endpoint(
                 &tx,
                 &user_state,
                 Route::from_link(unrelated_peer),
                 Route::from_link(local),
                 call_id.clone(),
-                payload,
+                body,
             )
             .await,
-            ForwardedRoutedPayload::Forwarded
+            FrameForwardingResult::Forwarded
         ));
 
-        assert!(matches!(route_rx.try_recv(), Ok(Message::Routed(_))));
+        assert!(matches!(route_rx.try_recv(), Ok(Message::Frame(_))));
         assert!(
             user_state
                 .read()
@@ -303,22 +286,22 @@ mod tests {
         let (tx, mut rx) = mpsc::channel(1);
 
         assert!(matches!(
-            forward_routed_payload_or_endpoint(
+            forward_frame_or_endpoint(
                 &tx,
                 &user_state,
                 Route::from_link(local.clone()),
                 Route::from_link(peer.clone()),
                 call_id.clone(),
-                b"payload".to_vec(),
+                FrameBody::StreamItem(b"payload".to_vec()),
             )
             .await,
-            ForwardedRoutedPayload::Forwarded
+            FrameForwardingResult::Forwarded
         ));
 
-        let Message::Routed(RoutedFrame {
+        let Message::Frame(Frame {
             call_id: response_call_id,
-            message:
-                RoutedFrameMessage::RoutingError {
+            body:
+                FrameBody::RoutingError {
                     failed_route,
                     error: ProtocolError::Unreachable { .. },
                 },
@@ -345,7 +328,7 @@ mod tests {
         {
             let mut us = user_state.write().await;
             us.ensure_route_rpc(Route::empty())
-                .register_peer_stream_outbound(RpcPeerStreamOutboundStart {
+                .register_peer_routing_outbound(PeerRoutingOutboundStart {
                     link: subscription_peer,
                     call_id: call_id.clone(),
                     method: method::ROUTING_SUBSCRIBE_EVENTS,
@@ -355,22 +338,22 @@ mod tests {
         let (tx, mut rx) = mpsc::channel(1);
 
         assert!(matches!(
-            forward_routed_payload_or_endpoint(
+            forward_frame_or_endpoint(
                 &tx,
                 &user_state,
                 Route::from_link(local),
                 Route::from_link(missing_peer),
                 call_id.clone(),
-                b"payload".to_vec(),
+                FrameBody::StreamItem(b"payload".to_vec()),
             )
             .await,
-            ForwardedRoutedPayload::Forwarded
+            FrameForwardingResult::Forwarded
         ));
 
         assert!(matches!(
             rx.recv().await,
-            Some(Message::Routed(RoutedFrame {
-                message: RoutedFrameMessage::RoutingError { .. },
+            Some(Message::Frame(Frame {
+                body: FrameBody::RoutingError { .. },
                 ..
             }))
         ));
@@ -404,22 +387,22 @@ mod tests {
         let (tx, mut rx) = mpsc::channel(1);
 
         assert!(matches!(
-            forward_routed_payload_or_endpoint(
+            forward_frame_or_endpoint(
                 &tx,
                 &user_state,
                 Route::from_link(unrelated_source),
                 Route::from_link(missing_peer),
                 call_id.clone(),
-                b"payload".to_vec(),
+                FrameBody::StreamItem(b"payload".to_vec()),
             )
             .await,
-            ForwardedRoutedPayload::Forwarded
+            FrameForwardingResult::Forwarded
         ));
 
         assert!(matches!(
             rx.recv().await,
-            Some(Message::Routed(RoutedFrame {
-                message: RoutedFrameMessage::RoutingError { .. },
+            Some(Message::Frame(Frame {
+                body: FrameBody::RoutingError { .. },
                 ..
             }))
         ));

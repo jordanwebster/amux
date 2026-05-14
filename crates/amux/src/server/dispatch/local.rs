@@ -2,11 +2,11 @@ use tokio::sync::mpsc;
 use uuid::Uuid;
 
 use crate::protocol::message::{
-    CallId, DebugFormat, FrameBody, HookProvider, LocalFrame, Message, ProtocolError, RequestFrame,
+    CallId, DebugFormat, Frame, FrameBody, HookProvider, Message, ProtocolError, RequestFrame,
     ResponseFrame, ShutdownReason,
 };
-use crate::protocol::method::{MethodLookupError, MethodScope};
-use crate::protocol::{method, wire};
+use crate::protocol::method::{MethodAccess, MethodLookupError};
+use crate::protocol::{Route, method, wire};
 use crate::server::ShutdownRequest;
 use crate::server::accept::tcp_connect;
 use crate::server::connection::{ConnectionContext, ConnectionError};
@@ -17,11 +17,12 @@ use crate::services::{
 
 pub(super) async fn handle_local_request(
     tx: &mpsc::Sender<Message>,
+    src: Route,
     call_id: CallId,
     request: RequestFrame,
     ctx: &ConnectionContext,
 ) -> crate::server::connection::Result<()> {
-    let endpoint = LocalEndpointCall::new(tx, call_id);
+    let endpoint = LocalEndpointCall::new(tx, src, call_id);
     match handle_local_request_inner(&endpoint, request, ctx).await {
         Ok(()) => Ok(()),
         Err(LocalRequestError::Rpc(error)) => endpoint.send_error(error).await,
@@ -34,7 +35,7 @@ async fn handle_local_request_inner(
     request: RequestFrame,
     ctx: &ConnectionContext,
 ) -> LocalResult<()> {
-    match method::find_for_scope(&request.method, MethodScope::Local) {
+    match method::find_for_scope(&request.method, MethodAccess::Local) {
         Ok(_) => {}
         Err(MethodLookupError::WrongScope {
             spec,
@@ -44,7 +45,7 @@ async fn handle_local_request_inner(
                 message: format!(
                     "method {} is {} scoped and not valid in {} scope",
                     request.method,
-                    spec.scope.as_str(),
+                    spec.access.as_str(),
                     requested_scope.as_str()
                 ),
             }
@@ -220,12 +221,13 @@ impl From<ConnectionError> for LocalRequestError {
 
 struct LocalEndpointCall<'a> {
     tx: &'a mpsc::Sender<Message>,
+    src: Route,
     call_id: CallId,
 }
 
 impl<'a> LocalEndpointCall<'a> {
-    fn new(tx: &'a mpsc::Sender<Message>, call_id: CallId) -> Self {
-        Self { tx, call_id }
+    fn new(tx: &'a mpsc::Sender<Message>, src: Route, call_id: CallId) -> Self {
+        Self { tx, src, call_id }
     }
 
     fn reply_sender(&self) -> mpsc::Sender<Message> {
@@ -261,8 +263,14 @@ impl<'a> LocalEndpointCall<'a> {
         &self,
         response: ResponseFrame,
     ) -> crate::server::connection::Result<()> {
+        let Some((reply_src, reply_dst)) = Route::reply(self.src.clone()) else {
+            tracing::warn!("dropping local response with empty return route");
+            return Ok(());
+        };
         self.tx
-            .send(Message::Local(LocalFrame {
+            .send(Message::Frame(Frame {
+                src: reply_src,
+                dst: reply_dst,
                 call_id: self.call_id.clone(),
                 body: FrameBody::Response(response),
             }))
@@ -487,14 +495,17 @@ mod tests {
             .await
             .expect("timed out waiting for local response")
             .expect("local response should be sent");
-        let Message::Local(LocalFrame {
+        let Message::Frame(Frame {
             call_id: response_call_id,
+            dst,
             body: FrameBody::Response(ResponseFrame::Error(error)),
+            ..
         }) = msg
         else {
             panic!("expected local error response");
         };
         assert_eq!(&response_call_id, call_id);
+        assert!(dst.is_empty());
         error
     }
 
@@ -508,6 +519,7 @@ mod tests {
 
         handle_local_request(
             &tx,
+            Route::from_link(Link::new("test-link").unwrap()),
             CallId::from(Uuid::new_v4()),
             request,
             &test_ctx_with_shutdown_tx(shutdown_tx).await,
@@ -535,9 +547,15 @@ mod tests {
             payload: Vec::new(),
         };
 
-        handle_local_request(&tx, call_id.clone(), request, &test_ctx().await)
-            .await
-            .unwrap();
+        handle_local_request(
+            &tx,
+            Route::from_link(Link::new("test-link").unwrap()),
+            call_id.clone(),
+            request,
+            &test_ctx().await,
+        )
+        .await
+        .unwrap();
 
         assert!(matches!(
             expect_local_error(rx, &call_id).await,
@@ -555,9 +573,15 @@ mod tests {
             payload: Vec::new(),
         };
 
-        handle_local_request(&tx, call_id.clone(), request, &test_ctx().await)
-            .await
-            .unwrap();
+        handle_local_request(
+            &tx,
+            Route::from_link(Link::new("test-link").unwrap()),
+            call_id.clone(),
+            request,
+            &test_ctx().await,
+        )
+        .await
+        .unwrap();
 
         assert!(matches!(
             expect_local_error(rx, &call_id).await,
@@ -575,9 +599,15 @@ mod tests {
             payload: vec![0xff],
         };
 
-        handle_local_request(&tx, call_id.clone(), request, &test_ctx().await)
-            .await
-            .unwrap();
+        handle_local_request(
+            &tx,
+            Route::from_link(Link::new("test-link").unwrap()),
+            call_id.clone(),
+            request,
+            &test_ctx().await,
+        )
+        .await
+        .unwrap();
 
         assert!(
             matches!(expect_local_error(rx, &call_id).await, ProtocolError::InvalidArgument { message } if message.contains("invalid"))
@@ -593,9 +623,15 @@ mod tests {
             payload: wire::ResolveAgentRequest { identifier: None }.encode_to_vec(),
         };
 
-        handle_local_request(&tx, call_id.clone(), request, &test_ctx().await)
-            .await
-            .unwrap();
+        handle_local_request(
+            &tx,
+            Route::from_link(Link::new("test-link").unwrap()),
+            call_id.clone(),
+            request,
+            &test_ctx().await,
+        )
+        .await
+        .unwrap();
 
         assert!(
             matches!(expect_local_error(rx, &call_id).await, ProtocolError::InvalidArgument { message } if message.contains("missing identifier"))

@@ -15,7 +15,6 @@ pub use common::{
     SupportedAgentType, TerminalSize,
 };
 pub use envelope::{
-    FrameBody, GoAway, LocalFrame, Message, PeerFrame, ReauthRequest, ReauthResponse, RequestFrame,
-    ResponseFrame, RoutedFrame, RoutedFrameMessage,
+    Frame, FrameBody, GoAway, Message, ReauthRequest, ReauthResponse, RequestFrame, ResponseFrame,
 };
 pub use routing::{AgentEvent, RoutingEvent};

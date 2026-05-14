@@ -2,7 +2,7 @@ use std::sync::Arc;
 use std::time::Duration;
 
 use prost::Message as _;
-use tokio::sync::{RwLock, mpsc};
+use tokio::sync::{Mutex, RwLock, mpsc};
 use tokio::task::JoinHandle;
 use uuid::Uuid;
 
@@ -15,18 +15,17 @@ use super::{
     ConnectionHandle, LOCAL_USER_ID, ServerState, ServerUserState, local_host, test_helpers,
 };
 use crate::agent::{AgentSession, SessionEvent, StopPolicy, TEST_ECHO_COMMAND, TestAgentSession};
-use crate::client::{Connection, OpenSessionClient, RpcClient, RpcClientError};
+use crate::client::{Connection, RpcClient, RpcClientError, SubscribeSessionClient};
 use crate::config::Config;
 use crate::protocol::handshake::RoutingRole;
 use crate::protocol::link::Link;
 use crate::protocol::message::{
-    AgentEvent, CallId, FrameBody, GoAway, Host, LocalFrame, Message, PeerFrame, ProtocolError,
-    ReauthRequest, RequestFrame, ResponseFrame, RoutedFrame, RoutedFrameMessage, RoutingEvent,
-    ShutdownReason,
+    AgentEvent, CallId, Frame, FrameBody, GoAway, Host, Message, ProtocolError, ReauthRequest,
+    RequestFrame, ResponseFrame, RoutingEvent, ShutdownReason,
 };
-use crate::protocol::open_session::{self, OpenSessionOutputEvent, OpenSessionServerFrame};
+use crate::protocol::session::{SubscribeSessionEvent, SubscribeSessionFrame};
 use crate::protocol::{Agent, AgentType, CreateAgentRequest, Route, method, wire};
-use crate::rpc::RpcPeerStreamOutboundStart;
+use crate::server::PeerRoutingOutboundStart;
 use crate::transport::memory::{MemoryTransport, pair as memory_transport_pair};
 use crate::transport::{Transport, TransportError};
 
@@ -178,21 +177,21 @@ impl Topology {
         session.stop(StopPolicy::Interrupt).await;
     }
 
-    pub(super) async fn expect_no_open_sessions(&self) {
+    pub(super) async fn expect_no_session_subscriptions(&self) {
         tokio::time::timeout(EXPECT_TIMEOUT, async {
             loop {
                 let user_state = self.user_state.read().await;
-                let has_open_session_rpc = !user_state
-                    .inbound_call_ids_if(|call| call.method == method::AGENT_OPEN_SESSION)
+                let has_session_subscription_rpc = !user_state
+                    .inbound_call_ids_if(|call| call.method == method::AGENT_SUBSCRIBE_SESSION)
                     .is_empty();
-                if !has_open_session_rpc {
+                if !has_session_subscription_rpc {
                     return;
                 }
                 tokio::task::yield_now().await;
             }
         })
         .await
-        .expect("timed out waiting for OpenSession state to clear");
+        .expect("timed out waiting for SubscribeSession state to clear");
     }
 
     async fn start_peer_connection(
@@ -215,7 +214,9 @@ impl Topology {
                 }
             }
             let routing_call_id = CallId::from(Uuid::new_v4());
-            let initial_messages = vec![Message::Peer(PeerFrame {
+            let initial_messages = vec![Message::Frame(Frame {
+                src: Route::from_link(link.clone()),
+                dst: Route::empty(),
                 call_id: routing_call_id.clone(),
                 body: FrameBody::Request(RequestFrame {
                     method: method::ROUTING_SUBSCRIBE_EVENTS_NAME.to_string(),
@@ -229,7 +230,7 @@ impl Topology {
             .await
             .rpc_for_link(&link)
             .expect("test peer route should have RPC state")
-            .register_peer_stream_outbound(RpcPeerStreamOutboundStart {
+            .register_peer_routing_outbound(PeerRoutingOutboundStart {
                 call_id: routing_call_id,
                 link: link.clone(),
                 method: method::ROUTING_SUBSCRIBE_EVENTS,
@@ -454,7 +455,7 @@ impl TestConnection {
             .expect("test connection transport should be open");
         let connection = Connection::new_memory(transport, self.link.clone());
         TestRpcClient {
-            rpc: RpcClient::new(connection),
+            rpc: Arc::new(Mutex::new(RpcClient::new(connection))),
             task: self.task,
         }
     }
@@ -491,7 +492,9 @@ impl TestConnection {
 
     pub(super) async fn send_local_list_agents_request(&mut self) {
         let call_id = self.next_call_id();
-        self.send(Message::Local(LocalFrame {
+        self.send(Message::Frame(Frame {
+            src: Route::from_link(self.link()),
+            dst: Route::empty(),
             call_id,
             body: FrameBody::Request(RequestFrame {
                 method: method::AGENT_LIST_NAME.to_string(),
@@ -501,35 +504,51 @@ impl TestConnection {
         .await;
     }
 
-    pub(super) async fn open_session_with_queued_raw_input(
+    pub(super) async fn subscribe_session_with_queued_raw_input(
         &mut self,
         agent_id: Uuid,
         io_protocol: &str,
         input: &[u8],
-    ) -> QueuedOpenSession {
+    ) -> QueuedSubscribeSession {
         let call_id = self.next_call_id();
-        self.send_local_routed_payload(
+        let input_call_id = self.next_call_id();
+        self.send_local_routed_body(
             call_id.clone(),
-            open_session::encode_open_session_request().unwrap(),
+            FrameBody::Request(RequestFrame {
+                method: method::AGENT_SUBSCRIBE_SESSION_NAME.to_string(),
+                payload: crate::protocol::session::encode_subscribe_session_request(
+                    agent_id,
+                    io_protocol,
+                    None,
+                )
+                .unwrap(),
+            }),
         )
         .await;
-        self.send_local_routed_payload(
-            call_id.clone(),
-            open_session::encode_open_session_open(agent_id, io_protocol, None).unwrap(),
+        self.send_local_routed_body(
+            input_call_id.clone(),
+            FrameBody::Request(RequestFrame {
+                method: method::AGENT_SEND_INPUT_NAME.to_string(),
+                payload: crate::protocol::session::encode_send_input_request(
+                    agent_id,
+                    io_protocol,
+                    Uuid::new_v4().as_bytes().to_vec(),
+                    input.to_vec(),
+                )
+                .unwrap(),
+            }),
         )
         .await;
-        self.send_local_routed_payload(
-            call_id.clone(),
-            open_session::encode_open_session_input(Vec::new(), input.to_vec()).unwrap(),
-        )
-        .await;
-        QueuedOpenSession { call_id }
+        QueuedSubscribeSession {
+            call_id,
+            input_call_id: Some(input_call_id),
+        }
     }
 
-    async fn send_local_routed_payload(&mut self, call_id: CallId, payload: Vec<u8>) {
+    async fn send_local_routed_body(&mut self, call_id: CallId, body: FrameBody) {
         let (src, dst) = Route::send(Route::from_link(self.link()))
             .expect("local test route should include the client link");
-        self.send(routed_payload(src, dst, call_id, payload)).await;
+        self.send(frame_message(src, dst, call_id, body)).await;
     }
 
     pub(super) async fn expect_reauth_accepted(&mut self) {
@@ -558,7 +577,7 @@ impl TestConnection {
     ) -> MissingRouteProbe {
         let missing = Link::new(missing).unwrap();
         let call_id = self.next_call_id();
-        self.send(routed_payload(
+        self.send(stream_item_frame(
             Route::from_link(self.link()),
             Route::from_link(missing.clone()),
             call_id.clone(),
@@ -575,12 +594,12 @@ impl TestConnection {
 
     pub(super) async fn expect_unreachable(&mut self, probe: MissingRouteProbe) {
         let msg = self.recv().await;
-        let Message::Routed(RoutedFrame {
+        let Message::Frame(Frame {
             src,
             dst,
             call_id: response_call_id,
-            message:
-                RoutedFrameMessage::RoutingError {
+            body:
+                FrameBody::RoutingError {
                     failed_route,
                     error:
                         ProtocolError::Unreachable {
@@ -611,7 +630,7 @@ impl TestConnection {
         payload: &[u8],
     ) -> ForwardedProbe {
         let call_id = self.next_call_id();
-        self.send(routed_payload(
+        self.send(stream_item_frame(
             Route::from_link(self.link()),
             Route::from_link(next_hop.clone()),
             call_id.clone(),
@@ -633,7 +652,7 @@ impl TestConnection {
         payload: &[u8],
     ) {
         let call_id = self.next_call_id();
-        self.send(routed_payload(
+        self.send(stream_item_frame(
             Route::from_link(spoofed_source),
             Route::from_link(next_hop),
             call_id,
@@ -659,11 +678,11 @@ impl TestConnection {
 
     pub(super) async fn expect_forwarded_opaque(&mut self, probe: ForwardedProbe, payload: &[u8]) {
         let msg = self.recv().await;
-        let Message::Routed(RoutedFrame {
+        let Message::Frame(Frame {
             src,
             dst,
             call_id: forwarded_call_id,
-            message: RoutedFrameMessage::Payload(forwarded_payload),
+            body: FrameBody::StreamItem(forwarded_payload),
         }) = msg
         else {
             panic!("expected forwarded routed payload, got {msg:?}");
@@ -683,15 +702,12 @@ impl TestConnection {
 
     pub(super) async fn expect_routed_request_method(&mut self, expected_method: &str) {
         let msg = self.recv().await;
-        let Message::Routed(RoutedFrame {
-            message: RoutedFrameMessage::Payload(payload),
+        let Message::Frame(Frame {
+            body: FrameBody::Request(request),
             ..
         }) = msg
         else {
             panic!("expected routed request payload, got {msg:?}");
-        };
-        let FrameBody::Request(request) = wire::decode_frame_body(&payload).unwrap() else {
-            panic!("expected routed request frame");
         };
         assert_eq!(request.method, expected_method);
     }
@@ -699,6 +715,7 @@ impl TestConnection {
     pub(super) async fn subscribe_routing_events(&mut self) -> RoutingSubscription {
         let call_id = self.next_call_id();
         self.send(peer_request(
+            self.link.clone(),
             call_id.clone(),
             method::ROUTING_SUBSCRIBE_EVENTS_NAME,
             wire::SubscribeRoutingEventsRequest {}.encode_to_vec(),
@@ -713,16 +730,14 @@ impl TestConnection {
             host_id: host_id.as_bytes().to_vec(),
         }
         .encode_to_vec();
-        let payload = wire::encode_frame_body(&FrameBody::Request(RequestFrame {
-            method: method::AGENT_SUBSCRIBE_EVENTS_NAME.to_string(),
-            payload: request,
-        }))
-        .unwrap();
-        self.send(routed_payload(
+        self.send(frame_message(
             Route::from_link(self.link.clone()),
             Route::empty(),
             call_id.clone(),
-            payload,
+            FrameBody::Request(RequestFrame {
+                method: method::AGENT_SUBSCRIBE_EVENTS_NAME.to_string(),
+                payload: request,
+            }),
         ))
         .await;
         AgentSubscription { call_id }
@@ -731,6 +746,7 @@ impl TestConnection {
     pub(super) async fn expect_duplicate_routing_subscription_rejected(&mut self) {
         let call_id = self.next_call_id();
         self.send(peer_request(
+            self.link.clone(),
             call_id.clone(),
             method::ROUTING_SUBSCRIBE_EVENTS_NAME,
             wire::SubscribeRoutingEventsRequest {}.encode_to_vec(),
@@ -743,15 +759,16 @@ impl TestConnection {
 }
 
 pub(super) struct TestRpcClient {
-    rpc: RpcClient,
+    rpc: Arc<Mutex<RpcClient>>,
     task: JoinHandle<super::connection::Result<()>>,
 }
 
 impl TestRpcClient {
     pub(super) async fn create_test_agent(&mut self, agent_id: Uuid, name: &str) -> Agent {
+        let mut rpc = self.rpc.lock().await;
         tokio::time::timeout(
             EXPECT_TIMEOUT,
-            self.rpc.create_agent(&CreateAgentRequest {
+            rpc.create_agent(&CreateAgentRequest {
                 agent_id,
                 name: Some(name.to_string()),
                 agent_type: AgentType::TestAgent {
@@ -768,9 +785,10 @@ impl TestRpcClient {
     }
 
     pub(super) async fn rename_agent(&mut self, agent_id: Uuid, route: Route, name: &str) -> Agent {
+        let mut rpc = self.rpc.lock().await;
         tokio::time::timeout(
             EXPECT_TIMEOUT,
-            self.rpc.rename_agent(agent_id, route, name.to_string()),
+            rpc.rename_agent(agent_id, route, name.to_string()),
         )
         .await
         .expect("timed out waiting for RenameAgent response")
@@ -783,23 +801,26 @@ impl TestRpcClient {
         route: Route,
         name: &str,
     ) -> Result<Agent, RpcClientError> {
+        let mut rpc = self.rpc.lock().await;
         tokio::time::timeout(
             EXPECT_TIMEOUT,
-            self.rpc.rename_agent(agent_id, route, name.to_string()),
+            rpc.rename_agent(agent_id, route, name.to_string()),
         )
         .await
         .expect("timed out waiting for RenameAgent response")
     }
 
     pub(super) async fn delete_agent(&mut self, agent_id: Uuid, route: Route) {
-        tokio::time::timeout(EXPECT_TIMEOUT, self.rpc.delete_agent(agent_id, route))
+        let mut rpc = self.rpc.lock().await;
+        tokio::time::timeout(EXPECT_TIMEOUT, rpc.delete_agent(agent_id, route))
             .await
             .expect("timed out waiting for DeleteAgent response")
             .unwrap();
     }
 
     pub(super) async fn list_agents(&mut self) -> Vec<crate::protocol::Agent> {
-        tokio::time::timeout(EXPECT_TIMEOUT, self.rpc.list_agents())
+        let mut rpc = self.rpc.lock().await;
+        tokio::time::timeout(EXPECT_TIMEOUT, rpc.list_agents())
             .await
             .expect("timed out waiting for ListAgents response")
             .unwrap()
@@ -841,50 +862,63 @@ impl TestRpcClient {
         .unwrap_or_else(|_| panic!("timed out waiting for agent named {name} to disappear"));
     }
 
-    pub(super) async fn open_session(
+    pub(super) async fn subscribe_session(
         &mut self,
         agent_id: Uuid,
         io_protocol: &str,
     ) -> TestRpcSession {
-        self.open_session_result(agent_id, io_protocol)
+        self.subscribe_session_result(agent_id, io_protocol)
             .await
             .unwrap()
     }
 
-    pub(super) async fn open_session_result(
+    pub(super) async fn subscribe_session_result(
         &mut self,
         agent_id: Uuid,
         io_protocol: &str,
     ) -> Result<TestRpcSession, RpcClientError> {
+        let mut rpc = self.rpc.lock().await;
         let session = tokio::time::timeout(
             EXPECT_TIMEOUT,
-            self.rpc
-                .open_session(agent_id, Route::empty(), io_protocol, None),
+            rpc.subscribe_session(agent_id, Route::empty(), io_protocol, None),
         )
         .await
-        .expect("timed out opening local OpenSession")?;
-        Ok(TestRpcSession { inner: session })
+        .expect("timed out opening local SubscribeSession")?;
+        Ok(TestRpcSession {
+            inner: session,
+            rpc: self.rpc.clone(),
+            agent_id,
+            agent_route: Route::empty(),
+            io_protocol: io_protocol.to_string(),
+        })
     }
 
-    pub(super) async fn open_agent_session(
+    pub(super) async fn subscribe_agent_session(
         &mut self,
         agent: &Agent,
         io_protocol: &str,
     ) -> TestRpcSession {
+        let mut rpc = self.rpc.lock().await;
         let session = tokio::time::timeout(
             EXPECT_TIMEOUT,
-            self.rpc
-                .open_session(agent.id, agent.route.clone(), io_protocol, None),
+            rpc.subscribe_session(agent.id, agent.route.clone(), io_protocol, None),
         )
         .await
-        .expect("timed out opening agent OpenSession")
+        .expect("timed out opening agent SubscribeSession")
         .unwrap();
-        TestRpcSession { inner: session }
+        TestRpcSession {
+            inner: session,
+            rpc: self.rpc.clone(),
+            agent_id: agent.id,
+            agent_route: agent.route.clone(),
+            io_protocol: io_protocol.to_string(),
+        }
     }
 
     pub(super) async fn close(self) -> super::connection::Result<()> {
-        drop(self.rpc);
-        self.task.await.expect("connection task panicked")
+        let Self { rpc, task } = self;
+        drop(rpc);
+        task.await.expect("connection task panicked")
     }
 
     pub(super) async fn close_after_session(
@@ -897,32 +931,57 @@ impl TestRpcClient {
 }
 
 pub(super) struct TestRpcSession {
-    inner: OpenSessionClient,
+    inner: SubscribeSessionClient,
+    rpc: Arc<Mutex<RpcClient>>,
+    agent_id: Uuid,
+    agent_route: Route,
+    io_protocol: String,
 }
 
 impl TestRpcSession {
-    async fn recv(&self) -> OpenSessionServerFrame {
+    async fn recv(&self) -> SubscribeSessionFrame {
         tokio::time::timeout(EXPECT_TIMEOUT, self.inner.recv())
             .await
-            .expect("timed out waiting for OpenSession frame")
+            .expect("timed out waiting for SubscribeSession frame")
             .unwrap()
     }
 
     pub(super) async fn expect_replay_complete(&self) {
         assert_eq!(
             self.recv().await,
-            OpenSessionServerFrame::Event(OpenSessionOutputEvent::ReplayComplete { cursor: None })
+            SubscribeSessionFrame::Event(SubscribeSessionEvent::ReplayComplete { cursor: None })
         );
     }
 
     pub(super) async fn send_bytes(&self, bytes: &[u8]) {
-        self.inner.send_raw_input(bytes.to_vec()).await.unwrap();
+        self.send_bytes_result(bytes).await.unwrap();
+    }
+
+    pub(super) async fn send_bytes_result(&self, bytes: &[u8]) -> Result<(), RpcClientError> {
+        self.rpc
+            .lock()
+            .await
+            .send_input(
+                self.agent_id,
+                self.agent_route.clone(),
+                self.io_protocol.clone(),
+                Uuid::new_v4().as_bytes().to_vec(),
+                bytes.to_vec(),
+            )
+            .await
+    }
+
+    pub(super) async fn expect_send_bytes_unreachable(&self, bytes: &[u8]) {
+        assert!(matches!(
+            self.send_bytes_result(bytes).await,
+            Err(RpcClientError::Protocol(ProtocolError::Unreachable { .. }))
+        ));
     }
 
     pub(super) async fn expect_output_bytes(&self, bytes: &[u8]) {
         assert_eq!(
             self.recv().await,
-            OpenSessionServerFrame::Event(OpenSessionOutputEvent::Output {
+            SubscribeSessionFrame::Event(SubscribeSessionEvent::Output {
                 payload: bytes.to_vec(),
             })
         );
@@ -933,72 +992,64 @@ impl TestRpcSession {
     }
 
     pub(super) async fn expect_terminal_cancelled(&self) {
-        let OpenSessionServerFrame::Response(Err(ProtocolError::Cancelled { .. })) =
+        let SubscribeSessionFrame::Response(Err(ProtocolError::Cancelled { .. })) =
             self.recv().await
         else {
-            panic!("expected cancelled OpenSession response");
+            panic!("expected cancelled SubscribeSession response");
         };
-    }
-
-    pub(super) async fn expect_send_bytes_rejected(&self, bytes: &[u8]) {
-        match self.inner.send_raw_input(bytes.to_vec()).await {
-            Err(RpcClientError::Unexpected { method, message })
-                if method == crate::protocol::method::AGENT_OPEN_SESSION_NAME
-                    && message.contains("not active") => {}
-            Ok(()) => panic!("expected OpenSession send after terminal response to be rejected"),
-            Err(error) => panic!("expected inactive OpenSession error, got {error}"),
-        }
     }
 
     pub(super) async fn expect_route_unreachable(&self) {
         match tokio::time::timeout(EXPECT_TIMEOUT, self.inner.recv())
             .await
-            .expect("timed out waiting for OpenSession routing error")
+            .expect("timed out waiting for SubscribeSession routing error")
         {
             Err(RpcClientError::Protocol(ProtocolError::Unreachable { .. })) => {}
-            Ok(frame) => panic!("expected OpenSession routing error, got {frame:?}"),
-            Err(error) => panic!("expected OpenSession unreachable error, got {error}"),
+            Ok(frame) => panic!("expected SubscribeSession routing error, got {frame:?}"),
+            Err(error) => panic!("expected SubscribeSession unreachable error, got {error}"),
         }
     }
 }
 
-pub(super) struct QueuedOpenSession {
+pub(super) struct QueuedSubscribeSession {
     call_id: CallId,
+    input_call_id: Option<CallId>,
 }
 
-impl QueuedOpenSession {
-    async fn recv(&self, client: &mut TestConnection) -> OpenSessionServerFrame {
-        let msg = client.recv().await;
-        let Message::Routed(RoutedFrame {
-            call_id,
-            message: RoutedFrameMessage::Payload(payload),
-            ..
-        }) = msg
-        else {
-            panic!("expected OpenSession routed frame, got {msg:?}");
-        };
-        assert_eq!(call_id, self.call_id);
-        open_session::decode_open_session_server_frame(&payload).unwrap()
+impl QueuedSubscribeSession {
+    async fn recv(&self, client: &mut TestConnection) -> SubscribeSessionFrame {
+        loop {
+            let msg = client.recv().await;
+            let Message::Frame(Frame { call_id, body, .. }) = msg else {
+                panic!("expected SubscribeSession frame, got {msg:?}");
+            };
+            if self.input_call_id.as_ref() == Some(&call_id) {
+                assert!(matches!(body, FrameBody::Response(_)));
+                continue;
+            }
+            assert_eq!(call_id, self.call_id);
+            return crate::protocol::session::decode_subscribe_session_frame_body(body).unwrap();
+        }
     }
 
     pub(super) async fn expect_opened(&self, client: &mut TestConnection) {
         assert_eq!(
             self.recv(client).await,
-            OpenSessionServerFrame::Event(OpenSessionOutputEvent::Opened)
+            SubscribeSessionFrame::Event(SubscribeSessionEvent::Opened)
         );
     }
 
     pub(super) async fn expect_replay_complete(&self, client: &mut TestConnection) {
         assert_eq!(
             self.recv(client).await,
-            OpenSessionServerFrame::Event(OpenSessionOutputEvent::ReplayComplete { cursor: None })
+            SubscribeSessionFrame::Event(SubscribeSessionEvent::ReplayComplete { cursor: None })
         );
     }
 
     pub(super) async fn expect_output_bytes(&self, client: &mut TestConnection, bytes: &[u8]) {
         assert_eq!(
             self.recv(client).await,
-            OpenSessionServerFrame::Event(OpenSessionOutputEvent::Output {
+            SubscribeSessionFrame::Event(SubscribeSessionEvent::Output {
                 payload: bytes.to_vec(),
             })
         );
@@ -1006,18 +1057,15 @@ impl QueuedOpenSession {
 
     pub(super) async fn cancel(&self, client: &mut TestConnection) {
         client
-            .send_local_routed_payload(
-                self.call_id.clone(),
-                open_session::encode_open_session_cancel().unwrap(),
-            )
+            .send_local_routed_body(self.call_id.clone(), FrameBody::Cancel)
             .await;
     }
 
     pub(super) async fn expect_terminal_cancelled(&self, client: &mut TestConnection) {
-        let OpenSessionServerFrame::Response(Err(ProtocolError::Cancelled { .. })) =
+        let SubscribeSessionFrame::Response(Err(ProtocolError::Cancelled { .. })) =
             self.recv(client).await
         else {
-            panic!("expected cancelled OpenSession response");
+            panic!("expected cancelled SubscribeSession response");
         };
     }
 }
@@ -1139,29 +1187,36 @@ fn call_id(value: u128) -> CallId {
     CallId::from(Uuid::from_u128(value))
 }
 
-fn peer_request(call_id: CallId, method: &'static str, payload: Vec<u8>) -> Message {
-    Message::Peer(PeerFrame {
-        call_id,
-        body: FrameBody::Request(RequestFrame {
-            method: method.to_string(),
-            payload,
-        }),
-    })
-}
-
-fn routed_payload(src: Route, dst: Route, call_id: CallId, payload: Vec<u8>) -> Message {
-    Message::Routed(RoutedFrame {
+fn frame_message(src: Route, dst: Route, call_id: CallId, body: FrameBody) -> Message {
+    Message::Frame(Frame {
         src,
         dst,
         call_id,
-        message: RoutedFrameMessage::Payload(payload),
+        body,
     })
 }
 
+fn peer_request(link: Link, call_id: CallId, method: &'static str, payload: Vec<u8>) -> Message {
+    frame_message(
+        Route::from_link(link),
+        Route::empty(),
+        call_id,
+        FrameBody::Request(RequestFrame {
+            method: method.to_string(),
+            payload,
+        }),
+    )
+}
+
+fn stream_item_frame(src: Route, dst: Route, call_id: CallId, payload: Vec<u8>) -> Message {
+    frame_message(src, dst, call_id, FrameBody::StreamItem(payload))
+}
+
 fn expect_peer_routing_event(msg: Message, call_id: &CallId) -> RoutingEvent {
-    let Message::Peer(PeerFrame {
+    let Message::Frame(Frame {
         call_id: response_call_id,
         body: FrameBody::StreamItem(payload),
+        ..
     }) = msg
     else {
         panic!("expected peer routing stream item, got {msg:?}");
@@ -1171,43 +1226,36 @@ fn expect_peer_routing_event(msg: Message, call_id: &CallId) -> RoutingEvent {
 }
 
 fn expect_routed_agent_event(msg: Message, call_id: &CallId) -> AgentEvent {
-    let Message::Routed(RoutedFrame {
+    let Message::Frame(Frame {
         call_id: response_call_id,
-        message: RoutedFrameMessage::Payload(payload),
+        body: FrameBody::StreamItem(payload),
         ..
     }) = msg
     else {
         panic!("expected routed agent stream item, got {msg:?}");
     };
     assert_eq!(&response_call_id, call_id);
-    let FrameBody::StreamItem(payload) = wire::decode_frame_body(&payload).unwrap() else {
-        panic!("expected routed stream item frame");
-    };
     wire::decode_agent_event(&payload).unwrap()
 }
 
 fn expect_routed_response_error(msg: Message, call_id: &CallId) -> ProtocolError {
-    let Message::Routed(RoutedFrame {
+    let Message::Frame(Frame {
         call_id: response_call_id,
-        message: RoutedFrameMessage::Payload(payload),
+        body: FrameBody::Response(ResponseFrame::Error(error)),
         ..
     }) = msg
     else {
         panic!("expected routed response error, got {msg:?}");
     };
     assert_eq!(&response_call_id, call_id);
-    let FrameBody::Response(ResponseFrame::Error(error)) =
-        wire::decode_frame_body(&payload).unwrap()
-    else {
-        panic!("expected routed response error frame");
-    };
     error
 }
 
 fn expect_peer_response_error(msg: Message, call_id: &CallId) -> ProtocolError {
-    let Message::Peer(PeerFrame {
+    let Message::Frame(Frame {
         call_id: response_call_id,
         body: FrameBody::Response(ResponseFrame::Error(error)),
+        ..
     }) = msg
     else {
         panic!("expected peer response error, got {msg:?}");

@@ -9,7 +9,7 @@ use crate::protocol::route::Route;
 
 /// Peer-scoped routing stream events.
 ///
-/// These are carried in protobuf `PeerFrame` stream items for
+/// These are carried in unified frame stream items for
 /// `RoutingService.SubscribeRoutingEvents`.
 #[derive(Serialize, Deserialize, Debug, Clone)]
 #[serde(tag = "type", rename_all = "snake_case")]

@@ -202,7 +202,7 @@ agent inventory. `list` returns the local server's current known local and
 subscribed remote agents. When a peer
 connection is lost, the server drops route contexts under that link, broadcasts
 matching `HostDown` events, removes host contexts and remote agents whose last
-route disappeared, and cancels affected RPC/OpenSession state.
+route disappeared, and cancels affected RPC/session state.
 
 Idle peer links run a symmetric heartbeat driven by a per-connection idle
 timeout negotiated in the `ConnectResponse` handshake (pulled from
@@ -218,8 +218,9 @@ owns the transport handle, `routes: Route -> RouteContext` owns advertised
 tunnels and route-scoped RPC state, and `hosts: HostId -> HostContext` owns
 remote host metadata plus agents. When a client wants to reach an agent on a
 remote server, the route is resolved from the agent's host (for example
-`"cloud-server.local-host"`) and the routed frame is forwarded hop-by-hop using
-the stack-based routing algorithm described in [architecture.md](architecture.md).
+`"cloud-server.local-host"`) and the route-addressed frame is forwarded
+hop-by-hop using the stack-based routing algorithm described in
+[architecture.md](architecture.md).
 
 ---
 

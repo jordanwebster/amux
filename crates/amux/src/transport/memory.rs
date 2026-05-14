@@ -98,17 +98,17 @@ mod tests {
 
     use super::*;
     use crate::protocol::link::Link;
-    use crate::protocol::message::{CallId, RoutedFrame, RoutedFrameMessage};
+    use crate::protocol::message::{CallId, Frame, FrameBody};
     use crate::protocol::route::Route;
 
     #[tokio::test]
     async fn message_roundtrips_through_memory_pair() {
         let (mut a, mut b) = pair(8);
-        let msg = Message::Routed(RoutedFrame {
+        let msg = Message::Frame(Frame {
             src: Route::from_link(Link::new("a").unwrap()),
             dst: Route::from_link(Link::new("b").unwrap()),
             call_id: CallId::from(Uuid::new_v4()),
-            message: RoutedFrameMessage::Payload(b"opaque".to_vec()),
+            body: FrameBody::StreamItem(b"opaque".to_vec()),
         });
 
         a.write_message(&msg).await.unwrap();

@@ -10,9 +10,7 @@ pub(crate) use agents::{
     CreateAgentError, create_agent_record, delete_local_agent, withdraw_agent,
 };
 pub(super) use agents::{resume_agents, shutdown_server, suspend_server};
-pub(in crate::server) use forwarding::{
-    ForwardedRoutedPayload, forward_routed_payload_or_endpoint,
-};
+pub(in crate::server) use forwarding::{FrameForwardingResult, forward_frame_or_endpoint};
 pub(super) use naming::apply_local_name_candidate;
 pub(crate) use naming::{RenameAgentError, rename_local_agent_record};
 pub(crate) use peers::{

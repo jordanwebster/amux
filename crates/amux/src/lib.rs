@@ -17,8 +17,8 @@ mod transport;
 pub mod update;
 
 pub use client::{
-    ConnectError, ConnectPolicy, Connection, DaemonOptions, OpenSessionClient, ResumeSummary,
-    RpcClient, RpcClientError, ServerMode, SuspendSummary, connect, spawn_daemon,
+    ConnectError, ConnectPolicy, Connection, DaemonOptions, ResumeSummary, RpcClient,
+    RpcClientError, ServerMode, SubscribeSessionClient, SuspendSummary, connect, spawn_daemon,
 };
 pub use config::{Config, ConfigError, Keybinds, LeaderKey};
 pub use paths::{default_data_dir, default_log_path};

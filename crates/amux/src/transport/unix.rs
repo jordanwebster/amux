@@ -85,7 +85,7 @@ mod tests {
 
     use super::*;
     use crate::protocol::link::Link;
-    use crate::protocol::message::{CallId, RoutedFrame, RoutedFrameMessage};
+    use crate::protocol::message::{CallId, Frame, FrameBody};
     use crate::protocol::route::Route;
 
     async fn create_socket_pair() -> (UnixTransport, UnixTransport) {
@@ -102,18 +102,18 @@ mod tests {
         let (mut client, mut server) = create_socket_pair().await;
 
         let payload = b"hello".to_vec();
-        let msg = Message::Routed(RoutedFrame {
+        let msg = Message::Frame(Frame {
             src: Route::from_link(Link::new("term-abc").unwrap()),
             dst: Route::empty(),
             call_id: CallId::from(Uuid::new_v4()),
-            message: RoutedFrameMessage::Payload(payload.clone()),
+            body: FrameBody::StreamItem(payload.clone()),
         });
 
         client.write_message(&msg).await.unwrap();
 
         let received = server.read_message().await.unwrap();
-        if let Message::Routed(RoutedFrame {
-            message: RoutedFrameMessage::Payload(decoded),
+        if let Message::Frame(Frame {
+            body: FrameBody::StreamItem(decoded),
             ..
         }) = received
         {
@@ -128,18 +128,18 @@ mod tests {
         let (mut client, mut server) = create_socket_pair().await;
 
         let payload = b"hello world".to_vec();
-        let msg = Message::Routed(RoutedFrame {
+        let msg = Message::Frame(Frame {
             src: Route::from_link(Link::new("host-a").unwrap()),
             dst: Route::from_link(Link::new("host-b").unwrap()),
             call_id: CallId::from(Uuid::new_v4()),
-            message: RoutedFrameMessage::Payload(payload.clone()),
+            body: FrameBody::StreamItem(payload.clone()),
         });
 
         client.write_message(&msg).await.unwrap();
 
         let received = server.read_message().await.unwrap();
-        if let Message::Routed(RoutedFrame {
-            message: RoutedFrameMessage::Payload(decoded),
+        if let Message::Frame(Frame {
+            body: FrameBody::StreamItem(decoded),
             ..
         }) = received
         {
@@ -154,18 +154,18 @@ mod tests {
         let (mut client, mut server) = create_socket_pair().await;
 
         let payload = b"user input".to_vec();
-        let msg = Message::Routed(RoutedFrame {
+        let msg = Message::Frame(Frame {
             src: Route::from_link(Link::new("host-a").unwrap()),
             dst: Route::from_link(Link::new("host-b").unwrap()),
             call_id: CallId::from(Uuid::new_v4()),
-            message: RoutedFrameMessage::Payload(payload.clone()),
+            body: FrameBody::StreamItem(payload.clone()),
         });
 
         client.write_message(&msg).await.unwrap();
 
         let received = server.read_message().await.unwrap();
-        if let Message::Routed(RoutedFrame {
-            message: RoutedFrameMessage::Payload(decoded),
+        if let Message::Frame(Frame {
+            body: FrameBody::StreamItem(decoded),
             ..
         }) = received
         {

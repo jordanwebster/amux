@@ -26,11 +26,12 @@ AMUX IS IN ACTIVE DEVELOPMENT AND IS NOT CURRENTLY RELEASED. DO NOT CONCERN YOUR
 **The protobuf protocol refactor is complete.** The codebase implements local terminal connections, server-to-server routing, cloud relay, and the protobuf runtime protocol:
 
 - Protobuf handshake frames (`ConnectRequest` / `ConnectResponse`) before runtime messages
-- Protobuf runtime frames (`LocalFrame`, `PeerFrame`, `RoutedFrame`, `Ping`, `Pong`, `Reauth`, `ReauthResponse`, `GoAway`)
+- Protobuf runtime messages (`Frame`, `Ping`, `Pong`, `Reauth`, `ReauthResponse`, `GoAway`)
+- Unified application frames with `src`, `dst`, `call_id`, and `FrameBody`
 - Opaque payload routing (intermediate hops don't deserialize)
 - 128-bit call IDs managed by the RPC/client/runtime layers
 - Per-user state isolation (for cloud multi-tenancy)
-- Peer routing events as the single source of host/agent propagation
+- Peer routing events for host topology; routed agent-event streams for agent inventory
 - Protobuf serialization for all transports (Unix, TCP, WebSocket binary frames)
 - OAuth 2.0 device flow + JWT authentication for cloud
 - TLS for server-to-server connections
@@ -58,14 +59,15 @@ Terminal ──Unix socket──> Local amux server ──TCP──> Cloud amux 
                                │
                           [owns agents]
                           [routing table]
-                          [OpenSession streams]
+                          [SubscribeSession streams]
+                          [SendInput unary calls]
 ```
 
 **Core types:**
 - `agent_id` - UUID identifying an agent (optional name for human-friendly references)
 - `Route` - stack of link names (`VecDeque<String>`) for multi-hop routing
-- `LocalAgentSession` - a running agent with PTY and replay buffers
-- `AgentRegistry` - centralized tracking of local + remote agents with name mapping
+- `AgentSession` - a running agent with provider-specific I/O and replay buffers
+- `ServerUserState` - per-user connections, route contexts, RPC state, local agents, and subscribed remote agents
 - `Host` - remote host info propagated via peer routing events
 
 ## Code Style
@@ -114,7 +116,7 @@ crates/
 │       │   ├── mod.rs          # Server struct, ServerState, ServerUserState
 │       │   ├── accept.rs       # Connection acceptance, handshake
 │       │   ├── connection.rs   # Connection loop, reader/writer tasks, stream management
-│       │   ├── dispatch.rs     # Local/peer/routed frame dispatch
+│       │   ├── dispatch.rs     # Application frame dispatch
 │       │   ├── routing.rs      # Route management, peer disconnect, agent creation
 │       │   └── cloud.rs        # Cloud connection establishment
 │       └── transport/

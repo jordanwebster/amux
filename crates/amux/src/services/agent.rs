@@ -2,11 +2,11 @@
 
 use uuid::Uuid;
 
-mod open_session;
+mod session_rpc;
 
 use std::sync::Arc;
 
-pub(crate) use open_session::OpenSessionCall;
+pub(crate) use session_rpc::SubscribeSessionCall;
 use tokio::sync::{RwLock, mpsc};
 
 use crate::agent::{SessionEvent, StopPolicy};
@@ -15,12 +15,12 @@ use crate::protocol::message::{
     AgentEvent, AgentType, CreateAgentRequest, ProtocolError, RenameAgentRequest,
 };
 use crate::protocol::wire::{CreateAgentConfig, CreateAgentRpcRequest};
-use crate::rpc::{RpcInboundRoutedServerStream, RpcRoutedSnapshotSendError};
 use crate::server::{
-    CreateAgentError, RenameAgentError, ServerUserState, begin_open_sessions_closing_for_agent,
-    create_agent_record, delete_local_agent, finish_open_sessions_with_error,
-    rename_local_agent_record,
+    CreateAgentError, RenameAgentError, ServerUserState,
+    begin_session_subscriptions_closing_for_agent, create_agent_record, delete_local_agent,
+    finish_session_subscriptions_with_error, rename_local_agent_record,
 };
+use crate::server::{EndpointServerStream, ServerStreamSnapshotSendError};
 
 pub(crate) struct AgentService;
 
@@ -92,7 +92,7 @@ impl AgentService {
     pub(crate) async fn subscribe_agent_events(
         ctx: &AgentServiceCtx,
         host_id: Uuid,
-        stream: &RpcInboundRoutedServerStream,
+        stream: &EndpointServerStream,
         activate_stream: impl FnOnce() -> bool,
     ) -> Result<(), ProtocolError> {
         if host_id != ctx.host_id() {
@@ -130,20 +130,15 @@ impl AgentService {
 
         match stream.output.try_send_snapshot(payloads) {
             Ok(()) => {}
-            Err(RpcRoutedSnapshotSendError::Full) => {
+            Err(ServerStreamSnapshotSendError::Full) => {
                 return Err(ProtocolError::ResourceExhausted {
                     message: "outgoing channel full while starting agent event stream".to_string(),
                 });
             }
-            Err(RpcRoutedSnapshotSendError::Closed) => {
+            Err(ServerStreamSnapshotSendError::Closed) => {
                 return Err(ProtocolError::ServerError {
                     message: "outgoing channel closed while starting agent event stream"
                         .to_string(),
-                });
-            }
-            Err(RpcRoutedSnapshotSendError::Encode(error)) => {
-                return Err(ProtocolError::ServerError {
-                    message: format!("failed to encode agent event stream item: {error}"),
                 });
             }
         }
@@ -193,22 +188,22 @@ impl AgentService {
     }
 
     pub(crate) async fn delete(ctx: &AgentServiceCtx, agent_id: Uuid) -> Result<(), ProtocolError> {
-        let (session_to_stop, open_session_closings) = {
+        let (session_to_stop, session_subscription_closings) = {
             let mut us = ctx.user_state().write().await;
             let session = delete_local_agent(&mut us, agent_id);
             let closings = if session.is_some() {
-                begin_open_sessions_closing_for_agent(&mut us, agent_id)
+                begin_session_subscriptions_closing_for_agent(&mut us, agent_id)
             } else {
                 Vec::new()
             };
             (session, closings)
         };
 
-        finish_open_sessions_with_error(
+        finish_session_subscriptions_with_error(
             ctx.user_state(),
-            open_session_closings,
+            session_subscription_closings,
             ProtocolError::Cancelled {
-                message: format!("OpenSession cancelled because agent {agent_id} was deleted"),
+                message: format!("SubscribeSession cancelled because agent {agent_id} was deleted"),
             },
         )
         .await;

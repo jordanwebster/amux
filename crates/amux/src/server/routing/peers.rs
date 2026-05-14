@@ -3,17 +3,17 @@ use uuid::Uuid;
 
 use crate::protocol::link::Link;
 use crate::protocol::message::{
-    AgentEvent, CallId, FrameBody, Message, PeerFrame, RequestFrame, RoutedFrame,
-    RoutedFrameMessage, RoutingEvent,
+    AgentEvent, CallId, Frame, FrameBody, Message, RequestFrame, RoutingEvent,
 };
 use crate::protocol::method;
 use crate::protocol::wire;
-use crate::rpc::RpcAgentSubscriptionOutboundStart;
-use crate::server::ServerUserState;
 use crate::server::routing::TopologyEvent;
+use crate::server::{ServerOriginOutboundStart, ServerUserState, peer_routing_dedup_key};
 
-fn peer_event_message(call_id: CallId, event: &RoutingEvent) -> Message {
-    Message::Peer(PeerFrame {
+fn peer_event_message(link: Link, call_id: CallId, event: &RoutingEvent) -> Message {
+    Message::Frame(Frame {
+        src: crate::protocol::Route::from_link(link),
+        dst: crate::protocol::Route::empty(),
         call_id,
         body: FrameBody::StreamItem(
             wire::encode_routing_event(event).expect("known routing event should encode"),
@@ -39,14 +39,14 @@ pub(in crate::server) fn broadcast_to_peers(
             failed += 1;
             continue;
         };
-        let Some(call_id) = context_rpc.active_inbound_call_id_for_dedup_key(
-            &crate::rpc::DedupKey::PeerRoutingSubscription { link: link.clone() },
-        ) else {
+        let Some(call_id) =
+            context_rpc.active_inbound_call_id_for_dedup_key(&peer_routing_dedup_key(&link))
+        else {
             tracing::warn!(peer = %link, "peer has no routing stream call id");
             failed += 1;
             continue;
         };
-        let wire_msg = peer_event_message(call_id, event);
+        let wire_msg = peer_event_message(link.clone(), call_id, event);
         let route = crate::protocol::Route::from_link(link.clone());
         if !us.send_via_route(
             &route,
@@ -104,24 +104,16 @@ pub(crate) fn maybe_start_agent_subscription(
         host_id: host_id.as_bytes().to_vec(),
     }
     .encode_to_vec();
-    let payload = match wire::encode_frame_body(&FrameBody::Request(RequestFrame {
+    let body = FrameBody::Request(RequestFrame {
         method: method::AGENT_SUBSCRIBE_EVENTS_NAME.to_string(),
         payload: request_payload,
-    })) {
-        Ok(payload) => payload,
-        Err(error) => {
-            tracing::warn!(host_id = %host_id, error = %error, "failed to encode agent subscription request");
-            return;
-        }
-    };
+    });
 
     let Some(rpc) = us.route_rpc_for_counterparty(&route) else {
         tracing::warn!(host_id = %host_id, route = %route, "missing route RPC for agent subscription");
         return;
     };
-    match rpc.register_agent_subscription_outbound(RpcAgentSubscriptionOutboundStart {
-        host_id,
-        route: route.clone(),
+    match rpc.register_server_origin_outbound(ServerOriginOutboundStart {
         call_id: call_id.clone(),
         method: method::AGENT_SUBSCRIBE_EVENTS,
     }) {
@@ -133,18 +125,18 @@ pub(crate) fn maybe_start_agent_subscription(
     }
     us.set_agent_subscription(host_id, route.clone(), call_id.clone());
 
-    let message = Message::Routed(RoutedFrame {
+    let message = Message::Frame(Frame {
         src: src.clone(),
         dst,
         call_id: call_id.clone(),
-        message: RoutedFrameMessage::Payload(payload),
+        body,
     });
     if !us.send_via_route(
         &src,
         message,
         format!("route queue overflow while starting agent subscription to {host_id}"),
     ) {
-        rpc.remove_agent_subscription_outbound_for_route(&call_id, &route);
+        rpc.remove_server_origin_outbound(&call_id, method::AGENT_SUBSCRIBE_EVENTS);
         us.clear_agent_subscription_for_route(&call_id, &route);
     }
 }
@@ -162,7 +154,7 @@ pub(in crate::server) fn broadcast_agent_event_to_subscribers(
             return;
         }
     };
-    for (rpc, sink) in us.active_inbound_routed_sinks_for_method(method::AGENT_SUBSCRIBE_EVENTS) {
+    for (rpc, sink) in us.active_endpoint_stream_sinks_for_method(method::AGENT_SUBSCRIBE_EVENTS) {
         if !sink.output.try_send_stream_item(payload.clone()) {
             tracing::warn!("agent subscription stream queue unavailable");
             if let Some(connection) = us.connections.get(&sink.owner_link) {

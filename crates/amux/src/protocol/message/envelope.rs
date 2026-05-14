@@ -4,42 +4,18 @@ use crate::protocol::route::Route;
 /// Protobuf-shaped transport message used after handshake.
 #[derive(Debug, Clone, PartialEq)]
 pub enum Message {
-    Routed(RoutedFrame),
-    Peer(PeerFrame),
-    Local(LocalFrame),
+    Frame(Frame),
     Ping,
     Pong,
     Reauth(ReauthRequest),
     ReauthResponse(ReauthResponse),
     GoAway(GoAway),
-    PeerSnapshot { messages: Vec<Message> },
 }
 
 #[derive(Debug, Clone, PartialEq)]
-pub struct RoutedFrame {
+pub struct Frame {
     pub src: Route,
     pub dst: Route,
-    pub call_id: CallId,
-    pub message: RoutedFrameMessage,
-}
-
-#[derive(Debug, Clone, PartialEq)]
-pub enum RoutedFrameMessage {
-    Payload(Vec<u8>),
-    RoutingError {
-        failed_route: Route,
-        error: ProtocolError,
-    },
-}
-
-#[derive(Debug, Clone, PartialEq)]
-pub struct PeerFrame {
-    pub call_id: CallId,
-    pub body: FrameBody,
-}
-
-#[derive(Debug, Clone, PartialEq)]
-pub struct LocalFrame {
     pub call_id: CallId,
     pub body: FrameBody,
 }
@@ -50,6 +26,10 @@ pub enum FrameBody {
     Response(ResponseFrame),
     StreamItem(Vec<u8>),
     Cancel,
+    RoutingError {
+        failed_route: Route,
+        error: ProtocolError,
+    },
 }
 
 #[derive(Debug, Clone, PartialEq)]
@@ -87,11 +67,11 @@ impl Message {
         failed_route: Route,
         error: ProtocolError,
     ) -> Self {
-        Message::Routed(RoutedFrame {
+        Message::Frame(Frame {
             src,
             dst,
             call_id,
-            message: RoutedFrameMessage::RoutingError {
+            body: FrameBody::RoutingError {
                 failed_route,
                 error,
             },
@@ -100,9 +80,7 @@ impl Message {
 
     pub fn type_label(&self) -> &'static str {
         match self {
-            Message::Routed(frame) => frame.type_label(),
-            Message::Peer(frame) => frame.body.type_label("Peer"),
-            Message::Local(frame) => frame.body.type_label("Local"),
+            Message::Frame(frame) => frame.type_label(),
             Message::Ping => "Ping",
             Message::Pong => "Pong",
             Message::Reauth(_) => "Reauth",
@@ -114,7 +92,6 @@ impl Message {
                 }
             }
             Message::GoAway(_) => "GoAway",
-            Message::PeerSnapshot { .. } => "Peer::SnapshotBatch",
         }
     }
 
@@ -129,41 +106,23 @@ impl Message {
     }
 }
 
-impl RoutedFrame {
+impl Frame {
     fn type_label(&self) -> &'static str {
-        match &self.message {
-            RoutedFrameMessage::Payload(_) => "Routed::Payload",
-            RoutedFrameMessage::RoutingError { .. } => "Routed::RoutingError",
-        }
+        self.body.type_label()
     }
 }
 
 impl FrameBody {
-    fn type_label(&self, scope: &'static str) -> &'static str {
+    fn type_label(&self) -> &'static str {
         match self {
-            FrameBody::Request(_) => match scope {
-                "Peer" => "Peer::Request",
-                "Local" => "Local::Request",
-                _ => "Frame::Request",
+            FrameBody::Request(_) => "Frame::Request",
+            FrameBody::Response(response) => match response {
+                ResponseFrame::Payload(_) => "Frame::Response",
+                ResponseFrame::Error(_) => "Frame::ResponseError",
             },
-            FrameBody::Response(response) => match (scope, response) {
-                ("Peer", ResponseFrame::Payload(_)) => "Peer::Response",
-                ("Peer", ResponseFrame::Error(_)) => "Peer::ResponseError",
-                ("Local", ResponseFrame::Payload(_)) => "Local::Response",
-                ("Local", ResponseFrame::Error(_)) => "Local::ResponseError",
-                (_, ResponseFrame::Payload(_)) => "Frame::Response",
-                (_, ResponseFrame::Error(_)) => "Frame::ResponseError",
-            },
-            FrameBody::StreamItem(_) => match scope {
-                "Peer" => "Peer::StreamItem",
-                "Local" => "Local::StreamItem",
-                _ => "Frame::StreamItem",
-            },
-            FrameBody::Cancel => match scope {
-                "Peer" => "Peer::Cancel",
-                "Local" => "Local::Cancel",
-                _ => "Frame::Cancel",
-            },
+            FrameBody::StreamItem(_) => "Frame::StreamItem",
+            FrameBody::Cancel => "Frame::Cancel",
+            FrameBody::RoutingError { .. } => "Frame::RoutingError",
         }
     }
 }
@@ -214,9 +173,11 @@ mod tests {
     }
 
     #[test]
-    fn peer_stream_item_roundtrips_with_payload() {
+    fn frame_stream_item_roundtrips_with_empty_dst() {
         let call_id = CallId::from(uuid::Uuid::from_u128(8));
-        let msg = Message::Peer(PeerFrame {
+        let msg = Message::Frame(Frame {
+            src: Route::from_link(Link::new("peer-link").unwrap()),
+            dst: Route::empty(),
             call_id: call_id.clone(),
             body: FrameBody::StreamItem(
                 crate::protocol::wire::SubscribeRoutingEventsResponse {
@@ -233,22 +194,22 @@ mod tests {
         let decoded = Message::decode(&msg.encode().unwrap()).unwrap();
 
         assert_eq!(decoded, msg);
-        assert_eq!(decoded.type_label(), "Peer::StreamItem");
+        assert_eq!(decoded.type_label(), "Frame::StreamItem");
     }
 
     #[test]
-    fn routed_payload_roundtrips() {
-        let msg = Message::Routed(RoutedFrame {
+    fn frame_stream_item_roundtrips_with_non_empty_dst() {
+        let msg = Message::Frame(Frame {
             src: Route::from_link(Link::new("src-link").unwrap()),
             dst: Route::from_link(Link::new("dst-link").unwrap()),
             call_id: CallId::from(uuid::Uuid::from_u128(9)),
-            message: RoutedFrameMessage::Payload(b"opaque".to_vec()),
+            body: FrameBody::StreamItem(b"opaque".to_vec()),
         });
 
         let decoded = Message::decode(&msg.encode().unwrap()).unwrap();
 
         assert_eq!(decoded, msg);
-        assert_eq!(decoded.type_label(), "Routed::Payload");
+        assert_eq!(decoded.type_label(), "Frame::StreamItem");
     }
 
     #[test]

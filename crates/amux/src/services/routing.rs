@@ -8,7 +8,7 @@ use crate::protocol::handshake::RoutingRole;
 use crate::protocol::link::Link;
 use crate::protocol::message::{ProtocolError, RoutingEvent};
 use crate::protocol::wire;
-use crate::rpc::{RpcInboundServerStream, RpcPeerSnapshotSendError};
+use crate::server::{EndpointServerStream, ServerStreamSnapshotSendError};
 use crate::server::{ServerUserState, initial_routing_events};
 
 pub(crate) struct RoutingService;
@@ -58,9 +58,9 @@ pub(crate) enum SubscribeRoutingEventsStartError {
 }
 
 fn enqueue_initial_snapshot(
-    stream: &RpcInboundServerStream,
+    stream: &EndpointServerStream,
     events: Vec<RoutingEvent>,
-) -> Result<(), PeerSnapshotEnqueueError> {
+) -> Result<(), RoutingSnapshotEnqueueError> {
     let payloads: Vec<_> = events
         .into_iter()
         .map(|event| wire::encode_routing_event(&event).expect("known routing event should encode"))
@@ -69,12 +69,12 @@ fn enqueue_initial_snapshot(
         .output
         .try_send_snapshot(payloads)
         .map_err(|error| match error {
-            RpcPeerSnapshotSendError::Full => PeerSnapshotEnqueueError::Full,
-            RpcPeerSnapshotSendError::Closed => PeerSnapshotEnqueueError::Closed,
+            ServerStreamSnapshotSendError::Full => RoutingSnapshotEnqueueError::Full,
+            ServerStreamSnapshotSendError::Closed => RoutingSnapshotEnqueueError::Closed,
         })
 }
 
-enum PeerSnapshotEnqueueError {
+enum RoutingSnapshotEnqueueError {
     Full,
     Closed,
 }
@@ -82,7 +82,7 @@ enum PeerSnapshotEnqueueError {
 impl RoutingService {
     pub(crate) async fn subscribe_routing_events(
         ctx: &RoutingServiceCtx,
-        stream: &RpcInboundServerStream,
+        stream: &EndpointServerStream,
     ) -> Result<(), SubscribeRoutingEventsStartError> {
         let us = ctx.user_state().read().await;
         if !us.is_peer_link(ctx.link()) {
@@ -106,13 +106,13 @@ impl RoutingService {
         let events = initial_routing_events(&us, ctx.link());
         match enqueue_initial_snapshot(stream, events) {
             Ok(()) => Ok(()),
-            Err(PeerSnapshotEnqueueError::Full) => Err(SubscribeRoutingEventsStartError::Response(
-                ProtocolError::ResourceExhausted {
+            Err(RoutingSnapshotEnqueueError::Full) => Err(
+                SubscribeRoutingEventsStartError::Response(ProtocolError::ResourceExhausted {
                     message: "outgoing channel full while starting routing event stream"
                         .to_string(),
-                },
-            )),
-            Err(PeerSnapshotEnqueueError::Closed) => {
+                }),
+            ),
+            Err(RoutingSnapshotEnqueueError::Closed) => {
                 Err(SubscribeRoutingEventsStartError::ConnectionClosed {
                     reason: "outgoing channel closed while starting routing event stream"
                         .to_string(),

@@ -25,9 +25,9 @@ use crate::agent::SessionEvent;
 use crate::auth::cloud::{CloudConnection, CloudError};
 use crate::config::Config;
 use crate::protocol::handshake::RoutingRole;
-use crate::protocol::message::{FrameBody, Message, PeerFrame, RequestFrame, ShutdownReason};
+use crate::protocol::message::{Frame, FrameBody, Message, RequestFrame, ShutdownReason};
 use crate::protocol::{method, wire};
-use crate::rpc::RpcPeerStreamOutboundStart;
+use crate::server::PeerRoutingOutboundStart;
 use crate::setup;
 
 const INITIAL_BACKOFF: Duration = Duration::from_secs(1);
@@ -263,7 +263,9 @@ async fn run_cloud_connection(
         let initial_messages: Vec<Message> = remote_routing_role
             .serves_routing_events()
             .then(|| {
-                Message::Peer(PeerFrame {
+                Message::Frame(Frame {
+                    src: crate::protocol::Route::from_link(link.clone()),
+                    dst: crate::protocol::Route::empty(),
                     call_id: crate::protocol::CallId::from(Uuid::new_v4()),
                     body: FrameBody::Request(RequestFrame {
                         method: method::ROUTING_SUBSCRIBE_EVENTS_NAME.to_string(),
@@ -281,8 +283,8 @@ async fn run_cloud_connection(
         .rpc_for_link(&link)
         .expect("reserved cloud route should have RPC state");
     for message in &initial_messages {
-        if let Message::Peer(PeerFrame { call_id, .. }) = message {
-            rpc.register_peer_stream_outbound(RpcPeerStreamOutboundStart {
+        if let Message::Frame(Frame { call_id, .. }) = message {
+            rpc.register_peer_routing_outbound(PeerRoutingOutboundStart {
                 call_id: call_id.clone(),
                 link: link.clone(),
                 method: method::ROUTING_SUBSCRIBE_EVENTS,

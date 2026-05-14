@@ -94,7 +94,7 @@ async fn routed_unary_receives_unreachable_when_peer_link_closes_while_pending()
 }
 
 #[tokio::test]
-async fn routed_payload_forwarding_preserves_opaque_payload_and_accumulates_src() {
+async fn application_frame_forwarding_preserves_opaque_payload_and_accumulates_src() {
     let net = Topology::new().await;
     let mut local = net.connect_local("local").await;
     let mut peer = net.connect_peer("peer").await;
@@ -109,7 +109,7 @@ async fn routed_payload_forwarding_preserves_opaque_payload_and_accumulates_src(
 }
 
 #[tokio::test]
-async fn routed_payload_from_peer_with_spoofed_source_is_dropped() {
+async fn application_frame_from_peer_with_spoofed_source_is_dropped() {
     let net = Topology::new().await;
     let mut sender = net.connect_peer("sender").await;
     let mut target = net.connect_peer("target").await;
@@ -316,11 +316,11 @@ async fn peer_routing_subscription_streams_remote_host_down_when_link_closes() {
 }
 
 #[tokio::test]
-async fn open_session_test_echo_roundtrips_input_as_output() {
+async fn subscribe_session_test_echo_roundtrips_input_as_output() {
     let net = Topology::new().await;
     let mut client = net.connect_local_client("local").await;
     let agent_id = net.spawn_test_echo_agent("echo").await;
-    let session = client.open_session(agent_id, TEST_ECHO_V1).await;
+    let session = client.subscribe_session(agent_id, TEST_ECHO_V1).await;
 
     session.expect_replay_complete().await;
     assert_eq!(client.list_agents().await.len(), 1);
@@ -328,17 +328,16 @@ async fn open_session_test_echo_roundtrips_input_as_output() {
     session.expect_output_bytes(b"hello").await;
     session.cancel().await;
     session.expect_terminal_cancelled().await;
-    session.expect_send_bytes_rejected(b"after terminal").await;
     client.close_after_session(session).await.unwrap();
 }
 
 #[tokio::test]
-async fn open_session_accepts_input_sent_immediately_after_request() {
+async fn subscribe_session_accepts_input_sent_immediately_after_request() {
     let net = Topology::new().await;
     let mut client = net.connect_local("local").await;
     let agent_id = net.spawn_test_echo_agent("echo").await;
     let session = client
-        .open_session_with_queued_raw_input(agent_id, TEST_ECHO_V1, b"hello before opened")
+        .subscribe_session_with_queued_raw_input(agent_id, TEST_ECHO_V1, b"hello before opened")
         .await;
 
     session.expect_opened(&mut client).await;
@@ -352,7 +351,7 @@ async fn open_session_accepts_input_sent_immediately_after_request() {
 }
 
 #[tokio::test]
-async fn open_session_routes_to_agent_learned_from_peer() {
+async fn subscribe_session_routes_to_agent_learned_from_peer() {
     let home = Topology::named("home").await;
     let host = Topology::named("host").await;
     host.spawn_test_echo_agent("echo").await;
@@ -368,7 +367,7 @@ async fn open_session_routes_to_agent_learned_from_peer() {
             .any(|protocol| protocol == TEST_ECHO_V1)
     );
 
-    let session = client.open_agent_session(&agent, TEST_ECHO_V1).await;
+    let session = client.subscribe_agent_session(&agent, TEST_ECHO_V1).await;
 
     session.expect_replay_complete().await;
     session.send_bytes(b"hello from home").await;
@@ -380,7 +379,7 @@ async fn open_session_routes_to_agent_learned_from_peer() {
 }
 
 #[tokio::test]
-async fn open_session_routes_to_agent_learned_through_relay() {
+async fn subscribe_session_routes_to_agent_learned_through_relay() {
     let home = Topology::named("home").await;
     let relay = Topology::named("relay").await;
     let host = Topology::named("host").await;
@@ -393,7 +392,7 @@ async fn open_session_routes_to_agent_learned_through_relay() {
     assert!(agent.is_remote());
     assert_eq!(agent.route.to_string(), "relay.host");
 
-    let session = client.open_agent_session(&agent, TEST_ECHO_V1).await;
+    let session = client.subscribe_agent_session(&agent, TEST_ECHO_V1).await;
 
     session.expect_replay_complete().await;
     session.send_bytes(b"hello through relay").await;
@@ -406,7 +405,7 @@ async fn open_session_routes_to_agent_learned_through_relay() {
 }
 
 #[tokio::test]
-async fn remote_open_session_is_cancelled_when_local_client_disconnects_idle() {
+async fn remote_subscribe_session_is_cancelled_when_local_client_disconnects_idle() {
     let home = Topology::named("home").await;
     let relay = Topology::named("relay").await;
     let host = Topology::named("host").await;
@@ -416,18 +415,18 @@ async fn remote_open_session_is_cancelled_when_local_client_disconnects_idle() {
     let mut client = home.connect_local_client("local").await;
 
     let agent = client.expect_agent_named("echo").await;
-    let session = client.open_agent_session(&agent, TEST_ECHO_V1).await;
+    let session = client.subscribe_agent_session(&agent, TEST_ECHO_V1).await;
     session.expect_replay_complete().await;
 
     client.close_after_session(session).await.unwrap();
-    host.expect_no_open_sessions().await;
+    host.expect_no_session_subscriptions().await;
 
     home_to_relay.close().await;
     relay_to_host.close().await;
 }
 
 #[tokio::test]
-async fn idle_open_session_receives_unreachable_when_remote_route_closes() {
+async fn idle_subscribe_session_receives_unreachable_when_remote_route_closes() {
     let home = Topology::named("home").await;
     let relay = Topology::named("relay").await;
     let host = Topology::named("host").await;
@@ -437,7 +436,7 @@ async fn idle_open_session_receives_unreachable_when_remote_route_closes() {
     let mut client = home.connect_local_client("local").await;
 
     let agent = client.expect_agent_named("echo").await;
-    let session = client.open_agent_session(&agent, TEST_ECHO_V1).await;
+    let session = client.subscribe_agent_session(&agent, TEST_ECHO_V1).await;
     session.expect_replay_complete().await;
 
     relay_to_host.close().await;
@@ -448,7 +447,7 @@ async fn idle_open_session_receives_unreachable_when_remote_route_closes() {
 }
 
 #[tokio::test]
-async fn idle_open_session_receives_unreachable_when_first_peer_link_closes() {
+async fn idle_subscribe_session_receives_unreachable_when_first_peer_link_closes() {
     let home = Topology::named("home").await;
     let relay = Topology::named("relay").await;
     let host = Topology::named("host").await;
@@ -458,7 +457,7 @@ async fn idle_open_session_receives_unreachable_when_first_peer_link_closes() {
     let mut client = home.connect_local_client("local").await;
 
     let agent = client.expect_agent_named("echo").await;
-    let session = client.open_agent_session(&agent, TEST_ECHO_V1).await;
+    let session = client.subscribe_agent_session(&agent, TEST_ECHO_V1).await;
     session.expect_replay_complete().await;
 
     home_to_relay.close().await;
@@ -489,7 +488,7 @@ async fn learned_agent_disappears_when_peer_route_closes() {
 }
 
 #[tokio::test]
-async fn open_session_input_after_downstream_route_closes_returns_unreachable() {
+async fn send_input_after_downstream_route_closes_returns_unreachable() {
     let home = Topology::named("home").await;
     let relay = Topology::named("relay").await;
     let host = Topology::named("host").await;
@@ -500,12 +499,14 @@ async fn open_session_input_after_downstream_route_closes_returns_unreachable() 
 
     let agent = client.expect_agent_named("echo").await;
     assert_eq!(agent.route.to_string(), "relay.host");
-    let session = client.open_agent_session(&agent, TEST_ECHO_V1).await;
+    let session = client.subscribe_agent_session(&agent, TEST_ECHO_V1).await;
 
     session.expect_replay_complete().await;
     relay_to_host.close().await;
 
-    session.send_bytes(b"after route close").await;
+    session
+        .expect_send_bytes_unreachable(b"after route close")
+        .await;
     session.expect_route_unreachable().await;
 
     client.close_after_session(session).await.unwrap();
@@ -513,30 +514,29 @@ async fn open_session_input_after_downstream_route_closes_returns_unreachable() 
 }
 
 #[tokio::test]
-async fn open_session_duplicate_for_same_counterparty_and_agent_is_rejected() {
+async fn subscribe_session_allows_multiple_subscribers_for_same_agent() {
     let net = Topology::new().await;
     let mut client = net.connect_local_client("local").await;
     let agent_id = net.spawn_test_echo_agent("echo").await;
-    let session = client.open_session(agent_id, TEST_ECHO_V1).await;
+    let first = client.subscribe_session(agent_id, TEST_ECHO_V1).await;
+    let second = client.subscribe_session(agent_id, TEST_ECHO_V1).await;
 
-    session.expect_replay_complete().await;
-    let error = match client.open_session_result(agent_id, TEST_ECHO_V1).await {
-        Ok(_) => panic!("expected duplicate OpenSession to be rejected"),
-        Err(RpcClientError::Protocol(error)) => error,
-        Err(error) => panic!("expected duplicate OpenSession protocol error, got {error}"),
-    };
-    assert!(matches!(error, ProtocolError::AlreadyExists { .. }));
-    session.cancel().await;
-    session.expect_terminal_cancelled().await;
-    client.close_after_session(session).await.unwrap();
+    first.expect_replay_complete().await;
+    second.expect_replay_complete().await;
+    first.cancel().await;
+    second.cancel().await;
+    first.expect_terminal_cancelled().await;
+    second.expect_terminal_cancelled().await;
+    drop(first);
+    client.close_after_session(second).await.unwrap();
 }
 
 #[tokio::test]
-async fn deleting_agent_cancels_open_session_for_that_agent() {
+async fn deleting_agent_cancels_subscribe_session_for_that_agent() {
     let net = Topology::new().await;
     let mut client = net.connect_local_client("local").await;
     let agent_id = net.spawn_test_echo_agent("echo").await;
-    let session = client.open_session(agent_id, TEST_ECHO_V1).await;
+    let session = client.subscribe_session(agent_id, TEST_ECHO_V1).await;
 
     session.expect_replay_complete().await;
     client.delete_agent(agent_id, Route::empty()).await;

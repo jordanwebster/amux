@@ -11,7 +11,7 @@ use crate::protocol::message::{
     CreateAgentRequest, DebugFormat, HookProvider, ProtocolError, RenameAgentRequest,
     ShutdownReason, TerminalSize,
 };
-use crate::protocol::open_session::{self, OpenSessionOutputEvent, OpenSessionServerFrame};
+use crate::protocol::session::{self, SubscribeSessionEvent, SubscribeSessionFrame};
 use crate::protocol::{Agent, Route, agent_lifecycle, method, wire};
 use crate::transport::TransportError;
 
@@ -51,53 +51,27 @@ pub struct ResumeSummary {
     pub failed_count: u64,
 }
 
-pub struct OpenSessionClient {
-    stream: runtime::OutboundRoutedStream,
+pub struct SubscribeSessionClient {
+    stream: runtime::EndpointOutputStream,
 }
 
-impl OpenSessionClient {
-    pub async fn send_input(
-        &self,
-        input_id: Vec<u8>,
-        payload: Vec<u8>,
-    ) -> Result<(), RpcClientError> {
-        self.stream
-            .send_stream_payload(
-                open_session_payload(
-                    method::AGENT_OPEN_SESSION_NAME,
-                    open_session::encode_open_session_input(input_id, payload),
-                )?,
-                method::AGENT_OPEN_SESSION_NAME,
-            )
-            .await
-    }
-
-    pub async fn send_raw_input(&self, data: Vec<u8>) -> Result<(), RpcClientError> {
-        self.send_input(Vec::new(), data).await
-    }
-
+impl SubscribeSessionClient {
     pub async fn cancel(&self) -> Result<(), RpcClientError> {
         self.stream
-            .send_cancel_payload(
-                open_session_payload(
-                    method::AGENT_OPEN_SESSION_NAME,
-                    open_session::encode_open_session_cancel(),
-                )?,
-                method::AGENT_OPEN_SESSION_NAME,
-            )
+            .send_cancel(method::AGENT_SUBSCRIBE_SESSION_NAME)
             .await
     }
 
-    pub async fn recv(&self) -> Result<OpenSessionServerFrame, RpcClientError> {
+    pub async fn recv(&self) -> Result<SubscribeSessionFrame, RpcClientError> {
         let body = self.stream.recv_frame_body().await?;
-        let frame = open_session::decode_open_session_server_frame_body(body).map_err(|error| {
+        let frame = session::decode_subscribe_session_frame_body(body).map_err(|error| {
             self.stream.finish();
             RpcClientError::Decode {
-                method: method::AGENT_OPEN_SESSION_NAME,
+                method: method::AGENT_SUBSCRIBE_SESSION_NAME,
                 message: error.to_string(),
             }
         })?;
-        if matches!(frame, OpenSessionServerFrame::Response(_)) {
+        if matches!(frame, SubscribeSessionFrame::Response(_)) {
             self.stream.finish();
         }
         Ok(frame)
@@ -123,20 +97,20 @@ impl RpcClient {
         &mut self,
         request: &CreateAgentRequest,
     ) -> Result<Agent, RpcClientError> {
-        let payload = agent_lifecycle_payload(
+        let payload = agent_lifecycle_request_payload(
             method::AGENT_CREATE_NAME,
             agent_lifecycle::encode_create_agent_request(request),
         )?;
         let agent_route = Route::empty();
         let response = self
             .runtime
-            .routed_unary_payload(
+            .call_endpoint_unary(
                 method::AGENT_CREATE,
                 self.route_to_agent(agent_route.clone()),
                 payload,
             )
             .await?;
-        match agent_lifecycle::decode_create_agent_response(&response, agent_route).map_err(
+        match agent_lifecycle::decode_create_agent_response(response, agent_route).map_err(
             |error| RpcClientError::Decode {
                 method: method::AGENT_CREATE_NAME,
                 message: error.to_string(),
@@ -153,19 +127,19 @@ impl RpcClient {
         agent_route: Route,
         name: String,
     ) -> Result<Agent, RpcClientError> {
-        let payload = agent_lifecycle_payload(
+        let payload = agent_lifecycle_request_payload(
             method::AGENT_RENAME_NAME,
             agent_lifecycle::encode_rename_agent_request(&RenameAgentRequest { agent_id, name }),
         )?;
         let response = self
             .runtime
-            .routed_unary_payload(
+            .call_endpoint_unary(
                 method::AGENT_RENAME,
                 self.route_to_agent(agent_route.clone()),
                 payload,
             )
             .await?;
-        match agent_lifecycle::decode_rename_agent_response(&response, agent_route).map_err(
+        match agent_lifecycle::decode_rename_agent_response(response, agent_route).map_err(
             |error| RpcClientError::Decode {
                 method: method::AGENT_RENAME_NAME,
                 message: error.to_string(),
@@ -181,19 +155,19 @@ impl RpcClient {
         agent_id: Uuid,
         agent_route: Route,
     ) -> Result<(), RpcClientError> {
-        let payload = agent_lifecycle_payload(
+        let payload = agent_lifecycle_request_payload(
             method::AGENT_DELETE_NAME,
             agent_lifecycle::encode_delete_agent_request(agent_id),
         )?;
         let response = self
             .runtime
-            .routed_unary_payload(
+            .call_endpoint_unary(
                 method::AGENT_DELETE,
                 self.route_to_agent(agent_route),
                 payload,
             )
             .await?;
-        match agent_lifecycle::decode_delete_agent_response(&response).map_err(|error| {
+        match agent_lifecycle::decode_delete_agent_response(response).map_err(|error| {
             RpcClientError::Decode {
                 method: method::AGENT_DELETE_NAME,
                 message: error.to_string(),
@@ -204,70 +178,102 @@ impl RpcClient {
         }
     }
 
-    pub async fn open_raw_session(
+    pub async fn subscribe_raw_session(
         &mut self,
         agent_id: Uuid,
         agent_route: Route,
         terminal_size: Option<TerminalSize>,
         replay_query: Option<ClaudeRawV1ReplayQuery>,
-    ) -> Result<OpenSessionClient, RpcClientError> {
+    ) -> Result<SubscribeSessionClient, RpcClientError> {
         let args = claude_io::encode_raw_v1_args(ClaudeRawV1Args {
             terminal_size,
             replay_query,
         });
-        self.open_session(agent_id, agent_route, claude_io::RAW_V1, args)
+        self.subscribe_session(agent_id, agent_route, claude_io::RAW_V1, args)
             .await
     }
 
-    pub async fn open_session(
+    pub async fn subscribe_session(
         &mut self,
         agent_id: Uuid,
         agent_route: Route,
         io_protocol: impl Into<String>,
         args: Option<Vec<u8>>,
-    ) -> Result<OpenSessionClient, RpcClientError> {
+    ) -> Result<SubscribeSessionClient, RpcClientError> {
         let full_route = route_to_agent_with_link(agent_route, self.runtime.link().clone());
         let io_protocol = io_protocol.into();
         let stream = self
             .runtime
-            .open_routed_stream(
-                method::AGENT_OPEN_SESSION,
+            .start_endpoint_stream(
+                method::AGENT_SUBSCRIBE_SESSION,
                 full_route,
-                open_session_payload(
-                    method::AGENT_OPEN_SESSION_NAME,
-                    open_session::encode_open_session_request(),
+                session_request_payload(
+                    method::AGENT_SUBSCRIBE_SESSION_NAME,
+                    session::encode_subscribe_session_request(agent_id, io_protocol, args),
                 )?,
             )
             .await?;
-        stream
-            .send_initial_stream_payload(
-                open_session_payload(
-                    method::AGENT_OPEN_SESSION_NAME,
-                    open_session::encode_open_session_open(agent_id, io_protocol, args),
-                )?,
-                method::AGENT_OPEN_SESSION_NAME,
-            )
-            .await?;
-        let session = OpenSessionClient { stream };
+        let session = SubscribeSessionClient { stream };
 
         match session.recv().await? {
-            OpenSessionServerFrame::Event(OpenSessionOutputEvent::Opened) => {
+            SubscribeSessionFrame::Event(SubscribeSessionEvent::Opened) => {
                 session.stream.set_active();
                 Ok(session)
             }
-            OpenSessionServerFrame::Event(event) => {
+            SubscribeSessionFrame::Event(event) => {
                 session.stream.finish();
                 Err(RpcClientError::Unexpected {
-                    method: method::AGENT_OPEN_SESSION_NAME,
+                    method: method::AGENT_SUBSCRIBE_SESSION_NAME,
                     message: format!("expected SessionOpened, got {event:?}"),
                 })
             }
-            OpenSessionServerFrame::Response(Ok(())) => Err(RpcClientError::Unexpected {
-                method: method::AGENT_OPEN_SESSION_NAME,
+            SubscribeSessionFrame::Response(Ok(())) => Err(RpcClientError::Unexpected {
+                method: method::AGENT_SUBSCRIBE_SESSION_NAME,
                 message: "session ended before opening".to_string(),
             }),
-            OpenSessionServerFrame::Response(Err(error)) => Err(error.into()),
+            SubscribeSessionFrame::Response(Err(error)) => Err(error.into()),
         }
+    }
+
+    pub async fn send_input(
+        &mut self,
+        agent_id: Uuid,
+        agent_route: Route,
+        io_protocol: impl Into<String>,
+        input_id: Vec<u8>,
+        payload: Vec<u8>,
+    ) -> Result<(), RpcClientError> {
+        let full_route = self.route_to_agent(agent_route);
+        let payload = session_request_payload(
+            method::AGENT_SEND_INPUT_NAME,
+            session::encode_send_input_request(agent_id, io_protocol, input_id, payload),
+        )?;
+        let response = self
+            .runtime
+            .call_endpoint_unary_payload(method::AGENT_SEND_INPUT, full_route, payload)
+            .await?;
+        decode_payload::<wire::SendInputResponse>(method::AGENT_SEND_INPUT_NAME, response)
+            .map(|_| ())
+    }
+
+    pub async fn send_control(
+        &mut self,
+        agent_id: Uuid,
+        agent_route: Route,
+        io_protocol: impl Into<String>,
+        payload: Vec<u8>,
+    ) -> Result<(), RpcClientError> {
+        let full_route = self.route_to_agent(agent_route);
+        let payload = session_request_payload(
+            method::AGENT_SEND_INPUT_NAME,
+            session::encode_send_control_request(agent_id, io_protocol, payload),
+        )?;
+        let response = self
+            .runtime
+            .call_endpoint_unary_payload(method::AGENT_SEND_INPUT, full_route, payload)
+            .await?;
+        decode_payload::<wire::SendInputResponse>(method::AGENT_SEND_INPUT_NAME, response)
+            .map(|_| ())
     }
 
     pub async fn list_agents(&mut self) -> Result<Vec<Agent>, RpcClientError> {
@@ -466,7 +472,7 @@ fn route_to_agent_with_link(mut agent_route: Route, local_link: crate::protocol:
     agent_route
 }
 
-fn agent_lifecycle_payload(
+fn agent_lifecycle_request_payload(
     method: &'static str,
     payload: Result<Vec<u8>, agent_lifecycle::AgentLifecycleCodecError>,
 ) -> Result<Vec<u8>, RpcClientError> {
@@ -476,9 +482,9 @@ fn agent_lifecycle_payload(
     })
 }
 
-fn open_session_payload(
+fn session_request_payload(
     method: &'static str,
-    payload: Result<Vec<u8>, open_session::OpenSessionCodecError>,
+    payload: Result<Vec<u8>, session::SessionCodecError>,
 ) -> Result<Vec<u8>, RpcClientError> {
     payload.map_err(|error| RpcClientError::Encode {
         method,

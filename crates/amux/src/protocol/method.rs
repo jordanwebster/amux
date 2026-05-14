@@ -3,23 +3,23 @@
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub(crate) struct MethodSpec {
     pub(crate) name: &'static str,
-    pub(crate) scope: MethodScope,
+    pub(crate) access: MethodAccess,
     pub(crate) kind: MethodKind,
 }
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
-pub(crate) enum MethodScope {
+pub(crate) enum MethodAccess {
     Local,
     Peer,
     Routed,
 }
 
-impl MethodScope {
+impl MethodAccess {
     pub(crate) fn as_str(self) -> &'static str {
         match self {
-            MethodScope::Local => "local",
-            MethodScope::Peer => "peer",
-            MethodScope::Routed => "routed",
+            MethodAccess::Local => "local",
+            MethodAccess::Peer => "peer",
+            MethodAccess::Routed => "routed",
         }
     }
 }
@@ -28,7 +28,6 @@ impl MethodScope {
 pub(crate) enum MethodKind {
     Unary,
     ServerStreaming,
-    BidiStreaming,
 }
 
 pub(crate) const ROUTING_SUBSCRIBE_EVENTS_NAME: &str =
@@ -40,7 +39,8 @@ pub(crate) const AGENT_RESOLVE_NAME: &str = "/amux.v1.AgentService/ResolveAgent"
 pub(crate) const AGENT_CREATE_NAME: &str = "/amux.v1.AgentService/CreateAgent";
 pub(crate) const AGENT_RENAME_NAME: &str = "/amux.v1.AgentService/RenameAgent";
 pub(crate) const AGENT_DELETE_NAME: &str = "/amux.v1.AgentService/DeleteAgent";
-pub(crate) const AGENT_OPEN_SESSION_NAME: &str = "/amux.v1.AgentService/OpenSession";
+pub(crate) const AGENT_SUBSCRIBE_SESSION_NAME: &str = "/amux.v1.AgentService/SubscribeSession";
+pub(crate) const AGENT_SEND_INPUT_NAME: &str = "/amux.v1.AgentService/SendInput";
 
 pub(crate) const HOOK_HANDLE_NAME: &str = "/amux.v1.HookService/HandleHook";
 
@@ -52,85 +52,91 @@ pub(crate) const ADMIN_CONNECT_TO_SERVER_NAME: &str = "/amux.v1.AdminService/Con
 
 pub(crate) const ROUTING_SUBSCRIBE_EVENTS: MethodSpec = MethodSpec {
     name: ROUTING_SUBSCRIBE_EVENTS_NAME,
-    scope: MethodScope::Peer,
+    access: MethodAccess::Peer,
     kind: MethodKind::ServerStreaming,
 };
 
 pub(crate) const AGENT_LIST: MethodSpec = MethodSpec {
     name: AGENT_LIST_NAME,
-    scope: MethodScope::Local,
+    access: MethodAccess::Local,
     kind: MethodKind::Unary,
 };
 
 pub(crate) const AGENT_SUBSCRIBE_EVENTS: MethodSpec = MethodSpec {
     name: AGENT_SUBSCRIBE_EVENTS_NAME,
-    scope: MethodScope::Routed,
+    access: MethodAccess::Routed,
     kind: MethodKind::ServerStreaming,
 };
 
 pub(crate) const AGENT_RESOLVE: MethodSpec = MethodSpec {
     name: AGENT_RESOLVE_NAME,
-    scope: MethodScope::Local,
+    access: MethodAccess::Local,
     kind: MethodKind::Unary,
 };
 
 pub(crate) const AGENT_CREATE: MethodSpec = MethodSpec {
     name: AGENT_CREATE_NAME,
-    scope: MethodScope::Routed,
+    access: MethodAccess::Routed,
     kind: MethodKind::Unary,
 };
 
 pub(crate) const AGENT_RENAME: MethodSpec = MethodSpec {
     name: AGENT_RENAME_NAME,
-    scope: MethodScope::Routed,
+    access: MethodAccess::Routed,
     kind: MethodKind::Unary,
 };
 
 pub(crate) const AGENT_DELETE: MethodSpec = MethodSpec {
     name: AGENT_DELETE_NAME,
-    scope: MethodScope::Routed,
+    access: MethodAccess::Routed,
     kind: MethodKind::Unary,
 };
 
-pub(crate) const AGENT_OPEN_SESSION: MethodSpec = MethodSpec {
-    name: AGENT_OPEN_SESSION_NAME,
-    scope: MethodScope::Routed,
-    kind: MethodKind::BidiStreaming,
+pub(crate) const AGENT_SUBSCRIBE_SESSION: MethodSpec = MethodSpec {
+    name: AGENT_SUBSCRIBE_SESSION_NAME,
+    access: MethodAccess::Routed,
+    kind: MethodKind::ServerStreaming,
+};
+
+pub(crate) const AGENT_SEND_INPUT: MethodSpec = MethodSpec {
+    name: AGENT_SEND_INPUT_NAME,
+    access: MethodAccess::Routed,
+    kind: MethodKind::Unary,
 };
 
 pub(crate) const HOOK_HANDLE: MethodSpec = MethodSpec {
     name: HOOK_HANDLE_NAME,
-    scope: MethodScope::Local,
+    access: MethodAccess::Local,
     kind: MethodKind::Unary,
 };
 
 pub(crate) const ADMIN_DEBUG: MethodSpec = MethodSpec {
     name: ADMIN_DEBUG_NAME,
-    scope: MethodScope::Local,
+    access: MethodAccess::Local,
     kind: MethodKind::Unary,
 };
 
 pub(crate) const ADMIN_SHUTDOWN: MethodSpec = MethodSpec {
     name: ADMIN_SHUTDOWN_NAME,
-    scope: MethodScope::Local,
+    access: MethodAccess::Local,
     kind: MethodKind::Unary,
 };
 
 pub(crate) const ADMIN_SUSPEND: MethodSpec = MethodSpec {
     name: ADMIN_SUSPEND_NAME,
-    scope: MethodScope::Local,
+    access: MethodAccess::Local,
     kind: MethodKind::Unary,
 };
 
 pub(crate) const ADMIN_RESUME: MethodSpec = MethodSpec {
     name: ADMIN_RESUME_NAME,
-    scope: MethodScope::Local,
+    access: MethodAccess::Local,
     kind: MethodKind::Unary,
 };
 
 pub(crate) const ADMIN_CONNECT_TO_SERVER: MethodSpec = MethodSpec {
     name: ADMIN_CONNECT_TO_SERVER_NAME,
-    scope: MethodScope::Local,
+    access: MethodAccess::Local,
     kind: MethodKind::Unary,
 };
 
@@ -142,7 +148,8 @@ pub(crate) const ALL: &[MethodSpec] = &[
     AGENT_CREATE,
     AGENT_RENAME,
     AGENT_DELETE,
-    AGENT_OPEN_SESSION,
+    AGENT_SUBSCRIBE_SESSION,
+    AGENT_SEND_INPUT,
     HOOK_HANDLE,
     ADMIN_DEBUG,
     ADMIN_SHUTDOWN,
@@ -160,16 +167,16 @@ pub(crate) enum MethodLookupError {
     Unknown,
     WrongScope {
         spec: MethodSpec,
-        requested_scope: MethodScope,
+        requested_scope: MethodAccess,
     },
 }
 
 pub(crate) fn find_for_scope(
     name: &str,
-    requested_scope: MethodScope,
+    requested_scope: MethodAccess,
 ) -> Result<MethodSpec, MethodLookupError> {
     match find(name) {
-        Some(spec) if spec.scope == requested_scope => Ok(spec),
+        Some(spec) if spec.access == requested_scope => Ok(spec),
         Some(spec) => Err(MethodLookupError::WrongScope {
             spec,
             requested_scope,
@@ -212,7 +219,9 @@ mod tests {
                     ) {
                         (false, false) => MethodKind::Unary,
                         (false, true) => MethodKind::ServerStreaming,
-                        (true, true) => MethodKind::BidiStreaming,
+                        (true, true) => {
+                            panic!("{name} is bidi-streaming; bidi RPCs are not supported")
+                        }
                         (true, false) => {
                             panic!("{name} is client-streaming only; add a MethodKind if needed")
                         }
@@ -255,48 +264,49 @@ mod tests {
     #[test]
     fn method_lookup_distinguishes_unknown_from_wrong_scope() {
         assert_eq!(
-            find_for_scope(AGENT_LIST_NAME, MethodScope::Local),
+            find_for_scope(AGENT_LIST_NAME, MethodAccess::Local),
             Ok(AGENT_LIST)
         );
         assert_eq!(
-            find_for_scope(AGENT_LIST_NAME, MethodScope::Routed),
+            find_for_scope(AGENT_LIST_NAME, MethodAccess::Routed),
             Err(MethodLookupError::WrongScope {
                 spec: AGENT_LIST,
-                requested_scope: MethodScope::Routed,
+                requested_scope: MethodAccess::Routed,
             })
         );
         assert_eq!(
-            find_for_scope("/amux.v1.Missing/Nope", MethodScope::Routed),
+            find_for_scope("/amux.v1.Missing/Nope", MethodAccess::Routed),
             Err(MethodLookupError::Unknown)
         );
     }
 
     #[test]
-    fn method_scopes_match_protocol_contract() {
-        let expected_scopes = [
-            (ROUTING_SUBSCRIBE_EVENTS_NAME, MethodScope::Peer),
-            (AGENT_SUBSCRIBE_EVENTS_NAME, MethodScope::Routed),
-            (AGENT_LIST_NAME, MethodScope::Local),
-            (AGENT_RESOLVE_NAME, MethodScope::Local),
-            (AGENT_CREATE_NAME, MethodScope::Routed),
-            (AGENT_RENAME_NAME, MethodScope::Routed),
-            (AGENT_DELETE_NAME, MethodScope::Routed),
-            (AGENT_OPEN_SESSION_NAME, MethodScope::Routed),
-            (HOOK_HANDLE_NAME, MethodScope::Local),
-            (ADMIN_DEBUG_NAME, MethodScope::Local),
-            (ADMIN_SHUTDOWN_NAME, MethodScope::Local),
-            (ADMIN_SUSPEND_NAME, MethodScope::Local),
-            (ADMIN_RESUME_NAME, MethodScope::Local),
-            (ADMIN_CONNECT_TO_SERVER_NAME, MethodScope::Local),
+    fn method_accesses_match_protocol_contract() {
+        let expected_accesses = [
+            (ROUTING_SUBSCRIBE_EVENTS_NAME, MethodAccess::Peer),
+            (AGENT_SUBSCRIBE_EVENTS_NAME, MethodAccess::Routed),
+            (AGENT_LIST_NAME, MethodAccess::Local),
+            (AGENT_RESOLVE_NAME, MethodAccess::Local),
+            (AGENT_CREATE_NAME, MethodAccess::Routed),
+            (AGENT_RENAME_NAME, MethodAccess::Routed),
+            (AGENT_DELETE_NAME, MethodAccess::Routed),
+            (AGENT_SUBSCRIBE_SESSION_NAME, MethodAccess::Routed),
+            (AGENT_SEND_INPUT_NAME, MethodAccess::Routed),
+            (HOOK_HANDLE_NAME, MethodAccess::Local),
+            (ADMIN_DEBUG_NAME, MethodAccess::Local),
+            (ADMIN_SHUTDOWN_NAME, MethodAccess::Local),
+            (ADMIN_SUSPEND_NAME, MethodAccess::Local),
+            (ADMIN_RESUME_NAME, MethodAccess::Local),
+            (ADMIN_CONNECT_TO_SERVER_NAME, MethodAccess::Local),
         ]
         .into_iter()
         .collect::<BTreeMap<_, _>>();
 
-        let actual_scopes = ALL
+        let actual_accesses = ALL
             .iter()
-            .map(|spec| (spec.name, spec.scope))
+            .map(|spec| (spec.name, spec.access))
             .collect::<BTreeMap<_, _>>();
 
-        assert_eq!(actual_scopes, expected_scopes);
+        assert_eq!(actual_accesses, expected_accesses);
     }
 }

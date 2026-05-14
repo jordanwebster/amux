@@ -31,7 +31,8 @@ The main moving parts are:
   transcript entries.
 
 Cloud servers are relay-oriented. They authenticate network connections and
-forward routed frames, but they do not host routed agent-service endpoints.
+forward route-addressed frames, but they do not host routed agent-service
+endpoints.
 
 ## Identity And Routes
 
@@ -185,38 +186,36 @@ protobuf `TransportMessage`.
 
 ```rust
 enum Message {
-    Local(LocalFrame),
-    Peer(PeerFrame),
-    Routed(RoutedFrame),
+    Frame(Frame),
     Ping,
     Pong,
     Reauth(ReauthRequest),
     ReauthResponse(ReauthResponse),
     GoAway(GoAway),
-
-    // Internal batching helper, never encoded on the wire.
-    PeerSnapshot { messages: Vec<Message> },
 }
 ```
 
-The three frame scopes are the protocol security boundary:
+All application RPC traffic uses one `Frame` envelope. Local, direct-peer, and
+multi-hop routed behavior are enforced from connection provenance, method
+access policy, and route shape rather than from distinct frame variants.
 
-- `LocalFrame` is valid only on trusted local transports. It carries local
-  CLI/admin calls.
-- `PeerFrame` is valid only between adjacent peer servers. It carries peer
-  routing-event streams.
-- `RoutedFrame` may cross hops. Its payload is opaque to relays until it
-  reaches the endpoint.
-
-Each `LocalFrame`, `PeerFrame`, and `RoutedFrame` carries a 16-byte non-zero
-`call_id`. `FrameBody` provides request/response/stream/cancel semantics:
+Each `Frame` carries `src`, `dst`, and a 16-byte `call_id`. `FrameBody`
+provides request/response/stream/cancel semantics:
 
 ```rust
+struct Frame {
+    src: Route,
+    dst: Route,
+    call_id: CallId,
+    body: FrameBody,
+}
+
 enum FrameBody {
     Request(RequestFrame),
     Response(ResponseFrame),
     StreamItem(Vec<u8>),
     Cancel,
+    RoutingError { failed_route: Route, error: ProtocolError },
 }
 
 enum ResponseFrame {
@@ -225,26 +224,25 @@ enum ResponseFrame {
 }
 ```
 
-Endpoint-delivered routed calls are encoded as
-`RoutedFrameMessage::Payload`, where the payload is an encoded `FrameBody`.
-Relay-generated delivery failures use
-`RoutedFrameMessage::RoutingError { failed_route, error }`.
+`dst == Route::empty()` means the frame is for this server. Otherwise the
+connection loop forwards the frame to the next hop. Relay-generated delivery
+failures are ordinary frames with `FrameBody::RoutingError`.
 
 See `crates/amux/src/protocol/message/envelope.rs` and
 `crates/amux/src/protocol/wire/runtime.rs`.
 
-### Method Scopes
+### Method Access
 
-Every protobuf RPC method has an explicit scope in
+Every protobuf RPC method has an explicit access policy in
 `crates/amux/src/protocol/method.rs`.
 
-| Scope | Methods | Frame |
+| Access | Methods | Route |
 | --- | --- | --- |
-| Local | `AgentService/ListAgents`, `AgentService/ResolveAgent`, `HookService/HandleHook`, `AdminService/*` | `LocalFrame` |
-| Peer | `RoutingService/SubscribeRoutingEvents` | `PeerFrame` |
-| Routed | `AgentService/SubscribeAgentEvents`, `CreateAgent`, `RenameAgent`, `DeleteAgent`, `OpenSession` | `RoutedFrame` |
+| LocalOnly | `AgentService/ListAgents`, `AgentService/ResolveAgent`, `HookService/HandleHook`, `AdminService/*` | local connection only |
+| DirectPeerOnly | `RoutingService/SubscribeRoutingEvents` | direct peer connection |
+| RoutedEndpoint | `AgentService/SubscribeAgentEvents`, `CreateAgent`, `RenameAgent`, `DeleteAgent`, `SubscribeSession`, `SendInput` | direct or multi-hop route |
 
-Dispatch rejects known methods used in the wrong scope with
+Dispatch rejects known methods used with the wrong access path with
 `PermissionDenied`, and unknown methods with `Unimplemented`.
 
 ### Errors
@@ -295,7 +293,7 @@ Each accepted or outbound connection uses the same driver:
 5. Spawn `reader_loop` and `writer_loop`.
 6. Run `connection_loop` over channels.
 7. On exit, remove the connection, drop affected route contexts, cancel
-   affected RPC/OpenSession state, withdraw affected topology, and let the
+   affected RPC/session state, withdraw affected topology, and let the
    writer drain.
 
 The task split is:
@@ -414,11 +412,10 @@ and hop selection stay in the routing layer.
 
 Endpoint routed RPC resolves the full counterparty return path to the longest
 known route-context prefix. For example, a frame arriving from `peer.client`
-uses the `peer` route context when `peer` is the advertised host route, while
-the OpenSession dedup key still stores the full `peer.client` counterparty
-route. If no route context exists yet, endpoint dispatch can fall back to the
-current connection's RPC table when the counterparty path starts with that
-connection link.
+uses the `peer` route context when `peer` is the advertised host route. If no
+route context exists yet, endpoint dispatch can fall back to the current
+connection's RPC table when the counterparty path starts with that connection
+link.
 
 Inbound calls are endpoint-owned work started by a received request. Outbound
 calls are work this node is waiting on. State tracks whether a call is waiting
@@ -429,11 +426,10 @@ must be unique. These keys are opaque to generic RPC state and are chosen by the
 application layer, notably:
 
 - one active peer routing-event stream per peer link
-- one active `OpenSession` per `(counterparty_route, agent_id)`
 
 When routes close or withdraw, the server uses RPC state to send cancels or
 routing errors for locally originated calls and to terminate affected
-`OpenSession` streams.
+`SubscribeSession` streams.
 
 See `crates/amux/src/rpc/`.
 
@@ -490,7 +486,7 @@ Important topology rules:
   `AgentService/SubscribeAgentEvents`; they do not reserve or remove
   connection links or route contexts.
 - `HostDown` and link closure remove route contexts and cancel affected
-  OpenSession/RPC state. A host context and its agents are removed only after
+  session/RPC state. A host context and its agents are removed only after
   the last route to that host disappears.
 - Announcements learned from one peer are not echoed back to the same peer.
 - Route announcements are exact-route ownership, not migration. Re-announcing
@@ -503,16 +499,15 @@ See `crates/amux/src/services/routing.rs`,
 
 ## Routed Forwarding
 
-When a `RoutedFrame::Payload` arrives:
+When a unified `Frame` arrives:
 
 1. Non-local connections must have `src.peek() == ctx.link`; otherwise the
    frame is dropped as spoofed.
 2. If `dst` has a next hop, the relay pops it, pushes it onto `src`, and sends
-   the unchanged payload to that connection.
+   the unchanged frame body to that connection.
 3. If the next hop is missing or the channel is closed, the relay sends a
    `RoutingError` back along the accumulated return path.
-4. If `dst` is empty, the payload is decoded as a protobuf `FrameBody` and
-   dispatched to the routed endpoint.
+4. If `dst` is empty, the frame body is dispatched to the routed endpoint.
 
 Cloud servers reject endpoint routed payloads because cloud relays are not
 agent hosts.
@@ -521,21 +516,20 @@ Endpoint dispatch uses the accumulated `src` as the counterparty return path.
 The RPC call table is selected by exact route context first, then by the
 longest advertised route prefix, with a connection-scoped fallback when the
 counterparty path starts with the current connection link. This keeps replies
-and OpenSession dedup keyed by the full counterparty route while tying
-route-scoped cleanup to the advertised tunnel that owns the call table.
+and route-scoped cleanup tied to the advertised tunnel that owns the call table.
 
 Routing failures include a reconstructed `failed_route`, built from the
 reverse accumulated source path plus the missing hop and remaining destination
 path. Endpoints use the `call_id` and failed route for cleanup.
 
 See `crates/amux/src/server/routing/forwarding.rs` and
-`crates/amux/src/server/dispatch/routable.rs`.
+`crates/amux/src/server/dispatch/frame.rs`.
 
 ## Services
 
 ### Local Services
 
-Local services are trusted-control calls carried by `LocalFrame`.
+Local services are trusted-control calls accepted only from local connections.
 
 - `AgentService/ListAgents`
 - `AgentService/ResolveAgent`
@@ -551,7 +545,7 @@ Network peers cannot invoke local methods.
 ### Peer Services
 
 `RoutingService/SubscribeRoutingEvents` runs only on peer links. It is a
-server-streaming RPC carried by `PeerFrame`. The stream stays open for the
+server-streaming RPC over a direct peer route. The stream stays open for the
 connection lifetime and carries host topology changes.
 
 ### Routed Agent Services
@@ -562,7 +556,8 @@ Routed agent services are endpoint calls to an agent host:
 - `CreateAgent`
 - `RenameAgent`
 - `DeleteAgent`
-- `OpenSession`
+- `SubscribeSession`
+- `SendInput`
 
 `SubscribeAgentEvents` is a routed server-streaming RPC. The request includes
 the target `host_id`; the endpoint rejects mismatches and hosts with no
@@ -626,7 +621,7 @@ Creating a local agent:
 6. Starts a task that sends `SessionEvent::Ended` when the process exits.
 
 Deleting or process exit withdraws the agent, emits `AgentDown` to active
-`SubscribeAgentEvents` subscribers, closes matching OpenSession calls, and
+`SubscribeAgentEvents` subscribers, closes matching session subscriptions, and
 stops the session as needed.
 
 See `crates/amux/src/agent/` and
@@ -657,31 +652,33 @@ Concrete buffers:
 
 See `crates/amux/src/agent/pty.rs` and `crates/amux/src/buffer.rs`.
 
-## OpenSession
+## Session I/O
 
-Agent I/O is exposed through the routed bidirectional
-`AgentService/OpenSession` RPC. The first client stream item must be
-`SessionOpen`; later items are `SessionInput`, `SessionControl`, or routed
-`Cancel`.
+Agent output is exposed through the routed server-streaming
+`AgentService/SubscribeSession` RPC. Input is an independent routed unary
+`AgentService/SendInput` RPC keyed by agent id and `io_protocol`.
 
 ```protobuf
-message SessionOpen {
+message SubscribeSessionRequest {
   bytes agent_id = 1;
   string io_protocol = 2;
   optional bytes args = 3;
 }
 
-message SessionInput {
-  bytes input_id = 1;
-  bytes payload = 2;
-}
-
-message OpenSessionResponse {
+message SubscribeSessionResponse {
   oneof event {
     SessionOpened opened = 1;
     SessionOutput output = 2;
-    SessionInputResult input_result = 3;
-    ReplayComplete replay_complete = 4;
+    ReplayComplete replay_complete = 3;
+  }
+}
+
+message SendInputRequest {
+  bytes agent_id = 1;
+  string io_protocol = 2;
+  oneof event {
+    SessionInput input = 10;
+    SessionControl control = 11;
   }
 }
 ```
@@ -694,9 +691,10 @@ payloads.
 
 Raw PTY protocol:
 
-- `SessionOpen.args` may contain terminal size and a tail-bytes replay query.
-- `SessionInput.payload` is written directly to PTY stdin.
-- `SessionControl.payload` supports terminal resize.
+- `SubscribeSessionRequest.args` may contain terminal size and a tail-bytes
+  replay query.
+- `SendInputRequest.input.payload` is written directly to PTY stdin.
+- `SendInputRequest.control.payload` supports terminal resize.
 - `SessionOutput.payload` is raw PTY stdout bytes.
 - `ReplayComplete.cursor` is absent.
 
@@ -704,7 +702,7 @@ Raw PTY protocol:
 
 Structured Claude transcript protocol:
 
-- `SessionOpen.args` may contain terminal size plus replay `since` or
+- `SubscribeSessionRequest.args` may contain terminal size plus replay `since` or
   `tail_count`.
 - Replay `since` uses the last sequence observed by the client; the server
   resumes after it.
@@ -712,18 +710,16 @@ Structured Claude transcript protocol:
   where `payload` is JSON-encoded Claude transcript or hook output.
 - `ReplayComplete.cursor` is a protobuf cursor containing the sequence at the
   replay boundary.
-- `SessionInput.payload` is `ClaudePtyTranscriptV1Input { expected_seq,
+- `SendInputRequest.input.payload` is `ClaudePtyTranscriptV1Input { expected_seq,
   actions }`.
 - Structured input actions are translated to PTY writes and bounded delays.
 - The server rejects stale structured input with `SequenceNumberMismatch` when
   `expected_seq` differs from the current structured log sequence.
-- Accepted or rejected structured inputs emit `SessionInputResult` correlated
-  by `input_id`.
+Accepted structured inputs complete the `SendInput` unary response. Rejected
+structured inputs return the corresponding `ProtocolError`.
 
-Only one active `OpenSession` per `(counterparty_route, agent_id)` is allowed.
-
-See `crates/amux/src/services/agent/open_session.rs`,
-`crates/amux/src/protocol/open_session.rs`, and
+See `crates/amux/src/services/agent/session.rs`,
+`crates/amux/src/protocol/session.rs`, and
 `crates/amux/src/agent/claude/io.rs`.
 
 ## Structured Logs And Hooks
@@ -811,7 +807,7 @@ Per connection
   reader_loop
   writer_loop
   connection_loop
-  cleanup topology/RPC/OpenSession state
+  cleanup topology/RPC/session state
 
 Per local agent
   PTY reader
@@ -820,10 +816,11 @@ Per local agent
   optional transcript tailer
   optional name sniffer
 
-Per OpenSession
-  input dispatcher
+Per SubscribeSession
   output stream task
-  optional structured input worker
+
+Per SendInput
+  apply raw PTY input/control or structured transcript input
 ```
 
 The architecture deliberately keeps routing reachability, RPC call lifecycle,

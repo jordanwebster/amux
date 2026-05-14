@@ -7,7 +7,7 @@ pub const AGENT_TYPE_CLAUDE: &str = "claude";
 #[cfg(any(debug_assertions, test))]
 pub const AGENT_TYPE_TEST_AGENT: &str = "test-agent";
 
-/// RPC call identity carried by local, peer, and routed frames.
+/// RPC call identity carried by application frames.
 ///
 /// The protobuf contract uses 128-bit non-zero call IDs.
 #[derive(Debug, Clone, PartialEq, Eq, Hash)]

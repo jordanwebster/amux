@@ -1,12 +1,10 @@
 use std::io::{self, Read, Write};
 use std::path::Path;
 
-use amux::protocol::open_session::{OpenSessionOutputEvent, OpenSessionServerFrame};
+use amux::agent::claude::io as claude_io;
+use amux::protocol::session::{SubscribeSessionEvent, SubscribeSessionFrame};
 use amux::protocol::{AgentType, CreateAgentRequest, Route, ShutdownReason, TerminalSize};
-use amux::{
-    Config, ConnectError, LeaderKey, OpenSessionClient, RpcClient, RpcClientError, TransportError,
-    connect,
-};
+use amux::{Config, ConnectError, LeaderKey, RpcClient, RpcClientError, TransportError, connect};
 use anyhow::{Result, anyhow};
 use crossterm::terminal;
 use tokio::sync::mpsc;
@@ -174,29 +172,30 @@ async fn subscribe_and_stream(
     state_path: &Path,
 ) -> Result<()> {
     let session = rpc
-        .open_raw_session(agent_id, route, terminal_size, None)
+        .subscribe_raw_session(agent_id, route.clone(), terminal_size, None)
         .await
-        .map_err(|error| anyhow!("failed to open session: {error}"))?;
+        .map_err(|error| anyhow!("failed to subscribe to session: {error}"))?;
 
-    tracing::info!(agent_id = %agent_id, "opened raw session");
+    tracing::info!(agent_id = %agent_id, "subscribed to raw session");
 
-    run_attached(session, leader, state_path).await
+    run_attached(rpc, session, agent_id, route, leader, state_path).await
 }
 
-fn handle_open_session_event(event: OpenSessionOutputEvent) {
+fn handle_subscribe_session_event(event: SubscribeSessionEvent) {
     match event {
-        OpenSessionOutputEvent::Output { payload, .. } => {
+        SubscribeSessionEvent::Output { payload } => {
             io::stdout().write_all(&payload).ok();
             io::stdout().flush().ok();
         }
-        OpenSessionOutputEvent::Opened
-        | OpenSessionOutputEvent::ReplayComplete { .. }
-        | OpenSessionOutputEvent::InputResult { .. } => {}
+        SubscribeSessionEvent::Opened | SubscribeSessionEvent::ReplayComplete { .. } => {}
     }
 }
 
 async fn run_attached(
-    session: OpenSessionClient,
+    mut rpc: RpcClient,
+    session: amux::SubscribeSessionClient,
+    agent_id: Uuid,
+    route: Route,
     leader: LeaderKey,
     state_path: &Path,
 ) -> Result<()> {
@@ -311,7 +310,17 @@ async fn run_attached(
         tokio::select! {
             event = input_rx.recv() => match event {
                 Some(StdinEvent::Data(data)) => {
-                    if session.send_raw_input(data).await.is_err() {
+                    if rpc
+                        .send_input(
+                            agent_id,
+                            route.clone(),
+                            claude_io::RAW_V1,
+                            Uuid::new_v4().as_bytes().to_vec(),
+                            data,
+                        )
+                        .await
+                        .is_err()
+                    {
                         break ExitReason::SessionEnded;
                     }
                 }
@@ -319,14 +328,14 @@ async fn run_attached(
                 None => break ExitReason::SessionEnded,
             },
             frame = session.recv() => match frame {
-                Ok(OpenSessionServerFrame::Event(event)) => {
-                    handle_open_session_event(event);
+                Ok(SubscribeSessionFrame::Event(event)) => {
+                    handle_subscribe_session_event(event);
                 }
-                Ok(OpenSessionServerFrame::Response(Ok(()))) => {
+                Ok(SubscribeSessionFrame::Response(Ok(()))) => {
                     tracing::info!("agent ended");
                     break ExitReason::SessionEnded;
                 }
-                Ok(OpenSessionServerFrame::Response(Err(error))) => {
+                Ok(SubscribeSessionFrame::Response(Err(error))) => {
                     tracing::info!(error = %error, "session ended with error");
                     break ExitReason::SessionEnded;
                 }

@@ -11,14 +11,13 @@ use crate::protocol::link::Link;
 use crate::protocol::message::{CallId, Host, Message};
 use crate::protocol::method::MethodSpec;
 use crate::protocol::route::Route;
-use crate::rpc::{
-    InboundCall, OutboundCall, RpcActiveInboundRoutedSink, RpcLocalOriginOutboundCall,
-};
+use crate::rpc::{InboundCall, OutboundCall};
 use crate::server::RpcDispatcher;
 use crate::server::routing::{
     LinkClosedChange, PeerAgentDownChange, PeerAgentDownIgnored, PeerAgentUpChange,
     PeerAgentUpIgnored, PeerHostDownChange, PeerHostUpChange, TopologyEvent,
 };
+use crate::server::{ActiveEndpointStreamSink, LocalOriginOutboundCall};
 
 pub(in crate::server) const LOCAL_USER_ID: Uuid = Uuid::nil();
 pub(in crate::server) const OUTGOING_MESSAGE_BUFFER: usize = 2048;
@@ -97,6 +96,7 @@ pub(crate) struct ServerUserState {
     pub(in crate::server) connections: HashMap<Link, ConnectionEntry>,
     pub(in crate::server) routes: HashMap<Route, RouteContext>,
     pub(in crate::server) hosts: HashMap<Uuid, HostContext>,
+    pub(crate) session_subscriptions: HashMap<CallId, SessionSubscriptionState>,
     remote_name_owners: HashMap<String, Uuid>,
     pub(crate) local_agents: HashMap<Uuid, LocalAgentContext>,
 }
@@ -175,6 +175,12 @@ pub(in crate::server) struct AgentSubscriptionState {
     pub(in crate::server) call_id: CallId,
 }
 
+#[derive(Debug, Clone)]
+pub(crate) struct SessionSubscriptionState {
+    pub(crate) agent_id: Uuid,
+    pub(crate) counterparty: Route,
+}
+
 pub(crate) struct LocalAgentContext {
     pub(crate) session: AgentSession,
     pub(crate) info: Agent,
@@ -186,6 +192,7 @@ impl ServerUserState {
             connections: HashMap::new(),
             routes: HashMap::new(),
             hosts: HashMap::new(),
+            session_subscriptions: HashMap::new(),
             remote_name_owners: HashMap::new(),
             local_agents: HashMap::new(),
         }
@@ -213,7 +220,7 @@ impl ServerUserState {
 
     pub(crate) fn rpc_for_inbound_call(&self, call_id: &CallId) -> Option<RpcDispatcher> {
         self.rpc_contexts_sorted().into_iter().find_map(|(_, rpc)| {
-            rpc.inbound_frame_target_for_call(call_id)
+            rpc.inbound_call_target_for_call(call_id)
                 .is_some()
                 .then_some(rpc)
         })
@@ -372,14 +379,14 @@ impl ServerUserState {
         contexts
     }
 
-    pub(in crate::server) fn active_inbound_routed_sinks_for_method(
+    pub(in crate::server) fn active_endpoint_stream_sinks_for_method(
         &self,
         method: MethodSpec,
-    ) -> Vec<(RpcDispatcher, RpcActiveInboundRoutedSink)> {
+    ) -> Vec<(RpcDispatcher, ActiveEndpointStreamSink)> {
         self.rpc_contexts_sorted()
             .into_iter()
             .flat_map(|(_, rpc)| {
-                rpc.active_inbound_routed_sinks_for_method(method)
+                rpc.active_endpoint_stream_sinks_for_method(method)
                     .into_iter()
                     .map(move |sink| (rpc.clone(), sink))
             })
@@ -454,7 +461,7 @@ impl ServerUserState {
     pub(in crate::server) fn remove_local_origin_outbound_for_owner_link(
         &self,
         owner_link: &Link,
-    ) -> Vec<RpcLocalOriginOutboundCall> {
+    ) -> Vec<LocalOriginOutboundCall> {
         self.rpc_contexts_sorted()
             .into_iter()
             .flat_map(|(_, rpc)| rpc.remove_local_origin_outbound_for_owner_link(owner_link))
@@ -464,7 +471,7 @@ impl ServerUserState {
     pub(in crate::server) fn remove_local_origin_outbound_for_route_prefix(
         &self,
         route_prefix: &Route,
-    ) -> Vec<RpcLocalOriginOutboundCall> {
+    ) -> Vec<LocalOriginOutboundCall> {
         self.rpc_contexts_sorted()
             .into_iter()
             .flat_map(|(_, rpc)| rpc.remove_local_origin_outbound_for_route_prefix(route_prefix))
@@ -1023,6 +1030,22 @@ impl ServerUserState {
         }
     }
 
+    pub(in crate::server) fn agent_subscription_host_for_route_and_call(
+        &self,
+        call_id: &CallId,
+        route: &Route,
+    ) -> Option<Uuid> {
+        self.hosts.iter().find_map(|(host_id, context)| {
+            context
+                .agent_subscription
+                .as_ref()
+                .is_some_and(|subscription| {
+                    &subscription.call_id == call_id && &subscription.route == route
+                })
+                .then_some(*host_id)
+        })
+    }
+
     pub(in crate::server) fn remove_agent_subscription_for_route_and_call(
         &mut self,
         call_id: &CallId,
@@ -1030,7 +1053,12 @@ impl ServerUserState {
     ) -> bool {
         let removed = self
             .route_rpc_for_counterparty(route)
-            .and_then(|rpc| rpc.remove_agent_subscription_outbound_for_route(call_id, route))
+            .and_then(|rpc| {
+                rpc.remove_server_origin_outbound(
+                    call_id,
+                    crate::protocol::method::AGENT_SUBSCRIBE_EVENTS,
+                )
+            })
             .is_some();
         if removed {
             self.clear_agent_subscription_for_route(call_id, route);
@@ -1224,10 +1252,8 @@ mod tests {
 
     use super::*;
     use crate::protocol::{Route, method};
-    use crate::rpc::{
-        OutboundCallState, RpcLocalOriginOutboundStart, RpcPeerStreamOutboundStart,
-        RpcRoutedUnaryStart,
-    };
+    use crate::rpc::OutboundCallState;
+    use crate::server::{EndpointUnaryStart, LocalOriginOutboundStart, PeerRoutingOutboundStart};
 
     fn test_host(id: Uuid, name: &str, version: &str) -> Host {
         Host {
@@ -1591,7 +1617,7 @@ mod tests {
         user_state.mark_peer_link(peer.clone());
         user_state.apply_peer_host_up(&peer, test_host(host_id, "peer-host", "v1"), Route::empty());
         let rpc = user_state.rpc_for_link(&peer).unwrap();
-        rpc.register_peer_stream_outbound(RpcPeerStreamOutboundStart {
+        rpc.register_peer_routing_outbound(PeerRoutingOutboundStart {
             link: peer.clone(),
             call_id: call_id.clone(),
             method: method::ROUTING_SUBSCRIBE_EVENTS,
@@ -1627,7 +1653,7 @@ mod tests {
         user_state
             .rpc_for_link(&link)
             .unwrap()
-            .register_routed_unary(RpcRoutedUnaryStart {
+            .register_endpoint_unary(EndpointUnaryStart {
                 tx,
                 owner_link: link.clone(),
                 reply_src: Route::empty(),
@@ -1657,7 +1683,7 @@ mod tests {
         user_state
             .rpc_for_link(&link)
             .unwrap()
-            .register_local_origin_outbound(RpcLocalOriginOutboundStart {
+            .register_local_origin_outbound(LocalOriginOutboundStart {
                 call_id: call_id.clone(),
                 method: method::AGENT_CREATE,
                 state: OutboundCallState::AwaitingResponse,
