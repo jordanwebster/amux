@@ -15,6 +15,26 @@ use crate::protocol::route::Route;
 #[serde(tag = "type", rename_all = "snake_case")]
 pub enum RoutingEvent {
     SnapshotComplete,
+    HostUp {
+        host: Host,
+        route: Route,
+    },
+    HostDown {
+        id: Uuid,
+        route: Route,
+    },
+    #[serde(other)]
+    Unknown,
+}
+
+/// Routed host-inventory stream events.
+///
+/// These are carried in routed protobuf stream items for
+/// `AgentService.SubscribeAgentEvents`.
+#[derive(Serialize, Deserialize, Debug, Clone)]
+#[serde(tag = "type", rename_all = "snake_case")]
+pub enum AgentEvent {
+    SnapshotComplete,
     AgentUp {
         agent_id: Uuid,
         host_id: Uuid,
@@ -31,14 +51,6 @@ pub enum RoutingEvent {
     AgentDown {
         agent_id: Uuid,
     },
-    HostUp {
-        host: Host,
-        route: Route,
-    },
-    HostDown {
-        id: Uuid,
-        route: Route,
-    },
     #[serde(other)]
     Unknown,
 }
@@ -47,11 +59,20 @@ impl RoutingEvent {
     pub fn type_label(&self) -> &'static str {
         match self {
             Self::SnapshotComplete => "Peer::SnapshotComplete",
-            Self::AgentUp { .. } => "Peer::AgentUp",
-            Self::AgentDown { .. } => "Peer::AgentDown",
             Self::HostUp { .. } => "Peer::HostUp",
             Self::HostDown { .. } => "Peer::HostDown",
             Self::Unknown => "Peer::Unknown",
+        }
+    }
+}
+
+impl AgentEvent {
+    pub fn type_label(&self) -> &'static str {
+        match self {
+            Self::SnapshotComplete => "Agent::SnapshotComplete",
+            Self::AgentUp { .. } => "Agent::AgentUp",
+            Self::AgentDown { .. } => "Agent::AgentDown",
+            Self::Unknown => "Agent::Unknown",
         }
     }
 }

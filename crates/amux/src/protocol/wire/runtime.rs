@@ -5,9 +5,9 @@ use prost::Message as ProstMessage;
 use uuid::Uuid;
 
 use crate::protocol::message::{
-    CallId, Capabilities, FrameBody, GoAway, Host, LocalFrame, Message, PeerFrame, ProtocolError,
-    ReauthRequest, ReauthResponse, ResponseFrame, RoutedFrame, RoutedFrameMessage, RoutingEvent,
-    ShutdownReason, SupportedAgentType,
+    AgentEvent, CallId, Capabilities, FrameBody, GoAway, Host, LocalFrame, Message, PeerFrame,
+    ProtocolError, ReauthRequest, ReauthResponse, ResponseFrame, RoutedFrame, RoutedFrameMessage,
+    RoutingEvent, ShutdownReason, SupportedAgentType,
 };
 use crate::protocol::route::Route;
 use crate::protocol::wire::{self, frame_body, response, transport_message};
@@ -37,6 +37,15 @@ pub(crate) fn encode_routing_event(event: &RoutingEvent) -> Result<Vec<u8>, wire
 pub(crate) fn decode_routing_event(payload: &[u8]) -> Result<RoutingEvent, wire::DecodeError> {
     let event = wire::SubscribeRoutingEventsResponse::decode(payload)?;
     routing_event_from_wire(event)
+}
+
+pub(crate) fn encode_agent_event(event: &AgentEvent) -> Result<Vec<u8>, wire::EncodeError> {
+    Ok(agent_event_to_wire(event)?.encode_to_vec())
+}
+
+pub(crate) fn decode_agent_event(payload: &[u8]) -> Result<AgentEvent, wire::DecodeError> {
+    let event = wire::SubscribeAgentEventsResponse::decode(payload)?;
+    agent_event_from_wire(event)
 }
 
 fn message_to_wire(message: &Message) -> Result<wire::TransportMessage, wire::EncodeError> {
@@ -269,37 +278,6 @@ fn routing_event_to_wire(
                 wire::SnapshotComplete {},
             )
         }
-        RoutingEvent::AgentUp {
-            agent_id,
-            host_id,
-            name,
-            command,
-            working_dir,
-            agent_type,
-            io_protocols,
-            readonly,
-            args,
-            created_at,
-        } => wire::subscribe_routing_events_response::Event::AgentUp(wire::AgentUp {
-            agent: Some(wire::Agent {
-                agent_id: uuid_to_bytes(*agent_id),
-                host_id: uuid_to_bytes(*host_id),
-                name: name.clone(),
-                command: command.clone(),
-                working_dir: working_dir.to_string_lossy().into_owned(),
-                agent_type: agent_type.clone(),
-                io_protocols: io_protocols.clone(),
-                readonly: *readonly,
-                args: args.clone(),
-                created_at_unix_ms: created_at.timestamp_millis(),
-            }),
-        }),
-        RoutingEvent::AgentDown { agent_id } => {
-            wire::subscribe_routing_events_response::Event::AgentDown(wire::AgentDown {
-                agent_id: uuid_to_bytes(*agent_id),
-                reason: None,
-            })
-        }
         RoutingEvent::HostUp { host, route } => {
             wire::subscribe_routing_events_response::Event::HostUp(wire::HostUp {
                 host: Some(host_to_wire(host)),
@@ -341,23 +319,6 @@ fn routing_event_from_wire(
                 route: required_route_from_wire("HostDown.route", event.route)?,
             })
         }
-        wire::subscribe_routing_events_response::Event::AgentUp(event) => {
-            let agent = event
-                .agent
-                .ok_or_else(|| wire::DecodeError::Invalid("missing AgentUp agent".into()))?;
-            agent_event_from_wire(agent)
-        }
-        wire::subscribe_routing_events_response::Event::AgentUpdated(event) => {
-            let agent = event
-                .agent
-                .ok_or_else(|| wire::DecodeError::Invalid("missing AgentUpdated agent".into()))?;
-            agent_event_from_wire(agent)
-        }
-        wire::subscribe_routing_events_response::Event::AgentDown(event) => {
-            Ok(RoutingEvent::AgentDown {
-                agent_id: uuid_from_bytes("agent_id", event.agent_id)?,
-            })
-        }
         wire::subscribe_routing_events_response::Event::SnapshotComplete(_) => {
             Ok(RoutingEvent::SnapshotComplete)
         }
@@ -375,12 +336,85 @@ fn host_event_from_wire(
     })
 }
 
-fn agent_event_from_wire(agent: wire::Agent) -> Result<RoutingEvent, wire::DecodeError> {
+fn agent_event_to_wire(
+    event: &AgentEvent,
+) -> Result<wire::SubscribeAgentEventsResponse, wire::EncodeError> {
+    let event = match event {
+        AgentEvent::SnapshotComplete => {
+            wire::subscribe_agent_events_response::Event::SnapshotComplete(
+                wire::SnapshotComplete {},
+            )
+        }
+        AgentEvent::AgentUp {
+            agent_id,
+            host_id,
+            name,
+            command,
+            working_dir,
+            agent_type,
+            io_protocols,
+            readonly,
+            args,
+            created_at,
+        } => wire::subscribe_agent_events_response::Event::AgentUp(wire::AgentUp {
+            agent: Some(wire::Agent {
+                agent_id: uuid_to_bytes(*agent_id),
+                host_id: uuid_to_bytes(*host_id),
+                name: name.clone(),
+                command: command.clone(),
+                working_dir: working_dir.to_string_lossy().into_owned(),
+                agent_type: agent_type.clone(),
+                io_protocols: io_protocols.clone(),
+                readonly: *readonly,
+                args: args.clone(),
+                created_at_unix_ms: created_at.timestamp_millis(),
+            }),
+        }),
+        AgentEvent::AgentDown { agent_id } => {
+            wire::subscribe_agent_events_response::Event::AgentDown(wire::AgentDown {
+                agent_id: uuid_to_bytes(*agent_id),
+                reason: None,
+            })
+        }
+        AgentEvent::Unknown => {
+            return Err(wire::EncodeError::Invalid(
+                "cannot encode unknown agent event".to_string(),
+            ));
+        }
+    };
+    Ok(wire::SubscribeAgentEventsResponse { event: Some(event) })
+}
+
+fn agent_event_from_wire(
+    event: wire::SubscribeAgentEventsResponse,
+) -> Result<AgentEvent, wire::DecodeError> {
+    let event = event
+        .event
+        .ok_or_else(|| wire::DecodeError::Invalid("missing AgentEvent event".into()))?;
+    match event {
+        wire::subscribe_agent_events_response::Event::AgentUp(event) => {
+            let agent = event
+                .agent
+                .ok_or_else(|| wire::DecodeError::Invalid("missing AgentUp agent".into()))?;
+            agent_up_from_wire(agent)
+        }
+        wire::subscribe_agent_events_response::Event::AgentDown(event) => {
+            Ok(AgentEvent::AgentDown {
+                agent_id: uuid_from_bytes("agent_id", event.agent_id)?,
+            })
+        }
+        wire::subscribe_agent_events_response::Event::SnapshotComplete(_) => {
+            Ok(AgentEvent::SnapshotComplete)
+        }
+    }
+}
+
+fn agent_up_from_wire(agent: wire::Agent) -> Result<AgentEvent, wire::DecodeError> {
     let created_at = Utc
         .timestamp_millis_opt(agent.created_at_unix_ms)
         .single()
         .ok_or_else(|| wire::DecodeError::Invalid("invalid agent created_at".into()))?;
-    Ok(RoutingEvent::AgentUp {
+    Ok(AgentEvent::AgentUp {
         agent_id: uuid_from_bytes("agent_id", agent.agent_id)?,
         host_id: uuid_from_bytes("host_id", agent.host_id)?,
         name: agent.name,

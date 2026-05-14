@@ -34,6 +34,7 @@ pub(crate) enum MethodKind {
 pub(crate) const ROUTING_SUBSCRIBE_EVENTS_NAME: &str =
     "/amux.v1.RoutingService/SubscribeRoutingEvents";
 
+pub(crate) const AGENT_SUBSCRIBE_EVENTS_NAME: &str = "/amux.v1.AgentService/SubscribeAgentEvents";
 pub(crate) const AGENT_LIST_NAME: &str = "/amux.v1.AgentService/ListAgents";
 pub(crate) const AGENT_RESOLVE_NAME: &str = "/amux.v1.AgentService/ResolveAgent";
 pub(crate) const AGENT_CREATE_NAME: &str = "/amux.v1.AgentService/CreateAgent";
@@ -59,6 +60,12 @@ pub(crate) const AGENT_LIST: MethodSpec = MethodSpec {
     name: AGENT_LIST_NAME,
     scope: MethodScope::Local,
     kind: MethodKind::Unary,
+};
+
+pub(crate) const AGENT_SUBSCRIBE_EVENTS: MethodSpec = MethodSpec {
+    name: AGENT_SUBSCRIBE_EVENTS_NAME,
+    scope: MethodScope::Routed,
+    kind: MethodKind::ServerStreaming,
 };
 
 pub(crate) const AGENT_RESOLVE: MethodSpec = MethodSpec {
@@ -129,6 +136,7 @@ pub(crate) const ADMIN_CONNECT_TO_SERVER: MethodSpec = MethodSpec {
 
 pub(crate) const ALL: &[MethodSpec] = &[
     ROUTING_SUBSCRIBE_EVENTS,
+    AGENT_SUBSCRIBE_EVENTS,
     AGENT_LIST,
     AGENT_RESOLVE,
     AGENT_CREATE,
@@ -267,6 +275,7 @@ mod tests {
     fn method_scopes_match_protocol_contract() {
         let expected_scopes = [
             (ROUTING_SUBSCRIBE_EVENTS_NAME, MethodScope::Peer),
+            (AGENT_SUBSCRIBE_EVENTS_NAME, MethodScope::Routed),
             (AGENT_LIST_NAME, MethodScope::Local),
             (AGENT_RESOLVE_NAME, MethodScope::Local),
             (AGENT_CREATE_NAME, MethodScope::Routed),

@@ -81,7 +81,7 @@ pub(super) async fn handle_routable(
         };
 
     if ctx.state.read().await.is_cloud_server() {
-        return reject_cloud_relay_endpoint_payload(tx, src, call_id).await;
+        return reject_cloud_relay_endpoint_payload(tx, src, call_id, payload).await;
     }
 
     let body = match crate::protocol::wire::decode_frame_body(&payload) {
@@ -122,21 +122,31 @@ async fn reject_cloud_relay_endpoint_payload(
     tx: &mpsc::Sender<Message>,
     src: Route,
     call_id: CallId,
+    request_payload: Vec<u8>,
 ) -> crate::server::connection::Result<()> {
     let Some((reply_src, reply_dst)) = Route::reply(src) else {
         tracing::warn!("dropping endpoint routed payload to cloud relay with empty src route");
         return Ok(());
     };
-    let payload = crate::protocol::wire::encode_frame_body(&FrameBody::Response(
-        ResponseFrame::Error(ProtocolError::ServerError {
+    let error = match crate::protocol::wire::decode_frame_body(&request_payload) {
+        Ok(FrameBody::Request(request))
+            if request.method == crate::protocol::method::AGENT_SUBSCRIBE_EVENTS_NAME =>
+        {
+            ProtocolError::FailedPrecondition {
+                message: "host has no supported agent types".to_string(),
+            }
+        }
+        _ => ProtocolError::ServerError {
             message: "cloud relays do not host routed service endpoints".to_string(),
-        }),
-    ))
-    .map_err(|error| {
-        crate::server::connection::ConnectionError::Config(format!(
-            "failed to encode cloud relay endpoint rejection: {error}"
-        ))
-    })?;
+        },
+    };
+    let payload =
+        crate::protocol::wire::encode_frame_body(&FrameBody::Response(ResponseFrame::Error(error)))
+            .map_err(|error| {
+                crate::server::connection::ConnectionError::Config(format!(
+                    "failed to encode cloud relay endpoint rejection: {error}"
+                ))
+            })?;
 
     let _ = tx
         .send(Message::Routed(RoutedFrame {
@@ -209,11 +219,20 @@ pub(super) async fn handle_routing_error(
             );
             None
         };
-        let (cancelled, cleanup_jobs) = if let Some(failed_route) = cleanup_route {
+        let (cancelled, cleanup_jobs, removed_agent_subscription) = if let Some(failed_route) =
+            cleanup_route
+        {
             let mut us = ctx.user_state.write().await;
-            crate::server::cancel_open_session_for_route_and_call(&mut us, &failed_route, &call_id)
+            let removed_agent_subscription =
+                us.remove_agent_subscription_for_route_and_call(&call_id, &failed_route);
+            let (cancelled, cleanup_jobs) = crate::server::cancel_open_session_for_route_and_call(
+                &mut us,
+                &failed_route,
+                &call_id,
+            );
+            (cancelled, cleanup_jobs, removed_agent_subscription)
         } else {
-            (0, Vec::new())
+            (0, Vec::new(), false)
         };
         crate::server::finish_open_session_cleanup_jobs(&ctx.user_state, cleanup_jobs).await;
         if cancelled != 0 {
@@ -221,6 +240,9 @@ pub(super) async fn handle_routing_error(
                 count = cancelled,
                 "cancelled open sessions after routing error"
             );
+        }
+        if removed_agent_subscription {
+            tracing::debug!("removed agent subscription after routing error");
         }
         let _ = tx;
     }

@@ -242,7 +242,7 @@ Every protobuf RPC method has an explicit scope in
 | --- | --- | --- |
 | Local | `AgentService/ListAgents`, `AgentService/ResolveAgent`, `HookService/HandleHook`, `AdminService/*` | `LocalFrame` |
 | Peer | `RoutingService/SubscribeRoutingEvents` | `PeerFrame` |
-| Routed | `AgentService/CreateAgent`, `RenameAgent`, `DeleteAgent`, `OpenSession` | `RoutedFrame` |
+| Routed | `AgentService/SubscribeAgentEvents`, `CreateAgent`, `RenameAgent`, `DeleteAgent`, `OpenSession` | `RoutedFrame` |
 
 Dispatch rejects known methods used in the wrong scope with
 `PermissionDenied`, and unknown methods with `Unimplemented`.
@@ -445,8 +445,7 @@ Peer topology is propagated through the peer-scoped
 Initial snapshot order is:
 
 1. hosts
-2. agents
-3. `SnapshotComplete`
+2. `SnapshotComplete`
 
 Events are:
 
@@ -454,17 +453,17 @@ Events are:
 enum RoutingEvent {
     HostUp { id, name, route, version },
     HostDown { id, route },
-    AgentUp { agent_id, host_id, name, command, working_dir,
-              agent_type, io_protocols, readonly, args, created_at },
-    AgentDown { agent_id },
     SnapshotComplete,
 }
 ```
 
 Host routes are hop-relative. When a peer host event arrives, the receiver
 prepends the inbound peer link before storing or rebroadcasting it. Agent
-events are route-free host inventory updates; receivers accept them only after
-they know a route to the agent's `host_id` through the announcing peer.
+inventory is not part of routing; interested non-cloud servers open a routed
+`AgentService/SubscribeAgentEvents` stream for hosts whose capabilities include
+at least one `supported_agent_type`.
+Cloud relays advertise no supported agent types; normal hosts advertise
+`claude`, plus `test-agent` in dev/test builds.
 
 The protobuf `Host` message is route-free identity and metadata. `HostUp`
 carries the route for that announcement:
@@ -481,22 +480,15 @@ message HostUp {
   Route route = 2;
 }
 
-message AgentUp {
-  Agent agent = 1;
-}
-
-message AgentDown {
-  bytes agent_id = 1;
-  optional string reason = 2;
-}
 ```
 
 Important topology rules:
 
 - Cloud relays do not announce themselves as hosts in initial snapshots.
-- `HostUp` must exist before an `AgentUp` for that host is accepted.
-- `AgentUp`/`AgentDown` are host inventory events; they do not reserve or
-  remove connection links or route contexts.
+- `HostUp` is the discovery point for routed agent subscriptions.
+- `AgentUp`/`AgentDown` are host inventory events carried by
+  `AgentService/SubscribeAgentEvents`; they do not reserve or remove
+  connection links or route contexts.
 - `HostDown` and link closure remove route contexts and cancel affected
   OpenSession/RPC state. A host context and its agents are removed only after
   the last route to that host disappears.
@@ -560,16 +552,23 @@ Network peers cannot invoke local methods.
 
 `RoutingService/SubscribeRoutingEvents` runs only on peer links. It is a
 server-streaming RPC carried by `PeerFrame`. The stream stays open for the
-connection lifetime and carries topology changes.
+connection lifetime and carries host topology changes.
 
 ### Routed Agent Services
 
 Routed agent services are endpoint calls to an agent host:
 
+- `SubscribeAgentEvents`
 - `CreateAgent`
 - `RenameAgent`
 - `DeleteAgent`
 - `OpenSession`
+
+`SubscribeAgentEvents` is a routed server-streaming RPC. The request includes
+the target `host_id`; the endpoint rejects mismatches and hosts with no
+`supported_agent_types`. The snapshot is current local agents, then
+`SnapshotComplete`, followed by live `AgentUp`/`AgentDown` events. `AgentUp` is
+an upsert.
 
 `CreateAgent` supports Claude PTY runtime and dev/test agents. The protobuf
 schema also contains `ClaudeSdkRuntime`, but the service currently returns
@@ -623,11 +622,12 @@ Creating a local agent:
 2. Checks UUID and name uniqueness.
 3. Constructs and starts the `AgentSession`.
 4. Registers the local agent in per-user local agent state.
-5. Broadcasts `AgentUp`.
+5. Emits `AgentUp` to active `SubscribeAgentEvents` subscribers.
 6. Starts a task that sends `SessionEvent::Ended` when the process exits.
 
-Deleting or process exit withdraws the agent, broadcasts `AgentDown`, closes
-matching OpenSession calls, and stops the session as needed.
+Deleting or process exit withdraws the agent, emits `AgentDown` to active
+`SubscribeAgentEvents` subscribers, closes matching OpenSession calls, and
+stops the session as needed.
 
 See `crates/amux/src/agent/` and
 `crates/amux/src/server/routing/agents.rs`.

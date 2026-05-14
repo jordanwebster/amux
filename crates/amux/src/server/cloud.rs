@@ -158,7 +158,11 @@ async fn run_cloud_connection(
 ) -> std::result::Result<(), CloudConnectionError> {
     let host = {
         let state = state.read().await;
-        local_host(state.host_id, &state.config.host_name)
+        local_host(
+            state.host_id,
+            &state.config.host_name,
+            state.is_cloud_server,
+        )
     };
     let local_host_id = host.id;
     let conn = match CloudConnection::connect(config, host).await {
@@ -251,6 +255,9 @@ async fn run_cloud_connection(
             let change = us.apply_direct_peer_host_up(&link, host);
             for event in &change.events {
                 super::broadcast_topology_event(&mut us, event, Some(&link));
+                if let super::routing::TopologyEvent::HostUp { host, .. } = event {
+                    super::maybe_start_agent_subscription(&mut us, host.id, true);
+                }
             }
         }
         let initial_messages: Vec<Message> = remote_routing_role

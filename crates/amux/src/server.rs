@@ -18,8 +18,8 @@ mod state;
 
 pub(crate) use connection::ConnectionError;
 pub(crate) use debug::dump_server_debug_info;
-pub(crate) use host::local_host;
 pub(in crate::server) use host::validate_remote_host;
+pub(crate) use host::{local_capabilities, local_host};
 pub(crate) use open_session_lifecycle::{
     OpenSessionRuntime, OpenSessionStructuredInput, OpenSessionStructuredInputJob,
     OpenSessionStructuredInputPayload, begin_open_sessions_closing_for_agent,
@@ -33,7 +33,8 @@ pub(in crate::server) use open_session_lifecycle::{
 };
 pub(crate) use routing::{
     CreateAgentError, RenameAgentError, broadcast_topology_event, create_agent_record,
-    delete_local_agent, initial_routing_events, rename_local_agent_record, withdraw_agent,
+    delete_local_agent, initial_routing_events, maybe_start_agent_subscription,
+    rename_local_agent_record, withdraw_agent,
 };
 pub(crate) use rpc_dispatcher::RpcDispatcher;
 pub(in crate::server) use rpc_dispatcher::RpcInboundCloseTarget;

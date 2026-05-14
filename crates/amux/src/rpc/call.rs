@@ -69,6 +69,12 @@ pub(crate) struct RpcInboundServerStream {
     pub(crate) output: RpcPeerStreamSink,
 }
 
+#[derive(Debug)]
+pub(crate) struct RpcInboundRoutedServerStream {
+    pub(crate) handle: RpcInboundCallHandle,
+    pub(crate) output: RpcRoutedSink,
+}
+
 #[derive(Debug, Clone)]
 pub(crate) enum RpcInboundFrameTarget {
     ActiveStream {
@@ -117,6 +123,16 @@ pub(crate) struct RpcRoutedUnaryStart {
     pub(crate) method: MethodSpec,
 }
 
+pub(crate) struct RpcRoutedServerStreamStart {
+    pub(crate) tx: mpsc::Sender<Message>,
+    pub(crate) owner_link: Link,
+    pub(crate) reply_src: Route,
+    pub(crate) reply_dst: Route,
+    pub(crate) call_id: CallId,
+    pub(crate) method: MethodSpec,
+    pub(crate) dedup_key: Option<DedupKey>,
+}
+
 pub(crate) struct RpcServerStreamStart {
     pub(crate) tx: mpsc::Sender<Message>,
     pub(crate) call_id: CallId,
@@ -146,8 +162,22 @@ pub(crate) struct RpcPeerStreamOutboundStart {
     pub(crate) method: MethodSpec,
 }
 
+pub(crate) struct RpcAgentSubscriptionOutboundStart {
+    pub(crate) host_id: Uuid,
+    pub(crate) route: Route,
+    pub(crate) call_id: CallId,
+    pub(crate) method: MethodSpec,
+}
+
 #[derive(Debug, Clone)]
 pub(crate) struct InboundCallResources {
+    pub(crate) owner_link: Link,
+    pub(crate) output: RpcRoutedSink,
+}
+
+#[derive(Debug, Clone)]
+pub(crate) struct RpcActiveInboundRoutedSink {
+    pub(crate) handle: RpcInboundCallHandle,
     pub(crate) owner_link: Link,
     pub(crate) output: RpcRoutedSink,
 }
@@ -190,6 +220,10 @@ pub(crate) enum OutboundCallResources {
     PeerRoutingSubscription {
         link: Link,
     },
+    AgentSubscription {
+        host_id: Uuid,
+        route: Route,
+    },
 }
 
 #[derive(Debug, Clone)]
@@ -209,6 +243,7 @@ impl OutboundCallResources {
                 request_dst,
             } => Some((owner_link, request_src, request_dst)),
             Self::ClientInbox { .. } | Self::PeerRoutingSubscription { .. } => None,
+            Self::AgentSubscription { .. } => None,
         }
     }
 
@@ -219,7 +254,9 @@ impl OutboundCallResources {
                 request_src,
                 request_dst,
             } => Some((owner_link, request_src, request_dst)),
-            Self::ClientInbox { .. } | Self::PeerRoutingSubscription { .. } => None,
+            Self::ClientInbox { .. }
+            | Self::PeerRoutingSubscription { .. }
+            | Self::AgentSubscription { .. } => None,
         }
     }
 }

@@ -1,7 +1,7 @@
 use uuid::Uuid;
 
 use crate::agent::Agent;
-use crate::protocol::message::{Host, RoutingEvent};
+use crate::protocol::message::{AgentEvent, Host, RoutingEvent};
 use crate::protocol::route::Route;
 
 #[derive(Debug, Clone)]
@@ -27,20 +27,13 @@ pub(in crate::server) struct PeerHostDownChange {
 }
 
 #[derive(Debug, Clone)]
-pub(in crate::server) struct AgentRemovedChange {
-    pub(in crate::server) event: TopologyEvent,
-}
-
-#[derive(Debug, Clone)]
 pub(in crate::server) struct PeerAgentUpChange {
-    pub(in crate::server) event: Option<TopologyEvent>,
     pub(in crate::server) ignored: Option<PeerAgentUpIgnored>,
 }
 
 impl PeerAgentUpChange {
     pub(in crate::server) fn ignored(ignored: PeerAgentUpIgnored) -> Self {
         Self {
-            event: None,
             ignored: Some(ignored),
         }
     }
@@ -55,14 +48,14 @@ pub(in crate::server) enum PeerAgentUpIgnored {
 
 #[derive(Debug, Clone)]
 pub(in crate::server) struct PeerAgentDownChange {
-    pub(in crate::server) removed: Option<AgentRemovedChange>,
+    pub(in crate::server) removed: bool,
     pub(in crate::server) ignored: Option<PeerAgentDownIgnored>,
 }
 
 impl PeerAgentDownChange {
     pub(in crate::server) fn ignored(ignored: PeerAgentDownIgnored) -> Self {
         Self {
-            removed: None,
+            removed: false,
             ignored: Some(ignored),
         }
     }
@@ -93,10 +86,21 @@ impl TopologyEvent {
                 id: *id,
                 route: route.clone(),
             },
-            Self::AgentUp { agent } => agent.routing_event(),
-            Self::AgentDown { agent_id } => RoutingEvent::AgentDown {
+            Self::AgentUp { .. } | Self::AgentDown { .. } => {
+                unreachable!("agent topology events are not routing events")
+            }
+        }
+    }
+
+    pub(in crate::server) fn to_agent_event(&self) -> AgentEvent {
+        match self {
+            Self::AgentUp { agent } => agent.agent_event(),
+            Self::AgentDown { agent_id } => AgentEvent::AgentDown {
                 agent_id: *agent_id,
             },
+            Self::HostUp { .. } | Self::HostDown { .. } => {
+                unreachable!("host topology events are not agent events")
+            }
         }
     }
 }

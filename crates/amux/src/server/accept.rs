@@ -471,7 +471,11 @@ pub(super) async fn accept_handshake<T: Transport>(
         None
     } else {
         let state = state.read().await;
-        Some(local_host(state.host_id(), state.host_name()))
+        Some(local_host(
+            state.host_id(),
+            state.host_name(),
+            state.is_cloud_server(),
+        ))
     };
 
     // Route is inserted — if the success write fails, clean up the stale route
@@ -568,6 +572,7 @@ pub(super) async fn accept_connection<T: TransportSplit>(
     );
     tracing::info!(parent: &conn_span, "connection established");
 
+    let is_cloud_server = local_routing_role == RoutingRole::Relay;
     let initial_messages = if !is_local {
         let rpc = {
             let mut us = user_state.write().await;
@@ -579,6 +584,9 @@ pub(super) async fn accept_connection<T: TransportSplit>(
                 let change = us.apply_direct_peer_host_up(&link, host);
                 for event in &change.events {
                     super::broadcast_topology_event(&mut us, event, Some(&link));
+                    if let super::routing::TopologyEvent::HostUp { host, .. } = event {
+                        super::maybe_start_agent_subscription(&mut us, host.id, is_cloud_server);
+                    }
                 }
             }
             us.rpc_for_link(&link)
@@ -712,7 +720,11 @@ pub(super) async fn tcp_connect(
     let (host, randomise) = {
         let state = state.read().await;
         (
-            local_host(state.host_id, &state.config.host_name),
+            local_host(
+                state.host_id,
+                &state.config.host_name,
+                state.is_cloud_server,
+            ),
             state.config.randomise_link_name,
         )
     };
@@ -776,6 +788,9 @@ pub(super) async fn tcp_connect(
             let change = us.apply_direct_peer_host_up(&link, host);
             for event in &change.events {
                 super::broadcast_topology_event(&mut us, event, Some(&link));
+                if let super::routing::TopologyEvent::HostUp { host, .. } = event {
+                    super::maybe_start_agent_subscription(&mut us, host.id, false);
+                }
             }
         }
         let routing_call_id = remote_routing_role
@@ -896,7 +911,7 @@ mod tests {
         connect_request_with_host(
             link_name,
             versions,
-            Some(local_host(Uuid::from_u128(77), "peer")),
+            Some(local_host(Uuid::from_u128(77), "peer", false)),
         )
     }
 
@@ -1052,7 +1067,7 @@ mod tests {
         let mut transport = FakeTransport::new(vec![Ok(connect_request_with_role(
             "observer-link",
             vec![PROTOCOL_VERSION],
-            Some(local_host(Uuid::from_u128(88), "observer")),
+            Some(local_host(Uuid::from_u128(88), "observer", false)),
             RoutingRole::Observer,
         ))]);
 
@@ -1129,7 +1144,7 @@ mod tests {
             .write_frame(&connect_request_with_role(
                 "relay-link",
                 vec![PROTOCOL_VERSION],
-                Some(local_host(Uuid::from_u128(88), "relay")),
+                Some(local_host(Uuid::from_u128(88), "relay", true)),
                 RoutingRole::Relay,
             ))
             .await
@@ -1187,7 +1202,7 @@ mod tests {
         let mut transport = FakeTransport::new(vec![Ok(connect_request_with_host(
             "peer-link",
             vec![PROTOCOL_VERSION],
-            Some(local_host(own_host_id, "same-host")),
+            Some(local_host(own_host_id, "same-host", false)),
         ))]);
 
         let result = accept_handshake(&mut transport, &state, false, false, Some(180)).await;

@@ -18,4 +18,4 @@ pub use envelope::{
     FrameBody, GoAway, LocalFrame, Message, PeerFrame, ReauthRequest, ReauthResponse, RequestFrame,
     ResponseFrame, RoutedFrame, RoutedFrameMessage,
 };
-pub use routing::RoutingEvent;
+pub use routing::{AgentEvent, RoutingEvent};

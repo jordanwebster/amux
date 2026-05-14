@@ -397,6 +397,40 @@ fn inbound_frame_target_identifies_active_no_input_calls() {
 }
 
 #[test]
+fn routed_server_stream_activates_after_snapshot() {
+    let (tx, _outbound_rx) = mpsc::channel(1);
+    let mut state = RpcState::new();
+    let call_id = call_id(42);
+
+    let stream = state
+        .register_routed_server_stream(RpcRoutedServerStreamStart {
+            tx,
+            owner_link: Link::new("owner").unwrap(),
+            reply_src: route("server"),
+            reply_dst: route("client"),
+            call_id: call_id.clone(),
+            method: method::AGENT_SUBSCRIBE_EVENTS,
+            dedup_key: None,
+        })
+        .unwrap();
+
+    assert!(matches!(
+        state.inbound_frame_target_for_call(&call_id),
+        Some(RpcInboundFrameTarget::NotAccepting {
+            state: InboundCallState::Starting
+        })
+    ));
+
+    assert!(state.activate_inbound_for_handle(&stream.handle));
+    assert!(matches!(
+        state.inbound_frame_target_for_call(&call_id),
+        Some(RpcInboundFrameTarget::ActiveNoInput {
+            method: method::AGENT_SUBSCRIBE_EVENTS
+        })
+    ));
+}
+
+#[test]
 fn inbound_frame_target_reports_closing_calls_as_not_accepting() {
     let (tx, _outbound_rx) = mpsc::channel(1);
     let mut state = RpcState::new();

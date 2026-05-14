@@ -213,15 +213,37 @@ async fn peer_routing_subscription_sends_snapshot_complete_without_self_host() {
 }
 
 #[tokio::test]
-async fn peer_routing_subscription_snapshot_includes_existing_agents_before_complete() {
+async fn agent_subscription_snapshot_includes_existing_agents_before_complete() {
     let net = Topology::new().await;
     let agent_id = net.spawn_test_echo_agent("echo").await;
     let mut peer = net.connect_peer("peer").await;
-    let subscription = peer.subscribe_routing_events().await;
+    let subscription = peer.subscribe_agent_events(net.host_id().await).await;
 
     subscription
         .expect_agent_up(&mut peer, agent_id, "echo", TEST_ECHO_V1)
         .await;
+    subscription.expect_snapshot_complete(&mut peer).await;
+    peer.close().await.unwrap();
+}
+
+#[tokio::test]
+async fn agent_subscription_snapshot_handles_large_known_inventory() {
+    let net = Topology::new().await;
+    let mut expected = Vec::new();
+    for idx in 0..300 {
+        let name = format!("echo-{idx:03}");
+        let agent_id = net.spawn_test_echo_agent(&name).await;
+        expected.push((agent_id, name));
+    }
+
+    let mut peer = net.connect_peer("peer").await;
+    let subscription = peer.subscribe_agent_events(net.host_id().await).await;
+
+    for (agent_id, name) in expected {
+        subscription
+            .expect_agent_up(&mut peer, agent_id, &name, TEST_ECHO_V1)
+            .await;
+    }
     subscription.expect_snapshot_complete(&mut peer).await;
     peer.close().await.unwrap();
 }
@@ -238,10 +260,10 @@ async fn duplicate_peer_routing_subscription_returns_already_exists() {
 }
 
 #[tokio::test]
-async fn peer_routing_subscription_streams_live_agent_announcements_after_snapshot() {
+async fn agent_subscription_streams_live_agent_announcements_after_snapshot() {
     let net = Topology::new().await;
     let mut peer = net.connect_peer("peer").await;
-    let subscription = peer.subscribe_routing_events().await;
+    let subscription = peer.subscribe_agent_events(net.host_id().await).await;
 
     subscription.expect_snapshot_complete(&mut peer).await;
 
@@ -254,6 +276,18 @@ async fn peer_routing_subscription_streams_live_agent_announcements_after_snapsh
     net.withdraw_agent(agent_id).await;
 
     subscription.expect_agent_down(&mut peer, agent_id).await;
+    peer.close().await.unwrap();
+}
+
+#[tokio::test]
+async fn agent_subscription_rejects_host_with_no_supported_agent_types() {
+    let net = Topology::new().await;
+    net.set_cloud_server(true).await;
+    let mut peer = net.connect_peer("peer").await;
+    let subscription = peer.subscribe_agent_events(net.host_id().await).await;
+
+    let error = subscription.expect_error(&mut peer).await;
+    assert!(matches!(error, ProtocolError::FailedPrecondition { .. }));
     peer.close().await.unwrap();
 }
 

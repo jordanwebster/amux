@@ -10,7 +10,7 @@ use super::connection::{
     ConnectionContext, ConnectionError, HeartbeatRole, HeartbeatSetup, RunConnection,
     run_connection,
 };
-use super::routing::{broadcast_topology_event, withdraw_agent};
+use super::routing::{broadcast_topology_event, maybe_start_agent_subscription, withdraw_agent};
 use super::{
     ConnectionHandle, LOCAL_USER_ID, ServerState, ServerUserState, local_host, test_helpers,
 };
@@ -20,8 +20,9 @@ use crate::config::Config;
 use crate::protocol::handshake::RoutingRole;
 use crate::protocol::link::Link;
 use crate::protocol::message::{
-    CallId, FrameBody, GoAway, Host, LocalFrame, Message, PeerFrame, ProtocolError, ReauthRequest,
-    RequestFrame, ResponseFrame, RoutedFrame, RoutedFrameMessage, RoutingEvent, ShutdownReason,
+    AgentEvent, CallId, FrameBody, GoAway, Host, LocalFrame, Message, PeerFrame, ProtocolError,
+    ReauthRequest, RequestFrame, ResponseFrame, RoutedFrame, RoutedFrameMessage, RoutingEvent,
+    ShutdownReason,
 };
 use crate::protocol::open_session::{self, OpenSessionOutputEvent, OpenSessionServerFrame};
 use crate::protocol::{Agent, AgentType, CreateAgentRequest, Route, method, wire};
@@ -102,9 +103,17 @@ impl Topology {
         self.state.read().await.host_id
     }
 
+    pub(super) async fn set_cloud_server(&self, is_cloud_server: bool) {
+        self.state.write().await.is_cloud_server = is_cloud_server;
+    }
+
     async fn local_host(&self) -> Host {
         let state = self.state.read().await;
-        local_host(state.host_id, &state.config.host_name)
+        local_host(
+            state.host_id,
+            &state.config.host_name,
+            state.is_cloud_server,
+        )
     }
 
     pub(super) async fn connect_peer_topology(
@@ -201,6 +210,9 @@ impl Topology {
             let change = user_state.apply_direct_peer_host_up(&link, peer_host);
             for event in &change.events {
                 broadcast_topology_event(&mut user_state, event, Some(&link));
+                if let super::routing::TopologyEvent::HostUp { host, .. } = event {
+                    maybe_start_agent_subscription(&mut user_state, host.id, false);
+                }
             }
             let routing_call_id = CallId::from(Uuid::new_v4());
             let initial_messages = vec![Message::Peer(PeerFrame {
@@ -266,7 +278,7 @@ impl Topology {
     ) -> TestConnection {
         let link = Link::new(link).unwrap();
         let (client_transport, server_transport) = memory_transport_pair(256);
-        let (outgoing_tx, outgoing_rx) = mpsc::channel(256);
+        let (outgoing_tx, outgoing_rx) = mpsc::channel(super::state::OUTGOING_MESSAGE_BUFFER);
         let route_handle = ConnectionHandle::new(outgoing_tx);
 
         {
@@ -695,6 +707,27 @@ impl TestConnection {
         RoutingSubscription { call_id }
     }
 
+    pub(super) async fn subscribe_agent_events(&mut self, host_id: Uuid) -> AgentSubscription {
+        let call_id = self.next_call_id();
+        let request = wire::SubscribeAgentEventsRequest {
+            host_id: host_id.as_bytes().to_vec(),
+        }
+        .encode_to_vec();
+        let payload = wire::encode_frame_body(&FrameBody::Request(RequestFrame {
+            method: method::AGENT_SUBSCRIBE_EVENTS_NAME.to_string(),
+            payload: request,
+        }))
+        .unwrap();
+        self.send(routed_payload(
+            Route::from_link(self.link.clone()),
+            Route::empty(),
+            call_id.clone(),
+            payload,
+        ))
+        .await;
+        AgentSubscription { call_id }
+    }
+
     pub(super) async fn expect_duplicate_routing_subscription_rejected(&mut self) {
         let call_id = self.next_call_id();
         self.send(peer_request(
@@ -1048,6 +1081,17 @@ impl RoutingSubscription {
         assert_eq!(id, host_id);
         assert_eq!(event_route, route);
     }
+}
+
+pub(super) struct AgentSubscription {
+    call_id: CallId,
+}
+
+impl AgentSubscription {
+    pub(super) async fn expect_snapshot_complete(&self, peer: &mut TestConnection) {
+        let event = expect_routed_agent_event(peer.recv().await, &self.call_id);
+        assert!(matches!(event, AgentEvent::SnapshotComplete));
+    }
 
     pub(super) async fn expect_agent_up(
         &self,
@@ -1056,8 +1100,8 @@ impl RoutingSubscription {
         name: &str,
         io_protocol: &str,
     ) {
-        let event = expect_peer_routing_event(peer.recv().await, &self.call_id);
-        let RoutingEvent::AgentUp {
+        let event = expect_routed_agent_event(peer.recv().await, &self.call_id);
+        let AgentEvent::AgentUp {
             agent_id: event_agent_id,
             name: event_name,
             io_protocols,
@@ -1075,8 +1119,8 @@ impl RoutingSubscription {
     }
 
     pub(super) async fn expect_agent_down(&self, peer: &mut TestConnection, agent_id: Uuid) {
-        let event = expect_peer_routing_event(peer.recv().await, &self.call_id);
-        let RoutingEvent::AgentDown {
+        let event = expect_routed_agent_event(peer.recv().await, &self.call_id);
+        let AgentEvent::AgentDown {
             agent_id: event_agent_id,
             ..
         } = event
@@ -1084,6 +1128,10 @@ impl RoutingSubscription {
             panic!("expected AgentDown live event, got {event:?}");
         };
         assert_eq!(event_agent_id, agent_id);
+    }
+
+    pub(super) async fn expect_error(&self, peer: &mut TestConnection) -> ProtocolError {
+        expect_routed_response_error(peer.recv().await, &self.call_id)
     }
 }
 
@@ -1120,6 +1168,40 @@ fn expect_peer_routing_event(msg: Message, call_id: &CallId) -> RoutingEvent {
     };
     assert_eq!(&response_call_id, call_id);
     wire::decode_routing_event(&payload).unwrap()
+}
+
+fn expect_routed_agent_event(msg: Message, call_id: &CallId) -> AgentEvent {
+    let Message::Routed(RoutedFrame {
+        call_id: response_call_id,
+        message: RoutedFrameMessage::Payload(payload),
+        ..
+    }) = msg
+    else {
+        panic!("expected routed agent stream item, got {msg:?}");
+    };
+    assert_eq!(&response_call_id, call_id);
+    let FrameBody::StreamItem(payload) = wire::decode_frame_body(&payload).unwrap() else {
+        panic!("expected routed stream item frame");
+    };
+    wire::decode_agent_event(&payload).unwrap()
+}
+
+fn expect_routed_response_error(msg: Message, call_id: &CallId) -> ProtocolError {
+    let Message::Routed(RoutedFrame {
+        call_id: response_call_id,
+        message: RoutedFrameMessage::Payload(payload),
+        ..
+    }) = msg
+    else {
+        panic!("expected routed response error, got {msg:?}");
+    };
+    assert_eq!(&response_call_id, call_id);
+    let FrameBody::Response(ResponseFrame::Error(error)) =
+        wire::decode_frame_body(&payload).unwrap()
+    else {
+        panic!("expected routed response error frame");
+    };
+    error
 }
 
 fn expect_peer_response_error(msg: Message, call_id: &CallId) -> ProtocolError {

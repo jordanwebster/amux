@@ -5,7 +5,7 @@ use crate::protocol::route::Route;
 use crate::server::connection::{
     ConnectionContext, ConnectionError, drain_local_origin_routed_unreachable_for_route,
 };
-use crate::server::routing::broadcast_topology_event;
+use crate::server::routing::{broadcast_topology_event, maybe_start_agent_subscription};
 use crate::server::{
     cancel_open_sessions_for_route_prefix, finish_open_session_cleanup_jobs, validate_remote_host,
 };
@@ -27,9 +27,9 @@ pub(super) async fn handle_announce(
     }
 
     let id = host.id;
-    let host_id = {
+    let (host_id, is_cloud_server) = {
         let state = ctx.state.read().await;
-        state.host_id
+        (state.host_id, state.is_cloud_server)
     };
 
     // Skip our own host announcement
@@ -57,6 +57,9 @@ pub(super) async fn handle_announce(
 
     for event in &change.events {
         broadcast_topology_event(&mut us, event, Some(&ctx.link));
+        if let crate::server::routing::TopologyEvent::HostUp { host, .. } = event {
+            maybe_start_agent_subscription(&mut us, host.id, is_cloud_server);
+        }
     }
 
     Ok(())
@@ -142,8 +145,10 @@ pub(super) async fn handle_withdraw(
     }
     {
         if let Some(withdraw_message) = withdraw_message {
+            let is_cloud_server = ctx.state.read().await.is_cloud_server;
             let mut us = ctx.user_state.write().await;
             broadcast_topology_event(&mut us, &withdraw_message, Some(&ctx.link));
+            maybe_start_agent_subscription(&mut us, id, is_cloud_server);
         }
     }
     finish_open_session_cleanup_jobs(&ctx.user_state, cleanup_jobs).await;
@@ -211,8 +216,8 @@ mod tests {
     #[tokio::test]
     async fn empty_route_host_up_is_rejected_without_changing_direct_host() {
         let (ctx, user_state) = test_context().await;
-        let direct_host = local_host(Uuid::from_u128(123), "peer");
-        let announced_host = local_host(Uuid::from_u128(456), "other");
+        let direct_host = local_host(Uuid::from_u128(123), "peer", false);
+        let announced_host = local_host(Uuid::from_u128(456), "other", false);
         {
             let mut us = user_state.write().await;
             us.apply_direct_peer_host_up(&ctx.link, direct_host.clone());
@@ -237,7 +242,7 @@ mod tests {
     #[tokio::test]
     async fn empty_route_host_down_is_rejected_without_removing_direct_host() {
         let (ctx, user_state) = test_context().await;
-        let direct_host = local_host(Uuid::from_u128(123), "peer");
+        let direct_host = local_host(Uuid::from_u128(123), "peer", false);
         {
             let mut us = user_state.write().await;
             us.apply_direct_peer_host_up(&ctx.link, direct_host.clone());

@@ -6,10 +6,11 @@ use crate::protocol::message::CallId;
 use crate::protocol::method::MethodSpec;
 use crate::rpc::{
     DedupKey, InboundCall, InboundCallResources, InboundCallState, OutboundCall, OutboundCallState,
-    RegisterCallError, RpcDebugSnapshot, RpcInboundBidi, RpcInboundCallHandle, RpcInboundClosing,
-    RpcInboundFrameTarget, RpcInboundServerStream, RpcInboundUnary, RpcLocalOriginOutboundCall,
+    RegisterCallError, RpcAgentSubscriptionOutboundStart, RpcDebugSnapshot, RpcInboundBidi,
+    RpcInboundCallHandle, RpcInboundClosing, RpcInboundFrameTarget, RpcInboundRoutedServerStream,
+    RpcInboundServerStream, RpcInboundUnary, RpcLocalOriginOutboundCall,
     RpcLocalOriginOutboundStart, RpcPeerStreamOutboundStart, RpcRoutedBidiStart,
-    RpcRoutedUnaryStart, RpcServerStreamStart, RpcState,
+    RpcRoutedServerStreamStart, RpcRoutedUnaryStart, RpcServerStreamStart, RpcState,
 };
 
 #[derive(Clone, Default, Debug)]
@@ -70,6 +71,13 @@ impl RpcDispatcher {
         self.write().register_routed_unary(start)
     }
 
+    pub(in crate::server) fn register_routed_server_stream(
+        &self,
+        start: RpcRoutedServerStreamStart,
+    ) -> Result<RpcInboundRoutedServerStream, RegisterCallError> {
+        self.write().register_routed_server_stream(start)
+    }
+
     pub(crate) fn register_routed_bidi(
         &self,
         start: RpcRoutedBidiStart,
@@ -100,6 +108,22 @@ impl RpcDispatcher {
         self.write()
             .register_peer_stream_outbound(start)
             .map(|_| ())
+    }
+
+    pub(in crate::server) fn register_agent_subscription_outbound(
+        &self,
+        start: RpcAgentSubscriptionOutboundStart,
+    ) -> Result<(), RegisterCallError> {
+        self.write()
+            .register_agent_subscription_outbound(start)
+            .map(|_| ())
+    }
+
+    pub(in crate::server) fn active_inbound_routed_sinks_for_method(
+        &self,
+        method: MethodSpec,
+    ) -> Vec<crate::rpc::RpcActiveInboundRoutedSink> {
+        self.read().active_inbound_routed_sinks_for_method(method)
     }
 
     pub(in crate::server) fn outbound_for_call_matches(
@@ -329,6 +353,23 @@ impl RpcDispatcher {
                 .is_some_and(|(_, request_src, request_dst)| {
                     local_origin_request_route_matches(request_src, request_dst, failed_route)
                 })
+        })
+    }
+
+    pub(in crate::server) fn remove_agent_subscription_outbound_for_route(
+        &self,
+        call_id: &CallId,
+        route: &Route,
+    ) -> Option<OutboundCall> {
+        self.write().remove_outbound_for_call_if(call_id, |call| {
+            call.method == crate::protocol::method::AGENT_SUBSCRIBE_EVENTS
+                && matches!(
+                    &call.resources,
+                    Some(crate::rpc::OutboundCallResources::AgentSubscription {
+                        route: call_route,
+                        ..
+                    }) if call_route == route
+                )
         })
     }
 

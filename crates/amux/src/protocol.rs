@@ -14,10 +14,10 @@ pub use link::{InvalidLinkName, Link};
 #[cfg(any(debug_assertions, test))]
 pub use message::AGENT_TYPE_TEST_AGENT;
 pub use message::{
-    AGENT_TYPE_CLAUDE, AgentType, CallId, Capabilities, CreateAgentRequest, DebugFormat, FrameBody,
-    GoAway, HookProvider, Host, LocalFrame, Message, PeerFrame, ProtocolError, ReauthRequest,
-    ReauthResponse, RenameAgentRequest, RequestFrame, ResponseFrame, RoutedFrame,
-    RoutedFrameMessage, RoutingEvent, SequencedReplayQuery, ShutdownReason, SupportedAgentType,
-    TerminalSize,
+    AGENT_TYPE_CLAUDE, AgentEvent, AgentType, CallId, Capabilities, CreateAgentRequest,
+    DebugFormat, FrameBody, GoAway, HookProvider, Host, LocalFrame, Message, PeerFrame,
+    ProtocolError, ReauthRequest, ReauthResponse, RenameAgentRequest, RequestFrame, ResponseFrame,
+    RoutedFrame, RoutedFrameMessage, RoutingEvent, SequencedReplayQuery, ShutdownReason,
+    SupportedAgentType, TerminalSize,
 };
 pub use route::Route;

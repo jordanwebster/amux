@@ -4,12 +4,12 @@ use crate::protocol::message::{AGENT_TYPE_CLAUDE, Capabilities, Host, SupportedA
 
 pub(crate) const MAX_SUPPORTED_AGENT_TYPES: usize = 64;
 
-pub(crate) fn local_host(host_id: Uuid, host_name: &str) -> Host {
+pub(crate) fn local_host(host_id: Uuid, host_name: &str, is_cloud_server: bool) -> Host {
     Host {
         id: host_id,
         name: host_name.to_string(),
         version: env!("CARGO_PKG_VERSION").to_string(),
-        capabilities: local_capabilities(),
+        capabilities: local_capabilities(is_cloud_server),
     }
 }
 
@@ -39,7 +39,14 @@ pub(in crate::server) fn validate_remote_host(host: &Host) -> std::result::Resul
     Ok(())
 }
 
-fn local_capabilities() -> Capabilities {
+pub(crate) fn local_capabilities(is_cloud_server: bool) -> Capabilities {
+    if is_cloud_server {
+        return Capabilities {
+            features: Vec::new(),
+            supported_agent_types: Vec::new(),
+        };
+    }
+
     #[cfg(any(debug_assertions, test))]
     let supported_agent_types = vec![
         SupportedAgentType {
@@ -67,7 +74,7 @@ mod tests {
 
     #[test]
     fn validate_remote_host_rejects_too_many_supported_agent_types() {
-        let mut host = local_host(Uuid::from_u128(1), "peer");
+        let mut host = local_host(Uuid::from_u128(1), "peer", false);
         host.capabilities.supported_agent_types = (0..=MAX_SUPPORTED_AGENT_TYPES)
             .map(|idx| SupportedAgentType {
                 agent_type: format!("agent-{idx}"),
@@ -77,5 +84,24 @@ mod tests {
         let error = validate_remote_host(&host).expect_err("host should exceed the cap");
 
         assert!(error.contains("supported agent_type count"));
+    }
+
+    #[test]
+    fn cloud_local_host_advertises_no_supported_agent_types() {
+        let host = local_host(Uuid::from_u128(1), "cloud", true);
+
+        assert!(host.capabilities.supported_agent_types.is_empty());
+    }
+
+    #[test]
+    fn non_cloud_local_host_advertises_claude_agent_type() {
+        let host = local_host(Uuid::from_u128(1), "host", false);
+
+        assert!(
+            host.capabilities
+                .supported_agent_types
+                .iter()
+                .any(|agent| agent.agent_type == AGENT_TYPE_CLAUDE)
+        );
     }
 }

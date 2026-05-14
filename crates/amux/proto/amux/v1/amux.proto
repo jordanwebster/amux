@@ -333,9 +333,7 @@ message Cancel {}
 service RoutingService {
   // PEER-scoped. Host routes are hop-relative; receivers rewrite inbound
   // routes using the link the event arrived on before storing or
-  // rebroadcasting. Host events that make an agent routable must precede
-  // that agent's AgentUp/AgentUpdated. Initial snapshot order is
-  // hosts, agents, then SnapshotComplete.
+  // rebroadcasting. Initial snapshot order is hosts, then SnapshotComplete.
   rpc SubscribeRoutingEvents(SubscribeRoutingEventsRequest) returns (stream SubscribeRoutingEventsResponse);
 }
 
@@ -345,10 +343,6 @@ message SubscribeRoutingEventsResponse {
   oneof event {
     HostUp host_up = 10;
     HostDown host_down = 12;
-
-    AgentUp agent_up = 20;
-    AgentUpdated agent_updated = 21;
-    AgentDown agent_down = 22;
 
     SnapshotComplete snapshot_complete = 100;
   }
@@ -387,9 +381,6 @@ message Agent {
 message AgentUp {
   Agent agent = 1;
 }
-message AgentUpdated {
-  Agent agent = 1;
-}
 message AgentDown {
   bytes agent_id = 1;
   optional string reason = 2;
@@ -400,6 +391,11 @@ message AgentDown {
 // ---------------------------------------------------------------------------
 
 service AgentService {
+  // ROUTED-scoped. Subscribe to the receiving host's agent inventory.
+  // The target host MUST reject requests for a different host_id and hosts
+  // with no supported_agent_types MUST reject this call with FAILED_PRECONDITION.
+  rpc SubscribeAgentEvents(SubscribeAgentEventsRequest) returns (stream SubscribeAgentEventsResponse);
+
   // LOCAL-scoped.
   rpc ListAgents(ListAgentsRequest) returns (ListAgentsResponse);
   rpc ResolveAgent(ResolveAgentRequest) returns (ResolveAgentResponse);
@@ -411,6 +407,19 @@ service AgentService {
 
   // ROUTED-scoped. First client StreamItem must be SessionOpen.
   rpc OpenSession(stream OpenSessionRequest) returns (stream OpenSessionResponse);
+}
+
+message SubscribeAgentEventsRequest {
+  bytes host_id = 1;
+}
+
+message SubscribeAgentEventsResponse {
+  oneof event {
+    AgentUp agent_up = 10;
+    AgentDown agent_down = 11;
+
+    SnapshotComplete snapshot_complete = 100;
+  }
 }
 
 message AgentEntry {

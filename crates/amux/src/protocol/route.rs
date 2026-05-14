@@ -32,7 +32,7 @@ pub struct Route {
 
 impl Route {
     /// Create an empty route (no hops).
-    /// Used in routing events to indicate the agent or host is local to the sender.
+    /// Used in routing events to indicate the host is local to the sender.
     pub fn empty() -> Self {
         Self {
             links: VecDeque::new(),

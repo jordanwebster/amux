@@ -2,17 +2,17 @@ use uuid::Uuid;
 
 use crate::agent::Agent;
 use crate::protocol::Route;
-use crate::protocol::message::RoutingEvent;
+use crate::protocol::message::AgentEvent;
 use crate::server::connection::ConnectionContext;
-use crate::server::routing::{PeerAgentDownIgnored, PeerAgentUpIgnored, broadcast_topology_event};
+use crate::server::routing::{PeerAgentDownIgnored, PeerAgentUpIgnored};
 
-/// Process an AgentUp routing event. Caller must ensure this is the
-/// `RoutingEvent::AgentUp` variant; other variants are a programmer error.
+/// Process an AgentUp inventory event. Caller must ensure this is the
+/// `AgentEvent::AgentUp` variant; other variants are a programmer error.
 pub(super) async fn handle_announce(
-    event: RoutingEvent,
+    event: AgentEvent,
     ctx: &ConnectionContext,
 ) -> crate::server::connection::Result<()> {
-    let RoutingEvent::AgentUp {
+    let AgentEvent::AgentUp {
         agent_id,
         host_id,
         name,
@@ -60,23 +60,19 @@ pub(super) async fn handle_announce(
 
     tracing::info!(agent_id = %agent_id, name = ?name, "stored remote agent");
 
-    if let Some(event) = change.event {
-        broadcast_topology_event(&mut us, &event, Some(&ctx.link));
-    }
-
     Ok(())
 }
 
 pub(super) async fn handle_withdraw(
     agent_id: Uuid,
+    host_id: Uuid,
     ctx: &ConnectionContext,
 ) -> crate::server::connection::Result<()> {
     let mut us = ctx.user_state.write().await;
-    let change = us.apply_peer_agent_down(&ctx.link, agent_id);
+    let change = us.apply_peer_agent_down_for_host(&ctx.link, host_id, agent_id);
 
-    if let Some(removed) = change.removed {
+    if change.removed {
         tracing::info!(agent_id = %agent_id, "withdrew remote agent");
-        broadcast_topology_event(&mut us, &removed.event, Some(&ctx.link));
     } else if let Some(ignored) = change.ignored {
         match ignored {
             PeerAgentDownIgnored::UnknownAgent => {

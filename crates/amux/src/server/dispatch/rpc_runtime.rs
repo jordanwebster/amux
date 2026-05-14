@@ -1,4 +1,6 @@
+use prost::Message as _;
 use tokio::sync::mpsc;
+use uuid::Uuid;
 
 use crate::protocol::Route;
 use crate::protocol::message::{
@@ -7,13 +9,14 @@ use crate::protocol::message::{
 };
 use crate::protocol::method::{self, MethodLookupError, MethodScope, MethodSpec};
 use crate::protocol::wire::{
-    AgentLifecycleRequest, AgentLifecycleResponse, AgentRecord,
+    AgentLifecycleRequest, AgentLifecycleResponse, AgentRecord, decode_agent_event,
     decode_agent_lifecycle_request_payload, encode_agent_lifecycle_response_frame,
 };
 use crate::rpc::{
-    DedupKey, InboundCallState, OutboundCallState, RegisterCallError, RpcInboundBidi,
-    RpcInboundClosing, RpcInboundFrameTarget, RpcInboundUnary, RpcLocalOriginOutboundStart,
-    RpcRoutedBidiStart, RpcRoutedUnaryStart, RpcStreamWriter,
+    DedupKey, InboundCallState, OutboundCallResources, OutboundCallState, RegisterCallError,
+    RpcInboundBidi, RpcInboundClosing, RpcInboundFrameTarget, RpcInboundRoutedServerStream,
+    RpcInboundUnary, RpcLocalOriginOutboundStart, RpcRoutedBidiStart, RpcRoutedServerStreamStart,
+    RpcRoutedUnaryStart, RpcStreamWriter,
 };
 use crate::server::connection::ConnectionContext;
 use crate::server::{
@@ -130,6 +133,16 @@ fn route_from_src_and_dst(src: &Route, dst: &Route) -> Option<Route> {
             .map(|link| link.as_str().to_string()),
     )
     .ok()
+}
+
+fn uuid_from_bytes(name: &str, bytes: Vec<u8>) -> Result<Uuid, crate::protocol::wire::DecodeError> {
+    let bytes: [u8; 16] = bytes.try_into().map_err(|bytes: Vec<u8>| {
+        crate::protocol::wire::DecodeError::Invalid(format!(
+            "{name} must be 16 bytes, got {}",
+            bytes.len()
+        ))
+    })?;
+    Ok(Uuid::from_bytes(bytes))
 }
 
 pub(super) async fn handle_malformed_routed_frame_body(
@@ -249,6 +262,23 @@ impl<'a> RoutedEndpointCall<'a> {
             call_id: self.call_id.clone(),
             method,
         })
+    }
+
+    async fn register_server_stream(
+        &self,
+        method: MethodSpec,
+        dedup_key: Option<DedupKey>,
+    ) -> Result<RpcInboundRoutedServerStream, RegisterCallError> {
+        self.rpc
+            .register_routed_server_stream(RpcRoutedServerStreamStart {
+                tx: self.tx.clone(),
+                owner_link: self.ctx.link.clone(),
+                reply_src: self.reply_src.clone(),
+                reply_dst: self.reply_dst.clone(),
+                call_id: self.call_id.clone(),
+                method,
+                dedup_key,
+            })
     }
 
     async fn register_bidi(
@@ -388,6 +418,13 @@ pub(super) async fn handle_routed_endpoint_frame(
         };
     }
 
+    if let Some(rpc) = rpc.clone()
+        && handle_routed_origin_agent_subscription_frame(rpc, &counterparty, &call_id, &body, ctx)
+            .await?
+    {
+        return Ok(());
+    }
+
     match body {
         FrameBody::Request(request) => {
             let Some(rpc) = rpc else {
@@ -467,11 +504,123 @@ async fn handle_routed_request(
     match spec.kind {
         method::MethodKind::Unary => handle_routed_unary_request(&endpoint, spec, request).await,
         method::MethodKind::ServerStreaming => {
-            send_unsupported_routed_method(&endpoint, spec.name).await
+            handle_routed_server_stream_request(&endpoint, spec, request).await
         }
         method::MethodKind::BidiStreaming => {
             handle_routed_bidi_request(&endpoint, spec, request, ctx).await
         }
+    }
+}
+
+async fn handle_routed_server_stream_request(
+    endpoint: &RoutedEndpointCall<'_>,
+    spec: MethodSpec,
+    request: RequestFrame,
+) -> crate::server::connection::Result<()> {
+    match spec.name {
+        method::AGENT_SUBSCRIBE_EVENTS_NAME => {
+            let request = match crate::protocol::wire::SubscribeAgentEventsRequest::decode(
+                request.payload.as_slice(),
+            ) {
+                Ok(request) => request,
+                Err(error) => {
+                    return endpoint
+                        .send_error(ProtocolError::InvalidArgument {
+                            message: format!("invalid SubscribeAgentEvents request: {error}"),
+                        })
+                        .await;
+                }
+            };
+            let host_id = match uuid_from_bytes("host_id", request.host_id) {
+                Ok(host_id) => host_id,
+                Err(error) => {
+                    return endpoint
+                        .send_error(ProtocolError::InvalidArgument {
+                            message: error.to_string(),
+                        })
+                        .await;
+                }
+            };
+            handle_subscribe_agent_events_request(endpoint, spec, host_id).await
+        }
+        method => send_unsupported_routed_method(endpoint, method).await,
+    }
+}
+
+async fn handle_routed_origin_agent_subscription_frame(
+    rpc: RpcDispatcher,
+    counterparty: &Route,
+    call_id: &CallId,
+    body: &FrameBody,
+    ctx: &ConnectionContext,
+) -> crate::server::connection::Result<bool> {
+    let mut subscribed_host_id = None;
+    let active = rpc.outbound_for_call_matches(call_id, |call| {
+        call.method == method::AGENT_SUBSCRIBE_EVENTS
+            && matches!(
+                &call.resources,
+                Some(OutboundCallResources::AgentSubscription { host_id, route, .. })
+                    if route == counterparty && {
+                        subscribed_host_id = Some(*host_id);
+                        true
+                    }
+            )
+            && matches!(
+                call.state,
+                OutboundCallState::AwaitingResponse | OutboundCallState::ActiveStream
+            )
+    });
+    if !active {
+        return Ok(false);
+    };
+    let Some(subscribed_host_id) = subscribed_host_id else {
+        debug_assert!(false, "active agent subscription did not capture host_id");
+        return Ok(false);
+    };
+
+    match body {
+        FrameBody::StreamItem(payload) => {
+            rpc.set_outbound_state_for_call(call_id, OutboundCallState::ActiveStream);
+            let event = match decode_agent_event(payload) {
+                Ok(event) => event,
+                Err(error) => {
+                    tracing::warn!(
+                        route = %counterparty,
+                        error = %error,
+                        "dropping malformed agent subscription event"
+                    );
+                    return Ok(true);
+                }
+            };
+            super::peer::handle_agent_event(event, subscribed_host_id, ctx).await?;
+            Ok(true)
+        }
+        FrameBody::Response(response) => {
+            if let ResponseFrame::Error(error) = response {
+                tracing::warn!(
+                    route = %counterparty,
+                    error = %error,
+                    "agent subscription failed"
+                );
+            } else {
+                tracing::debug!(route = %counterparty, "agent subscription completed");
+            }
+            rpc.remove_agent_subscription_outbound_for_route(call_id, counterparty);
+            ctx.user_state
+                .write()
+                .await
+                .clear_agent_subscription_for_route(call_id, counterparty);
+            Ok(true)
+        }
+        FrameBody::Cancel => {
+            rpc.remove_agent_subscription_outbound_for_route(call_id, counterparty);
+            ctx.user_state
+                .write()
+                .await
+                .clear_agent_subscription_for_route(call_id, counterparty);
+            Ok(true)
+        }
+        FrameBody::Request(_) => Ok(false),
     }
 }
 
@@ -749,6 +898,48 @@ async fn handle_agent_lifecycle_request(
     };
 
     finish_agent_lifecycle_unary(endpoint, call, response).await
+}
+
+async fn handle_subscribe_agent_events_request(
+    endpoint: &RoutedEndpointCall<'_>,
+    method: MethodSpec,
+    host_id: Uuid,
+) -> crate::server::connection::Result<()> {
+    let stream = endpoint.register_server_stream(method, None).await;
+    let stream = match stream {
+        Ok(stream) => stream,
+        Err(error) => {
+            return endpoint.send_error(duplicate_call_error(error)).await;
+        }
+    };
+
+    let agent_ctx = agent_service_ctx(endpoint.ctx).await;
+    let rpc = endpoint.rpc();
+    let stream_handle = stream.handle.clone();
+    match AgentService::subscribe_agent_events(&agent_ctx, host_id, &stream, || {
+        rpc.activate_inbound_for_handle(&stream_handle)
+    })
+    .await
+    {
+        Ok(()) => Ok(()),
+        Err(error) => finish_routed_server_stream_with_error(endpoint, stream, error).await,
+    }
+}
+
+async fn finish_routed_server_stream_with_error(
+    endpoint: &RoutedEndpointCall<'_>,
+    stream: RpcInboundRoutedServerStream,
+    error: ProtocolError,
+) -> crate::server::connection::Result<()> {
+    let closing = endpoint
+        .rpc()
+        .begin_inbound_closing_for_handle_if(&stream.handle, |_, _| true);
+    let Some(closing) = closing else {
+        return Ok(());
+    };
+    let result = closing.send_response(ResponseFrame::Error(error)).await;
+    endpoint.rpc().finish_inbound_closing(&closing);
+    result.map_err(routed_response_send_error)
 }
 
 fn agent_lifecycle_method_spec(request: &AgentLifecycleRequest) -> MethodSpec {

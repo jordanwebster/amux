@@ -14,7 +14,7 @@ use crate::protocol::message::{
 use crate::protocol::method;
 use crate::protocol::route::Route;
 use crate::server::dispatch::handle_message;
-use crate::server::routing::broadcast_topology_event;
+use crate::server::routing::{broadcast_topology_event, maybe_start_agent_subscription};
 use crate::server::{
     ConnectionHandle, RpcDispatcher, ServerUserState, cancel_open_sessions_for_closed_link,
     cancel_open_sessions_for_owner_link, finish_open_session_cleanup_jobs,
@@ -154,6 +154,7 @@ pub(in crate::server) async fn run_connection<T: TransportSplit>(
     let rpc = ctx.rpc();
     let link = ctx.link.clone();
     let is_local = ctx.is_local;
+    let is_cloud_server = ctx.state.read().await.is_cloud_server();
 
     let (reader, writer) = transport.into_split();
     let (incoming_tx, incoming_rx) = mpsc::channel(256);
@@ -221,6 +222,9 @@ pub(in crate::server) async fn run_connection<T: TransportSplit>(
             for event in change.events {
                 tracing::info!(peer = %link, event = event.to_routing_event().type_label(), "withdrawing topology event");
                 broadcast_topology_event(&mut us, &event, None);
+                if let crate::server::routing::TopologyEvent::HostDown { id, .. } = event {
+                    maybe_start_agent_subscription(&mut us, id, is_cloud_server);
+                }
             }
             (cleanup_jobs, local_origin_messages)
         } else {

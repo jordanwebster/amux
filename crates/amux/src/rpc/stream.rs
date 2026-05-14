@@ -118,6 +118,13 @@ pub(crate) struct RpcPeerStreamSink {
     pub(in crate::rpc) call_id: CallId,
 }
 
+#[derive(Debug)]
+pub(crate) enum RpcRoutedSnapshotSendError {
+    Encode(wire::EncodeError),
+    Full,
+    Closed,
+}
+
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub(crate) enum RpcPeerSnapshotSendError {
     Full,
@@ -284,6 +291,35 @@ impl RpcRoutedSink {
         self.send_frame_body(FrameBody::Response(response)).await
     }
 
+    pub(crate) fn try_send_stream_item(&self, payload: Vec<u8>) -> bool {
+        let Ok(message) = self.stream_item_message(payload) else {
+            return false;
+        };
+        self.tx.try_send(message).is_ok()
+    }
+
+    pub(crate) fn try_send_snapshot(
+        &self,
+        payloads: impl IntoIterator<Item = Vec<u8>>,
+    ) -> Result<(), RpcRoutedSnapshotSendError> {
+        let messages: Vec<_> = payloads
+            .into_iter()
+            .map(|payload| self.stream_item_message(payload))
+            .collect::<Result<_, _>>()
+            .map_err(RpcRoutedSnapshotSendError::Encode)?;
+        let permits = self
+            .tx
+            .try_reserve_many(messages.len())
+            .map_err(|error| match error {
+                mpsc::error::TrySendError::Full(_) => RpcRoutedSnapshotSendError::Full,
+                mpsc::error::TrySendError::Closed(_) => RpcRoutedSnapshotSendError::Closed,
+            })?;
+        for (permit, message) in permits.zip(messages) {
+            permit.send(message);
+        }
+        Ok(())
+    }
+
     pub(crate) async fn send_empty_response_result(
         &self,
         result: Result<(), ProtocolError>,
@@ -311,6 +347,16 @@ impl RpcRoutedSink {
             }))
             .await
             .map_err(|_| RpcRoutedSendError::Closed)
+    }
+
+    fn stream_item_message(&self, payload: Vec<u8>) -> Result<Message, wire::EncodeError> {
+        let payload = wire::encode_frame_body(&FrameBody::StreamItem(payload))?;
+        Ok(Message::Routed(RoutedFrame {
+            src: self.src.clone(),
+            dst: self.dst.clone(),
+            call_id: self.call_id.clone(),
+            message: RoutedFrameMessage::Payload(payload),
+        }))
     }
 }
 

@@ -4,7 +4,7 @@ mod reauth;
 
 use tokio::sync::mpsc;
 
-use crate::protocol::message::{Message, ReauthRequest, RoutingEvent};
+use crate::protocol::message::{AgentEvent, Message, ReauthRequest, RoutingEvent};
 use crate::server::connection::{ConnectionContext, ConnectionError};
 use crate::transport::TransportError;
 
@@ -33,13 +33,39 @@ pub(super) async fn handle_peer_event(
     ctx: &ConnectionContext,
 ) -> crate::server::connection::Result<()> {
     match event {
-        event @ RoutingEvent::AgentUp { .. } => agent::handle_announce(event, ctx).await,
-        RoutingEvent::AgentDown { agent_id } => agent::handle_withdraw(agent_id, ctx).await,
         RoutingEvent::HostUp { host, route } => host::handle_announce(host, route, ctx).await,
         RoutingEvent::HostDown { id, route } => host::handle_withdraw(id, route, ctx).await,
         RoutingEvent::SnapshotComplete => Ok(()),
         RoutingEvent::Unknown => {
             tracing::warn!("dropping unknown peer routing event");
+            Ok(())
+        }
+    }
+}
+
+pub(super) async fn handle_agent_event(
+    event: AgentEvent,
+    subscribed_host_id: uuid::Uuid,
+    ctx: &ConnectionContext,
+) -> crate::server::connection::Result<()> {
+    match event {
+        event @ AgentEvent::AgentUp { host_id, .. } => {
+            if host_id != subscribed_host_id {
+                tracing::warn!(
+                    host_id = %host_id,
+                    subscribed_host_id = %subscribed_host_id,
+                    "dropping AgentUp for host outside subscription"
+                );
+                return Ok(());
+            }
+            agent::handle_announce(event, ctx).await
+        }
+        AgentEvent::AgentDown { agent_id } => {
+            agent::handle_withdraw(agent_id, subscribed_host_id, ctx).await
+        }
+        AgentEvent::SnapshotComplete => Ok(()),
+        AgentEvent::Unknown => {
+            tracing::warn!("dropping unknown agent event");
             Ok(())
         }
     }

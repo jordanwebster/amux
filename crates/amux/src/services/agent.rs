@@ -11,8 +11,11 @@ use tokio::sync::{RwLock, mpsc};
 
 use crate::agent::{SessionEvent, StopPolicy};
 use crate::protocol;
-use crate::protocol::message::{AgentType, CreateAgentRequest, ProtocolError, RenameAgentRequest};
+use crate::protocol::message::{
+    AgentEvent, AgentType, CreateAgentRequest, ProtocolError, RenameAgentRequest,
+};
 use crate::protocol::wire::{CreateAgentConfig, CreateAgentRpcRequest};
+use crate::rpc::{RpcInboundRoutedServerStream, RpcRoutedSnapshotSendError};
 use crate::server::{
     CreateAgentError, RenameAgentError, ServerUserState, begin_open_sessions_closing_for_agent,
     create_agent_record, delete_local_agent, finish_open_sessions_with_error,
@@ -66,6 +69,12 @@ impl AgentServiceCtx {
     pub(crate) fn is_cloud_server(&self) -> bool {
         self.is_cloud_server
     }
+
+    pub(crate) fn has_supported_agent_types(&self) -> bool {
+        !crate::server::local_capabilities(self.is_cloud_server)
+            .supported_agent_types
+            .is_empty()
+    }
 }
 
 impl AgentService {
@@ -78,6 +87,73 @@ impl AgentService {
         identifier: &str,
     ) -> Option<protocol::Agent> {
         ctx.user_state().read().await.resolve_agent(identifier)
+    }
+
+    pub(crate) async fn subscribe_agent_events(
+        ctx: &AgentServiceCtx,
+        host_id: Uuid,
+        stream: &RpcInboundRoutedServerStream,
+        activate_stream: impl FnOnce() -> bool,
+    ) -> Result<(), ProtocolError> {
+        if host_id != ctx.host_id() {
+            return Err(ProtocolError::InvalidArgument {
+                message: format!(
+                    "SubscribeAgentEvents host_id {host_id} does not match receiving host {}",
+                    ctx.host_id()
+                ),
+            });
+        }
+        if !ctx.has_supported_agent_types() {
+            return Err(ProtocolError::FailedPrecondition {
+                message: "host has no supported agent types".to_string(),
+            });
+        }
+
+        let us = ctx.user_state().read().await;
+        let mut events: Vec<_> = us
+            .local_agents
+            .values()
+            .map(|context| context.info.agent_event())
+            .collect();
+        events.sort_unstable_by(|a, b| agent_event_sort_key(a).cmp(&agent_event_sort_key(b)));
+        events.push(AgentEvent::SnapshotComplete);
+        let payloads = events
+            .into_iter()
+            .map(|event| {
+                crate::protocol::wire::encode_agent_event(&event).map_err(|error| {
+                    ProtocolError::ServerError {
+                        message: format!("failed to encode agent event: {error}"),
+                    }
+                })
+            })
+            .collect::<Result<Vec<_>, _>>()?;
+
+        match stream.output.try_send_snapshot(payloads) {
+            Ok(()) => {}
+            Err(RpcRoutedSnapshotSendError::Full) => {
+                return Err(ProtocolError::ResourceExhausted {
+                    message: "outgoing channel full while starting agent event stream".to_string(),
+                });
+            }
+            Err(RpcRoutedSnapshotSendError::Closed) => {
+                return Err(ProtocolError::ServerError {
+                    message: "outgoing channel closed while starting agent event stream"
+                        .to_string(),
+                });
+            }
+            Err(RpcRoutedSnapshotSendError::Encode(error)) => {
+                return Err(ProtocolError::ServerError {
+                    message: format!("failed to encode agent event stream item: {error}"),
+                });
+            }
+        }
+
+        if !activate_stream() {
+            tracing::warn!("agent event stream was removed before initial snapshot activation");
+        }
+        drop(us);
+
+        Ok(())
     }
 
     pub(crate) async fn create(
@@ -144,6 +220,16 @@ impl AgentService {
             }
             None => Err(ProtocolError::NoAgentFound),
         }
+    }
+}
+
+fn agent_event_sort_key(event: &AgentEvent) -> (String, u128) {
+    match event {
+        AgentEvent::AgentUp { name, agent_id, .. } => {
+            (name.clone().unwrap_or_default(), agent_id.as_u128())
+        }
+        AgentEvent::AgentDown { agent_id } => (String::new(), agent_id.as_u128()),
+        AgentEvent::SnapshotComplete | AgentEvent::Unknown => (String::new(), 0),
     }
 }
 

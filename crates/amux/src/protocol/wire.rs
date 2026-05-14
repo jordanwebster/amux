@@ -34,6 +34,7 @@ pub(crate) use routed::{
     encode_open_session_output_event_payload, encode_open_session_request,
 };
 pub(crate) use runtime::{
-    decode_frame_body, decode_message, decode_routing_event, encode_frame_body, encode_message,
-    encode_routing_event, host_from_wire, host_to_wire,
+    decode_agent_event, decode_frame_body, decode_message, decode_routing_event,
+    encode_agent_event, encode_frame_body, encode_message, encode_routing_event, host_from_wire,
+    host_to_wire,
 };

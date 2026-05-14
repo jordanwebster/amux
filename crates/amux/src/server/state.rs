@@ -11,14 +11,17 @@ use crate::protocol::link::Link;
 use crate::protocol::message::{CallId, Host, Message};
 use crate::protocol::method::MethodSpec;
 use crate::protocol::route::Route;
-use crate::rpc::{InboundCall, OutboundCall, RpcLocalOriginOutboundCall};
+use crate::rpc::{
+    InboundCall, OutboundCall, RpcActiveInboundRoutedSink, RpcLocalOriginOutboundCall,
+};
 use crate::server::RpcDispatcher;
 use crate::server::routing::{
-    AgentRemovedChange, LinkClosedChange, PeerAgentDownChange, PeerAgentDownIgnored,
-    PeerAgentUpChange, PeerAgentUpIgnored, PeerHostDownChange, PeerHostUpChange, TopologyEvent,
+    LinkClosedChange, PeerAgentDownChange, PeerAgentDownIgnored, PeerAgentUpChange,
+    PeerAgentUpIgnored, PeerHostDownChange, PeerHostUpChange, TopologyEvent,
 };
 
 pub(in crate::server) const LOCAL_USER_ID: Uuid = Uuid::nil();
+pub(in crate::server) const OUTGOING_MESSAGE_BUFFER: usize = 2048;
 
 /// Request from a connection handler to shut down or suspend the server.
 pub(in crate::server) enum ShutdownRequest {
@@ -153,6 +156,7 @@ impl RouteContext {
 pub(crate) struct HostContext {
     pub(in crate::server) host: Host,
     pub(in crate::server) agents: HashMap<Uuid, Agent>,
+    pub(in crate::server) agent_subscription: Option<AgentSubscriptionState>,
 }
 
 impl HostContext {
@@ -160,8 +164,15 @@ impl HostContext {
         Self {
             host,
             agents: HashMap::new(),
+            agent_subscription: None,
         }
     }
+}
+
+#[derive(Debug, Clone)]
+pub(in crate::server) struct AgentSubscriptionState {
+    pub(in crate::server) route: Route,
+    pub(in crate::server) call_id: CallId,
 }
 
 pub(crate) struct LocalAgentContext {
@@ -266,7 +277,7 @@ impl ServerUserState {
         if self.connections.contains_key(&link) {
             return Err(link);
         }
-        let (outgoing_tx, outgoing_rx) = mpsc::channel::<Message>(256);
+        let (outgoing_tx, outgoing_rx) = mpsc::channel::<Message>(OUTGOING_MESSAGE_BUFFER);
         let handle = ConnectionHandle::new(outgoing_tx);
         self.connections.insert(
             link.clone(),
@@ -361,6 +372,20 @@ impl ServerUserState {
         contexts
     }
 
+    pub(in crate::server) fn active_inbound_routed_sinks_for_method(
+        &self,
+        method: MethodSpec,
+    ) -> Vec<(RpcDispatcher, RpcActiveInboundRoutedSink)> {
+        self.rpc_contexts_sorted()
+            .into_iter()
+            .flat_map(|(_, rpc)| {
+                rpc.active_inbound_routed_sinks_for_method(method)
+                    .into_iter()
+                    .map(move |sink| (rpc.clone(), sink))
+            })
+            .collect()
+    }
+
     pub(in crate::server) fn host_contexts_sorted(&self) -> Vec<(&Route, &Host, &RouteContext)> {
         self.route_contexts_sorted()
             .into_iter()
@@ -381,38 +406,6 @@ impl ServerUserState {
 
     pub(in crate::server) fn host_count(&self) -> usize {
         self.hosts.len()
-    }
-
-    pub(in crate::server) fn agents_for_peer_snapshot(&self, peer_link: &Link) -> Vec<Agent> {
-        let mut agents: Vec<_> = self
-            .local_agents
-            .values()
-            .map(|context| context.info.clone())
-            .collect();
-
-        for (host_id, context) in self.host_contexts_by_id_sorted() {
-            let Some(route) = self
-                .routes_for_host(*host_id)
-                .into_iter()
-                .find(|route| route.peek() != Some(peer_link))
-            else {
-                continue;
-            };
-            let mut remote_agents: Vec<_> = context.agents.values().cloned().collect();
-            remote_agents.sort_unstable_by(|a, b| {
-                a.name
-                    .as_deref()
-                    .unwrap_or("")
-                    .cmp(b.name.as_deref().unwrap_or(""))
-                    .then_with(|| a.id.as_u128().cmp(&b.id.as_u128()))
-            });
-            for mut agent in remote_agents {
-                agent.route = route.clone();
-                agents.push(agent);
-            }
-        }
-
-        agents
     }
 
     pub(in crate::server) fn peer_connection_count(&self) -> usize {
@@ -818,7 +811,7 @@ impl ServerUserState {
             return PeerAgentUpChange::ignored(PeerAgentUpIgnored::LocalAgent);
         }
 
-        let Some(route) = self.route_for_host_from(agent.host_id, from) else {
+        let Some(_route) = self.route_for_host_from(agent.host_id, from) else {
             return if self.hosts.contains_key(&agent.host_id) {
                 PeerAgentUpChange::ignored(PeerAgentUpIgnored::NonSelectedHostRoute)
             } else {
@@ -838,28 +831,27 @@ impl ServerUserState {
             .hosts
             .get_mut(&agent.host_id)
             .expect("host route lookup returned an existing host");
-        let mut event_agent = agent.clone();
-        event_agent.route = route;
         agent.route = Route::empty();
         context.agents.insert(agent.id, agent.clone());
-        PeerAgentUpChange {
-            event: Some(TopologyEvent::AgentUp { agent: event_agent }),
-            ignored: None,
-        }
+        PeerAgentUpChange { ignored: None }
     }
 
-    pub(in crate::server) fn apply_peer_agent_down(
+    pub(in crate::server) fn apply_peer_agent_down_for_host(
         &mut self,
         from: &Link,
+        host_id: Uuid,
         agent_id: Uuid,
     ) -> PeerAgentDownChange {
         if self.local_agents.contains_key(&agent_id) {
             return PeerAgentDownChange::ignored(PeerAgentDownIgnored::LocalAgent);
         }
 
-        let Some(host_id) = self.remote_agent_host(agent_id) else {
+        let Some(actual_host_id) = self.remote_agent_host(agent_id) else {
             return PeerAgentDownChange::ignored(PeerAgentDownIgnored::UnknownAgent);
         };
+        if actual_host_id != host_id {
+            return PeerAgentDownChange::ignored(PeerAgentDownIgnored::UnknownAgent);
+        }
         if self.route_for_host_from(host_id, from).is_none() {
             return if self.hosts.contains_key(&host_id) {
                 PeerAgentDownChange::ignored(PeerAgentDownIgnored::NonSelectedHostRoute)
@@ -876,9 +868,7 @@ impl ServerUserState {
         debug_assert_eq!(removed.id, agent_id);
         self.release_remote_name_if_owned(&removed);
         PeerAgentDownChange {
-            removed: Some(AgentRemovedChange {
-                event: TopologyEvent::AgentDown { agent_id },
-            }),
+            removed: true,
             ignored: None,
         }
     }
@@ -987,6 +977,67 @@ impl ServerUserState {
         self.routes_for_host(host_id).into_iter().next()
     }
 
+    pub(in crate::server) fn agent_subscription_candidate(
+        &self,
+        host_id: Uuid,
+    ) -> Option<(Host, Route)> {
+        let context = self.hosts.get(&host_id)?;
+        if context.host.capabilities.supported_agent_types.is_empty() {
+            return None;
+        }
+        if let Some(subscription) = &context.agent_subscription
+            && self.routes.contains_key(&subscription.route)
+        {
+            return None;
+        }
+        let route = self.route_for_host(host_id)?;
+        Some((context.host.clone(), route))
+    }
+
+    pub(in crate::server) fn set_agent_subscription(
+        &mut self,
+        host_id: Uuid,
+        route: Route,
+        call_id: CallId,
+    ) {
+        if let Some(context) = self.hosts.get_mut(&host_id) {
+            context.agent_subscription = Some(AgentSubscriptionState { route, call_id });
+        }
+    }
+
+    pub(in crate::server) fn clear_agent_subscription_for_route(
+        &mut self,
+        call_id: &CallId,
+        route: &Route,
+    ) {
+        for context in self.hosts.values_mut() {
+            if context
+                .agent_subscription
+                .as_ref()
+                .is_some_and(|subscription| {
+                    &subscription.call_id == call_id && &subscription.route == route
+                })
+            {
+                context.agent_subscription = None;
+            }
+        }
+    }
+
+    pub(in crate::server) fn remove_agent_subscription_for_route_and_call(
+        &mut self,
+        call_id: &CallId,
+        route: &Route,
+    ) -> bool {
+        let removed = self
+            .route_rpc_for_counterparty(route)
+            .and_then(|rpc| rpc.remove_agent_subscription_outbound_for_route(call_id, route))
+            .is_some();
+        if removed {
+            self.clear_agent_subscription_for_route(call_id, route);
+        }
+        removed
+    }
+
     fn route_for_host_from(&self, host_id: Uuid, from: &Link) -> Option<Route> {
         self.routes_for_host(host_id)
             .into_iter()
@@ -1067,6 +1118,14 @@ impl ServerUserState {
                 .values()
                 .any(|context| context.host_id == host_id)
             {
+                if let Some(context) = self.hosts.get_mut(&host_id)
+                    && context
+                        .agent_subscription
+                        .as_ref()
+                        .is_some_and(|subscription| subscription.route.starts_with_route(prefix))
+                {
+                    context.agent_subscription = None;
+                }
                 continue;
             }
             if let Some(context) = self.hosts.remove(&host_id) {
@@ -1274,8 +1333,8 @@ mod tests {
         let first = user_state.apply_peer_agent_up(&peer_a, agent.clone());
         let second = user_state.apply_peer_agent_up(&peer_b, agent);
 
-        assert!(first.event.is_some());
-        assert!(second.event.is_some());
+        assert!(first.ignored.is_none());
+        assert!(second.ignored.is_none());
         assert_eq!(user_state.remote_agent_count(), 1);
         assert!(
             user_state
@@ -1461,13 +1520,61 @@ mod tests {
                 .contains_key(&agent_id)
         );
 
-        let removed = user_state.apply_peer_agent_down(&relay, agent_id);
+        let removed = user_state.apply_peer_agent_down_for_host(&relay, host_id, agent_id);
 
-        assert!(removed.removed.is_some());
+        assert!(removed.removed);
         assert!(
             !user_state
                 .hosts
                 .get(&host_id)
+                .unwrap()
+                .agents
+                .contains_key(&agent_id)
+        );
+    }
+
+    #[test]
+    fn agent_down_for_subscription_host_does_not_remove_agent_on_other_host() {
+        let mut user_state = ServerUserState::new();
+        let relay = Link::new("relay").unwrap();
+        let host_a_route = Route::from_link(Link::new("host-a").unwrap());
+        let host_b_route = Route::from_link(Link::new("host-b").unwrap());
+        let host_a = Uuid::from_u128(1);
+        let host_b = Uuid::from_u128(2);
+        let agent_id = Uuid::from_u128(3);
+        user_state.apply_peer_host_up(
+            &relay,
+            test_host(host_a, "host-a", "v1"),
+            host_a_route.clone(),
+        );
+        user_state.apply_peer_host_up(
+            &relay,
+            test_host(host_b, "host-b", "v1"),
+            host_b_route.clone(),
+        );
+
+        let agent = Agent {
+            id: agent_id,
+            host_id: host_b,
+            name: Some("echo".to_string()),
+            command: "test".to_string(),
+            working_dir: std::env::temp_dir(),
+            route: Route::empty(),
+            agent_type: "test".to_string(),
+            io_protocols: Vec::new(),
+            readonly: false,
+            args: Vec::new(),
+            created_at: Utc::now(),
+        };
+        user_state.apply_peer_agent_up(&relay, agent);
+
+        let removed = user_state.apply_peer_agent_down_for_host(&relay, host_a, agent_id);
+
+        assert!(!removed.removed);
+        assert!(
+            user_state
+                .hosts
+                .get(&host_b)
                 .unwrap()
                 .agents
                 .contains_key(&agent_id)

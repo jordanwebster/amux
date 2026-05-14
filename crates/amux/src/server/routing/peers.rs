@@ -1,6 +1,14 @@
+use prost::Message as _;
+use uuid::Uuid;
+
 use crate::protocol::link::Link;
-use crate::protocol::message::{CallId, FrameBody, Message, PeerFrame, RoutingEvent};
+use crate::protocol::message::{
+    AgentEvent, CallId, FrameBody, Message, PeerFrame, RequestFrame, RoutedFrame,
+    RoutedFrameMessage, RoutingEvent,
+};
+use crate::protocol::method;
 use crate::protocol::wire;
+use crate::rpc::RpcAgentSubscriptionOutboundStart;
 use crate::server::ServerUserState;
 use crate::server::routing::TopologyEvent;
 
@@ -63,19 +71,112 @@ pub(crate) fn broadcast_topology_event(
     event: &TopologyEvent,
     exclude_link: Option<&Link>,
 ) {
-    broadcast_to_peers(us, &event.to_routing_event(), exclude_link);
+    match event {
+        TopologyEvent::HostUp { .. } | TopologyEvent::HostDown { .. } => {
+            broadcast_to_peers(us, &event.to_routing_event(), exclude_link);
+        }
+        TopologyEvent::AgentUp { .. } | TopologyEvent::AgentDown { .. } => {
+            broadcast_agent_event_to_subscribers(us, &event.to_agent_event());
+        }
+    }
 }
 
-/// Build initial agent announcements for a newly connected peer.
-/// Filters out agents that were learned from this same peer (no echo-back).
-pub(in crate::server::routing) fn initial_agent_events(
-    us: &ServerUserState,
-    peer_link: &Link,
-) -> Vec<RoutingEvent> {
-    us.agents_for_peer_snapshot(peer_link)
-        .into_iter()
-        .map(|agent| agent.routing_event())
-        .collect()
+pub(crate) fn maybe_start_agent_subscription(
+    us: &mut ServerUserState,
+    host_id: Uuid,
+    is_cloud_server: bool,
+) {
+    if is_cloud_server {
+        return;
+    }
+    let Some((_host, route)) = us.agent_subscription_candidate(host_id) else {
+        return;
+    };
+    if route.is_empty() {
+        return;
+    }
+
+    let Some((src, dst)) = crate::protocol::Route::send(route.clone()) else {
+        return;
+    };
+    let call_id = CallId::from(Uuid::new_v4());
+    let request_payload = wire::SubscribeAgentEventsRequest {
+        host_id: host_id.as_bytes().to_vec(),
+    }
+    .encode_to_vec();
+    let payload = match wire::encode_frame_body(&FrameBody::Request(RequestFrame {
+        method: method::AGENT_SUBSCRIBE_EVENTS_NAME.to_string(),
+        payload: request_payload,
+    })) {
+        Ok(payload) => payload,
+        Err(error) => {
+            tracing::warn!(host_id = %host_id, error = %error, "failed to encode agent subscription request");
+            return;
+        }
+    };
+
+    let Some(rpc) = us.route_rpc_for_counterparty(&route) else {
+        tracing::warn!(host_id = %host_id, route = %route, "missing route RPC for agent subscription");
+        return;
+    };
+    match rpc.register_agent_subscription_outbound(RpcAgentSubscriptionOutboundStart {
+        host_id,
+        route: route.clone(),
+        call_id: call_id.clone(),
+        method: method::AGENT_SUBSCRIBE_EVENTS,
+    }) {
+        Ok(()) => {}
+        Err(error) => {
+            tracing::warn!(host_id = %host_id, route = %route, error = ?error, "failed to register agent subscription");
+            return;
+        }
+    }
+    us.set_agent_subscription(host_id, route.clone(), call_id.clone());
+
+    let message = Message::Routed(RoutedFrame {
+        src: src.clone(),
+        dst,
+        call_id: call_id.clone(),
+        message: RoutedFrameMessage::Payload(payload),
+    });
+    if !us.send_via_route(
+        &src,
+        message,
+        format!("route queue overflow while starting agent subscription to {host_id}"),
+    ) {
+        rpc.remove_agent_subscription_outbound_for_route(&call_id, &route);
+        us.clear_agent_subscription_for_route(&call_id, &route);
+    }
+}
+
+pub(in crate::server) fn broadcast_agent_event_to_subscribers(
+    us: &mut ServerUserState,
+    event: &AgentEvent,
+) {
+    let mut sent = 0usize;
+    let mut failed = 0usize;
+    let payload = match wire::encode_agent_event(event) {
+        Ok(payload) => payload,
+        Err(error) => {
+            tracing::warn!(error = %error, "failed to encode agent event");
+            return;
+        }
+    };
+    for (rpc, sink) in us.active_inbound_routed_sinks_for_method(method::AGENT_SUBSCRIBE_EVENTS) {
+        if !sink.output.try_send_stream_item(payload.clone()) {
+            tracing::warn!("agent subscription stream queue unavailable");
+            if let Some(connection) = us.connections.get(&sink.owner_link) {
+                connection
+                    .handle
+                    .request_close("route queue overflow while broadcasting agent event");
+            }
+            rpc.remove_inbound_for_handle(&sink.handle);
+            failed += 1;
+        } else {
+            sent += 1;
+        }
+    }
+    tracing::debug!(sent, failed, "broadcast agent event to subscribers");
 }
 
 /// Build initial host events for a newly connected peer.
@@ -102,17 +203,13 @@ pub(in crate::server::routing) fn initial_host_events(
     events
 }
 
-/// Build all initial routing events (hosts + agents + snapshot complete) for a newly connected peer.
+/// Build all initial routing events (hosts + snapshot complete) for a newly connected peer.
 pub(crate) fn initial_routing_events(us: &ServerUserState, peer_link: &Link) -> Vec<RoutingEvent> {
     let mut events = initial_host_events(us, peer_link);
     let hosts = events.len();
-    let agents = initial_agent_events(us, peer_link);
-    let agent_count = agents.len();
-    events.extend(agents);
     events.push(RoutingEvent::SnapshotComplete);
     tracing::info!(
         peer = %peer_link,
-        agents = agent_count,
         hosts,
         "built initial announcements"
     );

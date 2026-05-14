@@ -192,18 +192,17 @@ Route: VecDeque<String>  // Serializes as "AB.BC.CD" (dot-separated)
 
 ## Session Propagation
 
-Agents are propagated to connected peers via
-`RoutingService/SubscribeRoutingEvents` stream items. `list` returns both
-local and remote agents. `AgentUp` and `AgentDown` are route-free host
-inventory updates; the agent's `host_id` is resolved through host route
-announcements.
-
 Hosts are propagated via `HostUp`/`HostDown` routing events. `Host` is
 route-free identity and metadata; `HostUp` carries the route for that
-announcement. When a peer connection is lost, the server drops route contexts
-under that link, broadcasts matching `HostDown` events, removes host contexts
-and remote agents whose last route disappeared, and cancels affected
-RPC/OpenSession state.
+announcement. Agents are propagated by routed
+`AgentService/SubscribeAgentEvents` streams opened by interested non-cloud
+servers for hosts that advertise supported agent types. Cloud relays advertise
+no supported agent types, so local servers do not subscribe to cloud relays for
+agent inventory. `list` returns the local server's current known local and
+subscribed remote agents. When a peer
+connection is lost, the server drops route contexts under that link, broadcasts
+matching `HostDown` events, removes host contexts and remote agents whose last
+route disappeared, and cancels affected RPC/OpenSession state.
 
 Idle peer links run a symmetric heartbeat driven by a per-connection idle
 timeout negotiated in the `ConnectResponse` handshake (pulled from

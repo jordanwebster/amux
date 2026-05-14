@@ -27,6 +27,7 @@ fn client_inbox(call: &OutboundCall) -> Option<mpsc::Sender<Message>> {
         Some(OutboundCallResources::ClientInbox { tx }) => Some(tx.clone()),
         Some(OutboundCallResources::LocalOriginRouted { .. })
         | Some(OutboundCallResources::PeerRoutingSubscription { .. })
+        | Some(OutboundCallResources::AgentSubscription { .. })
         | None => None,
     }
 }
@@ -184,6 +185,43 @@ impl RpcState {
         Ok(RpcInboundUnary { handle })
     }
 
+    pub(crate) fn register_routed_server_stream(
+        &mut self,
+        start: RpcRoutedServerStreamStart,
+    ) -> Result<RpcInboundRoutedServerStream, RegisterCallError> {
+        debug_assert_eq!(start.method.kind, MethodKind::ServerStreaming);
+        let generation = Uuid::new_v4();
+        let send_gate = Arc::new(Mutex::new(()));
+        let cancellation = RpcCallCancellation::new();
+        let output = RpcRoutedSink::new(
+            start.tx,
+            start.reply_src,
+            start.reply_dst,
+            start.call_id.clone(),
+            send_gate,
+        );
+        let handle = RpcInboundCallHandle {
+            call_id: start.call_id.clone(),
+            method: start.method,
+            generation,
+        };
+        self.register_inbound(InboundCall {
+            call_id: start.call_id,
+            method: start.method,
+            generation,
+            state: InboundCallState::Starting,
+            dedup_key: start.dedup_key,
+            stream_writer: None,
+            resources: Some(InboundCallResources {
+                owner_link: start.owner_link,
+                output: output.clone(),
+            }),
+            cancellation: cancellation.clone(),
+        })?;
+
+        Ok(RpcInboundRoutedServerStream { handle, output })
+    }
+
     pub(crate) fn register_server_stream(
         &mut self,
         start: RpcServerStreamStart,
@@ -325,6 +363,28 @@ impl RpcState {
         self.inbound_calls.get(call_id).and_then(|call| {
             matches!(call.state, InboundCallState::Active).then(|| call.call_id.clone())
         })
+    }
+
+    pub(crate) fn active_inbound_routed_sinks_for_method(
+        &self,
+        method: MethodSpec,
+    ) -> Vec<RpcActiveInboundRoutedSink> {
+        self.inbound_calls
+            .values()
+            .filter(|call| call.method == method && matches!(call.state, InboundCallState::Active))
+            .filter_map(|call| {
+                let resources = call.resources.as_ref()?;
+                Some(RpcActiveInboundRoutedSink {
+                    handle: RpcInboundCallHandle {
+                        call_id: call.call_id.clone(),
+                        method: call.method,
+                        generation: call.generation,
+                    },
+                    owner_link: resources.owner_link.clone(),
+                    output: resources.output.clone(),
+                })
+            })
+            .collect()
     }
 
     pub(crate) fn inbound_frame_target_for_call(
@@ -537,6 +597,22 @@ impl RpcState {
             method: start.method,
             state: OutboundCallState::AwaitingResponse,
             resources: Some(OutboundCallResources::PeerRoutingSubscription { link: start.link }),
+        })
+    }
+
+    pub(crate) fn register_agent_subscription_outbound(
+        &mut self,
+        start: RpcAgentSubscriptionOutboundStart,
+    ) -> Result<RpcOutboundCallHandle, RegisterCallError> {
+        debug_assert_eq!(start.method.kind, MethodKind::ServerStreaming);
+        self.register_outbound_tracked(OutboundCall {
+            call_id: start.call_id,
+            method: start.method,
+            state: OutboundCallState::AwaitingResponse,
+            resources: Some(OutboundCallResources::AgentSubscription {
+                host_id: start.host_id,
+                route: start.route,
+            }),
         })
     }
 

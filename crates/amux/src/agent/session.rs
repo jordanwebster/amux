@@ -25,7 +25,7 @@ use super::{
 use crate::agent::TEST_ECHO_V1;
 use crate::agent::claude::io as claude_io;
 use crate::protocol::message::{
-    AGENT_TYPE_CLAUDE, AgentType, CreateAgentRequest, HookProvider, ProtocolError, RoutingEvent,
+    AGENT_TYPE_CLAUDE, AgentEvent, AgentType, CreateAgentRequest, HookProvider, ProtocolError,
 };
 use crate::protocol::route::Route;
 use crate::suspend::SuspendedAgent;
@@ -51,8 +51,8 @@ impl Agent {
         self.route.peek().is_some()
     }
 
-    pub(crate) fn routing_event(&self) -> RoutingEvent {
-        RoutingEvent::AgentUp {
+    pub(crate) fn agent_event(&self) -> AgentEvent {
+        AgentEvent::AgentUp {
             agent_id: self.id,
             host_id: self.host_id,
             name: self.name.clone(),
