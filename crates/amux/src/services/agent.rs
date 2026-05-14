@@ -115,7 +115,7 @@ impl AgentService {
             .values()
             .map(|context| context.info.agent_event())
             .collect();
-        events.sort_unstable_by(|a, b| agent_event_sort_key(a).cmp(&agent_event_sort_key(b)));
+        events.sort_unstable_by_key(agent_event_sort_key);
         events.push(AgentEvent::SnapshotComplete);
         let payloads = events
             .into_iter()

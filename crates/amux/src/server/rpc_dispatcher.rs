@@ -29,7 +29,7 @@ struct RpcEndpointResources {
 pub(crate) enum RpcInboundCloseTarget {
     Absent,
     AlreadyClosing,
-    Closing(RpcInboundClosing),
+    Closing(Box<RpcInboundClosing>),
 }
 
 #[derive(Debug)]
@@ -479,11 +479,11 @@ impl RpcDispatcher {
 
         let mut state = self.write();
         if let Some(closing) = state.begin_inbound_closing_for_call_if(call_id, |_| true) {
-            return RpcInboundCloseTarget::Closing(RpcInboundClosing {
+            return RpcInboundCloseTarget::Closing(Box::new(RpcInboundClosing {
                 handle: closing.handle.clone(),
                 output: resource.output,
                 rpc_closing: closing,
-            });
+            }));
         }
 
         if state

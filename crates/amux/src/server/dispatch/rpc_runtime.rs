@@ -276,12 +276,12 @@ async fn terminate_endpoint_call_if_currently_present_or_send(
         RpcInboundCloseTarget::Closing(closing)
             if closing.handle.method == method::AGENT_SUBSCRIBE_SESSION =>
         {
-            match session_subscription_closing_from_rpc_closing(endpoint.rpc(), closing) {
+            match session_subscription_closing_from_rpc_closing(endpoint.rpc(), *closing) {
                 Some(closing) => EndpointCallCloseTarget::SessionSubscription(closing),
                 None => EndpointCallCloseTarget::AlreadyClosing,
             }
         }
-        RpcInboundCloseTarget::Closing(closing) => EndpointCallCloseTarget::Generic(closing),
+        RpcInboundCloseTarget::Closing(closing) => EndpointCallCloseTarget::Generic(*closing),
         RpcInboundCloseTarget::AlreadyClosing => EndpointCallCloseTarget::AlreadyClosing,
         RpcInboundCloseTarget::Absent => EndpointCallCloseTarget::Absent,
     };
