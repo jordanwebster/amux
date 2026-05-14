@@ -18,12 +18,13 @@ use super::connection::ConnectionContext;
 use crate::protocol::message::{
     CallId, Frame, FrameBody, Message, ProtocolError, RequestFrame, ResponseFrame, RoutingEvent,
 };
-use crate::protocol::method::{MethodAccess, MethodLookupError};
+use crate::protocol::method::MethodAccess;
 use crate::protocol::{Route, method, wire};
 use crate::rpc::{OutboundCallState, RegisterCallError};
 use crate::server::connection::{ConnectionError, Result};
 use crate::server::{
-    EndpointServerStream, EndpointServerStreamStart, OutboundCallResources, peer_routing_dedup_key,
+    EndpointServerStream, EndpointServerStreamStart, OutboundCallResources,
+    routing_subscription_dedup_key,
 };
 use crate::services::{RoutingService, RoutingServiceCtx, SubscribeRoutingEventsStartError};
 
@@ -89,14 +90,29 @@ fn peer_protocol_error(message: impl Into<String>) -> ConnectionError {
     ConnectionError::Protocol(message.into())
 }
 
-fn validate_adjacent_peer_source(src: &Route, ctx: &ConnectionContext, frame_type: &str) -> bool {
-    if ctx.is_local {
-        tracing::warn!(
-            frame_type = frame_type,
-            "rejecting peer frame from local connection"
-        );
-        return false;
+/// Compute the effective scope of an inbound request terminating at this hop.
+///
+/// Scopes form a containment hierarchy: `Local > Peer > Routed`. A request
+/// arriving with a multi-hop `src` (originator is more than one hop away)
+/// has `Routed` scope regardless of the link it arrived on. A single-hop
+/// `src` reflects the immediate connection: `Local` for local-socket
+/// connections, `Peer` otherwise.
+fn connection_scope_for(ctx: &ConnectionContext, src: &Route) -> MethodAccess {
+    if src.len() > 1 {
+        MethodAccess::Routed
+    } else if ctx.is_local {
+        MethodAccess::Local
+    } else {
+        MethodAccess::Peer
     }
+}
+
+/// Validate that an inbound frame came directly from the connecting party
+/// (single-hop `src`). Both peer connections and local connections satisfy
+/// this naturally — they hold the lone hop in their `src`. Multi-hop `src`
+/// would indicate a routed call, which should be dispatched via the routing
+/// path instead.
+fn validate_adjacent_peer_source(src: &Route, ctx: &ConnectionContext, frame_type: &str) -> bool {
     if src.len() != 1 {
         tracing::warn!(
             frame_type = frame_type,
@@ -124,38 +140,19 @@ async fn handle_peer_request(
         return Ok(());
     }
 
-    match method::find_for_scope(&request.method, MethodAccess::Peer) {
-        Ok(_) => {}
-        Err(MethodLookupError::WrongScope {
-            spec,
-            requested_scope,
-        }) => {
-            return send_peer_response(
-                tx,
-                src,
-                call_id,
-                Some(ProtocolError::PermissionDenied {
-                    message: format!(
-                        "method {} is {} scoped and not valid in {} scope",
-                        request.method,
-                        spec.access.as_str(),
-                        requested_scope.as_str()
-                    ),
-                }),
-            )
-            .await;
-        }
-        Err(MethodLookupError::Unknown) => {
-            return send_peer_response(
-                tx,
-                src,
-                call_id,
-                Some(ProtocolError::Unimplemented {
-                    message: format!("unknown peer method {}", request.method),
-                }),
-            )
-            .await;
-        }
+    // Scope was validated by the dispatcher before we got here; only Unknown
+    // is still possible at this layer (and only if some caller routes a
+    // non-peer-scoped method into this handler — defensive only).
+    if method::find(&request.method).map(|spec| spec.access) != Some(MethodAccess::Peer) {
+        return send_peer_response(
+            tx,
+            src,
+            call_id,
+            Some(ProtocolError::Unimplemented {
+                message: format!("unknown peer method {}", request.method),
+            }),
+        )
+        .await;
     }
 
     match request.method.as_str() {
@@ -199,11 +196,6 @@ async fn handle_peer_request(
                     send_peer_response(tx, src, call_id, Some(error)).await?;
                     Ok(())
                 }
-                Err(SubscribeRoutingEventsStartError::ResponseThenClose { error, reason }) => {
-                    remove_inbound_peer_stream(ctx, &stream).await;
-                    send_peer_response(tx, src, call_id, Some(error)).await?;
-                    Err(peer_protocol_error(reason))
-                }
                 Err(SubscribeRoutingEventsStartError::ConnectionClosed { reason }) => Err({
                     remove_inbound_peer_stream(ctx, &stream).await;
                     ConnectionError::Transport(crate::transport::TransportError::Io(
@@ -244,15 +236,6 @@ async fn register_peer_routing_stream(
     call_id: CallId,
     ctx: &ConnectionContext,
 ) -> std::result::Result<EndpointServerStream, PeerRoutingStreamStartError> {
-    if !ctx.user_state.read().await.is_peer_link(&ctx.link) {
-        return Err(PeerRoutingStreamStartError::ResponseThenClose {
-            error: ProtocolError::InvalidArgument {
-                message: "routing event subscription is only valid for peer connections"
-                    .to_string(),
-            },
-            reason: "received peer routing subscription on non-peer connection".to_string(),
-        });
-    }
     let Some((reply_src, reply_dst)) = Route::reply(src) else {
         return Err(PeerRoutingStreamStartError::ResponseThenClose {
             error: ProtocolError::InvalidArgument {
@@ -270,7 +253,7 @@ async fn register_peer_routing_stream(
             call_id,
             method: method::ROUTING_SUBSCRIBE_EVENTS,
             owner_link: ctx.link.clone(),
-            dedup_key: Some(peer_routing_dedup_key(&ctx.link)),
+            dedup_key: Some(routing_subscription_dedup_key(&ctx.link)),
         })
         .map_err(peer_routing_start_error)
 }
@@ -465,21 +448,52 @@ pub(super) async fn handle_message(
                     .await
                 }
                 FrameBody::Request(request) if frame.dst.is_empty() => {
-                    match method::find(&request.method).map(|spec| spec.access) {
-                        Some(MethodAccess::Local) => {
-                            if !ctx.is_local {
-                                tracing::warn!(
-                                    method = request.method,
-                                    "rejecting local request from non-local connection"
-                                );
-                                return Ok(());
-                            }
+                    let Some(spec) = method::find(&request.method) else {
+                        // Unknown method falls through to the application
+                        // frame handler, which produces an Unimplemented
+                        // error along the appropriate dispatch path.
+                        return handle_application_frame(
+                            tx,
+                            frame.src,
+                            frame.dst,
+                            frame.call_id,
+                            FrameBody::Request(request),
+                            ctx,
+                        )
+                        .await;
+                    };
+                    let connection_scope = connection_scope_for(ctx, &frame.src);
+                    if !connection_scope.allows(spec.access) {
+                        tracing::warn!(
+                            method = request.method,
+                            required = spec.access.as_str(),
+                            connection = connection_scope.as_str(),
+                            "rejecting request: insufficient connection scope"
+                        );
+                        return send_error_response(
+                            tx,
+                            frame.src,
+                            frame.call_id,
+                            ProtocolError::PermissionDenied {
+                                message: format!(
+                                    "method {} requires {} scope; connection has {} scope",
+                                    request.method,
+                                    spec.access.as_str(),
+                                    connection_scope.as_str(),
+                                ),
+                            },
+                            "insufficient scope rejection",
+                        )
+                        .await;
+                    }
+                    match spec.access {
+                        MethodAccess::Local => {
                             handle_local_request(tx, frame.src, frame.call_id, request, ctx).await
                         }
-                        Some(MethodAccess::Peer) => {
+                        MethodAccess::Peer => {
                             handle_peer_request(tx, frame.src, frame.call_id, request, ctx).await
                         }
-                        Some(MethodAccess::Routed) | None => {
+                        MethodAccess::Routed => {
                             handle_application_frame(
                                 tx,
                                 frame.src,
@@ -697,7 +711,11 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn peer_request_with_routed_source_is_dropped() {
+    async fn peer_request_with_routed_source_is_rejected_with_insufficient_scope() {
+        // A peer-scoped request arriving with a multi-hop src has Routed
+        // effective scope and cannot satisfy the method's Peer requirement.
+        // The dispatcher rejects with PermissionDenied rather than silently
+        // dropping, so misuse surfaces explicitly.
         let link = Link::new("peer").unwrap();
         let ctx = test_peer_ctx(link.clone()).await;
         let (tx, mut rx) = mpsc::channel(4);
@@ -720,7 +738,21 @@ mod tests {
         .await
         .unwrap();
 
-        assert!(rx.try_recv().is_err());
+        let msg = rx
+            .try_recv()
+            .expect("dispatcher should send PermissionDenied response");
+        let Message::Frame(Frame {
+            call_id: response_call_id,
+            body:
+                FrameBody::Response(ResponseFrame::Error(ProtocolError::PermissionDenied { message })),
+            ..
+        }) = msg
+        else {
+            panic!("expected PermissionDenied error response, got {msg:?}");
+        };
+        assert_eq!(response_call_id, call_id);
+        assert!(message.contains("requires peer scope"));
+        assert!(message.contains("connection has routed scope"));
         assert_eq!(ctx.rpc().inbound_len(), 0);
     }
 
@@ -802,8 +834,7 @@ mod tests {
         assert_eq!(
             error,
             ProtocolError::FailedPrecondition {
-                message: "peer did not advertise a routing role that serves routing events"
-                    .to_string(),
+                message: "this server's role on the link does not serve routing events".to_string(),
             }
         );
     }

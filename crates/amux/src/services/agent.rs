@@ -16,11 +16,10 @@ use crate::protocol::message::{
 };
 use crate::protocol::wire::{CreateAgentConfig, CreateAgentRpcRequest};
 use crate::server::{
-    CreateAgentError, RenameAgentError, ServerUserState,
-    begin_session_subscriptions_closing_for_agent, create_agent_record, delete_local_agent,
-    finish_session_subscriptions_with_error, rename_local_agent_record,
+    CreateAgentError, EndpointServerStream, RenameAgentError, ServerStreamSnapshotSendError,
+    ServerUserState, begin_session_subscriptions_closing_for_agent, create_agent_record,
+    delete_local_agent, finish_session_subscriptions_with_error, rename_local_agent_record,
 };
-use crate::server::{EndpointServerStream, ServerStreamSnapshotSendError};
 
 pub(crate) struct AgentService;
 

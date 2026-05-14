@@ -28,11 +28,10 @@ use super::{LOCAL_USER_ID, ServerState, ShutdownRequest};
 use crate::agent::SessionEvent;
 use crate::auth::jwt::JwtValidator;
 use crate::config::{Config, ConfigError};
-use crate::protocol::Route;
 use crate::protocol::message::{
     Frame, FrameBody, Message, ProtocolError, ResponseFrame, ShutdownReason,
 };
-use crate::protocol::wire;
+use crate::protocol::{Route, wire};
 use crate::transport::{LocalListener, TcpTransport, TransportError, create_tls_acceptor};
 
 /// Maximum time allowed for a TLS handshake to complete.

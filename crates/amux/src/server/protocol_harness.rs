@@ -323,8 +323,8 @@ impl Topology {
             link: link.clone(),
             is_local,
             heartbeat,
-            routing_role: if is_local {
-                RoutingRole::Observer
+            routing_role: if self.state.read().await.is_cloud_server() {
+                RoutingRole::Relay
             } else {
                 RoutingRole::Host
             },
@@ -659,6 +659,22 @@ impl TestConnection {
             payload.to_vec(),
         ))
         .await;
+    }
+
+    pub(super) async fn expect_permission_denied(&mut self, expected_message_fragment: &str) {
+        let msg = self.recv().await;
+        let Message::Frame(Frame {
+            body:
+                FrameBody::Response(ResponseFrame::Error(ProtocolError::PermissionDenied { message })),
+            ..
+        }) = msg
+        else {
+            panic!("expected PermissionDenied error response, got {msg:?}");
+        };
+        assert!(
+            message.contains(expected_message_fragment),
+            "PermissionDenied message {message:?} did not contain {expected_message_fragment:?}"
+        );
     }
 
     pub(super) async fn expect_no_message(&mut self) {

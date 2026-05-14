@@ -22,6 +22,23 @@ impl MethodAccess {
             MethodAccess::Routed => "routed",
         }
     }
+
+    /// Scopes form a containment hierarchy: `Routed < Peer < Local`. A
+    /// connection at scope `self` may call methods requiring scope `required`
+    /// iff `self.rank() >= required.rank()`.
+    pub(crate) const fn rank(self) -> u8 {
+        match self {
+            MethodAccess::Routed => 0,
+            MethodAccess::Peer => 1,
+            MethodAccess::Local => 2,
+        }
+    }
+
+    /// Returns true if a connection at this scope may call a method declared
+    /// at the `required` scope.
+    pub(crate) const fn allows(self, required: MethodAccess) -> bool {
+        self.rank() >= required.rank()
+    }
 }
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
@@ -165,21 +182,25 @@ pub(crate) fn find(name: &str) -> Option<MethodSpec> {
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub(crate) enum MethodLookupError {
     Unknown,
-    WrongScope {
+    InsufficientScope {
         spec: MethodSpec,
-        requested_scope: MethodAccess,
+        connection_scope: MethodAccess,
     },
 }
 
-pub(crate) fn find_for_scope(
+/// Look up a method by name and verify that a connection at
+/// `connection_scope` may call it. Scopes are a containment hierarchy
+/// (`Local > Peer > Routed`); higher scopes can call any method at a lower
+/// or equal scope.
+pub(crate) fn find_for_connection_scope(
     name: &str,
-    requested_scope: MethodAccess,
+    connection_scope: MethodAccess,
 ) -> Result<MethodSpec, MethodLookupError> {
     match find(name) {
-        Some(spec) if spec.access == requested_scope => Ok(spec),
-        Some(spec) => Err(MethodLookupError::WrongScope {
+        Some(spec) if connection_scope.allows(spec.access) => Ok(spec),
+        Some(spec) => Err(MethodLookupError::InsufficientScope {
             spec,
-            requested_scope,
+            connection_scope,
         }),
         None => Err(MethodLookupError::Unknown),
     }
@@ -262,20 +283,61 @@ mod tests {
     }
 
     #[test]
-    fn method_lookup_distinguishes_unknown_from_wrong_scope() {
+    fn scope_hierarchy_allows_higher_to_call_lower() {
+        use MethodAccess::*;
+        // Each scope allows itself and anything below it.
+        assert!(Local.allows(Local));
+        assert!(Local.allows(Peer));
+        assert!(Local.allows(Routed));
+        assert!(Peer.allows(Peer));
+        assert!(Peer.allows(Routed));
+        assert!(Routed.allows(Routed));
+        // No scope allows anything above it.
+        assert!(!Peer.allows(Local));
+        assert!(!Routed.allows(Local));
+        assert!(!Routed.allows(Peer));
+    }
+
+    #[test]
+    fn method_lookup_distinguishes_unknown_from_insufficient_scope() {
+        // Local connections can call methods at any scope.
         assert_eq!(
-            find_for_scope(AGENT_LIST_NAME, MethodAccess::Local),
+            find_for_connection_scope(AGENT_LIST_NAME, MethodAccess::Local),
             Ok(AGENT_LIST)
         );
         assert_eq!(
-            find_for_scope(AGENT_LIST_NAME, MethodAccess::Routed),
-            Err(MethodLookupError::WrongScope {
+            find_for_connection_scope(ROUTING_SUBSCRIBE_EVENTS_NAME, MethodAccess::Local),
+            Ok(ROUTING_SUBSCRIBE_EVENTS)
+        );
+        assert_eq!(
+            find_for_connection_scope(AGENT_SUBSCRIBE_EVENTS_NAME, MethodAccess::Local),
+            Ok(AGENT_SUBSCRIBE_EVENTS)
+        );
+
+        // Peer connections cannot reach Local methods.
+        assert_eq!(
+            find_for_connection_scope(AGENT_LIST_NAME, MethodAccess::Peer),
+            Err(MethodLookupError::InsufficientScope {
                 spec: AGENT_LIST,
-                requested_scope: MethodAccess::Routed,
+                connection_scope: MethodAccess::Peer,
+            })
+        );
+
+        // Routed scope can only reach Routed methods.
+        assert_eq!(
+            find_for_connection_scope(ROUTING_SUBSCRIBE_EVENTS_NAME, MethodAccess::Routed),
+            Err(MethodLookupError::InsufficientScope {
+                spec: ROUTING_SUBSCRIBE_EVENTS,
+                connection_scope: MethodAccess::Routed,
             })
         );
         assert_eq!(
-            find_for_scope("/amux.v1.Missing/Nope", MethodAccess::Routed),
+            find_for_connection_scope(AGENT_SUBSCRIBE_EVENTS_NAME, MethodAccess::Routed),
+            Ok(AGENT_SUBSCRIBE_EVENTS)
+        );
+
+        assert_eq!(
+            find_for_connection_scope("/amux.v1.Missing/Nope", MethodAccess::Routed),
             Err(MethodLookupError::Unknown)
         );
     }

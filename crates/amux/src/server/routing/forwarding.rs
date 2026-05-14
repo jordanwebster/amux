@@ -149,8 +149,9 @@ mod tests {
     use crate::protocol::method;
     use crate::rpc::OutboundCallState;
     use crate::server::state::{ConnectionEntry, ConnectionKind};
-    use crate::server::{ConnectionHandle, ServerUserState};
-    use crate::server::{LocalOriginOutboundStart, PeerRoutingOutboundStart};
+    use crate::server::{
+        ConnectionHandle, LocalOriginOutboundStart, PeerRoutingOutboundStart, ServerUserState,
+    };
 
     fn insert_connection(us: &mut ServerUserState, link: Link, tx: mpsc::Sender<Message>) {
         us.connections.insert(

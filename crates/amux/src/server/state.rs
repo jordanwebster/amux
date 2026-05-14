@@ -12,12 +12,11 @@ use crate::protocol::message::{CallId, Host, Message};
 use crate::protocol::method::MethodSpec;
 use crate::protocol::route::Route;
 use crate::rpc::{InboundCall, OutboundCall};
-use crate::server::RpcDispatcher;
 use crate::server::routing::{
     LinkClosedChange, PeerAgentDownChange, PeerAgentDownIgnored, PeerAgentUpChange,
     PeerAgentUpIgnored, PeerHostDownChange, PeerHostUpChange, TopologyEvent,
 };
-use crate::server::{ActiveEndpointStreamSink, LocalOriginOutboundCall};
+use crate::server::{ActiveEndpointStreamSink, LocalOriginOutboundCall, RpcDispatcher};
 
 pub(in crate::server) const LOCAL_USER_ID: Uuid = Uuid::nil();
 pub(in crate::server) const OUTGOING_MESSAGE_BUFFER: usize = 2048;

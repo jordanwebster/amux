@@ -5,64 +5,47 @@ use crate::protocol::link::Link;
 use crate::protocol::message::{
     AgentEvent, CallId, Frame, FrameBody, Message, RequestFrame, RoutingEvent,
 };
-use crate::protocol::method;
-use crate::protocol::wire;
+use crate::protocol::{method, wire};
 use crate::server::routing::TopologyEvent;
-use crate::server::{ServerOriginOutboundStart, ServerUserState, peer_routing_dedup_key};
+use crate::server::{ServerOriginOutboundStart, ServerUserState};
 
-fn peer_event_message(link: Link, call_id: CallId, event: &RoutingEvent) -> Message {
-    Message::Frame(Frame {
-        src: crate::protocol::Route::from_link(link),
-        dst: crate::protocol::Route::empty(),
-        call_id,
-        body: FrameBody::StreamItem(
-            wire::encode_routing_event(event).expect("known routing event should encode"),
-        ),
-    })
-}
-
-/// Send a routing event to all peer links, optionally excluding one.
-pub(in crate::server) fn broadcast_to_peers(
+/// Project a routing event onto every active routing-event subscription,
+/// regardless of whether the subscriber is a peer or a local connection.
+/// `exclude_link` skips a single subscriber (used when an event was
+/// announced by that peer; don't echo it back).
+pub(in crate::server) fn broadcast_routing_event_to_subscribers(
     us: &mut ServerUserState,
     event: &RoutingEvent,
     exclude_link: Option<&Link>,
 ) {
     let mut sent = 0usize;
     let mut failed = 0usize;
-    let links = us.peer_links();
-    for link in links {
-        if exclude_link == Some(&link) {
+    let payload = match wire::encode_routing_event(event) {
+        Ok(payload) => payload,
+        Err(error) => {
+            tracing::warn!(error = %error, "failed to encode routing event");
+            return;
+        }
+    };
+    for (rpc, sink) in us.active_endpoint_stream_sinks_for_method(method::ROUTING_SUBSCRIBE_EVENTS)
+    {
+        if Some(&sink.owner_link) == exclude_link {
             continue;
         }
-        let Some(context_rpc) = us.rpc_for_link(&link) else {
-            tracing::warn!(peer = %link, "peer has no route context");
-            failed += 1;
-            continue;
-        };
-        let Some(call_id) =
-            context_rpc.active_inbound_call_id_for_dedup_key(&peer_routing_dedup_key(&link))
-        else {
-            tracing::warn!(peer = %link, "peer has no routing stream call id");
-            failed += 1;
-            continue;
-        };
-        let wire_msg = peer_event_message(link.clone(), call_id, event);
-        let route = crate::protocol::Route::from_link(link.clone());
-        if !us.send_via_route(
-            &route,
-            wire_msg,
-            format!(
-                "peer route queue overflow while broadcasting {}",
-                event.type_label()
-            ),
-        ) {
-            tracing::warn!(peer = %link, "peer route queue unavailable; requested close");
+        if !sink.output.try_send_stream_item(payload.clone()) {
+            tracing::warn!(link = %sink.owner_link, "routing subscription stream queue unavailable");
+            if let Some(connection) = us.connections.get(&sink.owner_link) {
+                connection
+                    .handle
+                    .request_close("route queue overflow while broadcasting routing event");
+            }
+            rpc.remove_inbound_for_handle(&sink.handle);
             failed += 1;
         } else {
             sent += 1;
         }
     }
-    tracing::debug!(sent, failed, "broadcast to peers");
+    tracing::debug!(sent, failed, "broadcast routing event to subscribers");
 }
 
 /// Project a canonical topology event onto every active peer routing stream.
@@ -73,7 +56,7 @@ pub(crate) fn broadcast_topology_event(
 ) {
     match event {
         TopologyEvent::HostUp { .. } | TopologyEvent::HostDown { .. } => {
-            broadcast_to_peers(us, &event.to_routing_event(), exclude_link);
+            broadcast_routing_event_to_subscribers(us, &event.to_routing_event(), exclude_link);
         }
         TopologyEvent::AgentUp { .. } | TopologyEvent::AgentDown { .. } => {
             broadcast_agent_event_to_subscribers(us, &event.to_agent_event());

@@ -5,7 +5,7 @@ use crate::protocol::message::{
     CallId, DebugFormat, Frame, FrameBody, HookProvider, Message, ProtocolError, RequestFrame,
     ResponseFrame, ShutdownReason,
 };
-use crate::protocol::method::{MethodAccess, MethodLookupError};
+use crate::protocol::method::MethodAccess;
 use crate::protocol::{Route, method, wire};
 use crate::server::ShutdownRequest;
 use crate::server::accept::tcp_connect;
@@ -35,28 +35,13 @@ async fn handle_local_request_inner(
     request: RequestFrame,
     ctx: &ConnectionContext,
 ) -> LocalResult<()> {
-    match method::find_for_scope(&request.method, MethodAccess::Local) {
-        Ok(_) => {}
-        Err(MethodLookupError::WrongScope {
-            spec,
-            requested_scope,
-        }) => {
-            return Err(ProtocolError::PermissionDenied {
-                message: format!(
-                    "method {} is {} scoped and not valid in {} scope",
-                    request.method,
-                    spec.access.as_str(),
-                    requested_scope.as_str()
-                ),
-            }
-            .into());
+    // Scope was validated by the dispatcher before we got here; only Unknown
+    // is still possible at this layer (defensive against direct calls).
+    if method::find(&request.method).map(|spec| spec.access) != Some(MethodAccess::Local) {
+        return Err(ProtocolError::Unimplemented {
+            message: format!("unknown local method {}", request.method),
         }
-        Err(MethodLookupError::Unknown) => {
-            return Err(ProtocolError::Unimplemented {
-                message: format!("unknown local method {}", request.method),
-            }
-            .into());
-        }
+        .into());
     }
 
     match request.method.as_str() {
@@ -539,7 +524,10 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn known_wrong_scope_local_method_returns_permission_denied() {
+    async fn known_non_local_method_reaching_local_handler_returns_unimplemented() {
+        // Scope checking is now the dispatcher's responsibility; the local
+        // handler treats any non-Local method that somehow reaches it as
+        // unknown (defensive).
         let (tx, rx) = mpsc::channel(1);
         let call_id = CallId::from(Uuid::new_v4());
         let request = RequestFrame {
@@ -559,8 +547,8 @@ mod tests {
 
         assert!(matches!(
             expect_local_error(rx, &call_id).await,
-            ProtocolError::PermissionDenied { message }
-                if message.contains("not valid in local scope")
+            ProtocolError::Unimplemented { message }
+                if message.contains("unknown local method")
         ));
     }
 

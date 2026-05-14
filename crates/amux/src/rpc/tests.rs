@@ -1,8 +1,7 @@
 use uuid::Uuid;
 
 use super::*;
-use crate::protocol::CallId;
-use crate::protocol::method;
+use crate::protocol::{CallId, method};
 
 fn call_id(n: u128) -> CallId {
     CallId::from(Uuid::from_u128(n))
@@ -77,7 +76,6 @@ fn server_stream_starts_before_it_accepts_followup_frames() {
             state: InboundCallState::Starting,
         })
     ));
-    assert_eq!(state.active_inbound_call_id_for_dedup_key(&key), None);
 
     assert!(state.activate_inbound_for_handle(&stream.handle));
     assert!(matches!(
@@ -86,7 +84,6 @@ fn server_stream_starts_before_it_accepts_followup_frames() {
             method: method::ROUTING_SUBSCRIBE_EVENTS,
         })
     ));
-    assert_eq!(state.active_inbound_call_id_for_dedup_key(&key), Some(id));
 }
 
 #[test]

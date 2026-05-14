@@ -224,9 +224,7 @@ pub(super) async fn accept_handshake<T: Transport>(
 
     let local_routing_role = {
         let state = state.read().await;
-        if is_local {
-            RoutingRole::Observer
-        } else if state.is_cloud_server() {
+        if state.is_cloud_server() {
             RoutingRole::Relay
         } else {
             RoutingRole::Host

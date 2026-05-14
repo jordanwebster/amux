@@ -8,8 +8,9 @@ use crate::protocol::handshake::RoutingRole;
 use crate::protocol::link::Link;
 use crate::protocol::message::{ProtocolError, RoutingEvent};
 use crate::protocol::wire;
-use crate::server::{EndpointServerStream, ServerStreamSnapshotSendError};
-use crate::server::{ServerUserState, initial_routing_events};
+use crate::server::{
+    EndpointServerStream, ServerStreamSnapshotSendError, ServerUserState, initial_routing_events,
+};
 
 pub(crate) struct RoutingService;
 
@@ -48,13 +49,7 @@ impl RoutingServiceCtx {
 
 pub(crate) enum SubscribeRoutingEventsStartError {
     Response(ProtocolError),
-    ResponseThenClose {
-        error: ProtocolError,
-        reason: String,
-    },
-    ConnectionClosed {
-        reason: String,
-    },
+    ConnectionClosed { reason: String },
 }
 
 fn enqueue_initial_snapshot(
@@ -85,19 +80,13 @@ impl RoutingService {
         stream: &EndpointServerStream,
     ) -> Result<(), SubscribeRoutingEventsStartError> {
         let us = ctx.user_state().read().await;
-        if !us.is_peer_link(ctx.link()) {
-            return Err(SubscribeRoutingEventsStartError::ResponseThenClose {
-                error: ProtocolError::InvalidArgument {
-                    message: "routing event subscription is only valid for peer connections"
-                        .to_string(),
-                },
-                reason: "received peer routing subscription on non-peer connection".to_string(),
-            });
-        }
+        // The right precondition is "this server participates in routing,"
+        // i.e. the role we advertised on this link is Host or Relay. Whether
+        // the caller is a peer or a local connection is orthogonal.
         if !ctx.serves_routing_events() {
             return Err(SubscribeRoutingEventsStartError::Response(
                 ProtocolError::FailedPrecondition {
-                    message: "peer did not advertise a routing role that serves routing events"
+                    message: "this server's role on the link does not serve routing events"
                         .to_string(),
                 },
             ));

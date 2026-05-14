@@ -26,12 +26,11 @@ pub(crate) use routing::{
     delete_local_agent, initial_routing_events, maybe_start_agent_subscription,
     rename_local_agent_record, withdraw_agent,
 };
-pub(crate) use rpc_dispatcher::RpcDispatcher;
 pub(crate) use rpc_dispatcher::{
     ActiveEndpointStreamSink, EndpointServerStream, EndpointServerStreamStart, EndpointUnaryStart,
     InboundCallResources, LocalOriginOutboundCall, LocalOriginOutboundStart, OutboundCallResources,
-    PeerRoutingOutboundStart, RpcInboundCloseTarget, RpcInboundClosing, ServerOriginOutboundStart,
-    peer_routing_dedup_key,
+    PeerRoutingOutboundStart, RpcDispatcher, RpcInboundCloseTarget, RpcInboundClosing,
+    ServerOriginOutboundStart, routing_subscription_dedup_key,
 };
 pub(crate) use rpc_output::{
     ServerStreamEncoder, ServerStreamSendError, ServerStreamSink, ServerStreamSnapshotSendError,

@@ -210,13 +210,6 @@ impl RpcState {
             .collect()
     }
 
-    pub(crate) fn active_inbound_call_id_for_dedup_key(&self, key: &DedupKey) -> Option<CallId> {
-        let call_id = self.inbound_dedup_index.get(key)?;
-        self.inbound_calls.get(call_id).and_then(|call| {
-            matches!(call.state, InboundCallState::Active).then(|| call.call_id.clone())
-        })
-    }
-
     pub(crate) fn inbound_call_target_for_call(
         &self,
         call_id: &CallId,

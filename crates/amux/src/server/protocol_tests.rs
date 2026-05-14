@@ -130,7 +130,9 @@ async fn local_request_from_peer_connection_is_rejected() {
 
     peer.send_local_list_agents_request().await;
 
-    peer.expect_no_message().await;
+    // Local-scoped method from a peer connection: dispatcher computes Peer
+    // scope from the single-hop src and rejects with PermissionDenied.
+    peer.expect_permission_denied("requires local scope").await;
     peer.close().await.unwrap();
 }
 
@@ -313,6 +315,35 @@ async fn peer_routing_subscription_streams_remote_host_down_when_link_closes() {
         .expect_host_down(&mut observer, host_id, host_route)
         .await;
     observer.close().await.unwrap();
+}
+
+#[tokio::test]
+async fn local_routing_subscription_receives_live_host_events() {
+    // A local connection subscribes to routing events on its Host-role
+    // local server, then a peer brings up a new host. The broadcast must
+    // include the local subscriber (regression: prior code iterated
+    // peer_links() and silently skipped local subs after the initial
+    // snapshot, leaving them with a stale view).
+    let home = Topology::named("home").await;
+    let host = Topology::named("host").await;
+    let mut local = home.connect_local("local-client").await;
+    let subscription = local.subscribe_routing_events().await;
+
+    subscription.expect_snapshot_complete(&mut local).await;
+
+    let link = home.connect_peer_topology("host", &host).await;
+    let host_id = host.host_id().await;
+    let host_route = Route::from_link(link.local_link());
+    subscription
+        .expect_host_up(&mut local, host_id, "host", host_route.clone())
+        .await;
+
+    link.close().await;
+
+    subscription
+        .expect_host_down(&mut local, host_id, host_route)
+        .await;
+    local.close().await.unwrap();
 }
 
 #[tokio::test]

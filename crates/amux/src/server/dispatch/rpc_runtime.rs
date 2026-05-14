@@ -6,7 +6,7 @@ use crate::protocol::Route;
 use crate::protocol::message::{
     CallId, Frame, FrameBody, Message, ProtocolError, RequestFrame, ResponseFrame,
 };
-use crate::protocol::method::{self, MethodAccess, MethodLookupError, MethodSpec};
+use crate::protocol::method::{self, MethodAccess, MethodSpec};
 use crate::protocol::wire::{
     AgentLifecycleRequest, AgentLifecycleResponse, AgentRecord, decode_agent_event,
     decode_agent_lifecycle_request_payload, encode_agent_lifecycle_response_frame,
@@ -418,24 +418,11 @@ async fn handle_endpoint_request(
         return Ok(());
     };
 
-    let spec = match method::find_for_scope(&request.method, MethodAccess::Routed) {
-        Ok(spec) => spec,
-        Err(MethodLookupError::WrongScope {
-            spec,
-            requested_scope,
-        }) => {
-            return endpoint
-                .send_error(ProtocolError::PermissionDenied {
-                    message: format!(
-                        "method {} is {} scoped and not valid in {} scope",
-                        request.method,
-                        spec.access.as_str(),
-                        requested_scope.as_str()
-                    ),
-                })
-                .await;
-        }
-        Err(MethodLookupError::Unknown) => {
+    // Scope was validated by the dispatcher before we got here; only Unknown
+    // is still possible at this layer.
+    let spec = match method::find(&request.method) {
+        Some(spec) if spec.access == MethodAccess::Routed => spec,
+        _ => {
             return endpoint
                 .send_error(ProtocolError::Unimplemented {
                     message: format!("unknown endpoint method {}", request.method),
@@ -998,7 +985,10 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn known_wrong_scope_endpoint_method_returns_permission_denied() {
+    async fn known_non_routed_method_reaching_endpoint_handler_returns_unimplemented() {
+        // Scope checking is now the dispatcher's responsibility; the endpoint
+        // handler treats any non-Routed method that somehow reaches it as
+        // unknown (defensive).
         let ctx = test_ctx("owner", true).await;
         let counterparty = route("client");
         let key_call_id = call_id(42);
@@ -1019,13 +1009,14 @@ mod tests {
 
         assert!(matches!(
             expect_endpoint_error(&mut rx, &key_call_id).await,
-            ProtocolError::PermissionDenied { message }
-                if message.contains("not valid in routed scope")
+            ProtocolError::Unimplemented { message }
+                if message.contains("unknown endpoint method")
         ));
     }
 
     #[tokio::test]
     async fn direct_peer_endpoint_request_uses_connection_rpc_without_route_context() {
+        // Same defensive behavior when called via the direct-peer path.
         let ctx = test_ctx("peer", false).await;
         let counterparty = route_stack(&["peer", "client"]);
         let key_call_id = call_id(42);
@@ -1046,8 +1037,8 @@ mod tests {
 
         assert!(matches!(
             expect_endpoint_error(&mut rx, &key_call_id).await,
-            ProtocolError::PermissionDenied { message }
-                if message.contains("not valid in routed scope")
+            ProtocolError::Unimplemented { message }
+                if message.contains("unknown endpoint method")
         ));
     }
 

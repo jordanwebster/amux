@@ -199,13 +199,6 @@ impl RpcDispatcher {
         self.resources.write().expect("RPC resource lock poisoned")
     }
 
-    pub(in crate::server) fn active_inbound_call_id_for_dedup_key(
-        &self,
-        key: &DedupKey,
-    ) -> Option<CallId> {
-        self.read().active_inbound_call_id_for_dedup_key(key)
-    }
-
     pub(in crate::server) fn inbound_len(&self) -> usize {
         self.read().inbound_len()
     }
@@ -590,7 +583,7 @@ impl RpcDispatcher {
     ) -> bool {
         self.remove_inbound_for_call_if(call_id, |call| {
             call.method == method::ROUTING_SUBSCRIBE_EVENTS
-                && call.dedup_key == Some(peer_routing_dedup_key(link))
+                && call.dedup_key == Some(routing_subscription_dedup_key(link))
         })
         .is_some()
     }
@@ -754,8 +747,11 @@ impl RpcDispatcher {
     }
 }
 
-pub(crate) fn peer_routing_dedup_key(link: &Link) -> DedupKey {
-    DedupKey::new("peer-routing-subscription", link.as_str())
+/// Dedup key for a routing-event subscription bound to a particular link.
+/// Prevents a single connection from opening multiple concurrent routing
+/// subscriptions. Applies uniformly to peer and local connections.
+pub(crate) fn routing_subscription_dedup_key(link: &Link) -> DedupKey {
+    DedupKey::new("routing-subscription", link.as_str())
 }
 
 fn local_origin_request_route_matches(
