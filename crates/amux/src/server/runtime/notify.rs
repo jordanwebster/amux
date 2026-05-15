@@ -10,7 +10,7 @@ use crate::server::ServerUserState;
 ///
 /// This intentionally uses `try_send` so server shutdown does not block on a
 /// slow or backlogged client link. Missing this notice only affects the exit
-/// banner; update availability still comes from the marker file.
+/// banner; update availability is reported through the configured updater.
 pub(super) async fn notify_other_clients(
     user_state: &Arc<RwLock<ServerUserState>>,
     exclude_link: &Link,

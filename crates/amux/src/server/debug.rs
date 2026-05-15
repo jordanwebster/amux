@@ -387,31 +387,31 @@ struct AgentEntry<'a> {
 
 impl Serialize for AgentEntry<'_> {
     fn serialize<S: Serializer>(&self, serializer: S) -> Result<S::Ok, S::Error> {
-        let agent = self.agent;
+        let info = self.agent;
         let mut map = serializer.serialize_map(None)?;
-        map.serialize_entry("id", &agent.id)?;
-        map.serialize_entry("host_id", &agent.host_id)?;
+        map.serialize_entry("id", &info.id)?;
+        map.serialize_entry("host_id", &info.host_id)?;
         if let Some(host_name) = self.host_name {
             map.serialize_entry("host_name", host_name)?;
         }
-        if let Some(name) = &agent.name {
+        if let Some(name) = &info.name {
             map.serialize_entry("name", name)?;
         }
         map.serialize_entry(
             "location",
-            if agent.is_remote() { "remote" } else { "local" },
+            if info.is_remote() { "remote" } else { "local" },
         )?;
-        map.serialize_entry("route", &agent.route)?;
-        if let Some(via) = agent.route.peek() {
+        map.serialize_entry("route", &info.route)?;
+        if let Some(via) = info.route.peek() {
             map.serialize_entry("via", via)?;
         }
-        map.serialize_entry("agent_type", &agent.agent_type)?;
-        map.serialize_entry("io_protocols", &agent.io_protocols)?;
-        map.serialize_entry("readonly", &agent.readonly)?;
-        map.serialize_entry("command", &agent.command)?;
-        map.serialize_entry("working_dir", &LossyPath(&agent.working_dir))?;
-        map.serialize_entry("args", &agent.args)?;
-        map.serialize_entry("created_at", &agent.created_at)?;
+        map.serialize_entry("agent_type", &info.agent_type)?;
+        map.serialize_entry("io_protocols", &info.io_protocols)?;
+        map.serialize_entry("readonly", &info.readonly)?;
+        map.serialize_entry("command", &info.command)?;
+        map.serialize_entry("working_dir", &LossyPath(&info.working_dir))?;
+        map.serialize_entry("args", &info.args)?;
+        map.serialize_entry("created_at", &info.created_at)?;
         if let Some(session) = self.session {
             map.serialize_entry("session", &DebugView::new(session, self.verbose))?;
         }

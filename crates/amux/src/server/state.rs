@@ -5,6 +5,7 @@ use tokio::sync::{RwLock, mpsc, watch};
 use uuid::Uuid;
 
 use crate::agent::{Agent, AgentSession};
+use crate::auth::CredentialProvider;
 use crate::auth::jwt::JwtValidator;
 use crate::config::Config;
 use crate::protocol::link::Link;
@@ -17,6 +18,7 @@ use crate::server::routing::{
     PeerAgentUpIgnored, PeerHostDownChange, PeerHostUpChange, TopologyEvent,
 };
 use crate::server::{ActiveEndpointStreamSink, LocalOriginOutboundCall, RpcDispatcher};
+use crate::update::UpdateReporter;
 
 pub(in crate::server) const LOCAL_USER_ID: Uuid = Uuid::nil();
 pub(in crate::server) const OUTGOING_MESSAGE_BUFFER: usize = 2048;
@@ -517,26 +519,26 @@ impl ServerUserState {
             .sum()
     }
 
-    pub(crate) fn list_agents(&self) -> Vec<crate::protocol::Agent> {
-        let mut agents: Vec<crate::protocol::Agent> =
-            self.all_agents().into_iter().map(Into::into).collect();
+    pub(crate) fn list_agents(&self) -> Vec<crate::protocol::AgentEntry> {
+        let mut agents = self.all_agent_entries();
         agents.sort_unstable_by(|a, b| {
             a.route
                 .to_string()
                 .cmp(&b.route.to_string())
                 .then_with(|| {
-                    a.name
+                    a.agent
+                        .name
                         .as_deref()
                         .unwrap_or("")
-                        .cmp(b.name.as_deref().unwrap_or(""))
+                        .cmp(b.agent.name.as_deref().unwrap_or(""))
                 })
-                .then_with(|| a.id.as_u128().cmp(&b.id.as_u128()))
+                .then_with(|| a.agent.id.as_u128().cmp(&b.agent.id.as_u128()))
         });
         agents
     }
 
-    pub(crate) fn resolve_agent(&self, identifier: &str) -> Option<crate::protocol::Agent> {
-        self.resolve_agent_domain(identifier).map(Into::into)
+    pub(crate) fn resolve_agent(&self, identifier: &str) -> Option<crate::protocol::AgentEntry> {
+        self.resolve_agent_domain(identifier)
     }
 
     pub(crate) fn agent_session_mut(&mut self, agent_id: &Uuid) -> Option<&mut AgentSession> {
@@ -650,15 +652,52 @@ impl ServerUserState {
                     .cmp(b.name.as_deref().unwrap_or(""))
                     .then_with(|| a.id.as_u128().cmp(&b.id.as_u128()))
             });
-            for mut agent in remote_agents {
-                agent.route = route.clone();
-                agents.push(agent);
+            for mut info in remote_agents {
+                info.route = route.clone();
+                agents.push(info);
             }
         }
         agents
     }
 
-    fn resolve_agent_domain(&self, identifier: &str) -> Option<Agent> {
+    fn all_agent_entries(&self) -> Vec<crate::protocol::AgentEntry> {
+        let mut agents: Vec<_> = self
+            .local_agents
+            .values()
+            .map(|context| agent_entry_from_runtime(context.info.clone(), Route::empty()))
+            .collect();
+        let mut hosts: Vec<_> = self.hosts.iter().collect();
+        hosts.sort_unstable_by(|(host_id_a, context_a), (host_id_b, context_b)| {
+            self.route_for_host(**host_id_a)
+                .map(|route| route.to_string())
+                .cmp(
+                    &self
+                        .route_for_host(**host_id_b)
+                        .map(|route| route.to_string()),
+                )
+                .then_with(|| context_a.host.name.cmp(&context_b.host.name))
+                .then_with(|| host_id_a.as_u128().cmp(&host_id_b.as_u128()))
+        });
+        for (host_id, context) in hosts {
+            let Some(route) = self.route_for_host(*host_id) else {
+                continue;
+            };
+            let mut remote_agents: Vec<_> = context.agents.values().cloned().collect();
+            remote_agents.sort_unstable_by(|a, b| {
+                a.name
+                    .as_deref()
+                    .unwrap_or("")
+                    .cmp(b.name.as_deref().unwrap_or(""))
+                    .then_with(|| a.id.as_u128().cmp(&b.id.as_u128()))
+            });
+            for agent in remote_agents {
+                agents.push(agent_entry_from_runtime(agent, route.clone()));
+            }
+        }
+        agents
+    }
+
+    fn resolve_agent_domain(&self, identifier: &str) -> Option<crate::protocol::AgentEntry> {
         match identifier.rsplit_once(':') {
             Some((route_str, id)) => {
                 let supplied_route = parse_route(route_str)?;
@@ -668,52 +707,60 @@ impl ServerUserState {
         }
     }
 
-    fn resolve_agent_inner(&self, identifier: &str) -> Option<Agent> {
+    fn resolve_agent_inner(&self, identifier: &str) -> Option<crate::protocol::AgentEntry> {
         if let Ok(agent_id) = Uuid::parse_str(identifier) {
             return self.agent_by_id(agent_id);
         }
         self.agent_by_name(identifier)
     }
 
-    fn resolve_agent_inner_on_route(&self, identifier: &str, route: &Route) -> Option<Agent> {
+    fn resolve_agent_inner_on_route(
+        &self,
+        identifier: &str,
+        route: &Route,
+    ) -> Option<crate::protocol::AgentEntry> {
         if let Ok(agent_id) = Uuid::parse_str(identifier) {
             return self.agent_by_id_on_route(agent_id, route);
         }
         self.agent_by_name_on_route(identifier, route)
     }
 
-    fn agent_by_id(&self, agent_id: Uuid) -> Option<Agent> {
+    fn agent_by_id(&self, agent_id: Uuid) -> Option<crate::protocol::AgentEntry> {
         if let Some(context) = self.local_agents.get(&agent_id) {
-            return Some(context.info.clone());
+            return Some(agent_entry_from_runtime(
+                context.info.clone(),
+                Route::empty(),
+            ));
         }
         for (host_id, context) in self.host_contexts_by_id_sorted() {
             if let Some(agent) = context.agents.get(&agent_id) {
                 let Some(route) = self.route_for_host(*host_id) else {
                     continue;
                 };
-                let mut agent = agent.clone();
-                agent.route = route;
-                return Some(agent);
+                return Some(agent_entry_from_runtime(agent.clone(), route));
             }
         }
         None
     }
 
-    fn agent_by_id_on_route(&self, agent_id: Uuid, route: &Route) -> Option<Agent> {
+    fn agent_by_id_on_route(
+        &self,
+        agent_id: Uuid,
+        route: &Route,
+    ) -> Option<crate::protocol::AgentEntry> {
         if route.is_empty() {
             return self
                 .local_agents
                 .get(&agent_id)
-                .map(|context| context.info.clone());
+                .map(|context| agent_entry_from_runtime(context.info.clone(), Route::empty()));
         }
 
         let host_id = self.routes.get(route)?.host_id;
-        let mut agent = self.hosts.get(&host_id)?.agents.get(&agent_id)?.clone();
-        agent.route = route.clone();
-        Some(agent)
+        let agent = self.hosts.get(&host_id)?.agents.get(&agent_id)?.clone();
+        Some(agent_entry_from_runtime(agent, route.clone()))
     }
 
-    fn agent_by_name(&self, name: &str) -> Option<Agent> {
+    fn agent_by_name(&self, name: &str) -> Option<crate::protocol::AgentEntry> {
         let mut local: Vec<_> = self
             .local_agents
             .values()
@@ -722,14 +769,18 @@ impl ServerUserState {
             .collect();
         local.sort_unstable_by_key(|agent| agent.id.as_u128());
         if let Some(agent) = local.into_iter().next() {
-            return Some(agent);
+            return Some(agent_entry_from_runtime(agent, Route::empty()));
         }
 
         let agent_id = *self.remote_name_owners.get(name)?;
         self.agent_by_id(agent_id)
     }
 
-    fn agent_by_name_on_route(&self, name: &str, route: &Route) -> Option<Agent> {
+    fn agent_by_name_on_route(
+        &self,
+        name: &str,
+        route: &Route,
+    ) -> Option<crate::protocol::AgentEntry> {
         if route.is_empty() {
             let mut local: Vec<_> = self
                 .local_agents
@@ -738,7 +789,10 @@ impl ServerUserState {
                 .map(|context| context.info.clone())
                 .collect();
             local.sort_unstable_by_key(|agent| agent.id.as_u128());
-            return local.into_iter().next();
+            return local
+                .into_iter()
+                .next()
+                .map(|agent| agent_entry_from_runtime(agent, Route::empty()));
         }
 
         let host_id = self.routes.get(route)?.host_id;
@@ -751,10 +805,10 @@ impl ServerUserState {
             .cloned()
             .collect();
         remote.sort_unstable_by_key(|agent| agent.id.as_u128());
-        remote.into_iter().next().map(|mut agent| {
-            agent.route = route.clone();
-            agent
-        })
+        remote
+            .into_iter()
+            .next()
+            .map(|agent| agent_entry_from_runtime(agent, route.clone()))
     }
 
     fn host_contexts_by_id_sorted(&self) -> Vec<(&Uuid, &HostContext)> {
@@ -811,14 +865,14 @@ impl ServerUserState {
     pub(in crate::server) fn apply_peer_agent_up(
         &mut self,
         from: &Link,
-        mut agent: Agent,
+        mut info: Agent,
     ) -> PeerAgentUpChange {
-        if self.local_agents.contains_key(&agent.id) {
+        if self.local_agents.contains_key(&info.id) {
             return PeerAgentUpChange::ignored(PeerAgentUpIgnored::LocalAgent);
         }
 
-        let Some(_route) = self.route_for_host_from(agent.host_id, from) else {
-            return if self.hosts.contains_key(&agent.host_id) {
+        let Some(_route) = self.route_for_host_from(info.host_id, from) else {
+            return if self.hosts.contains_key(&info.host_id) {
                 PeerAgentUpChange::ignored(PeerAgentUpIgnored::NonSelectedHostRoute)
             } else {
                 PeerAgentUpChange::ignored(PeerAgentUpIgnored::UnknownHost)
@@ -826,19 +880,19 @@ impl ServerUserState {
         };
 
         for (host_id, context) in &mut self.hosts {
-            if *host_id != agent.host_id {
-                context.agents.remove(&agent.id);
+            if *host_id != info.host_id {
+                context.agents.remove(&info.id);
             }
         }
-        self.release_remote_names_for_agent(agent.id);
-        self.claim_remote_name_for_agent(&agent);
+        self.release_remote_names_for_agent(info.id);
+        self.claim_remote_name_for_agent(&info);
 
         let context = self
             .hosts
-            .get_mut(&agent.host_id)
+            .get_mut(&info.host_id)
             .expect("host route lookup returned an existing host");
-        agent.route = Route::empty();
-        context.agents.insert(agent.id, agent.clone());
+        info.route = Route::empty();
+        context.agents.insert(info.id, info.clone());
         PeerAgentUpChange { ignored: None }
     }
 
@@ -1180,9 +1234,18 @@ fn parse_route(route: &str) -> Option<Route> {
     Route::deserialize(deserializer).ok()
 }
 
+fn agent_entry_from_runtime(agent: Agent, route: Route) -> crate::protocol::AgentEntry {
+    crate::protocol::AgentEntry {
+        agent: agent.into(),
+        route,
+    }
+}
+
 pub(crate) struct ServerState {
     pub(in crate::server) config: Config,
     pub(in crate::server) host_id: Uuid,
+    pub(in crate::server) credentials: Option<Arc<dyn CredentialProvider>>,
+    pub(in crate::server) update_reporter: Option<Arc<dyn UpdateReporter>>,
     pub(in crate::server) is_cloud_server: bool,
     pub(in crate::server) jwt_validator: Option<Arc<JwtValidator>>,
     pub(in crate::server) users: HashMap<Uuid, Arc<RwLock<ServerUserState>>>,
@@ -1194,12 +1257,16 @@ impl ServerState {
         config: Config,
         host_id: Uuid,
         shutdown_tx: mpsc::Sender<ShutdownRequest>,
+        credentials: Option<Arc<dyn CredentialProvider>>,
+        update_reporter: Option<Arc<dyn UpdateReporter>>,
     ) -> Self {
         let mut users = HashMap::new();
         users.insert(LOCAL_USER_ID, Arc::new(RwLock::new(ServerUserState::new())));
         Self {
             config,
             host_id,
+            credentials,
+            update_reporter,
             is_cloud_server: false,
             jwt_validator: None,
             users,
@@ -1460,7 +1527,7 @@ mod tests {
         let resolved = user_state
             .resolve_agent("new")
             .expect("moved agent should resolve by latest name");
-        assert_eq!(resolved.host_id, host_b);
+        assert_eq!(resolved.agent.host_id, host_b);
         assert_eq!(resolved.route, Route::from_link(peer_b));
     }
 
@@ -1503,9 +1570,9 @@ mod tests {
             .resolve_agent(&format!("{route_a}:shared"))
             .expect("route-qualified duplicate should resolve on that route");
 
-        assert_eq!(unqualified.id, first_agent_id);
+        assert_eq!(unqualified.agent.id, first_agent_id);
         assert_eq!(unqualified.route, route_b);
-        assert_eq!(route_qualified.id, second_agent_id);
+        assert_eq!(route_qualified.agent.id, second_agent_id);
         assert_eq!(route_qualified.route, route_a);
     }
 

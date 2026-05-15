@@ -3,13 +3,166 @@ use std::collections::HashMap;
 use std::os::unix::fs::PermissionsExt;
 use std::path::{Path, PathBuf};
 
-use amux::Config;
+use amux::{Config, UpdateInfo, UpdateReporter, UpdateStatus};
 use anyhow::{Context, Result, bail};
 use semver::Version;
 use serde::Deserialize;
 use sha2::{Digest, Sha256};
 
 use crate::server_client;
+
+#[derive(Debug, Clone)]
+pub(crate) struct MarkerFileReporter {
+    state_dir: PathBuf,
+}
+
+impl MarkerFileReporter {
+    pub(crate) fn from_state_path(state_path: &Path) -> Self {
+        Self {
+            state_dir: state_path.parent().unwrap_or(Path::new(".")).to_path_buf(),
+        }
+    }
+
+    pub(crate) fn read_update_marker(&self) -> Option<UpdateInfo> {
+        let contents = std::fs::read_to_string(self.update_marker_path()).ok()?;
+        let mut lines = contents.lines();
+        let current_version = lines.next()?.to_string();
+        let update_version = lines.next()?.to_string();
+        if current_version.is_empty() || update_version.is_empty() {
+            return None;
+        }
+        Some(UpdateInfo {
+            current_version,
+            update_version,
+        })
+    }
+
+    pub(crate) fn read_update_required(&self) -> Option<String> {
+        let contents = std::fs::read_to_string(self.update_required_marker_path()).ok()?;
+        let version = contents.trim().to_string();
+        if version.is_empty() {
+            None
+        } else {
+            Some(version)
+        }
+    }
+
+    pub(crate) fn is_update_dismissed(&self, minimum_version: &str) -> bool {
+        match std::fs::read_to_string(self.update_dismissed_marker_path()) {
+            Ok(contents) => contents.trim() == minimum_version,
+            Err(_) => false,
+        }
+    }
+
+    pub(crate) fn dismiss_update_required(&self, minimum_version: &str) {
+        let _ = std::fs::write(
+            self.update_dismissed_marker_path(),
+            format!("{minimum_version}\n"),
+        );
+    }
+
+    pub(crate) fn clear_update_marker(&self) {
+        let _ = std::fs::remove_file(self.update_marker_path());
+    }
+
+    pub(crate) fn clear_update_required(&self) {
+        let _ = std::fs::remove_file(self.update_required_marker_path());
+        let _ = std::fs::remove_file(self.update_dismissed_marker_path());
+    }
+
+    pub(crate) fn clear_all(&self) {
+        self.clear_update_marker();
+        self.clear_update_required();
+    }
+
+    pub(crate) fn update_marker_path(&self) -> PathBuf {
+        self.state_dir.join("update-available")
+    }
+
+    fn update_required_marker_path(&self) -> PathBuf {
+        self.state_dir.join("update-required")
+    }
+
+    fn update_dismissed_marker_path(&self) -> PathBuf {
+        self.state_dir.join("update-dismissed")
+    }
+
+    fn write_update_marker(&self, info: &UpdateInfo) {
+        let contents = format!("{}\n{}\n", info.current_version, info.update_version);
+        if let Err(e) = std::fs::write(self.update_marker_path(), contents) {
+            tracing::warn!(error = %e, "failed to write update marker");
+        }
+    }
+
+    fn write_update_required(&self, minimum_version: &str) {
+        if let Err(e) = std::fs::write(
+            self.update_required_marker_path(),
+            format!("{minimum_version}\n"),
+        ) {
+            tracing::warn!(error = %e, "failed to write update-required marker");
+        }
+    }
+}
+
+impl UpdateReporter for MarkerFileReporter {
+    fn report(&self, status: UpdateStatus) {
+        match status {
+            UpdateStatus::Available(Some(info)) => self.write_update_marker(&info),
+            UpdateStatus::Available(None) => self.clear_update_marker(),
+            UpdateStatus::Required(Some(minimum_version)) => {
+                self.write_update_required(&minimum_version);
+            }
+            UpdateStatus::Required(None) => self.clear_update_required(),
+        }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn available_marker_round_trips_and_clears() {
+        let temp = tempfile::tempdir().unwrap();
+        let reporter = MarkerFileReporter::from_state_path(&temp.path().join("state.yaml"));
+        let info = UpdateInfo {
+            current_version: "0.3.0".to_string(),
+            update_version: "0.4.0".to_string(),
+        };
+
+        reporter.report(UpdateStatus::Available(Some(info.clone())));
+
+        let marker = reporter.read_update_marker().unwrap();
+        assert_eq!(marker.current_version, info.current_version);
+        assert_eq!(marker.update_version, info.update_version);
+
+        reporter.report(UpdateStatus::Available(None));
+
+        assert!(reporter.read_update_marker().is_none());
+        assert!(!reporter.update_marker_path().exists());
+    }
+
+    #[test]
+    fn required_marker_dismissal_round_trips_and_clears() {
+        let temp = tempfile::tempdir().unwrap();
+        let reporter = MarkerFileReporter::from_state_path(&temp.path().join("state.yaml"));
+
+        reporter.report(UpdateStatus::Required(Some("0.4.0".to_string())));
+
+        assert_eq!(reporter.read_update_required().as_deref(), Some("0.4.0"));
+        assert!(!reporter.is_update_dismissed("0.4.0"));
+
+        reporter.dismiss_update_required("0.4.0");
+
+        assert!(reporter.is_update_dismissed("0.4.0"));
+        assert!(!reporter.is_update_dismissed("0.5.0"));
+
+        reporter.report(UpdateStatus::Required(None));
+
+        assert_eq!(reporter.read_update_required(), None);
+        assert!(!reporter.is_update_dismissed("0.4.0"));
+    }
+}
 
 #[derive(Deserialize)]
 struct Manifest {
@@ -115,9 +268,7 @@ pub async fn run_update(config: &Config) -> Result<()> {
 
     if latest <= current {
         println!("Already up to date (v{current}).");
-        let marker_path = amux::update::update_marker_path(&config.state_path);
-        amux::update::clear_update_marker(&marker_path);
-        amux::update::clear_update_required(&config.state_path);
+        MarkerFileReporter::from_state_path(&config.state_path).clear_all();
         return Ok(());
     }
 
@@ -148,9 +299,7 @@ pub async fn run_update(config: &Config) -> Result<()> {
     println!("Updated to v{latest}.");
 
     // Clear update markers so stale banners don't persist.
-    let marker_path = amux::update::update_marker_path(&config.state_path);
-    amux::update::clear_update_marker(&marker_path);
-    amux::update::clear_update_required(&config.state_path);
+    MarkerFileReporter::from_state_path(&config.state_path).clear_all();
 
     if was_running {
         println!("Restarting server...");

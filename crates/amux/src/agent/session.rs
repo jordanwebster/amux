@@ -75,7 +75,6 @@ impl From<Agent> for crate::protocol::Agent {
             name: agent.name,
             command: agent.command,
             working_dir: agent.working_dir,
-            route: agent.route,
             agent_type: agent.agent_type,
             io_protocols: agent.io_protocols.clone(),
             readonly: agent.readonly,

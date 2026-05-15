@@ -41,7 +41,7 @@ pub(crate) enum JwtError {
 pub(crate) struct ConnectionClaims {
     /// User ID (subject)
     pub(crate) sub: String,
-    /// OAuth client that requested the cloud connection token
+    /// Auth client that requested the cloud connection token
     pub(crate) client_id: String,
     /// Expected host this token is for
     pub(crate) host: String,

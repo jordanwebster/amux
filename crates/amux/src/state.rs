@@ -1,7 +1,7 @@
 //! State management for amux.
 //!
 //! State is stored in `~/.local/state/amux/state.yaml` and persists across sessions.
-//! Includes cloud authentication state and other persistent preferences.
+//! Includes host identity and amux-owned integration state.
 
 use std::fs::{self, File, OpenOptions};
 use std::io::{Read, Seek, SeekFrom, Write};
@@ -31,22 +31,7 @@ pub(crate) struct State {
     #[serde(default)]
     pub(crate) host_id: Option<Uuid>,
     #[serde(default)]
-    pub(crate) cloud: CloudState,
-    #[serde(default)]
     pub(crate) claude: ClaudeState,
-}
-
-/// Runtime-scoped cloud state. Namespaced under `cloud:` in `state.yaml`.
-///
-/// Contains only values that are a function of the cloud runtime (e.g. the
-/// current refresh token). User preferences about cloud mode live in
-/// `Config::enable_cloud_mode` in `config.yaml`, not here.
-#[derive(Debug, Clone, Serialize, Deserialize, Default)]
-pub(crate) struct CloudState {
-    /// OAuth refresh token. Present iff the user has completed authentication;
-    /// absent otherwise.
-    #[serde(default)]
-    pub(crate) refresh_token: Option<String>,
 }
 
 /// Claude-specific state
@@ -148,7 +133,6 @@ mod tests {
     fn test_state_default() {
         let state = State::default();
         assert!(state.host_id.is_none());
-        assert!(state.cloud.refresh_token.is_none());
     }
 
     #[test]
@@ -157,7 +141,6 @@ mod tests {
         let path = temp.path().join("state.yaml");
         let state = State::load(&path).unwrap();
         assert!(state.host_id.is_none());
-        assert!(state.cloud.refresh_token.is_none());
     }
 
     #[test]
@@ -166,31 +149,12 @@ mod tests {
         let path = temp.path().join("state.yaml");
 
         State::update(&path, |s| {
-            s.cloud.refresh_token = Some("test_token".to_string());
+            s.host_id = Some(Uuid::from_u128(1));
         })
         .unwrap();
 
         let loaded = State::load(&path).unwrap();
-        assert!(loaded.host_id.is_none());
-        assert_eq!(loaded.cloud.refresh_token.as_deref(), Some("test_token"));
-    }
-
-    #[test]
-    fn test_state_update_clears_token() {
-        let temp = TempDir::new().unwrap();
-        let path = temp.path().join("state.yaml");
-
-        State::update(&path, |s| {
-            s.cloud.refresh_token = Some("t".to_string());
-        })
-        .unwrap();
-        State::update(&path, |s| {
-            s.cloud.refresh_token = None;
-        })
-        .unwrap();
-
-        let loaded = State::load(&path).unwrap();
-        assert!(loaded.cloud.refresh_token.is_none());
+        assert_eq!(loaded.host_id, Some(Uuid::from_u128(1)));
     }
 
     #[test]
@@ -198,12 +162,11 @@ mod tests {
         let temp = TempDir::new().unwrap();
         let path = temp.path().join("state.yaml");
 
-        // Write partial YAML (only cloud block)
-        fs::write(&path, "cloud:\n  refresh_token: abc123\n").unwrap();
+        // Unknown legacy sections should not prevent loading owned state.
+        fs::write(&path, "legacy:\n  ignored: abc123\n").unwrap();
 
         let loaded = State::load(&path).unwrap();
         assert!(loaded.host_id.is_none());
-        assert_eq!(loaded.cloud.refresh_token.as_deref(), Some("abc123"));
         // Claude section should be default
         assert!(loaded.claude.applied_plugin_version.is_none());
         assert!(loaded.claude.applied_marketplace_path.is_none());

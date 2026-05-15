@@ -6,7 +6,7 @@ use tokio::sync::{Mutex as AsyncMutex, mpsc};
 use tokio::task::JoinHandle;
 use uuid::Uuid;
 
-use super::RpcClientError;
+use super::ClientError;
 use crate::client::Connection;
 use crate::protocol::link::Link;
 use crate::protocol::message::{CallId, Frame, FrameBody, Message, RequestFrame, ResponseFrame};
@@ -16,12 +16,13 @@ use crate::rpc::{
     RpcState,
 };
 
+#[derive(Clone)]
 pub(super) struct ClientRuntime {
     connection: Connection,
     state: Arc<Mutex<RpcState>>,
     inboxes: Arc<Mutex<HashMap<CallId, mpsc::Sender<Message>>>>,
     reader_closed: Arc<AtomicBool>,
-    reader_task: Arc<RpcClientReaderTask>,
+    reader_task: Arc<ClientReaderTask>,
 }
 
 impl ClientRuntime {
@@ -53,7 +54,7 @@ impl ClientRuntime {
         spec: method::MethodSpec,
         full_route: Route,
         request_payload: Vec<u8>,
-    ) -> Result<EndpointOutputStream, RpcClientError> {
+    ) -> Result<EndpointOutputStream, ClientError> {
         let call_id = CallId::from(Uuid::new_v4());
         let outbound = register_outbound(
             &self.state,
@@ -79,7 +80,7 @@ impl ClientRuntime {
         spec: method::MethodSpec,
         full_route: Route,
         request_payload: Vec<u8>,
-    ) -> Result<Vec<u8>, RpcClientError> {
+    ) -> Result<Vec<u8>, ClientError> {
         match self
             .call_endpoint_unary(spec, full_route, request_payload)
             .await?
@@ -94,7 +95,7 @@ impl ClientRuntime {
         spec: method::MethodSpec,
         full_route: Route,
         request_payload: Vec<u8>,
-    ) -> Result<ResponseFrame, RpcClientError> {
+    ) -> Result<ResponseFrame, ClientError> {
         let call_id = CallId::from(Uuid::new_v4());
         let message =
             endpoint_request_message(spec, full_route.clone(), call_id.clone(), request_payload)?;
@@ -143,7 +144,7 @@ impl ClientRuntime {
                 }
                 Message::GoAway(goaway) => {
                     outbound.call.remove();
-                    return Err(RpcClientError::ServerShutdown(goaway.reason));
+                    return Err(ClientError::ServerShutdown(goaway.reason));
                 }
                 Message::Frame(Frame {
                     dst,
@@ -157,7 +158,7 @@ impl ClientRuntime {
                 ) =>
                 {
                     outbound.call.remove();
-                    return Err(RpcClientError::Unexpected {
+                    return Err(ClientError::Unexpected {
                         method: spec.name,
                         message: format!("expected endpoint response frame, got {body:?}"),
                     });
@@ -171,31 +172,11 @@ impl ClientRuntime {
         }
     }
 
-    pub(super) async fn local_send_only(
-        &self,
-        method: &'static str,
-        payload: Vec<u8>,
-    ) -> Result<(), RpcClientError> {
-        let call_id = CallId::from(Uuid::new_v4());
-        self.connection
-            .send(&Message::Frame(Frame {
-                src: Route::from_link(self.connection.link().clone()),
-                dst: Route::empty(),
-                call_id,
-                body: FrameBody::Request(RequestFrame {
-                    method: method.to_string(),
-                    payload,
-                }),
-            }))
-            .await?;
-        Ok(())
-    }
-
     pub(super) async fn local_unary_payload(
         &self,
         spec: method::MethodSpec,
         payload: Vec<u8>,
-    ) -> Result<Vec<u8>, RpcClientError> {
+    ) -> Result<Vec<u8>, ClientError> {
         match self.local_unary_response(spec, payload).await? {
             ResponseFrame::Payload(payload) => Ok(payload),
             ResponseFrame::Error(error) => Err(error.into()),
@@ -206,7 +187,7 @@ impl ClientRuntime {
         &self,
         spec: method::MethodSpec,
         payload: Vec<u8>,
-    ) -> Result<ResponseFrame, RpcClientError> {
+    ) -> Result<ResponseFrame, ClientError> {
         let call_id = CallId::from(Uuid::new_v4());
         let mut outbound = register_outbound(
             &self.state,
@@ -251,14 +232,14 @@ impl ClientRuntime {
                     ..
                 }) if dst.is_empty() && response_call_id == call_id => {
                     outbound.call.remove();
-                    return Err(RpcClientError::Unexpected {
+                    return Err(ClientError::Unexpected {
                         method: spec.name,
                         message: format!("expected response frame, got {body:?}"),
                     });
                 }
                 Message::GoAway(goaway) => {
                     outbound.call.remove();
-                    return Err(RpcClientError::ServerShutdown(goaway.reason));
+                    return Err(ClientError::ServerShutdown(goaway.reason));
                 }
                 Message::Frame(_)
                 | Message::Ping
@@ -270,12 +251,12 @@ impl ClientRuntime {
     }
 }
 
-struct RpcClientReaderTask {
+struct ClientReaderTask {
     task: JoinHandle<()>,
     closed: Arc<AtomicBool>,
 }
 
-impl Drop for RpcClientReaderTask {
+impl Drop for ClientReaderTask {
     fn drop(&mut self) {
         self.closed.store(true, Ordering::Release);
         self.task.abort();
@@ -302,7 +283,7 @@ impl EndpointFrameSink {
         }
     }
 
-    async fn send_request_payload(&self, payload: Vec<u8>) -> Result<(), RpcClientError> {
+    async fn send_request_payload(&self, payload: Vec<u8>) -> Result<(), ClientError> {
         self.send_frame_body(FrameBody::Request(RequestFrame {
             method: self.call.method.name.to_string(),
             payload,
@@ -310,9 +291,9 @@ impl EndpointFrameSink {
         .await
     }
 
-    async fn send_frame_body(&self, body: FrameBody) -> Result<(), RpcClientError> {
+    async fn send_frame_body(&self, body: FrameBody) -> Result<(), ClientError> {
         let (src, dst) =
-            Route::send(self.full_route.clone()).ok_or_else(|| RpcClientError::Unexpected {
+            Route::send(self.full_route.clone()).ok_or_else(|| ClientError::Unexpected {
                 method: self.call.method.name,
                 message: "agent route did not include the local connection link".to_string(),
             })?;
@@ -332,7 +313,7 @@ pub(super) struct EndpointOutputStream {
     call: OutboundCallGuard,
     sink: EndpointFrameSink,
     rx: AsyncMutex<mpsc::Receiver<Message>>,
-    _reader_task: Arc<RpcClientReaderTask>,
+    _reader_task: Arc<ClientReaderTask>,
 }
 
 impl EndpointOutputStream {
@@ -340,7 +321,7 @@ impl EndpointOutputStream {
         connection: Connection,
         outbound: RegisteredOutboundCall,
         full_route: Route,
-        reader_task: Arc<RpcClientReaderTask>,
+        reader_task: Arc<ClientReaderTask>,
     ) -> Self {
         let sink = EndpointFrameSink::new(connection, &outbound.call, full_route);
         Self {
@@ -359,11 +340,11 @@ impl EndpointOutputStream {
         self.call.remove();
     }
 
-    async fn send_request_payload(&self, payload: Vec<u8>) -> Result<(), RpcClientError> {
+    async fn send_request_payload(&self, payload: Vec<u8>) -> Result<(), ClientError> {
         self.send_request_payload_or_remove(payload).await
     }
 
-    pub(super) async fn send_cancel(&self, method: &'static str) -> Result<(), RpcClientError> {
+    pub(super) async fn send_cancel(&self, method: &'static str) -> Result<(), ClientError> {
         if !self.call.set_state_if(
             |state| {
                 state == OutboundCallState::AwaitingResponse
@@ -382,7 +363,7 @@ impl EndpointOutputStream {
         }
     }
 
-    pub(super) async fn recv_frame_body(&self) -> Result<FrameBody, RpcClientError> {
+    pub(super) async fn recv_frame_body(&self) -> Result<FrameBody, ClientError> {
         loop {
             match self.recv_message().await? {
                 Message::Frame(Frame {
@@ -397,7 +378,7 @@ impl EndpointOutputStream {
                 },
                 Message::GoAway(goaway) => {
                     self.finish();
-                    return Err(RpcClientError::ServerShutdown(goaway.reason));
+                    return Err(ClientError::ServerShutdown(goaway.reason));
                 }
                 Message::Frame(_)
                 | Message::Ping
@@ -408,12 +389,12 @@ impl EndpointOutputStream {
         }
     }
 
-    async fn recv_message(&self) -> Result<Message, RpcClientError> {
+    async fn recv_message(&self) -> Result<Message, ClientError> {
         let mut rx = self.rx.lock().await;
         recv_message_or_remove(&mut rx, &self.call).await
     }
 
-    async fn send_request_payload_or_remove(&self, payload: Vec<u8>) -> Result<(), RpcClientError> {
+    async fn send_request_payload_or_remove(&self, payload: Vec<u8>) -> Result<(), ClientError> {
         match self.sink.send_request_payload(payload).await {
             Ok(()) => Ok(()),
             Err(error) => {
@@ -487,11 +468,11 @@ fn register_outbound(
     method: method::MethodSpec,
     call_id: CallId,
     call_state: OutboundCallState,
-) -> Result<RegisteredOutboundCall, RpcClientError> {
+) -> Result<RegisteredOutboundCall, ClientError> {
     let (tx, rx) = mpsc::channel(16);
     let mut inbox_guard = lock_client_inboxes(inboxes);
     if reader_closed.load(Ordering::Acquire) {
-        return Err(RpcClientError::Unexpected {
+        return Err(ClientError::Unexpected {
             method: method.name,
             message: "RPC reader is closed".to_string(),
         });
@@ -518,12 +499,12 @@ fn register_outbound(
 async fn recv_message_or_remove(
     rx: &mut mpsc::Receiver<Message>,
     call: &OutboundCallGuard,
-) -> Result<Message, RpcClientError> {
+) -> Result<Message, ClientError> {
     match rx.recv().await {
         Some(message) => Ok(message),
         None => {
             call.remove();
-            Err(RpcClientError::Unexpected {
+            Err(ClientError::Unexpected {
                 method: call.handle().method.name,
                 message: "RPC reader closed before response".to_string(),
             })
@@ -572,9 +553,9 @@ fn spawn_client_reader(
     _state: Arc<Mutex<RpcState>>,
     inboxes: Arc<Mutex<HashMap<CallId, mpsc::Sender<Message>>>>,
     closed: Arc<AtomicBool>,
-) -> RpcClientReaderTask {
+) -> ClientReaderTask {
     let task_closed = closed.clone();
-    RpcClientReaderTask {
+    ClientReaderTask {
         task: tokio::spawn(async move {
             loop {
                 let message = match connection.recv().await {
@@ -613,15 +594,15 @@ fn endpoint_frame_matches_call(
     call_id == &call.call_id && dst.is_empty()
 }
 
-fn call_state_error(method: &'static str, error: RegisterCallError) -> RpcClientError {
-    RpcClientError::Unexpected {
+fn call_state_error(method: &'static str, error: RegisterCallError) -> ClientError {
+    ClientError::Unexpected {
         method,
         message: format!("RPC call state error: {error:?}"),
     }
 }
 
-fn outbound_call_not_active_error(method: &'static str) -> RpcClientError {
-    RpcClientError::Unexpected {
+fn outbound_call_not_active_error(method: &'static str) -> ClientError {
+    ClientError::Unexpected {
         method,
         message: "RPC call is not active".to_string(),
     }
@@ -632,8 +613,8 @@ fn endpoint_request_message(
     full_route: Route,
     call_id: CallId,
     payload: Vec<u8>,
-) -> Result<Message, RpcClientError> {
-    let (src, dst) = Route::send(full_route).ok_or_else(|| RpcClientError::Unexpected {
+) -> Result<Message, ClientError> {
+    let (src, dst) = Route::send(full_route).ok_or_else(|| ClientError::Unexpected {
         method: spec.name,
         message: "agent route did not include the local connection link".to_string(),
     })?;
@@ -693,7 +674,7 @@ mod tests {
             OutboundCallState::AwaitingResponse,
         );
 
-        assert!(matches!(result, Err(RpcClientError::Unexpected { .. })));
+        assert!(matches!(result, Err(ClientError::Unexpected { .. })));
         assert_eq!(lock_rpc_state(&state).outbound_len(), 0);
     }
 

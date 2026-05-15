@@ -21,9 +21,17 @@ tracing-appender = { workspace = true }
 serde_json = { workspace = true }
 uuid = { workspace = true }
 reqwest = { workspace = true }
+oauth2 = { workspace = true }
+chrono = { workspace = true }
+thiserror = { workspace = true }
+fs2 = { workspace = true }
+async-trait = { workspace = true }
 semver = { workspace = true }
 sha2 = { workspace = true }
 crossterm = { workspace = true }
+
+[target.'cfg(unix)'.dependencies]
+libc = { workspace = true }
 
 [dev-dependencies]
 tempfile = { workspace = true }

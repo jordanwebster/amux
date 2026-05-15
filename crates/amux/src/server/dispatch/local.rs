@@ -364,7 +364,7 @@ where
 }
 
 fn agents_to_wire_entries(
-    agents: impl IntoIterator<Item = crate::protocol::Agent>,
+    agents: impl IntoIterator<Item = crate::protocol::AgentEntry>,
 ) -> crate::server::connection::Result<Vec<wire::AgentEntry>> {
     agents
         .into_iter()
@@ -437,6 +437,8 @@ mod tests {
             Config::default(),
             Uuid::new_v4(),
             shutdown_tx,
+            None,
+            None,
         )));
         let user_state = {
             let s = state.read().await;

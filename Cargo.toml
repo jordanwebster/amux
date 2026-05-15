@@ -28,6 +28,7 @@ tokio-tungstenite = "0.21"
 futures-util = "0.3"
 gethostname = "0.5"
 oauth2 = "4"
+async-trait = "0.1"
 # default-features off to avoid enabling both ring and aws-lc-rs (reqwest
 # already activates ring; having both makes rustls panic at runtime).
 tokio-rustls = { version = "0.26", default-features = false }
@@ -48,6 +49,7 @@ tracing-appender = "0.2"
 tempfile = "3"
 crossterm = "0.28"
 shell-words = "1"
+bytes = "1"
 
 [profile.dev]
 panic = "abort"

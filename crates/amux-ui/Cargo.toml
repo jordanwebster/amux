@@ -1,0 +1,19 @@
+[package]
+name = "amux-ui"
+version = "0.3.0"
+edition.workspace = true
+description = "Reactive UI runtime for amux clients"
+
+[dependencies]
+amux = { workspace = true }
+tokio = { workspace = true }
+futures-util = { workspace = true }
+bytes = { workspace = true }
+uuid = { workspace = true }
+thiserror = { workspace = true }
+async-trait = { workspace = true }
+tracing = { workspace = true }
+
+[dev-dependencies]
+chrono = { workspace = true }
+tempfile = { workspace = true }

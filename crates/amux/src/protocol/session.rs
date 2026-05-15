@@ -40,13 +40,15 @@ pub fn encode_subscribe_session_request(
 pub fn encode_send_input_request(
     agent_id: Uuid,
     io_protocol: impl Into<String>,
-    input_id: Vec<u8>,
     payload: Vec<u8>,
 ) -> Result<Vec<u8>, SessionCodecError> {
     wire::encode_send_input_request_payload(&wire::SendInputRequest {
         agent_id,
         io_protocol: io_protocol.into(),
-        event: wire::SessionInputEvent::Input { input_id, payload },
+        event: wire::SessionInputEvent::Input {
+            input_id: Uuid::new_v4().as_bytes().to_vec(),
+            payload,
+        },
     })
     .map_err(|error| SessionCodecError::Encode(error.to_string()))
 }
@@ -105,7 +107,24 @@ impl From<wire::SessionOutputEvent> for SubscribeSessionEvent {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::protocol::wire;
+    use crate::protocol::{method, wire};
+
+    #[test]
+    fn send_input_encoder_generates_wire_input_id() {
+        let payload =
+            encode_send_input_request(Uuid::new_v4(), "claude_raw_v1", b"hello".to_vec()).unwrap();
+        let decoded = wire::decode_send_input_request(&crate::protocol::message::RequestFrame {
+            method: method::AGENT_SEND_INPUT_NAME.to_string(),
+            payload,
+        })
+        .unwrap();
+
+        let wire::SessionInputEvent::Input { input_id, payload } = decoded.event else {
+            panic!("expected input event");
+        };
+        assert_eq!(input_id.len(), 16);
+        assert_eq!(payload, b"hello");
+    }
 
     #[test]
     fn server_frame_decoder_accepts_output_events_and_terminal_responses() {

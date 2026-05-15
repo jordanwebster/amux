@@ -6,7 +6,7 @@ use chrono::{TimeZone, Utc};
 use prost::Message as ProstMessage;
 use uuid::Uuid;
 
-use crate::protocol::agent::Agent;
+use crate::protocol::agent::{Agent, AgentEntry};
 use crate::protocol::message::{
     AgentType, CreateAgentRequest as DomainCreateAgentRequest, ProtocolError, RenameAgentRequest,
     RequestFrame as DomainRequestFrame, ResponseFrame as DomainResponseFrame, TerminalSize,
@@ -124,7 +124,7 @@ impl From<&Agent> for AgentRecord {
 }
 
 impl AgentRecord {
-    pub(crate) fn into_agent(self, route: Route) -> Result<Agent, wire::DecodeError> {
+    pub(crate) fn into_agent(self) -> Result<Agent, wire::DecodeError> {
         let created_at = Utc
             .timestamp_millis_opt(self.created_at_unix_ms)
             .single()
@@ -135,7 +135,6 @@ impl AgentRecord {
             name: self.name,
             command: self.command,
             working_dir: self.working_dir,
-            route,
             agent_type: self.agent_type,
             io_protocols: self.io_protocols.clone(),
             readonly: self.readonly,
@@ -145,14 +144,18 @@ impl AgentRecord {
     }
 }
 
-pub(crate) fn agent_entry_from_domain(agent: Agent) -> Result<wire::AgentEntry, wire::EncodeError> {
+pub(crate) fn agent_entry_from_domain(
+    entry: AgentEntry,
+) -> Result<wire::AgentEntry, wire::EncodeError> {
     Ok(wire::AgentEntry {
-        agent: Some(agent_to_wire(&AgentRecord::from(&agent))?),
-        route: Some(route_to_wire(&agent.route)),
+        agent: Some(agent_to_wire(&AgentRecord::from(&entry.agent))?),
+        route: Some(route_to_wire(&entry.route)),
     })
 }
 
-pub(crate) fn agent_entry_to_domain(entry: wire::AgentEntry) -> Result<Agent, wire::DecodeError> {
+pub(crate) fn agent_entry_to_domain(
+    entry: wire::AgentEntry,
+) -> Result<AgentEntry, wire::DecodeError> {
     let agent = entry
         .agent
         .ok_or_else(|| wire::DecodeError::Invalid("AgentEntry missing agent".into()))?;
@@ -160,7 +163,10 @@ pub(crate) fn agent_entry_to_domain(entry: wire::AgentEntry) -> Result<Agent, wi
         .route
         .ok_or_else(|| wire::DecodeError::Invalid("AgentEntry missing route".into()))
         .and_then(route_from_wire)?;
-    agent_from_wire(agent)?.into_agent(route)
+    Ok(AgentEntry {
+        agent: agent_from_wire(agent)?.into_agent()?,
+        route,
+    })
 }
 
 impl CreateAgentRpcRequest {
@@ -691,6 +697,7 @@ fn required_uuid_from_bytes(name: &str, bytes: Vec<u8>) -> Result<Uuid, wire::De
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::protocol::Link;
 
     const CLAUDE_RAW_V1: &str = "claude_raw_v1";
     const CLAUDE_PTY_TRANSCRIPT_V1: &str = "claude_pty_transcript_v1";
@@ -710,6 +717,13 @@ mod tests {
             readonly: false,
             args: vec!["--resume".to_string(), "abc".to_string()],
             created_at_unix_ms: 1_700_000_000_123,
+        }
+    }
+
+    fn sample_agent_entry() -> AgentEntry {
+        AgentEntry {
+            agent: sample_agent_record().into_agent().unwrap(),
+            route: Route::from_link(Link::new("remote").unwrap()),
         }
     }
 
@@ -747,6 +761,15 @@ mod tests {
                 cols: 120
             })
         );
+    }
+
+    #[test]
+    fn agent_entry_roundtrip_preserves_agent_and_route() {
+        let entry = sample_agent_entry();
+        let wire = agent_entry_from_domain(entry.clone()).unwrap();
+        let decoded = agent_entry_to_domain(wire).unwrap();
+
+        assert_eq!(decoded, entry);
     }
 
     #[test]
@@ -1114,7 +1137,7 @@ mod tests {
             panic!("expected create success");
         };
         assert_eq!(decoded.io_protocols, wire_agent.io_protocols);
-        let agent = decoded.into_agent(Route::empty()).unwrap();
+        let agent = decoded.into_agent().unwrap();
         assert_eq!(agent.io_protocols, wire_agent.io_protocols);
     }
 

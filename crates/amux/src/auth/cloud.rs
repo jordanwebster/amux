@@ -2,25 +2,26 @@
 //!
 //! Manages the lifecycle of outbound connections to cloud servers, including:
 //! - Initial TLS connection with token authentication
-//! - Automatic token refresh before expiry
+//! - Automatic connection-JWT refresh before expiry
 //! - Message forwarding between local server and cloud
 
+use std::sync::Arc;
 use std::time::Duration as StdDuration;
 
 use chrono::{DateTime, Duration, Utc};
+use serde::Deserialize;
 use thiserror::Error;
 use tokio::net::TcpStream;
 use tokio::sync::mpsc;
 use tokio_rustls::client::TlsStream;
 
-use crate::auth::oauth;
+use crate::auth::{AccessToken, AuthError, CredentialProvider};
 use crate::config::Config;
 use crate::protocol::handshake::{Connect, ConnectResult, PROTOCOL_VERSION, RoutingRole};
 use crate::protocol::link::Link;
 use crate::protocol::message::{Host, Message, ProtocolError, ReauthRequest, ReauthResponse};
 use crate::protocol::route::generate_server_link;
 use crate::setup;
-use crate::state::State;
 use crate::transport::{TcpTransport, Transport, TransportError, tls_connect};
 
 /// Maximum time to wait for a handshake response from a cloud server.
@@ -39,12 +40,8 @@ pub(crate) enum CloudError {
     Auth(String),
     #[error("Cloud server host changed - reconnection required")]
     HostChanged,
-    #[error("OAuth error: {0}")]
-    OAuth(#[from] oauth::OAuthError),
     #[error("Transport error: {0}")]
     Transport(#[from] TransportError),
-    #[error("State error: {0}")]
-    State(#[from] crate::state::StateError),
     #[error(
         "protocol mismatch (server protocol v{server_version}, client protocol v{client_version})"
     )]
@@ -57,6 +54,15 @@ pub(crate) enum CloudError {
         minimum_version: String,
         client_version: String,
     },
+}
+
+/// Response from the cloud `/api/connect` endpoint.
+#[derive(Debug, Deserialize)]
+struct ApiConnectResult {
+    host: String,
+    port: u16,
+    token: String,
+    expires_at: DateTime<Utc>,
 }
 
 /// Check a handshake ConnectResult, mapping protocol errors to CloudError.
@@ -122,31 +128,74 @@ fn check_reauth_result(msg: &Message) -> std::result::Result<(), CloudError> {
     }
 }
 
-/// Refresh the OAuth token and fetch connection details from the cloud API.
+/// Fetch connection details from the cloud API using the consumer-owned token.
 ///
-/// Shared by both initial connection and token refresh to avoid duplicating
-/// the load-state → extract-token → refresh → rotate → get-connection sequence.
+/// Shared by both initial connection and connection-JWT refresh. The
+/// `CredentialProvider` owns access-token refresh and persistence; this layer
+/// only presents its bearer to `/api/connect`.
 async fn refresh_and_fetch_connection(
     config: &Config,
-) -> std::result::Result<oauth::ConnectResult, CloudError> {
-    let state = State::load(&config.state_path)?;
-    let refresh_token = state
-        .cloud
-        .refresh_token
-        .ok_or(CloudError::NotAuthenticated)?;
-    let (access_token, new_refresh) =
-        oauth::refresh_access_token(&config.cloud_url, &refresh_token).await?;
-    if let Some(new_token) = new_refresh {
-        State::update(&config.state_path, |s| {
-            s.cloud.refresh_token = Some(new_token);
-        })?;
+    credentials: &dyn CredentialProvider,
+) -> std::result::Result<ApiConnectResult, CloudError> {
+    let access_token = credentials
+        .access_token()
+        .await
+        .map_err(cloud_error_from_auth)?;
+    match fetch_connection(&config.cloud_url, credentials, &access_token).await {
+        Ok(connection) => Ok(connection),
+        Err(CloudError::Auth(_)) => {
+            let access_token = credentials
+                .access_token()
+                .await
+                .map_err(cloud_error_from_auth)?;
+            fetch_connection(&config.cloud_url, credentials, &access_token).await
+        }
+        Err(error) => Err(error),
     }
-    Ok(oauth::fetch_connection(&config.cloud_url, &access_token).await?)
+}
+
+async fn fetch_connection(
+    cloud_url: &str,
+    credentials: &dyn CredentialProvider,
+    access_token: &AccessToken,
+) -> std::result::Result<ApiConnectResult, CloudError> {
+    let response = reqwest::Client::new()
+        .get(format!("{cloud_url}/api/connect"))
+        .bearer_auth(&access_token.bearer)
+        .send()
+        .await
+        .map_err(|error| CloudError::Connection(error.to_string()))?;
+
+    if response.status() == reqwest::StatusCode::UNAUTHORIZED {
+        credentials.invalidate(access_token);
+        return Err(CloudError::Auth("invalid credentials".to_string()));
+    }
+
+    if !response.status().is_success() {
+        let status = response.status();
+        let body = response.text().await.unwrap_or_default();
+        return Err(CloudError::Connection(format!(
+            "API returned {status}: {body}"
+        )));
+    }
+
+    response
+        .json()
+        .await
+        .map_err(|error| CloudError::Connection(error.to_string()))
+}
+
+fn cloud_error_from_auth(error: AuthError) -> CloudError {
+    match error {
+        AuthError::Unauthenticated => CloudError::NotAuthenticated,
+        AuthError::Provider(message) => CloudError::Connection(message),
+    }
 }
 
 /// Cloud connection state
 pub(crate) struct CloudConnection {
     config: Config,
+    credentials: Arc<dyn CredentialProvider>,
     transport: TcpTransport<TlsStream<TcpStream>>,
     link: Link,
     current_host: String,
@@ -169,13 +218,14 @@ impl CloudConnection {
     pub(crate) async fn connect(
         config: &Config,
         host: Host,
+        credentials: Arc<dyn CredentialProvider>,
     ) -> std::result::Result<Self, CloudError> {
         // Check if cloud mode is enabled
         if !setup::cloud_enabled(config) {
             return Err(CloudError::CloudDisabled);
         }
 
-        let conn = refresh_and_fetch_connection(config).await?;
+        let conn = refresh_and_fetch_connection(config, credentials.as_ref()).await?;
 
         // Connect via TLS
         tracing::info!(host = %conn.host, port = conn.port, "connecting to cloud");
@@ -220,6 +270,7 @@ impl CloudConnection {
 
         Ok(Self {
             config: config.clone(),
+            credentials,
             transport,
             link: accepted_link,
             current_host: conn.host,
@@ -252,6 +303,7 @@ impl CloudConnection {
     pub(crate) fn into_parts(self) -> (TcpTransport<TlsStream<TcpStream>>, TokenRefreshState) {
         let refresh_state = TokenRefreshState {
             config: self.config,
+            credentials: self.credentials,
             link: self.link,
             current_host: self.current_host,
             current_port: self.current_port,
@@ -268,6 +320,7 @@ impl CloudConnection {
 /// on cloud connections. For non-cloud connections, None is passed.
 pub(crate) struct TokenRefreshState {
     config: Config,
+    credentials: Arc<dyn CredentialProvider>,
     pub(crate) link: Link,
     current_host: String,
     current_port: u16,
@@ -292,13 +345,13 @@ impl TokenRefreshState {
         }
     }
 
-    /// Refresh the OAuth token and send a Reauth message through the outgoing channel.
-    /// The ReauthResult will be intercepted by connection_loop.
+    /// Fetch a fresh connection token and send a Reauth message through the
+    /// outgoing channel. The ReauthResult is intercepted by connection_loop.
     pub(crate) async fn send_reauth(
         &mut self,
         tx: &mpsc::Sender<Message>,
     ) -> std::result::Result<(), CloudError> {
-        let conn = refresh_and_fetch_connection(&self.config).await?;
+        let conn = refresh_and_fetch_connection(&self.config, self.credentials.as_ref()).await?;
 
         // Check if host changed - requires full reconnection
         if conn.host != self.current_host || conn.port != self.current_port {
@@ -337,9 +390,24 @@ impl TokenRefreshState {
 mod tests {
     use super::*;
 
+    struct TestCredentialProvider;
+
+    #[async_trait::async_trait]
+    impl CredentialProvider for TestCredentialProvider {
+        async fn access_token(&self) -> Result<AccessToken, AuthError> {
+            Ok(AccessToken {
+                bearer: "test-access-token".to_string(),
+                expires_at: None,
+            })
+        }
+
+        fn invalidate(&self, _token: &AccessToken) {}
+    }
+
     fn test_refresh_state(expires_at: DateTime<Utc>) -> TokenRefreshState {
         TokenRefreshState {
             config: Config::default(),
+            credentials: Arc::new(TestCredentialProvider),
             link: Link::new("test-link").unwrap(),
             current_host: "test-host".to_string(),
             current_port: 9001,
@@ -385,6 +453,18 @@ mod tests {
         let result = state.handle_reauth_result(&msg);
 
         assert!(matches!(result, Err(CloudError::Auth(_))));
+    }
+
+    #[test]
+    fn provider_errors_remain_retriable_cloud_connection_errors() {
+        assert!(matches!(
+            cloud_error_from_auth(AuthError::Provider("temporary failure".to_string())),
+            CloudError::Connection(_)
+        ));
+        assert!(matches!(
+            cloud_error_from_auth(AuthError::Unauthenticated),
+            CloudError::NotAuthenticated
+        ));
     }
 
     #[test]

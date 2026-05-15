@@ -1,6 +1,7 @@
 use std::sync::Arc;
 use std::time::Duration;
 
+use futures_util::StreamExt;
 use prost::Message as _;
 use tokio::sync::{Mutex, RwLock, mpsc};
 use tokio::task::JoinHandle;
@@ -15,7 +16,7 @@ use super::{
     ConnectionHandle, LOCAL_USER_ID, ServerState, ServerUserState, local_host, test_helpers,
 };
 use crate::agent::{AgentSession, SessionEvent, StopPolicy, TEST_ECHO_COMMAND, TestAgentSession};
-use crate::client::{Connection, RpcClient, RpcClientError, SubscribeSessionClient};
+use crate::client::{Client, ClientError, Connection, SessionStream};
 use crate::config::Config;
 use crate::protocol::handshake::RoutingRole;
 use crate::protocol::link::Link;
@@ -24,10 +25,11 @@ use crate::protocol::message::{
     RequestFrame, ResponseFrame, RoutingEvent, ShutdownReason,
 };
 use crate::protocol::session::{SubscribeSessionEvent, SubscribeSessionFrame};
-use crate::protocol::{Agent, AgentType, CreateAgentRequest, Route, method, wire};
+use crate::protocol::{AgentEntry, AgentType, CreateAgentRequest, Route, method, wire};
 use crate::server::PeerRoutingOutboundStart;
 use crate::transport::memory::{MemoryTransport, pair as memory_transport_pair};
 use crate::transport::{Transport, TransportError};
+use crate::{SendInputRequest, SubscribeSessionRequest};
 
 const EXPECT_TIMEOUT: Duration = Duration::from_secs(1);
 const PEER_LINK_CLOSE_REASON: &str = "test peer link closed";
@@ -61,7 +63,7 @@ impl Topology {
         self.connect(link, true).await
     }
 
-    pub(super) async fn connect_local_client(&self, link: &str) -> TestRpcClient {
+    pub(super) async fn connect_local_client(&self, link: &str) -> TestClient {
         self.connect_local(link).await.into_rpc_client()
     }
 
@@ -448,14 +450,14 @@ impl TestConnection {
         ));
     }
 
-    fn into_rpc_client(mut self) -> TestRpcClient {
+    fn into_rpc_client(mut self) -> TestClient {
         let transport = self
             .transport
             .take()
             .expect("test connection transport should be open");
         let connection = Connection::new_memory(transport, self.link.clone());
-        TestRpcClient {
-            rpc: Arc::new(Mutex::new(RpcClient::new(connection))),
+        TestClient {
+            rpc: Arc::new(Mutex::new(Client::new(connection))),
             task: self.task,
         }
     }
@@ -532,7 +534,6 @@ impl TestConnection {
                 payload: crate::protocol::session::encode_send_input_request(
                     agent_id,
                     io_protocol,
-                    Uuid::new_v4().as_bytes().to_vec(),
                     input.to_vec(),
                 )
                 .unwrap(),
@@ -774,17 +775,17 @@ impl TestConnection {
     }
 }
 
-pub(super) struct TestRpcClient {
-    rpc: Arc<Mutex<RpcClient>>,
+pub(super) struct TestClient {
+    rpc: Arc<Mutex<Client>>,
     task: JoinHandle<super::connection::Result<()>>,
 }
 
-impl TestRpcClient {
-    pub(super) async fn create_test_agent(&mut self, agent_id: Uuid, name: &str) -> Agent {
-        let mut rpc = self.rpc.lock().await;
+impl TestClient {
+    pub(super) async fn create_test_agent(&mut self, agent_id: Uuid, name: &str) -> AgentEntry {
+        let rpc = self.rpc.lock().await;
         tokio::time::timeout(
             EXPECT_TIMEOUT,
-            rpc.create_agent(&CreateAgentRequest {
+            rpc.create_agent(CreateAgentRequest {
                 agent_id,
                 name: Some(name.to_string()),
                 agent_type: AgentType::TestAgent {
@@ -800,11 +801,16 @@ impl TestRpcClient {
         .unwrap()
     }
 
-    pub(super) async fn rename_agent(&mut self, agent_id: Uuid, route: Route, name: &str) -> Agent {
-        let mut rpc = self.rpc.lock().await;
+    pub(super) async fn rename_agent(
+        &mut self,
+        agent_id: Uuid,
+        route: Route,
+        name: &str,
+    ) -> AgentEntry {
+        let rpc = self.rpc.lock().await;
         tokio::time::timeout(
             EXPECT_TIMEOUT,
-            rpc.rename_agent(agent_id, route, name.to_string()),
+            rpc.rename_agent_on_route(agent_id, route, name.to_string()),
         )
         .await
         .expect("timed out waiting for RenameAgent response")
@@ -816,40 +822,40 @@ impl TestRpcClient {
         agent_id: Uuid,
         route: Route,
         name: &str,
-    ) -> Result<Agent, RpcClientError> {
-        let mut rpc = self.rpc.lock().await;
+    ) -> Result<AgentEntry, ClientError> {
+        let rpc = self.rpc.lock().await;
         tokio::time::timeout(
             EXPECT_TIMEOUT,
-            rpc.rename_agent(agent_id, route, name.to_string()),
+            rpc.rename_agent_on_route(agent_id, route, name.to_string()),
         )
         .await
         .expect("timed out waiting for RenameAgent response")
     }
 
     pub(super) async fn delete_agent(&mut self, agent_id: Uuid, route: Route) {
-        let mut rpc = self.rpc.lock().await;
-        tokio::time::timeout(EXPECT_TIMEOUT, rpc.delete_agent(agent_id, route))
+        let rpc = self.rpc.lock().await;
+        tokio::time::timeout(EXPECT_TIMEOUT, rpc.delete_agent_on_route(agent_id, route))
             .await
             .expect("timed out waiting for DeleteAgent response")
             .unwrap();
     }
 
-    pub(super) async fn list_agents(&mut self) -> Vec<crate::protocol::Agent> {
-        let mut rpc = self.rpc.lock().await;
+    pub(super) async fn list_agents(&mut self) -> Vec<AgentEntry> {
+        let rpc = self.rpc.lock().await;
         tokio::time::timeout(EXPECT_TIMEOUT, rpc.list_agents())
             .await
             .expect("timed out waiting for ListAgents response")
             .unwrap()
     }
 
-    pub(super) async fn expect_agent_named(&mut self, name: &str) -> Agent {
+    pub(super) async fn expect_agent_named(&mut self, name: &str) -> AgentEntry {
         tokio::time::timeout(EXPECT_TIMEOUT, async {
             loop {
                 if let Some(agent) = self
                     .list_agents()
                     .await
                     .into_iter()
-                    .find(|agent| agent.name.as_deref() == Some(name))
+                    .find(|agent| agent.agent.name.as_deref() == Some(name))
                 {
                     return agent;
                 }
@@ -867,7 +873,7 @@ impl TestRpcClient {
                     .list_agents()
                     .await
                     .into_iter()
-                    .all(|agent| agent.name.as_deref() != Some(name))
+                    .all(|agent| agent.agent.name.as_deref() != Some(name))
                 {
                     return;
                 }
@@ -892,11 +898,16 @@ impl TestRpcClient {
         &mut self,
         agent_id: Uuid,
         io_protocol: &str,
-    ) -> Result<TestRpcSession, RpcClientError> {
-        let mut rpc = self.rpc.lock().await;
+    ) -> Result<TestRpcSession, ClientError> {
+        let rpc = self.rpc.lock().await;
         let session = tokio::time::timeout(
             EXPECT_TIMEOUT,
-            rpc.subscribe_session(agent_id, Route::empty(), io_protocol, None),
+            rpc.subscribe_session(SubscribeSessionRequest {
+                id: agent_id,
+                route: Route::empty(),
+                io_protocol: io_protocol.to_string(),
+                args: None,
+            }),
         )
         .await
         .expect("timed out opening local SubscribeSession")?;
@@ -911,13 +922,18 @@ impl TestRpcClient {
 
     pub(super) async fn subscribe_agent_session(
         &mut self,
-        agent: &Agent,
+        entry: &AgentEntry,
         io_protocol: &str,
     ) -> TestRpcSession {
-        let mut rpc = self.rpc.lock().await;
+        let rpc = self.rpc.lock().await;
         let session = tokio::time::timeout(
             EXPECT_TIMEOUT,
-            rpc.subscribe_session(agent.id, agent.route.clone(), io_protocol, None),
+            rpc.subscribe_session(SubscribeSessionRequest {
+                id: entry.agent.id,
+                route: entry.route.clone(),
+                io_protocol: io_protocol.to_string(),
+                args: None,
+            }),
         )
         .await
         .expect("timed out opening agent SubscribeSession")
@@ -925,8 +941,8 @@ impl TestRpcClient {
         TestRpcSession {
             inner: session,
             rpc: self.rpc.clone(),
-            agent_id: agent.id,
-            agent_route: agent.route.clone(),
+            agent_id: entry.agent.id,
+            agent_route: entry.route.clone(),
             io_protocol: io_protocol.to_string(),
         }
     }
@@ -947,8 +963,8 @@ impl TestRpcClient {
 }
 
 pub(super) struct TestRpcSession {
-    inner: SubscribeSessionClient,
-    rpc: Arc<Mutex<RpcClient>>,
+    inner: SessionStream,
+    rpc: Arc<Mutex<Client>>,
     agent_id: Uuid,
     agent_route: Route,
     io_protocol: String,
@@ -973,24 +989,23 @@ impl TestRpcSession {
         self.send_bytes_result(bytes).await.unwrap();
     }
 
-    pub(super) async fn send_bytes_result(&self, bytes: &[u8]) -> Result<(), RpcClientError> {
+    pub(super) async fn send_bytes_result(&self, bytes: &[u8]) -> Result<(), ClientError> {
         self.rpc
             .lock()
             .await
-            .send_input(
-                self.agent_id,
-                self.agent_route.clone(),
-                self.io_protocol.clone(),
-                Uuid::new_v4().as_bytes().to_vec(),
-                bytes.to_vec(),
-            )
+            .send_input(SendInputRequest {
+                id: self.agent_id,
+                route: self.agent_route.clone(),
+                io_protocol: self.io_protocol.clone(),
+                payload: bytes.to_vec().into(),
+            })
             .await
     }
 
     pub(super) async fn expect_send_bytes_unreachable(&self, bytes: &[u8]) {
         assert!(matches!(
             self.send_bytes_result(bytes).await,
-            Err(RpcClientError::Protocol(ProtocolError::Unreachable { .. }))
+            Err(ClientError::Protocol(ProtocolError::Unreachable { .. }))
         ));
     }
 
@@ -1015,12 +1030,34 @@ impl TestRpcSession {
         };
     }
 
+    pub(super) async fn expect_terminal_cancelled_then_stream_end(&mut self) {
+        let Some(frame) = tokio::time::timeout(EXPECT_TIMEOUT, self.inner.next())
+            .await
+            .expect("timed out waiting for terminal SubscribeSession frame")
+        else {
+            panic!("expected cancelled SubscribeSession response");
+        };
+        let SubscribeSessionFrame::Response(Err(ProtocolError::Cancelled { .. })) =
+            frame.expect("terminal SubscribeSession frame should decode")
+        else {
+            panic!("expected cancelled SubscribeSession response");
+        };
+
+        let after_terminal = tokio::time::timeout(EXPECT_TIMEOUT, self.inner.next())
+            .await
+            .expect("timed out waiting for stream end");
+        assert!(
+            after_terminal.is_none(),
+            "SubscribeSession stream should end after terminal response"
+        );
+    }
+
     pub(super) async fn expect_route_unreachable(&self) {
         match tokio::time::timeout(EXPECT_TIMEOUT, self.inner.recv())
             .await
             .expect("timed out waiting for SubscribeSession routing error")
         {
-            Err(RpcClientError::Protocol(ProtocolError::Unreachable { .. })) => {}
+            Err(ClientError::Protocol(ProtocolError::Unreachable { .. })) => {}
             Ok(frame) => panic!("expected SubscribeSession routing error, got {frame:?}"),
             Err(error) => panic!("expected SubscribeSession unreachable error, got {error}"),
         }

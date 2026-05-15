@@ -8,7 +8,7 @@ pub(crate) mod route;
 pub mod session;
 pub(crate) mod wire;
 
-pub use agent::Agent;
+pub use agent::{Agent, AgentEntry};
 pub use handshake::{Connect, ConnectResult, PROTOCOL_VERSION, RoutingRole};
 pub use link::{InvalidLinkName, Link};
 #[cfg(any(debug_assertions, test))]

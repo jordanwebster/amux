@@ -77,14 +77,14 @@ impl AgentServiceCtx {
 }
 
 impl AgentService {
-    pub(crate) async fn list(ctx: &AgentServiceCtx) -> Vec<protocol::Agent> {
+    pub(crate) async fn list(ctx: &AgentServiceCtx) -> Vec<protocol::AgentEntry> {
         ctx.user_state().read().await.list_agents()
     }
 
     pub(crate) async fn resolve(
         ctx: &AgentServiceCtx,
         identifier: &str,
-    ) -> Option<protocol::Agent> {
+    ) -> Option<protocol::AgentEntry> {
         ctx.user_state().read().await.resolve_agent(identifier)
     }
 

@@ -9,7 +9,6 @@
 mod framing;
 mod handshake;
 mod local;
-#[cfg(test)]
 pub(crate) mod memory;
 #[cfg(windows)]
 mod named_pipe;

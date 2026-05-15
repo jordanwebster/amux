@@ -16,6 +16,8 @@ name = "amux"
 version = "0.3.0"
 dependencies = [
  "anyhow",
+ "async-trait",
+ "bytes",
  "chrono",
  "core-foundation",
  "fs2",
@@ -54,8 +56,13 @@ version = "0.3.0"
 dependencies = [
  "amux",
  "anyhow",
+ "async-trait",
+ "chrono",
  "clap",
  "crossterm",
+ "fs2",
+ "libc",
+ "oauth2",
  "reqwest 0.12.28",
  "semver",
  "serde",
@@ -63,10 +70,27 @@ dependencies = [
  "serde_yaml",
  "sha2",
  "tempfile",
+ "thiserror 1.0.69",
  "tokio",
  "tracing",
  "tracing-appender",
  "tracing-subscriber",
+ "uuid",
+]
+
+[[package]]
+name = "amux-ui"
+version = "0.3.0"
+dependencies = [
+ "amux",
+ "async-trait",
+ "bytes",
+ "chrono",
+ "futures-util",
+ "tempfile",
+ "thiserror 1.0.69",
+ "tokio",
+ "tracing",
  "uuid",
 ]
 
@@ -134,6 +158,17 @@ name = "anyhow"
 version = "1.0.101"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "5f0e0fee31ef5ed1ba1316088939cea399010ed7731dba877ed44aeb407a75ea"
+
+[[package]]
+name = "async-trait"
+version = "0.1.89"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "9035ad2d096bed7955a320ee7e2230574d28fd3c3a0f186cbea1ff3c7eed5dbb"
+dependencies = [
+ "proc-macro2",
+ "quote",
+ "syn",
+]
 
 [[package]]
 name = "atomic-waker"

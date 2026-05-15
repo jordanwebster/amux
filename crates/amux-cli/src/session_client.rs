@@ -1,16 +1,19 @@
 use std::io::{self, Read, Write};
 use std::path::Path;
 
-use amux::agent::claude::io as claude_io;
+use amux::agent::claude::io::{self as claude_io, ClaudeRawV1Args};
 use amux::protocol::session::{SubscribeSessionEvent, SubscribeSessionFrame};
 use amux::protocol::{AgentType, CreateAgentRequest, Route, ShutdownReason, TerminalSize};
-use amux::{Config, ConnectError, LeaderKey, RpcClient, RpcClientError, TransportError, connect};
+use amux::{
+    AgentIdentifier, Client, ClientError, Config, LeaderKey, SendInputRequest,
+    SubscribeSessionRequest,
+};
 use anyhow::{Result, anyhow};
 use crossterm::terminal;
 use tokio::sync::mpsc;
 use uuid::Uuid;
 
-use crate::client_common::{cli_daemon_policy, print_update_banner};
+use crate::client_common::{get_client, print_update_banner};
 
 /// Events from stdin reading task
 enum StdinEvent {
@@ -49,7 +52,7 @@ pub async fn new_agent(
     args: Vec<String>,
     config: &Config,
 ) -> Result<()> {
-    let mut rpc = RpcClient::new(connect(config, cli_daemon_policy()?).await?);
+    let rpc = get_client(config).await?;
     let terminal_size = get_terminal_size();
     let working_dir = std::env::current_dir()?;
 
@@ -57,8 +60,8 @@ pub async fn new_agent(
 
     tracing::info!(agent_id = %agent_id, ?name, "creating agent");
 
-    let agent = rpc
-        .create_agent(&CreateAgentRequest {
+    let entry = rpc
+        .create_agent(CreateAgentRequest {
             agent_id,
             name: name.map(|s| s.to_string()),
             agent_type,
@@ -71,8 +74,8 @@ pub async fn new_agent(
 
     subscribe_and_stream(
         rpc,
-        agent.id,
-        agent.route,
+        entry.agent.id,
+        entry.route,
         Some(terminal_size),
         config.keybinds.leader.clone(),
         &config.state_path,
@@ -82,20 +85,24 @@ pub async fn new_agent(
 
 /// Attach to an existing agent
 pub async fn attach(target: Option<&str>, config: &Config) -> Result<()> {
-    let mut rpc = RpcClient::new(connect(config, cli_daemon_policy()?).await?);
+    let rpc = get_client(config).await?;
     let terminal_size = get_terminal_size();
 
     let (route_suffix, agent_id) = match target {
         Some(identifier) => {
-            let Some(info) = rpc.resolve_agent(identifier).await? else {
-                return Err(anyhow!("agent not found: {identifier}"));
+            let info = match rpc.resolve_agent(AgentIdentifier::from(identifier)).await {
+                Ok(info) => info,
+                Err(ClientError::AgentNotFound(_)) => {
+                    return Err(anyhow!("agent not found: {identifier}"));
+                }
+                Err(error) => return Err(error.into()),
             };
-            (info.route, info.id)
+            (info.route, info.agent.id)
         }
         None => {
             let agents = rpc.list_agents().await?;
             if let Some(info) = agents.first() {
-                (info.route.clone(), info.id)
+                (info.route.clone(), info.agent.id)
             } else {
                 eprintln!("No agents running. Use 'amux new' to create one.");
                 return Ok(());
@@ -118,43 +125,31 @@ pub async fn attach(target: Option<&str>, config: &Config) -> Result<()> {
 
 /// List all running agents
 pub async fn list_agents(config: &Config) -> Result<()> {
-    let conn = match connect(config, cli_daemon_policy()?).await {
-        Ok(conn) => conn,
-        Err(ConnectError::Transport(TransportError::Io(e)))
-            if e.kind() == io::ErrorKind::NotFound
-                || e.kind() == io::ErrorKind::ConnectionRefused =>
-        {
-            println!("No agents running.");
-            return Ok(());
-        }
-        Err(e) => return Err(e.into()),
-    };
-
-    let mut rpc = RpcClient::new(conn);
+    let rpc = get_client(config).await?;
     let mut agents = rpc.list_agents().await?;
     if agents.is_empty() {
         println!("No agents running.");
     } else {
         agents.sort_by(|a, b| {
-            let a_id = a.id.to_string();
-            let b_id = b.id.to_string();
-            let a_name = a.name.as_deref().unwrap_or(&a_id);
-            let b_name = b.name.as_deref().unwrap_or(&b_id);
+            let a_id = a.agent.id.to_string();
+            let b_id = b.agent.id.to_string();
+            let a_name = a.agent.name.as_deref().unwrap_or(&a_id);
+            let b_name = b.agent.name.as_deref().unwrap_or(&b_id);
             a_name.cmp(b_name)
         });
         println!("Running agents:");
-        for agent in agents {
-            let agent_id_str = agent.id.to_string();
-            let display_name = agent.name.as_deref().unwrap_or(&agent_id_str);
-            if agent.is_remote() {
+        for entry in agents {
+            let agent_id_str = entry.agent.id.to_string();
+            let display_name = entry.agent.name.as_deref().unwrap_or(&agent_id_str);
+            if entry.is_remote() {
                 println!(
                     "  {} - {} (via {})",
                     display_name,
-                    agent.working_dir.display(),
-                    agent.route
+                    entry.agent.working_dir.display(),
+                    entry.route
                 );
             } else {
-                println!("  {} - {}", display_name, agent.working_dir.display());
+                println!("  {} - {}", display_name, entry.agent.working_dir.display());
             }
         }
     }
@@ -164,7 +159,7 @@ pub async fn list_agents(config: &Config) -> Result<()> {
 }
 
 async fn subscribe_and_stream(
-    mut rpc: RpcClient,
+    rpc: Client,
     agent_id: Uuid,
     route: Route,
     terminal_size: Option<TerminalSize>,
@@ -172,7 +167,16 @@ async fn subscribe_and_stream(
     state_path: &Path,
 ) -> Result<()> {
     let session = rpc
-        .subscribe_raw_session(agent_id, route.clone(), terminal_size, None)
+        .subscribe_session(SubscribeSessionRequest {
+            id: agent_id,
+            route: route.clone(),
+            io_protocol: claude_io::RAW_V1.to_string(),
+            args: claude_io::encode_raw_v1_args(ClaudeRawV1Args {
+                terminal_size,
+                replay_query: None,
+            })
+            .map(Into::into),
+        })
         .await
         .map_err(|error| anyhow!("failed to subscribe to session: {error}"))?;
 
@@ -192,8 +196,8 @@ fn handle_subscribe_session_event(event: SubscribeSessionEvent) {
 }
 
 async fn run_attached(
-    mut rpc: RpcClient,
-    session: amux::SubscribeSessionClient,
+    rpc: Client,
+    session: amux::SessionStream,
     agent_id: Uuid,
     route: Route,
     leader: LeaderKey,
@@ -311,13 +315,12 @@ async fn run_attached(
             event = input_rx.recv() => match event {
                 Some(StdinEvent::Data(data)) => {
                     if rpc
-                        .send_input(
-                            agent_id,
-                            route.clone(),
-                            claude_io::RAW_V1,
-                            Uuid::new_v4().as_bytes().to_vec(),
-                            data,
-                        )
+                        .send_input(SendInputRequest {
+                            id: agent_id,
+                            route: route.clone(),
+                            io_protocol: claude_io::RAW_V1.to_string(),
+                            payload: data.into(),
+                        })
                         .await
                         .is_err()
                     {
@@ -339,12 +342,12 @@ async fn run_attached(
                     tracing::info!(error = %error, "session ended with error");
                     break ExitReason::SessionEnded;
                 }
-                Err(RpcClientError::ServerShutdown(reason)) => {
+                Err(ClientError::ServerShutdown(reason)) => {
                     tracing::info!(reason = %reason, "server shutdown");
                     break ExitReason::Shutdown(reason);
                 }
                 Err(error) => {
-                    if let RpcClientError::Protocol(error) = &error {
+                    if let ClientError::Protocol(error) = &error {
                         tracing::info!(error = %error, "session route failed");
                     } else {
                         tracing::warn!(error = %error, "session read error");

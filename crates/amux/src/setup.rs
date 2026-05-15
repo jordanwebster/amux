@@ -3,7 +3,6 @@ use std::path::{Path, PathBuf};
 
 use serde_yaml::{Mapping, Value};
 
-use crate::auth::oauth;
 use crate::config::Config;
 use crate::state::State;
 
@@ -17,8 +16,6 @@ pub struct ClaudePluginSetupState {
 pub enum SetupError {
     #[error("state error: {0}")]
     State(String),
-    #[error("oauth error: {0}")]
-    OAuth(String),
     #[error("config error: {0}")]
     Config(String),
 }
@@ -29,13 +26,6 @@ pub enum SetupError {
 /// count as disabled.
 pub fn cloud_enabled(config: &Config) -> bool {
     config.enable_cloud_mode == Some(true)
-}
-
-/// Load the persisted cloud refresh token, if any.
-pub fn cloud_refresh_token(config: &Config) -> Option<String> {
-    State::load(&config.state_path)
-        .ok()
-        .and_then(|s| s.cloud.refresh_token)
 }
 
 /// Persist `enable_cloud_mode` to `config.yaml` and update the in-memory
@@ -67,23 +57,6 @@ pub fn clear_prevent_idle_sleep(config: &mut Config) -> Result<(), SetupError> {
     write_config_bool(config, "prevent_idle_sleep", None)?;
     config.prevent_idle_sleep = None;
     Ok(())
-}
-
-/// Persist (or clear) the cloud refresh token in `state.yaml`.
-pub fn set_cloud_refresh_token(state_path: &Path, token: Option<String>) -> Result<(), SetupError> {
-    State::update(state_path, |s| {
-        s.cloud.refresh_token = token;
-    })
-    .map_err(|e| SetupError::State(e.to_string()))?;
-    Ok(())
-}
-
-/// Run OAuth device flow and persist the refresh token.
-pub async fn authenticate_cloud(config: &Config) -> Result<(), SetupError> {
-    let refresh_token = oauth::device_flow(&config.cloud_url)
-        .await
-        .map_err(|e| SetupError::OAuth(e.to_string()))?;
-    set_cloud_refresh_token(&config.state_path, Some(refresh_token))
 }
 
 /// Return whether prevent-idle-sleep support is actually available at runtime.
@@ -281,22 +254,6 @@ mod tests {
 
         let yaml = fs::read_to_string(path).unwrap();
         assert!(!yaml.contains("enable_cloud_mode"));
-    }
-
-    #[test]
-    fn set_and_read_refresh_token_roundtrip() {
-        let dir = tempdir().unwrap();
-        let state_path = dir.path().join("state.yaml");
-        let config = Config {
-            state_path: state_path.clone(),
-            ..Config::default()
-        };
-
-        assert_eq!(cloud_refresh_token(&config), None);
-        set_cloud_refresh_token(&state_path, Some("tok".to_string())).unwrap();
-        assert_eq!(cloud_refresh_token(&config).as_deref(), Some("tok"));
-        set_cloud_refresh_token(&state_path, None).unwrap();
-        assert_eq!(cloud_refresh_token(&config), None);
     }
 
     #[test]

@@ -11,10 +11,13 @@ use std::io::{self, Write};
 use amux::setup::SetupError;
 use amux::{Config, setup};
 
+use crate::auth::{DeviceFlowError, DeviceFlowProvider, auth_file_path, clear_refresh_token};
+
 #[derive(Debug)]
 pub enum InitError {
     Io(io::Error),
     Setup(SetupError),
+    Auth(DeviceFlowError),
 }
 
 impl std::fmt::Display for InitError {
@@ -22,6 +25,7 @@ impl std::fmt::Display for InitError {
         match self {
             InitError::Io(e) => write!(f, "IO error: {}", e),
             InitError::Setup(e) => write!(f, "Setup error: {}", e),
+            InitError::Auth(e) => write!(f, "Authentication error: {}", e),
         }
     }
 }
@@ -31,6 +35,7 @@ impl std::error::Error for InitError {
         match self {
             InitError::Io(e) => Some(e),
             InitError::Setup(e) => Some(e),
+            InitError::Auth(e) => Some(e),
         }
     }
 }
@@ -44,6 +49,12 @@ impl From<io::Error> for InitError {
 impl From<SetupError> for InitError {
     fn from(e: SetupError) -> Self {
         InitError::Setup(e)
+    }
+}
+
+impl From<DeviceFlowError> for InitError {
+    fn from(e: DeviceFlowError) -> Self {
+        InitError::Auth(e)
     }
 }
 
@@ -94,7 +105,7 @@ fn next_step(config: &Config, has_refresh_token: bool, _ctx: &InitContext) -> In
 }
 
 fn has_refresh_token(config: &Config) -> bool {
-    setup::cloud_refresh_token(config).is_some()
+    cloud_auth_provider(config).is_authenticated()
 }
 
 /// True iff at least one init step would run given the current state.
@@ -108,7 +119,11 @@ pub async fn run_init(config: &mut Config, ctx: InitContext, reset: bool) -> Res
     if reset {
         setup::clear_enable_cloud_mode(config)?;
         setup::clear_prevent_idle_sleep(config)?;
-        setup::set_cloud_refresh_token(&config.state_path, None)?;
+        clear_refresh_token(&auth_file_path(&config.state_path)).map_err(|e| {
+            InitError::Setup(SetupError::State(format!(
+                "failed to clear cloud authentication: {e}"
+            )))
+        })?;
         println!("State cleared.");
     }
 
@@ -148,10 +163,14 @@ fn prompt_cloud_mode(config: &mut Config) -> Result<(), InitError> {
 
 async fn authenticate(config: &mut Config) -> Result<(), InitError> {
     println!("\nStarting authentication...");
-    setup::authenticate_cloud(config).await?;
+    cloud_auth_provider(config).run_device_flow().await?;
     println!("\nAuthentication successful!");
     println!("Your local amux server will now connect to the cloud automatically.");
     Ok(())
+}
+
+fn cloud_auth_provider(config: &Config) -> DeviceFlowProvider {
+    DeviceFlowProvider::new(auth_file_path(&config.state_path), config.cloud_url.clone())
 }
 
 fn prompt_idle_sleep(config: &mut Config) -> Result<(), InitError> {

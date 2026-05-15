@@ -9,6 +9,7 @@ use std::time::Duration;
 
 use prost::Message as _;
 use tokio::sync::{RwLock, mpsc};
+use tokio::task::JoinHandle;
 use tracing::Instrument;
 use uuid::Uuid;
 
@@ -29,6 +30,7 @@ use crate::protocol::message::{Frame, FrameBody, Message, RequestFrame, Shutdown
 use crate::protocol::{method, wire};
 use crate::server::PeerRoutingOutboundStart;
 use crate::setup;
+use crate::update::{UpdateReporter, UpdateStatus};
 
 const INITIAL_BACKOFF: Duration = Duration::from_secs(1);
 const MAX_BACKOFF: Duration = Duration::from_secs(300);
@@ -46,7 +48,7 @@ pub(super) fn establish_cloud_connection(
     config: Config,
     state: Arc<RwLock<ServerState>>,
     event_tx: mpsc::Sender<SessionEvent>,
-) {
+) -> JoinHandle<()> {
     let cloud_span = tracing::info_span!("cloud", url = %config.cloud_url);
     tokio::spawn(
         async move {
@@ -96,10 +98,11 @@ pub(super) fn establish_cloud_connection(
                             client_version = %client_version,
                             "cloud requires newer client version"
                         );
-                        crate::update::write_update_required(
-                            &config.state_path,
-                            &minimum_version,
-                        );
+                        report_update_status(
+                            &state,
+                            UpdateStatus::Required(Some(minimum_version)),
+                        )
+                        .await;
                         return;
                     }
                     Err(CloudConnectionError::NonRetriable(msg)) => {
@@ -126,7 +129,7 @@ pub(super) fn establish_cloud_connection(
             }
         }
         .instrument(cloud_span),
-    );
+    )
 }
 
 /// Error type for cloud connection attempts
@@ -156,20 +159,26 @@ async fn run_cloud_connection(
     user_state: Arc<RwLock<ServerUserState>>,
     event_tx: mpsc::Sender<SessionEvent>,
 ) -> std::result::Result<(), CloudConnectionError> {
-    let host = {
+    let (host, credentials) = {
         let state = state.read().await;
-        local_host(
-            state.host_id,
-            &state.config.host_name,
-            state.is_cloud_server,
+        let credentials = state.credentials.clone().ok_or_else(|| {
+            CloudConnectionError::NonRetriable(
+                "Authentication failed — run 'amux init' to authenticate".to_string(),
+            )
+        })?;
+        (
+            local_host(
+                state.host_id,
+                &state.config.host_name,
+                state.is_cloud_server,
+            ),
+            credentials,
         )
     };
     let local_host_id = host.id;
-    let conn = match CloudConnection::connect(config, host).await {
+    let conn = match CloudConnection::connect(config, host, credentials).await {
         Ok(conn) => conn,
-        Err(CloudError::NotAuthenticated)
-        | Err(CloudError::Auth(_))
-        | Err(CloudError::OAuth(crate::auth::oauth::OAuthError::RefreshTokenExpired)) => {
+        Err(CloudError::NotAuthenticated) | Err(CloudError::Auth(_)) => {
             return Err(CloudConnectionError::NonRetriable(
                 "Authentication failed — run 'amux init' to re-authenticate".to_string(),
             ));
@@ -205,8 +214,8 @@ async fn run_cloud_connection(
         }
     };
 
-    // Handshake succeeded: clear any stale update-required marker.
-    crate::update::clear_update_required(&config.state_path);
+    // Handshake succeeded: clear any stale update-required status.
+    report_update_status(&state, UpdateStatus::Required(None)).await;
     let remote_routing_role = conn.routing_role();
     let peer_host = match conn.host().cloned() {
         Some(host) => {
@@ -359,6 +368,16 @@ async fn run_cloud_connection(
     }
 }
 
+async fn report_update_status(state: &Arc<RwLock<ServerState>>, status: UpdateStatus) {
+    if let Some(reporter) = update_reporter(state).await {
+        reporter.report(status);
+    }
+}
+
+async fn update_reporter(state: &Arc<RwLock<ServerState>>) -> Option<Arc<dyn UpdateReporter>> {
+    state.read().await.update_reporter.clone()
+}
+
 fn next_backoff(backoff: Duration) -> Duration {
     std::cmp::min(backoff * 2, MAX_BACKOFF)
 }
@@ -395,12 +414,60 @@ fn should_reset_backoff_after_connection(connection_uptime: Duration) -> bool {
 
 #[cfg(test)]
 mod tests {
+    use std::sync::{Arc, Mutex};
     use std::time::Duration;
+
+    use tokio::sync::{RwLock, mpsc};
+    use uuid::Uuid;
 
     use super::{
         ABSOLUTE_JITTER_MAX, BACKOFF_RESET_AFTER_ESTABLISHED, INITIAL_BACKOFF, MAX_BACKOFF,
-        jittered_backoff_with_samples, next_backoff, should_reset_backoff_after_connection,
+        jittered_backoff_with_samples, next_backoff, report_update_status,
+        should_reset_backoff_after_connection,
     };
+    use crate::config::Config;
+    use crate::server::ServerState;
+    use crate::update::{UpdateReporter, UpdateStatus};
+
+    #[derive(Default)]
+    struct CapturingUpdateReporter {
+        statuses: Mutex<Vec<UpdateStatus>>,
+    }
+
+    impl UpdateReporter for CapturingUpdateReporter {
+        fn report(&self, status: UpdateStatus) {
+            self.statuses.lock().unwrap().push(status);
+        }
+    }
+
+    #[tokio::test]
+    async fn update_status_reports_through_configured_reporter() {
+        let (shutdown_tx, _shutdown_rx) = mpsc::channel(1);
+        let reporter = Arc::new(CapturingUpdateReporter::default());
+        let state = Arc::new(RwLock::new(ServerState::new(
+            Config::default(),
+            Uuid::new_v4(),
+            shutdown_tx,
+            None,
+            Some(reporter.clone()),
+        )));
+
+        report_update_status(&state, UpdateStatus::Required(Some("0.4.0".to_string()))).await;
+        report_update_status(&state, UpdateStatus::Required(None)).await;
+
+        let statuses = reporter.statuses.lock().unwrap();
+        assert_eq!(statuses.len(), 2);
+        match &statuses[0] {
+            UpdateStatus::Required(Some(minimum_version)) => {
+                assert_eq!(minimum_version, "0.4.0");
+            }
+            other => panic!("unexpected first update status: {other:?}"),
+        }
+        match &statuses[1] {
+            UpdateStatus::Required(None) => {}
+            other => panic!("unexpected second update status: {other:?}"),
+        }
+    }
 
     #[test]
     fn jittered_backoff_applies_relative_and_absolute_jitter() {

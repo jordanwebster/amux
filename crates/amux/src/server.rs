@@ -36,10 +36,9 @@ pub(crate) use rpc_output::{
     ServerStreamEncoder, ServerStreamSendError, ServerStreamSink, ServerStreamSnapshotSendError,
     TypedServerStreamSink,
 };
-pub(crate) use runtime::Server;
-pub use runtime::ServerError;
 #[cfg(test)]
 pub(crate) use runtime::test_helpers;
+pub use runtime::{DaemonBuilder, EmbeddedBuilder, Server, ServerBuilder, ServerError};
 pub(crate) use session_subscription_lifecycle::{
     SessionSubscriptionRuntime, begin_session_subscriptions_closing_for_agent,
     finish_session_subscriptions_with_error,

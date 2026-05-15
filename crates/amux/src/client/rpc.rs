@@ -1,22 +1,28 @@
 mod runtime;
 
+use std::future::Future;
+use std::pin::Pin;
+use std::sync::{Arc, Mutex};
+use std::task::{Context, Poll};
+
+use bytes::Bytes;
+use futures_util::Stream;
 use prost::Message as _;
 use thiserror::Error;
 use uuid::Uuid;
 
 use super::Connection;
-use crate::agent::claude::io as claude_io;
-use crate::agent::claude::io::{ClaudeRawV1Args, ClaudeRawV1ReplayQuery};
 use crate::protocol::message::{
-    CreateAgentRequest, DebugFormat, HookProvider, ProtocolError, RenameAgentRequest,
-    ShutdownReason, TerminalSize,
+    AgentEvent, CreateAgentRequest, DebugFormat, FrameBody, HookProvider, ProtocolError,
+    RenameAgentRequest, ResponseFrame, RoutingEvent, ShutdownReason,
 };
 use crate::protocol::session::{self, SubscribeSessionEvent, SubscribeSessionFrame};
-use crate::protocol::{Agent, Route, agent_lifecycle, method, wire};
+use crate::protocol::{AgentEntry, Route, agent_lifecycle, method, wire};
 use crate::transport::TransportError;
+use crate::{AgentIdentifier, ConnectToServerTarget, SendInputRequest, SubscribeSessionRequest};
 
 #[derive(Debug, Error)]
-pub enum RpcClientError {
+pub enum ClientError {
     #[error(transparent)]
     Transport(#[from] TransportError),
     #[error(transparent)]
@@ -38,6 +44,8 @@ pub enum RpcClientError {
         method: &'static str,
         message: String,
     },
+    #[error("agent not found: {0:?}")]
+    AgentNotFound(AgentIdentifier),
 }
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
@@ -51,30 +59,226 @@ pub struct ResumeSummary {
     pub failed_count: u64,
 }
 
+type StreamFuture<T> = Pin<Box<dyn Future<Output = Result<T, ClientError>> + Send>>;
+
 pub struct SubscribeSessionClient {
-    stream: runtime::EndpointOutputStream,
+    stream: Arc<runtime::EndpointOutputStream>,
+    pending: Mutex<Option<StreamFuture<SubscribeSessionFrame>>>,
+    done: Mutex<bool>,
+}
+
+pub type SessionStream = SubscribeSessionClient;
+
+pub struct RoutingEventStream {
+    stream: Arc<runtime::EndpointOutputStream>,
+    pending: Mutex<Option<StreamFuture<RoutingEvent>>>,
+    done: Mutex<bool>,
+}
+
+pub struct AgentEventStream {
+    stream: Arc<runtime::EndpointOutputStream>,
+    pending: Mutex<Option<StreamFuture<AgentEvent>>>,
+    done: Mutex<bool>,
 }
 
 impl SubscribeSessionClient {
-    pub async fn cancel(&self) -> Result<(), RpcClientError> {
+    pub async fn cancel(&self) -> Result<(), ClientError> {
         self.stream
             .send_cancel(method::AGENT_SUBSCRIBE_SESSION_NAME)
             .await
     }
 
-    pub async fn recv(&self) -> Result<SubscribeSessionFrame, RpcClientError> {
-        let body = self.stream.recv_frame_body().await?;
-        let frame = session::decode_subscribe_session_frame_body(body).map_err(|error| {
-            self.stream.finish();
-            RpcClientError::Decode {
-                method: method::AGENT_SUBSCRIBE_SESSION_NAME,
+    pub async fn recv(&self) -> Result<SubscribeSessionFrame, ClientError> {
+        recv_subscribe_session_frame(self.stream.clone()).await
+    }
+}
+
+impl Stream for SubscribeSessionClient {
+    type Item = Result<SubscribeSessionFrame, ClientError>;
+
+    fn poll_next(self: Pin<&mut Self>, cx: &mut Context<'_>) -> Poll<Option<Self::Item>> {
+        poll_stream_item(
+            self.get_mut(),
+            |stream| Box::pin(recv_subscribe_session_frame(stream)),
+            |this| &this.pending,
+            |this| this.stream.clone(),
+            |this| &this.done,
+            subscribe_session_stream_item_is_terminal,
+            cx,
+        )
+    }
+}
+
+impl RoutingEventStream {
+    pub async fn cancel(&self) -> Result<(), ClientError> {
+        self.stream
+            .send_cancel(method::ROUTING_SUBSCRIBE_EVENTS_NAME)
+            .await
+    }
+
+    pub async fn recv(&self) -> Result<RoutingEvent, ClientError> {
+        recv_routing_event(self.stream.clone()).await
+    }
+}
+
+impl Stream for RoutingEventStream {
+    type Item = Result<RoutingEvent, ClientError>;
+
+    fn poll_next(self: Pin<&mut Self>, cx: &mut Context<'_>) -> Poll<Option<Self::Item>> {
+        poll_stream_item(
+            self.get_mut(),
+            |stream| Box::pin(recv_routing_event(stream)),
+            |this| &this.pending,
+            |this| this.stream.clone(),
+            |this| &this.done,
+            result_is_terminal,
+            cx,
+        )
+    }
+}
+
+impl AgentEventStream {
+    pub async fn cancel(&self) -> Result<(), ClientError> {
+        self.stream
+            .send_cancel(method::AGENT_SUBSCRIBE_EVENTS_NAME)
+            .await
+    }
+
+    pub async fn recv(&self) -> Result<AgentEvent, ClientError> {
+        recv_agent_event(self.stream.clone()).await
+    }
+}
+
+impl Stream for AgentEventStream {
+    type Item = Result<AgentEvent, ClientError>;
+
+    fn poll_next(self: Pin<&mut Self>, cx: &mut Context<'_>) -> Poll<Option<Self::Item>> {
+        poll_stream_item(
+            self.get_mut(),
+            |stream| Box::pin(recv_agent_event(stream)),
+            |this| &this.pending,
+            |this| this.stream.clone(),
+            |this| &this.done,
+            result_is_terminal,
+            cx,
+        )
+    }
+}
+
+fn poll_stream_item<T, S>(
+    this: &mut S,
+    start: impl FnOnce(Arc<runtime::EndpointOutputStream>) -> StreamFuture<T>,
+    pending: impl FnOnce(&S) -> &Mutex<Option<StreamFuture<T>>>,
+    stream: impl FnOnce(&S) -> Arc<runtime::EndpointOutputStream>,
+    done: impl FnOnce(&S) -> &Mutex<bool>,
+    is_terminal: impl FnOnce(&Result<T, ClientError>) -> bool,
+    cx: &mut Context<'_>,
+) -> Poll<Option<Result<T, ClientError>>> {
+    let done = done(this);
+    if *done.lock().expect("stream done mutex poisoned") {
+        return Poll::Ready(None);
+    }
+    let stream = stream(this);
+    let mut pending = pending(this).lock().expect("stream future mutex poisoned");
+    if pending.is_none() {
+        *pending = Some(start(stream));
+    }
+    let result = pending
+        .as_mut()
+        .expect("stream future should be present")
+        .as_mut()
+        .poll(cx);
+    match result {
+        Poll::Ready(result) => {
+            *pending = None;
+            if is_terminal(&result) {
+                *done.lock().expect("stream done mutex poisoned") = true;
+            }
+            Poll::Ready(Some(result))
+        }
+        Poll::Pending => Poll::Pending,
+    }
+}
+
+fn result_is_terminal<T>(result: &Result<T, ClientError>) -> bool {
+    result.is_err()
+}
+
+fn subscribe_session_stream_item_is_terminal(
+    result: &Result<SubscribeSessionFrame, ClientError>,
+) -> bool {
+    match result {
+        Ok(SubscribeSessionFrame::Response(_)) | Err(_) => true,
+        Ok(SubscribeSessionFrame::Event(_)) => false,
+    }
+}
+
+async fn recv_subscribe_session_frame(
+    stream: Arc<runtime::EndpointOutputStream>,
+) -> Result<SubscribeSessionFrame, ClientError> {
+    let body = stream.recv_frame_body().await?;
+    let frame = session::decode_subscribe_session_frame_body(body).map_err(|error| {
+        stream.finish();
+        ClientError::Decode {
+            method: method::AGENT_SUBSCRIBE_SESSION_NAME,
+            message: error.to_string(),
+        }
+    })?;
+    if matches!(frame, SubscribeSessionFrame::Response(_)) {
+        stream.finish();
+    }
+    Ok(frame)
+}
+
+async fn recv_routing_event(
+    stream: Arc<runtime::EndpointOutputStream>,
+) -> Result<RoutingEvent, ClientError> {
+    let body = stream.recv_frame_body().await?;
+    match body {
+        FrameBody::StreamItem(payload) => wire::decode_routing_event(&payload).map_err(|error| {
+            stream.finish();
+            ClientError::Decode {
+                method: method::ROUTING_SUBSCRIBE_EVENTS_NAME,
                 message: error.to_string(),
             }
-        })?;
-        if matches!(frame, SubscribeSessionFrame::Response(_)) {
-            self.stream.finish();
+        }),
+        FrameBody::Response(ResponseFrame::Error(error)) => {
+            stream.finish();
+            Err(error.into())
         }
-        Ok(frame)
+        other => {
+            stream.finish();
+            Err(ClientError::Unexpected {
+                method: method::ROUTING_SUBSCRIBE_EVENTS_NAME,
+                message: format!("expected routing stream item, got {other:?}"),
+            })
+        }
+    }
+}
+
+async fn recv_agent_event(
+    stream: Arc<runtime::EndpointOutputStream>,
+) -> Result<AgentEvent, ClientError> {
+    let body = stream.recv_frame_body().await?;
+    match body {
+        FrameBody::StreamItem(payload) => wire::decode_agent_event(&payload).map_err(|error| {
+            stream.finish();
+            ClientError::Decode {
+                method: method::AGENT_SUBSCRIBE_EVENTS_NAME,
+                message: error.to_string(),
+            }
+        }),
+        FrameBody::Response(ResponseFrame::Error(error)) => {
+            stream.finish();
+            Err(error.into())
+        }
+        other => {
+            stream.finish();
+            Err(ClientError::Unexpected {
+                method: method::AGENT_SUBSCRIBE_EVENTS_NAME,
+                message: format!("expected agent stream item, got {other:?}"),
+            })
+        }
     }
 }
 
@@ -82,24 +286,38 @@ impl SubscribeSessionClient {
 ///
 /// This is intentionally not a frame helper. Callers invoke domain operations;
 /// the client owns local call IDs and response matching.
-pub struct RpcClient {
+#[derive(Clone)]
+pub struct Client {
     runtime: runtime::ClientRuntime,
+    guard: Option<Arc<dyn Send + Sync>>,
 }
 
-impl RpcClient {
-    pub fn new(connection: Connection) -> Self {
+impl Client {
+    pub(crate) fn new(connection: Connection) -> Self {
         Self {
             runtime: runtime::ClientRuntime::new(connection),
+            guard: None,
         }
     }
 
+    pub(crate) fn new_with_guard(connection: Connection, guard: Arc<dyn Send + Sync>) -> Self {
+        Self {
+            runtime: runtime::ClientRuntime::new(connection),
+            guard: Some(guard),
+        }
+    }
+
+    pub fn owns_embedded_server(&self) -> bool {
+        self.guard.is_some()
+    }
+
     pub async fn create_agent(
-        &mut self,
-        request: &CreateAgentRequest,
-    ) -> Result<Agent, RpcClientError> {
+        &self,
+        request: CreateAgentRequest,
+    ) -> Result<AgentEntry, ClientError> {
         let payload = agent_lifecycle_request_payload(
             method::AGENT_CREATE_NAME,
-            agent_lifecycle::encode_create_agent_request(request),
+            agent_lifecycle::encode_create_agent_request(&request),
         )?;
         let agent_route = Route::empty();
         let response = self
@@ -111,7 +329,7 @@ impl RpcClient {
             )
             .await?;
         match agent_lifecycle::decode_create_agent_response(response, agent_route).map_err(
-            |error| RpcClientError::Decode {
+            |error| ClientError::Decode {
                 method: method::AGENT_CREATE_NAME,
                 message: error.to_string(),
             },
@@ -122,11 +340,29 @@ impl RpcClient {
     }
 
     pub async fn rename_agent(
-        &mut self,
+        &self,
+        agent_id: Uuid,
+        name: String,
+    ) -> Result<AgentEntry, ClientError> {
+        let entry = self
+            .resolve_agent(AgentIdentifier::Id(agent_id))
+            .await
+            .map_err(|error| match error {
+                ClientError::AgentNotFound(_) => {
+                    ClientError::AgentNotFound(AgentIdentifier::Id(agent_id))
+                }
+                other => other,
+            })?;
+        self.rename_agent_on_route(agent_id, entry.route, name)
+            .await
+    }
+
+    pub(crate) async fn rename_agent_on_route(
+        &self,
         agent_id: Uuid,
         agent_route: Route,
         name: String,
-    ) -> Result<Agent, RpcClientError> {
+    ) -> Result<AgentEntry, ClientError> {
         let payload = agent_lifecycle_request_payload(
             method::AGENT_RENAME_NAME,
             agent_lifecycle::encode_rename_agent_request(&RenameAgentRequest { agent_id, name }),
@@ -140,7 +376,7 @@ impl RpcClient {
             )
             .await?;
         match agent_lifecycle::decode_rename_agent_response(response, agent_route).map_err(
-            |error| RpcClientError::Decode {
+            |error| ClientError::Decode {
                 method: method::AGENT_RENAME_NAME,
                 message: error.to_string(),
             },
@@ -150,11 +386,16 @@ impl RpcClient {
         }
     }
 
-    pub async fn delete_agent(
-        &mut self,
+    pub async fn delete_agent(&self, agent_id: Uuid) -> Result<(), ClientError> {
+        let entry = self.resolve_agent(AgentIdentifier::Id(agent_id)).await?;
+        self.delete_agent_on_route(agent_id, entry.route).await
+    }
+
+    pub(crate) async fn delete_agent_on_route(
+        &self,
         agent_id: Uuid,
         agent_route: Route,
-    ) -> Result<(), RpcClientError> {
+    ) -> Result<(), ClientError> {
         let payload = agent_lifecycle_request_payload(
             method::AGENT_DELETE_NAME,
             agent_lifecycle::encode_delete_agent_request(agent_id),
@@ -168,7 +409,7 @@ impl RpcClient {
             )
             .await?;
         match agent_lifecycle::decode_delete_agent_response(response).map_err(|error| {
-            RpcClientError::Decode {
+            ClientError::Decode {
                 method: method::AGENT_DELETE_NAME,
                 message: error.to_string(),
             }
@@ -178,28 +419,26 @@ impl RpcClient {
         }
     }
 
-    pub async fn subscribe_raw_session(
-        &mut self,
-        agent_id: Uuid,
-        agent_route: Route,
-        terminal_size: Option<TerminalSize>,
-        replay_query: Option<ClaudeRawV1ReplayQuery>,
-    ) -> Result<SubscribeSessionClient, RpcClientError> {
-        let args = claude_io::encode_raw_v1_args(ClaudeRawV1Args {
-            terminal_size,
-            replay_query,
-        });
-        self.subscribe_session(agent_id, agent_route, claude_io::RAW_V1, args)
-            .await
+    pub async fn subscribe_session(
+        &self,
+        request: SubscribeSessionRequest,
+    ) -> Result<SessionStream, ClientError> {
+        self.subscribe_session_on_route(
+            request.id,
+            request.route,
+            request.io_protocol,
+            request.args.map(|args| args.to_vec()),
+        )
+        .await
     }
 
-    pub async fn subscribe_session(
-        &mut self,
+    async fn subscribe_session_on_route(
+        &self,
         agent_id: Uuid,
         agent_route: Route,
         io_protocol: impl Into<String>,
         args: Option<Vec<u8>>,
-    ) -> Result<SubscribeSessionClient, RpcClientError> {
+    ) -> Result<SessionStream, ClientError> {
         let full_route = route_to_agent_with_link(agent_route, self.runtime.link().clone());
         let io_protocol = io_protocol.into();
         let stream = self
@@ -213,7 +452,11 @@ impl RpcClient {
                 )?,
             )
             .await?;
-        let session = SubscribeSessionClient { stream };
+        let session = SubscribeSessionClient {
+            stream: Arc::new(stream),
+            pending: Mutex::new(None),
+            done: Mutex::new(false),
+        };
 
         match session.recv().await? {
             SubscribeSessionFrame::Event(SubscribeSessionEvent::Opened) => {
@@ -222,12 +465,12 @@ impl RpcClient {
             }
             SubscribeSessionFrame::Event(event) => {
                 session.stream.finish();
-                Err(RpcClientError::Unexpected {
+                Err(ClientError::Unexpected {
                     method: method::AGENT_SUBSCRIBE_SESSION_NAME,
                     message: format!("expected SessionOpened, got {event:?}"),
                 })
             }
-            SubscribeSessionFrame::Response(Ok(())) => Err(RpcClientError::Unexpected {
+            SubscribeSessionFrame::Response(Ok(())) => Err(ClientError::Unexpected {
                 method: method::AGENT_SUBSCRIBE_SESSION_NAME,
                 message: "session ended before opening".to_string(),
             }),
@@ -235,18 +478,28 @@ impl RpcClient {
         }
     }
 
-    pub async fn send_input(
-        &mut self,
+    pub async fn send_input(&self, request: SendInputRequest) -> Result<(), ClientError> {
+        self.send_input_to_route(
+            request.id,
+            request.route,
+            request.io_protocol,
+            request.payload,
+        )
+        .await
+    }
+
+    async fn send_input_to_route(
+        &self,
         agent_id: Uuid,
         agent_route: Route,
         io_protocol: impl Into<String>,
-        input_id: Vec<u8>,
-        payload: Vec<u8>,
-    ) -> Result<(), RpcClientError> {
+        payload: impl Into<Bytes>,
+    ) -> Result<(), ClientError> {
         let full_route = self.route_to_agent(agent_route);
+        let payload = payload.into();
         let payload = session_request_payload(
             method::AGENT_SEND_INPUT_NAME,
-            session::encode_send_input_request(agent_id, io_protocol, input_id, payload),
+            session::encode_send_input_request(agent_id, io_protocol, payload.to_vec()),
         )?;
         let response = self
             .runtime
@@ -256,27 +509,7 @@ impl RpcClient {
             .map(|_| ())
     }
 
-    pub async fn send_control(
-        &mut self,
-        agent_id: Uuid,
-        agent_route: Route,
-        io_protocol: impl Into<String>,
-        payload: Vec<u8>,
-    ) -> Result<(), RpcClientError> {
-        let full_route = self.route_to_agent(agent_route);
-        let payload = session_request_payload(
-            method::AGENT_SEND_INPUT_NAME,
-            session::encode_send_control_request(agent_id, io_protocol, payload),
-        )?;
-        let response = self
-            .runtime
-            .call_endpoint_unary_payload(method::AGENT_SEND_INPUT, full_route, payload)
-            .await?;
-        decode_payload::<wire::SendInputResponse>(method::AGENT_SEND_INPUT_NAME, response)
-            .map(|_| ())
-    }
-
-    pub async fn list_agents(&mut self) -> Result<Vec<Agent>, RpcClientError> {
+    pub async fn list_agents(&self) -> Result<Vec<AgentEntry>, ClientError> {
         let body = self
             .runtime
             .local_unary_payload(
@@ -293,16 +526,24 @@ impl RpcClient {
     }
 
     pub async fn resolve_agent(
-        &mut self,
-        identifier: &str,
-    ) -> Result<Option<Agent>, RpcClientError> {
-        let identifier = Uuid::parse_str(identifier)
-            .map(|agent_id| {
+        &self,
+        identifier: AgentIdentifier,
+    ) -> Result<AgentEntry, ClientError> {
+        self.try_resolve_agent(identifier.clone())
+            .await?
+            .ok_or(ClientError::AgentNotFound(identifier))
+    }
+
+    async fn try_resolve_agent(
+        &self,
+        identifier: impl Into<AgentIdentifier>,
+    ) -> Result<Option<AgentEntry>, ClientError> {
+        let identifier = match identifier.into() {
+            AgentIdentifier::Id(agent_id) => {
                 wire::resolve_agent_request::Identifier::AgentId(agent_id.as_bytes().to_vec())
-            })
-            .unwrap_or_else(|_| {
-                wire::resolve_agent_request::Identifier::AgentName(identifier.to_string())
-            });
+            }
+            AgentIdentifier::Name(name) => wire::resolve_agent_request::Identifier::AgentName(name),
+        };
         let body = self
             .runtime
             .local_unary_payload(
@@ -321,7 +562,7 @@ impl RpcClient {
             .transpose()
     }
 
-    pub async fn shutdown(&mut self) -> Result<(), RpcClientError> {
+    pub async fn shutdown(&self, _reason: ShutdownReason) -> Result<(), ClientError> {
         let body = self
             .runtime
             .local_unary_payload(
@@ -332,18 +573,18 @@ impl RpcClient {
         decode_empty(method::ADMIN_SHUTDOWN_NAME, body)
     }
 
-    pub async fn suspend(&mut self) -> Result<SuspendSummary, RpcClientError> {
+    pub async fn suspend(&self) -> Result<SuspendSummary, ClientError> {
         self.suspend_with_reason(wire::SuspendReason::User).await
     }
 
-    pub async fn suspend_for_update(&mut self) -> Result<SuspendSummary, RpcClientError> {
+    pub async fn suspend_for_update(&self) -> Result<SuspendSummary, ClientError> {
         self.suspend_with_reason(wire::SuspendReason::Update).await
     }
 
     async fn suspend_with_reason(
-        &mut self,
+        &self,
         reason: wire::SuspendReason,
-    ) -> Result<SuspendSummary, RpcClientError> {
+    ) -> Result<SuspendSummary, ClientError> {
         let body = self
             .runtime
             .local_unary_payload(
@@ -360,7 +601,7 @@ impl RpcClient {
         })
     }
 
-    pub async fn resume(&mut self) -> Result<ResumeSummary, RpcClientError> {
+    pub async fn resume(&self) -> Result<ResumeSummary, ClientError> {
         let body = self
             .runtime
             .local_unary_payload(method::ADMIN_RESUME, wire::ResumeRequest {}.encode_to_vec())
@@ -372,7 +613,10 @@ impl RpcClient {
         })
     }
 
-    pub async fn connect_to_server(&mut self, address: String) -> Result<(), RpcClientError> {
+    pub async fn connect_to_server(
+        &self,
+        address: ConnectToServerTarget,
+    ) -> Result<(), ClientError> {
         let body = self
             .runtime
             .local_unary_payload(
@@ -383,11 +627,15 @@ impl RpcClient {
         decode_empty(method::ADMIN_CONNECT_TO_SERVER_NAME, body)
     }
 
-    pub async fn debug(
-        &mut self,
+    pub async fn debug_dump(&self, format: DebugFormat) -> Result<String, ClientError> {
+        self.debug_dump_verbose(false, format).await
+    }
+
+    pub async fn debug_dump_verbose(
+        &self,
         verbose: bool,
         format: DebugFormat,
-    ) -> Result<String, RpcClientError> {
+    ) -> Result<String, ClientError> {
         let body = self
             .runtime
             .local_unary_payload(
@@ -403,29 +651,129 @@ impl RpcClient {
         Ok(response.dump)
     }
 
-    pub async fn enqueue_hook(
-        &mut self,
+    pub async fn handle_hook(
+        &self,
+        provider: HookProvider,
+        payload: Bytes,
+    ) -> Result<Bytes, ClientError> {
+        let (agent_id, external) = hook_target_from_payload(provider, &payload)?;
+        self.enqueue_hook_for_agent(agent_id, provider, payload, external)
+            .await?;
+        Ok(Bytes::new())
+    }
+
+    async fn enqueue_hook_for_agent(
+        &self,
         agent_id: Uuid,
         provider: HookProvider,
-        payload: Vec<u8>,
+        payload: impl Into<Bytes>,
         external: bool,
-    ) -> Result<(), RpcClientError> {
-        self.runtime
-            .local_send_only(
-                method::HOOK_HANDLE_NAME,
+    ) -> Result<(), ClientError> {
+        let body = self
+            .runtime
+            .local_unary_payload(
+                method::HOOK_HANDLE,
                 wire::HandleHookRequest {
                     agent_id: agent_id.as_bytes().to_vec(),
                     provider: hook_provider_to_wire(provider),
-                    payload,
+                    payload: payload.into().to_vec(),
                     external,
                 }
                 .encode_to_vec(),
             )
-            .await
+            .await?;
+        decode_payload::<wire::HandleHookResponse>(method::HOOK_HANDLE_NAME, body).map(|_| ())
+    }
+
+    pub async fn subscribe_routing_events(&self) -> Result<RoutingEventStream, ClientError> {
+        let mut full_route = Route::empty();
+        full_route.push(self.runtime.link().clone());
+        let stream = self
+            .runtime
+            .start_endpoint_stream(
+                method::ROUTING_SUBSCRIBE_EVENTS,
+                full_route,
+                wire::SubscribeRoutingEventsRequest {}.encode_to_vec(),
+            )
+            .await?;
+        stream.set_active();
+        Ok(RoutingEventStream {
+            stream: Arc::new(stream),
+            pending: Mutex::new(None),
+            done: Mutex::new(false),
+        })
+    }
+
+    pub async fn subscribe_agent_events(
+        &self,
+        host_id: Uuid,
+    ) -> Result<AgentEventStream, ClientError> {
+        let mut full_route = Route::empty();
+        full_route.push(self.runtime.link().clone());
+        let stream = self
+            .runtime
+            .start_endpoint_stream(
+                method::AGENT_SUBSCRIBE_EVENTS,
+                full_route,
+                wire::SubscribeAgentEventsRequest {
+                    host_id: host_id.as_bytes().to_vec(),
+                }
+                .encode_to_vec(),
+            )
+            .await?;
+        stream.set_active();
+        Ok(AgentEventStream {
+            stream: Arc::new(stream),
+            pending: Mutex::new(None),
+            done: Mutex::new(false),
+        })
     }
 
     fn route_to_agent(&self, agent_route: Route) -> Route {
         route_to_agent_with_link(agent_route, self.runtime.link().clone())
+    }
+}
+
+fn hook_target_from_payload(
+    provider: HookProvider,
+    payload: &[u8],
+) -> Result<(Uuid, bool), ClientError> {
+    if let Ok(agent_id) = std::env::var("AMUX_AGENT_ID") {
+        return agent_id
+            .parse::<Uuid>()
+            .map(|agent_id| (agent_id, false))
+            .map_err(|error| ClientError::Encode {
+                method: method::HOOK_HANDLE_NAME,
+                message: format!("invalid AMUX_AGENT_ID: {error}"),
+            });
+    }
+
+    match provider {
+        HookProvider::Claude => serde_json::from_slice::<serde_json::Value>(payload)
+            .map_err(|error| ClientError::Encode {
+                method: method::HOOK_HANDLE_NAME,
+                message: format!("invalid Claude hook payload: {error}"),
+            })
+            .and_then(|value| {
+                value
+                    .get("session_id")
+                    .and_then(|id| id.as_str())
+                    .ok_or_else(|| ClientError::Encode {
+                        method: method::HOOK_HANDLE_NAME,
+                        message: "Claude hook payload missing session_id".to_string(),
+                    })
+                    .and_then(|id| {
+                        id.parse::<Uuid>().map_err(|error| ClientError::Encode {
+                            method: method::HOOK_HANDLE_NAME,
+                            message: format!("invalid Claude hook session_id: {error}"),
+                        })
+                    })
+            })
+            .map(|agent_id| (agent_id, true)),
+        HookProvider::Unknown => Err(ClientError::Encode {
+            method: method::HOOK_HANDLE_NAME,
+            message: "unknown hook provider".to_string(),
+        }),
     }
 }
 
@@ -443,15 +791,15 @@ fn hook_provider_to_wire(provider: HookProvider) -> i32 {
     }
 }
 
-fn decode_empty(method: &'static str, body: Vec<u8>) -> Result<(), RpcClientError> {
+fn decode_empty(method: &'static str, body: Vec<u8>) -> Result<(), ClientError> {
     decode_payload::<wire::Empty>(method, body).map(|_| ())
 }
 
-fn decode_payload<M>(method: &'static str, body: Vec<u8>) -> Result<M, RpcClientError>
+fn decode_payload<M>(method: &'static str, body: Vec<u8>) -> Result<M, ClientError>
 where
     M: prost::Message + Default,
 {
-    M::decode(body.as_slice()).map_err(|error| RpcClientError::Decode {
+    M::decode(body.as_slice()).map_err(|error| ClientError::Decode {
         method,
         message: error.to_string(),
     })
@@ -460,8 +808,8 @@ where
 fn decode_agent_entry(
     method: &'static str,
     entry: wire::AgentEntry,
-) -> Result<Agent, RpcClientError> {
-    wire::agent_entry_to_domain(entry).map_err(|error| RpcClientError::Decode {
+) -> Result<AgentEntry, ClientError> {
+    wire::agent_entry_to_domain(entry).map_err(|error| ClientError::Decode {
         method,
         message: error.to_string(),
     })
@@ -475,8 +823,8 @@ fn route_to_agent_with_link(mut agent_route: Route, local_link: crate::protocol:
 fn agent_lifecycle_request_payload(
     method: &'static str,
     payload: Result<Vec<u8>, agent_lifecycle::AgentLifecycleCodecError>,
-) -> Result<Vec<u8>, RpcClientError> {
-    payload.map_err(|error| RpcClientError::Encode {
+) -> Result<Vec<u8>, ClientError> {
+    payload.map_err(|error| ClientError::Encode {
         method,
         message: error.to_string(),
     })
@@ -485,8 +833,8 @@ fn agent_lifecycle_request_payload(
 fn session_request_payload(
     method: &'static str,
     payload: Result<Vec<u8>, session::SessionCodecError>,
-) -> Result<Vec<u8>, RpcClientError> {
-    payload.map_err(|error| RpcClientError::Encode {
+) -> Result<Vec<u8>, ClientError> {
+    payload.map_err(|error| ClientError::Encode {
         method,
         message: error.to_string(),
     })

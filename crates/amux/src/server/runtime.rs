@@ -9,7 +9,7 @@ mod events;
 mod notify;
 
 use std::net::SocketAddr;
-use std::sync::Arc;
+use std::sync::{Arc, Mutex};
 use std::time::Duration;
 
 pub(in crate::server) use events::handle_session_event;
@@ -18,6 +18,7 @@ use prost::Message as _;
 use thiserror::Error;
 use tokio::net::TcpListener;
 use tokio::sync::{RwLock, Semaphore, mpsc};
+use tokio::task::JoinHandle;
 use tokio_rustls::TlsAcceptor;
 
 use self::notify::notify_other_clients;
@@ -26,13 +27,20 @@ use super::cloud::establish_cloud_connection;
 use super::routing::{shutdown_server, suspend_server};
 use super::{LOCAL_USER_ID, ServerState, ShutdownRequest};
 use crate::agent::SessionEvent;
+use crate::auth::CredentialProvider;
 use crate::auth::jwt::JwtValidator;
+use crate::client::{Client, ConnectError, Connection, connect_existing};
 use crate::config::{Config, ConfigError};
+use crate::protocol::handshake::RoutingRole;
 use crate::protocol::message::{
     Frame, FrameBody, Message, ProtocolError, ResponseFrame, ShutdownReason,
 };
+use crate::protocol::route::generate_terminal_link;
 use crate::protocol::{Route, wire};
-use crate::transport::{LocalListener, TcpTransport, TransportError, create_tls_acceptor};
+use crate::transport::{
+    LocalListener, TcpTransport, TransportError, connect_handshake, create_tls_acceptor, memory,
+};
+use crate::update::{UpdateReporter, UpdateStatus};
 
 /// Maximum time allowed for a TLS handshake to complete.
 const TLS_HANDSHAKE_TIMEOUT: Duration = Duration::from_secs(10);
@@ -43,6 +51,12 @@ const TLS_HANDSHAKE_TIMEOUT: Duration = Duration::from_secs(10);
 const MAX_CONNECTIONS: usize = 16384;
 
 type Result<T> = std::result::Result<T, ServerError>;
+type BuilderParts = (
+    Config,
+    Option<Arc<dyn CredentialProvider>>,
+    bool,
+    Option<Arc<dyn UpdateReporter>>,
+);
 
 #[derive(Debug, Error)]
 pub enum ServerError {
@@ -60,22 +74,92 @@ pub enum ServerError {
     State(String),
 }
 
-/// The amux server
-pub(crate) struct Server {
+pub struct Server {
     state: Arc<RwLock<ServerState>>,
     event_tx: mpsc::Sender<SessionEvent>,
     event_rx: Option<mpsc::Receiver<SessionEvent>>,
     shutdown_rx: Option<mpsc::Receiver<ShutdownRequest>>,
 }
 
+pub struct ServerBuilder {
+    config: Option<Config>,
+    credentials: Option<Arc<dyn CredentialProvider>>,
+    update_reporter: Option<Arc<dyn UpdateReporter>>,
+    as_cloud_relay: bool,
+}
+
+pub struct EmbeddedBuilder {
+    inner: ServerBuilder,
+}
+
+pub struct DaemonBuilder {
+    inner: ServerBuilder,
+}
+
+struct EmbeddedServerGuard {
+    tasks: Arc<Mutex<Vec<JoinHandle<()>>>>,
+}
+
+impl EmbeddedServerGuard {
+    fn new(tasks: Arc<Mutex<Vec<JoinHandle<()>>>>) -> Self {
+        Self { tasks }
+    }
+
+    fn abort_tasks(&self) {
+        abort_embedded_tasks(&self.tasks);
+    }
+}
+
+impl Drop for EmbeddedServerGuard {
+    fn drop(&mut self) {
+        self.abort_tasks();
+    }
+}
+
+fn push_embedded_task(tasks: &Arc<Mutex<Vec<JoinHandle<()>>>>, task: JoinHandle<()>) {
+    tasks
+        .lock()
+        .expect("embedded server task list mutex poisoned")
+        .push(task);
+}
+
+fn abort_embedded_tasks(tasks: &Arc<Mutex<Vec<JoinHandle<()>>>>) {
+    for task in tasks
+        .lock()
+        .expect("embedded server task list mutex poisoned")
+        .drain(..)
+    {
+        task.abort();
+    }
+}
+
 impl Server {
-    pub(crate) fn with_config(config: Config) -> Result<Self> {
+    pub fn builder() -> ServerBuilder {
+        ServerBuilder {
+            config: None,
+            credentials: None,
+            update_reporter: None,
+            as_cloud_relay: false,
+        }
+    }
+
+    pub(crate) fn with_config_and_credentials(
+        config: Config,
+        credentials: Option<Arc<dyn CredentialProvider>>,
+        update_reporter: Option<Arc<dyn UpdateReporter>>,
+    ) -> Result<Self> {
         let host_id = crate::state::load_or_create_host_id(&config.state_path)
             .map_err(|e| ServerError::State(format!("failed to load host state: {e}")))?;
         let (event_tx, event_rx) = mpsc::channel::<SessionEvent>(256);
         let (shutdown_tx, shutdown_rx) = mpsc::channel::<ShutdownRequest>(1);
         Ok(Self {
-            state: Arc::new(RwLock::new(ServerState::new(config, host_id, shutdown_tx))),
+            state: Arc::new(RwLock::new(ServerState::new(
+                config,
+                host_id,
+                shutdown_tx,
+                credentials,
+                update_reporter,
+            ))),
             event_tx,
             event_rx: Some(event_rx),
             shutdown_rx: Some(shutdown_rx),
@@ -87,7 +171,7 @@ impl Server {
     /// If `is_cloud_server` is true, the server runs as a cloud relay:
     /// - TCP connections use TLS
     /// - All connections require valid JWT tokens
-    pub async fn run(&mut self, is_cloud_server: bool) -> Result<()> {
+    pub(crate) async fn run(&mut self, is_cloud_server: bool) -> Result<()> {
         let (socket_path, tcp_port, ws_port, cloud_url, enforce_tls, prevent_idle_sleep) = {
             let state = self.state.read().await;
             (
@@ -194,24 +278,20 @@ impl Server {
                 let state = self.state.read().await;
                 state.config.clone()
             };
-            establish_cloud_connection(config, self.state.clone(), self.event_tx.clone());
+            let _cloud_task =
+                establish_cloud_connection(config, self.state.clone(), self.event_tx.clone());
 
             // Task: Periodic update check (every hour)
-            let (state_path, check_for_updates) = {
+            let update_reporter = {
                 let state = self.state.read().await;
-                (
-                    state.config.state_path.clone(),
-                    state.config.check_for_updates,
-                )
+                state.update_reporter.clone()
             };
-            if check_for_updates {
-                crate::update::spawn_update_checker(
-                    cloud_url.clone(),
-                    env!("CARGO_PKG_VERSION").to_string(),
-                    Duration::from_secs(3600),
-                    state_path,
-                );
-            }
+            let _update_task = spawn_periodic_update_check(
+                update_reporter,
+                cloud_url.clone(),
+                env!("CARGO_PKG_VERSION").to_string(),
+                Duration::from_secs(3600),
+            );
         }
 
         // Network connection limiter (TCP + WebSocket): each connection holds a
@@ -460,6 +540,305 @@ impl Server {
     }
 }
 
+impl ServerBuilder {
+    pub fn config(mut self, config: Config) -> Self {
+        self.config = Some(config);
+        self
+    }
+
+    pub fn credentials(mut self, provider: Arc<dyn CredentialProvider>) -> Self {
+        self.credentials = Some(provider);
+        self
+    }
+
+    pub fn update_reporter(mut self, reporter: Arc<dyn UpdateReporter>) -> Self {
+        self.update_reporter = Some(reporter);
+        self
+    }
+
+    pub fn as_cloud_relay(mut self) -> Self {
+        self.as_cloud_relay = true;
+        self
+    }
+
+    pub fn embedded(self) -> EmbeddedBuilder {
+        EmbeddedBuilder { inner: self }
+    }
+
+    pub fn daemon(self) -> DaemonBuilder {
+        DaemonBuilder { inner: self }
+    }
+}
+
+impl EmbeddedBuilder {
+    pub async fn open(self) -> Result<Client> {
+        let (config, credentials, as_cloud_relay, update_reporter) = self.inner.into_parts()?;
+        config.validate(as_cloud_relay)?;
+        let mut server = Server::with_config_and_credentials(config, credentials, update_reporter)?;
+        if as_cloud_relay {
+            let mut state = server.state.write().await;
+            state.is_cloud_server = true;
+            state.jwt_validator = Some(Arc::new(JwtValidator::new(&state.config.cloud_url)));
+        }
+
+        let tasks = Arc::new(Mutex::new(Vec::new()));
+        let mut event_rx = server.event_rx.take().expect("open() called after run()");
+        let state = server.state.clone();
+        push_embedded_task(
+            &tasks,
+            tokio::spawn(async move {
+                while let Some(event) = event_rx.recv().await {
+                    handle_session_event(&state, event).await;
+                }
+            }),
+        );
+
+        if !as_cloud_relay {
+            let config = {
+                let state = server.state.read().await;
+                state.config.clone()
+            };
+            let cloud_url = config.cloud_url.clone();
+            push_embedded_task(
+                &tasks,
+                establish_cloud_connection(config, server.state.clone(), server.event_tx.clone()),
+            );
+            let update_reporter = {
+                let state = server.state.read().await;
+                state.update_reporter.clone()
+            };
+            if let Some(task) = spawn_periodic_update_check(
+                update_reporter,
+                cloud_url,
+                env!("CARGO_PKG_VERSION").to_string(),
+                Duration::from_secs(3600),
+            ) {
+                push_embedded_task(&tasks, task);
+            }
+        }
+
+        let user_state = crate::server::ensure_user_state(&server.state, LOCAL_USER_ID).await;
+        let mut shutdown_rx = server
+            .shutdown_rx
+            .take()
+            .expect("open() called after run()");
+        let shutdown_user_state = user_state.clone();
+        let shutdown_tasks = tasks.clone();
+        let state_path = {
+            let state = server.state.read().await;
+            state.config.state_path.clone()
+        };
+        push_embedded_task(
+            &tasks,
+            tokio::spawn(async move {
+                if let Some(req) = shutdown_rx.recv().await {
+                    handle_embedded_shutdown(req, shutdown_user_state, state_path, shutdown_tasks)
+                        .await;
+                }
+            }),
+        );
+
+        let (server_transport, mut client_transport) = memory::pair(2048);
+        let accept_state = server.state.clone();
+        let accept_event_tx = server.event_tx.clone();
+        push_embedded_task(
+            &tasks,
+            tokio::spawn(async move {
+                if let Err(error) =
+                    local_accept(server_transport, accept_state, accept_event_tx).await
+                {
+                    tracing::debug!(error = %error, "embedded local connection closed");
+                }
+            }),
+        );
+
+        let outcome = connect_handshake(
+            &mut client_transport,
+            generate_terminal_link,
+            None,
+            RoutingRole::Observer,
+        )
+        .await
+        .map_err(connect_error_to_server_error)?;
+
+        let guard = Arc::new(EmbeddedServerGuard::new(tasks));
+        Ok(Client::new_with_guard(
+            Connection::new_memory(client_transport, outcome.link),
+            guard,
+        ))
+    }
+
+    pub async fn run(self) -> Result<()> {
+        let (config, credentials, as_cloud_relay, update_reporter) = self.inner.into_parts()?;
+        let mut server = Server::with_config_and_credentials(config, credentials, update_reporter)?;
+        server.run(as_cloud_relay).await
+    }
+}
+
+impl DaemonBuilder {
+    pub async fn open(self) -> std::result::Result<Client, ConnectError> {
+        let config = self
+            .inner
+            .config
+            .ok_or_else(|| ConfigError::Invalid("server config is required".to_string()))
+            .map_err(ConnectError::Config)?;
+        connect_existing(&config).await.map(Client::new)
+    }
+}
+
+impl ServerBuilder {
+    fn into_parts(self) -> std::result::Result<BuilderParts, ConfigError> {
+        let config = self
+            .config
+            .ok_or_else(|| ConfigError::Invalid("server config is required".to_string()))?;
+        if self.as_cloud_relay && self.credentials.is_some() {
+            return Err(ConfigError::Invalid(
+                "credentials() and as_cloud_relay() are mutually exclusive".to_string(),
+            ));
+        }
+        if !self.as_cloud_relay
+            && crate::setup::cloud_enabled(&config)
+            && self.credentials.is_none()
+        {
+            return Err(ConfigError::Invalid(
+                "credentials provider is required when cloud mode is enabled".to_string(),
+            ));
+        }
+        Ok((
+            config,
+            self.credentials,
+            self.as_cloud_relay,
+            self.update_reporter,
+        ))
+    }
+}
+
+fn spawn_periodic_update_check(
+    reporter: Option<Arc<dyn UpdateReporter>>,
+    cloud_url: String,
+    current_version: String,
+    interval: Duration,
+) -> Option<JoinHandle<()>> {
+    let reporter = reporter?;
+    Some(tokio::spawn(async move {
+        loop {
+            match crate::update::check_for_update(&cloud_url, &current_version).await {
+                Some(info) => {
+                    tracing::info!(
+                        current = %info.current_version,
+                        latest = %info.update_version,
+                        "update available"
+                    );
+                    reporter.report(UpdateStatus::Available(Some(info)));
+                }
+                None => {
+                    reporter.report(UpdateStatus::Available(None));
+                }
+            }
+            tokio::time::sleep(interval).await;
+        }
+    }))
+}
+
+async fn handle_embedded_shutdown(
+    req: ShutdownRequest,
+    user_state: Arc<RwLock<super::ServerUserState>>,
+    state_path: std::path::PathBuf,
+    tasks: Arc<Mutex<Vec<JoinHandle<()>>>>,
+) {
+    let should_abort = match req {
+        ShutdownRequest::Shutdown {
+            reply,
+            reply_call_id,
+            link,
+        } => {
+            notify_other_clients(&user_state, &link, ShutdownReason::UserRequested).await;
+            shutdown_server(&user_state).await;
+            let _ = reply
+                .send(Message::Frame(Frame {
+                    src: Route::from_link(link),
+                    dst: Route::empty(),
+                    call_id: reply_call_id,
+                    body: FrameBody::Response(ResponseFrame::Payload(
+                        wire::Empty {}.encode_to_vec(),
+                    )),
+                }))
+                .await;
+            true
+        }
+        ShutdownRequest::Suspend {
+            reply,
+            reply_call_id,
+            link,
+            reason,
+        } => {
+            notify_other_clients(&user_state, &link, reason).await;
+            let (suspended, errors) = suspend_server(&user_state).await;
+            let suspended_count = suspended.agents.len();
+            if !suspended.agents.is_empty()
+                && let Err(error) = crate::suspend::save_suspended(&state_path, &suspended)
+            {
+                let _ = reply
+                    .send(Message::Frame(Frame {
+                        src: Route::from_link(link),
+                        dst: Route::empty(),
+                        call_id: reply_call_id,
+                        body: FrameBody::Response(ResponseFrame::Error(
+                            ProtocolError::ServerError {
+                                message: format!("failed to save state: {error}"),
+                            },
+                        )),
+                    }))
+                    .await;
+                false
+            } else {
+                let response = if errors.is_empty() {
+                    ResponseFrame::Payload(
+                        wire::SuspendResponse {
+                            suspended_count: suspended_count as u64,
+                        }
+                        .encode_to_vec(),
+                    )
+                } else {
+                    ResponseFrame::Error(ProtocolError::ServerError {
+                        message: errors.join("; "),
+                    })
+                };
+                let _ = reply
+                    .send(Message::Frame(Frame {
+                        src: Route::from_link(link),
+                        dst: Route::empty(),
+                        call_id: reply_call_id,
+                        body: FrameBody::Response(response),
+                    }))
+                    .await;
+                errors.is_empty()
+            }
+        }
+    };
+    if should_abort {
+        tokio::spawn(async move {
+            tokio::time::sleep(Duration::from_millis(10)).await;
+            abort_embedded_tasks(&tasks);
+        });
+    }
+}
+
+fn connect_error_to_server_error(error: crate::transport::HandshakeError) -> ServerError {
+    match error {
+        crate::transport::HandshakeError::Transport(error) => ServerError::Transport(error),
+        crate::transport::HandshakeError::Timeout => {
+            ServerError::Connection("embedded handshake timed out".to_string())
+        }
+        crate::transport::HandshakeError::InvalidMessage(message) => {
+            ServerError::Connection(message)
+        }
+        crate::transport::HandshakeError::Protocol(error) => {
+            ServerError::Connection(error.to_string())
+        }
+    }
+}
+
 #[cfg(test)]
 pub(crate) mod test_helpers {
     use std::sync::Arc;
@@ -476,6 +855,8 @@ pub(crate) mod test_helpers {
             Config::default(),
             Uuid::new_v4(),
             shutdown_tx,
+            None,
+            None,
         )));
         let user_state = {
             let s = state.read().await;
@@ -487,5 +868,22 @@ pub(crate) mod test_helpers {
             .await
             .ensure_route_rpc(crate::protocol::Route::empty());
         (state, user_state)
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use std::time::Duration;
+
+    #[test]
+    fn update_checker_is_not_spawned_without_reporter() {
+        let task = super::spawn_periodic_update_check(
+            None,
+            "https://example.com".to_string(),
+            env!("CARGO_PKG_VERSION").to_string(),
+            Duration::from_secs(3600),
+        );
+
+        assert!(task.is_none());
     }
 }

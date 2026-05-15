@@ -10,8 +10,8 @@
 
 use std::io::{self, BufRead};
 
+use amux::Config;
 use amux::protocol::HookProvider;
-use amux::{Config, ConnectPolicy, RpcClient, connect};
 use anyhow::Result;
 use serde::Deserialize;
 use serde_json::Value;
@@ -115,7 +115,7 @@ fn handle_claude_hook_inner(config: &Config) -> io::Result<()> {
     let config = config.clone();
     tokio::task::block_in_place(|| {
         tokio::runtime::Handle::current().block_on(async {
-            if let Err(e) = send_hook_event(&config, agent_id, payload, external).await {
+            if let Err(e) = send_hook_event(&config, payload).await {
                 tracing::debug!(error = %e, "server not running or hook delivery failed");
             }
         });
@@ -124,16 +124,10 @@ fn handle_claude_hook_inner(config: &Config) -> io::Result<()> {
     Ok(())
 }
 
-async fn send_hook_event(
-    config: &Config,
-    agent_id: Uuid,
-    payload: Vec<u8>,
-    external: bool,
-) -> Result<()> {
-    let conn = connect(config, ConnectPolicy::ExistingOnly).await?;
-    let mut client = RpcClient::new(conn);
+async fn send_hook_event(config: &Config, payload: Vec<u8>) -> Result<()> {
+    let client = crate::client_common::open_daemon(config).await?;
     client
-        .enqueue_hook(agent_id, HookProvider::Claude, payload, external)
+        .handle_hook(HookProvider::Claude, payload.into())
         .await?;
     Ok(())
 }

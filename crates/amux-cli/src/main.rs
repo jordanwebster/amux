@@ -1,3 +1,4 @@
+mod auth;
 mod client_common;
 mod hooks;
 mod init;
@@ -10,12 +11,15 @@ use std::fs::OpenOptions;
 use std::io::Read;
 use std::path::PathBuf;
 
-use amux::{Config, ServerMode, protocol, run_server, setup};
+use amux::{Config, protocol, setup};
 use anyhow::{Context, Result, anyhow};
 use clap::{CommandFactory, Parser, Subcommand, ValueEnum};
 use tracing_appender::non_blocking::WorkerGuard;
 use tracing_subscriber::prelude::*;
 use tracing_subscriber::{EnvFilter, fmt};
+
+use crate::server_client::ServerMode;
+use crate::update::MarkerFileReporter;
 
 /// Agent multiplexer - terminal multiplexer for AI agents
 #[derive(Debug, Parser)]
@@ -104,7 +108,7 @@ enum ServerCommands {
         #[arg(long)]
         foreground: bool,
 
-        /// Read config from stdin (YAML format). Used by ConnectPolicy::SpawnDaemon.
+        /// Read config from stdin (YAML format). Used by CLI daemon spawning.
         #[arg(long, hide = true)]
         config_from_stdin: bool,
     },
@@ -210,7 +214,7 @@ async fn handle_server_start_from_stdin(command: &Commands) -> Result<bool> {
     config
         .validate(*cloud)
         .map_err(|e| anyhow!("invalid config: {e}"))?;
-    run_server(config, *cloud).await?;
+    server_client::run_server_foreground(config, *cloud).await?;
     Ok(true)
 }
 
@@ -404,12 +408,13 @@ fn check_update_required(config: &Config) {
         return;
     }
 
-    let minimum_version = match amux::update::read_update_required(&config.state_path) {
+    let reporter = MarkerFileReporter::from_state_path(&config.state_path);
+    let minimum_version = match reporter.read_update_required() {
         Some(v) => v,
         None => return,
     };
 
-    if amux::update::is_update_dismissed(&config.state_path, &minimum_version) {
+    if reporter.is_update_dismissed(&minimum_version) {
         return;
     }
 
@@ -427,7 +432,7 @@ fn check_update_required(config: &Config) {
 
     let mut input = String::new();
     if std::io::stdin().read_line(&mut input).is_ok() && input.trim().eq_ignore_ascii_case("d") {
-        amux::update::dismiss_update_required(&config.state_path, &minimum_version);
+        reporter.dismiss_update_required(&minimum_version);
     }
 }
 

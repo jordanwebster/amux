@@ -38,6 +38,82 @@ One paragraph describing what was done.
 
 ---
 
+## 2026-05-15: Library cleanup pass after embedded refactor
+
+### Summary
+Implemented the four follow-ups from `LIB_CLEANUP.md`: moved CLI refresh-token state out of amux-owned `state.yaml`, replaced library-owned update marker writes with an injected reporter, restored `AgentEntry` as the route-carrying addressable agent type, and removed public `SendInputRequest::input_id`.
+
+### Changes
+- `amux-cli` now stores device-flow refresh tokens in CLI-owned `auth.yaml` next to `state.yaml`, using temp-file-plus-rename writes.
+- `amux` now exposes `UpdateStatus` and `UpdateReporter`; the server only performs periodic update checks when a reporter is configured.
+- CLI update banners and `amux update` marker cleanup now use `MarkerFileReporter` in `amux-cli`.
+- Public `Agent` no longer carries `route`; `AgentEntry { agent, route }` is used for list/resolve/create/rename results and `amux-ui` inventory.
+- `SendInputRequest` no longer requires callers to fabricate an input id; the protocol encoder synthesizes the protobuf `SessionInput.input_id`.
+- Embedded servers configured with an update reporter now run the same periodic available-update check as daemon servers.
+- `amux-ui` now emits `AgentUpdated` for route/metadata changes and includes the full `AgentEntry` on rename notifications.
+
+### Decisions Made
+- `auth.yaml` is intentionally not migrated from old `state.yaml` refresh-token data because the project is pre-release and the cleanup pass explicitly accepts re-running `amux init`.
+- Update marker filenames and banner behavior stayed in the CLI; embedded clients can omit `.update_reporter(...)` and get no periodic update task.
+- `amux-ui` now treats agent inventory as `AgentEntry` because UI clients usually need both identity metadata and the route to address sessions/input.
+
+### Verification
+- `cargo check --workspace --all-targets` — clean.
+- `cargo +nightly fmt --all` and `cargo +nightly fmt --all -- --check` — clean.
+- `cargo +nightly clippy --workspace --all-targets -- -D warnings` — clean.
+- `cargo test -p amux-ui --test runtime` — 1 passed.
+- `cargo doc -p amux-ui --no-deps` — clean.
+- `cargo test --workspace` — all workspace tests passed.
+- `cargo run -p e2e-runner -- run` — 13 passed, 0 failed.
+- `git diff --check` — clean.
+- GPT-5.5 xhigh review rounds completed; follow-up fixes added direct coverage for CLI update markers, auth-file replacement, embedded update reporter scheduling, cloud update reporter status delivery, `AgentEntry` wire round-tripping, generated send-input wire IDs, and `amux-ui` route-change reconciliation.
+- Cleanup audits: no `refresh_token`, `_extra`, or `CloudState` matches remain in `crates/amux/src`; no legacy update marker helpers remain in `crates/amux/src`; no `agent.route` access remains in `crates/amux/src`, `crates/amux-cli/src`, or `crates/amux-ui/src`; no public `input_id` remains in `amux::SendInputRequest` or `amux-ui`.
+
+### Next Steps
+- None for this cleanup pass.
+
+---
+
+## 2026-05-15: Library refactor for embedded clients and amux-ui
+
+### Summary
+Refactored the workspace around the new library boundary in `LIB_REFACTOR.md`: `amux` now owns the embeddable server/client core, `amux-cli` owns device flow and daemon spawn-or-attach glue, and the new `amux-ui` crate exposes a command/notification runtime for app-style clients.
+
+### Changes
+- `amux` exposes `AccessToken`, `AuthError`, `CredentialProvider`, `Server::builder()`, embedded/daemon builders, cheap-clone `Client`, request-based client operations, `SessionStream`, and routing/agent event streams.
+- OAuth device flow and refresh-token persistence moved out of `amux` into `crates/amux-cli/src/auth.rs` as `DeviceFlowProvider`.
+- Public `Connection`, `RpcClient`, `ConnectPolicy`, `DaemonOptions`, `connect`, `spawn_daemon`, `run_server`, and `run_server_with_credentials` were removed from the `amux` exports.
+- `MemoryTransport` is available for embedded server/client wiring, with `Server::builder().embedded().open()` returning a client over in-process transport.
+- CLI subcommands now use `amux::Client`; daemon spawn/wait/startup diagnostics live in `amux-cli/src/client_common.rs`.
+- Added `crates/amux-ui` with `Runtime`, `Cmd`, `Notification`, `CmdId`, session phase/failure reasons, and re-exported domain types.
+- Added embedded integration coverage in `crates/amux/tests/embedded.rs` and `crates/amux-ui/tests/runtime.rs`.
+- Added `PROGRESS.md` to track the refactor work.
+
+### Decisions Made
+- Auth refresh stays consumer-owned. The server asks a `CredentialProvider` for access tokens and invalidates rejected tokens; it does not know about device flow or refresh-token storage.
+- The CLI spawn-or-attach path remains CLI-specific. `amux::DaemonBuilder::open()` only connects to an existing daemon.
+- Embedded mode uses memory transport and an owned guard so the in-process server lifetime is tied to cloned clients.
+- `amux-ui` is intentionally v0: it provides bounded notifications, command correlation, basic inventory snapshots/deltas, and refcounted session subscriptions, but not reconnect/backoff or app projection state.
+
+### Verification
+- `cargo check --workspace --all-targets` — clean.
+- `cargo +nightly fmt --all` — applied.
+- `cargo +nightly clippy --workspace --all-targets -- -D warnings` — clean.
+- `cargo test -p amux-ui --test runtime` — 1 passed.
+- `cargo test --workspace` — all workspace tests passed.
+- `cargo doc -p amux-ui --no-deps` — clean.
+- `cargo run -p e2e-runner -- run` — 13 passed, 0 failed.
+- `cargo +nightly fmt --all -- --check` — clean.
+- After making `amux_ui::CmdId` opaque: `cargo check -p amux-ui --all-targets`, `cargo test -p amux-ui --test runtime`, and `cargo +nightly clippy -p amux-ui --all-targets -- -D warnings` — clean.
+- Three GPT-5.5 xhigh code review rounds were completed. Follow-up fixes landed for state preservation of CLI-owned refresh tokens, daemon-safe `amux-ui` shutdown, session detach cancellation/refcounting, embedded cloud startup and credential validation, retriable provider errors, terminating stream adapters, and embedded shutdown/suspend lifecycle behavior.
+- Final post-review validation: `cargo check --workspace --all-targets` — clean; `cargo +nightly clippy --workspace --all-targets -- -D warnings` — clean; `cargo test --workspace` — 329 amux-lib tests plus embedded/CLI/UI/e2e-runner/test-agent/doc tests passed; `cargo doc -p amux-ui --no-deps` — clean; escalated `cargo run -p e2e-runner -- run` — 13 passed, 0 failed; `cargo +nightly fmt --all -- --check` and `git diff --check` — clean.
+- Cleanup audit found no `oauth`/`OAuth`/`refresh_token` matches in `crates/amux/src` and no legacy public API names (`RpcClient`, `ConnectPolicy`, `DaemonOptions`, public `connect`/`run_server`) in the workspace source.
+
+### Next Steps
+- None for this refactor. Future `amux-ui` work can add reconnect/backoff and richer host-agent event projection as app requirements harden.
+
+---
+
 ## 2026-04-17: Negotiated idle timeout for heartbeats
 
 ### Summary

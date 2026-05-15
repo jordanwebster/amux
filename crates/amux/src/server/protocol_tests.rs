@@ -4,7 +4,7 @@ use uuid::Uuid;
 
 use super::protocol_harness::Topology;
 use crate::agent::TEST_ECHO_V1;
-use crate::client::RpcClientError;
+use crate::client::ClientError;
 use crate::protocol::message::ProtocolError;
 use crate::protocol::{Route, method};
 
@@ -23,21 +23,22 @@ async fn agent_lifecycle_create_rename_delete_runs_through_rpc_client() {
     let mut client = net.connect_local_client("local").await;
     let agent_id = Uuid::new_v4();
 
-    let agent = client.create_test_agent(agent_id, "draft").await;
-    assert_eq!(agent.id, agent_id);
-    assert_eq!(agent.name.as_deref(), Some("draft"));
+    let entry = client.create_test_agent(agent_id, "draft").await;
+    assert_eq!(entry.agent.id, agent_id);
+    assert_eq!(entry.agent.name.as_deref(), Some("draft"));
     assert!(
-        agent
+        entry
+            .agent
             .io_protocols
             .iter()
             .any(|protocol| protocol == TEST_ECHO_V1)
     );
 
     let renamed = client
-        .rename_agent(agent_id, agent.route.clone(), "renamed")
+        .rename_agent(agent_id, entry.route.clone(), "renamed")
         .await;
-    assert_eq!(renamed.id, agent_id);
-    assert_eq!(renamed.name.as_deref(), Some("renamed"));
+    assert_eq!(renamed.agent.id, agent_id);
+    assert_eq!(renamed.agent.name.as_deref(), Some("renamed"));
 
     client.delete_agent(agent_id, renamed.route).await;
     client.expect_no_agent_named("renamed").await;
@@ -88,7 +89,7 @@ async fn routed_unary_receives_unreachable_when_peer_link_closes_while_pending()
     let (result, close_result) = rename_task.await.expect("rename task should not panic");
     assert!(matches!(
         result,
-        Err(RpcClientError::Protocol(ProtocolError::Unreachable { .. }))
+        Err(ClientError::Protocol(ProtocolError::Unreachable { .. }))
     ));
     close_result.unwrap();
 }
@@ -351,14 +352,14 @@ async fn subscribe_session_test_echo_roundtrips_input_as_output() {
     let net = Topology::new().await;
     let mut client = net.connect_local_client("local").await;
     let agent_id = net.spawn_test_echo_agent("echo").await;
-    let session = client.subscribe_session(agent_id, TEST_ECHO_V1).await;
+    let mut session = client.subscribe_session(agent_id, TEST_ECHO_V1).await;
 
     session.expect_replay_complete().await;
     assert_eq!(client.list_agents().await.len(), 1);
     session.send_bytes(b"hello").await;
     session.expect_output_bytes(b"hello").await;
     session.cancel().await;
-    session.expect_terminal_cancelled().await;
+    session.expect_terminal_cancelled_then_stream_end().await;
     client.close_after_session(session).await.unwrap();
 }
 
@@ -393,6 +394,7 @@ async fn subscribe_session_routes_to_agent_learned_from_peer() {
     assert!(agent.is_remote());
     assert!(
         agent
+            .agent
             .io_protocols
             .iter()
             .any(|protocol| protocol == TEST_ECHO_V1)
@@ -419,11 +421,11 @@ async fn subscribe_session_routes_to_agent_learned_through_relay() {
     let relay_to_host = relay.connect_peer_topology("host", &host).await;
     let mut client = home.connect_local_client("local").await;
 
-    let agent = client.expect_agent_named("echo").await;
-    assert!(agent.is_remote());
-    assert_eq!(agent.route.to_string(), "relay.host");
+    let entry = client.expect_agent_named("echo").await;
+    assert!(entry.is_remote());
+    assert_eq!(entry.route.to_string(), "relay.host");
 
-    let session = client.subscribe_agent_session(&agent, TEST_ECHO_V1).await;
+    let session = client.subscribe_agent_session(&entry, TEST_ECHO_V1).await;
 
     session.expect_replay_complete().await;
     session.send_bytes(b"hello through relay").await;
@@ -508,8 +510,8 @@ async fn learned_agent_disappears_when_peer_route_closes() {
     let relay_to_host = relay.connect_peer_topology("host", &host).await;
     let mut client = home.connect_local_client("local").await;
 
-    let agent = client.expect_agent_named("echo").await;
-    assert_eq!(agent.route.to_string(), "relay.host");
+    let entry = client.expect_agent_named("echo").await;
+    assert_eq!(entry.route.to_string(), "relay.host");
 
     relay_to_host.close().await;
     client.expect_no_agent_named("echo").await;
@@ -528,9 +530,9 @@ async fn send_input_after_downstream_route_closes_returns_unreachable() {
     let relay_to_host = relay.connect_peer_topology("host", &host).await;
     let mut client = home.connect_local_client("local").await;
 
-    let agent = client.expect_agent_named("echo").await;
-    assert_eq!(agent.route.to_string(), "relay.host");
-    let session = client.subscribe_agent_session(&agent, TEST_ECHO_V1).await;
+    let entry = client.expect_agent_named("echo").await;
+    assert_eq!(entry.route.to_string(), "relay.host");
+    let session = client.subscribe_agent_session(&entry, TEST_ECHO_V1).await;
 
     session.expect_replay_complete().await;
     relay_to_host.close().await;

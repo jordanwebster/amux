@@ -3,7 +3,7 @@ use uuid::Uuid;
 use crate::protocol::message::{
     CreateAgentRequest, ProtocolError, RenameAgentRequest, ResponseFrame,
 };
-use crate::protocol::{Route, method, wire};
+use crate::protocol::{AgentEntry, Route, method, wire};
 
 #[derive(Debug, thiserror::Error)]
 pub enum AgentLifecycleCodecError {
@@ -25,12 +25,11 @@ pub fn encode_create_agent_request(
 pub fn decode_create_agent_response(
     response: ResponseFrame,
     route: Route,
-) -> Result<Result<crate::protocol::Agent, ProtocolError>, AgentLifecycleCodecError> {
+) -> Result<Result<AgentEntry, ProtocolError>, AgentLifecycleCodecError> {
     match wire::decode_agent_lifecycle_response_frame(method::AGENT_CREATE_NAME, &response)
         .map_err(|error| AgentLifecycleCodecError::Decode(error.to_string()))?
     {
-        wire::AgentLifecycleResponse::Create(Ok(agent)) => agent
-            .into_agent(route)
+        wire::AgentLifecycleResponse::Create(Ok(agent)) => agent_entry(agent, route)
             .map(Ok)
             .map_err(|error| AgentLifecycleCodecError::Decode(error.to_string())),
         wire::AgentLifecycleResponse::Create(Err(error)) => Ok(Err(error)),
@@ -53,12 +52,11 @@ pub fn encode_rename_agent_request(
 pub fn decode_rename_agent_response(
     response: ResponseFrame,
     route: crate::protocol::Route,
-) -> Result<Result<crate::protocol::Agent, ProtocolError>, AgentLifecycleCodecError> {
+) -> Result<Result<AgentEntry, ProtocolError>, AgentLifecycleCodecError> {
     match wire::decode_agent_lifecycle_response_frame(method::AGENT_RENAME_NAME, &response)
         .map_err(|error| AgentLifecycleCodecError::Decode(error.to_string()))?
     {
-        wire::AgentLifecycleResponse::Rename(Ok(agent)) => agent
-            .into_agent(route)
+        wire::AgentLifecycleResponse::Rename(Ok(agent)) => agent_entry(agent, route)
             .map(Ok)
             .map_err(|error| AgentLifecycleCodecError::Decode(error.to_string())),
         wire::AgentLifecycleResponse::Rename(Err(error)) => Ok(Err(error)),
@@ -67,6 +65,13 @@ pub fn decode_rename_agent_response(
             response.method_name()
         ))),
     }
+}
+
+fn agent_entry(agent: wire::AgentRecord, route: Route) -> Result<AgentEntry, wire::DecodeError> {
+    Ok(AgentEntry {
+        agent: agent.into_agent()?,
+        route,
+    })
 }
 
 pub fn encode_delete_agent_request(agent_id: Uuid) -> Result<Vec<u8>, AgentLifecycleCodecError> {
@@ -154,7 +159,7 @@ mod tests {
         let decoded = decode_create_agent_response(success, Route::empty())
             .unwrap()
             .unwrap();
-        assert_eq!(decoded.name.as_deref(), Some("worker"));
+        assert_eq!(decoded.agent.name.as_deref(), Some("worker"));
         assert_eq!(decoded.route, Route::empty());
 
         let error = wire::encode_agent_lifecycle_response_frame(

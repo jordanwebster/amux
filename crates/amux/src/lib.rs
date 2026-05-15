@@ -16,17 +16,63 @@ mod suspend;
 mod transport;
 pub mod update;
 
+pub use auth::{AccessToken, AuthError, CredentialProvider};
 pub use client::{
-    ConnectError, ConnectPolicy, Connection, DaemonOptions, ResumeSummary, RpcClient,
-    RpcClientError, ServerMode, SubscribeSessionClient, SuspendSummary, connect, spawn_daemon,
+    AgentEventStream, Client, ClientError, ConnectError, ResumeSummary, RoutingEventStream,
+    SessionStream, SuspendSummary,
 };
 pub use config::{Config, ConfigError, Keybinds, LeaderKey};
 pub use paths::{default_data_dir, default_log_path};
-pub use server::ServerError;
+pub use protocol::{
+    Agent, AgentEntry, AgentType, CreateAgentRequest, DebugFormat, HookProvider, Host, Route,
+    ShutdownReason, TerminalSize,
+};
+pub use server::{DaemonBuilder, EmbeddedBuilder, Server, ServerBuilder, ServerError};
 pub use transport::TransportError;
+pub use update::{UpdateInfo, UpdateReporter, UpdateStatus};
 
-/// Run the amux server with the provided config.
-pub async fn run_server(config: Config, cloud: bool) -> std::result::Result<(), ServerError> {
-    let mut server = server::Server::with_config(config)?;
-    server.run(cloud).await
+pub type AgentId = uuid::Uuid;
+pub type HostId = uuid::Uuid;
+pub type ConnectToServerTarget = String;
+
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub enum AgentIdentifier {
+    Id(AgentId),
+    Name(String),
+}
+
+impl From<AgentId> for AgentIdentifier {
+    fn from(id: AgentId) -> Self {
+        Self::Id(id)
+    }
+}
+
+impl From<String> for AgentIdentifier {
+    fn from(name: String) -> Self {
+        Self::Name(name)
+    }
+}
+
+impl From<&str> for AgentIdentifier {
+    fn from(value: &str) -> Self {
+        uuid::Uuid::parse_str(value)
+            .map(Self::Id)
+            .unwrap_or_else(|_| Self::Name(value.to_string()))
+    }
+}
+
+#[derive(Clone, Debug)]
+pub struct SendInputRequest {
+    pub id: AgentId,
+    pub route: Route,
+    pub io_protocol: String,
+    pub payload: bytes::Bytes,
+}
+
+#[derive(Clone, Debug)]
+pub struct SubscribeSessionRequest {
+    pub id: AgentId,
+    pub route: Route,
+    pub io_protocol: String,
+    pub args: Option<bytes::Bytes>,
 }
