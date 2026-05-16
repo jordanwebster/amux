@@ -8,7 +8,7 @@ use tokio::task::JoinHandle;
 
 use super::agent_cache::AgentCache;
 use super::cmd::{self, CmdId, CmdResult};
-use super::error::{AmuxError, protocol_failure_reason, session_failure_reason};
+use super::error::{AmuxError, session_close_reason, session_failure_reason};
 use super::notification::{self, Notification, SessionPhase};
 use super::types;
 
@@ -30,6 +30,16 @@ impl SessionRegistry {
             stop(session).await;
         }
     }
+
+    async fn remove_if_generation(&self, id: types::AgentId, generation: uuid::Uuid) {
+        let mut sessions = self.sessions.lock().await;
+        if sessions
+            .get(&id)
+            .is_some_and(|session| session.generation == generation)
+        {
+            sessions.remove(&id);
+        }
+    }
 }
 
 pub(crate) struct AttachRequest {
@@ -40,6 +50,7 @@ pub(crate) struct AttachRequest {
 }
 
 struct SessionSubscription {
+    generation: uuid::Uuid,
     refcount: usize,
     cancel: Option<oneshot::Sender<()>>,
     task: JoinHandle<()>,
@@ -53,14 +64,19 @@ pub(crate) async fn attach(
     sessions: SessionRegistry,
 ) {
     let mut sessions_guard = sessions.sessions.lock().await;
-    if let Some(session) = sessions_guard.get_mut(&request.id) {
+    if sessions_guard
+        .get(&request.id)
+        .is_some_and(|session| session.task.is_finished())
+    {
+        sessions_guard.remove(&request.id);
+    } else if let Some(session) = sessions_guard.get_mut(&request.id) {
         session.refcount += 1;
         drop(sessions_guard);
         cmd::completed(&tx, request.cmd_id, CmdResult::AttachSession).await;
         return;
     }
 
-    let Some(entry) = agents.find_or_fetch(&client, request.id).await else {
+    if agents.find_or_fetch(&client, request.id).await.is_none() {
         drop(sessions_guard);
         cmd::failed_error(
             &tx,
@@ -69,12 +85,11 @@ pub(crate) async fn attach(
         )
         .await;
         return;
-    };
+    }
 
     let session = match client
         .subscribe_session(amux::SubscribeSessionRequest {
-            id: request.id,
-            route: entry.route,
+            agent: request.id.into(),
             io_protocol: request.io_protocol,
             args: request.args,
         })
@@ -96,16 +111,19 @@ pub(crate) async fn attach(
         }
     };
 
-    notification::send(&tx, Notification::SessionOpened(request.id)).await;
     let session_tx = tx.clone();
     let id = request.id;
+    let generation = uuid::Uuid::new_v4();
+    let task_sessions = sessions.clone();
     let (cancel_tx, cancel_rx) = oneshot::channel();
     let task = tokio::spawn(async move {
         run(id, session, session_tx, cancel_rx).await;
+        task_sessions.remove_if_generation(id, generation).await;
     });
     sessions_guard.insert(
         request.id,
         SessionSubscription {
+            generation,
             refcount: 1,
             cancel: Some(cancel_tx),
             task,
@@ -149,7 +167,7 @@ async fn stop(mut session: SessionSubscription) {
 
 async fn run(
     id: types::AgentId,
-    session: amux::SessionStream,
+    mut session: amux::SessionStream,
     tx: mpsc::Sender<Notification>,
     mut cancel_rx: oneshot::Receiver<()>,
 ) {
@@ -157,33 +175,27 @@ async fn run(
     loop {
         let frame = tokio::select! {
             _ = &mut cancel_rx => {
-                let _ = session.cancel().await;
                 return;
             }
             frame = session.recv() => frame,
         };
         match frame {
-            Ok(amux::protocol::session::SubscribeSessionFrame::Event(
-                amux::protocol::session::SubscribeSessionEvent::Output { payload },
-            )) => {
+            Ok(amux::SubscribeSessionEvent::Output { payload }) => {
                 notification::send_session_output(&tx, id, Bytes::from(payload), phase).await;
             }
-            Ok(amux::protocol::session::SubscribeSessionFrame::Event(
-                amux::protocol::session::SubscribeSessionEvent::ReplayComplete { .. },
-            )) => {
+            Ok(amux::SubscribeSessionEvent::ReplayComplete { .. }) => {
                 phase = SessionPhase::Live;
                 notification::send(&tx, Notification::SessionReplayComplete(id)).await;
             }
-            Ok(amux::protocol::session::SubscribeSessionFrame::Event(
-                amux::protocol::session::SubscribeSessionEvent::Opened,
-            )) => {}
-            Ok(amux::protocol::session::SubscribeSessionFrame::Response(Ok(()))) => return,
-            Ok(amux::protocol::session::SubscribeSessionFrame::Response(Err(error))) => {
+            Ok(amux::SubscribeSessionEvent::Opened) => {
+                notification::send(&tx, Notification::SessionOpened(id)).await;
+            }
+            Ok(amux::SubscribeSessionEvent::Closed { reason }) => {
                 notification::send(
                     &tx,
                     Notification::SessionFailed {
                         id,
-                        reason: protocol_failure_reason(&error),
+                        reason: session_close_reason(reason),
                     },
                 )
                 .await;

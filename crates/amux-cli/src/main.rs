@@ -11,7 +11,7 @@ use std::fs::OpenOptions;
 use std::io::Read;
 use std::path::PathBuf;
 
-use amux::{Config, protocol, setup};
+use amux::{AgentType, Config, DebugFormat, setup};
 use anyhow::{Context, Result, anyhow};
 use clap::{CommandFactory, Parser, Subcommand, ValueEnum};
 use tracing_appender::non_blocking::WorkerGuard;
@@ -131,7 +131,7 @@ enum ServerCommands {
     Resume,
 }
 
-/// CLI-side mirror of `protocol::DebugFormat` so we can derive `clap::ValueEnum`
+/// CLI-side mirror of `DebugFormat` so we can derive `clap::ValueEnum`
 /// without pulling clap into the `amux` library crate.
 #[derive(Copy, Clone, Debug, ValueEnum)]
 #[value(rename_all = "snake_case")]
@@ -140,11 +140,11 @@ enum CliDebugFormat {
     Json,
 }
 
-impl From<CliDebugFormat> for protocol::DebugFormat {
+impl From<CliDebugFormat> for DebugFormat {
     fn from(value: CliDebugFormat) -> Self {
         match value {
-            CliDebugFormat::Yaml => protocol::DebugFormat::Yaml,
-            CliDebugFormat::Json => protocol::DebugFormat::Json,
+            CliDebugFormat::Yaml => DebugFormat::Yaml,
+            CliDebugFormat::Json => DebugFormat::Json,
         }
     }
 }
@@ -152,19 +152,7 @@ impl From<CliDebugFormat> for protocol::DebugFormat {
 #[derive(Debug, Subcommand)]
 enum HooksProvider {
     /// Claude Code hooks
-    Claude {
-        #[command(subcommand)]
-        event: ClaudeHookEvent,
-    },
-}
-
-#[derive(Debug, Subcommand)]
-enum ClaudeHookEvent {
-    SessionStart,
-    SessionEnd,
-    PermissionRequest,
-    Stop,
-    Notification,
+    Claude,
 }
 
 #[tokio::main]
@@ -246,14 +234,11 @@ async fn run_command(command: Commands, mut config: Config) -> Result<()> {
             ensure_initialized(&mut config).await?;
             check_update_required(&config);
             match agent_type {
-                protocol::AgentType::Claude => {
+                AgentType::Claude => {
                     plugin::ensure_plugin_installed().await;
                 }
                 #[cfg(any(debug_assertions, test))]
-                protocol::AgentType::TestAgent { .. } => {}
-                protocol::AgentType::Unknown => {
-                    unreachable!("CLI parser only constructs known agent types")
-                }
+                AgentType::TestAgent { .. } => {}
             };
             session_client::new_agent(name.as_deref(), agent_type, args, &config).await?;
         }
@@ -300,7 +285,7 @@ async fn run_command(command: Commands, mut config: Config) -> Result<()> {
             print!("{dump}");
         }
         Commands::Hooks { provider } => match provider {
-            HooksProvider::Claude { .. } => {
+            HooksProvider::Claude => {
                 hooks::handle_claude_hook(&config);
             }
         },
@@ -335,7 +320,7 @@ async fn ensure_initialized(config: &mut Config) -> Result<()> {
 
 // TODO: Once E2E executor can call amux/test-agent binaries directly (without
 // path substitution), switch to Clap's ValueEnum for proper enum argument parsing.
-fn parse_agent_type(s: &str) -> Result<protocol::AgentType> {
+fn parse_agent_type(s: &str) -> Result<AgentType> {
     #[cfg(any(debug_assertions, test))]
     let looks_like_test_agent_path = std::path::Path::new(s)
         .file_stem()
@@ -344,15 +329,15 @@ fn parse_agent_type(s: &str) -> Result<protocol::AgentType> {
         .unwrap_or(false);
 
     match s.to_lowercase().as_str() {
-        "claude" => Ok(protocol::AgentType::Claude),
+        "claude" => Ok(AgentType::Claude),
         #[cfg(any(debug_assertions, test))]
-        "test-agent" => Ok(protocol::AgentType::TestAgent {
+        "test-agent" => Ok(AgentType::TestAgent {
             command: s.to_string(),
         }),
         #[cfg(any(debug_assertions, test))]
         _ if looks_like_test_agent_path => {
             // Accept full path for E2E tests (e.g., /abs/path/test-agent or test-agent.exe)
-            Ok(protocol::AgentType::TestAgent {
+            Ok(AgentType::TestAgent {
                 command: s.to_string(),
             })
         }
@@ -409,7 +394,8 @@ fn check_update_required(config: &Config) {
     }
 
     let reporter = MarkerFileReporter::from_state_path(&config.state_path);
-    let minimum_version = match reporter.read_update_required() {
+    let current = env!("CARGO_PKG_VERSION");
+    let minimum_version = match reporter.read_active_update_required(current) {
         Some(v) => v,
         None => return,
     };
@@ -418,7 +404,6 @@ fn check_update_required(config: &Config) {
         return;
     }
 
-    let current = env!("CARGO_PKG_VERSION");
     eprintln!("┌ Update required ──────────────────────────────────────────┐");
     eprintln!("│                                                           │");
     eprintln!("│  Your version ({current}) is below the minimum required");

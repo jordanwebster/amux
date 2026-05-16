@@ -1,0 +1,69 @@
+# test: cloud_relay_connection
+# description: Two cloud-connected servers can share an agent session through a cloud relay
+
+## Environment
+
+config:
+  name: relay
+  host_name: relay
+  cloud_relay: true
+
+config:
+  name: server_a
+  host_name: host-a
+  enable_cloud_mode: true
+
+config:
+  name: server_b
+  host_name: host-b
+  enable_cloud_mode: true
+
+directory:
+  name: dir_a
+
+terminal:
+  name: Tr
+  config: relay
+
+terminal:
+  name: Ta
+  config: server_a
+  cwd: dir_a
+
+terminal:
+  name: Tb
+  config: server_b
+
+## Test
+
+@Tr
+> amux server start --cloud
+Server started.
+
+@Ta
+> amux new test-agent --name cloud-remote
+> hello from cloud A
+hello from cloud A
+echo: hello from cloud A
+
+@Tb
+> amux server start
+Server started.
+
+@Tb
+> amux list
+@@retry 8000 200
+Running agents:
+  cloud-remote - $dir_a.path
+
+@Tb
+> amux attach cloud-remote
+hello from cloud A
+echo: hello from cloud A
+> hello from cloud B
+hello from cloud B
+echo: hello from cloud B
+
+@Ta
+hello from cloud B
+echo: hello from cloud B

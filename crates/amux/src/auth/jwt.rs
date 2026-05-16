@@ -12,6 +12,8 @@ use serde::Deserialize;
 use thiserror::Error;
 use tokio::sync::RwLock;
 
+use crate::auth::claims::ConnectionClaims;
+
 /// How long to cache JWKS keys before re-fetching.
 const JWKS_CACHE_TTL: Duration = Duration::from_secs(3600);
 
@@ -34,19 +36,6 @@ pub(crate) enum JwtError {
 
     #[error("Missing client_id in token")]
     MissingClientId,
-}
-
-/// Claims from a connection token
-#[derive(Debug, Deserialize)]
-pub(crate) struct ConnectionClaims {
-    /// User ID (subject)
-    pub(crate) sub: String,
-    /// Auth client that requested the cloud connection token
-    pub(crate) client_id: String,
-    /// Expected host this token is for
-    pub(crate) host: String,
-    /// Expected port this token is for
-    pub(crate) port: u16,
 }
 
 /// JWKS key set structure
@@ -103,6 +92,7 @@ impl JwtValidator {
 
         // Validate and decode the token
         let mut validation = Validation::new(header.alg);
+        validation.set_required_spec_claims(&["exp", "aud"]);
         validation.set_audience(&["amux_token"]);
 
         let token_data = decode::<ConnectionClaims>(token, key, &validation)?;
@@ -151,5 +141,72 @@ impl JwtValidator {
 
         *self.last_fetch.write().await = Some(Instant::now());
         Ok(())
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use jsonwebtoken::{Algorithm, EncodingKey, Header, encode};
+    use serde::Serialize;
+
+    use super::*;
+
+    #[derive(Serialize)]
+    struct TestClaims<'a> {
+        sub: &'a str,
+        client_id: &'a str,
+        host: &'a str,
+        port: u16,
+        exp: u64,
+        #[serde(skip_serializing_if = "Option::is_none")]
+        aud: Option<&'a str>,
+    }
+
+    async fn validator_with_hs256_key(secret: &[u8]) -> JwtValidator {
+        let validator = JwtValidator::new("http://cloud.test");
+        validator
+            .keys
+            .write()
+            .await
+            .insert("test-key".to_string(), DecodingKey::from_secret(secret));
+        *validator.last_fetch.write().await = Some(Instant::now());
+        validator
+    }
+
+    fn token(secret: &[u8], aud: Option<&str>) -> String {
+        let mut header = Header::new(Algorithm::HS256);
+        header.kid = Some("test-key".to_string());
+        encode(
+            &header,
+            &TestClaims {
+                sub: "00000000-0000-0000-0000-000000000001",
+                client_id: "cli",
+                host: "relay",
+                port: 9443,
+                exp: 4_102_444_800,
+                aud,
+            },
+            &EncodingKey::from_secret(secret),
+        )
+        .unwrap()
+    }
+
+    #[tokio::test]
+    async fn validator_requires_expected_audience_claim() {
+        let secret = b"secret";
+        let validator = validator_with_hs256_key(secret).await;
+
+        let error = validator
+            .validate(&token(secret, None), "relay", 9443)
+            .await
+            .unwrap_err();
+
+        assert!(matches!(error, JwtError::Jwt(_)));
+        assert!(
+            validator
+                .validate(&token(secret, Some("amux_token")), "relay", 9443)
+                .await
+                .is_ok()
+        );
     }
 }

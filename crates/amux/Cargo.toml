@@ -12,9 +12,11 @@ serde = { workspace = true }
 serde_json = { workspace = true }
 serde_yaml = { workspace = true }
 prost = { workspace = true }
+tonic = { workspace = true }
+tower = { workspace = true }
+hyper-util = { workspace = true }
 thiserror = { workspace = true }
 uuid = { workspace = true }
-tokio-tungstenite = { workspace = true }
 futures-util = { workspace = true }
 gethostname = { workspace = true }
 oauth2 = { workspace = true }
@@ -52,4 +54,5 @@ prost-types = { workspace = true }
 
 [build-dependencies]
 prost-build = { workspace = true }
+tonic-build = { workspace = true }
 protoc-bin-vendored = { workspace = true }

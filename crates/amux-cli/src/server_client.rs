@@ -1,8 +1,7 @@
 use std::path::Path;
 use std::sync::Arc;
 
-use amux::protocol::{DebugFormat, ShutdownReason};
-use amux::{Client, ClientError, Config, CredentialProvider, Server, TransportError};
+use amux::{Client, ClientError, Config, CredentialProvider, DebugFormat, Server, TransportError};
 use anyhow::{Result, anyhow};
 
 use crate::auth::{DeviceFlowProvider, auth_file_path};
@@ -90,8 +89,8 @@ pub(crate) async fn run_server_foreground(config: Config, cloud: bool) -> Result
         .config(config)
         .update_reporter(update_reporter);
     match credentials {
-        Some(credentials) => builder.credentials(credentials).embedded().run().await?,
-        None => builder.as_cloud_relay().embedded().run().await?,
+        Some(credentials) => builder.credentials(credentials).run().await?,
+        None => builder.as_cloud_relay().run().await?,
     }
     Ok(())
 }
@@ -103,7 +102,7 @@ pub async fn stop_server(config: &Config) -> Result<()> {
         return Ok(());
     };
 
-    if let Err(error) = client.shutdown(ShutdownReason::UserRequested).await {
+    if let Err(error) = client.shutdown().await {
         tracing::warn!(%error, "error reading shutdown response");
     }
 
@@ -149,7 +148,7 @@ pub async fn resume_server_with_executable(config: &Config, executable: &Path) -
     Ok(())
 }
 
-/// Connect to a remote amux server
+/// Connect to a remote amux server.
 pub async fn connect_remote(address: &str, config: &Config) -> Result<()> {
     let client = get_client(config).await?;
     client.connect_to_server(address.to_string()).await?;

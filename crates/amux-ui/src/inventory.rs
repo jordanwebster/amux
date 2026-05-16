@@ -1,337 +1,293 @@
-//! Inventory task: tracks host topology and agent inventory, emits semantic
-//! deltas to the notification stream.
-//!
-//! Architecture:
-//! - One `SubscribeRoutingEvents` stream from the local server tracks the host
-//!   set; events feed the parent loop.
-//! - For each known host, one `SubscribeAgentEvents(host_id)` task pushes
-//!   agent events into a shared mpsc consumed by the parent loop. The parent
-//!   maintains a global `HashMap<AgentId, AgentEntry>` (the `AgentCache`) and
-//!   emits `AgentAdded` / `AgentUpdated` / `AgentRemoved` notifications.
-//! - When a host appears (`HostUp` mid-life) a new per-host agent task is
-//!   spawned. When a host disappears (`HostDown`) its task is cancelled and
-//!   the parent synthesises `AgentRemoved` for every agent it had on that
-//!   host (the protocol's `HostDown` does not emit per-agent events).
-//! - `AgentsSnapshot` is emitted exactly once, after every host known at
-//!   startup has delivered its agent-stream `SnapshotComplete`.
+//! Inventory task: tracks host topology and aggregate agent inventory, emits
+//! semantic deltas to the notification stream.
 
-use std::collections::{HashMap, HashSet};
+use std::collections::HashMap;
 
-use tokio::sync::{mpsc, oneshot};
-use tokio::task::JoinHandle;
+use tokio::sync::mpsc;
 
 use super::agent_cache::{AgentCache, InsertOutcome};
 use super::error::disconnect_reason;
 use super::notification::{self, Notification};
 use super::types;
 
-const HOST_AGENT_EVENT_BUFFER: usize = 512;
+struct PendingAgents {
+    events: HashMap<types::HostId, Vec<amux::AgentEvent>>,
+    snapshot_ready: bool,
+}
+
+impl PendingAgents {
+    fn new() -> Self {
+        Self {
+            events: HashMap::new(),
+            snapshot_ready: false,
+        }
+    }
+
+    fn has_pending(&self) -> bool {
+        !self.events.is_empty()
+    }
+}
 
 pub(crate) async fn run(client: amux::Client, tx: mpsc::Sender<Notification>, agents: AgentCache) {
-    let routing = match client.subscribe_routing_events().await {
+    let mut hosts_stream = match client.subscribe_hosts().await {
         Ok(stream) => stream,
         Err(error) => {
-            notification::send(
-                &tx,
-                Notification::Disconnected {
-                    reason: disconnect_reason(error),
-                },
-            )
-            .await;
+            send_disconnected(&tx, error).await;
+            return;
+        }
+    };
+    let mut agent_stream = match client.subscribe_agents().await {
+        Ok(stream) => stream,
+        Err(error) => {
+            send_disconnected(&tx, error).await;
             return;
         }
     };
 
-    // Phase 1: drain routing snapshot to learn the initial host set.
-    let mut hosts: HashMap<types::HostId, HostRecord> = HashMap::new();
-    loop {
-        match routing.recv().await {
-            Ok(amux::protocol::RoutingEvent::HostUp { host, route }) => {
-                hosts.insert(host.id, HostRecord { host, route });
-            }
-            Ok(amux::protocol::RoutingEvent::HostDown { id, .. }) => {
-                hosts.remove(&id);
-            }
-            Ok(amux::protocol::RoutingEvent::SnapshotComplete) => break,
-            Ok(amux::protocol::RoutingEvent::Unknown) => {}
-            Err(error) => {
-                notification::send(
-                    &tx,
-                    Notification::Disconnected {
-                        reason: disconnect_reason(error),
-                    },
-                )
-                .await;
-                return;
-            }
-        }
-    }
-
-    let hosts_snapshot: Vec<_> = hosts.values().map(|record| record.host.clone()).collect();
+    let mut hosts = match drain_host_snapshot(&mut hosts_stream, &tx).await {
+        Some(hosts) => hosts,
+        None => return,
+    };
+    let hosts_snapshot: Vec<_> = hosts.values().cloned().collect();
     notification::send(&tx, Notification::HostsSnapshot(hosts_snapshot)).await;
 
-    // Phase 2: spawn one per-host agent subscription task per known host.
-    // The agent_tx handle stays alive in scope so we can clone it for new
-    // host tasks spawned mid-life when a HostUp arrives.
-    let (agent_tx, mut agent_rx) = mpsc::channel::<HostAgentEvent>(HOST_AGENT_EVENT_BUFFER);
-    let mut subs: HashMap<types::HostId, HostSubscription> = HashMap::new();
-    let mut snapshot_pending: HashSet<types::HostId> = HashSet::new();
-    for host_id in hosts.keys() {
-        snapshot_pending.insert(*host_id);
-        subs.insert(
-            *host_id,
-            spawn_host_agent_task(client.clone(), *host_id, agent_tx.clone()),
-        );
+    let mut pending_agents = PendingAgents::new();
+    if !drain_agent_snapshot(&mut agent_stream, &tx, &agents, &hosts, &mut pending_agents).await {
+        return;
     }
+    maybe_emit_initial_snapshot(&tx, &agents, &mut pending_agents).await;
 
-    let mut initial_snapshot_emitted = false;
-    if snapshot_pending.is_empty() {
-        emit_initial_snapshot(&tx, &agents).await;
-        initial_snapshot_emitted = true;
-    }
-
-    // Phase 3: steady state. Multiplex routing events (host churn) and
-    // per-host agent events (inventory deltas).
     loop {
         tokio::select! {
-            event = routing.recv() => match event {
-                Ok(amux::protocol::RoutingEvent::HostUp { host, route }) => {
+            event = hosts_stream.recv() => match event {
+                Ok(amux::HostEvent::HostAdded { host }) => {
                     let host_id = host.id;
                     let was_new = !hosts.contains_key(&host_id);
-                    hosts.insert(host_id, HostRecord { host: host.clone(), route });
+                    hosts.insert(host_id, host.clone());
                     if was_new {
-                        subs.insert(
-                            host_id,
-                            spawn_host_agent_task(client.clone(), host_id, agent_tx.clone()),
-                        );
                         notification::send(&tx, Notification::HostAdded(host)).await;
                     }
+                    apply_pending_for_host(&tx, &agents, host_id, &mut pending_agents).await;
+                    maybe_emit_initial_snapshot(&tx, &agents, &mut pending_agents).await;
                 }
-                Ok(amux::protocol::RoutingEvent::HostDown { id, .. }) => {
+                Ok(amux::HostEvent::HostRemoved { id }) => {
                     hosts.remove(&id);
-                    if let Some(sub) = subs.remove(&id) {
-                        sub.cancel();
-                    }
-                    for agent_id in agents.remove_host(id).await {
-                        notification::send(
-                            &tx,
-                            Notification::AgentRemoved { id: agent_id, reason: None },
-                        )
-                        .await;
-                    }
+                    pending_agents.events.remove(&id);
                     notification::send(&tx, Notification::HostRemoved { id, reason: None }).await;
-                    // A host that hadn't yet delivered its initial agent
-                    // snapshot can disappear before completing; stop waiting
-                    // on it so the global snapshot isn't blocked forever.
-                    snapshot_pending.remove(&id);
-                    if !initial_snapshot_emitted && snapshot_pending.is_empty() {
-                        emit_initial_snapshot(&tx, &agents).await;
-                        initial_snapshot_emitted = true;
-                    }
+                    maybe_emit_initial_snapshot(&tx, &agents, &mut pending_agents).await;
                 }
-                Ok(amux::protocol::RoutingEvent::SnapshotComplete | amux::protocol::RoutingEvent::Unknown) => {}
+                Ok(amux::HostEvent::SnapshotComplete) => {}
                 Err(error) => {
-                    notification::send(
-                        &tx,
-                        Notification::Disconnected { reason: disconnect_reason(error) },
-                    )
-                    .await;
+                    send_disconnected(&tx, error).await;
                     return;
                 }
             },
-            Some(event) = agent_rx.recv() => match event {
-                HostAgentEvent::Up { host_id, agent } => {
-                    let Some(record) = hosts.get(&host_id) else {
-                        // Stale event after the host already disappeared.
-                        continue;
-                    };
-                    let entry = types::AgentEntry { agent, route: record.route.clone() };
-                    match agents.insert_with_outcome(entry).await {
-                        InsertOutcome::Added(agent) => {
-                            notification::send(&tx, Notification::AgentAdded(agent)).await;
-                        }
-                        InsertOutcome::Updated(agent) => {
-                            notification::send(&tx, Notification::AgentUpdated(agent)).await;
-                        }
-                        InsertOutcome::Same => {}
-                    }
+            event = agent_stream.recv() => match event {
+                Ok(event) => {
+                    apply_agent_event(&tx, &agents, event, &hosts, &mut pending_agents).await;
+                    maybe_emit_initial_snapshot(&tx, &agents, &mut pending_agents).await;
                 }
-                HostAgentEvent::Down { agent_id, reason } => {
-                    if agents.remove(agent_id).await {
-                        notification::send(
-                            &tx,
-                            Notification::AgentRemoved { id: agent_id, reason },
-                        )
-                        .await;
-                    }
-                }
-                HostAgentEvent::SnapshotComplete { host_id } => {
-                    snapshot_pending.remove(&host_id);
-                    if !initial_snapshot_emitted && snapshot_pending.is_empty() {
-                        emit_initial_snapshot(&tx, &agents).await;
-                        initial_snapshot_emitted = true;
-                    }
-                }
-                HostAgentEvent::Failed { host_id, error } => {
-                    tracing::warn!(host_id = %host_id, error = %error, "agent event subscription ended");
-                    subs.remove(&host_id);
-                    for agent_id in agents.remove_host(host_id).await {
-                        notification::send(
-                            &tx,
-                            Notification::AgentRemoved { id: agent_id, reason: None },
-                        )
-                        .await;
-                    }
-                    snapshot_pending.remove(&host_id);
-                    if !initial_snapshot_emitted && snapshot_pending.is_empty() {
-                        emit_initial_snapshot(&tx, &agents).await;
-                        initial_snapshot_emitted = true;
-                    }
+                Err(error) => {
+                    send_disconnected(&tx, error).await;
+                    return;
                 }
             },
         }
     }
 }
 
-async fn emit_initial_snapshot(tx: &mpsc::Sender<Notification>, agents: &AgentCache) {
+async fn drain_host_snapshot(
+    stream: &mut amux::HostEventStream,
+    tx: &mpsc::Sender<Notification>,
+) -> Option<HashMap<types::HostId, types::Host>> {
+    let mut hosts = HashMap::new();
+    loop {
+        match stream.recv().await {
+            Ok(amux::HostEvent::HostAdded { host }) => {
+                hosts.insert(host.id, host);
+            }
+            Ok(amux::HostEvent::HostRemoved { id }) => {
+                hosts.remove(&id);
+            }
+            Ok(amux::HostEvent::SnapshotComplete) => return Some(hosts),
+            Err(error) => {
+                send_disconnected(tx, error).await;
+                return None;
+            }
+        }
+    }
+}
+
+async fn drain_agent_snapshot(
+    stream: &mut amux::AgentEventStream,
+    tx: &mpsc::Sender<Notification>,
+    agents: &AgentCache,
+    hosts: &HashMap<types::HostId, types::Host>,
+    pending: &mut PendingAgents,
+) -> bool {
+    loop {
+        match stream.recv().await {
+            Ok(amux::AgentEvent::SnapshotComplete) => {
+                pending.snapshot_ready = true;
+                return true;
+            }
+            Ok(event) => apply_agent_event(tx, agents, event, hosts, pending).await,
+            Err(error) => {
+                send_disconnected(tx, error).await;
+                return false;
+            }
+        }
+    }
+}
+
+async fn apply_agent_event(
+    tx: &mpsc::Sender<Notification>,
+    agents: &AgentCache,
+    event: amux::AgentEvent,
+    hosts: &HashMap<types::HostId, types::Host>,
+    pending: &mut PendingAgents,
+) {
+    if let Some(host_id) = agent_event_host_id(&event)
+        && !hosts.contains_key(&host_id)
+    {
+        pending.events.entry(host_id).or_default().push(event);
+        return;
+    }
+    apply_known_agent_event(tx, agents, event).await;
+}
+
+async fn apply_known_agent_event(
+    tx: &mpsc::Sender<Notification>,
+    agents: &AgentCache,
+    event: amux::AgentEvent,
+) {
+    match event {
+        amux::AgentEvent::AgentUp { agent } | amux::AgentEvent::AgentUpdated { agent } => {
+            match agents.insert_with_outcome(agent).await {
+                InsertOutcome::Added(agent) => {
+                    notification::send(tx, Notification::AgentAdded(agent)).await;
+                }
+                InsertOutcome::Updated(agent) => {
+                    notification::send(tx, Notification::AgentUpdated(agent)).await;
+                }
+                InsertOutcome::Same => {}
+            }
+        }
+        amux::AgentEvent::AgentDown { agent_id } => {
+            if agents.remove(agent_id).await {
+                notification::send(
+                    tx,
+                    Notification::AgentRemoved {
+                        id: agent_id,
+                        reason: None,
+                    },
+                )
+                .await;
+            }
+        }
+        amux::AgentEvent::SnapshotComplete => {}
+    }
+}
+
+fn agent_event_host_id(event: &amux::AgentEvent) -> Option<types::HostId> {
+    match event {
+        amux::AgentEvent::AgentUp { agent } | amux::AgentEvent::AgentUpdated { agent } => {
+            Some(agent.host_id)
+        }
+        amux::AgentEvent::AgentDown { .. } | amux::AgentEvent::SnapshotComplete => None,
+    }
+}
+
+async fn apply_pending_for_host(
+    tx: &mpsc::Sender<Notification>,
+    agents: &AgentCache,
+    host_id: types::HostId,
+    pending: &mut PendingAgents,
+) {
+    let Some(events) = pending.events.remove(&host_id) else {
+        return;
+    };
+    for event in events {
+        apply_known_agent_event(tx, agents, event).await;
+    }
+}
+
+async fn maybe_emit_initial_snapshot(
+    tx: &mpsc::Sender<Notification>,
+    agents: &AgentCache,
+    pending: &mut PendingAgents,
+) {
+    if !pending.snapshot_ready || pending.has_pending() {
+        return;
+    }
+    pending.snapshot_ready = false;
     let snapshot = agents.snapshot().await;
     notification::send(tx, Notification::AgentsSnapshot(snapshot)).await;
     notification::send(tx, Notification::Connected).await;
 }
 
-struct HostRecord {
-    host: types::Host,
-    route: types::Route,
+async fn send_disconnected(tx: &mpsc::Sender<Notification>, error: amux::ClientError) {
+    notification::send(
+        tx,
+        Notification::Disconnected {
+            reason: disconnect_reason(error),
+        },
+    )
+    .await;
 }
 
-struct HostSubscription {
-    cancel: Option<oneshot::Sender<()>>,
-    _task: JoinHandle<()>,
-}
+#[cfg(test)]
+mod tests {
+    use chrono::Utc;
+    use uuid::Uuid;
 
-impl HostSubscription {
-    fn cancel(mut self) {
-        if let Some(cancel) = self.cancel.take() {
-            let _ = cancel.send(());
+    use super::*;
+
+    fn agent_up(agent_id: Uuid, host_id: Uuid) -> amux::AgentEvent {
+        amux::AgentEvent::AgentUp {
+            agent: amux::Agent {
+                id: agent_id,
+                host_id,
+                name: Some("agent".to_string()),
+                command: "test-agent".to_string(),
+                working_dir: std::env::temp_dir(),
+                agent_type: "test-agent".to_string(),
+                io_protocols: Vec::new(),
+                readonly: false,
+                args: Vec::new(),
+                created_at: Utc::now(),
+            },
         }
     }
-}
 
-enum HostAgentEvent {
-    Up {
-        host_id: types::HostId,
-        agent: types::Agent,
-    },
-    Down {
-        agent_id: types::AgentId,
-        reason: Option<String>,
-    },
-    SnapshotComplete {
-        host_id: types::HostId,
-    },
-    Failed {
-        host_id: types::HostId,
-        error: String,
-    },
-}
+    #[tokio::test]
+    async fn unknown_host_agent_events_are_pending_until_host_arrives() {
+        let host_id = Uuid::from_u128(1);
+        let agent_id = Uuid::from_u128(2);
+        let agents = AgentCache::new();
+        let (tx, mut rx) = mpsc::channel(8);
+        let hosts = HashMap::new();
+        let mut pending = PendingAgents::new();
 
-fn spawn_host_agent_task(
-    client: amux::Client,
-    host_id: types::HostId,
-    tx: mpsc::Sender<HostAgentEvent>,
-) -> HostSubscription {
-    let (cancel_tx, mut cancel_rx) = oneshot::channel();
-    let task = tokio::spawn(async move {
-        let stream = match client.subscribe_agent_events(host_id).await {
-            Ok(stream) => stream,
-            Err(error) => {
-                let _ = tx
-                    .send(HostAgentEvent::Failed {
-                        host_id,
-                        error: error.to_string(),
-                    })
-                    .await;
-                return;
-            }
-        };
+        apply_agent_event(
+            &tx,
+            &agents,
+            agent_up(agent_id, host_id),
+            &hosts,
+            &mut pending,
+        )
+        .await;
 
-        loop {
-            let event = tokio::select! {
-                _ = &mut cancel_rx => {
-                    let _ = stream.cancel().await;
-                    return;
-                }
-                event = stream.recv() => event,
-            };
-            match event {
-                Ok(amux::protocol::AgentEvent::AgentUp {
-                    agent_id,
-                    host_id: agent_host_id,
-                    name,
-                    command,
-                    working_dir,
-                    agent_type,
-                    io_protocols,
-                    readonly,
-                    args,
-                    created_at,
-                }) => {
-                    let agent = types::Agent {
-                        id: agent_id,
-                        host_id: agent_host_id,
-                        name,
-                        command,
-                        working_dir,
-                        agent_type,
-                        io_protocols,
-                        readonly,
-                        args,
-                        created_at,
-                    };
-                    if tx
-                        .send(HostAgentEvent::Up { host_id, agent })
-                        .await
-                        .is_err()
-                    {
-                        return;
-                    }
-                }
-                Ok(amux::protocol::AgentEvent::AgentDown { agent_id }) => {
-                    if tx
-                        .send(HostAgentEvent::Down {
-                            agent_id,
-                            reason: None,
-                        })
-                        .await
-                        .is_err()
-                    {
-                        return;
-                    }
-                }
-                Ok(amux::protocol::AgentEvent::SnapshotComplete) => {
-                    if tx
-                        .send(HostAgentEvent::SnapshotComplete { host_id })
-                        .await
-                        .is_err()
-                    {
-                        return;
-                    }
-                }
-                Ok(amux::protocol::AgentEvent::Unknown) => {}
-                Err(error) => {
-                    let _ = tx
-                        .send(HostAgentEvent::Failed {
-                            host_id,
-                            error: error.to_string(),
-                        })
-                        .await;
-                    return;
-                }
-            }
-        }
-    });
-    HostSubscription {
-        cancel: Some(cancel_tx),
-        _task: task,
+        assert!(agents.snapshot().await.is_empty());
+        assert!(rx.try_recv().is_err());
+        assert!(pending.has_pending());
+
+        apply_pending_for_host(&tx, &agents, host_id, &mut pending).await;
+
+        assert_eq!(agents.snapshot().await[0].id, agent_id);
+        assert!(
+            matches!(rx.try_recv(), Ok(Notification::AgentAdded(agent)) if agent.id == agent_id)
+        );
+        assert!(!pending.has_pending());
     }
 }

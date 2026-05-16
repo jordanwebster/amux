@@ -1,6 +1,6 @@
 //! TLS helpers for server-to-server and cloud connections.
 //!
-//! [`tls_connect`] establishes an outbound TLS connection (used by cloud client).
+//! [`tls_channel`] establishes an outbound TLS channel (used by cloud client).
 //! [`create_tls_acceptor`] builds a `TlsAcceptor` from PEM-encoded cert/key
 //! (used by cloud server mode).
 
@@ -10,15 +10,17 @@ use rustls::pki_types::ServerName;
 use tokio::net::TcpStream;
 use tokio_rustls::client::TlsStream as ClientTlsStream;
 use tokio_rustls::{TlsAcceptor, TlsConnector};
+use tonic::codegen::http::Uri;
+use tonic::transport::{Channel, Endpoint};
+use tower::service_fn;
 
-use super::{TcpTransport, configure_tcp_keepalive};
+use super::{configure_tcp_keepalive, configure_tonic_endpoint_keepalive};
 use crate::transport::{Result, TransportError};
 
-/// Connect to a TLS-enabled server and return a transport
-pub(crate) async fn tls_connect(
+pub(crate) async fn tls_connect_stream(
     host: &str,
     port: u16,
-) -> Result<TcpTransport<ClientTlsStream<TcpStream>>> {
+) -> Result<ClientTlsStream<TcpStream>> {
     let root_store =
         rustls::RootCertStore::from_iter(webpki_roots::TLS_SERVER_ROOTS.iter().cloned());
 
@@ -37,7 +39,25 @@ pub(crate) async fn tls_connect(
         .map_err(|_| TransportError::Config(format!("Invalid DNS name: {}", host)))?;
     let tls_stream = connector.connect(domain, stream).await?;
 
-    Ok(TcpTransport::new(tls_stream))
+    Ok(tls_stream)
+}
+
+pub(crate) fn tls_channel(host: String, port: u16) -> Result<Channel> {
+    let endpoint = Endpoint::from_shared(format!("https://{host}:{port}"))
+        .map_err(|error| TransportError::Config(error.to_string()))?;
+    Ok(
+        configure_tonic_endpoint_keepalive(endpoint).connect_with_connector_lazy(service_fn(
+            move |_uri: Uri| {
+                let host = host.clone();
+                async move {
+                    tls_connect_stream(&host, port)
+                        .await
+                        .map(hyper_util::rt::TokioIo::new)
+                        .map_err(|error| std::io::Error::other(error.to_string()))
+                }
+            },
+        )),
+    )
 }
 
 /// Create a TLS acceptor for cloud server mode.

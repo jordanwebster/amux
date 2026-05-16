@@ -47,6 +47,16 @@ impl MarkerFileReporter {
         }
     }
 
+    pub(crate) fn read_active_update_required(&self, current_version: &str) -> Option<String> {
+        let minimum_version = self.read_update_required()?;
+        if current_satisfies_minimum(current_version, &minimum_version) {
+            self.clear_update_required();
+            None
+        } else {
+            Some(minimum_version)
+        }
+    }
+
     pub(crate) fn is_update_dismissed(&self, minimum_version: &str) -> bool {
         match std::fs::read_to_string(self.update_dismissed_marker_path()) {
             Ok(contents) => contents.trim() == minimum_version,
@@ -101,6 +111,16 @@ impl MarkerFileReporter {
         ) {
             tracing::warn!(error = %e, "failed to write update-required marker");
         }
+    }
+}
+
+fn current_satisfies_minimum(current_version: &str, minimum_version: &str) -> bool {
+    match (
+        Version::parse(current_version),
+        Version::parse(minimum_version),
+    ) {
+        (Ok(current), Ok(minimum)) => current >= minimum,
+        _ => false,
     }
 }
 
@@ -161,6 +181,33 @@ mod tests {
 
         assert_eq!(reporter.read_update_required(), None);
         assert!(!reporter.is_update_dismissed("0.4.0"));
+    }
+
+    #[test]
+    fn active_required_marker_clears_when_current_satisfies_minimum() {
+        let temp = tempfile::tempdir().unwrap();
+        let reporter = MarkerFileReporter::from_state_path(&temp.path().join("state.yaml"));
+
+        reporter.report(UpdateStatus::Required(Some("0.4.0".to_string())));
+        reporter.dismiss_update_required("0.4.0");
+
+        assert_eq!(reporter.read_active_update_required("0.4.0"), None);
+        assert_eq!(reporter.read_update_required(), None);
+        assert!(!reporter.is_update_dismissed("0.4.0"));
+    }
+
+    #[test]
+    fn active_required_marker_retains_when_current_is_below_minimum() {
+        let temp = tempfile::tempdir().unwrap();
+        let reporter = MarkerFileReporter::from_state_path(&temp.path().join("state.yaml"));
+
+        reporter.report(UpdateStatus::Required(Some("0.4.0".to_string())));
+
+        assert_eq!(
+            reporter.read_active_update_required("0.3.0").as_deref(),
+            Some("0.4.0")
+        );
+        assert_eq!(reporter.read_update_required().as_deref(), Some("0.4.0"));
     }
 }
 

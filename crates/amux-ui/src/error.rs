@@ -30,13 +30,24 @@ pub(crate) fn session_failure_reason(error: &amux::ClientError) -> SessionFailur
     }
 }
 
-pub(crate) fn protocol_failure_reason(
-    error: &amux::protocol::ProtocolError,
-) -> SessionFailureReason {
+pub(crate) fn protocol_failure_reason(error: &amux::ProtocolError) -> SessionFailureReason {
     match error {
-        amux::protocol::ProtocolError::NoAgentFound => SessionFailureReason::NotFound,
-        amux::protocol::ProtocolError::Unimplemented { .. } => SessionFailureReason::Unsupported,
+        amux::ProtocolError::NoAgentFound => SessionFailureReason::NotFound,
+        amux::ProtocolError::Unimplemented { .. } => SessionFailureReason::Unsupported,
         other => SessionFailureReason::Other(other.to_string()),
+    }
+}
+
+pub(crate) fn session_close_reason(reason: amux::SessionCloseReason) -> SessionFailureReason {
+    match reason {
+        amux::SessionCloseReason::AgentDeleted => SessionFailureReason::AgentDeleted,
+        amux::SessionCloseReason::AgentExited { exit_code } => {
+            SessionFailureReason::AgentExited { exit_code }
+        }
+        amux::SessionCloseReason::HostUnreachable => SessionFailureReason::HostUnreachable,
+        amux::SessionCloseReason::InternalError { detail } => {
+            SessionFailureReason::InternalError(detail)
+        }
     }
 }
 

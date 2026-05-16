@@ -5,7 +5,7 @@
         "hooks": [
           {
             "type": "command",
-            "command": "amux hooks claude session-start",
+            "command": "amux hooks claude",
             "async": true
           }
         ]
@@ -16,7 +16,7 @@
         "hooks": [
           {
             "type": "command",
-            "command": "amux hooks claude session-end",
+            "command": "amux hooks claude",
             "async": true
           }
         ]
@@ -27,7 +27,7 @@
         "hooks": [
           {
             "type": "command",
-            "command": "amux hooks claude permission-request",
+            "command": "amux hooks claude",
             "async": true
           }
         ]
@@ -38,7 +38,7 @@
         "hooks": [
           {
             "type": "command",
-            "command": "amux hooks claude stop",
+            "command": "amux hooks claude",
             "async": true
           }
         ]
@@ -49,7 +49,7 @@
         "hooks": [
           {
             "type": "command",
-            "command": "amux hooks claude notification",
+            "command": "amux hooks claude",
             "async": true
           }
         ]

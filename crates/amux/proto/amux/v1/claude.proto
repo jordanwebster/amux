@@ -1,0 +1,70 @@
+syntax = "proto3";
+
+package amux.v1;
+
+// Claude-specific creation config and io_protocol payloads.
+//
+// These messages are intentionally independent from amux.proto. The core
+// protocol treats session args/input/control/output as opaque bytes; callers
+// serialize these inner messages only when they opt into a Claude io_protocol.
+
+message TerminalSize {
+  uint32 rows = 1;
+  uint32 cols = 2;
+}
+
+message ClaudeCreateConfig {
+  string working_dir = 1;
+  repeated string args = 2;
+  optional TerminalSize initial_terminal_size = 10;
+}
+
+message ClaudeRawV1Args {
+  optional TerminalSize terminal_size = 1;
+  optional ClaudeRawV1ReplayQuery replay_query = 2;
+}
+
+message ClaudeRawV1ReplayQuery {
+  oneof query {
+    uint64 tail_bytes = 1;
+  }
+}
+
+message ClaudeRawV1Control {
+  oneof control {
+    TerminalSize resize = 1;
+  }
+}
+
+message ClaudePtyTranscriptV1Args {
+  optional TerminalSize terminal_size = 1;
+  optional ClaudePtyTranscriptV1ReplayQuery replay_query = 2;
+}
+
+message ClaudePtyTranscriptV1ReplayQuery {
+  oneof query {
+    uint64 since = 1;
+    uint64 tail_count = 2;
+  }
+}
+
+message ClaudePtyTranscriptV1Cursor {
+  uint64 seq_id = 1;
+}
+
+message ClaudePtyTranscriptV1Input {
+  uint64 expected_seq = 1;
+  repeated ClaudePtyTranscriptV1Action actions = 2;
+}
+
+message ClaudePtyTranscriptV1Action {
+  oneof action {
+    bytes write = 1;
+    uint32 delay_ms = 2;
+  }
+}
+
+message ClaudePtyTranscriptV1Output {
+  uint64 seq_id = 1;
+  bytes payload = 2;
+}

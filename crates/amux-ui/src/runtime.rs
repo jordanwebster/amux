@@ -73,10 +73,7 @@ impl Runtime {
     /// Tear down runtime tasks and ask the server to shut down.
     pub async fn shutdown(self) {
         if self.client.owns_embedded_server() {
-            let _ = self
-                .client
-                .shutdown(amux::ShutdownReason::UserRequested)
-                .await;
+            let _ = self.client.shutdown().await;
         }
 
         self.sessions.stop_all().await;

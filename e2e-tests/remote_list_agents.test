@@ -1,5 +1,5 @@
 # test: remote_list_agents
-# description: Agent on server A is visible in list on server B after TCP connection
+# description: Agent on server A is visible in list on server B after direct connect
 
 ## Environment
 
@@ -25,23 +25,19 @@ terminal:
 
 ## Test
 
-# Create agent on server A
 @Ta
 > amux new test-agent --name remote-agent
 > hello
 hello
 echo: hello
 
-# Server B connects to server A
 @Tb
 > amux server connect 127.0.0.1:$server_a.tcp_port
 Connected to 127.0.0.1:$server_a.tcp_port
 
-# Wait for announcements to propagate
-@@sleep 20
+@@sleep 200
 
-# List agents on server B — should show remote agent with route
 @Tb
 > amux list
 Running agents:
-  remote-agent - $dir_a.path (via host-b)
+  remote-agent - $dir_a.path

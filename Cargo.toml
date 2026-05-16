@@ -22,9 +22,12 @@ prost = "0.13"
 prost-build = "0.13"
 prost-types = "0.13"
 protoc-bin-vendored = "3"
+tonic = { version = "0.12", features = ["transport"] }
+tonic-build = "0.12"
+tower = "0.5"
+hyper-util = { version = "0.1", features = ["tokio"] }
 thiserror = "1"
 uuid = { version = "1", features = ["v4", "serde"] }
-tokio-tungstenite = "0.21"
 futures-util = "0.3"
 gethostname = "0.5"
 oauth2 = "4"

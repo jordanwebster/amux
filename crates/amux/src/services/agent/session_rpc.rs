@@ -1,144 +1,60 @@
 //! Session subscription and input RPCs for AgentService.
 
 use serde_json::json;
-use tracing::Instrument;
+use tokio::sync::mpsc;
 use uuid::Uuid;
 
-use super::{AgentService, AgentServiceCtx};
+use super::AgentServiceCtx;
 #[cfg(test)]
-use crate::agent::TEST_ECHO_V1;
-use crate::agent::claude::io::{
+use crate::agents::TEST_ECHO_V1;
+use crate::agents::claude::io::{
     self as claude_io, ClaudePtyTranscriptV1Action, ClaudePtyTranscriptV1Output,
     ClaudePtyTranscriptV1ReplayQuery, ClaudeRawV1ReplayQuery,
 };
-use crate::agent::{PtyHandle, StructuredInputCancel, StructuredInputTarget};
-use crate::buffer::{BroadcastRead, ByteReplayQuery, StructuredOutput};
-use crate::protocol::Route;
-use crate::protocol::message::ProtocolError;
-use crate::protocol::wire::{
-    SendInputRequest, SessionInputEvent, SessionOutputEvent, SubscribeSessionRequest,
-    encode_session_output_event_payload,
+use crate::agents::{
+    BroadcastRead, ByteReplayQuery, PtyHandle, SendInputRequest, SessionCloseReason,
+    SessionInputEvent, StructuredInputTarget, StructuredOutput, SubscribeSessionEvent,
+    SubscribeSessionRequest,
 };
-use crate::server::{
-    EndpointServerStream, RpcDispatcher, ServerStreamEncoder, ServerStreamSendError,
-    SessionSubscriptionRuntime, TypedServerStreamSink,
-};
+use crate::protocol::{ProtocolError, protocol_status};
+use crate::server::{SHUTDOWN_REASON_METADATA_KEY, ShutdownReason};
 
-impl AgentService {
-    pub(crate) async fn subscribe_session(
-        call: SubscribeSessionCall,
+impl AgentServiceCtx {
+    pub(crate) async fn send_input(&self, request: SendInputRequest) -> Result<(), ProtocolError> {
+        send_session_input(self, request).await
+    }
+
+    pub(crate) async fn subscribe_session_response_stream(
+        &self,
         request: SubscribeSessionRequest,
-        ctx: &AgentServiceCtx,
-    ) -> std::result::Result<(), crate::server::ConnectionError> {
-        run_subscribe_session(call, request, ctx).await
-    }
-
-    pub(crate) async fn send_input(
-        ctx: &AgentServiceCtx,
-        request: SendInputRequest,
-    ) -> Result<(), ProtocolError> {
-        send_session_input(ctx, request).await
-    }
-}
-
-fn session_send_error(error: ServerStreamSendError) -> crate::server::ConnectionError {
-    crate::server::ConnectionError::Config(format!("failed to send session frame: {error}"))
-}
-
-type SessionOutputSink = TypedServerStreamSink<SessionOutputCodec>;
-
-pub(crate) struct SubscribeSessionCall {
-    runtime: SessionSubscriptionRuntime,
-    output: SessionOutputSink,
-}
-
-impl SubscribeSessionCall {
-    pub(crate) fn from_rpc(
-        call: EndpointServerStream,
-        counterparty_route: Route,
-        rpc: RpcDispatcher,
-    ) -> Option<Self> {
-        let runtime = SessionSubscriptionRuntime::new(
-            call.handle,
-            counterparty_route,
-            call.cancellation,
-            rpc,
-        )?;
-        Some(Self {
-            runtime,
-            output: call.output.encode_with::<SessionOutputCodec>(),
-        })
-    }
-}
-
-pub(crate) struct SessionOutputCodec;
-
-impl ServerStreamEncoder for SessionOutputCodec {
-    type Item = SessionOutputEvent;
-
-    fn encode_item(item: &Self::Item) -> Vec<u8> {
-        encode_session_output_event_payload(item)
-    }
-}
-
-async fn run_subscribe_session(
-    call: SubscribeSessionCall,
-    request: SubscribeSessionRequest,
-    ctx: &AgentServiceCtx,
-) -> std::result::Result<(), crate::server::ConnectionError> {
-    let SubscribeSessionCall { runtime, output } = call;
-
-    let prepared = tokio::select! {
-        biased;
-        () = runtime.cancelled() => {
-            return Ok(());
-        }
-        prepared = prepare_session_subscription(&request, ctx, &runtime) => prepared,
-    };
-    let prepared = match prepared {
-        Ok(prepared) => prepared,
-        Err(error) => {
-            return terminate_session_subscription(runtime, error, ctx).await;
-        }
-    };
-
-    if !runtime.activate() {
-        return Ok(());
-    }
-    ctx.user_state().write().await.session_subscriptions.insert(
-        runtime.call_id().clone(),
-        crate::server::SessionSubscriptionState {
-            agent_id: request.agent_id,
-            counterparty: runtime.counterparty().clone(),
-        },
-    );
-    if !runtime.is_active(ctx.user_state()).await {
-        ctx.user_state()
+    ) -> Result<super::ResponseStream<crate::protocol::wire::SubscribeSessionResponse>, ProtocolError>
+    {
+        let close_rx = self
+            .state()
             .write()
             .await
-            .session_subscriptions
-            .remove(runtime.call_id());
-        return Ok(());
+            .local_session_close_events
+            .subscribe_drop_on_overflow();
+        let shutdown_rx = self
+            .state()
+            .write()
+            .await
+            .local_shutdown_events
+            .subscribe_drop_on_overflow();
+        let prepared = prepare_direct_session_subscription(&request, self).await?;
+        Ok(direct_session_response_stream(
+            request.agent_id,
+            prepared.output,
+            close_rx,
+            shutdown_rx,
+        ))
     }
-
-    spawn_session_output_stream(
-        prepared.output,
-        SessionStreamHandle {
-            runtime,
-            sink: output,
-            agent_id: request.agent_id,
-            io_protocol: request.io_protocol,
-        },
-        ctx,
-    );
-
-    Ok(())
 }
 
 enum SessionOutputReader {
-    Raw(crate::buffer::MultiplexByteReader),
+    Raw(crate::agents::MultiplexByteReader),
     Structured {
-        reader: crate::buffer::MultiplexStructuredReader,
+        reader: crate::agents::MultiplexStructuredReader,
         replay_cursor: Vec<u8>,
     },
 }
@@ -147,20 +63,19 @@ struct PreparedSessionSubscription {
     output: SessionOutputReader,
 }
 
-async fn prepare_session_subscription(
+async fn prepare_direct_session_subscription(
     request: &SubscribeSessionRequest,
     ctx: &AgentServiceCtx,
-    runtime: &SessionSubscriptionRuntime,
 ) -> Result<PreparedSessionSubscription, ProtocolError> {
     match request.io_protocol.as_str() {
         claude_io::RAW_V1 => {
-            let reader = prepare_raw_session_subscription(request, ctx, runtime).await?;
+            let reader = prepare_direct_raw_session_subscription(request, ctx).await?;
             Ok(PreparedSessionSubscription {
                 output: SessionOutputReader::Raw(reader),
             })
         }
         claude_io::PTY_TRANSCRIPT_V1 => {
-            prepare_structured_session_subscription(request, ctx, runtime)
+            prepare_direct_structured_session_subscription(request, ctx)
                 .await
                 .map(|(reader, current_seq)| PreparedSessionSubscription {
                     output: SessionOutputReader::Structured {
@@ -171,7 +86,7 @@ async fn prepare_session_subscription(
         }
         #[cfg(test)]
         TEST_ECHO_V1 => {
-            let reader = prepare_test_echo_session_subscription(request, ctx, runtime).await?;
+            let reader = prepare_direct_test_echo_session_subscription(request, ctx).await?;
             Ok(PreparedSessionSubscription {
                 output: SessionOutputReader::Raw(reader),
             })
@@ -186,54 +101,55 @@ async fn prepare_session_subscription(
     }
 }
 
-async fn prepare_raw_session_subscription(
+async fn prepare_direct_raw_session_subscription(
     request: &SubscribeSessionRequest,
     ctx: &AgentServiceCtx,
-    runtime: &SessionSubscriptionRuntime,
-) -> Result<crate::buffer::MultiplexByteReader, ProtocolError> {
+) -> Result<crate::agents::MultiplexByteReader, ProtocolError> {
     let args = claude_io::decode_raw_v1_args(request.args.as_deref())?;
-    ensure_session_not_cancelled(runtime)?;
     let replay_query = args
         .replay_query
         .as_ref()
         .map(|ClaudeRawV1ReplayQuery::TailBytes { count }| ByteReplayQuery::Tail { count: *count });
 
     let pty = agent_pty(ctx, request.agent_id, claude_io::RAW_V1).await?;
-    ensure_session_not_cancelled(runtime)?;
     if let Some(size) = args.terminal_size {
-        resize_pty_unless_cancelled(&pty, size, runtime).await?;
+        pty.resize(size)
+            .await
+            .map_err(|error| ProtocolError::ServerError {
+                message: error.to_string(),
+            })?;
     }
 
-    subscribe_raw_unless_cancelled(&pty, replay_query, runtime).await
+    pty.subscribe_with_query(replay_query)
+        .await
+        .ok_or(ProtocolError::NoAgentFound)
 }
 
 #[cfg(test)]
-async fn prepare_test_echo_session_subscription(
+async fn prepare_direct_test_echo_session_subscription(
     request: &SubscribeSessionRequest,
     ctx: &AgentServiceCtx,
-    runtime: &SessionSubscriptionRuntime,
-) -> Result<crate::buffer::MultiplexByteReader, ProtocolError> {
+) -> Result<crate::agents::MultiplexByteReader, ProtocolError> {
     if request.args.is_some() {
         return Err(ProtocolError::InvalidArgument {
             message: format!("`{TEST_ECHO_V1}` does not accept args"),
         });
     }
-    ensure_session_not_cancelled(runtime)?;
     let pty = agent_pty(ctx, request.agent_id, TEST_ECHO_V1).await?;
-    subscribe_raw_unless_cancelled(&pty, None, runtime).await
+    pty.subscribe_with_query(None)
+        .await
+        .ok_or(ProtocolError::NoAgentFound)
 }
 
-async fn prepare_structured_session_subscription(
+async fn prepare_direct_structured_session_subscription(
     request: &SubscribeSessionRequest,
     ctx: &AgentServiceCtx,
-    runtime: &SessionSubscriptionRuntime,
-) -> Result<(crate::buffer::MultiplexStructuredReader, u64), ProtocolError> {
+) -> Result<(crate::agents::MultiplexStructuredReader, u64), ProtocolError> {
     let args = claude_io::decode_pty_transcript_v1_args(request.args.as_deref())?;
-    ensure_session_not_cancelled(runtime)?;
     let replay_query = match &args.replay_query {
         None => None,
         Some(ClaudePtyTranscriptV1ReplayQuery::Tail { count }) => {
-            Some(crate::protocol::SequencedReplayQuery::Tail { count: *count })
+            Some(crate::agents::SequencedReplayQuery::Tail { count: *count })
         }
         Some(ClaudePtyTranscriptV1ReplayQuery::Since { seq_id }) => {
             let seq = seq_id
@@ -242,13 +158,13 @@ async fn prepare_structured_session_subscription(
                     message: "transcript SubscribeSession replay since cursor is out of range"
                         .to_string(),
                 })?;
-            Some(crate::protocol::SequencedReplayQuery::Since { seq })
+            Some(crate::agents::SequencedReplayQuery::Since { seq })
         }
     };
 
     let (log_source, pty) = {
-        let us = ctx.user_state().read().await;
-        let session = us
+        let state = ctx.state().read().await;
+        let session = state
             .local_agents
             .get(&request.agent_id)
             .map(|context| &context.session)
@@ -260,7 +176,6 @@ async fn prepare_structured_session_subscription(
         )
     };
 
-    ensure_session_not_cancelled(runtime)?;
     if let Some(size) = args.terminal_size {
         let Some(pty) = pty else {
             return Err(ProtocolError::InvalidArgument {
@@ -271,10 +186,17 @@ async fn prepare_structured_session_subscription(
                 ),
             });
         };
-        resize_pty_unless_cancelled(&pty, size, runtime).await?;
+        pty.resize(size)
+            .await
+            .map_err(|error| ProtocolError::ServerError {
+                message: error.to_string(),
+            })?;
     }
 
-    subscribe_structured_unless_cancelled(&log_source, replay_query, runtime).await
+    log_source
+        .subscribe_with_query(replay_query)
+        .await
+        .ok_or(ProtocolError::NoAgentFound)
 }
 
 async fn send_session_input(
@@ -348,10 +270,9 @@ async fn send_structured_session_input(
     let input = claude_io::decode_pty_transcript_v1_input(&payload)?;
     let target = structured_input_target(ctx, agent_id, claude_io::PTY_TRANSCRIPT_V1).await?;
     target
-        .send_structured_input_cancellable(
+        .send_structured_input(
             input.expected_seq,
             transcript_actions_to_pty_input_json(input.actions),
-            StructuredInputCancel::new(),
         )
         .await
 }
@@ -361,8 +282,8 @@ async fn agent_pty(
     agent_id: Uuid,
     io_protocol: &str,
 ) -> Result<PtyHandle, ProtocolError> {
-    let us = ctx.user_state().read().await;
-    let session = us
+    let state = ctx.state().read().await;
+    let session = state
         .local_agents
         .get(&agent_id)
         .map(|context| &context.session)
@@ -381,8 +302,8 @@ async fn structured_input_target(
     agent_id: Uuid,
     io_protocol: &str,
 ) -> Result<StructuredInputTarget, ProtocolError> {
-    let us = ctx.user_state().read().await;
-    let session = us
+    let state = ctx.state().read().await;
+    let session = state
         .local_agents
         .get(&agent_id)
         .map(|context| &context.session)
@@ -392,7 +313,7 @@ async fn structured_input_target(
 }
 
 fn ensure_agent_supports_protocol(
-    session: &crate::agent::AgentSession,
+    session: &crate::agents::AgentSession,
     agent_id: Uuid,
     io_protocol: &str,
 ) -> Result<(), ProtocolError> {
@@ -406,56 +327,6 @@ fn ensure_agent_supports_protocol(
         Err(ProtocolError::InvalidArgument {
             message: format!("agent {agent_id} does not support `{io_protocol}` sessions"),
         })
-    }
-}
-
-fn ensure_session_not_cancelled(runtime: &SessionSubscriptionRuntime) -> Result<(), ProtocolError> {
-    if runtime.is_cancelled() {
-        Err(cancelled_error())
-    } else {
-        Ok(())
-    }
-}
-
-async fn resize_pty_unless_cancelled(
-    pty: &PtyHandle,
-    size: crate::protocol::message::TerminalSize,
-    runtime: &SessionSubscriptionRuntime,
-) -> Result<(), ProtocolError> {
-    tokio::select! {
-        biased;
-        () = runtime.cancelled() => Err(cancelled_error()),
-        result = pty.resize(size) => result.map_err(|error| ProtocolError::ServerError {
-            message: error.to_string(),
-        }),
-    }
-}
-
-async fn subscribe_raw_unless_cancelled(
-    pty: &PtyHandle,
-    replay_query: Option<ByteReplayQuery>,
-    runtime: &SessionSubscriptionRuntime,
-) -> Result<crate::buffer::MultiplexByteReader, ProtocolError> {
-    tokio::select! {
-        biased;
-        () = runtime.cancelled() => Err(cancelled_error()),
-        reader = pty.subscribe_with_query(replay_query) => {
-            reader.ok_or(ProtocolError::NoAgentFound)
-        }
-    }
-}
-
-async fn subscribe_structured_unless_cancelled(
-    log_source: &crate::agent::StructuredLogSource,
-    replay_query: Option<crate::protocol::SequencedReplayQuery>,
-    runtime: &SessionSubscriptionRuntime,
-) -> Result<(crate::buffer::MultiplexStructuredReader, u64), ProtocolError> {
-    tokio::select! {
-        biased;
-        () = runtime.cancelled() => Err(cancelled_error()),
-        reader = log_source.subscribe_with_query(replay_query) => {
-            reader.ok_or(ProtocolError::NoAgentFound)
-        }
     }
 }
 
@@ -477,92 +348,166 @@ fn transcript_actions_to_pty_input_json(
     )
 }
 
-async fn terminate_session_subscription(
-    runtime: SessionSubscriptionRuntime,
-    error: ProtocolError,
-    ctx: &AgentServiceCtx,
-) -> std::result::Result<(), crate::server::ConnectionError> {
-    runtime
-        .terminate(ctx.user_state(), error)
-        .await
-        .map_err(session_send_error)
+enum DirectSessionStreamState {
+    Opening {
+        agent_id: Uuid,
+        reader: SessionOutputReader,
+        close_rx: mpsc::Receiver<(Uuid, SessionCloseReason)>,
+        shutdown_rx: mpsc::Receiver<ShutdownReason>,
+    },
+    Reading {
+        agent_id: Uuid,
+        reader: SessionOutputReader,
+        close_rx: mpsc::Receiver<(Uuid, SessionCloseReason)>,
+        shutdown_rx: mpsc::Receiver<ShutdownReason>,
+    },
+    Done,
 }
 
-struct SessionStreamHandle {
-    runtime: SessionSubscriptionRuntime,
-    sink: SessionOutputSink,
+fn direct_session_response_stream(
     agent_id: Uuid,
-    io_protocol: String,
+    reader: SessionOutputReader,
+    close_rx: mpsc::Receiver<(Uuid, SessionCloseReason)>,
+    shutdown_rx: mpsc::Receiver<ShutdownReason>,
+) -> super::ResponseStream<crate::protocol::wire::SubscribeSessionResponse> {
+    Box::pin(futures_util::stream::unfold(
+        DirectSessionStreamState::Opening {
+            agent_id,
+            reader,
+            close_rx,
+            shutdown_rx,
+        },
+        |state| async move {
+            match state {
+                DirectSessionStreamState::Opening {
+                    agent_id,
+                    reader,
+                    close_rx,
+                    shutdown_rx,
+                } => Some((
+                    session_output_response(SubscribeSessionEvent::Opened),
+                    DirectSessionStreamState::Reading {
+                        agent_id,
+                        reader,
+                        close_rx,
+                        shutdown_rx,
+                    },
+                )),
+                DirectSessionStreamState::Reading {
+                    agent_id,
+                    mut reader,
+                    mut close_rx,
+                    mut shutdown_rx,
+                } => {
+                    let event = tokio::select! {
+                        biased;
+                        reason = shutdown_rx.recv() => {
+                            let Some(reason) = reason else {
+                                return Some((
+                                    Err(tonic::Status::resource_exhausted(
+                                        "shutdown event subscriber queue closed",
+                                    )),
+                                    DirectSessionStreamState::Done,
+                                ));
+                            };
+                            return Some((
+                                Err(server_shutdown_status(reason)),
+                                DirectSessionStreamState::Done,
+                            ));
+                        }
+                        reason = recv_close_reason_for_agent(&mut close_rx, agent_id) => {
+                            match reason {
+                                Ok(reason) => SubscribeSessionEvent::Closed { reason },
+                                Err(error) => {
+                                    return Some((
+                                        Err(protocol_status(error)),
+                                        DirectSessionStreamState::Done,
+                                    ));
+                                }
+                            }
+                        }
+                        output = read_session_output_event(&mut reader) => {
+                            match output {
+                                Some(Ok(event)) => event,
+                                Some(Err(error @ ProtocolError::ResourceExhausted { .. })) => {
+                                    return Some((
+                                        Err(protocol_status(error)),
+                                        DirectSessionStreamState::Done,
+                                    ));
+                                }
+                                Some(Err(error)) => SubscribeSessionEvent::Closed {
+                                    reason: SessionCloseReason::InternalError {
+                                        detail: error.to_string(),
+                                    },
+                                },
+                                None => SubscribeSessionEvent::Closed {
+                                    reason: SessionCloseReason::AgentExited {
+                                        exit_code: None,
+                                    },
+                                },
+                            }
+                        }
+                    };
+                    let next_state = match &event {
+                        SubscribeSessionEvent::Closed { .. } => DirectSessionStreamState::Done,
+                        _ => DirectSessionStreamState::Reading {
+                            agent_id,
+                            reader,
+                            close_rx,
+                            shutdown_rx,
+                        },
+                    };
+                    Some((session_output_response(event), next_state))
+                }
+                DirectSessionStreamState::Done => None,
+            }
+        },
+    ))
 }
 
-fn spawn_session_output_stream(
-    mut reader: SessionOutputReader,
-    handle: SessionStreamHandle,
-    ctx: &AgentServiceCtx,
-) {
-    let user_state = ctx.user_state().clone();
-    let span = tracing::info_span!(
-        "session_subscription",
-        agent_id = %handle.agent_id,
-        io_protocol = %handle.io_protocol
+fn server_shutdown_status(reason: ShutdownReason) -> tonic::Status {
+    let mut metadata = tonic::metadata::MetadataMap::new();
+    metadata.insert(
+        SHUTDOWN_REASON_METADATA_KEY,
+        tonic::metadata::MetadataValue::from_static(reason.as_wire_value()),
     );
+    tonic::Status::with_metadata(tonic::Code::Unavailable, reason.to_string(), metadata)
+}
 
-    tokio::spawn(
-        async move {
-            tokio::select! {
-                biased;
-                () = handle.runtime.cancelled() => {}
-                source_result = async {
-                    if !send_session_output_event_if_current(
-                        &handle.sink,
-                        &user_state,
-                        &handle.runtime,
-                        SessionOutputEvent::Opened,
-                    )
-                    .await {
-                        return Ok(false);
-                    }
-
-                    while let Some(output) = read_session_output_event(&mut reader).await {
-                        let output = match output {
-                            Ok(output) => output,
-                            Err(error) => return Err(error),
-                        };
-                        if !send_session_output_event_if_current(
-                            &handle.sink,
-                            &user_state,
-                            &handle.runtime,
-                            output,
-                        )
-                        .await {
-                            return Ok(false);
-                        }
-                    }
-
-                    Ok(true)
-                } => {
-                    let _ = handle
-                        .runtime
-                        .finish_output_source(&user_state, source_result)
-                        .await;
-                }
-            }
+async fn recv_close_reason_for_agent(
+    close_rx: &mut mpsc::Receiver<(Uuid, SessionCloseReason)>,
+    agent_id: Uuid,
+) -> Result<SessionCloseReason, ProtocolError> {
+    while let Some((closed_agent_id, reason)) = close_rx.recv().await {
+        if closed_agent_id == agent_id {
+            return Ok(reason);
         }
-        .instrument(span),
-    );
+    }
+    Err(ProtocolError::ResourceExhausted {
+        message: "session close event subscriber queue closed".to_string(),
+    })
+}
+
+fn session_output_response(
+    event: SubscribeSessionEvent,
+) -> Result<crate::protocol::wire::SubscribeSessionResponse, tonic::Status> {
+    Ok(crate::agents::session_output_event_to_wire(&event))
 }
 
 async fn read_session_output_event(
     reader: &mut SessionOutputReader,
-) -> Option<Result<SessionOutputEvent, ProtocolError>> {
+) -> Option<Result<SubscribeSessionEvent, ProtocolError>> {
     match reader {
         SessionOutputReader::Raw(reader) => reader.read_event().await.map(|event| match event {
             BroadcastRead::ReplayItem(payload) | BroadcastRead::LiveItem(payload) => {
-                Ok(SessionOutputEvent::Output { payload })
+                Ok(SubscribeSessionEvent::Output { payload })
             }
             BroadcastRead::ReplayComplete => {
-                Ok(SessionOutputEvent::ReplayComplete { cursor: None })
+                Ok(SubscribeSessionEvent::ReplayComplete { cursor: None })
             }
+            BroadcastRead::Lagged => Err(ProtocolError::ResourceExhausted {
+                message: "session output subscriber queue closed".to_string(),
+            }),
         }),
         SessionOutputReader::Structured {
             reader,
@@ -571,14 +516,19 @@ async fn read_session_output_event(
             BroadcastRead::ReplayItem(output) | BroadcastRead::LiveItem(output) => {
                 structured_output_event(output)
             }
-            BroadcastRead::ReplayComplete => Ok(SessionOutputEvent::ReplayComplete {
+            BroadcastRead::ReplayComplete => Ok(SubscribeSessionEvent::ReplayComplete {
                 cursor: Some(replay_cursor.clone()),
+            }),
+            BroadcastRead::Lagged => Err(ProtocolError::ResourceExhausted {
+                message: "session output subscriber queue closed".to_string(),
             }),
         }),
     }
 }
 
-fn structured_output_event(output: StructuredOutput) -> Result<SessionOutputEvent, ProtocolError> {
+fn structured_output_event(
+    output: StructuredOutput,
+) -> Result<SubscribeSessionEvent, ProtocolError> {
     let payload_json =
         serde_json::to_vec(&output.payload).map_err(|error| ProtocolError::ServerError {
             message: format!("failed to encode transcript SubscribeSession output: {error}"),
@@ -587,29 +537,98 @@ fn structured_output_event(output: StructuredOutput) -> Result<SessionOutputEven
         seq_id: output.seq,
         payload: payload_json,
     });
-    Ok(SessionOutputEvent::Output { payload })
+    Ok(SubscribeSessionEvent::Output { payload })
 }
 
-async fn send_session_output_event_if_current(
-    sink: &SessionOutputSink,
-    user_state: &std::sync::Arc<tokio::sync::RwLock<crate::server::ServerUserState>>,
-    runtime: &SessionSubscriptionRuntime,
-    event: SessionOutputEvent,
-) -> bool {
-    match sink
-        .send_item_if_current(event, || async { runtime.is_active(user_state).await })
-        .await
-    {
-        Ok(sent) => sent,
-        Err(error) => {
-            tracing::error!(%error, "failed to send session output event");
-            false
+#[cfg(test)]
+mod tests {
+    use futures_util::StreamExt;
+
+    use super::*;
+    use crate::agents::MultiplexByteBuffer;
+
+    #[tokio::test]
+    async fn direct_session_stream_reports_resource_exhausted_when_reader_lags() {
+        let agent_id = Uuid::from_u128(1);
+        let buffer = MultiplexByteBuffer::new(1024);
+        let reader = buffer.subscribe().await.unwrap();
+        let (_close_tx, close_rx) = mpsc::channel(1);
+        let (_shutdown_tx, shutdown_rx) = mpsc::channel(1);
+        let mut stream = direct_session_response_stream(
+            agent_id,
+            SessionOutputReader::Raw(reader),
+            close_rx,
+            shutdown_rx,
+        );
+
+        for _ in 0..300 {
+            buffer.write(b"x".to_vec()).await;
         }
-    }
-}
 
-fn cancelled_error() -> ProtocolError {
-    ProtocolError::Cancelled {
-        message: "SubscribeSession cancelled".to_string(),
+        let opened = stream.next().await.unwrap().unwrap();
+        assert!(matches!(
+            opened.event,
+            Some(crate::protocol::wire::subscribe_session_response::Event::Opened(_))
+        ));
+        let replay_complete = stream.next().await.unwrap().unwrap();
+        assert!(matches!(
+            replay_complete.event,
+            Some(crate::protocol::wire::subscribe_session_response::Event::ReplayComplete(_))
+        ));
+
+        let mut saw_resource_exhausted = false;
+        for _ in 0..300 {
+            match stream
+                .next()
+                .await
+                .expect("session stream ended before lag error")
+            {
+                Ok(_) => {}
+                Err(status) => {
+                    assert_eq!(status.code(), tonic::Code::ResourceExhausted);
+                    saw_resource_exhausted = true;
+                    break;
+                }
+            }
+        }
+        assert!(saw_resource_exhausted);
+        assert!(stream.next().await.is_none());
+    }
+
+    #[tokio::test]
+    async fn direct_session_stream_reports_server_shutdown_reason() {
+        let agent_id = Uuid::from_u128(1);
+        let buffer = MultiplexByteBuffer::new(1024);
+        let reader = buffer.subscribe().await.unwrap();
+        let (_close_tx, close_rx) = mpsc::channel(1);
+        let (shutdown_tx, shutdown_rx) = mpsc::channel(1);
+        let mut stream = direct_session_response_stream(
+            agent_id,
+            SessionOutputReader::Raw(reader),
+            close_rx,
+            shutdown_rx,
+        );
+
+        let opened = stream.next().await.unwrap().unwrap();
+        assert!(matches!(
+            opened.event,
+            Some(crate::protocol::wire::subscribe_session_response::Event::Opened(_))
+        ));
+
+        shutdown_tx
+            .send(ShutdownReason::Suspending)
+            .await
+            .expect("shutdown receiver should be active");
+        let error = stream.next().await.unwrap().unwrap_err();
+        assert_eq!(error.code(), tonic::Code::Unavailable);
+        assert_eq!(error.message(), "server suspending");
+        assert_eq!(
+            error
+                .metadata()
+                .get(SHUTDOWN_REASON_METADATA_KEY)
+                .and_then(|value| value.to_str().ok()),
+            Some("suspending")
+        );
+        assert!(stream.next().await.is_none());
     }
 }

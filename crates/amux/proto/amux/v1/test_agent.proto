@@ -1,0 +1,13 @@
+syntax = "proto3";
+
+package amux.v1;
+
+import "amux/v1/claude.proto";
+
+// Dev/test-only agent creation config. test_echo_v1 has no structured
+// session payloads.
+message TestAgentCreateConfig {
+  string command = 1;
+  optional TerminalSize initial_terminal_size = 2;
+  string working_dir = 3;
+}

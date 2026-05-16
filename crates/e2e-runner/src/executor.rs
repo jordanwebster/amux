@@ -1,16 +1,24 @@
-use crate::parser::{Directory, Terminal, TestCase, TestConfig, TestStep};
+use crate::parser::{Directory, RetryPolicy, Terminal, TestCase, TestConfig, TestStep};
 
 type PreparedEnvironment = (Vec<Directory>, Vec<TestConfig>, Vec<Terminal>);
 use std::collections::HashMap;
+use std::io::{Read, Write};
+use std::net::{TcpListener, TcpStream};
 use std::path::{Path, PathBuf};
 use std::process::Command;
-use std::time::Duration;
+use std::sync::Arc;
+use std::sync::atomic::{AtomicBool, Ordering};
+use std::thread;
+use std::time::{Duration, Instant};
 
+use chrono::{Duration as ChronoDuration, Utc};
+use jsonwebtoken::{Algorithm, EncodingKey, Header, encode};
+use serde::Serialize;
 use tempfile::TempDir;
 
 use crate::terminal::TestTerminal;
 
-#[derive(Debug)]
+#[derive(Debug, Clone)]
 struct ResolvedCommand {
     program: String,
     args: Vec<String>,
@@ -42,6 +50,45 @@ fn is_oneshot_amux_command(command: &ResolvedCommand) -> bool {
         },
         _ => false,
     }
+}
+
+fn run_oneshot_command(command: &ResolvedCommand, cwd: &Path) -> Result<String, String> {
+    let output = Command::new(&command.program)
+        .args(&command.args)
+        .current_dir(cwd)
+        .output()
+        .map_err(|e| format!("Failed to run oneshot command: {}", e))?;
+
+    let stdout = String::from_utf8_lossy(&output.stdout).to_string();
+    let stderr = String::from_utf8_lossy(&output.stderr).to_string();
+
+    Ok(if stderr.is_empty() {
+        stdout
+    } else if stdout.is_empty() {
+        stderr
+    } else {
+        format!("{}{}", stdout, stderr)
+    })
+}
+
+fn retry_oneshot_until_expected(
+    command: &ResolvedCommand,
+    cwd: &Path,
+    expected: &str,
+    policy: RetryPolicy,
+    first_output: String,
+) -> Result<String, String> {
+    let started = Instant::now();
+    let timeout = Duration::from_millis(policy.timeout_ms);
+    let interval = Duration::from_millis(policy.interval_ms);
+    let mut actual = first_output;
+
+    while actual != expected && started.elapsed() < timeout {
+        thread::sleep(interval);
+        actual = run_oneshot_command(command, cwd)?;
+    }
+
+    Ok(actual)
 }
 
 fn default_socket_path(base_dir: &Path, test_name: &str, config_name: &str) -> PathBuf {
@@ -97,6 +144,226 @@ struct VariableContext {
     tcp_ports: HashMap<String, u16>,
 }
 
+const E2E_USER_ID: &str = "11111111-1111-4111-8111-111111111111";
+const E2E_REFRESH_TOKEN: &str = "e2e-refresh";
+const E2E_ACCESS_TOKEN: &str = "e2e-access";
+const E2E_JWT_KID: &str = "e2e-key";
+const E2E_JWT_PRIVATE_KEY: &str = r#"-----BEGIN PRIVATE KEY-----
+MIIEvAIBADANBgkqhkiG9w0BAQEFAASCBKYwggSiAgEAAoIBAQDa10VP9rc+oAG3
++JhkaPK/OJSo2y00s5pUobICMpfWApDpnoEsPJf/3yvRvlIJnQMK+eQNtxSdngFP
+1O3P6vgpL0MkB7CAOxbe2WB4LFZ0wHuQzxyO0Bv9YDLvZidNg7FKyxhnARyVK0m0
+OFwvW5dn/L6POAxEouadWWHbeyDem1BsOcEAT2spQzqeVKZc2VlZJ2FO/CapGYvi
+p7bMOAMbiIPdklfTFRj1eGA4BlLlrw645YEvlo0fCMrVZNYb+sGI1SImVfoToaxl
+dcT1lagnKE1+ERL8jPqLcbx66jIOq/Nf5hRJOHuayfjz2uUqfYduumKu5NlryBv+
+OiVeQmm3AgMBAAECggEARcoJDKs9XPdiFO1ui/b8EwdUQVVEYV41hW/beN/xlApV
+dGtb/mOEhdECBG2RdAdihQmUNNuB85IEERVyka/5XAj6fG8HVp2BeagRH8HkAG+x
++EhUbybnBjK7i6UkO5AX5iZGrfKoztlzM8oVe/TVoA/2JW5WWz0oFl3+2yO1I8gE
+4qTcP+iNFgNa2SDu0ALjiDgVUDhap+Rs4R9qd5mxswdGYUfD9oqBcouxGZVPgv6n
+Xe66iowrnWfc25bD3swXPmsTBF1lncGPuSHrVwPYBFLb6rSbjtOh8aJf61qqRO/s
+w44UIcOAhZ15Qv5I1rbbPHoDiRK1a1VUEpPyWxZ/IQKBgQD8YwovOoSRSnzVorIa
+RlstKai7iOE6cFkrEVQUvojJcUNmfW99cMtCrGDkXQTahnpov7m2qRho/oNCPYpr
+tECo8vyiMW857CaLVZVQiHO5PvzkdCKqhdR4CNsDYpXCMqBtL0Qgn6WagsU1Qw4X
+uj9wgOxtBHoSgufe8rf1hXyLWwKBgQDd+Uo8gvP+rua4g4zkXZzyeucvQC5KJHqM
+8YNPdaZ8+cb72yMIp/p3BqPoj2zzyX+uGW7opEwwQjAO5VG5wh+jW6j09s6e5Zes
+3IJ55v5f40ioUkpxPaa3EQOSRQfi9EVRVJv6bPidRVCS4rtQMccB3oCxq+iQ8OCj
+QAf7PNwV1QKBgCG9N6pSn1Aw7fk9M6PxjdS+wfC3/qvqQvFP8raHNg//1SvJTvMs
+9e8mzhkZGkIAQjLolnIFrt6yT2e2hF+bjB1Jxl4ET8Mlf42W1kwawaWc9v+vSscS
+9vFI9cZBEpYQYIPYErptvRynqKdTHHotireGdJSqSYtZ9pdGSTNIMfsLAoGAYSHj
+MFOFfZ7/ayJ1lsC4GwtY+r41A1CvJ9nPQggTkICkaDVeQT1wRoFrXCrW3F8CNib+
+92JdzIhKC1qhxo2B1rQXXQpbJAEHvCbKGZnRGhiVBMLtvFvkBhu12l3Gs7N8WbiS
+gKUKrZdVSNFach82HEVHP3ggTrx5MDamx3O8QvkCgYBytDiq72xVjklJLWOsSbBo
+X7zVUE2d5y01FsN30UQ4nNdCGmEdvu206B1n3Clel1kepYd9Mn7JQgzrBQQwz5UP
+06MxC3IfJVYcFmiZ7Kb4ggeBW1QbUbbsb2Jbuv7wNoPcIAE2c5PwnmgacnhVB58O
+qr8VpwUTpFt0PnPahUNCRw==
+-----END PRIVATE KEY-----"#;
+const E2E_JWK_N: &str = "2tdFT_a3PqABt_iYZGjyvziUqNstNLOaVKGyAjKX1gKQ6Z6BLDyX_98r0b5SCZ0DCvnkDbcUnZ4BT9Ttz-r4KS9DJAewgDsW3tlgeCxWdMB7kM8cjtAb_WAy72YnTYOxSssYZwEclStJtDhcL1uXZ_y-jzgMRKLmnVlh23sg3ptQbDnBAE9rKUM6nlSmXNlZWSdhTvwmqRmL4qe2zDgDG4iD3ZJX0xUY9XhgOAZS5a8OuOWBL5aNHwjK1WTWG_rBiNUiJlX6E6GsZXXE9ZWoJyhNfhES_Iz6i3G8euoyDqvzX-YUSTh7msn489rlKn2HbrpiruTZa8gb_jolXkJptw";
+const E2E_JWK_E: &str = "AQAB";
+
+struct CloudFixture {
+    url: String,
+    running: Arc<AtomicBool>,
+    thread: Option<thread::JoinHandle<()>>,
+}
+
+impl Drop for CloudFixture {
+    fn drop(&mut self) {
+        self.running.store(false, Ordering::SeqCst);
+        let _ = TcpStream::connect(self.url.trim_start_matches("http://"));
+        if let Some(thread) = self.thread.take() {
+            let _ = thread.join();
+        }
+    }
+}
+
+#[derive(Serialize)]
+struct RoutingClaims<'a> {
+    sub: &'a str,
+    client_id: &'a str,
+    host: &'a str,
+    port: u16,
+    exp: u64,
+    aud: &'a str,
+}
+
+fn allocate_local_port() -> Result<u16, String> {
+    let listener = TcpListener::bind(("127.0.0.1", 0))
+        .map_err(|error| format!("failed to allocate local port: {error}"))?;
+    listener
+        .local_addr()
+        .map(|addr| addr.port())
+        .map_err(|error| format!("failed to read allocated local port: {error}"))
+}
+
+fn configure_cloud_fixture(configs: &mut [TestConfig]) -> Result<Option<CloudFixture>, String> {
+    let needs_cloud = configs
+        .iter()
+        .any(|config| config.cloud_relay || config.enable_cloud_mode == Some(true));
+    if !needs_cloud {
+        return Ok(None);
+    }
+
+    let relay = configs
+        .iter_mut()
+        .find(|config| config.cloud_relay)
+        .ok_or_else(|| {
+            "cloud-enabled e2e configs require one config with cloud_relay: true".to_string()
+        })?;
+    let routing_host = relay
+        .host_name
+        .clone()
+        .unwrap_or_else(|| relay.name.clone());
+    let routing_port = match relay.tcp_port {
+        Some(port) => port,
+        None => {
+            let port = allocate_local_port()?;
+            relay.tcp_port = Some(port);
+            port
+        }
+    };
+    relay.enable_cloud_mode.get_or_insert(true);
+    relay.enforce_tls_in_cloud_mode.get_or_insert(false);
+
+    let fixture = CloudFixture::start(routing_host, routing_port)?;
+    for config in configs {
+        if config.cloud_relay || config.enable_cloud_mode == Some(true) {
+            config.cloud_url = Some(fixture.url.clone());
+        }
+    }
+    Ok(Some(fixture))
+}
+
+impl CloudFixture {
+    fn start(routing_host: String, routing_port: u16) -> Result<Self, String> {
+        let listener = TcpListener::bind(("127.0.0.1", 0))
+            .map_err(|error| format!("failed to start fake cloud API: {error}"))?;
+        let addr = listener
+            .local_addr()
+            .map_err(|error| format!("failed to read fake cloud API address: {error}"))?;
+        listener
+            .set_nonblocking(true)
+            .map_err(|error| format!("failed to configure fake cloud API: {error}"))?;
+
+        let running = Arc::new(AtomicBool::new(true));
+        let thread_running = running.clone();
+        let thread_host = routing_host.clone();
+        let thread = thread::spawn(move || {
+            while thread_running.load(Ordering::SeqCst) {
+                match listener.accept() {
+                    Ok((stream, _)) => handle_cloud_request(stream, &thread_host, routing_port),
+                    Err(error) if error.kind() == std::io::ErrorKind::WouldBlock => {
+                        thread::sleep(Duration::from_millis(10));
+                    }
+                    Err(_) => break,
+                }
+            }
+        });
+
+        Ok(Self {
+            url: format!("http://{addr}"),
+            running,
+            thread: Some(thread),
+        })
+    }
+}
+
+fn handle_cloud_request(mut stream: TcpStream, routing_host: &str, routing_port: u16) {
+    let mut request = [0_u8; 4096];
+    let bytes_read = stream.read(&mut request).unwrap_or(0);
+    let request = String::from_utf8_lossy(&request[..bytes_read]);
+    let path = request
+        .lines()
+        .next()
+        .and_then(|line| line.split_whitespace().nth(1))
+        .unwrap_or("/");
+
+    let (status, body) = match path {
+        "/connect/token" => (
+            "200 OK",
+            serde_json::json!({
+                "access_token": E2E_ACCESS_TOKEN,
+                "token_type": "Bearer",
+                "expires_in": 3600,
+                "refresh_token": E2E_REFRESH_TOKEN,
+            })
+            .to_string(),
+        ),
+        "/api/connect" => {
+            let token = routing_token(routing_host, routing_port);
+            (
+                "200 OK",
+                serde_json::json!({
+                    "host": "127.0.0.1",
+                    "port": routing_port,
+                    "token": token,
+                    "expires_at": (Utc::now() + ChronoDuration::hours(1)).to_rfc3339(),
+                })
+                .to_string(),
+            )
+        }
+        "/.well-known/openid-configuration/jwks" => (
+            "200 OK",
+            serde_json::json!({
+                "keys": [{
+                    "kid": E2E_JWT_KID,
+                    "kty": "RSA",
+                    "alg": "RS256",
+                    "use": "sig",
+                    "n": E2E_JWK_N,
+                    "e": E2E_JWK_E,
+                }]
+            })
+            .to_string(),
+        ),
+        _ => ("404 Not Found", "{}".to_string()),
+    };
+
+    let response = format!(
+        "HTTP/1.1 {status}\r\ncontent-type: application/json\r\ncontent-length: {}\r\nconnection: close\r\n\r\n{body}",
+        body.len()
+    );
+    let _ = stream.write_all(response.as_bytes());
+}
+
+fn routing_token(routing_host: &str, routing_port: u16) -> String {
+    let mut header = Header::new(Algorithm::RS256);
+    header.kid = Some(E2E_JWT_KID.to_string());
+    let claims = RoutingClaims {
+        sub: E2E_USER_ID,
+        client_id: "e2e",
+        host: routing_host,
+        port: routing_port,
+        exp: (Utc::now() + ChronoDuration::hours(1)).timestamp() as u64,
+        aud: "amux_token",
+    };
+    encode(
+        &header,
+        &claims,
+        &EncodingKey::from_rsa_pem(E2E_JWT_PRIVATE_KEY.as_bytes())
+            .expect("embedded e2e RSA key should parse"),
+    )
+    .expect("embedded e2e RSA key should sign routing token")
+}
+
 impl VariableContext {
     fn new() -> Self {
         Self {
@@ -107,7 +374,8 @@ impl VariableContext {
     }
 
     /// Substitute variables in a string.
-    /// Supports: $name.path (for directories), $name.socket_path (for configs), $name.tcp_port (for configs)
+    /// Supports: $name.path (for directories), $name.socket_path and
+    /// $name.tcp_port (for configs)
     fn substitute(&self, input: &str) -> String {
         let mut result = input.to_string();
 
@@ -123,10 +391,9 @@ impl VariableContext {
             result = result.replace(&var, &socket_path.to_string_lossy());
         }
 
-        // Substitute config variables: $name.tcp_port
-        for (name, port) in &self.tcp_ports {
+        for (name, tcp_port) in &self.tcp_ports {
             let var = format!("${}.tcp_port", name);
-            result = result.replace(&var, &port.to_string());
+            result = result.replace(&var, &tcp_port.to_string());
         }
 
         result
@@ -162,8 +429,9 @@ impl Executor {
         let temp_dir = TempDir::new().map_err(|e| format!("Failed to create temp dir: {}", e))?;
 
         // Prepare environment by auto-injecting missing fields
-        let (directories, configs, terminals) =
+        let (directories, mut configs, terminals) =
             self.prepare_environment(test_case, temp_dir.path())?;
+        let _cloud_fixture = configure_cloud_fixture(&mut configs)?;
 
         // Build variable context
         let mut var_ctx = VariableContext::new();
@@ -200,33 +468,7 @@ impl Executor {
             #[cfg(unix)]
             let _ = std::fs::remove_file(&socket_path);
 
-            // Determine TCP port (auto-assign if not specified)
-            let tcp_port = match cfg.tcp_port {
-                Some(p) => p,
-                None => {
-                    // Bind to port 0 to get an available port from the OS
-                    let listener = std::net::TcpListener::bind("127.0.0.1:0")
-                        .map_err(|e| format!("Failed to find free TCP port: {}", e))?;
-                    listener
-                        .local_addr()
-                        .map_err(|e| format!("Failed to get assigned port: {}", e))?
-                        .port()
-                }
-            };
-
-            // Determine WebSocket port (auto-assign if not specified)
-            let ws_port = match cfg.websocket_port {
-                Some(p) => p,
-                None => {
-                    // Bind to port 0 to get an available port from the OS
-                    let listener = std::net::TcpListener::bind("127.0.0.1:0")
-                        .map_err(|e| format!("Failed to find free WebSocket port: {}", e))?;
-                    listener
-                        .local_addr()
-                        .map_err(|e| format!("Failed to get assigned WebSocket port: {}", e))?
-                        .port()
-                }
-            };
+            let tcp_port = cfg.tcp_port.unwrap_or(allocate_local_port()?);
 
             // Allocate a state-file path so each test has an isolated state
             // dir. Left unwritten: init flags live in the config file below;
@@ -244,19 +486,32 @@ impl Executor {
             //
             // `enable_cloud_mode: false` and `prevent_idle_sleep: false` keep
             // `amux init` from prompting during test runs.
-            // `check_for_updates: false` keeps e2e output hermetic.
             let host_name = cfg
                 .host_name
                 .clone()
                 .unwrap_or_else(|| test_case.name.clone());
-            let yaml_content = format!(
-                "host_name: '{}'\nsocket_path: '{}'\ntcp_port: {}\nwebsocket_port: {}\nrandomise_link_name: false\nenable_cloud_mode: false\nprevent_idle_sleep: false\ncheck_for_updates: false\nstate_path: '{}'\n",
+            let enable_cloud_mode = cfg.enable_cloud_mode.unwrap_or(false);
+            if enable_cloud_mode && !cfg.cloud_relay {
+                std::fs::write(
+                    state_dir.join("auth.yaml"),
+                    format!("refresh_token: '{}'\n", E2E_REFRESH_TOKEN),
+                )
+                .map_err(|e| format!("Failed to write auth file: {}", e))?;
+            }
+            let mut yaml_content = format!(
+                "host_name: '{}'\nsocket_path: '{}'\ntcp_port: {}\nrandomise_link_name: false\nenable_cloud_mode: {}\nprevent_idle_sleep: false\nstate_path: '{}'\n",
                 host_name,
                 socket_path.display(),
                 tcp_port,
-                ws_port,
+                enable_cloud_mode,
                 state_path.display()
             );
+            if let Some(cloud_url) = &cfg.cloud_url {
+                yaml_content.push_str(&format!("cloud_url: '{}'\n", cloud_url));
+            }
+            if let Some(enforce_tls) = cfg.enforce_tls_in_cloud_mode {
+                yaml_content.push_str(&format!("enforce_tls_in_cloud_mode: {}\n", enforce_tls));
+            }
 
             let config_file_path = temp_dir.path().join(format!("{}.yaml", cfg.name));
             std::fs::write(&config_file_path, yaml_content)
@@ -318,6 +573,8 @@ impl Executor {
     ) -> Result<(), String> {
         let mut active_terminals: HashMap<String, TestTerminal> = HashMap::new();
         let mut oneshot_outputs: HashMap<String, String> = HashMap::new();
+        let mut last_oneshot_commands: HashMap<String, (ResolvedCommand, PathBuf)> = HashMap::new();
+        let mut retry_next_expect: Option<RetryPolicy> = None;
         let mut current_terminal: Option<String> = None;
 
         for step in steps {
@@ -327,6 +584,9 @@ impl Executor {
                 }
                 TestStep::Sleep(ms) => {
                     std::thread::sleep(Duration::from_millis(*ms));
+                }
+                TestStep::RetryNextExpect(policy) => {
+                    retry_next_expect = Some(*policy);
                 }
                 TestStep::Input(input) => {
                     let term_name = current_terminal.as_ref().ok_or("No terminal selected")?;
@@ -346,22 +606,9 @@ impl Executor {
                             self.transform_command(&input_substituted, config_path)?;
 
                         if is_oneshot_amux_command(&transformed) {
-                            let output = Command::new(&transformed.program)
-                                .args(&transformed.args)
-                                .current_dir(cwd)
-                                .output()
-                                .map_err(|e| format!("Failed to run oneshot command: {}", e))?;
-
-                            let stdout = String::from_utf8_lossy(&output.stdout).to_string();
-                            let stderr = String::from_utf8_lossy(&output.stderr).to_string();
-
-                            let combined = if stderr.is_empty() {
-                                stdout
-                            } else if stdout.is_empty() {
-                                stderr
-                            } else {
-                                format!("{}{}", stdout, stderr)
-                            };
+                            let combined = run_oneshot_command(&transformed, cwd)?;
+                            last_oneshot_commands
+                                .insert(term_name.clone(), (transformed, cwd.clone()));
                             oneshot_outputs.insert(term_name.clone(), combined);
                         } else {
                             let terminal = TestTerminal::spawn(
@@ -392,12 +639,26 @@ impl Executor {
                 }
                 TestStep::ExpectOutput(expected) => {
                     let term_name = current_terminal.as_ref().ok_or("No terminal selected")?;
+                    let retry_policy = retry_next_expect.take();
 
                     let expected_substituted = var_ctx.substitute(expected);
                     let expected_with_newline = format!("{}\n", expected_substituted);
 
                     let actual = if let Some(output) = oneshot_outputs.remove(term_name) {
-                        output
+                        if let Some(policy) = retry_policy {
+                            let (command, cwd) = last_oneshot_commands.get(term_name).ok_or(
+                                "Retry directive requires a previous one-shot amux command",
+                            )?;
+                            retry_oneshot_until_expected(
+                                command,
+                                cwd,
+                                &expected_with_newline,
+                                policy,
+                                output,
+                            )?
+                        } else {
+                            output
+                        }
                     } else {
                         let terminal = active_terminals
                             .get_mut(term_name)
@@ -445,8 +706,11 @@ impl Executor {
                 name: "local".to_string(),
                 host_name: None,
                 socket_path: None,
+                enable_cloud_mode: None,
+                cloud_url: None,
                 tcp_port: None,
-                websocket_port: None,
+                enforce_tls_in_cloud_mode: None,
+                cloud_relay: false,
             });
         }
 

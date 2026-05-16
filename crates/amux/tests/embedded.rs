@@ -2,9 +2,10 @@ use std::sync::Arc;
 use std::time::Duration;
 
 use amux::{
-    AccessToken, AgentType, AuthError, Config, CreateAgentRequest, CredentialProvider, Server,
-    ShutdownReason, UpdateReporter, UpdateStatus,
+    AccessToken, AuthError, Config, CredentialProvider, Server, UpdateReporter, UpdateStatus,
 };
+#[cfg(debug_assertions)]
+use amux::{AgentType, CreateAgentRequest};
 use tempfile::tempdir;
 use tokio::io::{AsyncReadExt, AsyncWriteExt};
 use uuid::Uuid;
@@ -31,7 +32,7 @@ impl UpdateReporter for CapturingUpdateReporter {
 }
 
 #[tokio::test]
-async fn embedded_server_opens_client_over_memory_transport() {
+async fn embedded_server_opens_client_service_client() {
     let dir = tempdir().unwrap();
     let config = Config {
         state_path: dir.path().join("state.yaml"),
@@ -50,6 +51,44 @@ async fn embedded_server_opens_client_over_memory_transport() {
 
     let agents = client.list_agents().await.unwrap();
     assert!(agents.is_empty());
+}
+
+#[cfg(unix)]
+#[tokio::test]
+async fn daemon_open_uses_local_client_service() {
+    let dir = tempdir().unwrap();
+    let config = Config {
+        state_path: dir.path().join("state.yaml"),
+        socket_path: dir.path().join("amux.sock"),
+        enable_cloud_mode: Some(false),
+        prevent_idle_sleep: Some(false),
+        ..Config::default()
+    };
+    let server_config = config.clone();
+    let server_task = tokio::spawn(async move {
+        Server::builder().config(server_config).run().await.unwrap();
+    });
+
+    let client = tokio::time::timeout(Duration::from_secs(2), async {
+        loop {
+            match Server::builder()
+                .config(config.clone())
+                .daemon()
+                .open()
+                .await
+            {
+                Ok(client) => break client,
+                Err(_) => tokio::time::sleep(Duration::from_millis(10)).await,
+            }
+        }
+    })
+    .await
+    .expect("timed out waiting for daemon client");
+
+    assert!(!client.owns_embedded_server());
+    assert!(client.list_agents().await.unwrap().is_empty());
+    client.shutdown().await.unwrap();
+    server_task.await.unwrap();
 }
 
 #[tokio::test]
@@ -90,6 +129,7 @@ async fn embedded_server_runs_update_checker_when_reporter_is_configured() {
 }
 
 #[tokio::test]
+#[cfg(debug_assertions)]
 async fn embedded_shutdown_stops_agents_and_closes_server_tasks() {
     let dir = tempdir().unwrap();
     let config = Config {
@@ -111,6 +151,7 @@ async fn embedded_shutdown_stops_agents_and_closes_server_tasks() {
     client
         .create_agent(CreateAgentRequest {
             agent_id,
+            host_id: None,
             name: Some("shutdown-test".to_string()),
             agent_type: AgentType::TestAgent {
                 command: "cat".to_string(),
@@ -122,14 +163,12 @@ async fn embedded_shutdown_stops_agents_and_closes_server_tasks() {
         .await
         .unwrap();
 
-    client
-        .shutdown(ShutdownReason::UserRequested)
-        .await
-        .unwrap();
+    client.shutdown().await.unwrap();
     expect_client_closed(&client).await;
 }
 
 #[tokio::test]
+#[cfg(debug_assertions)]
 async fn embedded_suspend_stops_agents_and_closes_server_tasks() {
     let dir = tempdir().unwrap();
     let state_path = dir.path().join("state.yaml");
@@ -152,6 +191,7 @@ async fn embedded_suspend_stops_agents_and_closes_server_tasks() {
     client
         .create_agent(CreateAgentRequest {
             agent_id,
+            host_id: None,
             name: Some("suspend-test".to_string()),
             agent_type: AgentType::TestAgent {
                 command: "cat".to_string(),
@@ -228,6 +268,33 @@ async fn embedded_server_requires_credentials_when_cloud_enabled() {
         error
             .to_string()
             .contains("credentials provider is required")
+    );
+}
+
+#[tokio::test]
+async fn embedded_open_rejects_cloud_relay() {
+    let dir = tempdir().unwrap();
+    let config = Config {
+        state_path: dir.path().join("state.yaml"),
+        socket_path: dir.path().join("amux.sock"),
+        prevent_idle_sleep: Some(false),
+        ..Config::default()
+    };
+
+    let result = Server::builder()
+        .config(config)
+        .as_cloud_relay()
+        .embedded()
+        .open()
+        .await;
+    let Err(error) = result else {
+        panic!("embedded cloud relay opened");
+    };
+
+    assert!(
+        error
+            .to_string()
+            .contains("embedded cloud relays are not supported")
     );
 }
 

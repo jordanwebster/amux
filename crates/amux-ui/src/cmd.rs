@@ -55,13 +55,12 @@ pub(crate) async fn handle(
 ) {
     match cmd {
         Cmd::CreateAgent(request) => match client.create_agent(request).await {
-            Ok(entry) => {
-                let agent = entry.agent.clone();
+            Ok(agent) => {
                 // Optimistic: insert into the cache and emit AgentAdded
                 // immediately. The inventory subscription will deliver an
                 // AgentUp for the same id moments later; the cache returns
                 // `Same` and the duplicate notification is suppressed.
-                emit_inventory_change(&tx, &agents, entry).await;
+                emit_inventory_change(&tx, &agents, agent.clone()).await;
                 completed(&tx, cmd_id, CmdResult::CreateAgent(agent)).await;
             }
             Err(error) => failed(&tx, cmd_id, error).await,
@@ -72,9 +71,8 @@ pub(crate) async fn handle(
                 return;
             }
             match client.rename_agent(id, name).await {
-                Ok(entry) => {
-                    let agent = entry.agent.clone();
-                    emit_inventory_change(&tx, &agents, entry).await;
+                Ok(agent) => {
+                    emit_inventory_change(&tx, &agents, agent.clone()).await;
                     completed(&tx, cmd_id, CmdResult::RenameAgent(agent)).await;
                 }
                 Err(error) => failed(&tx, cmd_id, error).await,
@@ -101,14 +99,13 @@ pub(crate) async fn handle(
             io_protocol,
             payload,
         } => {
-            let Some(entry) = agents.find_or_fetch(&client, id).await else {
+            if agents.find_or_fetch(&client, id).await.is_none() {
                 failed_error(&tx, cmd_id, AmuxError::Protocol("agent not found".into())).await;
                 return;
-            };
+            }
             let result = client
                 .send_input(amux::SendInputRequest {
-                    id,
-                    route: entry.route,
+                    agent: id.into(),
                     io_protocol,
                     payload,
                 })
@@ -143,16 +140,16 @@ pub(crate) async fn handle(
     }
 }
 
-/// Insert an `AgentEntry` into the cache and emit the appropriate
+/// Insert an `Agent` into the cache and emit the appropriate
 /// notification based on the diff outcome. Used by command handlers that
-/// receive a fresh `AgentEntry` from an RPC response and want immediate
+/// receive a fresh `Agent` from an RPC response and want immediate
 /// feedback before the inventory subscription delivers the same event.
 async fn emit_inventory_change(
     tx: &mpsc::Sender<Notification>,
     agents: &AgentCache,
-    entry: types::AgentEntry,
+    agent: types::Agent,
 ) {
-    match agents.insert_with_outcome(entry).await {
+    match agents.insert_with_outcome(agent).await {
         InsertOutcome::Added(agent) => {
             notification::send(tx, Notification::AgentAdded(agent)).await;
         }

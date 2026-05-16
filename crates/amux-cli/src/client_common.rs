@@ -255,8 +255,8 @@ fn format_startup_diagnostics(contents: &str) -> Option<String> {
 /// The marker is ignored (and deleted) if its current_version doesn't match our binary.
 pub(super) fn print_update_banner(state_path: &Path) {
     let reporter = crate::update::MarkerFileReporter::from_state_path(state_path);
-    if let Some(minimum_version) = reporter.read_update_required() {
-        let current = env!("CARGO_PKG_VERSION");
+    let current = env!("CARGO_PKG_VERSION");
+    if let Some(minimum_version) = reporter.read_active_update_required(current) {
         println!(
             "An update is REQUIRED for cloud connectivity (minimum v{minimum_version}, \
              you have v{current}). Run 'amux update' to update."

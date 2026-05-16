@@ -17,7 +17,6 @@ pub enum ConfigError {
 }
 
 const DEFAULT_CLOUD_URL: &str = "https://amux.sh";
-const MAX_IDLE_TIMEOUT_SECS: u32 = u32::MAX / 1000;
 
 fn default_host_name() -> String {
     gethostname()
@@ -65,10 +64,6 @@ fn default_randomise_link_name() -> bool {
 
 fn default_enforce_tls_in_cloud_mode() -> bool {
     true
-}
-
-fn default_idle_timeout_secs() -> u32 {
-    180
 }
 
 /// A control-key leader parsed from the `ctrl+<char>` format (e.g. `ctrl+a`).
@@ -144,7 +139,7 @@ impl<'de> Deserialize<'de> for LeaderKey {
 
 /// Keybind configuration
 #[derive(Debug, Clone, Default, Serialize, Deserialize)]
-#[serde(default)]
+#[serde(default, deny_unknown_fields)]
 pub struct Keybinds {
     /// Leader key prefix for keybinds (default: ctrl+a)
     pub leader: LeaderKey,
@@ -152,7 +147,7 @@ pub struct Keybinds {
 
 /// Server configuration
 #[derive(Debug, Clone, Serialize, Deserialize)]
-#[serde(default)]
+#[serde(default, deny_unknown_fields)]
 pub struct Config {
     /// Human-readable hostname for generating link names.
     #[serde(default = "default_host_name")]
@@ -170,21 +165,13 @@ pub struct Config {
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub tcp_port: Option<u16>,
 
-    /// WebSocket port for rich clients (None = don't listen)
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub websocket_port: Option<u16>,
-
     /// Whether to add random suffixes to link names (default: true).
     /// Set to false in tests for deterministic link names.
-    /// Only configurable in debug/test builds; release always uses true.
     #[serde(default = "default_randomise_link_name")]
-    #[cfg_attr(not(any(debug_assertions, test)), serde(skip_deserializing))]
     pub randomise_link_name: bool,
 
     /// Path to state file.
-    /// Only configurable in debug/test builds; release always uses default.
     #[serde(default = "default_state_path")]
-    #[cfg_attr(not(any(debug_assertions, test)), serde(skip_deserializing))]
     pub state_path: PathBuf,
 
     /// Whether the cloud server should handle TLS itself (default: true).
@@ -209,13 +196,6 @@ pub struct Config {
     #[serde(default, skip_serializing_if = "HashMap::is_empty")]
     pub minimum_client_versions: HashMap<String, String>,
 
-    /// Idle timeout in seconds for non-Unix connections. Both peers drop
-    /// the connection after this many seconds without inbound traffic. The
-    /// dialer sends heartbeats at its own cadence (currently idle_timeout / 3)
-    /// to keep the connection alive.
-    #[serde(default = "default_idle_timeout_secs")]
-    pub idle_timeout_secs: u32,
-
     /// Keybind configuration
     #[serde(default)]
     pub keybinds: Keybinds,
@@ -231,14 +211,12 @@ impl Default for Config {
             cloud_url: default_cloud_url(),
             socket_path: default_socket_path(),
             tcp_port: None,
-            websocket_port: None,
             randomise_link_name: default_randomise_link_name(),
             state_path: default_state_path(),
             enforce_tls_in_cloud_mode: default_enforce_tls_in_cloud_mode(),
             enable_cloud_mode: None,
             prevent_idle_sleep: None,
             minimum_client_versions: HashMap::new(),
-            idle_timeout_secs: default_idle_timeout_secs(),
             keybinds: Keybinds::default(),
             path: None,
         }
@@ -271,29 +249,11 @@ impl Config {
             return Err(ConfigError::Invalid("host_name must not be empty".into()));
         }
 
-        if self.idle_timeout_secs == 0 {
+        // Cloud servers must have TCP configured.
+        if is_cloud && self.tcp_port.is_none() {
             return Err(ConfigError::Invalid(
-                "idle_timeout_secs must be greater than zero".into(),
+                "cloud mode requires tcp_port to be set".into(),
             ));
-        }
-        if self.idle_timeout_secs > MAX_IDLE_TIMEOUT_SECS {
-            return Err(ConfigError::Invalid(format!(
-                "idle_timeout_secs must be at most {MAX_IDLE_TIMEOUT_SECS}"
-            )));
-        }
-
-        // Cloud servers must have TCP and WebSocket ports configured
-        if is_cloud {
-            if self.tcp_port.is_none() {
-                return Err(ConfigError::Invalid(
-                    "cloud mode requires tcp_port to be set".into(),
-                ));
-            }
-            if self.websocket_port.is_none() {
-                return Err(ConfigError::Invalid(
-                    "cloud mode requires websocket_port to be set".into(),
-                ));
-            }
         }
 
         // Release builds must use HTTPS for cloud URLs to protect tokens in transit
@@ -413,7 +373,6 @@ mod tests {
     fn ports_default_to_none() {
         let config = Config::default();
         assert_eq!(config.tcp_port, None);
-        assert_eq!(config.websocket_port, None);
         assert_eq!(config.prevent_idle_sleep, None);
         assert_eq!(config.enable_cloud_mode, None);
     }
@@ -448,6 +407,12 @@ mod tests {
     }
 
     #[test]
+    fn unknown_config_field_is_rejected() {
+        let error = serde_yaml::from_str::<Config>("check_for_updates: false\n").unwrap_err();
+        assert!(error.to_string().contains("unknown field"));
+    }
+
+    #[test]
     fn validate_default_config_ok() {
         let config = Config::default();
         assert!(config.validate(false).is_ok());
@@ -455,29 +420,15 @@ mod tests {
 
     #[test]
     fn validate_cloud_requires_tcp_port() {
-        let config = Config {
-            websocket_port: Some(9002),
-            ..Config::default()
-        };
+        let config = Config::default();
         let err = config.validate(true).unwrap_err();
         assert!(err.to_string().contains("tcp_port"));
     }
 
     #[test]
-    fn validate_cloud_requires_websocket_port() {
+    fn validate_cloud_ok_with_tcp_port() {
         let config = Config {
             tcp_port: Some(9001),
-            ..Config::default()
-        };
-        let err = config.validate(true).unwrap_err();
-        assert!(err.to_string().contains("websocket_port"));
-    }
-
-    #[test]
-    fn validate_cloud_ok_with_both_ports() {
-        let config = Config {
-            tcp_port: Some(9001),
-            websocket_port: Some(9002),
             ..Config::default()
         };
         assert!(config.validate(true).is_ok());
@@ -517,26 +468,6 @@ mod tests {
             ..Config::default()
         };
         assert!(config.validate(false).is_ok());
-    }
-
-    #[test]
-    fn validate_rejects_zero_idle_timeout() {
-        let config = Config {
-            idle_timeout_secs: 0,
-            ..Config::default()
-        };
-        let err = config.validate(false).unwrap_err();
-        assert!(err.to_string().contains("idle_timeout_secs"));
-    }
-
-    #[test]
-    fn validate_rejects_idle_timeout_that_overflows_milliseconds() {
-        let config = Config {
-            idle_timeout_secs: MAX_IDLE_TIMEOUT_SECS + 1,
-            ..Config::default()
-        };
-        let err = config.validate(false).unwrap_err();
-        assert!(err.to_string().contains(&MAX_IDLE_TIMEOUT_SECS.to_string()));
     }
 
     #[test]

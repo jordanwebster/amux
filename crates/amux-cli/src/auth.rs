@@ -13,13 +13,9 @@ use std::path::{Path, PathBuf};
 use std::sync::Mutex;
 use std::time::{Duration as StdDuration, SystemTime};
 
-use amux::{AccessToken, AuthError, CredentialProvider};
-use oauth2::basic::{BasicClient, BasicErrorResponseType};
-use oauth2::devicecode::StandardDeviceAuthorizationResponse;
-use oauth2::reqwest::async_http_client;
-use oauth2::{
-    AuthUrl, ClientId, DeviceAuthorizationUrl, RefreshToken, RequestTokenError, Scope,
-    TokenResponse, TokenUrl,
+use amux::{
+    AccessToken, AuthError, CredentialProvider, OAuthError, refresh_access_token,
+    run_device_flow as run_oauth_device_flow,
 };
 use serde::{Deserialize, Serialize};
 use thiserror::Error;
@@ -44,7 +40,7 @@ impl DeviceFlowProvider {
 
     /// Run device flow interactively and persist the resulting refresh token.
     pub async fn run_device_flow(&self) -> Result<(), DeviceFlowError> {
-        let refresh_token = device_flow(&self.cloud_url).await?;
+        let refresh_token = run_oauth_device_flow(&self.cloud_url).await?;
         set_refresh_token(&self.auth_path, Some(refresh_token))?;
         Ok(())
     }
@@ -133,18 +129,6 @@ pub enum DeviceFlowError {
 }
 
 #[derive(Debug, Error)]
-pub enum OAuthError {
-    #[error("OAuth configuration error: {0}")]
-    Config(String),
-    #[error("OAuth request error: {0}")]
-    Request(String),
-    #[error("Refresh token expired or revoked — run 'amux init' to re-authenticate")]
-    RefreshTokenExpired,
-    #[error("No refresh token returned")]
-    NoRefreshToken,
-}
-
-#[derive(Debug, Error)]
 pub enum AuthStateError {
     #[error("IO error: {0}")]
     Io(#[from] std::io::Error),
@@ -152,106 +136,8 @@ pub enum AuthStateError {
     Parse(#[from] serde_yaml::Error),
 }
 
-/// Run the OAuth 2.0 device authorization flow.
-async fn device_flow(cloud_url: &str) -> Result<String, OAuthError> {
-    let auth_url = AuthUrl::new(format!("{cloud_url}/connect/authorize"))
-        .map_err(|e| OAuthError::Config(e.to_string()))?;
-    let token_url = TokenUrl::new(format!("{cloud_url}/connect/token"))
-        .map_err(|e| OAuthError::Config(e.to_string()))?;
-    let device_auth_url =
-        DeviceAuthorizationUrl::new(format!("{cloud_url}/connect/deviceauthorization"))
-            .map_err(|e| OAuthError::Config(e.to_string()))?;
-
-    let client = BasicClient::new(
-        ClientId::new("cli".to_string()),
-        None,
-        auth_url,
-        Some(token_url),
-    )
-    .set_device_authorization_url(device_auth_url);
-
-    let device_auth_request = client
-        .exchange_device_code()
-        .map_err(|e| OAuthError::Config(e.to_string()))?;
-
-    let details: StandardDeviceAuthorizationResponse = device_auth_request
-        .add_scope(Scope::new("openid".to_string()))
-        .add_scope(Scope::new("offline_access".to_string()))
-        .add_scope(Scope::new("api".to_string()))
-        .request_async(async_http_client)
-        .await
-        .map_err(|e| OAuthError::Request(e.to_string()))?;
-
-    println!("\nTo authenticate, visit:");
-    println!("  {}", details.verification_uri().as_str());
-    if let Some(complete_uri) = details.verification_uri_complete() {
-        println!("\nOr open this URL directly:");
-        println!("  {}", complete_uri.secret());
-    }
-    println!("\nAnd enter code: {}", details.user_code().secret());
-    println!("\nWaiting for authentication...");
-
-    let token_response = client
-        .exchange_device_access_token(&details)
-        .request_async(async_http_client, tokio::time::sleep, None)
-        .await
-        .map_err(|e| OAuthError::Request(e.to_string()))?;
-
-    token_response
-        .refresh_token()
-        .map(|token| token.secret().clone())
-        .ok_or(OAuthError::NoRefreshToken)
-}
-
-/// Get a new access token using a refresh token.
-async fn refresh_access_token(
-    cloud_url: &str,
-    refresh_token: &str,
-) -> Result<(AccessToken, Option<String>), OAuthError> {
-    let token_url = TokenUrl::new(format!("{cloud_url}/connect/token"))
-        .map_err(|e| OAuthError::Config(e.to_string()))?;
-    let auth_url = AuthUrl::new(format!("{cloud_url}/connect/authorize"))
-        .map_err(|e| OAuthError::Config(e.to_string()))?;
-
-    let client = BasicClient::new(
-        ClientId::new("cli".to_string()),
-        None,
-        auth_url,
-        Some(token_url),
-    );
-
-    let token_response = client
-        .exchange_refresh_token(&RefreshToken::new(refresh_token.to_string()))
-        .request_async(async_http_client)
-        .await
-        .map_err(|e| match &e {
-            RequestTokenError::ServerResponse(resp) => match resp.error() {
-                BasicErrorResponseType::InvalidGrant => OAuthError::RefreshTokenExpired,
-                other => {
-                    let desc = resp
-                        .error_description()
-                        .map(|description| format!(": {description}"))
-                        .unwrap_or_default();
-                    OAuthError::Request(format!("{}{desc}", other.as_ref()))
-                }
-            },
-            _ => OAuthError::Request(e.to_string()),
-        })?;
-
-    let access_token = AccessToken {
-        bearer: token_response.access_token().secret().clone(),
-        expires_at: token_response
-            .expires_in()
-            .map(|duration| SystemTime::now() + duration),
-    };
-    let new_refresh = token_response
-        .refresh_token()
-        .map(|token| token.secret().clone());
-
-    Ok((access_token, new_refresh))
-}
-
 #[derive(Debug, Default, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
 struct AuthFile {
     #[serde(default, skip_serializing_if = "Option::is_none")]
     refresh_token: Option<String>,
@@ -356,6 +242,16 @@ mod tests {
             load_refresh_token(&path).unwrap().as_deref(),
             Some("second-refresh")
         );
+    }
+
+    #[test]
+    fn auth_file_rejects_unknown_fields() {
+        let dir = tempdir().unwrap();
+        let path = dir.path().join("auth.yaml");
+        fs::write(&path, "refresh_token: refresh\nlegacy: true\n").unwrap();
+
+        let error = load_refresh_token(&path).unwrap_err();
+        assert!(error.to_string().contains("unknown field"));
     }
 
     #[test]

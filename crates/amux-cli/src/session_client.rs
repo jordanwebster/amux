@@ -1,12 +1,12 @@
+use std::collections::{HashMap, HashSet};
 use std::io::{self, Read, Write};
 use std::path::Path;
 
-use amux::agent::claude::io::{self as claude_io, ClaudeRawV1Args};
-use amux::protocol::session::{SubscribeSessionEvent, SubscribeSessionFrame};
-use amux::protocol::{AgentType, CreateAgentRequest, Route, ShutdownReason, TerminalSize};
+use amux::claude_io::{self, ClaudeRawV1Args};
 use amux::{
-    AgentIdentifier, Client, ClientError, Config, LeaderKey, SendInputRequest,
-    SubscribeSessionRequest,
+    AgentIdentifier, AgentType, Client, ClientError, Config, CreateAgentRequest, LeaderKey,
+    SendInputRequest, SessionCloseReason, ShutdownReason, SubscribeSessionEvent,
+    SubscribeSessionRequest, TerminalSize,
 };
 use anyhow::{Result, anyhow};
 use crossterm::terminal;
@@ -27,6 +27,7 @@ enum StdinEvent {
 enum ExitReason {
     Detached,
     SessionEnded,
+    SessionClosed(SessionCloseReason),
     Shutdown(ShutdownReason),
     Error(anyhow::Error),
 }
@@ -60,9 +61,10 @@ pub async fn new_agent(
 
     tracing::info!(agent_id = %agent_id, ?name, "creating agent");
 
-    let entry = rpc
+    let agent = rpc
         .create_agent(CreateAgentRequest {
             agent_id,
+            host_id: None,
             name: name.map(|s| s.to_string()),
             agent_type,
             working_dir: working_dir.clone(),
@@ -74,8 +76,7 @@ pub async fn new_agent(
 
     subscribe_and_stream(
         rpc,
-        entry.agent.id,
-        entry.route,
+        AgentIdentifier::from(agent.id),
         Some(terminal_size),
         config.keybinds.leader.clone(),
         &config.state_path,
@@ -88,21 +89,12 @@ pub async fn attach(target: Option<&str>, config: &Config) -> Result<()> {
     let rpc = get_client(config).await?;
     let terminal_size = get_terminal_size();
 
-    let (route_suffix, agent_id) = match target {
-        Some(identifier) => {
-            let info = match rpc.resolve_agent(AgentIdentifier::from(identifier)).await {
-                Ok(info) => info,
-                Err(ClientError::AgentNotFound(_)) => {
-                    return Err(anyhow!("agent not found: {identifier}"));
-                }
-                Err(error) => return Err(error.into()),
-            };
-            (info.route, info.agent.id)
-        }
+    let agent = match target {
+        Some(identifier) => AgentIdentifier::from(identifier),
         None => {
             let agents = rpc.list_agents().await?;
-            if let Some(info) = agents.first() {
-                (info.route.clone(), info.agent.id)
+            if let Some(agent) = agents.first() {
+                AgentIdentifier::from(agent.id)
             } else {
                 eprintln!("No agents running. Use 'amux new' to create one.");
                 return Ok(());
@@ -110,12 +102,11 @@ pub async fn attach(target: Option<&str>, config: &Config) -> Result<()> {
         }
     };
 
-    tracing::info!(agent_id = %agent_id, route = %route_suffix, "attaching");
+    tracing::info!(?agent, "attaching");
 
     subscribe_and_stream(
         rpc,
-        agent_id,
-        route_suffix,
+        agent,
         Some(terminal_size),
         config.keybinds.leader.clone(),
         &config.state_path,
@@ -131,25 +122,49 @@ pub async fn list_agents(config: &Config) -> Result<()> {
         println!("No agents running.");
     } else {
         agents.sort_by(|a, b| {
-            let a_id = a.agent.id.to_string();
-            let b_id = b.agent.id.to_string();
-            let a_name = a.agent.name.as_deref().unwrap_or(&a_id);
-            let b_name = b.agent.name.as_deref().unwrap_or(&b_id);
+            let a_id = a.id.to_string();
+            let b_id = b.id.to_string();
+            let a_name = a.name.as_deref().unwrap_or(&a_id);
+            let b_name = b.name.as_deref().unwrap_or(&b_id);
             a_name.cmp(b_name)
         });
+        let multiple_hosts = agents
+            .iter()
+            .map(|agent| agent.host_id)
+            .collect::<HashSet<_>>()
+            .len()
+            > 1;
+        let mut name_counts = HashMap::new();
+        for agent in &agents {
+            if let Some(name) = &agent.name {
+                *name_counts.entry(name.clone()).or_insert(0usize) += 1;
+            }
+        }
         println!("Running agents:");
-        for entry in agents {
-            let agent_id_str = entry.agent.id.to_string();
-            let display_name = entry.agent.name.as_deref().unwrap_or(&agent_id_str);
-            if entry.is_remote() {
-                println!(
-                    "  {} - {} (via {})",
-                    display_name,
-                    entry.agent.working_dir.display(),
-                    entry.route
-                );
+        for agent in agents {
+            let agent_id_str = agent.id.to_string();
+            let display_name = agent.name.as_deref().unwrap_or(&agent_id_str);
+            let name_is_ambiguous = agent
+                .name
+                .as_ref()
+                .and_then(|name| name_counts.get(name))
+                .is_some_and(|count| *count > 1);
+            let mut labels = Vec::new();
+            if name_is_ambiguous {
+                labels.push(format!("id {}", agent.id));
+            }
+            if multiple_hosts {
+                labels.push(format!("host {}", short_uuid(agent.host_id)));
+            }
+            if labels.is_empty() {
+                println!("  {} - {}", display_name, agent.working_dir.display());
             } else {
-                println!("  {} - {}", display_name, entry.agent.working_dir.display());
+                println!(
+                    "  {} ({}) - {}",
+                    display_name,
+                    labels.join(", "),
+                    agent.working_dir.display()
+                );
             }
         }
     }
@@ -158,18 +173,20 @@ pub async fn list_agents(config: &Config) -> Result<()> {
     Ok(())
 }
 
+fn short_uuid(id: Uuid) -> String {
+    id.to_string()[..8].to_string()
+}
+
 async fn subscribe_and_stream(
     rpc: Client,
-    agent_id: Uuid,
-    route: Route,
+    agent: AgentIdentifier,
     terminal_size: Option<TerminalSize>,
     leader: LeaderKey,
     state_path: &Path,
 ) -> Result<()> {
     let session = rpc
         .subscribe_session(SubscribeSessionRequest {
-            id: agent_id,
-            route: route.clone(),
+            agent: agent.clone(),
             io_protocol: claude_io::RAW_V1.to_string(),
             args: claude_io::encode_raw_v1_args(ClaudeRawV1Args {
                 terminal_size,
@@ -180,9 +197,9 @@ async fn subscribe_and_stream(
         .await
         .map_err(|error| anyhow!("failed to subscribe to session: {error}"))?;
 
-    tracing::info!(agent_id = %agent_id, "subscribed to raw session");
+    tracing::info!(?agent, "subscribed to raw session");
 
-    run_attached(rpc, session, agent_id, route, leader, state_path).await
+    run_attached(rpc, session, agent, leader, state_path).await
 }
 
 fn handle_subscribe_session_event(event: SubscribeSessionEvent) {
@@ -192,14 +209,16 @@ fn handle_subscribe_session_event(event: SubscribeSessionEvent) {
             io::stdout().flush().ok();
         }
         SubscribeSessionEvent::Opened | SubscribeSessionEvent::ReplayComplete { .. } => {}
+        SubscribeSessionEvent::Closed { reason } => {
+            tracing::info!(?reason, "session closed");
+        }
     }
 }
 
 async fn run_attached(
     rpc: Client,
-    session: amux::SessionStream,
-    agent_id: Uuid,
-    route: Route,
+    mut session: amux::SessionStream,
+    agent: AgentIdentifier,
     leader: LeaderKey,
     state_path: &Path,
 ) -> Result<()> {
@@ -316,8 +335,7 @@ async fn run_attached(
                 Some(StdinEvent::Data(data)) => {
                     if rpc
                         .send_input(SendInputRequest {
-                            id: agent_id,
-                            route: route.clone(),
+                            agent: agent.clone(),
                             io_protocol: claude_io::RAW_V1.to_string(),
                             payload: data.into(),
                         })
@@ -330,17 +348,13 @@ async fn run_attached(
                 Some(StdinEvent::Detach) => break ExitReason::Detached,
                 None => break ExitReason::SessionEnded,
             },
-            frame = session.recv() => match frame {
-                Ok(SubscribeSessionFrame::Event(event)) => {
+            event = session.recv() => match event {
+                Ok(event) => {
+                    if let SubscribeSessionEvent::Closed { reason } = event {
+                        tracing::info!(?reason, "session closed");
+                        break ExitReason::SessionClosed(reason);
+                    }
                     handle_subscribe_session_event(event);
-                }
-                Ok(SubscribeSessionFrame::Response(Ok(()))) => {
-                    tracing::info!("agent ended");
-                    break ExitReason::SessionEnded;
-                }
-                Ok(SubscribeSessionFrame::Response(Err(error))) => {
-                    tracing::info!(error = %error, "session ended with error");
-                    break ExitReason::SessionEnded;
                 }
                 Err(ClientError::ServerShutdown(reason)) => {
                     tracing::info!(reason = %reason, "server shutdown");
@@ -348,7 +362,7 @@ async fn run_attached(
                 }
                 Err(error) => {
                     if let ClientError::Protocol(error) = &error {
-                        tracing::info!(error = %error, "session route failed");
+                        tracing::info!(error = %error, "session failed");
                     } else {
                         tracing::warn!(error = %error, "session read error");
                     }
@@ -357,10 +371,6 @@ async fn run_attached(
             }
         }
     };
-
-    if matches!(exit_reason, ExitReason::Detached) {
-        let _ = session.cancel().await;
-    }
 
     drop(raw_mode_guard);
 
@@ -381,10 +391,25 @@ async fn run_attached(
             print_update_banner(state_path);
             std::process::exit(0);
         }
+        ExitReason::SessionClosed(reason) => {
+            println!("\n[{}]", session_close_label(&reason));
+            print_update_banner(state_path);
+            std::process::exit(0);
+        }
     }
 
     print_update_banner(state_path);
     Ok(())
+}
+
+fn session_close_label(reason: &SessionCloseReason) -> &'static str {
+    match reason {
+        SessionCloseReason::AgentDeleted | SessionCloseReason::AgentExited { .. } => {
+            "session ended"
+        }
+        SessionCloseReason::HostUnreachable => "host unreachable",
+        SessionCloseReason::InternalError { .. } => "session error",
+    }
 }
 
 /// RAII guard to restore terminal mode on drop

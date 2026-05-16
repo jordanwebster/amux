@@ -1,8 +1,7 @@
 # amux: New Architecture
 
-Status: **draft, in active design.** Reference sketch at `~/new_architecture.png`.
-Sections marked _(TODO)_ are placeholders to be filled in as we walk through
-the remaining user journeys.
+Status: **implemented baseline; kept as a living spec.** Reference sketch at
+`~/new_architecture.png`.
 
 The intent is for this document to be implementable as-written: it should be
 specific enough that an engineer (or agent) can build the system from these
@@ -77,7 +76,7 @@ The redesign extracts a small number of cleanly-separated concerns:
 - **Service** — an in-process Rust struct owning state + methods + event
   source(s). Three top-level services live on each daemon:
   `RoutingService`, `AgentService`, `ClientService`. See §4.5.
-- **Agent** — a running process (PTY or SDK) owned by exactly one host.
+- **Agent** — a running process owned by exactly one host.
 - **Session** — a subscription to an agent's I/O stream.
 
 ---
@@ -126,8 +125,8 @@ by R (T-1/T-2).
 
 Key constraints reflected here:
 
-- Relays enforce per-user isolation (I-3) — every entity shown belongs
-  to one user's `ServerUserState`.
+- Relays enforce per-user isolation (I-3) — every cloud user gets a separate
+  routing/tunnel runtime.
 - Clients connect only to `ClientService` (C-1, C-3); they never speak
   the routing protocol and never reach `AgentService` or
   `RoutingService` directly.
@@ -174,9 +173,10 @@ A single `amux.proto` containing three services:
 Per-`io_protocol` payload types (`ClaudeRawV1*`, `ClaudePtyTranscriptV1*`,
 etc.) may eventually move to their own proto files as that catalog grows.
 
-Authentication is **always** in gRPC metadata (`authorization: Bearer
-<jwt>`), validated by a `tonic` interceptor. Auth never appears in
-protobuf message bodies.
+Cloud routing authentication is in gRPC metadata (`authorization: Bearer
+<jwt>`), validated by a `tonic` interceptor. Direct non-cloud host links are
+plain operator-requested `RoutingService.Connect` streams without JWT auth.
+Auth never appears in protobuf message bodies.
 
 ### 4.3 Transports and gRPC
 
@@ -192,12 +192,13 @@ gRPC over HTTP/2 is the universal RPC layer. Transports below HTTP/2:
 | `tls.rs`                      | **Kept.** rustls config + accept helper.                 |
 | `WebSocketTransport`          | **Removed.** No consumer.                                |
 | `MemoryTransport`             | **Reduced.** `tokio::io::duplex` (no wrapper).           |
-| —                             | **`TunnelTransport` (new).** Lives under `routing/`, not `transport/`. See §6. |
+| —                             | **`TunnelTransport` (new).** Lives under `tunnel/`, not `transport/`. See §6. |
 
 After the cleanup, `crates/amux/src/transport/` shrinks to listener-setup
-helpers for Unix and TCP+TLS (each producing a `Stream<Item = Result<IO, _>>`
-suitable for `tonic::transport::Server::serve_with_incoming`), plus the
-rustls bits. Everything else is plain `tokio::io::*` and tonic types.
+helpers for Unix, TCP/TLS, and in-process channels (each producing a
+`Stream<Item = Result<IO, _>>` or a tonic `Channel` suitable for the local
+service boundary), plus the rustls bits. Everything else is plain
+`tokio::io::*` and tonic types.
 
 Also dropped from today's protocol stack:
 
@@ -238,13 +239,13 @@ service ClientService {
   rpc SubscribeAgents(SubscribeAgentsRequest) returns (stream SubscribeAgentsResponse);
 
   // Lifecycle
-  rpc CreateAgent(CreateAgentRequest) returns (CreateAgentResponse);
-  rpc RenameAgent(RenameAgentRequest) returns (RenameAgentResponse);
-  rpc DeleteAgent(DeleteAgentRequest) returns (DeleteAgentResponse);
+  rpc CreateAgent(ClientCreateAgentRequest) returns (CreateAgentResponse);
+  rpc RenameAgent(ClientRenameAgentRequest) returns (RenameAgentResponse);
+  rpc DeleteAgent(ClientDeleteAgentRequest) returns (DeleteAgentResponse);
 
   // Session
-  rpc SubscribeSession(SubscribeSessionRequest) returns (stream SubscribeSessionResponse);
-  rpc SendInput(SendInputRequest)               returns (SendInputResponse);
+  rpc SubscribeSession(ClientSubscribeSessionRequest) returns (stream SubscribeSessionResponse);
+  rpc SendInput(ClientSendInputRequest)               returns (SendInputResponse);
 
   // Admin (local-only by nature)
   rpc Debug(DebugRequest)                       returns (DebugResponse);
@@ -298,23 +299,24 @@ message AgentUp      { Agent agent = 1; }
 message AgentDown    { bytes agent_id = 1; }
 message AgentUpdated { Agent agent = 1; }
 
-message CreateAgentRequest {
-  optional bytes  host_id = 1;   // absent ⇒ local host
-  optional string name    = 2;
-  oneof config {
+message ClientCreateAgentRequest {
+  bytes agent_id = 1;            // client-generated UUID
+  optional string name = 2;
+  optional bytes host_id = 3;    // absent ⇒ local host
+  oneof agent {
     ClaudeCreateConfig    claude     = 10;
     TestAgentCreateConfig test_agent = 100;
   }
 }
 message CreateAgentResponse { Agent agent = 1; }
 
-message RenameAgentRequest  { AgentRef agent = 1; string new_name = 2; }
+message ClientRenameAgentRequest  { AgentRef agent = 1; string name = 2; }
 message RenameAgentResponse { Agent agent = 1; }
 
-message DeleteAgentRequest  { AgentRef agent = 1; }
+message ClientDeleteAgentRequest  { AgentRef agent = 1; }
 message DeleteAgentResponse {}
 
-message SubscribeSessionRequest {
+message ClientSubscribeSessionRequest {
   AgentRef agent       = 1;
   string   io_protocol = 2;
   optional bytes args  = 3;   // io_protocol-defined; opaque to ClientService
@@ -324,6 +326,7 @@ message SubscribeSessionResponse {
     SessionOpened  opened          = 1;
     SessionOutput  output          = 2;
     ReplayComplete replay_complete = 3;
+    SessionClosed   closed          = 4;
   }
 }
 
@@ -339,7 +342,7 @@ message SendInputResponse {}
 ```
 
 Admin and hook messages keep today's shapes (`Debug`, `Shutdown`,
-`Suspend`, `Resume`, `ConnectToServer`, `HandleHook`).
+`Suspend`, `Resume`, `HandleHook`).
 
 No `GetServerInfo` / `GetLocalHost` method. If a client needs to know
 which host is "local," it discovers via `SubscribeHosts` (the local host
@@ -349,9 +352,10 @@ appears in that stream like any other).
 
 ```rust
 struct ClientService {
-    user_state: Arc<ServerUserState>,
-    routing:    Arc<RoutingService>,
-    agents:     Arc<AgentService>,
+    local_agents: AgentServiceCtx,
+    server_state: Arc<RwLock<ServerState>>,
+    routing: Arc<RoutingCore>,
+    remote_agent_tunnels: Arc<TunnelPool>,
 
     hosts_model:  RwLock<HashMap<HostId, Host>>,    // relays excluded
     agents_model: RwLock<HashMap<AgentId, Agent>>,  // local + remote merged
@@ -418,10 +422,10 @@ A **remote-agent subscription task** (one per non-relay remote host):
      and emit corresponding downstream events. Same shape as the local
      handler.
    - `SnapshotComplete`: ignored (or used for diagnostics).
-4. If the stream errors before the task is aborted: mark every agent
-   with `host_id == X` as `AgentDown` (in `agents_model` and downstream
-   events); re-open the subscription. Don't terminate the task — the
-   accompanying `HostRemoved` would have aborted it explicitly.
+4. If the stream errors before the task is aborted: keep cached agents for
+   `host_id == X`, log the error, and re-open the subscription. Do not
+   synthesize teardown from the stream error; the accompanying `HostRemoved`
+   is the authoritative cleanup event and aborts the task explicitly.
 
 #### 4.4.5 Method dispatch
 
@@ -441,7 +445,7 @@ if agent.host_id == self.my_host_id {
     self.agents.<method>(...).await
 } else {
     // Remote call via tonic Channel over tunnel.
-    let channel = self.user_state.tunnel_pool.channel_to(agent.host_id).await?;
+    let channel = self.remote_agent_tunnels.channel_to(agent.host_id).await?;
     AgentServiceClient::new(channel).<method>(...).await
 }
 ```
@@ -550,9 +554,8 @@ impl SomeService {
 }
 ```
 
-`ServerUserState` holds `Arc<SomeService>` for each top-level service.
-Services that need to call into each other hold `Arc` references to
-those they depend on.
+Startup constructs the service set and hands each service the `Arc` references
+it needs. There is no central event bus or service graph layer.
 
 #### 4.5.2 Snapshot atomicity
 
@@ -573,14 +576,20 @@ state was empty at the moment of registration.
 
 #### 4.5.3 Backpressure
 
-Each subscriber's receiver is a bounded mpsc. If the producer cannot
-send because the receiver's queue is full:
+Each `EventSource` subscriber's receiver is a bounded mpsc. If the
+producer cannot send because the receiver's queue is full:
 
 - **In-process subscriber**: this is a programming error (model would
   become inconsistent). Log loudly and disconnect the subscriber.
-- **Network subscriber** (gRPC handler forwarding to a remote peer):
+- **Network event subscriber** (a gRPC subscribe handler serving a
+  snapshot-and-deltas stream):
   close the underlying gRPC stream with `RESOURCE_EXHAUSTED`. The peer
   will reconnect and re-snapshot.
+
+`RoutingService.Connect` link writers are transport queues, not
+`EventSource` subscribers. If a link writer cannot accept routing
+deltas, the link is torn down and routing convergence resumes through a
+fresh `Connect` handshake.
 
 #### 4.5.4 Startup ordering
 
@@ -677,8 +686,8 @@ message SubscribeAgentEventsRequest {}
 message SubscribeAgentEventsResponse {
   oneof event {
     AgentUp           agent_up          = 10;
-    AgentUpdated      agent_updated     = 11;
-    AgentDown         agent_down        = 12;
+    AgentDown         agent_down        = 11;
+    AgentUpdated      agent_updated     = 12;
 
     SnapshotComplete  snapshot_complete = 100;
   }
@@ -737,9 +746,9 @@ corresponding inventory event (`AgentUp` / `AgentUpdated` /
 `AgentDown`) to all current subscribers' event queues before the unary
 response returns. There is no cross-stream synchronization: a
 subscriber MAY observe the event before or after it observes the
-unary response on its other RPC. This matches today's behaviour
-(`broadcast_topology_event` is called inside the write lock that
-guards the lifecycle change, before the unary returns).
+unary response on its other RPC. Implementations satisfy this by
+emitting the concrete `AgentEvent` while committing the lifecycle
+state change, before the unary returns.
 
 This means an in-process caller like `ClientService` cannot assume its
 aggregated model has been updated by the time `create_agent` returns;
@@ -887,8 +896,8 @@ imports `claude.proto` and `test_agent.proto` to reference their
 create configs in `CreateAgentRequest`'s oneof.
 
 **`claude.proto`** holds Claude-specific shapes — both the creation
-config (`ClaudeCreateConfig`, `ClaudePtyRuntime`, `ClaudeSdkRuntime`,
-`TerminalSize`) and the session-layer payloads:
+config (`ClaudeCreateConfig`, `TerminalSize`) and the session-layer
+payloads:
 
 - `ClaudeRawV1Args`, `ClaudeRawV1Control`, `ClaudeRawV1ReplayQuery` —
   opaque PTY bytes; resize via control.
@@ -945,11 +954,12 @@ it (after successful auth + handshake) brings the link up; closing it
 tears the link down. After the handshake completes, both sides freely
 send and receive `Message`s in either direction.
 
-Auth: JWT in gRPC metadata. A `tonic` interceptor validates it before the
-handler runs; failure terminates the stream with `UNAUTHENTICATED` before
-any application bytes flow. The interceptor extracts `user_id` from the
-JWT and attaches it to the request extensions; the handler reads it to
-look up or create `ServerUserState`.
+Auth: cloud relay links require JWT in gRPC metadata. A `tonic` interceptor
+validates it before the handler runs; failure terminates the stream with
+`UNAUTHENTICATED` before any application bytes flow. The interceptor extracts
+`user_id` from the JWT and attaches it to the request extensions; the cloud
+handler uses it to select that user's routing/tunnel runtime. Direct non-cloud
+links are unauthenticated and reject `Reauth`/`ReauthAck` as protocol errors.
 
 ### 5.2 Message envelope
 
@@ -1173,11 +1183,11 @@ Forwarding:
 - If `dst` is non-empty: pop `dst.links[0]` — it must name one of this
   host's outgoing links. Send the frame (with the popped `dst`) out
   that link. Drop silently if the link is gone.
-- If `dst` is empty: this host is the endpoint. Validate
-  `tunnel_id.target == my_host_id` (else: protocol violation). Look up
-  the local tunnel keyed by the full `TunnelId`; deliver `payload`.
-  If no such tunnel exists and `target == my_host_id`, create a
-  target-side tunnel (see §6.2).
+- If `dst` is empty: this host is the endpoint. Look up the local
+  tunnel keyed by the full `TunnelId`; if it exists, deliver
+  `payload`. If no such tunnel exists, validate `tunnel_id.target ==
+  my_host_id` (else: protocol violation) and create a target-side
+  tunnel (see §6.2).
 
 `TunnelId` is set by the initiator at tunnel creation and is NEVER
 modified at intermediate hops. `payload` is opaque to the routing layer
@@ -1295,11 +1305,11 @@ The implementation:
 
 1. If a cached `tonic::Channel` exists for `(initiator=me, target=peer)`,
    return it.
-2. Else, look up `peer` in `ServerUserState.hosts`. Use its `route`.
+2. Else, look up `peer` in `RoutingCore`. Use its `route`.
 3. Mint a fresh `TunnelId { initiator: my_host_id, target: peer }`.
 4. Construct a `Tunnel` (the routing-side record) and a `TunnelTransport`
    (the gRPC-side handle).
-5. Insert `Tunnel` into `ServerUserState.tunnels` keyed by `TunnelId`.
+5. Insert `Tunnel` into `TunnelPool` keyed by `TunnelId`.
 6. Build a `tonic::Channel` over the `TunnelTransport` (see §6.6). Cache
    it.
 7. Return the cached `tonic::Channel`.
@@ -1309,7 +1319,7 @@ addressed to this host (`dst` empty, `tunnel_id.target == my_host_id`)
 and no tunnel exists in the registry for that `TunnelId`:
 
 1. Mint a `Tunnel` + `TunnelTransport` pair, with `route` looked up from
-   `ServerUserState.hosts[tunnel_id.initiator].route`.
+   `RoutingCore.host_entry(tunnel_id.initiator).route`.
 2. Insert `Tunnel` into the registry.
 3. Push the `TunnelTransport` onto the tonic Server's incoming-stream
    (an `mpsc::Sender<TunnelTransport>` set up at server start, see §6.7).
@@ -1338,7 +1348,7 @@ impl tonic::transport::Connected for TunnelTransport {
 #[derive(Clone)]
 pub struct TunnelConnectInfo { pub peer: HostId }
 
-/// Internal record in ServerUserState.tunnels. Not exposed publicly.
+/// Internal record in TunnelPool. Not exposed publicly.
 struct Tunnel {
     id:           TunnelId,
     route:        Route,
@@ -1387,16 +1397,9 @@ Backpressure flows end-to-end naturally.
 ### 6.5 Routing-core integration
 
 ```rust
-struct ServerUserState {
-    user_id:             UserId,
-    routing:             Arc<RoutingService>,
-    agents:              Arc<AgentService>,
-    client_service:      Arc<ClientService>,
-    hosts:               HashMap<HostId, HostEntry>,
-    tunnels:             HashMap<TunnelId, Tunnel>,
-    client_channels:     HashMap<HostId, tonic::Channel>,
-    incoming_tunnels_tx: mpsc::Sender<TunnelTransport>,
-    // ...
+struct StartedRoutingServices {
+    routing: Arc<RoutingCore>,
+    tunnels: Arc<TunnelPool>,
 }
 
 struct HostEntry {
@@ -1405,12 +1408,13 @@ struct HostEntry {
 }
 ```
 
-On inbound `TunnelFrame` to this host (`dst` empty, `tunnel_id.target
-== my_host_id`):
+On inbound `TunnelFrame` to this host (`dst` empty):
 
 ```rust
 if let Some(tunnel) = state.tunnels.get(&tunnel_id) {
     tunnel.inbound_tx.send(payload).await.ok();
+} else if tunnel_id.target != my_host_id {
+    return Err(PROTOCOL_ERROR);
 } else {
     let route = state.hosts[&tunnel_id.initiator].route.clone();
     let outbound_link_tx = link_table[&route.links[0]].outgoing_tx();
@@ -1463,8 +1467,7 @@ Each amux server starts one tonic Server with all host↔host services
 
 ```rust
 let (incoming_tx, incoming_rx) = mpsc::channel::<TunnelTransport>(64);
-// Store incoming_tx in ServerUserState.incoming_tunnels_tx for the
-// routing core to push new target-side tunnels.
+// Store incoming_tx in TunnelPool for target-side tunnel creation.
 
 let incoming = tokio_stream::wrappers::ReceiverStream::new(incoming_rx)
     .map(Ok::<_, std::io::Error>);
@@ -1723,7 +1726,7 @@ no in-memory state survives).
 6. **Handshake.** A sends `Hello`. R assigns a new (possibly
    different) link name and sends `HelloAck { accepted }`. Per
    I-12, if A's `host_id` somehow collided with another live host
-   in R's `ServerUserState[user]`, R would reject with
+   in R's routing runtime for the authenticated user, R would reject with
    `HOST_ID_COLLISION` — but A's `host_id` is unique for this
    daemon's lifetime (I-1), so in practice this doesn't fire on
    reconnect.
@@ -1807,8 +1810,8 @@ Each invariant should be implementable and testable.
   bound to the link for its lifetime. A `Reauth` MUST resolve to the
   same `user_id`; if not, the acceptor rejects the `Reauth`.
 - **I-3.** The routing layer prevents cross-tenant tunneling: a relay
-  never forms tunnels between hosts in different users'
-  `ServerUserState`s.
+  keeps separate routing runtimes per authenticated user and never forms
+  tunnels between hosts from different users.
 - **I-11.** Initial JWT validation happens in the gRPC interceptor,
   before any `Message` is read; failure closes the stream with
   `UNAUTHENTICATED`. Parsed claims (user_id, exp) are attached to the
@@ -1836,12 +1839,12 @@ Each invariant should be implementable and testable.
   `GoAway(PROTOCOL_ERROR, drain_timeout_ms: 0)` post-handshake, or
   `HelloAck { error }` pre-handshake.
 - **I-12.** On accept, if `Hello.host.host_id` matches an
-  already-live host within the same `ServerUserState`, the acceptor
+  already-live host within the same routing runtime, the acceptor
   rejects the new connection with
   `HelloAck { error: HOST_ID_COLLISION }` and closes the stream. The
   first established link wins; subsequent collisions cannot displace
-  it. Scope is per-`ServerUserState` — different users may legitimately
-  hold the same `host_id` without colliding.
+  it. Scope is per authenticated user on relays — different users may
+  legitimately hold the same `host_id` without colliding.
 
 ### Routing semantics
 
@@ -1875,8 +1878,10 @@ Each invariant should be implementable and testable.
 - **T-1.** A `TunnelId` is `(initiator_host_id, target_host_id)`. Set
   by the initiator at tunnel-creation time and NEVER modified at
   intermediate hops.
-- **T-2.** A `TunnelFrame` arriving at an endpoint with
-  `tunnel_id.target != my_host_id` is a protocol violation.
+- **T-2.** A `TunnelFrame` arriving at an endpoint for an unknown
+  tunnel with `tunnel_id.target != my_host_id` is a protocol violation.
+  Replies on an existing initiator-side tunnel reuse the original
+  `TunnelId { initiator, target }`.
 - **T-3.** Each endpoint's tunnel registry is keyed by the full
   `TunnelId`. Up to **two** tunnels can exist between any pair of
   hosts (one per `initiator`).
@@ -2041,10 +2046,10 @@ Each invariant should be implementable and testable.
 - **S-5.** Snapshot-then-subscribe is atomic: state lock held briefly
   to capture snapshot AND register subscriber together; deltas after
   release naturally queue behind the snapshot in the receiver.
-- **S-6.** A subscriber whose receive queue fills is disconnected.
-  For in-process subscribers, this is a fatal model-corruption
-  signal; for network subscribers, the gRPC stream is closed with
-  `RESOURCE_EXHAUSTED`.
+- **S-6.** An `EventSource` subscriber whose receive queue fills is
+  disconnected. For in-process subscribers, this is a fatal
+  model-corruption signal; for network event subscribers, the gRPC
+  stream is closed with `RESOURCE_EXHAUSTED`.
 
 ---
 
@@ -2061,10 +2066,11 @@ exists.
   changes later, the host↔host auth model (JWT in initial gRPC
   metadata, validated by an interceptor) is the obvious template;
   `ClientService` would gain a parallel listener, not a new service.
-- **`ConnectToServer` stays on `ClientService`.** Useful as an admin
-  RPC for runtime add-a-relay flows. Not load-bearing on anything
-  else; remove only if a future configuration model fully obsoletes
-  it.
+- **Direct host links.** A non-cloud daemon may expose a plain
+  `RoutingService.Connect` TCP listener when `tcp_port` is configured.
+  `ClientService.ConnectToServer` is the local admin command that opens
+  such an operator-requested link. Cloud relay listeners are separate
+  and remain authenticated.
 - **Multi-route fallback — out of scope for v1.** R-1 (first-route
   only) is the locked policy. The §5.4.2 two-flavour event API is a
   forward-compatibility seam: a future multi-route world would
@@ -2085,34 +2091,51 @@ exists.
 
 ## 10. Target file structure
 
-The implementation should land at this layout. Domain primitives at top
-level; services are thin tonic shims over those primitives.
+The implementation should land at this layout. Domain primitives live at top
+level; service modules own client-facing and agent-facing method logic; startup
+composition stays in `services/startup/`.
 
 ```
 crates/amux/src/
 ├── lib.rs                  # Public API + re-exports
 ├── config.rs               # Daemon config (parse + defaults)
 ├── state.rs                # Persistent state (refresh tokens)
-├── client.rs               # Library API: connect() → ClientServiceClient
+├── client/                 # Library API over generated ClientServiceClient
+│   ├── mod.rs
+│   └── connect.rs          # Local daemon connection helpers
 ├── server.rs               # Daemon entrypoint: startup, listener binding
-├── user_state.rs           # ServerUserState (per-user container)
+├── user_state.rs           # ServerState plus shutdown/suspend requests
+├── debug/                  # Debug dump rendering
+│   ├── mod.rs
+│   └── server.rs
 │
 ├── protocol/               # Proto include + central conversion error
 │   ├── mod.rs              # pub mod proto { tonic::include_proto!("amux.v1"); }
 │   └── error.rs            # ConvertError + impl Into<tonic::Status>
 │
-├── services/               # The three gRPC service impls (thin tonic shims)
+├── services/               # ClientService, AgentService, and startup wiring
 │   ├── mod.rs
-│   ├── routing.rs          # RoutingService (Connect handler)
-│   ├── agent.rs            # AgentService
-│   └── client.rs           # ClientService (aggregation + dispatch)
+│   ├── agent/
+│   │   ├── mod.rs          # AgentService
+│   │   ├── lifecycle.rs
+│   │   └── session_rpc.rs
+│   ├── client.rs           # ClientService (aggregation + dispatch)
+│   └── startup/
+│       ├── mod.rs          # Runtime composition and listener startup
+│       └── cloud.rs        # Cloud connection startup
 │
 ├── routing/                # Routing primitives used by RoutingService
 │   ├── mod.rs
+│   ├── connect/
+│   │   └── mod.rs          # RoutingService.Connect handler and link runtime
 │   ├── core.rs             # hosts table, links table, storage policy (R-1, R-2)
-│   ├── types.rs            # HostId, LinkName, Route, Host, HostEntry + conversions
+│   ├── types.rs            # LinkName, Host, capabilities + conversions
+│   ├── host.rs             # Local/remote host construction and validation
+│   ├── route.rs            # Route domain type
 │   ├── events.rs           # RoutingEvent, HostEvent + EventSources
-│   └── link.rs             # Per-link runtime state (writer mpsc, auth timer)
+│   ├── link.rs             # Link handshake/domain helpers
+│   ├── link_registry.rs    # Per-link writer table and event fanout
+│   └── wire.rs             # Routing-event wire conversions
 │
 ├── tunnel/                 # Tunnel primitives
 │   ├── mod.rs              # Tunnel struct, lifecycle
@@ -2122,15 +2145,22 @@ crates/amux/src/
 │
 ├── agents/                 # Agent implementations
 │   ├── mod.rs              # AgentSession enum + dispatch
-│   ├── types.rs            # AgentId, Agent, AgentRef, SessionCloseReason + conversions
+│   ├── types.rs            # AgentId, Agent, public agent request DTOs
+│   ├── session.rs          # AgentSession and runtime metadata
+│   ├── session_events.rs   # Public session stream events/reasons
 │   ├── events.rs           # AgentEvent + EventSource
+│   ├── wire.rs             # AgentService wire conversions
 │   ├── buffer.rs           # Per-session bounded retained buffer (A-11)
 │   ├── pty.rs              # PtyHandle + spawning
+│   ├── hook.rs             # Hook bootstrap/result types
+│   ├── log_source.rs       # Structured transcript source
+│   ├── naming.rs           # Local name-source precedence
 │   ├── claude/
 │   │   ├── mod.rs
-│   │   ├── session.rs      # ClaudeSession (PTY + SDK runtimes)
+│   │   ├── session/        # ClaudeSession PTY runtime
 │   │   ├── io.rs           # claude_raw_v1 + claude_pty_transcript_v1 handlers
-│   │   └── hook.rs         # Claude hook processing (SessionStart bootstrap)
+│   │   ├── hooks.rs        # Claude hook parsing
+│   │   └── transcript.rs   # Transcript tailing
 │   └── test_agent.rs
 │
 ├── auth/
@@ -2143,7 +2173,8 @@ crates/amux/src/
 └── transport/              # Listener / dial helpers for tonic
     ├── mod.rs
     ├── unix.rs
-    ├── tcp.rs              # TCP + TLS via rustls
+    ├── tcp.rs              # TCP listener/dial helpers
+    ├── tls.rs              # TLS channel/acceptor helpers
     └── memory.rs           # In-process duplex
 ```
 
@@ -2152,10 +2183,10 @@ crates/amux/src/
 - **Domain primitives at top level.** `routing/`, `tunnel/`, `agents/`,
   `auth/`, `transport/` each own a coherent domain. They expose
   ergonomic Rust types and have no gRPC trait impls themselves.
-- **Services are integration shims.** `services/routing.rs` is a small
-  tonic-trait impl over `routing::Core`. Same for agent / client.
-  This keeps the S-1 separation explicit: state + methods in the
-  domain module, wire serving in the service module.
+- **Services are integration shims.** `services/agent/` and
+  `services/client.rs` expose method logic over owned service state.
+  `RoutingService.Connect` lives in `routing/connect/` because the handler is
+  also the per-link protocol runtime; startup only wires those pieces together.
 - **Conversions co-locate with domain types.** `routing/types.rs`
   defines `Host` and `impl From<proto::Host> for Host` next to each
   other. No central `protocol/wire/` dump.
@@ -2172,8 +2203,8 @@ crates/amux/src/
 | `rpc.rs` (custom call-id lifecycle) | tonic |
 | `server/dispatch.rs` (frame dispatch) | tonic-generated service traits |
 | `server/accept.rs` (handshake-on-accept) | tonic accept + `auth/jwt.rs` interceptor |
-| `server/connection.rs` (link reader/writer tasks) | `services/routing.rs` + `routing/link.rs` |
-| `server/cloud.rs` (cloud dial) | `server.rs` startup |
+| `server/connection.rs` (link reader/writer tasks) | `routing/connect/` + `routing/link_registry.rs` |
+| `server/cloud.rs` (cloud dial) | `services/startup/cloud.rs` |
 | `transport/framing.rs` | HTTP/2 framing |
 | `transport/websocket.rs` | dropped entirely |
 | `protocol/agent_lifecycle.rs` and similar | prost-generated types |
@@ -2187,8 +2218,9 @@ crates/amux/src/
 - `agents/pty.rs` — PTY spawning helpers.
 - `auth/oauth.rs`, `auth/credentials.rs` — OAuth device flow and
   credential storage.
-- `transport/unix.rs`, `transport/tcp.rs` — listener and dial
-  helpers (significantly reduced; no framing logic).
+- `transport/unix.rs`, `transport/tcp.rs`, `transport/tls.rs`, and
+  `transport/memory.rs` — listener/dial/channel helpers (significantly
+  reduced; no framing logic).
 - `config.rs`, `state.rs` — daemon config and persistent state.
 
 The implementation should treat this layout as the destination, not as

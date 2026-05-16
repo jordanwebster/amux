@@ -1,7 +1,7 @@
 //! State management for amux.
 //!
 //! State is stored in `~/.local/state/amux/state.yaml` and persists across sessions.
-//! Includes host identity and amux-owned integration state.
+//! Includes amux-owned integration state.
 
 use std::fs::{self, File, OpenOptions};
 use std::io::{Read, Seek, SeekFrom, Write};
@@ -12,7 +12,6 @@ use std::path::{Path, PathBuf};
 use fs2::FileExt;
 use serde::{Deserialize, Serialize};
 use thiserror::Error;
-use uuid::Uuid;
 
 use crate::paths::default_state_path;
 
@@ -26,16 +25,15 @@ pub(crate) enum StateError {
 
 /// Persistent state for amux
 #[derive(Debug, Clone, Serialize, Deserialize, Default)]
+#[serde(default, deny_unknown_fields)]
 pub(crate) struct State {
-    /// Stable host identifier for this amux state directory.
-    #[serde(default)]
-    pub(crate) host_id: Option<Uuid>,
     #[serde(default)]
     pub(crate) claude: ClaudeState,
 }
 
 /// Claude-specific state
 #[derive(Debug, Clone, Serialize, Deserialize, Default)]
+#[serde(default, deny_unknown_fields)]
 pub(crate) struct ClaudeState {
     /// Plugin version last successfully applied to Claude Code.
     pub(crate) applied_plugin_version: Option<String>,
@@ -107,22 +105,6 @@ impl State {
     }
 }
 
-/// Load the persisted host ID, creating and saving one if this is the first run.
-pub(crate) fn load_or_create_host_id(path: &Path) -> Result<Uuid, StateError> {
-    if let Some(host_id) = State::load(path)?.host_id {
-        return Ok(host_id);
-    }
-
-    State::update(path, |state| match state.host_id {
-        Some(host_id) => host_id,
-        None => {
-            let host_id = Uuid::new_v4();
-            state.host_id = Some(host_id);
-            host_id
-        }
-    })
-}
-
 #[cfg(test)]
 mod tests {
     use tempfile::TempDir;
@@ -132,7 +114,7 @@ mod tests {
     #[test]
     fn test_state_default() {
         let state = State::default();
-        assert!(state.host_id.is_none());
+        assert!(state.claude.applied_plugin_version.is_none());
     }
 
     #[test]
@@ -140,7 +122,7 @@ mod tests {
         let temp = TempDir::new().unwrap();
         let path = temp.path().join("state.yaml");
         let state = State::load(&path).unwrap();
-        assert!(state.host_id.is_none());
+        assert!(state.claude.applied_plugin_version.is_none());
     }
 
     #[test]
@@ -149,57 +131,25 @@ mod tests {
         let path = temp.path().join("state.yaml");
 
         State::update(&path, |s| {
-            s.host_id = Some(Uuid::from_u128(1));
+            s.claude.applied_plugin_version = Some("1.0.0".to_string());
         })
         .unwrap();
 
         let loaded = State::load(&path).unwrap();
-        assert_eq!(loaded.host_id, Some(Uuid::from_u128(1)));
+        assert_eq!(
+            loaded.claude.applied_plugin_version.as_deref(),
+            Some("1.0.0")
+        );
     }
 
     #[test]
-    fn test_state_partial_yaml() {
+    fn state_rejects_unknown_fields() {
         let temp = TempDir::new().unwrap();
         let path = temp.path().join("state.yaml");
 
-        // Unknown legacy sections should not prevent loading owned state.
         fs::write(&path, "legacy:\n  ignored: abc123\n").unwrap();
 
-        let loaded = State::load(&path).unwrap();
-        assert!(loaded.host_id.is_none());
-        // Claude section should be default
-        assert!(loaded.claude.applied_plugin_version.is_none());
-        assert!(loaded.claude.applied_marketplace_path.is_none());
-    }
-
-    #[test]
-    fn test_load_or_create_host_id_persists_once() {
-        let temp = TempDir::new().unwrap();
-        let path = temp.path().join("state.yaml");
-
-        let first = load_or_create_host_id(&path).unwrap();
-        let second = load_or_create_host_id(&path).unwrap();
-
-        assert_eq!(first, second);
-        let loaded = State::load(&path).unwrap();
-        assert_eq!(loaded.host_id, Some(first));
-    }
-
-    #[cfg(unix)]
-    #[test]
-    fn test_load_or_create_host_id_reads_existing_readonly_file() {
-        use std::os::unix::fs::PermissionsExt;
-
-        let temp = TempDir::new().unwrap();
-        let path = temp.path().join("state.yaml");
-
-        let host_id = load_or_create_host_id(&path).unwrap();
-
-        let mut perms = fs::metadata(&path).unwrap().permissions();
-        perms.set_mode(0o400);
-        fs::set_permissions(&path, perms).unwrap();
-
-        let loaded = load_or_create_host_id(&path).unwrap();
-        assert_eq!(loaded, host_id);
+        let error = State::load(&path).unwrap_err();
+        assert!(error.to_string().contains("unknown field"));
     }
 }

@@ -66,6 +66,10 @@ pub enum DisconnectReason {
 pub enum SessionFailureReason {
     NotFound,
     Unsupported,
+    AgentDeleted,
+    AgentExited { exit_code: Option<i32> },
+    HostUnreachable,
+    InternalError(String),
     Transport(String),
     Other(String),
 }

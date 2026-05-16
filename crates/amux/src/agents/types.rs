@@ -1,0 +1,74 @@
+use std::path::PathBuf;
+
+use chrono::{DateTime, Utc};
+use serde::{Deserialize, Serialize};
+use uuid::Uuid;
+
+pub(crate) const AGENT_TYPE_CLAUDE: &str = "claude";
+
+#[cfg(any(debug_assertions, test))]
+pub(crate) const AGENT_TYPE_TEST_AGENT: &str = "test-agent";
+
+/// Type of agent to spawn.
+#[derive(Serialize, Deserialize, Debug, Clone, PartialEq)]
+#[serde(tag = "type", rename_all = "snake_case")]
+pub enum AgentType {
+    /// Claude Code agent.
+    Claude,
+    /// Test agent for E2E tests.
+    #[cfg(any(debug_assertions, test))]
+    TestAgent { command: String },
+}
+
+/// Terminal dimensions for PTY creation and resizing.
+#[derive(Serialize, Deserialize, Debug, Clone, Copy, PartialEq, Eq)]
+pub struct TerminalSize {
+    pub rows: u16,
+    pub cols: u16,
+}
+
+impl Default for TerminalSize {
+    fn default() -> Self {
+        Self { rows: 24, cols: 80 }
+    }
+}
+
+/// Request to create a new agent.
+#[derive(Serialize, Deserialize, Debug, Clone)]
+pub struct CreateAgentRequest {
+    pub agent_id: Uuid,
+    #[serde(default)]
+    pub host_id: Option<Uuid>,
+    pub name: Option<String>,
+    pub agent_type: AgentType,
+    pub working_dir: PathBuf,
+    /// Terminal dimensions. None means use defaults.
+    #[serde(default)]
+    pub terminal_size: Option<TerminalSize>,
+    /// Extra arguments passed to the agent command.
+    #[serde(default)]
+    pub args: Vec<String>,
+}
+
+/// Request to rename an existing agent.
+#[derive(Serialize, Deserialize, Debug, Clone)]
+pub struct RenameAgentRequest {
+    pub agent_id: Uuid,
+    pub name: String,
+}
+
+/// Client-visible agent DTO used by service responses and inventory streams.
+#[derive(Serialize, Deserialize, Debug, Clone, PartialEq, Eq)]
+pub struct Agent {
+    pub id: Uuid,
+    pub host_id: Uuid,
+    pub name: Option<String>,
+    pub command: String,
+    pub working_dir: PathBuf,
+    pub agent_type: String,
+    #[serde(default)]
+    pub io_protocols: Vec<String>,
+    pub readonly: bool,
+    pub args: Vec<String>,
+    pub created_at: DateTime<Utc>,
+}

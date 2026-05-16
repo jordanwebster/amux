@@ -8,7 +8,7 @@ use chrono::{DateTime, Utc};
 use serde::{Deserialize, Serialize};
 use uuid::Uuid;
 
-use crate::protocol::message::TerminalSize;
+use crate::agents::TerminalSize;
 
 /// All suspended agent sessions, serialized to disk across server restarts.
 #[derive(Serialize, Deserialize, Debug, Clone)]
@@ -78,13 +78,17 @@ pub(crate) fn save_suspended(
         fs::create_dir_all(parent)?;
     }
     let yaml = serde_yaml::to_string(state).map_err(std::io::Error::other)?;
+    let temp_path = suspended_path.with_extension("yaml.tmp");
 
     let mut opts = OpenOptions::new();
     opts.write(true).create(true).truncate(true);
     #[cfg(unix)]
     opts.mode(0o600);
-    let mut file = opts.open(&suspended_path)?;
+    let mut file = opts.open(&temp_path)?;
     file.write_all(yaml.as_bytes())?;
+    file.sync_all()?;
+    drop(file);
+    fs::rename(&temp_path, &suspended_path)?;
 
     tracing::info!(
         path = %suspended_path.display(),
@@ -94,8 +98,8 @@ pub(crate) fn save_suspended(
     Ok(())
 }
 
-/// Load suspended server state from `<state_dir>/suspended.yaml` and delete the file.
-pub(crate) fn load_and_remove_suspended(
+/// Load suspended server state from `<state_dir>/suspended.yaml`.
+pub(crate) fn load_suspended(
     state_path: &Path,
 ) -> Result<SuspendedServerState, Box<dyn std::error::Error + Send + Sync>> {
     let suspended_path = suspended_path(state_path);
@@ -104,13 +108,25 @@ pub(crate) fn load_and_remove_suspended(
     }
     let yaml = fs::read_to_string(&suspended_path)?;
     let state: SuspendedServerState = serde_yaml::from_str(&yaml)?;
-    fs::remove_file(&suspended_path)?;
     tracing::info!(
         path = %suspended_path.display(),
         count = state.agents.len(),
-        "loaded and removed suspended agents"
+        "loaded suspended agents"
     );
     Ok(state)
+}
+
+/// Delete the suspended server state file if it exists.
+pub(crate) fn remove_suspended(state_path: &Path) -> Result<(), std::io::Error> {
+    let suspended_path = suspended_path(state_path);
+    match fs::remove_file(&suspended_path) {
+        Ok(()) => {
+            tracing::info!(path = %suspended_path.display(), "removed suspended agents");
+            Ok(())
+        }
+        Err(error) if error.kind() == std::io::ErrorKind::NotFound => Ok(()),
+        Err(error) => Err(error),
+    }
 }
 
 fn suspended_path(state_path: &Path) -> PathBuf {
@@ -156,7 +172,7 @@ mod tests {
         let state_path = temp.path().join("state.yaml");
 
         save_suspended(&state_path, &state).unwrap();
-        let loaded = load_and_remove_suspended(&state_path).unwrap();
+        let loaded = load_suspended(&state_path).unwrap();
 
         assert_eq!(loaded.agents.len(), state.agents.len());
         assert!(matches!(
@@ -165,6 +181,8 @@ mod tests {
         ));
 
         let suspended = suspended_path(&state_path);
+        assert!(suspended.exists());
+        remove_suspended(&state_path).unwrap();
         assert!(!suspended.exists());
     }
 }

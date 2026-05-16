@@ -1,5 +1,5 @@
 # test: remote_connection
-# description: Two servers connect via TCP; agent on one is accessible from the other
+# description: Two direct-connected servers can share an agent session
 
 ## Environment
 
@@ -21,29 +21,26 @@ terminal:
 
 ## Test
 
-# Create agent on server A
 @Ta
 > amux new test-agent --name remote-test
 > hello from server A
 hello from server A
 echo: hello from server A
 
-# Server B connects to server A
 @Tb
 > amux server connect 127.0.0.1:$server_a.tcp_port
 Connected to 127.0.0.1:$server_a.tcp_port
 
-# Subscribe to remote agent from server B (route:agent_id format)
-# Server B's link name is "host-b" (its host_name, no random suffix in tests)
+@@sleep 200
+
 @Tb
-> amux attach host-b:remote-test
+> amux attach remote-test
 hello from server A
 echo: hello from server A
 > hello from server B
 hello from server B
 echo: hello from server B
 
-# Verify server A sees the message from B (broadcast works through remote)
 @Ta
 hello from server B
 echo: hello from server B

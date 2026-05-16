@@ -1,7 +1,6 @@
 //! Reactive UI runtime for amux.
 //!
-//! v0 limitations: no reconnect/backoff, no input replay across reconnects,
-//! single-consumer notifications, and opaque session payloads.
+//! UI state and command adapters over the generated ClientService API.
 
 mod agent_cache;
 mod cmd;

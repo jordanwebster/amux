@@ -19,9 +19,15 @@ pub struct TestConfig {
     #[serde(default)]
     pub socket_path: Option<String>,
     #[serde(default)]
+    pub enable_cloud_mode: Option<bool>,
+    #[serde(default)]
+    pub cloud_url: Option<String>,
+    #[serde(default)]
     pub tcp_port: Option<u16>,
     #[serde(default)]
-    pub websocket_port: Option<u16>,
+    pub enforce_tls_in_cloud_mode: Option<bool>,
+    #[serde(default)]
+    pub cloud_relay: bool,
 }
 
 /// Terminal definition in test environment
@@ -45,6 +51,14 @@ pub enum TestStep {
     ExpectOutput(String),
     /// Sleep for a given number of milliseconds
     Sleep(u64),
+    /// Retry the next expected output by rerunning the last one-shot command.
+    RetryNextExpect(RetryPolicy),
+}
+
+#[derive(Debug, Clone, Copy)]
+pub struct RetryPolicy {
+    pub timeout_ms: u64,
+    pub interval_ms: u64,
 }
 
 /// A parsed test case
@@ -288,6 +302,26 @@ pub fn parse_test_content(content: &str) -> Result<TestCase, ParseError> {
                     continue;
                 }
 
+                // Retry directive: @@retry <timeout_ms> <interval_ms>
+                if let Some(rest) = trimmed.strip_prefix("@@retry ") {
+                    flush_pending_output(&mut pending_output_lines, &mut steps);
+                    let parts = rest.split_whitespace().collect::<Vec<_>>();
+                    if parts.len() != 2 {
+                        panic!("Invalid retry directive: {}", rest);
+                    }
+                    let timeout_ms: u64 = parts[0].parse().unwrap_or_else(|_| {
+                        panic!("Invalid retry timeout: {}", parts[0]);
+                    });
+                    let interval_ms: u64 = parts[1].parse().unwrap_or_else(|_| {
+                        panic!("Invalid retry interval: {}", parts[1]);
+                    });
+                    steps.push(TestStep::RetryNextExpect(RetryPolicy {
+                        timeout_ms,
+                        interval_ms,
+                    }));
+                    continue;
+                }
+
                 // Terminal switch - flush any pending output first
                 if let Some(rest) = trimmed.strip_prefix('@') {
                     flush_pending_output(&mut pending_output_lines, &mut steps);
@@ -389,6 +423,38 @@ hello world
         match &test_case.steps[2] {
             TestStep::ExpectOutput(output) => assert_eq!(output, "hello world"),
             _ => panic!("Expected ExpectOutput"),
+        }
+    }
+
+    #[test]
+    fn test_parse_retry_next_expect() {
+        let content = r#"# test: retry
+
+## Environment
+
+config:
+  name: local
+
+terminal:
+  name: T1
+  config: local
+
+## Test
+
+@T1
+> amux list
+@@retry 2000 100
+No agents running.
+"#;
+
+        let test_case = parse_test_content(content).unwrap();
+        assert_eq!(test_case.steps.len(), 4);
+        match &test_case.steps[2] {
+            TestStep::RetryNextExpect(policy) => {
+                assert_eq!(policy.timeout_ms, 2000);
+                assert_eq!(policy.interval_ms, 100);
+            }
+            _ => panic!("Expected RetryNextExpect"),
         }
     }
 

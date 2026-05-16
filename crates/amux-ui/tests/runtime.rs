@@ -7,11 +7,8 @@ use futures_util::StreamExt;
 use tempfile::tempdir;
 use uuid::Uuid;
 
-// Ignored: the runtime's per-host agent-event subscriptions require knowing
-// the local server's host_id, which is not currently exposed to local
-// clients in the handshake. The push-based inventory in this crate is
-// structurally complete, but local-agent inventory is unreachable until
-// that piece lands as part of a forthcoming amux-ui redesign.
+// Ignored: exercises the embedded runtime end to end and is intentionally kept
+// out of the default suite while the UI runtime API is still being reshaped.
 #[tokio::test]
 #[ignore]
 async fn runtime_drives_embedded_agent_session() {
@@ -42,6 +39,7 @@ async fn runtime_drives_embedded_agent_session() {
     external_client
         .create_agent(CreateAgentRequest {
             agent_id: external_agent_id,
+            host_id: None,
             name: Some("external-ui-test".to_string()),
             agent_type: AgentType::TestAgent {
                 command: "cat".to_string(),
@@ -83,6 +81,7 @@ async fn runtime_drives_embedded_agent_session() {
     let agent_id = Uuid::new_v4();
     let create_id = runtime.dispatch(Cmd::CreateAgent(CreateAgentRequest {
         agent_id,
+        host_id: None,
         name: Some("ui-test".to_string()),
         agent_type: AgentType::TestAgent {
             command: "cat".to_string(),
@@ -109,50 +108,51 @@ async fn runtime_drives_embedded_agent_session() {
 
     let attach_id = runtime.dispatch(Cmd::AttachSession {
         id: agent_id,
-        io_protocol: amux::agent::claude::io::RAW_V1.to_string(),
+        io_protocol: amux::claude_io::RAW_V1.to_string(),
         args: None,
     });
-    wait_for(
+    wait_for_both(
         &mut notifications,
         |notification| matches!(notification, Notification::SessionOpened(id) if *id == agent_id),
+        |notification| {
+            matches!(
+                notification,
+                Notification::CommandCompleted {
+                    id,
+                    result: CmdResult::AttachSession
+                } if *id == attach_id
+            )
+        },
     )
-    .await;
-    wait_for(&mut notifications, |notification| {
-        matches!(
-            notification,
-            Notification::CommandCompleted {
-                id,
-                result: CmdResult::AttachSession
-            } if *id == attach_id
-        )
-    })
     .await;
 
     let send_id = runtime.dispatch(Cmd::SendInput {
         id: agent_id,
-        io_protocol: amux::agent::claude::io::RAW_V1.to_string(),
+        io_protocol: amux::claude_io::RAW_V1.to_string(),
         payload: Bytes::from_static(b"hello from ui\n"),
     });
-    wait_for(&mut notifications, |notification| {
-        matches!(
-            notification,
-            Notification::CommandCompleted {
-                id,
-                result: CmdResult::SendInput
-            } if *id == send_id
-        )
-    })
-    .await;
-    wait_for(&mut notifications, |notification| {
-        matches!(
-            notification,
-            Notification::SessionOutput {
-                id,
-                phase: SessionPhase::Live,
-                ..
-            } if *id == agent_id
-        )
-    })
+    wait_for_both(
+        &mut notifications,
+        |notification| {
+            matches!(
+                notification,
+                Notification::CommandCompleted {
+                    id,
+                    result: CmdResult::SendInput
+                } if *id == send_id
+            )
+        },
+        |notification| {
+            matches!(
+                notification,
+                Notification::SessionOutput {
+                    id,
+                    phase: SessionPhase::Live,
+                    ..
+                } if *id == agent_id
+            )
+        },
+    )
     .await;
 
     let delete_id = runtime.dispatch(Cmd::DeleteAgent(agent_id));
@@ -188,4 +188,29 @@ async fn wait_for(
     })
     .await
     .expect("timed out waiting for notification")
+}
+
+async fn wait_for_both(
+    notifications: &mut amux_ui::NotificationStream,
+    mut first: impl FnMut(&Notification) -> bool,
+    mut second: impl FnMut(&Notification) -> bool,
+) {
+    let mut first_seen = false;
+    let mut second_seen = false;
+    tokio::time::timeout(Duration::from_secs(5), async {
+        while let Some(notification) = notifications.next().await {
+            if first(&notification) {
+                first_seen = true;
+            }
+            if second(&notification) {
+                second_seen = true;
+            }
+            if first_seen && second_seen {
+                return;
+            }
+        }
+        panic!("notification stream closed before expected notifications");
+    })
+    .await
+    .expect("timed out waiting for notifications")
 }
