@@ -5,17 +5,17 @@ mod cloud;
 use std::collections::HashMap;
 use std::future::Future;
 use std::ops::{Deref, DerefMut};
-use std::path::Path;
+use std::path::{Path, PathBuf};
 use std::pin::Pin;
 use std::sync::Arc;
 use std::task::{Context, Poll};
 use std::time::{Duration, UNIX_EPOCH};
 
 pub(crate) use cloud::establish_cloud_connection;
-use futures_util::{Stream, stream};
+use futures_util::{Stream, StreamExt, stream};
 use tokio::io::{AsyncRead, AsyncWrite};
-use tokio::net::TcpListener;
-use tokio::sync::{RwLock, mpsc};
+use tokio::net::{TcpListener, TcpStream};
+use tokio::sync::{Mutex, RwLock, Semaphore, mpsc};
 use tokio::task::JoinHandle;
 use tokio_rustls::TlsAcceptor;
 use tonic::codegen::http;
@@ -24,22 +24,38 @@ use tonic::transport::server::Connected;
 use tower::Service;
 use uuid::Uuid;
 
+use crate::audit;
+use crate::connection::ConnectionManager;
+use crate::dispatcher::TunnelDispatcher;
+use crate::identity::{DeviceIdentity, IdentityError};
+use crate::pairing::PairMode;
 use crate::protocol::wire;
 use crate::routing::{
     AuthenticatedRoutingUser, Host, HostReachabilityEvent, Link, RoutingAuthSession,
     RoutingConnectCtx, RoutingConnectorCtx, RoutingCore, RoutingTokenAuthenticator, local_host,
     spawn_routing_event_fanout,
 };
-use crate::services::client::ClientService;
-use crate::services::{AgentServiceCtx, SharedAgentServiceState};
+use crate::services::client::{ClientService, PairingTrustAccess};
+use crate::services::{
+    AgentServiceCtx, LocalPairingIdentity, PairingService, ReachabilityLinkConnector,
+    SharedAgentServiceState,
+};
+#[cfg(test)]
+use crate::transport::PreTrustPairingReachability;
+#[cfg(test)]
+use crate::transport::tcp_incoming;
 use crate::transport::{
-    TcpServerTransport, in_process_channel, in_process_incoming, in_process_transport_pair,
-    tcp_incoming,
+    BoxedGrpcIo, TcpServerTransport, in_process_channel, in_process_transport_pair,
 };
 #[cfg(unix)]
 use crate::transport::{bind_unix_listener, unix_incoming};
+use crate::trust::{SharedTrustStore, TrustStore};
 use crate::tunnel::{TunnelPool, TunnelTransport};
 use crate::user_state::ServerState;
+
+const DEVICE_TLS_HANDSHAKE_TIMEOUT: Duration = Duration::from_secs(10);
+const CLOUD_TLS_HANDSHAKE_CONCURRENCY: usize = 128;
+type CloudTlsTransport = TcpServerTransport<tokio_rustls::server::TlsStream<TcpStream>>;
 
 #[derive(Clone)]
 pub(crate) struct JwtCloudRoutingAuthenticator {
@@ -137,6 +153,7 @@ impl CloudRoutingService {
         }
     }
 
+    #[cfg(test)]
     pub(crate) fn serve_on_tcp_listener(&self, listener: TcpListener) -> JoinHandle<()> {
         spawn_cloud_routing_service_server(self.clone(), tcp_incoming(listener))
     }
@@ -147,37 +164,7 @@ impl CloudRoutingService {
         acceptor: TlsAcceptor,
         handshake_timeout: Duration,
     ) -> JoinHandle<()> {
-        let incoming = stream::unfold(
-            (listener, acceptor, handshake_timeout),
-            |(listener, acceptor, handshake_timeout)| async move {
-                loop {
-                    let (stream, addr) = match listener.accept().await {
-                        Ok(accepted) => accepted,
-                        Err(error) => {
-                            return Some((Err(error), (listener, acceptor, handshake_timeout)));
-                        }
-                    };
-                    if let Err(error) = stream.set_nodelay(true) {
-                        tracing::warn!(error = %error, "failed to set TCP_NODELAY");
-                    }
-                    crate::transport::configure_tcp_keepalive(&stream);
-                    match tokio::time::timeout(handshake_timeout, acceptor.accept(stream)).await {
-                        Ok(Ok(tls_stream)) => {
-                            return Some((
-                                Ok(TcpServerTransport::new(tls_stream)),
-                                (listener, acceptor, handshake_timeout),
-                            ));
-                        }
-                        Ok(Err(error)) => {
-                            tracing::warn!(peer = %addr, error = %error, "TLS handshake failed");
-                        }
-                        Err(_) => {
-                            tracing::warn!(peer = %addr, "TLS handshake timed out");
-                        }
-                    }
-                }
-            },
-        );
+        let incoming = cloud_tls_incoming(listener, acceptor, handshake_timeout);
         spawn_cloud_routing_service_server(self.clone(), incoming)
     }
 
@@ -223,6 +210,70 @@ impl CloudRoutingService {
     }
 }
 
+fn cloud_tls_incoming(
+    listener: TcpListener,
+    acceptor: TlsAcceptor,
+    handshake_timeout: Duration,
+) -> impl Stream<Item = Result<CloudTlsTransport, std::io::Error>> + Send + 'static {
+    let (tx, rx) = mpsc::channel(CLOUD_TLS_HANDSHAKE_CONCURRENCY);
+    let slots = Arc::new(Semaphore::new(CLOUD_TLS_HANDSHAKE_CONCURRENCY));
+
+    tokio::spawn(async move {
+        loop {
+            let permit = tokio::select! {
+                permit = slots.clone().acquire_owned() => {
+                    match permit {
+                        Ok(permit) => permit,
+                        Err(_) => break,
+                    }
+                }
+                _ = tx.closed() => break,
+            };
+
+            let (stream, addr) = tokio::select! {
+                accepted = listener.accept() => {
+                    match accepted {
+                        Ok(accepted) => accepted,
+                        Err(error) => {
+                            if tx.send(Err(error)).await.is_err() {
+                                break;
+                            }
+                            continue;
+                        }
+                    }
+                }
+                _ = tx.closed() => break,
+            };
+
+            if let Err(error) = stream.set_nodelay(true) {
+                tracing::warn!(error = %error, "failed to set TCP_NODELAY");
+            }
+            crate::transport::configure_tcp_keepalive(&stream);
+
+            let acceptor = acceptor.clone();
+            let tx = tx.clone();
+            tokio::spawn(async move {
+                let _permit = permit;
+                match tokio::time::timeout(handshake_timeout, acceptor.accept(stream)).await {
+                    Ok(Ok(tls_stream)) => {
+                        let _ = tx.send(Ok(TcpServerTransport::new(tls_stream))).await;
+                    }
+                    Ok(Err(error)) => {
+                        tracing::warn!(peer = %addr, error = %error, "TLS handshake failed");
+                    }
+                    Err(_) => {
+                        tracing::warn!(peer = %addr, "TLS handshake timed out");
+                    }
+                }
+            });
+        }
+    });
+
+    stream::unfold(rx, |mut rx| async move {
+        rx.recv().await.map(|item| (item, rx))
+    })
+}
+
 #[tonic::async_trait]
 impl wire::routing_service_server::RoutingService for CloudRoutingService {
     type ConnectStream =
@@ -248,7 +299,8 @@ impl wire::routing_service_server::RoutingService for CloudRoutingService {
                 user,
                 self.inner.authenticator.clone(),
                 minimum_client_version,
-            ));
+            ))
+            .with_routing_only_direct_routes();
         <RoutingConnectCtx as wire::routing_service_server::RoutingService>::connect(&ctx, request)
             .await
     }
@@ -302,7 +354,10 @@ where
             let metadata = tonic::metadata::MetadataMap::from_headers(request.headers().clone());
             let auth_result = match bearer_token_from_metadata(&metadata) {
                 Ok(token) => authenticator.authenticate_token(token).await,
-                Err(status) => Err(status),
+                Err(status) => {
+                    audit::auth_jwt_failure(&status);
+                    Err(status)
+                }
             };
             match auth_result {
                 Ok(user) => {
@@ -329,6 +384,7 @@ fn cloud_routing_server(
 pub(crate) struct StartedRoutingServices {
     pub(crate) routing: Arc<RoutingCore>,
     pub(crate) tunnels: Arc<TunnelPool>,
+    pub(crate) connections: Arc<ConnectionManager>,
     local_host: Host,
     _incoming_tunnels_tx: mpsc::Sender<TunnelTransport>,
     tasks: Vec<JoinHandle<()>>,
@@ -339,7 +395,10 @@ struct StartedRoutingParts {
     incoming_tunnels_rx: mpsc::Receiver<TunnelTransport>,
 }
 
-async fn start_routing_services_parts(state: Arc<RwLock<ServerState>>) -> StartedRoutingParts {
+async fn start_routing_services_parts(
+    state: Arc<RwLock<ServerState>>,
+    device_security: Option<DeviceRuntimeSecurity>,
+) -> StartedRoutingParts {
     let (host_id, host_name, is_cloud_server) = {
         let state = state.read().await;
         (
@@ -350,22 +409,32 @@ async fn start_routing_services_parts(state: Arc<RwLock<ServerState>>) -> Starte
     };
     let host = local_host(host_id, &host_name, is_cloud_server);
 
-    let routing = Arc::new(RoutingCore::new());
+    let routing = Arc::new(match device_security.as_ref() {
+        Some(security) => RoutingCore::with_trust_store(security.trust_store.clone()),
+        None => RoutingCore::new(),
+    });
     let (incoming_tunnels_tx, incoming_tunnels_rx) = mpsc::channel(64);
-    let tunnels = Arc::new(TunnelPool::new(
-        host_id,
-        routing.clone(),
-        incoming_tunnels_tx.clone(),
-    ));
+    let tunnels = Arc::new(match device_security {
+        Some(security) => TunnelPool::with_device_tls(
+            host_id,
+            routing.clone(),
+            incoming_tunnels_tx.clone(),
+            security.identity.clone(),
+            security.trust_store.clone(),
+        ),
+        None => TunnelPool::new(host_id, routing.clone(), incoming_tunnels_tx.clone()),
+    });
+    let connections = Arc::new(ConnectionManager::new(routing.clone(), tunnels.clone()));
 
     let mut tasks = Vec::with_capacity(2);
     tasks.push(spawn_routing_event_fanout(routing.clone(), tunnels.link_registry()).await);
-    tasks.push(spawn_tunnel_cleanup_task(routing.clone(), tunnels.clone()).await);
+    tasks.push(connections.clone().attach_routing_events().await);
 
     StartedRoutingParts {
         runtime: StartedRoutingServices {
             routing,
             tunnels,
+            connections,
             local_host: host,
             _incoming_tunnels_tx: incoming_tunnels_tx,
             tasks,
@@ -377,7 +446,7 @@ async fn start_routing_services_parts(state: Arc<RwLock<ServerState>>) -> Starte
 pub(crate) async fn start_routing_services(
     state: Arc<RwLock<ServerState>>,
 ) -> StartedRoutingServices {
-    let mut parts = start_routing_services_parts(state).await;
+    let mut parts = start_routing_services_parts(state, None).await;
     parts
         .runtime
         .tasks
@@ -391,14 +460,45 @@ pub(crate) struct StartedUserServices {
     runtime: StartedRoutingServices,
     #[cfg(test)]
     pub(crate) agent: AgentServiceCtx,
+    #[cfg(test)]
     pub(crate) client: ClientService,
+    trusted_incoming_tx: mpsc::Sender<BoxedGrpcIo>,
+    #[cfg(test)]
+    pairing_incoming_tx: mpsc::Sender<BoxedGrpcIo>,
+    #[cfg(test)]
+    pair_mode: Arc<PairMode>,
+    reachability_links: ReachabilityLinkConnector,
+    dispatcher: TunnelDispatcher,
+}
+
+#[derive(Clone)]
+pub(crate) struct DeviceRuntimeSecurity {
+    identity: DeviceIdentity,
+    trust_store: SharedTrustStore,
+    data_dir: PathBuf,
+}
+
+impl DeviceRuntimeSecurity {
+    pub(crate) fn new(
+        identity: DeviceIdentity,
+        trust_store: TrustStore,
+        data_dir: PathBuf,
+    ) -> Self {
+        Self {
+            identity,
+            trust_store: Arc::new(std::sync::RwLock::new(trust_store)),
+            data_dir,
+        }
+    }
 }
 
 pub(crate) async fn start_user_services(
     state: Arc<RwLock<ServerState>>,
     agent_state: SharedAgentServiceState,
-) -> StartedUserServices {
-    let mut parts = start_routing_services_parts(state.clone()).await;
+    device_security: DeviceRuntimeSecurity,
+) -> Result<StartedUserServices, IdentityError> {
+    let mut parts =
+        start_routing_services_parts(state.clone(), Some(device_security.clone())).await;
     let host_id = parts.runtime.local_host.id;
     let is_cloud_server = {
         let state = state.read().await;
@@ -406,23 +506,70 @@ pub(crate) async fn start_user_services(
     };
 
     let agent = AgentServiceCtx::new(agent_state.clone(), host_id, is_cloud_server);
+    let trust_commit_lock = Arc::new(Mutex::new(()));
+    let pair_mode = Arc::new(PairMode::new());
+    let reachability_links = ReachabilityLinkConnector::new(
+        device_security.identity.clone(),
+        device_security.trust_store.clone(),
+        parts.runtime.local_host.clone(),
+        parts.runtime.routing.clone(),
+        parts.runtime.tunnels.clone(),
+        parts.runtime.connections.clone(),
+    );
     let client = ClientService::new(
         agent.clone(),
         state,
-        parts.runtime.routing.clone(),
-        parts.runtime.tunnels.clone(),
+        parts.runtime.connections.clone(),
+        PairingTrustAccess::new(
+            device_security.identity.public_key().to_vec(),
+            device_security.trust_store.clone(),
+            trust_commit_lock.clone(),
+            device_security.data_dir.clone(),
+        ),
+        pair_mode.clone(),
+        reachability_links.clone(),
     );
 
     client
-        .apply_host_event(HostReachabilityEvent::HostAdded {
+        .apply_host_event(HostReachabilityEvent::Added {
             host: parts.runtime.local_host.clone(),
         })
         .await;
 
-    parts.runtime.tasks.push(spawn_host_service_server(
+    let (trusted_incoming_tx, trusted_incoming_rx) = mpsc::channel(64);
+    let (pairing_incoming_tx, pairing_incoming_rx) = mpsc::channel(64);
+
+    parts.runtime.tasks.push(spawn_trusted_service_server(
+        client.clone(),
         agent.clone(),
-        parts.incoming_tunnels_rx,
+        parts.runtime.routing_connect_ctx(),
+        trusted_incoming_rx,
     ));
+    parts.runtime.tasks.push(spawn_pairing_service_server(
+        PairingService::new(
+            pair_mode.clone(),
+            LocalPairingIdentity::from_device_identity(&device_security.identity),
+            parts.runtime.local_host.name.clone(),
+            device_security.trust_store.clone(),
+            trust_commit_lock,
+            parts.runtime.connections.clone(),
+            device_security.data_dir.clone(),
+        ),
+        pairing_incoming_rx,
+    ));
+    let dispatcher = TunnelDispatcher::new(
+        &device_security.identity,
+        device_security.trust_store.clone(),
+        pair_mode.clone(),
+        parts.runtime.connections.trusted_connections(),
+        trusted_incoming_tx.clone(),
+        pairing_incoming_tx.clone(),
+        DEVICE_TLS_HANDSHAKE_TIMEOUT,
+    )?;
+    parts
+        .runtime
+        .tasks
+        .push(dispatcher.serve_tunnel_receiver(parts.incoming_tunnels_rx));
     parts.runtime.tasks.push(
         client
             .attach_routing_events(parts.runtime.routing.clone())
@@ -443,12 +590,20 @@ pub(crate) async fn start_user_services(
         }
     }
 
-    StartedUserServices {
+    Ok(StartedUserServices {
         runtime: parts.runtime,
         #[cfg(test)]
         agent,
+        #[cfg(test)]
         client,
-    }
+        trusted_incoming_tx,
+        #[cfg(test)]
+        pairing_incoming_tx,
+        #[cfg(test)]
+        pair_mode,
+        reachability_links,
+        dispatcher,
+    })
 }
 
 impl Deref for StartedUserServices {
@@ -468,9 +623,17 @@ impl DerefMut for StartedUserServices {
 impl StartedUserServices {
     pub(crate) fn open_in_process_client_channel(&self) -> (Channel, JoinHandle<()>) {
         let (client_transport, server_transport) = in_process_transport_pair();
-        let incoming = in_process_incoming(server_transport);
-        let server = spawn_client_service_server(self.client.clone(), incoming);
-        (in_process_channel(client_transport), server)
+        let trusted_tx = self.trusted_incoming_tx.clone();
+        let task = tokio::spawn(async move {
+            if trusted_tx
+                .send(BoxedGrpcIo::local_trusted(server_transport))
+                .await
+                .is_err()
+            {
+                tracing::warn!("trusted server closed before in-process stream was accepted");
+            }
+        });
+        (in_process_channel(client_transport), task)
     }
 
     #[cfg(unix)]
@@ -480,10 +643,27 @@ impl StartedUserServices {
     ) -> std::io::Result<()> {
         let listener = bind_unix_listener(socket_path)?;
         let incoming = unix_incoming(listener);
-        let client = self.client.clone();
-        self.tasks
-            .push(spawn_client_service_server(client, incoming));
+        let trusted_tx = self.trusted_incoming_tx.clone();
+        self.tasks.push(spawn_forward_to_trusted(
+            incoming,
+            trusted_tx,
+            "Unix socket",
+        ));
         Ok(())
+    }
+
+    pub(crate) fn serve_external_tcp_listener(&mut self, listener: TcpListener) {
+        let task = self.dispatcher.serve_tcp_listener(listener);
+        self.tasks.push(task);
+    }
+
+    pub(crate) fn spawn_reachability_links(
+        &self,
+        host_name: &str,
+        randomise_link_name: bool,
+    ) -> Vec<JoinHandle<()>> {
+        self.reachability_links
+            .spawn_startup_links(host_name, randomise_link_name)
     }
 }
 
@@ -494,14 +674,8 @@ impl StartedRoutingServices {
             self.routing.clone(),
             self.tunnels.clone(),
             proposed_link,
+            self.connections.route_runtime(),
         )
-    }
-
-    pub(crate) fn serve_routing_service_on_tcp_listener(&mut self, listener: TcpListener) {
-        self.tasks.push(spawn_routing_service_server(
-            self.routing_connect_ctx(),
-            tcp_incoming(listener),
-        ));
     }
 
     fn routing_connect_ctx(&self) -> RoutingConnectCtx {
@@ -509,6 +683,7 @@ impl StartedRoutingServices {
             self.local_host.clone(),
             self.routing.clone(),
             self.tunnels.clone(),
+            self.connections.route_runtime(),
         )
     }
 }
@@ -521,63 +696,91 @@ impl Drop for StartedRoutingServices {
     }
 }
 
-fn spawn_host_service_server(
-    agent: AgentServiceCtx,
-    incoming_rx: mpsc::Receiver<TunnelTransport>,
-) -> JoinHandle<()> {
-    let incoming = stream::unfold(
-        incoming_rx,
-        |mut rx: mpsc::Receiver<TunnelTransport>| async {
-            rx.recv()
-                .await
-                .map(|transport| (Ok::<_, std::io::Error>(transport), rx))
-        },
-    );
-
-    tokio::spawn(async move {
-        if let Err(error) = crate::transport::tonic_server_builder()
-            .add_service(wire::agent_service_server::AgentServiceServer::new(agent))
-            .serve_with_incoming(incoming)
-            .await
-        {
-            tracing::warn!(error = %error, "host AgentService server exited with error");
-        }
-    })
-}
-
 fn spawn_discard_incoming_tunnels_task(
     mut incoming_rx: mpsc::Receiver<TunnelTransport>,
 ) -> JoinHandle<()> {
     tokio::spawn(async move { while incoming_rx.recv().await.is_some() {} })
 }
 
-async fn spawn_tunnel_cleanup_task(
-    routing: Arc<RoutingCore>,
-    tunnels: Arc<TunnelPool>,
+fn spawn_trusted_service_server(
+    client: ClientService,
+    agent: AgentServiceCtx,
+    routing: RoutingConnectCtx,
+    incoming_rx: mpsc::Receiver<BoxedGrpcIo>,
 ) -> JoinHandle<()> {
-    let mut rx = routing.subscribe_hosts().await;
-    tokio::spawn(async move {
-        while let Some(event) = rx.recv().await {
-            tunnels.handle_host_event(&event).await;
-        }
-    })
-}
+    let incoming = stream::unfold(incoming_rx, |mut rx| async {
+        rx.recv()
+            .await
+            .map(|transport| (Ok::<_, std::io::Error>(transport), rx))
+    });
 
-fn spawn_client_service_server<I, IO>(client: ClientService, incoming: I) -> JoinHandle<()>
-where
-    I: Stream<Item = Result<IO, std::io::Error>> + Send + 'static,
-    IO: AsyncRead + AsyncWrite + Connected + Unpin + Send + 'static,
-    IO::ConnectInfo: Clone + Send + Sync + 'static,
-{
     tokio::spawn(async move {
         if let Err(error) = crate::transport::tonic_server_builder()
             .add_service(wire::client_service_server::ClientServiceServer::new(
                 client,
             ))
+            .add_service(wire::agent_service_server::AgentServiceServer::new(agent))
+            .add_service(wire::routing_service_server::RoutingServiceServer::new(
+                routing,
+            ))
             .serve_with_incoming(incoming)
             .await
         {
-            tracing::warn!(error = %error, "ClientService server exited with error");
+            tracing::warn!(error = %error, "Trusted Server exited with error");
+        }
+    })
+}
+
+fn spawn_pairing_service_server(
+    pairing: PairingService,
+    incoming_rx: mpsc::Receiver<BoxedGrpcIo>,
+) -> JoinHandle<()> {
+    let incoming = stream::unfold(incoming_rx, |mut rx| async {
+        rx.recv()
+            .await
+            .map(|transport| (Ok::<_, std::io::Error>(transport), rx))
+    });
+
+    tokio::spawn(async move {
+        if let Err(error) = crate::transport::tonic_server_builder()
+            .add_service(wire::pairing_service_server::PairingServiceServer::new(
+                pairing,
+            ))
+            .serve_with_incoming(incoming)
+            .await
+        {
+            tracing::warn!(error = %error, "Pairing Server exited with error");
+        }
+    })
+}
+
+fn spawn_forward_to_trusted<I, IO>(
+    incoming: I,
+    trusted_tx: mpsc::Sender<BoxedGrpcIo>,
+    label: &'static str,
+) -> JoinHandle<()>
+where
+    I: Stream<Item = Result<IO, std::io::Error>> + Send + 'static,
+    IO: AsyncRead + AsyncWrite + Unpin + Send + 'static,
+{
+    tokio::spawn(async move {
+        let mut incoming = Box::pin(incoming);
+        while let Some(item) = incoming.next().await {
+            match item {
+                Ok(io) => {
+                    if trusted_tx
+                        .send(BoxedGrpcIo::local_trusted(io))
+                        .await
+                        .is_err()
+                    {
+                        tracing::warn!(source = label, "Trusted Server channel closed");
+                        break;
+                    }
+                }
+                Err(error) => {
+                    tracing::warn!(source = label, error = %error, "trusted stream accept failed");
+                }
+            }
         }
     })
 }
@@ -602,34 +805,25 @@ where
     })
 }
 
-fn spawn_routing_service_server<I, IO>(service: RoutingConnectCtx, incoming: I) -> JoinHandle<()>
-where
-    I: Stream<Item = Result<IO, std::io::Error>> + Send + 'static,
-    IO: AsyncRead + AsyncWrite + Connected + Unpin + Send + 'static,
-    IO::ConnectInfo: Clone + Send + Sync + 'static,
-{
-    tokio::spawn(async move {
-        if let Err(error) = crate::transport::tonic_server_builder()
-            .add_service(wire::routing_service_server::RoutingServiceServer::new(
-                service,
-            ))
-            .serve_with_incoming(incoming)
-            .await
-        {
-            tracing::warn!(error = %error, "direct RoutingService server exited with error");
-        }
-    })
-}
-
 #[cfg(test)]
 mod tests {
-    use std::io;
     use std::path::PathBuf;
     use std::sync::{Arc, Mutex};
     use std::time::Duration;
+    use std::{fmt, io};
 
     use futures_util::StreamExt;
     use hyper_util::rt::TokioIo;
+    use rustls::client::danger::{HandshakeSignatureValid, ServerCertVerified, ServerCertVerifier};
+    use rustls::crypto::{
+        WebPkiSupportedAlgorithms, verify_tls12_signature, verify_tls13_signature,
+    };
+    use rustls::pki_types::{
+        CertificateDer, PrivateKeyDer, PrivatePkcs8KeyDer, ServerName, UnixTime,
+    };
+    use rustls::{
+        ClientConfig, DigitallySignedStruct, Error as TlsError, SignatureScheme, version,
+    };
     use tonic::codegen::http::Uri;
     use tonic::transport::{Channel, Endpoint};
     use tower::service_fn;
@@ -639,10 +833,13 @@ mod tests {
         CreateAgentConfig, CreateAgentRpcRequest, TEST_ECHO_COMMAND, TEST_ECHO_V1,
     };
     use crate::config::Config;
+    use crate::identity::DeviceIdentity;
     use crate::protocol::ProtocolError;
     use crate::routing::{Capabilities, Host, Route, SupportedAgentType};
+    use crate::transport::in_process_incoming;
+    use crate::trust::{Reachability, TrustEntry};
     use crate::user_state::ShutdownRequest;
-    use crate::{SessionCloseReason, SubscribeSessionEvent};
+    use crate::{Client, SessionCloseReason, SubscribeSessionEvent};
 
     fn test_state(host_id: Uuid) -> Arc<RwLock<ServerState>> {
         let (shutdown_tx, _shutdown_rx) = mpsc::channel::<ShutdownRequest>(1);
@@ -664,9 +861,41 @@ mod tests {
     }
 
     async fn test_started_services_with_host_id(host_id: Uuid) -> StartedUserServices {
-        let state = test_state(host_id);
+        let identity = DeviceIdentity::for_test(host_id);
+        test_started_services_with_identity_and_trust(identity, TrustStore::default()).await
+    }
+
+    async fn test_started_services_with_identity_and_trust(
+        identity: DeviceIdentity,
+        trust_store: TrustStore,
+    ) -> StartedUserServices {
+        let state = test_state(identity.host_id);
         let agent_state = Arc::new(RwLock::new(crate::services::AgentServiceState::new()));
-        start_user_services(state, agent_state).await
+        let data_dir = tempfile::tempdir().unwrap();
+        start_user_services(
+            state,
+            agent_state,
+            DeviceRuntimeSecurity::new(identity, trust_store, data_dir.keep()),
+        )
+        .await
+        .unwrap()
+    }
+
+    fn trust_store_for(peers: &[&DeviceIdentity]) -> TrustStore {
+        let mut trust_store = TrustStore::default();
+        for peer in peers {
+            trust_store.insert_for_test(peer.host_id, trust_entry(peer, vec![Reachability::Cloud]));
+        }
+        trust_store
+    }
+
+    fn trust_entry(peer: &DeviceIdentity, reachabilities: Vec<Reachability>) -> TrustEntry {
+        TrustEntry {
+            pubkey: peer.public_key().to_vec(),
+            name: format!("peer-{}", peer.host_id),
+            paired_at: chrono::Utc::now(),
+            reachabilities,
+        }
     }
 
     fn remote_host(id: u128) -> Host {
@@ -716,6 +945,19 @@ mod tests {
         }
     }
 
+    async fn test_cloud_routing_service(
+        host_id: Uuid,
+        token: &str,
+        user_id: Uuid,
+    ) -> CloudRoutingService {
+        let state = test_state(host_id);
+        state.write().await.is_cloud_server = true;
+        CloudRoutingService::with_authenticator(
+            state,
+            Arc::new(StaticCloudRoutingAuthenticator::new(token, user_id)),
+        )
+    }
+
     async fn create_test_agent(services: &StartedUserServices, agent_id: Uuid) {
         services
             .agent
@@ -730,6 +972,104 @@ mod tests {
             })
             .await
             .unwrap();
+    }
+
+    #[tokio::test]
+    async fn cloud_tls_incoming_accepts_new_socket_while_first_handshake_stalls() {
+        let rcgen::CertifiedKey { cert, signing_key } =
+            rcgen::generate_simple_self_signed(vec!["localhost".to_string()]).unwrap();
+        let acceptor_config = rustls::ServerConfig::builder()
+            .with_no_client_auth()
+            .with_single_cert(
+                vec![CertificateDer::from(cert.der().as_ref().to_vec())],
+                PrivateKeyDer::Pkcs8(PrivatePkcs8KeyDer::from(signing_key.serialize_der())),
+            )
+            .unwrap();
+        let acceptor = TlsAcceptor::from(Arc::new(acceptor_config));
+        let listener = TcpListener::bind(("127.0.0.1", 0)).await.unwrap();
+        let addr = listener.local_addr().unwrap();
+        let mut incoming = Box::pin(cloud_tls_incoming(
+            listener,
+            acceptor,
+            Duration::from_secs(30),
+        ));
+
+        let _slow_client = TcpStream::connect(addr).await.unwrap();
+        let fast_client = tokio::spawn(async move {
+            let stream = TcpStream::connect(addr).await.unwrap();
+            let connector = tokio_rustls::TlsConnector::from(Arc::new(no_verify_client_config()));
+            let server_name = ServerName::try_from("localhost").unwrap();
+            connector.connect(server_name, stream).await.unwrap()
+        });
+
+        let accepted = tokio::time::timeout(Duration::from_secs(1), incoming.next())
+            .await
+            .expect("second TLS handshake should not wait for the first handshake timeout")
+            .expect("incoming stream should yield")
+            .expect("second TLS handshake should succeed");
+        let fast_client = fast_client.await.unwrap();
+
+        drop(accepted);
+        drop(fast_client);
+    }
+
+    fn no_verify_client_config() -> ClientConfig {
+        let verifier = Arc::new(NoServerVerification {
+            supported_algs: rustls::crypto::ring::default_provider()
+                .signature_verification_algorithms,
+        });
+        let mut config = ClientConfig::builder_with_protocol_versions(&[&version::TLS13])
+            .dangerous()
+            .with_custom_certificate_verifier(verifier)
+            .with_no_client_auth();
+        config.alpn_protocols = vec![b"h2".to_vec()];
+        config
+    }
+
+    #[derive(Clone)]
+    struct NoServerVerification {
+        supported_algs: WebPkiSupportedAlgorithms,
+    }
+
+    impl fmt::Debug for NoServerVerification {
+        fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+            f.debug_struct("NoServerVerification").finish()
+        }
+    }
+
+    impl ServerCertVerifier for NoServerVerification {
+        fn verify_server_cert(
+            &self,
+            _end_entity: &CertificateDer<'_>,
+            _intermediates: &[CertificateDer<'_>],
+            _server_name: &ServerName<'_>,
+            _ocsp_response: &[u8],
+            _now: UnixTime,
+        ) -> std::result::Result<ServerCertVerified, TlsError> {
+            Ok(ServerCertVerified::assertion())
+        }
+
+        fn verify_tls12_signature(
+            &self,
+            message: &[u8],
+            cert: &CertificateDer<'_>,
+            dss: &DigitallySignedStruct,
+        ) -> std::result::Result<HandshakeSignatureValid, TlsError> {
+            verify_tls12_signature(message, cert, dss, &self.supported_algs)
+        }
+
+        fn verify_tls13_signature(
+            &self,
+            message: &[u8],
+            cert: &CertificateDer<'_>,
+            dss: &DigitallySignedStruct,
+        ) -> std::result::Result<HandshakeSignatureValid, TlsError> {
+            verify_tls13_signature(message, cert, dss, &self.supported_algs)
+        }
+
+        fn supported_verify_schemes(&self) -> Vec<SignatureScheme> {
+            self.supported_algs.supported_schemes()
+        }
     }
 
     fn client_create_request(agent_id: Uuid, name: &str) -> wire::ClientCreateAgentRequest {
@@ -789,12 +1129,15 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn started_services_serves_agent_service_on_incoming_tunnels() {
+    async fn started_services_serves_agent_service_on_trusted_ingress() {
         let services = test_started_services().await;
         let (client_io, server_io) = tokio::io::duplex(64 * 1024);
         services
-            ._incoming_tunnels_tx
-            .send(TunnelTransport::new(server_io, Uuid::from_u128(20)))
+            .trusted_incoming_tx
+            .send(BoxedGrpcIo::local_trusted(TunnelTransport::new(
+                server_io,
+                Uuid::from_u128(20),
+            )))
             .await
             .unwrap();
 
@@ -814,13 +1157,425 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn cloud_routing_service_rejects_missing_authorization() {
-        let state = test_state(Uuid::from_u128(1));
-        let user_id = Uuid::from_u128(100);
-        let service = CloudRoutingService::with_authenticator(
-            state,
-            Arc::new(StaticCloudRoutingAuthenticator::new("token-a", user_id)),
+    async fn pubkey_replacement_revokes_open_tls_trusted_server_connections() {
+        let local = DeviceIdentity::for_test(Uuid::from_u128(1));
+        let peer = DeviceIdentity::for_test(Uuid::from_u128(2));
+        let services =
+            test_started_services_with_identity_and_trust(local, trust_store_for(&[&peer])).await;
+        let (client_io, server_io) = tokio::io::duplex(64 * 1024);
+        services
+            .trusted_incoming_tx
+            .send(
+                BoxedGrpcIo::tls_trusted(
+                    TunnelTransport::new(server_io, peer.host_id),
+                    peer.host_id,
+                )
+                .track_trusted_peer(&services.connections.trusted_connections()),
+            )
+            .await
+            .unwrap();
+
+        let channel = channel_from_transport(TunnelTransport::new(client_io, Uuid::from_u128(10)));
+        let mut client = wire::agent_service_client::AgentServiceClient::new(channel);
+        let mut stream = client
+            .subscribe_agent_events(wire::SubscribeAgentEventsRequest::default())
+            .await
+            .unwrap()
+            .into_inner();
+        let first = stream.next().await.unwrap().unwrap();
+        assert!(matches!(
+            first.event,
+            Some(wire::subscribe_agent_events_response::Event::SnapshotComplete(_))
+        ));
+
+        let connections = services.connections.clone();
+        tokio::time::timeout(Duration::from_secs(1), async move {
+            connections.teardown_host(peer.host_id).await;
+        })
+        .await
+        .expect("timed out waiting for trusted transport teardown");
+
+        let next = tokio::time::timeout(Duration::from_secs(1), stream.message())
+            .await
+            .expect("timed out waiting for trusted stream revocation");
+        assert!(next.is_err() || next.unwrap().is_none());
+    }
+
+    #[tokio::test]
+    async fn pairing_service_is_only_on_pairing_ingress() {
+        let services = test_started_services().await;
+
+        let (trusted_client_io, trusted_server_io) = tokio::io::duplex(64 * 1024);
+        services
+            .trusted_incoming_tx
+            .send(BoxedGrpcIo::local_trusted(TunnelTransport::new(
+                trusted_server_io,
+                Uuid::from_u128(20),
+            )))
+            .await
+            .unwrap();
+        let trusted_channel =
+            channel_from_transport(TunnelTransport::new(trusted_client_io, Uuid::from_u128(10)));
+        let mut trusted_pairing_client =
+            wire::pairing_service_client::PairingServiceClient::new(trusted_channel);
+        let trusted_error = trusted_pairing_client
+            .pair_by_token(wire::pb::PairByTokenRequest::default())
+            .await
+            .unwrap_err();
+        assert_eq!(trusted_error.code(), tonic::Code::Unimplemented);
+
+        let (pairing_client_io, pairing_server_io) = tokio::io::duplex(64 * 1024);
+        services
+            .pairing_incoming_tx
+            .send(BoxedGrpcIo::pre_trust_pairing(
+                TunnelTransport::new(pairing_server_io, Uuid::from_u128(30)),
+                PreTrustPairingReachability::Cloud,
+                None,
+            ))
+            .await
+            .unwrap();
+        let pairing_channel =
+            channel_from_transport(TunnelTransport::new(pairing_client_io, Uuid::from_u128(10)));
+        let mut pairing_client =
+            wire::pairing_service_client::PairingServiceClient::new(pairing_channel);
+        let pairing_error = pairing_client
+            .pair_by_token(wire::pb::PairByTokenRequest::default())
+            .await
+            .unwrap_err();
+        assert_eq!(pairing_error.code(), tonic::Code::FailedPrecondition);
+
+        services
+            .pair_mode
+            .start_token_for_duration([1_u8; 32], Duration::from_secs(60))
+            .unwrap();
+        let (active_client_io, active_server_io) = tokio::io::duplex(64 * 1024);
+        services
+            .pairing_incoming_tx
+            .send(BoxedGrpcIo::pre_trust_pairing(
+                TunnelTransport::new(active_server_io, Uuid::from_u128(31)),
+                PreTrustPairingReachability::Cloud,
+                None,
+            ))
+            .await
+            .unwrap();
+        let active_pairing_channel =
+            channel_from_transport(TunnelTransport::new(active_client_io, Uuid::from_u128(11)));
+        let mut active_pairing_client =
+            wire::pairing_service_client::PairingServiceClient::new(active_pairing_channel);
+        let active_pairing_error = active_pairing_client
+            .pair_by_token(wire::pb::PairByTokenRequest::default())
+            .await
+            .unwrap_err();
+        assert_eq!(active_pairing_error.code(), tonic::Code::InvalidArgument);
+    }
+
+    #[tokio::test]
+    async fn direct_pin_pairing_over_tcp_updates_both_trust_stores() {
+        let initiator_dir = tempfile::tempdir().unwrap();
+        let responder_dir = tempfile::tempdir().unwrap();
+        let initiator_identity =
+            crate::identity::load_or_create_device_identity_in(initiator_dir.path()).unwrap();
+        let responder_identity =
+            crate::identity::load_or_create_device_identity_in(responder_dir.path()).unwrap();
+
+        let initiator_security = DeviceRuntimeSecurity::new(
+            initiator_identity.clone(),
+            TrustStore::default(),
+            initiator_dir.path().to_path_buf(),
         );
+        let initiator_trust = initiator_security.trust_store.clone();
+        let responder_security = DeviceRuntimeSecurity::new(
+            responder_identity.clone(),
+            TrustStore::default(),
+            responder_dir.path().to_path_buf(),
+        );
+        let responder_trust = responder_security.trust_store.clone();
+        let initiator = start_user_services(
+            test_state(initiator_identity.host_id),
+            Arc::new(RwLock::new(crate::services::AgentServiceState::new())),
+            initiator_security,
+        )
+        .await
+        .unwrap();
+        let mut responder = start_user_services(
+            test_state(responder_identity.host_id),
+            Arc::new(RwLock::new(crate::services::AgentServiceState::new())),
+            responder_security,
+        )
+        .await
+        .unwrap();
+
+        responder
+            .pair_mode
+            .start_pin_for_duration("123456".to_string(), Duration::from_secs(60))
+            .unwrap();
+        let listener = TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let addr = listener.local_addr().unwrap();
+        responder.serve_external_tcp_listener(listener);
+        let (channel, server_task) = initiator.open_in_process_client_channel();
+        let client = Client::from_client_service_channel(channel, None);
+
+        let paired_peer = crate::pair_via_pin_direct_tcp(
+            initiator_dir.path(),
+            "initiator",
+            addr,
+            "123456",
+            &client,
+        )
+        .await
+        .unwrap();
+
+        assert_eq!(paired_peer.host_id, responder_identity.host_id);
+        {
+            let initiator_live = initiator_trust.read().unwrap();
+            assert_eq!(
+                initiator_live
+                    .entry(responder_identity.host_id)
+                    .unwrap()
+                    .reachabilities,
+                vec![Reachability::DirectTcp { addr }]
+            );
+        }
+        {
+            let responder_live = responder_trust.read().unwrap();
+            assert!(
+                responder_live
+                    .entry(initiator_identity.host_id)
+                    .unwrap()
+                    .reachabilities
+                    .is_empty()
+            );
+        }
+
+        wait_for_host_entry(&initiator.routing, responder_identity.host_id).await;
+
+        server_task.abort();
+    }
+
+    #[tokio::test]
+    async fn direct_tcp_reachability_establishes_runtime_link_from_trust_store() {
+        let identity_a = DeviceIdentity::for_test(Uuid::from_u128(21));
+        let identity_b = DeviceIdentity::for_test(Uuid::from_u128(22));
+        let listener = TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let addr = listener.local_addr().unwrap();
+
+        let mut trust_a = TrustStore::default();
+        trust_a.insert_for_test(
+            identity_b.host_id,
+            trust_entry(&identity_b, vec![Reachability::DirectTcp { addr }]),
+        );
+        let mut trust_b = TrustStore::default();
+        trust_b.insert_for_test(identity_a.host_id, trust_entry(&identity_a, Vec::new()));
+
+        let host_a =
+            test_started_services_with_identity_and_trust(identity_a.clone(), trust_a).await;
+        let mut host_b =
+            test_started_services_with_identity_and_trust(identity_b.clone(), trust_b).await;
+        host_b.serve_external_tcp_listener(listener);
+
+        let tasks = host_a.spawn_reachability_links("host-a", false);
+        wait_for_host_entry(&host_a.routing, identity_b.host_id).await;
+        assert_eq!(
+            host_a
+                .connections
+                .active_route(identity_b.host_id)
+                .await
+                .unwrap()
+                .len(),
+            1
+        );
+
+        let channel = host_a
+            .connections
+            .channel_to(identity_b.host_id)
+            .await
+            .unwrap();
+        let mut client = wire::client_service_client::ClientServiceClient::new(channel);
+        let response = client
+            .list_hosts(wire::ListHostsRequest {
+                scope: wire::list_hosts_request::Scope::All as i32,
+            })
+            .await
+            .unwrap()
+            .into_inner();
+        assert!(
+            response
+                .hosts
+                .iter()
+                .any(|host| { host.host_id == identity_b.host_id.as_bytes().to_vec() })
+        );
+
+        host_a
+            .tunnels
+            .link_registry()
+            .close_host(identity_b.host_id)
+            .await;
+        wait_for_host_entry_removed(&host_a.routing, identity_b.host_id).await;
+        assert!(
+            host_a
+                .connections
+                .channel_to(identity_b.host_id)
+                .await
+                .is_err()
+        );
+        drop(host_b);
+
+        for task in tasks {
+            task.abort();
+        }
+    }
+
+    #[tokio::test]
+    async fn direct_tcp_reachabilities_on_both_peers_establish_two_outbound_links() {
+        let identity_a = DeviceIdentity::for_test(Uuid::from_u128(23));
+        let identity_b = DeviceIdentity::for_test(Uuid::from_u128(24));
+        let listener_a = TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let addr_a = listener_a.local_addr().unwrap();
+        let listener_b = TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let addr_b = listener_b.local_addr().unwrap();
+
+        let mut trust_a = TrustStore::default();
+        trust_a.insert_for_test(
+            identity_b.host_id,
+            trust_entry(&identity_b, vec![Reachability::DirectTcp { addr: addr_b }]),
+        );
+        let mut trust_b = TrustStore::default();
+        trust_b.insert_for_test(
+            identity_a.host_id,
+            trust_entry(&identity_a, vec![Reachability::DirectTcp { addr: addr_a }]),
+        );
+
+        let mut host_a =
+            test_started_services_with_identity_and_trust(identity_a.clone(), trust_a).await;
+        let mut host_b =
+            test_started_services_with_identity_and_trust(identity_b.clone(), trust_b).await;
+        host_a.serve_external_tcp_listener(listener_a);
+        host_b.serve_external_tcp_listener(listener_b);
+
+        let tasks_a = host_a.spawn_reachability_links("host-a", false);
+        let tasks_b = host_b.spawn_reachability_links("host-b", false);
+        wait_for_host_entry(&host_a.routing, identity_b.host_id).await;
+        wait_for_host_entry(&host_b.routing, identity_a.host_id).await;
+
+        assert_eq!(
+            host_a
+                .connections
+                .active_route(identity_b.host_id)
+                .await
+                .unwrap()
+                .len(),
+            1
+        );
+        assert_eq!(
+            host_b
+                .connections
+                .active_route(identity_a.host_id)
+                .await
+                .unwrap()
+                .len(),
+            1
+        );
+
+        assert!(
+            host_a
+                .connections
+                .channel_to(identity_b.host_id)
+                .await
+                .is_ok()
+        );
+        assert!(
+            host_b
+                .connections
+                .channel_to(identity_a.host_id)
+                .await
+                .is_ok()
+        );
+
+        for task in tasks_a.into_iter().chain(tasks_b) {
+            task.abort();
+        }
+    }
+
+    #[tokio::test]
+    async fn ssh_relay_runtime_link_establishes_route_over_trusted_ingress() {
+        let identity_a = DeviceIdentity::for_test(Uuid::from_u128(31));
+        let identity_b = DeviceIdentity::for_test(Uuid::from_u128(32));
+
+        let mut trust_a = TrustStore::default();
+        trust_a.insert_for_test(
+            identity_b.host_id,
+            trust_entry(
+                &identity_b,
+                vec![Reachability::Ssh {
+                    target: "workstation".to_string(),
+                }],
+            ),
+        );
+        let host_a =
+            test_started_services_with_identity_and_trust(identity_a.clone(), trust_a).await;
+        let host_b = test_started_services_with_identity_and_trust(
+            identity_b.clone(),
+            TrustStore::default(),
+        )
+        .await;
+
+        let (client_io, server_io) = tokio::io::duplex(64 * 1024);
+        host_b
+            .trusted_incoming_tx
+            .send(BoxedGrpcIo::local_trusted(server_io))
+            .await
+            .unwrap();
+        let channel = crate::transport::channel_from_single_io(
+            crate::transport::configure_tonic_endpoint_keepalive(Endpoint::from_static(
+                "http://ssh-relay-test",
+            )),
+            "test SSH relay transport",
+            client_io,
+        );
+        let (connector_task, established_rx) =
+            crate::routing::spawn_connector_to_channel_with_establishment(
+                host_a
+                    .routing_connector_ctx(Link::new("ssh-test").unwrap())
+                    .with_expected_peer(identity_b.host_id),
+                channel,
+            );
+
+        let established = tokio::time::timeout(Duration::from_secs(1), established_rx)
+            .await
+            .expect("timed out waiting for SSH relay Link establishment")
+            .expect("SSH relay establishment channel closed")
+            .expect("SSH relay Link establishment failed");
+        assert_eq!(established.id, identity_b.host_id);
+        wait_for_host_entry(&host_a.routing, identity_b.host_id).await;
+
+        let channel = host_a
+            .connections
+            .channel_to(identity_b.host_id)
+            .await
+            .unwrap();
+        let mut client = wire::client_service_client::ClientServiceClient::new(channel);
+        let response = client
+            .list_hosts(wire::ListHostsRequest {
+                scope: wire::list_hosts_request::Scope::All as i32,
+            })
+            .await
+            .unwrap()
+            .into_inner();
+        assert!(
+            response
+                .hosts
+                .iter()
+                .any(|host| host.host_id == identity_b.host_id.as_bytes().to_vec())
+        );
+
+        connector_task.abort();
+        drop(host_b);
+    }
+
+    #[tokio::test]
+    async fn cloud_routing_service_rejects_missing_authorization() {
+        let user_id = Uuid::from_u128(100);
+        let service = test_cloud_routing_service(Uuid::from_u128(1), "token-a", user_id).await;
 
         let (client_transport, server_transport) = in_process_transport_pair();
         let incoming = in_process_incoming(server_transport);
@@ -850,12 +1605,8 @@ mod tests {
 
     #[tokio::test]
     async fn cloud_routing_service_selects_user_services_from_bearer_metadata() {
-        let state = test_state(Uuid::from_u128(1));
         let user_id = Uuid::from_u128(100);
-        let service = CloudRoutingService::with_authenticator(
-            state,
-            Arc::new(StaticCloudRoutingAuthenticator::new("token-a", user_id)),
-        );
+        let service = test_cloud_routing_service(Uuid::from_u128(1), "token-a", user_id).await;
 
         let (client_transport, server_transport) = in_process_transport_pair();
         let incoming = in_process_incoming(server_transport);
@@ -911,12 +1662,8 @@ mod tests {
 
     #[tokio::test]
     async fn cloud_routing_service_serves_tcp_listener() {
-        let state = test_state(Uuid::from_u128(1));
         let user_id = Uuid::from_u128(100);
-        let service = CloudRoutingService::with_authenticator(
-            state,
-            Arc::new(StaticCloudRoutingAuthenticator::new("token-a", user_id)),
-        );
+        let service = test_cloud_routing_service(Uuid::from_u128(1), "token-a", user_id).await;
         let listener = TcpListener::bind(("127.0.0.1", 0)).await.unwrap();
         let addr = listener.local_addr().unwrap();
         let server_task = service.serve_on_tcp_listener(listener);
@@ -966,18 +1713,24 @@ mod tests {
 
     #[tokio::test]
     async fn cloud_routing_service_drives_remote_agent_inventory() {
-        let state = test_state(Uuid::from_u128(1));
         let user_id = Uuid::from_u128(100);
-        let service = CloudRoutingService::with_authenticator(
-            state,
-            Arc::new(StaticCloudRoutingAuthenticator::new("token-a", user_id)),
-        );
+        let service = test_cloud_routing_service(Uuid::from_u128(1), "token-a", user_id).await;
         let listener = TcpListener::bind(("127.0.0.1", 0)).await.unwrap();
         let addr = listener.local_addr().unwrap();
         let server_task = service.serve_on_tcp_listener(listener);
 
-        let host_a = test_started_services_with_host_id(Uuid::from_u128(2)).await;
-        let host_b = test_started_services_with_host_id(Uuid::from_u128(3)).await;
+        let identity_a = DeviceIdentity::for_test(Uuid::from_u128(2));
+        let identity_b = DeviceIdentity::for_test(Uuid::from_u128(3));
+        let host_a = test_started_services_with_identity_and_trust(
+            identity_a.clone(),
+            trust_store_for(&[&identity_b]),
+        )
+        .await;
+        let host_b = test_started_services_with_identity_and_trust(
+            identity_b.clone(),
+            trust_store_for(&[&identity_a]),
+        )
+        .await;
         let agent_id = Uuid::from_u128(44);
         create_test_agent(&host_a, agent_id).await;
 
@@ -1014,6 +1767,259 @@ mod tests {
         .await
         .expect("timed out waiting for authenticated remote agent inventory");
 
+        task_a.abort();
+        task_b.abort();
+        server_task.abort();
+    }
+
+    #[tokio::test]
+    async fn cloud_pin_pairing_updates_both_trust_stores() {
+        let user_id = Uuid::from_u128(100);
+        let service = test_cloud_routing_service(Uuid::from_u128(1), "token-a", user_id).await;
+        let listener = TcpListener::bind(("127.0.0.1", 0)).await.unwrap();
+        let addr = listener.local_addr().unwrap();
+        let server_task = service.serve_on_tcp_listener(listener);
+
+        let data_dir_a = tempfile::tempdir().unwrap();
+        let data_dir_b = tempfile::tempdir().unwrap();
+        let identity_a = DeviceIdentity::for_test(Uuid::from_u128(2));
+        let identity_b = DeviceIdentity::for_test(Uuid::from_u128(3));
+        let old_identity_a = DeviceIdentity::for_test(identity_a.host_id);
+        let security_a = DeviceRuntimeSecurity::new(
+            identity_a.clone(),
+            TrustStore::default(),
+            data_dir_a.path().to_path_buf(),
+        );
+        let trust_a = security_a.trust_store.clone();
+        let mut initial_trust_b = TrustStore::default();
+        initial_trust_b.insert_for_test(
+            identity_a.host_id,
+            TrustEntry {
+                pubkey: old_identity_a.public_key().to_vec(),
+                name: "old-a".to_string(),
+                paired_at: chrono::Utc::now(),
+                reachabilities: vec![Reachability::Cloud],
+            },
+        );
+        let security_b = DeviceRuntimeSecurity::new(
+            identity_b.clone(),
+            initial_trust_b,
+            data_dir_b.path().to_path_buf(),
+        );
+        let trust_b = security_b.trust_store.clone();
+        let host_a = start_user_services(
+            test_state(identity_a.host_id),
+            Arc::new(RwLock::new(crate::services::AgentServiceState::new())),
+            security_a,
+        )
+        .await
+        .unwrap();
+        let host_b = start_user_services(
+            test_state(identity_b.host_id),
+            Arc::new(RwLock::new(crate::services::AgentServiceState::new())),
+            security_b,
+        )
+        .await
+        .unwrap();
+
+        let channel_a = Endpoint::from_shared(format!("http://{addr}"))
+            .unwrap()
+            .connect()
+            .await
+            .unwrap();
+        let task_a = crate::routing::spawn_connector_to_channel_with_bearer_token(
+            host_a.routing_connector_ctx(Link::new("host-a").unwrap()),
+            channel_a,
+            "token-a".to_string(),
+        );
+        let channel_b = Endpoint::from_shared(format!("http://{addr}"))
+            .unwrap()
+            .connect()
+            .await
+            .unwrap();
+        let task_b = crate::routing::spawn_connector_to_channel_with_bearer_token(
+            host_b.routing_connector_ctx(Link::new("host-b").unwrap()),
+            channel_b,
+            "token-a".to_string(),
+        );
+
+        tokio::time::timeout(Duration::from_secs(1), async {
+            loop {
+                if host_a
+                    .client
+                    .list_hosts()
+                    .await
+                    .iter()
+                    .any(|host| host.id == identity_b.host_id)
+                {
+                    break;
+                }
+                tokio::task::yield_now().await;
+            }
+        })
+        .await
+        .expect("timed out waiting for cloud route to pairing target");
+
+        host_b
+            .pair_mode
+            .start_pin_for_duration("123456".to_string(), Duration::from_secs(60))
+            .unwrap();
+        let (client_channel, client_server_task) = host_a.open_in_process_client_channel();
+        let client = Client::from_client_service_channel(client_channel, None);
+        let paired_peer = client
+            .pair_pin_cloud_peer(identity_b.host_id, "123456".to_string())
+            .await
+            .unwrap();
+
+        assert_eq!(paired_peer.host_id, identity_b.host_id);
+        assert_eq!(paired_peer.pubkey, identity_b.public_key());
+        let trust_a_live = trust_a.read().unwrap();
+        assert_eq!(
+            trust_a_live
+                .entry(identity_b.host_id)
+                .unwrap()
+                .reachabilities,
+            vec![Reachability::Cloud]
+        );
+        drop(trust_a_live);
+        let trust_b_live = trust_b.read().unwrap();
+        let trust_b_entry = trust_b_live.entry(identity_a.host_id).unwrap();
+        assert_eq!(trust_b_entry.pubkey, identity_a.public_key());
+        assert_eq!(trust_b_entry.name, "local");
+        assert_eq!(trust_b_entry.reachabilities, vec![Reachability::Cloud]);
+
+        client_server_task.abort();
+        task_a.abort();
+        task_b.abort();
+        server_task.abort();
+    }
+
+    #[tokio::test]
+    async fn cloud_qr_pairing_updates_both_trust_stores_and_pins_responder_pubkey() {
+        let user_id = Uuid::from_u128(101);
+        let service = test_cloud_routing_service(Uuid::from_u128(1), "token-a", user_id).await;
+        let listener = TcpListener::bind(("127.0.0.1", 0)).await.unwrap();
+        let addr = listener.local_addr().unwrap();
+        let server_task = service.serve_on_tcp_listener(listener);
+
+        let data_dir_a = tempfile::tempdir().unwrap();
+        let data_dir_b = tempfile::tempdir().unwrap();
+        let identity_a = DeviceIdentity::for_test(Uuid::from_u128(2));
+        let identity_b = DeviceIdentity::for_test(Uuid::from_u128(3));
+        let old_identity_a = DeviceIdentity::for_test(identity_a.host_id);
+        let security_a = DeviceRuntimeSecurity::new(
+            identity_a.clone(),
+            TrustStore::default(),
+            data_dir_a.path().to_path_buf(),
+        );
+        let trust_a = security_a.trust_store.clone();
+        let mut initial_trust_b = TrustStore::default();
+        initial_trust_b.insert_for_test(
+            identity_a.host_id,
+            TrustEntry {
+                pubkey: old_identity_a.public_key().to_vec(),
+                name: "old-a".to_string(),
+                paired_at: chrono::Utc::now(),
+                reachabilities: vec![Reachability::Cloud],
+            },
+        );
+        let security_b = DeviceRuntimeSecurity::new(
+            identity_b.clone(),
+            initial_trust_b,
+            data_dir_b.path().to_path_buf(),
+        );
+        let trust_b = security_b.trust_store.clone();
+        let host_a = start_user_services(
+            test_state(identity_a.host_id),
+            Arc::new(RwLock::new(crate::services::AgentServiceState::new())),
+            security_a,
+        )
+        .await
+        .unwrap();
+        let host_b = start_user_services(
+            test_state(identity_b.host_id),
+            Arc::new(RwLock::new(crate::services::AgentServiceState::new())),
+            security_b,
+        )
+        .await
+        .unwrap();
+
+        let channel_a = Endpoint::from_shared(format!("http://{addr}"))
+            .unwrap()
+            .connect()
+            .await
+            .unwrap();
+        let task_a = crate::routing::spawn_connector_to_channel_with_bearer_token(
+            host_a.routing_connector_ctx(Link::new("host-a").unwrap()),
+            channel_a,
+            "token-a".to_string(),
+        );
+        let channel_b = Endpoint::from_shared(format!("http://{addr}"))
+            .unwrap()
+            .connect()
+            .await
+            .unwrap();
+        let task_b = crate::routing::spawn_connector_to_channel_with_bearer_token(
+            host_b.routing_connector_ctx(Link::new("host-b").unwrap()),
+            channel_b,
+            "token-a".to_string(),
+        );
+
+        tokio::time::timeout(Duration::from_secs(1), async {
+            loop {
+                if host_a
+                    .client
+                    .list_hosts()
+                    .await
+                    .iter()
+                    .any(|host| host.id == identity_b.host_id)
+                {
+                    break;
+                }
+                tokio::task::yield_now().await;
+            }
+        })
+        .await
+        .expect("timed out waiting for cloud route to pairing target");
+
+        let token = [9_u8; 32];
+        host_b
+            .pair_mode
+            .start_token_for_duration(token, Duration::from_secs(60))
+            .unwrap();
+        let (client_channel, client_server_task) = host_a.open_in_process_client_channel();
+        let client = Client::from_client_service_channel(client_channel, None);
+        client
+            .pair_qr_cloud_peer(identity_b.host_id, vec![42; 32], token.to_vec())
+            .await
+            .expect_err("wrong QR pubkey must fail before token consumption");
+        let paired_peer = client
+            .pair_qr_cloud_peer(
+                identity_b.host_id,
+                identity_b.public_key().to_vec(),
+                token.to_vec(),
+            )
+            .await
+            .unwrap();
+
+        assert_eq!(paired_peer.host_id, identity_b.host_id);
+        assert_eq!(paired_peer.pubkey, identity_b.public_key());
+        let trust_a_live = trust_a.read().unwrap();
+        assert_eq!(
+            trust_a_live
+                .entry(identity_b.host_id)
+                .unwrap()
+                .reachabilities,
+            vec![Reachability::Cloud]
+        );
+        drop(trust_a_live);
+        let trust_b_live = trust_b.read().unwrap();
+        let trust_b_entry = trust_b_live.entry(identity_a.host_id).unwrap();
+        assert_eq!(trust_b_entry.pubkey, identity_a.public_key());
+        assert_eq!(trust_b_entry.name, "local");
+        assert_eq!(trust_b_entry.reachabilities, vec![Reachability::Cloud]);
+
+        client_server_task.abort();
         task_a.abort();
         task_b.abort();
         server_task.abort();
@@ -1061,8 +2067,8 @@ mod tests {
             .unwrap();
         assert!(matches!(
             event,
-            crate::routing::HostEvent::HostAdded { host }
-                if host.id == Uuid::from_u128(1)
+            crate::routing::HostEvent::HostUpdated { host }
+                if host.id == Uuid::from_u128(1) && host.online
         ));
         let event = tokio::time::timeout(Duration::from_secs(1), host_events.recv())
             .await
@@ -1240,9 +2246,6 @@ mod tests {
     #[tokio::test]
     async fn public_client_preserves_first_session_closed_event() {
         let services = test_started_services().await;
-        for task in &services.tasks {
-            task.abort();
-        }
         let remote = remote_host(2);
         let agent_id = Uuid::from_u128(44);
         services
@@ -1327,6 +2330,32 @@ mod tests {
             }
         }
         panic!("session output did not match expected payload");
+    }
+
+    async fn wait_for_host_entry(routing: &RoutingCore, host_id: Uuid) -> Host {
+        tokio::time::timeout(Duration::from_secs(1), async {
+            loop {
+                if let Some(host) = routing.host_entry(host_id).await {
+                    return host.host;
+                }
+                tokio::task::yield_now().await;
+            }
+        })
+        .await
+        .expect("timed out waiting for host entry")
+    }
+
+    async fn wait_for_host_entry_removed(routing: &RoutingCore, host_id: Uuid) {
+        tokio::time::timeout(Duration::from_secs(1), async {
+            loop {
+                if routing.host_entry(host_id).await.is_none() {
+                    return;
+                }
+                tokio::task::yield_now().await;
+            }
+        })
+        .await
+        .expect("timed out waiting for host entry removal");
     }
 
     fn channel_from_transport(transport: TunnelTransport) -> Channel {

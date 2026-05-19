@@ -1,7 +1,9 @@
 //! In-process tonic transport helpers.
 
+#[cfg(test)]
 use std::io;
 
+#[cfg(test)]
 use futures_util::{Stream, stream};
 use tokio::io::DuplexStream;
 use tonic::transport::{Channel, Endpoint};
@@ -20,6 +22,7 @@ pub(crate) fn in_process_transport_pair() -> (InProcessTransport, InProcessTrans
     )
 }
 
+#[cfg(test)]
 pub(crate) fn in_process_incoming(
     transport: InProcessTransport,
 ) -> impl Stream<Item = io::Result<InProcessTransport>> + Send + 'static {

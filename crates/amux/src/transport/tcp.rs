@@ -1,17 +1,19 @@
 //! TCP socket helpers.
 
+#[cfg(test)]
 use std::io;
 
+#[cfg(test)]
 use futures_util::{Stream, stream};
-use tokio::net::{TcpListener, TcpStream};
-use tonic::codegen::http::Uri;
-use tonic::transport::{Channel, Endpoint};
-use tower::service_fn;
+#[cfg(test)]
+use tokio::net::TcpListener;
+use tokio::net::TcpStream;
 
-use super::{GrpcIo, Result, TransportError, configure_tonic_endpoint_keepalive};
+use super::GrpcIo;
 
 pub(crate) type TcpServerTransport<T = TcpStream> = GrpcIo<T>;
 
+#[cfg(test)]
 pub(crate) fn tcp_incoming(
     listener: TcpListener,
 ) -> impl Stream<Item = io::Result<TcpServerTransport<TcpStream>>> + Send + 'static {
@@ -43,22 +45,4 @@ pub(crate) fn configure_tcp_keepalive(stream: &tokio::net::TcpStream) {
     if let Err(error) = sock.set_tcp_keepalive(&keepalive) {
         tracing::warn!(error = %error, "failed to set TCP keepalive");
     }
-}
-
-pub(crate) fn tcp_channel(host: String, port: u16) -> Result<Channel> {
-    let endpoint = Endpoint::from_shared(format!("http://{host}:{port}"))
-        .map_err(|error| TransportError::Config(error.to_string()))?;
-    Ok(
-        configure_tonic_endpoint_keepalive(endpoint).connect_with_connector_lazy(service_fn(
-            move |_uri: Uri| {
-                let host = host.clone();
-                async move {
-                    let stream = TcpStream::connect((host.as_str(), port)).await?;
-                    stream.set_nodelay(true)?;
-                    configure_tcp_keepalive(&stream);
-                    Ok::<_, std::io::Error>(hyper_util::rt::TokioIo::new(stream))
-                }
-            },
-        )),
-    )
 }

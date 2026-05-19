@@ -1,11 +1,12 @@
 # test: remote_connection
-# description: Two direct-connected servers can share an agent session
+# description: Two paired servers can share an agent session
 
 ## Environment
 
 config:
   name: server_a
   host_name: host-a
+  tcp_port: 0
 
 config:
   name: server_b
@@ -19,6 +20,14 @@ terminal:
   name: Tb
   config: server_b
 
+terminal:
+  name: TpairA
+  config: server_a
+
+terminal:
+  name: TpairB
+  config: server_b
+
 ## Test
 
 @Ta
@@ -27,11 +36,27 @@ terminal:
 hello from server A
 echo: hello from server A
 
-@Tb
-> amux server connect 127.0.0.1:$server_a.tcp_port
-Connected to 127.0.0.1:$server_a.tcp_port
+@TpairA
+> amux pair --listen
+@@capture pairing_pin Pairing PIN:
+LAN direct listener: tcp_port $server_a.tcp_port
+Pairing mode active for 300 seconds.
 
-@@sleep 200
+@TpairB
+> amux pair --connect 127.0.0.1:$server_a.tcp_port
+> $pairing_pin
+
+@@sleep 1500
+
+@TpairB
+@@capture paired_peer PIN: Paired with
+
+@@sleep 1200
+
+@TpairA
+Pairing mode ended.
+
+@@sleep 800
 
 @Tb
 > amux attach remote-test

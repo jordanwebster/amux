@@ -23,7 +23,7 @@ pub enum Notification {
         reason: Option<String>,
     },
     HostsSnapshot(Vec<types::Host>),
-    HostAdded(types::Host),
+    HostUpdated(types::Host),
     HostRemoved {
         id: types::HostId,
         reason: Option<String>,

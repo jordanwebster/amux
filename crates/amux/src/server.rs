@@ -4,7 +4,7 @@
 //! cloud routing. Shared daemon state is kept in `Arc<RwLock<ServerState>>`.
 
 use std::net::SocketAddr;
-use std::path::Path;
+use std::path::{Path, PathBuf};
 use std::sync::{Arc, Mutex};
 use std::time::Duration;
 
@@ -13,7 +13,6 @@ use thiserror::Error;
 use tokio::net::TcpListener;
 use tokio::sync::{RwLock, mpsc, oneshot};
 use tokio::task::JoinHandle;
-use tokio_rustls::TlsAcceptor;
 use uuid::Uuid;
 
 use crate::auth::CredentialProvider;
@@ -22,13 +21,16 @@ use crate::auth::jwt::JwtValidator;
 use crate::client::connect_existing_client_service;
 use crate::client::{Client, ConnectError};
 use crate::config::{Config, ConfigError};
+use crate::identity;
 use crate::protocol::{ProtocolError, wire};
 use crate::routing::generate_server_link;
 use crate::services::{
-    CloudRoutingService, SharedAgentServiceState, StartedUserServices, commit_server_suspend,
-    establish_cloud_connection, prepare_server_suspend, shutdown_server, start_user_services,
+    CloudRoutingService, DeviceRuntimeSecurity, SharedAgentServiceState, StartedUserServices,
+    commit_server_suspend, establish_cloud_connection, prepare_server_suspend, shutdown_server,
+    start_user_services,
 };
 use crate::transport::{TransportError, create_tls_acceptor};
+use crate::trust::TrustStore;
 use crate::tunnel::TunnelPool;
 use crate::update::{UpdateReporter, UpdateStatus};
 use crate::user_state::{ServerState, ShutdownRequest, get_local_agent_service_state};
@@ -146,6 +148,16 @@ pub enum ServerError {
 pub struct Server {
     state: Arc<RwLock<ServerState>>,
     shutdown_rx: Option<mpsc::Receiver<ShutdownRequest>>,
+    mode: ServerMode,
+}
+
+enum ServerMode {
+    CloudRelay,
+    Device {
+        identity: identity::DeviceIdentity,
+        trust_store: TrustStore,
+        data_dir: PathBuf,
+    },
 }
 
 pub struct ServerBuilder {
@@ -218,8 +230,38 @@ impl Server {
         config: Config,
         credentials: Option<Arc<dyn CredentialProvider>>,
         update_reporter: Option<Arc<dyn UpdateReporter>>,
+        as_cloud_relay: bool,
     ) -> Result<Self> {
-        let host_id = Uuid::new_v4();
+        Self::with_config_and_credentials_in_data_dir(
+            config,
+            credentials,
+            update_reporter,
+            as_cloud_relay,
+            &crate::default_data_dir(),
+        )
+    }
+
+    fn with_config_and_credentials_in_data_dir(
+        config: Config,
+        credentials: Option<Arc<dyn CredentialProvider>>,
+        update_reporter: Option<Arc<dyn UpdateReporter>>,
+        as_cloud_relay: bool,
+        data_dir: &Path,
+    ) -> Result<Self> {
+        let (host_id, mode) = if as_cloud_relay {
+            (Uuid::new_v4(), ServerMode::CloudRelay)
+        } else {
+            let device_files = identity::ensure_device_files_with_trust_in(data_dir)
+                .map_err(|error| ServerError::State(error.to_string()))?;
+            (
+                device_files.identity.host_id,
+                ServerMode::Device {
+                    identity: device_files.identity,
+                    trust_store: device_files.trust_store,
+                    data_dir: data_dir.to_path_buf(),
+                },
+            )
+        };
         let (shutdown_tx, shutdown_rx) = mpsc::channel::<ShutdownRequest>(1);
         Ok(Self {
             state: Arc::new(RwLock::new(ServerState::new(
@@ -230,22 +272,39 @@ impl Server {
                 update_reporter,
             ))),
             shutdown_rx: Some(shutdown_rx),
+            mode,
         })
+    }
+
+    fn is_cloud_relay(&self) -> bool {
+        matches!(self.mode, ServerMode::CloudRelay)
+    }
+
+    fn device_runtime_security(&self) -> DeviceRuntimeSecurity {
+        let ServerMode::Device {
+            identity,
+            trust_store,
+            data_dir,
+        } = &self.mode
+        else {
+            unreachable!("cloud relay has no device runtime security");
+        };
+        DeviceRuntimeSecurity::new(identity.clone(), trust_store.clone(), data_dir.clone())
     }
 
     /// Run the server
     ///
-    /// If `is_cloud_server` is true, the server runs as a cloud relay:
+    /// If this server was constructed as a cloud relay:
     /// - TCP connections use TLS
     /// - All connections require valid JWT tokens
-    pub(crate) async fn run(&mut self, is_cloud_server: bool) -> Result<()> {
-        let (socket_path, tcp_port, cloud_url, enforce_tls, prevent_idle_sleep) = {
+    pub(crate) async fn run(&mut self) -> Result<()> {
+        let is_cloud_server = self.is_cloud_relay();
+        let (socket_path, tcp_port, cloud_url, prevent_idle_sleep) = {
             let state = self.state.read().await;
             (
                 state.config.socket_path.clone(),
                 state.config.tcp_port,
                 state.config.cloud_url.clone(),
-                state.config.enforce_tls_in_cloud_mode,
                 state.config.prevent_idle_sleep.unwrap_or(false),
             )
         };
@@ -258,54 +317,48 @@ impl Server {
 
         let _sleep_inhibitor = crate::sleep_inhibitor::SleepInhibitor::new(prevent_idle_sleep);
 
-        // Configure cloud server: enable JWT validation (and optionally TLS)
-        let tls_acceptor: Option<TlsAcceptor> = if is_cloud_server {
+        // Configure cloud server: enable JWT validation and TLS.
+        let tls_acceptor = if is_cloud_server {
             let mut state = self.state.write().await;
             state.is_cloud_server = true;
             state.jwt_validator = Some(Arc::new(JwtValidator::new(&cloud_url)));
 
-            if enforce_tls {
-                // Cloud mode requires TLS certificates via environment variables
-                let cert_path = std::env::var("AMUX_TLS_CERT").map_err(|_| {
-                    ServerError::Config(ConfigError::Invalid(
-                        "AMUX_TLS_CERT environment variable required for cloud mode".into(),
-                    ))
-                })?;
-                let key_path = std::env::var("AMUX_TLS_KEY").map_err(|_| {
-                    ServerError::Config(ConfigError::Invalid(
-                        "AMUX_TLS_KEY environment variable required for cloud mode".into(),
-                    ))
-                })?;
+            // Cloud mode requires TLS certificates via environment variables.
+            let cert_path = std::env::var("AMUX_TLS_CERT").map_err(|_| {
+                ServerError::Config(ConfigError::Invalid(
+                    "AMUX_TLS_CERT environment variable required for cloud mode".into(),
+                ))
+            })?;
+            let key_path = std::env::var("AMUX_TLS_KEY").map_err(|_| {
+                ServerError::Config(ConfigError::Invalid(
+                    "AMUX_TLS_KEY environment variable required for cloud mode".into(),
+                ))
+            })?;
 
-                let cert_pem = std::fs::read(&cert_path).map_err(|e| {
-                    ServerError::Config(ConfigError::Invalid(format!(
-                        "Failed to read TLS cert from {}: {}",
-                        cert_path, e
-                    )))
-                })?;
-                let key_pem = std::fs::read(&key_path).map_err(|e| {
-                    ServerError::Config(ConfigError::Invalid(format!(
-                        "Failed to read TLS key from {}: {}",
-                        key_path, e
-                    )))
-                })?;
+            let cert_pem = std::fs::read(&cert_path).map_err(|e| {
+                ServerError::Config(ConfigError::Invalid(format!(
+                    "Failed to read TLS cert from {}: {}",
+                    cert_path, e
+                )))
+            })?;
+            let key_pem = std::fs::read(&key_path).map_err(|e| {
+                ServerError::Config(ConfigError::Invalid(format!(
+                    "Failed to read TLS key from {}: {}",
+                    key_path, e
+                )))
+            })?;
 
-                let acceptor = create_tls_acceptor(&cert_pem, &key_pem)?;
-                tracing::info!("TLS configured for cloud mode");
-                Some(acceptor)
-            } else {
-                tracing::info!("cloud mode with external TLS termination");
-                None
-            }
+            let acceptor = create_tls_acceptor(&cert_pem, &key_pem)?;
+            tracing::info!("TLS configured for cloud mode");
+            Some(acceptor)
         } else {
             None
         };
 
-        let local_agent_state = get_local_agent_service_state(&self.state).await;
-        let mut started_services =
-            start_user_services(self.state.clone(), local_agent_state.clone()).await;
         let cloud_routing = is_cloud_server.then(|| CloudRoutingService::new(self.state.clone()));
         let mut cloud_routing_task = None;
+        let mut local_agent_state = None;
+        let mut started_services = None;
         let mut background_tasks: Vec<JoinHandle<()>> = Vec::new();
 
         if is_cloud_server {
@@ -314,43 +367,40 @@ impl Server {
             };
             let addr = SocketAddr::from(([0, 0, 0, 0], port));
             let listener = TcpListener::bind(addr).await?;
-            if enforce_tls {
-                tracing::info!(addr = %addr, "listening on cloud TLS RoutingService");
-                let service = cloud_routing
-                    .as_ref()
-                    .expect("cloud server should have cloud routing service");
-                let acceptor = tls_acceptor
-                    .clone()
-                    .expect("cloud TLS mode should have TLS acceptor");
-                cloud_routing_task = Some(service.serve_on_tls_tcp_listener(
-                    listener,
-                    acceptor,
-                    TLS_HANDSHAKE_TIMEOUT,
-                ));
-            } else {
-                tracing::info!(addr = %addr, "listening on cloud TCP RoutingService (external TLS)");
-                let service = cloud_routing
-                    .as_ref()
-                    .expect("cloud server should have cloud routing service");
-                cloud_routing_task = Some(service.serve_on_tcp_listener(listener));
+            tracing::info!(addr = %addr, "listening on cloud TLS RoutingService");
+            let service = cloud_routing
+                .as_ref()
+                .expect("cloud server should have cloud routing service");
+            let acceptor = tls_acceptor.expect("cloud TLS mode should have TLS acceptor");
+            cloud_routing_task =
+                Some(service.serve_on_tls_tcp_listener(listener, acceptor, TLS_HANDSHAKE_TIMEOUT));
+        } else {
+            let agent_state = get_local_agent_service_state(&self.state).await;
+            let mut services = start_user_services(
+                self.state.clone(),
+                agent_state.clone(),
+                self.device_runtime_security(),
+            )
+            .await
+            .map_err(|error| ServerError::State(error.to_string()))?;
+
+            if let Some(port) = tcp_port {
+                let addr = SocketAddr::from(([0, 0, 0, 0], port));
+                let listener = TcpListener::bind(addr).await?;
+                tracing::info!(addr = %addr, "listening on direct dispatcher TCP");
+                services.serve_external_tcp_listener(listener);
             }
-        } else if let Some(port) = tcp_port {
-            let addr = SocketAddr::from(([0, 0, 0, 0], port));
-            let listener = TcpListener::bind(addr).await?;
-            tracing::info!(addr = %addr, "listening on direct RoutingService TCP");
-            started_services.serve_routing_service_on_tcp_listener(listener);
-        }
 
-        #[cfg(unix)]
-        {
-            started_services.serve_client_service_on_unix_socket(&socket_path)?;
-            tracing::info!(path = %socket_path.display(), "listening on local ClientService");
-        }
+            #[cfg(unix)]
+            {
+                services.serve_client_service_on_unix_socket(&socket_path)?;
+                tracing::info!(path = %socket_path.display(), "listening on local ClientService");
+            }
 
-        // Auto-connect to cloud (local server only, not cloud server)
-        if !is_cloud_server {
             background_tasks
-                .extend(spawn_local_background_tasks(self.state.clone(), &started_services).await);
+                .extend(spawn_local_background_tasks(self.state.clone(), &services).await);
+            local_agent_state = Some(agent_state);
+            started_services = Some(services);
         }
 
         let mut shutdown_rx = self.shutdown_rx.take().expect("run() called twice");
@@ -366,9 +416,11 @@ impl Server {
             };
             if let Some(reply) = process_shutdown_request(
                 req,
-                &local_agent_state,
+                local_agent_state.as_ref(),
                 &state_path,
-                &started_services.tunnels,
+                started_services
+                    .as_ref()
+                    .map(|services| services.tunnels.as_ref()),
                 cloud_routing.as_ref(),
             )
             .await
@@ -381,7 +433,9 @@ impl Server {
         // the old server after receiving the response. Keep routing tasks alive
         // briefly so queued GoAway frames can flush.
         #[cfg(unix)]
-        let _ = std::fs::remove_file(&socket_path);
+        if !is_cloud_server {
+            let _ = std::fs::remove_file(&socket_path);
+        }
         pending_shutdown_reply.send_success();
 
         tokio::time::sleep(Duration::from_millis(SERVER_GOAWAY_DRAIN_TIMEOUT_MS as u64)).await;
@@ -428,8 +482,13 @@ impl ServerBuilder {
 
     pub async fn run(self) -> Result<()> {
         let (config, credentials, as_cloud_relay, update_reporter) = self.into_parts()?;
-        let mut server = Server::with_config_and_credentials(config, credentials, update_reporter)?;
-        server.run(as_cloud_relay).await
+        let mut server = Server::with_config_and_credentials(
+            config,
+            credentials,
+            update_reporter,
+            as_cloud_relay,
+        )?;
+        server.run().await
     }
 }
 
@@ -443,11 +502,22 @@ impl EmbeddedBuilder {
             )));
         }
         config.validate(as_cloud_relay)?;
-        let mut server = Server::with_config_and_credentials(config, credentials, update_reporter)?;
+        let mut server = Server::with_config_and_credentials(
+            config,
+            credentials,
+            update_reporter,
+            as_cloud_relay,
+        )?;
 
         let tasks = Arc::new(Mutex::new(Vec::new()));
         let agent_state = get_local_agent_service_state(&server.state).await;
-        let started_services = start_user_services(server.state.clone(), agent_state.clone()).await;
+        let started_services = start_user_services(
+            server.state.clone(),
+            agent_state.clone(),
+            server.device_runtime_security(),
+        )
+        .await
+        .map_err(|error| ServerError::State(error.to_string()))?;
 
         for task in spawn_local_background_tasks(server.state.clone(), &started_services).await {
             push_embedded_task(&tasks, task);
@@ -576,7 +646,7 @@ async fn handle_embedded_shutdown(
     tunnels: Arc<TunnelPool>,
 ) -> bool {
     if let Some(reply) =
-        process_shutdown_request(req, &agent_state, &state_path, &tunnels, None).await
+        process_shutdown_request(req, Some(&agent_state), &state_path, Some(&tunnels), None).await
     {
         reply.send_success();
         tokio::spawn(async move {
@@ -598,15 +668,21 @@ async fn spawn_local_background_tasks(
         state.config.clone()
     };
     let cloud_url = config.cloud_url.clone();
-    let connector_ctx = started_services.routing_connector_ctx(generate_server_link(
-        &config.host_name,
-        config.randomise_link_name,
-    ));
-    let mut tasks = vec![establish_cloud_connection(
-        config,
-        state.clone(),
-        connector_ctx,
-    )];
+    let mut tasks = Vec::new();
+    if crate::setup::cloud_enabled(&config) {
+        let connector_ctx = started_services.routing_connector_ctx(generate_server_link(
+            &config.host_name,
+            config.randomise_link_name,
+        ));
+        tasks.push(establish_cloud_connection(
+            config.clone(),
+            state.clone(),
+            connector_ctx,
+        ));
+    }
+    tasks.extend(
+        started_services.spawn_reachability_links(&config.host_name, config.randomise_link_name),
+    );
 
     let update_reporter = {
         let state = state.read().await;
@@ -625,19 +701,28 @@ async fn spawn_local_background_tasks(
 
 async fn process_shutdown_request(
     req: ShutdownRequest,
-    agent_state: &SharedAgentServiceState,
+    agent_state: Option<&SharedAgentServiceState>,
     state_path: &Path,
-    tunnels: &TunnelPool,
+    tunnels: Option<&TunnelPool>,
     cloud_routing: Option<&CloudRoutingService>,
 ) -> Option<PendingShutdownReply> {
     match req {
         ShutdownRequest::Shutdown { reply } => {
-            notify_local_clients(agent_state, ShutdownReason::UserRequested).await;
+            if let Some(agent_state) = agent_state {
+                notify_local_clients(agent_state, ShutdownReason::UserRequested).await;
+                shutdown_server(agent_state).await;
+            }
             notify_routing_peers(tunnels, cloud_routing, ShutdownReason::UserRequested).await;
-            shutdown_server(agent_state).await;
             Some(PendingShutdownReply::Shutdown { reply })
         }
         ShutdownRequest::Suspend { reason, reply } => {
+            let Some(agent_state) = agent_state else {
+                notify_routing_peers(tunnels, cloud_routing, reason).await;
+                return Some(PendingShutdownReply::Suspend {
+                    reply,
+                    suspended_count: 0,
+                });
+            };
             let (suspended, errors) = prepare_server_suspend(agent_state).await;
             let suspended_count = suspended.agents.len();
             if !errors.is_empty() {
@@ -671,15 +756,17 @@ async fn notify_local_clients(agent_state: &SharedAgentServiceState, reason: Shu
 }
 
 async fn notify_routing_peers(
-    tunnels: &TunnelPool,
+    tunnels: Option<&TunnelPool>,
     cloud_routing: Option<&CloudRoutingService>,
     reason: ShutdownReason,
 ) {
     let goaway_reason = goaway_reason_for_shutdown(reason);
-    tunnels
-        .link_registry()
-        .send_goaway_to_all(goaway_reason, SERVER_GOAWAY_DRAIN_TIMEOUT_MS)
-        .await;
+    if let Some(tunnels) = tunnels {
+        tunnels
+            .link_registry()
+            .send_goaway_to_all(goaway_reason, SERVER_GOAWAY_DRAIN_TIMEOUT_MS)
+            .await;
+    }
     if let Some(cloud_routing) = cloud_routing {
         cloud_routing
             .send_goaway_to_all(goaway_reason, SERVER_GOAWAY_DRAIN_TIMEOUT_MS)
@@ -703,7 +790,8 @@ fn goaway_reason_for_shutdown(reason: ShutdownReason) -> wire::pb::GoAwayReason 
 mod tests {
     use std::time::Duration;
 
-    use super::{ShutdownReason, goaway_reason_for_shutdown};
+    use super::{Server, ShutdownReason, goaway_reason_for_shutdown};
+    use crate::Config;
     use crate::protocol::wire;
 
     #[test]
@@ -732,5 +820,66 @@ mod tests {
         );
 
         assert!(task.is_none());
+    }
+
+    #[test]
+    fn device_server_uses_persisted_host_id() {
+        let dir = tempfile::tempdir().unwrap();
+        let config = Config {
+            path: Some(dir.path().join("config.yaml")),
+            state_path: dir.path().join("state.yaml"),
+            ..Config::default()
+        };
+
+        let first = Server::with_config_and_credentials_in_data_dir(
+            config.clone(),
+            None,
+            None,
+            false,
+            dir.path(),
+        )
+        .unwrap();
+        let second =
+            Server::with_config_and_credentials_in_data_dir(config, None, None, false, dir.path())
+                .unwrap();
+
+        assert_eq!(
+            first.state.blocking_read().host_id(),
+            second.state.blocking_read().host_id()
+        );
+        assert!(dir.path().join("device.key").exists());
+        assert!(dir.path().join("host_id").exists());
+        assert!(dir.path().join("trust.json").exists());
+    }
+
+    #[test]
+    fn cloud_relay_does_not_create_device_identity_files() {
+        let dir = tempfile::tempdir().unwrap();
+        let config = Config {
+            path: Some(dir.path().join("config.yaml")),
+            state_path: dir.path().join("state.yaml"),
+            tcp_port: Some(0),
+            ..Config::default()
+        };
+
+        let first = Server::with_config_and_credentials_in_data_dir(
+            config.clone(),
+            None,
+            None,
+            true,
+            dir.path(),
+        )
+        .unwrap();
+        let second =
+            Server::with_config_and_credentials_in_data_dir(config, None, None, true, dir.path())
+                .unwrap();
+
+        assert_ne!(
+            first.state.blocking_read().host_id(),
+            second.state.blocking_read().host_id()
+        );
+        assert!(!dir.path().join("device.key").exists());
+        assert!(!dir.path().join("host_id").exists());
+        assert!(!dir.path().join("trust.json").exists());
     }
 }

@@ -1,12 +1,18 @@
 #![allow(clippy::result_large_err)]
 
 mod agents;
+mod audit;
 mod auth;
 mod client;
 mod config;
+mod connection;
 mod debug;
+mod dispatcher;
+mod identity;
+mod pairing;
 mod paths;
 mod protocol;
+mod resource_limits;
 mod routing;
 mod server;
 mod services;
@@ -15,6 +21,7 @@ mod sleep_inhibitor;
 mod state;
 mod suspend;
 mod transport;
+mod trust;
 mod tunnel;
 pub mod update;
 mod user_state;
@@ -26,14 +33,28 @@ pub use agents::{
 pub use auth::oauth::{OAuthError, refresh_access_token, run_device_flow};
 pub use auth::{AccessToken, AuthError, CredentialProvider};
 pub use client::{
-    AgentEventStream, Client, ClientError, ConnectError, HostEventStream, ResumeSummary,
-    SessionStream, SuspendSummary,
+    AgentEventStream, Client, ClientError, ConnectError, HostEventStream, PairingSecret,
+    PairingStart, PeerEntry, PeerReachability, ResumeSummary, SessionStream, SuspendSummary,
 };
 pub use config::{Config, ConfigError, Keybinds, LeaderKey};
 pub use debug::DebugFormat;
+pub use pairing::pin::{PinPairingError, pair_via_pin_direct_tcp};
+pub use pairing::qr::{
+    QrPairingError, QrPairingPayload, encode_qr_pairing_payload, parse_qr_pairing_payload,
+    parse_qr_pairing_payload_for_cloud, validate_qr_payload_cloud_url,
+};
+pub use pairing::ssh::{
+    SshPairingError, SshPairingPeer, pair_via_ssh_initiator, pair_via_ssh_responder,
+    pair_via_ssh_target,
+};
+#[cfg(unix)]
+pub use pairing::ssh::{pair_via_ssh_responder_stdio, relay_stdio_to_unix_socket};
 pub use paths::{default_data_dir, default_log_path};
 pub use protocol::ProtocolError;
-pub use routing::{Capabilities, Host, HostEvent, SupportedAgentType};
+pub use routing::{
+    Capabilities, Host, HostEntry, HostEvent, HostReachabilityStatus, HostTrustStatus,
+    SupportedAgentType,
+};
 pub use server::{
     DaemonBuilder, EmbeddedBuilder, Server, ServerBuilder, ServerError, ShutdownReason,
 };
@@ -73,6 +94,32 @@ impl From<String> for AgentIdentifier {
 }
 
 impl From<&str> for AgentIdentifier {
+    fn from(value: &str) -> Self {
+        uuid::Uuid::parse_str(value)
+            .map(Self::Id)
+            .unwrap_or_else(|_| Self::Name(value.to_string()))
+    }
+}
+
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub enum PeerIdentifier {
+    Id(HostId),
+    Name(String),
+}
+
+impl From<HostId> for PeerIdentifier {
+    fn from(id: HostId) -> Self {
+        Self::Id(id)
+    }
+}
+
+impl From<String> for PeerIdentifier {
+    fn from(name: String) -> Self {
+        Self::Name(name)
+    }
+}
+
+impl From<&str> for PeerIdentifier {
     fn from(value: &str) -> Self {
         uuid::Uuid::parse_str(value)
             .map(Self::Id)

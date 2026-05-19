@@ -7,6 +7,7 @@ use serde::{Deserialize, Serialize};
 use thiserror::Error;
 
 use crate::paths::{amux_xdg_dir, default_state_path};
+use crate::routing::MAX_HOST_NAME_BYTES;
 
 #[derive(Debug, Error)]
 pub enum ConfigError {
@@ -59,10 +60,6 @@ fn default_socket_path() -> PathBuf {
 }
 
 fn default_randomise_link_name() -> bool {
-    true
-}
-
-fn default_enforce_tls_in_cloud_mode() -> bool {
     true
 }
 
@@ -174,11 +171,6 @@ pub struct Config {
     #[serde(default = "default_state_path")]
     pub state_path: PathBuf,
 
-    /// Whether the cloud server should handle TLS itself (default: true).
-    /// Set to false when TLS is terminated by a reverse proxy (e.g. nginx).
-    #[serde(default = "default_enforce_tls_in_cloud_mode")]
-    pub enforce_tls_in_cloud_mode: bool,
-
     /// Whether the user has opted into cloud mode. `None` = not yet asked (init
     /// will prompt); `Some(true/false)` = explicit user choice.
     #[serde(default, skip_serializing_if = "Option::is_none")]
@@ -213,7 +205,6 @@ impl Default for Config {
             tcp_port: None,
             randomise_link_name: default_randomise_link_name(),
             state_path: default_state_path(),
-            enforce_tls_in_cloud_mode: default_enforce_tls_in_cloud_mode(),
             enable_cloud_mode: None,
             prevent_idle_sleep: None,
             minimum_client_versions: HashMap::new(),
@@ -247,6 +238,11 @@ impl Config {
 
         if self.host_name.is_empty() {
             return Err(ConfigError::Invalid("host_name must not be empty".into()));
+        }
+        if self.host_name.len() > MAX_HOST_NAME_BYTES {
+            return Err(ConfigError::Invalid(format!(
+                "host_name must be at most {MAX_HOST_NAME_BYTES} bytes"
+            )));
         }
 
         // Cloud servers must have TCP configured.
@@ -464,10 +460,20 @@ mod tests {
     #[test]
     fn validate_accepts_long_host_name() {
         let config = Config {
-            host_name: "a".repeat(200),
+            host_name: "a".repeat(MAX_HOST_NAME_BYTES),
             ..Config::default()
         };
         assert!(config.validate(false).is_ok());
+    }
+
+    #[test]
+    fn validate_rejects_oversized_host_name() {
+        let config = Config {
+            host_name: "a".repeat(MAX_HOST_NAME_BYTES + 1),
+            ..Config::default()
+        };
+        let err = config.validate(false).unwrap_err();
+        assert!(err.to_string().contains("host_name"));
     }
 
     #[test]

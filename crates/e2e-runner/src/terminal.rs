@@ -318,6 +318,48 @@ impl TestTerminal {
             }
         }
     }
+
+    /// Read and consume one rendered output line, returning it without the
+    /// trailing newline.
+    pub fn read_line(&mut self, timeout: Duration) -> Result<String, TerminalError> {
+        let start = std::time::Instant::now();
+
+        loop {
+            let (rendered, rendered_map) = render_terminal(&self.output_buffer);
+
+            if let Some(line_end) = rendered.find('\n') {
+                let actual = rendered[..line_end].to_string();
+                let consumed = rendered_map.get(line_end).copied().unwrap_or(0);
+                self.output_buffer.drain(..consumed);
+                return Ok(actual);
+            }
+
+            let remaining = timeout.saturating_sub(start.elapsed());
+            if remaining.is_zero() {
+                return Err(TerminalError {
+                    message: format!(
+                        "Timeout waiting for output line (got rendered: {rendered:?})"
+                    ),
+                });
+            }
+
+            match self.rx.recv_timeout(remaining) {
+                Ok(data) => {
+                    self.output_buffer.extend_from_slice(&data);
+                }
+                Err(mpsc::RecvTimeoutError::Timeout) => {
+                    continue;
+                }
+                Err(mpsc::RecvTimeoutError::Disconnected) => {
+                    return Err(TerminalError {
+                        message: format!(
+                            "EOF waiting for output line (got rendered: {rendered:?})"
+                        ),
+                    });
+                }
+            }
+        }
+    }
 }
 
 #[cfg(test)]

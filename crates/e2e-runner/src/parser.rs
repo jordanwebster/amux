@@ -25,8 +25,6 @@ pub struct TestConfig {
     #[serde(default)]
     pub tcp_port: Option<u16>,
     #[serde(default)]
-    pub enforce_tls_in_cloud_mode: Option<bool>,
-    #[serde(default)]
     pub cloud_relay: bool,
 }
 
@@ -49,6 +47,8 @@ pub enum TestStep {
     Input(String),
     /// Expect output (may be multiple lines, joined with \n)
     ExpectOutput(String),
+    /// Capture one output line suffix after a required prefix into a variable.
+    CaptureOutput { name: String, prefix: String },
     /// Sleep for a given number of milliseconds
     Sleep(u64),
     /// Retry the next expected output by rerunning the last one-shot command.
@@ -322,6 +322,26 @@ pub fn parse_test_content(content: &str) -> Result<TestCase, ParseError> {
                     continue;
                 }
 
+                // Capture directive: @@capture <variable> <line prefix>
+                if let Some(rest) = trimmed.strip_prefix("@@capture ") {
+                    flush_pending_output(&mut pending_output_lines, &mut steps);
+                    let (name, prefix) = rest.split_once(' ').ok_or_else(|| ParseError {
+                        line: line_num,
+                        message: format!("Invalid capture directive: {}", rest),
+                    })?;
+                    if name.is_empty() || prefix.is_empty() {
+                        return Err(ParseError {
+                            line: line_num,
+                            message: format!("Invalid capture directive: {}", rest),
+                        });
+                    }
+                    steps.push(TestStep::CaptureOutput {
+                        name: name.to_string(),
+                        prefix: prefix.to_string(),
+                    });
+                    continue;
+                }
+
                 // Terminal switch - flush any pending output first
                 if let Some(rest) = trimmed.strip_prefix('@') {
                     flush_pending_output(&mut pending_output_lines, &mut steps);
@@ -455,6 +475,32 @@ No agents running.
                 assert_eq!(policy.interval_ms, 100);
             }
             _ => panic!("Expected RetryNextExpect"),
+        }
+    }
+
+    #[test]
+    fn test_parse_capture_output() {
+        let content = r#"# test: capture
+
+## Environment
+
+terminal:
+  name: T1
+
+## Test
+
+@T1
+> amux pair --listen
+@@capture pairing_pin Pairing PIN:
+"#;
+        let test_case = parse_test_content(content).unwrap();
+        assert_eq!(test_case.steps.len(), 3);
+        match &test_case.steps[2] {
+            TestStep::CaptureOutput { name, prefix } => {
+                assert_eq!(name, "pairing_pin");
+                assert_eq!(prefix, "Pairing PIN:");
+            }
+            _ => panic!("expected capture step"),
         }
     }
 

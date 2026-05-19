@@ -42,7 +42,7 @@ fn is_oneshot_amux_command(command: &ResolvedCommand) -> bool {
     match subcommand {
         "list" | "ls" => true,
         "server" => match command.args.get(index + 1).map(String::as_str) {
-            Some("connect" | "stop" | "suspend" | "resume") => true,
+            Some("stop" | "suspend" | "resume") => true,
             Some("start") => !command.args[index + 2..]
                 .iter()
                 .any(|arg| arg == "--foreground"),
@@ -52,10 +52,15 @@ fn is_oneshot_amux_command(command: &ResolvedCommand) -> bool {
     }
 }
 
-fn run_oneshot_command(command: &ResolvedCommand, cwd: &Path) -> Result<String, String> {
+fn run_oneshot_command(
+    command: &ResolvedCommand,
+    cwd: &Path,
+    env: &HashMap<String, String>,
+) -> Result<String, String> {
     let output = Command::new(&command.program)
         .args(&command.args)
         .current_dir(cwd)
+        .envs(env)
         .output()
         .map_err(|e| format!("Failed to run oneshot command: {}", e))?;
 
@@ -74,6 +79,7 @@ fn run_oneshot_command(command: &ResolvedCommand, cwd: &Path) -> Result<String, 
 fn retry_oneshot_until_expected(
     command: &ResolvedCommand,
     cwd: &Path,
+    env: &HashMap<String, String>,
     expected: &str,
     policy: RetryPolicy,
     first_output: String,
@@ -85,10 +91,42 @@ fn retry_oneshot_until_expected(
 
     while actual != expected && started.elapsed() < timeout {
         thread::sleep(interval);
-        actual = run_oneshot_command(command, cwd)?;
+        actual = run_oneshot_command(command, cwd, env)?;
     }
 
     Ok(actual)
+}
+
+fn append_config_logs(
+    mut error: String,
+    config_envs: &HashMap<String, HashMap<String, String>>,
+) -> String {
+    let mut names = config_envs.keys().collect::<Vec<_>>();
+    names.sort();
+    for name in names {
+        let Some(log_path) = config_envs.get(name).and_then(|env| env.get("AMUX_LOG")) else {
+            continue;
+        };
+        let Ok(contents) = std::fs::read_to_string(log_path) else {
+            continue;
+        };
+        if contents.trim().is_empty() {
+            continue;
+        }
+        error.push_str(&format!("\n\n--- {name} amux.log ({log_path}) ---\n"));
+        error.push_str(&tail_lines(&contents, 200));
+    }
+    error
+}
+
+fn tail_lines(contents: &str, max_lines: usize) -> String {
+    let lines = contents.lines().collect::<Vec<_>>();
+    let start = lines.len().saturating_sub(max_lines);
+    let mut tail = lines[start..].join("\n");
+    if !tail.is_empty() {
+        tail.push('\n');
+    }
+    tail
 }
 
 fn default_socket_path(base_dir: &Path, test_name: &str, config_name: &str) -> PathBuf {
@@ -96,7 +134,7 @@ fn default_socket_path(base_dir: &Path, test_name: &str, config_name: &str) -> P
     #[cfg(unix)]
     {
         let _ = base_dir;
-        std::env::temp_dir().join(format!("amux-test-{pid}-{test_name}-{config_name}.sock"))
+        PathBuf::from("/tmp").join(format!("amux-test-{pid}-{test_name}-{config_name}.sock"))
     }
     #[cfg(windows)]
     {
@@ -142,6 +180,8 @@ struct VariableContext {
     configs: HashMap<String, PathBuf>,
     /// config name -> tcp_port
     tcp_ports: HashMap<String, u16>,
+    /// captured output variable name -> value
+    captures: HashMap<String, String>,
 }
 
 const E2E_USER_ID: &str = "11111111-1111-4111-8111-111111111111";
@@ -178,9 +218,80 @@ qr8VpwUTpFt0PnPahUNCRw==
 -----END PRIVATE KEY-----"#;
 const E2E_JWK_N: &str = "2tdFT_a3PqABt_iYZGjyvziUqNstNLOaVKGyAjKX1gKQ6Z6BLDyX_98r0b5SCZ0DCvnkDbcUnZ4BT9Ttz-r4KS9DJAewgDsW3tlgeCxWdMB7kM8cjtAb_WAy72YnTYOxSssYZwEclStJtDhcL1uXZ_y-jzgMRKLmnVlh23sg3ptQbDnBAE9rKUM6nlSmXNlZWSdhTvwmqRmL4qe2zDgDG4iD3ZJX0xUY9XhgOAZS5a8OuOWBL5aNHwjK1WTWG_rBiNUiJlX6E6GsZXXE9ZWoJyhNfhES_Iz6i3G8euoyDqvzX-YUSTh7msn489rlKn2HbrpiruTZa8gb_jolXkJptw";
 const E2E_JWK_E: &str = "AQAB";
+const E2E_CLOUD_TLS_CA: &str = r#"-----BEGIN CERTIFICATE-----
+MIIDGTCCAgGgAwIBAgIUb37PUGBCfNL02QQ6MxsMhbku/FkwDQYJKoZIhvcNAQEL
+BQAwHDEaMBgGA1UEAwwRYW11eC1lMmUtY2xvdWQtY2EwHhcNMjYwNTE5MTAyNTI2
+WhcNMzYwNTE2MTAyNTI2WjAcMRowGAYDVQQDDBFhbXV4LWUyZS1jbG91ZC1jYTCC
+ASIwDQYJKoZIhvcNAQEBBQADggEPADCCAQoCggEBANfq+5Eq48ZaLg2wcpKun4db
+EcAQy48B0z+ML/pgQjPA98bpqiY/qCjS9gQc3wLSM486LaTh6+Us5q9AEZb09ZuY
+H9PDqkZ4bKXxIdkNHOFjq8QoFSkzOZJz9zKEZ87JH2Z8FMrXJkgWJEmJL0RNtOMx
+eXKAgC5eztoOPMA0UQTJWCKv5RRPeGOG+I6ps03pyMKh7QPTj3fRdeB4UhTtomNi
+CJRgwwZigf8aq+YezTXCKPpQlziP5PrENlmN96t4Xl2jiCkKkBL8uHGU2z662esf
+wRwFXOB+ZW1dhFBtkJ2+HTvs0R9zXfPmd/oj1CPQP3Z2dImSBIA43vqLT7PJ9qUC
+AwEAAaNTMFEwHQYDVR0OBBYEFAswMn/umvBjTlplcV7rRKLYILYCMB8GA1UdIwQY
+MBaAFAswMn/umvBjTlplcV7rRKLYILYCMA8GA1UdEwEB/wQFMAMBAf8wDQYJKoZI
+hvcNAQELBQADggEBAAGq6C5cvBYrXC48egmjL/e79o7sCOsjh7BRTElkebeNoreN
+yRarwcSzUwOfa6YFIqECdS5FPKOmRH+NtlBQl+ZQyq4lh7CKWREOLVJYzfpBdi28
+Q/OsWGUuA3oYfvDyXm3xxEXeY/kFTAC+yTOCqRQfN0jCL58Y3K+69iyV5DWLqzd6
+k2VDVdU1pv0J87BwWIMXWRI1Unb2cnUlOeVfB9B1Wh7A07WgfJ6OEQ3mOMmi3xd/
+JnOQYM8lYvIQnui0RKlNX1WsNnfnYN34KvLIf8RACeCmMYSeXiD/xm0efkw24sgg
+WWw8TqG1kFSTmb1KjJdbmC4mdO/TkkKYMsvwhPg=
+-----END CERTIFICATE-----"#;
+const E2E_CLOUD_TLS_CERT: &str = r#"-----BEGIN CERTIFICATE-----
+MIIDSzCCAjOgAwIBAgIUNKY7gJVX/L7F63F2Am2QrzwpyAQwDQYJKoZIhvcNAQEL
+BQAwHDEaMBgGA1UEAwwRYW11eC1lMmUtY2xvdWQtY2EwHhcNMjYwNTE5MTAyNTI2
+WhcNMzYwNTE2MTAyNTI2WjAUMRIwEAYDVQQDDAlsb2NhbGhvc3QwggEiMA0GCSqG
+SIb3DQEBAQUAA4IBDwAwggEKAoIBAQDdZk1QHIDbSam+fJvWb7+YCKbDB0iF70j7
+l0POY0UP1D4ElsyHMDqHXkn9qnry1KTf1sP2/6fhLUYV8LfW103Zi4CI0L4Utz4H
+vwep8+Nz3OHPxc/Ue/NQl/bGs9z+URKF+8tC+sFN5/oEpfzYq3PgDPS0BFLHHX3b
+xDjwpynLYxvpuTS3aECth+v6/iZiwMxAQi3eAlIxtdLKd7JswNBOBChx7zW0/L4K
+DIzX8VXxyIUH8ESBV0Fs9exTQLP5OmIqkQ3KsUns3F2dGMjkToOs8n3cZUZQUMP2
+PNWTS3aycOwuaGajyRDJNPWt+BkmS40cPHubFSKGYODAHbg5DxARAgMBAAGjgYww
+gYkwCQYDVR0TBAIwADALBgNVHQ8EBAMCBaAwEwYDVR0lBAwwCgYIKwYBBQUHAwEw
+GgYDVR0RBBMwEYIJbG9jYWxob3N0hwR/AAABMB0GA1UdDgQWBBR9KWwfNLKu8JP1
+zdbCBORo5wz/1TAfBgNVHSMEGDAWgBQLMDJ/7prwY05aZXFe60Si2CC2AjANBgkq
+hkiG9w0BAQsFAAOCAQEAAB9ftHtsPyTYVBf5O3TlAimSz04nVF5FPmpGPIZ6HGLu
+pJxNqT8a2f4b5EYBcncoz5p+YTz1wvZ/aJmDdwHcNFqOhcwX886O4nNv1HIfmY9K
+Di2Y9qj1CLh5ZSq+2HaYbm2bN0dNvteNKEewtdVV2XTmbxBF+lJIAwAWEv6IhdNY
+tJKq9+Csgn2qViv+63uuRky2vS0zVBNwnkvtGs9fmYTmcRyUUDJ5WkJ2+1Yly7B8
+XbSNyBpRotjjUtssfsvgPpDpv7eM2P9iUuvTaIMWQa2x+2IO8oMRqZBX8LRqznsK
+q5VD8R2wlqfk62Nxa0kWrZICp/6rW+57CpqlyhTcCg==
+-----END CERTIFICATE-----"#;
+const E2E_CLOUD_TLS_KEY: &str = r#"-----BEGIN PRIVATE KEY-----
+MIIEvgIBADANBgkqhkiG9w0BAQEFAASCBKgwggSkAgEAAoIBAQDdZk1QHIDbSam+
+fJvWb7+YCKbDB0iF70j7l0POY0UP1D4ElsyHMDqHXkn9qnry1KTf1sP2/6fhLUYV
+8LfW103Zi4CI0L4Utz4Hvwep8+Nz3OHPxc/Ue/NQl/bGs9z+URKF+8tC+sFN5/oE
+pfzYq3PgDPS0BFLHHX3bxDjwpynLYxvpuTS3aECth+v6/iZiwMxAQi3eAlIxtdLK
+d7JswNBOBChx7zW0/L4KDIzX8VXxyIUH8ESBV0Fs9exTQLP5OmIqkQ3KsUns3F2d
+GMjkToOs8n3cZUZQUMP2PNWTS3aycOwuaGajyRDJNPWt+BkmS40cPHubFSKGYODA
+Hbg5DxARAgMBAAECggEABWaSyZAobzD40bYQccaqvHau5WBZcIr0aM65JLZfNOek
+gPrSD79+w1aVeiPyeSyevlHALgJGghkB9f8NPPxmNcGlZ7D6h17WRdzEacI9RieZ
+NTb0vuYsepwlCkEmSZMzXyP+l/+t6iHtLg0ugcqM5RDr1zL+d0T3kP4ptWpz0TY/
+a6iBJcQyzFi/GXsRv5+qgv2c98KWGnyRQ5HtgPJvffbe5tPUhzusmmEhNTx6wGMI
+HPh3Zqdaq069zlDz9t1YsKW/QlpkweJNSK7Lja3ZGJX2ri14o3H3vaplfs2eAgKO
+AIS4cU2B6xhQVOTgnK1ACmI94FtQFiFLYGeL/CSgwQKBgQDxk3xiSx58A+5gKdMS
+cfiJeiMuNyisZ1+AiNRGlXP0Wji6B93By718LlZyTqdg1xc8yFw8YE73NywU11Ky
+QCFXSTdatOFihUv3BXesZOwxITMg20ZJ2RtDauFUabHNa5lWeiaU/bcCCPOywSuf
+qG7YDl4Iw7IlMm6MifuT0NheRQKBgQDqnmqZDUYMUKN01AYM4/Vlk+0LLMsLP/sx
+I+BQQ8YQMtRClgqClHNhV7KKQDYaVHtltmlFHuISsq4e10w6HoTv30CFKgtnCjJg
+ItN2T1VH6Fk1e3BPX/IptDkM0f09ugxR9LqDLfp7i5ZUqqFRUPCplUvwLvMJ6FRN
+iLia9JsdXQKBgGDzrhHM0Bk5gqu5XWqjrvmNuRzNKle2zQ9K2tbRGE5S/z059vfW
+CuARwMPzaR1mdX8BcnMQu+BfliNvH1NGhZsAWWTf/yyJDqm+2f6oKlq1Vk2zcwwk
+Q9rUxEYafS9SJaIdN+rHwHDiott0x0s2T/YKHhcqYw6mpNNmdT8nrA55AoGBAJxY
+zx6JKunf/t1GwXVrn8d+KVPuGKy5iVI43y19zIpU5QAubniQJsdyoobgvW0UaVrh
+kQs/xlXBfqkMvj5owhv7gUp8NzcGI4XPD23i9ijCHFi4lqI+hOjnsbDqasDsr3Ma
+DASI6kfUQGzRfEjtEENiO0Wmc81hZnR4rNSONqP9AoGBAMRjgn8H/vD6VoLLH3JH
+1dkJs1UeYDuphsxQDSL8BSZ3A/KdpVXTWr/GpQP+CEirAJMB7SUhvKt8w8ON2gS5
+e+JjcThHZj+6Byi+a909uj8Ql6adrYeAa+tODJRSICJYHjhGHMGT/3cqsjmEKwkW
+1Y9XHTmF4wHjXj00ZfEgep1N
+-----END PRIVATE KEY-----"#;
 
 struct CloudFixture {
     url: String,
+    routing_tls_ca: PathBuf,
+    routing_tls_cert: PathBuf,
+    routing_tls_key: PathBuf,
+    _tls_dir: TempDir,
     running: Arc<AtomicBool>,
     thread: Option<thread::JoinHandle<()>>,
 }
@@ -233,15 +344,14 @@ fn configure_cloud_fixture(configs: &mut [TestConfig]) -> Result<Option<CloudFix
         .clone()
         .unwrap_or_else(|| relay.name.clone());
     let routing_port = match relay.tcp_port {
-        Some(port) => port,
-        None => {
+        Some(0) | None => {
             let port = allocate_local_port()?;
             relay.tcp_port = Some(port);
             port
         }
+        Some(port) => port,
     };
     relay.enable_cloud_mode.get_or_insert(true);
-    relay.enforce_tls_in_cloud_mode.get_or_insert(false);
 
     let fixture = CloudFixture::start(routing_host, routing_port)?;
     for config in configs {
@@ -254,6 +364,18 @@ fn configure_cloud_fixture(configs: &mut [TestConfig]) -> Result<Option<CloudFix
 
 impl CloudFixture {
     fn start(routing_host: String, routing_port: u16) -> Result<Self, String> {
+        let tls_dir =
+            TempDir::new().map_err(|error| format!("failed to create cloud TLS dir: {error}"))?;
+        let routing_tls_ca = tls_dir.path().join("cloud-routing-ca.pem");
+        let routing_tls_cert = tls_dir.path().join("cloud-routing-cert.pem");
+        let routing_tls_key = tls_dir.path().join("cloud-routing-key.pem");
+        std::fs::write(&routing_tls_ca, E2E_CLOUD_TLS_CA)
+            .map_err(|error| format!("failed to write cloud TLS CA: {error}"))?;
+        std::fs::write(&routing_tls_cert, E2E_CLOUD_TLS_CERT)
+            .map_err(|error| format!("failed to write cloud TLS cert: {error}"))?;
+        std::fs::write(&routing_tls_key, E2E_CLOUD_TLS_KEY)
+            .map_err(|error| format!("failed to write cloud TLS key: {error}"))?;
+
         let listener = TcpListener::bind(("127.0.0.1", 0))
             .map_err(|error| format!("failed to start fake cloud API: {error}"))?;
         let addr = listener
@@ -280,6 +402,10 @@ impl CloudFixture {
 
         Ok(Self {
             url: format!("http://{addr}"),
+            routing_tls_ca,
+            routing_tls_cert,
+            routing_tls_key,
+            _tls_dir: tls_dir,
             running,
             thread: Some(thread),
         })
@@ -312,7 +438,7 @@ fn handle_cloud_request(mut stream: TcpStream, routing_host: &str, routing_port:
             (
                 "200 OK",
                 serde_json::json!({
-                    "host": "127.0.0.1",
+                    "host": "localhost",
                     "port": routing_port,
                     "token": token,
                     "expires_at": (Utc::now() + ChronoDuration::hours(1)).to_rfc3339(),
@@ -370,6 +496,7 @@ impl VariableContext {
             directories: HashMap::new(),
             configs: HashMap::new(),
             tcp_ports: HashMap::new(),
+            captures: HashMap::new(),
         }
     }
 
@@ -394,6 +521,11 @@ impl VariableContext {
         for (name, tcp_port) in &self.tcp_ports {
             let var = format!("${}.tcp_port", name);
             result = result.replace(&var, &tcp_port.to_string());
+        }
+
+        for (name, value) in &self.captures {
+            let var = format!("${name}");
+            result = result.replace(&var, value);
         }
 
         result
@@ -431,7 +563,7 @@ impl Executor {
         // Prepare environment by auto-injecting missing fields
         let (directories, mut configs, terminals) =
             self.prepare_environment(test_case, temp_dir.path())?;
-        let _cloud_fixture = configure_cloud_fixture(&mut configs)?;
+        let cloud_fixture = configure_cloud_fixture(&mut configs)?;
 
         // Build variable context
         let mut var_ctx = VariableContext::new();
@@ -456,6 +588,7 @@ impl Executor {
 
         // Generate config files and populate config paths in variable context
         let mut config_paths: HashMap<String, PathBuf> = HashMap::new();
+        let mut config_envs: HashMap<String, HashMap<String, String>> = HashMap::new();
 
         for cfg in &configs {
             // Determine socket path
@@ -468,7 +601,11 @@ impl Executor {
             #[cfg(unix)]
             let _ = std::fs::remove_file(&socket_path);
 
-            let tcp_port = cfg.tcp_port.unwrap_or(allocate_local_port()?);
+            let tcp_port = match cfg.tcp_port {
+                Some(0) => Some(allocate_local_port()?),
+                Some(port) => Some(port),
+                None => None,
+            };
 
             // Allocate a state-file path so each test has an isolated state
             // dir. Left unwritten: init flags live in the config file below;
@@ -477,6 +614,13 @@ impl Executor {
             std::fs::create_dir_all(&state_dir)
                 .map_err(|e| format!("Failed to create state dir: {}", e))?;
             let state_path = state_dir.join("state.yaml");
+            let data_home = state_dir.join("data_home");
+            std::fs::create_dir_all(&data_home)
+                .map_err(|e| format!("Failed to create data home: {}", e))?;
+            let xdg_state_home = state_dir.join("xdg_state_home");
+            std::fs::create_dir_all(&xdg_state_home)
+                .map_err(|e| format!("Failed to create XDG state home: {}", e))?;
+            let log_path = state_dir.join("amux.log");
 
             // Generate YAML config file.
             // Use single quotes for paths: YAML double-quoted strings treat
@@ -499,28 +643,63 @@ impl Executor {
                 .map_err(|e| format!("Failed to write auth file: {}", e))?;
             }
             let mut yaml_content = format!(
-                "host_name: '{}'\nsocket_path: '{}'\ntcp_port: {}\nrandomise_link_name: false\nenable_cloud_mode: {}\nprevent_idle_sleep: false\nstate_path: '{}'\n",
+                "host_name: '{}'\nsocket_path: '{}'\nrandomise_link_name: false\nenable_cloud_mode: {}\nprevent_idle_sleep: false\nstate_path: '{}'\n",
                 host_name,
                 socket_path.display(),
-                tcp_port,
                 enable_cloud_mode,
                 state_path.display()
             );
+            if let Some(tcp_port) = tcp_port {
+                yaml_content.push_str(&format!("tcp_port: {}\n", tcp_port));
+            }
             if let Some(cloud_url) = &cfg.cloud_url {
                 yaml_content.push_str(&format!("cloud_url: '{}'\n", cloud_url));
             }
-            if let Some(enforce_tls) = cfg.enforce_tls_in_cloud_mode {
-                yaml_content.push_str(&format!("enforce_tls_in_cloud_mode: {}\n", enforce_tls));
-            }
-
             let config_file_path = temp_dir.path().join(format!("{}.yaml", cfg.name));
             std::fs::write(&config_file_path, yaml_content)
                 .map_err(|e| format!("Failed to write config file: {}", e))?;
 
             config_paths.insert(cfg.name.clone(), config_file_path);
+            let mut env = HashMap::from([
+                (
+                    "XDG_DATA_HOME".to_string(),
+                    data_home.to_string_lossy().to_string(),
+                ),
+                (
+                    "XDG_STATE_HOME".to_string(),
+                    xdg_state_home.to_string_lossy().to_string(),
+                ),
+                (
+                    "AMUX_LOG".to_string(),
+                    log_path.to_string_lossy().to_string(),
+                ),
+            ]);
+            if let Some(fixture) = &cloud_fixture
+                && (cfg.cloud_relay || enable_cloud_mode)
+            {
+                env.insert(
+                    "AMUX_CLOUD_TLS_CA".to_string(),
+                    fixture.routing_tls_ca.to_string_lossy().to_string(),
+                );
+                if cfg.cloud_relay {
+                    env.insert(
+                        "AMUX_TLS_CERT".to_string(),
+                        fixture.routing_tls_cert.to_string_lossy().to_string(),
+                    );
+                    env.insert(
+                        "AMUX_TLS_KEY".to_string(),
+                        fixture.routing_tls_key.to_string_lossy().to_string(),
+                    );
+                }
+            }
+            config_envs.insert(cfg.name.clone(), env);
             var_ctx.configs.insert(cfg.name.clone(), socket_path);
-            var_ctx.tcp_ports.insert(cfg.name.clone(), tcp_port);
+            if let Some(tcp_port) = tcp_port {
+                var_ctx.tcp_ports.insert(cfg.name.clone(), tcp_port);
+            }
         }
+
+        self.initialize_device_configs(&configs, &config_paths, &config_envs)?;
 
         // Map terminal names to their config and cwd
         let terminal_configs: HashMap<String, (String, PathBuf)> = terminals
@@ -547,8 +726,15 @@ impl Executor {
             .collect();
 
         // Execute test steps, then clean up servers regardless of result
-        let result =
-            self.execute_steps(&test_case.steps, &terminal_configs, &config_paths, &var_ctx);
+        let result = self
+            .execute_steps(
+                &test_case.steps,
+                &terminal_configs,
+                &config_paths,
+                &config_envs,
+                &mut var_ctx,
+            )
+            .map_err(|error| append_config_logs(error, &config_envs));
 
         // Cleanup: shut down background servers spawned during the test.
         for config_path in config_paths.values() {
@@ -564,16 +750,52 @@ impl Executor {
         result
     }
 
+    fn initialize_device_configs(
+        &self,
+        configs: &[TestConfig],
+        config_paths: &HashMap<String, PathBuf>,
+        config_envs: &HashMap<String, HashMap<String, String>>,
+    ) -> Result<(), String> {
+        for cfg in configs.iter().filter(|cfg| !cfg.cloud_relay) {
+            let config_path = config_paths
+                .get(&cfg.name)
+                .ok_or_else(|| format!("Unknown config: {}", cfg.name))?;
+            let env = config_envs
+                .get(&cfg.name)
+                .ok_or_else(|| format!("Missing env for config: {}", cfg.name))?;
+            let output = Command::new(&self.config.amux_binary)
+                .arg("--config")
+                .arg(config_path)
+                .arg("init")
+                .envs(env)
+                .output()
+                .map_err(|e| format!("Failed to initialize config {}: {}", cfg.name, e))?;
+            if !output.status.success() {
+                let stdout = String::from_utf8_lossy(&output.stdout);
+                let stderr = String::from_utf8_lossy(&output.stderr);
+                return Err(format!(
+                    "Failed to initialize config {}:\n{}{}",
+                    cfg.name, stdout, stderr
+                ));
+            }
+        }
+        Ok(())
+    }
+
     fn execute_steps(
         &self,
         steps: &[TestStep],
         terminal_configs: &HashMap<String, (String, PathBuf)>,
         config_paths: &HashMap<String, PathBuf>,
-        var_ctx: &VariableContext,
+        config_envs: &HashMap<String, HashMap<String, String>>,
+        var_ctx: &mut VariableContext,
     ) -> Result<(), String> {
         let mut active_terminals: HashMap<String, TestTerminal> = HashMap::new();
         let mut oneshot_outputs: HashMap<String, String> = HashMap::new();
-        let mut last_oneshot_commands: HashMap<String, (ResolvedCommand, PathBuf)> = HashMap::new();
+        let mut last_oneshot_commands: HashMap<
+            String,
+            (ResolvedCommand, PathBuf, HashMap<String, String>),
+        > = HashMap::new();
         let mut retry_next_expect: Option<RetryPolicy> = None;
         let mut current_terminal: Option<String> = None;
 
@@ -588,6 +810,45 @@ impl Executor {
                 TestStep::RetryNextExpect(policy) => {
                     retry_next_expect = Some(*policy);
                 }
+                TestStep::CaptureOutput { name, prefix } => {
+                    let term_name = current_terminal.as_ref().ok_or("No terminal selected")?;
+                    let prefix_substituted = var_ctx.substitute(prefix);
+
+                    let actual = if let Some(output) = oneshot_outputs.remove(term_name) {
+                        let Some(line_end) = output.find('\n') else {
+                            return Err(format!(
+                                "Capture in terminal {term_name} expected one output line, got {output:?}"
+                            ));
+                        };
+                        let line = output[..line_end].to_string();
+                        let remainder = output[line_end + 1..].to_string();
+                        if !remainder.is_empty() {
+                            oneshot_outputs.insert(term_name.clone(), remainder);
+                        }
+                        line
+                    } else {
+                        let terminal = active_terminals
+                            .get_mut(term_name)
+                            .ok_or(format!("Terminal {} not initialized", term_name))?;
+                        terminal
+                            .read_line(self.config.timeout)
+                            .map_err(|e| format!("Failed to capture output: {}", e))?
+                    };
+
+                    if !actual.starts_with(&prefix_substituted) {
+                        return Err(format!(
+                            "Capture mismatch in terminal {}:\n  Expected prefix: {:?}\n  Actual:          {:?}",
+                            term_name, prefix_substituted, actual
+                        ));
+                    }
+                    let value = actual[prefix_substituted.len()..].trim().to_string();
+                    if value.is_empty() {
+                        return Err(format!(
+                            "Capture {name} in terminal {term_name} produced an empty value"
+                        ));
+                    }
+                    var_ctx.captures.insert(name.clone(), value);
+                }
                 TestStep::Input(input) => {
                     let term_name = current_terminal.as_ref().ok_or("No terminal selected")?;
                     let (config_name, cwd) = terminal_configs
@@ -596,6 +857,9 @@ impl Executor {
                     let config_path = config_paths
                         .get(config_name)
                         .ok_or(format!("Unknown config: {}", config_name))?;
+                    let env = config_envs
+                        .get(config_name)
+                        .ok_or(format!("Missing env for config: {}", config_name))?;
 
                     let input_substituted = var_ctx.substitute(input);
                     let is_amux_command =
@@ -606,16 +870,16 @@ impl Executor {
                             self.transform_command(&input_substituted, config_path)?;
 
                         if is_oneshot_amux_command(&transformed) {
-                            let combined = run_oneshot_command(&transformed, cwd)?;
+                            let combined = run_oneshot_command(&transformed, cwd, env)?;
                             last_oneshot_commands
-                                .insert(term_name.clone(), (transformed, cwd.clone()));
+                                .insert(term_name.clone(), (transformed, cwd.clone(), env.clone()));
                             oneshot_outputs.insert(term_name.clone(), combined);
                         } else {
                             let terminal = TestTerminal::spawn(
                                 &transformed.program,
                                 &transformed.args,
                                 cwd,
-                                &HashMap::new(),
+                                env,
                             )
                             .map_err(|e| {
                                 format!("Failed to spawn terminal {}: {}", term_name, e)
@@ -646,12 +910,13 @@ impl Executor {
 
                     let actual = if let Some(output) = oneshot_outputs.remove(term_name) {
                         if let Some(policy) = retry_policy {
-                            let (command, cwd) = last_oneshot_commands.get(term_name).ok_or(
+                            let (command, cwd, env) = last_oneshot_commands.get(term_name).ok_or(
                                 "Retry directive requires a previous one-shot amux command",
                             )?;
                             retry_oneshot_until_expected(
                                 command,
                                 cwd,
+                                env,
                                 &expected_with_newline,
                                 policy,
                                 output,
@@ -709,7 +974,6 @@ impl Executor {
                 enable_cloud_mode: None,
                 cloud_url: None,
                 tcp_port: None,
-                enforce_tls_in_cloud_mode: None,
                 cloud_relay: false,
             });
         }

@@ -3,6 +3,7 @@
 mod io;
 mod memory;
 mod single_io;
+mod ssh;
 mod tcp;
 mod tls;
 #[cfg(unix)]
@@ -10,12 +11,24 @@ mod unix;
 
 use std::time::Duration;
 
-pub(crate) use io::GrpcIo;
-pub(crate) use memory::{in_process_channel, in_process_incoming, in_process_transport_pair};
+pub(crate) use io::{
+    BoxedGrpcAuth, BoxedGrpcConnectInfo, BoxedGrpcIo, GrpcIo, PreTrustPairingReachability,
+    TrustedPeerConnections,
+};
+#[cfg(test)]
+pub(crate) use memory::in_process_incoming;
+pub(crate) use memory::{in_process_channel, in_process_transport_pair};
 pub(crate) use single_io::{channel_from_single_io, connect_single_io};
-pub(crate) use tcp::{TcpServerTransport, configure_tcp_keepalive, tcp_channel, tcp_incoming};
+#[allow(unused_imports)]
+pub(crate) use ssh::{SshRelayIo, spawn_ssh_pair_recv, spawn_ssh_relay};
+#[cfg(test)]
+pub(crate) use tcp::tcp_incoming;
+pub(crate) use tcp::{TcpServerTransport, configure_tcp_keepalive};
 use thiserror::Error;
-pub(crate) use tls::{create_tls_acceptor, tls_channel};
+pub(crate) use tls::{
+    create_tls_acceptor, pin_pairing_channel, pin_pairing_channel_from_io,
+    qr_pairing_channel_from_io, tls_channel, trusted_device_channel,
+};
 use tonic::transport::{Endpoint, Server};
 #[cfg(unix)]
 pub(crate) use unix::{bind_unix_listener, unix_incoming};

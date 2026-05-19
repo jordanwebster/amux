@@ -27,9 +27,11 @@ async-trait = { workspace = true }
 semver = { workspace = true }
 sha2 = { workspace = true }
 crossterm = { workspace = true }
+qrcode = { workspace = true }
 
 [target.'cfg(unix)'.dependencies]
 libc = { workspace = true }
 
 [dev-dependencies]
+chrono = { workspace = true }
 tempfile = { workspace = true }

@@ -1,9 +1,11 @@
+use std::net::SocketAddr;
 use std::pin::Pin;
 use std::sync::Arc;
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::task::{Context, Poll};
 
 use bytes::Bytes;
+use chrono::{DateTime, Utc};
 use futures_util::Stream;
 use prost::Message as ProstMessage;
 use thiserror::Error;
@@ -15,15 +17,22 @@ use crate::agents::{
     Agent, AgentEvent, CreateAgentRequest, SessionCloseReason, SubscribeSessionEvent,
 };
 use crate::debug::DebugFormat;
+use crate::pairing::ssh::SshPairingPeer;
 use crate::protocol::{ProtocolError, wire};
-use crate::routing::{HostEvent, host_from_wire};
+use crate::routing::{
+    HostEntry, HostEvent, HostReachabilityStatus, HostTrustStatus, capabilities_from_wire,
+};
 use crate::server::{SHUTDOWN_REASON_METADATA_KEY, ShutdownReason};
 use crate::transport::TransportError;
-use crate::{AgentIdentifier, SendInputRequest, SubscribeSessionRequest};
+use crate::{AgentIdentifier, PeerIdentifier, SendInputRequest, SubscribeSessionRequest};
+
+const PAIRING_PUBKEY_LEN: usize = 32;
+const MAX_PAIRING_NAME_BYTES: usize = 256;
 
 mod connect;
 
 mod method {
+    pub(super) const CLIENT_LIST_HOSTS_NAME: &str = "/amux.v1.ClientService/ListHosts";
     pub(super) const CLIENT_LIST_AGENTS_NAME: &str = "/amux.v1.ClientService/ListAgents";
     pub(super) const CLIENT_SUBSCRIBE_HOSTS_NAME: &str = "/amux.v1.ClientService/SubscribeHosts";
     pub(super) const CLIENT_SUBSCRIBE_AGENTS_NAME: &str = "/amux.v1.ClientService/SubscribeAgents";
@@ -32,6 +41,14 @@ mod method {
     pub(super) const CLIENT_SUBSCRIBE_SESSION_NAME: &str =
         "/amux.v1.ClientService/SubscribeSession";
     pub(super) const CLIENT_HANDLE_HOOK_NAME: &str = "/amux.v1.ClientService/HandleHook";
+    pub(super) const CLIENT_START_PAIRING_NAME: &str = "/amux.v1.ClientService/StartPairing";
+    pub(super) const CLIENT_PAIR_PIN_CLOUD_PEER_NAME: &str =
+        "/amux.v1.ClientService/PairPinCloudPeer";
+    pub(super) const CLIENT_PAIR_QR_CLOUD_PEER_NAME: &str =
+        "/amux.v1.ClientService/PairQrCloudPeer";
+    pub(super) const CLIENT_LIST_PEERS_NAME: &str = "/amux.v1.ClientService/ListPeers";
+    pub(super) const CLIENT_GET_PEER_NAME: &str = "/amux.v1.ClientService/GetPeer";
+    pub(super) const CLIENT_UNPAIR_NAME: &str = "/amux.v1.ClientService/Unpair";
 }
 
 pub use connect::ConnectError;
@@ -89,6 +106,37 @@ pub struct HostEventStream {
 pub struct AgentEventStream {
     inner: ClientServiceResponseStream<wire::SubscribeAgentsResponse>,
     done: bool,
+}
+
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct PairingStart {
+    pub identity: SshPairingPeer,
+    pub ttl_seconds: u64,
+    pub tcp_port: Option<u16>,
+    pub cloud_url: String,
+    pub secret: PairingSecret,
+}
+
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub enum PairingSecret {
+    Pin(String),
+    OneShotToken(Vec<u8>),
+}
+
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct PeerEntry {
+    pub host_id: uuid::Uuid,
+    pub name: String,
+    pub pubkey: Vec<u8>,
+    pub paired_at: DateTime<Utc>,
+    pub reachabilities: Vec<PeerReachability>,
+}
+
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub enum PeerReachability {
+    Cloud,
+    Ssh { target: String },
+    DirectTcp { addr: SocketAddr },
 }
 
 struct ClientServiceResponseStream<T> {
@@ -461,6 +509,38 @@ impl Client {
             .collect()
     }
 
+    pub async fn list_hosts(&self) -> Result<Vec<HostEntry>, ClientError> {
+        self.list_hosts_scoped(wire::list_hosts_request::Scope::All)
+            .await
+    }
+
+    pub async fn list_pairing_hosts(&self) -> Result<Vec<HostEntry>, ClientError> {
+        self.list_hosts_scoped(wire::list_hosts_request::Scope::PairingCandidates)
+            .await
+    }
+
+    async fn list_hosts_scoped(
+        &self,
+        scope: wire::list_hosts_request::Scope,
+    ) -> Result<Vec<HostEntry>, ClientError> {
+        self.ensure_open()?;
+        let response = self
+            .inner
+            .lock()
+            .await
+            .list_hosts(wire::ListHostsRequest {
+                scope: scope as i32,
+            })
+            .await
+            .map_err(status_to_client_error)?
+            .into_inner();
+        response
+            .hosts
+            .into_iter()
+            .map(|host| host_entry_from_wire(method::CLIENT_LIST_HOSTS_NAME, host))
+            .collect()
+    }
+
     pub async fn subscribe_hosts(&self) -> Result<HostEventStream, ClientError> {
         self.ensure_open()?;
         let response = self
@@ -550,12 +630,230 @@ impl Client {
         })
     }
 
-    pub async fn connect_to_server(&self, address: String) -> Result<(), ClientError> {
+    pub async fn start_pin_pairing(&self) -> Result<PairingStart, ClientError> {
+        self.start_pairing(wire::start_pairing_request::Mode::Pin, false)
+            .await
+    }
+
+    pub async fn start_lan_pin_pairing(&self) -> Result<PairingStart, ClientError> {
+        self.start_pairing(wire::start_pairing_request::Mode::Pin, true)
+            .await
+    }
+
+    pub async fn start_qr_pairing(&self) -> Result<PairingStart, ClientError> {
+        self.start_pairing(wire::start_pairing_request::Mode::Qr, false)
+            .await
+    }
+
+    async fn start_pairing(
+        &self,
+        mode: wire::start_pairing_request::Mode,
+        require_lan_direct: bool,
+    ) -> Result<PairingStart, ClientError> {
+        self.ensure_open()?;
+        let response = self
+            .inner
+            .lock()
+            .await
+            .start_pairing(wire::StartPairingRequest {
+                mode: mode as i32,
+                require_lan_direct,
+            })
+            .await
+            .map_err(status_to_client_error)?
+            .into_inner();
+        pairing_start_from_wire(response)
+    }
+
+    pub async fn cancel_pairing(&self) -> Result<(), ClientError> {
         self.ensure_open()?;
         self.inner
             .lock()
             .await
-            .connect_to_server(wire::ConnectToServerRequest { address })
+            .cancel_pairing(wire::CancelPairingRequest {})
+            .await
+            .map_err(status_to_client_error)?;
+        Ok(())
+    }
+
+    pub async fn pairing_is_active(&self) -> Result<bool, ClientError> {
+        self.ensure_open()?;
+        let response = self
+            .inner
+            .lock()
+            .await
+            .get_pairing_status(wire::GetPairingStatusRequest {})
+            .await
+            .map_err(status_to_client_error)?
+            .into_inner();
+        Ok(response.active)
+    }
+
+    pub async fn pair_ssh_peer(
+        &self,
+        peer: SshPairingPeer,
+        ssh_target: Option<String>,
+    ) -> Result<(), ClientError> {
+        let reachability = ssh_target.map(wire::pair_peer_request::Reachability::SshTarget);
+        self.pair_peer(peer, reachability).await
+    }
+
+    pub async fn pair_direct_peer(
+        &self,
+        peer: SshPairingPeer,
+        address: SocketAddr,
+    ) -> Result<(), ClientError> {
+        self.pair_peer(
+            peer,
+            Some(wire::pair_peer_request::Reachability::DirectTcpAddr(
+                address.to_string(),
+            )),
+        )
+        .await
+    }
+
+    pub async fn pair_pin_cloud_peer(
+        &self,
+        host_id: uuid::Uuid,
+        pin: String,
+    ) -> Result<SshPairingPeer, ClientError> {
+        self.ensure_open()?;
+        let response = self
+            .inner
+            .lock()
+            .await
+            .pair_pin_cloud_peer(wire::PairPinCloudPeerRequest {
+                host_id: host_id.as_bytes().to_vec(),
+                pin,
+            })
+            .await
+            .map_err(status_to_client_error)?
+            .into_inner();
+        let peer = response.peer.ok_or_else(|| ClientError::Decode {
+            method: method::CLIENT_PAIR_PIN_CLOUD_PEER_NAME,
+            message: "missing PairPinCloudPeerResponse.peer".to_string(),
+        })?;
+        let (host_id, pubkey, name) =
+            pairing_identity_from_wire(method::CLIENT_PAIR_PIN_CLOUD_PEER_NAME, peer)?;
+        Ok(SshPairingPeer {
+            host_id,
+            pubkey,
+            name,
+        })
+    }
+
+    pub async fn pair_qr_cloud_peer(
+        &self,
+        host_id: uuid::Uuid,
+        pubkey: Vec<u8>,
+        one_shot_token: Vec<u8>,
+    ) -> Result<SshPairingPeer, ClientError> {
+        self.ensure_open()?;
+        let response = self
+            .inner
+            .lock()
+            .await
+            .pair_qr_cloud_peer(wire::PairQrCloudPeerRequest {
+                host_id: host_id.as_bytes().to_vec(),
+                pubkey,
+                one_shot_token,
+            })
+            .await
+            .map_err(status_to_client_error)?
+            .into_inner();
+        let peer = response.peer.ok_or_else(|| ClientError::Decode {
+            method: method::CLIENT_PAIR_QR_CLOUD_PEER_NAME,
+            message: "missing PairQrCloudPeerResponse.peer".to_string(),
+        })?;
+        let (host_id, pubkey, name) =
+            pairing_identity_from_wire(method::CLIENT_PAIR_QR_CLOUD_PEER_NAME, peer)?;
+        Ok(SshPairingPeer {
+            host_id,
+            pubkey,
+            name,
+        })
+    }
+
+    pub async fn list_peers(&self) -> Result<Vec<PeerEntry>, ClientError> {
+        self.ensure_open()?;
+        let response = self
+            .inner
+            .lock()
+            .await
+            .list_peers(wire::ListPeersRequest {})
+            .await
+            .map_err(status_to_client_error)?
+            .into_inner();
+        response
+            .peers
+            .into_iter()
+            .map(|peer| peer_entry_from_wire(method::CLIENT_LIST_PEERS_NAME, peer))
+            .collect()
+    }
+
+    pub async fn get_peer(
+        &self,
+        peer: impl Into<PeerIdentifier>,
+    ) -> Result<PeerEntry, ClientError> {
+        self.ensure_open()?;
+        let response = self
+            .inner
+            .lock()
+            .await
+            .get_peer(wire::GetPeerRequest {
+                peer: Some(peer_ref(peer.into())),
+            })
+            .await
+            .map_err(status_to_client_error)?
+            .into_inner();
+        let peer = response.peer.ok_or_else(|| ClientError::Decode {
+            method: method::CLIENT_GET_PEER_NAME,
+            message: "missing GetPeerResponse.peer".to_string(),
+        })?;
+        peer_entry_from_wire(method::CLIENT_GET_PEER_NAME, peer)
+    }
+
+    pub async fn unpair(
+        &self,
+        peer: impl Into<PeerIdentifier>,
+        reason: impl Into<String>,
+    ) -> Result<PeerEntry, ClientError> {
+        self.ensure_open()?;
+        let response = self
+            .inner
+            .lock()
+            .await
+            .unpair(wire::UnpairRequest {
+                peer: Some(peer_ref(peer.into())),
+                reason: reason.into(),
+            })
+            .await
+            .map_err(status_to_client_error)?
+            .into_inner();
+        let peer = response.removed_peer.ok_or_else(|| ClientError::Decode {
+            method: method::CLIENT_UNPAIR_NAME,
+            message: "missing UnpairResponse.removed_peer".to_string(),
+        })?;
+        peer_entry_from_wire(method::CLIENT_UNPAIR_NAME, peer)
+    }
+
+    async fn pair_peer(
+        &self,
+        peer: SshPairingPeer,
+        reachability: Option<wire::pair_peer_request::Reachability>,
+    ) -> Result<(), ClientError> {
+        self.ensure_open()?;
+        self.inner
+            .lock()
+            .await
+            .pair_peer(wire::PairPeerRequest {
+                peer: Some(wire::PairingIdentity {
+                    host_id: peer.host_id.as_bytes().to_vec(),
+                    pubkey: peer.pubkey,
+                    name: peer.name,
+                }),
+                reachability,
+            })
             .await
             .map_err(status_to_client_error)?;
         Ok(())
@@ -680,6 +978,18 @@ fn agent_ref(identifier: AgentIdentifier) -> wire::AgentRef {
     }
 }
 
+fn peer_ref(identifier: PeerIdentifier) -> wire::PeerRef {
+    let identifier = match identifier {
+        PeerIdentifier::Id(host_id) => {
+            wire::peer_ref::Identifier::HostId(host_id.as_bytes().to_vec())
+        }
+        PeerIdentifier::Name(name) => wire::peer_ref::Identifier::Name(name),
+    };
+    wire::PeerRef {
+        identifier: Some(identifier),
+    }
+}
+
 fn agent_response_to_agent(
     method: &'static str,
     agent: Option<wire::Agent>,
@@ -696,6 +1006,66 @@ fn wire_agent_to_agent(method: &'static str, agent: wire::Agent) -> Result<Agent
         method,
         message: error.to_string(),
     })
+}
+
+fn peer_entry_from_wire(
+    method: &'static str,
+    peer: wire::PeerEntry,
+) -> Result<PeerEntry, ClientError> {
+    let host_id = uuid_from_wire_bytes(method, "PeerEntry.host_id", peer.host_id)?;
+    if peer.pubkey.len() != PAIRING_PUBKEY_LEN {
+        return Err(ClientError::Decode {
+            method,
+            message: format!(
+                "PeerEntry.pubkey must be 32 bytes, got {}",
+                peer.pubkey.len()
+            ),
+        });
+    }
+    let paired_at =
+        DateTime::<Utc>::from_timestamp_millis(peer.paired_at_unix_ms).ok_or_else(|| {
+            ClientError::Decode {
+                method,
+                message: format!(
+                    "PeerEntry.paired_at_unix_ms is out of range: {}",
+                    peer.paired_at_unix_ms
+                ),
+            }
+        })?;
+    let reachabilities = peer
+        .reachabilities
+        .into_iter()
+        .map(|reachability| peer_reachability_from_wire(method, reachability))
+        .collect::<Result<Vec<_>, _>>()?;
+    Ok(PeerEntry {
+        host_id,
+        name: peer.name,
+        pubkey: peer.pubkey,
+        paired_at,
+        reachabilities,
+    })
+}
+
+fn peer_reachability_from_wire(
+    method: &'static str,
+    reachability: wire::PeerReachability,
+) -> Result<PeerReachability, ClientError> {
+    match reachability.kind.ok_or_else(|| ClientError::Decode {
+        method,
+        message: "PeerReachability.kind is missing".to_string(),
+    })? {
+        wire::peer_reachability::Kind::Cloud(_) => Ok(PeerReachability::Cloud),
+        wire::peer_reachability::Kind::SshTarget(target) => Ok(PeerReachability::Ssh { target }),
+        wire::peer_reachability::Kind::DirectTcpAddr(addr) => {
+            let addr = addr
+                .parse::<SocketAddr>()
+                .map_err(|error| ClientError::Decode {
+                    method,
+                    message: format!("PeerReachability.direct_tcp_addr is invalid: {error}"),
+                })?;
+            Ok(PeerReachability::DirectTcp { addr })
+        }
+    }
 }
 
 fn client_service_session_response_to_event(
@@ -743,6 +1113,100 @@ fn client_service_session_close_reason(
     }
 }
 
+fn host_entry_from_wire(
+    method: &'static str,
+    host: wire::HostEntry,
+) -> Result<HostEntry, ClientError> {
+    let id = uuid_from_wire_bytes(method, "HostEntry.host_id", host.host_id)?;
+    let trust_status = match wire::HostTrustStatus::try_from(host.trust_status).map_err(|_| {
+        ClientError::Decode {
+            method,
+            message: format!("invalid HostEntry.trust_status {}", host.trust_status),
+        }
+    })? {
+        wire::HostTrustStatus::Trusted => HostTrustStatus::Trusted,
+        wire::HostTrustStatus::UntrustedButOnline => HostTrustStatus::UntrustedButOnline,
+        wire::HostTrustStatus::Unspecified => {
+            return Err(ClientError::Decode {
+                method,
+                message: "HostEntry.trust_status is unspecified".to_string(),
+            });
+        }
+    };
+    let reachability_status = host
+        .reachability_status
+        .map(|status| host_reachability_status_from_wire(method, status))
+        .transpose()?;
+    if host.online && (host.version.is_none() || host.capabilities.is_none()) {
+        return Err(ClientError::Decode {
+            method,
+            message: "online HostEntry requires version and capabilities".to_string(),
+        });
+    }
+    if !host.online && (host.version.is_some() || host.capabilities.is_some()) {
+        return Err(ClientError::Decode {
+            method,
+            message: "non-online HostEntry must not include version or capabilities".to_string(),
+        });
+    }
+    if trust_status == HostTrustStatus::UntrustedButOnline && reachability_status.is_some() {
+        return Err(ClientError::Decode {
+            method,
+            message: "untrusted HostEntry must not include reachability_status".to_string(),
+        });
+    }
+    if trust_status == HostTrustStatus::UntrustedButOnline && !host.online {
+        return Err(ClientError::Decode {
+            method,
+            message: "untrusted HostEntry must be online".to_string(),
+        });
+    }
+    if trust_status == HostTrustStatus::Trusted && reachability_status.is_none() {
+        return Err(ClientError::Decode {
+            method,
+            message: "trusted HostEntry requires reachability_status".to_string(),
+        });
+    }
+    Ok(HostEntry {
+        id,
+        name: host.name,
+        online: host.online,
+        version: host.version,
+        capabilities: host
+            .capabilities
+            .map(|capabilities| capabilities_from_wire(Some(capabilities))),
+        trust_status,
+        reachability_status,
+    })
+}
+
+fn host_reachability_status_from_wire(
+    method: &'static str,
+    status: wire::HostReachabilityStatus,
+) -> Result<HostReachabilityStatus, ClientError> {
+    match status.status.ok_or_else(|| ClientError::Decode {
+        method,
+        message: "HostReachabilityStatus.status is missing".to_string(),
+    })? {
+        wire::host_reachability_status::Status::Reachable(_) => {
+            Ok(HostReachabilityStatus::Reachable)
+        }
+        wire::host_reachability_status::Status::Unreachable(unreachable) => {
+            if unreachable.last_error.is_empty() {
+                return Err(ClientError::Decode {
+                    method,
+                    message: "HostReachabilityStatus.last_error is required for unreachable"
+                        .to_string(),
+                });
+            }
+            Ok(HostReachabilityStatus::Unreachable {
+                last_error: unreachable.last_error,
+            })
+        }
+        wire::host_reachability_status::Status::Unknown(_) => Ok(HostReachabilityStatus::Unknown),
+    }
+}
+
 fn client_service_host_response_to_host_event(
     response: wire::SubscribeHostsResponse,
 ) -> Result<HostEvent, ClientError> {
@@ -751,16 +1215,13 @@ fn client_service_host_response_to_host_event(
         message: "missing SubscribeHostsResponse event".to_string(),
     })?;
     match event {
-        wire::subscribe_hosts_response::Event::HostAdded(added) => {
-            let host = added.host.ok_or_else(|| ClientError::Decode {
+        wire::subscribe_hosts_response::Event::HostUpdated(updated) => {
+            let host = updated.host.ok_or_else(|| ClientError::Decode {
                 method: method::CLIENT_SUBSCRIBE_HOSTS_NAME,
-                message: "missing HostAdded.host".to_string(),
+                message: "missing HostUpdated.host".to_string(),
             })?;
-            let host = host_from_wire(host).map_err(|error| ClientError::Decode {
-                method: method::CLIENT_SUBSCRIBE_HOSTS_NAME,
-                message: error.to_string(),
-            })?;
-            Ok(HostEvent::HostAdded { host })
+            let host = host_entry_from_wire(method::CLIENT_SUBSCRIBE_HOSTS_NAME, host)?;
+            Ok(HostEvent::HostUpdated { host })
         }
         wire::subscribe_hosts_response::Event::HostRemoved(removed) => Ok(HostEvent::HostRemoved {
             id: uuid_from_wire_bytes(
@@ -823,6 +1284,72 @@ fn required_wire_agent(
     crate::agents::agent_from_wire(agent).map_err(|error| ClientError::Decode {
         method,
         message: error.to_string(),
+    })
+}
+
+fn pairing_start_from_wire(
+    response: wire::StartPairingResponse,
+) -> Result<PairingStart, ClientError> {
+    let identity = response.identity.ok_or_else(|| ClientError::Decode {
+        method: method::CLIENT_START_PAIRING_NAME,
+        message: "missing StartPairingResponse.identity".to_string(),
+    })?;
+    let secret = match response.secret.ok_or_else(|| ClientError::Decode {
+        method: method::CLIENT_START_PAIRING_NAME,
+        message: "missing StartPairingResponse.secret".to_string(),
+    })? {
+        wire::start_pairing_response::Secret::Pin(pin) => PairingSecret::Pin(pin),
+        wire::start_pairing_response::Secret::OneShotToken(token) => {
+            PairingSecret::OneShotToken(token)
+        }
+    };
+    Ok(PairingStart {
+        identity: pairing_identity_to_peer(method::CLIENT_START_PAIRING_NAME, identity)?,
+        ttl_seconds: response.ttl_seconds,
+        tcp_port: response
+            .tcp_port
+            .map(u16::try_from)
+            .transpose()
+            .map_err(|_| ClientError::Decode {
+                method: method::CLIENT_START_PAIRING_NAME,
+                message: "StartPairingResponse.tcp_port exceeds u16".to_string(),
+            })?,
+        cloud_url: response.cloud_url,
+        secret,
+    })
+}
+
+fn pairing_identity_from_wire(
+    method: &'static str,
+    identity: wire::PairingIdentity,
+) -> Result<(Uuid, Vec<u8>, String), ClientError> {
+    let peer = pairing_identity_to_peer(method, identity)?;
+    Ok((peer.host_id, peer.pubkey, peer.name))
+}
+
+fn pairing_identity_to_peer(
+    method: &'static str,
+    identity: wire::PairingIdentity,
+) -> Result<SshPairingPeer, ClientError> {
+    if identity.pubkey.len() != PAIRING_PUBKEY_LEN {
+        return Err(ClientError::Decode {
+            method,
+            message: format!(
+                "PairingIdentity.pubkey must be {PAIRING_PUBKEY_LEN} bytes, got {}",
+                identity.pubkey.len()
+            ),
+        });
+    }
+    if identity.name.len() > MAX_PAIRING_NAME_BYTES {
+        return Err(ClientError::Decode {
+            method,
+            message: format!("PairingIdentity.name must be at most {MAX_PAIRING_NAME_BYTES} bytes"),
+        });
+    }
+    Ok(SshPairingPeer {
+        host_id: uuid_from_wire_bytes(method, "PairingIdentity.host_id", identity.host_id)?,
+        pubkey: identity.pubkey,
+        name: identity.name,
     })
 }
 
@@ -943,5 +1470,53 @@ mod tests {
         .unwrap_err();
 
         assert!(error.to_string().contains("must be valid UTF-8"));
+    }
+
+    #[test]
+    fn pairing_start_response_decodes_identity_transport_metadata_and_secret() {
+        let host_id = Uuid::from_u128(42);
+        let start = pairing_start_from_wire(wire::StartPairingResponse {
+            identity: Some(wire::PairingIdentity {
+                host_id: host_id.as_bytes().to_vec(),
+                pubkey: vec![7; 32],
+                name: "laptop".to_string(),
+            }),
+            ttl_seconds: 300,
+            tcp_port: Some(4242),
+            cloud_url: "https://cloud.example".to_string(),
+            secret: Some(wire::start_pairing_response::Secret::Pin(
+                "123456".to_string(),
+            )),
+        })
+        .unwrap();
+
+        assert_eq!(start.identity.host_id, host_id);
+        assert_eq!(start.identity.pubkey, vec![7; 32]);
+        assert_eq!(start.identity.name, "laptop");
+        assert_eq!(start.ttl_seconds, 300);
+        assert_eq!(start.tcp_port, Some(4242));
+        assert_eq!(start.cloud_url, "https://cloud.example");
+        assert_eq!(start.secret, PairingSecret::Pin("123456".to_string()));
+    }
+
+    #[test]
+    fn pairing_start_response_rejects_invalid_tcp_port() {
+        let error = pairing_start_from_wire(wire::StartPairingResponse {
+            identity: Some(wire::PairingIdentity {
+                host_id: Uuid::from_u128(42).as_bytes().to_vec(),
+                pubkey: vec![7; 32],
+                name: "laptop".to_string(),
+            }),
+            ttl_seconds: 300,
+            tcp_port: Some(u32::from(u16::MAX) + 1),
+            cloud_url: "https://cloud.example".to_string(),
+            secret: Some(wire::start_pairing_response::Secret::OneShotToken(vec![
+                1;
+                32
+            ])),
+        })
+        .unwrap_err();
+
+        assert!(error.to_string().contains("tcp_port"));
     }
 }

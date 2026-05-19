@@ -1,19 +1,33 @@
-use std::collections::HashMap;
+use std::collections::{HashMap, HashSet, VecDeque};
 use std::sync::Arc;
+use std::time::Duration;
 
 use bytes::Bytes;
+use rustls::pki_types::ServerName;
 use tokio::sync::{RwLock, mpsc};
+use tokio_rustls::TlsConnector;
 use tonic::transport::{Channel, Endpoint};
 
 use crate::HostId;
+use crate::identity::{DeviceIdentity, IdentityError};
 use crate::protocol::wire as pb;
-use crate::routing::{
-    HostReachabilityEvent, Link, LinkRegistry, LinkRegistryError, Route, RoutingCore, route_to_wire,
+use crate::resource_limits::{
+    CLOUD_INBOUND_TUNNEL_ID_CACHE_CAP, CLOUD_INBOUND_TUNNEL_RATE_LIMIT,
+    CLOUD_INBOUND_TUNNEL_RATE_WINDOW, SlidingWindowRateLimiter,
 };
-use crate::transport::{channel_from_single_io, configure_tonic_endpoint_keepalive};
+use crate::routing::{Link, LinkRegistry, LinkRegistryError, Route, RoutingCore, route_to_wire};
+use crate::transport::{
+    channel_from_single_io, configure_tonic_endpoint_keepalive, pin_pairing_channel_from_io,
+    qr_pairing_channel_from_io,
+};
+use crate::trust::SharedTrustStore;
 use crate::tunnel::transport::TunnelTransport;
 use crate::tunnel::types::{TunnelId, TunnelTypeError};
-use crate::tunnel::{Tunnel, create_tunnel};
+use crate::tunnel::{TUNNEL_FRAME_PAYLOAD_MAX, Tunnel, create_tunnel};
+
+const TUNNEL_TLS_HANDSHAKE_TIMEOUT: Duration = Duration::from_secs(10);
+const PIN_PAIRING_TLS_HANDSHAKE_TIMEOUT: Duration = Duration::from_secs(10);
+const RETIRED_TUNNEL_CAP: usize = 4096;
 
 #[derive(Debug, thiserror::Error)]
 pub(crate) enum TunnelPoolError {
@@ -31,20 +45,54 @@ pub(crate) enum TunnelPoolError {
     MissingDestination,
     #[error("TunnelFrame has invalid route: {message}")]
     InvalidRoute { message: String },
+    #[error("TunnelFrame payload exceeds {max} bytes: {actual} bytes")]
+    PayloadTooLarge { actual: usize, max: usize },
     #[error(transparent)]
     InvalidTunnelId(#[from] TunnelTypeError),
-    #[error("TunnelFrame target {target} does not match local host {local}")]
-    TargetMismatch { target: HostId, local: HostId },
     #[error("incoming tunnel receiver is closed")]
     IncomingTunnelsClosed,
     #[error("target-side tunnel closed before payload delivery")]
     InboundClosed,
+    #[error(transparent)]
+    Identity(#[from] IdentityError),
+    #[error("tunnel TLS error: {0}")]
+    Tls(String),
+    #[allow(dead_code)]
+    #[error("tunnel endpoint channels require device TLS")]
+    DeviceTlsRequired,
+}
+
+struct ActiveTunnel {
+    peer: HostId,
+    route: Route,
+    tunnel: Tunnel,
+}
+
+struct PoolState {
+    tunnels: HashMap<TunnelId, ActiveTunnel>,
+    retired_tunnels: BoundedTunnelIdSet,
+    cloud_inbound_tunnel_limiter: SlidingWindowRateLimiter<()>,
+    cloud_limited_tunnels: BoundedTunnelIdSet,
 }
 
 #[derive(Default)]
-struct PoolState {
-    tunnels: HashMap<TunnelId, Tunnel>,
-    channels: HashMap<HostId, Channel>,
+struct BoundedTunnelIdSet {
+    ids: HashSet<TunnelId>,
+    order: VecDeque<TunnelId>,
+}
+
+impl Default for PoolState {
+    fn default() -> Self {
+        Self {
+            tunnels: HashMap::new(),
+            retired_tunnels: BoundedTunnelIdSet::default(),
+            cloud_inbound_tunnel_limiter: SlidingWindowRateLimiter::new(
+                CLOUD_INBOUND_TUNNEL_RATE_LIMIT,
+                CLOUD_INBOUND_TUNNEL_RATE_WINDOW,
+            ),
+            cloud_limited_tunnels: BoundedTunnelIdSet::default(),
+        }
+    }
 }
 
 pub(crate) struct TunnelPool {
@@ -52,7 +100,19 @@ pub(crate) struct TunnelPool {
     routing: Arc<RoutingCore>,
     links: Arc<LinkRegistry>,
     incoming_tunnels_tx: mpsc::Sender<TunnelTransport>,
-    state: RwLock<PoolState>,
+    channel_security: TunnelChannelSecurity,
+    pin_pairing_handshake_timeout: Duration,
+    state: Arc<RwLock<PoolState>>,
+}
+
+#[derive(Clone)]
+enum TunnelChannelSecurity {
+    Plain,
+    DeviceTls {
+        identity: DeviceIdentity,
+        trust_store: SharedTrustStore,
+        handshake_timeout: Duration,
+    },
 }
 
 impl TunnelPool {
@@ -75,53 +135,255 @@ impl TunnelPool {
         links: Arc<LinkRegistry>,
         incoming_tunnels_tx: mpsc::Sender<TunnelTransport>,
     ) -> Self {
+        Self::with_link_registry_and_security(
+            my_host_id,
+            routing,
+            links,
+            incoming_tunnels_tx,
+            TunnelChannelSecurity::Plain,
+        )
+    }
+
+    pub(crate) fn with_device_tls(
+        my_host_id: HostId,
+        routing: Arc<RoutingCore>,
+        incoming_tunnels_tx: mpsc::Sender<TunnelTransport>,
+        identity: DeviceIdentity,
+        trust_store: SharedTrustStore,
+    ) -> Self {
+        Self::with_link_registry_and_security(
+            my_host_id,
+            routing,
+            Arc::new(LinkRegistry::default()),
+            incoming_tunnels_tx,
+            TunnelChannelSecurity::DeviceTls {
+                identity,
+                trust_store,
+                handshake_timeout: TUNNEL_TLS_HANDSHAKE_TIMEOUT,
+            },
+        )
+    }
+
+    fn with_link_registry_and_security(
+        my_host_id: HostId,
+        routing: Arc<RoutingCore>,
+        links: Arc<LinkRegistry>,
+        incoming_tunnels_tx: mpsc::Sender<TunnelTransport>,
+        channel_security: TunnelChannelSecurity,
+    ) -> Self {
         Self {
             my_host_id,
             routing,
             links,
             incoming_tunnels_tx,
-            state: RwLock::new(PoolState::default()),
+            channel_security,
+            pin_pairing_handshake_timeout: PIN_PAIRING_TLS_HANDSHAKE_TIMEOUT,
+            state: Arc::new(RwLock::new(PoolState::default())),
         }
+    }
+
+    #[cfg(test)]
+    pub(crate) fn with_pin_pairing_handshake_timeout(mut self, timeout: Duration) -> Self {
+        self.pin_pairing_handshake_timeout = timeout;
+        self
     }
 
     pub(crate) fn link_registry(&self) -> Arc<LinkRegistry> {
         self.links.clone()
     }
 
+    #[cfg(test)]
     pub(crate) async fn channel_to(&self, peer: HostId) -> Result<Channel, TunnelPoolError> {
-        let host_entry = self
+        let route = self
             .routing
-            .host_entry(peer)
+            .best_route(peer)
             .await
             .ok_or(TunnelPoolError::NotFound { host_id: peer })?;
-        let (first_hop, dst) = outgoing_route_parts(peer, &host_entry.route)?;
+        self.channel_to_route(peer, route).await
+    }
 
+    pub(crate) async fn channel_to_route(
+        &self,
+        peer: HostId,
+        route: Route,
+    ) -> Result<Channel, TunnelPoolError> {
+        let (first_hop, dst) = outgoing_route_parts(peer, &route)?;
         let outgoing_tx = self.links.outgoing_tx(&first_hop).await?;
 
-        let mut state = self.state.write().await;
-        if let Some(channel) = state.channels.get(&peer).cloned() {
-            return Ok(channel);
+        let id = TunnelId::new(self.my_host_id);
+        let (tunnel, transport) = create_tunnel(id, dst, peer, outgoing_tx);
+        let transport = self.transport_with_cleanup(id, transport);
+        {
+            let mut state = self.state.write().await;
+            state.tunnels.insert(
+                id,
+                ActiveTunnel {
+                    peer,
+                    route: route.clone(),
+                    tunnel,
+                },
+            );
         }
 
-        let id = TunnelId::new(self.my_host_id, peer);
-        let (tunnel, transport) = create_tunnel(id, dst, peer, outgoing_tx);
-        let channel = channel_from_transport(transport);
+        let channel = match self.channel_from_transport(peer, transport).await {
+            Ok(channel) => channel,
+            Err(error) => {
+                self.state.write().await.tunnels.remove(&id);
+                return Err(error);
+            }
+        };
 
-        state.tunnels.insert(id, tunnel);
-        state.channels.insert(peer, channel.clone());
         Ok(channel)
     }
 
+    pub(crate) async fn pin_pairing_channel_to_route(
+        &self,
+        peer: HostId,
+        route: Route,
+    ) -> Result<Channel, TunnelPoolError> {
+        let (id, transport) = self.pairing_transport_to_route(peer, route).await?;
+        match tokio::time::timeout(
+            self.pin_pairing_handshake_timeout,
+            pin_pairing_channel_from_io(transport),
+        )
+        .await
+        {
+            Err(_) => {
+                self.state.write().await.tunnels.remove(&id);
+                Err(TunnelPoolError::Tls(
+                    "PIN pairing TLS handshake timed out".to_string(),
+                ))
+            }
+            Ok(Ok(channel)) => Ok(channel),
+            Ok(Err(error)) => {
+                self.state.write().await.tunnels.remove(&id);
+                Err(TunnelPoolError::Tls(error.to_string()))
+            }
+        }
+    }
+
+    pub(crate) async fn qr_pairing_channel_to_route(
+        &self,
+        peer: HostId,
+        route: Route,
+        expected_pubkey: Vec<u8>,
+    ) -> Result<Channel, TunnelPoolError> {
+        let (id, transport) = self.pairing_transport_to_route(peer, route).await?;
+        match tokio::time::timeout(
+            self.pin_pairing_handshake_timeout,
+            qr_pairing_channel_from_io(transport, expected_pubkey),
+        )
+        .await
+        {
+            Err(_) => {
+                self.state.write().await.tunnels.remove(&id);
+                Err(TunnelPoolError::Tls(
+                    "QR pairing TLS handshake timed out".to_string(),
+                ))
+            }
+            Ok(Ok(channel)) => Ok(channel),
+            Ok(Err(error)) => {
+                self.state.write().await.tunnels.remove(&id);
+                Err(TunnelPoolError::Tls(error.to_string()))
+            }
+        }
+    }
+
+    async fn pairing_transport_to_route(
+        &self,
+        peer: HostId,
+        route: Route,
+    ) -> Result<(TunnelId, TunnelTransport), TunnelPoolError> {
+        let (first_hop, dst) = outgoing_route_parts(peer, &route)?;
+        let outgoing_tx = self.links.outgoing_tx(&first_hop).await?;
+
+        let id = TunnelId::new(self.my_host_id);
+        let (tunnel, transport) = create_tunnel(id, dst, peer, outgoing_tx);
+        let transport = self.transport_with_cleanup(id, transport);
+        {
+            let mut state = self.state.write().await;
+            state.tunnels.insert(
+                id,
+                ActiveTunnel {
+                    peer,
+                    route: route.clone(),
+                    tunnel,
+                },
+            );
+        }
+        Ok((id, transport))
+    }
+
+    async fn channel_from_transport(
+        &self,
+        peer: HostId,
+        transport: TunnelTransport,
+    ) -> Result<Channel, TunnelPoolError> {
+        match &self.channel_security {
+            #[cfg(test)]
+            TunnelChannelSecurity::Plain => Ok(channel_from_transport(transport)),
+            #[cfg(not(test))]
+            TunnelChannelSecurity::Plain => Err(TunnelPoolError::DeviceTlsRequired),
+            TunnelChannelSecurity::DeviceTls {
+                identity,
+                trust_store,
+                handshake_timeout,
+            } => {
+                let config = identity
+                    .client_tls_config_for_peer(trust_store.clone(), peer)
+                    .map_err(TunnelPoolError::Identity)?;
+                let connector = TlsConnector::from(Arc::new(config));
+                let server_name = ServerName::try_from("amux-device".to_string())
+                    .map_err(|error| TunnelPoolError::Tls(error.to_string()))?;
+                let tls = tokio::time::timeout(
+                    *handshake_timeout,
+                    connector.connect(server_name, transport),
+                )
+                .await
+                .map_err(|_| TunnelPoolError::Tls("TLS handshake timed out".to_string()))?
+                .map_err(|error| TunnelPoolError::Tls(error.to_string()))?;
+                Ok(channel_from_tls_transport(tls))
+            }
+        }
+    }
+
+    #[cfg(test)]
     pub(crate) async fn handle_inbound_frame(
         &self,
-        mut frame: pb::TunnelFrame,
+        frame: pb::TunnelFrame,
     ) -> Result<(), TunnelPoolError> {
+        self.handle_inbound_frame_from_link(frame, None).await
+    }
+
+    pub(crate) async fn handle_inbound_frame_from_link(
+        &self,
+        mut frame: pb::TunnelFrame,
+        origin_link: Option<&Link>,
+    ) -> Result<(), TunnelPoolError> {
+        if frame.payload.len() > TUNNEL_FRAME_PAYLOAD_MAX {
+            return Err(TunnelPoolError::PayloadTooLarge {
+                actual: frame.payload.len(),
+                max: TUNNEL_FRAME_PAYLOAD_MAX,
+            });
+        }
         let id = frame
             .tunnel_id
             .clone()
             .ok_or(TunnelPoolError::MissingTunnelId)
             .map(TunnelId::try_from)??;
         let mut dst = route_from_wire(frame.dst.take())?;
+        let cloud_origin = match origin_link {
+            Some(link) => self.links.is_cloud_relay(link).await,
+            None => false,
+        };
+        if cloud_origin && !self.allow_cloud_inbound_tunnel_id(id).await {
+            tracing::warn!(
+                tunnel_id = %id.nonce,
+                initiator = %id.initiator,
+                "cloud inbound tunnel rate limit exceeded"
+            );
+            return Ok(());
+        }
         if let Some(next_hop) = dst.pop() {
             frame.dst = Some(route_to_wire(&dst));
             if let Some(outgoing_tx) = self.links.existing_tx(&next_hop).await {
@@ -140,36 +402,31 @@ impl TunnelPool {
             .await
             .tunnels
             .get(&id)
-            .map(Tunnel::inbound_sender)
+            .map(|active| active.tunnel.inbound_sender())
         {
             return inbound_tx
                 .send(Bytes::from(frame.payload))
                 .await
                 .map_err(|_| TunnelPoolError::InboundClosed);
         }
-
-        if id.target != self.my_host_id {
-            return Err(TunnelPoolError::TargetMismatch {
-                target: id.target,
-                local: self.my_host_id,
-            });
+        if self.state.read().await.retired_tunnels.contains(&id) {
+            return Ok(());
         }
 
-        let host_entry =
-            self.routing
-                .host_entry(id.initiator)
-                .await
-                .ok_or(TunnelPoolError::NotFound {
-                    host_id: id.initiator,
-                })?;
-        let (first_hop, dst) = outgoing_route_parts(id.initiator, &host_entry.route)?;
+        let Some(route) = self.routing.best_route(id.initiator).await else {
+            return Ok(());
+        };
+        let Ok((first_hop, dst)) = outgoing_route_parts(id.initiator, &route) else {
+            return Ok(());
+        };
 
-        let outgoing_tx = self.links.existing_tx(&first_hop).await.ok_or_else(|| {
-            TunnelPoolError::LinkUnavailable {
-                link: first_hop.clone(),
-            }
-        })?;
+        let Some(outgoing_tx) = self.links.existing_tx(&first_hop).await else {
+            return Ok(());
+        };
         let (tunnel, transport) = create_tunnel(id, dst, id.initiator, outgoing_tx);
+        let transport = self
+            .transport_with_cleanup(id, transport)
+            .with_cloud_pairing_reachability(cloud_origin);
         let inbound_tx = tunnel.inbound_sender();
         let mut transport = Some(transport);
 
@@ -177,11 +434,24 @@ impl TunnelPool {
             let mut state = self.state.write().await;
             if let Some(existing) = state.tunnels.get(&id) {
                 transport = None;
-                existing.inbound_sender()
+                Some(existing.tunnel.inbound_sender())
+            } else if state.retired_tunnels.contains(&id) {
+                transport = None;
+                None
             } else {
-                state.tunnels.insert(id, tunnel);
-                inbound_tx
+                state.tunnels.insert(
+                    id,
+                    ActiveTunnel {
+                        peer: id.initiator,
+                        route: route.clone(),
+                        tunnel,
+                    },
+                );
+                Some(inbound_tx)
             }
+        };
+        let Some(inbound_tx) = inbound_tx else {
+            return Ok(());
         };
 
         if let Some(transport) = transport
@@ -197,25 +467,126 @@ impl TunnelPool {
             .map_err(|_| TunnelPoolError::InboundClosed)
     }
 
-    pub(crate) async fn remove_host(&self, host_id: HostId) {
+    async fn allow_cloud_inbound_tunnel_id(&self, id: TunnelId) -> bool {
         let mut state = self.state.write().await;
-        state.channels.remove(&host_id);
-        state
-            .tunnels
-            .retain(|id, _| id.initiator != host_id && id.target != host_id);
+        allow_cloud_inbound_tunnel_id(&mut state, id)
     }
 
-    pub(crate) async fn handle_host_event(&self, event: &HostReachabilityEvent) {
-        if let HostReachabilityEvent::HostRemoved { host_id } = event {
-            self.remove_host(*host_id).await;
+    fn transport_with_cleanup(&self, id: TunnelId, transport: TunnelTransport) -> TunnelTransport {
+        let state = self.state.clone();
+        transport.with_drop_hook(move || {
+            let Ok(handle) = tokio::runtime::Handle::try_current() else {
+                return;
+            };
+            handle.spawn(async move {
+                let mut state = state.write().await;
+                if state.tunnels.remove(&id).is_some() {
+                    retire_tunnel_id(&mut state, id);
+                }
+            });
+        })
+    }
+
+    #[cfg(test)]
+    pub(crate) async fn remove_host(&self, host_id: HostId) {
+        self.remove_host_preserving_tunnel(host_id, None).await;
+    }
+
+    pub(crate) async fn remove_host_preserving_tunnel(
+        &self,
+        host_id: HostId,
+        preserve_tunnel_id: Option<TunnelId>,
+    ) {
+        let mut state = self.state.write().await;
+        let retired = state
+            .tunnels
+            .iter()
+            .filter_map(|(id, active)| {
+                (active.peer == host_id && Some(*id) != preserve_tunnel_id).then_some(*id)
+            })
+            .collect::<Vec<_>>();
+        for id in retired {
+            state.tunnels.remove(&id);
+            retire_tunnel_id(&mut state, id);
+        }
+    }
+
+    pub(crate) async fn remove_route(&self, route: &Route) {
+        self.remove_route_preserving_tunnel(route, None).await;
+    }
+
+    pub(crate) async fn remove_route_preserving_tunnel(
+        &self,
+        route: &Route,
+        preserve_tunnel_id: Option<TunnelId>,
+    ) {
+        let mut state = self.state.write().await;
+        let retired = state
+            .tunnels
+            .iter()
+            .filter_map(|(id, active)| {
+                (active.route == *route && Some(*id) != preserve_tunnel_id).then_some(*id)
+            })
+            .collect::<Vec<_>>();
+        for id in retired {
+            state.tunnels.remove(&id);
+            retire_tunnel_id(&mut state, id);
         }
     }
 
     #[cfg(test)]
     pub(crate) async fn counts(&self) -> (usize, usize) {
         let state = self.state.read().await;
-        (state.tunnels.len(), state.channels.len())
+        (state.tunnels.len(), state.retired_tunnels.len())
     }
+}
+
+impl BoundedTunnelIdSet {
+    fn contains(&self, id: &TunnelId) -> bool {
+        self.ids.contains(id)
+    }
+
+    fn insert(&mut self, id: TunnelId, cap: usize) -> bool {
+        if !self.ids.insert(id) {
+            return false;
+        }
+        self.order.push_back(id);
+        while self.order.len() > cap {
+            if let Some(expired) = self.order.pop_front() {
+                self.ids.remove(&expired);
+            }
+        }
+        true
+    }
+
+    #[cfg(test)]
+    fn len(&self) -> usize {
+        self.ids.len()
+    }
+}
+
+fn retire_tunnel_id(state: &mut PoolState, id: TunnelId) {
+    state.retired_tunnels.insert(id, RETIRED_TUNNEL_CAP);
+}
+
+fn allow_cloud_inbound_tunnel_id(state: &mut PoolState, id: TunnelId) -> bool {
+    if state.tunnels.contains_key(&id)
+        || state.retired_tunnels.contains(&id)
+        || state.cloud_limited_tunnels.contains(&id)
+    {
+        return true;
+    }
+    if !state.cloud_inbound_tunnel_limiter.allow(()) {
+        return false;
+    }
+    remember_cloud_limited_tunnel_id(state, id);
+    true
+}
+
+fn remember_cloud_limited_tunnel_id(state: &mut PoolState, id: TunnelId) {
+    state
+        .cloud_limited_tunnels
+        .insert(id, CLOUD_INBOUND_TUNNEL_ID_CACHE_CAP);
 }
 
 impl From<LinkRegistryError> for TunnelPoolError {
@@ -234,10 +605,21 @@ fn route_from_wire(route: Option<pb::Route>) -> Result<Route, TunnelPoolError> {
     })
 }
 
+#[cfg(test)]
 fn channel_from_transport(transport: TunnelTransport) -> Channel {
     channel_from_single_io(
         configure_tonic_endpoint_keepalive(Endpoint::from_static("http://tunnel")),
         "TunnelTransport",
+        transport,
+    )
+}
+
+fn channel_from_tls_transport(
+    transport: tokio_rustls::client::TlsStream<TunnelTransport>,
+) -> Channel {
+    channel_from_single_io(
+        configure_tonic_endpoint_keepalive(Endpoint::from_static("https://tunnel")),
+        "TLS TunnelTransport",
         transport,
     )
 }
@@ -250,10 +632,17 @@ fn outgoing_route_parts(host_id: HostId, route: &Route) -> Result<(Link, Route),
 
 #[cfg(test)]
 mod tests {
+    use std::time::Duration;
+
+    use chrono::{DateTime, Utc};
     use tokio::io::AsyncReadExt;
 
     use super::*;
-    use crate::routing::{Capabilities, Host, Route, RoutingEvent, SupportedAgentType};
+    use crate::identity::DeviceIdentity;
+    use crate::routing::{
+        Capabilities, FEATURE_CLOUD_RELAY, Host, LinkRole, Route, RoutingEvent, SupportedAgentType,
+    };
+    use crate::trust::{Reachability, TrustEntry, TrustStore};
 
     fn host(id: u128, name: &str) -> Host {
         Host {
@@ -269,6 +658,18 @@ mod tests {
         }
     }
 
+    fn cloud_host(id: u128, name: &str) -> Host {
+        Host {
+            id: HostId::from_u128(id),
+            name: name.to_string(),
+            version: "test".to_string(),
+            capabilities: Capabilities {
+                features: vec![FEATURE_CLOUD_RELAY.to_string()],
+                supported_agent_types: Vec::new(),
+            },
+        }
+    }
+
     fn link(name: &str) -> Link {
         Link::new(name).unwrap()
     }
@@ -277,10 +678,70 @@ mod tests {
         Route::from_link(link(name))
     }
 
+    fn tunnel_id(initiator: HostId, nonce: u128) -> TunnelId {
+        TunnelId::from_parts(initiator, uuid::Uuid::from_u128(nonce))
+    }
+
     async fn register_test_link(pool: &TunnelPool, name: &str, tx: mpsc::Sender<pb::Message>) {
+        register_test_link_with_role(pool, name, tx, LinkRole::Peer).await;
+    }
+
+    async fn register_test_link_with_role(
+        pool: &TunnelPool,
+        name: &str,
+        tx: mpsc::Sender<pb::Message>,
+        role: LinkRole,
+    ) {
         pool.link_registry()
-            .register(link(name), HostId::from_u128(99), tx)
+            .register_with_role(link(name), HostId::from_u128(99), tx, role)
             .await;
+    }
+
+    async fn wait_for_counts(pool: &TunnelPool, expected: (usize, usize)) {
+        tokio::time::timeout(Duration::from_secs(1), async {
+            loop {
+                if pool.counts().await == expected {
+                    return;
+                }
+                tokio::task::yield_now().await;
+            }
+        })
+        .await
+        .expect("timed out waiting for tunnel pool counts");
+    }
+
+    fn trust_store_for(peer: &DeviceIdentity) -> TrustStore {
+        let mut trust_store = TrustStore::default();
+        trust_store.insert_for_test(
+            peer.host_id,
+            TrustEntry {
+                pubkey: peer.public_key().to_vec(),
+                name: format!("peer-{}", peer.host_id),
+                paired_at: DateTime::<Utc>::from_timestamp(200, 0).unwrap(),
+                reachabilities: vec![Reachability::Cloud],
+            },
+        );
+        trust_store
+    }
+
+    fn device_tls_pool_with_timeout(
+        my_identity: DeviceIdentity,
+        routing: Arc<RoutingCore>,
+        incoming_tunnels_tx: mpsc::Sender<TunnelTransport>,
+        peer: &DeviceIdentity,
+        timeout: Duration,
+    ) -> TunnelPool {
+        TunnelPool::with_link_registry_and_security(
+            my_identity.host_id,
+            routing,
+            Arc::new(LinkRegistry::default()),
+            incoming_tunnels_tx,
+            TunnelChannelSecurity::DeviceTls {
+                identity: my_identity,
+                trust_store: Arc::new(std::sync::RwLock::new(trust_store_for(peer))),
+                handshake_timeout: timeout,
+            },
+        )
     }
 
     async fn recv_routing_event(rx: &mut mpsc::Receiver<pb::Message>) -> pb::RoutingEvent {
@@ -359,7 +820,11 @@ mod tests {
             .await;
 
         assert!(link_rx.try_recv().is_err());
-        assert!(pool.link_registry().activate(&link_name, [host.id]).await);
+        assert!(
+            pool.link_registry()
+                .activate(&link_name, [(host.id, route("relay"))])
+                .await
+        );
 
         let event = recv_routing_event(&mut link_rx).await;
         assert!(matches!(
@@ -391,7 +856,7 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn channel_to_creates_and_caches_initiator_tunnel() {
+    async fn channel_to_creates_initiator_tunnels() {
         let routing = Arc::new(RoutingCore::new());
         let my_host_id = HostId::from_u128(1);
         let peer = HostId::from_u128(2);
@@ -407,11 +872,11 @@ mod tests {
         let _first = pool.channel_to(peer).await.unwrap();
         let _second = pool.channel_to(peer).await.unwrap();
 
-        assert_eq!(pool.counts().await, (1, 1));
+        assert_eq!(pool.counts().await, (2, 0));
     }
 
     #[tokio::test]
-    async fn channel_to_rechecks_route_before_returning_cached_channel() {
+    async fn channel_to_rechecks_route_before_opening_channel() {
         let routing = Arc::new(RoutingCore::new());
         let my_host_id = HostId::from_u128(1);
         let peer = HostId::from_u128(2);
@@ -425,7 +890,7 @@ mod tests {
         register_test_link(&pool, "relay", link_tx).await;
 
         let _channel = pool.channel_to(peer).await.unwrap();
-        assert_eq!(pool.counts().await, (1, 1));
+        assert_eq!(pool.counts().await, (1, 0));
 
         routing.apply_host_down(peer, &route("relay"), None).await;
 
@@ -491,7 +956,7 @@ mod tests {
         let (link_tx, _link_rx) = mpsc::channel(8);
         register_test_link(&pool, "relay", link_tx).await;
 
-        let id = TunnelId::new(initiator, target);
+        let id = tunnel_id(initiator, 42);
         pool.handle_inbound_frame(frame(id, b"hello"))
             .await
             .unwrap();
@@ -508,6 +973,286 @@ mod tests {
     }
 
     #[tokio::test]
+    async fn inbound_endpoint_frame_without_return_route_is_dropped() {
+        let routing = Arc::new(RoutingCore::new());
+        let initiator = HostId::from_u128(1);
+        let target = HostId::from_u128(2);
+        let (incoming_tx, mut incoming_rx) = mpsc::channel(1);
+        let pool = TunnelPool::new(target, routing, incoming_tx);
+
+        pool.handle_inbound_frame(frame(tunnel_id(initiator, 42), b"hello"))
+            .await
+            .unwrap();
+
+        assert!(incoming_rx.try_recv().is_err());
+        assert_eq!(pool.counts().await, (0, 0));
+    }
+
+    #[tokio::test]
+    async fn dropping_inbound_endpoint_transport_removes_target_tunnel() {
+        let routing = Arc::new(RoutingCore::new());
+        let initiator = HostId::from_u128(1);
+        let target = HostId::from_u128(2);
+        routing
+            .apply_host_up(host(1, "initiator"), route("relay"), None)
+            .await;
+
+        let (incoming_tx, mut incoming_rx) = mpsc::channel(2);
+        let pool = TunnelPool::new(target, routing, incoming_tx);
+        let (link_tx, _link_rx) = mpsc::channel(8);
+        register_test_link(&pool, "relay", link_tx).await;
+
+        let id = tunnel_id(initiator, 42);
+        pool.handle_inbound_frame(frame(id, b"hello"))
+            .await
+            .unwrap();
+        let transport = incoming_rx.recv().await.unwrap();
+        assert_eq!(pool.counts().await, (1, 0));
+
+        pool.remove_host_preserving_tunnel(initiator, Some(id))
+            .await;
+        assert_eq!(pool.counts().await, (1, 0));
+
+        drop(transport);
+        wait_for_counts(&pool, (0, 1)).await;
+
+        pool.handle_inbound_frame(frame(id, b"late")).await.unwrap();
+
+        assert!(incoming_rx.try_recv().is_err());
+        assert_eq!(pool.counts().await, (0, 1));
+    }
+
+    #[tokio::test]
+    async fn inbound_endpoint_transport_marks_cloud_pairing_reachability_from_origin_link() {
+        let routing = Arc::new(RoutingCore::new());
+        let initiator = HostId::from_u128(1);
+        let target = HostId::from_u128(2);
+        routing
+            .apply_host_up(cloud_host(3, "cloud"), route("cloud"), None)
+            .await;
+        routing
+            .apply_host_up(
+                host(1, "initiator"),
+                Route::from_links(["cloud".to_string(), "initiator".to_string()]).unwrap(),
+                None,
+            )
+            .await;
+
+        let (incoming_tx, mut incoming_rx) = mpsc::channel(2);
+        let pool = TunnelPool::new(target, routing, incoming_tx);
+        let (link_tx, _link_rx) = mpsc::channel(8);
+        register_test_link_with_role(&pool, "cloud", link_tx, LinkRole::CloudRelay).await;
+
+        pool.handle_inbound_frame_from_link(
+            frame(tunnel_id(initiator, 42), b"hello"),
+            Some(&link("cloud")),
+        )
+        .await
+        .unwrap();
+
+        let transport = incoming_rx.recv().await.unwrap();
+        assert!(transport.has_cloud_pairing_reachability());
+    }
+
+    #[tokio::test]
+    async fn cloud_origin_new_inbound_tunnels_are_rate_limited() {
+        let routing = Arc::new(RoutingCore::new());
+        let initiator = HostId::from_u128(1);
+        let target = HostId::from_u128(2);
+        routing
+            .apply_host_up(cloud_host(3, "cloud"), route("cloud"), None)
+            .await;
+        routing
+            .apply_host_up(
+                host(1, "initiator"),
+                Route::from_links(["cloud".to_string(), "initiator".to_string()]).unwrap(),
+                None,
+            )
+            .await;
+
+        let (incoming_tx, mut incoming_rx) = mpsc::channel(CLOUD_INBOUND_TUNNEL_RATE_LIMIT + 1);
+        let pool = TunnelPool::new(target, routing, incoming_tx);
+        let (link_tx, _link_rx) = mpsc::channel(64);
+        register_test_link_with_role(&pool, "cloud", link_tx, LinkRole::CloudRelay).await;
+        pool.routing
+            .apply_host_down(HostId::from_u128(3), &route("cloud"), None)
+            .await;
+
+        for nonce in 0..CLOUD_INBOUND_TUNNEL_RATE_LIMIT as u128 {
+            pool.handle_inbound_frame_from_link(
+                frame(tunnel_id(initiator, nonce + 1), b"hello"),
+                Some(&link("cloud")),
+            )
+            .await
+            .unwrap();
+        }
+        pool.handle_inbound_frame_from_link(
+            frame(tunnel_id(initiator, 10_000), b"excess"),
+            Some(&link("cloud")),
+        )
+        .await
+        .unwrap();
+
+        assert_eq!(pool.counts().await, (CLOUD_INBOUND_TUNNEL_RATE_LIMIT, 0));
+        let mut received = 0;
+        while incoming_rx.try_recv().is_ok() {
+            received += 1;
+        }
+        assert_eq!(received, CLOUD_INBOUND_TUNNEL_RATE_LIMIT);
+    }
+
+    #[tokio::test]
+    async fn cloud_origin_forwarded_new_tunnels_are_rate_limited() {
+        let routing = Arc::new(RoutingCore::new());
+        let initiator = HostId::from_u128(1);
+        let target = HostId::from_u128(2);
+        routing
+            .apply_host_up(cloud_host(3, "cloud"), route("cloud"), None)
+            .await;
+
+        let (incoming_tx, _incoming_rx) = mpsc::channel(1);
+        let pool = TunnelPool::new(target, routing.clone(), incoming_tx);
+        let (cloud_tx, _cloud_rx) = mpsc::channel(8);
+        register_test_link_with_role(&pool, "cloud", cloud_tx, LinkRole::CloudRelay).await;
+        let (link_tx, mut link_rx) = mpsc::channel(CLOUD_INBOUND_TUNNEL_RATE_LIMIT + 1);
+        register_test_link(&pool, "next", link_tx).await;
+        routing
+            .apply_host_down(HostId::from_u128(3), &route("cloud"), None)
+            .await;
+
+        for nonce in 0..=CLOUD_INBOUND_TUNNEL_RATE_LIMIT as u128 {
+            pool.handle_inbound_frame_from_link(
+                routed_frame(&["next"], tunnel_id(initiator, nonce + 1), b"hello"),
+                Some(&link("cloud")),
+            )
+            .await
+            .unwrap();
+        }
+
+        let mut forwarded = 0;
+        while link_rx.try_recv().is_ok() {
+            forwarded += 1;
+        }
+        assert_eq!(forwarded, CLOUD_INBOUND_TUNNEL_RATE_LIMIT);
+    }
+
+    #[tokio::test]
+    async fn repeated_cloud_frames_for_one_tunnel_id_consume_one_rate_slot() {
+        let routing = Arc::new(RoutingCore::new());
+        let initiator = HostId::from_u128(1);
+        let target = HostId::from_u128(2);
+        routing
+            .apply_host_up(cloud_host(3, "cloud"), route("cloud"), None)
+            .await;
+
+        let (incoming_tx, _incoming_rx) = mpsc::channel(1);
+        let pool = TunnelPool::new(target, routing, incoming_tx);
+        let (cloud_tx, _cloud_rx) = mpsc::channel(8);
+        register_test_link_with_role(&pool, "cloud", cloud_tx, LinkRole::CloudRelay).await;
+        let (link_tx, mut link_rx) = mpsc::channel(128);
+        register_test_link(&pool, "next", link_tx).await;
+        let repeated = tunnel_id(initiator, 7);
+
+        for _ in 0..CLOUD_INBOUND_TUNNEL_RATE_LIMIT {
+            pool.handle_inbound_frame_from_link(
+                routed_frame(&["next"], repeated, b"same"),
+                Some(&link("cloud")),
+            )
+            .await
+            .unwrap();
+        }
+        for nonce in 0..CLOUD_INBOUND_TUNNEL_RATE_LIMIT as u128 {
+            pool.handle_inbound_frame_from_link(
+                routed_frame(&["next"], tunnel_id(initiator, 1_000 + nonce), b"unique"),
+                Some(&link("cloud")),
+            )
+            .await
+            .unwrap();
+        }
+
+        let mut forwarded = 0;
+        while link_rx.try_recv().is_ok() {
+            forwarded += 1;
+        }
+        assert_eq!(forwarded, (CLOUD_INBOUND_TUNNEL_RATE_LIMIT * 2) - 1);
+    }
+
+    #[tokio::test]
+    async fn inbound_endpoint_transport_marks_non_cloud_origin_without_reusable_reachability() {
+        let routing = Arc::new(RoutingCore::new());
+        let initiator = HostId::from_u128(1);
+        let target = HostId::from_u128(2);
+        routing
+            .apply_host_up(host(1, "initiator"), route("relay"), None)
+            .await;
+
+        let (incoming_tx, mut incoming_rx) = mpsc::channel(2);
+        let pool = TunnelPool::new(target, routing, incoming_tx);
+        let (link_tx, _link_rx) = mpsc::channel(8);
+        register_test_link(&pool, "relay", link_tx).await;
+
+        pool.handle_inbound_frame_from_link(
+            frame(tunnel_id(initiator, 42), b"hello"),
+            Some(&link("relay")),
+        )
+        .await
+        .unwrap();
+
+        let transport = incoming_rx.recv().await.unwrap();
+        assert!(!transport.has_cloud_pairing_reachability());
+    }
+
+    #[tokio::test]
+    async fn outbound_tls_timeout_removes_provisional_tunnel() {
+        let local_identity = DeviceIdentity::for_test(HostId::from_u128(1));
+        let peer_identity = DeviceIdentity::for_test(HostId::from_u128(2));
+        let routing = Arc::new(RoutingCore::new());
+        routing
+            .apply_host_up(host(2, "peer"), route("relay"), None)
+            .await;
+
+        let (incoming_tx, _incoming_rx) = mpsc::channel(1);
+        let pool = device_tls_pool_with_timeout(
+            local_identity,
+            routing,
+            incoming_tx,
+            &peer_identity,
+            Duration::from_millis(10),
+        );
+        let (link_tx, _link_rx) = mpsc::channel(8);
+        register_test_link(&pool, "relay", link_tx).await;
+
+        let result = pool.channel_to(peer_identity.host_id).await;
+        assert!(
+            matches!(result, Err(TunnelPoolError::Tls(message)) if message.contains("timed out"))
+        );
+        wait_for_counts(&pool, (0, 0)).await;
+    }
+
+    #[tokio::test]
+    async fn pin_pairing_tls_timeout_removes_provisional_tunnel() {
+        let routing = Arc::new(RoutingCore::new());
+        let peer = HostId::from_u128(2);
+        routing
+            .apply_host_up(host(2, "peer"), route("relay"), None)
+            .await;
+
+        let (incoming_tx, _incoming_rx) = mpsc::channel(1);
+        let pool = TunnelPool::new(HostId::from_u128(1), routing, incoming_tx)
+            .with_pin_pairing_handshake_timeout(Duration::from_millis(10));
+        let (link_tx, _link_rx) = mpsc::channel(8);
+        register_test_link(&pool, "relay", link_tx).await;
+
+        let result = pool
+            .pin_pairing_channel_to_route(peer, route("relay"))
+            .await;
+        assert!(
+            matches!(result, Err(TunnelPoolError::Tls(message)) if message.contains("timed out"))
+        );
+        wait_for_counts(&pool, (0, 0)).await;
+    }
+
+    #[tokio::test]
     async fn inbound_frame_delivers_to_existing_initiator_tunnel() {
         let routing = Arc::new(RoutingCore::new());
         let initiator = HostId::from_u128(1);
@@ -516,9 +1261,17 @@ mod tests {
         let pool = TunnelPool::new(initiator, routing, incoming_tx);
         let (link_tx, _link_rx) = mpsc::channel(8);
 
-        let id = TunnelId::new(initiator, target);
+        let id = tunnel_id(initiator, 42);
         let (tunnel, mut transport) = create_tunnel(id, route("relay"), target, link_tx);
-        pool.state.write().await.tunnels.insert(id, tunnel);
+        pool.state.write().await.tunnels.insert(
+            id,
+            ActiveTunnel {
+                #[cfg(test)]
+                peer: target,
+                route: route("relay"),
+                tunnel,
+            },
+        );
 
         pool.handle_inbound_frame(frame(id, b"pong")).await.unwrap();
 
@@ -540,9 +1293,17 @@ mod tests {
             .register(relay.clone(), target, link_tx)
             .await;
 
-        let id = TunnelId::new(initiator, target);
+        let id = tunnel_id(initiator, 42);
         let (tunnel, mut transport) = create_tunnel(id, route("relay"), target, mpsc::channel(8).0);
-        pool.state.write().await.tunnels.insert(id, tunnel);
+        pool.state.write().await.tunnels.insert(
+            id,
+            ActiveTunnel {
+                #[cfg(test)]
+                peer: target,
+                route: route("relay"),
+                tunnel,
+            },
+        );
         assert!(pool.link_registry().mark_draining(&relay).await);
 
         pool.handle_inbound_frame(frame(id, b"pong")).await.unwrap();
@@ -570,7 +1331,7 @@ mod tests {
             .await;
         assert!(pool.link_registry().mark_draining(&relay).await);
 
-        let id = TunnelId::new(initiator, target);
+        let id = tunnel_id(initiator, 42);
         pool.handle_inbound_frame(frame(id, b"hello"))
             .await
             .unwrap();
@@ -589,7 +1350,7 @@ mod tests {
         let (link_tx, mut link_rx) = mpsc::channel(1);
         register_test_link(&pool, "relay", link_tx).await;
 
-        let id = TunnelId::new(HostId::from_u128(10), HostId::from_u128(20));
+        let id = tunnel_id(HostId::from_u128(10), 20);
         pool.handle_inbound_frame(routed_frame(&["relay", "target"], id, b"payload"))
             .await
             .unwrap();
@@ -607,7 +1368,6 @@ mod tests {
     async fn forwarded_tunnel_frame_does_not_synthesize_routing_events() {
         let routing = Arc::new(RoutingCore::new());
         let initiator = HostId::from_u128(10);
-        let target = HostId::from_u128(20);
         routing
             .apply_host_up(host(10, "initiator"), route("from-initiator"), None)
             .await;
@@ -617,7 +1377,7 @@ mod tests {
         let (link_tx, mut link_rx) = mpsc::channel(4);
         register_test_link(&pool, "next", link_tx).await;
 
-        let id = TunnelId::new(initiator, target);
+        let id = tunnel_id(initiator, 20);
         pool.handle_inbound_frame(routed_frame_with_id(&["next"], id, b"first"))
             .await
             .unwrap();
@@ -641,7 +1401,6 @@ mod tests {
     async fn forwarded_tunnel_frame_does_not_announce_initiator_back_to_origin_route() {
         let routing = Arc::new(RoutingCore::new());
         let initiator = HostId::from_u128(10);
-        let target = HostId::from_u128(20);
         routing
             .apply_host_up(host(10, "initiator"), route("origin"), None)
             .await;
@@ -651,7 +1410,7 @@ mod tests {
         let (link_tx, mut link_rx) = mpsc::channel(2);
         register_test_link(&pool, "origin", link_tx).await;
 
-        let id = TunnelId::new(initiator, target);
+        let id = tunnel_id(initiator, 20);
         pool.handle_inbound_frame(routed_frame_with_id(&["origin"], id, b"reply"))
             .await
             .unwrap();
@@ -670,7 +1429,7 @@ mod tests {
         let (incoming_tx, _incoming_rx) = mpsc::channel(1);
         let pool = TunnelPool::new(HostId::from_u128(1), routing, incoming_tx);
 
-        let id = TunnelId::new(HostId::from_u128(10), HostId::from_u128(20));
+        let id = tunnel_id(HostId::from_u128(10), 20);
         pool.handle_inbound_frame(routed_frame(&["missing"], id, b"payload"))
             .await
             .unwrap();
@@ -678,11 +1437,33 @@ mod tests {
     }
 
     #[tokio::test]
+    async fn inbound_frame_rejects_oversized_payload() {
+        let routing = Arc::new(RoutingCore::new());
+        let (incoming_tx, _incoming_rx) = mpsc::channel(1);
+        let pool = TunnelPool::new(HostId::from_u128(1), routing, incoming_tx);
+        let id = tunnel_id(HostId::from_u128(10), 20);
+        let payload = vec![0_u8; TUNNEL_FRAME_PAYLOAD_MAX + 1];
+
+        let error = pool
+            .handle_inbound_frame(routed_frame(&["next"], id, &payload))
+            .await
+            .expect_err("oversized frame should be rejected");
+
+        assert!(matches!(
+            error,
+            TunnelPoolError::PayloadTooLarge {
+                actual,
+                max,
+            } if actual == TUNNEL_FRAME_PAYLOAD_MAX + 1 && max == TUNNEL_FRAME_PAYLOAD_MAX
+        ));
+    }
+
+    #[tokio::test]
     async fn inbound_frame_requires_destination_and_tunnel_id() {
         let routing = Arc::new(RoutingCore::new());
         let (incoming_tx, _incoming_rx) = mpsc::channel(1);
         let pool = TunnelPool::new(HostId::from_u128(1), routing, incoming_tx);
-        let id = TunnelId::new(HostId::from_u128(10), HostId::from_u128(20));
+        let id = tunnel_id(HostId::from_u128(10), 20);
 
         let missing_dst = pb::TunnelFrame {
             dst: None,
@@ -708,32 +1489,28 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn endpoint_frame_for_other_target_is_protocol_violation() {
+    async fn endpoint_frame_uses_empty_dst_as_the_target_signal() {
         let routing = Arc::new(RoutingCore::new());
         let local = HostId::from_u128(1);
-        let target = HostId::from_u128(2);
+        let initiator = HostId::from_u128(3);
+        routing
+            .apply_host_up(host(3, "initiator"), route("relay"), None)
+            .await;
+
         let (incoming_tx, _incoming_rx) = mpsc::channel(1);
         let pool = TunnelPool::new(local, routing, incoming_tx);
+        let (link_tx, _link_rx) = mpsc::channel(8);
+        register_test_link(&pool, "relay", link_tx).await;
 
-        let error = pool
-            .handle_inbound_frame(frame(
-                TunnelId::new(HostId::from_u128(3), target),
-                b"payload",
-            ))
+        pool.handle_inbound_frame(frame(tunnel_id(initiator, 99), b"payload"))
             .await
-            .unwrap_err();
+            .unwrap();
 
-        assert!(matches!(
-            error,
-            TunnelPoolError::TargetMismatch {
-                target: observed,
-                local: observed_local
-            } if observed == target && observed_local == local
-        ));
+        assert_eq!(pool.counts().await, (1, 0));
     }
 
     #[tokio::test]
-    async fn remove_host_drops_related_tunnels_and_channels() {
+    async fn remove_host_drops_related_tunnels() {
         let routing = Arc::new(RoutingCore::new());
         let my_host_id = HostId::from_u128(1);
         let peer = HostId::from_u128(2);
@@ -746,19 +1523,20 @@ mod tests {
         let (link_tx, _link_rx) = mpsc::channel(8);
         register_test_link(&pool, "relay", link_tx).await;
         let _channel = pool.channel_to(peer).await.unwrap();
-        assert_eq!(pool.counts().await, (1, 1));
+        assert_eq!(pool.counts().await, (1, 0));
 
         pool.remove_host(peer).await;
-        assert_eq!(pool.counts().await, (0, 0));
+        assert_eq!(pool.counts().await, (0, 1));
     }
 
     #[tokio::test]
-    async fn host_removed_event_drops_related_tunnels_and_channels() {
+    async fn remove_route_drops_related_tunnels() {
         let routing = Arc::new(RoutingCore::new());
         let my_host_id = HostId::from_u128(1);
         let peer = HostId::from_u128(2);
+        let peer_route = route("relay");
         routing
-            .apply_host_up(host(2, "peer"), route("relay"), None)
+            .apply_host_up(host(2, "peer"), peer_route.clone(), None)
             .await;
 
         let (incoming_tx, _incoming_rx) = mpsc::channel(1);
@@ -766,16 +1544,70 @@ mod tests {
         let (link_tx, _link_rx) = mpsc::channel(8);
         register_test_link(&pool, "relay", link_tx).await;
         let _channel = pool.channel_to(peer).await.unwrap();
-        assert_eq!(pool.counts().await, (1, 1));
+        assert_eq!(pool.counts().await, (1, 0));
 
-        pool.handle_host_event(&HostReachabilityEvent::HostAdded {
-            host: host(3, "other"),
-        })
-        .await;
-        assert_eq!(pool.counts().await, (1, 1));
+        pool.remove_route(&route("other")).await;
+        assert_eq!(pool.counts().await, (1, 0));
 
-        pool.handle_host_event(&HostReachabilityEvent::HostRemoved { host_id: peer })
+        pool.remove_route(&peer_route).await;
+        assert_eq!(pool.counts().await, (0, 1));
+    }
+
+    #[tokio::test]
+    async fn removed_route_tombstones_tunnel_ids() {
+        let routing = Arc::new(RoutingCore::new());
+        let initiator = HostId::from_u128(1);
+        let target = HostId::from_u128(2);
+        let old_route = route("old");
+        let new_route = route("new");
+        routing
+            .apply_host_up(host(1, "initiator"), old_route.clone(), None)
             .await;
-        assert_eq!(pool.counts().await, (0, 0));
+        routing
+            .apply_host_up(host(1, "initiator"), new_route.clone(), None)
+            .await;
+
+        let (incoming_tx, mut incoming_rx) = mpsc::channel(2);
+        let pool = TunnelPool::new(target, routing.clone(), incoming_tx);
+        let (old_tx, _old_rx) = mpsc::channel(8);
+        register_test_link(&pool, "old", old_tx).await;
+        let (new_tx, _new_rx) = mpsc::channel(8);
+        register_test_link(&pool, "new", new_tx).await;
+        let id = tunnel_id(initiator, 42);
+
+        pool.handle_inbound_frame(frame(id, b"first"))
+            .await
+            .unwrap();
+        let _transport = incoming_rx.recv().await.unwrap();
+        assert_eq!(pool.counts().await, (1, 0));
+
+        routing.apply_host_down(initiator, &old_route, None).await;
+        pool.remove_route(&old_route).await;
+        assert_eq!(pool.counts().await, (0, 1));
+
+        pool.handle_inbound_frame(frame(id, b"late")).await.unwrap();
+
+        assert!(incoming_rx.try_recv().is_err());
+        assert_eq!(pool.counts().await, (0, 1));
+    }
+
+    #[test]
+    fn retired_tunnel_tombstones_are_bounded() {
+        let mut state = PoolState::default();
+        for nonce in 0..(RETIRED_TUNNEL_CAP as u128 + 2) {
+            retire_tunnel_id(&mut state, tunnel_id(HostId::from_u128(1), nonce));
+        }
+
+        assert_eq!(state.retired_tunnels.len(), RETIRED_TUNNEL_CAP);
+        assert_eq!(state.retired_tunnels.order.len(), RETIRED_TUNNEL_CAP);
+        assert!(
+            !state
+                .retired_tunnels
+                .contains(&tunnel_id(HostId::from_u128(1), 0))
+        );
+        assert!(state.retired_tunnels.contains(&tunnel_id(
+            HostId::from_u128(1),
+            RETIRED_TUNNEL_CAP as u128 + 1,
+        )));
     }
 }

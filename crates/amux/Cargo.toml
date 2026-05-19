@@ -25,6 +25,9 @@ tokio-rustls = { workspace = true }
 rustls = { workspace = true }
 webpki-roots = { workspace = true }
 rustls-pemfile = { workspace = true }
+ring = { workspace = true }
+curve25519-dalek = { workspace = true }
+rcgen = { workspace = true }
 jsonwebtoken = { workspace = true }
 reqwest = { workspace = true }
 fs2 = { workspace = true }
@@ -43,6 +46,7 @@ core-foundation = "0.9"
 [target.'cfg(windows)'.dependencies]
 windows-sys = { version = "0.61.2", features = [
     "Win32_Foundation",
+    "Win32_Storage_FileSystem",
     "Win32_System_Power",
     "Win32_System_SystemServices",
     "Win32_System_Threading",

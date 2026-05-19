@@ -2,13 +2,16 @@ use uuid::Uuid;
 
 use crate::HostId;
 use crate::protocol::wire::pb;
-use crate::routing::{Host, Link, Route, RoutingEvent, host_to_wire};
+use crate::routing::{
+    Host, Link, ROUTE_HOP_CAP, Route, RoutingEvent, host_to_wire, validate_remote_host,
+};
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub(crate) enum InboundRoutingEvent {
     HostUp { host: Host, route: Route },
     HostDown { host_id: HostId, route: Route },
     SnapshotComplete,
+    RouteOverHopCap,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, thiserror::Error)]
@@ -80,15 +83,22 @@ pub(crate) fn wire_routing_event_to_inbound(
     let event = event.event.ok_or(WireRoutingEventError::MissingEvent)?;
     match event {
         pb::routing_event::Event::HostUp(event) => {
+            let Some(route) = required_route_from_wire("HostUp.route", event.route, incoming_link)?
+            else {
+                return Ok(InboundRoutingEvent::RouteOverHopCap);
+            };
             let host = event
                 .host
                 .ok_or(WireRoutingEventError::MissingField("HostUp.host"))
                 .and_then(inbound_host_from_wire)?;
-            let route = required_route_from_wire("HostUp.route", event.route, incoming_link)?;
             Ok(InboundRoutingEvent::HostUp { host, route })
         }
         pb::routing_event::Event::HostDown(event) => {
-            let route = required_route_from_wire("HostDown.route", event.route, incoming_link)?;
+            let Some(route) =
+                required_route_from_wire("HostDown.route", event.route, incoming_link)?
+            else {
+                return Ok(InboundRoutingEvent::RouteOverHopCap);
+            };
             Ok(InboundRoutingEvent::HostDown {
                 host_id: uuid_from_bytes("HostDown.host_id", &event.host_id)?,
                 route,
@@ -108,21 +118,31 @@ fn snapshot_complete_event() -> pb::RoutingEvent {
 }
 
 fn inbound_host_from_wire(host: pb::Host) -> Result<Host, WireRoutingEventError> {
-    crate::routing::host_from_wire(host).map_err(|error| WireRoutingEventError::InvalidField {
+    let host = crate::routing::host_from_wire(host).map_err(|error| {
+        WireRoutingEventError::InvalidField {
+            field: "Host",
+            reason: error.to_string(),
+        }
+    })?;
+    validate_remote_host(&host).map_err(|reason| WireRoutingEventError::InvalidField {
         field: "Host",
-        reason: error.to_string(),
-    })
+        reason,
+    })?;
+    Ok(host)
 }
 
 fn required_route_from_wire(
     field: &'static str,
     route: Option<pb::Route>,
     incoming_link: &Link,
-) -> Result<Route, WireRoutingEventError> {
+) -> Result<Option<Route>, WireRoutingEventError> {
     let route = route.ok_or(WireRoutingEventError::MissingField(field))?;
+    if route.links.len().saturating_add(1) > ROUTE_HOP_CAP {
+        return Ok(None);
+    }
     let mut route = route_from_wire(field, route)?;
     route.push(incoming_link.clone());
-    Ok(route)
+    Ok(Some(route))
 }
 
 fn route_from_wire(field: &'static str, route: pb::Route) -> Result<Route, WireRoutingEventError> {
@@ -329,6 +349,49 @@ mod tests {
         assert_eq!(
             wire_routing_event_to_inbound(event, &link("peer")).unwrap(),
             InboundRoutingEvent::SnapshotComplete
+        );
+    }
+
+    #[test]
+    fn inbound_route_over_hop_cap_is_dropped_marker() {
+        let incoming = link("incoming");
+        let over_cap = (0..ROUTE_HOP_CAP)
+            .map(|idx| format!("hop-{idx}"))
+            .collect::<Vec<_>>();
+        let over_cap_refs = over_cap.iter().map(String::as_str).collect::<Vec<_>>();
+
+        assert_eq!(
+            wire_routing_event_to_inbound(wire_host_up(host(1), &over_cap_refs), &incoming)
+                .unwrap(),
+            InboundRoutingEvent::RouteOverHopCap
+        );
+        assert_eq!(
+            wire_routing_event_to_inbound(
+                wire_host_down(HostId::from_u128(1), &over_cap_refs),
+                &incoming,
+            )
+            .unwrap(),
+            InboundRoutingEvent::RouteOverHopCap
+        );
+
+        let mut invalid_over_cap = over_cap.clone();
+        invalid_over_cap[0] = "bad.link".to_string();
+        let invalid_over_cap_refs = invalid_over_cap
+            .iter()
+            .map(String::as_str)
+            .collect::<Vec<_>>();
+        assert_eq!(
+            wire_routing_event_to_inbound(wire_host_up(host(1), &invalid_over_cap_refs), &incoming)
+                .unwrap(),
+            InboundRoutingEvent::RouteOverHopCap
+        );
+
+        let mut invalid_host = host(1);
+        invalid_host.name.clear();
+        assert_eq!(
+            wire_routing_event_to_inbound(wire_host_up(invalid_host, &over_cap_refs), &incoming)
+                .unwrap(),
+            InboundRoutingEvent::RouteOverHopCap
         );
     }
 

@@ -65,10 +65,6 @@ impl ServerState {
         self.config.tcp_port
     }
 
-    pub(crate) fn randomise_link_name(&self) -> bool {
-        self.config.randomise_link_name
-    }
-
     pub(crate) fn jwt_validator(&self) -> Option<Arc<JwtValidator>> {
         self.jwt_validator.clone()
     }

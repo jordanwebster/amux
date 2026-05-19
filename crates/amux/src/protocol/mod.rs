@@ -1,7 +1,7 @@
 mod error;
 
 /// Protocol version for the generated `RoutingService.Connect` handshake.
-pub const PROTOCOL_VERSION: u32 = 3;
+pub const PROTOCOL_VERSION: u32 = 5;
 
 pub use error::ProtocolError;
 pub(crate) use error::protocol_status;
@@ -62,6 +62,14 @@ mod tests {
             "HelloAck",
             "RoutingEvent",
             "TunnelFrame",
+            "PairByTokenRequest",
+            "PairByTokenResponse",
+            "PairQrCloudPeerRequest",
+            "PairQrCloudPeerResponse",
+            "PairBySpake2Message",
+            "PairingComplete",
+            "PairingError",
+            "PairingIdentity",
             "AgentUpdated",
             "SessionClosed",
             "Reauth",
@@ -74,8 +82,12 @@ mod tests {
             );
         }
 
-        let expected_services =
-            std::collections::BTreeSet::from(["AgentService", "ClientService", "RoutingService"]);
+        let expected_services = std::collections::BTreeSet::from([
+            "AgentService",
+            "ClientService",
+            "PairingService",
+            "RoutingService",
+        ]);
         assert_eq!(service_names, expected_services);
 
         let service_methods = descriptor
@@ -99,6 +111,13 @@ mod tests {
             Some(std::collections::BTreeSet::from(["Connect"]))
         );
         assert_eq!(
+            service_methods.get("PairingService").cloned(),
+            Some(std::collections::BTreeSet::from([
+                "PairBySpake2",
+                "PairByToken"
+            ]))
+        );
+        assert_eq!(
             service_methods.get("AgentService").cloned(),
             Some(std::collections::BTreeSet::from([
                 "CreateAgent",
@@ -109,6 +128,86 @@ mod tests {
                 "SubscribeSession",
             ]))
         );
+        assert_eq!(
+            service_methods.get("ClientService").cloned(),
+            Some(std::collections::BTreeSet::from([
+                "CancelPairing",
+                "CreateAgent",
+                "Debug",
+                "DeleteAgent",
+                "GetPairingStatus",
+                "GetPeer",
+                "HandleHook",
+                "ListAgents",
+                "ListHosts",
+                "ListPeers",
+                "PairPeer",
+                "PairPinCloudPeer",
+                "PairQrCloudPeer",
+                "RenameAgent",
+                "Resume",
+                "SendInput",
+                "Shutdown",
+                "StartPairing",
+                "SubscribeAgents",
+                "SubscribeHosts",
+                "SubscribeSession",
+                "Suspend",
+                "Unpair",
+            ]))
+        );
+
+        let message_fields = descriptor
+            .file
+            .iter()
+            .filter(|file| file.package.as_deref() == Some("amux.v1"))
+            .flat_map(|file| file.message_type.iter())
+            .map(|message| {
+                (
+                    message.name.as_deref().unwrap_or_default(),
+                    message
+                        .field
+                        .iter()
+                        .map(|field| {
+                            (
+                                field.name.as_deref().unwrap_or_default(),
+                                field.number.unwrap_or_default(),
+                            )
+                        })
+                        .collect::<std::collections::BTreeMap<_, _>>(),
+                )
+            })
+            .collect::<std::collections::BTreeMap<_, _>>();
+        assert_eq!(
+            message_fields.get("TunnelId").cloned(),
+            Some(std::collections::BTreeMap::from([
+                ("initiator", 1),
+                ("nonce", 2)
+            ]))
+        );
+
+        let pairing_methods = descriptor
+            .file
+            .iter()
+            .filter(|file| file.package.as_deref() == Some("amux.v1"))
+            .flat_map(|file| file.service.iter())
+            .find(|service| service.name.as_deref() == Some("PairingService"))
+            .expect("PairingService should exist");
+        let pair_by_spake2 = pairing_methods
+            .method
+            .iter()
+            .find(|method| method.name.as_deref() == Some("PairBySpake2"))
+            .expect("PairBySpake2 should exist");
+        assert_eq!(
+            pair_by_spake2.input_type.as_deref(),
+            Some(".amux.v1.PairBySpake2Message")
+        );
+        assert_eq!(
+            pair_by_spake2.output_type.as_deref(),
+            Some(".amux.v1.PairBySpake2Message")
+        );
+        assert_eq!(pair_by_spake2.client_streaming, Some(true));
+        assert_eq!(pair_by_spake2.server_streaming, Some(true));
     }
 
     #[test]
@@ -117,6 +216,7 @@ mod tests {
             std::any::type_name::<super::wire::routing_service_client::RoutingServiceClient<()>>(),
             std::any::type_name::<super::wire::agent_service_client::AgentServiceClient<()>>(),
             std::any::type_name::<super::wire::client_service_client::ClientServiceClient<()>>(),
+            std::any::type_name::<super::wire::pairing_service_client::PairingServiceClient<()>>(),
         ];
 
         assert!(clients.iter().all(|client| client.contains("Client")));

@@ -1,11 +1,12 @@
 # test: remote_attach_by_alias
-# description: Attach to a remote agent by alias after direct connect
+# description: Attach to a remote agent by alias after pairing
 
 ## Environment
 
 config:
   name: server_a
   host_name: host-a
+  tcp_port: 0
 
 config:
   name: server_b
@@ -19,15 +20,39 @@ terminal:
   name: Tb
   config: server_b
 
+terminal:
+  name: TpairA
+  config: server_a
+
+terminal:
+  name: TpairB
+  config: server_b
+
 ## Test
 
 @Ta
 > amux server start
 Server started.
 
-@Tb
-> amux server connect 127.0.0.1:$server_a.tcp_port
-Connected to 127.0.0.1:$server_a.tcp_port
+@TpairA
+> amux pair --listen
+@@capture pairing_pin Pairing PIN:
+LAN direct listener: tcp_port $server_a.tcp_port
+Pairing mode active for 300 seconds.
+
+@TpairB
+> amux pair --connect 127.0.0.1:$server_a.tcp_port
+> $pairing_pin
+
+@@sleep 1500
+
+@TpairB
+@@capture paired_peer PIN: Paired with
+
+@@sleep 1200
+
+@TpairA
+Pairing mode ended.
 
 @Ta
 > amux new test-agent --name remote-test
@@ -35,7 +60,7 @@ Connected to 127.0.0.1:$server_a.tcp_port
 hello from server A
 echo: hello from server A
 
-@@sleep 200
+@@sleep 800
 
 @Tb
 > amux attach remote-test

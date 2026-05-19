@@ -4,17 +4,20 @@ use crate::protocol::wire as pb;
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 pub(crate) struct TunnelId {
     pub(crate) initiator: HostId,
-    pub(crate) target: HostId,
+    pub(crate) nonce: uuid::Uuid,
 }
 
 impl TunnelId {
-    pub(crate) fn new(initiator: HostId, target: HostId) -> Self {
-        Self { initiator, target }
+    pub(crate) fn new(initiator: HostId) -> Self {
+        Self {
+            initiator,
+            nonce: uuid::Uuid::new_v4(),
+        }
     }
 
     #[cfg(test)]
-    pub(crate) fn contains(self, host_id: HostId) -> bool {
-        self.initiator == host_id || self.target == host_id
+    pub(crate) fn from_parts(initiator: HostId, nonce: uuid::Uuid) -> Self {
+        Self { initiator, nonce }
     }
 }
 
@@ -30,7 +33,7 @@ impl TryFrom<pb::TunnelId> for TunnelId {
     fn try_from(value: pb::TunnelId) -> Result<Self, Self::Error> {
         Ok(Self {
             initiator: uuid_from_bytes("TunnelId.initiator", value.initiator)?,
-            target: uuid_from_bytes("TunnelId.target", value.target)?,
+            nonce: uuid_from_bytes("TunnelId.nonce", value.nonce)?,
         })
     }
 }
@@ -39,7 +42,7 @@ impl From<TunnelId> for pb::TunnelId {
     fn from(value: TunnelId) -> Self {
         Self {
             initiator: value.initiator.as_bytes().to_vec(),
-            target: value.target.as_bytes().to_vec(),
+            nonce: value.nonce.as_bytes().to_vec(),
         }
     }
 }
@@ -58,20 +61,17 @@ mod tests {
 
     #[test]
     fn tunnel_id_roundtrips_wire_shape() {
-        let id = TunnelId::new(HostId::from_u128(1), HostId::from_u128(2));
+        let id = TunnelId::from_parts(HostId::from_u128(1), uuid::Uuid::from_u128(2));
         let wire: pb::TunnelId = id.into();
 
         assert_eq!(TunnelId::try_from(wire).unwrap(), id);
-        assert!(id.contains(HostId::from_u128(1)));
-        assert!(id.contains(HostId::from_u128(2)));
-        assert!(!id.contains(HostId::from_u128(3)));
     }
 
     #[test]
     fn tunnel_id_rejects_invalid_uuid_lengths() {
         let error = TunnelId::try_from(pb::TunnelId {
             initiator: vec![1, 2, 3],
-            target: HostId::from_u128(2).as_bytes().to_vec(),
+            nonce: uuid::Uuid::from_u128(2).as_bytes().to_vec(),
         })
         .unwrap_err();
 
@@ -79,6 +79,20 @@ mod tests {
             error,
             TunnelTypeError::InvalidUuidLength {
                 field: "TunnelId.initiator",
+                actual: 3
+            }
+        );
+
+        let error = TunnelId::try_from(pb::TunnelId {
+            initiator: HostId::from_u128(1).as_bytes().to_vec(),
+            nonce: vec![1, 2, 3],
+        })
+        .unwrap_err();
+
+        assert_eq!(
+            error,
+            TunnelTypeError::InvalidUuidLength {
+                field: "TunnelId.nonce",
                 actual: 3
             }
         );

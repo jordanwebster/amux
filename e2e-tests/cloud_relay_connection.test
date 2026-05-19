@@ -6,6 +6,7 @@
 config:
   name: relay
   host_name: relay
+  tcp_port: 0
   cloud_relay: true
 
 config:
@@ -34,11 +35,19 @@ terminal:
   name: Tb
   config: server_b
 
+terminal:
+  name: TpairA
+  config: server_a
+
+terminal:
+  name: TpairB
+  config: server_b
+
 ## Test
 
 @Tr
-> amux server start --cloud
-Server started.
+> amux server start --cloud --foreground
+@@sleep 500
 
 @Ta
 > amux new test-agent --name cloud-remote
@@ -46,9 +55,26 @@ Server started.
 hello from cloud A
 echo: hello from cloud A
 
-@Tb
-> amux server start
-Server started.
+@TpairA
+> amux pair
+@@capture pairing_pin Pairing PIN:
+Pairing mode active for 300 seconds.
+
+@TpairB
+> amux pair --connect host-a
+> $pairing_pin
+
+@@sleep 1500
+
+@TpairB
+@@capture paired_peer PIN: Paired with
+
+@@sleep 1200
+
+@TpairA
+Pairing mode ended.
+
+@@sleep 800
 
 @Tb
 > amux list

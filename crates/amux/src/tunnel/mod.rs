@@ -18,7 +18,8 @@ use crate::protocol::wire as pb;
 use crate::routing::{LinkOutputTx, Route, route_to_wire};
 pub(crate) use crate::tunnel::types::TunnelId;
 
-const BUF_SIZE: usize = 64 * 1024;
+pub(crate) const TUNNEL_FRAME_PAYLOAD_MAX: usize = 64 * 1024;
+const BUF_SIZE: usize = TUNNEL_FRAME_PAYLOAD_MAX;
 const INBOUND_DEPTH: usize = 32;
 
 pub(crate) struct Tunnel {
@@ -80,7 +81,7 @@ pub(crate) fn create_tunnel(
             reader_task,
             writer_task,
         },
-        TunnelTransport::new(grpc_half, peer),
+        TunnelTransport::new(grpc_half, peer).with_tunnel_id(id),
     )
 }
 
@@ -109,7 +110,7 @@ mod tests {
     async fn create_tunnel_wraps_outbound_bytes_and_delivers_inbound_bytes() {
         let initiator = HostId::from_u128(1);
         let target = HostId::from_u128(2);
-        let id = TunnelId::new(initiator, target);
+        let id = TunnelId::from_parts(initiator, uuid::Uuid::from_u128(42));
         let (outbound_tx, mut outbound_rx) = mpsc::channel(1);
 
         let (tunnel, mut transport) = create_tunnel(id, route("next-hop"), target, outbound_tx);

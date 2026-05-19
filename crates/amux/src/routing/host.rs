@@ -5,7 +5,9 @@ use crate::agents::AGENT_TYPE_CLAUDE;
 use crate::agents::AGENT_TYPE_TEST_AGENT;
 use crate::routing::{Capabilities, Host, SupportedAgentType};
 
+pub(crate) const FEATURE_CLOUD_RELAY: &str = "amux.cloud_relay";
 pub(crate) const MAX_SUPPORTED_AGENT_TYPES: usize = 64;
+pub(crate) const MAX_HOST_NAME_BYTES: usize = 256;
 
 pub(crate) fn local_host(host_id: Uuid, host_name: &str, is_cloud_server: bool) -> Host {
     Host {
@@ -22,6 +24,11 @@ pub(crate) fn validate_remote_host(host: &Host) -> std::result::Result<(), Strin
     }
     if host.name.is_empty() {
         return Err("host name must be non-empty".to_string());
+    }
+    if host.name.len() > MAX_HOST_NAME_BYTES {
+        return Err(format!(
+            "host name must be at most {MAX_HOST_NAME_BYTES} bytes"
+        ));
     }
     if host.version.is_empty() {
         return Err("host version must be non-empty".to_string());
@@ -45,7 +52,7 @@ pub(crate) fn validate_remote_host(host: &Host) -> std::result::Result<(), Strin
 pub(crate) fn local_capabilities(is_cloud_server: bool) -> Capabilities {
     if is_cloud_server {
         return Capabilities {
-            features: Vec::new(),
+            features: vec![FEATURE_CLOUD_RELAY.to_string()],
             supported_agent_types: Vec::new(),
         };
     }
@@ -90,10 +97,29 @@ mod tests {
     }
 
     #[test]
+    fn validate_remote_host_rejects_oversized_name() {
+        let host = local_host(
+            Uuid::from_u128(1),
+            &"a".repeat(MAX_HOST_NAME_BYTES + 1),
+            false,
+        );
+
+        let error = validate_remote_host(&host).expect_err("host name should exceed the cap");
+
+        assert!(error.contains("host name"));
+    }
+
+    #[test]
     fn cloud_local_host_advertises_no_supported_agent_types() {
         let host = local_host(Uuid::from_u128(1), "cloud", true);
 
         assert!(host.capabilities.supported_agent_types.is_empty());
+        assert!(
+            host.capabilities
+                .features
+                .iter()
+                .any(|feature| feature == FEATURE_CLOUD_RELAY)
+        );
     }
 
     #[test]

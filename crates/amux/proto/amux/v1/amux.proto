@@ -144,7 +144,7 @@ message RoutingEvent {
 
 message TunnelId {
   bytes initiator = 1;
-  bytes target = 2;
+  bytes nonce = 2;
 }
 
 message TunnelFrame {
@@ -188,6 +188,7 @@ enum GoAwayReason {
   GO_AWAY_REASON_AUTH_EXPIRED = 5;
   GO_AWAY_REASON_PROTOCOL_ERROR = 6;
   GO_AWAY_REASON_UPDATE_REQUIRED = 7;
+  GO_AWAY_REASON_USER_REVOKED = 8;
 }
 
 // ---------------------------------------------------------------------------
@@ -219,9 +220,104 @@ message HostDown {
   optional string reason = 3;
 }
 
-message ListHostsRequest {}
+// ---------------------------------------------------------------------------
+// Pairing service
+// ---------------------------------------------------------------------------
+
+service PairingService {
+  rpc PairByToken(PairByTokenRequest) returns (PairByTokenResponse);
+  rpc PairBySpake2(stream PairBySpake2Message) returns (stream PairBySpake2Message);
+}
+
+message PairByTokenRequest {
+  bytes one_shot_token = 1;
+  bytes host_id = 2;
+  bytes pubkey = 3;
+  string name = 4;
+}
+
+message PairByTokenResponse {
+  bytes host_id = 1;
+  string name = 2;
+}
+
+message PairBySpake2Message {
+  oneof body {
+    bytes spake2_message = 1;
+    bytes key_confirmation = 2;
+    bytes sealed_identity = 3;
+    PairingError error = 4;
+    PairingComplete pairing_complete = 5;
+  }
+}
+
+message PairingComplete {}
+
+message PairingError {
+  enum Reason {
+    REASON_UNSPECIFIED = 0;
+    NOT_IN_PAIRING_MODE = 1;
+    INVALID_PIN = 2;
+    INVALID_TOKEN = 3;
+    PROTOCOL_VIOLATION = 4;
+    TIMEOUT = 5;
+    USER_REJECTED = 6;
+    SELF_PAIRING = 7;
+  }
+
+  Reason reason = 1;
+  string detail = 2;
+}
+
+message PairingIdentity {
+  bytes host_id = 1;
+  bytes pubkey = 2;
+  string name = 3;
+}
+
+message ListHostsRequest {
+  enum Scope {
+    SCOPE_UNSPECIFIED = 0;
+    ALL = 1;
+    PAIRING_CANDIDATES = 2;
+  }
+
+  Scope scope = 1;
+}
 message ListHostsResponse {
-  repeated Host hosts = 1;
+  repeated HostEntry hosts = 1;
+}
+
+enum HostTrustStatus {
+  HOST_TRUST_STATUS_UNSPECIFIED = 0;
+  TRUSTED = 1;
+  UNTRUSTED_BUT_ONLINE = 2;
+}
+
+message HostReachabilityReachable {}
+
+message HostReachabilityUnreachable {
+  string last_error = 1;
+}
+
+message HostReachabilityUnknown {}
+
+message HostReachabilityStatus {
+  oneof status {
+    HostReachabilityReachable reachable = 1;
+    HostReachabilityUnreachable unreachable = 2;
+    HostReachabilityUnknown unknown = 3;
+  }
+}
+
+message HostEntry {
+  bytes host_id = 1;
+  string name = 2;
+  bool online = 3;
+  optional string version = 4;
+  optional Capabilities capabilities = 5;
+  HostTrustStatus trust_status = 6;
+  optional HostReachabilityStatus reachability_status = 7;
 }
 
 message Agent {
@@ -403,7 +499,15 @@ service ClientService {
   rpc Shutdown(ShutdownRequest) returns (ShutdownResponse);
   rpc Suspend(SuspendRequest) returns (SuspendResponse);
   rpc Resume(ResumeRequest) returns (ResumeResponse);
-  rpc ConnectToServer(ConnectToServerRequest) returns (ConnectToServerResponse);
+  rpc StartPairing(StartPairingRequest) returns (StartPairingResponse);
+  rpc GetPairingStatus(GetPairingStatusRequest) returns (GetPairingStatusResponse);
+  rpc CancelPairing(CancelPairingRequest) returns (CancelPairingResponse);
+  rpc PairPeer(PairPeerRequest) returns (PairPeerResponse);
+  rpc PairPinCloudPeer(PairPinCloudPeerRequest) returns (PairPinCloudPeerResponse);
+  rpc PairQrCloudPeer(PairQrCloudPeerRequest) returns (PairQrCloudPeerResponse);
+  rpc ListPeers(ListPeersRequest) returns (ListPeersResponse);
+  rpc GetPeer(GetPeerRequest) returns (GetPeerResponse);
+  rpc Unpair(UnpairRequest) returns (UnpairResponse);
 
   rpc HandleHook(HandleHookRequest) returns (HandleHookResponse);
 }
@@ -416,14 +520,14 @@ message ListAgentsResponse {
 message SubscribeHostsRequest {}
 message SubscribeHostsResponse {
   oneof event {
-    HostAdded host_added = 1;
+    HostUpdated host_updated = 1;
     HostRemoved host_removed = 2;
     SnapshotComplete snapshot_complete = 100;
   }
 }
 
-message HostAdded {
-  Host host = 1;
+message HostUpdated {
+  HostEntry host = 1;
 }
 
 message HostRemoved {
@@ -483,6 +587,79 @@ message HandleHookRequest {
 
 message HandleHookResponse {}
 
+message PairPeerRequest {
+  PairingIdentity peer = 1;
+
+  oneof reachability {
+    string ssh_target = 2;
+    string direct_tcp_addr = 3;
+  }
+}
+
+message PairPeerResponse {}
+
+message PairPinCloudPeerRequest {
+  bytes host_id = 1;
+  string pin = 2;
+}
+
+message PairPinCloudPeerResponse {
+  PairingIdentity peer = 1;
+}
+
+message PairQrCloudPeerRequest {
+  bytes host_id = 1;
+  bytes pubkey = 2;
+  bytes one_shot_token = 3;
+}
+
+message PairQrCloudPeerResponse {
+  PairingIdentity peer = 1;
+}
+
+message PeerRef {
+  oneof identifier {
+    bytes host_id = 1;
+    string name = 2;
+  }
+}
+
+message PeerReachability {
+  oneof kind {
+    Empty cloud = 1;
+    string ssh_target = 2;
+    string direct_tcp_addr = 3;
+  }
+}
+
+message PeerEntry {
+  bytes host_id = 1;
+  string name = 2;
+  bytes pubkey = 3;
+  int64 paired_at_unix_ms = 4;
+  repeated PeerReachability reachabilities = 5;
+}
+
+message ListPeersRequest {}
+message ListPeersResponse {
+  repeated PeerEntry peers = 1;
+}
+
+message GetPeerRequest {
+  PeerRef peer = 1;
+}
+message GetPeerResponse {
+  PeerEntry peer = 1;
+}
+
+message UnpairRequest {
+  PeerRef peer = 1;
+  string reason = 2;
+}
+message UnpairResponse {
+  PeerEntry removed_peer = 1;
+}
+
 message DebugRequest {
   bool verbose = 1;
   DebugFormat format = 2;
@@ -518,7 +695,33 @@ message ResumeResponse {
   uint64 resumed_count = 1;
   uint64 failed_count = 2;
 }
-message ConnectToServerRequest {
-  string address = 1;
+message StartPairingRequest {
+  enum Mode {
+    MODE_UNSPECIFIED = 0;
+    PIN = 1;
+    QR = 2;
+  }
+
+  Mode mode = 1;
+  bool require_lan_direct = 2;
 }
-message ConnectToServerResponse {}
+
+message StartPairingResponse {
+  PairingIdentity identity = 1;
+  uint64 ttl_seconds = 2;
+  optional uint32 tcp_port = 3;
+  string cloud_url = 4;
+
+  oneof secret {
+    string pin = 10;
+    bytes one_shot_token = 11;
+  }
+}
+
+message GetPairingStatusRequest {}
+message GetPairingStatusResponse {
+  bool active = 1;
+}
+
+message CancelPairingRequest {}
+message CancelPairingResponse {}

@@ -6,7 +6,7 @@ use anyhow::{Result, anyhow};
 
 use crate::auth::{DeviceFlowProvider, auth_file_path};
 use crate::client_common::{
-    get_client, get_client_with_executable, open_daemon, print_update_banner, remove_stale_socket,
+    get_client_with_executable, open_daemon, print_update_banner, remove_stale_socket,
     server_unavailable_error, spawn_daemon,
 };
 use crate::update::MarkerFileReporter;
@@ -145,14 +145,6 @@ pub async fn resume_server_with_executable(config: &Config, executable: &Path) -
         print!(" ({} failed to resume)", summary.failed_count);
     }
     println!();
-    Ok(())
-}
-
-/// Connect to a remote amux server.
-pub async fn connect_remote(address: &str, config: &Config) -> Result<()> {
-    let client = get_client(config).await?;
-    client.connect_to_server(address.to_string()).await?;
-    println!("Connected to {}", address);
     Ok(())
 }
 

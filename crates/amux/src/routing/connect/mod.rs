@@ -12,15 +12,18 @@ use tokio::task::JoinHandle;
 use tonic::transport::Channel;
 use uuid::Uuid;
 
+use crate::connection::RouteRuntimeState;
 use crate::protocol::{PROTOCOL_VERSION, ProtocolError, protocol_status, wire};
 use crate::routing::{
     ConnectHandshake, ConnectHandshakeEvent, Host, HostUpOutcome, InboundRoutingEvent, Link,
-    LinkCloseReason, LinkRegistry, Route, RoutingCore, RoutingEvent as CoreRoutingEvent,
+    LinkCloseReason, LinkRegistry, LinkRole, Route, RoutingCore, RoutingEvent as CoreRoutingEvent,
     host_from_wire, host_to_wire, outbound_routing_message, protocol_error_goaway,
     protocol_error_hello_ack, should_send_routing_event_to_link, validate_remote_host,
     wire_routing_event_to_inbound,
 };
+use crate::transport::{BoxedGrpcAuth, BoxedGrpcConnectInfo};
 use crate::tunnel::TunnelPool;
+use crate::{HostId, audit};
 
 type ResponseStream<T> = Pin<Box<dyn Stream<Item = Result<T, tonic::Status>> + Send + 'static>>;
 type ConnectInputStream =
@@ -32,6 +35,7 @@ type EstablishmentReceiver = oneshot::Receiver<Result<Host, tonic::Status>>;
 const ROUTING_AUTH_REFRESH_BEFORE_EXPIRY: Duration = Duration::from_secs(300);
 const ROUTING_AUTH_REAUTH_RESPONSE_TIMEOUT: Duration = Duration::from_secs(15);
 const ROUTING_AUTH_EXPIRED_DRAIN_TIMEOUT_MS: u32 = 0;
+const ROUTING_CONNECT_HELLO_TIMEOUT: Duration = Duration::from_secs(10);
 
 #[derive(Debug, Clone)]
 pub(crate) struct AuthenticatedRoutingUser {
@@ -119,6 +123,9 @@ pub(crate) struct RoutingConnectCtx {
     links: Arc<LinkRegistry>,
     assigned_link: Option<Link>,
     auth_session: Option<RoutingAuthSession>,
+    tls_peer: Option<Uuid>,
+    route_runtime: RouteRuntimeState,
+    direct_route_mode: DirectRouteMode,
 }
 
 impl RoutingConnectCtx {
@@ -128,6 +135,7 @@ impl RoutingConnectCtx {
         routing: Arc<RoutingCore>,
         tunnels: Arc<TunnelPool>,
         assigned_link: Link,
+        route_runtime: RouteRuntimeState,
     ) -> Self {
         Self {
             local_host,
@@ -136,6 +144,9 @@ impl RoutingConnectCtx {
             tunnels,
             assigned_link: Some(assigned_link),
             auth_session: None,
+            tls_peer: None,
+            route_runtime,
+            direct_route_mode: DirectRouteMode::RequireChannel,
         }
     }
 
@@ -143,6 +154,7 @@ impl RoutingConnectCtx {
         local_host: Host,
         routing: Arc<RoutingCore>,
         tunnels: Arc<TunnelPool>,
+        route_runtime: RouteRuntimeState,
     ) -> Self {
         Self {
             local_host,
@@ -151,6 +163,9 @@ impl RoutingConnectCtx {
             tunnels,
             assigned_link: None,
             auth_session: None,
+            tls_peer: None,
+            route_runtime,
+            direct_route_mode: DirectRouteMode::RequireChannel,
         }
     }
 
@@ -162,6 +177,9 @@ impl RoutingConnectCtx {
             links: self.links.clone(),
             link,
             auth_session: self.auth_session.clone(),
+            route_runtime: self.route_runtime.clone(),
+            direct_route_mode: self.direct_route_mode,
+            link_role: LinkRole::Peer,
         }
     }
 
@@ -169,6 +187,22 @@ impl RoutingConnectCtx {
         self.auth_session = Some(auth_session);
         self
     }
+
+    pub(crate) fn with_routing_only_direct_routes(mut self) -> Self {
+        self.direct_route_mode = DirectRouteMode::RoutingOnly;
+        self
+    }
+
+    fn with_tls_peer(mut self, tls_peer: Uuid) -> Self {
+        self.tls_peer = Some(tls_peer);
+        self
+    }
+}
+
+#[derive(Clone, Copy)]
+enum DirectRouteMode {
+    RequireChannel,
+    RoutingOnly,
 }
 
 #[derive(Clone)]
@@ -178,6 +212,9 @@ pub(crate) struct RoutingConnectorCtx {
     tunnels: Arc<TunnelPool>,
     links: Arc<LinkRegistry>,
     proposed_link: Link,
+    expected_peer: Option<HostId>,
+    route_runtime: RouteRuntimeState,
+    link_role: LinkRole,
 }
 
 impl RoutingConnectorCtx {
@@ -186,6 +223,7 @@ impl RoutingConnectorCtx {
         routing: Arc<RoutingCore>,
         tunnels: Arc<TunnelPool>,
         proposed_link: Link,
+        route_runtime: RouteRuntimeState,
     ) -> Self {
         Self {
             local_host,
@@ -193,7 +231,21 @@ impl RoutingConnectorCtx {
             links: tunnels.link_registry(),
             tunnels,
             proposed_link,
+            expected_peer: None,
+            route_runtime,
+            link_role: LinkRole::Peer,
         }
+    }
+
+    pub(crate) fn with_expected_peer(mut self, expected_peer: HostId) -> Self {
+        self.expected_peer = Some(expected_peer);
+        self
+    }
+
+    #[cfg(test)]
+    pub(crate) fn with_link_role(mut self, link_role: LinkRole) -> Self {
+        self.link_role = link_role;
+        self
     }
 
     fn established(&self, link: Link) -> EstablishedConnectCtx {
@@ -204,6 +256,9 @@ impl RoutingConnectorCtx {
             links: self.links.clone(),
             link,
             auth_session: None,
+            route_runtime: self.route_runtime.clone(),
+            direct_route_mode: DirectRouteMode::RequireChannel,
+            link_role: self.link_role,
         }
     }
 }
@@ -212,8 +267,23 @@ impl RoutingConnectorCtx {
 pub(crate) fn spawn_connector_to_channel(
     ctx: RoutingConnectorCtx,
     channel: Channel,
-) -> JoinHandle<Result<(), tonic::Status>> {
+) -> ConnectorTask {
     spawn_connector_to_channel_with_authorization(ctx, channel, None, None)
+}
+
+pub(crate) fn spawn_connector_to_channel_with_establishment(
+    ctx: RoutingConnectorCtx,
+    channel: Channel,
+) -> (ConnectorTask, EstablishmentReceiver) {
+    let (established_tx, established_rx) = oneshot::channel();
+    let task = spawn_connector_to_channel_with_authorization_and_signal(
+        ctx,
+        channel,
+        None,
+        None,
+        Some(established_tx),
+    );
+    (task, established_rx)
 }
 
 #[cfg(test)]
@@ -223,7 +293,7 @@ pub(crate) fn spawn_connector_to_channel_with_bearer_token(
     token: String,
 ) -> JoinHandle<Result<(), tonic::Status>> {
     spawn_connector_to_channel_with_authorization(
-        ctx,
+        ctx.with_link_role(LinkRole::CloudRelay),
         channel,
         Some(format!("Bearer {token}")),
         None,
@@ -241,21 +311,6 @@ pub(crate) fn spawn_connector_to_channel_with_auth_and_establishment(
         channel,
         None,
         Some(auth),
-        Some(established_tx),
-    );
-    (task, established_rx)
-}
-
-pub(crate) fn spawn_connector_to_channel_with_establishment(
-    ctx: RoutingConnectorCtx,
-    channel: Channel,
-) -> (ConnectorTask, EstablishmentReceiver) {
-    let (established_tx, established_rx) = oneshot::channel();
-    let task = spawn_connector_to_channel_with_authorization_and_signal(
-        ctx,
-        channel,
-        None,
-        None,
         Some(established_tx),
     );
     (task, established_rx)
@@ -285,6 +340,7 @@ fn spawn_connector_to_channel_with_authorization_and_signal(
     established_tx: Option<EstablishmentSender>,
 ) -> ConnectorTask {
     tokio::spawn(async move {
+        let direct_channel = channel.clone();
         let mut client = wire::routing_service_client::RoutingServiceClient::new(channel);
         let (out_tx, out_rx) = mpsc::channel(256);
         let request_stream = stream::unfold(out_rx, |mut rx| async move {
@@ -312,6 +368,7 @@ fn spawn_connector_to_channel_with_authorization_and_signal(
             out_tx,
             connector_auth,
             established_tx,
+            Some(direct_channel),
         )
         .await
     })
@@ -325,6 +382,9 @@ struct EstablishedConnectCtx {
     links: Arc<LinkRegistry>,
     link: Link,
     auth_session: Option<RoutingAuthSession>,
+    route_runtime: RouteRuntimeState,
+    direct_route_mode: DirectRouteMode,
+    link_role: LinkRole,
 }
 
 #[tonic::async_trait]
@@ -335,7 +395,18 @@ impl wire::routing_service_server::RoutingService for RoutingConnectCtx {
         &self,
         request: tonic::Request<tonic::Streaming<wire::pb::Message>>,
     ) -> Result<tonic::Response<Self::ConnectStream>, tonic::Status> {
-        let rx = spawn_acceptor_connect(self.clone(), request.into_inner());
+        let tls_peer = request
+            .extensions()
+            .get::<BoxedGrpcConnectInfo>()
+            .and_then(|info| match &info.auth {
+                BoxedGrpcAuth::TlsTrusted { peer } => Some(*peer),
+                BoxedGrpcAuth::LocalTrusted | BoxedGrpcAuth::PreTrustPairing { .. } => None,
+            });
+        let ctx = match tls_peer {
+            Some(peer) => self.clone().with_tls_peer(peer),
+            None => self.clone(),
+        };
+        let rx = spawn_acceptor_connect(ctx, request.into_inner());
         Ok(tonic::Response::new(Box::pin(receiver_stream(rx))))
     }
 }
@@ -346,7 +417,7 @@ where
 {
     let (out_tx, out_rx) = mpsc::channel(256);
     tokio::spawn(async move {
-        run_acceptor_connect(ctx, input, out_tx).await;
+        run_acceptor_connect(ctx, input, out_tx, ROUTING_CONNECT_HELLO_TIMEOUT).await;
     });
     out_rx
 }
@@ -361,7 +432,9 @@ where
 {
     let (out_tx, out_rx) = mpsc::channel(256);
     tokio::spawn(async move {
-        let _ = run_connector_connect(ctx, input, out_tx, None, None).await;
+        let direct_channel =
+            tonic::transport::Endpoint::from_static("http://unit-test").connect_lazy();
+        let _ = run_connector_connect(ctx, input, out_tx, None, None, Some(direct_channel)).await;
     });
     out_rx
 }
@@ -370,15 +443,18 @@ async fn run_acceptor_connect<S>(
     ctx: RoutingConnectCtx,
     input: S,
     out_tx: mpsc::Sender<wire::pb::Message>,
+    hello_timeout: Duration,
 ) where
     S: Stream<Item = Result<wire::pb::Message, tonic::Status>> + Send + 'static,
 {
     let mut input: ConnectInputStream = Box::pin(input);
-    let Some(first) = input.next().await else {
-        return;
-    };
-    let Ok(first) = first else {
-        return;
+    let first = match tokio::time::timeout(hello_timeout, input.next()).await {
+        Ok(Some(Ok(first))) => first,
+        Ok(Some(Err(_))) | Ok(None) => return,
+        Err(_) => {
+            tracing::warn!("routing Connect stream timed out waiting for Hello");
+            return;
+        }
     };
 
     let mut handshake = ConnectHandshake::acceptor();
@@ -406,34 +482,6 @@ async fn run_acceptor_connect<S>(
         }
     };
 
-    match store_direct_peer(
-        &ctx.routing,
-        ctx.local_host.id,
-        &assigned_link,
-        peer_host.clone(),
-    )
-    .await
-    {
-        Ok(DirectPeerStoreOutcome::Inserted) => {}
-        Ok(DirectPeerStoreOutcome::AlreadyKnown) => {
-            ctx.routing.release_link(&assigned_link).await;
-            let _ = out_tx
-                .send(error_hello_ack(host_id_collision_error(format!(
-                    "host_id {} is already reachable",
-                    peer_host.id
-                ))))
-                .await;
-            return;
-        }
-        Err(error) => {
-            ctx.routing.release_link(&assigned_link).await;
-            let _ = out_tx
-                .send(error_hello_ack(host_id_collision_error(error)))
-                .await;
-            return;
-        }
-    }
-
     if out_tx
         .send(accepted_hello_ack(&ctx, &assigned_link))
         .await
@@ -456,7 +504,8 @@ async fn run_acceptor_connect<S>(
             peer_host,
             connector_auth: None,
             established_tx: None,
-            peer_route_stored: true,
+            peer_route_stored: false,
+            direct_channel: None,
         },
     )
     .await;
@@ -468,6 +517,7 @@ async fn run_connector_connect<S>(
     out_tx: mpsc::Sender<wire::pb::Message>,
     connector_auth: Option<RoutingConnectorAuth>,
     established_tx: Option<EstablishmentSender>,
+    direct_channel: Option<Channel>,
 ) -> Result<(), tonic::Status>
 where
     S: Stream<Item = Result<wire::pb::Message, tonic::Status>> + Send + 'static,
@@ -540,6 +590,7 @@ where
             connector_auth,
             established_tx,
             peer_route_stored: false,
+            direct_channel,
         },
     )
     .await
@@ -578,6 +629,7 @@ struct EstablishedConnectArgs {
     connector_auth: Option<RoutingConnectorAuth>,
     established_tx: Option<EstablishmentSender>,
     peer_route_stored: bool,
+    direct_channel: Option<Channel>,
 }
 
 async fn run_established_connect(
@@ -592,14 +644,30 @@ async fn run_established_connect(
         connector_auth,
         established_tx,
         peer_route_stored,
+        direct_channel,
     } = args;
 
     debug_assert!(handshake.is_established());
+    let link_role = if connector_auth.is_some() {
+        LinkRole::CloudRelay
+    } else {
+        ctx.link_role
+    };
     let mut link_close_rx = ctx
         .links
-        .register(ctx.link.clone(), peer_host.id, out_tx.clone())
+        .register_with_role(ctx.link.clone(), peer_host.id, out_tx.clone(), link_role)
         .await;
-    if !peer_route_stored {
+    let direct_channel_registered = if let Some(channel) = direct_channel {
+        ctx.route_runtime
+            .register(Route::from_link(ctx.link.clone()), channel)
+            .await;
+        true
+    } else {
+        false
+    };
+    let can_store_direct_route =
+        direct_channel_registered || matches!(ctx.direct_route_mode, DirectRouteMode::RoutingOnly);
+    if !peer_route_stored && can_store_direct_route {
         match store_direct_peer(
             &ctx.routing,
             ctx.local_host_id,
@@ -626,6 +694,11 @@ async fn run_established_connect(
                 return Ok(());
             }
         }
+    } else if !peer_route_stored {
+        tracing::debug!(
+            link = %ctx.link,
+            "not storing acceptor-only direct route without outbound channel"
+        );
     }
     if let Some(established_tx) = established_tx {
         let _ = established_tx.send(Ok(peer_host.clone()));
@@ -656,8 +729,15 @@ async fn run_established_connect(
                 let Some(inbound) = inbound else {
                     break;
                 };
-                let Ok(message) = inbound else {
+                let message = match inbound {
+                    Ok(message) => message,
+                    Err(status) => {
+                    let _ = try_send_outbound(
+                        &out_tx,
+                            protocol_error_goaway(status.to_string()),
+                    );
                     break;
+                    }
                 };
                 match handshake.receive(message) {
                     Ok(ConnectHandshakeEvent::PostHandshake(body)) => {
@@ -708,6 +788,7 @@ async fn run_established_connect(
                 break;
             }
             _ = maybe_sleep_until(auth_expiry_deadline), if auth_expiry_deadline.is_some() => {
+                audit::auth_jwt_failure("routing authorization expired");
                 let _ = try_send_outbound(&out_tx, auth_expired_goaway());
                 break;
             }
@@ -716,6 +797,7 @@ async fn run_established_connect(
                     continue;
                 };
                 if let Err(status) = connector_reauth.send_refresh(&out_tx).await {
+                    audit::auth_jwt_failure(&status);
                     let _ = try_send_outbound(&out_tx, protocol_error_goaway(status.to_string()));
                     close_status = Some(status);
                     break;
@@ -726,6 +808,7 @@ async fn run_established_connect(
                     &out_tx,
                     protocol_error_goaway("routing reauth response timed out"),
                 );
+                audit::auth_jwt_failure("routing reauth response timed out");
                 break;
             }
             reason = link_close_rx.recv() => {
@@ -733,6 +816,11 @@ async fn run_established_connect(
                     Some(LinkCloseReason::OutgoingQueueFull) => {
                         close_status = Some(tonic::Status::resource_exhausted(
                             "routing link outgoing queue full",
+                        ));
+                    }
+                    Some(LinkCloseReason::TrustReplaced) => {
+                        close_status = Some(tonic::Status::permission_denied(
+                            "peer trust was replaced",
                         ));
                     }
                     None => {
@@ -775,18 +863,20 @@ async fn accept_peer_hello(
         .and_then(|host| host_from_wire(host).map_err(|error| error.to_string()))
         .map_err(invalid_argument_error)?;
     validate_remote_host(&host).map_err(invalid_argument_error)?;
+    if let Some(tls_peer) = ctx.tls_peer
+        && host.id != tls_peer
+    {
+        return Err(invalid_argument_error(format!(
+            "Hello.host_id {} does not match TLS peer {}",
+            host.id, tls_peer
+        )));
+    }
     if let Some(auth_session) = &ctx.auth_session {
         validate_minimum_client_version(&host, auth_session)?;
     }
     if host.id == ctx.local_host.id {
         return Err(host_id_collision_error(format!(
             "peer host_id {} matches local host_id",
-            host.id
-        )));
-    }
-    if ctx.routing.host_entry(host.id).await.is_some() {
-        return Err(host_id_collision_error(format!(
-            "host_id {} is already reachable",
             host.id
         )));
     }
@@ -880,6 +970,14 @@ async fn accept_peer_hello_ack(
         .and_then(|host| host_from_wire(host).map_err(|error| error.to_string()))
         .map_err(invalid_argument_error)?;
     validate_remote_host(&host).map_err(invalid_argument_error)?;
+    if let Some(expected_peer) = ctx.expected_peer
+        && host.id != expected_peer
+    {
+        return Err(invalid_argument_error(format!(
+            "HelloAccepted.host_id {} does not match expected peer {}",
+            host.id, expected_peer
+        )));
+    }
     if host.id == ctx.local_host.id {
         return Err(host_id_collision_error(format!(
             "peer host_id {} matches local host_id",
@@ -917,6 +1015,9 @@ async fn store_direct_peer(
             tracing::debug!(%host_id, "direct peer already reachable");
             Ok(DirectPeerStoreOutcome::AlreadyKnown)
         }
+        HostUpOutcome::RejectedByCap => Err(format!(
+            "routing host cap reached while storing direct peer {host_id}"
+        )),
     }
 }
 
@@ -950,11 +1051,11 @@ async fn send_initial_routing_snapshot(
     peer_host_id: uuid::Uuid,
 ) -> bool {
     let snapshot = ctx.routing.routing_events_snapshot().await;
-    let mut snapshot_hosts = Vec::new();
+    let mut snapshot_routes = Vec::new();
     for event in snapshot {
         if should_send_routing_event_to_link(&event, &ctx.link, Some(peer_host_id)) {
-            if let CoreRoutingEvent::HostUp { host, .. } = &event {
-                snapshot_hosts.push(host.id);
+            if let CoreRoutingEvent::HostUp { host, route, .. } = &event {
+                snapshot_routes.push((host.id, route.clone()));
             }
             if out_tx.try_send(outbound_routing_message(&event)).is_err() {
                 return false;
@@ -975,7 +1076,7 @@ async fn send_initial_routing_snapshot(
     {
         return false;
     }
-    ctx.links.activate(&ctx.link, snapshot_hosts).await
+    ctx.links.activate(&ctx.link, snapshot_routes).await
 }
 
 enum PostHandshakeAction {
@@ -1017,22 +1118,23 @@ async fn handle_post_handshake_body(
                         );
                         return PostHandshakeAction::Close;
                     }
-                    if let Err(error) = validate_remote_host(&host) {
-                        let _ = try_send_outbound(out_tx, protocol_error_goaway(error.to_string()));
-                        return PostHandshakeAction::Close;
-                    }
                     ctx.routing
                         .apply_host_up(host, route, Some(ctx.link.clone()))
                         .await;
                     PostHandshakeAction::Continue
                 }
                 Ok(InboundRoutingEvent::HostDown { host_id, route }) => {
-                    ctx.routing
+                    let removed = ctx
+                        .routing
                         .apply_host_down(host_id, &route, Some(ctx.link.clone()))
                         .await;
+                    if removed {
+                        ctx.route_runtime.remove_route(&route).await;
+                    }
                     PostHandshakeAction::Continue
                 }
                 Ok(InboundRoutingEvent::SnapshotComplete) => PostHandshakeAction::Continue,
+                Ok(InboundRoutingEvent::RouteOverHopCap) => PostHandshakeAction::Continue,
                 Err(error) => {
                     let _ = try_send_outbound(out_tx, protocol_error_goaway(error.to_string()));
                     PostHandshakeAction::Close
@@ -1040,7 +1142,11 @@ async fn handle_post_handshake_body(
             }
         }
         wire::pb::message::Body::TunnelFrame(frame) => {
-            match ctx.tunnels.handle_inbound_frame(frame).await {
+            match ctx
+                .tunnels
+                .handle_inbound_frame_from_link(frame, Some(&ctx.link))
+                .await
+            {
                 Ok(()) => PostHandshakeAction::Continue,
                 Err(error) => {
                     let _ = try_send_outbound(out_tx, protocol_error_goaway(error.to_string()));
@@ -1177,6 +1283,7 @@ impl ConnectorReauthState {
                 true
             }
             wire::pb::reauth_ack::Outcome::Error(error) => {
+                audit::auth_jwt_failure(format!("routing reauth rejected: {}", error.message));
                 tracing::warn!(code = error.code, message = %error.message, "routing reauth rejected");
                 false
             }
@@ -1206,6 +1313,7 @@ async fn handle_reauth(
             try_send_outbound(out_tx, accepted_reauth_ack())
         }
         Ok(user) => {
+            audit::auth_jwt_failure("routing reauth user mismatch");
             tracing::warn!(
                 original_user_id = %auth.user.user_id,
                 reauth_user_id = %user.user_id,
@@ -1214,6 +1322,7 @@ async fn handle_reauth(
             try_send_outbound(out_tx, unauthenticated_reauth_ack())
         }
         Err(status) => {
+            audit::auth_jwt_failure(&status);
             tracing::warn!(error = %status, "routing reauth token validation failed");
             try_send_outbound(out_tx, unauthenticated_reauth_ack())
         }
@@ -1300,8 +1409,8 @@ fn instant_for_system_time(time: SystemTime, early_by: Duration) -> tokio::time:
 async fn cleanup_link(ctx: &EstablishedConnectCtx) {
     ctx.links.remove(&ctx.link).await;
     for event in ctx.routing.remove_link_routes(&ctx.link).await {
-        if let CoreRoutingEvent::HostDown { host_id, .. } = &event {
-            ctx.tunnels.remove_host(*host_id).await;
+        if let CoreRoutingEvent::HostDown { route, .. } = event {
+            ctx.route_runtime.remove_route(&route).await;
         }
     }
     ctx.routing.release_link(&ctx.link).await;
@@ -1330,6 +1439,7 @@ mod tests {
 
     use super::*;
     use crate::HostId;
+    use crate::connection::ConnectionManager;
     use crate::routing::{Capabilities, SupportedAgentType};
 
     fn link(name: &str) -> Link {
@@ -1410,7 +1520,11 @@ mod tests {
             wire::pb::TunnelFrame {
                 dst: Some(route_to_wire(dst)),
                 tunnel_id: Some(
-                    crate::tunnel::TunnelId::new(HostId::from_u128(2), HostId::from_u128(3)).into(),
+                    crate::tunnel::TunnelId::from_parts(
+                        HostId::from_u128(2),
+                        uuid::Uuid::from_u128(3),
+                    )
+                    .into(),
                 ),
                 payload: payload.to_vec(),
             },
@@ -1433,13 +1547,32 @@ mod tests {
         }))
     }
 
+    fn stream_from_result_rx(
+        rx: mpsc::Receiver<Result<wire::pb::Message, tonic::Status>>,
+    ) -> Pin<Box<dyn Stream<Item = Result<wire::pb::Message, tonic::Status>> + Send>> {
+        Box::pin(futures_util::stream::unfold(rx, |mut rx| async move {
+            rx.recv().await.map(|message| (message, rx))
+        }))
+    }
+
+    fn route_runtime(tunnels: &Arc<TunnelPool>) -> RouteRuntimeState {
+        RouteRuntimeState::new(tunnels.clone())
+    }
+
     async fn test_ctx() -> (RoutingConnectCtx, Arc<RoutingCore>, Arc<TunnelPool>) {
         let local = host(1, "local");
         let routing = Arc::new(RoutingCore::new());
         let (incoming_tx, _incoming_rx) = mpsc::channel(4);
         let tunnels = Arc::new(TunnelPool::new(local.id, routing.clone(), incoming_tx));
         crate::routing::spawn_routing_event_fanout(routing.clone(), tunnels.link_registry()).await;
-        let ctx = RoutingConnectCtx::new(local, routing.clone(), tunnels.clone(), link("peer"));
+        let ctx = RoutingConnectCtx::new(
+            local,
+            routing.clone(),
+            tunnels.clone(),
+            link("peer"),
+            route_runtime(&tunnels),
+        )
+        .with_routing_only_direct_routes();
         (ctx, routing, tunnels)
     }
 
@@ -1455,6 +1588,7 @@ mod tests {
             routing.clone(),
             tunnels.clone(),
             link("local"),
+            route_runtime(&tunnels),
         );
         (ctx, routing, tunnels, local)
     }
@@ -1629,7 +1763,11 @@ mod tests {
     {
         let (out_tx, out_rx) = mpsc::channel(256);
         tokio::spawn(async move {
-            let _ = run_connector_connect(ctx, input, out_tx, Some(auth), None).await;
+            let direct_channel =
+                tonic::transport::Endpoint::from_static("http://unit-test").connect_lazy();
+            let _ =
+                run_connector_connect(ctx, input, out_tx, Some(auth), None, Some(direct_channel))
+                    .await;
         });
         out_rx
     }
@@ -1761,6 +1899,69 @@ mod tests {
         assert_eq!(entry.route, route(&["peer"]));
 
         drop(input_tx);
+    }
+
+    #[tokio::test]
+    async fn acceptor_without_outbound_channel_does_not_store_direct_peer_by_default() {
+        let local = host(1, "local");
+        let routing = Arc::new(RoutingCore::new());
+        let (incoming_tx, _incoming_rx) = mpsc::channel(4);
+        let tunnels = Arc::new(TunnelPool::new(local.id, routing.clone(), incoming_tx));
+        crate::routing::spawn_routing_event_fanout(routing.clone(), tunnels.link_registry()).await;
+        let ctx = RoutingConnectCtx::new(
+            local,
+            routing.clone(),
+            tunnels.clone(),
+            link("peer"),
+            route_runtime(&tunnels),
+        );
+        let peer = host(2, "peer-host");
+
+        let (input_tx, input_rx) = mpsc::channel(8);
+        let mut output_rx = spawn_acceptor_connect(ctx, stream_from_rx(input_rx));
+        input_tx.send(hello(&peer)).await.unwrap();
+
+        assert_accepted_hello_ack(&recv_message(&mut output_rx).await);
+        assert_snapshot_complete(&recv_message(&mut output_rx).await);
+        assert!(routing.host_entry(peer.id).await.is_none());
+
+        drop(input_tx);
+    }
+
+    #[tokio::test]
+    async fn acceptor_times_out_waiting_for_initial_hello() {
+        let (ctx, _routing, _tunnels) = test_ctx().await;
+        let (out_tx, mut out_rx) = mpsc::channel(8);
+
+        run_acceptor_connect(
+            ctx,
+            futures_util::stream::pending::<Result<wire::pb::Message, tonic::Status>>(),
+            out_tx,
+            Duration::from_millis(10),
+        )
+        .await;
+
+        assert!(out_rx.recv().await.is_none());
+    }
+
+    #[tokio::test]
+    async fn acceptor_rejects_hello_host_id_that_does_not_match_tls_peer() {
+        let (ctx, routing, _tunnels) = test_ctx().await;
+        let ctx = ctx.with_tls_peer(HostId::from_u128(2));
+        let spoofed = host(3, "spoofed-peer");
+
+        let (input_tx, input_rx) = mpsc::channel(8);
+        let mut output_rx = spawn_acceptor_connect(ctx, stream_from_rx(input_rx));
+        input_tx.send(hello(&spoofed)).await.unwrap();
+
+        let ack = recv_message(&mut output_rx).await;
+        assert_error_hello_ack(&ack);
+        assert!(
+            hello_ack_error(&ack)
+                .message
+                .contains("does not match TLS peer")
+        );
+        assert!(routing.host_entry(spoofed.id).await.is_none());
     }
 
     #[tokio::test]
@@ -1985,7 +2186,13 @@ mod tests {
         let routing = Arc::new(RoutingCore::new());
         let (incoming_tx, _incoming_rx) = mpsc::channel(4);
         let tunnels = Arc::new(TunnelPool::new(local.id, routing.clone(), incoming_tx));
-        let ctx = RoutingConnectCtx::dynamic(local, routing.clone(), tunnels);
+        let ctx = RoutingConnectCtx::dynamic(
+            local,
+            routing.clone(),
+            tunnels.clone(),
+            route_runtime(&tunnels),
+        )
+        .with_routing_only_direct_routes();
         let busy_link = link("peer");
         assert!(routing.reserve_exact_link(&busy_link).await);
 
@@ -2021,7 +2228,7 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn acceptor_rejects_host_id_collision_without_displacing_existing_route() {
+    async fn acceptor_allows_distinct_route_for_already_reachable_host() {
         let (ctx, routing, _tunnels) = test_ctx().await;
         let peer = host(2, "peer-host");
         let existing_route = route(&["existing"]);
@@ -2029,23 +2236,35 @@ mod tests {
             .apply_host_up(peer.clone(), existing_route.clone(), None)
             .await;
 
-        let colliding_peer = host(2, "colliding-host");
         let (input_tx, input_rx) = mpsc::channel(8);
         let mut output_rx = spawn_acceptor_connect(ctx, stream_from_rx(input_rx));
-        input_tx.send(hello(&colliding_peer)).await.unwrap();
+        input_tx.send(hello(&peer)).await.unwrap();
 
-        let response = recv_message(&mut output_rx).await;
-        let error = hello_ack_error(&response);
-        assert_eq!(error.code, wire::pb::ErrorCode::AlreadyExists as i32);
-        assert!(error.message.contains("already reachable"));
+        assert_accepted_hello_ack(&recv_message(&mut output_rx).await);
+        assert_snapshot_complete(&recv_message(&mut output_rx).await);
         assert_eq!(
             routing.host_entry(peer.id).await.unwrap().route,
             existing_route
         );
+        assert_eq!(
+            routing
+                .routing_events_snapshot()
+                .await
+                .into_iter()
+                .filter_map(|event| match event {
+                    CoreRoutingEvent::HostUp { host, route, .. } if host.id == peer.id => {
+                        Some(route)
+                    }
+                    _ => None,
+                })
+                .collect::<Vec<_>>(),
+            vec![existing_route, route(&["peer"])]
+        );
+        drop(input_tx);
     }
 
     #[tokio::test]
-    async fn direct_peer_store_keeps_existing_route_when_already_reachable() {
+    async fn direct_peer_store_adds_distinct_route_for_already_reachable_host() {
         let (_ctx, routing, _tunnels) = test_ctx().await;
         let peer = host(2, "peer-host");
         let existing_route = route(&["existing"]);
@@ -2058,10 +2277,24 @@ mod tests {
             store_direct_peer(&routing, HostId::from_u128(1), &link("peer"), peer.clone())
                 .await
                 .unwrap();
-        assert!(matches!(outcome, DirectPeerStoreOutcome::AlreadyKnown));
+        assert!(matches!(outcome, DirectPeerStoreOutcome::Inserted));
         assert_eq!(
             routing.host_entry(peer.id).await.unwrap().route,
             existing_route
+        );
+        assert_eq!(
+            routing
+                .routing_events_snapshot()
+                .await
+                .into_iter()
+                .filter_map(|event| match event {
+                    CoreRoutingEvent::HostUp { host, route, .. } if host.id == peer.id => {
+                        Some(route)
+                    }
+                    _ => None,
+                })
+                .collect::<Vec<_>>(),
+            vec![existing_route, route(&["peer"])]
         );
     }
 
@@ -2166,6 +2399,55 @@ mod tests {
         assert_eq!(frame.payload, b"payload");
         assert_eq!(frame.dst.unwrap().links, ["target"]);
         assert!(frame.tunnel_id.is_some());
+    }
+
+    #[tokio::test]
+    async fn oversized_tunnel_frame_sends_protocol_goaway_and_cleans_link() {
+        let (ctx, routing, _tunnels) = test_ctx().await;
+        let peer = host(2, "peer-host");
+        let (input_tx, mut output_rx) = establish(ctx, &peer).await;
+        assert!(routing.host_entry(peer.id).await.is_some());
+
+        let oversized = vec![0_u8; crate::tunnel::TUNNEL_FRAME_PAYLOAD_MAX + 1];
+        input_tx
+            .send(tunnel_frame(&["next"], &oversized))
+            .await
+            .unwrap();
+
+        let message = recv_message(&mut output_rx).await;
+        let error = protocol_goaway_error(&message);
+        assert_eq!(error.code, wire::pb::ErrorCode::InvalidArgument as i32);
+        assert!(error.message.contains("payload exceeds"));
+        wait_until(|| {
+            let routing = routing.clone();
+            async move { routing.host_entry(peer.id).await.is_none() }
+        })
+        .await;
+    }
+
+    #[tokio::test]
+    async fn post_handshake_stream_error_sends_protocol_goaway_and_cleans_link() {
+        let (ctx, routing, _tunnels) = test_ctx().await;
+        let peer = host(2, "peer-host");
+        let (input_tx, input_rx) = mpsc::channel(8);
+        let mut output_rx = spawn_acceptor_connect(ctx, stream_from_result_rx(input_rx));
+
+        input_tx.send(Ok(hello(&peer))).await.unwrap();
+        assert_accepted_hello_ack(&recv_message(&mut output_rx).await);
+        assert_snapshot_complete(&recv_message(&mut output_rx).await);
+        assert!(routing.host_entry(peer.id).await.is_some());
+        input_tx
+            .send(Err(tonic::Status::resource_exhausted("message too large")))
+            .await
+            .unwrap();
+        let message = recv_message(&mut output_rx).await;
+        let error = protocol_goaway_error(&message);
+        assert!(error.message.contains("message too large"));
+        wait_until(|| {
+            let routing = routing.clone();
+            async move { routing.host_entry(peer.id).await.is_none() }
+        })
+        .await;
     }
 
     #[tokio::test]
@@ -2379,6 +2661,30 @@ mod tests {
     }
 
     #[tokio::test]
+    async fn connector_rejects_hello_accepted_host_id_that_does_not_match_expected_peer() {
+        let (ctx, routing, _tunnels, _local) = connector_test_ctx().await;
+        let ctx = ctx.with_expected_peer(HostId::from_u128(2));
+        let spoofed = host(3, "spoofed-peer");
+        let (input_tx, input_rx) = mpsc::channel(8);
+        let mut output_rx = spawn_connector_connect(ctx, stream_from_rx(input_rx));
+        assert_connector_hello(&recv_message(&mut output_rx).await);
+
+        input_tx
+            .send(accepted_ack(&spoofed, "assigned"))
+            .await
+            .unwrap();
+
+        let message = recv_message(&mut output_rx).await;
+        let error = protocol_goaway_error(&message);
+        assert!(matches!(
+            wire::decode_protocol_error(error.clone()),
+            ProtocolError::InvalidArgument { message }
+                if message.contains("does not match expected peer")
+        ));
+        assert!(routing.hosts_snapshot().await.is_empty());
+    }
+
+    #[tokio::test]
     async fn connector_releases_assigned_link_when_accepted_host_is_invalid() {
         let (ctx, routing, _tunnels, _local) = connector_test_ctx().await;
 
@@ -2492,8 +2798,10 @@ mod tests {
         let acceptor_ctx = RoutingConnectCtx::dynamic(
             acceptor_host.clone(),
             acceptor_routing.clone(),
-            acceptor_tunnels,
-        );
+            acceptor_tunnels.clone(),
+            route_runtime(&acceptor_tunnels),
+        )
+        .with_routing_only_direct_routes();
 
         let connector_host = host(2, "connector");
         let connector_routing = Arc::new(RoutingCore::new());
@@ -2503,11 +2811,13 @@ mod tests {
             connector_routing.clone(),
             connector_incoming_tx,
         ));
+        let connector_route_runtime = route_runtime(&connector_tunnels);
         let connector_ctx = RoutingConnectorCtx::new(
             connector_host.clone(),
             connector_routing.clone(),
             connector_tunnels,
             link("connector"),
+            connector_route_runtime.clone(),
         );
 
         let (client_io, server_io) = tokio::io::duplex(64 * 1024);
@@ -2555,7 +2865,139 @@ mod tests {
             .await
             .unwrap();
         assert_eq!(connector_entry.route, route(&["connector"]));
+        assert!(
+            connector_route_runtime
+                .pool()
+                .get(&route(&["connector"]))
+                .await
+                .is_some()
+        );
 
+        connector_task.abort();
+        server_task.abort();
+    }
+
+    #[tokio::test]
+    async fn connector_manager_rejects_cached_channel_after_inbound_goaway() {
+        let acceptor_host = host(1, "acceptor");
+        let acceptor_routing = Arc::new(RoutingCore::new());
+        let (acceptor_incoming_tx, _acceptor_incoming_rx) = mpsc::channel(4);
+        let acceptor_tunnels = Arc::new(TunnelPool::new(
+            acceptor_host.id,
+            acceptor_routing.clone(),
+            acceptor_incoming_tx,
+        ));
+        let acceptor_ctx = RoutingConnectCtx::dynamic(
+            acceptor_host.clone(),
+            acceptor_routing.clone(),
+            acceptor_tunnels.clone(),
+            route_runtime(&acceptor_tunnels),
+        )
+        .with_routing_only_direct_routes();
+
+        let connector_host = host(2, "connector");
+        let connector_routing = Arc::new(RoutingCore::new());
+        let (connector_incoming_tx, _connector_incoming_rx) = mpsc::channel(4);
+        let connector_tunnels = Arc::new(TunnelPool::new(
+            connector_host.id,
+            connector_routing.clone(),
+            connector_incoming_tx,
+        ));
+        let connector_manager = Arc::new(ConnectionManager::new(
+            connector_routing.clone(),
+            connector_tunnels.clone(),
+        ));
+        let connector_ctx = RoutingConnectorCtx::new(
+            connector_host.clone(),
+            connector_routing.clone(),
+            connector_tunnels.clone(),
+            link("connector"),
+            connector_manager.route_runtime(),
+        );
+
+        let (client_io, server_io) = tokio::io::duplex(64 * 1024);
+        let incoming =
+            stream::once(async move { Ok::<_, std::io::Error>(TestTransport::new(server_io)) });
+        let server_task = tokio::spawn(async move {
+            tonic::transport::Server::builder()
+                .add_service(wire::routing_service_server::RoutingServiceServer::new(
+                    acceptor_ctx,
+                ))
+                .serve_with_incoming(incoming)
+                .await
+                .unwrap();
+        });
+
+        let connector_task =
+            spawn_connector_to_channel(connector_ctx, channel_from_test_transport(client_io));
+        tokio::time::timeout(Duration::from_secs(1), async {
+            loop {
+                if connector_routing
+                    .host_entry(acceptor_host.id)
+                    .await
+                    .is_some()
+                    && connector_manager
+                        .pool()
+                        .get(&route(&["connector"]))
+                        .await
+                        .is_some()
+                {
+                    break;
+                }
+                tokio::task::yield_now().await;
+            }
+        })
+        .await
+        .expect("timed out waiting for connector route/channel");
+        connector_manager
+            .seed(connector_routing.routing_events_snapshot().await)
+            .await;
+        let _cached = connector_manager
+            .channel_to(acceptor_host.id)
+            .await
+            .unwrap();
+        let Some(acceptor_tx) = acceptor_tunnels
+            .link_registry()
+            .outgoing_writers()
+            .await
+            .into_iter()
+            .next()
+        else {
+            panic!("expected acceptor routing writer");
+        };
+
+        acceptor_tx
+            .send(goaway(wire::pb::GoAwayReason::UserShutdown, 200))
+            .await
+            .unwrap();
+        tokio::time::timeout(Duration::from_secs(1), async {
+            loop {
+                if connector_manager
+                    .pool()
+                    .get(&route(&["connector"]))
+                    .await
+                    .is_some()
+                    && connector_tunnels
+                        .link_registry()
+                        .is_draining(&link("connector"))
+                        .await
+                {
+                    break;
+                }
+                tokio::task::yield_now().await;
+            }
+        })
+        .await
+        .expect("timed out waiting for connector link drain");
+
+        let error = connector_manager
+            .channel_to(acceptor_host.id)
+            .await
+            .unwrap_err();
+
+        assert!(
+            matches!(error, crate::tunnel::TunnelPoolError::LinkDraining { link: observed } if observed == link("connector"))
+        );
         connector_task.abort();
         server_task.abort();
     }
@@ -2573,8 +3015,10 @@ mod tests {
         let acceptor_ctx = RoutingConnectCtx::dynamic(
             acceptor_host.clone(),
             acceptor_routing.clone(),
-            acceptor_tunnels,
-        );
+            acceptor_tunnels.clone(),
+            route_runtime(&acceptor_tunnels),
+        )
+        .with_routing_only_direct_routes();
 
         let connector_host = host(2, "connector");
         let connector_routing = Arc::new(RoutingCore::new());
@@ -2587,8 +3031,9 @@ mod tests {
         let connector_ctx = RoutingConnectorCtx::new(
             connector_host.clone(),
             connector_routing.clone(),
-            connector_tunnels,
+            connector_tunnels.clone(),
             link("connector"),
+            route_runtime(&connector_tunnels),
         );
 
         let (client_io, server_io) = tokio::io::duplex(64 * 1024);

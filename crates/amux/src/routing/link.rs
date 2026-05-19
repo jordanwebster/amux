@@ -367,7 +367,7 @@ mod tests {
                 dst: Some(pb::Route { links: Vec::new() }),
                 tunnel_id: Some(pb::TunnelId {
                     initiator: [1_u8; 16].to_vec(),
-                    target: [2_u8; 16].to_vec(),
+                    nonce: [2_u8; 16].to_vec(),
                 }),
                 payload: vec![1, 2, 3],
             }),

@@ -4,6 +4,7 @@ use std::path::{Path, PathBuf};
 use serde_yaml::{Mapping, Value};
 
 use crate::config::Config;
+use crate::identity::{IdentityError, ensure_default_device_files};
 use crate::state::State;
 
 #[derive(Debug, Clone, Default)]
@@ -18,6 +19,14 @@ pub enum SetupError {
     State(String),
     #[error("config error: {0}")]
     Config(String),
+    #[error("identity error: {0}")]
+    Identity(String),
+}
+
+impl From<IdentityError> for SetupError {
+    fn from(error: IdentityError) -> Self {
+        Self::Identity(error.to_string())
+    }
 }
 
 /// Whether cloud mode is enabled (user opted in).
@@ -62,6 +71,18 @@ pub fn clear_prevent_idle_sleep(config: &mut Config) -> Result<(), SetupError> {
 /// Return whether prevent-idle-sleep support is actually available at runtime.
 pub fn prevent_idle_sleep_supported() -> bool {
     crate::sleep_inhibitor::supported()
+}
+
+/// True when the data-dir identity/trust files already exist and validate.
+pub fn device_identity_ready() -> bool {
+    crate::identity::default_device_files_ready()
+}
+
+/// Ensure the device identity and trust-store files from `docs/NETWORKING.md`
+/// exist in the data directory.
+pub fn ensure_device_identity() -> Result<(), SetupError> {
+    ensure_default_device_files()?;
+    Ok(())
 }
 
 /// Read Claude plugin setup state persisted for Claude Code integration.

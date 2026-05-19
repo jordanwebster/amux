@@ -1,3 +1,4 @@
 pub use amux::{
-    Agent, AgentId, AgentIdentifier, AgentType, CreateAgentRequest, Host, HostId, TerminalSize,
+    Agent, AgentId, AgentIdentifier, AgentType, CreateAgentRequest, HostEntry as Host, HostId,
+    TerminalSize,
 };

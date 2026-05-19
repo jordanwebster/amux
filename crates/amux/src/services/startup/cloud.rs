@@ -7,7 +7,7 @@ use std::sync::Arc;
 use std::time::{Duration, SystemTime};
 
 use prost::Message as ProstMessage;
-use tokio::sync::RwLock;
+use tokio::sync::{RwLock, oneshot};
 use tokio::task::JoinHandle;
 use tracing::Instrument;
 use uuid::Uuid;
@@ -19,21 +19,20 @@ use crate::auth::cloud::{
 use crate::config::Config;
 use crate::protocol::{ProtocolError, wire};
 use crate::routing::{
-    RoutingConnectorAuth, RoutingConnectorCtx, RoutingConnectorToken,
+    Host, RoutingConnectorAuth, RoutingConnectorCtx, RoutingConnectorToken,
     RoutingConnectorTokenRefresher, spawn_connector_to_channel_with_auth_and_establishment,
 };
-use crate::setup;
-#[cfg(any(debug_assertions, test))]
-use crate::transport::tcp_channel;
 use crate::transport::tls_channel;
 use crate::update::{UpdateReporter, UpdateStatus};
 use crate::user_state::ServerState;
+use crate::{audit, setup};
 
 const INITIAL_BACKOFF: Duration = Duration::from_secs(1);
 const MAX_BACKOFF: Duration = Duration::from_secs(300);
 const RELATIVE_JITTER_RATIO: f64 = 0.25;
 const ABSOLUTE_JITTER_MAX: Duration = Duration::from_secs(5);
 const BACKOFF_RESET_AFTER_ESTABLISHED: Duration = Duration::from_secs(30);
+const CLOUD_ROUTING_ESTABLISHMENT_TIMEOUT: Duration = Duration::from_secs(10);
 
 pub(crate) fn establish_cloud_connection(
     config: Config,
@@ -115,6 +114,7 @@ async fn run_cloud_connection(
     let details = match fetch_routing_connection_details(config, credentials.as_ref()).await {
         Ok(details) => details,
         Err(CloudError::NotAuthenticated) | Err(CloudError::Auth(_)) => {
+            audit::auth_jwt_failure("cloud routing credentials were rejected");
             return Err(CloudConnectionError::NonRetriable(
                 "Authentication failed — run 'amux init' to re-authenticate".to_string(),
             ));
@@ -143,13 +143,12 @@ async fn run_cloud_connection_with_details(
     details: CloudRoutingConnectionDetails,
 ) -> std::result::Result<(), CloudConnectionError> {
     tracing::info!(host = %details.host, port = details.port, "connecting to cloud routing");
-    let channel =
-        cloud_routing_channel(config, details.host.clone(), details.port).map_err(|error| {
-            CloudConnectionError::Retriable {
-                msg: format!("Connection failed: {error}"),
-                reset_backoff: false,
-            }
-        })?;
+    let channel = cloud_routing_channel(details.host.clone(), details.port).map_err(|error| {
+        CloudConnectionError::Retriable {
+            msg: format!("Connection failed: {error}"),
+            reset_backoff: false,
+        }
+    })?;
     let connected_at = std::time::Instant::now();
     let connector_auth = RoutingConnectorAuth::new(
         RoutingConnectorToken {
@@ -169,15 +168,13 @@ async fn run_cloud_connection_with_details(
         connector_auth,
     );
     let _abort_connector_on_drop = AbortTaskOnDrop(connector_task.abort_handle());
-    match established_rx.await {
-        Ok(Ok(_)) => report_update_status(&state, UpdateStatus::Required(None)).await,
-        Ok(Err(status)) => {
-            return Err(
-                cloud_connection_error_from_status(&state, status, connected_at.elapsed()).await,
-            );
-        }
-        Err(_) => {}
-    }
+    await_cloud_establishment(
+        &state,
+        established_rx,
+        connected_at,
+        CLOUD_ROUTING_ESTABLISHMENT_TIMEOUT,
+    )
+    .await?;
 
     let result = connector_task
         .await
@@ -194,6 +191,28 @@ async fn run_cloud_connection_with_details(
     }
 }
 
+async fn await_cloud_establishment(
+    state: &Arc<RwLock<ServerState>>,
+    established_rx: oneshot::Receiver<Result<Host, tonic::Status>>,
+    connected_at: std::time::Instant,
+    timeout: Duration,
+) -> std::result::Result<(), CloudConnectionError> {
+    match tokio::time::timeout(timeout, established_rx).await {
+        Ok(Ok(Ok(_))) => {
+            report_update_status(state, UpdateStatus::Required(None)).await;
+            Ok(())
+        }
+        Ok(Ok(Err(status))) => {
+            Err(cloud_connection_error_from_status(state, status, connected_at.elapsed()).await)
+        }
+        Ok(Err(_)) => Ok(()),
+        Err(_) => Err(CloudConnectionError::Retriable {
+            msg: "cloud routing handshake timed out".to_string(),
+            reset_backoff: false,
+        }),
+    }
+}
+
 async fn cloud_connection_error_from_status(
     state: &Arc<RwLock<ServerState>>,
     status: tonic::Status,
@@ -207,6 +226,7 @@ async fn cloud_connection_error_from_status(
         return CloudConnectionError::NonRetriable(status.to_string());
     }
     if status.code() == tonic::Code::Unauthenticated {
+        audit::auth_jwt_failure(&status);
         return CloudConnectionError::NonRetriable(
             "Invalid credentials — run 'amux init' to re-authenticate".to_string(),
         );
@@ -236,17 +256,9 @@ fn update_required_from_status(status: &tonic::Status) -> Option<String> {
 }
 
 fn cloud_routing_channel(
-    config: &Config,
     host: String,
     port: u16,
 ) -> crate::transport::Result<tonic::transport::Channel> {
-    #[cfg(any(debug_assertions, test))]
-    if config.cloud_url.starts_with("http://") {
-        return tcp_channel(host, port);
-    }
-
-    #[cfg(not(any(debug_assertions, test)))]
-    let _ = config;
     tls_channel(host, port)
 }
 
@@ -340,13 +352,14 @@ mod tests {
     use std::sync::{Arc, Mutex};
     use std::time::Duration;
 
-    use tokio::sync::{RwLock, mpsc};
+    use tokio::sync::{RwLock, mpsc, oneshot};
     use uuid::Uuid;
 
     use super::{
         ABSOLUTE_JITTER_MAX, BACKOFF_RESET_AFTER_ESTABLISHED, INITIAL_BACKOFF, MAX_BACKOFF,
-        cloud_connection_error_from_status, jittered_backoff_with_samples, next_backoff,
-        report_update_status, should_reset_backoff_after_connection,
+        await_cloud_establishment, cloud_connection_error_from_status,
+        jittered_backoff_with_samples, next_backoff, report_update_status,
+        should_reset_backoff_after_connection,
     };
     use crate::config::Config;
     use crate::protocol::{ProtocolError, protocol_status};
@@ -426,6 +439,38 @@ mod tests {
                 assert_eq!(minimum_version, "0.4.0");
             }
             other => panic!("unexpected update status: {other:?}"),
+        }
+    }
+
+    #[tokio::test]
+    async fn cloud_establishment_wait_times_out() {
+        let (shutdown_tx, _shutdown_rx) = mpsc::channel(1);
+        let state = Arc::new(RwLock::new(ServerState::new(
+            Config::default(),
+            Uuid::new_v4(),
+            shutdown_tx,
+            None,
+            None,
+        )));
+        let (_tx, rx) = oneshot::channel();
+
+        let error = await_cloud_establishment(
+            &state,
+            rx,
+            std::time::Instant::now(),
+            Duration::from_millis(10),
+        )
+        .await
+        .unwrap_err();
+
+        match error {
+            super::CloudConnectionError::Retriable { msg, reset_backoff } => {
+                assert!(msg.contains("timed out"));
+                assert!(!reset_backoff);
+            }
+            super::CloudConnectionError::NonRetriable(message) => {
+                panic!("timeout must be retriable, got non-retriable: {message}");
+            }
         }
     }
 

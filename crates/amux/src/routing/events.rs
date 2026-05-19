@@ -2,7 +2,7 @@ use tokio::sync::mpsc;
 use uuid::Uuid;
 
 use crate::HostId;
-use crate::routing::types::Host;
+use crate::routing::types::{Capabilities, Host};
 use crate::routing::{Link, Route};
 
 const DEFAULT_EVENT_BUFFER: usize = 256;
@@ -23,8 +23,35 @@ pub(crate) enum RoutingEvent {
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub(crate) enum HostReachabilityEvent {
-    HostAdded { host: Host },
-    HostRemoved { host_id: HostId },
+    Added { host: Host },
+    Removed { host_id: HostId },
+    StatusChanged { host_id: HostId },
+}
+
+#[derive(serde::Serialize, serde::Deserialize, Debug, Clone, PartialEq, Eq)]
+#[serde(rename_all = "snake_case")]
+pub enum HostTrustStatus {
+    Trusted,
+    UntrustedButOnline,
+}
+
+#[derive(serde::Serialize, serde::Deserialize, Debug, Clone, PartialEq, Eq)]
+#[serde(tag = "type", rename_all = "snake_case")]
+pub enum HostReachabilityStatus {
+    Reachable,
+    Unreachable { last_error: String },
+    Unknown,
+}
+
+#[derive(serde::Serialize, serde::Deserialize, Debug, Clone, PartialEq, Eq)]
+pub struct HostEntry {
+    pub id: Uuid,
+    pub name: String,
+    pub online: bool,
+    pub version: Option<String>,
+    pub capabilities: Option<Capabilities>,
+    pub trust_status: HostTrustStatus,
+    pub reachability_status: Option<HostReachabilityStatus>,
 }
 
 /// Client-facing host inventory events.
@@ -34,7 +61,7 @@ pub(crate) enum HostReachabilityEvent {
 #[serde(tag = "type", rename_all = "snake_case")]
 pub enum HostEvent {
     SnapshotComplete,
-    HostAdded { host: Host },
+    HostUpdated { host: HostEntry },
     HostRemoved { id: Uuid },
 }
 
@@ -42,7 +69,7 @@ impl HostEvent {
     pub fn type_label(&self) -> &'static str {
         match self {
             Self::SnapshotComplete => "Host::SnapshotComplete",
-            Self::HostAdded { .. } => "Host::HostAdded",
+            Self::HostUpdated { .. } => "Host::HostUpdated",
             Self::HostRemoved { .. } => "Host::HostRemoved",
         }
     }
@@ -136,7 +163,7 @@ mod tests {
         let mut full = source.subscribe_drop_on_overflow();
         let mut live = source.subscribe_drop_on_overflow();
 
-        let first = HostReachabilityEvent::HostRemoved {
+        let first = HostReachabilityEvent::Removed {
             host_id: HostId::nil(),
         };
         assert_eq!(
@@ -148,7 +175,7 @@ mod tests {
         );
         assert_eq!(live.recv().await, Some(first));
 
-        let second = HostReachabilityEvent::HostRemoved {
+        let second = HostReachabilityEvent::Removed {
             host_id: HostId::from_u128(1),
         };
         assert_eq!(
@@ -167,10 +194,10 @@ mod tests {
     fn full_critical_subscriber_panics() {
         let mut source = EventSource::new(1);
         let _full = source.subscribe();
-        source.emit(HostReachabilityEvent::HostRemoved {
+        source.emit(HostReachabilityEvent::Removed {
             host_id: HostId::nil(),
         });
-        source.emit(HostReachabilityEvent::HostRemoved {
+        source.emit(HostReachabilityEvent::Removed {
             host_id: HostId::from_u128(1),
         });
     }

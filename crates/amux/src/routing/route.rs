@@ -20,6 +20,8 @@ const LINK_ALPHABET: [char; 36] = [
     't', 'u', 'v', 'w', 'x', 'y', 'z', '0', '1', '2', '3', '4', '5', '6', '7', '8', '9',
 ];
 
+pub(crate) const ROUTE_HOP_CAP: usize = 8;
+
 /// A route is a stack of link names.
 ///
 /// The top of the stack (front of deque) is the next hop.
@@ -70,7 +72,23 @@ impl Route {
         self.links.iter()
     }
 
+    pub(crate) fn len(&self) -> usize {
+        self.links.len()
+    }
+
+    pub(crate) fn ends_with_route(&self, suffix: &Route) -> bool {
+        if suffix.links.len() > self.links.len() {
+            return false;
+        }
+        self.links
+            .iter()
+            .rev()
+            .zip(suffix.links.iter().rev())
+            .all(|(a, b)| a == b)
+    }
+
     /// Check if this route passes through a given link name.
+    #[cfg(test)]
     pub fn contains_link(&self, link: &str) -> bool {
         self.links.iter().any(|l| l.as_str() == link)
     }
@@ -401,5 +419,25 @@ mod tests {
         let mut prefix = Route::from_link(link("CD"));
         prefix.push(link("AB"));
         assert!(!route.starts_with_route(&prefix));
+    }
+
+    #[test]
+    fn test_ends_with_route() {
+        let mut route = Route::from_link(link("CD"));
+        route.push(link("BC"));
+        route.push(link("AB"));
+        let mut suffix = Route::from_link(link("CD"));
+        suffix.push(link("BC"));
+        assert!(route.ends_with_route(&suffix));
+    }
+
+    #[test]
+    fn test_ends_with_route_mismatch() {
+        let mut route = Route::from_link(link("CD"));
+        route.push(link("BC"));
+        route.push(link("AB"));
+        let mut suffix = Route::from_link(link("CD"));
+        suffix.push(link("AB"));
+        assert!(!route.ends_with_route(&suffix));
     }
 }

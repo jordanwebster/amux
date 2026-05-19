@@ -60,13 +60,10 @@ pub(crate) async fn run(client: amux::Client, tx: mpsc::Sender<Notification>, ag
     loop {
         tokio::select! {
             event = hosts_stream.recv() => match event {
-                Ok(amux::HostEvent::HostAdded { host }) => {
+                Ok(amux::HostEvent::HostUpdated { host }) => {
                     let host_id = host.id;
-                    let was_new = !hosts.contains_key(&host_id);
                     hosts.insert(host_id, host.clone());
-                    if was_new {
-                        notification::send(&tx, Notification::HostAdded(host)).await;
-                    }
+                    notification::send(&tx, Notification::HostUpdated(host)).await;
                     apply_pending_for_host(&tx, &agents, host_id, &mut pending_agents).await;
                     maybe_emit_initial_snapshot(&tx, &agents, &mut pending_agents).await;
                 }
@@ -103,7 +100,7 @@ async fn drain_host_snapshot(
     let mut hosts = HashMap::new();
     loop {
         match stream.recv().await {
-            Ok(amux::HostEvent::HostAdded { host }) => {
+            Ok(amux::HostEvent::HostUpdated { host }) => {
                 hosts.insert(host.id, host);
             }
             Ok(amux::HostEvent::HostRemoved { id }) => {
