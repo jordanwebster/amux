@@ -21,6 +21,8 @@ Commands:
   server  Manage the amux server lifecycle
   init    Initialize amux (cloud mode, authentication)
   pair    Pair this device with another amux daemon
+  peer    Show trusted peers
+  unpair  Remove trust for a peer
   update  Update amux to the latest version
   help    Print this message or the help of the given subcommand(s)
 

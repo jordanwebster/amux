@@ -193,7 +193,7 @@ impl TestTerminal {
             // ConPTY spawn path below.
             let quoted_args: Vec<String> = args.iter().map(|arg| shell_quote(arg)).collect();
             let shell_cmd = format!(
-                "stty raw; exec {} {}",
+                "stty raw -echo; exec {} {}",
                 shell_quote(command),
                 quoted_args.join(" ")
             );
