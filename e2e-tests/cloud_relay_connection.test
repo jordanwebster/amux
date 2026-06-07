@@ -55,6 +55,12 @@ terminal:
 hello from cloud A
 echo: hello from cloud A
 
+@Tb
+> amux server start
+Server started.
+
+@@sleep 1500
+
 @TpairA
 > amux pair
 @@capture pairing_pin Pairing PIN:

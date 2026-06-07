@@ -342,7 +342,11 @@ async fn run_command(command: Commands, mut config: Config) -> Result<()> {
                 ensure_initialized(&mut config).await?;
                 let payload =
                     amux::parse_qr_pairing_payload_for_cloud(&payload, &config.cloud_url)?;
-                let client = client_common::get_client(&config).await?;
+                let client = client_common::require_running_client(
+                    &config,
+                    Some("amux pair --qr <payload>"),
+                )
+                .await?;
                 let peer = client
                     .pair_qr_cloud_peer(payload.host_id, payload.pubkey, payload.one_shot_token)
                     .await?;
@@ -353,7 +357,11 @@ async fn run_command(command: Commands, mut config: Config) -> Result<()> {
                 match parse_pair_connect_target(connect_target) {
                     PairConnectTarget::Picker => {
                         ensure_initialized(&mut config).await?;
-                        let client = client_common::get_client(&config).await?;
+                        let client = client_common::require_running_client(
+                            &config,
+                            Some("amux pair --connect"),
+                        )
+                        .await?;
                         let hosts = sorted_pairing_hosts(client.list_pairing_hosts().await?);
                         let host = prompt_pairing_host(&hosts)?;
                         let peer = pair_cloud_host(&client, &host).await?;
@@ -362,7 +370,10 @@ async fn run_command(command: Commands, mut config: Config) -> Result<()> {
                     }
                     PairConnectTarget::CloudName(target) => {
                         ensure_initialized(&mut config).await?;
-                        let client = client_common::get_client(&config).await?;
+                        let retry_command = format!("amux pair --connect {target}");
+                        let client =
+                            client_common::require_running_client(&config, Some(&retry_command))
+                                .await?;
                         let hosts = sorted_pairing_hosts(client.list_pairing_hosts().await?);
                         let host = resolve_pairing_host_by_name(&hosts, &target)?;
                         let peer = pair_cloud_host(&client, &host).await?;
@@ -371,8 +382,11 @@ async fn run_command(command: Commands, mut config: Config) -> Result<()> {
                     }
                     PairConnectTarget::Direct(addr) => {
                         ensure_initialized(&mut config).await?;
+                        let retry_command = format!("amux pair --connect {addr}");
+                        let client =
+                            client_common::require_running_client(&config, Some(&retry_command))
+                                .await?;
                         let pin = prompt_pairing_pin()?;
-                        let client = client_common::get_client(&config).await?;
                         let peer = amux::pair_via_pin_direct_tcp(
                             default_data_dir(),
                             &config.host_name,
@@ -389,19 +403,13 @@ async fn run_command(command: Commands, mut config: Config) -> Result<()> {
                     }
                 }
             }
-            if listen
-                && config.tcp_port.is_none()
-                && !server_client::server_is_running(&config).await
-            {
-                return Err(anyhow!(
-                    "set `tcp_port` in your config, or use cloud / SSH pairing"
-                ));
-            }
 
             ensure_initialized(&mut config).await?;
             #[cfg(unix)]
             if let Some(target) = via_ssh {
-                let client = client_common::get_client(&config).await?;
+                let retry_command = format!("amux pair --via-ssh {target}");
+                let client =
+                    client_common::require_running_client(&config, Some(&retry_command)).await?;
                 let peer = amux::pair_via_ssh_target(
                     default_data_dir(),
                     &config.host_name,
@@ -413,7 +421,14 @@ async fn run_command(command: Commands, mut config: Config) -> Result<()> {
                 return Ok(());
             }
 
-            let client = client_common::get_client(&config).await?;
+            let retry_command = pair_start_retry_command(qr.is_some(), listen);
+            let client =
+                client_common::require_running_client(&config, Some(retry_command)).await?;
+            if listen && config.tcp_port.is_none() {
+                return Err(anyhow!(
+                    "set `tcp_port` in your config, or use cloud / SSH pairing"
+                ));
+            }
             let pairing = if qr.is_some() {
                 client.start_qr_pairing().await?
             } else if listen {
@@ -429,7 +444,7 @@ async fn run_command(command: Commands, mut config: Config) -> Result<()> {
         }
         Commands::Peer { command } => {
             ensure_initialized(&mut config).await?;
-            let client = client_common::get_client(&config).await?;
+            let client = client_common::require_running_client(&config, None).await?;
             match command {
                 PeerCommands::List => {
                     let peers = client.list_peers().await?;
@@ -443,7 +458,7 @@ async fn run_command(command: Commands, mut config: Config) -> Result<()> {
         }
         Commands::Unpair { peer, force } => {
             ensure_initialized(&mut config).await?;
-            let client = client_common::get_client(&config).await?;
+            let client = client_common::require_running_client(&config, None).await?;
             let entry = client.get_peer(peer.as_str()).await?;
             if !force && !confirm_unpair(&entry)? {
                 println!("Unpair cancelled.");
@@ -454,7 +469,7 @@ async fn run_command(command: Commands, mut config: Config) -> Result<()> {
         }
         #[cfg(unix)]
         Commands::PairRecv => {
-            let client = client_common::get_client(&config).await?;
+            let client = client_common::require_running_client(&config, None).await?;
             amux::pair_via_ssh_responder_stdio(default_data_dir(), &config.host_name, &client)
                 .await?;
         }
@@ -570,6 +585,16 @@ fn prompt_pairing_pin() -> Result<String> {
     Ok(pin.trim().to_string())
 }
 
+fn pair_start_retry_command(qr: bool, listen: bool) -> &'static str {
+    if qr {
+        "amux pair --qr"
+    } else if listen {
+        "amux pair --listen"
+    } else {
+        "amux pair"
+    }
+}
+
 async fn pair_cloud_host(
     client: &amux::Client,
     host: &amux::HostEntry,
@@ -607,7 +632,7 @@ fn resolve_pairing_host_by_name(
     match matches.as_slice() {
         [host] => Ok((*host).clone()),
         [] => Err(anyhow!(
-            "no online cloud host named {target}; run `amux pair --connect` to choose from available hosts"
+            "no online cloud host named `{target}`. Run `amux pair --connect` to choose from currently visible hosts."
         )),
         _ => Err(anyhow!(
             "multiple online cloud hosts are named {target}; use the host ID shown by `amux pair --connect`"

@@ -13,7 +13,7 @@ use crossterm::terminal;
 use tokio::sync::mpsc;
 use uuid::Uuid;
 
-use crate::client_common::{get_client, print_update_banner};
+use crate::client_common::{get_client, print_update_banner, require_running_client};
 
 /// Events from stdin reading task
 enum StdinEvent {
@@ -86,7 +86,10 @@ pub async fn new_agent(
 
 /// Attach to an existing agent
 pub async fn attach(target: Option<&str>, config: &Config) -> Result<()> {
-    let rpc = get_client(config).await?;
+    let retry_command = target
+        .map(|target| format!("amux attach {target}"))
+        .unwrap_or_else(|| "amux attach".to_string());
+    let rpc = require_running_client(config, Some(&retry_command)).await?;
     let terminal_size = get_terminal_size();
 
     let agent = match target {
@@ -116,7 +119,7 @@ pub async fn attach(target: Option<&str>, config: &Config) -> Result<()> {
 
 /// List all running agents
 pub async fn list_agents(config: &Config) -> Result<()> {
-    let rpc = get_client(config).await?;
+    let rpc = require_running_client(config, Some("amux list")).await?;
     let mut agents = rpc.list_agents().await?;
     if agents.is_empty() {
         println!("No agents running.");

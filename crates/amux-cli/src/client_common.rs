@@ -12,6 +12,20 @@ pub(super) async fn get_client(config: &Config) -> Result<Client> {
     get_client_with_executable(config, executable.as_path()).await
 }
 
+pub(super) async fn require_running_client(
+    config: &Config,
+    retry_command: Option<&str>,
+) -> Result<Client> {
+    match open_daemon(config).await {
+        Ok(client) => Ok(client),
+        Err(error) if server_unavailable_error(config, &error) => {
+            remove_stale_socket(config, &error);
+            Err(anyhow!(server_not_running_message(retry_command)))
+        }
+        Err(error) => Err(error.into()),
+    }
+}
+
 pub(super) async fn get_client_with_executable(
     config: &Config,
     executable: &Path,
@@ -176,6 +190,16 @@ fn is_server_unavailable(error: &io::Error) -> bool {
     )
 }
 
+fn server_not_running_message(retry_command: Option<&str>) -> String {
+    let mut message =
+        "amux server is not running.\n\nStart it with:\n  amux server start".to_string();
+    if let Some(command) = retry_command {
+        message.push_str("\n\nThen run:\n  ");
+        message.push_str(command);
+    }
+    message
+}
+
 fn startup_stderr_path(config: &Config) -> PathBuf {
     config
         .state_path
@@ -281,11 +305,25 @@ pub(super) fn print_update_banner(state_path: &Path) {
 
 #[cfg(test)]
 mod tests {
+    use super::{format_startup_diagnostics, server_not_running_message};
+
+    #[test]
+    fn server_not_running_message_can_include_retry_command() {
+        assert_eq!(
+            server_not_running_message(Some("amux pair --connect")),
+            "amux server is not running.\n\nStart it with:\n  amux server start\n\nThen run:\n  amux pair --connect"
+        );
+        assert_eq!(
+            server_not_running_message(None),
+            "amux server is not running.\n\nStart it with:\n  amux server start"
+        );
+    }
+
     #[test]
     fn trims_empty_startup_diagnostics() {
-        assert_eq!(super::format_startup_diagnostics(" \n\t "), None);
+        assert_eq!(format_startup_diagnostics(" \n\t "), None);
         assert_eq!(
-            super::format_startup_diagnostics("\nError: startup failed\n"),
+            format_startup_diagnostics("\nError: startup failed\n"),
             Some("Error: startup failed".to_string())
         );
     }

@@ -36,6 +36,10 @@ terminal:
 hello
 echo: hello
 
+@Tb
+> amux server start
+Server started.
+
 @TpairA
 > amux pair --listen
 @@capture pairing_pin Pairing PIN:
