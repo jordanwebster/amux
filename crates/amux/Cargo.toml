@@ -4,8 +4,14 @@ version = "0.3.0"
 edition.workspace = true
 description = "Agent multiplexer - library for building amux clients and servers"
 
+[features]
+# Compiles the in-process spec-test harness (`amux::testnet`) into the
+# library. Test-only; never enable in production builds.
+testnet = ["dep:tempfile"]
+
 [dependencies]
 anyhow = { workspace = true }
+tempfile = { workspace = true, optional = true }
 portable-pty = { workspace = true }
 tokio = { workspace = true }
 serde = { workspace = true }
@@ -55,6 +61,11 @@ windows-sys = { version = "0.61.2", features = [
 [dev-dependencies]
 tempfile = { workspace = true }
 prost-types = { workspace = true }
+
+[[test]]
+name = "spec"
+path = "tests/spec/main.rs"
+required-features = ["testnet"]
 
 [build-dependencies]
 prost-build = { workspace = true }

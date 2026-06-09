@@ -20,6 +20,9 @@ pub mod setup;
 mod sleep_inhibitor;
 mod state;
 mod suspend;
+#[cfg(feature = "testnet")]
+#[doc(hidden)]
+pub mod testnet;
 mod transport;
 mod trust;
 mod tunnel;

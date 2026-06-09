@@ -12,7 +12,7 @@ use crate::routing::types::Host;
 use crate::routing::{Link, Route};
 use crate::trust::SharedTrustStore;
 
-#[cfg(test)]
+#[cfg(any(test, feature = "testnet"))]
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub(crate) struct HostEntry {
     pub(crate) host: Host,
@@ -62,7 +62,7 @@ impl RoutingCore {
         }
     }
 
-    #[cfg(test)]
+    #[cfg(any(test, feature = "testnet"))]
     pub(crate) async fn host_entry(&self, host_id: HostId) -> Option<HostEntry> {
         self.state
             .read()
@@ -406,7 +406,7 @@ impl RoutingCore {
 }
 
 impl HostRoutes {
-    #[cfg(test)]
+    #[cfg(any(test, feature = "testnet"))]
     fn first_entry(&self) -> Option<HostEntry> {
         self.routes.first().cloned().map(|route| HostEntry {
             host: self.host.clone(),

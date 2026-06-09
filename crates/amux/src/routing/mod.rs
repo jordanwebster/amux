@@ -15,15 +15,15 @@ mod wire;
 
 pub(crate) use core::{HostUpOutcome, RoutingCore, select_best_route};
 
+#[cfg(test)]
+pub(crate) use connect::spawn_connector_to_channel;
+#[cfg(any(test, feature = "testnet"))]
+pub(crate) use connect::spawn_connector_to_channel_with_bearer_token;
 pub(crate) use connect::{
     AuthenticatedRoutingUser, RoutingAuthSession, RoutingConnectCtx, RoutingConnectorAuth,
     RoutingConnectorCtx, RoutingConnectorToken, RoutingConnectorTokenRefresher,
     RoutingTokenAuthenticator, spawn_connector_to_channel_with_auth_and_establishment,
     spawn_connector_to_channel_with_establishment,
-};
-#[cfg(test)]
-pub(crate) use connect::{
-    spawn_connector_to_channel, spawn_connector_to_channel_with_bearer_token,
 };
 pub(crate) use events::{EventSource, HostReachabilityEvent, RoutingEvent};
 pub use events::{HostEntry, HostEvent, HostReachabilityStatus, HostTrustStatus};

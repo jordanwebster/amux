@@ -510,12 +510,12 @@ impl ConnectionManager {
         Ok(())
     }
 
-    #[cfg(test)]
+    #[cfg(any(test, feature = "testnet"))]
     pub(crate) async fn active_route(&self, peer: HostId) -> Option<Route> {
         self.state.read().await.active.get(&peer).cloned()
     }
 
-    #[cfg(test)]
+    #[cfg(any(test, feature = "testnet"))]
     pub(crate) async fn known_routes(&self, peer: HostId) -> Vec<Route> {
         self.state
             .read()

@@ -242,7 +242,7 @@ impl RoutingConnectorCtx {
         self
     }
 
-    #[cfg(test)]
+    #[cfg(any(test, feature = "testnet"))]
     pub(crate) fn with_link_role(mut self, link_role: LinkRole) -> Self {
         self.link_role = link_role;
         self
@@ -286,7 +286,7 @@ pub(crate) fn spawn_connector_to_channel_with_establishment(
     (task, established_rx)
 }
 
-#[cfg(test)]
+#[cfg(any(test, feature = "testnet"))]
 pub(crate) fn spawn_connector_to_channel_with_bearer_token(
     ctx: RoutingConnectorCtx,
     channel: Channel,
@@ -316,7 +316,7 @@ pub(crate) fn spawn_connector_to_channel_with_auth_and_establishment(
     (task, established_rx)
 }
 
-#[cfg(test)]
+#[cfg(any(test, feature = "testnet"))]
 fn spawn_connector_to_channel_with_authorization(
     ctx: RoutingConnectorCtx,
     channel: Channel,

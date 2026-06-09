@@ -158,6 +158,18 @@ impl CloudRoutingService {
         spawn_cloud_routing_service_server(self.clone(), tcp_incoming(listener))
     }
 
+    /// Serves the relay on an arbitrary accepted-transport stream. Used by
+    /// the testnet harness to keep kill-switch handles on accepted sockets.
+    #[cfg(feature = "testnet")]
+    pub(crate) fn serve_on_incoming<I, IO>(&self, incoming: I) -> JoinHandle<()>
+    where
+        I: Stream<Item = Result<IO, std::io::Error>> + Send + 'static,
+        IO: AsyncRead + AsyncWrite + Connected + Unpin + Send + 'static,
+        IO::ConnectInfo: Clone + Send + Sync + 'static,
+    {
+        spawn_cloud_routing_service_server(self.clone(), incoming)
+    }
+
     pub(crate) fn serve_on_tls_tcp_listener(
         &self,
         listener: TcpListener,
@@ -460,7 +472,7 @@ pub(crate) struct StartedUserServices {
     runtime: StartedRoutingServices,
     #[cfg(test)]
     pub(crate) agent: AgentServiceCtx,
-    #[cfg(test)]
+    #[cfg(any(test, feature = "testnet"))]
     pub(crate) client: ClientService,
     trusted_incoming_tx: mpsc::Sender<BoxedGrpcIo>,
     #[cfg(test)]
@@ -489,6 +501,11 @@ impl DeviceRuntimeSecurity {
             trust_store: Arc::new(std::sync::RwLock::new(trust_store)),
             data_dir,
         }
+    }
+
+    #[cfg(feature = "testnet")]
+    pub(crate) fn shared_trust_store(&self) -> SharedTrustStore {
+        self.trust_store.clone()
     }
 }
 
@@ -594,7 +611,7 @@ pub(crate) async fn start_user_services(
         runtime: parts.runtime,
         #[cfg(test)]
         agent,
-        #[cfg(test)]
+        #[cfg(any(test, feature = "testnet"))]
         client,
         trusted_incoming_tx,
         #[cfg(test)]
@@ -664,6 +681,11 @@ impl StartedUserServices {
     ) -> Vec<JoinHandle<()>> {
         self.reachability_links
             .spawn_startup_links(host_name, randomise_link_name)
+    }
+
+    #[cfg(feature = "testnet")]
+    pub(crate) fn reachability_link_connector(&self) -> &ReachabilityLinkConnector {
+        &self.reachability_links
     }
 }
 
