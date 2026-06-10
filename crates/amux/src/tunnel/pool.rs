@@ -515,6 +515,15 @@ impl TunnelPool {
         self.remove_route_preserving_tunnel(route, None).await;
     }
 
+    /// Retires the tunnels *this daemon initiated* over `route`. Hosted
+    /// inbound tunnels are deliberately left alone: `route` is only their
+    /// locally-resolved reply path, and a local route removal (e.g. a
+    /// make-then-break swap to a better route) says nothing about the
+    /// remote initiator's tunnel — retiring it here would silently brick
+    /// the initiator's cached channel until its HTTP/2 keepalive reaps it
+    /// (see NETWORKING_REVIEW.md §6.9). Inbound tunnels die with their
+    /// peer ([`Self::remove_host_preserving_tunnel`]), with their
+    /// transport (drop hook), or at server keepalive.
     pub(crate) async fn remove_route_preserving_tunnel(
         &self,
         route: &Route,
@@ -525,13 +534,29 @@ impl TunnelPool {
             .tunnels
             .iter()
             .filter_map(|(id, active)| {
-                (active.route == *route && Some(*id) != preserve_tunnel_id).then_some(*id)
+                (id.initiator == self.my_host_id
+                    && active.route == *route
+                    && Some(*id) != preserve_tunnel_id)
+                    .then_some(*id)
             })
             .collect::<Vec<_>>();
         for id in retired {
             state.tunnels.remove(&id);
             retire_tunnel_id(&mut state, id);
         }
+    }
+
+    /// Testnet observation seam: every active tunnel as
+    /// `(initiator, peer, reply/forward route)`.
+    #[cfg(feature = "testnet")]
+    pub(crate) async fn active_tunnels(&self) -> Vec<(TunnelId, HostId, Route)> {
+        self.state
+            .read()
+            .await
+            .tunnels
+            .iter()
+            .map(|(id, active)| (*id, active.peer, active.route.clone()))
+            .collect()
     }
 
     #[cfg(test)]
@@ -1553,8 +1578,13 @@ mod tests {
         assert_eq!(pool.counts().await, (0, 1));
     }
 
+    /// A local route removal (e.g. a make-then-break swap) must not retire
+    /// tunnels a *remote* initiator is hosting here — the removed route was
+    /// only this side's reply-path hint, and sweeping the tunnel would
+    /// silently brick the initiator's cached channel (NETWORKING_REVIEW.md
+    /// §6.9). Hosted inbound tunnels die with their peer instead.
     #[tokio::test]
-    async fn removed_route_tombstones_tunnel_ids() {
+    async fn removed_reply_route_keeps_hosted_inbound_tunnels_alive() {
         let routing = Arc::new(RoutingCore::new());
         let initiator = HostId::from_u128(1);
         let target = HostId::from_u128(2);
@@ -1583,11 +1613,19 @@ mod tests {
 
         routing.apply_host_down(initiator, &old_route, None).await;
         pool.remove_route(&old_route).await;
-        assert_eq!(pool.counts().await, (0, 1));
-
+        assert_eq!(
+            pool.counts().await,
+            (1, 0),
+            "the initiator's tunnel outlives this side's reply-route removal"
+        );
         pool.handle_inbound_frame(frame(id, b"late")).await.unwrap();
 
-        assert!(incoming_rx.try_recv().is_err());
+        // The peer-scoped teardown (revocation, key replacement, peer gone)
+        // is what retires hosted inbound tunnels.
+        pool.remove_host(initiator).await;
+        assert_eq!(pool.counts().await, (0, 1));
+
+        pool.handle_inbound_frame(frame(id, b"dead")).await.unwrap();
         assert_eq!(pool.counts().await, (0, 1));
     }
 

@@ -1,11 +1,14 @@
 //! In-process cloud relay for testnet topologies.
 //!
 //! Mirrors the assembly used by the startup tests: a real
-//! [`CloudRoutingService`] served over localhost TCP, with a static
-//! bearer-token authenticator standing in for JWT validation. All daemons in
-//! a `TestNet` share one cloud user, so the relay bridges them exactly like
-//! production cloud routing does for one account.
+//! [`CloudRoutingService`] served over localhost TCP, with a bearer-token
+//! registry standing in for JWT validation. Daemons in a `TestNet` share one
+//! cloud user by default, so the relay bridges them exactly like production
+//! cloud routing does for one account; the builder's `cloud_user` verb
+//! attaches a daemon under a different user, and per-token TTLs let the
+//! Reauth flow be driven hermetically.
 
+use std::collections::HashMap;
 use std::net::SocketAddr;
 use std::sync::Arc;
 use std::time::{Duration, SystemTime};
@@ -18,6 +21,8 @@ use uuid::Uuid;
 
 use crate::HostId;
 use crate::config::Config;
+use crate::connection::ConnectionManager;
+use crate::protocol::wire;
 use crate::routing::{AuthenticatedRoutingUser, RoutingTokenAuthenticator};
 use crate::services::CloudRoutingService;
 use crate::transport::TcpServerTransport;
@@ -30,16 +35,36 @@ use super::assertions::POLL_INTERVAL;
 /// an aborted accept loop).
 type TrackedConnections = Arc<std::sync::Mutex<Vec<std::net::TcpStream>>>;
 
+/// What the relay's authenticator knows about one bearer token. The
+/// authenticated session expires `ttl` after each validation, standing in
+/// for a JWT `exp` claim.
+#[derive(Clone, Copy)]
+pub(crate) struct RegisteredToken {
+    pub(crate) user_id: Uuid,
+    pub(crate) ttl: Duration,
+}
+
+/// Shared token → user/TTL registry; the relay's authenticator reads it and
+/// test verbs (different cloud users, short-lived JWTs) write it.
+pub(crate) type TokenRegistry = Arc<std::sync::RwLock<HashMap<String, RegisteredToken>>>;
+
+/// TTL for ordinary (non-expiring-test) testnet tokens.
+const DEFAULT_TOKEN_TTL: Duration = Duration::from_secs(3600);
+
 pub(crate) struct CloudRelay {
     pub(crate) addr: SocketAddr,
     pub(crate) host_id: HostId,
+    /// The default cloud user's bearer token.
     pub(crate) token: String,
     user_id: Uuid,
+    tokens: TokenRegistry,
+    /// builder `cloud_user` label → that user's `(user_id, token)`.
+    user_labels: std::sync::Mutex<HashMap<String, (Uuid, String)>>,
     server: Mutex<Option<RunningCloud>>,
 }
 
 struct RunningCloud {
-    _service: CloudRoutingService,
+    service: CloudRoutingService,
     task: JoinHandle<()>,
     connections: TrackedConnections,
 }
@@ -75,11 +100,26 @@ impl CloudRelay {
         let addr = listener
             .local_addr()
             .expect("testnet cloud relay listener address");
+        let token = format!("spec-token-{}", Uuid::new_v4().simple());
+        let user_id = Uuid::new_v4();
+        let tokens: TokenRegistry = Arc::default();
+        tokens
+            .write()
+            .expect("testnet token registry poisoned")
+            .insert(
+                token.clone(),
+                RegisteredToken {
+                    user_id,
+                    ttl: DEFAULT_TOKEN_TTL,
+                },
+            );
         let relay = Self {
             addr,
             host_id: Uuid::new_v4(),
-            token: format!("spec-token-{}", Uuid::new_v4().simple()),
-            user_id: Uuid::new_v4(),
+            token,
+            user_id,
+            tokens,
+            user_labels: std::sync::Mutex::new(HashMap::new()),
             server: Mutex::new(None),
         };
         relay.serve(listener).await;
@@ -91,18 +131,72 @@ impl CloudRelay {
         state.write().await.is_cloud_server = true;
         let service = CloudRoutingService::with_authenticator(
             state,
-            Arc::new(StaticTokenAuthenticator {
-                token: self.token.clone(),
-                user_id: self.user_id,
+            Arc::new(RegistryTokenAuthenticator {
+                tokens: self.tokens.clone(),
             }),
         );
         let connections: TrackedConnections = Arc::default();
         let task = service.serve_on_incoming(tracked_tcp_incoming(listener, connections.clone()));
         *self.server.lock().await = Some(RunningCloud {
-            _service: service,
+            service,
             task,
             connections,
         });
+    }
+
+    pub(crate) fn default_user_id(&self) -> Uuid {
+        self.user_id
+    }
+
+    /// The `(user_id, bearer token)` for a builder `cloud_user` label,
+    /// minting and registering them on first use.
+    pub(crate) fn credentials_for_user(&self, label: &str) -> (Uuid, String) {
+        let mut labels = self
+            .user_labels
+            .lock()
+            .expect("testnet user label registry poisoned");
+        labels
+            .entry(label.to_string())
+            .or_insert_with(|| {
+                let user_id = Uuid::new_v4();
+                let token = format!("spec-token-{label}-{}", Uuid::new_v4().simple());
+                self.register_token(&token, user_id, DEFAULT_TOKEN_TTL);
+                (user_id, token)
+            })
+            .clone()
+    }
+
+    /// Registers a bearer token the relay will accept for `user_id`, with
+    /// authenticated sessions that expire `ttl` after each validation.
+    pub(crate) fn register_token(&self, token: &str, user_id: Uuid, ttl: Duration) {
+        self.tokens
+            .write()
+            .expect("testnet token registry poisoned")
+            .insert(token.to_string(), RegisteredToken { user_id, ttl });
+    }
+
+    pub(crate) fn token_registry(&self) -> TokenRegistry {
+        self.tokens.clone()
+    }
+
+    /// Attempts a routed `ClientService.ListAgents` call from the relay's
+    /// own position into `host` (within `user_id`'s routing services). The
+    /// relay forwards these peers' bytes, but it has no device identity and
+    /// no trust entry, so the call must never complete.
+    pub(crate) async fn try_call_into(&self, user_id: Uuid, host: HostId) -> anyhow::Result<()> {
+        let connections = {
+            let guard = self.server.lock().await;
+            let running = guard
+                .as_ref()
+                .ok_or_else(|| anyhow::anyhow!("the cloud relay is offline"))?;
+            running.service.user_routing_connections(user_id).await
+        };
+        let connections: Arc<ConnectionManager> =
+            connections.ok_or_else(|| anyhow::anyhow!("relay has no services for this user"))?;
+        let channel = connections.channel_to(host).await?;
+        let mut client = wire::client_service_client::ClientServiceClient::new(channel);
+        client.list_agents(wire::ListAgentsRequest {}).await?;
+        Ok(())
     }
 
     /// Takes the relay down hard: stops accepting and severs every accepted
@@ -202,24 +296,27 @@ pub(crate) fn testnet_server_state(
 }
 
 #[derive(Clone)]
-struct StaticTokenAuthenticator {
-    token: String,
-    user_id: Uuid,
+struct RegistryTokenAuthenticator {
+    tokens: TokenRegistry,
 }
 
 #[tonic::async_trait]
-impl RoutingTokenAuthenticator for StaticTokenAuthenticator {
+impl RoutingTokenAuthenticator for RegistryTokenAuthenticator {
     async fn authenticate_token(
         &self,
         token: &str,
     ) -> Result<AuthenticatedRoutingUser, tonic::Status> {
-        if token != self.token {
-            return Err(tonic::Status::unauthenticated("unknown testnet token"));
-        }
+        let registered = self
+            .tokens
+            .read()
+            .expect("testnet token registry poisoned")
+            .get(token)
+            .copied()
+            .ok_or_else(|| tonic::Status::unauthenticated("unknown testnet token"))?;
         Ok(AuthenticatedRoutingUser {
-            user_id: self.user_id,
+            user_id: registered.user_id,
             client_id: "test-client".to_string(),
-            expires_at: SystemTime::now() + Duration::from_secs(3600),
+            expires_at: SystemTime::now() + registered.ttl,
         })
     }
 }

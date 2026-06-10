@@ -201,6 +201,22 @@ impl CloudRoutingService {
             .routing_connect_ctx()
     }
 
+    /// Testnet observation seam: the relay-side `ConnectionManager` serving
+    /// `user_id`, if that user has attached. Lets spec tests assert what the
+    /// relay can (not) do with the traffic it forwards.
+    #[cfg(feature = "testnet")]
+    pub(crate) async fn user_routing_connections(
+        &self,
+        user_id: Uuid,
+    ) -> Option<Arc<crate::connection::ConnectionManager>> {
+        self.inner
+            .users
+            .read()
+            .await
+            .get(&user_id)
+            .map(|services| services.connections.clone())
+    }
+
     pub(crate) async fn send_goaway_to_all(
         &self,
         reason: wire::pb::GoAwayReason,

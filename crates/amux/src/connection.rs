@@ -8,7 +8,9 @@ use tokio::task::JoinHandle;
 use tonic::transport::Channel;
 
 use crate::HostId;
-use crate::routing::{Route, RoutingCore, RoutingEvent, select_best_route};
+use crate::routing::{
+    FEATURE_CLOUD_RELAY, Host, Route, RoutingCore, RoutingEvent, select_best_route,
+};
 use crate::transport::TrustedPeerConnections;
 use crate::tunnel::{TunnelId, TunnelPool, TunnelPoolError};
 
@@ -284,6 +286,7 @@ impl ConnectionManager {
         match event {
             RoutingEvent::HostUp { host, route, .. } => {
                 let peer = host.id;
+                let is_cloud_relay = host_is_cloud_relay(&host);
                 let mut state = self.state.write().await;
                 if state.replacing.contains(&peer) {
                     return None;
@@ -292,6 +295,16 @@ impl ConnectionManager {
                 let peer_routes = state.routes.entry(peer).or_default();
                 if !peer_routes.contains(&route) {
                     peer_routes.push(route.clone());
+                }
+                // A multi-hop route to a cloud relay is recorded but never
+                // eagerly activated: relay routing services discard inbound
+                // tunnels by design, so the device-TLS materialization can
+                // never complete and would stall the routing-event loop for
+                // the whole handshake timeout. This window opens whenever a
+                // peer advertises the relay before our own cloud link is up
+                // (NETWORKING_REVIEW.md §6.7).
+                if route.len() > 1 && is_cloud_relay {
+                    return None;
                 }
                 if should_activate(&state, peer, &route) {
                     Some((peer, route))
@@ -540,6 +553,13 @@ impl ConnectionManager {
     }
 }
 
+fn host_is_cloud_relay(host: &Host) -> bool {
+    host.capabilities
+        .features
+        .iter()
+        .any(|feature| feature == FEATURE_CLOUD_RELAY)
+}
+
 fn should_activate(state: &ConnectionState, peer: HostId, route: &Route) -> bool {
     match state.active.get(&peer) {
         Some(active) => route.len() < active.len(),
@@ -709,6 +729,49 @@ mod tests {
             error,
             TunnelPoolError::LinkDraining { link } if link == Link::new("cloud").unwrap()
         ));
+    }
+
+    /// Regression for NETWORKING_REVIEW.md §6.7: a multi-hop route to a
+    /// cloud relay (learned through a peer before our own cloud link is up)
+    /// must be recorded but never picked for eager activation — relays
+    /// discard inbound tunnels, so materializing one can only stall the
+    /// routing-event loop for the whole TLS handshake timeout.
+    #[tokio::test]
+    async fn multi_hop_route_to_a_cloud_relay_is_recorded_but_not_eagerly_activated() {
+        let routing = Arc::new(RoutingCore::new());
+        let (incoming_tx, _incoming_rx) = mpsc::channel(1);
+        let tunnels = Arc::new(TunnelPool::new(
+            HostId::from_u128(1),
+            routing.clone(),
+            incoming_tx,
+        ));
+        let manager = ConnectionManager::new(routing.clone(), tunnels.clone());
+        let relay = HostId::from_u128(100);
+
+        let swap = manager
+            .record_event(RoutingEvent::HostUp {
+                host: cloud_host(100),
+                route: route(&["direct-peer", "peers-cloud-link"]),
+                origin_link: Some(Link::new("direct-peer").unwrap()),
+            })
+            .await;
+
+        assert_eq!(swap, None, "relay multi-hop routes must not auto-activate");
+        assert_eq!(
+            manager.known_routes(relay).await,
+            vec![route(&["direct-peer", "peers-cloud-link"])],
+            "the route itself is still recorded"
+        );
+
+        // A single-hop relay route (our own cloud link) activates as usual.
+        let swap = manager
+            .record_event(RoutingEvent::HostUp {
+                host: cloud_host(100),
+                route: route(&["cloud"]),
+                origin_link: None,
+            })
+            .await;
+        assert_eq!(swap, Some((relay, route(&["cloud"]))));
     }
 
     #[tokio::test]

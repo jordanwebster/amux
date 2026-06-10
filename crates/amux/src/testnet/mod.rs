@@ -36,7 +36,7 @@ use std::sync::Arc;
 use tokio::net::TcpListener;
 use tokio::sync::Mutex;
 
-pub use daemon::{Daemon, RouteAssertion};
+pub use daemon::{Daemon, ExpiringJwt, RouteAssertion, RoutedStream};
 pub use pairing::{PairAttempt, Pin, QrPayload};
 
 use crate::identity::{DeviceIdentity, load_or_create_device_identity_in};
@@ -69,6 +69,10 @@ pub(crate) struct NetInner {
     /// Owns every daemon's data dir; removed when the net is dropped.
     _data_root: tempfile::TempDir,
 }
+
+/// How long [`TestNet::cloud_relay_cannot_call`] gives the relay's doomed
+/// call attempt before treating "still not completed" as cannot-call.
+const RELAY_CALL_ATTEMPT_TIMEOUT: std::time::Duration = assertions::DEFAULT_TIMEOUT;
 
 impl TestNet {
     pub fn builder() -> TestNetBuilder {
@@ -188,6 +192,33 @@ impl TestNet {
         .await;
     }
 
+    /// Asserts the cloud relay cannot complete a routed call into `target`,
+    /// even though it forwards every byte between cloud peers: the relay has
+    /// no device identity and no trust entry, and `target` only accepts
+    /// pinned device-mTLS from trusted peers. A call attempt that errors or
+    /// never completes both count.
+    pub async fn cloud_relay_cannot_call(&self, target: &Daemon) {
+        let cloud = self.cloud();
+        let user_id = target
+            .inner
+            .cloud
+            .as_ref()
+            .unwrap_or_else(|| panic!("daemon '{}' is not cloud-attached", target.name()))
+            .user_id;
+        let attempt = tokio::time::timeout(
+            RELAY_CALL_ATTEMPT_TIMEOUT,
+            cloud.try_call_into(user_id, target.host_id()),
+        )
+        .await;
+        if let Ok(Ok(())) = attempt {
+            panic!(
+                "the cloud relay completed a routed call into '{}'; it must only \
+                 forward opaque bytes",
+                target.name()
+            );
+        }
+    }
+
     fn cloud(&self) -> &CloudRelay {
         self.inner
             .cloud
@@ -250,6 +281,7 @@ struct DaemonSpec {
     name: String,
     cloud_only: bool,
     no_cloud: bool,
+    cloud_user: Option<String>,
 }
 
 #[derive(Default)]
@@ -257,6 +289,7 @@ pub struct TestNetBuilder {
     cloud: bool,
     daemons: Vec<DaemonSpec>,
     pairs: Vec<(String, String, Via)>,
+    trusted: Vec<(String, String)>,
 }
 
 impl TestNetBuilder {
@@ -278,6 +311,7 @@ impl TestNetBuilder {
             name,
             cloud_only: false,
             no_cloud: false,
+            cloud_user: None,
         });
         self
     }
@@ -295,10 +329,28 @@ impl TestNetBuilder {
         self
     }
 
+    /// Attaches the most recently added daemon to the cloud as a *different*
+    /// cloud user (by default every daemon shares one account). Cloud
+    /// presence is per-user, so daemons of different users meet nothing of
+    /// each other at the relay.
+    pub fn cloud_user(mut self, user: impl Into<String>) -> Self {
+        self.last_daemon("cloud_user").cloud_user = Some(user.into());
+        self
+    }
+
     /// Pairing-as-fixture: seeds both trust stores (pubkey, name, and the
     /// reachability implied by `via`) before the daemons start.
     pub fn paired(mut self, a: impl Into<String>, b: impl Into<String>, via: Via) -> Self {
         self.pairs.push((a.into(), b.into(), via));
+        self
+    }
+
+    /// Trust-as-fixture *without* reachability: seeds both trust stores
+    /// (pubkey and name only), so the two can authenticate end to end but
+    /// neither knows how to dial the other — any route between them must be
+    /// learned through the routing graph (e.g. a chain of links).
+    pub fn trusted(mut self, a: impl Into<String>, b: impl Into<String>) -> Self {
+        self.trusted.push((a.into(), b.into()));
         self
     }
 
@@ -333,6 +385,11 @@ impl TestNetBuilder {
             assert!(
                 !spec.cloud_only || self.cloud,
                 "daemon '{}' is cloud_only but the topology has no cloud",
+                spec.name
+            );
+            assert!(
+                spec.cloud_user.is_none() || (self.cloud && !spec.no_cloud),
+                "daemon '{}' has a cloud_user but does not attach to a cloud",
                 spec.name
             );
             let data_dir = data_root.path().join(&spec.name);
@@ -391,6 +448,18 @@ impl TestNetBuilder {
             preps[ib].trust.insert_for_test(host_id_a, entry_a);
         }
 
+        for (a, b) in &self.trusted {
+            let ia = index_of(&self.daemons, a);
+            let ib = index_of(&self.daemons, b);
+            assert_ne!(ia, ib, "cannot seed trust between '{a}' and itself");
+            let host_id_a = preps[ia].identity.host_id;
+            let host_id_b = preps[ib].identity.host_id;
+            let entry_b = trust_entry(&preps[ib].identity, b, Vec::new());
+            let entry_a = trust_entry(&preps[ia].identity, a, Vec::new());
+            preps[ia].trust.insert_for_test(host_id_b, entry_b);
+            preps[ib].trust.insert_for_test(host_id_a, entry_a);
+        }
+
         let mut daemon_inners = Vec::with_capacity(preps.len());
         for (spec, prep) in self.daemons.iter().zip(preps) {
             prep.trust
@@ -403,20 +472,32 @@ impl TestNetBuilder {
                 tcp_addr: prep.tcp_addr,
                 cloud: prep.attaches_to_cloud.then(|| {
                     let cloud = cloud.as_ref().expect("cloud attachment without cloud");
+                    let (user_id, token) = match &spec.cloud_user {
+                        Some(label) => cloud.credentials_for_user(label),
+                        None => (cloud.default_user_id(), cloud.token.clone()),
+                    };
                     CloudAttachment {
                         addr: cloud.addr,
-                        token: cloud.token.clone(),
+                        token,
+                        user_id,
                     }
                 }),
                 runtime: Mutex::new(None),
                 tracked_tcp: Default::default(),
+                tracked_cloud_tcp: Default::default(),
             });
             let runtime = start_daemon_runtime(&inner, prep.listener).await;
             *inner.runtime.lock().await = Some(runtime);
             daemon_inners.push(inner);
         }
 
-        let topology = render_topology(&self.daemons, &daemon_inners, cloud.as_ref(), &self.pairs);
+        let topology = render_topology(
+            &self.daemons,
+            &daemon_inners,
+            cloud.as_ref(),
+            &self.pairs,
+            &self.trusted,
+        );
         let inner = Arc::new_cyclic(|weak| NetInner {
             topology,
             daemons: daemon_inners
@@ -478,6 +559,7 @@ fn render_topology(
     inners: &[Arc<DaemonInner>],
     cloud: Option<&CloudRelay>,
     pairs: &[(String, String, Via)],
+    trusted: &[(String, String)],
 ) -> String {
     let mut out = String::new();
     if let Some(cloud) = cloud {
@@ -498,14 +580,22 @@ fn render_topology(
         } else {
             "no-cloud"
         };
+        let cloud_user = spec
+            .cloud_user
+            .as_ref()
+            .map(|user| format!(" cloud_user='{user}'"))
+            .unwrap_or_default();
         let _ = writeln!(
             out,
-            "  daemon '{}' (host_id {}) tcp={tcp} {cloud_attachment}",
+            "  daemon '{}' (host_id {}) tcp={tcp} {cloud_attachment}{cloud_user}",
             spec.name, inner.host_id
         );
     }
     for (a, b, via) in pairs {
         let _ = writeln!(out, "  paired '{a}' <-> '{b}' via {via:?}");
+    }
+    for (a, b) in trusted {
+        let _ = writeln!(out, "  trusted '{a}' <-> '{b}' (no reachability)");
     }
     out
 }

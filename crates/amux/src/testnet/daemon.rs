@@ -20,7 +20,9 @@ use crate::dispatcher::TrackedTcpConnections;
 use crate::identity::{device_key_path, load_or_create_device_identity_in};
 use crate::protocol::wire;
 use crate::routing::{
-    HostEntry, Route, RoutingCore, generate_server_link,
+    HostEntry, Route, RoutingConnectorAuth, RoutingConnectorCtx, RoutingConnectorToken,
+    RoutingConnectorTokenRefresher, RoutingCore, generate_server_link,
+    spawn_connector_to_channel_with_auth_and_establishment,
     spawn_connector_to_channel_with_bearer_token,
 };
 use crate::services::{
@@ -32,12 +34,15 @@ use crate::tunnel::TunnelPool;
 
 use super::NetInner;
 use super::assertions::eventually;
-use super::net::{bind_addr_with_retries, testnet_server_state};
+use super::net::{RegisteredToken, TokenRegistry, bind_addr_with_retries, testnet_server_state};
 
 /// Parameters a daemon needs to (re)connect to the testnet cloud relay.
 pub(crate) struct CloudAttachment {
     pub(crate) addr: SocketAddr,
     pub(crate) token: String,
+    /// The cloud user this daemon attaches as (the relay's authenticator
+    /// maps its bearer token to this user).
+    pub(crate) user_id: uuid::Uuid,
 }
 
 pub(crate) struct DaemonInner {
@@ -60,19 +65,31 @@ pub(crate) struct DaemonInner {
     /// `notes/NETWORKING_REVIEW.md`), so without the sever peers and the
     /// relay keep treating the dead incarnation as online.
     pub(crate) tracked_tcp: TrackedTcpConnections,
+    /// OS-level duplicates of the outbound sockets the cloud connector
+    /// dialed, kept separately from `tracked_tcp` so credential-rollover
+    /// verbs can sever just the cloud link while direct links stay up.
+    pub(crate) tracked_cloud_tcp: TrackedTcpConnections,
 }
 
 impl DaemonInner {
     fn sever_tracked_tcp(&self) {
-        let connections = std::mem::take(
-            &mut *self
-                .tracked_tcp
-                .lock()
-                .expect("tracked TCP connection registry poisoned"),
-        );
-        for connection in connections {
-            let _ = connection.shutdown(std::net::Shutdown::Both);
-        }
+        sever_registry(&self.tracked_tcp);
+        self.sever_tracked_cloud_tcp();
+    }
+
+    fn sever_tracked_cloud_tcp(&self) {
+        sever_registry(&self.tracked_cloud_tcp);
+    }
+}
+
+fn sever_registry(registry: &TrackedTcpConnections) {
+    let connections = std::mem::take(
+        &mut *registry
+            .lock()
+            .expect("tracked TCP connection registry poisoned"),
+    );
+    for connection in connections {
+        let _ = connection.shutdown(std::net::Shutdown::Both);
     }
 }
 
@@ -85,6 +102,30 @@ pub(crate) struct DaemonRuntime {
 
 impl DaemonRuntime {
     pub(crate) fn spawn_cloud_connector(&mut self, inner: &DaemonInner) {
+        let (ctx, channel, token) = self.cloud_connector_parts(inner);
+        self.cloud_task = Some(spawn_connector_to_channel_with_bearer_token(
+            ctx, channel, token,
+        ));
+    }
+
+    /// Like [`Self::spawn_cloud_connector`], but with the production-shaped
+    /// connector auth: an initial token with an expiry plus a refresher the
+    /// Reauth flow calls before that expiry.
+    pub(crate) fn spawn_cloud_connector_with_auth(
+        &mut self,
+        inner: &DaemonInner,
+        auth: RoutingConnectorAuth,
+    ) {
+        let (ctx, channel, _token) = self.cloud_connector_parts(inner);
+        let (task, _established_rx) =
+            spawn_connector_to_channel_with_auth_and_establishment(ctx, channel, auth);
+        self.cloud_task = Some(task);
+    }
+
+    fn cloud_connector_parts(
+        &mut self,
+        inner: &DaemonInner,
+    ) -> (RoutingConnectorCtx, Channel, String) {
         let cloud = inner
             .cloud
             .as_ref()
@@ -92,7 +133,7 @@ impl DaemonRuntime {
         if let Some(task) = self.cloud_task.take() {
             task.abort();
         }
-        let channel = tracked_cloud_channel(cloud.addr, inner.tracked_tcp.clone());
+        let channel = tracked_cloud_channel(cloud.addr, inner.tracked_cloud_tcp.clone());
         // Randomised like production (`randomise_link_name` defaults to
         // true): a restarted daemon must come back under a *new* link name,
         // or its peers and the relay can mistake the new link for the old
@@ -100,11 +141,7 @@ impl DaemonRuntime {
         let ctx = self
             .services
             .routing_connector_ctx(generate_server_link(&format!("cloud-{}", inner.name), true));
-        self.cloud_task = Some(spawn_connector_to_channel_with_bearer_token(
-            ctx,
-            channel,
-            cloud.token.clone(),
-        ));
+        (ctx, channel, cloud.token.clone())
     }
 }
 
@@ -155,6 +192,12 @@ impl Drop for DaemonRuntime {
 /// back before attaching to the cloud (peers may legitimately be offline,
 /// so this is a grace window, not an assertion).
 const RESTART_DIRECT_LINK_GRACE: std::time::Duration = std::time::Duration::from_secs(2);
+
+/// Per-attempt bound for the polled call verbs ([`Daemon::can_call`],
+/// [`Daemon::cannot_call`]): one attempt must never eat the whole assertion
+/// budget, so a black-holed attempt is retried (or counted as unreachable)
+/// instead of hanging the poll.
+const CALL_ATTEMPT_TIMEOUT: std::time::Duration = std::time::Duration::from_secs(1);
 
 /// Boots the daemon's user services from its data dir. Identity and trust
 /// persist on disk, so a restart reuses them; `listener` carries the
@@ -301,6 +344,29 @@ impl Daemon {
         .await;
     }
 
+    /// Presence of a trusted-but-offline peer: `other` is still *listed* on
+    /// this daemon's host-listing surface (from the trust store) but with
+    /// `online = false`.
+    pub async fn sees_offline(&self, other: &Daemon) {
+        let assertion = format!(
+            "'{}' lists '{}' as a known but offline host",
+            self.name(),
+            other.name()
+        );
+        let other_id = other.host_id();
+        eventually(
+            &assertion,
+            async || {
+                self.host_table()
+                    .await
+                    .iter()
+                    .any(|host| host.id == other_id && !host.online)
+            },
+            self.failure_dump(),
+        )
+        .await;
+    }
+
     /// Route-shape assertions on this daemon's route to `other`; finish with
     /// [`RouteAssertion::via_direct`], [`RouteAssertion::via`], or
     /// [`RouteAssertion::via_cloud`].
@@ -378,6 +444,13 @@ impl Daemon {
     /// call may legitimately race link re-establishment; use
     /// [`Self::lists_agents_on`] directly when asserting on a settled
     /// network or on call *failure*.
+    ///
+    /// Each attempt is individually time-bounded so the poll can retry: an
+    /// attempt whose tunnel TLS lands in a closing peer window blackholes
+    /// for the full 10s device handshake timeout (the dispatcher's close
+    /// never reaches the initiator — the silent-drop gap of
+    /// NETWORKING_REVIEW.md §6.5/§6.8), while the next attempt's fresh
+    /// tunnel goes through.
     pub async fn can_call(&self, other: &Daemon) {
         let assertion = format!(
             "'{}' can complete a routed call to '{}'",
@@ -386,26 +459,199 @@ impl Daemon {
         );
         eventually(
             &assertion,
-            async || self.lists_agents_on_inner(other).await.is_ok(),
+            async || {
+                matches!(
+                    tokio::time::timeout(CALL_ATTEMPT_TIMEOUT, self.lists_agents_on_inner(other))
+                        .await,
+                    Ok(Ok(_))
+                )
+            },
             self.failure_dump(),
         )
         .await;
     }
 
-    /// Graceful stop and restart with the same data dir; identity, trust,
-    /// and the direct-TCP listener address all persist. Direct links are
-    /// re-established from stored reachabilities before the cloud is
-    /// reattached (see [`start_daemon_runtime`]).
-    pub async fn restart(&self) {
-        // Drop the old runtime first so its tasks abort and the TCP listener
-        // port is released before the new runtime rebinds it; sever every
-        // tracked socket like the process exit a real restart implies. The
-        // runtime lock is released between the steps: holding it across
-        // `wait_until_peers_see_us_down` would deadlock the failure dump,
-        // which queries this daemon's host table through the same lock.
+    /// Asserts that routed calls to `other` (eventually) fail: revocation or
+    /// an outage has made the peer unreachable. An attempt that completes
+    /// with an error and an attempt that hangs past the per-attempt bound
+    /// both count as unreachable.
+    pub async fn cannot_call(&self, other: &Daemon) {
+        let assertion = format!(
+            "routed calls from '{}' to '{}' fail",
+            self.name(),
+            other.name()
+        );
+        eventually(
+            &assertion,
+            async || match tokio::time::timeout(
+                CALL_ATTEMPT_TIMEOUT,
+                self.lists_agents_on_inner(other),
+            )
+            .await
+            {
+                Ok(result) => result.is_err(),
+                Err(_) => true,
+            },
+            self.failure_dump(),
+        )
+        .await;
+    }
+
+    /// The local pairing-candidate inventory: `ClientService.ListHosts` with
+    /// `scope = PAIRING_CANDIDATES` over the local-admin surface, as the UI
+    /// would request it before prompting the user to pair.
+    pub async fn pairing_candidates(&self) -> Vec<HostId> {
+        let hosts = self
+            .admin_client()
+            .await
+            .list_pairing_hosts()
+            .await
+            .unwrap_or_else(|error| {
+                panic!(
+                    "'{}' failed to list pairing candidates: {error}",
+                    self.name()
+                )
+            });
+        hosts.into_iter().map(|host| host.id).collect()
+    }
+
+    /// Pairing-candidate assertion: `other` (eventually) shows up in this
+    /// daemon's local pairing-candidate inventory.
+    pub async fn sees_pairing_candidate(&self, other: &Daemon) {
+        let assertion = format!(
+            "'{}' lists '{}' as a pairing candidate",
+            self.name(),
+            other.name()
+        );
+        let other_id = other.host_id();
+        eventually(
+            &assertion,
+            async || self.pairing_candidates().await.contains(&other_id),
+            self.failure_dump(),
+        )
+        .await;
+    }
+
+    /// A routed `ClientService.ListHosts(PAIRING_CANDIDATES)` against
+    /// `other`, i.e. what a *paired remote* caller gets when it asks for
+    /// pairing-candidate inventory. The spec reserves this scope for local
+    /// callers (docs/NETWORKING.md §8.12).
+    pub async fn list_pairing_candidates_on(&self, other: &Daemon) -> anyhow::Result<Vec<HostId>> {
+        self.list_hosts_on_scoped(other, wire::list_hosts_request::Scope::PairingCandidates)
+            .await
+    }
+
+    /// A routed `ClientService.ListHosts(ALL)` against `other`: the host
+    /// inventory `other` serves to a paired remote caller.
+    pub async fn list_hosts_on(&self, other: &Daemon) -> anyhow::Result<Vec<HostId>> {
+        self.list_hosts_on_scoped(other, wire::list_hosts_request::Scope::All)
+            .await
+    }
+
+    async fn list_hosts_on_scoped(
+        &self,
+        other: &Daemon,
+        scope: wire::list_hosts_request::Scope,
+    ) -> anyhow::Result<Vec<HostId>> {
+        let request = async {
+            let Some(parts) = self.try_parts().await else {
+                anyhow::bail!("daemon '{}' is not running", self.name());
+            };
+            let channel = parts.connections.channel_to(other.host_id()).await?;
+            let mut client = wire::client_service_client::ClientServiceClient::new(channel);
+            let hosts = client
+                .list_hosts(wire::ListHostsRequest {
+                    scope: scope as i32,
+                })
+                .await?
+                .into_inner()
+                .hosts;
+            hosts
+                .into_iter()
+                .map(|host| {
+                    HostId::from_slice(&host.host_id)
+                        .map_err(|error| anyhow::anyhow!("malformed host_id in response: {error}"))
+                })
+                .collect()
+        };
+        match tokio::time::timeout(super::assertions::DEFAULT_TIMEOUT, request).await {
+            Ok(result) => result,
+            Err(_) => anyhow::bail!(
+                "routed ListHosts from '{}' to '{}' timed out",
+                self.name(),
+                other.name()
+            ),
+        }
+    }
+
+    /// Opens a long-lived routed gRPC stream to `other` over this daemon's
+    /// *current* route — a `ClientService.SubscribeHosts` subscription
+    /// served by `other` — confirmed live by reading its first snapshot
+    /// event. Route swaps and revocations are expected to break it; finish
+    /// with [`RoutedStream::expect_disconnect`] (or
+    /// [`RoutedStream::expect_stalled_open`] where teardown is one-sided).
+    pub async fn open_event_stream_to(&self, other: &Daemon) -> RoutedStream {
+        let description = format!(
+            "routed event stream from '{}' to '{}'",
+            self.name(),
+            other.name()
+        );
+        match tokio::time::timeout(
+            super::assertions::DEFAULT_TIMEOUT,
+            self.open_event_stream_inner(other),
+        )
+        .await
+        {
+            Ok(Ok(stream)) => RoutedStream {
+                description,
+                stream,
+            },
+            Ok(Err(error)) => panic!("failed to open {description}: {error}"),
+            Err(_) => panic!("timed out opening {description}"),
+        }
+    }
+
+    async fn open_event_stream_inner(
+        &self,
+        other: &Daemon,
+    ) -> anyhow::Result<tonic::Streaming<wire::SubscribeHostsResponse>> {
+        let Some(parts) = self.try_parts().await else {
+            anyhow::bail!("daemon '{}' is not running", self.name());
+        };
+        let channel = parts.connections.channel_to(other.host_id()).await?;
+        let mut client = wire::client_service_client::ClientServiceClient::new(channel);
+        let mut stream = client
+            .subscribe_hosts(wire::SubscribeHostsRequest {})
+            .await?
+            .into_inner();
+        match stream.message().await? {
+            Some(_) => Ok(stream),
+            None => anyhow::bail!("subscription ended before its first snapshot event"),
+        }
+    }
+
+    /// Stops the daemon like a process exit: its tasks die and every socket
+    /// it held to the outside world is severed. Returns once every other
+    /// daemon has observed it going offline, so follow-up assertions start
+    /// from a settled network.
+    ///
+    /// The runtime lock is released before the wait: holding it across
+    /// `wait_until_peers_see_us_down` would deadlock the failure dump,
+    /// which queries this daemon's host table through the same lock.
+    pub async fn stop(&self) {
         *self.inner.runtime.lock().await = None;
         self.inner.sever_tracked_tcp();
         self.wait_until_peers_see_us_down().await;
+    }
+
+    /// Stop and restart with the same data dir; identity, trust, and the
+    /// direct-TCP listener address all persist. Direct links are
+    /// re-established from stored reachabilities before the cloud is
+    /// reattached (see [`start_daemon_runtime`]).
+    pub async fn restart(&self) {
+        // Stop first so the old runtime's tasks abort and the TCP listener
+        // port is released before the new runtime rebinds it.
+        self.stop().await;
         let mut runtime = start_daemon_runtime(&self.inner, None).await;
         if self.inner.cloud.is_some() {
             wait_for_stored_direct_peers(&runtime).await;
@@ -455,9 +701,7 @@ impl Daemon {
     /// `host_id` under a freshly generated keypair, so peers still pin the
     /// old key until they re-pair.
     pub async fn restart_with_new_key(&self) {
-        *self.inner.runtime.lock().await = None;
-        self.inner.sever_tracked_tcp();
-        self.wait_until_peers_see_us_down().await;
+        self.stop().await;
         std::fs::remove_file(device_key_path(&self.inner.data_dir)).unwrap_or_else(|error| {
             panic!("remove device key for daemon '{}': {error}", self.name())
         });
@@ -617,6 +861,79 @@ impl Daemon {
         }
     }
 
+    /// Credential rollover onto a short-lived cloud JWT: severs the current
+    /// cloud link (the relay sees the same EOF a re-login would produce) and
+    /// reattaches with a bearer token that expires `ttl` from now, plus the
+    /// production-shaped refresher the Reauth flow calls. Returns a handle
+    /// whose [`ExpiringJwt::expired`] waits out the initial token's expiry.
+    ///
+    /// `ttl` must be shorter than the assertion timeout and is best kept
+    /// well under the production `ROUTING_AUTH_REFRESH_BEFORE_EXPIRY`
+    /// (300s), so the connector's proactive refresh fires immediately after
+    /// establishment — the only way to drive the flow without real minutes.
+    pub async fn reattach_cloud_with_expiring_jwt(&self, ttl: std::time::Duration) -> ExpiringJwt {
+        assert!(
+            ttl < super::assertions::DEFAULT_TIMEOUT,
+            "the JWT ttl must fit within the assertion timeout"
+        );
+        let net = self.net.upgrade().expect("testnet already dropped");
+        let cloud_relay = net
+            .cloud
+            .as_ref()
+            .expect("this testnet was built without .cloud()");
+        let attachment = self
+            .inner
+            .cloud
+            .as_ref()
+            .unwrap_or_else(|| panic!("daemon '{}' is not cloud-attached", self.name()));
+
+        // Cut the current link first; reattaching while it is still up would
+        // give the daemon two concurrent cloud links.
+        self.inner.sever_tracked_cloud_tcp();
+        let assertion = format!(
+            "'{}' drops its previous cloud link for the credential rollover",
+            self.name()
+        );
+        eventually(
+            &assertion,
+            async || !self.has_single_hop_route_to(cloud_relay.host_id).await,
+            self.failure_dump(),
+        )
+        .await;
+
+        let token = format!("jwt-initial-{}", uuid::Uuid::new_v4().simple());
+        let expires_at = std::time::SystemTime::now() + ttl;
+        cloud_relay.register_token(&token, attachment.user_id, ttl);
+        let auth = RoutingConnectorAuth::new(
+            RoutingConnectorToken { token, expires_at },
+            Arc::new(RegistryTokenRefresher {
+                tokens: cloud_relay.token_registry(),
+                user_id: attachment.user_id,
+            }),
+        );
+        {
+            let mut guard = self.inner.runtime.lock().await;
+            let runtime = guard
+                .as_mut()
+                .unwrap_or_else(|| panic!("daemon '{}' is not running", self.name()));
+            runtime.spawn_cloud_connector_with_auth(&self.inner, auth);
+        }
+        let assertion = format!(
+            "'{}' reattaches to the cloud relay under the short-lived JWT",
+            self.name()
+        );
+        eventually(
+            &assertion,
+            async || self.knows_host(cloud_relay.host_id).await,
+            self.failure_dump(),
+        )
+        .await;
+        ExpiringJwt {
+            daemon: self.clone(),
+            expires_at,
+        }
+    }
+
     /// Looks up a stored direct-TCP reachability for `peer` in this daemon's
     /// trust store.
     pub(crate) async fn direct_tcp_reachability_to(&self, peer: HostId) -> Option<Reachability> {
@@ -680,6 +997,17 @@ impl Daemon {
                         host.name, host.id, host.online, host.trust_status
                     );
                 }
+                if let Some(parts) = daemon.try_parts().await {
+                    for (id, peer, route) in parts.tunnels.active_tunnels().await {
+                        let _ = writeln!(
+                            out,
+                            "  tunnel {} initiator={} peer={peer} route={}",
+                            id.nonce,
+                            id.initiator,
+                            format_route(&route)
+                        );
+                    }
+                }
             }
         } else {
             let _ = writeln!(out, "(testnet already dropped; no topology available)");
@@ -703,9 +1031,10 @@ impl Daemon {
         for peer in peers {
             let active = parts.connections.active_route(peer).await;
             let known = parts.connections.known_routes(peer).await;
+            let core_best = parts.routing.best_route(peer).await;
             let _ = writeln!(
                 out,
-                "  {peer}: active={} known=[{}]",
+                "  {peer}: active={} known=[{}] core_best={}",
                 active
                     .as_ref()
                     .map_or_else(|| "none".to_string(), format_route),
@@ -713,10 +1042,137 @@ impl Daemon {
                     .iter()
                     .map(format_route)
                     .collect::<Vec<_>>()
-                    .join(", ")
+                    .join(", "),
+                core_best
+                    .as_ref()
+                    .map_or_else(|| "none".to_string(), format_route),
             );
         }
         out
+    }
+}
+
+/// A live routed gRPC stream opened by [`Daemon::open_event_stream_to`].
+pub struct RoutedStream {
+    description: String,
+    stream: tonic::Streaming<wire::SubscribeHostsResponse>,
+}
+
+impl RoutedStream {
+    /// Asserts the stream breaks with an error status within the assertion
+    /// timeout. Messages still arriving before the break are drained; a
+    /// clean end-of-stream or survival past the timeout fails the
+    /// assertion.
+    ///
+    /// NOTE: the spec promises `UNAVAILABLE` for in-flight streams on a
+    /// dropped route (docs/NETWORKING.md §8.6, §8.7, §8.10); what tonic
+    /// actually surfaces today when the tunnel transport dies under a live
+    /// stream is `Unknown: h2 protocol error: error reading a body from
+    /// connection`. This verb locks the user-observable contract — the
+    /// stream breaks promptly with an error — and leaves the exact code
+    /// unasserted; see NETWORKING_REVIEW.md §6.4.
+    pub async fn expect_disconnect(mut self) {
+        let deadline = tokio::time::Instant::now() + super::assertions::DEFAULT_TIMEOUT;
+        loop {
+            let remaining = deadline.saturating_duration_since(tokio::time::Instant::now());
+            match tokio::time::timeout(remaining, self.stream.message()).await {
+                // Live events may legitimately flow until the route drops.
+                Ok(Ok(Some(_))) => continue,
+                Ok(Ok(None)) => panic!(
+                    "{} ended cleanly; in-flight streams on a dropped route must \
+                     break with an error",
+                    self.description
+                ),
+                Ok(Err(_)) => return,
+                Err(_) => panic!(
+                    "{} is still alive; expected it to break with an error",
+                    self.description
+                ),
+            }
+        }
+    }
+
+    /// Asserts the stream does *not* terminate within a short observation
+    /// window — it has gone silent rather than broken. Stray events that
+    /// were already in flight are tolerated; any termination (error or
+    /// clean end) fails the assertion.
+    ///
+    /// This locks the current revocation behavior: the revoked peer's
+    /// in-flight streams stall instead of breaking (the revoker kills its
+    /// inbound connection without anything reaching the peer), so only a
+    /// transport keepalive would eventually end them. The spec intends
+    /// prompt teardown; see NETWORKING_REVIEW.md §6.5.
+    pub async fn expect_stalled_open(mut self) {
+        const OBSERVATION_WINDOW: std::time::Duration = std::time::Duration::from_secs(2);
+        let deadline = tokio::time::Instant::now() + OBSERVATION_WINDOW;
+        loop {
+            let remaining = deadline.saturating_duration_since(tokio::time::Instant::now());
+            match tokio::time::timeout(remaining, self.stream.message()).await {
+                // Events already in flight may still be delivered.
+                Ok(Ok(Some(_))) => continue,
+                Ok(Ok(None)) => panic!("{} ended; expected it to stall open", self.description),
+                Ok(Err(status)) => panic!(
+                    "{} broke with {status}; expected it to stall open",
+                    self.description
+                ),
+                Err(_) => return, // silent for the whole window
+            }
+        }
+    }
+}
+
+/// Handle to a short-lived cloud JWT minted by
+/// [`Daemon::reattach_cloud_with_expiring_jwt`].
+pub struct ExpiringJwt {
+    daemon: Daemon,
+    expires_at: std::time::SystemTime,
+}
+
+impl ExpiringJwt {
+    /// Waits (bounded by the assertion timeout) until the initial token's
+    /// expiry moment has passed on the wall clock.
+    pub async fn expired(&self) {
+        let assertion = format!(
+            "the initial cloud JWT of '{}' reaches its expiry",
+            self.daemon.name()
+        );
+        eventually(
+            &assertion,
+            async || std::time::SystemTime::now() >= self.expires_at,
+            self.daemon.failure_dump(),
+        )
+        .await;
+    }
+}
+
+/// TTL for the tokens [`RegistryTokenRefresher`] mints: long enough that the
+/// connector schedules no further refresh within a test's lifetime.
+const REFRESHED_JWT_TTL: std::time::Duration = std::time::Duration::from_secs(3600);
+
+/// The testnet stand-in for the production cloud-token refresher: mints a
+/// fresh long-lived bearer token and registers it at the relay, exactly the
+/// observable shape of fetching a new JWT from the cloud API.
+struct RegistryTokenRefresher {
+    tokens: TokenRegistry,
+    user_id: uuid::Uuid,
+}
+
+#[tonic::async_trait]
+impl RoutingConnectorTokenRefresher for RegistryTokenRefresher {
+    async fn refresh_routing_token(&self) -> Result<RoutingConnectorToken, tonic::Status> {
+        let token = format!("jwt-refreshed-{}", uuid::Uuid::new_v4().simple());
+        let expires_at = std::time::SystemTime::now() + REFRESHED_JWT_TTL;
+        self.tokens
+            .write()
+            .expect("testnet token registry poisoned")
+            .insert(
+                token.clone(),
+                RegisteredToken {
+                    user_id: self.user_id,
+                    ttl: REFRESHED_JWT_TTL,
+                },
+            );
+        Ok(RoutingConnectorToken { token, expires_at })
     }
 }
 
