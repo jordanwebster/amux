@@ -98,6 +98,10 @@ pub(crate) struct DaemonRuntime {
     pub(crate) trust: SharedTrustStore,
     reachability_tasks: Vec<JoinHandle<()>>,
     cloud_task: Option<JoinHandle<Result<(), tonic::Status>>>,
+    /// Listens for `ClientService.Shutdown`/`Suspend` requests and tears the
+    /// daemon down, so a paired peer's routed disruptive op is observable as
+    /// the daemon going offline. Aborted when the runtime is dropped.
+    shutdown_task: Option<JoinHandle<()>>,
 }
 
 impl DaemonRuntime {
@@ -184,6 +188,9 @@ impl Drop for DaemonRuntime {
         if let Some(task) = &self.cloud_task {
             task.abort();
         }
+        if let Some(task) = &self.shutdown_task {
+            task.abort();
+        }
         // `services` aborts its own tasks on drop.
     }
 }
@@ -212,7 +219,7 @@ const CALL_ATTEMPT_TIMEOUT: std::time::Duration = std::time::Duration::from_secs
 /// up under "Findings from spec-suite construction" in
 /// `notes/NETWORKING_REVIEW.md` §6.2.)
 pub(crate) async fn start_daemon_runtime(
-    inner: &DaemonInner,
+    inner: &Arc<DaemonInner>,
     listener: Option<TcpListener>,
 ) -> DaemonRuntime {
     let identity = load_or_create_device_identity_in(&inner.data_dir)
@@ -222,7 +229,7 @@ pub(crate) async fn start_daemon_runtime(
     let security = DeviceRuntimeSecurity::new(identity, trust_store, inner.data_dir.clone());
     let trust = security.shared_trust_store();
 
-    let state = testnet_server_state(
+    let (state, shutdown_rx) = testnet_server_state(
         &inner.name,
         inner.host_id,
         inner.tcp_addr.map(|addr| addr.port()),
@@ -242,12 +249,52 @@ pub(crate) async fn start_daemon_runtime(
     }
 
     let reachability_tasks = services.spawn_reachability_links(&inner.name, true);
+    let shutdown_task = Some(spawn_shutdown_handler(Arc::downgrade(inner), shutdown_rx));
     DaemonRuntime {
         services,
         trust,
         reachability_tasks,
         cloud_task: None,
+        shutdown_task,
     }
+}
+
+/// Drives the daemon's `ClientService.Shutdown`/`Suspend` requests: when a
+/// paired peer invokes one over the route, the handler replies success and
+/// stops the daemon (severs its external sockets and drops the runtime), so
+/// the network observes it going down — the in-process stand-in for a process
+/// exit. Suspend is treated like Shutdown for the purposes of the network
+/// observable (it parks agents and ends the server in production too).
+fn spawn_shutdown_handler(
+    inner: Weak<DaemonInner>,
+    mut shutdown_rx: tokio::sync::mpsc::Receiver<crate::user_state::ShutdownRequest>,
+) -> JoinHandle<()> {
+    use crate::user_state::ShutdownRequest;
+    tokio::spawn(async move {
+        // One disruptive request is enough to take the daemon down; ignore any
+        // further requests (the handler is aborted with the runtime anyway).
+        let Some(request) = shutdown_rx.recv().await else {
+            return;
+        };
+        match request {
+            ShutdownRequest::Shutdown { reply } => {
+                let _ = reply.send(Ok(()));
+            }
+            ShutdownRequest::Suspend { reply, .. } => {
+                let _ = reply.send(Ok(0));
+            }
+        }
+        let Some(inner) = inner.upgrade() else {
+            return;
+        };
+        // Stop off this task: setting the runtime to `None` drops the runtime
+        // (which aborts this very handler), so the teardown must run detached
+        // or it would cancel itself mid-flight.
+        tokio::spawn(async move {
+            inner.sever_tracked_tcp();
+            *inner.runtime.lock().await = None;
+        });
+    })
 }
 
 /// Waits (bounded by [`RESTART_DIRECT_LINK_GRACE`]) for every peer with a

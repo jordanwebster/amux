@@ -17,7 +17,7 @@ use crate::agents::{CreateAgentRequest, StructuredLogSource, TerminalSize};
 use crate::agents::{MultiplexStructuredReader, SequencedReplayQuery};
 use crate::debug::DebugView;
 
-#[cfg(test)]
+#[cfg(any(test, feature = "testnet"))]
 pub(crate) mod io {
     pub(crate) const TEST_ECHO_COMMAND: &str = "__amux_test_echo__";
     pub(crate) const TEST_ECHO_V1: &str = "test_echo_v1";
@@ -86,7 +86,7 @@ impl TestAgentSession {
     /// Spawn the test agent process. Returns an exit handle that completes
     /// when the process exits.
     pub(crate) fn start(&mut self) -> Result<tokio::task::JoinHandle<()>> {
-        #[cfg(test)]
+        #[cfg(any(test, feature = "testnet"))]
         if self.command == io::TEST_ECHO_COMMAND {
             self.pty = Some(PtyHandle::test_echo());
             return Ok(tokio::spawn(std::future::pending::<()>()));

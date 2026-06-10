@@ -23,7 +23,7 @@ use super::{
 };
 #[cfg(any(debug_assertions, test))]
 use crate::agents::AGENT_TYPE_TEST_AGENT;
-#[cfg(test)]
+#[cfg(any(test, feature = "testnet"))]
 use crate::agents::TEST_ECHO_V1;
 use crate::agents::claude::io as claude_io;
 use crate::agents::{AGENT_TYPE_CLAUDE, Agent, AgentEvent, AgentType, CreateAgentRequest};
@@ -259,7 +259,7 @@ impl AgentSession {
             Self::Claude(_) => protocols.push(claude_io::PTY_TRANSCRIPT_V1.to_string()),
             #[cfg(any(debug_assertions, test))]
             Self::TestAgent(_) => {
-                #[cfg(test)]
+                #[cfg(any(test, feature = "testnet"))]
                 protocols.push(TEST_ECHO_V1.to_string());
             }
         }

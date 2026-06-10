@@ -5,7 +5,7 @@ use tokio::sync::mpsc;
 use uuid::Uuid;
 
 use super::AgentServiceCtx;
-#[cfg(test)]
+#[cfg(any(test, feature = "testnet"))]
 use crate::agents::TEST_ECHO_V1;
 use crate::agents::claude::io::{
     self as claude_io, ClaudePtyTranscriptV1Action, ClaudePtyTranscriptV1Output,
@@ -84,7 +84,7 @@ async fn prepare_direct_session_subscription(
                     },
                 })
         }
-        #[cfg(test)]
+        #[cfg(any(test, feature = "testnet"))]
         TEST_ECHO_V1 => {
             let reader = prepare_direct_test_echo_session_subscription(request, ctx).await?;
             Ok(PreparedSessionSubscription {
@@ -125,7 +125,7 @@ async fn prepare_direct_raw_session_subscription(
         .ok_or(ProtocolError::NoAgentFound)
 }
 
-#[cfg(test)]
+#[cfg(any(test, feature = "testnet"))]
 async fn prepare_direct_test_echo_session_subscription(
     request: &SubscribeSessionRequest,
     ctx: &AgentServiceCtx,
@@ -210,7 +210,7 @@ async fn send_session_input(
         claude_io::PTY_TRANSCRIPT_V1 => {
             send_structured_session_input(ctx, request.agent_id, request.event).await
         }
-        #[cfg(test)]
+        #[cfg(any(test, feature = "testnet"))]
         TEST_ECHO_V1 => {
             send_raw_session_input(ctx, request.agent_id, TEST_ECHO_V1, request.event).await
         }

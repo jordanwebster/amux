@@ -30,7 +30,7 @@ pub(crate) use session::{
 pub use session_events::{SessionCloseReason, SubscribeSessionEvent};
 #[cfg(any(debug_assertions, test))]
 pub(crate) use test_agent::TestAgentSession;
-#[cfg(test)]
+#[cfg(any(test, feature = "testnet"))]
 pub(crate) use test_agent::io::{TEST_ECHO_COMMAND, TEST_ECHO_V1};
 pub(crate) use types::AGENT_TYPE_CLAUDE;
 #[cfg(any(debug_assertions, test))]

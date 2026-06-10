@@ -24,7 +24,7 @@ pub(crate) struct PtyHandle {
 }
 
 impl PtyHandle {
-    #[cfg(test)]
+    #[cfg(any(test, feature = "testnet"))]
     pub(crate) fn test_echo() -> Self {
         let (input_tx, mut input_rx) = mpsc::channel::<Vec<u8>>(256);
         let buffer = Arc::new(MultiplexByteBuffer::new(MAX_REPLAY_BUFFER));

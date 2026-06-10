@@ -28,6 +28,8 @@ mod assertions;
 mod daemon;
 mod net;
 mod pairing;
+mod session;
+mod wire;
 
 use std::fmt::Write as _;
 use std::net::SocketAddr;
@@ -38,6 +40,8 @@ use tokio::sync::Mutex;
 
 pub use daemon::{Daemon, ExpiringJwt, RouteAssertion, RoutedStream};
 pub use pairing::{PairAttempt, Pin, QrPayload};
+pub use session::EchoSession;
+pub use wire::{GoAwayReason, WirePeer};
 
 use crate::identity::{DeviceIdentity, load_or_create_device_identity_in};
 use crate::trust::{Reachability, TrustEntry, TrustStore};
