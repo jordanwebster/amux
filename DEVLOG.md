@@ -38,6 +38,146 @@ One paragraph describing what was done.
 
 ---
 
+## 2026-06-10: Spec suite polish, harness docs, CI wiring
+
+### Summary
+Final pass over the spec-test suite: hoisted remaining plumbing out of test
+bodies into harness verbs (`Pin::wrong_guess`, `WirePeer::flood_handshakes_
+until_rate_limited`), documented the testnet harness at module level, ordered
+chapter modules as documentation, and wired the suite into CI.
+
+### Changes
+- `crates/amux/src/testnet/` rustdoc on all public items; ~25-line module doc
+  covering TestNet/Daemon/WirePeer and the eventually/restart/sever
+  disciplines.
+- `.github/workflows/ci.yml`: test job runs
+  `cargo test -p amux --features testnet --test spec`; clippy covers the
+  feature.
+
+### Verification
+- Spec suite green twice (43 passed, 1 ignored, ~32s); lib 451 passed; fmt +
+  clippy (CI invocation) clean.
+
+### Next Steps
+- Decide whether `notes/SPEC_TESTS_DESIGN.md` and `notes/NETWORKING_REVIEW.md`
+  (gitignored, referenced from committed code comments) should be force-added.
+
+---
+
+## 2026-06-10: Spec chapters 5–6 — remote sessions, authority, wire conformance
+
+### Summary
+Catalog items 30–39: remote agent attach with IO round-trips over direct and
+cloud routes, session survival across topology churn, full runtime authority
+for paired peers, local-admin RPC rejection over remote transports, and a
+`WirePeer` scripted protocol actor exercising the real TCP listener +
+dispatcher + TLS for the wire-conformance chapter.
+
+### Changes
+- `crates/amux/tests/spec/{sessions,wire}.rs`; `src/testnet/{session,wire}.rs`.
+- Production: only `#[cfg(test)]` → `#[cfg(any(test, feature = "testnet"))]`
+  widenings in `agents/` and `services/agent/session_rpc.rs`.
+
+### Decisions Made
+- Item 38's race half (review finding B1: a benign tunnel-close race can
+  escalate to a link-level GoAway) is an `#[ignore]`d test documenting the
+  bug; the deterministic unknown-tunnel-drop case asserts the spec'd behavior.
+
+### Verification
+- Spec suite 43 passed / 1 ignored across 3 consecutive runs; lib 451 passed;
+  fmt + clippy clean.
+
+---
+
+## 2026-06-10: Spec chapters 3–4 — presence, routing & failover
+
+### Summary
+Catalog items 15–29 (+28b): presence lifecycle, per-user isolation at the
+relay, pairing-candidate scoping, direct-beats-cloud selection, failover in
+both directions, make-then-break swaps with in-flight stream breakage,
+startup re-establishment, revocation teardown, 3- and 4-node relay chains,
+and JWT-expiry continuity driven through the real Reauth path with
+short-TTL testnet tokens.
+
+### Changes
+- `crates/amux/tests/spec/{presence,routing}.rs`; harness verbs `stop`,
+  `sees_offline`, `cannot_call`, pairing-candidate observers,
+  `open_event_stream_to` (`RoutedStream`), `.cloud_user(...)`,
+  `.trusted(...)`, expiring-JWT support in the testnet relay.
+- Product fixes found by the suite (NETWORKING_REVIEW.md §6.7/§6.9):
+  `connection.rs` no longer eagerly materializes multi-hop routes to relay
+  hosts (head-of-line blocked the routing-event loop for the 10s handshake
+  timeout); `tunnel/pool.rs` route removal no longer retires healthy hosted
+  inbound tunnels on make-then-break swaps.
+
+### Decisions Made
+- Tests lock current behavior where it diverges from docs/NETWORKING.md, with
+  NOTE comments: dropped-route streams fail with `h2 protocol error` (not
+  UNAVAILABLE); revocation strands in-flight streams both ways; chained
+  relaying is dial-direction-dependent (acceptor-side HostUp suppression).
+
+### Verification
+- Spec suite 32 passed across 5 consecutive runs; lib 451 passed (incl. new
+  regression tests for both product fixes); fmt + clippy clean.
+
+---
+
+## 2026-06-10: Spec chapters 1–2 — identity, trust, pairing; harness hardening
+
+### Summary
+Catalog items 1–14: identity persistence across restart, trust locality, all
+three pairing flows (PIN direct/cloud, QR, SSH over an in-process stream
+seam), wrong-PIN opacity, the 5-attempt cap, pair-mode TTL and one-shot
+consumption, self-pairing rejection, and key rotation. Pairing verbs drive
+the real local-admin RPCs, not trust-store pokes.
+
+### Changes
+- `crates/amux/tests/spec/{identity,pairing}.rs`; `src/testnet/pairing.rs`.
+- Harness hardening after a hang hunt: `eventually()` now bounds both the
+  condition poll and the failure dump; routed-call verbs are
+  timeout-bounded (`can_call` for post-churn assertions); `restart()` severs
+  tracked inbound and outbound sockets so peers observe a real process death
+  (aborting the connector task alone leaks the established link on both
+  ends — documented finding).
+- Product fix (NETWORKING_REVIEW.md §6.2): a stale
+  `ConnectionManager::activate_route` could demote a fresh direct route and
+  permanently strand its pooled channel; activation now refuses
+  longer-or-equal demotion.
+
+### Verification
+- Spec suite 16 passed, 3 consecutive runs, zero hangs; lib 450 passed.
+
+---
+
+## 2026-06-09: Testnet spec-test harness and smoke tests
+
+### Summary
+Built the `amux::testnet` harness (behind a `testnet` feature) and the
+`tests/spec` integration target per `notes/SPEC_TESTS_DESIGN.md`: whole-daemon
+in-process networks with real localhost TCP + mTLS and a real cloud relay,
+declarative `TestNet` builder with trust pre-pairing, eventually-assertions
+with topology failure dumps, and operator verbs (cloud outage, link sever,
+restart). Two smoke tests cover the canonical example and the operator verbs.
+
+### Changes
+- `crates/amux/src/testnet/{mod,net,daemon,assertions}.rs`;
+  `crates/amux/tests/spec/`; `testnet` feature + `[[test]] spec` target.
+- Production: cfg-gate widenings plus feature-gated accessors and a tracked
+  TCP-accept seam in `dispatcher.rs` (no behavior changes).
+
+### Decisions Made
+- Assembly generalizes the existing `services/startup/mod.rs` integration
+  tests rather than inventing a new path; no skip-TLS anywhere.
+- Daemon bring-up is sequenced (direct links, then cloud) to avoid a
+  route-activation race discovered during construction — later root-caused
+  and fixed as NETWORKING_REVIEW.md §6.2.
+
+### Verification
+- `cargo test -p amux --features testnet --test spec` — 2 passed, stable
+  across 10 runs; lib 450 passed; clippy + fmt clean.
+
+---
+
 ## 2026-05-15: Library cleanup pass after embedded refactor
 
 ### Summary
