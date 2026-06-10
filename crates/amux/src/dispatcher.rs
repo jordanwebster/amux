@@ -45,6 +45,27 @@ fn take_mtls_audit_emitted() -> bool {
     MTLS_AUDIT_EMITTED.with(|emitted| emitted.swap(false, Ordering::Relaxed))
 }
 
+/// OS-level duplicates of accepted external-TCP sockets, kept so test
+/// harnesses can sever every live connection at once (see
+/// [`TunnelDispatcher::serve_tcp_listener_tracked`]).
+pub(crate) type TrackedTcpConnections = std::sync::Arc<std::sync::Mutex<Vec<std::net::TcpStream>>>;
+
+fn track_accepted_stream(
+    stream: tokio::net::TcpStream,
+    track: Option<&TrackedTcpConnections>,
+) -> std::io::Result<tokio::net::TcpStream> {
+    let Some(connections) = track else {
+        return Ok(stream);
+    };
+    let std_stream = stream.into_std()?;
+    let duplicate = std_stream.try_clone()?;
+    connections
+        .lock()
+        .expect("tracked TCP connection registry poisoned")
+        .push(duplicate);
+    tokio::net::TcpStream::from_std(std_stream)
+}
+
 #[derive(Clone)]
 pub(crate) struct TunnelDispatcher {
     acceptor: TlsAcceptor,
@@ -98,6 +119,28 @@ impl TunnelDispatcher {
     }
 
     pub(crate) fn serve_tcp_listener(&self, listener: TcpListener) -> JoinHandle<()> {
+        self.serve_tcp_listener_inner(listener, None)
+    }
+
+    /// Test seam: like [`Self::serve_tcp_listener`], but registers an
+    /// OS-level duplicate of every accepted socket in `connections` so an
+    /// in-process daemon "restart" can sever them the way a real process
+    /// exit would (per-connection tasks are detached and would otherwise
+    /// keep serving the old runtime).
+    #[cfg(any(test, feature = "testnet"))]
+    pub(crate) fn serve_tcp_listener_tracked(
+        &self,
+        listener: TcpListener,
+        connections: TrackedTcpConnections,
+    ) -> JoinHandle<()> {
+        self.serve_tcp_listener_inner(listener, Some(connections))
+    }
+
+    fn serve_tcp_listener_inner(
+        &self,
+        listener: TcpListener,
+        track: Option<TrackedTcpConnections>,
+    ) -> JoinHandle<()> {
         let dispatcher = self.clone();
         tokio::spawn(async move {
             loop {
@@ -105,6 +148,13 @@ impl TunnelDispatcher {
                     Ok(accepted) => accepted,
                     Err(error) => {
                         tracing::warn!(error = %error, "external TCP accept failed");
+                        continue;
+                    }
+                };
+                let stream = match track_accepted_stream(stream, track.as_ref()) {
+                    Ok(stream) => stream,
+                    Err(error) => {
+                        tracing::warn!(error = %error, "failed to track accepted TCP stream");
                         continue;
                     }
                 };

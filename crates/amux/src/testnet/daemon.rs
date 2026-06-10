@@ -6,14 +6,18 @@ use std::net::SocketAddr;
 use std::path::PathBuf;
 use std::sync::{Arc, Weak};
 
+use hyper_util::rt::TokioIo;
 use tokio::net::TcpListener;
 use tokio::sync::{Mutex, RwLock};
 use tokio::task::JoinHandle;
-use tonic::transport::Endpoint;
+use tonic::codegen::http::Uri;
+use tonic::transport::{Channel, Endpoint};
 
 use crate::HostId;
+use crate::client::Client;
 use crate::connection::ConnectionManager;
-use crate::identity::load_or_create_device_identity_in;
+use crate::dispatcher::TrackedTcpConnections;
+use crate::identity::{device_key_path, load_or_create_device_identity_in};
 use crate::protocol::wire;
 use crate::routing::{
     HostEntry, Route, RoutingCore, generate_server_link,
@@ -45,6 +49,31 @@ pub(crate) struct DaemonInner {
     pub(crate) tcp_addr: Option<SocketAddr>,
     pub(crate) cloud: Option<CloudAttachment>,
     pub(crate) runtime: Mutex<Option<DaemonRuntime>>,
+    /// OS-level duplicates of every TCP socket this daemon's runtime holds
+    /// open to the outside world: sockets its external TCP listener has
+    /// accepted *and* the outbound sockets its cloud connector dialed. A
+    /// real restart closes all of them with the process; the in-process
+    /// restart severs them explicitly. Merely dropping the runtime is not
+    /// enough: per-connection dispatcher tasks are detached, and aborting
+    /// the cloud connector task leaks its established link (see the
+    /// "Findings from spec-suite construction" entry in
+    /// `notes/NETWORKING_REVIEW.md`), so without the sever peers and the
+    /// relay keep treating the dead incarnation as online.
+    pub(crate) tracked_tcp: TrackedTcpConnections,
+}
+
+impl DaemonInner {
+    fn sever_tracked_tcp(&self) {
+        let connections = std::mem::take(
+            &mut *self
+                .tracked_tcp
+                .lock()
+                .expect("tracked TCP connection registry poisoned"),
+        );
+        for connection in connections {
+            let _ = connection.shutdown(std::net::Shutdown::Both);
+        }
+    }
 }
 
 pub(crate) struct DaemonRuntime {
@@ -55,22 +84,59 @@ pub(crate) struct DaemonRuntime {
 }
 
 impl DaemonRuntime {
-    pub(crate) fn spawn_cloud_connector(&mut self, name: &str, cloud: &CloudAttachment) {
+    pub(crate) fn spawn_cloud_connector(&mut self, inner: &DaemonInner) {
+        let cloud = inner
+            .cloud
+            .as_ref()
+            .expect("spawn_cloud_connector on a daemon without a cloud attachment");
         if let Some(task) = self.cloud_task.take() {
             task.abort();
         }
-        let channel = Endpoint::from_shared(format!("http://{}", cloud.addr))
-            .expect("testnet cloud endpoint URI")
-            .connect_lazy();
+        let channel = tracked_cloud_channel(cloud.addr, inner.tracked_tcp.clone());
+        // Randomised like production (`randomise_link_name` defaults to
+        // true): a restarted daemon must come back under a *new* link name,
+        // or its peers and the relay can mistake the new link for the old
+        // one and keep stale routes/tunnels alive.
         let ctx = self
             .services
-            .routing_connector_ctx(generate_server_link(&format!("cloud-{name}"), false));
+            .routing_connector_ctx(generate_server_link(&format!("cloud-{}", inner.name), true));
         self.cloud_task = Some(spawn_connector_to_channel_with_bearer_token(
             ctx,
             channel,
             cloud.token.clone(),
         ));
     }
+}
+
+/// A lazy tonic channel to the testnet cloud relay that registers an
+/// OS-level duplicate of every TCP socket it dials in `tracked`, so a
+/// daemon "restart" can sever its outbound cloud connection the way a real
+/// process exit would.
+///
+// NOTE: works around the connector-abort link leak documented under
+// "Findings from spec-suite construction" in `notes/NETWORKING_REVIEW.md`:
+// aborting an established routing-connector task never runs `cleanup_link`,
+// and the link registry's clone of the outbound sender keeps the Connect
+// request stream open, so neither the relay nor any peer ever observes the
+// link going down. Severing the socket gives the relay the same EOF a dead
+// process would.
+fn tracked_cloud_channel(addr: SocketAddr, tracked: TrackedTcpConnections) -> Channel {
+    Endpoint::from_shared(format!("http://{addr}"))
+        .expect("testnet cloud endpoint URI")
+        .connect_with_connector_lazy(tower::service_fn(move |_uri: Uri| {
+            let tracked = tracked.clone();
+            async move {
+                let stream = tokio::net::TcpStream::connect(addr).await?;
+                stream.set_nodelay(true)?;
+                let std_stream = stream.into_std()?;
+                let duplicate = std_stream.try_clone()?;
+                tracked
+                    .lock()
+                    .expect("tracked TCP connection registry poisoned")
+                    .push(duplicate);
+                Ok::<_, std::io::Error>(TokioIo::new(tokio::net::TcpStream::from_std(std_stream)?))
+            }
+        }))
 }
 
 impl Drop for DaemonRuntime {
@@ -96,12 +162,12 @@ const RESTART_DIRECT_LINK_GRACE: std::time::Duration = std::time::Duration::from
 /// recorded address).
 ///
 /// The cloud connector is *not* spawned here: callers attach the cloud
-/// after direct links are up. Bringing both up concurrently trips a
-/// route-activation race in `ConnectionManager` (a stale in-flight
-/// activation of the cloud route can land after the direct route activates,
-/// evicting the direct link's pooled channel for good). The harness
-/// sequences bring-up instead of changing production behavior; the race is
-/// a finding for the routing chapter.
+/// after direct links are up, which keeps initial topologies deterministic.
+/// (Bringing both up concurrently used to trip a route-activation race in
+/// `ConnectionManager` that stranded the direct link's pooled channel; that
+/// race is now guarded in `ConnectionManager::activate_route` and written
+/// up under "Findings from spec-suite construction" in
+/// `notes/NETWORKING_REVIEW.md` §6.2.)
 pub(crate) async fn start_daemon_runtime(
     inner: &DaemonInner,
     listener: Option<TcpListener>,
@@ -113,7 +179,12 @@ pub(crate) async fn start_daemon_runtime(
     let security = DeviceRuntimeSecurity::new(identity, trust_store, inner.data_dir.clone());
     let trust = security.shared_trust_store();
 
-    let state = testnet_server_state(&inner.name, inner.host_id);
+    let state = testnet_server_state(
+        &inner.name,
+        inner.host_id,
+        inner.tcp_addr.map(|addr| addr.port()),
+        inner.cloud.is_some(),
+    );
     let agent_state = Arc::new(RwLock::new(AgentServiceState::new()));
     let mut services = start_user_services(state, agent_state, security)
         .await
@@ -124,10 +195,10 @@ pub(crate) async fn start_daemon_runtime(
             Some(listener) => listener,
             None => bind_addr_with_retries(addr).await,
         };
-        services.serve_external_tcp_listener(listener);
+        services.serve_external_tcp_listener_tracked(listener, inner.tracked_tcp.clone());
     }
 
-    let reachability_tasks = services.spawn_reachability_links(&inner.name, false);
+    let reachability_tasks = services.spawn_reachability_links(&inner.name, true);
     DaemonRuntime {
         services,
         trust,
@@ -265,7 +336,27 @@ impl Daemon {
     /// A real routed RPC: lists the agents on `other` by calling its
     /// `ClientService.ListAgents` over this daemon's current route. Returns
     /// the agent names.
+    ///
+    /// Bounded by the assertion timeout: a call into a dead channel (e.g. a
+    /// peer's previous incarnation after a restart) yields `Err`, never a
+    /// hung test.
     pub async fn lists_agents_on(&self, other: &Daemon) -> anyhow::Result<Vec<String>> {
+        match tokio::time::timeout(
+            super::assertions::DEFAULT_TIMEOUT,
+            self.lists_agents_on_inner(other),
+        )
+        .await
+        {
+            Ok(result) => result,
+            Err(_) => anyhow::bail!(
+                "routed call from '{}' to '{}' timed out",
+                self.name(),
+                other.name()
+            ),
+        }
+    }
+
+    async fn lists_agents_on_inner(&self, other: &Daemon) -> anyhow::Result<Vec<String>> {
         let Some(parts) = self.try_parts().await else {
             anyhow::bail!("daemon '{}' is not running", self.name());
         };
@@ -282,21 +373,177 @@ impl Daemon {
             .collect())
     }
 
+    /// Asserts that a routed call to `other` (eventually) succeeds. Use this
+    /// after network churn — restart, failover, re-pairing — where the first
+    /// call may legitimately race link re-establishment; use
+    /// [`Self::lists_agents_on`] directly when asserting on a settled
+    /// network or on call *failure*.
+    pub async fn can_call(&self, other: &Daemon) {
+        let assertion = format!(
+            "'{}' can complete a routed call to '{}'",
+            self.name(),
+            other.name()
+        );
+        eventually(
+            &assertion,
+            async || self.lists_agents_on_inner(other).await.is_ok(),
+            self.failure_dump(),
+        )
+        .await;
+    }
+
     /// Graceful stop and restart with the same data dir; identity, trust,
     /// and the direct-TCP listener address all persist. Direct links are
     /// re-established from stored reachabilities before the cloud is
     /// reattached (see [`start_daemon_runtime`]).
     pub async fn restart(&self) {
-        let mut guard = self.inner.runtime.lock().await;
         // Drop the old runtime first so its tasks abort and the TCP listener
-        // port is released before the new runtime rebinds it.
-        *guard = None;
+        // port is released before the new runtime rebinds it; sever every
+        // tracked socket like the process exit a real restart implies. The
+        // runtime lock is released between the steps: holding it across
+        // `wait_until_peers_see_us_down` would deadlock the failure dump,
+        // which queries this daemon's host table through the same lock.
+        *self.inner.runtime.lock().await = None;
+        self.inner.sever_tracked_tcp();
+        self.wait_until_peers_see_us_down().await;
         let mut runtime = start_daemon_runtime(&self.inner, None).await;
-        if let Some(cloud) = &self.inner.cloud {
+        if self.inner.cloud.is_some() {
             wait_for_stored_direct_peers(&runtime).await;
-            runtime.spawn_cloud_connector(&self.inner.name, cloud);
+            runtime.spawn_cloud_connector(&self.inner);
         }
-        *guard = Some(runtime);
+        *self.inner.runtime.lock().await = Some(runtime);
+    }
+
+    /// Waits until every other daemon has seen this one go offline, so the
+    /// restart comes back into a settled network. Without this beat, a
+    /// daemon that reattaches to the cloud before its HostDown propagated
+    /// leaves peers holding tunnels/channels to its dead incarnation that
+    /// never recover (calls fail with "TLS TunnelTransport already
+    /// consumed" indefinitely) — a real fast-restart race, left to the
+    /// routing chapter to lock in deliberately.
+    async fn wait_until_peers_see_us_down(&self) {
+        let Some(net) = self.net.upgrade() else {
+            return;
+        };
+        let my_id = self.host_id();
+        for other in &net.daemons {
+            if other.host_id() == my_id {
+                continue;
+            }
+            let assertion = format!(
+                "'{}' observes '{}' going down for its restart",
+                other.name(),
+                self.name()
+            );
+            eventually(
+                &assertion,
+                async || {
+                    !other
+                        .host_table()
+                        .await
+                        .iter()
+                        .any(|host| host.id == my_id && host.online)
+                },
+                other.failure_dump(),
+            )
+            .await;
+        }
+    }
+
+    /// Key rotation: stops the daemon, wipes its device key (the `host_id`
+    /// file is kept), and restarts. The daemon comes back with the same
+    /// `host_id` under a freshly generated keypair, so peers still pin the
+    /// old key until they re-pair.
+    pub async fn restart_with_new_key(&self) {
+        *self.inner.runtime.lock().await = None;
+        self.inner.sever_tracked_tcp();
+        self.wait_until_peers_see_us_down().await;
+        std::fs::remove_file(device_key_path(&self.inner.data_dir)).unwrap_or_else(|error| {
+            panic!("remove device key for daemon '{}': {error}", self.name())
+        });
+        let mut runtime = start_daemon_runtime(&self.inner, None).await;
+        if self.inner.cloud.is_some() {
+            runtime.spawn_cloud_connector(&self.inner);
+        }
+        *self.inner.runtime.lock().await = Some(runtime);
+    }
+
+    /// The daemon's persisted identity, re-read from its data dir:
+    /// `(host_id, pubkey)`.
+    pub fn identity_on_disk(&self) -> (HostId, Vec<u8>) {
+        let identity = load_or_create_device_identity_in(&self.inner.data_dir)
+            .unwrap_or_else(|error| panic!("load identity for daemon '{}': {error}", self.name()));
+        (identity.host_id, identity.public_key().to_vec())
+    }
+
+    /// Trust-store check: this daemon's entry for `other` pins `other`'s
+    /// *current* on-disk public key (catches stale entries after rotation).
+    pub async fn trusts_current_key_of(&self, other: &Daemon) {
+        let assertion = format!(
+            "'{}' trusts the current key of '{}'",
+            self.name(),
+            other.name()
+        );
+        let (_, pubkey) = other.identity_on_disk();
+        eventually(
+            &assertion,
+            async || {
+                let Some(parts) = self.try_parts().await else {
+                    return false;
+                };
+                parts
+                    .trust
+                    .read()
+                    .map(|store| {
+                        store
+                            .entry(other.host_id())
+                            .is_some_and(|entry| entry.pubkey == pubkey)
+                    })
+                    .unwrap_or(false)
+            },
+            self.failure_dump(),
+        )
+        .await;
+    }
+
+    /// Trust-store check: this daemon trusts `other` but holds no outbound
+    /// reachability hint for it (e.g. the responder side of SSH pairing).
+    pub async fn trusts_without_reachability(&self, other: &Daemon) {
+        let assertion = format!(
+            "'{}' trusts '{}' without any outbound reachability",
+            self.name(),
+            other.name()
+        );
+        eventually(
+            &assertion,
+            async || {
+                let Some(parts) = self.try_parts().await else {
+                    return false;
+                };
+                parts
+                    .trust
+                    .read()
+                    .map(|store| {
+                        store
+                            .entry(other.host_id())
+                            .is_some_and(|entry| entry.reachabilities.is_empty())
+                    })
+                    .unwrap_or(false)
+            },
+            self.failure_dump(),
+        )
+        .await;
+    }
+
+    /// Opens a fresh local-admin client to this daemon's `ClientService`,
+    /// exactly what a local CLI gets over the Unix socket.
+    pub(crate) async fn admin_client(&self) -> Client {
+        let guard = self.inner.runtime.lock().await;
+        let runtime = guard
+            .as_ref()
+            .unwrap_or_else(|| panic!("daemon '{}' is not running", self.name()));
+        let (channel, _accept_task) = runtime.services.open_in_process_client_channel();
+        Client::from_client_service_channel(channel, None)
     }
 
     async fn trusts_now(&self, other: &Daemon) -> bool {
@@ -362,11 +609,11 @@ impl Daemon {
     }
 
     pub(crate) async fn reconnect_cloud(&self) {
-        let Some(cloud) = &self.inner.cloud else {
+        if self.inner.cloud.is_none() {
             return;
-        };
+        }
         if let Some(runtime) = self.inner.runtime.lock().await.as_mut() {
-            runtime.spawn_cloud_connector(&self.inner.name, cloud);
+            runtime.spawn_cloud_connector(&self.inner);
         }
     }
 

@@ -477,8 +477,8 @@ pub(crate) struct StartedUserServices {
     trusted_incoming_tx: mpsc::Sender<BoxedGrpcIo>,
     #[cfg(test)]
     pairing_incoming_tx: mpsc::Sender<BoxedGrpcIo>,
-    #[cfg(test)]
-    pair_mode: Arc<PairMode>,
+    #[cfg(any(test, feature = "testnet"))]
+    pub(crate) pair_mode: Arc<PairMode>,
     reachability_links: ReachabilityLinkConnector,
     dispatcher: TunnelDispatcher,
 }
@@ -616,7 +616,7 @@ pub(crate) async fn start_user_services(
         trusted_incoming_tx,
         #[cfg(test)]
         pairing_incoming_tx,
-        #[cfg(test)]
+        #[cfg(any(test, feature = "testnet"))]
         pair_mode,
         reachability_links,
         dispatcher,
@@ -671,6 +671,22 @@ impl StartedUserServices {
 
     pub(crate) fn serve_external_tcp_listener(&mut self, listener: TcpListener) {
         let task = self.dispatcher.serve_tcp_listener(listener);
+        self.tasks.push(task);
+    }
+
+    /// Test seam: serves the external TCP listener while registering every
+    /// accepted socket in `connections`, so an in-process restart can sever
+    /// them like a real process exit (see
+    /// [`crate::dispatcher::TunnelDispatcher::serve_tcp_listener_tracked`]).
+    #[cfg(any(test, feature = "testnet"))]
+    pub(crate) fn serve_external_tcp_listener_tracked(
+        &mut self,
+        listener: TcpListener,
+        connections: crate::dispatcher::TrackedTcpConnections,
+    ) {
+        let task = self
+            .dispatcher
+            .serve_tcp_listener_tracked(listener, connections);
         self.tasks.push(task);
     }
 

@@ -616,7 +616,7 @@ fn temp_path_for(path: &Path) -> PathBuf {
     path.with_file_name(format!(".{file_name}.{}.tmp", uuid::Uuid::new_v4()))
 }
 
-fn device_key_path(data_dir: &Path) -> PathBuf {
+pub(crate) fn device_key_path(data_dir: &Path) -> PathBuf {
     data_dir.join(DEVICE_KEY_FILE)
 }
 

@@ -25,17 +25,34 @@ where
     D: Future<Output = String>,
 {
     let deadline = Instant::now() + DEFAULT_TIMEOUT;
+    let mut check_hung = false;
     loop {
-        if check().await {
-            return;
+        let remaining = deadline.saturating_duration_since(Instant::now());
+        // The deadline binds the check future itself, not just the gaps
+        // between polls: an observable that blocks forever must surface as
+        // a timed-out assertion with a dump, never as a hung test.
+        match tokio::time::timeout(remaining, check()).await {
+            Ok(true) => return,
+            Ok(false) => {}
+            Err(_) => {
+                check_hung = true;
+                break;
+            }
         }
         if Instant::now() >= deadline {
             break;
         }
         tokio::time::sleep(POLL_INTERVAL).await;
     }
-    panic!(
-        "spec assertion timed out after {DEFAULT_TIMEOUT:?}: {assertion}\n{}",
-        dump.await
-    );
+    let hung_note = if check_hung {
+        " (the final condition poll itself did not resolve)"
+    } else {
+        ""
+    };
+    // The dump itself queries live daemons and must not be able to hang the
+    // failing test either.
+    let dump = tokio::time::timeout(DEFAULT_TIMEOUT, dump)
+        .await
+        .unwrap_or_else(|_| "<state dump timed out>".to_string());
+    panic!("spec assertion timed out after {DEFAULT_TIMEOUT:?}{hung_note}: {assertion}\n{dump}");
 }

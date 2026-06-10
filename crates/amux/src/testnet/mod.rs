@@ -27,6 +27,7 @@
 mod assertions;
 mod daemon;
 mod net;
+mod pairing;
 
 use std::fmt::Write as _;
 use std::net::SocketAddr;
@@ -36,6 +37,7 @@ use tokio::net::TcpListener;
 use tokio::sync::Mutex;
 
 pub use daemon::{Daemon, RouteAssertion};
+pub use pairing::{PairAttempt, Pin, QrPayload};
 
 use crate::identity::{DeviceIdentity, load_or_create_device_identity_in};
 use crate::trust::{Reachability, TrustEntry, TrustStore};
@@ -407,6 +409,7 @@ impl TestNetBuilder {
                     }
                 }),
                 runtime: Mutex::new(None),
+                tracked_tcp: Default::default(),
             });
             let runtime = start_daemon_runtime(&inner, prep.listener).await;
             *inner.runtime.lock().await = Some(runtime);

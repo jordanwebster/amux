@@ -67,10 +67,13 @@ async fn operator_verbs_cover_failover_outage_recovery_and_restart() {
     laptop.sees(&phone).await;
     laptop.lists_agents_on(&phone).await.unwrap();
 
-    // Restart preserves identity and re-establishes links.
+    // Restart preserves identity. The restart killed laptop's direct link
+    // (desktop holds no reachability back, so nothing re-dials it); traffic
+    // settles on the cloud route once laptop evicts the dead direct route.
     let desktop_id = desktop.host_id();
     desktop.restart().await;
     assert_eq!(desktop.host_id(), desktop_id);
     laptop.sees(&desktop).await;
+    laptop.connects_to(&desktop).via_cloud().await;
     laptop.lists_agents_on(&desktop).await.unwrap();
 }

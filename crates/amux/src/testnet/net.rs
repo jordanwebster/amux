@@ -87,7 +87,7 @@ impl CloudRelay {
     }
 
     async fn serve(&self, listener: TcpListener) {
-        let state = testnet_server_state("cloud", self.host_id);
+        let state = testnet_server_state("cloud", self.host_id, None, false);
         state.write().await.is_cloud_server = true;
         let service = CloudRoutingService::with_authenticator(
             state,
@@ -175,13 +175,21 @@ pub(crate) async fn bind_addr_with_retries(addr: SocketAddr) -> TcpListener {
 }
 
 /// Minimal `ServerState` for an in-process testnet node.
+///
+/// `tcp_port` / `enable_cloud_mode` mirror what a configured daemon would
+/// hold so config-gated surfaces (e.g. `StartPairing`'s QR mode requiring
+/// cloud mode) behave like production.
 pub(crate) fn testnet_server_state(
     host_name: &str,
     host_id: HostId,
+    tcp_port: Option<u16>,
+    enable_cloud_mode: bool,
 ) -> std::sync::Arc<RwLock<ServerState>> {
     let (shutdown_tx, _shutdown_rx) = mpsc::channel::<ShutdownRequest>(1);
     let config = Config {
         host_name: host_name.to_string(),
+        tcp_port,
+        enable_cloud_mode: enable_cloud_mode.then_some(true),
         ..Config::default()
     };
     std::sync::Arc::new(RwLock::new(ServerState::new(

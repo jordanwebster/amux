@@ -434,6 +434,19 @@ impl ConnectionManager {
             let mut state = self.state.write().await;
             if !route_is_known(&state, peer, &route) {
                 (false, None)
+            } else if state.active.get(&peer).is_some_and(|active| {
+                active != &route
+                    && active.len() <= route.len()
+                    && route_is_known(&state, peer, active)
+            }) {
+                // A stale in-flight activation must not demote the active
+                // route: a better route activated while this one was being
+                // materialized, and evicting its runtime state here would
+                // permanently strand single-hop routes (their link-backed
+                // channels are only registered at link establishment and
+                // cannot be re-materialized). Serve the call on the channel
+                // we built; the active route stays as is.
+                return Ok(channel);
             } else {
                 (true, state.active.insert(peer, route.clone()))
             }
