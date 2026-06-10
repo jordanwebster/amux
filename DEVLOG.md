@@ -38,6 +38,39 @@ One paragraph describing what was done.
 
 ---
 
+## 2026-06-11: Protocol v6 one-pager
+
+### Summary
+Concluded the protocol-simplification walkthrough (all proposals from the
+networking review resolved) and wrote `docs/PROTOCOL.md` — the v6 target
+design as a one-pager. Core decisions: host-id routing with one proxy hop
+through any relay (advertise-only-adjacency / forward-only-to-adjacency);
+every peer call is a tunnel with pinned e2e mTLS inside (links grant
+forwarding only, never call authority); QR pairing collapses into the
+SPAKE2 flow as a QR-carried 256-bit secret; neighbor snapshot moves into
+Hello/HelloAck (SnapshotComplete deleted); GoAway drain deleted and the
+message renamed LinkClose; Reauth kept but ReauthAck deleted
+(fire-and-forget refresh, so live sessions are never disturbed); TunnelClose
+added; HostUp/Down → NeighborUp/Down, TunnelFrame → TunnelData,
+RoutingService → LinkService, PairBySpake2 → Pair.
+
+### Decisions Made
+- Full rationale recorded in `notes/PROTOCOL_V6_DECISIONS.md` (D1–D15,
+  local working notes). Notable rejections: link-scoped tunnel IDs (forces
+  relay remap state), tunnels surviving link replacement (cross-link
+  reordering), dropping Reauth entirely (hourly breaks of live cloud
+  sessions).
+
+### Verification
+- Design-only change; no code. Spec suite unaffected (expected flips when
+  v6 lands are pre-recorded in the decisions notes).
+
+### Next Steps
+- Implement in sequence: P3+P6 deletions → P1+P8 core rewrite → P2 →
+  P5/P7, spec suite green throughout.
+
+---
+
 ## 2026-06-10: Spec suite polish, harness docs, CI wiring
 
 ### Summary
