@@ -145,26 +145,8 @@ async fn handshake_floods_are_rate_limited_without_disturbing_existing_links() {
     // The ally's link (it dialed the victim at startup) predates the flood.
     ally.can_call(&victim).await;
 
-    // Spend past the 10/min per-source budget. Early handshakes are admitted
-    // (they complete TLS, then the dispatcher closes the anonymous stream);
-    // once the budget is spent, handshakes are refused before TLS. We stop at
-    // the first refusal that follows at least one admitted handshake, which is
-    // the rate limiter engaging.
-    let mut admitted = 0;
-    let mut refused = false;
-    for _ in 0..20 {
-        if WirePeer::anonymous_tls_handshake_succeeds(&net, "victim").await {
-            admitted += 1;
-        } else if admitted > 0 {
-            refused = true;
-            break;
-        }
-    }
-    assert!(
-        refused,
-        "expected the per-source handshake rate limiter to refuse a handshake \
-         after {admitted} were admitted"
-    );
+    // Spend past the 10/min per-source budget until the limiter engages.
+    WirePeer::flood_handshakes_until_rate_limited(&net, "victim").await;
 
     // The pre-existing paired link is unaffected by the flood.
     ally.can_call(&victim).await;

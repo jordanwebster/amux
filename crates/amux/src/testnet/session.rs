@@ -10,13 +10,12 @@
 
 use uuid::Uuid;
 
+use super::Daemon;
+use super::assertions::{DEFAULT_TIMEOUT, eventually};
 use crate::agents::{TEST_ECHO_COMMAND, TEST_ECHO_V1};
 use crate::client::{Client, ClientError};
 use crate::protocol::ProtocolError;
 use crate::{AgentType, CreateAgentRequest, SendInputRequest, SubscribeSessionEvent};
-
-use super::Daemon;
-use super::assertions::{DEFAULT_TIMEOUT, eventually};
 
 /// Asserts a routed local-admin RPC was rejected with permission-denied.
 fn assert_permission_denied(rpc: &str, result: Result<(), ClientError>) {

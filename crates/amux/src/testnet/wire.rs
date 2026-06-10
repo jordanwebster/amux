@@ -27,6 +27,8 @@ use tokio::sync::mpsc;
 use tokio_rustls::TlsConnector;
 use tonic::Request;
 
+use super::TestNet;
+use super::assertions::DEFAULT_TIMEOUT;
 use crate::HostId;
 use crate::identity::load_or_create_device_identity_in;
 use crate::protocol::PROTOCOL_VERSION;
@@ -35,17 +37,19 @@ use crate::routing::{Capabilities, Host, host_to_wire};
 use crate::transport::trusted_device_channel;
 use crate::trust::{TrustEntry, TrustStore};
 
-use super::TestNet;
-use super::assertions::DEFAULT_TIMEOUT;
-
 /// The GoAway reasons the wire-conformance tests assert on. Mirrors the wire
 /// enum so the spec suite need not name the crate-private protobuf type.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum GoAwayReason {
+    /// The wire enum's zero value: no reason given.
     Unspecified,
+    /// The peer committed a link-closing protocol violation.
     ProtocolError,
+    /// The link's authentication expired without a successful Reauth.
     AuthExpired,
+    /// The user asked the daemon to shut down.
     UserShutdown,
+    /// The peer must update before the daemon will talk to it.
     UpdateRequired,
     /// Any wire reason not modelled above, carrying its raw code.
     Other(i32),
@@ -354,6 +358,30 @@ impl WirePeer {
         }
     }
 
+    /// Floods `victim`'s external TCP listener with anonymous TLS handshakes
+    /// from this process's source IP until the per-source rate limiter
+    /// refuses one. Early handshakes are admitted — they complete TLS, then
+    /// the dispatcher closes the anonymous stream — and once the budget is
+    /// spent, handshakes are refused before TLS. The flood stops at the first
+    /// refusal that follows at least one admitted handshake (the limiter
+    /// engaging); it panics if the limiter never engages within the attempt
+    /// budget.
+    pub async fn flood_handshakes_until_rate_limited(net: &TestNet, victim: &str) {
+        const MAX_FLOOD_ATTEMPTS: usize = 20;
+        let mut admitted = 0;
+        for _ in 0..MAX_FLOOD_ATTEMPTS {
+            if Self::anonymous_tls_handshake_succeeds(net, victim).await {
+                admitted += 1;
+            } else if admitted > 0 {
+                return;
+            }
+        }
+        panic!(
+            "expected '{victim}'s per-source handshake rate limiter to refuse a \
+             handshake after {admitted} were admitted"
+        );
+    }
+
     /// Attempts a single anonymous (no client cert) device-TLS handshake
     /// against `victim`'s external TCP listener, returning whether the TLS
     /// handshake completed. An admitted handshake completes on localhost in a
@@ -361,7 +389,7 @@ impl WirePeer {
     /// gRPC layer, which this probe does not reach); a rate-limited one is
     /// left unanswered — the dispatcher drops it before TLS — so it never
     /// completes and this returns `false` after a short bound.
-    pub async fn anonymous_tls_handshake_succeeds(net: &TestNet, victim: &str) -> bool {
+    async fn anonymous_tls_handshake_succeeds(net: &TestNet, victim: &str) -> bool {
         // A rate-limited connection is dropped server-side before any TLS
         // bytes; on localhost an admitted handshake finishes well within this
         // bound, so a timeout reliably means "refused".

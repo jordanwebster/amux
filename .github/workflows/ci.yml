@@ -41,7 +41,7 @@ jobs:
           components: clippy
       - uses: Swatinem/rust-cache@v2
       - name: Run clippy
-        run: cargo clippy --workspace --all-targets -- -D warnings
+        run: cargo clippy --workspace --all-targets --features amux/testnet -- -D warnings
 
   test:
     name: Test
@@ -55,6 +55,8 @@ jobs:
       - uses: Swatinem/rust-cache@v2
       - name: Run tests
         run: cargo test --workspace --all-targets
+      - name: Run spec tests
+        run: cargo test -p amux --features testnet --test spec
 
   build:
     name: Build

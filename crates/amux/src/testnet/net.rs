@@ -19,6 +19,7 @@ use tokio::sync::{Mutex, RwLock, mpsc};
 use tokio::task::JoinHandle;
 use uuid::Uuid;
 
+use super::assertions::POLL_INTERVAL;
 use crate::HostId;
 use crate::config::Config;
 use crate::connection::ConnectionManager;
@@ -27,8 +28,6 @@ use crate::routing::{AuthenticatedRoutingUser, RoutingTokenAuthenticator};
 use crate::services::CloudRoutingService;
 use crate::transport::TcpServerTransport;
 use crate::user_state::{ServerState, ShutdownRequest};
-
-use super::assertions::POLL_INTERVAL;
 
 /// OS-level handles to every TCP connection the relay has accepted, so an
 /// outage can sever them for real (tonic's spawned connection tasks outlive

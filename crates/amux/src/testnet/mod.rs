@@ -1,10 +1,13 @@
 //! TestNet: the in-process spec-test harness.
 //!
-//! Builds topologies of *whole daemons* — real identities, real trust
-//! stores, real localhost TCP with device mTLS, and an optional in-process
-//! cloud relay — and exposes user-meaningful observation verbs plus
-//! network-operator verbs. See `notes/SPEC_TESTS_DESIGN.md` for the design
-//! contract; the assembly recipes come from the `services::startup` tests.
+//! [`TestNet`] builds a declared topology of *whole daemons* — real
+//! identities, real trust stores, real localhost TCP with device mTLS, and
+//! an optional in-process cloud relay — then hands out [`Daemon`] handles
+//! whose verbs are user-meaningful (`sees`, `trusts`, `can_call`, `pair`,
+//! `attach`, …). The net itself carries the network-operator verbs
+//! (`sever_direct`, `cloud_offline`, …); [`WirePeer`] is the separate
+//! scripted protocol actor for wire-conformance tests. See
+//! `notes/SPEC_TESTS_DESIGN.md` for the design contract.
 //!
 //! ```ignore
 //! let net = TestNet::builder()
@@ -21,6 +24,21 @@
 //! laptop.lists_agents_on(&desktop).await.unwrap();
 //! ```
 //!
+//! Three disciplines hold throughout:
+//!
+//! - **Eventually, never sleep.** Every observation verb polls through
+//!   [`assertions::eventually`] under one default timeout; on expiry it
+//!   panics with a dump of the declared topology, every daemon's host table,
+//!   and the failing daemon's routes. Tests contain no retry loops.
+//! - **Restart = process exit.** `Daemon::stop`/`restart` drop the runtime
+//!   *and* sever OS-level duplicates of every socket it held (accepted and
+//!   dialed), because detached connection tasks would otherwise keep a dead
+//!   incarnation "online". Identity, trust, and the TCP address persist in
+//!   the daemon's data dir across restarts.
+//! - **Sever = real outage.** `sever_direct`/`cloud_offline` cut sockets (or
+//!   close links) hard and return only once the affected daemons have
+//!   observed the loss, so follow-up assertions start from a settled net.
+//!
 //! Compiled only with the `testnet` cargo feature; not part of the public
 //! API.
 
@@ -35,20 +53,18 @@ use std::fmt::Write as _;
 use std::net::SocketAddr;
 use std::sync::Arc;
 
-use tokio::net::TcpListener;
-use tokio::sync::Mutex;
-
+use assertions::eventually;
+use daemon::{CloudAttachment, DaemonInner, start_daemon_runtime};
 pub use daemon::{Daemon, ExpiringJwt, RouteAssertion, RoutedStream};
+use net::CloudRelay;
 pub use pairing::{PairAttempt, Pin, QrPayload};
 pub use session::EchoSession;
+use tokio::net::TcpListener;
+use tokio::sync::Mutex;
 pub use wire::{GoAwayReason, WirePeer};
 
 use crate::identity::{DeviceIdentity, load_or_create_device_identity_in};
 use crate::trust::{Reachability, TrustEntry, TrustStore};
-
-use assertions::eventually;
-use daemon::{CloudAttachment, DaemonInner, start_daemon_runtime};
-use net::CloudRelay;
 
 /// How a pre-paired fixture pair reaches each other.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -61,6 +77,9 @@ pub enum Via {
     Cloud,
 }
 
+/// A running testnet: the daemons and optional cloud relay declared through
+/// [`TestNet::builder`], plus the network-operator verbs that disturb them.
+/// Dropping the net tears everything down (runtimes, sockets, data dirs).
 pub struct TestNet {
     inner: Arc<NetInner>,
 }
@@ -79,6 +98,7 @@ pub(crate) struct NetInner {
 const RELAY_CALL_ATTEMPT_TIMEOUT: std::time::Duration = assertions::DEFAULT_TIMEOUT;
 
 impl TestNet {
+    /// Starts declaring a topology; finish with [`TestNetBuilder::start`].
     pub fn builder() -> TestNetBuilder {
         TestNetBuilder::default()
     }
@@ -288,6 +308,9 @@ struct DaemonSpec {
     cloud_user: Option<String>,
 }
 
+/// Declares a topology for [`TestNetBuilder::start`]: daemons, an optional
+/// cloud relay, and pre-seeded trust (pairing-as-fixture). Obtained from
+/// [`TestNet::builder`].
 #[derive(Default)]
 pub struct TestNetBuilder {
     cloud: bool,

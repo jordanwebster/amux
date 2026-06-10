@@ -9,16 +9,29 @@
 
 use std::time::Duration;
 
-use crate::client::PairingSecret;
-use crate::{HostId, pair_via_pin_direct_tcp, pair_via_ssh_initiator, pair_via_ssh_responder};
-
 use super::Daemon;
 use super::assertions::eventually;
+use crate::client::PairingSecret;
+use crate::{HostId, pair_via_pin_direct_tcp, pair_via_ssh_initiator, pair_via_ssh_responder};
 
 /// A 6-digit pairing PIN handed out by [`Daemon::start_pairing`].
 /// Dereferences to the PIN string for `pair(..).with_pin(&pin)`.
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub struct Pin(String);
+
+impl Pin {
+    /// A PIN that is definitely not this one, still six digits — the
+    /// adversary's (deterministically) wrong guess.
+    pub fn wrong_guess(&self) -> Pin {
+        let first = self.0.as_bytes()[0];
+        let flipped = if first == b'9' {
+            '0'
+        } else {
+            (first + 1) as char
+        };
+        Pin(format!("{flipped}{}", &self.0[1..]))
+    }
+}
 
 impl std::ops::Deref for Pin {
     type Target = str;
@@ -38,8 +51,12 @@ impl std::fmt::Display for Pin {
 /// [`Daemon::start_qr_pairing`].
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub struct QrPayload {
+    /// The responder's host id.
     pub host_id: HostId,
+    /// The responder's device public key; the initiator pins it at the TLS
+    /// layer.
     pub pubkey: Vec<u8>,
+    /// The one-shot bearer token consumed by the first successful pairing.
     pub one_shot_token: Vec<u8>,
 }
 

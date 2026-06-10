@@ -13,6 +13,9 @@ use tokio::task::JoinHandle;
 use tonic::codegen::http::Uri;
 use tonic::transport::{Channel, Endpoint};
 
+use super::NetInner;
+use super::assertions::eventually;
+use super::net::{RegisteredToken, TokenRegistry, bind_addr_with_retries, testnet_server_state};
 use crate::HostId;
 use crate::client::Client;
 use crate::connection::ConnectionManager;
@@ -31,10 +34,6 @@ use crate::services::{
 };
 use crate::trust::{Reachability, SharedTrustStore, TrustStore};
 use crate::tunnel::TunnelPool;
-
-use super::NetInner;
-use super::assertions::eventually;
-use super::net::{RegisteredToken, TokenRegistry, bind_addr_with_retries, testnet_server_state};
 
 /// Parameters a daemon needs to (re)connect to the testnet cloud relay.
 pub(crate) struct CloudAttachment {
@@ -346,10 +345,12 @@ pub struct Daemon {
 }
 
 impl Daemon {
+    /// The daemon's builder-declared name (e.g. `"laptop"`).
     pub fn name(&self) -> &str {
         &self.inner.name
     }
 
+    /// The daemon's persistent host id (stable across restarts).
     pub fn host_id(&self) -> HostId {
         self.inner.host_id
     }

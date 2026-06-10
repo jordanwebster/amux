@@ -8,18 +8,7 @@
 
 use std::time::Duration;
 
-use amux::testnet::{Pin, TestNet, Via};
-
-/// A PIN that is definitely not `pin`, still six digits.
-fn wrong_pin(pin: &Pin) -> String {
-    let first = pin.as_bytes()[0];
-    let flipped = if first == b'9' {
-        '0'
-    } else {
-        (first + 1) as char
-    };
-    format!("{flipped}{}", &pin[1..])
-}
+use amux::testnet::{TestNet, Via};
 
 /// PIN pairing over direct TCP establishes mutual trust; afterwards both
 /// sides can call each other (the initiator over its new direct link, the
@@ -139,7 +128,7 @@ async fn wrong_pin_fails_opaquely_and_the_correct_pin_still_works() {
     let pin = desktop.start_pairing().await;
     let error = laptop
         .pair(&desktop)
-        .with_pin(&wrong_pin(&pin))
+        .with_pin(&pin.wrong_guess())
         .await
         .expect_err("a wrong PIN must not pair");
     assert!(
@@ -173,7 +162,7 @@ async fn five_pin_failures_cancel_pair_mode() {
     for _ in 0..5 {
         laptop
             .pair(&desktop)
-            .with_pin(&wrong_pin(&pin))
+            .with_pin(&pin.wrong_guess())
             .await
             .expect_err("a wrong PIN must not pair");
     }
