@@ -17,8 +17,8 @@ use crate::protocol::{PROTOCOL_VERSION, ProtocolError, protocol_status, wire};
 use crate::routing::{
     ConnectHandshake, ConnectHandshakeEvent, Host, HostUpOutcome, InboundRoutingEvent, Link,
     LinkCloseReason, LinkRegistry, LinkRole, Route, RoutingCore, RoutingEvent as CoreRoutingEvent,
-    host_from_wire, host_to_wire, outbound_routing_message, protocol_error_goaway,
-    protocol_error_hello_ack, should_send_routing_event_to_link, validate_remote_host,
+    host_from_wire, host_to_wire, outbound_routing_message, protocol_error_hello_ack,
+    protocol_error_link_close, should_send_routing_event_to_link, validate_remote_host,
     wire_routing_event_to_inbound,
 };
 use crate::transport::{BoxedGrpcAuth, BoxedGrpcConnectInfo};
@@ -34,7 +34,6 @@ type EstablishmentReceiver = oneshot::Receiver<Result<Host, tonic::Status>>;
 
 const ROUTING_AUTH_REFRESH_BEFORE_EXPIRY: Duration = Duration::from_secs(300);
 const ROUTING_AUTH_REAUTH_RESPONSE_TIMEOUT: Duration = Duration::from_secs(15);
-const ROUTING_AUTH_EXPIRED_DRAIN_TIMEOUT_MS: u32 = 0;
 const ROUTING_CONNECT_HELLO_TIMEOUT: Duration = Duration::from_secs(10);
 
 #[derive(Debug, Clone)]
@@ -548,7 +547,9 @@ where
                 Ok(peer) => peer,
                 Err(error) => {
                     let message = error.message.clone();
-                    let _ = out_tx.send(protocol_error_goaway_from_error(error)).await;
+                    let _ = out_tx
+                        .send(protocol_error_link_close_from_error(error))
+                        .await;
                     return connector_establishment_failed(
                         established_tx,
                         tonic::Status::invalid_argument(message),
@@ -564,7 +565,7 @@ where
         }
         Ok(_) => {
             let message = "unexpected handshake event while awaiting hello_ack";
-            let _ = out_tx.send(protocol_error_goaway(message)).await;
+            let _ = out_tx.send(protocol_error_link_close(message)).await;
             return connector_establishment_failed(
                 established_tx,
                 tonic::Status::invalid_argument(message),
@@ -572,7 +573,9 @@ where
         }
         Err(error) => {
             let message = error.to_string();
-            let _ = out_tx.send(protocol_error_goaway(message.clone())).await;
+            let _ = out_tx
+                .send(protocol_error_link_close(message.clone()))
+                .await;
             return connector_establishment_failed(
                 established_tx,
                 tonic::Status::invalid_argument(message),
@@ -689,7 +692,7 @@ async fn run_established_connect(
                     let _ =
                         established_tx.send(Err(tonic::Status::invalid_argument(error.clone())));
                 }
-                let _ = try_send_outbound(&out_tx, protocol_error_goaway(error));
+                let _ = try_send_outbound(&out_tx, protocol_error_link_close(error));
                 cleanup_link(&ctx).await;
                 return Ok(());
             }
@@ -710,8 +713,6 @@ async fn run_established_connect(
     }
     let mut acceptor_auth = ctx.auth_session.clone().map(EstablishedRoutingAuth::new);
     let mut connector_reauth = connector_auth.map(ConnectorReauthState::new);
-    let mut drain_deadline = None;
-    let mut draining = false;
     let mut close_status = None;
 
     loop {
@@ -734,7 +735,7 @@ async fn run_established_connect(
                     Err(status) => {
                     let _ = try_send_outbound(
                         &out_tx,
-                            protocol_error_goaway(status.to_string()),
+                            protocol_error_link_close(status.to_string()),
                     );
                     break;
                     }
@@ -745,51 +746,35 @@ async fn run_established_connect(
                             &ctx,
                             &out_tx,
                             body,
-                            draining,
                             acceptor_auth.as_mut(),
                             connector_reauth.as_mut(),
                         ).await {
                             PostHandshakeAction::Continue => {}
                             PostHandshakeAction::Close => break,
-                            PostHandshakeAction::Drain { duration, status } => {
-                                ctx.links.mark_draining(&ctx.link).await;
-                                draining = true;
-                                acceptor_auth = None;
-                                connector_reauth = None;
+                            PostHandshakeAction::LinkClosed { status } => {
                                 close_status = close_status.or(status);
-                                if duration.is_zero() {
-                                    break;
-                                }
-                                let deadline = tokio::time::Instant::now() + duration;
-                                drain_deadline = Some(
-                                    drain_deadline
-                                        .map(|current: tokio::time::Instant| current.min(deadline))
-                                        .unwrap_or(deadline),
-                                );
+                                break;
                             }
                         }
                     }
                     Ok(_) => {
                         if !try_send_outbound(
                             &out_tx,
-                            protocol_error_goaway("unexpected handshake event after establishment"),
+                            protocol_error_link_close("unexpected handshake event after establishment"),
                         ) {
                             break;
                         }
                         break;
                     }
                     Err(error) => {
-                        let _ = try_send_outbound(&out_tx, protocol_error_goaway(error.to_string()));
+                        let _ = try_send_outbound(&out_tx, protocol_error_link_close(error.to_string()));
                         break;
                     }
                 }
             }
-            _ = maybe_sleep_until(drain_deadline), if drain_deadline.is_some() => {
-                break;
-            }
             _ = maybe_sleep_until(auth_expiry_deadline), if auth_expiry_deadline.is_some() => {
                 audit::auth_jwt_failure("routing authorization expired");
-                let _ = try_send_outbound(&out_tx, auth_expired_goaway());
+                let _ = try_send_outbound(&out_tx, auth_expired_link_close());
                 break;
             }
             _ = maybe_sleep_until(connector_refresh_deadline), if connector_refresh_deadline.is_some() => {
@@ -798,7 +783,7 @@ async fn run_established_connect(
                 };
                 if let Err(status) = connector_reauth.send_refresh(&out_tx).await {
                     audit::auth_jwt_failure(&status);
-                    let _ = try_send_outbound(&out_tx, protocol_error_goaway(status.to_string()));
+                    let _ = try_send_outbound(&out_tx, protocol_error_link_close(status.to_string()));
                     close_status = Some(status);
                     break;
                 }
@@ -806,7 +791,7 @@ async fn run_established_connect(
             _ = maybe_sleep_until(connector_response_timeout), if connector_response_timeout.is_some() => {
                 let _ = try_send_outbound(
                     &out_tx,
-                    protocol_error_goaway("routing reauth response timed out"),
+                    protocol_error_link_close("routing reauth response timed out"),
                 );
                 audit::auth_jwt_failure("routing reauth response timed out");
                 break;
@@ -1082,8 +1067,8 @@ async fn send_initial_routing_snapshot(
 enum PostHandshakeAction {
     Continue,
     Close,
-    Drain {
-        duration: Duration,
+    /// The peer declared the link closed (`LinkClose`): stop immediately.
+    LinkClosed {
         status: Option<tonic::Status>,
     },
 }
@@ -1092,19 +1077,9 @@ async fn handle_post_handshake_body(
     ctx: &EstablishedConnectCtx,
     out_tx: &mpsc::Sender<wire::pb::Message>,
     body: wire::pb::message::Body,
-    draining: bool,
     acceptor_auth: Option<&mut EstablishedRoutingAuth>,
     connector_reauth: Option<&mut ConnectorReauthState>,
 ) -> PostHandshakeAction {
-    if draining
-        && !matches!(
-            body,
-            wire::pb::message::Body::TunnelFrame(_) | wire::pb::message::Body::Goaway(_)
-        )
-    {
-        return PostHandshakeAction::Continue;
-    }
-
     match body {
         wire::pb::message::Body::RoutingEvent(event) => {
             match wire_routing_event_to_inbound(event, &ctx.link) {
@@ -1112,7 +1087,7 @@ async fn handle_post_handshake_body(
                     if host.id == ctx.local_host_id {
                         let _ = try_send_outbound(
                             out_tx,
-                            protocol_error_goaway(
+                            protocol_error_link_close(
                                 "inbound HostUp host_id must not match local host_id",
                             ),
                         );
@@ -1136,7 +1111,7 @@ async fn handle_post_handshake_body(
                 Ok(InboundRoutingEvent::SnapshotComplete) => PostHandshakeAction::Continue,
                 Ok(InboundRoutingEvent::RouteOverHopCap) => PostHandshakeAction::Continue,
                 Err(error) => {
-                    let _ = try_send_outbound(out_tx, protocol_error_goaway(error.to_string()));
+                    let _ = try_send_outbound(out_tx, protocol_error_link_close(error.to_string()));
                     PostHandshakeAction::Close
                 }
             }
@@ -1149,7 +1124,7 @@ async fn handle_post_handshake_body(
             {
                 Ok(()) => PostHandshakeAction::Continue,
                 Err(error) => {
-                    let _ = try_send_outbound(out_tx, protocol_error_goaway(error.to_string()));
+                    let _ = try_send_outbound(out_tx, protocol_error_link_close(error.to_string()));
                     PostHandshakeAction::Close
                 }
             }
@@ -1168,9 +1143,8 @@ async fn handle_post_handshake_body(
                 PostHandshakeAction::Close
             }
         }
-        wire::pb::message::Body::Goaway(goaway) => PostHandshakeAction::Drain {
-            duration: goaway_drain_duration(&goaway),
-            status: goaway_status(&goaway),
+        wire::pb::message::Body::LinkClose(close) => PostHandshakeAction::LinkClosed {
+            status: link_close_status(&close),
         },
         wire::pb::message::Body::Hello(_) | wire::pb::message::Body::HelloAck(_) => {
             unreachable!("handshake body should be rejected by ConnectHandshake")
@@ -1178,30 +1152,20 @@ async fn handle_post_handshake_body(
     }
 }
 
-fn goaway_status(goaway: &wire::pb::GoAway) -> Option<tonic::Status> {
-    let reason = wire::pb::GoAwayReason::try_from(goaway.reason)
-        .unwrap_or(wire::pb::GoAwayReason::Unspecified);
-    if reason != wire::pb::GoAwayReason::UpdateRequired {
+fn link_close_status(close: &wire::pb::LinkClose) -> Option<tonic::Status> {
+    let reason = wire::pb::LinkCloseReason::try_from(close.reason)
+        .unwrap_or(wire::pb::LinkCloseReason::Unspecified);
+    if reason != wire::pb::LinkCloseReason::UpdateRequired {
         return None;
     }
     Some(
-        goaway
+        close
             .error
             .clone()
             .map(wire::decode_protocol_error)
             .map(protocol_status)
             .unwrap_or_else(|| tonic::Status::failed_precondition("amux update required")),
     )
-}
-
-fn goaway_drain_duration(goaway: &wire::pb::GoAway) -> Duration {
-    let reason = wire::pb::GoAwayReason::try_from(goaway.reason)
-        .unwrap_or(wire::pb::GoAwayReason::Unspecified);
-    if reason == wire::pb::GoAwayReason::ProtocolError || goaway.drain_timeout_ms == 0 {
-        Duration::ZERO
-    } else {
-        Duration::from_millis(u64::from(goaway.drain_timeout_ms))
-    }
 }
 
 struct EstablishedRoutingAuth {
@@ -1299,7 +1263,7 @@ async fn handle_reauth(
     let Some(auth) = acceptor_auth else {
         let _ = try_send_outbound(
             out_tx,
-            protocol_error_goaway("routing reauth received on unauthenticated link"),
+            protocol_error_link_close("routing reauth received on unauthenticated link"),
         );
         return false;
     };
@@ -1339,7 +1303,7 @@ async fn handle_reauth_ack(
         None => {
             let _ = try_send_outbound(
                 out_tx,
-                protocol_error_goaway("routing reauth_ack received without connector auth"),
+                protocol_error_link_close("routing reauth_ack received without connector auth"),
             );
             false
         }
@@ -1366,26 +1330,24 @@ fn unauthenticated_reauth_ack() -> wire::pb::Message {
     }
 }
 
-fn auth_expired_goaway() -> wire::pb::Message {
+fn auth_expired_link_close() -> wire::pb::Message {
     wire::pb::Message {
-        body: Some(wire::pb::message::Body::Goaway(wire::pb::GoAway {
-            reason: wire::pb::GoAwayReason::AuthExpired as i32,
+        body: Some(wire::pb::message::Body::LinkClose(wire::pb::LinkClose {
+            reason: wire::pb::LinkCloseReason::AuthExpired as i32,
             error: Some(wire::pb::Error {
                 code: wire::pb::ErrorCode::Unauthenticated as i32,
                 message: "routing authorization expired".to_string(),
                 details: Vec::new(),
             }),
-            drain_timeout_ms: ROUTING_AUTH_EXPIRED_DRAIN_TIMEOUT_MS,
         })),
     }
 }
 
-fn protocol_error_goaway_from_error(error: wire::pb::Error) -> wire::pb::Message {
+fn protocol_error_link_close_from_error(error: wire::pb::Error) -> wire::pb::Message {
     wire::pb::Message {
-        body: Some(wire::pb::message::Body::Goaway(wire::pb::GoAway {
-            reason: wire::pb::GoAwayReason::ProtocolError as i32,
+        body: Some(wire::pb::message::Body::LinkClose(wire::pb::LinkClose {
+            reason: wire::pb::LinkCloseReason::ProtocolError as i32,
             error: Some(error),
-            drain_timeout_ms: 0,
         })),
     }
 }
@@ -1531,11 +1493,10 @@ mod tests {
         ))
     }
 
-    fn goaway(reason: wire::pb::GoAwayReason, drain_timeout_ms: u32) -> wire::pb::Message {
-        message(wire::pb::message::Body::Goaway(wire::pb::GoAway {
+    fn link_close(reason: wire::pb::LinkCloseReason) -> wire::pb::Message {
+        message(wire::pb::message::Body::LinkClose(wire::pb::LinkClose {
             reason: reason as i32,
             error: None,
-            drain_timeout_ms,
         }))
     }
 
@@ -1827,31 +1788,34 @@ mod tests {
         ));
     }
 
-    fn assert_protocol_goaway(message: &wire::pb::Message) {
-        let Some(wire::pb::message::Body::Goaway(goaway)) = &message.body else {
-            panic!("expected GoAway");
+    fn assert_protocol_link_close(message: &wire::pb::Message) {
+        let Some(wire::pb::message::Body::LinkClose(close)) = &message.body else {
+            panic!("expected LinkClose");
         };
-        assert_eq!(goaway.reason, wire::pb::GoAwayReason::ProtocolError as i32);
-        assert_eq!(goaway.drain_timeout_ms, 0);
-    }
-
-    fn protocol_goaway_error(message: &wire::pb::Message) -> &wire::pb::Error {
-        let Some(wire::pb::message::Body::Goaway(goaway)) = &message.body else {
-            panic!("expected GoAway");
-        };
-        assert_eq!(goaway.reason, wire::pb::GoAwayReason::ProtocolError as i32);
-        assert_eq!(goaway.drain_timeout_ms, 0);
-        goaway.error.as_ref().expect("expected GoAway error")
-    }
-
-    fn assert_auth_expired_goaway(message: &wire::pb::Message) {
-        let Some(wire::pb::message::Body::Goaway(goaway)) = &message.body else {
-            panic!("expected GoAway");
-        };
-        assert_eq!(goaway.reason, wire::pb::GoAwayReason::AuthExpired as i32);
-        assert_eq!(goaway.drain_timeout_ms, 0);
         assert_eq!(
-            goaway.error.as_ref().map(|error| error.code),
+            close.reason,
+            wire::pb::LinkCloseReason::ProtocolError as i32
+        );
+    }
+
+    fn protocol_link_close_error(message: &wire::pb::Message) -> &wire::pb::Error {
+        let Some(wire::pb::message::Body::LinkClose(close)) = &message.body else {
+            panic!("expected LinkClose");
+        };
+        assert_eq!(
+            close.reason,
+            wire::pb::LinkCloseReason::ProtocolError as i32
+        );
+        close.error.as_ref().expect("expected LinkClose error")
+    }
+
+    fn assert_auth_expired_link_close(message: &wire::pb::Message) {
+        let Some(wire::pb::message::Body::LinkClose(close)) = &message.body else {
+            panic!("expected LinkClose");
+        };
+        assert_eq!(close.reason, wire::pb::LinkCloseReason::AuthExpired as i32);
+        assert_eq!(
+            close.error.as_ref().map(|error| error.code),
             Some(wire::pb::ErrorCode::Unauthenticated as i32)
         );
     }
@@ -2023,7 +1987,7 @@ mod tests {
             .unwrap();
 
         let response = recv_message(&mut output_rx).await;
-        let error = protocol_goaway_error(&response);
+        let error = protocol_link_close_error(&response);
         assert!(
             error
                 .message
@@ -2048,7 +2012,7 @@ mod tests {
             .unwrap();
 
         let response = recv_message(&mut output_rx).await;
-        let error = protocol_goaway_error(&response);
+        let error = protocol_link_close_error(&response);
         assert!(
             error
                 .message
@@ -2067,7 +2031,7 @@ mod tests {
 
         let (_input_tx, mut output_rx) = establish(ctx, &peer).await;
 
-        assert_auth_expired_goaway(&recv_message(&mut output_rx).await);
+        assert_auth_expired_link_close(&recv_message(&mut output_rx).await);
     }
 
     #[tokio::test]
@@ -2402,7 +2366,7 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn oversized_tunnel_frame_sends_protocol_goaway_and_cleans_link() {
+    async fn oversized_tunnel_frame_sends_protocol_link_close_and_cleans_link() {
         let (ctx, routing, _tunnels) = test_ctx().await;
         let peer = host(2, "peer-host");
         let (input_tx, mut output_rx) = establish(ctx, &peer).await;
@@ -2415,7 +2379,7 @@ mod tests {
             .unwrap();
 
         let message = recv_message(&mut output_rx).await;
-        let error = protocol_goaway_error(&message);
+        let error = protocol_link_close_error(&message);
         assert_eq!(error.code, wire::pb::ErrorCode::InvalidArgument as i32);
         assert!(error.message.contains("payload exceeds"));
         wait_until(|| {
@@ -2426,7 +2390,7 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn post_handshake_stream_error_sends_protocol_goaway_and_cleans_link() {
+    async fn post_handshake_stream_error_sends_protocol_link_close_and_cleans_link() {
         let (ctx, routing, _tunnels) = test_ctx().await;
         let peer = host(2, "peer-host");
         let (input_tx, input_rx) = mpsc::channel(8);
@@ -2441,7 +2405,7 @@ mod tests {
             .await
             .unwrap();
         let message = recv_message(&mut output_rx).await;
-        let error = protocol_goaway_error(&message);
+        let error = protocol_link_close_error(&message);
         assert!(error.message.contains("message too large"));
         wait_until(|| {
             let routing = routing.clone();
@@ -2450,49 +2414,41 @@ mod tests {
         .await;
     }
 
+    /// D11: an inbound `LinkClose` means "the link is closed now" — the
+    /// handler tears the link down immediately; there is no drain window in
+    /// which frames keep flowing.
     #[tokio::test]
-    async fn inbound_goaway_drains_before_cleanup_and_keeps_tunnel_frames_flowing() {
+    async fn inbound_link_close_tears_the_link_down_immediately() {
         let (ctx, routing, tunnels) = test_ctx().await;
         let peer = host(2, "peer-host");
-        let next_link = link("next");
-        let (next_tx, mut next_rx) = mpsc::channel(4);
-        tunnels
-            .link_registry()
-            .register(next_link.clone(), HostId::from_u128(99), next_tx)
-            .await;
-        tunnels.link_registry().activate(&next_link, []).await;
 
         let (input_tx, _output_rx) = establish(ctx, &peer).await;
-        input_tx
-            .send(goaway(wire::pb::GoAwayReason::UserShutdown, 75))
-            .await
-            .unwrap();
-
-        wait_until(|| {
-            let tunnels = tunnels.clone();
-            async move { tunnels.link_registry().is_draining(&link("peer")).await }
-        })
-        .await;
         assert!(routing.host_entry(peer.id).await.is_some());
-        let peer_link = link("peer");
-        assert!(matches!(
-            tunnels.channel_to(peer.id).await,
-            Err(crate::tunnel::TunnelPoolError::LinkDraining { link }) if link == peer_link
-        ));
-
         input_tx
-            .send(tunnel_frame(&["next", "target"], b"payload"))
+            .send(link_close(wire::pb::LinkCloseReason::UserShutdown))
             .await
             .unwrap();
-        let frame = recv_forwarded_tunnel_frame(&mut next_rx).await;
-        assert_eq!(frame.payload, b"payload");
-        assert_eq!(frame.dst.unwrap().links, ["target"]);
 
         wait_until(|| {
             let routing = routing.clone();
             async move { routing.host_entry(peer.id).await.is_none() }
         })
         .await;
+        wait_until(|| {
+            let tunnels = tunnels.clone();
+            async move {
+                tunnels
+                    .link_registry()
+                    .existing_tx(&link("peer"))
+                    .await
+                    .is_none()
+            }
+        })
+        .await;
+        assert!(matches!(
+            tunnels.channel_to(peer.id).await,
+            Err(crate::tunnel::TunnelPoolError::NotFound { host_id }) if host_id == peer.id
+        ));
     }
 
     #[tokio::test]
@@ -2600,7 +2556,7 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn connector_rejects_bad_first_acceptor_message_with_goaway() {
+    async fn connector_rejects_bad_first_acceptor_message_with_link_close() {
         let (ctx, routing, _tunnels, _local) = connector_test_ctx().await;
         let (input_tx, input_rx) = mpsc::channel(8);
         let mut output_rx = spawn_connector_connect(ctx, stream_from_rx(input_rx));
@@ -2608,12 +2564,12 @@ mod tests {
 
         input_tx.send(routing_snapshot_complete()).await.unwrap();
 
-        assert_protocol_goaway(&recv_message(&mut output_rx).await);
+        assert_protocol_link_close(&recv_message(&mut output_rx).await);
         assert!(routing.hosts_snapshot().await.is_empty());
     }
 
     #[tokio::test]
-    async fn connector_rejects_protocol_version_mismatch_with_structured_goaway() {
+    async fn connector_rejects_protocol_version_mismatch_with_structured_link_close() {
         let (ctx, routing, _tunnels, _local) = connector_test_ctx().await;
         let peer = host(2, "peer-host");
         let (input_tx, input_rx) = mpsc::channel(8);
@@ -2626,7 +2582,7 @@ mod tests {
             .unwrap();
 
         let message = recv_message(&mut output_rx).await;
-        let error = protocol_goaway_error(&message);
+        let error = protocol_link_close_error(&message);
         assert!(matches!(
             wire::decode_protocol_error(error.clone()),
             ProtocolError::ProtocolMismatch {
@@ -2639,7 +2595,7 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn connector_rejects_invalid_assigned_link_with_structured_goaway() {
+    async fn connector_rejects_invalid_assigned_link_with_structured_link_close() {
         let (ctx, routing, _tunnels, _local) = connector_test_ctx().await;
         let peer = host(2, "peer-host");
         let (input_tx, input_rx) = mpsc::channel(8);
@@ -2652,7 +2608,7 @@ mod tests {
             .unwrap();
 
         let message = recv_message(&mut output_rx).await;
-        let error = protocol_goaway_error(&message);
+        let error = protocol_link_close_error(&message);
         assert!(matches!(
             wire::decode_protocol_error(error.clone()),
             ProtocolError::InvalidLinkName { name, .. } if name == "bad.link"
@@ -2675,7 +2631,7 @@ mod tests {
             .unwrap();
 
         let message = recv_message(&mut output_rx).await;
-        let error = protocol_goaway_error(&message);
+        let error = protocol_link_close_error(&message);
         assert!(matches!(
             wire::decode_protocol_error(error.clone()),
             ProtocolError::InvalidArgument { message }
@@ -2719,7 +2675,7 @@ mod tests {
             .unwrap();
 
         let message = recv_message(&mut output_rx).await;
-        let error = protocol_goaway_error(&message);
+        let error = protocol_link_close_error(&message);
         assert!(error.message.contains("must not match local host_id"));
         assert!(routing.host_entry(local_collision.id).await.is_none());
     }
@@ -2738,7 +2694,7 @@ mod tests {
             .unwrap();
 
         let message = recv_message(&mut output_rx).await;
-        let error = protocol_goaway_error(&message);
+        let error = protocol_link_close_error(&message);
         assert!(error.message.contains("host name must be non-empty"));
         assert!(routing.host_entry(invalid_host.id).await.is_none());
     }
@@ -2877,8 +2833,11 @@ mod tests {
         server_task.abort();
     }
 
+    /// D11: an inbound `LinkClose` on the connector side cleans the link up
+    /// at once — the cached route-keyed channel is dropped and later calls
+    /// fail with an unavailable link instead of lingering through a drain.
     #[tokio::test]
-    async fn connector_manager_rejects_cached_channel_after_inbound_goaway() {
+    async fn connector_manager_rejects_cached_channel_after_inbound_link_close() {
         let acceptor_host = host(1, "acceptor");
         let acceptor_routing = Arc::new(RoutingCore::new());
         let (acceptor_incoming_tx, _acceptor_incoming_rx) = mpsc::channel(4);
@@ -2967,7 +2926,7 @@ mod tests {
         };
 
         acceptor_tx
-            .send(goaway(wire::pb::GoAwayReason::UserShutdown, 200))
+            .send(link_close(wire::pb::LinkCloseReason::UserShutdown))
             .await
             .unwrap();
         tokio::time::timeout(Duration::from_secs(1), async {
@@ -2976,11 +2935,12 @@ mod tests {
                     .pool()
                     .get(&route(&["connector"]))
                     .await
-                    .is_some()
+                    .is_none()
                     && connector_tunnels
                         .link_registry()
-                        .is_draining(&link("connector"))
+                        .existing_tx(&link("connector"))
                         .await
+                        .is_none()
                 {
                     break;
                 }
@@ -2988,7 +2948,7 @@ mod tests {
             }
         })
         .await
-        .expect("timed out waiting for connector link drain");
+        .expect("timed out waiting for connector link cleanup");
 
         let error = connector_manager
             .channel_to(acceptor_host.id)
@@ -2996,7 +2956,7 @@ mod tests {
             .unwrap_err();
 
         assert!(
-            matches!(error, crate::tunnel::TunnelPoolError::LinkDraining { link: observed } if observed == link("connector"))
+            matches!(error, crate::tunnel::TunnelPoolError::LinkUnavailable { link: observed } if observed == link("connector"))
         );
         connector_task.abort();
         server_task.abort();

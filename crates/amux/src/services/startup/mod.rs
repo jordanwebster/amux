@@ -217,11 +217,7 @@ impl CloudRoutingService {
             .map(|services| services.connections.clone())
     }
 
-    pub(crate) async fn send_goaway_to_all(
-        &self,
-        reason: wire::pb::GoAwayReason,
-        drain_timeout_ms: u32,
-    ) {
+    pub(crate) async fn send_link_close_to_all(&self, reason: wire::pb::LinkCloseReason) {
         let tunnels = {
             let users = self.inner.users.read().await;
             users
@@ -230,10 +226,7 @@ impl CloudRoutingService {
                 .collect::<Vec<_>>()
         };
         for tunnels in tunnels {
-            tunnels
-                .link_registry()
-                .send_goaway_to_all(reason, drain_timeout_ms)
-                .await;
+            tunnels.link_registry().send_link_close_to_all(reason).await;
         }
     }
 }
@@ -1284,7 +1277,6 @@ mod tests {
             .send(BoxedGrpcIo::pre_trust_pairing(
                 TunnelTransport::new(pairing_server_io, Uuid::from_u128(30)),
                 PreTrustPairingReachability::Cloud,
-                None,
             ))
             .await
             .unwrap();
@@ -1308,7 +1300,6 @@ mod tests {
             .send(BoxedGrpcIo::pre_trust_pairing(
                 TunnelTransport::new(active_server_io, Uuid::from_u128(31)),
                 PreTrustPairingReachability::Cloud,
-                None,
             ))
             .await
             .unwrap();
@@ -1838,26 +1829,15 @@ mod tests {
         let data_dir_b = tempfile::tempdir().unwrap();
         let identity_a = DeviceIdentity::for_test(Uuid::from_u128(2));
         let identity_b = DeviceIdentity::for_test(Uuid::from_u128(3));
-        let old_identity_a = DeviceIdentity::for_test(identity_a.host_id);
         let security_a = DeviceRuntimeSecurity::new(
             identity_a.clone(),
             TrustStore::default(),
             data_dir_a.path().to_path_buf(),
         );
         let trust_a = security_a.trust_store.clone();
-        let mut initial_trust_b = TrustStore::default();
-        initial_trust_b.insert_for_test(
-            identity_a.host_id,
-            TrustEntry {
-                pubkey: old_identity_a.public_key().to_vec(),
-                name: "old-a".to_string(),
-                paired_at: chrono::Utc::now(),
-                reachabilities: vec![Reachability::Cloud],
-            },
-        );
         let security_b = DeviceRuntimeSecurity::new(
             identity_b.clone(),
-            initial_trust_b,
+            TrustStore::default(),
             data_dir_b.path().to_path_buf(),
         );
         let trust_b = security_b.trust_store.clone();
@@ -1960,26 +1940,15 @@ mod tests {
         let data_dir_b = tempfile::tempdir().unwrap();
         let identity_a = DeviceIdentity::for_test(Uuid::from_u128(2));
         let identity_b = DeviceIdentity::for_test(Uuid::from_u128(3));
-        let old_identity_a = DeviceIdentity::for_test(identity_a.host_id);
         let security_a = DeviceRuntimeSecurity::new(
             identity_a.clone(),
             TrustStore::default(),
             data_dir_a.path().to_path_buf(),
         );
         let trust_a = security_a.trust_store.clone();
-        let mut initial_trust_b = TrustStore::default();
-        initial_trust_b.insert_for_test(
-            identity_a.host_id,
-            TrustEntry {
-                pubkey: old_identity_a.public_key().to_vec(),
-                name: "old-a".to_string(),
-                paired_at: chrono::Utc::now(),
-                reachabilities: vec![Reachability::Cloud],
-            },
-        );
         let security_b = DeviceRuntimeSecurity::new(
             identity_b.clone(),
-            initial_trust_b,
+            TrustStore::default(),
             data_dir_b.path().to_path_buf(),
         );
         let trust_b = security_b.trust_store.clone();

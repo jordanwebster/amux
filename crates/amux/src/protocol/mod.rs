@@ -74,7 +74,7 @@ mod tests {
             "SessionClosed",
             "Reauth",
             "ReauthAck",
-            "GoAway",
+            "LinkClose",
         ] {
             assert!(
                 message_names.contains(message_name),

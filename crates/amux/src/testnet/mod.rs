@@ -61,7 +61,7 @@ pub use pairing::{PairAttempt, Pin, QrPayload};
 pub use session::EchoSession;
 use tokio::net::TcpListener;
 use tokio::sync::Mutex;
-pub use wire::{GoAwayReason, WirePeer};
+pub use wire::{LinkCloseReason, WirePeer};
 
 use crate::identity::{DeviceIdentity, load_or_create_device_identity_in};
 use crate::trust::{Reachability, TrustEntry, TrustStore};

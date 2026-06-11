@@ -12,7 +12,7 @@ use crate::routing::{
     FEATURE_CLOUD_RELAY, Host, Route, RoutingCore, RoutingEvent, select_best_route,
 };
 use crate::transport::TrustedPeerConnections;
-use crate::tunnel::{TunnelId, TunnelPool, TunnelPoolError};
+use crate::tunnel::{TunnelPool, TunnelPoolError};
 
 #[derive(Default)]
 pub(crate) struct ConnectionPool {
@@ -73,25 +73,8 @@ impl RouteRuntimeState {
         self.tunnels.remove_route(route).await;
     }
 
-    pub(crate) async fn remove_host_preserving_tunnel(
-        &self,
-        host_id: HostId,
-        preserve_tunnel_id: Option<TunnelId>,
-    ) {
-        self.tunnels
-            .remove_host_preserving_tunnel(host_id, preserve_tunnel_id)
-            .await;
-    }
-
-    pub(crate) async fn remove_route_preserving_tunnel(
-        &self,
-        route: &Route,
-        preserve_tunnel_id: Option<TunnelId>,
-    ) {
-        self.pool.unregister(route).await;
-        self.tunnels
-            .remove_route_preserving_tunnel(route, preserve_tunnel_id)
-            .await;
+    pub(crate) async fn remove_host(&self, host_id: HostId) {
+        self.tunnels.remove_host(host_id).await;
     }
 }
 
@@ -216,58 +199,34 @@ impl ConnectionManager {
         }
     }
 
-    pub(crate) async fn send_goaway_to_host(
+    pub(crate) async fn send_link_close_to_host(
         &self,
         peer: HostId,
-        reason: crate::protocol::wire::pb::GoAwayReason,
-        drain_timeout_ms: u32,
+        reason: crate::protocol::wire::pb::LinkCloseReason,
     ) {
         self.runtime
             .tunnels
             .link_registry()
-            .send_goaway_to_host(peer, reason, drain_timeout_ms)
+            .send_link_close_to_host(peer, reason)
             .await;
     }
 
-    #[allow(dead_code)]
     pub(crate) async fn teardown_host(&self, peer: HostId) {
-        self.teardown_host_preserving_tunnel(peer, None).await;
-    }
-
-    pub(crate) async fn teardown_host_preserving_tunnel(
-        &self,
-        peer: HostId,
-        preserve_tunnel_id: Option<TunnelId>,
-    ) {
         {
             self.state.write().await.replacing.insert(peer);
         }
         for event in self.routing.remove_host_routes(peer, None).await {
-            self.record_event_preserving_tunnel(event, preserve_tunnel_id)
-                .await;
+            self.record_teardown_event(event).await;
         }
-        self.remove_host_runtime_state_preserving_tunnel(peer, preserve_tunnel_id)
-            .await;
+        self.remove_host_runtime_state(peer).await;
         self.trusted_connections.close_host(peer).await;
         self.runtime.tunnels.link_registry().close_host(peer).await;
-        self.remove_host_runtime_state_preserving_tunnel(peer, preserve_tunnel_id)
-            .await;
+        self.remove_host_runtime_state(peer).await;
     }
 
-    #[allow(dead_code)]
     pub(crate) async fn finish_host_replacement(&self, peer: HostId) {
-        self.finish_host_replacement_preserving_tunnel(peer, None)
-            .await;
-    }
-
-    pub(crate) async fn finish_host_replacement_preserving_tunnel(
-        &self,
-        peer: HostId,
-        preserve_tunnel_id: Option<TunnelId>,
-    ) {
         for event in self.routing.remove_host_routes(peer, None).await {
-            self.record_event_preserving_tunnel(event, preserve_tunnel_id)
-                .await;
+            self.record_teardown_event(event).await;
         }
         self.state.write().await.replacing.remove(&peer);
         self.trusted_connections.finish_host_replacement(peer);
@@ -344,11 +303,10 @@ impl ConnectionManager {
         }
     }
 
-    async fn record_event_preserving_tunnel(
-        &self,
-        event: RoutingEvent,
-        preserve_tunnel_id: Option<TunnelId>,
-    ) -> Option<(HostId, Route)> {
+    /// Teardown-path variant of [`Self::record_event`]: a `HostDown` always
+    /// removes the route's runtime state, even while the host is marked as
+    /// replacing (the plain path skips removal during replacement).
+    async fn record_teardown_event(&self, event: RoutingEvent) -> Option<(HostId, Route)> {
         match event {
             RoutingEvent::HostDown { host_id, route, .. } => {
                 let mut active_removed = false;
@@ -368,19 +326,14 @@ impl ConnectionManager {
                 if active_removed {
                     self.routing.mark_active_route(host_id, None).await;
                 }
-                self.remove_route_runtime_state_preserving_tunnel(&route, preserve_tunnel_id)
-                    .await;
+                self.remove_route_runtime_state(&route).await;
                 None
             }
             other => self.record_event(other).await,
         }
     }
 
-    async fn remove_host_runtime_state_preserving_tunnel(
-        &self,
-        peer: HostId,
-        preserve_tunnel_id: Option<TunnelId>,
-    ) {
+    async fn remove_host_runtime_state(&self, peer: HostId) {
         let routes = {
             let mut state = self.state.write().await;
             let mut routes = state.routes.remove(&peer).unwrap_or_default();
@@ -392,12 +345,9 @@ impl ConnectionManager {
             routes
         };
         for route in &routes {
-            self.remove_route_runtime_state_preserving_tunnel(route, preserve_tunnel_id)
-                .await;
+            self.remove_route_runtime_state(route).await;
         }
-        self.runtime
-            .remove_host_preserving_tunnel(peer, preserve_tunnel_id)
-            .await;
+        self.runtime.remove_host(peer).await;
     }
 
     async fn best_route(&self, peer: HostId) -> Option<Route> {
@@ -482,16 +432,6 @@ impl ConnectionManager {
 
     async fn remove_route_runtime_state(&self, route: &Route) {
         self.runtime.remove_route(route).await;
-    }
-
-    async fn remove_route_runtime_state_preserving_tunnel(
-        &self,
-        route: &Route,
-        preserve_tunnel_id: Option<TunnelId>,
-    ) {
-        self.runtime
-            .remove_route_preserving_tunnel(route, preserve_tunnel_id)
-            .await;
     }
 
     async fn materialize(&self, peer: HostId, route: &Route) -> Result<Channel, TunnelPoolError> {
@@ -672,6 +612,8 @@ mod tests {
         );
     }
 
+    /// Cloud pairing must select the cloud route even when a shorter direct
+    /// route exists: the pairing TLS ClientHello leaves on the cloud link.
     #[tokio::test]
     async fn cloud_pin_pairing_uses_cloud_route_not_shortest_route() {
         let routing = Arc::new(RoutingCore::new());
@@ -681,9 +623,9 @@ mod tests {
             routing.clone(),
             incoming_tx,
         ));
-        let manager = ConnectionManager::new(routing.clone(), tunnels.clone());
+        let manager = Arc::new(ConnectionManager::new(routing.clone(), tunnels.clone()));
         let peer = HostId::from_u128(2);
-        let (cloud_tx, _cloud_rx) = mpsc::channel(8);
+        let (cloud_tx, mut cloud_rx) = mpsc::channel(8);
         tunnels
             .link_registry()
             .register_with_role(
@@ -693,9 +635,10 @@ mod tests {
                 LinkRole::CloudRelay,
             )
             .await;
+        let (direct_tx, mut direct_rx) = mpsc::channel(8);
         tunnels
             .link_registry()
-            .mark_draining(&Link::new("cloud").unwrap())
+            .register(Link::new("direct").unwrap(), peer, direct_tx)
             .await;
 
         manager
@@ -720,15 +663,20 @@ mod tests {
             })
             .await;
 
-        let error = manager
-            .cloud_pin_pairing_channel_to(peer)
-            .await
-            .unwrap_err();
+        let pairing_manager = manager.clone();
+        let pairing =
+            tokio::spawn(async move { pairing_manager.cloud_pin_pairing_channel_to(peer).await });
 
+        let message = tokio::time::timeout(std::time::Duration::from_secs(1), cloud_rx.recv())
+            .await
+            .expect("timed out waiting for pairing traffic on the cloud link")
+            .expect("cloud link closed");
         assert!(matches!(
-            error,
-            TunnelPoolError::LinkDraining { link } if link == Link::new("cloud").unwrap()
+            message.body,
+            Some(crate::protocol::wire::pb::message::Body::TunnelFrame(_))
         ));
+        assert!(direct_rx.try_recv().is_err(), "direct link must stay quiet");
+        pairing.abort();
     }
 
     /// Regression for NETWORKING_REVIEW.md §6.7: a multi-hop route to a
@@ -1035,7 +983,7 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn channel_to_rejects_cached_route_on_draining_first_hop() {
+    async fn channel_to_rejects_cached_route_when_first_hop_link_is_gone() {
         let routing = Arc::new(RoutingCore::new());
         let (incoming_tx, _incoming_rx) = mpsc::channel(1);
         let tunnels = Arc::new(TunnelPool::new(
@@ -1063,10 +1011,10 @@ mod tests {
         assert_eq!(manager.active_route(peer).await, Some(route.clone()));
         assert_eq!(manager.pool().len().await, 1);
 
-        assert!(tunnels.link_registry().mark_draining(&relay).await);
+        tunnels.link_registry().remove(&relay).await;
         let error = manager.channel_to(peer).await.unwrap_err();
 
-        assert!(matches!(error, TunnelPoolError::LinkDraining { link } if link == relay));
+        assert!(matches!(error, TunnelPoolError::LinkUnavailable { link } if link == relay));
         assert_eq!(manager.active_route(peer).await, Some(route));
         assert_eq!(manager.pool().len().await, 1);
     }
@@ -1188,7 +1136,7 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn channel_to_rejects_cached_single_hop_channel_on_draining_link() {
+    async fn channel_to_rejects_cached_single_hop_channel_when_link_is_gone() {
         let routing = Arc::new(RoutingCore::new());
         let (incoming_tx, _incoming_rx) = mpsc::channel(1);
         let tunnels = Arc::new(TunnelPool::new(
@@ -1221,17 +1169,17 @@ mod tests {
             .await;
         let _channel = manager.channel_to(peer).await.unwrap();
 
-        assert!(tunnels.link_registry().mark_draining(&direct).await);
+        tunnels.link_registry().remove(&direct).await;
         let error = manager.channel_to(peer).await.unwrap_err();
 
-        assert!(matches!(error, TunnelPoolError::LinkDraining { link } if link == direct));
+        assert!(matches!(error, TunnelPoolError::LinkUnavailable { link } if link == direct));
         assert_eq!(manager.active_route(peer).await, Some(route));
         assert_eq!(manager.pool().len().await, 1);
         assert_eq!(tunnels.counts().await, (0, 0));
     }
 
     #[tokio::test]
-    async fn channel_to_rejects_pre_active_cached_channel_on_draining_link() {
+    async fn channel_to_rejects_pre_active_cached_channel_when_link_is_gone() {
         let routing = Arc::new(RoutingCore::new());
         let (incoming_tx, _incoming_rx) = mpsc::channel(1);
         let tunnels = Arc::new(TunnelPool::new(
@@ -1264,10 +1212,10 @@ mod tests {
             .await;
         assert!(manager.active_route(peer).await.is_none());
 
-        assert!(tunnels.link_registry().mark_draining(&direct).await);
+        tunnels.link_registry().remove(&direct).await;
         let error = manager.channel_to(peer).await.unwrap_err();
 
-        assert!(matches!(error, TunnelPoolError::LinkDraining { link } if link == direct));
+        assert!(matches!(error, TunnelPoolError::LinkUnavailable { link } if link == direct));
         assert!(manager.active_route(peer).await.is_none());
     }
 

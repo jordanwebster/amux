@@ -344,7 +344,7 @@ async fn cloud_peers_keep_communicating_across_a_jwt_expiry() {
     jwt.expired().await;
 
     // The link survived its initial token: had the Reauth not landed, the
-    // relay would have torn the link down with GoAway(AUTH_EXPIRED) and no
+    // relay would have torn the link down with LinkClose(AUTH_EXPIRED) and no
     // reconnect exists on this link.
     laptop.connects_to(&phone).via_cloud().await;
     laptop.can_call(&phone).await;

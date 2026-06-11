@@ -506,7 +506,7 @@ impl ClientService {
         drop(trust_commit_lock);
 
         self.remote_agent_connections
-            .send_goaway_to_host(host_id, wire::pb::GoAwayReason::UserRevoked, 0)
+            .send_link_close_to_host(host_id, wire::pb::LinkCloseReason::UserRevoked)
             .await;
         self.remote_agent_connections.teardown_host(host_id).await;
         self.remove_peer_from_client_model(host_id).await;
@@ -2361,7 +2361,6 @@ fn remote_tunnel_status(
             protocol_status(ProtocolError::Unreachable { message })
         }
         TunnelPoolError::LinkUnavailable { .. }
-        | TunnelPoolError::LinkDraining { .. }
         | TunnelPoolError::IncomingTunnelsClosed
         | TunnelPoolError::InboundClosed
         | TunnelPoolError::Identity(_)
@@ -5205,7 +5204,7 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn tonic_unpair_removes_trust_sends_goaway_and_tears_down_routes() {
+    async fn tonic_unpair_removes_trust_sends_link_close_and_tears_down_routes() {
         let data_dir = TempDir::new().unwrap();
         let local = DeviceIdentity::for_test(Uuid::from_u128(1));
         let peer = DeviceIdentity::for_test(Uuid::from_u128(2));
@@ -5308,13 +5307,12 @@ mod tests {
                 .is_none()
         );
         let Some(wire::pb::Message {
-            body: Some(wire::pb::message::Body::Goaway(goaway)),
+            body: Some(wire::pb::message::Body::LinkClose(close)),
         }) = rx.recv().await
         else {
-            panic!("expected user-revoked GoAway");
+            panic!("expected user-revoked LinkClose");
         };
-        assert_eq!(goaway.reason, wire::pb::GoAwayReason::UserRevoked as i32);
-        assert_eq!(goaway.drain_timeout_ms, 0);
+        assert_eq!(close.reason, wire::pb::LinkCloseReason::UserRevoked as i32);
         assert!(
             service
                 .remote_agent_connections

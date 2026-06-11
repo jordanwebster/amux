@@ -31,7 +31,7 @@ pub(crate) use host::{
     FEATURE_CLOUD_RELAY, MAX_HOST_NAME_BYTES, local_capabilities, local_host, validate_remote_host,
 };
 pub(crate) use link::{
-    ConnectHandshake, ConnectHandshakeEvent, protocol_error_goaway, protocol_error_hello_ack,
+    ConnectHandshake, ConnectHandshakeEvent, protocol_error_hello_ack, protocol_error_link_close,
 };
 pub(crate) use link_registry::{
     LinkCloseReason, LinkOutputTx, LinkRegistry, LinkRegistryError, LinkRole,

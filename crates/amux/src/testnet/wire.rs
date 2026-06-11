@@ -4,7 +4,7 @@
 //! to a real daemon's *external TCP listener* through real device mTLS and
 //! drives the `RoutingService.Connect` bidi stream by hand — sending raw
 //! `Message` envelopes (Hello, TunnelFrame) and asserting on the exact
-//! replies (HelloAck, GoAway) and on stream closure. It is the conformance
+//! replies (HelloAck, LinkClose) and on stream closure. It is the conformance
 //! lab for the adversarial cases the topology layer cannot express: oversize
 //! frames, host_id spoofing after mTLS, version mismatch, malformed frames,
 //! and handshake rate limiting.
@@ -37,10 +37,10 @@ use crate::routing::{Capabilities, Host, host_to_wire};
 use crate::transport::trusted_device_channel;
 use crate::trust::{TrustEntry, TrustStore};
 
-/// The GoAway reasons the wire-conformance tests assert on. Mirrors the wire
-/// enum so the spec suite need not name the crate-private protobuf type.
+/// The LinkClose reasons the wire-conformance tests assert on. Mirrors the
+/// wire enum so the spec suite need not name the crate-private protobuf type.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub enum GoAwayReason {
+pub enum LinkCloseReason {
     /// The wire enum's zero value: no reason given.
     Unspecified,
     /// The peer committed a link-closing protocol violation.
@@ -55,14 +55,14 @@ pub enum GoAwayReason {
     Other(i32),
 }
 
-impl GoAwayReason {
+impl LinkCloseReason {
     fn from_wire(reason: i32) -> Self {
-        match pb::GoAwayReason::try_from(reason) {
-            Ok(pb::GoAwayReason::Unspecified) => Self::Unspecified,
-            Ok(pb::GoAwayReason::ProtocolError) => Self::ProtocolError,
-            Ok(pb::GoAwayReason::AuthExpired) => Self::AuthExpired,
-            Ok(pb::GoAwayReason::UserShutdown) => Self::UserShutdown,
-            Ok(pb::GoAwayReason::UpdateRequired) => Self::UpdateRequired,
+        match pb::LinkCloseReason::try_from(reason) {
+            Ok(pb::LinkCloseReason::Unspecified) => Self::Unspecified,
+            Ok(pb::LinkCloseReason::ProtocolError) => Self::ProtocolError,
+            Ok(pb::LinkCloseReason::AuthExpired) => Self::AuthExpired,
+            Ok(pb::LinkCloseReason::UserShutdown) => Self::UserShutdown,
+            Ok(pb::LinkCloseReason::UpdateRequired) => Self::UpdateRequired,
             _ => Self::Other(reason),
         }
     }
@@ -264,36 +264,36 @@ impl WirePeer {
         }
     }
 
-    /// Drains replies (bounded) until a `GoAway` with the given reason
+    /// Drains replies (bounded) until a `LinkClose` with the given reason
     /// arrives, returning its embedded error. Intervening messages (e.g. the
     /// initial routing snapshot) are skipped.
-    pub async fn expect_goaway(&mut self, reason: GoAwayReason) -> Option<pb::Error> {
+    pub async fn expect_link_close(&mut self, reason: LinkCloseReason) -> Option<pb::Error> {
         let deadline = tokio::time::Instant::now() + DEFAULT_TIMEOUT;
         loop {
             let remaining = deadline.saturating_duration_since(tokio::time::Instant::now());
             match tokio::time::timeout(remaining, self.inbound.message()).await {
                 Ok(Ok(Some(pb::Message {
-                    body: Some(pb::message::Body::Goaway(goaway)),
+                    body: Some(pb::message::Body::LinkClose(close)),
                 }))) => {
-                    let got = GoAwayReason::from_wire(goaway.reason);
+                    let got = LinkCloseReason::from_wire(close.reason);
                     assert_eq!(
                         got, reason,
-                        "expected GoAway({reason:?}) from '{}', got GoAway({got:?})",
+                        "expected LinkClose({reason:?}) from '{}', got LinkClose({got:?})",
                         self.victim_name
                     );
-                    return goaway.error;
+                    return close.error;
                 }
                 Ok(Ok(Some(_))) => continue,
                 Ok(Ok(None)) => panic!(
-                    "'{}' closed the Connect stream before sending GoAway({reason:?})",
+                    "'{}' closed the Connect stream before sending LinkClose({reason:?})",
                     self.victim_name
                 ),
                 Ok(Err(status)) => panic!(
-                    "Connect stream from '{}' errored before GoAway({reason:?}): {status}",
+                    "Connect stream from '{}' errored before LinkClose({reason:?}): {status}",
                     self.victim_name
                 ),
                 Err(_) => panic!(
-                    "timed out waiting for GoAway({reason:?}) from '{}'",
+                    "timed out waiting for LinkClose({reason:?}) from '{}'",
                     self.victim_name
                 ),
             }
@@ -318,8 +318,8 @@ impl WirePeer {
     }
 
     /// Asserts the Connect stream stays *open* for a short observation
-    /// window — no GoAway, no closure — proving the link survived whatever was
-    /// just sent. Stray messages already in flight are tolerated.
+    /// window — no LinkClose, no closure — proving the link survived whatever
+    /// was just sent. Stray messages already in flight are tolerated.
     pub async fn expect_stream_stays_open(&mut self) {
         const WINDOW: Duration = Duration::from_secs(1);
         let deadline = tokio::time::Instant::now() + WINDOW;
@@ -327,11 +327,11 @@ impl WirePeer {
             let remaining = deadline.saturating_duration_since(tokio::time::Instant::now());
             match tokio::time::timeout(remaining, self.inbound.message()).await {
                 Ok(Ok(Some(pb::Message {
-                    body: Some(pb::message::Body::Goaway(goaway)),
+                    body: Some(pb::message::Body::LinkClose(close)),
                 }))) => panic!(
-                    "'{}' sent GoAway({:?}); expected the link to stay up",
+                    "'{}' sent LinkClose({:?}); expected the link to stay up",
                     self.victim_name,
-                    GoAwayReason::from_wire(goaway.reason)
+                    LinkCloseReason::from_wire(close.reason)
                 ),
                 Ok(Ok(Some(_))) => continue,
                 Ok(Ok(None)) => panic!(

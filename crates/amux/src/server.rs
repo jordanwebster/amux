@@ -37,7 +37,9 @@ use crate::user_state::{ServerState, ShutdownRequest, get_local_agent_service_st
 
 /// Maximum time allowed for a TLS handshake to complete.
 const TLS_HANDSHAKE_TIMEOUT: Duration = Duration::from_secs(10);
-const SERVER_GOAWAY_DRAIN_TIMEOUT_MS: u32 = 200;
+/// Local grace before aborting routing tasks so queued LinkClose frames can
+/// flush onto the sockets. Purely local; nothing on the wire mentions it.
+const SERVER_LINK_CLOSE_FLUSH_TIMEOUT: Duration = Duration::from_millis(200);
 
 type Result<T> = std::result::Result<T, ServerError>;
 type BuilderParts = (
@@ -431,14 +433,14 @@ impl Server {
 
         // Remove the local socket before replying so clients can't reconnect to
         // the old server after receiving the response. Keep routing tasks alive
-        // briefly so queued GoAway frames can flush.
+        // briefly so queued LinkClose frames can flush.
         #[cfg(unix)]
         if !is_cloud_server {
             let _ = std::fs::remove_file(&socket_path);
         }
         pending_shutdown_reply.send_success();
 
-        tokio::time::sleep(Duration::from_millis(SERVER_GOAWAY_DRAIN_TIMEOUT_MS as u64)).await;
+        tokio::time::sleep(SERVER_LINK_CLOSE_FLUSH_TIMEOUT).await;
         if let Some(task) = cloud_routing_task.take() {
             task.abort();
         }
@@ -650,7 +652,7 @@ async fn handle_embedded_shutdown(
     {
         reply.send_success();
         tokio::spawn(async move {
-            tokio::time::sleep(Duration::from_millis(SERVER_GOAWAY_DRAIN_TIMEOUT_MS as u64)).await;
+            tokio::time::sleep(SERVER_LINK_CLOSE_FLUSH_TIMEOUT).await;
             abort_embedded_tasks(&tasks);
         });
         true
@@ -760,29 +762,29 @@ async fn notify_routing_peers(
     cloud_routing: Option<&CloudRoutingService>,
     reason: ShutdownReason,
 ) {
-    let goaway_reason = goaway_reason_for_shutdown(reason);
+    let link_close_reason = link_close_reason_for_shutdown(reason);
     if let Some(tunnels) = tunnels {
         tunnels
             .link_registry()
-            .send_goaway_to_all(goaway_reason, SERVER_GOAWAY_DRAIN_TIMEOUT_MS)
+            .send_link_close_to_all(link_close_reason)
             .await;
     }
     if let Some(cloud_routing) = cloud_routing {
         cloud_routing
-            .send_goaway_to_all(goaway_reason, SERVER_GOAWAY_DRAIN_TIMEOUT_MS)
+            .send_link_close_to_all(link_close_reason)
             .await;
     }
 }
 
-fn goaway_reason_for_shutdown(reason: ShutdownReason) -> wire::pb::GoAwayReason {
+fn link_close_reason_for_shutdown(reason: ShutdownReason) -> wire::pb::LinkCloseReason {
     match reason {
-        ShutdownReason::UpdateRequired => wire::pb::GoAwayReason::UpdateRequired,
-        ShutdownReason::ProtocolError => wire::pb::GoAwayReason::ProtocolError,
-        ShutdownReason::UserRequested => wire::pb::GoAwayReason::UserShutdown,
-        ShutdownReason::Updating => wire::pb::GoAwayReason::Updating,
-        ShutdownReason::Suspending => wire::pb::GoAwayReason::Suspending,
-        ShutdownReason::Restarting => wire::pb::GoAwayReason::Restarting,
-        ShutdownReason::AuthExpired => wire::pb::GoAwayReason::AuthExpired,
+        ShutdownReason::UpdateRequired => wire::pb::LinkCloseReason::UpdateRequired,
+        ShutdownReason::ProtocolError => wire::pb::LinkCloseReason::ProtocolError,
+        ShutdownReason::UserRequested => wire::pb::LinkCloseReason::UserShutdown,
+        ShutdownReason::Updating => wire::pb::LinkCloseReason::Updating,
+        ShutdownReason::Suspending => wire::pb::LinkCloseReason::Suspending,
+        ShutdownReason::Restarting => wire::pb::LinkCloseReason::Restarting,
+        ShutdownReason::AuthExpired => wire::pb::LinkCloseReason::AuthExpired,
     }
 }
 
@@ -790,23 +792,23 @@ fn goaway_reason_for_shutdown(reason: ShutdownReason) -> wire::pb::GoAwayReason 
 mod tests {
     use std::time::Duration;
 
-    use super::{Server, ShutdownReason, goaway_reason_for_shutdown};
+    use super::{Server, ShutdownReason, link_close_reason_for_shutdown};
     use crate::Config;
     use crate::protocol::wire;
 
     #[test]
-    fn shutdown_reason_maps_to_goaway_reason() {
+    fn shutdown_reason_maps_to_link_close_reason() {
         assert_eq!(
-            goaway_reason_for_shutdown(ShutdownReason::UserRequested),
-            wire::pb::GoAwayReason::UserShutdown
+            link_close_reason_for_shutdown(ShutdownReason::UserRequested),
+            wire::pb::LinkCloseReason::UserShutdown
         );
         assert_eq!(
-            goaway_reason_for_shutdown(ShutdownReason::Updating),
-            wire::pb::GoAwayReason::Updating
+            link_close_reason_for_shutdown(ShutdownReason::Updating),
+            wire::pb::LinkCloseReason::Updating
         );
         assert_eq!(
-            goaway_reason_for_shutdown(ShutdownReason::Suspending),
-            wire::pb::GoAwayReason::Suspending
+            link_close_reason_for_shutdown(ShutdownReason::Suspending),
+            wire::pb::LinkCloseReason::Suspending
         );
     }
 

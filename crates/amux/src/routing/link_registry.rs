@@ -19,8 +19,6 @@ const PENDING_ROUTING_EVENT_LIMIT: usize = 256;
 pub(crate) enum LinkRegistryError {
     #[error("route first hop {link} has no outgoing writer")]
     Unavailable { link: Link },
-    #[error("route first hop {link} is draining")]
-    Draining { link: Link },
 }
 
 #[derive(Default)]
@@ -47,7 +45,6 @@ struct LinkWriter {
     closed: Arc<Notify>,
     role: LinkRole,
     active: bool,
-    draining: bool,
     pending_routing_events: VecDeque<RoutingEvent>,
 }
 
@@ -88,7 +85,6 @@ impl LinkRegistry {
                 closed,
                 role,
                 active: false,
-                draining: false,
                 pending_routing_events: VecDeque::new(),
             },
         );
@@ -119,7 +115,6 @@ impl LinkRegistry {
                 .iter_mut()
                 .filter_map(|(link, writer)| {
                     if writer.peer_host_id == host_id {
-                        writer.draining = true;
                         request_link_close(writer, LinkCloseReason::TrustReplaced);
                         Some((link.clone(), writer.closed.clone()))
                     } else {
@@ -140,29 +135,14 @@ impl LinkRegistry {
         closing.into_iter().map(|(link, _)| link).collect()
     }
 
-    pub(crate) async fn mark_draining(&self, link: &Link) -> bool {
-        let mut state = self.state.write().await;
-        let Some(writer) = state.writers.get_mut(link) else {
-            return false;
-        };
-        writer.draining = true;
-        true
-    }
-
     pub(crate) async fn outgoing_tx(&self, link: &Link) -> Result<LinkOutputTx, LinkRegistryError> {
         self.state
             .read()
             .await
             .writers
             .get(link)
-            .map(|writer| {
-                if writer.draining {
-                    Err(LinkRegistryError::Draining { link: link.clone() })
-                } else {
-                    Ok(writer.tx.clone())
-                }
-            })
-            .unwrap_or_else(|| Err(LinkRegistryError::Unavailable { link: link.clone() }))
+            .map(|writer| writer.tx.clone())
+            .ok_or(LinkRegistryError::Unavailable { link: link.clone() })
     }
 
     pub(crate) async fn existing_tx(&self, link: &Link) -> Option<LinkOutputTx> {
@@ -183,58 +163,36 @@ impl LinkRegistry {
             .is_some_and(|writer| writer.role == LinkRole::CloudRelay)
     }
 
-    pub(crate) async fn send_goaway_to_all(&self, reason: pb::GoAwayReason, drain_timeout_ms: u32) {
+    pub(crate) async fn send_link_close_to_all(&self, reason: pb::LinkCloseReason) {
         let outgoing = {
-            let mut state = self.state.write().await;
+            let state = self.state.read().await;
             state
                 .writers
-                .values_mut()
-                .map(|writer| {
-                    writer.draining = true;
-                    writer.tx.clone()
-                })
+                .values()
+                .map(|writer| writer.tx.clone())
                 .collect::<Vec<_>>()
         };
-        let message = pb::Message {
-            body: Some(pb::message::Body::Goaway(pb::GoAway {
-                reason: reason as i32,
-                error: None,
-                drain_timeout_ms,
-            })),
-        };
+        let message = link_close_message(reason);
         for outgoing_tx in outgoing {
             try_send_or_spawn(outgoing_tx, message.clone());
         }
     }
 
-    pub(crate) async fn send_goaway_to_host(
+    pub(crate) async fn send_link_close_to_host(
         &self,
         host_id: HostId,
-        reason: pb::GoAwayReason,
-        drain_timeout_ms: u32,
+        reason: pb::LinkCloseReason,
     ) {
         let outgoing = {
-            let mut state = self.state.write().await;
+            let state = self.state.read().await;
             state
                 .writers
-                .values_mut()
-                .filter_map(|writer| {
-                    if writer.peer_host_id == host_id {
-                        writer.draining = true;
-                        Some(writer.tx.clone())
-                    } else {
-                        None
-                    }
-                })
+                .values()
+                .filter(|writer| writer.peer_host_id == host_id)
+                .map(|writer| writer.tx.clone())
                 .collect::<Vec<_>>()
         };
-        let message = pb::Message {
-            body: Some(pb::message::Body::Goaway(pb::GoAway {
-                reason: reason as i32,
-                error: None,
-                drain_timeout_ms,
-            })),
-        };
+        let message = link_close_message(reason);
         for outgoing_tx in outgoing {
             try_send_or_spawn(outgoing_tx, message.clone());
         }
@@ -257,9 +215,6 @@ impl LinkRegistry {
             let mut state = self.state.write().await;
             let mut overflowed = Vec::new();
             for (link, writer) in &mut state.writers {
-                if writer.draining {
-                    continue;
-                }
                 if !should_send_routing_event_to_link(event, link, Some(writer.peer_host_id)) {
                     continue;
                 }
@@ -350,20 +305,19 @@ impl LinkRegistry {
             }
         }
     }
-
-    #[cfg(test)]
-    pub(crate) async fn is_draining(&self, link: &Link) -> bool {
-        self.state
-            .read()
-            .await
-            .writers
-            .get(link)
-            .is_some_and(|writer| writer.draining)
-    }
 }
 
 fn request_link_close(writer: &LinkWriter, reason: LinkCloseReason) {
     let _ = writer.close_tx.try_send(reason);
+}
+
+fn link_close_message(reason: pb::LinkCloseReason) -> pb::Message {
+    pb::Message {
+        body: Some(pb::message::Body::LinkClose(pb::LinkClose {
+            reason: reason as i32,
+            error: None,
+        })),
+    }
 }
 
 fn try_send_or_spawn(tx: LinkOutputTx, message: pb::Message) {
@@ -424,7 +378,7 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn goaway_notification_is_best_effort_for_full_link_queues() {
+    async fn link_close_notification_is_best_effort_for_full_link_queues() {
         let registry = LinkRegistry::default();
         let (tx, _rx) = mpsc::channel(1);
         tx.try_send(pb::Message { body: None }).unwrap();
@@ -434,14 +388,14 @@ mod tests {
 
         tokio::time::timeout(
             Duration::from_millis(50),
-            registry.send_goaway_to_all(pb::GoAwayReason::UserShutdown, 200),
+            registry.send_link_close_to_all(pb::LinkCloseReason::UserShutdown),
         )
         .await
-        .expect("goaway send must not wait on a full queue");
+        .expect("link close send must not wait on a full queue");
     }
 
     #[tokio::test]
-    async fn send_goaway_marks_links_draining_before_notifying() {
+    async fn send_link_close_to_all_sends_typed_reason() {
         let registry = LinkRegistry::default();
         let link = Link::new("peer").unwrap();
         let (tx, mut rx) = mpsc::channel(8);
@@ -450,22 +404,17 @@ mod tests {
             .await;
 
         registry
-            .send_goaway_to_all(pb::GoAwayReason::UserShutdown, 200)
+            .send_link_close_to_all(pb::LinkCloseReason::UserShutdown)
             .await;
 
-        assert!(registry.is_draining(&link).await);
-        assert!(matches!(
-            registry.outgoing_tx(&link).await,
-            Err(LinkRegistryError::Draining { link: observed }) if observed == link
-        ));
         let Some(pb::Message {
-            body: Some(pb::message::Body::Goaway(goaway)),
+            body: Some(pb::message::Body::LinkClose(close)),
         }) = rx.recv().await
         else {
-            panic!("expected GoAway message");
+            panic!("expected LinkClose message");
         };
-        assert_eq!(goaway.reason, pb::GoAwayReason::UserShutdown as i32);
-        assert_eq!(goaway.drain_timeout_ms, 200);
+        assert_eq!(close.reason, pb::LinkCloseReason::UserShutdown as i32);
+        assert!(close.error.is_none());
     }
 
     #[tokio::test]

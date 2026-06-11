@@ -38,6 +38,66 @@ One paragraph describing what was done.
 
 ---
 
+## 2026-06-11: v6 chunk 1 — delete preserve_tunnel_id and GoAway drain; rename GoAway → LinkClose
+
+### Summary
+First implementation chunk of protocol v6: the two pure deletions (D10/P3,
+D11/P6). `preserve_tunnel_id` — the `Option<TunnelId>` threaded from the
+dispatcher through the pairing service into `ConnectionManager` so a
+same-host_id/different-pubkey replacement could keep the in-flight pairing
+tunnel alive — is gone; teardown now tears down everything, and an initiator
+that misses `PairingComplete` re-pairs. The GoAway drain machinery
+(`drain_timeout_ms`, draining flags, draining-mode frame filtering, the
+`LinkDraining`/`Draining` error variants) is gone, and the wire message is
+renamed `GoAway` → `LinkClose { reason, error }`: receiving it means "the
+link is closed now, here's why" — no grace period.
+
+### Changes
+- `proto/amux/v1/amux.proto`: `GoAway` → `LinkClose` (drops
+  `drain_timeout_ms`), `GoAwayReason` → `LinkCloseReason` (values unchanged).
+  PROTOCOL_VERSION deliberately not bumped — that lands with the full wire
+  rewrite next chunk.
+- `connection.rs`, `tunnel/pool.rs`, `services/pairing.rs`, `dispatcher.rs`,
+  `transport/io.rs`, `tunnel/transport.rs`: every `*_preserving_tunnel`
+  doubled method collapsed to its plain form; `BoxedGrpcAuth::PreTrustPairing`
+  and `TunnelTransport` lose their `tunnel_id` fields.
+- `routing/connect/mod.rs`: drain deadline/flag/filtering deleted; inbound
+  `LinkClose` breaks the loop immediately (`PostHandshakeAction::Drain` →
+  `LinkClosed`); `goaway_drain_duration` deleted.
+- `routing/link_registry.rs`: `draining` writer flag, `mark_draining`,
+  `is_draining`, `LinkRegistryError::Draining` deleted;
+  `send_goaway_to_*` → `send_link_close_to_*` (no drain arg).
+- `server.rs`: shutdown notification renamed; the 200 ms pre-abort sleep is
+  kept as a purely local flush grace (`SERVER_LINK_CLOSE_FLUSH_TIMEOUT`).
+- Testnet harness mirror `GoAwayReason` → `LinkCloseReason`,
+  `expect_goaway` → `expect_link_close`; spec tests renamed accordingly.
+- Tests: drain-behavior tests rewritten to assert immediate-close (or
+  link-removed) semantics; the cloud pin/QR pairing startup tests no longer
+  preload a stale key (they locked in the preserved-tunnel success); new
+  `pair_by_token_replacement_retires_the_in_flight_pairing_tunnel` locks the
+  D10 behavior directly.
+
+### Decisions Made
+- Per D10, a cloud pairing that triggers key replacement now fails at the
+  initiator (timeout today; prompt once D3's TunnelClose lands) and the
+  initiator re-pairs. Known v5-interim consequence: after the replacement the
+  responder holds no route back to the initiator until a link flap, so the
+  immediate re-pair over the same relay can black-hole — the v6 reply rule
+  (replies ride the arrival link) removes this class structurally.
+- Internal `routing::LinkCloseReason` (writer close requests) keeps its name;
+  the wire enum converges on the same name per D11.
+
+### Verification
+- `cargo build -p amux --features testnet` clean; lib tests 449 passed; spec
+  suite green twice (43 passed, 1 ignored, ~32s each); fmt + CI clippy
+  (`--workspace --all-targets --features amux/testnet -- -D warnings`) clean.
+
+### Next Steps
+- P1+P8 core rewrite: host-id routing, every-call-a-tunnel,
+  TunnelOpen/TunnelData/TunnelClose, PROTOCOL_VERSION = 6.
+
+---
+
 ## 2026-06-11: Protocol v6 one-pager
 
 ### Summary

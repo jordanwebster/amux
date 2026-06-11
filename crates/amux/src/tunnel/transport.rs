@@ -5,14 +5,12 @@ use tokio::io::{AsyncRead, AsyncWrite, DuplexStream, ReadBuf};
 use tonic::transport::server::Connected;
 
 use crate::HostId;
-use crate::tunnel::TunnelId;
 
 type DropHook = Box<dyn FnOnce() + Send + 'static>;
 
 pub(crate) struct TunnelTransport {
     inner: DuplexStream,
     peer: HostId,
-    tunnel_id: Option<TunnelId>,
     cloud_pairing_reachability: bool,
     on_drop: Option<DropHook>,
 }
@@ -22,19 +20,9 @@ impl TunnelTransport {
         Self {
             inner,
             peer,
-            tunnel_id: None,
             cloud_pairing_reachability: false,
             on_drop: None,
         }
-    }
-
-    pub(crate) fn with_tunnel_id(mut self, tunnel_id: TunnelId) -> Self {
-        self.tunnel_id = Some(tunnel_id);
-        self
-    }
-
-    pub(crate) fn tunnel_id(&self) -> Option<TunnelId> {
-        self.tunnel_id
     }
 
     pub(crate) fn with_cloud_pairing_reachability(mut self, cloud: bool) -> Self {

@@ -37,8 +37,6 @@ pub(crate) enum TunnelPoolError {
     EmptyRoute { host_id: HostId },
     #[error("route first hop {link} has no outgoing writer")]
     LinkUnavailable { link: Link },
-    #[error("route first hop {link} is draining")]
-    LinkDraining { link: Link },
     #[error("TunnelFrame missing tunnel_id")]
     MissingTunnelId,
     #[error("TunnelFrame missing dst")]
@@ -487,32 +485,17 @@ impl TunnelPool {
         })
     }
 
-    #[cfg(test)]
     pub(crate) async fn remove_host(&self, host_id: HostId) {
-        self.remove_host_preserving_tunnel(host_id, None).await;
-    }
-
-    pub(crate) async fn remove_host_preserving_tunnel(
-        &self,
-        host_id: HostId,
-        preserve_tunnel_id: Option<TunnelId>,
-    ) {
         let mut state = self.state.write().await;
         let retired = state
             .tunnels
             .iter()
-            .filter_map(|(id, active)| {
-                (active.peer == host_id && Some(*id) != preserve_tunnel_id).then_some(*id)
-            })
+            .filter_map(|(id, active)| (active.peer == host_id).then_some(*id))
             .collect::<Vec<_>>();
         for id in retired {
             state.tunnels.remove(&id);
             retire_tunnel_id(&mut state, id);
         }
-    }
-
-    pub(crate) async fn remove_route(&self, route: &Route) {
-        self.remove_route_preserving_tunnel(route, None).await;
     }
 
     /// Retires the tunnels *this daemon initiated* over `route`. Hosted
@@ -522,22 +505,15 @@ impl TunnelPool {
     /// remote initiator's tunnel — retiring it here would silently brick
     /// the initiator's cached channel until its HTTP/2 keepalive reaps it
     /// (see NETWORKING_REVIEW.md §6.9). Inbound tunnels die with their
-    /// peer ([`Self::remove_host_preserving_tunnel`]), with their
-    /// transport (drop hook), or at server keepalive.
-    pub(crate) async fn remove_route_preserving_tunnel(
-        &self,
-        route: &Route,
-        preserve_tunnel_id: Option<TunnelId>,
-    ) {
+    /// peer ([`Self::remove_host`]), with their transport (drop hook), or
+    /// at server keepalive.
+    pub(crate) async fn remove_route(&self, route: &Route) {
         let mut state = self.state.write().await;
         let retired = state
             .tunnels
             .iter()
             .filter_map(|(id, active)| {
-                (id.initiator == self.my_host_id
-                    && active.route == *route
-                    && Some(*id) != preserve_tunnel_id)
-                    .then_some(*id)
+                (id.initiator == self.my_host_id && active.route == *route).then_some(*id)
             })
             .collect::<Vec<_>>();
         for id in retired {
@@ -618,7 +594,6 @@ impl From<LinkRegistryError> for TunnelPoolError {
     fn from(error: LinkRegistryError) -> Self {
         match error {
             LinkRegistryError::Unavailable { link } => Self::LinkUnavailable { link },
-            LinkRegistryError::Draining { link } => Self::LinkDraining { link },
         }
     }
 }
@@ -861,7 +836,7 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn send_goaway_to_all_uses_typed_reason() {
+    async fn send_link_close_to_all_uses_typed_reason() {
         let routing = Arc::new(RoutingCore::new());
         let (incoming_tx, _incoming_rx) = mpsc::channel(1);
         let pool = TunnelPool::new(HostId::from_u128(1), routing, incoming_tx);
@@ -869,15 +844,14 @@ mod tests {
         register_test_link(&pool, "relay", link_tx).await;
 
         pool.link_registry()
-            .send_goaway_to_all(pb::GoAwayReason::Suspending, 200)
+            .send_link_close_to_all(pb::LinkCloseReason::Suspending)
             .await;
 
-        let message = link_rx.recv().await.expect("expected goaway message");
-        let Some(pb::message::Body::Goaway(goaway)) = message.body else {
-            panic!("expected GoAway");
+        let message = link_rx.recv().await.expect("expected link close message");
+        let Some(pb::message::Body::LinkClose(close)) = message.body else {
+            panic!("expected LinkClose");
         };
-        assert_eq!(goaway.reason, pb::GoAwayReason::Suspending as i32);
-        assert_eq!(goaway.drain_timeout_ms, 200);
+        assert_eq!(close.reason, pb::LinkCloseReason::Suspending as i32);
     }
 
     #[tokio::test]
@@ -923,31 +897,6 @@ mod tests {
             pool.channel_to(peer).await,
             Err(TunnelPoolError::NotFound { host_id }) if host_id == peer
         ));
-    }
-
-    #[tokio::test]
-    async fn channel_to_rejects_new_channels_on_draining_link() {
-        let routing = Arc::new(RoutingCore::new());
-        let my_host_id = HostId::from_u128(1);
-        let peer = HostId::from_u128(2);
-        routing
-            .apply_host_up(host(2, "peer"), route("relay"), None)
-            .await;
-
-        let (incoming_tx, _incoming_rx) = mpsc::channel(1);
-        let pool = TunnelPool::new(my_host_id, routing, incoming_tx);
-        let (link_tx, _link_rx) = mpsc::channel(8);
-        let relay = link("relay");
-        pool.link_registry()
-            .register(relay.clone(), HostId::from_u128(99), link_tx)
-            .await;
-        assert!(pool.link_registry().mark_draining(&relay).await);
-
-        assert!(matches!(
-            pool.channel_to(peer).await,
-            Err(TunnelPoolError::LinkDraining { link }) if link == relay
-        ));
-        assert_eq!(pool.counts().await, (0, 0));
     }
 
     #[tokio::test]
@@ -1013,6 +962,10 @@ mod tests {
         assert_eq!(pool.counts().await, (0, 0));
     }
 
+    /// D10: a host teardown retires *every* tunnel for that host — there is
+    /// no preserved-tunnel exception any more — and a late frame for the
+    /// retired id is dropped without resurrecting the tunnel. The transport's
+    /// drop hook must not double-count the already-retired tunnel.
     #[tokio::test]
     async fn dropping_inbound_endpoint_transport_removes_target_tunnel() {
         let routing = Arc::new(RoutingCore::new());
@@ -1034,12 +987,12 @@ mod tests {
         let transport = incoming_rx.recv().await.unwrap();
         assert_eq!(pool.counts().await, (1, 0));
 
-        pool.remove_host_preserving_tunnel(initiator, Some(id))
-            .await;
-        assert_eq!(pool.counts().await, (1, 0));
+        pool.remove_host(initiator).await;
+        assert_eq!(pool.counts().await, (0, 1));
 
         drop(transport);
-        wait_for_counts(&pool, (0, 1)).await;
+        tokio::task::yield_now().await;
+        assert_eq!(pool.counts().await, (0, 1));
 
         pool.handle_inbound_frame(frame(id, b"late")).await.unwrap();
 
@@ -1303,68 +1256,6 @@ mod tests {
         let mut buf = [0_u8; 4];
         transport.read_exact(&mut buf).await.unwrap();
         assert_eq!(&buf, b"pong");
-    }
-
-    #[tokio::test]
-    async fn inbound_frame_delivers_existing_tunnel_on_draining_link() {
-        let routing = Arc::new(RoutingCore::new());
-        let initiator = HostId::from_u128(1);
-        let target = HostId::from_u128(2);
-        let (incoming_tx, _incoming_rx) = mpsc::channel(1);
-        let pool = TunnelPool::new(initiator, routing, incoming_tx);
-        let (link_tx, _link_rx) = mpsc::channel(8);
-        let relay = link("relay");
-        pool.link_registry()
-            .register(relay.clone(), target, link_tx)
-            .await;
-
-        let id = tunnel_id(initiator, 42);
-        let (tunnel, mut transport) = create_tunnel(id, route("relay"), target, mpsc::channel(8).0);
-        pool.state.write().await.tunnels.insert(
-            id,
-            ActiveTunnel {
-                #[cfg(test)]
-                peer: target,
-                route: route("relay"),
-                tunnel,
-            },
-        );
-        assert!(pool.link_registry().mark_draining(&relay).await);
-
-        pool.handle_inbound_frame(frame(id, b"pong")).await.unwrap();
-
-        let mut buf = [0_u8; 4];
-        transport.read_exact(&mut buf).await.unwrap();
-        assert_eq!(&buf, b"pong");
-    }
-
-    #[tokio::test]
-    async fn inbound_frame_can_create_target_tunnel_on_draining_link() {
-        let routing = Arc::new(RoutingCore::new());
-        let initiator = HostId::from_u128(1);
-        let target = HostId::from_u128(2);
-        routing
-            .apply_host_up(host(1, "initiator"), route("relay"), None)
-            .await;
-
-        let (incoming_tx, mut incoming_rx) = mpsc::channel(1);
-        let pool = TunnelPool::new(target, routing, incoming_tx);
-        let (link_tx, _link_rx) = mpsc::channel(8);
-        let relay = link("relay");
-        pool.link_registry()
-            .register(relay.clone(), initiator, link_tx)
-            .await;
-        assert!(pool.link_registry().mark_draining(&relay).await);
-
-        let id = tunnel_id(initiator, 42);
-        pool.handle_inbound_frame(frame(id, b"hello"))
-            .await
-            .unwrap();
-
-        let mut transport = incoming_rx.recv().await.unwrap();
-        let mut buf = [0_u8; 5];
-        transport.read_exact(&mut buf).await.unwrap();
-        assert_eq!(&buf, b"hello");
     }
 
     #[tokio::test]

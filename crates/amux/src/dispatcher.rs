@@ -179,11 +179,7 @@ impl TunnelDispatcher {
                 tokio::spawn(async move {
                     let _permit = permit;
                     if let Err(error) = dispatcher
-                        .dispatch(
-                            stream,
-                            PreTrustPairingReachability::NoReusableReachability,
-                            None,
-                        )
+                        .dispatch(stream, PreTrustPairingReachability::NoReusableReachability)
                         .await
                     {
                         tracing::warn!(peer = %addr, error = %error, "dispatcher rejected TCP stream");
@@ -202,16 +198,12 @@ impl TunnelDispatcher {
             while let Some(transport) = incoming_rx.recv().await {
                 let dispatcher = dispatcher.clone();
                 tokio::spawn(async move {
-                    let tunnel_id = transport.tunnel_id();
                     let pairing_reachability = if transport.has_cloud_pairing_reachability() {
                         PreTrustPairingReachability::Cloud
                     } else {
                         PreTrustPairingReachability::NoReusableReachability
                     };
-                    if let Err(error) = dispatcher
-                        .dispatch(transport, pairing_reachability, tunnel_id)
-                        .await
-                    {
+                    if let Err(error) = dispatcher.dispatch(transport, pairing_reachability).await {
                         tracing::warn!(error = %error, "dispatcher rejected tunnel stream");
                     }
                 });
@@ -230,7 +222,6 @@ impl TunnelDispatcher {
         &self,
         stream: IO,
         pairing_reachability: PreTrustPairingReachability,
-        pairing_tunnel_id: Option<crate::tunnel::TunnelId>,
     ) -> Result<(), DispatchError>
     where
         IO: AsyncRead + AsyncWrite + Send + Unpin + 'static,
@@ -268,7 +259,6 @@ impl TunnelDispatcher {
                 .send(BoxedGrpcIo::pre_trust_pairing(
                     tls_stream,
                     pairing_reachability,
-                    pairing_tunnel_id,
                 ))
                 .await
                 .map_err(|_| DispatchError::ChannelClosed),
@@ -459,7 +449,7 @@ mod tests {
                 .connect(ServerName::try_from("amux.test").unwrap(), client_io)
                 .await
         });
-        let server = dispatcher.dispatch(server_io, reachability, None).await;
+        let server = dispatcher.dispatch(server_io, reachability).await;
         let _ = client.await.unwrap();
         server
     }
@@ -546,7 +536,6 @@ mod tests {
             pairing.connect_info().auth,
             BoxedGrpcAuth::PreTrustPairing {
                 reachability: PreTrustPairingReachability::Cloud,
-                tunnel_id: None,
             }
         );
     }
@@ -588,7 +577,6 @@ mod tests {
             pairing.connect_info().auth,
             BoxedGrpcAuth::PreTrustPairing {
                 reachability: PreTrustPairingReachability::NoReusableReachability,
-                tunnel_id: None,
             }
         );
     }

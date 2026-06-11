@@ -12,7 +12,6 @@ use tokio::io::{AsyncRead, AsyncWrite, ReadBuf};
 use tonic::transport::server::Connected;
 
 use crate::HostId;
-use crate::tunnel::TunnelId;
 
 pub(crate) struct GrpcIo<T> {
     inner: T,
@@ -85,7 +84,6 @@ pub(crate) enum BoxedGrpcAuth {
     },
     PreTrustPairing {
         reachability: PreTrustPairingReachability,
-        tunnel_id: Option<TunnelId>,
     },
 }
 
@@ -121,21 +119,11 @@ impl BoxedGrpcIo {
         Self::new(inner, BoxedGrpcAuth::TlsTrusted { peer })
     }
 
-    pub(crate) fn pre_trust_pairing<T>(
-        inner: T,
-        reachability: PreTrustPairingReachability,
-        tunnel_id: Option<TunnelId>,
-    ) -> Self
+    pub(crate) fn pre_trust_pairing<T>(inner: T, reachability: PreTrustPairingReachability) -> Self
     where
         T: BoxedGrpcInner,
     {
-        Self::new(
-            inner,
-            BoxedGrpcAuth::PreTrustPairing {
-                reachability,
-                tunnel_id,
-            },
-        )
+        Self::new(inner, BoxedGrpcAuth::PreTrustPairing { reachability })
     }
 
     fn new<T>(inner: T, auth: BoxedGrpcAuth) -> Self

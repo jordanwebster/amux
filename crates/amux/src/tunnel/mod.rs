@@ -81,7 +81,7 @@ pub(crate) fn create_tunnel(
             reader_task,
             writer_task,
         },
-        TunnelTransport::new(grpc_half, peer).with_tunnel_id(id),
+        TunnelTransport::new(grpc_half, peer),
     )
 }
 

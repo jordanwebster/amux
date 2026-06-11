@@ -9,15 +9,15 @@
 //! dropped without harming the link, and handshake floods are rate-limited.
 //! (docs/NETWORKING.md §8.9–8.10, §10 N-TN-*, N-X-9, protocol versioning)
 
-use amux::testnet::{GoAwayReason, TestNet, Via, WirePeer};
+use amux::testnet::{LinkCloseReason, TestNet, Via, WirePeer};
 
 /// An oversize `TunnelFrame` (one byte past the 64 KiB payload cap, N-TN-7) is
-/// a link-closing protocol violation: the daemon answers `GoAway(PROTOCOL_
+/// a link-closing protocol violation: the daemon answers `LinkClose(PROTOCOL_
 /// ERROR)` and closes the Connect stream. Unlike the lib-level test that hand-
 /// feeds the handler, this rides the real external TCP listener, TLS, and
 /// dispatcher.
 #[tokio::test]
-async fn an_oversize_tunnel_frame_closes_the_link_with_a_protocol_goaway() {
+async fn an_oversize_tunnel_frame_closes_the_link_with_a_protocol_link_close() {
     let net = TestNet::builder().daemon("victim").start().await;
 
     let mut wire = WirePeer::connect_trusted(&net, "victim").await;
@@ -27,12 +27,12 @@ async fn an_oversize_tunnel_frame_closes_the_link_with_a_protocol_goaway() {
         .await;
 
     let error = wire
-        .expect_goaway(GoAwayReason::ProtocolError)
+        .expect_link_close(LinkCloseReason::ProtocolError)
         .await
-        .expect("the protocol GoAway carries an error");
+        .expect("the protocol LinkClose carries an error");
     assert!(
         error.message.contains("payload exceeds"),
-        "GoAway error should explain the cap violation, got: {}",
+        "LinkClose error should explain the cap violation, got: {}",
         error.message
     );
     wire.expect_stream_closed().await;
@@ -89,12 +89,12 @@ async fn a_malformed_frame_closes_the_connect_stream() {
 /// A `TunnelFrame` for a tunnel that never existed is dropped on the floor and
 /// the Link stays up (N-TN-4: an unknown id may at most create an inbound
 /// tunnel; here the acceptor holds no reverse route to the frame's initiator,
-/// so it is simply discarded). The link must not escalate to a GoAway.
+/// so it is simply discarded). The link must not escalate to a LinkClose.
 ///
 /// NOTE: this is the deterministic, non-racy half of the spec'd behavior. The
 /// close-race variant — a frame arriving for a tunnel in its just-dropped
 /// window yields `InboundClosed`, which the Connect handler escalates to
-/// `GoAway(PROTOCOL_ERROR)` on the whole Link — is the B1 finding
+/// `LinkClose(PROTOCOL_ERROR)` on the whole Link — is the B1 finding
 /// (NETWORKING_REVIEW.md §1); it needs a real tunnel lifecycle a WirePeer
 /// can't drive deterministically and is documented by the ignored test below.
 #[tokio::test]
@@ -115,13 +115,13 @@ async fn a_frame_for_an_unknown_tunnel_is_dropped_and_the_link_stays_up() {
 
 /// Documents the B1 close-race (NETWORKING_REVIEW.md §1): a frame for a tunnel
 /// dropped a moment earlier surfaces `InboundClosed`, which the Connect
-/// handler turns into a link-wide `GoAway(PROTOCOL_ERROR)` — contrary to the
+/// handler turns into a link-wide `LinkClose(PROTOCOL_ERROR)` — contrary to the
 /// spec, where only oversize payloads are link-closing. The race needs a real
 /// tunnel created-then-closed under the frame, which the WirePeer harness
 /// cannot stage deterministically; ignored until the bug is fixed or a
 /// deterministic reproduction exists.
 #[tokio::test]
-#[ignore = "B1: tunnel-close race escalates a dead-tunnel frame to a link GoAway (NETWORKING_REVIEW.md §1)"]
+#[ignore = "B1: tunnel-close race escalates a dead-tunnel frame to a link LinkClose (NETWORKING_REVIEW.md §1)"]
 async fn a_frame_for_a_just_closed_tunnel_should_not_kill_the_link() {
     // Intentionally empty: the deterministic case is covered above; this
     // marker keeps the B1 divergence visible in the suite.

@@ -22,7 +22,6 @@ use crate::pairing::{PairMode, PairModePinAttempt, PairModeTokenAttempt};
 use crate::protocol::{PROTOCOL_VERSION, wire};
 use crate::transport::{BoxedGrpcAuth, BoxedGrpcConnectInfo, PreTrustPairingReachability};
 use crate::trust::{Reachability, SharedTrustStore, TrustStore, TrustStorePairingUpdate};
-use crate::tunnel::TunnelId;
 use crate::{HostId, audit};
 
 const HOST_ID_LEN: usize = 16;
@@ -81,7 +80,6 @@ pub(crate) struct PeerTrustUpdate {
     pubkey: Vec<u8>,
     name: String,
     reachability: Option<Reachability>,
-    preserve_tunnel_id: Option<TunnelId>,
 }
 
 impl PeerTrustUpdate {
@@ -96,13 +94,7 @@ impl PeerTrustUpdate {
             pubkey,
             name,
             reachability,
-            preserve_tunnel_id: None,
         }
-    }
-
-    fn preserving_tunnel(mut self, tunnel_id: Option<TunnelId>) -> Self {
-        self.preserve_tunnel_id = tunnel_id;
-        self
     }
 }
 
@@ -168,7 +160,6 @@ impl PairingService {
         pubkey: Vec<u8>,
         name: String,
         reachability: Option<Reachability>,
-        preserve_tunnel_id: Option<TunnelId>,
     ) -> Result<PeerTrustCommitGuard, Status> {
         stage_peer_trust_update(
             PeerTrustCommitContext::new(
@@ -177,8 +168,7 @@ impl PairingService {
                 self.connections.clone(),
                 self.data_dir.clone(),
             ),
-            PeerTrustUpdate::new(host_id, pubkey, name, reachability)
-                .preserving_tunnel(preserve_tunnel_id),
+            PeerTrustUpdate::new(host_id, pubkey, name, reachability),
         )
         .await
     }
@@ -190,10 +180,9 @@ impl PairingService {
         pubkey: Vec<u8>,
         name: String,
         reachability: Option<Reachability>,
-        preserve_tunnel_id: Option<TunnelId>,
     ) -> Result<(), Status> {
         match self
-            .stage_peer_trust(host_id, pubkey, name, reachability, preserve_tunnel_id)
+            .stage_peer_trust(host_id, pubkey, name, reachability)
             .await
         {
             Ok(trust_commit) => match self.pair_mode.complete_token_success(&mut attempt) {
@@ -218,14 +207,13 @@ impl PairingService {
         pubkey: Vec<u8>,
         name: String,
         reachability: Option<Reachability>,
-        preserve_tunnel_id: Option<TunnelId>,
     ) -> Result<(), Status> {
         let mut commit = self
             .pair_mode
             .begin_pin_commit(attempt)
             .map_err(pin_mode_status)?;
         match self
-            .stage_peer_trust(host_id, pubkey, name, reachability, preserve_tunnel_id)
+            .stage_peer_trust(host_id, pubkey, name, reachability)
             .await
         {
             Ok(trust_commit) => match self.pair_mode.complete_pin_success(&mut commit) {
@@ -247,7 +235,6 @@ impl PairingService {
         self,
         mut pin_attempt: PairModePinAttempt,
         reachability: Option<Reachability>,
-        preserve_tunnel_id: Option<TunnelId>,
         mut inbound: tonic::Streaming<wire::pb::PairBySpake2Message>,
         outbound: mpsc::Sender<Result<wire::pb::PairBySpake2Message, Status>>,
     ) -> Result<(), Status> {
@@ -419,7 +406,6 @@ impl PairingService {
             peer_identity.pubkey,
             peer_identity.name,
             reachability,
-            preserve_tunnel_id,
         )
         .await?;
         send_body(
@@ -683,8 +669,7 @@ async fn stage_peer_trust_update(
     let mut guard = PeerTrustCommitGuard::new(
         context.clone(),
         host_id,
-        PeerTrustCommitState::new(before.clone(), staged.clone(), outcome.clone())
-            .preserving_tunnel(update.preserve_tunnel_id),
+        PeerTrustCommitState::new(before.clone(), staged.clone(), outcome.clone()),
         trust_commit_lock,
     );
 
@@ -707,18 +692,13 @@ async fn stage_peer_trust_update(
         guard = PeerTrustCommitGuard::new(
             context.clone(),
             host_id,
-            PeerTrustCommitState::new(before, staged.clone(), outcome.clone())
-                .finish_connection()
-                .preserving_tunnel(update.preserve_tunnel_id),
+            PeerTrustCommitState::new(before, staged.clone(), outcome.clone()).finish_connection(),
             guard
                 .trust_commit_lock
                 .take()
                 .expect("trust commit lock held"),
         );
-        context
-            .connections
-            .teardown_host_preserving_tunnel(host_id, update.preserve_tunnel_id)
-            .await;
+        context.connections.teardown_host(host_id).await;
         outcome = staged
             .replace_paired_peer_after_teardown(
                 host_id,
@@ -747,7 +727,6 @@ struct PeerTrustCommitGuard {
     staged: Option<TrustStore>,
     outcome: TrustStorePairingUpdate,
     finish_connection: bool,
-    preserve_tunnel_id: Option<TunnelId>,
     trust_commit_lock: Option<OwnedMutexGuard<()>>,
 }
 
@@ -756,7 +735,6 @@ struct PeerTrustCommitState {
     staged: TrustStore,
     outcome: TrustStorePairingUpdate,
     finish_connection: bool,
-    preserve_tunnel_id: Option<TunnelId>,
 }
 
 impl PeerTrustCommitState {
@@ -766,17 +744,11 @@ impl PeerTrustCommitState {
             staged,
             outcome,
             finish_connection: false,
-            preserve_tunnel_id: None,
         }
     }
 
     fn finish_connection(mut self) -> Self {
         self.finish_connection = true;
-        self
-    }
-
-    fn preserving_tunnel(mut self, tunnel_id: Option<TunnelId>) -> Self {
-        self.preserve_tunnel_id = tunnel_id;
         self
     }
 }
@@ -797,7 +769,6 @@ impl PeerTrustCommitGuard {
             staged: Some(state.staged),
             outcome: state.outcome,
             finish_connection: state.finish_connection,
-            preserve_tunnel_id: state.preserve_tunnel_id,
             trust_commit_lock: Some(trust_commit_lock),
         }
     }
@@ -836,9 +807,7 @@ impl PeerTrustCommitGuard {
 
     async fn finish_replacement(&mut self) {
         if self.finish_connection {
-            self.connections
-                .finish_host_replacement_preserving_tunnel(self.host_id, self.preserve_tunnel_id)
-                .await;
+            self.connections.finish_host_replacement(self.host_id).await;
             self.finish_connection = false;
         }
     }
@@ -857,12 +826,9 @@ impl Drop for PeerTrustCommitGuard {
         if self.finish_connection {
             let connections = self.connections.clone();
             let host_id = self.host_id;
-            let preserve_tunnel_id = self.preserve_tunnel_id;
             if let Ok(handle) = tokio::runtime::Handle::try_current() {
                 handle.spawn(async move {
-                    connections
-                        .finish_host_replacement_preserving_tunnel(host_id, preserve_tunnel_id)
-                        .await;
+                    connections.finish_host_replacement(host_id).await;
                 });
             }
         }
@@ -877,7 +843,7 @@ impl wire::pairing_service_server::PairingService for PairingService {
     ) -> Result<tonic::Response<wire::pb::PairByTokenResponse>, Status> {
         audit::pairing_start("token");
         let result = async {
-            let (reachability, preserve_tunnel_id) = token_pairing_request_reachability(&request)?;
+            let reachability = token_pairing_request_reachability(&request)?;
             if !self.pair_mode.is_active() {
                 return Err(pairing_status(
                     Code::FailedPrecondition,
@@ -904,7 +870,6 @@ impl wire::pairing_service_server::PairingService for PairingService {
                 request.pubkey,
                 request.name,
                 reachability,
-                preserve_tunnel_id,
             )
             .await?;
             audit::pairing_success("token", peer_host_id);
@@ -927,10 +892,9 @@ impl wire::pairing_service_server::PairingService for PairingService {
         request: tonic::Request<tonic::Streaming<wire::pb::PairBySpake2Message>>,
     ) -> Result<tonic::Response<Self::PairBySpake2Stream>, Status> {
         audit::pairing_start("spake2");
-        let (reachability, preserve_tunnel_id) = pairing_request_reachability(&request)
-            .inspect_err(|error| {
-                audit::pairing_failure("spake2", error);
-            })?;
+        let reachability = pairing_request_reachability(&request).inspect_err(|error| {
+            audit::pairing_failure("spake2", error);
+        })?;
         let pin_attempt = self
             .pair_mode
             .begin_pin_attempt()
@@ -945,7 +909,6 @@ impl wire::pairing_service_server::PairingService for PairingService {
             let responder = service.run_spake2_responder(
                 pin_attempt,
                 reachability,
-                preserve_tunnel_id,
                 request.into_inner(),
                 tx.clone(),
             );
@@ -1024,21 +987,15 @@ fn validate_pairing_identity(identity: &wire::pb::PairingIdentity) -> Result<Hos
 
 fn pairing_request_reachability<T>(
     request: &tonic::Request<T>,
-) -> Result<(Option<Reachability>, Option<TunnelId>), Status> {
+) -> Result<Option<Reachability>, Status> {
     request
         .extensions()
         .get::<BoxedGrpcConnectInfo>()
         .and_then(|info| match &info.auth {
-            BoxedGrpcAuth::PreTrustPairing {
-                reachability,
-                tunnel_id,
-            } => Some((
-                match reachability {
-                    PreTrustPairingReachability::Cloud => Some(Reachability::Cloud),
-                    PreTrustPairingReachability::NoReusableReachability => None,
-                },
-                *tunnel_id,
-            )),
+            BoxedGrpcAuth::PreTrustPairing { reachability } => Some(match reachability {
+                PreTrustPairingReachability::Cloud => Some(Reachability::Cloud),
+                PreTrustPairingReachability::NoReusableReachability => None,
+            }),
             BoxedGrpcAuth::LocalTrusted | BoxedGrpcAuth::TlsTrusted { .. } => None,
         })
         .ok_or_else(|| {
@@ -1048,7 +1005,7 @@ fn pairing_request_reachability<T>(
 
 fn token_pairing_request_reachability<T>(
     request: &tonic::Request<T>,
-) -> Result<(Option<Reachability>, Option<TunnelId>), Status> {
+) -> Result<Option<Reachability>, Status> {
     let info = request
         .extensions()
         .get::<BoxedGrpcConnectInfo>()
@@ -1058,11 +1015,9 @@ fn token_pairing_request_reachability<T>(
     match &info.auth {
         BoxedGrpcAuth::PreTrustPairing {
             reachability: PreTrustPairingReachability::Cloud,
-            tunnel_id,
-        } => Ok((Some(Reachability::Cloud), *tunnel_id)),
+        } => Ok(Some(Reachability::Cloud)),
         BoxedGrpcAuth::PreTrustPairing {
             reachability: PreTrustPairingReachability::NoReusableReachability,
-            ..
         } => Err(Status::permission_denied(
             "token pairing requires cloud pre-trust pairing transport",
         )),
@@ -1559,7 +1514,6 @@ mod tests {
         request.extensions_mut().insert(BoxedGrpcConnectInfo {
             auth: BoxedGrpcAuth::PreTrustPairing {
                 reachability: PreTrustPairingReachability::Cloud,
-                tunnel_id: None,
             },
         });
         request
@@ -1586,7 +1540,6 @@ mod tests {
             Ok::<_, std::io::Error>(BoxedGrpcIo::pre_trust_pairing(
                 server_transport,
                 reachability,
-                None,
             ))
         });
         let task = tokio::spawn(async move {
@@ -1706,7 +1659,6 @@ mod tests {
             Ok::<_, std::io::Error>(BoxedGrpcIo::pre_trust_pairing(
                 server_transport,
                 PreTrustPairingReachability::Cloud,
-                None,
             ))
         });
         let task = tokio::spawn(async move {
@@ -1738,7 +1690,6 @@ mod tests {
             Ok::<_, std::io::Error>(BoxedGrpcIo::pre_trust_pairing(
                 server_transport,
                 PreTrustPairingReachability::Cloud,
-                None,
             ))
         });
         let task = tokio::spawn(async move {
@@ -2205,7 +2156,6 @@ mod tests {
                 peer.public_key().to_vec(),
                 "peer".to_string(),
                 Some(Reachability::Cloud),
-                None,
             )
             .await
             .unwrap();
@@ -2683,6 +2633,110 @@ mod tests {
         let persisted = TrustStore::load_or_create_in(dir.path()).unwrap();
         assert_eq!(
             persisted.entry(peer.host_id).unwrap().pubkey,
+            peer.public_key()
+        );
+    }
+
+    /// D10: committing a same-host_id/different-pubkey replacement tears
+    /// down *everything* for that host — including the in-flight pairing
+    /// tunnel that carried the pairing RPC itself. Nothing is preserved; an
+    /// initiator that misses the response simply re-pairs.
+    #[tokio::test]
+    async fn pair_by_token_replacement_retires_the_in_flight_pairing_tunnel() {
+        let data_dir = tempfile::tempdir().unwrap();
+        let responder = DeviceIdentity::for_test(HostId::from_u128(1));
+        let peer = DeviceIdentity::for_test(HostId::from_u128(2));
+        let old_peer = DeviceIdentity::for_test(peer.host_id);
+        let pair_mode = Arc::new(PairMode::new());
+        let trust_store = Arc::new(std::sync::RwLock::new(TrustStore::default()));
+        trust_store.write().unwrap().insert_for_test(
+            peer.host_id,
+            TrustEntry {
+                pubkey: old_peer.public_key().to_vec(),
+                name: "old".to_string(),
+                paired_at: chrono::DateTime::<Utc>::from_timestamp(100, 0).unwrap(),
+                reachabilities: vec![Reachability::Cloud],
+            },
+        );
+        let routing = Arc::new(RoutingCore::new());
+        let (incoming_tx, mut incoming_rx) = mpsc::channel(2);
+        let tunnels = Arc::new(crate::tunnel::TunnelPool::new(
+            responder.host_id,
+            routing.clone(),
+            incoming_tx,
+        ));
+        // Host an inbound tunnel initiated by the pairing peer over a relay
+        // link — the stand-in for the tunnel carrying this very pairing RPC.
+        routing
+            .apply_host_up(
+                Host {
+                    id: peer.host_id,
+                    name: "peer".to_string(),
+                    version: "test".to_string(),
+                    capabilities: Capabilities {
+                        features: Vec::new(),
+                        supported_agent_types: vec![SupportedAgentType {
+                            agent_type: "test-agent".to_string(),
+                        }],
+                    },
+                },
+                Route::from_link(Link::new("relay").unwrap()),
+                None,
+            )
+            .await;
+        let (link_tx, _link_rx) = mpsc::channel(8);
+        tunnels
+            .link_registry()
+            .register(Link::new("relay").unwrap(), HostId::from_u128(99), link_tx)
+            .await;
+        tunnels
+            .handle_inbound_frame(wire::pb::TunnelFrame {
+                dst: Some(wire::pb::Route { links: Vec::new() }),
+                tunnel_id: Some(
+                    crate::tunnel::TunnelId::from_parts(peer.host_id, uuid::Uuid::from_u128(42))
+                        .into(),
+                ),
+                payload: b"pairing".to_vec(),
+            })
+            .await
+            .unwrap();
+        let _pairing_transport = incoming_rx.recv().await.unwrap();
+        assert_eq!(tunnels.counts().await, (1, 0));
+
+        let connections = Arc::new(ConnectionManager::new(routing, tunnels.clone()));
+        let service = PairingService::new(
+            pair_mode.clone(),
+            LocalPairingIdentity::from_device_identity(&responder),
+            "responder".to_string(),
+            trust_store.clone(),
+            Arc::new(Mutex::new(())),
+            connections,
+            data_dir.path().to_path_buf(),
+        );
+        let token = [5_u8; 32];
+        pair_mode
+            .start_token_for_duration(token, Duration::from_secs(60))
+            .unwrap();
+
+        service
+            .pair_by_token(pre_trust_pairing_request(token_request(
+                token, &peer, "new",
+            )))
+            .await
+            .unwrap();
+
+        assert_eq!(
+            tunnels.counts().await,
+            (0, 1),
+            "the replacement commit must retire the in-flight pairing tunnel"
+        );
+        assert_eq!(
+            trust_store
+                .read()
+                .unwrap()
+                .entry(peer.host_id)
+                .unwrap()
+                .pubkey,
             peer.public_key()
         );
     }

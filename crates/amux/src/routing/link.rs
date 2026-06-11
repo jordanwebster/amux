@@ -185,16 +185,15 @@ fn body_name(body: &pb::message::Body) -> &'static str {
         pb::message::Body::TunnelFrame(_) => "tunnel_frame",
         pb::message::Body::Reauth(_) => "reauth",
         pb::message::Body::ReauthAck(_) => "reauth_ack",
-        pb::message::Body::Goaway(_) => "goaway",
+        pb::message::Body::LinkClose(_) => "link_close",
     }
 }
 
-pub(crate) fn protocol_error_goaway(message: impl Into<String>) -> pb::Message {
+pub(crate) fn protocol_error_link_close(message: impl Into<String>) -> pb::Message {
     pb::Message {
-        body: Some(pb::message::Body::Goaway(pb::GoAway {
-            reason: pb::GoAwayReason::ProtocolError as i32,
+        body: Some(pb::message::Body::LinkClose(pb::LinkClose {
+            reason: pb::LinkCloseReason::ProtocolError as i32,
             error: Some(protocol_error(message)),
-            drain_timeout_ms: 0,
         })),
     }
 }
@@ -377,10 +376,9 @@ mod tests {
             pb::message::Body::ReauthAck(pb::ReauthAck {
                 outcome: Some(pb::reauth_ack::Outcome::Accepted(pb::Empty {})),
             }),
-            pb::message::Body::Goaway(pb::GoAway {
-                reason: pb::GoAwayReason::UserShutdown as i32,
+            pb::message::Body::LinkClose(pb::LinkClose {
+                reason: pb::LinkCloseReason::UserShutdown as i32,
                 error: None,
-                drain_timeout_ms: 10,
             }),
         ];
 
@@ -435,15 +433,14 @@ mod tests {
     }
 
     #[test]
-    fn protocol_error_goaway_is_abort_without_drain() {
-        let goaway = protocol_error_goaway("bad frame");
-        let Some(pb::message::Body::Goaway(goaway)) = goaway.body else {
-            panic!("expected GoAway");
+    fn protocol_error_link_close_carries_reason_and_error() {
+        let close = protocol_error_link_close("bad frame");
+        let Some(pb::message::Body::LinkClose(close)) = close.body else {
+            panic!("expected LinkClose");
         };
-        assert_eq!(goaway.reason, pb::GoAwayReason::ProtocolError as i32);
-        assert_eq!(goaway.drain_timeout_ms, 0);
+        assert_eq!(close.reason, pb::LinkCloseReason::ProtocolError as i32);
         assert_eq!(
-            goaway.error.unwrap().code,
+            close.error.unwrap().code,
             pb::ErrorCode::InvalidArgument as i32
         );
     }

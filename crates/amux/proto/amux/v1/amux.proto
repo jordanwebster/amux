@@ -111,7 +111,7 @@ message Message {
     TunnelFrame tunnel_frame = 4;
     Reauth reauth = 5;
     ReauthAck reauth_ack = 6;
-    GoAway goaway = 7;
+    LinkClose link_close = 7;
   }
 }
 
@@ -173,22 +173,23 @@ message SupportedAgentType {
   string agent_type = 1;
 }
 
-message GoAway {
-  GoAwayReason reason = 1;
+// "The link is closed now, here's why." No grace period: a receiver treats
+// the link as gone the moment this arrives.
+message LinkClose {
+  LinkCloseReason reason = 1;
   optional Error error = 2;
-  uint32 drain_timeout_ms = 3;
 }
 
-enum GoAwayReason {
-  GO_AWAY_REASON_UNSPECIFIED = 0;
-  GO_AWAY_REASON_USER_SHUTDOWN = 1;
-  GO_AWAY_REASON_UPDATING = 2;
-  GO_AWAY_REASON_SUSPENDING = 3;
-  GO_AWAY_REASON_RESTARTING = 4;
-  GO_AWAY_REASON_AUTH_EXPIRED = 5;
-  GO_AWAY_REASON_PROTOCOL_ERROR = 6;
-  GO_AWAY_REASON_UPDATE_REQUIRED = 7;
-  GO_AWAY_REASON_USER_REVOKED = 8;
+enum LinkCloseReason {
+  LINK_CLOSE_REASON_UNSPECIFIED = 0;
+  LINK_CLOSE_REASON_USER_SHUTDOWN = 1;
+  LINK_CLOSE_REASON_UPDATING = 2;
+  LINK_CLOSE_REASON_SUSPENDING = 3;
+  LINK_CLOSE_REASON_RESTARTING = 4;
+  LINK_CLOSE_REASON_AUTH_EXPIRED = 5;
+  LINK_CLOSE_REASON_PROTOCOL_ERROR = 6;
+  LINK_CLOSE_REASON_UPDATE_REQUIRED = 7;
+  LINK_CLOSE_REASON_USER_REVOKED = 8;
 }
 
 // ---------------------------------------------------------------------------
