@@ -1,0 +1,100 @@
+# How amux works
+
+amux lets your devices reach the AI coding agents and terminal sessions
+running on your other devices — your phone checking on a build your
+workstation is running, your laptop picking up a session you started at
+your desk. This page explains the model behind that, and why you can
+trust it with a door into your machines.
+
+## Devices, not accounts
+
+Every device running amux mints its own cryptographic identity on first
+run: a private key that never leaves the device, ever. There is no
+account that owns your devices and no server that holds your keys. Two
+devices can talk if — and only if — you have **paired** them.
+
+## Pairing: trust is something you do once, in person
+
+Pairing connects two devices you control (or yours and a collaborator's).
+It works like you'd hope:
+
+- **Type a PIN** — one device shows a 6-digit code, you type it into the
+  other; or
+- **Scan a QR code** — point your phone at the screen.
+
+Under the hood both run the same password-authenticated key exchange
+(SPAKE2): the code proves to each device that the other one is the
+machine physically in front of you, *without the code itself ever
+crossing the network*. An eavesdropper learns nothing they can replay;
+codes are one-shot and expire in about five minutes.
+
+What pairing produces is small and local: each device **pins the other's
+public key** in its own trust store, like remembering a face. From then
+on, all trust decisions are made against that pinned key — on your
+device, by your device.
+
+## Talking: links and tunnels
+
+Paired devices connect however they can reach each other — a direct
+connection on your network, SSH, or through a relay when they can't
+reach each other directly (your phone on cellular, your workstation
+behind a home router). amux calls these connections **links**.
+
+Every actual conversation — attaching to a session, listing agents,
+streaming output — travels inside a **tunnel**: an end-to-end encrypted
+channel that rides whatever links are available. Before a single byte of
+your session flows, the two endpoints complete a mutual TLS handshake
+checked against their pinned keys. Both sides prove who they are, every
+time, no matter what carried the connection.
+
+That one rule — every call is a tunnel, every tunnel is authenticated
+end-to-end — is the heart of the security model. The transport
+underneath is just plumbing; nothing about it is trusted.
+
+## The relay (and why it can't hurt you)
+
+When two of your devices can't reach each other directly, a relay passes
+their messages along. The relay can be the amux cloud, or any always-on
+device you've paired (a home server works fine) — relaying is built into
+every node.
+
+A relay sees only encrypted tunnel traffic and delivery addresses. It
+cannot:
+
+- **read your sessions** — tunnel contents are encrypted end-to-end
+  between your devices;
+- **impersonate a device** — it holds no pinned key, so it fails the
+  handshake that guards every call;
+- **create agents or run commands** — those require a tunnel that
+  terminates inside your trusted circle, which a relay can never form.
+
+The cloud relay is deliberately just a well-connected middleman with a
+subscription check at the door. If it were ever compromised, the
+attacker would inherit the ability to forward your encrypted packets —
+and nothing else.
+
+## Leaving: revocation is local and immediate
+
+Unpair a device and your machine simply deletes its pinned key. From
+that moment every connection and in-flight session from that device is
+cut, and new attempts fail their handshake. You don't ask a server's
+permission to stop trusting someone; you just stop.
+
+## Why this is trustworthy
+
+- **The protocol is small.** A handful of message types, two routing
+  rules, one pairing flow, one way to authenticate a call. Small enough
+  to read in an afternoon, small enough to audit.
+- **It's missing things on purpose.** No transitive trust ("a friend of
+  a friend"), no multi-hop routing, no central trust authority, no
+  bearer tokens for pairing. Each absence is a whole class of attacks
+  and bugs that cannot exist.
+- **The spec is executable.** The protocol's guarantees are locked in by
+  a test suite written as plain-English specifications — from "a relay
+  that carries every byte still cannot call the devices it serves" to
+  "revoking trust breaks in-flight sessions immediately" — and run
+  against real daemons, real TLS, and real sockets on every change.
+
+For the wire-level details, see the [protocol specification](PROTOCOL.md).
+For how the pieces fit together inside, see the
+[architecture](ARCHITECTURE.md).

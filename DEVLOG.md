@@ -38,6 +38,37 @@ One paragraph describing what was done.
 
 ---
 
+## 2026-06-11: Protocol spec grows its survivors; the website one-pager lands
+
+### Summary
+docs/PROTOCOL.md absorbed the three protocol-level survivors of the v5
+spec — the SPAKE2 wire crypto (RFC 9382/edwards25519, transcript hash,
+HKDF infos, sealed identities, opaque INVALID_PIN), the
+versioning-is-equality rule, and the QR payload shape — plus a new "Why
+it is shaped this way" section folding the load-bearing rationale from
+the v6 decision walkthrough (stateless relays, one proxy hop, only-Open-
+allocates, no housekeeping acks, tunnels die with their link, deliberate
+double encryption, PAKE over bearer tokens). With that folded, the
+working note `notes/PROTOCOL_V6_DECISIONS.md` is deleted; rejected-
+alternative history lives in the June DEVLOG entries. New
+docs/HOW_IT_WORKS.md: the human-readable one-pager for the documentation
+website — mental model (devices not accounts, pairing as a one-time act,
+links carry / tunnels authenticate) and the trust story (what a relay
+structurally cannot do, local revocation, missing-by-design, executable
+spec).
+
+### Changes
+- docs/PROTOCOL.md: pairing crypto paragraph, version rule, rationale
+  section, header repointed (now ~150 lines).
+- docs/HOW_IT_WORKS.md: new.
+- notes/PROTOCOL_V6_DECISIONS.md deleted (gitignored; content folded).
+
+### Verification
+- Docs-only change; spec suite green on the prior commit re-verified
+  (43 passed / 0 ignored).
+
+---
+
 ## 2026-06-11: Replace the v5 networking spec with an architecture doc
 
 ### Summary
