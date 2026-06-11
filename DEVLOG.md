@@ -38,6 +38,25 @@ One paragraph describing what was done.
 
 ---
 
+## 2026-06-11: Stop the pre-existing Windows test hang from eating 6-hour runners
+
+### Summary
+With the clap failure fixed, the Windows test leg ran further and hit a
+hang that PREDATES the protocol rework (the 2026-06-07 run on old main
+was killed at the same 6-hour limit): `embedded_shutdown_…` and
+`embedded_suspend_…` never return on Windows — agent PTY teardown hangs
+under ConPTY, the same class of issue that already keeps the Windows e2e
+leg disabled. Both tests are now `#[cfg_attr(windows, ignore)]` with the
+reason inline. And the "tests always run with a timeout" rule now applies
+to CI itself: every job has `timeout-minutes` (10–30), so a future hang
+fails in minutes instead of silently burning a 6-hour runner.
+
+### Verification
+- `cargo test -p amux --test embedded`: 10 passed (macOS).
+- Windows leg verified by the subsequent CI run.
+
+---
+
 ## 2026-06-11: Fix Windows CLI arg conflicts referencing the unix-only --via-ssh
 
 ### Summary
