@@ -27,7 +27,7 @@ pub(crate) use tcp::{TcpServerTransport, configure_tcp_keepalive};
 use thiserror::Error;
 pub(crate) use tls::{
     create_tls_acceptor, pin_pairing_channel, pin_pairing_channel_from_io,
-    qr_pairing_channel_from_io, tls_channel, trusted_device_channel,
+    qr_pairing_channel_from_io, tls_channel, trusted_device_channel_tracked,
 };
 use tonic::transport::{Endpoint, Server};
 #[cfg(unix)]

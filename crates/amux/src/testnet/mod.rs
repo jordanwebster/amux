@@ -203,17 +203,22 @@ impl TestNet {
             );
         };
         from.spawn_direct_link(to.host_id(), reachability).await;
-        // Only the dialing side gains a Direct route: the acceptor of a
-        // direct link deliberately stores no route back (it has no outbound
-        // channel on that link until every call is a tunnel).
-        let assertion = format!("'{}' gains a direct route to '{}'", from.name(), to.name());
-        let to_id = to.host_id();
-        eventually(
-            &assertion,
-            async || matches!(from.route_to(to_id).await, Some(route) if route.is_direct()),
-            from.failure_dump(),
-        )
-        .await;
+        // Calls ride tunnels and frames flow both ways, so the link is
+        // callable — and routable — from both ends once it is up.
+        for (gains, over) in [(from, to), (to, from)] {
+            let assertion = format!(
+                "'{}' gains a direct route to '{}'",
+                gains.name(),
+                over.name()
+            );
+            let over_id = over.host_id();
+            eventually(
+                &assertion,
+                async || matches!(gains.route_to(over_id).await, Some(route) if route.is_direct()),
+                gains.failure_dump(),
+            )
+            .await;
+        }
     }
 
     /// Asserts the cloud relay cannot complete a routed call into `target`,
@@ -279,11 +284,9 @@ impl TestNet {
             match via {
                 Via::Tcp => {
                     a.connects_to(&b).via_direct().await;
-                    // The acceptor side of a direct link stores no route
-                    // back, so without a cloud it cannot observe the dialer.
-                    if a.inner.cloud.is_some() && b.inner.cloud.is_some() {
-                        b.sees(&a).await;
-                    }
+                    // Any live link is bidirectional at the call layer: the
+                    // acceptor records a route back over the inbound link.
+                    b.sees(&a).await;
                 }
                 Via::Cloud => {
                     b.sees(&a).await;

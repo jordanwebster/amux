@@ -1,23 +1,39 @@
-use crate::HostId;
-use crate::protocol::wire as pb;
+//! Tunnel identity: a plain 16-byte UUID minted by the initiator.
+//!
+//! The id carries no structure — the reply address travels once, in
+//! `TunnelOpen.src` — so the wire shape is just `bytes tunnel_id`.
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
-pub(crate) struct TunnelId {
-    pub(crate) initiator: HostId,
-    pub(crate) nonce: uuid::Uuid,
-}
+pub(crate) struct TunnelId(uuid::Uuid);
 
 impl TunnelId {
-    pub(crate) fn new(initiator: HostId) -> Self {
-        Self {
-            initiator,
-            nonce: uuid::Uuid::new_v4(),
-        }
+    pub(crate) fn new() -> Self {
+        Self(uuid::Uuid::new_v4())
+    }
+
+    pub(crate) fn to_wire(self) -> Vec<u8> {
+        self.0.as_bytes().to_vec()
+    }
+
+    pub(crate) fn from_wire(bytes: &[u8]) -> Result<Self, TunnelTypeError> {
+        let bytes: [u8; 16] = bytes
+            .try_into()
+            .map_err(|_| TunnelTypeError::InvalidUuidLength {
+                field: "tunnel_id",
+                actual: bytes.len(),
+            })?;
+        Ok(Self(uuid::Uuid::from_bytes(bytes)))
     }
 
     #[cfg(test)]
-    pub(crate) fn from_parts(initiator: HostId, nonce: uuid::Uuid) -> Self {
-        Self { initiator, nonce }
+    pub(crate) fn from_u128(value: u128) -> Self {
+        Self(uuid::Uuid::from_u128(value))
+    }
+}
+
+impl std::fmt::Display for TunnelId {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        write!(f, "{}", self.0.as_simple())
     }
 }
 
@@ -27,72 +43,25 @@ pub(crate) enum TunnelTypeError {
     InvalidUuidLength { field: &'static str, actual: usize },
 }
 
-impl TryFrom<pb::TunnelId> for TunnelId {
-    type Error = TunnelTypeError;
-
-    fn try_from(value: pb::TunnelId) -> Result<Self, Self::Error> {
-        Ok(Self {
-            initiator: uuid_from_bytes("TunnelId.initiator", value.initiator)?,
-            nonce: uuid_from_bytes("TunnelId.nonce", value.nonce)?,
-        })
-    }
-}
-
-impl From<TunnelId> for pb::TunnelId {
-    fn from(value: TunnelId) -> Self {
-        Self {
-            initiator: value.initiator.as_bytes().to_vec(),
-            nonce: value.nonce.as_bytes().to_vec(),
-        }
-    }
-}
-
-fn uuid_from_bytes(field: &'static str, bytes: Vec<u8>) -> Result<HostId, TunnelTypeError> {
-    let actual = bytes.len();
-    let bytes: [u8; 16] = bytes
-        .try_into()
-        .map_err(|_| TunnelTypeError::InvalidUuidLength { field, actual })?;
-    Ok(HostId::from_bytes(bytes))
-}
-
 #[cfg(test)]
 mod tests {
     use super::*;
 
     #[test]
     fn tunnel_id_roundtrips_wire_shape() {
-        let id = TunnelId::from_parts(HostId::from_u128(1), uuid::Uuid::from_u128(2));
-        let wire: pb::TunnelId = id.into();
+        let id = TunnelId::new();
 
-        assert_eq!(TunnelId::try_from(wire).unwrap(), id);
+        assert_eq!(TunnelId::from_wire(&id.to_wire()).unwrap(), id);
     }
 
     #[test]
     fn tunnel_id_rejects_invalid_uuid_lengths() {
-        let error = TunnelId::try_from(pb::TunnelId {
-            initiator: vec![1, 2, 3],
-            nonce: uuid::Uuid::from_u128(2).as_bytes().to_vec(),
-        })
-        .unwrap_err();
+        let error = TunnelId::from_wire(&[1, 2, 3]).unwrap_err();
 
         assert_eq!(
             error,
             TunnelTypeError::InvalidUuidLength {
-                field: "TunnelId.initiator",
-                actual: 3
-            }
-        );
-
-        let error = TunnelId::try_from(pb::TunnelId {
-            initiator: HostId::from_u128(1).as_bytes().to_vec(),
-            nonce: vec![1, 2, 3],
-        })
-        .unwrap_err();
-
-        assert_eq!(
-            error,
-            TunnelTypeError::InvalidUuidLength {
-                field: "TunnelId.nonce",
+                field: "tunnel_id",
                 actual: 3
             }
         );

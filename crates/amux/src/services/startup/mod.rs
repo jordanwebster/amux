@@ -705,7 +705,6 @@ impl StartedRoutingServices {
             self.local_host.clone(),
             self.routing.clone(),
             self.tunnels.clone(),
-            self.connections.route_runtime(),
         )
     }
 
@@ -714,7 +713,6 @@ impl StartedRoutingServices {
             self.local_host.clone(),
             self.routing.clone(),
             self.tunnels.clone(),
-            self.connections.route_runtime(),
         )
     }
 }
@@ -1396,10 +1394,7 @@ mod tests {
 
         let tasks = host_a.spawn_reachability_links();
         wait_for_host_entry(&host_a.routing, identity_b.host_id).await;
-        assert!(matches!(
-            host_a.connections.active_route(identity_b.host_id).await,
-            Some(Route::Direct(_))
-        ));
+        wait_for_active_direct_route(&host_a.connections, identity_b.host_id).await;
 
         let channel = host_a
             .connections
@@ -1473,14 +1468,8 @@ mod tests {
         wait_for_host_entry(&host_a.routing, identity_b.host_id).await;
         wait_for_host_entry(&host_b.routing, identity_a.host_id).await;
 
-        assert!(matches!(
-            host_a.connections.active_route(identity_b.host_id).await,
-            Some(Route::Direct(_))
-        ));
-        assert!(matches!(
-            host_b.connections.active_route(identity_a.host_id).await,
-            Some(Route::Direct(_))
-        ));
+        wait_for_active_direct_route(&host_a.connections, identity_b.host_id).await;
+        wait_for_active_direct_route(&host_b.connections, identity_a.host_id).await;
 
         assert!(
             host_a
@@ -1517,13 +1506,15 @@ mod tests {
                 }],
             ),
         );
+        // SSH pairing commits trust on both sides; the responder must pin
+        // the initiator because every call now runs pinned mTLS inside its
+        // tunnel — SSH links no longer inherit transport-level trust (D4).
+        let mut trust_b = TrustStore::default();
+        trust_b.insert_for_test(identity_a.host_id, trust_entry(&identity_a, Vec::new()));
         let host_a =
             test_started_services_with_identity_and_trust(identity_a.clone(), trust_a).await;
-        let host_b = test_started_services_with_identity_and_trust(
-            identity_b.clone(),
-            TrustStore::default(),
-        )
-        .await;
+        let host_b =
+            test_started_services_with_identity_and_trust(identity_b.clone(), trust_b).await;
 
         let (client_io, server_io) = tokio::io::duplex(64 * 1024);
         host_b
@@ -2313,6 +2304,25 @@ mod tests {
             }
         }
         panic!("session output did not match expected payload");
+    }
+
+    /// Activation now materializes a real tunnel (with the inner device-TLS
+    /// handshake) instead of looking up a pre-registered channel, so tests
+    /// poll for the active route rather than asserting it synchronously.
+    async fn wait_for_active_direct_route(connections: &ConnectionManager, host_id: Uuid) {
+        tokio::time::timeout(Duration::from_secs(5), async {
+            loop {
+                if matches!(
+                    connections.active_route(host_id).await,
+                    Some(Route::Direct(_))
+                ) {
+                    return;
+                }
+                tokio::task::yield_now().await;
+            }
+        })
+        .await
+        .expect("timed out waiting for an active direct route")
     }
 
     async fn wait_for_host_entry(routing: &RoutingCore, host_id: Uuid) -> Host {

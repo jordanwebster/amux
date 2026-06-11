@@ -230,6 +230,22 @@ impl LinkRegistry {
         true
     }
 
+    /// Best-effort enqueue on one specific link (proactive `TunnelClose`):
+    /// never awaits a full queue inline and never escalates — a close the
+    /// peer misses is recovered by the unknown-id drop rule or link death.
+    pub(crate) async fn send_best_effort(&self, link: &LinkId, message: pb::Message) {
+        let outgoing = self
+            .state
+            .read()
+            .await
+            .writers
+            .get(link)
+            .map(|writer| writer.tx.clone());
+        if let Some(outgoing_tx) = outgoing {
+            try_send_or_spawn(outgoing_tx, message);
+        }
+    }
+
     pub(crate) async fn is_cloud_relay(&self, link: &LinkId) -> bool {
         self.state
             .read()

@@ -11,8 +11,8 @@ use std::time::Duration;
 use amux::testnet::{TestNet, Via};
 
 /// PIN pairing over direct TCP establishes mutual trust; afterwards both
-/// sides can call each other (the initiator over its new direct link, the
-/// responder back through the relay they share).
+/// sides can call each other over the new direct link — the initiator as
+/// its dialer, the responder back over the same inbound link.
 #[tokio::test]
 async fn pin_pairing_over_direct_tcp_establishes_mutual_trust() {
     let net = TestNet::builder()
@@ -98,6 +98,12 @@ async fn qr_pairing_through_the_cloud() {
 /// stream (an in-memory stream here): the initiator stores the SSH target
 /// as a reachability, the responder gains trust but no outbound
 /// reachability — an incoming SSH session doesn't tell it how to dial back.
+///
+/// Yet once the initiator's link is up, *both* sides can call: tunnels are
+/// opened by sending frames, and frames flow both ways on every link, so
+/// the responder calls back over the link its peer established. What stays
+/// asymmetric is only dialing — if the link dies, re-establishing it is the
+/// initiator's job, because only the initiator holds a reachability.
 #[tokio::test]
 async fn ssh_pairing_gives_the_responder_trust_but_no_reachability() {
     let net = TestNet::builder()
@@ -111,6 +117,9 @@ async fn ssh_pairing_gives_the_responder_trust_but_no_reachability() {
 
     laptop.trusts(&server).await;
     server.trusts_without_reachability(&laptop).await;
+
+    laptop.can_call(&server).await;
+    server.can_call(&laptop).await; // back over the inbound link
 }
 
 /// A wrong PIN fails with the same opaque INVALID_PIN as every other
@@ -307,7 +316,8 @@ async fn re_pairing_a_rotated_key_replaces_the_old_entry() {
 
     laptop.trusts_current_key_of(&desktop).await;
     desktop.connects_to(&laptop).via_direct().await;
-    // Only the re-pairing dialer holds a route in this LAN-only topology;
-    // its calls prove the replaced key is honored end to end.
+    // Calls in both directions over the re-paired link prove the replaced
+    // key is honored end to end.
     desktop.can_call(&laptop).await;
+    laptop.can_call(&desktop).await;
 }

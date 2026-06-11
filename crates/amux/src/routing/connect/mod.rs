@@ -2,7 +2,10 @@
 //!
 //! The bidi stream IS the link. The handshake exchanges identity, protocol
 //! version, and the sender's current neighbor snapshot; everything after it
-//! is a delta (`NeighborUp`/`NeighborDown`) or a `TunnelFrame`.
+//! is a delta (`NeighborUp`/`NeighborDown`) or a tunnel frame
+//! (`TunnelOpen`/`TunnelData`/`TunnelClose`). Because tunnels are opened by
+//! *sending frames*, and frames flow both ways, every live link is fully
+//! bidirectional at the call layer: both ends record a route over it.
 
 use std::future;
 use std::pin::Pin;
@@ -16,7 +19,6 @@ use tokio::task::JoinHandle;
 use tonic::transport::Channel;
 use uuid::Uuid;
 
-use crate::connection::RouteRuntimeState;
 use crate::protocol::{PROTOCOL_VERSION, ProtocolError, protocol_status, wire};
 use crate::routing::{
     ConnectHandshake, ConnectHandshakeEvent, Host, LinkCloseRequest, LinkId, LinkRegistry,
@@ -124,7 +126,6 @@ pub(crate) struct LinkServiceCtx {
     links: Arc<LinkRegistry>,
     auth_session: Option<LinkAuthSession>,
     tls_peer: Option<Uuid>,
-    route_runtime: RouteRuntimeState,
 }
 
 impl LinkServiceCtx {
@@ -132,7 +133,6 @@ impl LinkServiceCtx {
         local_host: Host,
         routing: Arc<RoutingCore>,
         tunnels: Arc<TunnelPool>,
-        route_runtime: RouteRuntimeState,
     ) -> Self {
         Self {
             local_host,
@@ -141,7 +141,6 @@ impl LinkServiceCtx {
             tunnels,
             auth_session: None,
             tls_peer: None,
-            route_runtime,
         }
     }
 
@@ -153,7 +152,6 @@ impl LinkServiceCtx {
             links: self.links.clone(),
             link,
             auth_session: self.auth_session.clone(),
-            route_runtime: self.route_runtime.clone(),
             link_role: LinkRole::Peer,
         }
     }
@@ -177,7 +175,6 @@ pub(crate) struct LinkConnectorCtx {
     tunnels: Arc<TunnelPool>,
     links: Arc<LinkRegistry>,
     expected_peer: Option<HostId>,
-    route_runtime: RouteRuntimeState,
     link_role: LinkRole,
 }
 
@@ -186,7 +183,6 @@ impl LinkConnectorCtx {
         local_host: Host,
         routing: Arc<RoutingCore>,
         tunnels: Arc<TunnelPool>,
-        route_runtime: RouteRuntimeState,
     ) -> Self {
         Self {
             local_host,
@@ -194,7 +190,6 @@ impl LinkConnectorCtx {
             links: tunnels.link_registry(),
             tunnels,
             expected_peer: None,
-            route_runtime,
             link_role: LinkRole::Peer,
         }
     }
@@ -218,7 +213,6 @@ impl LinkConnectorCtx {
             links: self.links.clone(),
             link,
             auth_session: None,
-            route_runtime: self.route_runtime.clone(),
             link_role: self.link_role,
         }
     }
@@ -298,7 +292,6 @@ fn spawn_connector_to_channel_with_authorization_and_signal(
     established_tx: Option<EstablishmentSender>,
 ) -> ConnectorTask {
     tokio::spawn(async move {
-        let direct_channel = channel.clone();
         let mut client = wire::link_service_client::LinkServiceClient::new(channel);
         let (out_tx, out_rx) = mpsc::channel(256);
         let request_stream = stream::unfold(out_rx, |mut rx| async move {
@@ -326,7 +319,6 @@ fn spawn_connector_to_channel_with_authorization_and_signal(
             out_tx,
             connector_auth,
             established_tx,
-            Some(direct_channel),
         )
         .await
     })
@@ -340,7 +332,6 @@ struct EstablishedConnectCtx {
     links: Arc<LinkRegistry>,
     link: LinkId,
     auth_session: Option<LinkAuthSession>,
-    route_runtime: RouteRuntimeState,
     link_role: LinkRole,
 }
 
@@ -386,9 +377,7 @@ where
 {
     let (out_tx, out_rx) = mpsc::channel(256);
     tokio::spawn(async move {
-        let direct_channel =
-            tonic::transport::Endpoint::from_static("http://unit-test").connect_lazy();
-        let _ = run_connector_connect(ctx, input, out_tx, None, None, Some(direct_channel)).await;
+        let _ = run_connector_connect(ctx, input, out_tx, None, None).await;
     });
     out_rx
 }
@@ -463,7 +452,6 @@ async fn run_acceptor_connect<S>(
             sent_snapshot: snapshot.into_iter().map(|host| host.id).collect(),
             connector_auth: None,
             established_tx: None,
-            direct_channel: None,
         },
     )
     .await;
@@ -475,7 +463,6 @@ async fn run_connector_connect<S>(
     out_tx: mpsc::Sender<wire::pb::Message>,
     connector_auth: Option<LinkConnectorAuth>,
     established_tx: Option<EstablishmentSender>,
-    direct_channel: Option<Channel>,
 ) -> Result<(), tonic::Status>
 where
     S: Stream<Item = Result<wire::pb::Message, tonic::Status>> + Send + 'static,
@@ -555,7 +542,6 @@ where
             sent_snapshot: snapshot.into_iter().map(|host| host.id).collect(),
             connector_auth,
             established_tx,
-            direct_channel,
         },
     )
     .await
@@ -598,7 +584,6 @@ struct EstablishedConnectArgs {
     sent_snapshot: Vec<HostId>,
     connector_auth: Option<LinkConnectorAuth>,
     established_tx: Option<EstablishmentSender>,
-    direct_channel: Option<Channel>,
 }
 
 async fn run_established_connect(
@@ -614,7 +599,6 @@ async fn run_established_connect(
         sent_snapshot,
         connector_auth,
         established_tx,
-        direct_channel,
     } = args;
 
     debug_assert!(handshake.is_established());
@@ -642,12 +626,13 @@ async fn run_established_connect(
         ctx.routing.apply_claim_up(peer_host.id, neighbor).await;
     }
 
-    // Only the dialer holds an outbound channel on this link (the dual-path
-    // discipline that dies with the every-call-is-a-tunnel chunk), so only
-    // the dialer records a Direct route.
+    // Calls ride tunnels, and tunnels are opened by sending frames, so the
+    // live link is callable from both ends: dialer and acceptor alike record
+    // a Direct route over it. The one exception is the multi-tenant cloud
+    // acceptor (`auth_session`): nobody calls the cloud through the mesh,
+    // and the relay calls nobody — it records no routes.
     let peer_host_id = peer_host.id;
-    if let Some(channel) = direct_channel {
-        ctx.route_runtime.register_direct(ctx.link, channel).await;
+    if ctx.auth_session.is_none() {
         match ctx
             .routing
             .apply_direct_up(peer_host.clone(), ctx.link)
@@ -1005,12 +990,26 @@ async fn handle_post_handshake_body(
                 PostHandshakeAction::Close
             }
         },
-        wire::pb::message::Body::TunnelFrame(frame) => {
-            match ctx
-                .tunnels
-                .handle_inbound_frame_from_link(frame, &ctx.link)
-                .await
-            {
+        wire::pb::message::Body::TunnelOpen(open) => {
+            match ctx.tunnels.handle_inbound_open(open, &ctx.link).await {
+                Ok(()) => PostHandshakeAction::Continue,
+                Err(error) => {
+                    let _ = try_send_outbound(out_tx, protocol_error_link_close(error.to_string()));
+                    PostHandshakeAction::Close
+                }
+            }
+        }
+        wire::pb::message::Body::TunnelData(data) => {
+            match ctx.tunnels.handle_inbound_data(data, &ctx.link).await {
+                Ok(()) => PostHandshakeAction::Continue,
+                Err(error) => {
+                    let _ = try_send_outbound(out_tx, protocol_error_link_close(error.to_string()));
+                    PostHandshakeAction::Close
+                }
+            }
+        }
+        wire::pb::message::Body::TunnelClose(close) => {
+            match ctx.tunnels.handle_inbound_close(close, &ctx.link).await {
                 Ok(()) => PostHandshakeAction::Continue,
                 Err(error) => {
                     let _ = try_send_outbound(out_tx, protocol_error_link_close(error.to_string()));
@@ -1266,7 +1265,6 @@ async fn cleanup_link(ctx: &EstablishedConnectCtx) {
     ctx.links.remove(&ctx.link).await;
     ctx.tunnels.remove_link(&ctx.link).await;
     ctx.routing.apply_direct_down(ctx.link).await;
-    ctx.route_runtime.remove_direct(ctx.link).await;
     if ctx.links.link_to_peer(peer).await.is_none() {
         ctx.routing.remove_relay_claims(peer).await;
     }
@@ -1354,20 +1352,12 @@ mod tests {
         ))
     }
 
-    fn tunnel_frame(dst: HostId, payload: &[u8]) -> wire::pb::Message {
-        message(wire::pb::message::Body::TunnelFrame(
-            wire::pb::TunnelFrame {
-                dst: dst.as_bytes().to_vec(),
-                tunnel_id: Some(
-                    crate::tunnel::TunnelId::from_parts(
-                        HostId::from_u128(2),
-                        uuid::Uuid::from_u128(3),
-                    )
-                    .into(),
-                ),
-                payload: payload.to_vec(),
-            },
-        ))
+    fn tunnel_data(dst: HostId, payload: &[u8]) -> wire::pb::Message {
+        message(wire::pb::message::Body::TunnelData(wire::pb::TunnelData {
+            tunnel_id: uuid::Uuid::from_u128(3).as_bytes().to_vec(),
+            dst: dst.as_bytes().to_vec(),
+            payload: payload.to_vec(),
+        }))
     }
 
     fn link_close(reason: wire::pb::LinkCloseReason) -> wire::pb::Message {
@@ -1393,21 +1383,12 @@ mod tests {
         }))
     }
 
-    fn route_runtime(tunnels: &Arc<TunnelPool>) -> RouteRuntimeState {
-        RouteRuntimeState::new(tunnels.clone())
-    }
-
     async fn test_ctx() -> (LinkServiceCtx, Arc<RoutingCore>, Arc<TunnelPool>) {
         let local = host(1, "local");
         let routing = Arc::new(RoutingCore::new());
         let (incoming_tx, _incoming_rx) = mpsc::channel(4);
         let tunnels = Arc::new(TunnelPool::new(local.id, routing.clone(), incoming_tx));
-        let ctx = LinkServiceCtx::new(
-            local,
-            routing.clone(),
-            tunnels.clone(),
-            route_runtime(&tunnels),
-        );
+        let ctx = LinkServiceCtx::new(local, routing.clone(), tunnels.clone());
         (ctx, routing, tunnels)
     }
 
@@ -1416,12 +1397,7 @@ mod tests {
         let routing = Arc::new(RoutingCore::new());
         let (incoming_tx, _incoming_rx) = mpsc::channel(4);
         let tunnels = Arc::new(TunnelPool::new(local.id, routing.clone(), incoming_tx));
-        let ctx = LinkConnectorCtx::new(
-            local.clone(),
-            routing.clone(),
-            tunnels.clone(),
-            route_runtime(&tunnels),
-        );
+        let ctx = LinkConnectorCtx::new(local.clone(), routing.clone(), tunnels.clone());
         (ctx, routing, tunnels, local)
     }
 
@@ -1522,22 +1498,22 @@ mod tests {
         .expect("timed out waiting for condition");
     }
 
-    async fn recv_forwarded_tunnel_frame(
+    async fn recv_forwarded_tunnel_data(
         rx: &mut mpsc::Receiver<wire::pb::Message>,
-    ) -> wire::pb::TunnelFrame {
+    ) -> wire::pb::TunnelData {
         for _ in 0..4 {
             let message = tokio::time::timeout(Duration::from_secs(1), rx.recv())
                 .await
-                .expect("timed out waiting for forwarded TunnelFrame")
-                .expect("forwarded TunnelFrame channel closed");
+                .expect("timed out waiting for forwarded TunnelData")
+                .expect("forwarded TunnelData channel closed");
             match message.body {
-                Some(wire::pb::message::Body::TunnelFrame(frame)) => return frame,
+                Some(wire::pb::message::Body::TunnelData(data)) => return data,
                 Some(wire::pb::message::Body::NeighborUp(_))
                 | Some(wire::pb::message::Body::NeighborDown(_)) => continue,
-                _ => panic!("expected forwarded TunnelFrame"),
+                _ => panic!("expected forwarded TunnelData"),
             }
         }
-        panic!("expected forwarded TunnelFrame");
+        panic!("expected forwarded TunnelData");
     }
 
     async fn recv_neighbor_up(rx: &mut mpsc::Receiver<wire::pb::Message>) -> wire::pb::NeighborUp {
@@ -1589,11 +1565,7 @@ mod tests {
     {
         let (out_tx, out_rx) = mpsc::channel(256);
         tokio::spawn(async move {
-            let direct_channel =
-                tonic::transport::Endpoint::from_static("http://unit-test").connect_lazy();
-            let _ =
-                run_connector_connect(ctx, input, out_tx, Some(auth), None, Some(direct_channel))
-                    .await;
+            let _ = run_connector_connect(ctx, input, out_tx, Some(auth), None).await;
         });
         out_rx
     }
@@ -1698,11 +1670,12 @@ mod tests {
         assert_eq!(reauth.auth_token, expected_token);
     }
 
-    /// The acceptor accepts a Hello and applies its neighbor snapshot as the
-    /// peer's adjacency claims — but, holding no outbound channel on the
-    /// link, records no Direct route to the dialer itself.
+    /// The acceptor accepts a Hello, applies its neighbor snapshot as the
+    /// peer's adjacency claims, and — calls being tunnels that flow both
+    /// ways on any live link — records a Direct route back to the dialer
+    /// over the inbound link itself.
     #[tokio::test]
-    async fn acceptor_applies_handshake_snapshot_but_stores_no_direct_route() {
+    async fn acceptor_applies_handshake_snapshot_and_stores_a_direct_route_back() {
         let (ctx, routing, _tunnels) = test_ctx().await;
         let peer = host(2, "peer-host");
         let remote = host(3, "remote-host");
@@ -1720,7 +1693,10 @@ mod tests {
             async move { routing.route_to(remote.id).await == Some(Route::Via(peer.id)) }
         })
         .await;
-        assert_eq!(routing.route_to(peer.id).await, None);
+        assert!(matches!(
+            routing.route_to(peer.id).await,
+            Some(Route::Direct(link)) if link.peer() == peer.id
+        ));
 
         drop(input_tx);
     }
@@ -2113,14 +2089,14 @@ mod tests {
 
         let (input_tx, _output_rx) = establish(ctx, &peer).await;
         input_tx
-            .send(tunnel_frame(target.id, b"payload"))
+            .send(tunnel_data(target.id, b"payload"))
             .await
             .unwrap();
 
-        let frame = recv_forwarded_tunnel_frame(&mut target_rx).await;
-        assert_eq!(frame.payload, b"payload");
-        assert_eq!(frame.dst, target.id.as_bytes().to_vec());
-        assert!(frame.tunnel_id.is_some());
+        let data = recv_forwarded_tunnel_data(&mut target_rx).await;
+        assert_eq!(data.payload, b"payload");
+        assert_eq!(data.dst, target.id.as_bytes().to_vec());
+        assert!(!data.tunnel_id.is_empty());
     }
 
     /// Rule 2's other half: no direct link to dst, no forwarding — the
@@ -2130,10 +2106,9 @@ mod tests {
         let (ctx, routing, _tunnels) = test_ctx().await;
         let peer = host(2, "peer-host");
         let (input_tx, mut output_rx) = establish(ctx, &peer).await;
-        assert!(routing.host_entry(peer.id).await.is_none());
 
         input_tx
-            .send(tunnel_frame(HostId::from_u128(77), b"to-nowhere"))
+            .send(tunnel_data(HostId::from_u128(77), b"to-nowhere"))
             .await
             .unwrap();
         input_tx
@@ -2167,9 +2142,9 @@ mod tests {
         })
         .await;
 
-        let oversized = vec![0_u8; crate::tunnel::TUNNEL_FRAME_PAYLOAD_MAX + 1];
+        let oversized = vec![0_u8; crate::tunnel::TUNNEL_DATA_PAYLOAD_MAX + 1];
         input_tx
-            .send(tunnel_frame(HostId::from_u128(9), &oversized))
+            .send(tunnel_data(HostId::from_u128(9), &oversized))
             .await
             .unwrap();
 
@@ -2424,14 +2399,14 @@ mod tests {
 
         let (input_tx, _output_rx) = establish_connector(ctx, &peer).await;
         input_tx
-            .send(tunnel_frame(target.id, b"payload"))
+            .send(tunnel_data(target.id, b"payload"))
             .await
             .unwrap();
 
-        let frame = recv_forwarded_tunnel_frame(&mut target_rx).await;
-        assert_eq!(frame.payload, b"payload");
-        assert_eq!(frame.dst, target.id.as_bytes().to_vec());
-        assert!(frame.tunnel_id.is_some());
+        let data = recv_forwarded_tunnel_data(&mut target_rx).await;
+        assert_eq!(data.payload, b"payload");
+        assert_eq!(data.dst, target.id.as_bytes().to_vec());
+        assert!(!data.tunnel_id.is_empty());
     }
 
     #[tokio::test]
@@ -2467,7 +2442,6 @@ mod tests {
             acceptor_host.clone(),
             acceptor_routing.clone(),
             acceptor_tunnels.clone(),
-            route_runtime(&acceptor_tunnels),
         );
 
         let connector_host = host(2, "connector");
@@ -2478,12 +2452,10 @@ mod tests {
             connector_routing.clone(),
             connector_incoming_tx,
         ));
-        let connector_route_runtime = route_runtime(&connector_tunnels);
         let connector_ctx = LinkConnectorCtx::new(
             connector_host.clone(),
             connector_routing.clone(),
             connector_tunnels,
-            connector_route_runtime.clone(),
         );
 
         let (client_io, server_io) = tokio::io::duplex(64 * 1024);
@@ -2522,19 +2494,12 @@ mod tests {
         .await
         .expect("timed out waiting for tonic LinkService.Connect establishment");
 
-        let Some(Route::Direct(link)) = connector_routing.route_to(acceptor_host.id).await else {
-            panic!("expected a direct route");
-        };
-        assert!(
-            connector_route_runtime
-                .pool()
-                .get_direct(link)
-                .await
-                .is_some()
-        );
-        // The acceptor advertises the dialer as wire adjacency but records
-        // no local route over a link it cannot call on (pre-tunnel chunk).
-        assert_eq!(acceptor_routing.route_to(connector_host.id).await, None);
+        // Every live link is callable from both ends: the acceptor records
+        // a Direct route back over the inbound link too.
+        assert!(matches!(
+            acceptor_routing.route_to(connector_host.id).await,
+            Some(Route::Direct(link)) if link.peer() == connector_host.id
+        ));
 
         connector_task.abort();
         server_task.abort();
@@ -2557,7 +2522,6 @@ mod tests {
             acceptor_host.clone(),
             acceptor_routing.clone(),
             acceptor_tunnels.clone(),
-            route_runtime(&acceptor_tunnels),
         );
 
         let connector_host = host(2, "connector");
@@ -2576,7 +2540,6 @@ mod tests {
             connector_host.clone(),
             connector_routing.clone(),
             connector_tunnels.clone(),
-            connector_manager.route_runtime(),
         );
 
         let (client_io, server_io) = tokio::io::duplex(64 * 1024);
@@ -2668,7 +2631,6 @@ mod tests {
             acceptor_host.clone(),
             acceptor_routing.clone(),
             acceptor_tunnels.clone(),
-            route_runtime(&acceptor_tunnels),
         );
 
         let connector_host = host(2, "connector");
@@ -2683,7 +2645,6 @@ mod tests {
             connector_host.clone(),
             connector_routing.clone(),
             connector_tunnels.clone(),
-            route_runtime(&connector_tunnels),
         );
 
         let (client_io, server_io) = tokio::io::duplex(64 * 1024);

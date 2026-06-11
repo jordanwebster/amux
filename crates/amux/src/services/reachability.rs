@@ -9,13 +9,14 @@ use tracing::Instrument;
 
 use crate::HostId;
 use crate::connection::ConnectionManager;
+use crate::dispatcher::TrackedTcpConnections;
 use crate::identity::DeviceIdentity;
 use crate::routing::{
     Host, LinkConnectorCtx, RoutingCore, spawn_connector_to_channel_with_establishment,
 };
 use crate::transport::{
     channel_from_single_io, configure_tonic_endpoint_keepalive, spawn_ssh_relay,
-    trusted_device_channel,
+    trusted_device_channel_tracked,
 };
 use crate::trust::{Reachability, SharedTrustStore};
 use crate::tunnel::TunnelPool;
@@ -47,6 +48,10 @@ struct ReachabilityLinkContext {
     routing: Arc<RoutingCore>,
     tunnels: Arc<TunnelPool>,
     connections: Arc<ConnectionManager>,
+    /// Test-harness seam: OS-level duplicates of the TCP sockets this
+    /// connector dials, so an in-process "process exit" severs them the way
+    /// a real exit would. `None` in production.
+    dialed_tcp_tracker: Arc<Mutex<Option<TrackedTcpConnections>>>,
 }
 
 #[derive(Clone)]
@@ -75,10 +80,23 @@ impl ReachabilityLinkConnector {
                         routing,
                         tunnels,
                         connections,
+                        dialed_tcp_tracker: Arc::new(Mutex::new(None)),
                     },
                     pair_time_tasks: Mutex::new(Vec::new()),
                 },
             )),
+        }
+    }
+
+    /// Test-harness seam: register every TCP socket this connector dials in
+    /// `tracker`, so the harness can sever them like a process exit.
+    #[cfg(feature = "testnet")]
+    pub(crate) fn track_dialed_tcp(&self, tracker: TrackedTcpConnections) {
+        let ReachabilityLinkConnectorMode::Enabled(inner) = &self.mode else {
+            return;
+        };
+        if let Ok(mut slot) = inner.context.dialed_tcp_tracker.lock() {
+            *slot = Some(tracker);
         }
     }
 
@@ -192,13 +210,19 @@ async fn establish_reachability_link(
     context: ReachabilityLinkContext,
     attempt: ReachabilityLinkAttempt,
 ) {
+    let dialed_tracker = context
+        .dialed_tcp_tracker
+        .lock()
+        .ok()
+        .and_then(|tracker| tracker.clone());
     let channel = match attempt.reachability.clone() {
         Reachability::Cloud => return,
-        Reachability::DirectTcp { addr } => trusted_device_channel(
+        Reachability::DirectTcp { addr } => trusted_device_channel_tracked(
             addr,
             context.identity.clone(),
             context.trust_store.clone(),
             attempt.peer,
+            dialed_tracker,
         )
         .map_err(|error| error.to_string()),
         Reachability::Ssh { target } => spawn_ssh_relay(&target)
@@ -227,7 +251,6 @@ async fn establish_reachability_link(
         context.local_host.clone(),
         context.routing.clone(),
         context.tunnels.clone(),
-        context.connections.route_runtime(),
     )
     .with_expected_peer(attempt.peer);
     let (connector_task, established_rx) =

@@ -2348,12 +2348,10 @@ fn remote_tunnel_status(
     match error {
         TunnelPoolError::NotFound { .. } => protocol_status(ProtocolError::Unreachable { message }),
         TunnelPoolError::LinkUnavailable { .. }
-        | TunnelPoolError::IncomingTunnelsClosed
-        | TunnelPoolError::InboundClosed
         | TunnelPoolError::Identity(_)
         | TunnelPoolError::Tls(_) => tonic::Status::unavailable(message),
-        TunnelPoolError::MissingTunnelId
-        | TunnelPoolError::InvalidDestination { .. }
+        TunnelPoolError::InvalidDestination { .. }
+        | TunnelPoolError::InvalidSource { .. }
         | TunnelPoolError::InvalidTunnelId(_)
         | TunnelPoolError::PayloadTooLarge { .. }
         | TunnelPoolError::DeviceTlsRequired => tonic::Status::internal(message),
@@ -2434,7 +2432,6 @@ mod tests {
     use futures_util::StreamExt as _;
     use tempfile::TempDir;
     use tokio::task::JoinHandle;
-    use tonic::transport::Endpoint;
 
     use super::*;
     use crate::agents::{AGENT_TYPE_CLAUDE, TEST_ECHO_COMMAND, TEST_ECHO_V1};
@@ -2812,13 +2809,21 @@ mod tests {
     ) -> JoinHandle<()> {
         tokio::spawn(async move {
             while let Some(message) = rx.recv().await {
-                let Some(wire::pb::message::Body::TunnelFrame(frame)) = message.body else {
-                    continue;
-                };
-                target_pool
-                    .handle_inbound_frame_from_link(frame, &arrival_link)
-                    .await
-                    .unwrap();
+                match message.body {
+                    Some(wire::pb::message::Body::TunnelOpen(open)) => target_pool
+                        .handle_inbound_open(open, &arrival_link)
+                        .await
+                        .unwrap(),
+                    Some(wire::pb::message::Body::TunnelData(data)) => target_pool
+                        .handle_inbound_data(data, &arrival_link)
+                        .await
+                        .unwrap(),
+                    Some(wire::pb::message::Body::TunnelClose(close)) => target_pool
+                        .handle_inbound_close(close, &arrival_link)
+                        .await
+                        .unwrap(),
+                    _ => continue,
+                }
             }
         })
     }
@@ -5215,14 +5220,6 @@ mod tests {
         });
         routing
             .apply_direct_up(host(2, non_relay_types()), link)
-            .await;
-        service
-            .remote_agent_connections
-            .route_runtime()
-            .register_direct(
-                link,
-                Endpoint::from_static("http://example.com").connect_lazy(),
-            )
             .await;
         assert_eq!(
             service

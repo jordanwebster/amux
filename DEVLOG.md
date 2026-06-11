@@ -38,6 +38,98 @@ One paragraph describing what was done.
 
 ---
 
+## 2026-06-11: v6 chunk 3 — every call is a tunnel, with an explicit lifecycle
+
+### Summary
+P8 + D3a: the tunnel protocol is now the link lifecycle one layer up —
+`TunnelOpen { tunnel_id, src, dst }` · `TunnelData { tunnel_id, dst,
+payload }` · `TunnelClose { tunnel_id, dst }`, with `tunnel_id` a plain
+16-byte UUID. Only an Open allocates endpoint state (the reply address
+travels exactly once, in the Open; cloud rate limiting keys on Opens);
+Data for an unknown id is a principled drop — zero allocation, link stays
+up — which closes B1 structurally; normal teardown sends TunnelClose
+proactively from either end (rejection too: there is no open-ack, the
+inner mTLS handshake is the acknowledgement). Relays forward all three
+frame types statelessly by `dst`. The dual-path channel discipline is
+deleted: every peer call rides a tunnel, including to adjacent peers
+(`Route::Direct(link)` materializes a tunnel pinned to that link with
+`dst = peer`). Because tunnels are opened by sending frames, and frames
+flow both ways, every live link is callable from both ends — both sides
+now record a Direct route at link establishment (the multi-tenant cloud
+acceptor excepted: the relay records no routes), which makes the
+SSH-pairing responder's call-back real (D6).
+
+### Changes
+- `proto/amux/v1/amux.proto`: `TunnelId`/`TunnelFrame` deleted;
+  `TunnelOpen`/`TunnelData`/`TunnelClose` added; `Message.body` renumbered.
+- `tunnel/types.rs`: `TunnelId` is a UUID newtype (initiator/nonce gone —
+  "initiated by me" is now an explicit `ActiveTunnel.initiated` flag).
+- `tunnel/mod.rs`: initiator endpoints send the Open lazily, just ahead of
+  their first Data frame (a never-used tunnel never allocates remotely);
+  hosted endpoints never open. `TUNNEL_FRAME_PAYLOAD_MAX` →
+  `TUNNEL_DATA_PAYLOAD_MAX` (cap unchanged).
+- `tunnel/pool.rs`: one inbound handler per frame type; retired-tunnel
+  tombstones (`BoundedTunnelIdSet`, `RETIRED_TUNNEL_CAP`) and the cloud
+  tunnel-id cache deleted — with explicit Opens there is nothing for a
+  stale Data frame to allocate. Endpoint drop/retirement sends a
+  best-effort TunnelClose on the pinned link (`LinkRegistry::
+  send_best_effort`); `InboundClosed`/`IncomingTunnelsClosed`/
+  `MissingTunnelId` error variants gone. New `channel_on_link` for Direct
+  routes.
+- `connection.rs`: `ChannelKey::Direct`, `RouteRuntimeState`,
+  `register_direct`/`remove_direct` deleted; the pool keys on
+  `(peer, Route)` and materialization is one path — open a tunnel.
+  NeighborUp gained the same never-eagerly-tunnel-into-the-cloud guard
+  ClaimUp had (§6.7).
+- `routing/connect/mod.rs`: the `direct_channel` threading is gone;
+  `run_established_connect` records `apply_direct_up` on both roles
+  (`auth_session.is_none()` — i.e. everyone but the cloud acceptor).
+- Harness: `WirePeer` scripts Open/Data/Close; testnet tracks *dialed*
+  direct-link TCP sockets (`trusted_device_channel_tracked` +
+  `ReachabilityLinkConnector::track_dialed_tcp`) so an in-process restart
+  severs them — with acceptors recording routes, a leaked dialer socket
+  kept the acceptor seeing a stopped daemon online. `over_ssh` now stands
+  the post-pairing SSH link in with the test TCP transport, as production
+  dials its stored reachability at commit time.
+
+### Decisions Made
+- Pre-planned spec flips: the SSH-responder test asserts
+  `server.can_call(&laptop)` over the inbound link; the B1 `#[ignore]`
+  marker became a real passing test (open → close → late data: dropped,
+  link up); wire scripts rewritten to the new grammar.
+- Additional flips, all v6-structural consequences, called out here:
+  `direct_beats_cloud_when_both_are_available` — the acceptor now routes
+  back over the link itself, not via the cloud;
+  `revocation_evicts_routes_and_breaks_in_flight_streams` (was
+  `…strands_in_flight_streams`) — streams ride tunnels, tunnels die with
+  links/TunnelClose, so the §6.5 stall is gone and the spec-intended
+  prompt break is real; the SSH-relay lib test gives the responder a
+  pinned entry for the initiator (D4: tunnel mTLS is uniform, SSH links no
+  longer inherit transport trust); startup lib tests poll for active
+  routes (activation now performs a real tunnel TLS handshake).
+
+### Verification
+- `cargo test -p amux --lib`: 402 passed.
+- Spec suite (`--features testnet --test spec`): 43 passed / 0 ignored,
+  ×2 runs (~32.3s each).
+- `cargo build --workspace` clean; `cargo fmt`; CI clippy
+  (`--workspace --all-targets --features amux/testnet -- -D warnings`)
+  clean.
+
+### Next Steps
+- Chunk 4 (P2/D9): pairing collapse to one SPAKE2 protocol; delete
+  `PairByToken`, `INVALID_TOKEN`, the QR-pinned verifier mode.
+- Chunk 5 (P5/D12 + P7/D15): delete `ReauthAck` and the reauth ack state
+  machine; shrink `HostEntry` reachability to `online` +
+  `last_dial_error`.
+- Ledger candidates from this chunk: eager route activation now runs a
+  device-TLS handshake serially on the events task (the §6.7 "move
+  activation off the event loop" smell got heavier); link-up now costs
+  two tunnel TLS handshakes (both ends activate eagerly) even if no call
+  is ever made.
+
+---
+
 ## 2026-06-11: v6 chunk 2 — route by host id with adjacency-only events
 
 ### Summary

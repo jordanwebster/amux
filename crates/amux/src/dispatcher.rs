@@ -50,7 +50,7 @@ fn take_mtls_audit_emitted() -> bool {
 /// [`TunnelDispatcher::serve_tcp_listener_tracked`]).
 pub(crate) type TrackedTcpConnections = std::sync::Arc<std::sync::Mutex<Vec<std::net::TcpStream>>>;
 
-fn track_accepted_stream(
+pub(crate) fn track_tcp_stream(
     stream: tokio::net::TcpStream,
     track: Option<&TrackedTcpConnections>,
 ) -> std::io::Result<tokio::net::TcpStream> {
@@ -151,7 +151,7 @@ impl TunnelDispatcher {
                         continue;
                     }
                 };
-                let stream = match track_accepted_stream(stream, track.as_ref()) {
+                let stream = match track_tcp_stream(stream, track.as_ref()) {
                     Ok(stream) => stream,
                     Err(error) => {
                         tracing::warn!(error = %error, "failed to track accepted TCP stream");

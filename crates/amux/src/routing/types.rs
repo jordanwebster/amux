@@ -72,9 +72,9 @@ impl std::fmt::Display for LinkId {
 /// How this daemon reaches a host: over its own link, or through one
 /// adjacent relay. There are no longer routes than this — forwarding is
 /// non-recursive by construction.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 pub enum Route {
-    /// A direct link of our own with an outbound channel.
+    /// Over a direct link of our own; the call's tunnel is pinned to it.
     Direct(LinkId),
     /// Through an adjacent relay that claims adjacency to the host.
     Via(HostId),

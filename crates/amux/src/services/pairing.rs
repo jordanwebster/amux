@@ -2687,24 +2687,18 @@ mod tests {
             )
             .await;
         tunnels
-            .handle_inbound_frame_from_link(
-                wire::pb::TunnelFrame {
+            .handle_inbound_open(
+                wire::pb::TunnelOpen {
+                    tunnel_id: uuid::Uuid::from_u128(42).as_bytes().to_vec(),
+                    src: peer.host_id.as_bytes().to_vec(),
                     dst: responder.host_id.as_bytes().to_vec(),
-                    tunnel_id: Some(
-                        crate::tunnel::TunnelId::from_parts(
-                            peer.host_id,
-                            uuid::Uuid::from_u128(42),
-                        )
-                        .into(),
-                    ),
-                    payload: b"pairing".to_vec(),
                 },
                 &relay_link,
             )
             .await
             .unwrap();
         let _pairing_transport = incoming_rx.recv().await.unwrap();
-        assert_eq!(tunnels.counts().await, (1, 0));
+        assert_eq!(tunnels.active_count().await, 1);
 
         let connections = Arc::new(ConnectionManager::new(routing, tunnels.clone()));
         let service = PairingService::new(
@@ -2729,8 +2723,8 @@ mod tests {
             .unwrap();
 
         assert_eq!(
-            tunnels.counts().await,
-            (0, 1),
+            tunnels.active_count().await,
+            0,
             "the replacement commit must retire the in-flight pairing tunnel"
         );
         assert_eq!(

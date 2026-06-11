@@ -140,11 +140,17 @@ pub(crate) fn pin_pairing_channel(addr: SocketAddr) -> Result<Channel> {
     )
 }
 
-pub(crate) fn trusted_device_channel(
+/// A device-mTLS channel to a trusted peer's external TCP listener, with an
+/// optional OS-level socket tracker: test harnesses register the dialed TCP
+/// socket so an in-process "process exit" can sever it the way a real exit
+/// would (the same discipline as `serve_tcp_listener_tracked` on the
+/// accepting side). Pass `None` outside tests.
+pub(crate) fn trusted_device_channel_tracked(
     addr: SocketAddr,
     identity: DeviceIdentity,
     trust_store: SharedTrustStore,
     peer: HostId,
+    dialed_tracker: Option<crate::dispatcher::TrackedTcpConnections>,
 ) -> Result<Channel> {
     let endpoint = Endpoint::from_shared(format!("https://{addr}"))
         .map_err(|error| TransportError::Config(error.to_string()))?;
@@ -155,10 +161,13 @@ pub(crate) fn trusted_device_channel(
         configure_tonic_endpoint_keepalive(endpoint).connect_with_connector_lazy(service_fn(
             move |_uri: Uri| {
                 let connector = TlsConnector::from(Arc::new(config.clone()));
+                let dialed_tracker = dialed_tracker.clone();
                 async move {
                     let stream = TcpStream::connect(addr).await?;
                     stream.set_nodelay(true)?;
                     configure_tcp_keepalive(&stream);
+                    let stream =
+                        crate::dispatcher::track_tcp_stream(stream, dialed_tracker.as_ref())?;
                     let server_name = ServerName::try_from("amux-device.local")
                         .expect("static device server name is valid");
                     connector

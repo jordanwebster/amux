@@ -275,6 +275,22 @@ impl PairAttempt<'_> {
         let responded = responder.await.expect("ssh pairing responder panicked");
         initiated?;
         responded?;
+
+        // In production the initiator's commit immediately dials its stored
+        // SSH reachability (`ssh <target> amux relay`) and brings the Link
+        // up. The hermetic harness cannot spawn `ssh`, so the responder's
+        // test TCP transport stands in for the SSH stdio link — the Link
+        // semantics under test (a live, bidirectional, tunnel-carrying
+        // stream) are transport-agnostic.
+        let addr = self.to.inner.tcp_addr.expect(
+            "over_ssh: the responder needs a TCP listener to stand in for the SSH stdio link",
+        );
+        self.from
+            .spawn_direct_link(
+                self.to.host_id(),
+                crate::trust::Reachability::DirectTcp { addr },
+            )
+            .await;
         Ok(())
     }
 }

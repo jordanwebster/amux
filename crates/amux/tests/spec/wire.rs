@@ -2,29 +2,36 @@
 //!
 //! Adversarial cases the topology layer cannot express, driven by a scripted
 //! protocol actor over a real daemon's external TCP listener, real device
-//! mTLS, and the real `RoutingService.Connect` dispatcher. These lock the
+//! mTLS, and the real `LinkService.Connect` dispatcher. These lock the
 //! wire-visible contract: oversize frames close the link loudly, the Hello
 //! host_id must match the mTLS-bound identity, unsupported versions are
-//! rejected, malformed frames close the stream, frames for unknown tunnels are
-//! dropped without harming the link, and handshake floods are rate-limited.
-//! (docs/NETWORKING.md §8.9–8.10, §10 N-TN-*, N-X-9, protocol versioning)
+//! rejected, malformed frames close the stream, frames for unknown or
+//! just-closed tunnels are dropped without harming the link, and handshake
+//! floods are rate-limited. (docs/PROTOCOL.md; docs/NETWORKING.md §8.9–8.10,
+//! §10 N-TN-*, N-X-9)
+//!
+//! B1 (NETWORKING_REVIEW.md §1) — a frame in a tunnel's just-closed window
+//! escalating to a link-wide LinkClose — is closed structurally by the
+//! explicit `TunnelOpen`/`TunnelData`/`TunnelClose` lifecycle: only an Open
+//! allocates, so a late frame is for an unknown id and is a deterministic
+//! drop. The once-`#[ignore]`d marker below is now a real passing test.
 
 use amux::testnet::{LinkCloseReason, TestNet, Via, WirePeer};
 
-/// An oversize `TunnelFrame` (one byte past the 64 KiB payload cap, N-TN-7) is
+/// An oversize `TunnelData` (one byte past the 64 KiB payload cap, N-TN-7) is
 /// a link-closing protocol violation: the daemon answers `LinkClose(PROTOCOL_
 /// ERROR)` and closes the Connect stream. Unlike the lib-level test that hand-
 /// feeds the handler, this rides the real external TCP listener, TLS, and
 /// dispatcher.
 #[tokio::test]
-async fn an_oversize_tunnel_frame_closes_the_link_with_a_protocol_link_close() {
+async fn an_oversize_tunnel_data_frame_closes_the_link_with_a_protocol_link_close() {
     let net = TestNet::builder().daemon("victim").start().await;
     let [victim] = net.daemons(["victim"]);
 
     let mut wire = WirePeer::connect_trusted(&net, "victim").await;
     wire.hello().await;
 
-    wire.send_tunnel_frame(victim.host_id(), vec![0u8; 64 * 1024 + 1])
+    wire.send_tunnel_data(victim.host_id(), vec![0u8; 64 * 1024 + 1])
         .await;
 
     let error = wire
@@ -87,47 +94,52 @@ async fn a_malformed_frame_closes_the_connect_stream() {
     wire.expect_stream_closed().await;
 }
 
-/// A `TunnelFrame` for a tunnel that never existed is dropped on the floor and
-/// the Link stays up (N-TN-4: an unknown id may at most create an inbound
-/// tunnel; here the acceptor holds no reverse route to the frame's initiator,
-/// so it is simply discarded). The link must not escalate to a LinkClose.
-///
-/// NOTE: this is the deterministic, non-racy half of the spec'd behavior. The
-/// close-race variant — a frame arriving for a tunnel in its just-dropped
-/// window yields `InboundClosed`, which the Connect handler escalates to
-/// `LinkClose(PROTOCOL_ERROR)` on the whole Link — is the B1 finding
-/// (NETWORKING_REVIEW.md §1); it needs a real tunnel lifecycle a WirePeer
-/// can't drive deterministically and is documented by the ignored test below.
+/// Only a `TunnelOpen` allocates endpoint state: a `TunnelData` frame for a
+/// tunnel that was never opened is a confused or stale peer's violation —
+/// dropped on the floor, zero allocation, and the link stays up. It must not
+/// escalate to a LinkClose.
 #[tokio::test]
-async fn a_frame_for_an_unknown_tunnel_is_dropped_and_the_link_stays_up() {
+async fn a_data_frame_for_an_unknown_tunnel_is_dropped_and_the_link_stays_up() {
     let net = TestNet::builder().daemon("victim").start().await;
     let [victim] = net.daemons(["victim"]);
 
     let mut wire = WirePeer::connect_trusted(&net, "victim").await;
     wire.hello().await;
 
-    // Endpoint-addressed (dst = the victim itself) frame for a fresh,
-    // never-seen tunnel id initiated by this peer. The victim is the
-    // acceptor of this link and holds no route back, so the frame is
-    // dropped.
-    wire.send_tunnel_frame(victim.host_id(), b"frame-for-a-ghost-tunnel".to_vec())
+    // Endpoint-addressed (dst = the victim itself) data frame under a
+    // fresh, never-opened tunnel id: a principled drop.
+    wire.send_tunnel_data(victim.host_id(), b"frame-for-a-ghost-tunnel".to_vec())
         .await;
 
     wire.expect_stream_stays_open().await;
 }
 
-/// Documents the B1 close-race (NETWORKING_REVIEW.md §1): a frame for a tunnel
-/// dropped a moment earlier surfaces `InboundClosed`, which the Connect
-/// handler turns into a link-wide `LinkClose(PROTOCOL_ERROR)` — contrary to the
-/// spec, where only oversize payloads are link-closing. The race needs a real
-/// tunnel created-then-closed under the frame, which the WirePeer harness
-/// cannot stage deterministically; ignored until the bug is fixed or a
-/// deterministic reproduction exists.
+/// The B1 finding (NETWORKING_REVIEW.md §1), closed structurally by the
+/// explicit tunnel lifecycle: under v5's implicit opens, a frame landing in
+/// a tunnel's just-closed window surfaced `InboundClosed` and escalated to a
+/// link-wide `LinkClose(PROTOCOL_ERROR)`. Now closing is part of the wire
+/// grammar — open a tunnel, close it, then send data for it: the frame is
+/// for an unknown id, deterministically dropped, and the link lives on.
 #[tokio::test]
-#[ignore = "B1: tunnel-close race escalates a dead-tunnel frame to a link LinkClose (NETWORKING_REVIEW.md §1)"]
-async fn a_frame_for_a_just_closed_tunnel_should_not_kill_the_link() {
-    // Intentionally empty: the deterministic case is covered above; this
-    // marker keeps the B1 divergence visible in the suite.
+async fn a_frame_for_a_just_closed_tunnel_does_not_kill_the_link() {
+    let net = TestNet::builder().daemon("victim").start().await;
+    let [victim] = net.daemons(["victim"]);
+
+    let mut wire = WirePeer::connect_trusted(&net, "victim").await;
+    wire.hello().await;
+
+    let tunnel_id = wire.send_tunnel_open(victim.host_id()).await;
+    wire.send_tunnel_data_for(victim.host_id(), tunnel_id.clone(), b"alive".to_vec())
+        .await;
+    wire.send_tunnel_close(victim.host_id(), tunnel_id.clone())
+        .await;
+
+    // The frame for the tunnel that closed a moment ago: dropped, not a
+    // link-closing violation.
+    wire.send_tunnel_data_for(victim.host_id(), tunnel_id, b"too-late".to_vec())
+        .await;
+
+    wire.expect_stream_stays_open().await;
 }
 
 /// A handshake flood from one source IP is rate-limited (§10: 10/min per

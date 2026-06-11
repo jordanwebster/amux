@@ -101,10 +101,12 @@ message Message {
     HelloAck hello_ack = 2;
     NeighborUp neighbor_up = 3;
     NeighborDown neighbor_down = 4;
-    TunnelFrame tunnel_frame = 5;
-    Reauth reauth = 6;
-    ReauthAck reauth_ack = 7;
-    LinkClose link_close = 8;
+    TunnelOpen tunnel_open = 5;
+    TunnelData tunnel_data = 6;
+    TunnelClose tunnel_close = 7;
+    Reauth reauth = 8;
+    ReauthAck reauth_ack = 9;
+    LinkClose link_close = 10;
   }
 }
 
@@ -141,17 +143,36 @@ message NeighborDown {
   optional string reason = 2;
 }
 
-message TunnelId {
-  bytes initiator = 1;
-  bytes nonce = 2;
-}
-
-message TunnelFrame {
+// Opens a tunnel: the only frame that allocates endpoint state. The reply
+// address (`src`) travels exactly once, here; replies leave on the link the
+// tunnel's frames arrive on, addressed `dst = src`. There is no open-ack —
+// the pinned mTLS handshake inside the tunnel is the acknowledgement, and
+// rejection is TunnelClose.
+message TunnelOpen {
+  // A plain 16-byte UUID minted by the initiator.
+  bytes tunnel_id = 1;
+  // The initiator's host_id: where replies go.
+  bytes src = 2;
   // The destination host_id. A relay forwards iff it has a direct link to
   // dst; otherwise the frame is dropped. dst == self delivers locally.
-  bytes dst = 1;
-  TunnelId tunnel_id = 2;
+  bytes dst = 3;
+}
+
+// Carries tunnel bytes (payload <= 64 KiB). Data for an unknown tunnel_id is
+// a protocol violation by a confused or stale peer: it is dropped without
+// allocating anything, and the link stays up.
+message TunnelData {
+  bytes tunnel_id = 1;
+  bytes dst = 2;
   bytes payload = 3;
+}
+
+// Ends a tunnel. Sent proactively on normal teardown from either endpoint;
+// a TunnelClose for an unknown tunnel_id is dropped. Tunnels also die with
+// the link they are pinned to.
+message TunnelClose {
+  bytes tunnel_id = 1;
+  bytes dst = 2;
 }
 
 message Reauth {

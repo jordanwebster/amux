@@ -3,11 +3,12 @@
 //! Where [`super::Daemon`] speaks user-meaningful verbs, `WirePeer` connects
 //! to a real daemon's *external TCP listener* through real device mTLS and
 //! drives the `LinkService.Connect` bidi stream by hand — sending raw
-//! `Message` envelopes (Hello, TunnelFrame) and asserting on the exact
-//! replies (HelloAck, LinkClose) and on stream closure. It is the conformance
-//! lab for the adversarial cases the topology layer cannot express: oversize
-//! frames, host_id spoofing after mTLS, version mismatch, malformed frames,
-//! and handshake rate limiting.
+//! `Message` envelopes (Hello, TunnelOpen/TunnelData/TunnelClose) and
+//! asserting on the exact replies (HelloAck, LinkClose) and on stream
+//! closure. It is the conformance lab for the adversarial cases the topology
+//! layer cannot express: oversize frames, host_id spoofing after mTLS,
+//! version mismatch, malformed frames, stale tunnel frames, and handshake
+//! rate limiting.
 //!
 //! The harness seeds a keypair + trust entry for the wire peer in the
 //! victim's live trust store (the same pinned-pubkey mTLS every real peer
@@ -34,7 +35,7 @@ use crate::identity::load_or_create_device_identity_in;
 use crate::protocol::PROTOCOL_VERSION;
 use crate::protocol::wire::{self, pb};
 use crate::routing::{Capabilities, Host, host_to_wire};
-use crate::transport::trusted_device_channel;
+use crate::transport::trusted_device_channel_tracked;
 use crate::trust::{TrustEntry, TrustStore};
 
 /// The LinkClose reasons the wire-conformance tests assert on. Mirrors the
@@ -119,8 +120,9 @@ impl WirePeer {
         let peer_trust = Arc::new(std::sync::RwLock::new(peer_trust));
 
         let bound = identity.host_id;
-        let channel = trusted_device_channel(addr, identity, peer_trust, victim_host_id)
-            .expect("build wire peer device channel");
+        let channel =
+            trusted_device_channel_tracked(addr, identity, peer_trust, victim_host_id, None)
+                .expect("build wire peer device channel");
         let mut client = wire::link_service_client::LinkServiceClient::new(channel);
 
         let (out_tx, out_rx) = mpsc::channel::<pb::Message>(64);
@@ -202,15 +204,47 @@ impl WirePeer {
             .expect("wire peer Connect request stream closed");
     }
 
-    /// Sends a `TunnelFrame` addressed to `dst`, under a fresh tunnel id
-    /// initiated by this peer.
-    pub async fn send_tunnel_frame(&self, dst: HostId, payload: Vec<u8>) {
-        let tunnel_id = crate::tunnel::TunnelId::new(self.bound).into();
+    /// Sends a `TunnelOpen` addressed to `dst` under a fresh tunnel id,
+    /// with this peer's own host_id as the reply address (`src`). Returns
+    /// the id so the script can address later frames at the same tunnel.
+    pub async fn send_tunnel_open(&self, dst: HostId) -> Vec<u8> {
+        let tunnel_id = HostId::new_v4().as_bytes().to_vec();
         self.send_message(pb::Message {
-            body: Some(pb::message::Body::TunnelFrame(pb::TunnelFrame {
+            body: Some(pb::message::Body::TunnelOpen(pb::TunnelOpen {
+                tunnel_id: tunnel_id.clone(),
+                src: self.bound.as_bytes().to_vec(),
                 dst: dst.as_bytes().to_vec(),
-                tunnel_id: Some(tunnel_id),
+            })),
+        })
+        .await;
+        tunnel_id
+    }
+
+    /// Sends a `TunnelData` frame addressed to `dst` for `tunnel_id`.
+    pub async fn send_tunnel_data_for(&self, dst: HostId, tunnel_id: Vec<u8>, payload: Vec<u8>) {
+        self.send_message(pb::Message {
+            body: Some(pb::message::Body::TunnelData(pb::TunnelData {
+                tunnel_id,
+                dst: dst.as_bytes().to_vec(),
                 payload,
+            })),
+        })
+        .await;
+    }
+
+    /// Sends a `TunnelData` frame addressed to `dst` under a fresh, never
+    /// opened tunnel id.
+    pub async fn send_tunnel_data(&self, dst: HostId, payload: Vec<u8>) {
+        let tunnel_id = HostId::new_v4().as_bytes().to_vec();
+        self.send_tunnel_data_for(dst, tunnel_id, payload).await;
+    }
+
+    /// Sends a `TunnelClose` addressed to `dst` for `tunnel_id`.
+    pub async fn send_tunnel_close(&self, dst: HostId, tunnel_id: Vec<u8>) {
+        self.send_message(pb::Message {
+            body: Some(pb::message::Body::TunnelClose(pb::TunnelClose {
+                tunnel_id,
+                dst: dst.as_bytes().to_vec(),
             })),
         })
         .await;

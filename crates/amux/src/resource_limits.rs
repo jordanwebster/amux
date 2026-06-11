@@ -11,7 +11,6 @@ pub(crate) const EXTERNAL_TCP_TLS_HANDSHAKE_RATE_WINDOW: Duration = Duration::fr
 pub(crate) const EXTERNAL_TCP_TLS_HANDSHAKE_CONCURRENCY: usize = 128;
 pub(crate) const CLOUD_INBOUND_TUNNEL_RATE_LIMIT: usize = 30;
 pub(crate) const CLOUD_INBOUND_TUNNEL_RATE_WINDOW: Duration = Duration::from_secs(60);
-pub(crate) const CLOUD_INBOUND_TUNNEL_ID_CACHE_CAP: usize = 4096;
 
 #[derive(Debug)]
 pub(crate) struct SlidingWindowRateLimiter<K> {

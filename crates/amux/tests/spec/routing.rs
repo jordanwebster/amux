@@ -10,10 +10,10 @@ use std::time::Duration;
 use amux::testnet::{TestNet, Via};
 
 /// Direct beats cloud: with both paths available, traffic uses the direct
-/// link. The reverse direction proves the cloud path exists and works — the
-/// acceptor side of a direct link holds no route back over it
-/// (NETWORKING_REVIEW.md B4), so the desktop reaches the laptop via the
-/// relay while the laptop dials it directly.
+/// link — from both ends. The acceptor of a direct link routes back over
+/// the inbound link itself (every link is bidirectional at the call layer),
+/// so neither side touches the relay while the link is up; the cloud claim
+/// is the standby route the failover tests below exercise.
 #[tokio::test]
 async fn direct_beats_cloud_when_both_are_available() {
     let net = TestNet::builder()
@@ -26,7 +26,7 @@ async fn direct_beats_cloud_when_both_are_available() {
     let [laptop, desktop] = net.daemons(["laptop", "desktop"]);
 
     laptop.connects_to(&desktop).via_direct().await;
-    desktop.connects_to(&laptop).via_cloud().await;
+    desktop.connects_to(&laptop).via_direct().await;
     laptop.can_call(&desktop).await;
     desktop.can_call(&laptop).await;
 }
@@ -193,16 +193,13 @@ async fn restart_re_establishes_direct_links_from_stored_reachabilities() {
 /// stays local: the revoked side still holds its own entry, it just no
 /// longer gets anything for it. (docs/NETWORKING.md §5.4)
 ///
-/// NOTE: the spec intends in-flight streams to break too ("in-flight +
-/// reconnect" both fail, §5.4 step 4 / §4.9). Today neither side's
-/// in-flight streams break promptly: the revoked peer's inbound connection
-/// is killed at the revoker without anything reaching the peer (its stream
-/// goes silent until a transport keepalive would reap it), and the
-/// revoker's own outbound streams survive because unregistering a 1-hop
-/// Channel never severs the underlying socket. Locked in here as stalls;
-/// see NETWORKING_REVIEW.md §6.5.
+/// In-flight streams break too, as §5.4 always intended: every stream rides
+/// a tunnel, the revoker's teardown closes its links (`LinkClose`) and its
+/// tunnels (`TunnelClose`), and a tunnel's death is a transport EOF under
+/// the stream. The v5 stall (NETWORKING_REVIEW.md §6.5 — one-sided teardown
+/// left both sides' streams silently hanging) is gone structurally.
 #[tokio::test]
-async fn revocation_evicts_routes_and_fails_fresh_calls_but_strands_in_flight_streams() {
+async fn revocation_evicts_routes_and_breaks_in_flight_streams() {
     let net = TestNet::builder()
         .cloud()
         .daemon("laptop")
@@ -212,7 +209,7 @@ async fn revocation_evicts_routes_and_fails_fresh_calls_but_strands_in_flight_st
         .await;
     let [laptop, desktop] = net.daemons(["laptop", "desktop"]);
 
-    desktop.can_call(&laptop).await; // via the relay; the direct link is laptop→desktop
+    desktop.can_call(&laptop).await; // back over laptop's inbound direct link
     let revoked_stream = desktop.open_event_stream_to(&laptop).await;
     let revoker_stream = laptop.open_event_stream_to(&desktop).await;
 
@@ -222,8 +219,8 @@ async fn revocation_evicts_routes_and_fails_fresh_calls_but_strands_in_flight_st
     desktop.cannot_call(&laptop).await;
     laptop.cannot_call(&desktop).await; // revoking also dropped laptop's own key pin
     desktop.trusts(&laptop).await; // trust is local; access is not
-    revoked_stream.expect_stalled_open().await; // NOTE: spec says break; code stalls
-    revoker_stream.expect_stalled_open().await; // NOTE: spec says break; code stalls
+    revoked_stream.expect_disconnect().await;
+    revoker_stream.expect_disconnect().await;
 }
 
 /// Three daemons chained A–B–C: A learns of C through B (B advertises its

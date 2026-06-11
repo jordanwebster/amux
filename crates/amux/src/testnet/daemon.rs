@@ -243,6 +243,12 @@ pub(crate) async fn start_daemon_runtime(
         services.serve_external_tcp_listener_tracked(listener, inner.tracked_tcp.clone());
     }
 
+    // Track dialed direct-link sockets too: with both ends of a link
+    // recording routes, a leaked dialer socket would keep the *acceptor*
+    // treating a stopped daemon as online.
+    services
+        .reachability_link_connector()
+        .track_dialed_tcp(inner.tracked_tcp.clone());
     let reachability_tasks = services.spawn_reachability_links();
     let shutdown_task = Some(spawn_shutdown_handler(Arc::downgrade(inner), shutdown_rx));
     DaemonRuntime {
@@ -1043,11 +1049,7 @@ impl Daemon {
                 }
                 if let Some(parts) = daemon.try_parts().await {
                     for (id, peer, link) in parts.tunnels.active_tunnels().await {
-                        let _ = writeln!(
-                            out,
-                            "  tunnel {} initiator={} peer={peer} link={link}",
-                            id.nonce, id.initiator,
-                        );
+                        let _ = writeln!(out, "  tunnel {id} peer={peer} link={link}");
                     }
                 }
             }

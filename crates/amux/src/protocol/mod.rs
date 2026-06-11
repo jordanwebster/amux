@@ -62,7 +62,9 @@ mod tests {
             "HelloAck",
             "NeighborUp",
             "NeighborDown",
-            "TunnelFrame",
+            "TunnelOpen",
+            "TunnelData",
+            "TunnelClose",
             "PairByTokenRequest",
             "PairByTokenResponse",
             "PairQrCloudPeerRequest",
@@ -180,10 +182,26 @@ mod tests {
             })
             .collect::<std::collections::BTreeMap<_, _>>();
         assert_eq!(
-            message_fields.get("TunnelId").cloned(),
+            message_fields.get("TunnelOpen").cloned(),
             Some(std::collections::BTreeMap::from([
-                ("initiator", 1),
-                ("nonce", 2)
+                ("tunnel_id", 1),
+                ("src", 2),
+                ("dst", 3)
+            ]))
+        );
+        assert_eq!(
+            message_fields.get("TunnelData").cloned(),
+            Some(std::collections::BTreeMap::from([
+                ("tunnel_id", 1),
+                ("dst", 2),
+                ("payload", 3)
+            ]))
+        );
+        assert_eq!(
+            message_fields.get("TunnelClose").cloned(),
+            Some(std::collections::BTreeMap::from([
+                ("tunnel_id", 1),
+                ("dst", 2)
             ]))
         );
 
