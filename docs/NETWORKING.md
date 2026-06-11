@@ -1,6 +1,15 @@
 # amux Networking & Security
 
-**Status**: Draft — Spec v1
+**Status**: Superseded (v5 spec, historical). The implemented protocol is
+**v6**, specified in [`PROTOCOL.md`](./PROTOCOL.md) and locked in by the
+spec test suite (`crates/amux/tests/spec/`). v6 replaced this document's
+routing (route lists → host-id adjacency), tunneling (implicit opens →
+`TunnelOpen`/`TunnelData`/`TunnelClose`), pairing (PairByToken deleted —
+SPAKE2 only), drain/ack machinery (deleted), and reachability surface
+(three-state → `online` + `last_dial_error`). The identity, trust-store,
+two-server, and dispatcher material remains broadly accurate but is no
+longer authoritative; trust `PROTOCOL.md` and the spec suite where they
+disagree.
 
 This document defines the network and security model for amux. It is
 written as a complete specification that a developer or AI agent can

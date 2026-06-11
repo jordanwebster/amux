@@ -1,9 +1,11 @@
 # The amux protocol
 
-**Status**: target design (v6), agreed 2026-06-11. The current
-implementation is v5, specified in [`NETWORKING.md`](./NETWORKING.md);
-this document supersedes its routing, tunneling, and pairing architecture
-once implemented. Decision rationale: `notes/PROTOCOL_V6_DECISIONS.md`.
+**Status**: implemented (v6, 2026-06-11). This is the protocol the daemon
+speaks; it is locked in by the prose spec suite in
+`crates/amux/tests/spec/`. It supersedes the routing, tunneling, and
+pairing architecture of the historical v5 spec
+([`NETWORKING.md`](./NETWORKING.md)). Decision rationale:
+`notes/PROTOCOL_V6_DECISIONS.md`.
 
 ## The mental model
 

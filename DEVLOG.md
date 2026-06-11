@@ -38,6 +38,38 @@ One paragraph describing what was done.
 
 ---
 
+## 2026-06-11: protocol v6 complete — docs graduate
+
+### Summary
+Closing docs pass for the v6 implementation (chunks 1–5, commits
+6735df6 → ccd7a25). `docs/PROTOCOL.md` graduates from "target design" to
+the implemented spec, locked in by the prose suite in
+`crates/amux/tests/spec/`. `docs/NETWORKING.md` is marked superseded
+(v5, historical) with a banner saying exactly what v6 replaced and that
+PROTOCOL.md + the spec suite win where they disagree.
+
+### Changes
+- `docs/PROTOCOL.md`: status header → implemented.
+- `docs/NETWORKING.md`: supersession banner.
+
+### Verification
+- Final state on `protocol-v6`: lib 394 passed; spec suite 43 passed /
+  0 ignored; CI clippy clean; workspace build clean. The wire
+  `Message.body` oneof matches PROTOCOL.md's vocabulary verbatim:
+  Hello · HelloAck · NeighborUp · NeighborDown · TunnelOpen · TunnelData
+  · TunnelClose · Reauth · LinkClose, plus `PairingService.Pair`;
+  `PROTOCOL_VERSION = 6`.
+
+### Next Steps
+- Decide the fate of NETWORKING.md's still-accurate material (identity,
+  trust store, two-server model, dispatcher): fold into PROTOCOL.md
+  companions or rewrite as a v6 reference.
+- §6 ledger follow-ups: move route activation's TLS handshake off the
+  ConnectionManager events task (§6.12); `last_dial_error` changes push
+  no event to subscription-only UIs (D15 note).
+
+---
+
 ## 2026-06-11: v6 chunk 5 — fire-and-forget Reauth; reachability shrinks to two fields
 
 ### Summary
