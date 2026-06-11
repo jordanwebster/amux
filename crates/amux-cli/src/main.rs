@@ -1104,7 +1104,7 @@ mod tests {
             version: Some(host.version.clone()),
             capabilities: Some(host.capabilities.clone()),
             trust_status: amux::HostTrustStatus::UntrustedButOnline,
-            reachability_status: None,
+            last_dial_error: None,
         }
     }
 

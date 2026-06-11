@@ -19,9 +19,7 @@ use crate::agents::{
 use crate::debug::DebugFormat;
 use crate::pairing::ssh::SshPairingPeer;
 use crate::protocol::{ProtocolError, wire};
-use crate::routing::{
-    HostEntry, HostEvent, HostReachabilityStatus, HostTrustStatus, capabilities_from_wire,
-};
+use crate::routing::{HostEntry, HostEvent, HostTrustStatus, capabilities_from_wire};
 use crate::server::{SHUTDOWN_REASON_METADATA_KEY, ShutdownReason};
 use crate::transport::TransportError;
 use crate::{AgentIdentifier, PeerIdentifier, SendInputRequest, SubscribeSessionRequest};
@@ -1131,10 +1129,6 @@ fn host_entry_from_wire(
             });
         }
     };
-    let reachability_status = host
-        .reachability_status
-        .map(|status| host_reachability_status_from_wire(method, status))
-        .transpose()?;
     if host.online && (host.version.is_none() || host.capabilities.is_none()) {
         return Err(ClientError::Decode {
             method,
@@ -1147,22 +1141,10 @@ fn host_entry_from_wire(
             message: "non-online HostEntry must not include version or capabilities".to_string(),
         });
     }
-    if trust_status == HostTrustStatus::UntrustedButOnline && reachability_status.is_some() {
-        return Err(ClientError::Decode {
-            method,
-            message: "untrusted HostEntry must not include reachability_status".to_string(),
-        });
-    }
     if trust_status == HostTrustStatus::UntrustedButOnline && !host.online {
         return Err(ClientError::Decode {
             method,
             message: "untrusted HostEntry must be online".to_string(),
-        });
-    }
-    if trust_status == HostTrustStatus::Trusted && reachability_status.is_none() {
-        return Err(ClientError::Decode {
-            method,
-            message: "trusted HostEntry requires reachability_status".to_string(),
         });
     }
     Ok(HostEntry {
@@ -1174,35 +1156,8 @@ fn host_entry_from_wire(
             .capabilities
             .map(|capabilities| capabilities_from_wire(Some(capabilities))),
         trust_status,
-        reachability_status,
+        last_dial_error: host.last_dial_error,
     })
-}
-
-fn host_reachability_status_from_wire(
-    method: &'static str,
-    status: wire::HostReachabilityStatus,
-) -> Result<HostReachabilityStatus, ClientError> {
-    match status.status.ok_or_else(|| ClientError::Decode {
-        method,
-        message: "HostReachabilityStatus.status is missing".to_string(),
-    })? {
-        wire::host_reachability_status::Status::Reachable(_) => {
-            Ok(HostReachabilityStatus::Reachable)
-        }
-        wire::host_reachability_status::Status::Unreachable(unreachable) => {
-            if unreachable.last_error.is_empty() {
-                return Err(ClientError::Decode {
-                    method,
-                    message: "HostReachabilityStatus.last_error is required for unreachable"
-                        .to_string(),
-                });
-            }
-            Ok(HostReachabilityStatus::Unreachable {
-                last_error: unreachable.last_error,
-            })
-        }
-        wire::host_reachability_status::Status::Unknown(_) => Ok(HostReachabilityStatus::Unknown),
-    }
 }
 
 fn client_service_host_response_to_host_event(

@@ -38,6 +38,103 @@ One paragraph describing what was done.
 
 ---
 
+## 2026-06-11: v6 chunk 5 — fire-and-forget Reauth; reachability shrinks to two fields
+
+### Summary
+The final v6 code chunk: D12 (P5) and D15 (P7). Credential refresh is now
+fire-and-forget — the daemon sends `Reauth { token }` on the cloud link at
+expiry − 5 min and expects nothing back; the cloud's only answers are the
+two things it can already say: silence (refresh accepted, the link
+continues) or `LinkClose(AUTH_EXPIRED)` (the daemon reconnects with a
+fresh token — the recovery path that exists anyway). `ReauthAck`, the 15s
+ack-timeout state machine, and `ConnectorReauthState` are deleted; the
+protocol never acknowledges housekeeping, it only signals state changes.
+A healthy link, and every session riding its tunnels, is never disturbed
+by refresh. Separately, the host-listing reachability surface shrinks to
+two honest fields: `HostEntry` carries `online: bool` (routing-derived
+presence) + `last_dial_error: optional string` (the last failed dial
+attempt's outcome, cleared when a route comes up). The
+`reachable/unreachable/unknown` enum, its three proto wrapper messages,
+and the `StatusChanged` plumbing are deleted — nothing probes, so
+"unknown" is `!online && last_dial_error.is_none()`, derived client-side
+if anyone cares. This completes the v6 wire vocabulary: `Hello`/`HelloAck`
+· `NeighborUp`/`NeighborDown` · `TunnelOpen`/`TunnelData`/`TunnelClose` ·
+`LinkClose` · `Reauth` · `PairingService.Pair`.
+
+### Changes
+- `proto/amux/v1/amux.proto`: `ReauthAck` deleted from `Message.body`
+  (`LinkClose` renumbered to 9); the three `HostReachability*` wrapper
+  messages and `HostReachabilityStatus` deleted;
+  `HostEntry.reachability_status` → `optional string last_dial_error`.
+- `routing/connect/mod.rs`: `ConnectorReauthState` and
+  `LINK_AUTH_REAUTH_RESPONSE_TIMEOUT` deleted; `LinkConnectorAuth` itself
+  now holds the token in force and gains `refresh_deadline`/`send_refresh`
+  (send the Reauth, adopt the refreshed token's expiry as the next
+  deadline — no pending/awaiting state). The ack-timeout select arm and
+  the `ReauthAck` body arm are gone; the refresh-send arm survives. On the
+  acceptor, a good refresh extends auth silently; a bad token (validation
+  failure or user mismatch) answers `LinkClose(AUTH_EXPIRED)` and closes.
+- `routing/events.rs`: `HostReachabilityStatus` deleted;
+  `HostReachabilityEvent::StatusChanged` deleted; `HostEntry` carries
+  `last_dial_error`. `routing/core.rs::notify_host_status_changed`
+  deleted; `connection.rs` record/clear_reachability_error keep the
+  storage (it IS `last_dial_error`) but emit nothing.
+- `services/client.rs`: both host-entry builders read the stored dial
+  error straight off the connection manager (`stored_last_dial_error`);
+  `host_reachability_status_to_wire` deleted; the pairing-candidate filter
+  drops its `reachability_status.is_none()` clause (the trust-status check
+  already said it); `publish_host_status_update` survives for trust
+  transitions but returns nothing; `HostEventOutcome::Updated` deleted.
+- `client/mod.rs`: `host_reachability_status_from_wire` and the
+  status-presence validation rules deleted; `last_dial_error` decodes as a
+  plain optional string. `HostReachabilityStatus` un-exported from
+  `lib.rs`/`routing/mod.rs`; `amux-cli` test fixture updated (the CLI/UI
+  never rendered the three-state beyond carrying the field).
+- Spec: `cloud_peers_keep_communicating_across_a_jwt_expiry` strengthened
+  per D12 — an echo session opened before the refresh point echoes again
+  after `jwt.expired()` on the same stream/tunnel/link (tunnels die with
+  links, so the surviving stream is proof of zero disturbance).
+
+### Decisions Made
+- Lib tests:
+  `unauthenticated_acceptor_rejects_reauth_ack` deleted (message gone);
+  `authenticated_acceptor_accepts_reauth_for_same_user` rewritten as
+  `…_silently_extends_auth_on_reauth_for_same_user` (initial token expires
+  inside the asserted quiet window, so silence also proves the extension);
+  `…_rejects_reauth_for_different_user` rewritten to expect
+  `LinkClose(AUTH_EXPIRED)`, plus a new invalid-token twin;
+  `connector_sends_reauth_before_token_expiry` rewritten ack-free plus new
+  `connector_schedules_the_next_refresh_from_the_refreshed_token` (locks
+  the no-ack rescheduling rule); connection.rs
+  `reachability_error_changes_emit_host_status_event` rewritten as
+  `reachability_errors_are_stored_until_cleared` (storage, no events);
+  client.rs status tests re-pointed at `last_dial_error`
+  (`host_status_change_publishes_cached_reachability_error` folded into
+  the list-hosts dial-error test — there is no status event to publish).
+- `last_dial_error` changes do not push `HostUpdated` events (that was the
+  deleted `StatusChanged` plumbing); listings re-read the storage on
+  demand, which is what the harness verbs and UIs poll anyway.
+
+### Verification
+- `cargo build -p amux --features testnet` and `cargo build --workspace`
+  clean; `cargo fmt`; CI clippy
+  (`--workspace --all-targets --features amux/testnet -- -D warnings`)
+  clean.
+- `cargo test -p amux --lib`: 394 passed.
+- Spec suite: 43 passed / 0 ignored, ×2 runs (32.25s / 32.26s), with the
+  strengthened JWT-expiry test.
+
+### Next Steps
+- v6 implementation complete (chunks 1–5: D10/D11 → D2/D13/D14 → D3a/P8 →
+  D9 → D12/D15). Graduate the remaining doc work: PROTOCOL.md is current;
+  NETWORKING.md still describes v5 and is superseded where they overlap.
+- Ledger note: the connector trusts the refresher's `expires_at`
+  unconditionally — a refresher that keeps minting tokens already inside
+  the 5-minute refresh window drives back-to-back refreshes (pre-existing
+  shape, now without even an ack to pace it).
+
+---
+
 ## 2026-06-11: v6 chunk 4 — one pairing protocol (SPAKE2), two secret deliveries
 
 ### Summary

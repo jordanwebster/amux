@@ -285,9 +285,13 @@ async fn presence_reaches_exactly_two_hops_along_a_chain() {
 }
 
 /// Cloud-only peers keep communicating across a JWT expiry: the connector
-/// refreshes the token in-band (`Reauth`) before the old one expires, so
-/// the cloud link — and calls over it — survive the expiry moment without
-/// reconnecting. (docs/NETWORKING.md §8.5)
+/// refreshes the token in-band (`Reauth`, fire-and-forget — the relay's
+/// only answers are silence or `LinkClose(AUTH_EXPIRED)`) before the old
+/// one expires, so the cloud link — and every session riding its tunnels —
+/// survives the expiry moment without reconnecting. A live session opened
+/// before the refresh point is completely undisturbed: tunnels die with
+/// their link, so the same stream still echoing afterwards is proof the
+/// link never flapped. (docs/PROTOCOL.md "Links", D12)
 ///
 /// Hermetic via the testnet relay's per-token TTLs: the daemon reattaches
 /// under a 2s token, which puts the production refresh point
@@ -312,7 +316,21 @@ async fn cloud_peers_keep_communicating_across_a_jwt_expiry() {
         .await;
     laptop.can_call(&phone).await; // up and running under the short-lived JWT
 
+    // A long-lived session opened under the expiring token, echoing before
+    // the expiry moment…
+    phone.spawn_echo_agent("steady").await;
+    laptop.sees_agent_on(&phone, "steady").await;
+    let mut session = laptop.attach(&phone, "steady").await;
+    session.send("before the expiry").await;
+    session.expect_output("before the expiry").await;
+
     jwt.expired().await;
+
+    // …is completely undisturbed across it: the SAME stream, on the SAME
+    // tunnel, on the SAME link, still echoes. Had the refresh broken the
+    // link, this session would have died with it.
+    session.send("after the expiry").await;
+    session.expect_output("after the expiry").await;
 
     // The link survived its initial token: had the Reauth not landed, the
     // relay would have torn the link down with LinkClose(AUTH_EXPIRED) and no

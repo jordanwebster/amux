@@ -38,7 +38,6 @@ type EstablishmentSender = oneshot::Sender<Result<Host, tonic::Status>>;
 type EstablishmentReceiver = oneshot::Receiver<Result<Host, tonic::Status>>;
 
 const LINK_AUTH_REFRESH_BEFORE_EXPIRY: Duration = Duration::from_secs(300);
-const LINK_AUTH_REAUTH_RESPONSE_TIMEOUT: Duration = Duration::from_secs(15);
 const LINK_CONNECT_HELLO_TIMEOUT: Duration = Duration::from_secs(10);
 
 #[derive(Debug, Clone)]
@@ -102,18 +101,49 @@ pub(crate) trait LinkConnectorTokenRefresher: Send + Sync + 'static {
     async fn refresh_routing_token(&self) -> Result<LinkConnectorToken, tonic::Status>;
 }
 
+/// Connector-side credential state for an authenticated (cloud) link: the
+/// token currently in force and the refresher that mints its successor.
 #[derive(Clone)]
 pub(crate) struct LinkConnectorAuth {
-    initial: LinkConnectorToken,
+    token: LinkConnectorToken,
     refresher: Arc<dyn LinkConnectorTokenRefresher>,
 }
 
 impl LinkConnectorAuth {
     pub(crate) fn new(
-        initial: LinkConnectorToken,
+        token: LinkConnectorToken,
         refresher: Arc<dyn LinkConnectorTokenRefresher>,
     ) -> Self {
-        Self { initial, refresher }
+        Self { token, refresher }
+    }
+
+    fn refresh_deadline(&self) -> tokio::time::Instant {
+        instant_for_system_time(self.token.expires_at, LINK_AUTH_REFRESH_BEFORE_EXPIRY)
+    }
+
+    /// Mints a fresh token and sends `Reauth`, fire-and-forget: the protocol
+    /// never acknowledges housekeeping, it only signals state changes. The
+    /// peer's only answers are silence (refresh accepted, the link
+    /// continues) or `LinkClose(AUTH_EXPIRED)` (we reconnect with a fresh
+    /// token — the recovery path that exists anyway). The refreshed token's
+    /// own expiry schedules the next refresh.
+    async fn send_refresh(
+        &mut self,
+        out_tx: &mpsc::Sender<wire::pb::Message>,
+    ) -> Result<(), tonic::Status> {
+        let token = self.refresher.refresh_routing_token().await?;
+        try_send_outbound(
+            out_tx,
+            wire::pb::Message {
+                body: Some(wire::pb::message::Body::Reauth(wire::pb::Reauth {
+                    auth_token: token.token.clone(),
+                })),
+            },
+        )
+        .then_some(())
+        .ok_or_else(|| tonic::Status::unavailable("link closed during reauth"))?;
+        self.token = token;
+        Ok(())
     }
 }
 
@@ -300,7 +330,7 @@ fn spawn_connector_to_channel_with_authorization_and_signal(
         let mut request = tonic::Request::new(request_stream);
         let authorization = connector_auth
             .as_ref()
-            .map(|auth| format!("Bearer {}", auth.initial.token))
+            .map(|auth| format!("Bearer {}", auth.token.token))
             .or(authorization);
         if let Some(authorization) = authorization {
             let authorization = tonic::metadata::MetadataValue::try_from(authorization)
@@ -663,19 +693,16 @@ async fn run_established_connect(
         let _ = established_tx.send(Ok(peer_host.clone()));
     }
     let mut acceptor_auth = ctx.auth_session.clone().map(EstablishedLinkAuth::new);
-    let mut connector_reauth = connector_auth.map(ConnectorReauthState::new);
+    let mut connector_auth = connector_auth;
     let mut close_status = None;
 
     loop {
         let auth_expiry_deadline = acceptor_auth
             .as_ref()
             .map(EstablishedLinkAuth::expiry_deadline);
-        let connector_refresh_deadline = connector_reauth
+        let connector_refresh_deadline = connector_auth
             .as_ref()
-            .and_then(ConnectorReauthState::refresh_deadline);
-        let connector_response_timeout = connector_reauth
-            .as_ref()
-            .and_then(ConnectorReauthState::response_timeout);
+            .map(LinkConnectorAuth::refresh_deadline);
         tokio::select! {
             inbound = input.next() => {
                 let Some(inbound) = inbound else {
@@ -698,7 +725,6 @@ async fn run_established_connect(
                             &out_tx,
                             body,
                             acceptor_auth.as_mut(),
-                            connector_reauth.as_mut(),
                         ).await {
                             PostHandshakeAction::Continue => {}
                             PostHandshakeAction::Close => break,
@@ -729,23 +755,15 @@ async fn run_established_connect(
                 break;
             }
             _ = maybe_sleep_until(connector_refresh_deadline), if connector_refresh_deadline.is_some() => {
-                let Some(connector_reauth) = connector_reauth.as_mut() else {
+                let Some(connector_auth) = connector_auth.as_mut() else {
                     continue;
                 };
-                if let Err(status) = connector_reauth.send_refresh(&out_tx).await {
+                if let Err(status) = connector_auth.send_refresh(&out_tx).await {
                     audit::auth_jwt_failure(&status);
                     let _ = try_send_outbound(&out_tx, protocol_error_link_close(status.to_string()));
                     close_status = Some(status);
                     break;
                 }
-            }
-            _ = maybe_sleep_until(connector_response_timeout), if connector_response_timeout.is_some() => {
-                let _ = try_send_outbound(
-                    &out_tx,
-                    protocol_error_link_close("link reauth response timed out"),
-                );
-                audit::auth_jwt_failure("link reauth response timed out");
-                break;
             }
             request = link_close_rx.recv() => {
                 match request {
@@ -963,7 +981,6 @@ async fn handle_post_handshake_body(
     out_tx: &mpsc::Sender<wire::pb::Message>,
     body: wire::pb::message::Body,
     acceptor_auth: Option<&mut EstablishedLinkAuth>,
-    connector_reauth: Option<&mut ConnectorReauthState>,
 ) -> PostHandshakeAction {
     match body {
         wire::pb::message::Body::NeighborUp(event) => match neighbor_up_from_wire(event) {
@@ -1024,13 +1041,6 @@ async fn handle_post_handshake_body(
                 PostHandshakeAction::Close
             }
         }
-        wire::pb::message::Body::ReauthAck(ack) => {
-            if handle_reauth_ack(connector_reauth, out_tx, ack).await {
-                PostHandshakeAction::Continue
-            } else {
-                PostHandshakeAction::Close
-            }
-        }
         wire::pb::message::Body::LinkClose(close) => PostHandshakeAction::LinkClosed {
             status: link_close_status(&close),
         },
@@ -1074,75 +1084,11 @@ impl EstablishedLinkAuth {
     }
 }
 
-struct ConnectorReauthState {
-    expires_at: SystemTime,
-    pending_expires_at: Option<SystemTime>,
-    awaiting_since: Option<tokio::time::Instant>,
-    refresher: Arc<dyn LinkConnectorTokenRefresher>,
-}
-
-impl ConnectorReauthState {
-    fn new(auth: LinkConnectorAuth) -> Self {
-        Self {
-            expires_at: auth.initial.expires_at,
-            pending_expires_at: None,
-            awaiting_since: None,
-            refresher: auth.refresher,
-        }
-    }
-
-    fn refresh_deadline(&self) -> Option<tokio::time::Instant> {
-        self.awaiting_since
-            .is_none()
-            .then(|| instant_for_system_time(self.expires_at, LINK_AUTH_REFRESH_BEFORE_EXPIRY))
-    }
-
-    fn response_timeout(&self) -> Option<tokio::time::Instant> {
-        self.awaiting_since
-            .map(|since| since + LINK_AUTH_REAUTH_RESPONSE_TIMEOUT)
-    }
-
-    async fn send_refresh(
-        &mut self,
-        out_tx: &mpsc::Sender<wire::pb::Message>,
-    ) -> Result<(), tonic::Status> {
-        let token = self.refresher.refresh_routing_token().await?;
-        self.pending_expires_at = Some(token.expires_at);
-        try_send_outbound(
-            out_tx,
-            wire::pb::Message {
-                body: Some(wire::pb::message::Body::Reauth(wire::pb::Reauth {
-                    auth_token: token.token,
-                })),
-            },
-        )
-        .then_some(())
-        .ok_or_else(|| tonic::Status::unavailable("link closed during reauth"))?;
-        self.awaiting_since = Some(tokio::time::Instant::now());
-        Ok(())
-    }
-
-    fn handle_ack(&mut self, ack: wire::pb::ReauthAck) -> bool {
-        let Some(outcome) = ack.outcome else {
-            return false;
-        };
-        match outcome {
-            wire::pb::reauth_ack::Outcome::Accepted(_) => {
-                if let Some(expires_at) = self.pending_expires_at.take() {
-                    self.expires_at = expires_at;
-                }
-                self.awaiting_since = None;
-                true
-            }
-            wire::pb::reauth_ack::Outcome::Error(error) => {
-                audit::auth_jwt_failure(format!("link reauth rejected: {}", error.message));
-                tracing::warn!(code = error.code, message = %error.message, "link reauth rejected");
-                false
-            }
-        }
-    }
-}
-
+/// Handles a fire-and-forget `Reauth` on an authenticated acceptor link. A
+/// good token extends the link's auth silently — housekeeping is never
+/// acknowledged. A bad token is answered with the only state change the
+/// acceptor can signal: `LinkClose(AUTH_EXPIRED)`, after which the connector
+/// reconnects with a fresh token.
 async fn handle_reauth(
     acceptor_auth: Option<&mut EstablishedLinkAuth>,
     out_tx: &mpsc::Sender<wire::pb::Message>,
@@ -1162,7 +1108,7 @@ async fn handle_reauth(
     {
         Ok(user) if user.user_id == auth.user.user_id => {
             auth.user = user;
-            try_send_outbound(out_tx, accepted_reauth_ack())
+            true
         }
         Ok(user) => {
             audit::auth_jwt_failure("link reauth user mismatch");
@@ -1171,50 +1117,15 @@ async fn handle_reauth(
                 reauth_user_id = %user.user_id,
                 "link reauth user mismatch"
             );
-            try_send_outbound(out_tx, unauthenticated_reauth_ack())
+            let _ = try_send_outbound(out_tx, auth_expired_link_close());
+            false
         }
         Err(status) => {
             audit::auth_jwt_failure(&status);
             tracing::warn!(error = %status, "link reauth token validation failed");
-            try_send_outbound(out_tx, unauthenticated_reauth_ack())
-        }
-    }
-}
-
-async fn handle_reauth_ack(
-    connector_reauth: Option<&mut ConnectorReauthState>,
-    out_tx: &mpsc::Sender<wire::pb::Message>,
-    ack: wire::pb::ReauthAck,
-) -> bool {
-    match connector_reauth {
-        Some(connector_reauth) => connector_reauth.handle_ack(ack),
-        None => {
-            let _ = try_send_outbound(
-                out_tx,
-                protocol_error_link_close("reauth_ack received without connector auth"),
-            );
+            let _ = try_send_outbound(out_tx, auth_expired_link_close());
             false
         }
-    }
-}
-
-fn accepted_reauth_ack() -> wire::pb::Message {
-    wire::pb::Message {
-        body: Some(wire::pb::message::Body::ReauthAck(wire::pb::ReauthAck {
-            outcome: Some(wire::pb::reauth_ack::Outcome::Accepted(wire::pb::Empty {})),
-        })),
-    }
-}
-
-fn unauthenticated_reauth_ack() -> wire::pb::Message {
-    wire::pb::Message {
-        body: Some(wire::pb::message::Body::ReauthAck(wire::pb::ReauthAck {
-            outcome: Some(wire::pb::reauth_ack::Outcome::Error(wire::pb::Error {
-                code: wire::pb::ErrorCode::Unauthenticated as i32,
-                message: "invalid link authorization".to_string(),
-                details: Vec::new(),
-            })),
-        })),
     }
 }
 
@@ -1644,23 +1555,13 @@ mod tests {
         );
     }
 
-    fn assert_accepted_reauth_ack(message: &wire::pb::Message) {
-        assert!(matches!(
-            &message.body,
-            Some(wire::pb::message::Body::ReauthAck(wire::pb::ReauthAck {
-                outcome: Some(wire::pb::reauth_ack::Outcome::Accepted(_))
-            }))
-        ));
-    }
-
-    fn assert_unauthenticated_reauth_ack(message: &wire::pb::Message) {
-        let Some(wire::pb::message::Body::ReauthAck(ack)) = &message.body else {
-            panic!("expected ReauthAck");
-        };
-        let Some(wire::pb::reauth_ack::Outcome::Error(error)) = &ack.outcome else {
-            panic!("expected error ReauthAck");
-        };
-        assert_eq!(error.code, wire::pb::ErrorCode::Unauthenticated as i32);
+    /// Asserts that the link stays quiet: no message arrives within
+    /// `window`. The silence IS the assertion — an accepted Reauth is never
+    /// acknowledged, and a link that stays healthy sends nothing.
+    async fn assert_link_silence(rx: &mut mpsc::Receiver<wire::pb::Message>, window: Duration) {
+        if let Ok(message) = tokio::time::timeout(window, rx.recv()).await {
+            panic!("expected link silence, got {message:?}");
+        }
     }
 
     fn assert_reauth_message(message: &wire::pb::Message, expected_token: &str) {
@@ -1737,11 +1638,15 @@ mod tests {
         assert!(routing.host_entry(spoofed.id).await.is_none());
     }
 
+    /// D12: an accepted refresh is pure silence — no ack, no close. The
+    /// initial token expires inside the quiet window, so the silence also
+    /// proves the refresh took effect: without it, the expiry arm would
+    /// have sent `LinkClose(AUTH_EXPIRED)`.
     #[tokio::test]
-    async fn authenticated_acceptor_accepts_reauth_for_same_user() {
+    async fn authenticated_acceptor_silently_extends_auth_on_reauth_for_same_user() {
         let (ctx, _routing, _tunnels) = test_ctx().await;
         let peer = host(2, "peer-host");
-        let initial_user = auth_user(100, "client-a", Duration::from_secs(3600));
+        let initial_user = auth_user(100, "client-a", Duration::from_millis(500));
         let refreshed_user = auth_user(100, "client-a", Duration::from_secs(7200));
         let authenticator = Arc::new(TestTokenAuthenticator::new(vec![(
             "token-b",
@@ -1757,12 +1662,15 @@ mod tests {
             .await
             .unwrap();
 
-        assert_accepted_reauth_ack(&recv_message(&mut output_rx).await);
+        assert_link_silence(&mut output_rx, Duration::from_millis(1200)).await;
         drop(input_tx);
     }
 
+    /// D12: a bad refresh token gets the one answer the acceptor can give —
+    /// `LinkClose(AUTH_EXPIRED)`; the connector reconnects with a fresh
+    /// token.
     #[tokio::test]
-    async fn authenticated_acceptor_rejects_reauth_for_different_user() {
+    async fn authenticated_acceptor_answers_reauth_for_different_user_with_auth_expired() {
         let (ctx, _routing, _tunnels) = test_ctx().await;
         let peer = host(2, "peer-host");
         let initial_user = auth_user(100, "client-a", Duration::from_secs(3600));
@@ -1778,7 +1686,27 @@ mod tests {
             .await
             .unwrap();
 
-        assert_unauthenticated_reauth_ack(&recv_message(&mut output_rx).await);
+        assert_auth_expired_link_close(&recv_message(&mut output_rx).await);
+        drop(input_tx);
+    }
+
+    #[tokio::test]
+    async fn authenticated_acceptor_answers_invalid_reauth_token_with_auth_expired() {
+        let (ctx, _routing, _tunnels) = test_ctx().await;
+        let peer = host(2, "peer-host");
+        let initial_user = auth_user(100, "client-a", Duration::from_secs(3600));
+        let authenticator = Arc::new(TestTokenAuthenticator::new(Vec::new()));
+        let ctx = ctx.with_auth_session(LinkAuthSession::new(initial_user, authenticator, None));
+
+        let (input_tx, mut output_rx) = establish(ctx, &peer).await;
+        input_tx
+            .send(message(wire::pb::message::Body::Reauth(wire::pb::Reauth {
+                auth_token: "unknown-token".to_string(),
+            })))
+            .await
+            .unwrap();
+
+        assert_auth_expired_link_close(&recv_message(&mut output_rx).await);
         drop(input_tx);
     }
 
@@ -1801,31 +1729,6 @@ mod tests {
             error
                 .message
                 .contains("reauth received on unauthenticated link")
-        );
-        drop(input_tx);
-    }
-
-    #[tokio::test]
-    async fn unauthenticated_acceptor_rejects_reauth_ack() {
-        let (ctx, _routing, _tunnels) = test_ctx().await;
-        let peer = host(2, "peer-host");
-
-        let (input_tx, mut output_rx) = establish(ctx, &peer).await;
-        input_tx
-            .send(message(wire::pb::message::Body::ReauthAck(
-                wire::pb::ReauthAck {
-                    outcome: Some(wire::pb::reauth_ack::Outcome::Accepted(wire::pb::Empty {})),
-                },
-            )))
-            .await
-            .unwrap();
-
-        let response = recv_message(&mut output_rx).await;
-        let error = protocol_link_close_error(&response);
-        assert!(
-            error
-                .message
-                .contains("reauth_ack received without connector auth")
         );
         drop(input_tx);
     }
@@ -1891,8 +1794,12 @@ mod tests {
         assert!(routing.host_entry(peer.id).await.is_none());
     }
 
+    /// D12: the connector fires `Reauth` at the refresh point and expects
+    /// nothing back — the refreshed token's own expiry (an hour out)
+    /// schedules the next refresh, so exactly one refresh happens and the
+    /// link then stays quiet.
     #[tokio::test]
-    async fn connector_sends_reauth_before_token_expiry() {
+    async fn connector_sends_reauth_before_token_expiry_and_awaits_nothing() {
         let (ctx, _routing, _tunnels, _local) = connector_test_ctx().await;
         let peer = host(2, "peer-host");
         let calls = Arc::new(Mutex::new(0));
@@ -1917,15 +1824,42 @@ mod tests {
         input_tx.send(accepted_ack(&peer)).await.unwrap();
 
         assert_reauth_message(&recv_message(&mut output_rx).await, "token-b");
-        input_tx
-            .send(message(wire::pb::message::Body::ReauthAck(
-                wire::pb::ReauthAck {
-                    outcome: Some(wire::pb::reauth_ack::Outcome::Accepted(wire::pb::Empty {})),
-                },
-            )))
-            .await
-            .unwrap();
+        assert_link_silence(&mut output_rx, Duration::from_millis(200)).await;
         assert_eq!(*calls.lock().unwrap(), 1);
+        drop(input_tx);
+    }
+
+    /// D12: with no ack to wait on, the connector adopts each refreshed
+    /// token's expiry as its next refresh deadline. A refresher that keeps
+    /// minting already-due tokens therefore drives refresh after refresh.
+    #[tokio::test]
+    async fn connector_schedules_the_next_refresh_from_the_refreshed_token() {
+        let (ctx, _routing, _tunnels, _local) = connector_test_ctx().await;
+        let peer = host(2, "peer-host");
+        let calls = Arc::new(Mutex::new(0));
+        let refresher = Arc::new(TestTokenRefresher {
+            token: LinkConnectorToken {
+                token: "token-b".to_string(),
+                expires_at: SystemTime::now(),
+            },
+            calls: calls.clone(),
+        });
+        let auth = LinkConnectorAuth::new(
+            LinkConnectorToken {
+                token: "token-a".to_string(),
+                expires_at: SystemTime::now(),
+            },
+            refresher,
+        );
+
+        let (input_tx, input_rx) = mpsc::channel(8);
+        let mut output_rx = spawn_connector_connect_with_auth(ctx, stream_from_rx(input_rx), auth);
+        assert_connector_hello(&recv_message(&mut output_rx).await);
+        input_tx.send(accepted_ack(&peer)).await.unwrap();
+
+        assert_reauth_message(&recv_message(&mut output_rx).await, "token-b");
+        assert_reauth_message(&recv_message(&mut output_rx).await, "token-b");
+        assert!(*calls.lock().unwrap() >= 2);
         drop(input_tx);
     }
 

@@ -54,10 +54,7 @@ pub use pairing::ssh::{
 pub use pairing::ssh::{pair_via_ssh_responder_stdio, relay_stdio_to_unix_socket};
 pub use paths::{default_data_dir, default_log_path};
 pub use protocol::ProtocolError;
-pub use routing::{
-    Capabilities, Host, HostEntry, HostEvent, HostReachabilityStatus, HostTrustStatus,
-    SupportedAgentType,
-};
+pub use routing::{Capabilities, Host, HostEntry, HostEvent, HostTrustStatus, SupportedAgentType};
 pub use server::{
     DaemonBuilder, EmbeddedBuilder, Server, ServerBuilder, ServerError, ShutdownReason,
 };

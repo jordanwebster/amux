@@ -131,6 +131,9 @@ impl ConnectionManager {
         self.routing.mark_client_visible_hosts(host_ids).await;
     }
 
+    /// The last failed dial attempt's outcome for `peer`, if any: the
+    /// storage behind `HostEntry.last_dial_error`. Nothing probes, so this
+    /// is everything the daemon honestly knows about an offline peer.
     pub(crate) async fn stored_reachability_error(&self, peer: HostId) -> Option<String> {
         self.state
             .read()
@@ -141,27 +144,15 @@ impl ConnectionManager {
     }
 
     pub(crate) async fn record_reachability_error(&self, peer: HostId, error: impl Into<String>) {
-        {
-            self.state
-                .write()
-                .await
-                .reachability_errors
-                .insert(peer, error.into());
-        }
-        self.routing.notify_host_status_changed(peer).await;
-    }
-
-    pub(crate) async fn clear_reachability_error(&self, peer: HostId) {
-        let removed = self
-            .state
+        self.state
             .write()
             .await
             .reachability_errors
-            .remove(&peer)
-            .is_some();
-        if removed {
-            self.routing.notify_host_status_changed(peer).await;
-        }
+            .insert(peer, error.into());
+    }
+
+    pub(crate) async fn clear_reachability_error(&self, peer: HostId) {
+        self.state.write().await.reachability_errors.remove(&peer);
     }
 
     pub(crate) async fn send_link_close_to_host(
@@ -364,10 +355,7 @@ mod tests {
     use tokio::sync::mpsc;
 
     use super::*;
-    use crate::routing::{
-        Capabilities, FEATURE_CLOUD_RELAY, Host, HostReachabilityEvent, LinkRole,
-        SupportedAgentType,
-    };
+    use crate::routing::{Capabilities, FEATURE_CLOUD_RELAY, Host, LinkRole, SupportedAgentType};
 
     fn host(id: u128) -> Host {
         Host {
@@ -571,20 +559,24 @@ mod tests {
         assert!(matches!(error, TunnelPoolError::NotFound { host_id } if host_id == peer.id));
     }
 
+    /// The dial-error storage IS `HostEntry.last_dial_error`: a failed
+    /// attempt is recorded until a route comes up (or a clear), with no
+    /// event plumbing of its own — host listings re-read it on demand.
     #[tokio::test]
-    async fn reachability_error_changes_emit_host_status_event() {
+    async fn reachability_errors_are_stored_until_cleared() {
         let routing = Arc::new(RoutingCore::new());
-        let mut rx = routing.subscribe_hosts().await;
         let tunnels = test_pool(HostId::from_u128(1), &routing);
         let manager = ConnectionManager::new(routing.clone(), tunnels);
         let peer = HostId::from_u128(2);
 
         manager.record_reachability_error(peer, "failed").await;
+        assert_eq!(
+            manager.stored_reachability_error(peer).await,
+            Some("failed".to_string())
+        );
 
-        assert!(matches!(
-            rx.recv().await,
-            Some(HostReachabilityEvent::StatusChanged { host_id }) if host_id == peer
-        ));
+        manager.clear_reachability_error(peer).await;
+        assert_eq!(manager.stored_reachability_error(peer).await, None);
     }
 
     #[tokio::test]

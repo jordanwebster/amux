@@ -303,14 +303,6 @@ impl RoutingCore {
         }
     }
 
-    pub(crate) async fn notify_host_status_changed(&self, host_id: HostId) {
-        self.state
-            .write()
-            .await
-            .host_events
-            .emit(HostReachabilityEvent::StatusChanged { host_id });
-    }
-
     pub(crate) async fn subscribe_routing_events(&self) -> mpsc::Receiver<RoutingEvent> {
         self.state.write().await.routing_events.subscribe()
     }

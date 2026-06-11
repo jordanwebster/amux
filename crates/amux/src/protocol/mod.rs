@@ -74,7 +74,6 @@ mod tests {
             "AgentUpdated",
             "SessionClosed",
             "Reauth",
-            "ReauthAck",
             "LinkClose",
         ] {
             assert!(

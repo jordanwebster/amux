@@ -187,7 +187,6 @@ fn body_name(body: &pb::message::Body) -> &'static str {
         pb::message::Body::TunnelData(_) => "tunnel_data",
         pb::message::Body::TunnelClose(_) => "tunnel_close",
         pb::message::Body::Reauth(_) => "reauth",
-        pb::message::Body::ReauthAck(_) => "reauth_ack",
         pb::message::Body::LinkClose(_) => "link_close",
     }
 }
@@ -379,9 +378,6 @@ mod tests {
             }),
             pb::message::Body::Reauth(pb::Reauth {
                 auth_token: "new-token".to_string(),
-            }),
-            pb::message::Body::ReauthAck(pb::ReauthAck {
-                outcome: Some(pb::reauth_ack::Outcome::Accepted(pb::Empty {})),
             }),
             pb::message::Body::LinkClose(pb::LinkClose {
                 reason: pb::LinkCloseReason::UserShutdown as i32,

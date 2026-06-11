@@ -27,7 +27,7 @@ use crate::pairing::{PAIR_MODE_TTL, PairMode, PairModeError};
 use crate::protocol::{ProtocolError, protocol_status, wire};
 use crate::routing::{
     EventSource, FEATURE_CLOUD_RELAY, Host, HostEntry, HostEvent, HostReachabilityEvent,
-    HostReachabilityStatus, HostTrustStatus, RoutingCore, capabilities_to_wire,
+    HostTrustStatus, RoutingCore, capabilities_to_wire,
 };
 use crate::server::{SHUTDOWN_REASON_METADATA_KEY, ShutdownReason};
 use crate::services::agent::AgentServiceCtx;
@@ -60,7 +60,6 @@ pub(crate) enum AgentRef {
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub(crate) enum HostEventOutcome {
     Added,
-    Updated,
     Removed { removed_agents: usize },
     IgnoredRelayOrUnknown,
 }
@@ -189,13 +188,6 @@ impl ClientService {
         match event {
             HostReachabilityEvent::Added { host } => self.add_host(host).await,
             HostReachabilityEvent::Removed { host_id } => self.remove_host(host_id).await,
-            HostReachabilityEvent::StatusChanged { host_id } => {
-                if self.publish_host_status_update(host_id).await {
-                    HostEventOutcome::Updated
-                } else {
-                    HostEventOutcome::IgnoredRelayOrUnknown
-                }
-            }
         }
     }
 
@@ -383,11 +375,6 @@ impl ClientService {
     ) -> HostEntry {
         let host_id = host.id;
         let trusted = self.is_local_host(host_id) || trusted_names.contains_key(&host_id);
-        let reachability_status = if self.is_local_host(host_id) || trusted {
-            Some(HostReachabilityStatus::Reachable)
-        } else {
-            None
-        };
         let name = host.name.clone();
         let version = host.version.clone();
         let capabilities = host.capabilities.clone();
@@ -402,19 +389,11 @@ impl ClientService {
             } else {
                 HostTrustStatus::UntrustedButOnline
             },
-            reachability_status,
+            last_dial_error: self.stored_last_dial_error(host_id).await,
         }
     }
 
     async fn trusted_host_entry(&self, host_id: Uuid, name: String) -> HostEntry {
-        let reachability_status = match self
-            .remote_agent_connections
-            .stored_reachability_error(host_id)
-            .await
-        {
-            Some(last_error) => HostReachabilityStatus::Unreachable { last_error },
-            None => HostReachabilityStatus::Unknown,
-        };
         HostEntry {
             id: host_id,
             name,
@@ -422,8 +401,17 @@ impl ClientService {
             version: None,
             capabilities: None,
             trust_status: HostTrustStatus::Trusted,
-            reachability_status: Some(reachability_status),
+            last_dial_error: self.stored_last_dial_error(host_id).await,
         }
+    }
+
+    /// `HostEntry.last_dial_error` is read straight from the connection
+    /// manager's dial-outcome storage: the last failed attempt, cleared when
+    /// a route comes up. Nothing probes, so there is nothing more to derive.
+    async fn stored_last_dial_error(&self, host_id: Uuid) -> Option<String> {
+        self.remote_agent_connections
+            .stored_reachability_error(host_id)
+            .await
     }
 
     fn trusted_host_names(&self) -> Vec<(Uuid, String)> {
@@ -534,13 +522,15 @@ impl ClientService {
             .emit(HostEvent::HostRemoved { id: host_id });
     }
 
-    async fn publish_host_status_update(&self, host_id: Uuid) -> bool {
+    /// Re-publishes `host_id`'s entry to host subscribers after a local
+    /// trust transition (pairing) changes how it should be presented.
+    async fn publish_host_status_update(&self, host_id: Uuid) {
         let online_host = self.state.read().await.hosts_model.get(&host_id).cloned();
         let entry = match online_host {
             Some(host) => self.host_entry_for_online_host(host).await,
             None => {
                 let Some(name) = self.trusted_host_name(host_id) else {
-                    return false;
+                    return;
                 };
                 self.trusted_host_entry(host_id, name).await
             }
@@ -550,7 +540,6 @@ impl ClientService {
             .await
             .host_events
             .emit(HostEvent::HostUpdated { host: entry });
-        true
     }
 
     async fn remove_host(&self, host_id: Uuid) -> HostEventOutcome {
@@ -1195,10 +1184,7 @@ fn host_entry_to_wire(host: &HostEntry) -> wire::HostEntry {
             HostTrustStatus::Trusted => wire::HostTrustStatus::Trusted as i32,
             HostTrustStatus::UntrustedButOnline => wire::HostTrustStatus::UntrustedButOnline as i32,
         },
-        reachability_status: host
-            .reachability_status
-            .as_ref()
-            .map(host_reachability_status_to_wire),
+        last_dial_error: host.last_dial_error.clone(),
     }
 }
 
@@ -1225,30 +1211,6 @@ fn peer_reachability_to_wire(reachability: &Reachability) -> wire::PeerReachabil
         }
     };
     wire::PeerReachability { kind: Some(target) }
-}
-
-fn host_reachability_status_to_wire(
-    status: &HostReachabilityStatus,
-) -> wire::HostReachabilityStatus {
-    match status {
-        HostReachabilityStatus::Reachable => wire::HostReachabilityStatus {
-            status: Some(wire::host_reachability_status::Status::Reachable(
-                wire::HostReachabilityReachable {},
-            )),
-        },
-        HostReachabilityStatus::Unreachable { last_error } => wire::HostReachabilityStatus {
-            status: Some(wire::host_reachability_status::Status::Unreachable(
-                wire::HostReachabilityUnreachable {
-                    last_error: last_error.clone(),
-                },
-            )),
-        },
-        HostReachabilityStatus::Unknown => wire::HostReachabilityStatus {
-            status: Some(wire::host_reachability_status::Status::Unknown(
-                wire::HostReachabilityUnknown {},
-            )),
-        },
-    }
 }
 
 pub(crate) fn client_agent_event_to_wire(
@@ -1474,11 +1436,8 @@ fn filter_host_entries_for_scope(
         hosts.retain(|host| host.trust_status == HostTrustStatus::Trusted);
     }
     if scope == wire::list_hosts_request::Scope::PairingCandidates {
-        hosts.retain(|host| {
-            host.online
-                && host.trust_status == HostTrustStatus::UntrustedButOnline
-                && host.reachability_status.is_none()
-        });
+        hosts
+            .retain(|host| host.online && host.trust_status == HostTrustStatus::UntrustedButOnline);
     }
     hosts
 }
@@ -2384,7 +2343,7 @@ mod tests {
             version: Some(host.version.clone()),
             capabilities: Some(host.capabilities.clone()),
             trust_status: HostTrustStatus::UntrustedButOnline,
-            reachability_status: None,
+            last_dial_error: None,
         }
     }
 
@@ -3435,7 +3394,7 @@ mod tests {
             added.trust_status,
             wire::HostTrustStatus::UntrustedButOnline as i32
         );
-        assert!(added.reachability_status.is_none());
+        assert!(added.last_dial_error.is_none());
         assert!(matches!(
             responses[1].event,
             Some(wire::subscribe_hosts_response::Event::SnapshotComplete(_))
@@ -3585,7 +3544,7 @@ mod tests {
             hosts.hosts[0].trust_status,
             wire::HostTrustStatus::UntrustedButOnline as i32
         );
-        assert!(hosts.hosts[0].reachability_status.is_none());
+        assert!(hosts.hosts[0].last_dial_error.is_none());
 
         let agents = tonic_list_agents(&service).await;
         assert_eq!(agents.agents.len(), 1);
@@ -3643,8 +3602,11 @@ mod tests {
         ));
     }
 
+    /// D15: a trusted peer the daemon has never failed to dial is simply
+    /// offline with no `last_dial_error` — "unknown" is something a client
+    /// derives, not something the daemon claims.
     #[tokio::test]
-    async fn tonic_list_hosts_reports_trusted_offline_hosts_as_unknown() {
+    async fn tonic_list_hosts_reports_trusted_offline_hosts_without_a_dial_error() {
         let data_dir = tempfile::tempdir().unwrap();
         let local = DeviceIdentity::for_test(Uuid::from_u128(1));
         let trust_store = Arc::new(std::sync::RwLock::new(TrustStore::default()));
@@ -3665,15 +3627,11 @@ mod tests {
         assert!(host.version.is_none());
         assert!(host.capabilities.is_none());
         assert_eq!(host.trust_status, wire::HostTrustStatus::Trusted as i32);
-        let status = host.reachability_status.as_ref().unwrap();
-        assert!(matches!(
-            status.status,
-            Some(wire::host_reachability_status::Status::Unknown(_))
-        ));
+        assert!(host.last_dial_error.is_none());
     }
 
     #[tokio::test]
-    async fn tonic_list_hosts_reports_cached_trusted_reachability_error() {
+    async fn tonic_list_hosts_reports_the_last_dial_error_for_a_trusted_offline_peer() {
         let data_dir = tempfile::tempdir().unwrap();
         let local = DeviceIdentity::for_test(Uuid::from_u128(1));
         let peer = Uuid::from_u128(2);
@@ -3698,49 +3656,10 @@ mod tests {
             .unwrap();
         assert!(!host.online);
         assert_eq!(host.trust_status, wire::HostTrustStatus::Trusted as i32);
-        let status = host.reachability_status.as_ref().unwrap();
-        assert!(matches!(
-            &status.status,
-            Some(wire::host_reachability_status::Status::Unreachable(unreachable))
-                if unreachable.last_error == "ssh alias did not resolve"
-        ));
-    }
-
-    #[tokio::test]
-    async fn host_status_change_publishes_cached_reachability_error() {
-        let data_dir = tempfile::tempdir().unwrap();
-        let local = DeviceIdentity::for_test(Uuid::from_u128(1));
-        let peer = Uuid::from_u128(2);
-        let trust_store = Arc::new(std::sync::RwLock::new(TrustStore::default()));
-        trust_store
-            .write()
-            .unwrap()
-            .insert_for_test(peer, trust_entry("trusted-peer", 2));
-        let service =
-            client_service_with_pairing_trust(data_dir.path(), &local, trust_store.clone());
-        let mut rx = service.subscribe_hosts().await;
-        service
-            .remote_agent_connections
-            .record_reachability_error(peer, "tcp connect refused")
-            .await;
-
         assert_eq!(
-            service
-                .apply_host_event(HostReachabilityEvent::StatusChanged { host_id: peer })
-                .await,
-            HostEventOutcome::Updated
+            host.last_dial_error.as_deref(),
+            Some("ssh alias did not resolve")
         );
-
-        assert!(matches!(
-            rx.recv().await,
-            Some(HostEvent::HostUpdated { host })
-                if host.id == peer
-                    && !host.online
-                    && host.reachability_status
-                        == Some(HostReachabilityStatus::Unreachable {
-                            last_error: "tcp connect refused".to_string(),
-                        })
-        ));
     }
 
     #[tokio::test]
@@ -3870,7 +3789,6 @@ mod tests {
                 if host.id == peer.id
                     && host.online
                     && host.trust_status == HostTrustStatus::UntrustedButOnline
-                    && host.reachability_status.is_none()
         ));
 
         trust_store
@@ -3885,7 +3803,6 @@ mod tests {
                 if host.id == peer.id
                     && host.online
                     && host.trust_status == HostTrustStatus::Trusted
-                    && host.reachability_status == Some(HostReachabilityStatus::Reachable)
         ));
     }
 
@@ -3923,7 +3840,7 @@ mod tests {
                 if host.id == peer.id
                     && !host.online
                     && host.trust_status == HostTrustStatus::Trusted
-                    && host.reachability_status == Some(HostReachabilityStatus::Unknown)
+                    && host.last_dial_error.is_none()
         ));
     }
 

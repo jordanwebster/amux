@@ -105,8 +105,7 @@ message Message {
     TunnelData tunnel_data = 6;
     TunnelClose tunnel_close = 7;
     Reauth reauth = 8;
-    ReauthAck reauth_ack = 9;
-    LinkClose link_close = 10;
+    LinkClose link_close = 9;
   }
 }
 
@@ -175,15 +174,13 @@ message TunnelClose {
   bytes dst = 2;
 }
 
+// Fire-and-forget credential refresh on the cloud link, sent before the
+// current token expires. There is no acknowledgement — the protocol never
+// acknowledges housekeeping; it only signals state changes. The receiver's
+// only answers are silence (refresh accepted, the link continues) or
+// `LinkClose(AUTH_EXPIRED)` (the sender reconnects with a fresh token).
 message Reauth {
   string auth_token = 1;
-}
-
-message ReauthAck {
-  oneof outcome {
-    Empty accepted = 1;
-    Error error = 2;
-  }
 }
 
 message Capabilities {
@@ -293,30 +290,20 @@ enum HostTrustStatus {
   UNTRUSTED_BUT_ONLINE = 2;
 }
 
-message HostReachabilityReachable {}
-
-message HostReachabilityUnreachable {
-  string last_error = 1;
-}
-
-message HostReachabilityUnknown {}
-
-message HostReachabilityStatus {
-  oneof status {
-    HostReachabilityReachable reachable = 1;
-    HostReachabilityUnreachable unreachable = 2;
-    HostReachabilityUnknown unknown = 3;
-  }
-}
-
 message HostEntry {
   bytes host_id = 1;
   string name = 2;
+  // Presence, derived from routing: adjacent, or claimed adjacent by a
+  // neighbor.
   bool online = 3;
   optional string version = 4;
   optional Capabilities capabilities = 5;
   HostTrustStatus trust_status = 6;
-  optional HostReachabilityStatus reachability_status = 7;
+  // The outcome of the daemon's last failed dial attempt at this host,
+  // cleared when a route comes up. Nothing probes, so this is all the
+  // daemon honestly knows; "never tried / no news" is
+  // `!online && last_dial_error` unset, derived client-side if needed.
+  optional string last_dial_error = 7;
 }
 
 message Agent {

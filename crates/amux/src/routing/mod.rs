@@ -27,7 +27,7 @@ pub(crate) use connect::{
     spawn_connector_to_channel_with_establishment,
 };
 pub(crate) use events::{EventSource, HostReachabilityEvent, RoutingEvent};
-pub use events::{HostEntry, HostEvent, HostReachabilityStatus, HostTrustStatus};
+pub use events::{HostEntry, HostEvent, HostTrustStatus};
 pub(crate) use host::{
     FEATURE_CLOUD_RELAY, MAX_HOST_NAME_BYTES, local_capabilities, local_host, validate_remote_host,
 };
