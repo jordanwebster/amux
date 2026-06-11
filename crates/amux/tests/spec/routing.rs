@@ -227,50 +227,17 @@ async fn revocation_evicts_routes_and_fails_fresh_calls_but_strands_in_flight_st
 }
 
 /// Three daemons chained A–B–C: A learns of C through B (B advertises its
-/// adjacency over the A–B link) and the two endpoints call each other
-/// through B — chained relaying over a daemon hop, with end-to-end mTLS
-/// between A and C, who are trusted but share no reachability.
+/// own adjacency over the A–B link) and the two endpoints call each other
+/// through B — relaying over a daemon hop, with end-to-end mTLS between
+/// A and C, who are trusted but share no reachability.
 ///
-/// NOTE: link direction decides whether this works at all. Only the
-/// *dialer* of a link stores a route over it (acceptor-side suppression,
-/// NETWORKING_REVIEW.md B4), and hosting an inbound tunnel requires a
-/// route back to its initiator, so chained calls succeed only when B
-/// dialed both links: then A and C each learn the other via B and hold
-/// reverse routes for replies. The catalog's `a.connects_to(&c).via(&b)`
-/// is not assertable in this arrangement — A holds no route to B itself
-/// (B dialed A), so B never even shows as online on A. See
-/// NETWORKING_REVIEW.md §6.6 and the companion test below for the
-/// chain-order arrangement, where discovery works but calls cannot.
+/// The chain is deliberately dialed in chain order (A→B, B→C) — the
+/// arrangement that black-holed replies under route-list routing
+/// (NETWORKING_REVIEW.md §6.6). Who dialed whom no longer matters: every
+/// link carries frames both ways, B forwards to its own adjacency, and a
+/// tunnel's replies leave on the link its frames arrive on.
 #[tokio::test]
-async fn endpoints_call_each_other_through_a_chain_when_the_middle_dialed_both_links() {
-    let net = TestNet::builder()
-        .daemon("a")
-        .daemon("b")
-        .daemon("c")
-        .paired("b", "a", Via::Tcp)
-        .paired("b", "c", Via::Tcp)
-        .trusted("a", "c")
-        .start()
-        .await;
-    let [a, _b, c] = net.daemons(["a", "b", "c"]);
-
-    a.sees(&c).await; // learned through b's HostUp propagation
-    c.sees(&a).await;
-    a.can_call(&c).await;
-    c.can_call(&a).await;
-}
-
-/// The same chain dialed in chain order (A→B, B→C): A learns of C and
-/// holds the two-hop route through B — `connects_to(..).via(&b)` from the
-/// catalog holds here — but its calls can never complete: C, the acceptor
-/// of both nothing-stored links, has no route back to A to host the
-/// inbound tunnel, so A's frames are dropped on the floor at C.
-///
-/// NOTE: this locks a real gap, not a feature: under the spec's symmetric
-/// link model (§8.5 register→HostUp for every endpoint) this arrangement
-/// would work. See NETWORKING_REVIEW.md §6.6.
-#[tokio::test]
-async fn chain_order_links_propagate_discovery_but_replies_have_no_route() {
+async fn endpoints_call_each_other_through_a_chain_regardless_of_dial_direction() {
     let net = TestNet::builder()
         .daemon("a")
         .daemon("b")
@@ -282,35 +249,42 @@ async fn chain_order_links_propagate_discovery_but_replies_have_no_route() {
         .await;
     let [a, b, c] = net.daemons(["a", "b", "c"]);
 
-    a.sees(&c).await;
+    a.sees(&c).await; // learned from b's NeighborUp
+    c.sees(&a).await;
     a.connects_to(&c).via(&b).await;
-    a.cannot_call(&c).await; // NOTE: spec-shaped routing would deliver this call
+    a.can_call(&c).await;
+    c.can_call(&a).await;
 }
 
-/// Four daemons chained A–B–C–D: reachability propagates hop by hop (the
-/// hop cap is 8) and the endpoints call each other across three links.
-/// The dial directions follow the same alignment rule as the three-node
-/// chain: each endpoint must be dialed *by* its neighbour so that routes
-/// toward both endpoints exist at every hop (NETWORKING_REVIEW.md §6.6).
+/// Four daemons chained A–B–C–D: presence reaches exactly two hops. A
+/// node advertises only its own adjacency, so A sees C (B's neighbor)
+/// and calls it through B — but D is three hops out, beyond any
+/// neighbor's claim, and A never learns it exists. One proxy hop is the
+/// protocol's whole reach; longer paths are deliberately inexpressible.
 #[tokio::test]
-async fn endpoints_call_each_other_across_a_three_link_chain() {
+async fn presence_reaches_exactly_two_hops_along_a_chain() {
     let net = TestNet::builder()
         .daemon("a")
         .daemon("b")
         .daemon("c")
         .daemon("d")
-        .paired("b", "a", Via::Tcp)
+        .paired("a", "b", Via::Tcp)
         .paired("b", "c", Via::Tcp)
         .paired("c", "d", Via::Tcp)
+        .trusted("a", "c") // call authority for the two-hop calls below;
+        .trusted("b", "d") // presence needs no trust at all
         .trusted("a", "d")
         .start()
         .await;
-    let [a, _b, _c, d] = net.daemons(["a", "b", "c", "d"]);
+    let [a, b, c, d] = net.daemons(["a", "b", "c", "d"]);
 
-    a.sees(&d).await;
-    d.sees(&a).await;
-    a.can_call(&d).await;
-    d.can_call(&a).await;
+    a.sees(&c).await; // two hops: B claims adjacency to C
+    a.can_call(&c).await; // one relay hop, forwarded by B
+    d.sees(&b).await; // symmetric from the far end
+    d.can_call(&b).await;
+
+    a.cannot_see(&d).await; // three hops: nobody A hears from claims D
+    d.cannot_see(&a).await;
 }
 
 /// Cloud-only peers keep communicating across a JWT expiry: the connector

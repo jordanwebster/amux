@@ -4,7 +4,6 @@ use std::time::Duration;
 
 use tokio::time::Instant;
 
-pub(crate) const ROUTES_PER_HOST_CAP: usize = 16;
 pub(crate) const ROUTING_HOST_CAP: usize = 1000;
 pub(crate) const CLIENT_VISIBLE_ACTIVITY_RECENT_WINDOW: Duration = Duration::from_secs(5 * 60);
 pub(crate) const EXTERNAL_TCP_TLS_HANDSHAKE_RATE_LIMIT: usize = 10;

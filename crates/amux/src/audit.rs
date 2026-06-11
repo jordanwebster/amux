@@ -2,7 +2,7 @@ use std::fmt;
 
 use chrono::{DateTime, Utc};
 
-use crate::routing::{Link, LinkRole};
+use crate::routing::{LinkId, LinkRole};
 use crate::trust::TrustStorePairingUpdate;
 use crate::{AgentId, HostId};
 
@@ -142,7 +142,7 @@ pub(crate) fn trust_remove(
     );
 }
 
-pub(crate) fn link_up(host_id: HostId, link: &Link, role: LinkRole) {
+pub(crate) fn link_up(host_id: HostId, link: &LinkId, role: LinkRole) {
     tracing::info!(
         target: TARGET,
         category = category::LINK_UP,
@@ -153,7 +153,7 @@ pub(crate) fn link_up(host_id: HostId, link: &Link, role: LinkRole) {
     );
 }
 
-pub(crate) fn link_down(host_id: HostId, link: &Link, reason: impl fmt::Display) {
+pub(crate) fn link_down(host_id: HostId, link: &LinkId, reason: impl fmt::Display) {
     tracing::info!(
         target: TARGET,
         category = category::LINK_DOWN,

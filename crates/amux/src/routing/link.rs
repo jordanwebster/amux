@@ -181,7 +181,8 @@ fn body_name(body: &pb::message::Body) -> &'static str {
     match body {
         pb::message::Body::Hello(_) => "hello",
         pb::message::Body::HelloAck(_) => "hello_ack",
-        pb::message::Body::RoutingEvent(_) => "routing_event",
+        pb::message::Body::NeighborUp(_) => "neighbor_up",
+        pb::message::Body::NeighborDown(_) => "neighbor_down",
         pb::message::Body::TunnelFrame(_) => "tunnel_frame",
         pb::message::Body::Reauth(_) => "reauth",
         pb::message::Body::ReauthAck(_) => "reauth_ack",
@@ -217,8 +218,8 @@ mod tests {
     fn hello() -> pb::Message {
         message(pb::message::Body::Hello(pb::Hello {
             supported_protocol_versions: vec![1],
-            proposed_link_name: "peer".to_string(),
             host: None,
+            neighbors: Vec::new(),
         }))
     }
 
@@ -226,8 +227,8 @@ mod tests {
         message(pb::message::Body::HelloAck(pb::HelloAck {
             outcome: Some(pb::hello_ack::Outcome::Accepted(pb::HelloAccepted {
                 protocol_version: 1,
-                assigned_link_name: "peer".to_string(),
                 host: None,
+                neighbors: Vec::new(),
             })),
         }))
     }
@@ -242,11 +243,10 @@ mod tests {
         }))
     }
 
-    fn routing_event() -> pb::Message {
-        message(pb::message::Body::RoutingEvent(pb::RoutingEvent {
-            event: Some(pb::routing_event::Event::SnapshotComplete(
-                pb::SnapshotComplete {},
-            )),
+    fn neighbor_down() -> pb::Message {
+        message(pb::message::Body::NeighborDown(pb::NeighborDown {
+            host_id: vec![0_u8; 16],
+            reason: None,
         }))
     }
 
@@ -255,9 +255,9 @@ mod tests {
         let mut handshake = ConnectHandshake::acceptor();
 
         assert!(matches!(
-            handshake.receive(routing_event()),
+            handshake.receive(neighbor_down()),
             Err(ConnectProtocolError::ExpectedHello {
-                got: "routing_event"
+                got: "neighbor_down"
             })
         ));
         assert!(matches!(
@@ -274,15 +274,15 @@ mod tests {
             handshake.receive(hello()).unwrap(),
             ConnectHandshakeEvent::Hello(pb::Hello {
                 supported_protocol_versions: vec![1],
-                proposed_link_name: "peer".to_string(),
                 host: None,
+                neighbors: Vec::new(),
             })
         );
         assert!(!handshake.is_established());
         assert!(matches!(
-            handshake.receive(routing_event()),
+            handshake.receive(neighbor_down()),
             Err(ConnectProtocolError::AcceptorMustAckBeforeNextMessage {
-                got: "routing_event"
+                got: "neighbor_down"
             })
         ));
         assert!(matches!(
@@ -330,7 +330,7 @@ mod tests {
                 if code == pb::ErrorCode::InvalidArgument as i32
         ));
         assert!(matches!(
-            handshake.receive(routing_event()),
+            handshake.receive(neighbor_down()),
             Err(ConnectProtocolError::StreamClosed)
         ));
     }
@@ -346,7 +346,7 @@ mod tests {
             Err(ConnectProtocolError::MalformedHelloAck)
         ));
         assert!(matches!(
-            handshake.receive(routing_event()),
+            handshake.receive(neighbor_down()),
             Err(ConnectProtocolError::StreamClosed)
         ));
     }
@@ -357,13 +357,12 @@ mod tests {
         handshake.receive(accepted_ack()).unwrap();
 
         let bodies = [
-            pb::message::Body::RoutingEvent(pb::RoutingEvent {
-                event: Some(pb::routing_event::Event::SnapshotComplete(
-                    pb::SnapshotComplete {},
-                )),
+            pb::message::Body::NeighborDown(pb::NeighborDown {
+                host_id: vec![0_u8; 16],
+                reason: None,
             }),
             pb::message::Body::TunnelFrame(pb::TunnelFrame {
-                dst: Some(pb::Route { links: Vec::new() }),
+                dst: [3_u8; 16].to_vec(),
                 tunnel_id: Some(pb::TunnelId {
                     initiator: [1_u8; 16].to_vec(),
                     nonce: [2_u8; 16].to_vec(),

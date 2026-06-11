@@ -19,11 +19,12 @@ use amux::testnet::{LinkCloseReason, TestNet, Via, WirePeer};
 #[tokio::test]
 async fn an_oversize_tunnel_frame_closes_the_link_with_a_protocol_link_close() {
     let net = TestNet::builder().daemon("victim").start().await;
+    let [victim] = net.daemons(["victim"]);
 
     let mut wire = WirePeer::connect_trusted(&net, "victim").await;
     wire.hello().await;
 
-    wire.send_tunnel_frame(&["next"], vec![0u8; 64 * 1024 + 1])
+    wire.send_tunnel_frame(victim.host_id(), vec![0u8; 64 * 1024 + 1])
         .await;
 
     let error = wire
@@ -100,14 +101,16 @@ async fn a_malformed_frame_closes_the_connect_stream() {
 #[tokio::test]
 async fn a_frame_for_an_unknown_tunnel_is_dropped_and_the_link_stays_up() {
     let net = TestNet::builder().daemon("victim").start().await;
+    let [victim] = net.daemons(["victim"]);
 
     let mut wire = WirePeer::connect_trusted(&net, "victim").await;
     wire.hello().await;
 
-    // Endpoint-addressed (empty dst route) frame for a fresh, never-seen
-    // tunnel id initiated by this peer. The victim is the acceptor of this
-    // link and holds no route back, so the frame is dropped.
-    wire.send_tunnel_frame(&[], b"frame-for-a-ghost-tunnel".to_vec())
+    // Endpoint-addressed (dst = the victim itself) frame for a fresh,
+    // never-seen tunnel id initiated by this peer. The victim is the
+    // acceptor of this link and holds no route back, so the frame is
+    // dropped.
+    wire.send_tunnel_frame(victim.host_id(), b"frame-for-a-ghost-tunnel".to_vec())
         .await;
 
     wire.expect_stream_stays_open().await;

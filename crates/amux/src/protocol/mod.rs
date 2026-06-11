@@ -1,7 +1,7 @@
 mod error;
 
-/// Protocol version for the generated `RoutingService.Connect` handshake.
-pub const PROTOCOL_VERSION: u32 = 5;
+/// Protocol version for the generated `LinkService.Connect` handshake.
+pub const PROTOCOL_VERSION: u32 = 6;
 
 pub use error::ProtocolError;
 pub(crate) use error::protocol_status;
@@ -60,7 +60,8 @@ mod tests {
             "Message",
             "Hello",
             "HelloAck",
-            "RoutingEvent",
+            "NeighborUp",
+            "NeighborDown",
             "TunnelFrame",
             "PairByTokenRequest",
             "PairByTokenResponse",
@@ -85,8 +86,8 @@ mod tests {
         let expected_services = std::collections::BTreeSet::from([
             "AgentService",
             "ClientService",
+            "LinkService",
             "PairingService",
-            "RoutingService",
         ]);
         assert_eq!(service_names, expected_services);
 
@@ -107,7 +108,7 @@ mod tests {
             })
             .collect::<std::collections::BTreeMap<_, _>>();
         assert_eq!(
-            service_methods.get("RoutingService").cloned(),
+            service_methods.get("LinkService").cloned(),
             Some(std::collections::BTreeSet::from(["Connect"]))
         );
         assert_eq!(
@@ -213,7 +214,7 @@ mod tests {
     #[test]
     fn generated_service_clients_are_available() {
         let clients = [
-            std::any::type_name::<super::wire::routing_service_client::RoutingServiceClient<()>>(),
+            std::any::type_name::<super::wire::link_service_client::LinkServiceClient<()>>(),
             std::any::type_name::<super::wire::agent_service_client::AgentServiceClient<()>>(),
             std::any::type_name::<super::wire::client_service_client::ClientServiceClient<()>>(),
             std::any::type_name::<super::wire::pairing_service_client::PairingServiceClient<()>>(),

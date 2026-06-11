@@ -5,8 +5,8 @@
 // before being used by application code.
 //
 // The amux runtime uses gRPC services for application calls.
-// Host-to-host routing links use RoutingService.Connect, whose bidi stream
-// carries the Message envelope defined below.
+// Host-to-host links use LinkService.Connect, whose bidi stream carries the
+// Message envelope defined below.
 
 syntax = "proto3";
 
@@ -21,18 +21,15 @@ import "amux/v1/test_agent.proto";
 
 message Empty {}
 
-// In-band marker that a routing snapshot has been flushed.
+// In-band marker that a local subscription's snapshot has been flushed
+// (agent/host inventory subscriptions). The link layer has no snapshot
+// phase: the neighbor snapshot is a field of Hello/HelloAccepted.
 message SnapshotComplete {}
 
 // In-band marker that a session replay has been flushed.
 message ReplayComplete {
   // Opaque position at the replay boundary when the io_protocol has one.
   optional bytes cursor = 1;
-}
-
-message Route {
-  // Ordered stack of link names. For dst, links[0] is the next hop.
-  repeated string links = 1;
 }
 
 message AgentRef {
@@ -66,11 +63,6 @@ message ProtocolVersionMismatch {
   repeated uint32 peer_supported_protocol_versions = 2;
 }
 
-message InvalidLinkName {
-  string name = 1;
-  string reason = 2;
-}
-
 message SequenceNumberMismatch {
   uint64 expected = 1;
   uint64 actual = 2;
@@ -102,23 +94,26 @@ enum ErrorCode {
 // Transport setup and control
 // ---------------------------------------------------------------------------
 
-// Host-to-host link stream envelope exchanged by RoutingService.Connect.
+// Host-to-host link stream envelope exchanged by LinkService.Connect.
 message Message {
   oneof body {
     Hello hello = 1;
     HelloAck hello_ack = 2;
-    RoutingEvent routing_event = 3;
-    TunnelFrame tunnel_frame = 4;
-    Reauth reauth = 5;
-    ReauthAck reauth_ack = 6;
-    LinkClose link_close = 7;
+    NeighborUp neighbor_up = 3;
+    NeighborDown neighbor_down = 4;
+    TunnelFrame tunnel_frame = 5;
+    Reauth reauth = 6;
+    ReauthAck reauth_ack = 7;
+    LinkClose link_close = 8;
   }
 }
 
+// The handshake carries the sender's current neighbor snapshot; everything
+// after it is a delta (NeighborUp/NeighborDown) by definition.
 message Hello {
   repeated uint32 supported_protocol_versions = 1;
-  string proposed_link_name = 2;
-  Host host = 3;
+  Host host = 2;
+  repeated Host neighbors = 3;
 }
 
 message HelloAck {
@@ -130,16 +125,20 @@ message HelloAck {
 
 message HelloAccepted {
   uint32 protocol_version = 1;
-  string assigned_link_name = 2;
-  Host host = 3;
+  Host host = 2;
+  repeated Host neighbors = 3;
 }
 
-message RoutingEvent {
-  oneof event {
-    HostUp host_up = 1;
-    HostDown host_down = 2;
-    SnapshotComplete snapshot_complete = 3;
-  }
+// "I have a direct link to this host." Strictly adjacency: a node never
+// advertises anything it learned from someone else.
+message NeighborUp {
+  Host host = 1;
+}
+
+// "I lost my last direct link to this host."
+message NeighborDown {
+  bytes host_id = 1;
+  optional string reason = 2;
 }
 
 message TunnelId {
@@ -148,7 +147,9 @@ message TunnelId {
 }
 
 message TunnelFrame {
-  Route dst = 1;
+  // The destination host_id. A relay forwards iff it has a direct link to
+  // dst; otherwise the frame is dropped. dst == self delivers locally.
+  bytes dst = 1;
   TunnelId tunnel_id = 2;
   bytes payload = 3;
 }
@@ -193,13 +194,13 @@ enum LinkCloseReason {
 }
 
 // ---------------------------------------------------------------------------
-// Routing service
+// Link service
 // ---------------------------------------------------------------------------
 
-service RoutingService {
+service LinkService {
   // Host-to-host link. The bidi stream IS the link: opening it (after
   // successful auth + handshake) brings the link up; closing it tears the
-  // link down. Routing events and tunnel frames flow inside the Message
+  // link down. Neighbor events and tunnel frames flow inside the Message
   // envelope after the handshake completes.
   rpc Connect(stream Message) returns (stream Message);
 }
@@ -209,16 +210,6 @@ message Host {
   string name = 2;
   string version = 3;
   Capabilities capabilities = 4;
-}
-
-message HostUp {
-  Host host = 1;
-  Route route = 2;
-}
-message HostDown {
-  bytes host_id = 1;
-  Route route = 2;
-  optional string reason = 3;
 }
 
 // ---------------------------------------------------------------------------

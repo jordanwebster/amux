@@ -1,7 +1,7 @@
 //! In-process cloud relay for testnet topologies.
 //!
 //! Mirrors the assembly used by the startup tests: a real
-//! [`CloudRoutingService`] served over localhost TCP, with a bearer-token
+//! [`CloudLinkService`] served over localhost TCP, with a bearer-token
 //! registry standing in for JWT validation. Daemons in a `TestNet` share one
 //! cloud user by default, so the relay bridges them exactly like production
 //! cloud routing does for one account; the builder's `cloud_user` verb
@@ -24,8 +24,8 @@ use crate::HostId;
 use crate::config::Config;
 use crate::connection::ConnectionManager;
 use crate::protocol::wire;
-use crate::routing::{AuthenticatedRoutingUser, RoutingTokenAuthenticator};
-use crate::services::CloudRoutingService;
+use crate::routing::{AuthenticatedLinkUser, LinkTokenAuthenticator};
+use crate::services::CloudLinkService;
 use crate::transport::TcpServerTransport;
 use crate::user_state::{ServerState, ShutdownRequest};
 
@@ -63,7 +63,7 @@ pub(crate) struct CloudRelay {
 }
 
 struct RunningCloud {
-    service: CloudRoutingService,
+    service: CloudLinkService,
     task: JoinHandle<()>,
     connections: TrackedConnections,
 }
@@ -128,7 +128,7 @@ impl CloudRelay {
     async fn serve(&self, listener: TcpListener) {
         let (state, _shutdown_rx) = testnet_server_state("cloud", self.host_id, None, false);
         state.write().await.is_cloud_server = true;
-        let service = CloudRoutingService::with_authenticator(
+        let service = CloudLinkService::with_authenticator(
             state,
             Arc::new(RegistryTokenAuthenticator {
                 tokens: self.tokens.clone(),
@@ -307,11 +307,11 @@ struct RegistryTokenAuthenticator {
 }
 
 #[tonic::async_trait]
-impl RoutingTokenAuthenticator for RegistryTokenAuthenticator {
+impl LinkTokenAuthenticator for RegistryTokenAuthenticator {
     async fn authenticate_token(
         &self,
         token: &str,
-    ) -> Result<AuthenticatedRoutingUser, tonic::Status> {
+    ) -> Result<AuthenticatedLinkUser, tonic::Status> {
         let registered = self
             .tokens
             .read()
@@ -319,7 +319,7 @@ impl RoutingTokenAuthenticator for RegistryTokenAuthenticator {
             .get(token)
             .copied()
             .ok_or_else(|| tonic::Status::unauthenticated("unknown testnet token"))?;
-        Ok(AuthenticatedRoutingUser {
+        Ok(AuthenticatedLinkUser {
             user_id: registered.user_id,
             client_id: "test-client".to_string(),
             expires_at: SystemTime::now() + registered.ttl,

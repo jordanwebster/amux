@@ -1,7 +1,9 @@
-//! New architecture routing primitives.
+//! Routing primitives for the v6 protocol.
 //!
-//! This module owns route-level reachability and exposes the raw and logical
-//! event streams described in `docs/NETWORKING.md`.
+//! Two rules define routing (docs/PROTOCOL.md): advertise only adjacency,
+//! forward only to adjacency. This module owns the link runtime
+//! (`connect`), the wire-side adjacency discipline (`link_registry`), and
+//! the derived local routing table (`core`).
 
 mod connect;
 mod core;
@@ -9,20 +11,19 @@ mod events;
 mod host;
 mod link;
 mod link_registry;
-mod route;
 mod types;
 mod wire;
 
-pub(crate) use core::{HostUpOutcome, RoutingCore, select_best_route};
+pub(crate) use core::{RouteUpdateOutcome, RoutingCore};
 
 #[cfg(test)]
 pub(crate) use connect::spawn_connector_to_channel;
 #[cfg(any(test, feature = "testnet"))]
 pub(crate) use connect::spawn_connector_to_channel_with_bearer_token;
 pub(crate) use connect::{
-    AuthenticatedRoutingUser, RoutingAuthSession, RoutingConnectCtx, RoutingConnectorAuth,
-    RoutingConnectorCtx, RoutingConnectorToken, RoutingConnectorTokenRefresher,
-    RoutingTokenAuthenticator, spawn_connector_to_channel_with_auth_and_establishment,
+    AuthenticatedLinkUser, LinkAuthSession, LinkConnectorAuth, LinkConnectorCtx,
+    LinkConnectorToken, LinkConnectorTokenRefresher, LinkServiceCtx, LinkTokenAuthenticator,
+    spawn_connector_to_channel_with_auth_and_establishment,
     spawn_connector_to_channel_with_establishment,
 };
 pub(crate) use events::{EventSource, HostReachabilityEvent, RoutingEvent};
@@ -34,16 +35,10 @@ pub(crate) use link::{
     ConnectHandshake, ConnectHandshakeEvent, protocol_error_hello_ack, protocol_error_link_close,
 };
 pub(crate) use link_registry::{
-    LinkCloseReason, LinkOutputTx, LinkRegistry, LinkRegistryError, LinkRole,
-    spawn_routing_event_fanout,
+    LinkCloseRequest, LinkOutputTx, LinkRegistry, LinkRole, LinkUnavailable,
 };
-pub(crate) use route::{ROUTE_HOP_CAP, Route, generate_server_link};
 pub use types::{Capabilities, Host, SupportedAgentType};
 pub(crate) use types::{
-    InvalidLinkName, Link, capabilities_from_wire, capabilities_to_wire, host_from_wire,
-    host_to_wire,
+    LinkId, Route, capabilities_from_wire, capabilities_to_wire, host_from_wire, host_to_wire,
 };
-pub(crate) use wire::{
-    InboundRoutingEvent, outbound_routing_message, route_to_wire,
-    should_send_routing_event_to_link, wire_routing_event_to_inbound,
-};
+pub(crate) use wire::{inbound_host_from_wire, neighbor_down_from_wire, neighbor_up_from_wire};

@@ -1052,19 +1052,8 @@ impl wire::client_service_server::ClientService for ClientService {
         audit::pairing_success(method, host_id);
         self.publish_host_status_update(host_id).await;
         if let Some(reachability) = link_reachability {
-            let (host_name, randomise_link_name) = {
-                let state = self.server_state.read().await;
-                (
-                    state.host_name().to_string(),
-                    state.config.randomise_link_name,
-                )
-            };
-            self.reachability_links.spawn_pair_time_link(
-                &host_name,
-                randomise_link_name,
-                host_id,
-                reachability,
-            );
+            self.reachability_links
+                .spawn_pair_time_link(host_id, reachability);
         }
         Ok(tonic::Response::new(wire::PairPeerResponse {}))
     }
@@ -2357,17 +2346,14 @@ fn remote_tunnel_status(
 ) -> tonic::Status {
     let message = format!("{method} remote dispatch to host {host_id} failed: {error}");
     match error {
-        TunnelPoolError::NotFound { .. } | TunnelPoolError::EmptyRoute { .. } => {
-            protocol_status(ProtocolError::Unreachable { message })
-        }
+        TunnelPoolError::NotFound { .. } => protocol_status(ProtocolError::Unreachable { message }),
         TunnelPoolError::LinkUnavailable { .. }
         | TunnelPoolError::IncomingTunnelsClosed
         | TunnelPoolError::InboundClosed
         | TunnelPoolError::Identity(_)
         | TunnelPoolError::Tls(_) => tonic::Status::unavailable(message),
         TunnelPoolError::MissingTunnelId
-        | TunnelPoolError::MissingDestination
-        | TunnelPoolError::InvalidRoute { .. }
+        | TunnelPoolError::InvalidDestination { .. }
         | TunnelPoolError::InvalidTunnelId(_)
         | TunnelPoolError::PayloadTooLarge { .. }
         | TunnelPoolError::DeviceTlsRequired => tonic::Status::internal(message),
@@ -2455,8 +2441,7 @@ mod tests {
     use crate::config::Config;
     use crate::identity::DeviceIdentity;
     use crate::routing::{
-        Capabilities, Link, LinkCloseReason, LinkRole, Route, RoutingCore, RoutingEvent,
-        SupportedAgentType,
+        Capabilities, LinkCloseRequest, LinkId, LinkRole, RoutingCore, SupportedAgentType,
     };
     use crate::services::agent::{AgentServiceState, spawn_agent_tonic_server};
     use crate::trust::{TrustEntry, TrustStore};
@@ -2717,35 +2702,21 @@ mod tests {
         let local_host_id = Uuid::from_u128(1);
         let remote_host_id = Uuid::from_u128(2);
         let relay_host_id = Uuid::from_u128(3);
-        let local_to_relay = Link::new("local-to-relay").unwrap();
-        let relay_to_remote = Link::new("relay-to-remote").unwrap();
-        let remote_to_relay = Link::new("remote-to-relay").unwrap();
-        let relay_to_local = Link::new("relay-to-local").unwrap();
+        // Each daemon's own link to its neighbor, plus the relay's links to
+        // both endpoints. The relay forwards by adjacency alone.
+        let local_to_relay = LinkId::new(relay_host_id);
+        let remote_to_relay = LinkId::new(relay_host_id);
+        let relay_to_remote = LinkId::new(remote_host_id);
+        let relay_to_local = LinkId::new(local_host_id);
 
         let local_routing = Arc::new(RoutingCore::new());
         let remote_routing = Arc::new(RoutingCore::new());
         let relay_routing = Arc::new(RoutingCore::new());
         local_routing
-            .apply_host_up(
-                host(2, non_relay_types()),
-                Route::from_links([
-                    local_to_relay.as_str().to_string(),
-                    relay_to_remote.as_str().to_string(),
-                ])
-                .unwrap(),
-                None,
-            )
+            .apply_claim_up(relay_host_id, host(2, non_relay_types()))
             .await;
         remote_routing
-            .apply_host_up(
-                host(1, non_relay_types()),
-                Route::from_links([
-                    remote_to_relay.as_str().to_string(),
-                    relay_to_local.as_str().to_string(),
-                ])
-                .unwrap(),
-                None,
-            )
+            .apply_claim_up(relay_host_id, host(1, non_relay_types()))
             .await;
 
         let (local_incoming_tx, _local_incoming_rx) = mpsc::channel(8);
@@ -2773,26 +2744,50 @@ mod tests {
         let (relay_to_local_tx, relay_to_local_rx) = mpsc::channel(32);
         local_tunnels
             .link_registry()
-            .register(local_to_relay, relay_host_id, local_to_relay_tx)
+            .register(
+                local_to_relay,
+                host(3, Vec::new()),
+                local_to_relay_tx,
+                LinkRole::Peer,
+                &[],
+            )
             .await;
         remote_tunnels
             .link_registry()
-            .register(remote_to_relay, relay_host_id, remote_to_relay_tx)
+            .register(
+                remote_to_relay,
+                host(3, Vec::new()),
+                remote_to_relay_tx,
+                LinkRole::Peer,
+                &[],
+            )
             .await;
         relay_tunnels
             .link_registry()
-            .register(relay_to_remote, remote_host_id, relay_to_remote_tx)
+            .register(
+                relay_to_remote,
+                host(2, non_relay_types()),
+                relay_to_remote_tx,
+                LinkRole::Peer,
+                &[],
+            )
             .await;
         relay_tunnels
             .link_registry()
-            .register(relay_to_local, local_host_id, relay_to_local_tx)
+            .register(
+                relay_to_local,
+                host(1, non_relay_types()),
+                relay_to_local_tx,
+                LinkRole::Peer,
+                &[],
+            )
             .await;
 
         let bridges = vec![
-            spawn_tunnel_bridge(local_to_relay_rx, relay_tunnels.clone()),
-            spawn_tunnel_bridge(relay_to_remote_rx, remote_tunnels.clone()),
-            spawn_tunnel_bridge(remote_to_relay_rx, relay_tunnels),
-            spawn_tunnel_bridge(relay_to_local_rx, local_tunnels.clone()),
+            spawn_tunnel_bridge(local_to_relay_rx, relay_tunnels.clone(), relay_to_local),
+            spawn_tunnel_bridge(relay_to_remote_rx, remote_tunnels.clone(), remote_to_relay),
+            spawn_tunnel_bridge(remote_to_relay_rx, relay_tunnels, relay_to_remote),
+            spawn_tunnel_bridge(relay_to_local_rx, local_tunnels.clone(), local_to_relay),
         ];
         let remote_server =
             spawn_agent_tonic_server(agent_service_ctx(remote_host_id), remote_incoming_rx);
@@ -2802,10 +2797,6 @@ mod tests {
             local_routing.clone(),
             local_tunnels,
         );
-        service
-            .remote_agent_connections
-            .seed(local_routing.routing_events_snapshot().await)
-            .await;
 
         RemoteDispatchHarness {
             service,
@@ -2817,13 +2808,17 @@ mod tests {
     fn spawn_tunnel_bridge(
         mut rx: mpsc::Receiver<wire::pb::Message>,
         target_pool: Arc<TunnelPool>,
+        arrival_link: LinkId,
     ) -> JoinHandle<()> {
         tokio::spawn(async move {
             while let Some(message) = rx.recv().await {
                 let Some(wire::pb::message::Body::TunnelFrame(frame)) = message.body else {
                     continue;
                 };
-                target_pool.handle_inbound_frame(frame).await.unwrap();
+                target_pool
+                    .handle_inbound_frame_from_link(frame, &arrival_link)
+                    .await
+                    .unwrap();
             }
         })
     }
@@ -3063,22 +3058,16 @@ mod tests {
     #[tokio::test]
     async fn internal_host_model_insert_without_client_delivery_does_not_mark_visible_activity() {
         let local_host_id = Uuid::from_u128(2);
+        let relay = Uuid::from_u128(9_999);
         let routing = Arc::new(RoutingCore::new());
-        for id in 1..=crate::resource_limits::ROUTING_HOST_CAP as u128 {
+        routing
+            .apply_direct_up(host(1, non_relay_types()), LinkId::new(Uuid::from_u128(1)))
+            .await;
+        for id in 2..=crate::resource_limits::ROUTING_HOST_CAP as u128 {
             routing
-                .apply_host_up(
-                    host(id, non_relay_types()),
-                    Route::from_link(Link::new(format!("r{id}")).unwrap()),
-                    None,
-                )
+                .apply_claim_up(relay, host(id, non_relay_types()))
                 .await;
         }
-        routing
-            .mark_active_route(
-                HostId::from_u128(1),
-                Some(Route::from_link(Link::new("r1").unwrap())),
-            )
-            .await;
         let (incoming_tx, _incoming_rx) = mpsc::channel(8);
         let tunnels = Arc::new(TunnelPool::new(local_host_id, routing.clone(), incoming_tx));
         let service = client_service_with_agent_and_tunnels(
@@ -3097,13 +3086,9 @@ mod tests {
         );
         assert_eq!(
             routing
-                .apply_host_up(
-                    host(1001, non_relay_types()),
-                    Route::from_link(Link::new("r1001").unwrap()),
-                    None,
-                )
+                .apply_claim_up(relay, host(1001, non_relay_types()))
                 .await,
-            crate::routing::HostUpOutcome::Inserted
+            crate::routing::RouteUpdateOutcome::Inserted
         );
 
         assert!(routing.host_entry(HostId::from_u128(1)).await.is_some());
@@ -3114,22 +3099,16 @@ mod tests {
     #[tokio::test]
     async fn remote_subscriber_hidden_untrusted_live_event_does_not_mark_visible_activity() {
         let local_host_id = Uuid::from_u128(10_000);
+        let relay = Uuid::from_u128(9_999);
         let routing = Arc::new(RoutingCore::new());
-        for id in 1..=crate::resource_limits::ROUTING_HOST_CAP as u128 {
+        routing
+            .apply_direct_up(host(1, non_relay_types()), LinkId::new(Uuid::from_u128(1)))
+            .await;
+        for id in 2..=crate::resource_limits::ROUTING_HOST_CAP as u128 {
             routing
-                .apply_host_up(
-                    host(id, non_relay_types()),
-                    Route::from_link(Link::new(format!("r{id}")).unwrap()),
-                    None,
-                )
+                .apply_claim_up(relay, host(id, non_relay_types()))
                 .await;
         }
-        routing
-            .mark_active_route(
-                HostId::from_u128(1),
-                Some(Route::from_link(Link::new("r1").unwrap())),
-            )
-            .await;
         let (incoming_tx, _incoming_rx) = mpsc::channel(8);
         let tunnels = Arc::new(TunnelPool::new(local_host_id, routing.clone(), incoming_tx));
         let service = client_service_with_agent_and_tunnels(
@@ -3170,13 +3149,9 @@ mod tests {
         );
         assert_eq!(
             routing
-                .apply_host_up(
-                    host(1001, non_relay_types()),
-                    Route::from_link(Link::new("r1001").unwrap()),
-                    None,
-                )
+                .apply_claim_up(relay, host(1001, non_relay_types()))
                 .await,
-            crate::routing::HostUpOutcome::Inserted
+            crate::routing::RouteUpdateOutcome::Inserted
         );
 
         assert!(routing.host_entry(HostId::from_u128(1)).await.is_some());
@@ -3385,11 +3360,7 @@ mod tests {
         let routing = Arc::new(RoutingCore::new());
         let existing = host(10, non_relay_types());
         routing
-            .apply_host_up(
-                existing.clone(),
-                Route::from_link(Link::new("existing").unwrap()),
-                None,
-            )
+            .apply_claim_up(Uuid::from_u128(9), existing.clone())
             .await;
 
         let task = service.attach_routing_events(routing.clone()).await;
@@ -3397,11 +3368,7 @@ mod tests {
 
         let live = host(11, non_relay_types());
         routing
-            .apply_host_up(
-                live.clone(),
-                Route::from_link(Link::new("live").unwrap()),
-                None,
-            )
+            .apply_claim_up(Uuid::from_u128(9), live.clone())
             .await;
         tokio::time::timeout(Duration::from_secs(1), async {
             loop {
@@ -3414,9 +3381,7 @@ mod tests {
         .await
         .expect("timed out waiting for live host event");
 
-        routing
-            .apply_host_down(live.id, &Route::from_link(Link::new("live").unwrap()), None)
-            .await;
+        routing.apply_claim_down(Uuid::from_u128(9), live.id).await;
         tokio::time::timeout(Duration::from_secs(1), async {
             loop {
                 if service.list_hosts().await.is_empty() {
@@ -4099,15 +4064,6 @@ mod tests {
         let cloud_peer = host(2, non_relay_types());
         let direct_peer = host(3, non_relay_types());
         let (cloud_tx, _cloud_rx) = mpsc::channel(8);
-        tunnels
-            .link_registry()
-            .register_with_role(
-                Link::new("cloud").unwrap(),
-                Uuid::from_u128(99),
-                cloud_tx,
-                LinkRole::CloudRelay,
-            )
-            .await;
         let cloud_relay = Host {
             id: Uuid::from_u128(99),
             name: "cloud".to_string(),
@@ -4117,6 +4073,16 @@ mod tests {
                 supported_agent_types: Vec::new(),
             },
         };
+        tunnels
+            .link_registry()
+            .register(
+                LinkId::new(cloud_relay.id),
+                cloud_relay.clone(),
+                cloud_tx,
+                LinkRole::CloudRelay,
+                &[],
+            )
+            .await;
         service
             .apply_host_event(HostReachabilityEvent::Added {
                 host: cloud_peer.clone(),
@@ -4125,25 +4091,13 @@ mod tests {
         service
             .apply_host_event(HostReachabilityEvent::Added { host: direct_peer })
             .await;
-        service
-            .remote_agent_connections
-            .seed(vec![
-                RoutingEvent::HostUp {
-                    host: cloud_relay,
-                    route: Route::from_link(Link::new("cloud").unwrap()),
-                    origin_link: None,
-                },
-                RoutingEvent::HostUp {
-                    host: cloud_peer.clone(),
-                    route: Route::from_links(["cloud".to_string(), "peer".to_string()]).unwrap(),
-                    origin_link: Some(Link::new("cloud").unwrap()),
-                },
-                RoutingEvent::HostUp {
-                    host: host(3, non_relay_types()),
-                    route: Route::from_link(Link::new("direct").unwrap()),
-                    origin_link: None,
-                },
-            ])
+        // The cloud relay claims adjacency to the cloud peer; the direct
+        // peer has a channel-backed link of our own.
+        routing
+            .apply_claim_up(cloud_relay.id, cloud_peer.clone())
+            .await;
+        routing
+            .apply_direct_up(host(3, non_relay_types()), LinkId::new(Uuid::from_u128(3)))
             .await;
 
         let response = <ClientService as wire::client_service_server::ClientService>::list_hosts(
@@ -5248,31 +5202,25 @@ mod tests {
             Arc::new(PairMode::new()),
             ReachabilityLinkConnector::disabled(),
         );
-        let link = Link::new("peer").unwrap();
-        let route = Route::from_link(link.clone());
+        let link = LinkId::new(peer.host_id);
         let (tx, mut rx) = mpsc::channel(8);
         let mut close_rx = tunnels
             .link_registry()
-            .register(link.clone(), peer.host_id, tx)
+            .register(link, host(2, non_relay_types()), tx, LinkRole::Peer, &[])
             .await;
         let link_registry = tunnels.link_registry();
-        let close_link = link.clone();
         tokio::spawn(async move {
-            assert_eq!(close_rx.recv().await, Some(LinkCloseReason::TrustReplaced));
-            link_registry.remove(&close_link).await;
+            assert_eq!(close_rx.recv().await, Some(LinkCloseRequest::TrustReplaced));
+            link_registry.remove(&link).await;
         });
         routing
-            .apply_host_up(host(2, non_relay_types()), route.clone(), None)
-            .await;
-        service
-            .remote_agent_connections
-            .seed(routing.routing_events_snapshot().await)
+            .apply_direct_up(host(2, non_relay_types()), link)
             .await;
         service
             .remote_agent_connections
             .route_runtime()
-            .register(
-                route.clone(),
+            .register_direct(
+                link,
                 Endpoint::from_static("http://example.com").connect_lazy(),
             )
             .await;
@@ -5281,7 +5229,7 @@ mod tests {
                 .remote_agent_connections
                 .known_routes(peer.host_id)
                 .await,
-            vec![route.clone()]
+            vec![crate::routing::Route::Direct(link)]
         );
 
         let response = <ClientService as wire::client_service_server::ClientService>::unpair(
@@ -5320,7 +5268,7 @@ mod tests {
                 .await
                 .is_empty()
         );
-        assert!(routing.best_route(peer.host_id).await.is_none());
+        assert!(routing.route_to(peer.host_id).await.is_none());
         assert_eq!(service.remote_agent_connections.pool().len().await, 0);
     }
 

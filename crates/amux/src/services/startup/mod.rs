@@ -31,9 +31,8 @@ use crate::identity::{DeviceIdentity, IdentityError};
 use crate::pairing::PairMode;
 use crate::protocol::wire;
 use crate::routing::{
-    AuthenticatedRoutingUser, Host, HostReachabilityEvent, Link, RoutingAuthSession,
-    RoutingConnectCtx, RoutingConnectorCtx, RoutingCore, RoutingTokenAuthenticator, local_host,
-    spawn_routing_event_fanout,
+    AuthenticatedLinkUser, Host, HostReachabilityEvent, LinkAuthSession, LinkConnectorCtx,
+    LinkServiceCtx, LinkTokenAuthenticator, RoutingCore, local_host,
 };
 use crate::services::client::{ClientService, PairingTrustAccess};
 use crate::services::{
@@ -58,22 +57,22 @@ const CLOUD_TLS_HANDSHAKE_CONCURRENCY: usize = 128;
 type CloudTlsTransport = TcpServerTransport<tokio_rustls::server::TlsStream<TcpStream>>;
 
 #[derive(Clone)]
-pub(crate) struct JwtCloudRoutingAuthenticator {
+pub(crate) struct JwtCloudLinkAuthenticator {
     state: Arc<RwLock<ServerState>>,
 }
 
-impl JwtCloudRoutingAuthenticator {
+impl JwtCloudLinkAuthenticator {
     pub(crate) fn new(state: Arc<RwLock<ServerState>>) -> Self {
         Self { state }
     }
 }
 
 #[tonic::async_trait]
-impl RoutingTokenAuthenticator for JwtCloudRoutingAuthenticator {
+impl LinkTokenAuthenticator for JwtCloudLinkAuthenticator {
     async fn authenticate_token(
         &self,
         token: &str,
-    ) -> Result<AuthenticatedRoutingUser, tonic::Status> {
+    ) -> Result<AuthenticatedLinkUser, tonic::Status> {
         let (validator, host_name, tcp_port) = {
             let state = self.state.read().await;
             let validator = state.jwt_validator().ok_or_else(|| {
@@ -99,7 +98,7 @@ impl RoutingTokenAuthenticator for JwtCloudRoutingAuthenticator {
         let expires_at = UNIX_EPOCH
             .checked_add(Duration::from_secs(claims.exp))
             .ok_or_else(|| tonic::Status::unauthenticated("invalid routing authorization"))?;
-        Ok(AuthenticatedRoutingUser {
+        Ok(AuthenticatedLinkUser {
             user_id,
             client_id: claims.client_id,
             expires_at,
@@ -122,30 +121,30 @@ fn bearer_token_from_metadata(
 }
 
 #[derive(Clone)]
-pub(crate) struct CloudRoutingService {
-    inner: Arc<CloudRoutingServiceInner>,
+pub(crate) struct CloudLinkService {
+    inner: Arc<CloudLinkServiceInner>,
 }
 
-struct CloudRoutingServiceInner {
+struct CloudLinkServiceInner {
     state: Arc<RwLock<ServerState>>,
-    authenticator: Arc<dyn RoutingTokenAuthenticator>,
+    authenticator: Arc<dyn LinkTokenAuthenticator>,
     users: RwLock<HashMap<Uuid, StartedRoutingServices>>,
 }
 
-impl CloudRoutingService {
+impl CloudLinkService {
     pub(crate) fn new(state: Arc<RwLock<ServerState>>) -> Self {
         Self::with_authenticator(
             state.clone(),
-            Arc::new(JwtCloudRoutingAuthenticator::new(state)),
+            Arc::new(JwtCloudLinkAuthenticator::new(state)),
         )
     }
 
     pub(crate) fn with_authenticator(
         state: Arc<RwLock<ServerState>>,
-        authenticator: Arc<dyn RoutingTokenAuthenticator>,
+        authenticator: Arc<dyn LinkTokenAuthenticator>,
     ) -> Self {
         Self {
-            inner: Arc::new(CloudRoutingServiceInner {
+            inner: Arc::new(CloudLinkServiceInner {
                 state,
                 authenticator,
                 users: RwLock::new(HashMap::new()),
@@ -155,7 +154,7 @@ impl CloudRoutingService {
 
     #[cfg(test)]
     pub(crate) fn serve_on_tcp_listener(&self, listener: TcpListener) -> JoinHandle<()> {
-        spawn_cloud_routing_service_server(self.clone(), tcp_incoming(listener))
+        spawn_cloud_link_service_server(self.clone(), tcp_incoming(listener))
     }
 
     /// Serves the relay on an arbitrary accepted-transport stream. Used by
@@ -167,7 +166,7 @@ impl CloudRoutingService {
         IO: AsyncRead + AsyncWrite + Connected + Unpin + Send + 'static,
         IO::ConnectInfo: Clone + Send + Sync + 'static,
     {
-        spawn_cloud_routing_service_server(self.clone(), incoming)
+        spawn_cloud_link_service_server(self.clone(), incoming)
     }
 
     pub(crate) fn serve_on_tls_tcp_listener(
@@ -177,17 +176,17 @@ impl CloudRoutingService {
         handshake_timeout: Duration,
     ) -> JoinHandle<()> {
         let incoming = cloud_tls_incoming(listener, acceptor, handshake_timeout);
-        spawn_cloud_routing_service_server(self.clone(), incoming)
+        spawn_cloud_link_service_server(self.clone(), incoming)
     }
 
-    async fn routing_connect_ctx_for_user(&self, user_id: Uuid) -> RoutingConnectCtx {
+    async fn link_service_ctx_for_user(&self, user_id: Uuid) -> LinkServiceCtx {
         if let Some(ctx) = self
             .inner
             .users
             .read()
             .await
             .get(&user_id)
-            .map(StartedRoutingServices::routing_connect_ctx)
+            .map(StartedRoutingServices::link_service_ctx)
         {
             return ctx;
         }
@@ -195,10 +194,7 @@ impl CloudRoutingService {
         let started = start_routing_services(self.inner.state.clone()).await;
 
         let mut users = self.inner.users.write().await;
-        users
-            .entry(user_id)
-            .or_insert(started)
-            .routing_connect_ctx()
+        users.entry(user_id).or_insert(started).link_service_ctx()
     }
 
     /// Testnet observation seam: the relay-side `ConnectionManager` serving
@@ -296,9 +292,8 @@ fn cloud_tls_incoming(
 }
 
 #[tonic::async_trait]
-impl wire::routing_service_server::RoutingService for CloudRoutingService {
-    type ConnectStream =
-        <RoutingConnectCtx as wire::routing_service_server::RoutingService>::ConnectStream;
+impl wire::link_service_server::LinkService for CloudLinkService {
+    type ConnectStream = <LinkServiceCtx as wire::link_service_server::LinkService>::ConnectStream;
 
     async fn connect(
         &self,
@@ -306,7 +301,7 @@ impl wire::routing_service_server::RoutingService for CloudRoutingService {
     ) -> Result<tonic::Response<Self::ConnectStream>, tonic::Status> {
         let user = request
             .extensions()
-            .get::<AuthenticatedRoutingUser>()
+            .get::<AuthenticatedLinkUser>()
             .cloned()
             .ok_or_else(|| tonic::Status::unauthenticated("missing routing auth claims"))?;
         let minimum_client_version = {
@@ -314,27 +309,25 @@ impl wire::routing_service_server::RoutingService for CloudRoutingService {
             state.minimum_client_version(&user.client_id)
         };
         let ctx = self
-            .routing_connect_ctx_for_user(user.user_id)
+            .link_service_ctx_for_user(user.user_id)
             .await
-            .with_auth_session(RoutingAuthSession::new(
+            .with_auth_session(LinkAuthSession::new(
                 user,
                 self.inner.authenticator.clone(),
                 minimum_client_version,
-            ))
-            .with_routing_only_direct_routes();
-        <RoutingConnectCtx as wire::routing_service_server::RoutingService>::connect(&ctx, request)
-            .await
+            ));
+        <LinkServiceCtx as wire::link_service_server::LinkService>::connect(&ctx, request).await
     }
 }
 
 #[derive(Clone)]
-struct RoutingAuthInterceptor<S> {
+struct LinkAuthInterceptor<S> {
     inner: S,
-    authenticator: Arc<dyn RoutingTokenAuthenticator>,
+    authenticator: Arc<dyn LinkTokenAuthenticator>,
 }
 
-impl<S> RoutingAuthInterceptor<S> {
-    fn new(inner: S, authenticator: Arc<dyn RoutingTokenAuthenticator>) -> Self {
+impl<S> LinkAuthInterceptor<S> {
+    fn new(inner: S, authenticator: Arc<dyn LinkTokenAuthenticator>) -> Self {
         Self {
             inner,
             authenticator,
@@ -342,14 +335,14 @@ impl<S> RoutingAuthInterceptor<S> {
     }
 }
 
-impl<S> tonic::server::NamedService for RoutingAuthInterceptor<S>
+impl<S> tonic::server::NamedService for LinkAuthInterceptor<S>
 where
     S: tonic::server::NamedService,
 {
     const NAME: &'static str = S::NAME;
 }
 
-impl<S, B> Service<http::Request<B>> for RoutingAuthInterceptor<S>
+impl<S, B> Service<http::Request<B>> for LinkAuthInterceptor<S>
 where
     S: Service<http::Request<B>, Response = http::Response<tonic::body::BoxBody>>
         + Clone
@@ -391,13 +384,12 @@ where
     }
 }
 
-fn cloud_routing_server(
-    service: CloudRoutingService,
-) -> RoutingAuthInterceptor<wire::routing_service_server::RoutingServiceServer<CloudRoutingService>>
-{
+fn cloud_link_server(
+    service: CloudLinkService,
+) -> LinkAuthInterceptor<wire::link_service_server::LinkServiceServer<CloudLinkService>> {
     let authenticator = service.inner.authenticator.clone();
-    RoutingAuthInterceptor::new(
-        wire::routing_service_server::RoutingServiceServer::new(service),
+    LinkAuthInterceptor::new(
+        wire::link_service_server::LinkServiceServer::new(service),
         authenticator,
     )
 }
@@ -447,9 +439,7 @@ async fn start_routing_services_parts(
     });
     let connections = Arc::new(ConnectionManager::new(routing.clone(), tunnels.clone()));
 
-    let mut tasks = Vec::with_capacity(2);
-    tasks.push(spawn_routing_event_fanout(routing.clone(), tunnels.link_registry()).await);
-    tasks.push(connections.clone().attach_routing_events().await);
+    let tasks = vec![connections.clone().attach_routing_events().await];
 
     StartedRoutingParts {
         runtime: StartedRoutingServices {
@@ -568,7 +558,7 @@ pub(crate) async fn start_user_services(
     parts.runtime.tasks.push(spawn_trusted_service_server(
         client.clone(),
         agent.clone(),
-        parts.runtime.routing_connect_ctx(),
+        parts.runtime.link_service_ctx(),
         trusted_incoming_rx,
     ));
     parts.runtime.tasks.push(spawn_pairing_service_server(
@@ -699,13 +689,8 @@ impl StartedUserServices {
         self.tasks.push(task);
     }
 
-    pub(crate) fn spawn_reachability_links(
-        &self,
-        host_name: &str,
-        randomise_link_name: bool,
-    ) -> Vec<JoinHandle<()>> {
-        self.reachability_links
-            .spawn_startup_links(host_name, randomise_link_name)
+    pub(crate) fn spawn_reachability_links(&self) -> Vec<JoinHandle<()>> {
+        self.reachability_links.spawn_startup_links()
     }
 
     #[cfg(feature = "testnet")]
@@ -715,18 +700,17 @@ impl StartedUserServices {
 }
 
 impl StartedRoutingServices {
-    pub(crate) fn routing_connector_ctx(&self, proposed_link: Link) -> RoutingConnectorCtx {
-        RoutingConnectorCtx::new(
+    pub(crate) fn link_connector_ctx(&self) -> LinkConnectorCtx {
+        LinkConnectorCtx::new(
             self.local_host.clone(),
             self.routing.clone(),
             self.tunnels.clone(),
-            proposed_link,
             self.connections.route_runtime(),
         )
     }
 
-    fn routing_connect_ctx(&self) -> RoutingConnectCtx {
-        RoutingConnectCtx::dynamic(
+    fn link_service_ctx(&self) -> LinkServiceCtx {
+        LinkServiceCtx::new(
             self.local_host.clone(),
             self.routing.clone(),
             self.tunnels.clone(),
@@ -752,7 +736,7 @@ fn spawn_discard_incoming_tunnels_task(
 fn spawn_trusted_service_server(
     client: ClientService,
     agent: AgentServiceCtx,
-    routing: RoutingConnectCtx,
+    routing: LinkServiceCtx,
     incoming_rx: mpsc::Receiver<BoxedGrpcIo>,
 ) -> JoinHandle<()> {
     let incoming = stream::unfold(incoming_rx, |mut rx| async {
@@ -767,9 +751,7 @@ fn spawn_trusted_service_server(
                 client,
             ))
             .add_service(wire::agent_service_server::AgentServiceServer::new(agent))
-            .add_service(wire::routing_service_server::RoutingServiceServer::new(
-                routing,
-            ))
+            .add_service(wire::link_service_server::LinkServiceServer::new(routing))
             .serve_with_incoming(incoming)
             .await
         {
@@ -832,10 +814,7 @@ where
     })
 }
 
-fn spawn_cloud_routing_service_server<I, IO>(
-    service: CloudRoutingService,
-    incoming: I,
-) -> JoinHandle<()>
+fn spawn_cloud_link_service_server<I, IO>(service: CloudLinkService, incoming: I) -> JoinHandle<()>
 where
     I: Stream<Item = Result<IO, std::io::Error>> + Send + 'static,
     IO: AsyncRead + AsyncWrite + Connected + Unpin + Send + 'static,
@@ -843,11 +822,11 @@ where
 {
     tokio::spawn(async move {
         if let Err(error) = crate::transport::tonic_server_builder()
-            .add_service(cloud_routing_server(service))
+            .add_service(cloud_link_server(service))
             .serve_with_incoming(incoming)
             .await
         {
-            tracing::warn!(error = %error, "cloud RoutingService server exited with error");
+            tracing::warn!(error = %error, "cloud LinkService server exited with error");
         }
     })
 }
@@ -876,6 +855,7 @@ mod tests {
     use tower::service_fn;
 
     use super::*;
+    use crate::HostId;
     use crate::agents::{
         CreateAgentConfig, CreateAgentRpcRequest, TEST_ECHO_COMMAND, TEST_ECHO_V1,
     };
@@ -960,16 +940,16 @@ mod tests {
     }
 
     #[derive(Clone)]
-    struct StaticCloudRoutingAuthenticator {
-        token_users: Arc<HashMap<String, AuthenticatedRoutingUser>>,
+    struct StaticCloudLinkAuthenticator {
+        token_users: Arc<HashMap<String, AuthenticatedLinkUser>>,
     }
 
-    impl StaticCloudRoutingAuthenticator {
+    impl StaticCloudLinkAuthenticator {
         fn new(token: &str, user_id: Uuid) -> Self {
             Self {
                 token_users: Arc::new(HashMap::from([(
                     token.to_string(),
-                    AuthenticatedRoutingUser {
+                    AuthenticatedLinkUser {
                         user_id,
                         client_id: "test-client".to_string(),
                         expires_at: std::time::SystemTime::now() + Duration::from_secs(3600),
@@ -980,11 +960,11 @@ mod tests {
     }
 
     #[tonic::async_trait]
-    impl RoutingTokenAuthenticator for StaticCloudRoutingAuthenticator {
+    impl LinkTokenAuthenticator for StaticCloudLinkAuthenticator {
         async fn authenticate_token(
             &self,
             token: &str,
-        ) -> Result<AuthenticatedRoutingUser, tonic::Status> {
+        ) -> Result<AuthenticatedLinkUser, tonic::Status> {
             self.token_users
                 .get(token)
                 .cloned()
@@ -992,16 +972,16 @@ mod tests {
         }
     }
 
-    async fn test_cloud_routing_service(
+    async fn test_cloud_link_service(
         host_id: Uuid,
         token: &str,
         user_id: Uuid,
-    ) -> CloudRoutingService {
+    ) -> CloudLinkService {
         let state = test_state(host_id);
         state.write().await.is_cloud_server = true;
-        CloudRoutingService::with_authenticator(
+        CloudLinkService::with_authenticator(
             state,
-            Arc::new(StaticCloudRoutingAuthenticator::new(token, user_id)),
+            Arc::new(StaticCloudLinkAuthenticator::new(token, user_id)),
         )
     }
 
@@ -1160,11 +1140,7 @@ mod tests {
         let mut host_events = services.client.subscribe_hosts().await;
         services
             .routing
-            .apply_host_up(
-                remote_host(2),
-                Route::from_links(["to-remote".to_string()]).unwrap(),
-                None,
-            )
+            .apply_claim_up(HostId::from_u128(9), remote_host(2))
             .await;
         tokio::time::timeout(Duration::from_secs(1), host_events.recv())
             .await
@@ -1418,17 +1394,12 @@ mod tests {
             test_started_services_with_identity_and_trust(identity_b.clone(), trust_b).await;
         host_b.serve_external_tcp_listener(listener);
 
-        let tasks = host_a.spawn_reachability_links("host-a", false);
+        let tasks = host_a.spawn_reachability_links();
         wait_for_host_entry(&host_a.routing, identity_b.host_id).await;
-        assert_eq!(
-            host_a
-                .connections
-                .active_route(identity_b.host_id)
-                .await
-                .unwrap()
-                .len(),
-            1
-        );
+        assert!(matches!(
+            host_a.connections.active_route(identity_b.host_id).await,
+            Some(Route::Direct(_))
+        ));
 
         let channel = host_a
             .connections
@@ -1497,29 +1468,19 @@ mod tests {
         host_a.serve_external_tcp_listener(listener_a);
         host_b.serve_external_tcp_listener(listener_b);
 
-        let tasks_a = host_a.spawn_reachability_links("host-a", false);
-        let tasks_b = host_b.spawn_reachability_links("host-b", false);
+        let tasks_a = host_a.spawn_reachability_links();
+        let tasks_b = host_b.spawn_reachability_links();
         wait_for_host_entry(&host_a.routing, identity_b.host_id).await;
         wait_for_host_entry(&host_b.routing, identity_a.host_id).await;
 
-        assert_eq!(
-            host_a
-                .connections
-                .active_route(identity_b.host_id)
-                .await
-                .unwrap()
-                .len(),
-            1
-        );
-        assert_eq!(
-            host_b
-                .connections
-                .active_route(identity_a.host_id)
-                .await
-                .unwrap()
-                .len(),
-            1
-        );
+        assert!(matches!(
+            host_a.connections.active_route(identity_b.host_id).await,
+            Some(Route::Direct(_))
+        ));
+        assert!(matches!(
+            host_b.connections.active_route(identity_a.host_id).await,
+            Some(Route::Direct(_))
+        ));
 
         assert!(
             host_a
@@ -1580,7 +1541,7 @@ mod tests {
         let (connector_task, established_rx) =
             crate::routing::spawn_connector_to_channel_with_establishment(
                 host_a
-                    .routing_connector_ctx(Link::new("ssh-test").unwrap())
+                    .link_connector_ctx()
                     .with_expected_peer(identity_b.host_id),
                 channel,
             );
@@ -1620,13 +1581,13 @@ mod tests {
     #[tokio::test]
     async fn cloud_routing_service_rejects_missing_authorization() {
         let user_id = Uuid::from_u128(100);
-        let service = test_cloud_routing_service(Uuid::from_u128(1), "token-a", user_id).await;
+        let service = test_cloud_link_service(Uuid::from_u128(1), "token-a", user_id).await;
 
         let (client_transport, server_transport) = in_process_transport_pair();
         let incoming = in_process_incoming(server_transport);
         let server_task = tokio::spawn(async move {
             tonic::transport::Server::builder()
-                .add_service(cloud_routing_server(service))
+                .add_service(cloud_link_server(service))
                 .serve_with_incoming(incoming)
                 .await
                 .unwrap();
@@ -1634,7 +1595,7 @@ mod tests {
 
         let connector = test_started_services_with_host_id(Uuid::from_u128(2)).await;
         let connector_task = crate::routing::spawn_connector_to_channel(
-            connector.routing_connector_ctx(Link::new("connector").unwrap()),
+            connector.link_connector_ctx(),
             in_process_channel(client_transport),
         );
 
@@ -1651,14 +1612,14 @@ mod tests {
     #[tokio::test]
     async fn cloud_routing_service_selects_user_services_from_bearer_metadata() {
         let user_id = Uuid::from_u128(100);
-        let service = test_cloud_routing_service(Uuid::from_u128(1), "token-a", user_id).await;
+        let service = test_cloud_link_service(Uuid::from_u128(1), "token-a", user_id).await;
 
         let (client_transport, server_transport) = in_process_transport_pair();
         let incoming = in_process_incoming(server_transport);
         let server_service = service.clone();
         let server_task = tokio::spawn(async move {
             tonic::transport::Server::builder()
-                .add_service(cloud_routing_server(server_service))
+                .add_service(cloud_link_server(server_service))
                 .serve_with_incoming(incoming)
                 .await
                 .unwrap();
@@ -1666,29 +1627,31 @@ mod tests {
 
         let connector = test_started_services_with_host_id(Uuid::from_u128(2)).await;
         let connector_task = crate::routing::spawn_connector_to_channel_with_bearer_token(
-            connector.routing_connector_ctx(Link::new("connector").unwrap()),
+            connector.link_connector_ctx(),
             in_process_channel(client_transport),
             "token-a".to_string(),
         );
 
+        // The cloud is adjacency, not a host: neither side records a host
+        // entry for the other. The link registries are the live-link truth.
         tokio::time::timeout(Duration::from_secs(1), async {
             loop {
-                let cloud_routing = service
+                let cloud_links = service
                     .inner
                     .users
                     .read()
                     .await
                     .get(&user_id)
-                    .map(|services| services.routing.clone());
-                let cloud_sees_connector = match cloud_routing {
-                    Some(routing) => routing.host_entry(Uuid::from_u128(2)).await.is_some(),
+                    .map(|services| services.tunnels.link_registry());
+                let cloud_sees_connector = match cloud_links {
+                    Some(links) => links.link_to_peer(Uuid::from_u128(2)).await.is_some(),
                     None => false,
                 };
                 let connector_sees_cloud = connector
-                    .routing
-                    .host_entry(Uuid::from_u128(1))
-                    .await
-                    .is_some();
+                    .tunnels
+                    .link_registry()
+                    .has_cloud_relay_link_to(Uuid::from_u128(1))
+                    .await;
                 if cloud_sees_connector && connector_sees_cloud {
                     break;
                 }
@@ -1696,7 +1659,7 @@ mod tests {
             }
         })
         .await
-        .expect("timed out waiting for cloud RoutingService.Connect");
+        .expect("timed out waiting for cloud LinkService.Connect");
 
         assert_eq!(service.inner.users.read().await.len(), 1);
         assert!(service.inner.users.read().await.contains_key(&user_id));
@@ -1708,7 +1671,7 @@ mod tests {
     #[tokio::test]
     async fn cloud_routing_service_serves_tcp_listener() {
         let user_id = Uuid::from_u128(100);
-        let service = test_cloud_routing_service(Uuid::from_u128(1), "token-a", user_id).await;
+        let service = test_cloud_link_service(Uuid::from_u128(1), "token-a", user_id).await;
         let listener = TcpListener::bind(("127.0.0.1", 0)).await.unwrap();
         let addr = listener.local_addr().unwrap();
         let server_task = service.serve_on_tcp_listener(listener);
@@ -1720,29 +1683,30 @@ mod tests {
             .await
             .unwrap();
         let connector_task = crate::routing::spawn_connector_to_channel_with_bearer_token(
-            connector.routing_connector_ctx(Link::new("connector").unwrap()),
+            connector.link_connector_ctx(),
             channel,
             "token-a".to_string(),
         );
 
+        // See above: live links, not host entries, are the v6 observable.
         tokio::time::timeout(Duration::from_secs(1), async {
             loop {
-                let cloud_routing = service
+                let cloud_links = service
                     .inner
                     .users
                     .read()
                     .await
                     .get(&user_id)
-                    .map(|services| services.routing.clone());
-                let cloud_sees_connector = match cloud_routing {
-                    Some(routing) => routing.host_entry(Uuid::from_u128(2)).await.is_some(),
+                    .map(|services| services.tunnels.link_registry());
+                let cloud_sees_connector = match cloud_links {
+                    Some(links) => links.link_to_peer(Uuid::from_u128(2)).await.is_some(),
                     None => false,
                 };
                 let connector_sees_cloud = connector
-                    .routing
-                    .host_entry(Uuid::from_u128(1))
-                    .await
-                    .is_some();
+                    .tunnels
+                    .link_registry()
+                    .has_cloud_relay_link_to(Uuid::from_u128(1))
+                    .await;
                 if cloud_sees_connector && connector_sees_cloud {
                     break;
                 }
@@ -1750,7 +1714,7 @@ mod tests {
             }
         })
         .await
-        .expect("timed out waiting for cloud TCP RoutingService.Connect");
+        .expect("timed out waiting for cloud TCP LinkService.Connect");
 
         connector_task.abort();
         server_task.abort();
@@ -1759,7 +1723,7 @@ mod tests {
     #[tokio::test]
     async fn cloud_routing_service_drives_remote_agent_inventory() {
         let user_id = Uuid::from_u128(100);
-        let service = test_cloud_routing_service(Uuid::from_u128(1), "token-a", user_id).await;
+        let service = test_cloud_link_service(Uuid::from_u128(1), "token-a", user_id).await;
         let listener = TcpListener::bind(("127.0.0.1", 0)).await.unwrap();
         let addr = listener.local_addr().unwrap();
         let server_task = service.serve_on_tcp_listener(listener);
@@ -1785,7 +1749,7 @@ mod tests {
             .await
             .unwrap();
         let task_a = crate::routing::spawn_connector_to_channel_with_bearer_token(
-            host_a.routing_connector_ctx(Link::new("host-a").unwrap()),
+            host_a.link_connector_ctx(),
             channel_a,
             "token-a".to_string(),
         );
@@ -1795,7 +1759,7 @@ mod tests {
             .await
             .unwrap();
         let task_b = crate::routing::spawn_connector_to_channel_with_bearer_token(
-            host_b.routing_connector_ctx(Link::new("host-b").unwrap()),
+            host_b.link_connector_ctx(),
             channel_b,
             "token-a".to_string(),
         );
@@ -1820,7 +1784,7 @@ mod tests {
     #[tokio::test]
     async fn cloud_pin_pairing_updates_both_trust_stores() {
         let user_id = Uuid::from_u128(100);
-        let service = test_cloud_routing_service(Uuid::from_u128(1), "token-a", user_id).await;
+        let service = test_cloud_link_service(Uuid::from_u128(1), "token-a", user_id).await;
         let listener = TcpListener::bind(("127.0.0.1", 0)).await.unwrap();
         let addr = listener.local_addr().unwrap();
         let server_task = service.serve_on_tcp_listener(listener);
@@ -1862,7 +1826,7 @@ mod tests {
             .await
             .unwrap();
         let task_a = crate::routing::spawn_connector_to_channel_with_bearer_token(
-            host_a.routing_connector_ctx(Link::new("host-a").unwrap()),
+            host_a.link_connector_ctx(),
             channel_a,
             "token-a".to_string(),
         );
@@ -1872,7 +1836,7 @@ mod tests {
             .await
             .unwrap();
         let task_b = crate::routing::spawn_connector_to_channel_with_bearer_token(
-            host_b.routing_connector_ctx(Link::new("host-b").unwrap()),
+            host_b.link_connector_ctx(),
             channel_b,
             "token-a".to_string(),
         );
@@ -1931,7 +1895,7 @@ mod tests {
     #[tokio::test]
     async fn cloud_qr_pairing_updates_both_trust_stores_and_pins_responder_pubkey() {
         let user_id = Uuid::from_u128(101);
-        let service = test_cloud_routing_service(Uuid::from_u128(1), "token-a", user_id).await;
+        let service = test_cloud_link_service(Uuid::from_u128(1), "token-a", user_id).await;
         let listener = TcpListener::bind(("127.0.0.1", 0)).await.unwrap();
         let addr = listener.local_addr().unwrap();
         let server_task = service.serve_on_tcp_listener(listener);
@@ -1973,7 +1937,7 @@ mod tests {
             .await
             .unwrap();
         let task_a = crate::routing::spawn_connector_to_channel_with_bearer_token(
-            host_a.routing_connector_ctx(Link::new("host-a").unwrap()),
+            host_a.link_connector_ctx(),
             channel_a,
             "token-a".to_string(),
         );
@@ -1983,7 +1947,7 @@ mod tests {
             .await
             .unwrap();
         let task_b = crate::routing::spawn_connector_to_channel_with_bearer_token(
-            host_b.routing_connector_ctx(Link::new("host-b").unwrap()),
+            host_b.link_connector_ctx(),
             channel_b,
             "token-a".to_string(),
         );
@@ -2273,11 +2237,7 @@ mod tests {
         let agent_id = Uuid::from_u128(44);
         services
             .routing
-            .apply_host_up(
-                remote.clone(),
-                Route::from_link(Link::new("missing").unwrap()),
-                None,
-            )
+            .apply_claim_up(HostId::from_u128(9), remote.clone())
             .await;
         services
             .client
@@ -2359,7 +2319,7 @@ mod tests {
         tokio::time::timeout(Duration::from_secs(1), async {
             loop {
                 if let Some(host) = routing.host_entry(host_id).await {
-                    return host.host;
+                    return host;
                 }
                 tokio::task::yield_now().await;
             }

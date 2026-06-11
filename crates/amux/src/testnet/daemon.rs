@@ -23,8 +23,8 @@ use crate::dispatcher::TrackedTcpConnections;
 use crate::identity::{device_key_path, load_or_create_device_identity_in};
 use crate::protocol::wire;
 use crate::routing::{
-    HostEntry, Route, RoutingConnectorAuth, RoutingConnectorCtx, RoutingConnectorToken,
-    RoutingConnectorTokenRefresher, RoutingCore, generate_server_link,
+    HostEntry, LinkConnectorAuth, LinkConnectorCtx, LinkConnectorToken,
+    LinkConnectorTokenRefresher, Route, RoutingCore,
     spawn_connector_to_channel_with_auth_and_establishment,
     spawn_connector_to_channel_with_bearer_token,
 };
@@ -117,7 +117,7 @@ impl DaemonRuntime {
     pub(crate) fn spawn_cloud_connector_with_auth(
         &mut self,
         inner: &DaemonInner,
-        auth: RoutingConnectorAuth,
+        auth: LinkConnectorAuth,
     ) {
         let (ctx, channel, _token) = self.cloud_connector_parts(inner);
         let (task, _established_rx) =
@@ -128,7 +128,7 @@ impl DaemonRuntime {
     fn cloud_connector_parts(
         &mut self,
         inner: &DaemonInner,
-    ) -> (RoutingConnectorCtx, Channel, String) {
+    ) -> (LinkConnectorCtx, Channel, String) {
         let cloud = inner
             .cloud
             .as_ref()
@@ -137,13 +137,9 @@ impl DaemonRuntime {
             task.abort();
         }
         let channel = tracked_cloud_channel(cloud.addr, inner.tracked_cloud_tcp.clone());
-        // Randomised like production (`randomise_link_name` defaults to
-        // true): a restarted daemon must come back under a *new* link name,
-        // or its peers and the relay can mistake the new link for the old
-        // one and keep stale routes/tunnels alive.
-        let ctx = self
-            .services
-            .routing_connector_ctx(generate_server_link(&format!("cloud-{}", inner.name), true));
+        // Every (re)connection is a fresh link instance: a restarted daemon
+        // comes back under a new link identity by construction.
+        let ctx = self.services.link_connector_ctx();
         (ctx, channel, cloud.token.clone())
     }
 }
@@ -247,7 +243,7 @@ pub(crate) async fn start_daemon_runtime(
         services.serve_external_tcp_listener_tracked(listener, inner.tracked_tcp.clone());
     }
 
-    let reachability_tasks = services.spawn_reachability_links(&inner.name, true);
+    let reachability_tasks = services.spawn_reachability_links();
     let shutdown_task = Some(spawn_shutdown_handler(Arc::downgrade(inner), shutdown_rx));
     DaemonRuntime {
         services,
@@ -875,7 +871,7 @@ impl Daemon {
     /// currently active route.
     pub(crate) async fn route_to(&self, peer: HostId) -> Option<Route> {
         let parts = self.try_parts().await?;
-        if let Some(route) = parts.routing.best_route(peer).await {
+        if let Some(route) = parts.routing.route_to(peer).await {
             return Some(route);
         }
         parts.connections.active_route(peer).await
@@ -888,14 +884,14 @@ impl Daemon {
         }
     }
 
-    /// Whether this daemon holds a single-hop (own-link) route to `host_id`.
-    pub(crate) async fn has_single_hop_route_to(&self, host_id: HostId) -> bool {
+    /// Whether this daemon holds a direct (own-link) route to `host_id`.
+    pub(crate) async fn has_direct_route_to(&self, host_id: HostId) -> bool {
         match self.try_parts().await {
             Some(parts) => parts
                 .routing
-                .best_route(host_id)
+                .route_to(host_id)
                 .await
-                .is_some_and(|route| route.len() == 1),
+                .is_some_and(|route| route.is_direct()),
             None => false,
         }
     }
@@ -944,7 +940,7 @@ impl Daemon {
         );
         eventually(
             &assertion,
-            async || !self.has_single_hop_route_to(cloud_relay.host_id).await,
+            async || !self.has_direct_route_to(cloud_relay.host_id).await,
             self.failure_dump(),
         )
         .await;
@@ -952,8 +948,8 @@ impl Daemon {
         let token = format!("jwt-initial-{}", uuid::Uuid::new_v4().simple());
         let expires_at = std::time::SystemTime::now() + ttl;
         cloud_relay.register_token(&token, attachment.user_id, ttl);
-        let auth = RoutingConnectorAuth::new(
-            RoutingConnectorToken { token, expires_at },
+        let auth = LinkConnectorAuth::new(
+            LinkConnectorToken { token, expires_at },
             Arc::new(RegistryTokenRefresher {
                 tokens: cloud_relay.token_registry(),
                 user_id: attachment.user_id,
@@ -1006,7 +1002,7 @@ impl Daemon {
         runtime
             .services
             .reachability_link_connector()
-            .spawn_pair_time_link(&self.inner.name, true, peer, reachability);
+            .spawn_pair_time_link(peer, reachability);
     }
 
     /// Renders the failure dump: declared topology, every daemon's host
@@ -1046,13 +1042,11 @@ impl Daemon {
                     );
                 }
                 if let Some(parts) = daemon.try_parts().await {
-                    for (id, peer, route) in parts.tunnels.active_tunnels().await {
+                    for (id, peer, link) in parts.tunnels.active_tunnels().await {
                         let _ = writeln!(
                             out,
-                            "  tunnel {} initiator={} peer={peer} route={}",
-                            id.nonce,
-                            id.initiator,
-                            format_route(&route)
+                            "  tunnel {} initiator={} peer={peer} link={link}",
+                            id.nonce, id.initiator,
                         );
                     }
                 }
@@ -1079,21 +1073,17 @@ impl Daemon {
         for peer in peers {
             let active = parts.connections.active_route(peer).await;
             let known = parts.connections.known_routes(peer).await;
-            let core_best = parts.routing.best_route(peer).await;
             let _ = writeln!(
                 out,
-                "  {peer}: active={} known=[{}] core_best={}",
+                "  {peer}: active={} known=[{}]",
                 active
                     .as_ref()
-                    .map_or_else(|| "none".to_string(), format_route),
+                    .map_or_else(|| "none".to_string(), |route| route.to_string()),
                 known
                     .iter()
-                    .map(format_route)
+                    .map(|route| route.to_string())
                     .collect::<Vec<_>>()
                     .join(", "),
-                core_best
-                    .as_ref()
-                    .map_or_else(|| "none".to_string(), format_route),
             );
         }
         out
@@ -1206,8 +1196,8 @@ struct RegistryTokenRefresher {
 }
 
 #[tonic::async_trait]
-impl RoutingConnectorTokenRefresher for RegistryTokenRefresher {
-    async fn refresh_routing_token(&self) -> Result<RoutingConnectorToken, tonic::Status> {
+impl LinkConnectorTokenRefresher for RegistryTokenRefresher {
+    async fn refresh_routing_token(&self) -> Result<LinkConnectorToken, tonic::Status> {
         let token = format!("jwt-refreshed-{}", uuid::Uuid::new_v4().simple());
         let expires_at = std::time::SystemTime::now() + REFRESHED_JWT_TTL;
         self.tokens
@@ -1220,17 +1210,8 @@ impl RoutingConnectorTokenRefresher for RegistryTokenRefresher {
                     ttl: REFRESHED_JWT_TTL,
                 },
             );
-        Ok(RoutingConnectorToken { token, expires_at })
+        Ok(LinkConnectorToken { token, expires_at })
     }
-}
-
-pub(crate) fn format_route(route: &Route) -> String {
-    let hops = route
-        .iter()
-        .map(|link| link.as_str())
-        .collect::<Vec<_>>()
-        .join(" > ");
-    format!("[{hops}]")
 }
 
 /// Pending route-shape assertion created by [`Daemon::connects_to`].
@@ -1240,7 +1221,7 @@ pub struct RouteAssertion<'a> {
 }
 
 impl RouteAssertion<'_> {
-    /// The route is a single hop: a direct link to the peer.
+    /// The route is a direct link to the peer.
     pub async fn via_direct(self) {
         let assertion = format!(
             "'{}' connects to '{}' via a direct link",
@@ -1250,14 +1231,14 @@ impl RouteAssertion<'_> {
         let to_id = self.to.host_id();
         eventually(
             &assertion,
-            async || matches!(self.from.route_to(to_id).await, Some(route) if route.len() == 1),
+            async || matches!(self.from.route_to(to_id).await, Some(route) if route.is_direct()),
             self.from.failure_dump(),
         )
         .await;
     }
 
-    /// The route's first hop(s) go through `relay`: it extends the route to
-    /// the relay node.
+    /// The route goes through `relay` (an adjacent node claiming adjacency
+    /// to the peer).
     pub async fn via(self, relay: &Daemon) {
         self.via_host(relay.host_id(), relay.name()).await;
     }
@@ -1282,15 +1263,7 @@ impl RouteAssertion<'_> {
         let to_id = self.to.host_id();
         eventually(
             &assertion,
-            async || {
-                let Some(route) = self.from.route_to(to_id).await else {
-                    return false;
-                };
-                let Some(relay_route) = self.from.route_to(relay_id).await else {
-                    return false;
-                };
-                route.len() > relay_route.len() && route.starts_with_route(&relay_route)
-            },
+            async || self.from.route_to(to_id).await == Some(Route::Via(relay_id)),
             self.from.failure_dump(),
         )
         .await;

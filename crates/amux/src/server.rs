@@ -23,9 +23,8 @@ use crate::client::{Client, ConnectError};
 use crate::config::{Config, ConfigError};
 use crate::identity;
 use crate::protocol::{ProtocolError, wire};
-use crate::routing::generate_server_link;
 use crate::services::{
-    CloudRoutingService, DeviceRuntimeSecurity, SharedAgentServiceState, StartedUserServices,
+    CloudLinkService, DeviceRuntimeSecurity, SharedAgentServiceState, StartedUserServices,
     commit_server_suspend, establish_cloud_connection, prepare_server_suspend, shutdown_server,
     start_user_services,
 };
@@ -357,7 +356,7 @@ impl Server {
             None
         };
 
-        let cloud_routing = is_cloud_server.then(|| CloudRoutingService::new(self.state.clone()));
+        let cloud_routing = is_cloud_server.then(|| CloudLinkService::new(self.state.clone()));
         let mut cloud_routing_task = None;
         let mut local_agent_state = None;
         let mut started_services = None;
@@ -369,7 +368,7 @@ impl Server {
             };
             let addr = SocketAddr::from(([0, 0, 0, 0], port));
             let listener = TcpListener::bind(addr).await?;
-            tracing::info!(addr = %addr, "listening on cloud TLS RoutingService");
+            tracing::info!(addr = %addr, "listening on cloud TLS LinkService");
             let service = cloud_routing
                 .as_ref()
                 .expect("cloud server should have cloud routing service");
@@ -672,19 +671,14 @@ async fn spawn_local_background_tasks(
     let cloud_url = config.cloud_url.clone();
     let mut tasks = Vec::new();
     if crate::setup::cloud_enabled(&config) {
-        let connector_ctx = started_services.routing_connector_ctx(generate_server_link(
-            &config.host_name,
-            config.randomise_link_name,
-        ));
+        let connector_ctx = started_services.link_connector_ctx();
         tasks.push(establish_cloud_connection(
             config.clone(),
             state.clone(),
             connector_ctx,
         ));
     }
-    tasks.extend(
-        started_services.spawn_reachability_links(&config.host_name, config.randomise_link_name),
-    );
+    tasks.extend(started_services.spawn_reachability_links());
 
     let update_reporter = {
         let state = state.read().await;
@@ -706,7 +700,7 @@ async fn process_shutdown_request(
     agent_state: Option<&SharedAgentServiceState>,
     state_path: &Path,
     tunnels: Option<&TunnelPool>,
-    cloud_routing: Option<&CloudRoutingService>,
+    cloud_routing: Option<&CloudLinkService>,
 ) -> Option<PendingShutdownReply> {
     match req {
         ShutdownRequest::Shutdown { reply } => {
@@ -759,7 +753,7 @@ async fn notify_local_clients(agent_state: &SharedAgentServiceState, reason: Shu
 
 async fn notify_routing_peers(
     tunnels: Option<&TunnelPool>,
-    cloud_routing: Option<&CloudRoutingService>,
+    cloud_routing: Option<&CloudLinkService>,
     reason: ShutdownReason,
 ) {
     let link_close_reason = link_close_reason_for_shutdown(reason);

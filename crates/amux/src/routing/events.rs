@@ -2,23 +2,27 @@ use tokio::sync::mpsc;
 use uuid::Uuid;
 
 use crate::HostId;
-use crate::routing::types::{Capabilities, Host};
-use crate::routing::{Link, Route};
+use crate::routing::types::{Capabilities, Host, LinkId};
 
 const DEFAULT_EVENT_BUFFER: usize = 256;
 
+/// Internal routing-table change events ([`super::RoutingCore`] →
+/// `ConnectionManager`). Strictly local bookkeeping; the wire-side
+/// `NeighborUp`/`NeighborDown` fan-out lives in the `LinkRegistry`.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub(crate) enum RoutingEvent {
-    HostUp {
-        host: Host,
-        route: Route,
-        origin_link: Option<Link>,
-    },
-    HostDown {
+    /// A channel-backed direct link to `host` came up.
+    NeighborUp { host: Host, link: LinkId },
+    /// A direct link went down; `last_link` marks the peer's last one.
+    NeighborDown {
         host_id: HostId,
-        route: Route,
-        origin_link: Option<Link>,
+        link: LinkId,
+        last_link: bool,
     },
+    /// Neighbor `relay` claimed adjacency to `host`.
+    ClaimUp { relay: HostId, host: Host },
+    /// Neighbor `relay` withdrew its adjacency claim for `host_id`.
+    ClaimDown { relay: HostId, host_id: HostId },
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]

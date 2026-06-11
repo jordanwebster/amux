@@ -1,7 +1,9 @@
 //! New architecture tunnel primitives.
 //!
 //! It provides the in-process byte channel that tonic uses for host-to-host
-//! services over routed `TunnelFrame` messages.
+//! services over routed `TunnelFrame` messages. Frames are addressed by
+//! destination host_id; a tunnel is pinned to the link its first frame used
+//! and dies with that link.
 
 mod pool;
 mod transport;
@@ -15,7 +17,7 @@ pub(crate) use transport::TunnelTransport;
 
 use crate::HostId;
 use crate::protocol::wire as pb;
-use crate::routing::{LinkOutputTx, Route, route_to_wire};
+use crate::routing::LinkOutputTx;
 pub(crate) use crate::tunnel::types::TunnelId;
 
 pub(crate) const TUNNEL_FRAME_PAYLOAD_MAX: usize = 64 * 1024;
@@ -41,9 +43,10 @@ impl Drop for Tunnel {
     }
 }
 
+/// Creates a tunnel endpoint to `peer`. Outbound frames carry `dst = peer`
+/// and leave on `outbound_link_tx` — the link the tunnel is pinned to.
 pub(crate) fn create_tunnel(
     id: TunnelId,
-    route: Route,
     peer: HostId,
     outbound_link_tx: LinkOutputTx,
 ) -> (Tunnel, TunnelTransport) {
@@ -52,7 +55,6 @@ pub(crate) fn create_tunnel(
     let (inbound_tx, mut inbound_rx) = mpsc::channel::<Bytes>(INBOUND_DEPTH);
 
     let reader_id = id;
-    let reader_route = route.clone();
     let reader_task = tokio::spawn(async move {
         let mut buf = vec![0_u8; BUF_SIZE];
         loop {
@@ -60,7 +62,7 @@ pub(crate) fn create_tunnel(
                 Ok(0) | Err(_) => break,
                 Ok(read) => read,
             };
-            let message = tunnel_frame_message(reader_id, &reader_route, buf[..read].to_vec());
+            let message = tunnel_frame_message(reader_id, peer, buf[..read].to_vec());
             if outbound_link_tx.send(message).await.is_err() {
                 break;
             }
@@ -85,10 +87,10 @@ pub(crate) fn create_tunnel(
     )
 }
 
-fn tunnel_frame_message(id: TunnelId, route: &Route, payload: Vec<u8>) -> pb::Message {
+fn tunnel_frame_message(id: TunnelId, dst: HostId, payload: Vec<u8>) -> pb::Message {
     pb::Message {
         body: Some(pb::message::Body::TunnelFrame(pb::TunnelFrame {
-            dst: Some(route_to_wire(route)),
+            dst: dst.as_bytes().to_vec(),
             tunnel_id: Some(id.into()),
             payload,
         })),
@@ -100,11 +102,6 @@ mod tests {
     use tokio::io::{AsyncReadExt, AsyncWriteExt};
 
     use super::*;
-    use crate::routing::Link;
-
-    fn route(link: &str) -> Route {
-        Route::from_link(Link::new(link).unwrap())
-    }
 
     #[tokio::test]
     async fn create_tunnel_wraps_outbound_bytes_and_delivers_inbound_bytes() {
@@ -113,7 +110,7 @@ mod tests {
         let id = TunnelId::from_parts(initiator, uuid::Uuid::from_u128(42));
         let (outbound_tx, mut outbound_rx) = mpsc::channel(1);
 
-        let (tunnel, mut transport) = create_tunnel(id, route("next-hop"), target, outbound_tx);
+        let (tunnel, mut transport) = create_tunnel(id, target, outbound_tx);
 
         transport.write_all(b"hello").await.unwrap();
         let frame = outbound_rx.recv().await.unwrap();
@@ -121,7 +118,7 @@ mod tests {
             panic!("expected tunnel frame");
         };
         assert_eq!(frame.payload, b"hello");
-        assert_eq!(frame.dst.unwrap().links, ["next-hop"]);
+        assert_eq!(frame.dst, target.as_bytes().to_vec());
         assert_eq!(TunnelId::try_from(frame.tunnel_id.unwrap()).unwrap(), id);
 
         tunnel

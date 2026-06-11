@@ -135,7 +135,7 @@ impl TestNet {
             );
             eventually(
                 &assertion,
-                async || !daemon.has_single_hop_route_to(cloud.host_id).await,
+                async || !daemon.has_direct_route_to(cloud.host_id).await,
                 daemon.failure_dump(),
             )
             .await;
@@ -178,7 +178,7 @@ impl TestNet {
             let to_id = to.host_id();
             eventually(
                 &assertion,
-                async || !matches!(from.route_to(to_id).await, Some(route) if route.len() == 1),
+                async || !matches!(from.route_to(to_id).await, Some(route) if route.is_direct()),
                 from.failure_dump(),
             )
             .await;
@@ -203,14 +203,14 @@ impl TestNet {
             );
         };
         from.spawn_direct_link(to.host_id(), reachability).await;
-        // Only the dialing side gains a single-hop route: the acceptor of a
+        // Only the dialing side gains a Direct route: the acceptor of a
         // direct link deliberately stores no route back (it has no outbound
-        // channel on that link).
+        // channel on that link until every call is a tunnel).
         let assertion = format!("'{}' gains a direct route to '{}'", from.name(), to.name());
         let to_id = to.host_id();
         eventually(
             &assertion,
-            async || matches!(from.route_to(to_id).await, Some(route) if route.len() == 1),
+            async || matches!(from.route_to(to_id).await, Some(route) if route.is_direct()),
             from.failure_dump(),
         )
         .await;

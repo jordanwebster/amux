@@ -19,8 +19,8 @@ use crate::auth::cloud::{
 use crate::config::Config;
 use crate::protocol::{ProtocolError, wire};
 use crate::routing::{
-    Host, RoutingConnectorAuth, RoutingConnectorCtx, RoutingConnectorToken,
-    RoutingConnectorTokenRefresher, spawn_connector_to_channel_with_auth_and_establishment,
+    Host, LinkConnectorAuth, LinkConnectorCtx, LinkConnectorToken, LinkConnectorTokenRefresher,
+    spawn_connector_to_channel_with_auth_and_establishment,
 };
 use crate::transport::tls_channel;
 use crate::update::{UpdateReporter, UpdateStatus};
@@ -37,7 +37,7 @@ const CLOUD_ROUTING_ESTABLISHMENT_TIMEOUT: Duration = Duration::from_secs(10);
 pub(crate) fn establish_cloud_connection(
     config: Config,
     state: Arc<RwLock<ServerState>>,
-    connector_ctx: RoutingConnectorCtx,
+    connector_ctx: LinkConnectorCtx,
 ) -> JoinHandle<()> {
     let cloud_span = tracing::info_span!("cloud", url = %config.cloud_url);
     tokio::spawn(
@@ -100,7 +100,7 @@ enum CloudConnectionError {
 async fn run_cloud_connection(
     config: &Config,
     state: Arc<RwLock<ServerState>>,
-    connector_ctx: RoutingConnectorCtx,
+    connector_ctx: LinkConnectorCtx,
 ) -> std::result::Result<(), CloudConnectionError> {
     let credentials = {
         let state = state.read().await;
@@ -138,7 +138,7 @@ async fn run_cloud_connection(
 async fn run_cloud_connection_with_details(
     config: &Config,
     state: Arc<RwLock<ServerState>>,
-    connector_ctx: RoutingConnectorCtx,
+    connector_ctx: LinkConnectorCtx,
     credentials: Arc<dyn CredentialProvider>,
     details: CloudRoutingConnectionDetails,
 ) -> std::result::Result<(), CloudConnectionError> {
@@ -150,12 +150,12 @@ async fn run_cloud_connection_with_details(
         }
     })?;
     let connected_at = std::time::Instant::now();
-    let connector_auth = RoutingConnectorAuth::new(
-        RoutingConnectorToken {
+    let connector_auth = LinkConnectorAuth::new(
+        LinkConnectorToken {
             token: details.token,
             expires_at: SystemTime::from(details.expires_at),
         },
-        Arc::new(CloudRoutingTokenRefresher {
+        Arc::new(CloudLinkTokenRefresher {
             config: config.clone(),
             credentials,
             current_host: details.host,
@@ -270,7 +270,7 @@ impl Drop for AbortTaskOnDrop {
     }
 }
 
-struct CloudRoutingTokenRefresher {
+struct CloudLinkTokenRefresher {
     config: Config,
     credentials: Arc<dyn CredentialProvider>,
     current_host: String,
@@ -278,8 +278,8 @@ struct CloudRoutingTokenRefresher {
 }
 
 #[tonic::async_trait]
-impl RoutingConnectorTokenRefresher for CloudRoutingTokenRefresher {
-    async fn refresh_routing_token(&self) -> Result<RoutingConnectorToken, tonic::Status> {
+impl LinkConnectorTokenRefresher for CloudLinkTokenRefresher {
+    async fn refresh_routing_token(&self) -> Result<LinkConnectorToken, tonic::Status> {
         let details = fetch_routing_connection_details(&self.config, self.credentials.as_ref())
             .await
             .map_err(|error| match error {
@@ -296,7 +296,7 @@ impl RoutingConnectorTokenRefresher for CloudRoutingTokenRefresher {
             ));
         }
 
-        Ok(RoutingConnectorToken {
+        Ok(LinkConnectorToken {
             token: details.token,
             expires_at: SystemTime::from(details.expires_at),
         })

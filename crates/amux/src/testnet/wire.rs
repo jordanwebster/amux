@@ -2,7 +2,7 @@
 //!
 //! Where [`super::Daemon`] speaks user-meaningful verbs, `WirePeer` connects
 //! to a real daemon's *external TCP listener* through real device mTLS and
-//! drives the `RoutingService.Connect` bidi stream by hand — sending raw
+//! drives the `LinkService.Connect` bidi stream by hand — sending raw
 //! `Message` envelopes (Hello, TunnelFrame) and asserting on the exact
 //! replies (HelloAck, LinkClose) and on stream closure. It is the conformance
 //! lab for the adversarial cases the topology layer cannot express: oversize
@@ -82,7 +82,7 @@ pub struct WirePeer {
 impl WirePeer {
     /// Connects to `victim`'s external TCP listener through real device mTLS,
     /// trusted via a freshly-seeded keypair in the victim's trust store, and
-    /// opens the `RoutingService.Connect` bidi stream. No Hello is sent yet.
+    /// opens the `LinkService.Connect` bidi stream. No Hello is sent yet.
     pub async fn connect_trusted(net: &TestNet, victim: &str) -> Self {
         let victim_daemon = net.daemon(victim);
         let addr = victim_daemon.inner.tcp_addr.unwrap_or_else(|| {
@@ -121,13 +121,13 @@ impl WirePeer {
         let bound = identity.host_id;
         let channel = trusted_device_channel(addr, identity, peer_trust, victim_host_id)
             .expect("build wire peer device channel");
-        let mut client = wire::routing_service_client::RoutingServiceClient::new(channel);
+        let mut client = wire::link_service_client::LinkServiceClient::new(channel);
 
         let (out_tx, out_rx) = mpsc::channel::<pb::Message>(64);
         let response = client
             .connect(Request::new(request_stream(out_rx)))
             .await
-            .expect("open RoutingService.Connect stream");
+            .expect("open LinkService.Connect stream");
         Self {
             victim_name: victim.to_string(),
             bound,
@@ -182,8 +182,8 @@ impl WirePeer {
         self.send_message(pb::Message {
             body: Some(pb::message::Body::Hello(pb::Hello {
                 supported_protocol_versions: supported_versions,
-                proposed_link_name: "wire-peer".to_string(),
                 host: Some(host_to_wire(&host)),
+                neighbors: Vec::new(),
             })),
         })
         .await;
@@ -202,15 +202,13 @@ impl WirePeer {
             .expect("wire peer Connect request stream closed");
     }
 
-    /// Sends a `TunnelFrame` with the given destination route and payload,
-    /// under a fresh tunnel id initiated by this peer.
-    pub async fn send_tunnel_frame(&self, dst_links: &[&str], payload: Vec<u8>) {
+    /// Sends a `TunnelFrame` addressed to `dst`, under a fresh tunnel id
+    /// initiated by this peer.
+    pub async fn send_tunnel_frame(&self, dst: HostId, payload: Vec<u8>) {
         let tunnel_id = crate::tunnel::TunnelId::new(self.bound).into();
         self.send_message(pb::Message {
             body: Some(pb::message::Body::TunnelFrame(pb::TunnelFrame {
-                dst: Some(pb::Route {
-                    links: dst_links.iter().map(|link| (*link).to_string()).collect(),
-                }),
+                dst: dst.as_bytes().to_vec(),
                 tunnel_id: Some(tunnel_id),
                 payload,
             })),
@@ -265,8 +263,8 @@ impl WirePeer {
     }
 
     /// Drains replies (bounded) until a `LinkClose` with the given reason
-    /// arrives, returning its embedded error. Intervening messages (e.g. the
-    /// initial routing snapshot) are skipped.
+    /// arrives, returning its embedded error. Intervening messages (e.g.
+    /// neighbor events) are skipped.
     pub async fn expect_link_close(&mut self, reason: LinkCloseReason) -> Option<pb::Error> {
         let deadline = tokio::time::Instant::now() + DEFAULT_TIMEOUT;
         loop {

@@ -1457,7 +1457,7 @@ mod tests {
     use super::*;
     use crate::protocol::wire::pairing_service_server::PairingService as _;
     use crate::routing::{
-        Capabilities, Host, Link, Route, RoutingCore, RoutingEvent, SupportedAgentType,
+        Capabilities, Host, LinkId, LinkRole, Route, RoutingCore, SupportedAgentType,
     };
     use crate::transport::{BoxedGrpcIo, in_process_channel, in_process_transport_pair};
     use crate::trust::{TrustEntry, TrustStore};
@@ -2308,11 +2308,14 @@ mod tests {
             old_peer.public_key()
         );
 
-        let route = Route::from_link(Link::new("new-key").unwrap());
+        // The route barrier is lifted: a fresh adjacency claim registers.
+        let relay = HostId::from_u128(99);
         service
             .connections
-            .seed(vec![RoutingEvent::HostUp {
-                host: Host {
+            .routing()
+            .apply_claim_up(
+                relay,
+                Host {
                     id: peer.host_id,
                     name: "peer".to_string(),
                     version: "test".to_string(),
@@ -2323,13 +2326,11 @@ mod tests {
                         }],
                     },
                 },
-                route: route.clone(),
-                origin_link: None,
-            }])
+            )
             .await;
         assert_eq!(
             service.connections.known_routes(peer.host_id).await,
-            vec![route]
+            vec![Route::Via(relay)]
         );
     }
 
@@ -2397,11 +2398,14 @@ mod tests {
                 .unwrap(),
             old_peer.public_key()
         );
-        let route = Route::from_link(Link::new("new-key").unwrap());
+        // The route barrier is lifted: a fresh adjacency claim registers.
+        let relay = HostId::from_u128(99);
         service
             .connections
-            .seed(vec![RoutingEvent::HostUp {
-                host: Host {
+            .routing()
+            .apply_claim_up(
+                relay,
+                Host {
                     id: peer.host_id,
                     name: "peer".to_string(),
                     version: "test".to_string(),
@@ -2412,13 +2416,11 @@ mod tests {
                         }],
                     },
                 },
-                route: route.clone(),
-                origin_link: None,
-            }])
+            )
             .await;
         assert_eq!(
             service.connections.known_routes(peer.host_id).await,
-            vec![route]
+            vec![Route::Via(relay)]
         );
     }
 
@@ -2667,37 +2669,38 @@ mod tests {
         ));
         // Host an inbound tunnel initiated by the pairing peer over a relay
         // link — the stand-in for the tunnel carrying this very pairing RPC.
-        routing
-            .apply_host_up(
-                Host {
-                    id: peer.host_id,
-                    name: "peer".to_string(),
-                    version: "test".to_string(),
-                    capabilities: Capabilities {
-                        features: Vec::new(),
-                        supported_agent_types: vec![SupportedAgentType {
-                            agent_type: "test-agent".to_string(),
-                        }],
-                    },
-                },
-                Route::from_link(Link::new("relay").unwrap()),
-                None,
-            )
-            .await;
         let (link_tx, _link_rx) = mpsc::channel(8);
+        let relay_link = LinkId::new(HostId::from_u128(99));
         tunnels
             .link_registry()
-            .register(Link::new("relay").unwrap(), HostId::from_u128(99), link_tx)
+            .register(
+                relay_link,
+                Host {
+                    id: HostId::from_u128(99),
+                    name: "relay".to_string(),
+                    version: "test".to_string(),
+                    capabilities: Capabilities::default(),
+                },
+                link_tx,
+                LinkRole::Peer,
+                &[],
+            )
             .await;
         tunnels
-            .handle_inbound_frame(wire::pb::TunnelFrame {
-                dst: Some(wire::pb::Route { links: Vec::new() }),
-                tunnel_id: Some(
-                    crate::tunnel::TunnelId::from_parts(peer.host_id, uuid::Uuid::from_u128(42))
+            .handle_inbound_frame_from_link(
+                wire::pb::TunnelFrame {
+                    dst: responder.host_id.as_bytes().to_vec(),
+                    tunnel_id: Some(
+                        crate::tunnel::TunnelId::from_parts(
+                            peer.host_id,
+                            uuid::Uuid::from_u128(42),
+                        )
                         .into(),
-                ),
-                payload: b"pairing".to_vec(),
-            })
+                    ),
+                    payload: b"pairing".to_vec(),
+                },
+                &relay_link,
+            )
             .await
             .unwrap();
         let _pairing_transport = incoming_rx.recv().await.unwrap();

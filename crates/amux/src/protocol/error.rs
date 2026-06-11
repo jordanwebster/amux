@@ -4,8 +4,8 @@ use serde::{Deserialize, Serialize};
 use uuid::Uuid;
 
 use super::amux::v1::{
-    AmbiguousAgentName, Error, ErrorDetail, InvalidLinkName, ProtocolVersionMismatch,
-    SequenceNumberMismatch, UpdateRequired,
+    AmbiguousAgentName, Error, ErrorDetail, ProtocolVersionMismatch, SequenceNumberMismatch,
+    UpdateRequired,
 };
 
 /// Errors carried over generated service and routing protocol boundaries.
@@ -48,9 +48,6 @@ pub enum ProtocolError {
     /// The receiver was unable to allocate a required protocol resource.
     #[error("{message}")]
     ResourceExhausted { message: String },
-    /// The proposed link name is invalid.
-    #[error("invalid link name `{name}`: {reason}")]
-    InvalidLinkName { name: String, reason: String },
     /// Protocol version mismatch between client and server.
     #[error(
         "amux update required (supported protocol versions {supported_versions:?}, peer supports {peer_supported_versions:?})"
@@ -102,7 +99,6 @@ pub(crate) fn encode_protocol_error(error: &ProtocolError) -> Error {
         ProtocolError::ServerError { message } => simple_error(13, message.clone()),
         ProtocolError::InvalidCredentials => simple_error(6, error.to_string()),
         ProtocolError::ResourceExhausted { message } => simple_error(9, message.clone()),
-        ProtocolError::InvalidLinkName { name, reason } => invalid_link_name_error(name, reason),
         ProtocolError::ProtocolMismatch {
             supported_versions,
             peer_supported_versions,
@@ -142,14 +138,6 @@ pub(crate) fn decode_protocol_error(error: Error) -> ProtocolError {
                     return ProtocolError::SequenceNumberMismatch {
                         client_seq: detail.actual,
                         current_seq: detail.expected,
-                    };
-                }
-            }
-            "amux.v1.InvalidLinkName" => {
-                if let Ok(detail) = InvalidLinkName::decode(detail.value.as_slice()) {
-                    return ProtocolError::InvalidLinkName {
-                        name: detail.name,
-                        reason: detail.reason,
                     };
                 }
             }
@@ -253,8 +241,7 @@ pub(crate) fn protocol_status(error: ProtocolError) -> tonic::Status {
         ProtocolError::ResourceExhausted { message } => {
             protocol_status_with_details(tonic::Code::ResourceExhausted, message, details)
         }
-        ProtocolError::InvalidLinkName { .. }
-        | ProtocolError::ProtocolMismatch { .. }
+        ProtocolError::ProtocolMismatch { .. }
         | ProtocolError::UpdateRequired { .. }
         | ProtocolError::SequenceNumberMismatch { .. } => protocol_status_with_details(
             tonic::Code::FailedPrecondition,
@@ -270,23 +257,6 @@ fn protocol_status_with_details(
     details: Vec<u8>,
 ) -> tonic::Status {
     tonic::Status::with_details(code, message, Bytes::from(details))
-}
-
-pub(crate) fn invalid_link_name_error(name: &str, reason: &str) -> Error {
-    let detail = InvalidLinkName {
-        name: name.to_string(),
-        reason: reason.to_string(),
-    };
-    detailed_error(
-        2,
-        if name.is_empty() {
-            "invalid link name".to_string()
-        } else {
-            format!("invalid link name `{name}`: {reason}")
-        },
-        "amux.v1.InvalidLinkName",
-        detail,
-    )
 }
 
 pub(crate) fn protocol_version_mismatch_error(

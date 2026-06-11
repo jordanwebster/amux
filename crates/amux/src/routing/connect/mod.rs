@@ -1,4 +1,8 @@
-//! Runtime for `RoutingService.Connect` host links.
+//! Runtime for `LinkService.Connect` host links.
+//!
+//! The bidi stream IS the link. The handshake exchanges identity, protocol
+//! version, and the sender's current neighbor snapshot; everything after it
+//! is a delta (`NeighborUp`/`NeighborDown`) or a `TunnelFrame`.
 
 use std::future;
 use std::pin::Pin;
@@ -15,11 +19,10 @@ use uuid::Uuid;
 use crate::connection::RouteRuntimeState;
 use crate::protocol::{PROTOCOL_VERSION, ProtocolError, protocol_status, wire};
 use crate::routing::{
-    ConnectHandshake, ConnectHandshakeEvent, Host, HostUpOutcome, InboundRoutingEvent, Link,
-    LinkCloseReason, LinkRegistry, LinkRole, Route, RoutingCore, RoutingEvent as CoreRoutingEvent,
-    host_from_wire, host_to_wire, outbound_routing_message, protocol_error_hello_ack,
-    protocol_error_link_close, should_send_routing_event_to_link, validate_remote_host,
-    wire_routing_event_to_inbound,
+    ConnectHandshake, ConnectHandshakeEvent, Host, LinkCloseRequest, LinkId, LinkRegistry,
+    LinkRole, RouteUpdateOutcome, RoutingCore, host_from_wire, host_to_wire,
+    inbound_host_from_wire, neighbor_down_from_wire, neighbor_up_from_wire,
+    protocol_error_hello_ack, protocol_error_link_close, validate_remote_host,
 };
 use crate::transport::{BoxedGrpcAuth, BoxedGrpcConnectInfo};
 use crate::tunnel::TunnelPool;
@@ -32,53 +35,51 @@ type ConnectorTask = JoinHandle<Result<(), tonic::Status>>;
 type EstablishmentSender = oneshot::Sender<Result<Host, tonic::Status>>;
 type EstablishmentReceiver = oneshot::Receiver<Result<Host, tonic::Status>>;
 
-const ROUTING_AUTH_REFRESH_BEFORE_EXPIRY: Duration = Duration::from_secs(300);
-const ROUTING_AUTH_REAUTH_RESPONSE_TIMEOUT: Duration = Duration::from_secs(15);
-const ROUTING_CONNECT_HELLO_TIMEOUT: Duration = Duration::from_secs(10);
+const LINK_AUTH_REFRESH_BEFORE_EXPIRY: Duration = Duration::from_secs(300);
+const LINK_AUTH_REAUTH_RESPONSE_TIMEOUT: Duration = Duration::from_secs(15);
+const LINK_CONNECT_HELLO_TIMEOUT: Duration = Duration::from_secs(10);
 
 #[derive(Debug, Clone)]
-pub(crate) struct AuthenticatedRoutingUser {
+pub(crate) struct AuthenticatedLinkUser {
     pub(crate) user_id: Uuid,
     pub(crate) client_id: String,
     pub(crate) expires_at: SystemTime,
 }
 
 #[tonic::async_trait]
-pub(crate) trait RoutingTokenAuthenticator: Send + Sync + 'static {
-    async fn authenticate_token(
-        &self,
-        token: &str,
-    ) -> Result<AuthenticatedRoutingUser, tonic::Status>;
+pub(crate) trait LinkTokenAuthenticator: Send + Sync + 'static {
+    async fn authenticate_token(&self, token: &str)
+    -> Result<AuthenticatedLinkUser, tonic::Status>;
 }
 
 #[tonic::async_trait]
-impl<T> RoutingTokenAuthenticator for Arc<T>
+impl<T> LinkTokenAuthenticator for Arc<T>
 where
-    T: RoutingTokenAuthenticator + ?Sized,
+    T: LinkTokenAuthenticator + ?Sized,
 {
     async fn authenticate_token(
         &self,
         token: &str,
-    ) -> Result<AuthenticatedRoutingUser, tonic::Status> {
+    ) -> Result<AuthenticatedLinkUser, tonic::Status> {
         (**self).authenticate_token(token).await
     }
 }
 
 #[derive(Clone)]
-pub(crate) struct RoutingAuthSession {
-    user: AuthenticatedRoutingUser,
-    authenticator: Arc<dyn RoutingTokenAuthenticator>,
+pub(crate) struct LinkAuthSession {
+    user: AuthenticatedLinkUser,
+    authenticator: Arc<dyn LinkTokenAuthenticator>,
     minimum_client_version: Option<String>,
 }
 
-impl RoutingAuthSession {
+impl LinkAuthSession {
     pub(crate) fn new<T>(
-        user: AuthenticatedRoutingUser,
+        user: AuthenticatedLinkUser,
         authenticator: T,
         minimum_client_version: Option<String>,
     ) -> Self
     where
-        T: RoutingTokenAuthenticator,
+        T: LinkTokenAuthenticator,
     {
         Self {
             user,
@@ -89,51 +90,48 @@ impl RoutingAuthSession {
 }
 
 #[derive(Debug, Clone)]
-pub(crate) struct RoutingConnectorToken {
+pub(crate) struct LinkConnectorToken {
     pub(crate) token: String,
     pub(crate) expires_at: SystemTime,
 }
 
 #[tonic::async_trait]
-pub(crate) trait RoutingConnectorTokenRefresher: Send + Sync + 'static {
-    async fn refresh_routing_token(&self) -> Result<RoutingConnectorToken, tonic::Status>;
+pub(crate) trait LinkConnectorTokenRefresher: Send + Sync + 'static {
+    async fn refresh_routing_token(&self) -> Result<LinkConnectorToken, tonic::Status>;
 }
 
 #[derive(Clone)]
-pub(crate) struct RoutingConnectorAuth {
-    initial: RoutingConnectorToken,
-    refresher: Arc<dyn RoutingConnectorTokenRefresher>,
+pub(crate) struct LinkConnectorAuth {
+    initial: LinkConnectorToken,
+    refresher: Arc<dyn LinkConnectorTokenRefresher>,
 }
 
-impl RoutingConnectorAuth {
+impl LinkConnectorAuth {
     pub(crate) fn new(
-        initial: RoutingConnectorToken,
-        refresher: Arc<dyn RoutingConnectorTokenRefresher>,
+        initial: LinkConnectorToken,
+        refresher: Arc<dyn LinkConnectorTokenRefresher>,
     ) -> Self {
         Self { initial, refresher }
     }
 }
 
+/// Acceptor-side context: serves `LinkService.Connect`.
 #[derive(Clone)]
-pub(crate) struct RoutingConnectCtx {
+pub(crate) struct LinkServiceCtx {
     local_host: Host,
     routing: Arc<RoutingCore>,
     tunnels: Arc<TunnelPool>,
     links: Arc<LinkRegistry>,
-    assigned_link: Option<Link>,
-    auth_session: Option<RoutingAuthSession>,
+    auth_session: Option<LinkAuthSession>,
     tls_peer: Option<Uuid>,
     route_runtime: RouteRuntimeState,
-    direct_route_mode: DirectRouteMode,
 }
 
-impl RoutingConnectCtx {
-    #[cfg(test)]
+impl LinkServiceCtx {
     pub(crate) fn new(
         local_host: Host,
         routing: Arc<RoutingCore>,
         tunnels: Arc<TunnelPool>,
-        assigned_link: Link,
         route_runtime: RouteRuntimeState,
     ) -> Self {
         Self {
@@ -141,34 +139,13 @@ impl RoutingConnectCtx {
             routing,
             links: tunnels.link_registry(),
             tunnels,
-            assigned_link: Some(assigned_link),
             auth_session: None,
             tls_peer: None,
             route_runtime,
-            direct_route_mode: DirectRouteMode::RequireChannel,
         }
     }
 
-    pub(crate) fn dynamic(
-        local_host: Host,
-        routing: Arc<RoutingCore>,
-        tunnels: Arc<TunnelPool>,
-        route_runtime: RouteRuntimeState,
-    ) -> Self {
-        Self {
-            local_host,
-            routing,
-            links: tunnels.link_registry(),
-            tunnels,
-            assigned_link: None,
-            auth_session: None,
-            tls_peer: None,
-            route_runtime,
-            direct_route_mode: DirectRouteMode::RequireChannel,
-        }
-    }
-
-    fn established(&self, link: Link) -> EstablishedConnectCtx {
+    fn established(&self, link: LinkId) -> EstablishedConnectCtx {
         EstablishedConnectCtx {
             local_host_id: self.local_host.id,
             routing: self.routing.clone(),
@@ -177,18 +154,12 @@ impl RoutingConnectCtx {
             link,
             auth_session: self.auth_session.clone(),
             route_runtime: self.route_runtime.clone(),
-            direct_route_mode: self.direct_route_mode,
             link_role: LinkRole::Peer,
         }
     }
 
-    pub(crate) fn with_auth_session(mut self, auth_session: RoutingAuthSession) -> Self {
+    pub(crate) fn with_auth_session(mut self, auth_session: LinkAuthSession) -> Self {
         self.auth_session = Some(auth_session);
-        self
-    }
-
-    pub(crate) fn with_routing_only_direct_routes(mut self) -> Self {
-        self.direct_route_mode = DirectRouteMode::RoutingOnly;
         self
     }
 
@@ -198,30 +169,23 @@ impl RoutingConnectCtx {
     }
 }
 
-#[derive(Clone, Copy)]
-enum DirectRouteMode {
-    RequireChannel,
-    RoutingOnly,
-}
-
+/// Connector-side context: dials a peer's `LinkService.Connect`.
 #[derive(Clone)]
-pub(crate) struct RoutingConnectorCtx {
+pub(crate) struct LinkConnectorCtx {
     local_host: Host,
     routing: Arc<RoutingCore>,
     tunnels: Arc<TunnelPool>,
     links: Arc<LinkRegistry>,
-    proposed_link: Link,
     expected_peer: Option<HostId>,
     route_runtime: RouteRuntimeState,
     link_role: LinkRole,
 }
 
-impl RoutingConnectorCtx {
+impl LinkConnectorCtx {
     pub(crate) fn new(
         local_host: Host,
         routing: Arc<RoutingCore>,
         tunnels: Arc<TunnelPool>,
-        proposed_link: Link,
         route_runtime: RouteRuntimeState,
     ) -> Self {
         Self {
@@ -229,7 +193,6 @@ impl RoutingConnectorCtx {
             routing,
             links: tunnels.link_registry(),
             tunnels,
-            proposed_link,
             expected_peer: None,
             route_runtime,
             link_role: LinkRole::Peer,
@@ -247,7 +210,7 @@ impl RoutingConnectorCtx {
         self
     }
 
-    fn established(&self, link: Link) -> EstablishedConnectCtx {
+    fn established(&self, link: LinkId) -> EstablishedConnectCtx {
         EstablishedConnectCtx {
             local_host_id: self.local_host.id,
             routing: self.routing.clone(),
@@ -256,22 +219,18 @@ impl RoutingConnectorCtx {
             link,
             auth_session: None,
             route_runtime: self.route_runtime.clone(),
-            direct_route_mode: DirectRouteMode::RequireChannel,
             link_role: self.link_role,
         }
     }
 }
 
 #[cfg(test)]
-pub(crate) fn spawn_connector_to_channel(
-    ctx: RoutingConnectorCtx,
-    channel: Channel,
-) -> ConnectorTask {
+pub(crate) fn spawn_connector_to_channel(ctx: LinkConnectorCtx, channel: Channel) -> ConnectorTask {
     spawn_connector_to_channel_with_authorization(ctx, channel, None, None)
 }
 
 pub(crate) fn spawn_connector_to_channel_with_establishment(
-    ctx: RoutingConnectorCtx,
+    ctx: LinkConnectorCtx,
     channel: Channel,
 ) -> (ConnectorTask, EstablishmentReceiver) {
     let (established_tx, established_rx) = oneshot::channel();
@@ -287,7 +246,7 @@ pub(crate) fn spawn_connector_to_channel_with_establishment(
 
 #[cfg(any(test, feature = "testnet"))]
 pub(crate) fn spawn_connector_to_channel_with_bearer_token(
-    ctx: RoutingConnectorCtx,
+    ctx: LinkConnectorCtx,
     channel: Channel,
     token: String,
 ) -> JoinHandle<Result<(), tonic::Status>> {
@@ -300,9 +259,9 @@ pub(crate) fn spawn_connector_to_channel_with_bearer_token(
 }
 
 pub(crate) fn spawn_connector_to_channel_with_auth_and_establishment(
-    ctx: RoutingConnectorCtx,
+    ctx: LinkConnectorCtx,
     channel: Channel,
-    auth: RoutingConnectorAuth,
+    auth: LinkConnectorAuth,
 ) -> (ConnectorTask, EstablishmentReceiver) {
     let (established_tx, established_rx) = oneshot::channel();
     let task = spawn_connector_to_channel_with_authorization_and_signal(
@@ -317,10 +276,10 @@ pub(crate) fn spawn_connector_to_channel_with_auth_and_establishment(
 
 #[cfg(any(test, feature = "testnet"))]
 fn spawn_connector_to_channel_with_authorization(
-    ctx: RoutingConnectorCtx,
+    ctx: LinkConnectorCtx,
     channel: Channel,
     authorization: Option<String>,
-    connector_auth: Option<RoutingConnectorAuth>,
+    connector_auth: Option<LinkConnectorAuth>,
 ) -> ConnectorTask {
     spawn_connector_to_channel_with_authorization_and_signal(
         ctx,
@@ -332,15 +291,15 @@ fn spawn_connector_to_channel_with_authorization(
 }
 
 fn spawn_connector_to_channel_with_authorization_and_signal(
-    ctx: RoutingConnectorCtx,
+    ctx: LinkConnectorCtx,
     channel: Channel,
     authorization: Option<String>,
-    connector_auth: Option<RoutingConnectorAuth>,
+    connector_auth: Option<LinkConnectorAuth>,
     established_tx: Option<EstablishmentSender>,
 ) -> ConnectorTask {
     tokio::spawn(async move {
         let direct_channel = channel.clone();
-        let mut client = wire::routing_service_client::RoutingServiceClient::new(channel);
+        let mut client = wire::link_service_client::LinkServiceClient::new(channel);
         let (out_tx, out_rx) = mpsc::channel(256);
         let request_stream = stream::unfold(out_rx, |mut rx| async move {
             rx.recv().await.map(|message| (message, rx))
@@ -379,15 +338,14 @@ struct EstablishedConnectCtx {
     routing: Arc<RoutingCore>,
     tunnels: Arc<TunnelPool>,
     links: Arc<LinkRegistry>,
-    link: Link,
-    auth_session: Option<RoutingAuthSession>,
+    link: LinkId,
+    auth_session: Option<LinkAuthSession>,
     route_runtime: RouteRuntimeState,
-    direct_route_mode: DirectRouteMode,
     link_role: LinkRole,
 }
 
 #[tonic::async_trait]
-impl wire::routing_service_server::RoutingService for RoutingConnectCtx {
+impl wire::link_service_server::LinkService for LinkServiceCtx {
     type ConnectStream = ResponseStream<wire::pb::Message>;
 
     async fn connect(
@@ -410,22 +368,19 @@ impl wire::routing_service_server::RoutingService for RoutingConnectCtx {
     }
 }
 
-fn spawn_acceptor_connect<S>(ctx: RoutingConnectCtx, input: S) -> mpsc::Receiver<wire::pb::Message>
+fn spawn_acceptor_connect<S>(ctx: LinkServiceCtx, input: S) -> mpsc::Receiver<wire::pb::Message>
 where
     S: Stream<Item = Result<wire::pb::Message, tonic::Status>> + Send + 'static,
 {
     let (out_tx, out_rx) = mpsc::channel(256);
     tokio::spawn(async move {
-        run_acceptor_connect(ctx, input, out_tx, ROUTING_CONNECT_HELLO_TIMEOUT).await;
+        run_acceptor_connect(ctx, input, out_tx, LINK_CONNECT_HELLO_TIMEOUT).await;
     });
     out_rx
 }
 
 #[cfg(test)]
-fn spawn_connector_connect<S>(
-    ctx: RoutingConnectorCtx,
-    input: S,
-) -> mpsc::Receiver<wire::pb::Message>
+fn spawn_connector_connect<S>(ctx: LinkConnectorCtx, input: S) -> mpsc::Receiver<wire::pb::Message>
 where
     S: Stream<Item = Result<wire::pb::Message, tonic::Status>> + Send + 'static,
 {
@@ -439,7 +394,7 @@ where
 }
 
 async fn run_acceptor_connect<S>(
-    ctx: RoutingConnectCtx,
+    ctx: LinkServiceCtx,
     input: S,
     out_tx: mpsc::Sender<wire::pb::Message>,
     hello_timeout: Duration,
@@ -451,13 +406,13 @@ async fn run_acceptor_connect<S>(
         Ok(Some(Ok(first))) => first,
         Ok(Some(Err(_))) | Ok(None) => return,
         Err(_) => {
-            tracing::warn!("routing Connect stream timed out waiting for Hello");
+            tracing::warn!("link Connect stream timed out waiting for Hello");
             return;
         }
     };
 
     let mut handshake = ConnectHandshake::acceptor();
-    let (peer_host, assigned_link) = match handshake.receive(first) {
+    let (peer_host, peer_neighbors) = match handshake.receive(first) {
         Ok(ConnectHandshakeEvent::Hello(hello)) => match accept_peer_hello(&ctx, hello).await {
             Ok(peer) => peer,
             Err(error) => {
@@ -481,29 +436,33 @@ async fn run_acceptor_connect<S>(
         }
     };
 
+    // The snapshot is a field of the handshake: HelloAccepted carries the
+    // neighbor set as of this moment; registration reconciles any change
+    // that lands in between.
+    let snapshot = ctx.links.neighbor_snapshot().await;
     if out_tx
-        .send(accepted_hello_ack(&ctx, &assigned_link))
+        .send(accepted_hello_ack(&ctx, &snapshot, peer_host.id))
         .await
         .is_err()
     {
-        cleanup_link(&ctx.established(assigned_link)).await;
         return;
     }
     if handshake.acceptor_ack_sent().is_err() {
-        cleanup_link(&ctx.established(assigned_link)).await;
         return;
     }
 
+    let link = LinkId::new(peer_host.id);
     let _ = run_established_connect(
-        ctx.established(assigned_link),
+        ctx.established(link),
         EstablishedConnectArgs {
             handshake,
             input,
             out_tx,
             peer_host,
+            peer_neighbors,
+            sent_snapshot: snapshot.into_iter().map(|host| host.id).collect(),
             connector_auth: None,
             established_tx: None,
-            peer_route_stored: false,
             direct_channel: None,
         },
     )
@@ -511,10 +470,10 @@ async fn run_acceptor_connect<S>(
 }
 
 async fn run_connector_connect<S>(
-    ctx: RoutingConnectorCtx,
+    ctx: LinkConnectorCtx,
     input: S,
     out_tx: mpsc::Sender<wire::pb::Message>,
-    connector_auth: Option<RoutingConnectorAuth>,
+    connector_auth: Option<LinkConnectorAuth>,
     established_tx: Option<EstablishmentSender>,
     direct_channel: Option<Channel>,
 ) -> Result<(), tonic::Status>
@@ -523,17 +482,18 @@ where
 {
     let mut input: ConnectInputStream = Box::pin(input);
     let mut handshake = ConnectHandshake::connector();
-    if out_tx.send(connector_hello(&ctx)).await.is_err() {
+    let snapshot = ctx.links.neighbor_snapshot().await;
+    if out_tx.send(connector_hello(&ctx, &snapshot)).await.is_err() {
         return connector_establishment_failed(
             established_tx,
-            tonic::Status::unavailable("routing connect request stream closed before Hello"),
+            tonic::Status::unavailable("link connect request stream closed before Hello"),
         );
     }
 
     let Some(first) = input.next().await else {
         return connector_establishment_failed(
             established_tx,
-            tonic::Status::unavailable("routing connect response stream closed before HelloAck"),
+            tonic::Status::unavailable("link connect response stream closed before HelloAck"),
         );
     };
     let first = match first {
@@ -541,7 +501,7 @@ where
         Err(status) => return connector_establishment_failed(established_tx, status),
     };
 
-    let (peer_host, assigned_link) = match handshake.receive(first) {
+    let (peer_host, peer_neighbors) = match handshake.receive(first) {
         Ok(ConnectHandshakeEvent::Accepted(accepted)) => {
             match accept_peer_hello_ack(&ctx, accepted).await {
                 Ok(peer) => peer,
@@ -583,16 +543,18 @@ where
         }
     };
 
+    let link = LinkId::new(peer_host.id);
     run_established_connect(
-        ctx.established(assigned_link),
+        ctx.established(link),
         EstablishedConnectArgs {
             handshake,
             input,
             out_tx,
             peer_host,
+            peer_neighbors,
+            sent_snapshot: snapshot.into_iter().map(|host| host.id).collect(),
             connector_auth,
             established_tx,
-            peer_route_stored: false,
             direct_channel,
         },
     )
@@ -629,9 +591,13 @@ struct EstablishedConnectArgs {
     input: ConnectInputStream,
     out_tx: mpsc::Sender<wire::pb::Message>,
     peer_host: Host,
-    connector_auth: Option<RoutingConnectorAuth>,
+    /// The peer's handshake snapshot: its direct neighbors at handshake time.
+    peer_neighbors: Vec<Host>,
+    /// The neighbor set our own handshake message advertised; registration
+    /// reconciles it against the registry.
+    sent_snapshot: Vec<HostId>,
+    connector_auth: Option<LinkConnectorAuth>,
     established_tx: Option<EstablishmentSender>,
-    peer_route_stored: bool,
     direct_channel: Option<Channel>,
 }
 
@@ -644,9 +610,10 @@ async fn run_established_connect(
         mut input,
         out_tx,
         peer_host,
+        peer_neighbors,
+        sent_snapshot,
         connector_auth,
         established_tx,
-        peer_route_stored,
         direct_channel,
     } = args;
 
@@ -658,36 +625,45 @@ async fn run_established_connect(
     };
     let mut link_close_rx = ctx
         .links
-        .register_with_role(ctx.link.clone(), peer_host.id, out_tx.clone(), link_role)
-        .await;
-    let direct_channel_registered = if let Some(channel) = direct_channel {
-        ctx.route_runtime
-            .register(Route::from_link(ctx.link.clone()), channel)
-            .await;
-        true
-    } else {
-        false
-    };
-    let can_store_direct_route =
-        direct_channel_registered || matches!(ctx.direct_route_mode, DirectRouteMode::RoutingOnly);
-    if !peer_route_stored && can_store_direct_route {
-        match store_direct_peer(
-            &ctx.routing,
-            ctx.local_host_id,
-            &ctx.link,
+        .register(
+            ctx.link,
             peer_host.clone(),
+            out_tx.clone(),
+            link_role,
+            &sent_snapshot,
         )
-        .await
+        .await;
+
+    // Apply the peer's handshake snapshot as its adjacency claims.
+    for neighbor in peer_neighbors {
+        if neighbor.id == ctx.local_host_id || neighbor.id == peer_host.id {
+            continue;
+        }
+        ctx.routing.apply_claim_up(peer_host.id, neighbor).await;
+    }
+
+    // Only the dialer holds an outbound channel on this link (the dual-path
+    // discipline that dies with the every-call-is-a-tunnel chunk), so only
+    // the dialer records a Direct route.
+    let peer_host_id = peer_host.id;
+    if let Some(channel) = direct_channel {
+        ctx.route_runtime.register_direct(ctx.link, channel).await;
+        match ctx
+            .routing
+            .apply_direct_up(peer_host.clone(), ctx.link)
+            .await
         {
-            Ok(DirectPeerStoreOutcome::Inserted) => {}
-            Ok(DirectPeerStoreOutcome::AlreadyKnown) => {
+            RouteUpdateOutcome::Inserted | RouteUpdateOutcome::AlreadyKnown => {}
+            RouteUpdateOutcome::Replacing => {
                 tracing::debug!(
-                    peer_host_id = %peer_host.id,
+                    peer_host_id = %peer_host_id,
                     link = %ctx.link,
-                    "direct peer already reachable; keeping duplicate link established"
+                    "direct link established during trust replacement; not recording a route"
                 );
             }
-            Err(error) => {
+            RouteUpdateOutcome::RejectedByCap => {
+                let error =
+                    format!("routing host cap reached while storing direct peer {peer_host_id}");
                 if let Some(established_tx) = established_tx {
                     let _ =
                         established_tx.send(Err(tonic::Status::invalid_argument(error.clone())));
@@ -697,28 +673,18 @@ async fn run_established_connect(
                 return Ok(());
             }
         }
-    } else if !peer_route_stored {
-        tracing::debug!(
-            link = %ctx.link,
-            "not storing acceptor-only direct route without outbound channel"
-        );
     }
     if let Some(established_tx) = established_tx {
         let _ = established_tx.send(Ok(peer_host.clone()));
     }
-    let peer_host_id = peer_host.id;
-    if !send_initial_routing_snapshot(&ctx, &out_tx, peer_host_id).await {
-        cleanup_link(&ctx).await;
-        return Ok(());
-    }
-    let mut acceptor_auth = ctx.auth_session.clone().map(EstablishedRoutingAuth::new);
+    let mut acceptor_auth = ctx.auth_session.clone().map(EstablishedLinkAuth::new);
     let mut connector_reauth = connector_auth.map(ConnectorReauthState::new);
     let mut close_status = None;
 
     loop {
         let auth_expiry_deadline = acceptor_auth
             .as_ref()
-            .map(EstablishedRoutingAuth::expiry_deadline);
+            .map(EstablishedLinkAuth::expiry_deadline);
         let connector_refresh_deadline = connector_reauth
             .as_ref()
             .and_then(ConnectorReauthState::refresh_deadline);
@@ -773,7 +739,7 @@ async fn run_established_connect(
                 }
             }
             _ = maybe_sleep_until(auth_expiry_deadline), if auth_expiry_deadline.is_some() => {
-                audit::auth_jwt_failure("routing authorization expired");
+                audit::auth_jwt_failure("link authorization expired");
                 let _ = try_send_outbound(&out_tx, auth_expired_link_close());
                 break;
             }
@@ -791,26 +757,26 @@ async fn run_established_connect(
             _ = maybe_sleep_until(connector_response_timeout), if connector_response_timeout.is_some() => {
                 let _ = try_send_outbound(
                     &out_tx,
-                    protocol_error_link_close("routing reauth response timed out"),
+                    protocol_error_link_close("link reauth response timed out"),
                 );
-                audit::auth_jwt_failure("routing reauth response timed out");
+                audit::auth_jwt_failure("link reauth response timed out");
                 break;
             }
-            reason = link_close_rx.recv() => {
-                match reason {
-                    Some(LinkCloseReason::OutgoingQueueFull) => {
+            request = link_close_rx.recv() => {
+                match request {
+                    Some(LinkCloseRequest::OutgoingQueueFull) => {
                         close_status = Some(tonic::Status::resource_exhausted(
-                            "routing link outgoing queue full",
+                            "link outgoing queue full",
                         ));
                     }
-                    Some(LinkCloseReason::TrustReplaced) => {
+                    Some(LinkCloseRequest::TrustReplaced) => {
                         close_status = Some(tonic::Status::permission_denied(
                             "peer trust was replaced",
                         ));
                     }
                     None => {
                         close_status = Some(tonic::Status::unavailable(
-                            "routing link closed",
+                            "link closed",
                         ));
                     }
                 }
@@ -827,9 +793,9 @@ async fn run_established_connect(
 }
 
 async fn accept_peer_hello(
-    ctx: &RoutingConnectCtx,
+    ctx: &LinkServiceCtx,
     hello: wire::pb::Hello,
-) -> Result<(Host, Link), wire::pb::Error> {
+) -> Result<(Host, Vec<Host>), wire::pb::Error> {
     if !hello
         .supported_protocol_versions
         .contains(&PROTOCOL_VERSION)
@@ -865,23 +831,13 @@ async fn accept_peer_hello(
             host.id
         )));
     }
-    let proposed_link_name = hello.proposed_link_name;
-    let proposed_link = Link::new(proposed_link_name.clone()).map_err(|error| {
-        wire::encode_protocol_error(&ProtocolError::InvalidLinkName {
-            name: proposed_link_name,
-            reason: error.to_string(),
-        })
-    })?;
-    let assigned_link = match &ctx.assigned_link {
-        Some(link) if ctx.routing.reserve_exact_link(link).await => link.clone(),
-        Some(_) | None => ctx.routing.reserve_link(&proposed_link).await,
-    };
-    Ok((host, assigned_link))
+    let neighbors = neighbors_from_wire(hello.neighbors)?;
+    Ok((host, neighbors))
 }
 
 fn validate_minimum_client_version(
     host: &Host,
-    auth_session: &RoutingAuthSession,
+    auth_session: &LinkAuthSession,
 ) -> Result<(), wire::pb::Error> {
     let Some(minimum_version) = &auth_session.minimum_client_version else {
         return Ok(());
@@ -898,7 +854,7 @@ fn validate_minimum_client_version(
             client_id = %auth_session.user.client_id,
             client_version = %host.version,
             minimum_version = %minimum_version,
-            "routing client version below minimum"
+            "link client version below minimum"
         );
         return Err(wire::encode_protocol_error(
             &ProtocolError::UpdateRequired {
@@ -931,9 +887,9 @@ fn host_id_collision_error(message: impl Into<String>) -> wire::pb::Error {
 }
 
 async fn accept_peer_hello_ack(
-    ctx: &RoutingConnectorCtx,
+    ctx: &LinkConnectorCtx,
     accepted: wire::pb::HelloAccepted,
-) -> Result<(Host, Link), wire::pb::Error> {
+) -> Result<(Host, Vec<Host>), wire::pb::Error> {
     if accepted.protocol_version != PROTOCOL_VERSION {
         return Err(wire::encode_protocol_error(
             &ProtocolError::ProtocolMismatch {
@@ -942,13 +898,6 @@ async fn accept_peer_hello_ack(
             },
         ));
     }
-    let assigned_link_name = accepted.assigned_link_name;
-    let assigned_link = Link::new(assigned_link_name.clone()).map_err(|error| {
-        wire::encode_protocol_error(&ProtocolError::InvalidLinkName {
-            name: assigned_link_name,
-            reason: error.to_string(),
-        })
-    })?;
     let host = accepted
         .host
         .ok_or_else(|| "HelloAccepted.host is required".to_string())
@@ -969,99 +918,50 @@ async fn accept_peer_hello_ack(
             host.id
         )));
     }
-    if !ctx.routing.reserve_exact_link(&assigned_link).await {
-        return Err(host_id_collision_error(format!(
-            "HelloAccepted.assigned_link_name `{assigned_link}` is already in use"
-        )));
-    }
-    Ok((host, assigned_link))
+    let neighbors = neighbors_from_wire(accepted.neighbors)?;
+    Ok((host, neighbors))
 }
 
-enum DirectPeerStoreOutcome {
-    Inserted,
-    AlreadyKnown,
+fn neighbors_from_wire(neighbors: Vec<wire::pb::Host>) -> Result<Vec<Host>, wire::pb::Error> {
+    neighbors
+        .into_iter()
+        .map(|host| {
+            inbound_host_from_wire(host, "handshake neighbor")
+                .map_err(|error| invalid_argument_error(error.to_string()))
+        })
+        .collect()
 }
 
-async fn store_direct_peer(
-    routing: &RoutingCore,
-    local_host_id: uuid::Uuid,
-    link: &Link,
-    host: Host,
-) -> Result<DirectPeerStoreOutcome, String> {
-    if host.id == local_host_id {
-        return Err("peer host_id must not match local host_id".to_string());
-    }
-
-    let host_id = host.id;
-    let route = Route::from_link(link.clone());
-    match routing.apply_host_up(host, route, None).await {
-        HostUpOutcome::Inserted => Ok(DirectPeerStoreOutcome::Inserted),
-        HostUpOutcome::AlreadyKnown => {
-            tracing::debug!(%host_id, "direct peer already reachable");
-            Ok(DirectPeerStoreOutcome::AlreadyKnown)
-        }
-        HostUpOutcome::RejectedByCap => Err(format!(
-            "routing host cap reached while storing direct peer {host_id}"
-        )),
-    }
-}
-
-fn connector_hello(ctx: &RoutingConnectorCtx) -> wire::pb::Message {
+fn connector_hello(ctx: &LinkConnectorCtx, snapshot: &[Host]) -> wire::pb::Message {
     wire::pb::Message {
         body: Some(wire::pb::message::Body::Hello(wire::pb::Hello {
             supported_protocol_versions: vec![PROTOCOL_VERSION],
-            proposed_link_name: ctx.proposed_link.as_str().to_string(),
             host: Some(host_to_wire(&ctx.local_host)),
+            neighbors: snapshot.iter().map(host_to_wire).collect(),
         })),
     }
 }
 
-fn accepted_hello_ack(ctx: &RoutingConnectCtx, assigned_link: &Link) -> wire::pb::Message {
+fn accepted_hello_ack(
+    ctx: &LinkServiceCtx,
+    snapshot: &[Host],
+    peer_host_id: HostId,
+) -> wire::pb::Message {
     wire::pb::Message {
         body: Some(wire::pb::message::Body::HelloAck(wire::pb::HelloAck {
             outcome: Some(wire::pb::hello_ack::Outcome::Accepted(
                 wire::pb::HelloAccepted {
                     protocol_version: PROTOCOL_VERSION,
-                    assigned_link_name: assigned_link.as_str().to_string(),
                     host: Some(host_to_wire(&ctx.local_host)),
+                    neighbors: snapshot
+                        .iter()
+                        .filter(|host| host.id != peer_host_id)
+                        .map(host_to_wire)
+                        .collect(),
                 },
             )),
         })),
     }
-}
-
-async fn send_initial_routing_snapshot(
-    ctx: &EstablishedConnectCtx,
-    out_tx: &mpsc::Sender<wire::pb::Message>,
-    peer_host_id: uuid::Uuid,
-) -> bool {
-    let snapshot = ctx.routing.routing_events_snapshot().await;
-    let mut snapshot_routes = Vec::new();
-    for event in snapshot {
-        if should_send_routing_event_to_link(&event, &ctx.link, Some(peer_host_id)) {
-            if let CoreRoutingEvent::HostUp { host, route, .. } = &event {
-                snapshot_routes.push((host.id, route.clone()));
-            }
-            if out_tx.try_send(outbound_routing_message(&event)).is_err() {
-                return false;
-            }
-        }
-    }
-    if out_tx
-        .try_send(wire::pb::Message {
-            body: Some(wire::pb::message::Body::RoutingEvent(
-                wire::pb::RoutingEvent {
-                    event: Some(wire::pb::routing_event::Event::SnapshotComplete(
-                        wire::pb::SnapshotComplete {},
-                    )),
-                },
-            )),
-        })
-        .is_err()
-    {
-        return false;
-    }
-    ctx.links.activate(&ctx.link, snapshot_routes).await
 }
 
 enum PostHandshakeAction {
@@ -1077,49 +977,38 @@ async fn handle_post_handshake_body(
     ctx: &EstablishedConnectCtx,
     out_tx: &mpsc::Sender<wire::pb::Message>,
     body: wire::pb::message::Body,
-    acceptor_auth: Option<&mut EstablishedRoutingAuth>,
+    acceptor_auth: Option<&mut EstablishedLinkAuth>,
     connector_reauth: Option<&mut ConnectorReauthState>,
 ) -> PostHandshakeAction {
     match body {
-        wire::pb::message::Body::RoutingEvent(event) => {
-            match wire_routing_event_to_inbound(event, &ctx.link) {
-                Ok(InboundRoutingEvent::HostUp { host, route }) => {
-                    if host.id == ctx.local_host_id {
-                        let _ = try_send_outbound(
-                            out_tx,
-                            protocol_error_link_close(
-                                "inbound HostUp host_id must not match local host_id",
-                            ),
-                        );
-                        return PostHandshakeAction::Close;
-                    }
-                    ctx.routing
-                        .apply_host_up(host, route, Some(ctx.link.clone()))
-                        .await;
-                    PostHandshakeAction::Continue
+        wire::pb::message::Body::NeighborUp(event) => match neighbor_up_from_wire(event) {
+            Ok(host) => {
+                // A claim about ourselves or about the claimant says nothing
+                // we don't already know from the link itself.
+                if host.id != ctx.local_host_id && host.id != ctx.link.peer() {
+                    ctx.routing.apply_claim_up(ctx.link.peer(), host).await;
                 }
-                Ok(InboundRoutingEvent::HostDown { host_id, route }) => {
-                    let removed = ctx
-                        .routing
-                        .apply_host_down(host_id, &route, Some(ctx.link.clone()))
-                        .await;
-                    if removed {
-                        ctx.route_runtime.remove_route(&route).await;
-                    }
-                    PostHandshakeAction::Continue
-                }
-                Ok(InboundRoutingEvent::SnapshotComplete) => PostHandshakeAction::Continue,
-                Ok(InboundRoutingEvent::RouteOverHopCap) => PostHandshakeAction::Continue,
-                Err(error) => {
-                    let _ = try_send_outbound(out_tx, protocol_error_link_close(error.to_string()));
-                    PostHandshakeAction::Close
-                }
+                PostHandshakeAction::Continue
             }
-        }
+            Err(error) => {
+                let _ = try_send_outbound(out_tx, protocol_error_link_close(error.to_string()));
+                PostHandshakeAction::Close
+            }
+        },
+        wire::pb::message::Body::NeighborDown(event) => match neighbor_down_from_wire(event) {
+            Ok(host_id) => {
+                ctx.routing.apply_claim_down(ctx.link.peer(), host_id).await;
+                PostHandshakeAction::Continue
+            }
+            Err(error) => {
+                let _ = try_send_outbound(out_tx, protocol_error_link_close(error.to_string()));
+                PostHandshakeAction::Close
+            }
+        },
         wire::pb::message::Body::TunnelFrame(frame) => {
             match ctx
                 .tunnels
-                .handle_inbound_frame_from_link(frame, Some(&ctx.link))
+                .handle_inbound_frame_from_link(frame, &ctx.link)
                 .await
             {
                 Ok(()) => PostHandshakeAction::Continue,
@@ -1168,13 +1057,13 @@ fn link_close_status(close: &wire::pb::LinkClose) -> Option<tonic::Status> {
     )
 }
 
-struct EstablishedRoutingAuth {
-    user: AuthenticatedRoutingUser,
-    authenticator: Arc<dyn RoutingTokenAuthenticator>,
+struct EstablishedLinkAuth {
+    user: AuthenticatedLinkUser,
+    authenticator: Arc<dyn LinkTokenAuthenticator>,
 }
 
-impl EstablishedRoutingAuth {
-    fn new(session: RoutingAuthSession) -> Self {
+impl EstablishedLinkAuth {
+    fn new(session: LinkAuthSession) -> Self {
         Self {
             user: session.user,
             authenticator: session.authenticator,
@@ -1190,11 +1079,11 @@ struct ConnectorReauthState {
     expires_at: SystemTime,
     pending_expires_at: Option<SystemTime>,
     awaiting_since: Option<tokio::time::Instant>,
-    refresher: Arc<dyn RoutingConnectorTokenRefresher>,
+    refresher: Arc<dyn LinkConnectorTokenRefresher>,
 }
 
 impl ConnectorReauthState {
-    fn new(auth: RoutingConnectorAuth) -> Self {
+    fn new(auth: LinkConnectorAuth) -> Self {
         Self {
             expires_at: auth.initial.expires_at,
             pending_expires_at: None,
@@ -1206,12 +1095,12 @@ impl ConnectorReauthState {
     fn refresh_deadline(&self) -> Option<tokio::time::Instant> {
         self.awaiting_since
             .is_none()
-            .then(|| instant_for_system_time(self.expires_at, ROUTING_AUTH_REFRESH_BEFORE_EXPIRY))
+            .then(|| instant_for_system_time(self.expires_at, LINK_AUTH_REFRESH_BEFORE_EXPIRY))
     }
 
     fn response_timeout(&self) -> Option<tokio::time::Instant> {
         self.awaiting_since
-            .map(|since| since + ROUTING_AUTH_REAUTH_RESPONSE_TIMEOUT)
+            .map(|since| since + LINK_AUTH_REAUTH_RESPONSE_TIMEOUT)
     }
 
     async fn send_refresh(
@@ -1229,7 +1118,7 @@ impl ConnectorReauthState {
             },
         )
         .then_some(())
-        .ok_or_else(|| tonic::Status::unavailable("routing link closed during reauth"))?;
+        .ok_or_else(|| tonic::Status::unavailable("link closed during reauth"))?;
         self.awaiting_since = Some(tokio::time::Instant::now());
         Ok(())
     }
@@ -1247,8 +1136,8 @@ impl ConnectorReauthState {
                 true
             }
             wire::pb::reauth_ack::Outcome::Error(error) => {
-                audit::auth_jwt_failure(format!("routing reauth rejected: {}", error.message));
-                tracing::warn!(code = error.code, message = %error.message, "routing reauth rejected");
+                audit::auth_jwt_failure(format!("link reauth rejected: {}", error.message));
+                tracing::warn!(code = error.code, message = %error.message, "link reauth rejected");
                 false
             }
         }
@@ -1256,14 +1145,14 @@ impl ConnectorReauthState {
 }
 
 async fn handle_reauth(
-    acceptor_auth: Option<&mut EstablishedRoutingAuth>,
+    acceptor_auth: Option<&mut EstablishedLinkAuth>,
     out_tx: &mpsc::Sender<wire::pb::Message>,
     reauth: wire::pb::Reauth,
 ) -> bool {
     let Some(auth) = acceptor_auth else {
         let _ = try_send_outbound(
             out_tx,
-            protocol_error_link_close("routing reauth received on unauthenticated link"),
+            protocol_error_link_close("reauth received on unauthenticated link"),
         );
         return false;
     };
@@ -1277,17 +1166,17 @@ async fn handle_reauth(
             try_send_outbound(out_tx, accepted_reauth_ack())
         }
         Ok(user) => {
-            audit::auth_jwt_failure("routing reauth user mismatch");
+            audit::auth_jwt_failure("link reauth user mismatch");
             tracing::warn!(
                 original_user_id = %auth.user.user_id,
                 reauth_user_id = %user.user_id,
-                "routing reauth user mismatch"
+                "link reauth user mismatch"
             );
             try_send_outbound(out_tx, unauthenticated_reauth_ack())
         }
         Err(status) => {
             audit::auth_jwt_failure(&status);
-            tracing::warn!(error = %status, "routing reauth token validation failed");
+            tracing::warn!(error = %status, "link reauth token validation failed");
             try_send_outbound(out_tx, unauthenticated_reauth_ack())
         }
     }
@@ -1303,7 +1192,7 @@ async fn handle_reauth_ack(
         None => {
             let _ = try_send_outbound(
                 out_tx,
-                protocol_error_link_close("routing reauth_ack received without connector auth"),
+                protocol_error_link_close("reauth_ack received without connector auth"),
             );
             false
         }
@@ -1323,7 +1212,7 @@ fn unauthenticated_reauth_ack() -> wire::pb::Message {
         body: Some(wire::pb::message::Body::ReauthAck(wire::pb::ReauthAck {
             outcome: Some(wire::pb::reauth_ack::Outcome::Error(wire::pb::Error {
                 code: wire::pb::ErrorCode::Unauthenticated as i32,
-                message: "invalid routing authorization".to_string(),
+                message: "invalid link authorization".to_string(),
                 details: Vec::new(),
             })),
         })),
@@ -1336,7 +1225,7 @@ fn auth_expired_link_close() -> wire::pb::Message {
             reason: wire::pb::LinkCloseReason::AuthExpired as i32,
             error: Some(wire::pb::Error {
                 code: wire::pb::ErrorCode::Unauthenticated as i32,
-                message: "routing authorization expired".to_string(),
+                message: "link authorization expired".to_string(),
                 details: Vec::new(),
             }),
         })),
@@ -1368,14 +1257,19 @@ fn instant_for_system_time(time: SystemTime, early_by: Duration) -> tokio::time:
     }
 }
 
+/// Tears down everything the link carried: the registry entry (which
+/// advertises `NeighborDown` if it was the peer's last link), every tunnel
+/// pinned to the link, the Direct route, and — when no link to the peer
+/// remains — every adjacency claim the peer ever made.
 async fn cleanup_link(ctx: &EstablishedConnectCtx) {
+    let peer = ctx.link.peer();
     ctx.links.remove(&ctx.link).await;
-    for event in ctx.routing.remove_link_routes(&ctx.link).await {
-        if let CoreRoutingEvent::HostDown { route, .. } = event {
-            ctx.route_runtime.remove_route(&route).await;
-        }
+    ctx.tunnels.remove_link(&ctx.link).await;
+    ctx.routing.apply_direct_down(ctx.link).await;
+    ctx.route_runtime.remove_direct(ctx.link).await;
+    if ctx.links.link_to_peer(peer).await.is_none() {
+        ctx.routing.remove_relay_claims(peer).await;
     }
-    ctx.routing.release_link(&ctx.link).await;
 }
 
 fn receiver_stream<T>(rx: mpsc::Receiver<T>) -> ResponseStream<T>
@@ -1402,11 +1296,7 @@ mod tests {
     use super::*;
     use crate::HostId;
     use crate::connection::ConnectionManager;
-    use crate::routing::{Capabilities, SupportedAgentType};
-
-    fn link(name: &str) -> Link {
-        Link::new(name).unwrap()
-    }
+    use crate::routing::{Capabilities, Route, SupportedAgentType};
 
     fn host(id: u128, name: &str) -> Host {
         Host {
@@ -1422,65 +1312,52 @@ mod tests {
         }
     }
 
-    fn route(links: &[&str]) -> Route {
-        Route::from_links(links.iter().map(|link| (*link).to_string())).unwrap()
-    }
-
-    fn route_to_wire(route: &[&str]) -> wire::pb::Route {
-        wire::pb::Route {
-            links: route.iter().map(|link| (*link).to_string()).collect(),
-        }
-    }
-
     fn message(body: wire::pb::message::Body) -> wire::pb::Message {
         wire::pb::Message { body: Some(body) }
     }
 
     fn hello(peer: &Host) -> wire::pb::Message {
+        hello_with_neighbors(peer, &[])
+    }
+
+    fn hello_with_neighbors(peer: &Host, neighbors: &[Host]) -> wire::pb::Message {
         message(wire::pb::message::Body::Hello(wire::pb::Hello {
             supported_protocol_versions: vec![PROTOCOL_VERSION],
-            proposed_link_name: "peer".to_string(),
             host: Some(host_to_wire(peer)),
+            neighbors: neighbors.iter().map(host_to_wire).collect(),
         }))
     }
 
-    fn hello_with(
+    fn hello_with_versions(
         peer: &Host,
         supported_protocol_versions: Vec<u32>,
-        proposed_link_name: impl Into<String>,
     ) -> wire::pb::Message {
         message(wire::pb::message::Body::Hello(wire::pb::Hello {
             supported_protocol_versions,
-            proposed_link_name: proposed_link_name.into(),
             host: Some(host_to_wire(peer)),
+            neighbors: Vec::new(),
         }))
     }
 
-    fn routing_host_up(host: &Host, route: &[&str]) -> wire::pb::Message {
-        message(wire::pb::message::Body::RoutingEvent(
-            wire::pb::RoutingEvent {
-                event: Some(wire::pb::routing_event::Event::HostUp(wire::pb::HostUp {
-                    host: Some(host_to_wire(host)),
-                    route: Some(route_to_wire(route)),
-                })),
+    fn neighbor_up(host: &Host) -> wire::pb::Message {
+        message(wire::pb::message::Body::NeighborUp(wire::pb::NeighborUp {
+            host: Some(host_to_wire(host)),
+        }))
+    }
+
+    fn neighbor_down(host_id: HostId) -> wire::pb::Message {
+        message(wire::pb::message::Body::NeighborDown(
+            wire::pb::NeighborDown {
+                host_id: host_id.as_bytes().to_vec(),
+                reason: None,
             },
         ))
     }
 
-    fn routing_snapshot_complete() -> wire::pb::Message {
-        message(wire::pb::message::Body::RoutingEvent(
-            wire::pb::RoutingEvent {
-                event: Some(wire::pb::routing_event::Event::SnapshotComplete(
-                    wire::pb::SnapshotComplete {},
-                )),
-            },
-        ))
-    }
-
-    fn tunnel_frame(dst: &[&str], payload: &[u8]) -> wire::pb::Message {
+    fn tunnel_frame(dst: HostId, payload: &[u8]) -> wire::pb::Message {
         message(wire::pb::message::Body::TunnelFrame(
             wire::pb::TunnelFrame {
-                dst: Some(route_to_wire(dst)),
+                dst: dst.as_bytes().to_vec(),
                 tunnel_id: Some(
                     crate::tunnel::TunnelId::from_parts(
                         HostId::from_u128(2),
@@ -1520,42 +1397,36 @@ mod tests {
         RouteRuntimeState::new(tunnels.clone())
     }
 
-    async fn test_ctx() -> (RoutingConnectCtx, Arc<RoutingCore>, Arc<TunnelPool>) {
+    async fn test_ctx() -> (LinkServiceCtx, Arc<RoutingCore>, Arc<TunnelPool>) {
         let local = host(1, "local");
         let routing = Arc::new(RoutingCore::new());
         let (incoming_tx, _incoming_rx) = mpsc::channel(4);
         let tunnels = Arc::new(TunnelPool::new(local.id, routing.clone(), incoming_tx));
-        crate::routing::spawn_routing_event_fanout(routing.clone(), tunnels.link_registry()).await;
-        let ctx = RoutingConnectCtx::new(
+        let ctx = LinkServiceCtx::new(
             local,
             routing.clone(),
             tunnels.clone(),
-            link("peer"),
             route_runtime(&tunnels),
-        )
-        .with_routing_only_direct_routes();
+        );
         (ctx, routing, tunnels)
     }
 
-    async fn connector_test_ctx() -> (RoutingConnectorCtx, Arc<RoutingCore>, Arc<TunnelPool>, Host)
-    {
+    async fn connector_test_ctx() -> (LinkConnectorCtx, Arc<RoutingCore>, Arc<TunnelPool>, Host) {
         let local = host(1, "local");
         let routing = Arc::new(RoutingCore::new());
         let (incoming_tx, _incoming_rx) = mpsc::channel(4);
         let tunnels = Arc::new(TunnelPool::new(local.id, routing.clone(), incoming_tx));
-        crate::routing::spawn_routing_event_fanout(routing.clone(), tunnels.link_registry()).await;
-        let ctx = RoutingConnectorCtx::new(
+        let ctx = LinkConnectorCtx::new(
             local.clone(),
             routing.clone(),
             tunnels.clone(),
-            link("local"),
             route_runtime(&tunnels),
         );
         (ctx, routing, tunnels, local)
     }
 
-    fn auth_user(user_id: u128, client_id: &str, expires_in: Duration) -> AuthenticatedRoutingUser {
-        AuthenticatedRoutingUser {
+    fn auth_user(user_id: u128, client_id: &str, expires_in: Duration) -> AuthenticatedLinkUser {
+        AuthenticatedLinkUser {
             user_id: uuid::Uuid::from_u128(user_id),
             client_id: client_id.to_string(),
             expires_at: SystemTime::now() + expires_in,
@@ -1564,11 +1435,11 @@ mod tests {
 
     #[derive(Clone)]
     struct TestTokenAuthenticator {
-        tokens: Arc<Vec<(String, AuthenticatedRoutingUser)>>,
+        tokens: Arc<Vec<(String, AuthenticatedLinkUser)>>,
     }
 
     impl TestTokenAuthenticator {
-        fn new(tokens: Vec<(&str, AuthenticatedRoutingUser)>) -> Self {
+        fn new(tokens: Vec<(&str, AuthenticatedLinkUser)>) -> Self {
             Self {
                 tokens: Arc::new(
                     tokens
@@ -1581,11 +1452,11 @@ mod tests {
     }
 
     #[tonic::async_trait]
-    impl RoutingTokenAuthenticator for TestTokenAuthenticator {
+    impl LinkTokenAuthenticator for TestTokenAuthenticator {
         async fn authenticate_token(
             &self,
             token: &str,
-        ) -> Result<AuthenticatedRoutingUser, tonic::Status> {
+        ) -> Result<AuthenticatedLinkUser, tonic::Status> {
             self.tokens
                 .iter()
                 .find_map(|(candidate, user)| (candidate == token).then(|| user.clone()))
@@ -1595,33 +1466,33 @@ mod tests {
 
     #[derive(Clone)]
     struct TestTokenRefresher {
-        token: RoutingConnectorToken,
+        token: LinkConnectorToken,
         calls: Arc<Mutex<usize>>,
     }
 
     #[tonic::async_trait]
-    impl RoutingConnectorTokenRefresher for TestTokenRefresher {
-        async fn refresh_routing_token(&self) -> Result<RoutingConnectorToken, tonic::Status> {
+    impl LinkConnectorTokenRefresher for TestTokenRefresher {
+        async fn refresh_routing_token(&self) -> Result<LinkConnectorToken, tonic::Status> {
             *self.calls.lock().unwrap() += 1;
             Ok(self.token.clone())
         }
     }
 
-    fn accepted_ack(peer: &Host, assigned_link: &str) -> wire::pb::Message {
-        accepted_ack_with(peer, assigned_link, PROTOCOL_VERSION)
+    fn accepted_ack(peer: &Host) -> wire::pb::Message {
+        accepted_ack_with(peer, PROTOCOL_VERSION, &[])
     }
 
     fn accepted_ack_with(
         peer: &Host,
-        assigned_link: &str,
         protocol_version: u32,
+        neighbors: &[Host],
     ) -> wire::pb::Message {
         message(wire::pb::message::Body::HelloAck(wire::pb::HelloAck {
             outcome: Some(wire::pb::hello_ack::Outcome::Accepted(
                 wire::pb::HelloAccepted {
                     protocol_version,
-                    assigned_link_name: assigned_link.to_string(),
                     host: Some(host_to_wire(peer)),
+                    neighbors: neighbors.iter().map(host_to_wire).collect(),
                 },
             )),
         }))
@@ -1630,8 +1501,8 @@ mod tests {
     async fn recv_message(rx: &mut mpsc::Receiver<wire::pb::Message>) -> wire::pb::Message {
         tokio::time::timeout(Duration::from_secs(1), rx.recv())
             .await
-            .expect("timed out waiting for RoutingService.Connect output")
-            .expect("RoutingService.Connect output closed")
+            .expect("timed out waiting for LinkService.Connect output")
+            .expect("LinkService.Connect output closed")
     }
 
     async fn wait_until<F, Fut>(mut condition: F)
@@ -1654,38 +1525,34 @@ mod tests {
     async fn recv_forwarded_tunnel_frame(
         rx: &mut mpsc::Receiver<wire::pb::Message>,
     ) -> wire::pb::TunnelFrame {
-        for _ in 0..2 {
+        for _ in 0..4 {
             let message = tokio::time::timeout(Duration::from_secs(1), rx.recv())
                 .await
                 .expect("timed out waiting for forwarded TunnelFrame")
                 .expect("forwarded TunnelFrame channel closed");
             match message.body {
                 Some(wire::pb::message::Body::TunnelFrame(frame)) => return frame,
-                Some(wire::pb::message::Body::RoutingEvent(_)) => continue,
+                Some(wire::pb::message::Body::NeighborUp(_))
+                | Some(wire::pb::message::Body::NeighborDown(_)) => continue,
                 _ => panic!("expected forwarded TunnelFrame"),
             }
         }
         panic!("expected forwarded TunnelFrame");
     }
 
-    async fn recv_forwarded_host_up(
-        rx: &mut mpsc::Receiver<wire::pb::Message>,
-    ) -> wire::pb::HostUp {
+    async fn recv_neighbor_up(rx: &mut mpsc::Receiver<wire::pb::Message>) -> wire::pb::NeighborUp {
         let message = tokio::time::timeout(Duration::from_secs(1), rx.recv())
             .await
-            .expect("timed out waiting for forwarded HostUp")
-            .expect("forwarded HostUp channel closed");
-        let Some(wire::pb::message::Body::RoutingEvent(wire::pb::RoutingEvent {
-            event: Some(wire::pb::routing_event::Event::HostUp(host_up)),
-        })) = message.body
-        else {
-            panic!("expected forwarded HostUp");
+            .expect("timed out waiting for NeighborUp")
+            .expect("NeighborUp channel closed");
+        let Some(wire::pb::message::Body::NeighborUp(up)) = message.body else {
+            panic!("expected NeighborUp, got {message:?}");
         };
-        host_up
+        up
     }
 
     async fn establish(
-        ctx: RoutingConnectCtx,
+        ctx: LinkServiceCtx,
         peer: &Host,
     ) -> (
         mpsc::Sender<wire::pb::Message>,
@@ -1695,12 +1562,11 @@ mod tests {
         let mut output_rx = spawn_acceptor_connect(ctx, stream_from_rx(input_rx));
         input_tx.send(hello(peer)).await.unwrap();
         assert_accepted_hello_ack(&recv_message(&mut output_rx).await);
-        assert_snapshot_complete(&recv_message(&mut output_rx).await);
         (input_tx, output_rx)
     }
 
     async fn establish_connector(
-        ctx: RoutingConnectorCtx,
+        ctx: LinkConnectorCtx,
         peer: &Host,
     ) -> (
         mpsc::Sender<wire::pb::Message>,
@@ -1709,15 +1575,14 @@ mod tests {
         let (input_tx, input_rx) = mpsc::channel(8);
         let mut output_rx = spawn_connector_connect(ctx, stream_from_rx(input_rx));
         assert_connector_hello(&recv_message(&mut output_rx).await);
-        input_tx.send(accepted_ack(peer, "assigned")).await.unwrap();
-        assert_snapshot_complete(&recv_message(&mut output_rx).await);
+        input_tx.send(accepted_ack(peer)).await.unwrap();
         (input_tx, output_rx)
     }
 
     fn spawn_connector_connect_with_auth<S>(
-        ctx: RoutingConnectorCtx,
+        ctx: LinkConnectorCtx,
         input: S,
-        auth: RoutingConnectorAuth,
+        auth: LinkConnectorAuth,
     ) -> mpsc::Receiver<wire::pb::Message>
     where
         S: Stream<Item = Result<wire::pb::Message, tonic::Status>> + Send + 'static,
@@ -1738,14 +1603,12 @@ mod tests {
             panic!("expected Hello");
         };
         assert_eq!(hello.supported_protocol_versions, vec![PROTOCOL_VERSION]);
-        assert_eq!(hello.proposed_link_name, "local");
         assert!(hello.host.is_some());
     }
 
     fn assert_accepted_hello_ack(message: &wire::pb::Message) {
         let accepted = accepted_hello_ack_message(message);
         assert_eq!(accepted.protocol_version, PROTOCOL_VERSION);
-        assert_eq!(accepted.assigned_link_name, "peer");
     }
 
     fn accepted_hello_ack_message(message: &wire::pb::Message) -> &wire::pb::HelloAccepted {
@@ -1775,17 +1638,6 @@ mod tests {
             panic!("expected error HelloAck");
         };
         error
-    }
-
-    fn assert_snapshot_complete(message: &wire::pb::Message) {
-        assert!(matches!(
-            &message.body,
-            Some(wire::pb::message::Body::RoutingEvent(
-                wire::pb::RoutingEvent {
-                    event: Some(wire::pb::routing_event::Event::SnapshotComplete(_))
-                }
-            ))
-        ));
     }
 
     fn assert_protocol_link_close(message: &wire::pb::Message) {
@@ -1846,48 +1698,29 @@ mod tests {
         assert_eq!(reauth.auth_token, expected_token);
     }
 
+    /// The acceptor accepts a Hello and applies its neighbor snapshot as the
+    /// peer's adjacency claims — but, holding no outbound channel on the
+    /// link, records no Direct route to the dialer itself.
     #[tokio::test]
-    async fn connect_accepts_hello_sends_ack_and_stores_direct_peer() {
+    async fn acceptor_applies_handshake_snapshot_but_stores_no_direct_route() {
         let (ctx, routing, _tunnels) = test_ctx().await;
         let peer = host(2, "peer-host");
+        let remote = host(3, "remote-host");
 
         let (input_tx, input_rx) = mpsc::channel(8);
         let mut output_rx = spawn_acceptor_connect(ctx, stream_from_rx(input_rx));
-        input_tx.send(hello(&peer)).await.unwrap();
+        input_tx
+            .send(hello_with_neighbors(&peer, std::slice::from_ref(&remote)))
+            .await
+            .unwrap();
 
         assert_accepted_hello_ack(&recv_message(&mut output_rx).await);
-        assert_snapshot_complete(&recv_message(&mut output_rx).await);
-
-        let entry = routing.host_entry(peer.id).await.unwrap();
-        assert_eq!(entry.host, peer);
-        assert_eq!(entry.route, route(&["peer"]));
-
-        drop(input_tx);
-    }
-
-    #[tokio::test]
-    async fn acceptor_without_outbound_channel_does_not_store_direct_peer_by_default() {
-        let local = host(1, "local");
-        let routing = Arc::new(RoutingCore::new());
-        let (incoming_tx, _incoming_rx) = mpsc::channel(4);
-        let tunnels = Arc::new(TunnelPool::new(local.id, routing.clone(), incoming_tx));
-        crate::routing::spawn_routing_event_fanout(routing.clone(), tunnels.link_registry()).await;
-        let ctx = RoutingConnectCtx::new(
-            local,
-            routing.clone(),
-            tunnels.clone(),
-            link("peer"),
-            route_runtime(&tunnels),
-        );
-        let peer = host(2, "peer-host");
-
-        let (input_tx, input_rx) = mpsc::channel(8);
-        let mut output_rx = spawn_acceptor_connect(ctx, stream_from_rx(input_rx));
-        input_tx.send(hello(&peer)).await.unwrap();
-
-        assert_accepted_hello_ack(&recv_message(&mut output_rx).await);
-        assert_snapshot_complete(&recv_message(&mut output_rx).await);
-        assert!(routing.host_entry(peer.id).await.is_none());
+        wait_until(|| {
+            let routing = routing.clone();
+            async move { routing.route_to(remote.id).await == Some(Route::Via(peer.id)) }
+        })
+        .await;
+        assert_eq!(routing.route_to(peer.id).await, None);
 
         drop(input_tx);
     }
@@ -1938,7 +1771,7 @@ mod tests {
             "token-b",
             refreshed_user,
         )]));
-        let ctx = ctx.with_auth_session(RoutingAuthSession::new(initial_user, authenticator, None));
+        let ctx = ctx.with_auth_session(LinkAuthSession::new(initial_user, authenticator, None));
 
         let (input_tx, mut output_rx) = establish(ctx, &peer).await;
         input_tx
@@ -1959,7 +1792,7 @@ mod tests {
         let initial_user = auth_user(100, "client-a", Duration::from_secs(3600));
         let wrong_user = auth_user(200, "client-a", Duration::from_secs(7200));
         let authenticator = Arc::new(TestTokenAuthenticator::new(vec![("token-b", wrong_user)]));
-        let ctx = ctx.with_auth_session(RoutingAuthSession::new(initial_user, authenticator, None));
+        let ctx = ctx.with_auth_session(LinkAuthSession::new(initial_user, authenticator, None));
 
         let (input_tx, mut output_rx) = establish(ctx, &peer).await;
         input_tx
@@ -2027,7 +1860,7 @@ mod tests {
         let peer = host(2, "peer-host");
         let initial_user = auth_user(100, "client-a", Duration::from_millis(25));
         let authenticator = Arc::new(TestTokenAuthenticator::new(Vec::new()));
-        let ctx = ctx.with_auth_session(RoutingAuthSession::new(initial_user, authenticator, None));
+        let ctx = ctx.with_auth_session(LinkAuthSession::new(initial_user, authenticator, None));
 
         let (_input_tx, mut output_rx) = establish(ctx, &peer).await;
 
@@ -2041,7 +1874,7 @@ mod tests {
         peer.version = "1.0.0".to_string();
         let initial_user = auth_user(100, "client-a", Duration::from_secs(3600));
         let authenticator = Arc::new(TestTokenAuthenticator::new(Vec::new()));
-        let ctx = ctx.with_auth_session(RoutingAuthSession::new(
+        let ctx = ctx.with_auth_session(LinkAuthSession::new(
             initial_user,
             authenticator,
             Some("2.0.0".to_string()),
@@ -2065,7 +1898,7 @@ mod tests {
         let (input_tx, input_rx) = mpsc::channel(8);
         let mut output_rx = spawn_acceptor_connect(ctx, stream_from_rx(input_rx));
         input_tx
-            .send(hello_with(&peer, vec![PROTOCOL_VERSION + 1], "peer"))
+            .send(hello_with_versions(&peer, vec![PROTOCOL_VERSION + 1]))
             .await
             .unwrap();
 
@@ -2083,39 +1916,19 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn acceptor_rejects_invalid_proposed_link_with_structured_error() {
-        let (ctx, routing, _tunnels) = test_ctx().await;
-        let peer = host(2, "peer-host");
-        let (input_tx, input_rx) = mpsc::channel(8);
-        let mut output_rx = spawn_acceptor_connect(ctx, stream_from_rx(input_rx));
-        input_tx
-            .send(hello_with(&peer, vec![PROTOCOL_VERSION], "bad.link"))
-            .await
-            .unwrap();
-
-        let response = recv_message(&mut output_rx).await;
-        let error = hello_ack_error(&response);
-        assert!(matches!(
-            wire::decode_protocol_error(error.clone()),
-            ProtocolError::InvalidLinkName { name, .. } if name == "bad.link"
-        ));
-        assert!(routing.host_entry(peer.id).await.is_none());
-    }
-
-    #[tokio::test]
     async fn connector_sends_reauth_before_token_expiry() {
         let (ctx, _routing, _tunnels, _local) = connector_test_ctx().await;
         let peer = host(2, "peer-host");
         let calls = Arc::new(Mutex::new(0));
         let refresher = Arc::new(TestTokenRefresher {
-            token: RoutingConnectorToken {
+            token: LinkConnectorToken {
                 token: "token-b".to_string(),
                 expires_at: SystemTime::now() + Duration::from_secs(3600),
             },
             calls: calls.clone(),
         });
-        let auth = RoutingConnectorAuth::new(
-            RoutingConnectorToken {
+        let auth = LinkConnectorAuth::new(
+            LinkConnectorToken {
                 token: "token-a".to_string(),
                 expires_at: SystemTime::now(),
             },
@@ -2125,11 +1938,7 @@ mod tests {
         let (input_tx, input_rx) = mpsc::channel(8);
         let mut output_rx = spawn_connector_connect_with_auth(ctx, stream_from_rx(input_rx), auth);
         assert_connector_hello(&recv_message(&mut output_rx).await);
-        input_tx
-            .send(accepted_ack(&peer, "assigned"))
-            .await
-            .unwrap();
-        assert_snapshot_complete(&recv_message(&mut output_rx).await);
+        input_tx.send(accepted_ack(&peer)).await.unwrap();
 
         assert_reauth_message(&recv_message(&mut output_rx).await, "token-b");
         input_tx
@@ -2144,237 +1953,223 @@ mod tests {
         drop(input_tx);
     }
 
+    /// D14: the snapshot is a field of the handshake. A second link
+    /// established after the first learns the existing neighbor in its
+    /// HelloAccepted, not from any separate snapshot phase.
     #[tokio::test]
-    async fn dynamic_acceptor_suffixes_busy_proposed_link_and_releases_on_close() {
-        let local = host(1, "local");
-        let routing = Arc::new(RoutingCore::new());
-        let (incoming_tx, _incoming_rx) = mpsc::channel(4);
-        let tunnels = Arc::new(TunnelPool::new(local.id, routing.clone(), incoming_tx));
-        let ctx = RoutingConnectCtx::dynamic(
-            local,
-            routing.clone(),
-            tunnels.clone(),
-            route_runtime(&tunnels),
-        )
-        .with_routing_only_direct_routes();
-        let busy_link = link("peer");
-        assert!(routing.reserve_exact_link(&busy_link).await);
+    async fn hello_ack_carries_the_current_neighbor_snapshot() {
+        let (ctx, _routing, _tunnels) = test_ctx().await;
+        let first_peer = host(2, "first-peer");
+        let (_first_tx, _first_rx) = establish(ctx.clone(), &first_peer).await;
 
-        let peer = host(2, "peer-host");
+        let second_peer = host(3, "second-peer");
         let (input_tx, input_rx) = mpsc::channel(8);
         let mut output_rx = spawn_acceptor_connect(ctx, stream_from_rx(input_rx));
-        input_tx.send(hello(&peer)).await.unwrap();
+        input_tx.send(hello(&second_peer)).await.unwrap();
 
         let ack = recv_message(&mut output_rx).await;
         let accepted = accepted_hello_ack_message(&ack);
-        assert_eq!(accepted.protocol_version, PROTOCOL_VERSION);
-        assert_ne!(accepted.assigned_link_name, "peer");
-        assert!(accepted.assigned_link_name.starts_with("peer-"));
-        assert_snapshot_complete(&recv_message(&mut output_rx).await);
-
-        let assigned_link = link(&accepted.assigned_link_name);
-        let entry = routing.host_entry(peer.id).await.unwrap();
-        assert_eq!(entry.route, Route::from_link(assigned_link.clone()));
-
-        drop(input_tx);
-        tokio::time::timeout(Duration::from_secs(1), async {
-            loop {
-                if routing.host_entry(peer.id).await.is_none()
-                    && routing.reserve_exact_link(&assigned_link).await
-                {
-                    break;
-                }
-                tokio::task::yield_now().await;
-            }
-        })
-        .await
-        .expect("timed out waiting for dynamic link cleanup");
-    }
-
-    #[tokio::test]
-    async fn acceptor_allows_distinct_route_for_already_reachable_host() {
-        let (ctx, routing, _tunnels) = test_ctx().await;
-        let peer = host(2, "peer-host");
-        let existing_route = route(&["existing"]);
-        routing
-            .apply_host_up(peer.clone(), existing_route.clone(), None)
-            .await;
-
-        let (input_tx, input_rx) = mpsc::channel(8);
-        let mut output_rx = spawn_acceptor_connect(ctx, stream_from_rx(input_rx));
-        input_tx.send(hello(&peer)).await.unwrap();
-
-        assert_accepted_hello_ack(&recv_message(&mut output_rx).await);
-        assert_snapshot_complete(&recv_message(&mut output_rx).await);
         assert_eq!(
-            routing.host_entry(peer.id).await.unwrap().route,
-            existing_route
-        );
-        assert_eq!(
-            routing
-                .routing_events_snapshot()
-                .await
-                .into_iter()
-                .filter_map(|event| match event {
-                    CoreRoutingEvent::HostUp { host, route, .. } if host.id == peer.id => {
-                        Some(route)
-                    }
-                    _ => None,
-                })
+            accepted
+                .neighbors
+                .iter()
+                .map(|host| host.host_id.clone())
                 .collect::<Vec<_>>(),
-            vec![existing_route, route(&["peer"])]
+            vec![first_peer.id.as_bytes().to_vec()]
         );
         drop(input_tx);
     }
 
     #[tokio::test]
-    async fn direct_peer_store_adds_distinct_route_for_already_reachable_host() {
-        let (_ctx, routing, _tunnels) = test_ctx().await;
-        let peer = host(2, "peer-host");
-        let existing_route = route(&["existing"]);
-
-        routing
-            .apply_host_up(peer.clone(), existing_route.clone(), None)
-            .await;
-
-        let outcome =
-            store_direct_peer(&routing, HostId::from_u128(1), &link("peer"), peer.clone())
-                .await
-                .unwrap();
-        assert!(matches!(outcome, DirectPeerStoreOutcome::Inserted));
-        assert_eq!(
-            routing.host_entry(peer.id).await.unwrap().route,
-            existing_route
-        );
-        assert_eq!(
-            routing
-                .routing_events_snapshot()
-                .await
-                .into_iter()
-                .filter_map(|event| match event {
-                    CoreRoutingEvent::HostUp { host, route, .. } if host.id == peer.id => {
-                        Some(route)
-                    }
-                    _ => None,
-                })
-                .collect::<Vec<_>>(),
-            vec![existing_route, route(&["peer"])]
-        );
-    }
-
-    #[tokio::test]
-    async fn acceptor_rejects_semantically_invalid_remote_host() {
-        let (ctx, routing, _tunnels) = test_ctx().await;
-        let mut peer = host(2, "peer-host");
-        peer.name.clear();
-        let (input_tx, input_rx) = mpsc::channel(8);
-        let mut output_rx = spawn_acceptor_connect(ctx, stream_from_rx(input_rx));
-        input_tx.send(hello(&peer)).await.unwrap();
-
-        let response = recv_message(&mut output_rx).await;
-        let error = hello_ack_error(&response);
-        assert_eq!(error.code, wire::pb::ErrorCode::InvalidArgument as i32);
-        assert!(error.message.contains("host name must be non-empty"));
-        assert!(routing.host_entry(peer.id).await.is_none());
-    }
-
-    #[tokio::test]
-    async fn connect_applies_inbound_routing_events_with_incoming_link_origin() {
+    async fn inbound_neighbor_up_records_an_adjacency_claim() {
         let (ctx, routing, _tunnels) = test_ctx().await;
         let peer = host(2, "peer-host");
         let remote = host(3, "remote-host");
         let (input_tx, _output_rx) = establish(ctx, &peer).await;
 
-        input_tx
-            .send(routing_host_up(&remote, &["remote-link"]))
-            .await
-            .unwrap();
-        let entry = tokio::time::timeout(Duration::from_secs(1), async {
-            loop {
-                if let Some(entry) = routing.host_entry(remote.id).await {
-                    break entry;
-                }
-                tokio::task::yield_now().await;
-            }
+        input_tx.send(neighbor_up(&remote)).await.unwrap();
+
+        wait_until(|| {
+            let routing = routing.clone();
+            async move { routing.route_to(remote.id).await == Some(Route::Via(peer.id)) }
         })
-        .await
-        .expect("timed out waiting for inbound HostUp to be stored");
-
-        assert_eq!(entry.host, remote);
-        assert_eq!(entry.route, route(&["peer", "remote-link"]));
+        .await;
+        drop(input_tx);
     }
 
     #[tokio::test]
-    async fn connect_forwards_live_routing_events_after_snapshot() {
-        let (ctx, _routing, tunnels) = test_ctx().await;
-        let peer = host(2, "peer-host");
-        let other = host(4, "other-host");
-        let (input_tx, _output_rx) = establish(ctx, &peer).await;
-
-        let (next_tx, mut next_rx) = mpsc::channel(4);
-        let next_link = link("next");
-        tunnels
-            .link_registry()
-            .register(next_link.clone(), HostId::from_u128(99), next_tx)
-            .await;
-        tunnels.link_registry().activate(&next_link, []).await;
-
-        input_tx
-            .send(routing_host_up(&other, &["other"]))
-            .await
-            .unwrap();
-
-        let up = recv_forwarded_host_up(&mut next_rx).await;
-        assert_eq!(up.host.unwrap().host_id, other.id.as_bytes());
-        assert_eq!(up.route.unwrap().links, ["peer", "other"]);
-    }
-
-    #[tokio::test]
-    async fn connect_rejects_bad_first_message_with_hello_ack_error() {
+    async fn inbound_neighbor_down_withdraws_the_claim() {
         let (ctx, routing, _tunnels) = test_ctx().await;
-        let (input_tx, input_rx) = mpsc::channel(8);
-        let mut output_rx = spawn_acceptor_connect(ctx, stream_from_rx(input_rx));
+        let peer = host(2, "peer-host");
+        let remote = host(3, "remote-host");
+        let (input_tx, _output_rx) = establish(ctx, &peer).await;
 
-        input_tx.send(routing_snapshot_complete()).await.unwrap();
+        input_tx.send(neighbor_up(&remote)).await.unwrap();
+        wait_until(|| {
+            let routing = routing.clone();
+            async move { routing.route_to(remote.id).await.is_some() }
+        })
+        .await;
 
-        assert_error_hello_ack(&recv_message(&mut output_rx).await);
-        assert!(routing.hosts_snapshot().await.is_empty());
+        input_tx.send(neighbor_down(remote.id)).await.unwrap();
+        wait_until(|| {
+            let routing = routing.clone();
+            async move { routing.route_to(remote.id).await.is_none() }
+        })
+        .await;
+        drop(input_tx);
     }
 
+    /// Rule 1 on the outbound side: a claim learned from one neighbor is
+    /// never re-advertised to another. The other link hears nothing.
     #[tokio::test]
-    async fn connect_dispatches_tunnel_frames_to_pool() {
-        let (ctx, _routing, tunnels) = test_ctx().await;
-        let peer = host(2, "peer-host");
-        let (next_tx, mut next_rx) = mpsc::channel(4);
-        let next_link = link("next");
-        tunnels
-            .link_registry()
-            .register(next_link.clone(), HostId::from_u128(99), next_tx)
-            .await;
-        tunnels.link_registry().activate(&next_link, []).await;
+    async fn claims_are_not_re_advertised_to_other_links() {
+        let (ctx, routing, _tunnels) = test_ctx().await;
+        let first_peer = host(2, "first-peer");
+        let second_peer = host(3, "second-peer");
+        let (_first_tx, mut first_rx) = establish(ctx.clone(), &first_peer).await;
+        let (second_tx, _second_rx) = establish(ctx, &second_peer).await;
 
-        let (input_tx, _output_rx) = establish(ctx, &peer).await;
+        // The first link learns about the second link coming up (adjacency).
+        let up = recv_neighbor_up(&mut first_rx).await;
+        assert_eq!(up.host.unwrap().host_id, second_peer.id.as_bytes().to_vec());
+
+        // The second peer claims adjacency to a remote host…
+        let remote = host(4, "remote-host");
+        second_tx.send(neighbor_up(&remote)).await.unwrap();
+        wait_until(|| {
+            let routing = routing.clone();
+            async move { routing.route_to(remote.id).await.is_some() }
+        })
+        .await;
+
+        // …and the first link must hear nothing about it.
+        assert!(
+            first_rx.try_recv().is_err(),
+            "learned claims must never be re-advertised"
+        );
+    }
+
+    /// A peer's claim about *us* says nothing we don't already know from
+    /// the link itself; it is ignored, not a protocol violation.
+    #[tokio::test]
+    async fn claims_about_the_local_host_are_ignored() {
+        let (ctx, routing, _tunnels) = test_ctx().await;
+        let peer = host(2, "peer-host");
+        let local_self = host(1, "local");
+        let (input_tx, mut output_rx) = establish(ctx, &peer).await;
+
+        input_tx.send(neighbor_up(&local_self)).await.unwrap();
         input_tx
-            .send(tunnel_frame(&["next", "target"], b"payload"))
+            .send(neighbor_up(&host(3, "real-claim")))
             .await
             .unwrap();
 
-        let frame = recv_forwarded_tunnel_frame(&mut next_rx).await;
+        wait_until(|| {
+            let routing = routing.clone();
+            async move { routing.route_to(HostId::from_u128(3)).await.is_some() }
+        })
+        .await;
+        assert!(routing.route_to(local_self.id).await.is_none());
+        assert!(output_rx.try_recv().is_err(), "the link stays up");
+        drop(input_tx);
+    }
+
+    #[tokio::test]
+    async fn inbound_neighbor_up_requires_semantically_valid_host() {
+        let (ctx, routing, _tunnels) = test_ctx().await;
+        let peer = host(2, "peer-host");
+        let mut invalid_host = host(3, "invalid-host");
+        invalid_host.name.clear();
+        let (input_tx, mut output_rx) = establish(ctx, &peer).await;
+
+        input_tx.send(neighbor_up(&invalid_host)).await.unwrap();
+
+        let message = recv_message(&mut output_rx).await;
+        let error = protocol_link_close_error(&message);
+        assert!(error.message.contains("host name must be non-empty"));
+        assert!(routing.host_entry(invalid_host.id).await.is_none());
+    }
+
+    /// Rule 2: a frame addressed to a host we hold a direct link to is
+    /// forwarded out that link.
+    #[tokio::test]
+    async fn frames_for_a_direct_neighbor_are_forwarded() {
+        let (ctx, _routing, tunnels) = test_ctx().await;
+        let peer = host(2, "peer-host");
+        let target = host(9, "target-host");
+
+        let (target_tx, mut target_rx) = mpsc::channel(8);
+        tunnels
+            .link_registry()
+            .register(
+                crate::routing::LinkId::new(target.id),
+                target.clone(),
+                target_tx,
+                LinkRole::Peer,
+                &[],
+            )
+            .await;
+
+        let (input_tx, _output_rx) = establish(ctx, &peer).await;
+        input_tx
+            .send(tunnel_frame(target.id, b"payload"))
+            .await
+            .unwrap();
+
+        let frame = recv_forwarded_tunnel_frame(&mut target_rx).await;
         assert_eq!(frame.payload, b"payload");
-        assert_eq!(frame.dst.unwrap().links, ["target"]);
+        assert_eq!(frame.dst, target.id.as_bytes().to_vec());
         assert!(frame.tunnel_id.is_some());
+    }
+
+    /// Rule 2's other half: no direct link to dst, no forwarding — the
+    /// frame is dropped without disturbing the link.
+    #[tokio::test]
+    async fn frames_for_an_unknown_destination_are_dropped() {
+        let (ctx, routing, _tunnels) = test_ctx().await;
+        let peer = host(2, "peer-host");
+        let (input_tx, mut output_rx) = establish(ctx, &peer).await;
+        assert!(routing.host_entry(peer.id).await.is_none());
+
+        input_tx
+            .send(tunnel_frame(HostId::from_u128(77), b"to-nowhere"))
+            .await
+            .unwrap();
+        input_tx
+            .send(neighbor_up(&host(3, "still-alive")))
+            .await
+            .unwrap();
+
+        wait_until(|| {
+            let routing = routing.clone();
+            async move { routing.route_to(HostId::from_u128(3)).await.is_some() }
+        })
+        .await;
+        assert!(output_rx.try_recv().is_err(), "the link stays up");
+        drop(input_tx);
     }
 
     #[tokio::test]
     async fn oversized_tunnel_frame_sends_protocol_link_close_and_cleans_link() {
-        let (ctx, routing, _tunnels) = test_ctx().await;
+        let (ctx, _routing, tunnels) = test_ctx().await;
         let peer = host(2, "peer-host");
         let (input_tx, mut output_rx) = establish(ctx, &peer).await;
-        assert!(routing.host_entry(peer.id).await.is_some());
+        wait_until(|| {
+            let tunnels = tunnels.clone();
+            async move {
+                tunnels
+                    .link_registry()
+                    .link_to_peer(peer.id)
+                    .await
+                    .is_some()
+            }
+        })
+        .await;
 
         let oversized = vec![0_u8; crate::tunnel::TUNNEL_FRAME_PAYLOAD_MAX + 1];
         input_tx
-            .send(tunnel_frame(&["next"], &oversized))
+            .send(tunnel_frame(HostId::from_u128(9), &oversized))
             .await
             .unwrap();
 
@@ -2383,23 +2178,38 @@ mod tests {
         assert_eq!(error.code, wire::pb::ErrorCode::InvalidArgument as i32);
         assert!(error.message.contains("payload exceeds"));
         wait_until(|| {
-            let routing = routing.clone();
-            async move { routing.host_entry(peer.id).await.is_none() }
+            let tunnels = tunnels.clone();
+            async move {
+                tunnels
+                    .link_registry()
+                    .link_to_peer(peer.id)
+                    .await
+                    .is_none()
+            }
         })
         .await;
     }
 
     #[tokio::test]
     async fn post_handshake_stream_error_sends_protocol_link_close_and_cleans_link() {
-        let (ctx, routing, _tunnels) = test_ctx().await;
+        let (ctx, _routing, tunnels) = test_ctx().await;
         let peer = host(2, "peer-host");
         let (input_tx, input_rx) = mpsc::channel(8);
         let mut output_rx = spawn_acceptor_connect(ctx, stream_from_result_rx(input_rx));
 
         input_tx.send(Ok(hello(&peer))).await.unwrap();
         assert_accepted_hello_ack(&recv_message(&mut output_rx).await);
-        assert_snapshot_complete(&recv_message(&mut output_rx).await);
-        assert!(routing.host_entry(peer.id).await.is_some());
+        wait_until(|| {
+            let tunnels = tunnels.clone();
+            async move {
+                tunnels
+                    .link_registry()
+                    .link_to_peer(peer.id)
+                    .await
+                    .is_some()
+            }
+        })
+        .await;
         input_tx
             .send(Err(tonic::Status::resource_exhausted("message too large")))
             .await
@@ -2408,22 +2218,35 @@ mod tests {
         let error = protocol_link_close_error(&message);
         assert!(error.message.contains("message too large"));
         wait_until(|| {
-            let routing = routing.clone();
-            async move { routing.host_entry(peer.id).await.is_none() }
+            let tunnels = tunnels.clone();
+            async move {
+                tunnels
+                    .link_registry()
+                    .link_to_peer(peer.id)
+                    .await
+                    .is_none()
+            }
         })
         .await;
     }
 
     /// D11: an inbound `LinkClose` means "the link is closed now" — the
-    /// handler tears the link down immediately; there is no drain window in
-    /// which frames keep flowing.
+    /// handler tears the link down immediately, including the claims the
+    /// peer had made.
     #[tokio::test]
     async fn inbound_link_close_tears_the_link_down_immediately() {
         let (ctx, routing, tunnels) = test_ctx().await;
         let peer = host(2, "peer-host");
+        let remote = host(3, "remote-host");
 
         let (input_tx, _output_rx) = establish(ctx, &peer).await;
-        assert!(routing.host_entry(peer.id).await.is_some());
+        input_tx.send(neighbor_up(&remote)).await.unwrap();
+        wait_until(|| {
+            let routing = routing.clone();
+            async move { routing.route_to(remote.id).await.is_some() }
+        })
+        .await;
+
         input_tx
             .send(link_close(wire::pb::LinkCloseReason::UserShutdown))
             .await
@@ -2431,7 +2254,7 @@ mod tests {
 
         wait_until(|| {
             let routing = routing.clone();
-            async move { routing.host_entry(peer.id).await.is_none() }
+            async move { routing.route_to(remote.id).await.is_none() }
         })
         .await;
         wait_until(|| {
@@ -2439,73 +2262,37 @@ mod tests {
             async move {
                 tunnels
                     .link_registry()
-                    .existing_tx(&link("peer"))
+                    .link_to_peer(peer.id)
                     .await
                     .is_none()
             }
         })
         .await;
-        assert!(matches!(
-            tunnels.channel_to(peer.id).await,
-            Err(crate::tunnel::TunnelPoolError::NotFound { host_id }) if host_id == peer.id
-        ));
     }
 
     #[tokio::test]
-    async fn connect_enqueues_host_up_before_later_peer_tunnel_frame() {
-        let (ctx, _routing, tunnels) = test_ctx().await;
-        let peer = host(2, "peer-host");
-        let (next_tx, mut next_rx) = mpsc::channel(4);
-        let next_link = link("next");
-        tunnels
-            .link_registry()
-            .register(next_link.clone(), HostId::from_u128(99), next_tx)
-            .await;
-        tunnels.link_registry().activate(&next_link, []).await;
-
-        let (input_tx, _output_rx) = establish(ctx, &peer).await;
-        input_tx
-            .send(tunnel_frame(&["next"], b"payload"))
-            .await
-            .unwrap();
-
-        let host_up = recv_forwarded_host_up(&mut next_rx).await;
-        assert_eq!(host_up.host.unwrap().host_id, peer.id.as_bytes());
-        assert_eq!(host_up.route.unwrap().links, ["peer"]);
-
-        let frame = recv_forwarded_tunnel_frame(&mut next_rx).await;
-        assert_eq!(frame.payload, b"payload");
-        assert_eq!(frame.dst.unwrap().links, Vec::<String>::new());
-        assert_eq!(
-            crate::tunnel::TunnelId::try_from(frame.tunnel_id.unwrap())
-                .unwrap()
-                .initiator,
-            peer.id
-        );
-    }
-
-    #[tokio::test]
-    async fn connect_cleans_link_routes_when_input_stream_closes() {
+    async fn connect_cleans_claims_when_input_stream_closes() {
         let (ctx, routing, _tunnels) = test_ctx().await;
         let peer = host(2, "peer-host");
+        let remote = host(3, "remote-host");
         let (input_tx, _output_rx) = establish(ctx, &peer).await;
-        assert!(routing.host_entry(peer.id).await.is_some());
+        input_tx.send(neighbor_up(&remote)).await.unwrap();
+        wait_until(|| {
+            let routing = routing.clone();
+            async move { routing.route_to(remote.id).await.is_some() }
+        })
+        .await;
 
         drop(input_tx);
-        tokio::time::timeout(Duration::from_secs(1), async {
-            loop {
-                if routing.host_entry(peer.id).await.is_none() {
-                    break;
-                }
-                tokio::task::yield_now().await;
-            }
+        wait_until(|| {
+            let routing = routing.clone();
+            async move { routing.route_to(remote.id).await.is_none() }
         })
-        .await
-        .expect("timed out waiting for link route cleanup");
+        .await;
     }
 
     #[tokio::test]
-    async fn connector_sends_hello_accepts_ack_and_stores_direct_peer() {
+    async fn connector_sends_hello_accepts_ack_and_stores_direct_route() {
         let (ctx, routing, _tunnels, local) = connector_test_ctx().await;
         let peer = host(2, "peer-host");
         let (input_tx, input_rx) = mpsc::channel(8);
@@ -2518,41 +2305,41 @@ mod tests {
         };
         assert_eq!(hello.host.unwrap().host_id, local.id.as_bytes());
 
-        input_tx
-            .send(accepted_ack(&peer, "assigned"))
-            .await
-            .unwrap();
-        assert_snapshot_complete(&recv_message(&mut output_rx).await);
+        input_tx.send(accepted_ack(&peer)).await.unwrap();
 
-        let entry = routing.host_entry(peer.id).await.unwrap();
-        assert_eq!(entry.host, peer);
-        assert_eq!(entry.route, route(&["assigned"]));
+        wait_until(|| {
+            let routing = routing.clone();
+            async move {
+                matches!(routing.route_to(peer.id).await, Some(Route::Direct(link)) if link.peer() == peer.id)
+            }
+        })
+        .await;
     }
 
     #[tokio::test]
-    async fn connector_applies_inbound_routing_events_with_assigned_link_origin() {
+    async fn connector_applies_hello_ack_snapshot_as_claims() {
         let (ctx, routing, _tunnels, _local) = connector_test_ctx().await;
         let peer = host(2, "peer-host");
         let remote = host(3, "remote-host");
-        let (input_tx, _output_rx) = establish_connector(ctx, &peer).await;
+        let (input_tx, input_rx) = mpsc::channel(8);
+        let mut output_rx = spawn_connector_connect(ctx, stream_from_rx(input_rx));
+        assert_connector_hello(&recv_message(&mut output_rx).await);
 
         input_tx
-            .send(routing_host_up(&remote, &["remote-link"]))
+            .send(accepted_ack_with(
+                &peer,
+                PROTOCOL_VERSION,
+                std::slice::from_ref(&remote),
+            ))
             .await
             .unwrap();
-        let entry = tokio::time::timeout(Duration::from_secs(1), async {
-            loop {
-                if let Some(entry) = routing.host_entry(remote.id).await {
-                    break entry;
-                }
-                tokio::task::yield_now().await;
-            }
-        })
-        .await
-        .expect("timed out waiting for connector inbound HostUp to be stored");
 
-        assert_eq!(entry.host, remote);
-        assert_eq!(entry.route, route(&["assigned", "remote-link"]));
+        wait_until(|| {
+            let routing = routing.clone();
+            async move { routing.route_to(remote.id).await == Some(Route::Via(peer.id)) }
+        })
+        .await;
+        drop(input_tx);
     }
 
     #[tokio::test]
@@ -2562,10 +2349,13 @@ mod tests {
         let mut output_rx = spawn_connector_connect(ctx, stream_from_rx(input_rx));
         assert_connector_hello(&recv_message(&mut output_rx).await);
 
-        input_tx.send(routing_snapshot_complete()).await.unwrap();
+        input_tx
+            .send(neighbor_down(HostId::from_u128(9)))
+            .await
+            .unwrap();
 
         assert_protocol_link_close(&recv_message(&mut output_rx).await);
-        assert!(routing.hosts_snapshot().await.is_empty());
+        assert!(routing.host_entry(HostId::from_u128(9)).await.is_none());
     }
 
     #[tokio::test]
@@ -2577,7 +2367,7 @@ mod tests {
         assert_connector_hello(&recv_message(&mut output_rx).await);
 
         input_tx
-            .send(accepted_ack_with(&peer, "assigned", PROTOCOL_VERSION + 1))
+            .send(accepted_ack_with(&peer, PROTOCOL_VERSION + 1, &[]))
             .await
             .unwrap();
 
@@ -2591,29 +2381,7 @@ mod tests {
             } if supported_versions == vec![PROTOCOL_VERSION]
                 && peer_supported_versions == vec![PROTOCOL_VERSION + 1]
         ));
-        assert!(routing.hosts_snapshot().await.is_empty());
-    }
-
-    #[tokio::test]
-    async fn connector_rejects_invalid_assigned_link_with_structured_link_close() {
-        let (ctx, routing, _tunnels, _local) = connector_test_ctx().await;
-        let peer = host(2, "peer-host");
-        let (input_tx, input_rx) = mpsc::channel(8);
-        let mut output_rx = spawn_connector_connect(ctx, stream_from_rx(input_rx));
-        assert_connector_hello(&recv_message(&mut output_rx).await);
-
-        input_tx
-            .send(accepted_ack(&peer, "bad.link"))
-            .await
-            .unwrap();
-
-        let message = recv_message(&mut output_rx).await;
-        let error = protocol_link_close_error(&message);
-        assert!(matches!(
-            wire::decode_protocol_error(error.clone()),
-            ProtocolError::InvalidLinkName { name, .. } if name == "bad.link"
-        ));
-        assert!(routing.hosts_snapshot().await.is_empty());
+        assert!(routing.host_entry(peer.id).await.is_none());
     }
 
     #[tokio::test]
@@ -2625,10 +2393,7 @@ mod tests {
         let mut output_rx = spawn_connector_connect(ctx, stream_from_rx(input_rx));
         assert_connector_hello(&recv_message(&mut output_rx).await);
 
-        input_tx
-            .send(accepted_ack(&spoofed, "assigned"))
-            .await
-            .unwrap();
+        input_tx.send(accepted_ack(&spoofed)).await.unwrap();
 
         let message = recv_message(&mut output_rx).await;
         let error = protocol_link_close_error(&message);
@@ -2637,112 +2402,59 @@ mod tests {
             ProtocolError::InvalidArgument { message }
                 if message.contains("does not match expected peer")
         ));
-        assert!(routing.hosts_snapshot().await.is_empty());
-    }
-
-    #[tokio::test]
-    async fn connector_releases_assigned_link_when_accepted_host_is_invalid() {
-        let (ctx, routing, _tunnels, _local) = connector_test_ctx().await;
-
-        let error = accept_peer_hello_ack(
-            &ctx,
-            wire::pb::HelloAccepted {
-                protocol_version: PROTOCOL_VERSION,
-                assigned_link_name: "assigned".to_string(),
-                host: None,
-            },
-        )
-        .await
-        .unwrap_err();
-
-        assert!(error.message.contains("HelloAccepted.host is required"));
-        assert!(
-            routing.reserve_exact_link(&link("assigned")).await,
-            "assigned link leaked after invalid accepted host"
-        );
-    }
-
-    #[tokio::test]
-    async fn inbound_host_up_for_local_host_id_is_protocol_error() {
-        let (ctx, routing, _tunnels) = test_ctx().await;
-        let peer = host(2, "peer-host");
-        let local_collision = host(1, "local-collision");
-        let (input_tx, mut output_rx) = establish(ctx, &peer).await;
-
-        input_tx
-            .send(routing_host_up(&local_collision, &["remote-link"]))
-            .await
-            .unwrap();
-
-        let message = recv_message(&mut output_rx).await;
-        let error = protocol_link_close_error(&message);
-        assert!(error.message.contains("must not match local host_id"));
-        assert!(routing.host_entry(local_collision.id).await.is_none());
-    }
-
-    #[tokio::test]
-    async fn inbound_host_up_requires_semantically_valid_host() {
-        let (ctx, routing, _tunnels) = test_ctx().await;
-        let peer = host(2, "peer-host");
-        let mut invalid_host = host(3, "invalid-host");
-        invalid_host.name.clear();
-        let (input_tx, mut output_rx) = establish(ctx, &peer).await;
-
-        input_tx
-            .send(routing_host_up(&invalid_host, &["remote-link"]))
-            .await
-            .unwrap();
-
-        let message = recv_message(&mut output_rx).await;
-        let error = protocol_link_close_error(&message);
-        assert!(error.message.contains("host name must be non-empty"));
-        assert!(routing.host_entry(invalid_host.id).await.is_none());
+        assert!(routing.host_entry(spoofed.id).await.is_none());
     }
 
     #[tokio::test]
     async fn connector_dispatches_tunnel_frames_to_pool() {
         let (ctx, _routing, tunnels, _local) = connector_test_ctx().await;
         let peer = host(2, "peer-host");
-        let (next_tx, mut next_rx) = mpsc::channel(4);
+        let target = host(9, "target-host");
+        let (target_tx, mut target_rx) = mpsc::channel(8);
         tunnels
             .link_registry()
-            .register(link("next"), HostId::from_u128(99), next_tx)
+            .register(
+                crate::routing::LinkId::new(target.id),
+                target.clone(),
+                target_tx,
+                LinkRole::Peer,
+                &[],
+            )
             .await;
 
         let (input_tx, _output_rx) = establish_connector(ctx, &peer).await;
         input_tx
-            .send(tunnel_frame(&["next", "target"], b"payload"))
+            .send(tunnel_frame(target.id, b"payload"))
             .await
             .unwrap();
 
-        let frame = recv_forwarded_tunnel_frame(&mut next_rx).await;
+        let frame = recv_forwarded_tunnel_frame(&mut target_rx).await;
         assert_eq!(frame.payload, b"payload");
-        assert_eq!(frame.dst.unwrap().links, ["target"]);
+        assert_eq!(frame.dst, target.id.as_bytes().to_vec());
         assert!(frame.tunnel_id.is_some());
     }
 
     #[tokio::test]
-    async fn connector_cleans_link_routes_when_input_stream_closes() {
+    async fn connector_cleans_direct_route_when_input_stream_closes() {
         let (ctx, routing, _tunnels, _local) = connector_test_ctx().await;
         let peer = host(2, "peer-host");
         let (input_tx, _output_rx) = establish_connector(ctx, &peer).await;
-        assert!(routing.host_entry(peer.id).await.is_some());
+        wait_until(|| {
+            let routing = routing.clone();
+            async move { routing.route_to(peer.id).await.is_some() }
+        })
+        .await;
 
         drop(input_tx);
-        tokio::time::timeout(Duration::from_secs(1), async {
-            loop {
-                if routing.host_entry(peer.id).await.is_none() {
-                    break;
-                }
-                tokio::task::yield_now().await;
-            }
+        wait_until(|| {
+            let routing = routing.clone();
+            async move { routing.route_to(peer.id).await.is_none() }
         })
-        .await
-        .expect("timed out waiting for connector link route cleanup");
+        .await;
     }
 
     #[tokio::test]
-    async fn connector_to_channel_establishes_routing_service_over_tonic() {
+    async fn connector_to_channel_establishes_link_service_over_tonic() {
         let acceptor_host = host(1, "acceptor");
         let acceptor_routing = Arc::new(RoutingCore::new());
         let (acceptor_incoming_tx, _acceptor_incoming_rx) = mpsc::channel(4);
@@ -2751,13 +2463,12 @@ mod tests {
             acceptor_routing.clone(),
             acceptor_incoming_tx,
         ));
-        let acceptor_ctx = RoutingConnectCtx::dynamic(
+        let acceptor_ctx = LinkServiceCtx::new(
             acceptor_host.clone(),
             acceptor_routing.clone(),
             acceptor_tunnels.clone(),
             route_runtime(&acceptor_tunnels),
-        )
-        .with_routing_only_direct_routes();
+        );
 
         let connector_host = host(2, "connector");
         let connector_routing = Arc::new(RoutingCore::new());
@@ -2768,11 +2479,10 @@ mod tests {
             connector_incoming_tx,
         ));
         let connector_route_runtime = route_runtime(&connector_tunnels);
-        let connector_ctx = RoutingConnectorCtx::new(
+        let connector_ctx = LinkConnectorCtx::new(
             connector_host.clone(),
             connector_routing.clone(),
             connector_tunnels,
-            link("connector"),
             connector_route_runtime.clone(),
         );
 
@@ -2781,7 +2491,7 @@ mod tests {
             stream::once(async move { Ok::<_, std::io::Error>(TestTransport::new(server_io)) });
         let server_task = tokio::spawn(async move {
             tonic::transport::Server::builder()
-                .add_service(wire::routing_service_server::RoutingServiceServer::new(
+                .add_service(wire::link_service_server::LinkServiceServer::new(
                     acceptor_ctx,
                 ))
                 .serve_with_incoming(incoming)
@@ -2794,48 +2504,45 @@ mod tests {
 
         tokio::time::timeout(Duration::from_secs(1), async {
             loop {
-                let acceptor_sees_connector = acceptor_routing
-                    .host_entry(connector_host.id)
+                let acceptor_has_link = acceptor_tunnels
+                    .link_registry()
+                    .link_to_peer(connector_host.id)
                     .await
                     .is_some();
-                let connector_sees_acceptor = connector_routing
-                    .host_entry(acceptor_host.id)
-                    .await
-                    .is_some();
-                if acceptor_sees_connector && connector_sees_acceptor {
+                let connector_routes_direct = matches!(
+                    connector_routing.route_to(acceptor_host.id).await,
+                    Some(Route::Direct(_))
+                );
+                if acceptor_has_link && connector_routes_direct {
                     break;
                 }
                 tokio::task::yield_now().await;
             }
         })
         .await
-        .expect("timed out waiting for tonic RoutingService.Connect establishment");
+        .expect("timed out waiting for tonic LinkService.Connect establishment");
 
-        let acceptor_entry = acceptor_routing
-            .host_entry(connector_host.id)
-            .await
-            .unwrap();
-        assert_eq!(acceptor_entry.route, route(&["connector"]));
-        let connector_entry = connector_routing
-            .host_entry(acceptor_host.id)
-            .await
-            .unwrap();
-        assert_eq!(connector_entry.route, route(&["connector"]));
+        let Some(Route::Direct(link)) = connector_routing.route_to(acceptor_host.id).await else {
+            panic!("expected a direct route");
+        };
         assert!(
             connector_route_runtime
                 .pool()
-                .get(&route(&["connector"]))
+                .get_direct(link)
                 .await
                 .is_some()
         );
+        // The acceptor advertises the dialer as wire adjacency but records
+        // no local route over a link it cannot call on (pre-tunnel chunk).
+        assert_eq!(acceptor_routing.route_to(connector_host.id).await, None);
 
         connector_task.abort();
         server_task.abort();
     }
 
     /// D11: an inbound `LinkClose` on the connector side cleans the link up
-    /// at once — the cached route-keyed channel is dropped and later calls
-    /// fail with an unavailable link instead of lingering through a drain.
+    /// at once — the cached link-keyed channel is dropped and later calls
+    /// fail with no route instead of lingering through a drain.
     #[tokio::test]
     async fn connector_manager_rejects_cached_channel_after_inbound_link_close() {
         let acceptor_host = host(1, "acceptor");
@@ -2846,13 +2553,12 @@ mod tests {
             acceptor_routing.clone(),
             acceptor_incoming_tx,
         ));
-        let acceptor_ctx = RoutingConnectCtx::dynamic(
+        let acceptor_ctx = LinkServiceCtx::new(
             acceptor_host.clone(),
             acceptor_routing.clone(),
             acceptor_tunnels.clone(),
             route_runtime(&acceptor_tunnels),
-        )
-        .with_routing_only_direct_routes();
+        );
 
         let connector_host = host(2, "connector");
         let connector_routing = Arc::new(RoutingCore::new());
@@ -2866,11 +2572,10 @@ mod tests {
             connector_routing.clone(),
             connector_tunnels.clone(),
         ));
-        let connector_ctx = RoutingConnectorCtx::new(
+        let connector_ctx = LinkConnectorCtx::new(
             connector_host.clone(),
             connector_routing.clone(),
             connector_tunnels.clone(),
-            link("connector"),
             connector_manager.route_runtime(),
         );
 
@@ -2879,7 +2584,7 @@ mod tests {
             stream::once(async move { Ok::<_, std::io::Error>(TestTransport::new(server_io)) });
         let server_task = tokio::spawn(async move {
             tonic::transport::Server::builder()
-                .add_service(wire::routing_service_server::RoutingServiceServer::new(
+                .add_service(wire::link_service_server::LinkServiceServer::new(
                     acceptor_ctx,
                 ))
                 .serve_with_incoming(incoming)
@@ -2891,26 +2596,17 @@ mod tests {
             spawn_connector_to_channel(connector_ctx, channel_from_test_transport(client_io));
         tokio::time::timeout(Duration::from_secs(1), async {
             loop {
-                if connector_routing
-                    .host_entry(acceptor_host.id)
-                    .await
-                    .is_some()
-                    && connector_manager
-                        .pool()
-                        .get(&route(&["connector"]))
-                        .await
-                        .is_some()
-                {
+                if matches!(
+                    connector_routing.route_to(acceptor_host.id).await,
+                    Some(Route::Direct(_))
+                ) {
                     break;
                 }
                 tokio::task::yield_now().await;
             }
         })
         .await
-        .expect("timed out waiting for connector route/channel");
-        connector_manager
-            .seed(connector_routing.routing_events_snapshot().await)
-            .await;
+        .expect("timed out waiting for connector direct route");
         let _cached = connector_manager
             .channel_to(acceptor_host.id)
             .await
@@ -2922,7 +2618,7 @@ mod tests {
             .into_iter()
             .next()
         else {
-            panic!("expected acceptor routing writer");
+            panic!("expected acceptor link writer");
         };
 
         acceptor_tx
@@ -2931,14 +2627,10 @@ mod tests {
             .unwrap();
         tokio::time::timeout(Duration::from_secs(1), async {
             loop {
-                if connector_manager
-                    .pool()
-                    .get(&route(&["connector"]))
-                    .await
-                    .is_none()
+                if connector_routing.route_to(acceptor_host.id).await.is_none()
                     && connector_tunnels
                         .link_registry()
-                        .existing_tx(&link("connector"))
+                        .link_to_peer(acceptor_host.id)
                         .await
                         .is_none()
                 {
@@ -2956,7 +2648,7 @@ mod tests {
             .unwrap_err();
 
         assert!(
-            matches!(error, crate::tunnel::TunnelPoolError::LinkUnavailable { link: observed } if observed == link("connector"))
+            matches!(error, crate::tunnel::TunnelPoolError::NotFound { host_id } if host_id == acceptor_host.id)
         );
         connector_task.abort();
         server_task.abort();
@@ -2972,13 +2664,12 @@ mod tests {
             acceptor_routing.clone(),
             acceptor_incoming_tx,
         ));
-        let acceptor_ctx = RoutingConnectCtx::dynamic(
+        let acceptor_ctx = LinkServiceCtx::new(
             acceptor_host.clone(),
             acceptor_routing.clone(),
             acceptor_tunnels.clone(),
             route_runtime(&acceptor_tunnels),
-        )
-        .with_routing_only_direct_routes();
+        );
 
         let connector_host = host(2, "connector");
         let connector_routing = Arc::new(RoutingCore::new());
@@ -2988,11 +2679,10 @@ mod tests {
             connector_routing.clone(),
             connector_incoming_tx,
         ));
-        let connector_ctx = RoutingConnectorCtx::new(
+        let connector_ctx = LinkConnectorCtx::new(
             connector_host.clone(),
             connector_routing.clone(),
             connector_tunnels.clone(),
-            link("connector"),
             route_runtime(&connector_tunnels),
         );
 
@@ -3001,8 +2691,8 @@ mod tests {
             stream::once(async move { Ok::<_, std::io::Error>(TestTransport::new(server_io)) });
         let server_task = tokio::spawn(async move {
             tonic::transport::Server::builder()
-                .add_service(wire::routing_service_server::RoutingServiceServer::new(
-                    MetadataCheckingRoutingService {
+                .add_service(wire::link_service_server::LinkServiceServer::new(
+                    MetadataCheckingLinkService {
                         inner: acceptor_ctx,
                         expected_authorization: "Bearer test-token",
                     },
@@ -3020,22 +2710,23 @@ mod tests {
 
         tokio::time::timeout(Duration::from_secs(1), async {
             loop {
-                let acceptor_sees_connector = acceptor_routing
-                    .host_entry(connector_host.id)
+                let acceptor_has_link = acceptor_tunnels
+                    .link_registry()
+                    .link_to_peer(connector_host.id)
                     .await
                     .is_some();
                 let connector_sees_acceptor = connector_routing
                     .host_entry(acceptor_host.id)
                     .await
                     .is_some();
-                if acceptor_sees_connector && connector_sees_acceptor {
+                if acceptor_has_link && connector_sees_acceptor {
                     break;
                 }
                 tokio::task::yield_now().await;
             }
         })
         .await
-        .expect("timed out waiting for metadata-authenticated RoutingService.Connect");
+        .expect("timed out waiting for metadata-authenticated LinkService.Connect");
 
         assert!(!connector_task.is_finished());
         connector_task.abort();
@@ -3043,15 +2734,15 @@ mod tests {
     }
 
     #[derive(Clone)]
-    struct MetadataCheckingRoutingService {
-        inner: RoutingConnectCtx,
+    struct MetadataCheckingLinkService {
+        inner: LinkServiceCtx,
         expected_authorization: &'static str,
     }
 
     #[tonic::async_trait]
-    impl wire::routing_service_server::RoutingService for MetadataCheckingRoutingService {
+    impl wire::link_service_server::LinkService for MetadataCheckingLinkService {
         type ConnectStream =
-            <RoutingConnectCtx as wire::routing_service_server::RoutingService>::ConnectStream;
+            <LinkServiceCtx as wire::link_service_server::LinkService>::ConnectStream;
 
         async fn connect(
             &self,
@@ -3066,7 +2757,7 @@ mod tests {
                     "missing expected authorization metadata",
                 ));
             }
-            <RoutingConnectCtx as wire::routing_service_server::RoutingService>::connect(
+            <LinkServiceCtx as wire::link_service_server::LinkService>::connect(
                 &self.inner,
                 request,
             )
@@ -3126,7 +2817,7 @@ mod tests {
 
     fn channel_from_test_transport(transport: DuplexStream) -> Channel {
         let transport = Arc::new(Mutex::new(Some(TestTransport::new(transport))));
-        Endpoint::from_static("http://routing-test").connect_with_connector_lazy(service_fn(
+        Endpoint::from_static("http://link-test").connect_with_connector_lazy(service_fn(
             move |_uri: Uri| {
                 let transport = Arc::clone(&transport);
                 async move {

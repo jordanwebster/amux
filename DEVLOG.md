@@ -38,6 +38,75 @@ One paragraph describing what was done.
 
 ---
 
+## 2026-06-11: v6 chunk 2 — route by host id with adjacency-only events
+
+### Summary
+The core routing rewrite (D2, D14, the routing-relevant D13 renames;
+PROTOCOL_VERSION = 6). Routes are now `Direct(link) | Via(relay_host)` and
+the wire carries host-id-addressed frames under two structural rules:
+advertise only adjacency (`NeighborUp`/`NeighborDown` claim strictly "I
+have/lost a direct link to H") and forward only to adjacency (a frame for
+`dst` is forwarded iff a direct link to `dst` exists, else dropped). Route
+lists, prepend-on-forward, split-horizon, hop caps, route dedup, wire link
+names, and the snapshot/delta phase distinction (`SnapshotComplete`,
+pre-activation event buffering) are deleted. The neighbor snapshot is a
+field of `Hello`/`HelloAccepted`, reconciled atomically with link
+registration. Presence is a two-hop derivation; replies leave on the
+tunnel's arrival link, which removes the §6.6 direction-dependent
+black-hole structurally. `RoutingService` → `LinkService`. The dual-path
+channel discipline (direct channels eager, Via tunnels lazy) survives
+until chunk 3 (P8).
+
+### Changes
+- `proto/amux/v1/amux.proto`: `Route` message deleted; `TunnelFrame.dst`
+  is a host id; `HostUp/HostDown` → top-level `NeighborUp { host }` /
+  `NeighborDown { host_id, reason }` (no route field); `RoutingEvent`
+  envelope and `SnapshotComplete` deleted; `Hello`/`HelloAccepted` lose
+  link names and gain `neighbors`; `service RoutingService` →
+  `service LinkService`.
+- `routing/route.rs` deleted (898 + 443 lines of route-list machinery with
+  `routing/core.rs` rewritten around host entries + claims); registry-level
+  adjacency discipline moved into `routing/link_registry.rs::register`
+  (snapshot diff + `NeighborUp` fanout under one lock).
+- `tunnel/pool.rs`: forwarding is the registry lookup
+  (`forward_to_peer`), non-awaiting — a congested peer link gets the
+  existing try_send-or-request-close policy instead of stalling the origin
+  link's inbound processing (head-of-line guard).
+- `connection.rs`: `ChannelKey::{Direct(link), Via{target, relay}}`
+  replaces route-keyed pooling; §6.2/§6.7 guards reduced to what the new
+  model still needs.
+- Startup/cloud (`services/startup/*`, `user_state.rs`): per-user
+  registries fan out scoped `NeighborUp`s; the cloud is adjacency, not a
+  host — neither side records a host entry for the other.
+- Harness/spec: `WirePeer` speaks the v6 handshake; chain tests rewritten —
+  `endpoints_call_each_other_through_a_chain_regardless_of_dial_direction`
+  (the §6.6 pair collapsed; dial direction no longer matters) and
+  `presence_reaches_exactly_two_hops_along_a_chain` (catalog 28b inverted:
+  three hops out is deliberately invisible).
+
+### Decisions Made
+- Pre-planned spec flips only: 28b inversion, §6.6 collapse, handshake-
+  snapshot wire tests. Everything else green with mechanical updates.
+- Lib tests that asserted v5 observables were re-pointed at v6 ones:
+  rate-limit/forwarding tests count `TunnelFrame` bodies (links also carry
+  adjacency events now); cloud-startup tests wait on live links in the
+  registries instead of host entries (the cloud never appears as a host).
+
+### Verification
+- `cargo test -p amux --lib`: 394 passed.
+- Spec suite (`--features testnet --test spec`): 42 passed / 1 ignored,
+  ×3 runs (~32.3s each).
+- `cargo fmt`; CI clippy (`--workspace --all-targets --features
+  amux/testnet -- -D warnings`) clean; `cargo build --workspace` clean.
+
+### Next Steps
+- Chunk 3 (P8 + D3a): every call a tunnel, `TunnelOpen`/`TunnelData`/
+  `TunnelClose` with UUID ids, delete the dual-path materialization and
+  `ChannelKey::Direct`; SSH-responder spec test flips cannot_call →
+  can_call.
+
+---
+
 ## 2026-06-11: v6 chunk 1 — delete preserve_tunnel_id and GoAway drain; rename GoAway → LinkClose
 
 ### Summary

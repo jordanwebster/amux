@@ -15,6 +15,6 @@ pub(crate) use client::ClientService;
 pub(crate) use pairing::{LocalPairingIdentity, PairingService, pair_by_spake2_initiator};
 pub(crate) use reachability::ReachabilityLinkConnector;
 pub(crate) use startup::{
-    CloudRoutingService, DeviceRuntimeSecurity, StartedUserServices, establish_cloud_connection,
+    CloudLinkService, DeviceRuntimeSecurity, StartedUserServices, establish_cloud_connection,
     start_user_services,
 };

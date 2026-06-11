@@ -59,10 +59,6 @@ fn default_socket_path() -> PathBuf {
     PathBuf::from(format!(r"\\.\pipe\amux-{user}"))
 }
 
-fn default_randomise_link_name() -> bool {
-    true
-}
-
 /// A control-key leader parsed from the `ctrl+<char>` format (e.g. `ctrl+a`).
 #[derive(Debug, Clone)]
 pub struct LeaderKey {
@@ -162,11 +158,6 @@ pub struct Config {
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub tcp_port: Option<u16>,
 
-    /// Whether to add random suffixes to link names (default: true).
-    /// Set to false in tests for deterministic link names.
-    #[serde(default = "default_randomise_link_name")]
-    pub randomise_link_name: bool,
-
     /// Path to state file.
     #[serde(default = "default_state_path")]
     pub state_path: PathBuf,
@@ -203,7 +194,6 @@ impl Default for Config {
             cloud_url: default_cloud_url(),
             socket_path: default_socket_path(),
             tcp_port: None,
-            randomise_link_name: default_randomise_link_name(),
             state_path: default_state_path(),
             enable_cloud_mode: None,
             prevent_idle_sleep: None,

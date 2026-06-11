@@ -1,24 +1,31 @@
-use std::collections::{HashMap, HashSet, VecDeque};
+//! The link registry: this daemon's live links and the wire-side adjacency
+//! discipline.
+//!
+//! The registry is the single source of truth for *wire* adjacency. Every
+//! `NeighborUp`/`NeighborDown` a peer ever receives from us is emitted here,
+//! under one lock, in registration order — so "advertise only adjacency" is
+//! structural: there is no API for broadcasting anything else. The handshake
+//! snapshot is reconciled here too: registering a link diffs the neighbor
+//! set the handshake advertised against the current one and sends the
+//! difference down the new link, atomically with registration, which closes
+//! the window between composing the snapshot and the link going live.
+
+use std::collections::{HashMap, HashSet};
 use std::sync::Arc;
 
 use tokio::sync::{Notify, RwLock, mpsc};
-use tokio::task::JoinHandle;
 
 use crate::protocol::wire::pb;
-use crate::routing::{
-    Link, Route, RoutingCore, RoutingEvent, outbound_routing_message,
-    should_send_routing_event_to_link,
-};
+use crate::routing::types::{Host, LinkId};
+use crate::routing::wire::{neighbor_down_message, neighbor_up_message};
 use crate::{HostId, audit};
 
 pub(crate) type LinkOutputTx = mpsc::Sender<pb::Message>;
 
-const PENDING_ROUTING_EVENT_LIMIT: usize = 256;
-
 #[derive(Debug, thiserror::Error)]
-pub(crate) enum LinkRegistryError {
-    #[error("route first hop {link} has no outgoing writer")]
-    Unavailable { link: Link },
+#[error("no live link to host {host_id}")]
+pub(crate) struct LinkUnavailable {
+    pub(crate) host_id: HostId,
 }
 
 #[derive(Default)]
@@ -28,7 +35,7 @@ pub(crate) struct LinkRegistry {
 
 #[derive(Default)]
 struct LinkRegistryState {
-    writers: HashMap<Link, LinkWriter>,
+    writers: HashMap<LinkId, LinkWriter>,
 }
 
 #[derive(Debug, Clone, Copy, Eq, PartialEq)]
@@ -39,87 +46,132 @@ pub(crate) enum LinkRole {
 
 #[derive(Clone)]
 struct LinkWriter {
-    peer_host_id: HostId,
+    host: Host,
     tx: LinkOutputTx,
-    close_tx: mpsc::Sender<LinkCloseReason>,
+    close_tx: mpsc::Sender<LinkCloseRequest>,
     closed: Arc<Notify>,
     role: LinkRole,
-    active: bool,
-    pending_routing_events: VecDeque<RoutingEvent>,
 }
 
+/// A local request for the link's connect task to close the link. Distinct
+/// from the wire `pb::LinkCloseReason`, which names why a *peer* closed it.
 #[derive(Debug, Clone, Copy, Eq, PartialEq)]
-pub(crate) enum LinkCloseReason {
+pub(crate) enum LinkCloseRequest {
     OutgoingQueueFull,
     TrustReplaced,
 }
 
 impl LinkRegistry {
-    #[cfg(test)]
+    /// Registers a live link and runs the adjacency discipline atomically:
+    /// other links learn `NeighborUp(peer)` if this is the first link to the
+    /// peer, and this link receives the diff between `advertised_snapshot`
+    /// (the neighbor set its handshake carried) and the current one.
     pub(crate) async fn register(
         &self,
-        link: Link,
-        peer_host_id: HostId,
-        outgoing_tx: LinkOutputTx,
-    ) -> mpsc::Receiver<LinkCloseReason> {
-        self.register_with_role(link, peer_host_id, outgoing_tx, LinkRole::Peer)
-            .await
-    }
-
-    pub(crate) async fn register_with_role(
-        &self,
-        link: Link,
-        peer_host_id: HostId,
+        link: LinkId,
+        host: Host,
         outgoing_tx: LinkOutputTx,
         role: LinkRole,
-    ) -> mpsc::Receiver<LinkCloseReason> {
+        advertised_snapshot: &[HostId],
+    ) -> mpsc::Receiver<LinkCloseRequest> {
         let (close_tx, close_rx) = mpsc::channel(1);
         let closed = Arc::new(Notify::new());
-        let audit_link = link.clone();
-        let old = self.state.write().await.writers.insert(
+        let mut state = self.state.write().await;
+        let first_link_to_peer = !state
+            .writers
+            .values()
+            .any(|writer| writer.host.id == host.id);
+
+        // Reconcile the new link's view: the handshake snapshot plus this
+        // diff equals the registry's neighbor set at this instant.
+        let advertised: HashSet<HostId> = advertised_snapshot.iter().copied().collect();
+        let mut current: HashMap<HostId, Host> = HashMap::new();
+        for writer in state.writers.values() {
+            current.entry(writer.host.id).or_insert(writer.host.clone());
+        }
+        for (peer, peer_host) in &current {
+            if *peer != host.id && !advertised.contains(peer) {
+                try_send_or_request_close(&outgoing_tx, &close_tx, neighbor_up_message(peer_host));
+            }
+        }
+        for advertised_peer in advertised {
+            if advertised_peer != host.id && !current.contains_key(&advertised_peer) {
+                try_send_or_request_close(
+                    &outgoing_tx,
+                    &close_tx,
+                    neighbor_down_message(advertised_peer),
+                );
+            }
+        }
+
+        if first_link_to_peer {
+            let message = neighbor_up_message(&host);
+            fanout(&state, message, host.id);
+        }
+
+        let old = state.writers.insert(
             link,
             LinkWriter {
-                peer_host_id,
+                host: host.clone(),
                 tx: outgoing_tx,
                 close_tx,
                 closed,
                 role,
-                active: false,
-                pending_routing_events: VecDeque::new(),
             },
         );
+        drop(state);
         if let Some(old) = old {
             old.closed.notify_waiters();
-            if old.active {
-                audit::link_down(old.peer_host_id, &audit_link, "replaced");
-            }
+            audit::link_down(old.host.id, &link, "replaced");
         }
+        audit::link_up(host.id, &link, role);
         close_rx
     }
 
-    pub(crate) async fn remove(&self, link: &Link) {
-        if let Some(writer) = self.state.write().await.writers.remove(link) {
-            writer.closed.notify_waiters();
-            if writer.active {
-                audit::link_down(writer.peer_host_id, link, "removed");
-            }
+    /// Removes a link; if it was the last link to its peer, other links
+    /// learn `NeighborDown(peer)`.
+    pub(crate) async fn remove(&self, link: &LinkId) {
+        let mut state = self.state.write().await;
+        let Some(writer) = state.writers.remove(link) else {
+            return;
+        };
+        let peer = writer.host.id;
+        let last_link_to_peer = !state.writers.values().any(|other| other.host.id == peer);
+        if last_link_to_peer {
+            let message = neighbor_down_message(peer);
+            fanout(&state, message, peer);
         }
+        drop(state);
+        writer.closed.notify_waiters();
+        audit::link_down(peer, link, "removed");
     }
 
-    #[allow(dead_code)]
-    pub(crate) async fn close_host(&self, host_id: HostId) -> Vec<Link> {
+    /// The current neighbor set, as a handshake snapshot.
+    pub(crate) async fn neighbor_snapshot(&self) -> Vec<Host> {
+        let state = self.state.read().await;
+        let mut seen = HashSet::new();
+        let mut snapshot = Vec::new();
+        for writer in state.writers.values() {
+            if seen.insert(writer.host.id) {
+                snapshot.push(writer.host.clone());
+            }
+        }
+        snapshot.sort_unstable_by_key(|host| host.id);
+        snapshot
+    }
+
+    /// Requests closure of every link to `host_id` and waits until they are
+    /// gone from the registry.
+    pub(crate) async fn close_host(&self, host_id: HostId) -> Vec<LinkId> {
         let closing = {
-            let mut state = self.state.write().await;
+            let state = self.state.read().await;
             state
                 .writers
-                .iter_mut()
-                .filter_map(|(link, writer)| {
-                    if writer.peer_host_id == host_id {
-                        request_link_close(writer, LinkCloseReason::TrustReplaced);
-                        Some((link.clone(), writer.closed.clone()))
-                    } else {
-                        None
-                    }
+                .iter()
+                .filter(|(_, writer)| writer.host.id == host_id)
+                .map(|(link, writer)| {
+                    let _ = writer.close_tx.try_send(LinkCloseRequest::TrustReplaced);
+                    (*link, writer.closed.clone())
                 })
                 .collect::<Vec<_>>()
         };
@@ -135,32 +187,68 @@ impl LinkRegistry {
         closing.into_iter().map(|(link, _)| link).collect()
     }
 
-    pub(crate) async fn outgoing_tx(&self, link: &Link) -> Result<LinkOutputTx, LinkRegistryError> {
+    /// The writer for one specific link.
+    pub(crate) async fn outgoing_tx(&self, link: &LinkId) -> Result<LinkOutputTx, LinkUnavailable> {
         self.state
             .read()
             .await
             .writers
             .get(link)
             .map(|writer| writer.tx.clone())
-            .ok_or(LinkRegistryError::Unavailable { link: link.clone() })
+            .ok_or(LinkUnavailable {
+                host_id: link.peer(),
+            })
     }
 
-    pub(crate) async fn existing_tx(&self, link: &Link) -> Option<LinkOutputTx> {
+    pub(crate) async fn has_link(&self, link: &LinkId) -> bool {
+        self.state.read().await.writers.contains_key(link)
+    }
+
+    /// A writer for any live link to `peer` — the forwarding rule's "do I
+    /// have a direct link to dst" lookup.
+    pub(crate) async fn link_to_peer(&self, peer: HostId) -> Option<(LinkId, LinkOutputTx)> {
         self.state
             .read()
             .await
             .writers
-            .get(link)
-            .map(|writer| writer.tx.clone())
+            .iter()
+            .find(|(_, writer)| writer.host.id == peer)
+            .map(|(link, writer)| (*link, writer.tx.clone()))
     }
 
-    pub(crate) async fn is_cloud_relay(&self, link: &Link) -> bool {
+    /// Rule 2's action: enqueue `message` on any live link to `peer`,
+    /// applying the full-queue close policy — forwarding never awaits a
+    /// congested link (a slow peer must not stall the origin link's
+    /// inbound processing). Returns false when no direct link to `peer`
+    /// exists.
+    pub(crate) async fn forward_to_peer(&self, peer: HostId, message: pb::Message) -> bool {
+        let state = self.state.read().await;
+        let Some(writer) = state.writers.values().find(|writer| writer.host.id == peer) else {
+            return false;
+        };
+        try_send_or_request_close(&writer.tx, &writer.close_tx, message);
+        true
+    }
+
+    pub(crate) async fn is_cloud_relay(&self, link: &LinkId) -> bool {
         self.state
             .read()
             .await
             .writers
             .get(link)
             .is_some_and(|writer| writer.role == LinkRole::CloudRelay)
+    }
+
+    /// Whether any live link to `peer` is the authenticated cloud link.
+    /// Pairing route selection keys on the link role, never on the peer's
+    /// self-asserted capabilities.
+    pub(crate) async fn has_cloud_relay_link_to(&self, peer: HostId) -> bool {
+        self.state
+            .read()
+            .await
+            .writers
+            .values()
+            .any(|writer| writer.host.id == peer && writer.role == LinkRole::CloudRelay)
     }
 
     pub(crate) async fn send_link_close_to_all(&self, reason: pb::LinkCloseReason) {
@@ -188,7 +276,7 @@ impl LinkRegistry {
             state
                 .writers
                 .values()
-                .filter(|writer| writer.peer_host_id == host_id)
+                .filter(|writer| writer.host.id == host_id)
                 .map(|writer| writer.tx.clone())
                 .collect::<Vec<_>>()
         };
@@ -208,107 +296,33 @@ impl LinkRegistry {
             .map(|writer| writer.tx.clone())
             .collect()
     }
+}
 
-    pub(crate) async fn broadcast_routing_event(&self, event: &RoutingEvent) {
-        let message = outbound_routing_message(event);
-        let overflowed = {
-            let mut state = self.state.write().await;
-            let mut overflowed = Vec::new();
-            for (link, writer) in &mut state.writers {
-                if !should_send_routing_event_to_link(event, link, Some(writer.peer_host_id)) {
-                    continue;
-                }
-                if writer.active {
-                    match writer.tx.try_send(message.clone()) {
-                        Ok(()) => {}
-                        Err(mpsc::error::TrySendError::Full(_)) => {
-                            request_link_close(writer, LinkCloseReason::OutgoingQueueFull);
-                            overflowed.push(link.clone());
-                        }
-                        Err(mpsc::error::TrySendError::Closed(_)) => {
-                            overflowed.push(link.clone());
-                        }
-                    }
-                } else {
-                    if writer.pending_routing_events.len() >= PENDING_ROUTING_EVENT_LIMIT {
-                        request_link_close(writer, LinkCloseReason::OutgoingQueueFull);
-                        overflowed.push(link.clone());
-                    } else {
-                        writer.pending_routing_events.push_back(event.clone());
-                    }
-                }
-            }
-            let mut removed = Vec::new();
-            for link in &overflowed {
-                if let Some(writer) = state.writers.remove(link) {
-                    writer.closed.notify_waiters();
-                    if writer.active {
-                        removed.push((link.clone(), writer.peer_host_id));
-                    }
-                }
-            }
-            removed
-        };
-        for (link, host_id) in overflowed {
-            audit::link_down(host_id, &link, "outgoing routing event queue full");
-            tracing::warn!(%link, "closing routing link after full outgoing event queue");
+/// Enqueues `message` to every writer except links to `skip_peer` (a host is
+/// never told about itself). A full queue requests the link's closure; the
+/// connect task then removes it through the normal path.
+fn fanout(state: &LinkRegistryState, message: pb::Message, skip_peer: HostId) {
+    for writer in state.writers.values() {
+        if writer.host.id == skip_peer {
+            continue;
         }
-    }
-
-    pub(crate) async fn activate(
-        &self,
-        link: &Link,
-        snapshot_routes: impl IntoIterator<Item = (HostId, Route)>,
-    ) -> bool {
-        let mut known_routes = snapshot_routes.into_iter().collect::<HashSet<_>>();
-        loop {
-            let (tx, close_tx, pending) = {
-                let mut state = self.state.write().await;
-                let Some(writer) = state.writers.get_mut(link) else {
-                    return false;
-                };
-                if writer.pending_routing_events.is_empty() {
-                    if !writer.active {
-                        audit::link_up(writer.peer_host_id, link, writer.role);
-                    }
-                    writer.active = true;
-                    return true;
-                }
-                (
-                    writer.tx.clone(),
-                    writer.close_tx.clone(),
-                    writer.pending_routing_events.drain(..).collect::<Vec<_>>(),
-                )
-            };
-
-            for event in pending {
-                match &event {
-                    RoutingEvent::HostUp { host, route, .. } => {
-                        if !known_routes.insert((host.id, route.clone())) {
-                            continue;
-                        }
-                    }
-                    RoutingEvent::HostDown { host_id, route, .. } => {
-                        if !known_routes.remove(&(*host_id, route.clone())) {
-                            continue;
-                        }
-                    }
-                }
-                match tx.try_send(outbound_routing_message(&event)) {
-                    Ok(()) => {}
-                    Err(mpsc::error::TrySendError::Full(_)) => {
-                        let _ = close_tx.try_send(LinkCloseReason::OutgoingQueueFull);
-                        return false;
-                    }
-                    Err(mpsc::error::TrySendError::Closed(_)) => return false,
-                }
-            }
-        }
+        try_send_or_request_close(&writer.tx, &writer.close_tx, message.clone());
     }
 }
 
-fn request_link_close(writer: &LinkWriter, reason: LinkCloseReason) {
-    let _ = writer.close_tx.try_send(reason);
+fn try_send_or_request_close(
+    tx: &LinkOutputTx,
+    close_tx: &mpsc::Sender<LinkCloseRequest>,
+    message: pb::Message,
+) {
+    match tx.try_send(message) {
+        Ok(()) => {}
+        Err(mpsc::error::TrySendError::Full(_)) => {
+            tracing::warn!("link outgoing queue full; requesting link close");
+            let _ = close_tx.try_send(LinkCloseRequest::OutgoingQueueFull);
+        }
+        Err(mpsc::error::TrySendError::Closed(_)) => {}
+    }
 }
 
 fn link_close_message(reason: pb::LinkCloseReason) -> pb::Message {
@@ -332,18 +346,6 @@ fn try_send_or_spawn(tx: LinkOutputTx, message: pb::Message) {
     }
 }
 
-pub(crate) async fn spawn_routing_event_fanout(
-    routing: Arc<RoutingCore>,
-    links: Arc<LinkRegistry>,
-) -> JoinHandle<()> {
-    let mut rx = routing.subscribe_routing_events().await;
-    tokio::spawn(async move {
-        while let Some(event) = rx.recv().await {
-            links.broadcast_routing_event(&event).await;
-        }
-    })
-}
-
 #[cfg(test)]
 mod tests {
     use std::time::Duration;
@@ -351,7 +353,7 @@ mod tests {
     use uuid::Uuid;
 
     use super::*;
-    use crate::routing::{Capabilities, Host, Route};
+    use crate::routing::Capabilities;
 
     fn host(id: u128) -> Host {
         Host {
@@ -365,16 +367,190 @@ mod tests {
         }
     }
 
-    fn route(links: &[&str]) -> Route {
-        Route::from_links(links.iter().map(|link| (*link).to_string())).unwrap()
+    fn link(peer: u128, instance: u128) -> LinkId {
+        LinkId {
+            peer: Uuid::from_u128(peer),
+            instance: Uuid::from_u128(instance),
+        }
     }
 
-    async fn recv_routing_event(rx: &mut mpsc::Receiver<pb::Message>) -> pb::RoutingEvent {
-        let message = rx.recv().await.unwrap();
-        let Some(pb::message::Body::RoutingEvent(event)) = message.body else {
-            panic!("expected routing event");
+    async fn recv_message(rx: &mut mpsc::Receiver<pb::Message>) -> pb::Message {
+        tokio::time::timeout(Duration::from_secs(1), rx.recv())
+            .await
+            .expect("timed out waiting for a registry message")
+            .expect("registry writer channel closed")
+    }
+
+    fn neighbor_up_host_id(message: &pb::Message) -> Vec<u8> {
+        let Some(pb::message::Body::NeighborUp(up)) = &message.body else {
+            panic!("expected NeighborUp, got {message:?}");
         };
-        event
+        up.host.as_ref().expect("NeighborUp.host").host_id.clone()
+    }
+
+    fn neighbor_down_host_id(message: &pb::Message) -> Vec<u8> {
+        let Some(pb::message::Body::NeighborDown(down)) = &message.body else {
+            panic!("expected NeighborDown, got {message:?}");
+        };
+        down.host_id.clone()
+    }
+
+    #[tokio::test]
+    async fn registering_a_link_announces_the_new_neighbor_to_existing_links() {
+        let registry = LinkRegistry::default();
+        let (first_tx, mut first_rx) = mpsc::channel(8);
+        registry
+            .register(link(1, 1), host(1), first_tx, LinkRole::Peer, &[])
+            .await;
+
+        let (second_tx, _second_rx) = mpsc::channel(8);
+        registry
+            .register(link(2, 1), host(2), second_tx, LinkRole::Peer, &[])
+            .await;
+
+        assert_eq!(
+            neighbor_up_host_id(&recv_message(&mut first_rx).await),
+            Uuid::from_u128(2).as_bytes()
+        );
+        assert!(first_rx.try_recv().is_err());
+    }
+
+    #[tokio::test]
+    async fn registering_a_link_reconciles_its_handshake_snapshot() {
+        let registry = LinkRegistry::default();
+        let (existing_tx, _existing_rx) = mpsc::channel(8);
+        registry
+            .register(link(1, 1), host(1), existing_tx, LinkRole::Peer, &[])
+            .await;
+
+        // The new link's handshake advertised a now-gone neighbor (3) and
+        // missed the existing one (1): registration sends the difference.
+        let (new_tx, mut new_rx) = mpsc::channel(8);
+        registry
+            .register(
+                link(2, 1),
+                host(2),
+                new_tx,
+                LinkRole::Peer,
+                &[Uuid::from_u128(3)],
+            )
+            .await;
+
+        let first = recv_message(&mut new_rx).await;
+        let second = recv_message(&mut new_rx).await;
+        let (up, down) = match &first.body {
+            Some(pb::message::Body::NeighborUp(_)) => (first, second),
+            _ => (second, first),
+        };
+        assert_eq!(neighbor_up_host_id(&up), Uuid::from_u128(1).as_bytes());
+        assert_eq!(neighbor_down_host_id(&down), Uuid::from_u128(3).as_bytes());
+        assert!(new_rx.try_recv().is_err());
+    }
+
+    #[tokio::test]
+    async fn only_the_last_link_to_a_peer_announces_neighbor_down() {
+        let registry = LinkRegistry::default();
+        let (observer_tx, mut observer_rx) = mpsc::channel(8);
+        registry
+            .register(link(9, 1), host(9), observer_tx, LinkRole::Peer, &[])
+            .await;
+
+        let (first_tx, _first_rx) = mpsc::channel(8);
+        let (second_tx, _second_rx) = mpsc::channel(8);
+        registry
+            .register(link(2, 1), host(2), first_tx, LinkRole::Peer, &[])
+            .await;
+        registry
+            .register(
+                link(2, 2),
+                host(2),
+                second_tx,
+                LinkRole::Peer,
+                &[Uuid::from_u128(9)],
+            )
+            .await;
+        // One NeighborUp for the peer's first link; the second link is silent.
+        assert_eq!(
+            neighbor_up_host_id(&recv_message(&mut observer_rx).await),
+            Uuid::from_u128(2).as_bytes()
+        );
+        assert!(observer_rx.try_recv().is_err());
+
+        registry.remove(&link(2, 1)).await;
+        assert!(observer_rx.try_recv().is_err(), "one link is still up");
+
+        registry.remove(&link(2, 2)).await;
+        assert_eq!(
+            neighbor_down_host_id(&recv_message(&mut observer_rx).await),
+            Uuid::from_u128(2).as_bytes()
+        );
+    }
+
+    #[tokio::test]
+    async fn a_neighbor_is_never_told_about_itself() {
+        let registry = LinkRegistry::default();
+        let (peer_tx, mut peer_rx) = mpsc::channel(8);
+        registry
+            .register(link(2, 1), host(2), peer_tx, LinkRole::Peer, &[])
+            .await;
+
+        // A second link to the same peer: no announcement to the peer.
+        let (second_tx, mut second_rx) = mpsc::channel(8);
+        registry
+            .register(
+                link(2, 2),
+                host(2),
+                second_tx,
+                LinkRole::Peer,
+                &[Uuid::from_u128(2)],
+            )
+            .await;
+
+        assert!(peer_rx.try_recv().is_err());
+        assert!(second_rx.try_recv().is_err());
+    }
+
+    #[tokio::test]
+    async fn snapshot_lists_each_neighbor_once() {
+        let registry = LinkRegistry::default();
+        let (first_tx, _first_rx) = mpsc::channel(8);
+        let (second_tx, _second_rx) = mpsc::channel(8);
+        let (other_tx, _other_rx) = mpsc::channel(8);
+        registry
+            .register(link(2, 1), host(2), first_tx, LinkRole::Peer, &[])
+            .await;
+        registry
+            .register(link(2, 2), host(2), second_tx, LinkRole::Peer, &[])
+            .await;
+        registry
+            .register(link(3, 1), host(3), other_tx, LinkRole::Peer, &[])
+            .await;
+
+        let snapshot = registry.neighbor_snapshot().await;
+        assert_eq!(
+            snapshot.iter().map(|host| host.id).collect::<Vec<_>>(),
+            vec![Uuid::from_u128(2), Uuid::from_u128(3)]
+        );
+    }
+
+    #[tokio::test]
+    async fn full_outgoing_queue_requests_link_close() {
+        let registry = LinkRegistry::default();
+        let (full_tx, _full_rx) = mpsc::channel(1);
+        full_tx.try_send(pb::Message { body: None }).unwrap();
+        let mut close_rx = registry
+            .register(link(1, 1), host(1), full_tx, LinkRole::Peer, &[])
+            .await;
+
+        let (new_tx, _new_rx) = mpsc::channel(8);
+        registry
+            .register(link(2, 1), host(2), new_tx, LinkRole::Peer, &[])
+            .await;
+
+        assert_eq!(
+            close_rx.recv().await,
+            Some(LinkCloseRequest::OutgoingQueueFull)
+        );
     }
 
     #[tokio::test]
@@ -383,7 +559,7 @@ mod tests {
         let (tx, _rx) = mpsc::channel(1);
         tx.try_send(pb::Message { body: None }).unwrap();
         registry
-            .register(Link::new("full").unwrap(), Uuid::new_v4(), tx)
+            .register(link(1, 1), host(1), tx, LinkRole::Peer, &[])
             .await;
 
         tokio::time::timeout(
@@ -397,10 +573,9 @@ mod tests {
     #[tokio::test]
     async fn send_link_close_to_all_sends_typed_reason() {
         let registry = LinkRegistry::default();
-        let link = Link::new("peer").unwrap();
         let (tx, mut rx) = mpsc::channel(8);
         registry
-            .register(link.clone(), Uuid::from_u128(99), tx)
+            .register(link(99, 1), host(99), tx, LinkRole::Peer, &[])
             .await;
 
         registry
@@ -418,134 +593,20 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn register_with_role_marks_cloud_relay_links() {
+    async fn cloud_relay_role_is_tracked_per_link() {
         let registry = LinkRegistry::default();
-        let cloud = Link::new("cloud").unwrap();
-        let peer = Link::new("peer").unwrap();
         let (cloud_tx, _cloud_rx) = mpsc::channel(1);
         let (peer_tx, _peer_rx) = mpsc::channel(1);
-
         registry
-            .register_with_role(
-                cloud.clone(),
-                Uuid::from_u128(1),
-                cloud_tx,
-                LinkRole::CloudRelay,
-            )
+            .register(link(1, 1), host(1), cloud_tx, LinkRole::CloudRelay, &[])
             .await;
         registry
-            .register(peer.clone(), Uuid::from_u128(2), peer_tx)
+            .register(link(2, 1), host(2), peer_tx, LinkRole::Peer, &[])
             .await;
 
-        assert!(registry.is_cloud_relay(&cloud).await);
-        assert!(!registry.is_cloud_relay(&peer).await);
-    }
-
-    #[tokio::test]
-    async fn routing_event_overflow_requests_link_close_and_removes_writer() {
-        let registry = LinkRegistry::default();
-        let link = Link::new("full").unwrap();
-        let (tx, _rx) = mpsc::channel(1);
-        tx.try_send(pb::Message { body: None }).unwrap();
-        let mut close_rx = registry.register(link.clone(), Uuid::new_v4(), tx).await;
-        assert!(registry.activate(&link, []).await);
-
-        registry
-            .broadcast_routing_event(&RoutingEvent::HostUp {
-                host: Host {
-                    id: Uuid::from_u128(2),
-                    name: "remote".to_string(),
-                    version: "test".to_string(),
-                    capabilities: Capabilities {
-                        features: Vec::new(),
-                        supported_agent_types: Vec::new(),
-                    },
-                },
-                route: Route::from_link(link.clone()),
-                origin_link: None,
-            })
-            .await;
-
-        assert_eq!(
-            close_rx.recv().await,
-            Some(LinkCloseReason::OutgoingQueueFull)
-        );
-        assert!(matches!(
-            registry.outgoing_tx(&link).await,
-            Err(LinkRegistryError::Unavailable { .. })
-        ));
-    }
-
-    #[tokio::test]
-    async fn activate_flushes_pending_host_up_for_distinct_route() {
-        let registry = LinkRegistry::default();
-        let link = Link::new("peer").unwrap();
-        let (tx, mut rx) = mpsc::channel(8);
-        registry
-            .register(link.clone(), Uuid::from_u128(99), tx)
-            .await;
-        let host = host(2);
-        let snapshot_route = route(&["a"]);
-        let pending_route = route(&["b"]);
-
-        registry
-            .broadcast_routing_event(&RoutingEvent::HostUp {
-                host: host.clone(),
-                route: pending_route.clone(),
-                origin_link: None,
-            })
-            .await;
-
-        assert!(registry.activate(&link, [(host.id, snapshot_route)]).await);
-        let event = recv_routing_event(&mut rx).await;
-        assert!(matches!(
-            event.event,
-            Some(pb::routing_event::Event::HostUp(up))
-                if up.host.as_ref().is_some_and(|host| host.host_id == Uuid::from_u128(2).as_bytes())
-                    && up.route.as_ref().is_some_and(|route| route.links == ["b"])
-        ));
-        assert!(rx.try_recv().is_err());
-    }
-
-    #[tokio::test]
-    async fn activate_flushes_route_specific_host_downs() {
-        let registry = LinkRegistry::default();
-        let link = Link::new("peer").unwrap();
-        let (tx, mut rx) = mpsc::channel(8);
-        registry
-            .register(link.clone(), Uuid::from_u128(99), tx)
-            .await;
-        let host = host(2);
-        let first = route(&["a"]);
-        let second = route(&["b"]);
-
-        for route in [first.clone(), second.clone()] {
-            registry
-                .broadcast_routing_event(&RoutingEvent::HostDown {
-                    host_id: host.id,
-                    route,
-                    origin_link: None,
-                })
-                .await;
-        }
-
-        assert!(
-            registry
-                .activate(&link, [(host.id, first), (host.id, second)])
-                .await
-        );
-        let first_event = recv_routing_event(&mut rx).await;
-        let second_event = recv_routing_event(&mut rx).await;
-        let routes = [first_event, second_event]
-            .into_iter()
-            .map(|event| match event.event {
-                Some(pb::routing_event::Event::HostDown(down)) => {
-                    down.route.unwrap().links.join(".")
-                }
-                _ => panic!("expected HostDown"),
-            })
-            .collect::<Vec<_>>();
-        assert_eq!(routes, ["a", "b"]);
-        assert!(rx.try_recv().is_err());
+        assert!(registry.is_cloud_relay(&link(1, 1)).await);
+        assert!(!registry.is_cloud_relay(&link(2, 1)).await);
+        assert!(registry.has_cloud_relay_link_to(Uuid::from_u128(1)).await);
+        assert!(!registry.has_cloud_relay_link_to(Uuid::from_u128(2)).await);
     }
 }

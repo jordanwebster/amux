@@ -11,8 +11,7 @@ use crate::HostId;
 use crate::connection::ConnectionManager;
 use crate::identity::DeviceIdentity;
 use crate::routing::{
-    Host, Link, RoutingConnectorCtx, RoutingCore, generate_server_link,
-    spawn_connector_to_channel_with_establishment,
+    Host, LinkConnectorCtx, RoutingCore, spawn_connector_to_channel_with_establishment,
 };
 use crate::transport::{
     channel_from_single_io, configure_tonic_endpoint_keepalive, spawn_ssh_relay,
@@ -90,11 +89,7 @@ impl ReachabilityLinkConnector {
         }
     }
 
-    pub(crate) fn spawn_startup_links(
-        &self,
-        host_name: &str,
-        randomise_link_name: bool,
-    ) -> Vec<JoinHandle<()>> {
+    pub(crate) fn spawn_startup_links(&self) -> Vec<JoinHandle<()>> {
         let ReachabilityLinkConnectorMode::Enabled(inner) = &self.mode else {
             return Vec::new();
         };
@@ -107,63 +102,41 @@ impl ReachabilityLinkConnector {
         };
         attempts
             .into_iter()
-            .filter_map(|attempt| self.spawn_attempt(host_name, randomise_link_name, attempt))
+            .filter_map(|attempt| self.spawn_attempt(attempt))
             .collect()
     }
 
-    pub(crate) fn spawn_pair_time_link(
-        &self,
-        host_name: &str,
-        randomise_link_name: bool,
-        peer: HostId,
-        reachability: Reachability,
-    ) {
+    pub(crate) fn spawn_pair_time_link(&self, peer: HostId, reachability: Reachability) {
         let ReachabilityLinkConnectorMode::Enabled(inner) = &self.mode else {
             return;
         };
         if matches!(reachability, Reachability::Cloud) {
             return;
         };
-        let Some(task) = self.spawn_attempt(
-            host_name,
-            randomise_link_name,
-            ReachabilityLinkAttempt {
-                peer,
-                reachability,
-                ordinal: 0,
-            },
-        ) else {
+        let Some(task) = self.spawn_attempt(ReachabilityLinkAttempt {
+            peer,
+            reachability,
+            ordinal: 0,
+        }) else {
             return;
         };
         inner.retain_pair_time_task(task);
     }
 
-    fn spawn_attempt(
-        &self,
-        host_name: &str,
-        randomise_link_name: bool,
-        attempt: ReachabilityLinkAttempt,
-    ) -> Option<JoinHandle<()>> {
+    fn spawn_attempt(&self, attempt: ReachabilityLinkAttempt) -> Option<JoinHandle<()>> {
         let ReachabilityLinkConnectorMode::Enabled(inner) = &self.mode else {
             return None;
         };
         let context = inner.context.clone();
-        let proposed_link = proposed_link_name(
-            host_name,
-            attempt.peer,
-            &attempt.reachability,
-            attempt.ordinal,
-            randomise_link_name,
-        );
         let span = tracing::info_span!(
             "reachability_link",
             peer = %attempt.peer,
             reachability = ?attempt.reachability,
-            proposed_link = %proposed_link,
+            ordinal = attempt.ordinal,
         );
         Some(tokio::spawn(
             async move {
-                establish_reachability_link(context, attempt, proposed_link).await;
+                establish_reachability_link(context, attempt).await;
             }
             .instrument(span),
         ))
@@ -218,7 +191,6 @@ fn snapshot_direct_attempts(
 async fn establish_reachability_link(
     context: ReachabilityLinkContext,
     attempt: ReachabilityLinkAttempt,
-    proposed_link: Link,
 ) {
     let channel = match attempt.reachability.clone() {
         Reachability::Cloud => return,
@@ -251,11 +223,10 @@ async fn establish_reachability_link(
         }
     };
 
-    let connector_ctx = RoutingConnectorCtx::new(
+    let connector_ctx = LinkConnectorCtx::new(
         context.local_host.clone(),
         context.routing.clone(),
         context.tunnels.clone(),
-        proposed_link,
         context.connections.route_runtime(),
     )
     .with_expected_peer(attempt.peer);
@@ -311,30 +282,6 @@ async fn establish_reachability_link(
     }
 }
 
-fn proposed_link_name(
-    host_name: &str,
-    peer: HostId,
-    reachability: &Reachability,
-    ordinal: usize,
-    randomise_link_name: bool,
-) -> Link {
-    let kind = match reachability {
-        Reachability::Cloud => "cloud",
-        Reachability::DirectTcp { .. } => "tcp",
-        Reachability::Ssh { .. } => "ssh",
-    };
-    let peer_prefix = peer
-        .as_simple()
-        .to_string()
-        .chars()
-        .take(8)
-        .collect::<String>();
-    generate_server_link(
-        &format!("{kind}-{peer_prefix}-{ordinal}-{host_name}"),
-        randomise_link_name,
-    )
-}
-
 struct AbortTaskOnDrop(tokio::task::AbortHandle);
 
 impl Drop for AbortTaskOnDrop {
@@ -384,20 +331,5 @@ mod tests {
             &attempts[1].reachability,
             Reachability::Ssh { target } if target == "workstation"
         ));
-    }
-
-    #[test]
-    fn proposed_link_name_keeps_reachability_peer_and_ordinal_prefix() {
-        let link = proposed_link_name(
-            "this.host.name.is.sanitized",
-            HostId::from_u128(0x1234),
-            &Reachability::Ssh {
-                target: "workstation".to_string(),
-            },
-            3,
-            false,
-        );
-
-        assert!(link.as_str().starts_with("ssh-00000000-3-this-host"));
     }
 }
