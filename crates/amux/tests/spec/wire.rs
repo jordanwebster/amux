@@ -7,10 +7,10 @@
 //! host_id must match the mTLS-bound identity, unsupported versions are
 //! rejected, malformed frames close the stream, frames for unknown or
 //! just-closed tunnels are dropped without harming the link, and handshake
-//! floods are rate-limited. (docs/PROTOCOL.md; docs/NETWORKING.md §8.9–8.10,
-//! §10 N-TN-*, N-X-9)
+//! floods are rate-limited. (docs/PROTOCOL.md "Links" and "Tunnels";
+//! docs/ARCHITECTURE.md "The dispatcher")
 //!
-//! B1 (NETWORKING_REVIEW.md §1) — a frame in a tunnel's just-closed window
+//! The v5 review's B1 finding — a frame in a tunnel's just-closed window
 //! escalating to a link-wide LinkClose — is closed structurally by the
 //! explicit `TunnelOpen`/`TunnelData`/`TunnelClose` lifecycle: only an Open
 //! allocates, so a late frame is for an unknown id and is a deterministic
@@ -68,7 +68,8 @@ async fn a_hello_host_id_that_contradicts_the_mtls_identity_is_rejected() {
 
 /// A Hello advertising only an unsupported protocol version earns an error
 /// `HelloAck` and a closed stream: the daemon requires its own protocol
-/// version in the peer's supported set. (docs/NETWORKING.md §10, versioning)
+/// version in the peer's supported set. (`PROTOCOL_VERSION = 6`;
+/// docs/PROTOCOL.md "The complete wire vocabulary")
 #[tokio::test]
 async fn an_unsupported_protocol_version_is_rejected() {
     let net = TestNet::builder().daemon("victim").start().await;
@@ -114,7 +115,7 @@ async fn a_data_frame_for_an_unknown_tunnel_is_dropped_and_the_link_stays_up() {
     wire.expect_stream_stays_open().await;
 }
 
-/// The B1 finding (NETWORKING_REVIEW.md §1), closed structurally by the
+/// The v5 review's B1 finding, closed structurally by the
 /// explicit tunnel lifecycle: under v5's implicit opens, a frame landing in
 /// a tunnel's just-closed window surfaced `InboundClosed` and escalated to a
 /// link-wide `LinkClose(PROTOCOL_ERROR)`. Now closing is part of the wire

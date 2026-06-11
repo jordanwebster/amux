@@ -59,10 +59,9 @@ pub(crate) struct DaemonInner {
     /// real restart closes all of them with the process; the in-process
     /// restart severs them explicitly. Merely dropping the runtime is not
     /// enough: per-connection dispatcher tasks are detached, and aborting
-    /// the cloud connector task leaks its established link (see the
-    /// "Findings from spec-suite construction" entry in
-    /// `notes/NETWORKING_REVIEW.md`), so without the sever peers and the
-    /// relay keep treating the dead incarnation as online.
+    /// the cloud connector task never runs its link cleanup, leaking the
+    /// established link — so without the sever, peers and the relay keep
+    /// treating the dead incarnation as online.
     pub(crate) tracked_tcp: TrackedTcpConnections,
     /// OS-level duplicates of the outbound sockets the cloud connector
     /// dialed, kept separately from `tracked_tcp` so credential-rollover
@@ -149,8 +148,7 @@ impl DaemonRuntime {
 /// daemon "restart" can sever its outbound cloud connection the way a real
 /// process exit would.
 ///
-// NOTE: works around the connector-abort link leak documented under
-// "Findings from spec-suite construction" in `notes/NETWORKING_REVIEW.md`:
+// NOTE: works around the connector-abort link leak:
 // aborting an established routing-connector task never runs `cleanup_link`,
 // and the link registry's clone of the outbound sender keeps the Connect
 // request stream open, so neither the relay nor any peer ever observes the
@@ -210,9 +208,8 @@ const CALL_ATTEMPT_TIMEOUT: std::time::Duration = std::time::Duration::from_secs
 /// after direct links are up, which keeps initial topologies deterministic.
 /// (Bringing both up concurrently used to trip a route-activation race in
 /// `ConnectionManager` that stranded the direct link's pooled channel; that
-/// race is now guarded in `ConnectionManager::activate_route` and written
-/// up under "Findings from spec-suite construction" in
-/// `notes/NETWORKING_REVIEW.md` §6.2.)
+/// race is now guarded in `ConnectionManager::activate_route` — a stale
+/// activation no longer demotes an active direct route.)
 pub(crate) async fn start_daemon_runtime(
     inner: &Arc<DaemonInner>,
     listener: Option<TcpListener>,
@@ -497,10 +494,9 @@ impl Daemon {
     ///
     /// Each attempt is individually time-bounded so the poll can retry: an
     /// attempt whose tunnel TLS lands in a closing peer window blackholes
-    /// for the full 10s device handshake timeout (the dispatcher's close
-    /// never reaches the initiator — the silent-drop gap of
-    /// NETWORKING_REVIEW.md §6.5/§6.8), while the next attempt's fresh
-    /// tunnel goes through.
+    /// for the full 10s device handshake timeout (the dispatcher silently
+    /// drops the stream and nothing reaches the initiator), while the next
+    /// attempt's fresh tunnel goes through.
     pub async fn can_call(&self, other: &Daemon) {
         let assertion = format!(
             "'{}' can complete a routed call to '{}'",
@@ -584,8 +580,8 @@ impl Daemon {
 
     /// A routed `ClientService.ListHosts(PAIRING_CANDIDATES)` against
     /// `other`, i.e. what a *paired remote* caller gets when it asks for
-    /// pairing-candidate inventory. The spec reserves this scope for local
-    /// callers (docs/NETWORKING.md §8.12).
+    /// pairing-candidate inventory. The scope is reserved for local
+    /// callers (docs/ARCHITECTURE.md "Service surface map").
     pub async fn list_pairing_candidates_on(&self, other: &Daemon) -> anyhow::Result<Vec<HostId>> {
         self.list_hosts_on_scoped(other, wire::list_hosts_request::Scope::PairingCandidates)
             .await
@@ -1104,13 +1100,11 @@ impl RoutedStream {
     /// clean end-of-stream or survival past the timeout fails the
     /// assertion.
     ///
-    /// NOTE: the spec promises `UNAVAILABLE` for in-flight streams on a
-    /// dropped route (docs/NETWORKING.md §8.6, §8.7, §8.10); what tonic
-    /// actually surfaces today when the tunnel transport dies under a live
-    /// stream is `Unknown: h2 protocol error: error reading a body from
-    /// connection`. This verb locks the user-observable contract — the
-    /// stream breaks promptly with an error — and leaves the exact code
-    /// unasserted; see NETWORKING_REVIEW.md §6.4.
+    /// NOTE: what tonic surfaces when the tunnel transport dies under a
+    /// live stream is `Unknown: h2 protocol error: error reading a body
+    /// from connection`, not `UNAVAILABLE`. This verb locks the
+    /// user-observable contract — the stream breaks promptly with an
+    /// error — and leaves the exact status code unasserted.
     pub async fn expect_disconnect(mut self) {
         let deadline = tokio::time::Instant::now() + super::assertions::DEFAULT_TIMEOUT;
         loop {
@@ -1137,11 +1131,9 @@ impl RoutedStream {
     /// were already in flight are tolerated; any termination (error or
     /// clean end) fails the assertion.
     ///
-    /// This locks the current revocation behavior: the revoked peer's
-    /// in-flight streams stall instead of breaking (the revoker kills its
-    /// inbound connection without anything reaching the peer), so only a
-    /// transport keepalive would eventually end them. The spec intends
-    /// prompt teardown; see NETWORKING_REVIEW.md §6.5.
+    /// For one-sided teardowns where nothing reaches the peer: its
+    /// in-flight streams go silent instead of breaking, and only a
+    /// transport keepalive would eventually end them.
     pub async fn expect_stalled_open(mut self) {
         const OBSERVATION_WINDOW: std::time::Duration = std::time::Duration::from_secs(2);
         let deadline = tokio::time::Instant::now() + OBSERVATION_WINDOW;

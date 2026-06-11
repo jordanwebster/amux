@@ -4,7 +4,8 @@
 //! attach to one and round-trip terminal I/O across the route, hold that
 //! session open through unrelated routing churn, and wield full runtime
 //! authority — while the daemon-local trust-administration RPCs stay reserved
-//! for local callers. (docs/NETWORKING.md §4.7, §8.9–8.12, §10 N-S-2)
+//! for local callers. (docs/PROTOCOL.md "Tunnels: who am I calling";
+//! docs/ARCHITECTURE.md "Service surface map")
 
 use amux::testnet::{TestNet, Via};
 

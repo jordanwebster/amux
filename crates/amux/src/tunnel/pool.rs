@@ -519,8 +519,7 @@ impl TunnelPool {
     /// withdrawn claim), closing them toward the peer. Hosted inbound
     /// tunnels are deliberately left alone: a local route change says
     /// nothing about the remote initiator's tunnel, and sweeping it would
-    /// silently brick the initiator's cached channel
-    /// (NETWORKING_REVIEW.md §6.9).
+    /// silently brick the initiator's cached channel.
     pub(crate) async fn remove_initiated_over(&self, peer: HostId, link_peer: HostId) {
         let retired = {
             let state = self.state.read().await;
@@ -1420,9 +1419,8 @@ mod tests {
 
     /// A local route change must not retire tunnels a *remote* initiator is
     /// hosting here — sweeping the tunnel would silently brick the
-    /// initiator's cached channel (NETWORKING_REVIEW.md §6.9). Hosted
-    /// inbound tunnels die with their peer, their transport, their link, or
-    /// the peer's own TunnelClose.
+    /// initiator's cached channel. Hosted inbound tunnels die with their
+    /// peer, their transport, their link, or the peer's own TunnelClose.
     #[tokio::test]
     async fn removed_claim_keeps_hosted_inbound_tunnels_alive() {
         let initiator = HostId::from_u128(1);

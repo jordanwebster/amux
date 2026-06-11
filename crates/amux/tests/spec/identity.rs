@@ -2,7 +2,8 @@
 //!
 //! Every device has a keypair plus a random `host_id`, both generated once
 //! and persisted; trust is a strictly local registry bootstrapped only by
-//! pairing. (docs/NETWORKING.md §4.1–4.2, invariants N-K-*, N-T-*)
+//! pairing. (docs/PROTOCOL.md "Identity and trust"; docs/ARCHITECTURE.md
+//! "Identity and the trust store")
 
 use amux::testnet::{TestNet, Via};
 

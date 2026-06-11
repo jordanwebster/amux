@@ -187,7 +187,7 @@ impl ConnectionManager {
                 // Never eagerly tunnel into a cloud relay: nobody calls the
                 // cloud through the mesh — it discards inbound tunnels, so
                 // materialization can only stall for the whole handshake
-                // timeout (NETWORKING_REVIEW.md §6.7).
+                // timeout.
                 if host_is_cloud_relay(&host) {
                     return;
                 }
@@ -213,8 +213,8 @@ impl ConnectionManager {
             }
             RoutingEvent::ClaimUp { relay, host } => {
                 self.clear_reachability_error(host.id).await;
-                // The cloud-relay guard again (§6.7): record the claim,
-                // never eagerly tunnel into the relay.
+                // The cloud-relay guard again: record the claim, never
+                // eagerly tunnel into the relay.
                 if host_is_cloud_relay(&host) {
                     return;
                 }
@@ -249,8 +249,7 @@ impl ConnectionManager {
             match state.active.get(&peer) {
                 // A stale in-flight activation must not demote an active
                 // direct route to a relay path: serve the call on the
-                // channel we built; the active route stays as is
-                // (NETWORKING_REVIEW.md §6.2).
+                // channel we built; the active route stays as is.
                 Some(active @ Route::Direct(_)) if !route.is_direct() && *active != route => {
                     return Ok(channel);
                 }
@@ -474,7 +473,7 @@ mod tests {
         pairing.abort();
     }
 
-    /// Regression for NETWORKING_REVIEW.md §6.7: a claim whose target is a
+    /// Regression: a claim whose target is a
     /// cloud relay (learned through a peer before our own cloud link is up)
     /// must be recorded but never eagerly tunneled into — relays discard
     /// inbound tunnels, so materializing one can only stall the event loop.

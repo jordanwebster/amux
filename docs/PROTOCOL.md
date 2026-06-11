@@ -2,9 +2,9 @@
 
 **Status**: implemented (v6, 2026-06-11). This is the protocol the daemon
 speaks; it is locked in by the prose spec suite in
-`crates/amux/tests/spec/`. It supersedes the routing, tunneling, and
-pairing architecture of the historical v5 spec
-([`NETWORKING.md`](./NETWORKING.md)). Decision rationale:
+`crates/amux/tests/spec/`. The system around the wire — processes,
+servers, the dispatcher, trust storage, service surfaces — is described
+in [`ARCHITECTURE.md`](./ARCHITECTURE.md). Decision rationale:
 `notes/PROTOCOL_V6_DECISIONS.md`.
 
 ## The mental model

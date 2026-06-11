@@ -3,7 +3,8 @@
 //! Who can see whom, and as what: cloud presence is per-user and
 //! routing-driven, trust-store entries persist through outages as offline
 //! hosts, and untrusted-but-online hosts surface only as local pairing
-//! candidates. (docs/NETWORKING.md §4.5, §8.11–8.12)
+//! candidates. (docs/PROTOCOL.md "Routing: two rules"; docs/ARCHITECTURE.md
+//! "Service surface map", "The cloud deployment")
 
 use amux::testnet::{TestNet, Via};
 
@@ -81,7 +82,7 @@ async fn a_trusted_but_offline_peer_is_still_listed_as_offline() {
 /// An untrusted-but-online host is a *local* affair: the daemon's own user
 /// sees it as a pairing candidate, while a paired remote caller is refused
 /// the pairing-candidate scope outright and never sees the untrusted host
-/// in normal inventory either. (docs/NETWORKING.md §8.12)
+/// in normal inventory either. (docs/ARCHITECTURE.md "Service surface map")
 #[tokio::test]
 async fn untrusted_online_hosts_are_pairing_candidates_for_local_callers_only() {
     let net = TestNet::builder()

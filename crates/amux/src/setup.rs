@@ -78,8 +78,8 @@ pub fn device_identity_ready() -> bool {
     crate::identity::default_device_files_ready()
 }
 
-/// Ensure the device identity and trust-store files from `docs/NETWORKING.md`
-/// exist in the data directory.
+/// Ensure the device identity and trust-store files from
+/// `docs/ARCHITECTURE.md` exist in the data directory.
 pub fn ensure_device_identity() -> Result<(), SetupError> {
     ensure_default_device_files()?;
     Ok(())

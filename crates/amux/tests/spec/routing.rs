@@ -3,7 +3,8 @@
 //! How traffic finds its way: shortest route wins, the cloud relay forwards
 //! what it cannot read, failover and recovery are make-then-break, restarts
 //! re-dial stored reachabilities, revocation evicts routes, and reachability
-//! propagates through chains of links. (docs/NETWORKING.md §4.8–4.9, §8)
+//! propagates through chains of links. (docs/PROTOCOL.md "Routing: two
+//! rules"; docs/ARCHITECTURE.md "Internal layering")
 
 use std::time::Duration;
 
@@ -82,12 +83,11 @@ async fn a_dying_direct_link_fails_over_to_the_cloud_route() {
 /// The direct link recovers → the swap back is make-then-break: the daemon
 /// returns to the direct route, the in-flight stream riding the old cloud
 /// tunnel breaks, and fresh calls succeed on the new route.
-/// (docs/NETWORKING.md §8.7)
+/// (docs/ARCHITECTURE.md "Internal layering", ConnectionManager)
 ///
-/// NOTE: the spec says the broken stream fails with UNAVAILABLE; what
-/// actually surfaces when the swap drops the old tunnel is
-/// `Unknown: h2 protocol error` (see `expect_disconnect` and
-/// NETWORKING_REVIEW.md §6.4).
+/// NOTE: what surfaces when the swap drops the old tunnel is
+/// `Unknown: h2 protocol error`, not `UNAVAILABLE`; `expect_disconnect`
+/// locks the prompt break and leaves the exact status code unasserted.
 #[tokio::test]
 async fn a_recovering_direct_link_wins_back_and_breaks_in_flight_cloud_streams() {
     let net = TestNet::builder()
@@ -168,7 +168,7 @@ async fn cloud_only_peers_lose_each_other_in_an_outage_and_recover() {
 /// A daemon restart re-establishes direct links from the reachabilities in
 /// its own trust store — no nudge from the network: the restarted dialer
 /// re-dials its stored `DirectTcp` address on startup.
-/// (docs/NETWORKING.md §8.8)
+/// (docs/ARCHITECTURE.md "Identity and the trust store")
 #[tokio::test]
 async fn restart_re_establishes_direct_links_from_stored_reachabilities() {
     let net = TestNet::builder()
@@ -191,13 +191,14 @@ async fn restart_re_establishes_direct_links_from_stored_reachabilities() {
 /// fail over every route — direct mTLS re-dials are refused by the live
 /// trust check, and cloud tunnels die at the end-to-end handshake. Trust
 /// stays local: the revoked side still holds its own entry, it just no
-/// longer gets anything for it. (docs/NETWORKING.md §5.4)
+/// longer gets anything for it. (docs/ARCHITECTURE.md "Identity and the
+/// trust store")
 ///
-/// In-flight streams break too, as §5.4 always intended: every stream rides
-/// a tunnel, the revoker's teardown closes its links (`LinkClose`) and its
-/// tunnels (`TunnelClose`), and a tunnel's death is a transport EOF under
-/// the stream. The v5 stall (NETWORKING_REVIEW.md §6.5 — one-sided teardown
-/// left both sides' streams silently hanging) is gone structurally.
+/// In-flight streams break too, as revocation always intended: every stream
+/// rides a tunnel, the revoker's teardown closes its links (`LinkClose`) and
+/// its tunnels (`TunnelClose`), and a tunnel's death is a transport EOF under
+/// the stream. The v5 stall — one-sided teardown left both sides' in-flight
+/// streams silently hanging — is gone structurally.
 #[tokio::test]
 async fn revocation_evicts_routes_and_breaks_in_flight_streams() {
     let net = TestNet::builder()
@@ -229,8 +230,9 @@ async fn revocation_evicts_routes_and_breaks_in_flight_streams() {
 /// A and C, who are trusted but share no reachability.
 ///
 /// The chain is deliberately dialed in chain order (A→B, B→C) — the
-/// arrangement that black-holed replies under route-list routing
-/// (NETWORKING_REVIEW.md §6.6). Who dialed whom no longer matters: every
+/// arrangement that black-holed replies under v5's route-list routing,
+/// where a link's acceptor held no route back over it. Who dialed whom no
+/// longer matters: every
 /// link carries frames both ways, B forwards to its own adjacency, and a
 /// tunnel's replies leave on the link its frames arrive on.
 #[tokio::test]

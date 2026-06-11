@@ -38,6 +38,58 @@ One paragraph describing what was done.
 
 ---
 
+## 2026-06-11: Replace the v5 networking spec with an architecture doc
+
+### Summary
+The tombstone chain is gone: `docs/NETWORKING.md` (the superseded 3,202-line
+v5 spec), `docs/NETWORKING_PROGRESS.md` (its work ledger), and the three
+pointer stubs (`NEW_ARCHITECTURE.md`, `architecture.md`,
+`cloud_architecture.md`) are deleted; git history keeps them. In their
+place, `docs/ARCHITECTURE.md` — a v6-true system doc complementing
+PROTOCOL.md: PROTOCOL.md owns the wire, ARCHITECTURE.md owns the system
+(process/deployment shapes, identity & trust store, the two-server model,
+the dispatcher's classification table, the service surface map, the
+multi-tenant cloud deployment, and the LinkRegistry / RoutingCore /
+TunnelPool / ConnectionManager layering). Disposition of NETWORKING.md's
+material: §3–4 (threat model, identity, trust, two servers, dispatcher,
+tenancy), §7 (CLI shape), §8.4/8.12/8.13, and the resource caps were
+rewritten for v6 into ARCHITECTURE.md; §4.8, §5–6, §8.5–8.11 were
+protocol-level and already superseded by PROTOCOL.md (the SPAKE2 crypto
+detail of §5.2.1 survives only in `services/pairing.rs` for now); the
+glossary, invariant catalog (§10), and reference implementation map (§12)
+died with v5's vocabulary.
+
+### Changes
+- `docs/ARCHITECTURE.md` created; the five superseded docs `git rm`ed.
+- `docs/PROTOCOL.md` status header now points at ARCHITECTURE.md instead
+  of the deleted NETWORKING.md.
+- Every `docs/NETWORKING.md §x.y` / `NETWORKING_REVIEW.md §6.x` citation in
+  `crates/` re-pointed at PROTOCOL.md/ARCHITECTURE.md section names or
+  rewritten as self-contained prose (spec chapter headers in
+  `tests/spec/{identity,presence,routing,sessions,wire}.rs`; doc comments
+  in `connection.rs`, `setup.rs`, `tunnel/pool.rs`, `testnet/daemon.rs`).
+  The invariant catalog is not preserved as a numbered list; comments now
+  say what they mean.
+- `CLAUDE.md`/`AGENTS.md` still reference the deleted docs; they are
+  re-pointed in a follow-up chunk.
+
+### Verification
+- Spec suite: 43 passed / 0 ignored. Lib tests: 394 passed.
+- `cargo fmt --all`; CI clippy
+  (`--workspace --all-targets --features amux/testnet -- -D warnings`)
+  clean.
+- `grep -rn "NETWORKING\|NEW_ARCHITECTURE\|cloud_architecture" --include="*.rs"
+  --include="*.md" .` is clean outside `notes/`, DEVLOG history, and
+  CLAUDE.md (deferred above).
+
+### Next Steps
+- Re-point CLAUDE.md and AGENTS.md at PROTOCOL.md + ARCHITECTURE.md.
+- Ledger candidate: `RoutedStream::expect_stalled_open` in
+  `testnet/daemon.rs` no longer has a caller — v6 revocation breaks
+  streams instead of stalling them — and could be deleted.
+
+---
+
 ## 2026-06-11: e2e runner catches up with v6 config
 
 ### Summary
