@@ -197,7 +197,7 @@ async fn restart_re_establishes_direct_links_from_stored_reachabilities() {
 /// In-flight streams break too, as revocation always intended: every stream
 /// rides a tunnel, the revoker's teardown closes its links (`LinkClose`) and
 /// its tunnels (`TunnelClose`), and a tunnel's death is a transport EOF under
-/// the stream. The v5 stall — one-sided teardown left both sides' in-flight
+/// the stream. The historical stall — one-sided teardown left both sides' in-flight
 /// streams silently hanging — is gone structurally.
 #[tokio::test]
 async fn revocation_evicts_routes_and_breaks_in_flight_streams() {
@@ -230,7 +230,7 @@ async fn revocation_evicts_routes_and_breaks_in_flight_streams() {
 /// A and C, who are trusted but share no reachability.
 ///
 /// The chain is deliberately dialed in chain order (A→B, B→C) — the
-/// arrangement that black-holed replies under v5's route-list routing,
+/// arrangement that black-holed replies under the earlier route-list routing,
 /// where a link's acceptor held no route back over it. Who dialed whom no
 /// longer matters: every
 /// link carries frames both ways, B forwards to its own adjacency, and a

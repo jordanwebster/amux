@@ -38,6 +38,22 @@ One paragraph describing what was done.
 
 ---
 
+## 2026-06-11: Protocol version resets to 1
+
+### Summary
+amux is unreleased and the wire owes nothing to history:
+`PROTOCOL_VERSION` resets from the internal working number to **1** —
+the protocol as designed is the first one that will ever ship. The
+internal version labels scrubbed from code comments, docs, and this log
+in favor of plain language ("the protocol rework", "the earlier
+route-list routing").
+
+### Verification
+- Full local CI parity run (fmt --check, CI clippy, workspace build, lib
+  tests, spec suite, e2e suite) before rebasing onto main.
+
+---
+
 ## 2026-06-11: Docs housekeeping — three docs, repointed instructions, compacted log
 
 ### Summary
@@ -51,7 +67,7 @@ the working conventions (timeout-wrapped tests, DEVLOG-per-chunk, no
 trailers, docs-vs-notes). The spec suite's main.rs module doc absorbed
 the "how to add a test" guide, retiring notes/SPEC_TESTS_DESIGN.md;
 notes/REFACTOR_PROGRESS.md (migration complete) deleted. DEVLOG
-compacted: June 2026 entries (spec suite + v6 + docs) kept verbatim, the
+compacted: June 2026 entries (spec suite + protocol rework + docs) kept verbatim, the
 ~100 older entries summarized into era paragraphs — full text remains in
 this file's git history.
 
@@ -77,11 +93,11 @@ spec — the SPAKE2 wire crypto (RFC 9382/edwards25519, transcript hash,
 HKDF infos, sealed identities, opaque INVALID_PIN), the
 versioning-is-equality rule, and the QR payload shape — plus a new "Why
 it is shaped this way" section folding the load-bearing rationale from
-the v6 decision walkthrough (stateless relays, one proxy hop, only-Open-
+the protocol-rework decision walkthrough (stateless relays, one proxy hop, only-Open-
 allocates, no housekeeping acks, tunnels die with their link, deliberate
 double encryption, PAKE over bearer tokens). With that folded, the
-working note `notes/PROTOCOL_V6_DECISIONS.md` is deleted; rejected-
-alternative history lives in the June DEVLOG entries. New
+protocol-decisions working note is deleted; rejected-alternative history
+lives in the June DEVLOG entries. New
 docs/HOW_IT_WORKS.md: the human-readable one-pager for the documentation
 website — mental model (devices not accounts, pairing as a one-time act,
 links carry / tunnels authenticate) and the trust story (what a relay
@@ -92,7 +108,7 @@ spec).
 - docs/PROTOCOL.md: pairing crypto paragraph, version rule, rationale
   section, header repointed (now ~150 lines).
 - docs/HOW_IT_WORKS.md: new.
-- notes/PROTOCOL_V6_DECISIONS.md deleted (gitignored; content folded).
+- the protocol-decisions working note deleted (gitignored; content folded).
 
 ### Verification
 - Docs-only change; spec suite green on the prior commit re-verified
@@ -107,7 +123,7 @@ The tombstone chain is gone: `docs/NETWORKING.md` (the superseded 3,202-line
 v5 spec), `docs/NETWORKING_PROGRESS.md` (its work ledger), and the three
 pointer stubs (`NEW_ARCHITECTURE.md`, `architecture.md`,
 `cloud_architecture.md`) are deleted; git history keeps them. In their
-place, `docs/ARCHITECTURE.md` — a v6-true system doc complementing
+place, `docs/ARCHITECTURE.md` — a current-design system doc complementing
 PROTOCOL.md: PROTOCOL.md owns the wire, ARCHITECTURE.md owns the system
 (process/deployment shapes, identity & trust store, the two-server model,
 the dispatcher's classification table, the service surface map, the
@@ -115,7 +131,7 @@ multi-tenant cloud deployment, and the LinkRegistry / RoutingCore /
 TunnelPool / ConnectionManager layering). Disposition of NETWORKING.md's
 material: §3–4 (threat model, identity, trust, two servers, dispatcher,
 tenancy), §7 (CLI shape), §8.4/8.12/8.13, and the resource caps were
-rewritten for v6 into ARCHITECTURE.md; §4.8, §5–6, §8.5–8.11 were
+rewritten for the new design into ARCHITECTURE.md; §4.8, §5–6, §8.5–8.11 were
 protocol-level and already superseded by PROTOCOL.md (the SPAKE2 crypto
 detail of §5.2.1 survives only in `services/pairing.rs` for now); the
 glossary, invariant catalog (§10), and reference implementation map (§12)
@@ -147,15 +163,15 @@ died with v5's vocabulary.
 ### Next Steps
 - Re-point CLAUDE.md and AGENTS.md at PROTOCOL.md + ARCHITECTURE.md.
 - Ledger candidate: `RoutedStream::expect_stalled_open` in
-  `testnet/daemon.rs` no longer has a caller — v6 revocation breaks
+  `testnet/daemon.rs` no longer has a caller — revocation now breaks
   streams instead of stalling them — and could be deleted.
 
 ---
 
-## 2026-06-11: e2e runner catches up with v6 config
+## 2026-06-11: e2e runner catches up with the reworked config
 
 ### Summary
-All 14 e2e tests failed after the v6 chunks with one cause: the runner's
+All 14 e2e tests failed after the protocol-rework chunks with one cause: the runner's
 generated `local.yaml` still set `randomise_link_name`, deleted with wire
 link names in chunk 2 (the config parser rejects unknown fields). Removed
 the field from the template in `e2e-runner/src/executor.rs`.
@@ -165,14 +181,14 @@ the field from the template in `e2e-runner/src/executor.rs`.
 
 ---
 
-## 2026-06-11: protocol v6 complete — docs graduate
+## 2026-06-11: protocol rework complete — docs graduate
 
 ### Summary
-Closing docs pass for the v6 implementation (chunks 1–5, commits
+Closing docs pass for the protocol-rework implementation (chunks 1–5, commits
 6735df6 → ccd7a25). `docs/PROTOCOL.md` graduates from "target design" to
 the implemented spec, locked in by the prose suite in
 `crates/amux/tests/spec/`. `docs/NETWORKING.md` is marked superseded
-(v5, historical) with a banner saying exactly what v6 replaced and that
+(v5, historical) with a banner saying exactly what the rework replaced and that
 PROTOCOL.md + the spec suite win where they disagree.
 
 ### Changes
@@ -180,7 +196,7 @@ PROTOCOL.md + the spec suite win where they disagree.
 - `docs/NETWORKING.md`: supersession banner.
 
 ### Verification
-- Final state on `protocol-v6`: lib 394 passed; spec suite 43 passed /
+- Final state on the rework branch: lib 394 passed; spec suite 43 passed /
   0 ignored; CI clippy clean; workspace build clean. The wire
   `Message.body` oneof matches PROTOCOL.md's vocabulary verbatim:
   Hello · HelloAck · NeighborUp · NeighborDown · TunnelOpen · TunnelData
@@ -190,17 +206,17 @@ PROTOCOL.md + the spec suite win where they disagree.
 ### Next Steps
 - Decide the fate of NETWORKING.md's still-accurate material (identity,
   trust store, two-server model, dispatcher): fold into PROTOCOL.md
-  companions or rewrite as a v6 reference.
+  companions or rewrite as a current reference.
 - §6 ledger follow-ups: move route activation's TLS handshake off the
   ConnectionManager events task (§6.12); `last_dial_error` changes push
   no event to subscription-only UIs (D15 note).
 
 ---
 
-## 2026-06-11: v6 chunk 5 — fire-and-forget Reauth; reachability shrinks to two fields
+## 2026-06-11: protocol-rework chunk 5 — fire-and-forget Reauth; reachability shrinks to two fields
 
 ### Summary
-The final v6 code chunk: D12 (P5) and D15 (P7). Credential refresh is now
+The final protocol-rework code chunk: D12 (P5) and D15 (P7). Credential refresh is now
 fire-and-forget — the daemon sends `Reauth { token }` on the cloud link at
 expiry − 5 min and expects nothing back; the cloud's only answers are the
 two things it can already say: silence (refresh accepted, the link
@@ -216,7 +232,7 @@ attempt's outcome, cleared when a route comes up). The
 `reachable/unreachable/unknown` enum, its three proto wrapper messages,
 and the `StatusChanged` plumbing are deleted — nothing probes, so
 "unknown" is `!online && last_dial_error.is_none()`, derived client-side
-if anyone cares. This completes the v6 wire vocabulary: `Hello`/`HelloAck`
+if anyone cares. This completes the reworked wire vocabulary: `Hello`/`HelloAck`
 · `NeighborUp`/`NeighborDown` · `TunnelOpen`/`TunnelData`/`TunnelClose` ·
 `LinkClose` · `Reauth` · `PairingService.Pair`.
 
@@ -284,7 +300,7 @@ if anyone cares. This completes the v6 wire vocabulary: `Hello`/`HelloAck`
   strengthened JWT-expiry test.
 
 ### Next Steps
-- v6 implementation complete (chunks 1–5: D10/D11 → D2/D13/D14 → D3a/P8 →
+- Protocol-rework implementation complete (chunks 1–5: D10/D11 → D2/D13/D14 → D3a/P8 →
   D9 → D12/D15). Graduate the remaining doc work: PROTOCOL.md is current;
   NETWORKING.md still describes v5 and is superseded where they overlap.
 - Ledger note: the connector trusts the refresher's `expires_at`
@@ -294,7 +310,7 @@ if anyone cares. This completes the v6 wire vocabulary: `Hello`/`HelloAck`
 
 ---
 
-## 2026-06-11: v6 chunk 4 — one pairing protocol (SPAKE2), two secret deliveries
+## 2026-06-11: protocol-rework chunk 4 — one pairing protocol (SPAKE2), two secret deliveries
 
 ### Summary
 P2/D9 plus the D13 rename: pairing is now ONE wire protocol —
@@ -385,7 +401,7 @@ deleted second protocol.
 
 ---
 
-## 2026-06-11: v6 chunk 3 — every call is a tunnel, with an explicit lifecycle
+## 2026-06-11: protocol-rework chunk 3 — every call is a tunnel, with an explicit lifecycle
 
 ### Summary
 P8 + D3a: the tunnel protocol is now the link lifecycle one layer up —
@@ -444,7 +460,7 @@ SSH-pairing responder's call-back real (D6).
   `server.can_call(&laptop)` over the inbound link; the B1 `#[ignore]`
   marker became a real passing test (open → close → late data: dropped,
   link up); wire scripts rewritten to the new grammar.
-- Additional flips, all v6-structural consequences, called out here:
+- Additional flips, all structural consequences of the rework, called out here:
   `direct_beats_cloud_when_both_are_available` — the acceptor now routes
   back over the link itself, not via the cloud;
   `revocation_evicts_routes_and_breaks_in_flight_streams` (was
@@ -477,7 +493,7 @@ SSH-pairing responder's call-back real (D6).
 
 ---
 
-## 2026-06-11: v6 chunk 2 — route by host id with adjacency-only events
+## 2026-06-11: protocol-rework chunk 2 — route by host id with adjacency-only events
 
 ### Summary
 The core routing rewrite (D2, D14, the routing-relevant D13 renames;
@@ -517,7 +533,7 @@ until chunk 3 (P8).
 - Startup/cloud (`services/startup/*`, `user_state.rs`): per-user
   registries fan out scoped `NeighborUp`s; the cloud is adjacency, not a
   host — neither side records a host entry for the other.
-- Harness/spec: `WirePeer` speaks the v6 handshake; chain tests rewritten —
+- Harness/spec: `WirePeer` speaks the new handshake; chain tests rewritten —
   `endpoints_call_each_other_through_a_chain_regardless_of_dial_direction`
   (the §6.6 pair collapsed; dial direction no longer matters) and
   `presence_reaches_exactly_two_hops_along_a_chain` (catalog 28b inverted:
@@ -526,7 +542,7 @@ until chunk 3 (P8).
 ### Decisions Made
 - Pre-planned spec flips only: 28b inversion, §6.6 collapse, handshake-
   snapshot wire tests. Everything else green with mechanical updates.
-- Lib tests that asserted v5 observables were re-pointed at v6 ones:
+- Lib tests that asserted old observables were re-pointed at current ones:
   rate-limit/forwarding tests count `TunnelFrame` bodies (links also carry
   adjacency events now); cloud-startup tests wait on live links in the
   registries instead of host entries (the cloud never appears as a host).
@@ -546,10 +562,10 @@ until chunk 3 (P8).
 
 ---
 
-## 2026-06-11: v6 chunk 1 — delete preserve_tunnel_id and GoAway drain; rename GoAway → LinkClose
+## 2026-06-11: protocol-rework chunk 1 — delete preserve_tunnel_id and GoAway drain; rename GoAway → LinkClose
 
 ### Summary
-First implementation chunk of protocol v6: the two pure deletions (D10/P3,
+First implementation chunk of the protocol rework: the two pure deletions (D10/P3,
 D11/P6). `preserve_tunnel_id` — the `Option<TunnelId>` threaded from the
 dispatcher through the pairing service into `ConnectionManager` so a
 same-host_id/different-pubkey replacement could keep the in-flight pairing
@@ -590,7 +606,7 @@ link is closed now, here's why" — no grace period.
   initiator (timeout today; prompt once D3's TunnelClose lands) and the
   initiator re-pairs. Known v5-interim consequence: after the replacement the
   responder holds no route back to the initiator until a link flap, so the
-  immediate re-pair over the same relay can black-hole — the v6 reply rule
+  immediate re-pair over the same relay can black-hole — the new reply rule
   (replies ride the arrival link) removes this class structurally.
 - Internal `routing::LinkCloseReason` (writer close requests) keeps its name;
   the wire enum converges on the same name per D11.
@@ -606,11 +622,11 @@ link is closed now, here's why" — no grace period.
 
 ---
 
-## 2026-06-11: Protocol v6 one-pager
+## 2026-06-11: Protocol rework one-pager
 
 ### Summary
 Concluded the protocol-simplification walkthrough (all proposals from the
-networking review resolved) and wrote `docs/PROTOCOL.md` — the v6 target
+networking review resolved) and wrote `docs/PROTOCOL.md` — the target
 design as a one-pager. Core decisions: host-id routing with one proxy hop
 through any relay (advertise-only-adjacency / forward-only-to-adjacency);
 every peer call is a tunnel with pinned e2e mTLS inside (links grant
@@ -623,7 +639,7 @@ added; HostUp/Down → NeighborUp/Down, TunnelFrame → TunnelData,
 RoutingService → LinkService, PairBySpake2 → Pair.
 
 ### Decisions Made
-- Full rationale recorded in `notes/PROTOCOL_V6_DECISIONS.md` (D1–D15,
+- Full rationale recorded in the protocol-decisions working note (D1–D15,
   local working notes). Notable rejections: link-scoped tunnel IDs (forces
   relay remap state), tunnels surviving link replacement (cross-link
   reordering), dropping Reauth entirely (hourly breaks of live cloud
@@ -636,7 +652,7 @@ RoutingService → LinkService, PairBySpake2 → Pair.
 
 ### Verification
 - Design-only change; no code. Spec suite unaffected (expected flips when
-  v6 lands are pre-recorded in the decisions notes).
+  the rework lands are pre-recorded in the decisions notes).
 
 ### Next Steps
 - Implement in sequence: P3+P6 deletions → P1+P8 core rewrite → P2 →
@@ -799,7 +815,7 @@ classification, and the multi-tenant cloud relay (TLS+JWT). Anchor
 commits: fd02e8e ("Implement v1 routing and service architecture"),
 681ee49 ("Implement amux Networking & Security v1"), 707f620. All of it
 was specified in docs/NETWORKING.md (since deleted) and superseded by
-protocol v6 — see the June entries above.
+the protocol rework — see the June entries above.
 
 ### 2026-05-15: Embedded-library refactor
 `amux` reshaped into a library for embedded clients plus `amux-ui` (a
@@ -836,4 +852,4 @@ TCP keepalives; protocol version checking on Connect.
 The initial PTY-multiplexer prototype; milestone 1 with the e2e testing
 framework; TCP transport and remote subscriptions; hooks, structured
 logs, and the dashboard; link-based stack routing — the design whose
-relay statefulness v6 finally resolved by routing on host ids.
+relay statefulness the rework finally resolved by routing on host ids.

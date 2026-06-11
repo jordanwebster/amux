@@ -1,4 +1,4 @@
-//! Routing primitives for the v6 protocol.
+//! Routing primitives for the amux protocol.
 //!
 //! Two rules define routing (docs/PROTOCOL.md): advertise only adjacency,
 //! forward only to adjacency. This module owns the link runtime

@@ -1,6 +1,6 @@
 # The amux protocol
 
-**Status**: implemented (v6, 2026-06-11). This is the protocol the daemon
+**Status**: implemented (2026-06-11). This is the protocol the daemon
 speaks; it is locked in by the prose spec suite in
 `crates/amux/tests/spec/`. The system around the wire — processes,
 servers, the dispatcher, trust storage, service surfaces — is described
@@ -117,7 +117,7 @@ paired peer; relaying is something every node can do.
 
 `Hello` / `HelloAck` · `NeighborUp` / `NeighborDown` · `TunnelOpen` ·
 `TunnelData` · `TunnelClose` · `LinkClose` · `Reauth` ·
-`PairingService.Pair` (stream). `PROTOCOL_VERSION = 6`.
+`PairingService.Pair` (stream). `PROTOCOL_VERSION = 1`.
 
 ## What this protocol deliberately does not have
 

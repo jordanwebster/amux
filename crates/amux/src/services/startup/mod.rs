@@ -853,7 +853,6 @@ mod tests {
     use tower::service_fn;
 
     use super::*;
-    use crate::HostId;
     use crate::agents::{
         CreateAgentConfig, CreateAgentRpcRequest, TEST_ECHO_COMMAND, TEST_ECHO_V1,
     };
@@ -864,7 +863,7 @@ mod tests {
     use crate::transport::in_process_incoming;
     use crate::trust::{Reachability, TrustEntry};
     use crate::user_state::ShutdownRequest;
-    use crate::{Client, SessionCloseReason, SubscribeSessionEvent};
+    use crate::{Client, HostId, SessionCloseReason, SubscribeSessionEvent};
 
     fn test_state(host_id: Uuid) -> Arc<RwLock<ServerState>> {
         let (shutdown_tx, _shutdown_rx) = mpsc::channel::<ShutdownRequest>(1);
@@ -1681,7 +1680,7 @@ mod tests {
             "token-a".to_string(),
         );
 
-        // See above: live links, not host entries, are the v6 observable.
+        // See above: live links, not host entries, are the observable.
         tokio::time::timeout(Duration::from_secs(1), async {
             loop {
                 let cloud_links = service

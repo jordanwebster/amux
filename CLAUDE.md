@@ -6,7 +6,7 @@ compatibility for old local protocols, config keys, or public APIs.
 Use these sources as the current guidance:
 
 - `AGENTS.md` for repo-level agent instructions.
-- `docs/PROTOCOL.md` for the wire protocol (v6): links, routing, tunnels,
+- `docs/PROTOCOL.md` for the wire protocol: links, routing, tunnels,
   pairing, and the design rationale.
 - `docs/ARCHITECTURE.md` for the system: processes, the two-server model,
   the dispatcher, trust storage, service surfaces, internal layering.

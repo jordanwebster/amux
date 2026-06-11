@@ -1,6 +1,6 @@
 # The amux system architecture
 
-**Status**: current (v6, 2026-06-11). This document describes the system —
+**Status**: current (2026-06-11). This document describes the system —
 processes, servers, trust machinery, service surfaces, and internal
 layering. Its companion, [`PROTOCOL.md`](./PROTOCOL.md), owns the wire:
 links, frames, tunnels, the routing rules, and the pairing flow. When this

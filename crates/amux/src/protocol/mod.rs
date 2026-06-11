@@ -1,7 +1,7 @@
 mod error;
 
 /// Protocol version for the generated `LinkService.Connect` handshake.
-pub const PROTOCOL_VERSION: u32 = 6;
+pub const PROTOCOL_VERSION: u32 = 1;
 
 pub use error::ProtocolError;
 pub(crate) use error::protocol_status;

@@ -10,7 +10,7 @@
 //! floods are rate-limited. (docs/PROTOCOL.md "Links" and "Tunnels";
 //! docs/ARCHITECTURE.md "The dispatcher")
 //!
-//! The v5 review's B1 finding — a frame in a tunnel's just-closed window
+//! A historical close-race flaw — a frame in a tunnel's just-closed window
 //! escalating to a link-wide LinkClose — is closed structurally by the
 //! explicit `TunnelOpen`/`TunnelData`/`TunnelClose` lifecycle: only an Open
 //! allocates, so a late frame is for an unknown id and is a deterministic
@@ -115,8 +115,8 @@ async fn a_data_frame_for_an_unknown_tunnel_is_dropped_and_the_link_stays_up() {
     wire.expect_stream_stays_open().await;
 }
 
-/// The v5 review's B1 finding, closed structurally by the
-/// explicit tunnel lifecycle: under v5's implicit opens, a frame landing in
+/// A historical close-race flaw, closed structurally by the
+/// explicit tunnel lifecycle: with implicit tunnel opens, a frame landing in
 /// a tunnel's just-closed window surfaced `InboundClosed` and escalated to a
 /// link-wide `LinkClose(PROTOCOL_ERROR)`. Now closing is part of the wire
 /// grammar — open a tunnel, close it, then send data for it: the frame is
