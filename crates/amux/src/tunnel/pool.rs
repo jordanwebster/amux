@@ -32,8 +32,7 @@ use crate::resource_limits::{
 };
 use crate::routing::{LinkId, LinkRegistry, LinkUnavailable, RoutingCore};
 use crate::transport::{
-    channel_from_single_io, configure_tonic_endpoint_keepalive, pin_pairing_channel_from_io,
-    qr_pairing_channel_from_io,
+    channel_from_single_io, configure_tonic_endpoint_keepalive, pairing_channel_from_io,
 };
 use crate::trust::SharedTrustStore;
 use crate::tunnel::transport::TunnelTransport;
@@ -41,7 +40,7 @@ use crate::tunnel::types::{TunnelId, TunnelTypeError};
 use crate::tunnel::{TUNNEL_DATA_PAYLOAD_MAX, Tunnel, create_tunnel, tunnel_close_message};
 
 const TUNNEL_TLS_HANDSHAKE_TIMEOUT: Duration = Duration::from_secs(10);
-const PIN_PAIRING_TLS_HANDSHAKE_TIMEOUT: Duration = Duration::from_secs(10);
+const PAIRING_TLS_HANDSHAKE_TIMEOUT: Duration = Duration::from_secs(10);
 
 #[derive(Debug, thiserror::Error)]
 pub(crate) enum TunnelPoolError {
@@ -101,7 +100,7 @@ pub(crate) struct TunnelPool {
     links: Arc<LinkRegistry>,
     incoming_tunnels_tx: mpsc::Sender<TunnelTransport>,
     channel_security: TunnelChannelSecurity,
-    pin_pairing_handshake_timeout: Duration,
+    pairing_handshake_timeout: Duration,
     state: Arc<RwLock<PoolState>>,
 }
 
@@ -163,14 +162,14 @@ impl TunnelPool {
             links,
             incoming_tunnels_tx,
             channel_security,
-            pin_pairing_handshake_timeout: PIN_PAIRING_TLS_HANDSHAKE_TIMEOUT,
+            pairing_handshake_timeout: PAIRING_TLS_HANDSHAKE_TIMEOUT,
             state: Arc::new(RwLock::new(PoolState::default())),
         }
     }
 
     #[cfg(test)]
-    pub(crate) fn with_pin_pairing_handshake_timeout(mut self, timeout: Duration) -> Self {
-        self.pin_pairing_handshake_timeout = timeout;
+    pub(crate) fn with_pairing_handshake_timeout(mut self, timeout: Duration) -> Self {
+        self.pairing_handshake_timeout = timeout;
         self
     }
 
@@ -208,49 +207,22 @@ impl TunnelPool {
         self.secured_channel(id, peer, transport).await
     }
 
-    pub(crate) async fn pin_pairing_channel_via(
+    pub(crate) async fn pairing_channel_via(
         &self,
         peer: HostId,
         relay: HostId,
     ) -> Result<Channel, TunnelPoolError> {
         let (id, transport) = self.pairing_transport_via(peer, relay).await?;
         match tokio::time::timeout(
-            self.pin_pairing_handshake_timeout,
-            pin_pairing_channel_from_io(transport),
+            self.pairing_handshake_timeout,
+            pairing_channel_from_io(transport),
         )
         .await
         {
             Err(_) => {
                 self.retire_and_notify(id).await;
                 Err(TunnelPoolError::Tls(
-                    "PIN pairing TLS handshake timed out".to_string(),
-                ))
-            }
-            Ok(Ok(channel)) => Ok(channel),
-            Ok(Err(error)) => {
-                self.retire_and_notify(id).await;
-                Err(TunnelPoolError::Tls(error.to_string()))
-            }
-        }
-    }
-
-    pub(crate) async fn qr_pairing_channel_via(
-        &self,
-        peer: HostId,
-        relay: HostId,
-        expected_pubkey: Vec<u8>,
-    ) -> Result<Channel, TunnelPoolError> {
-        let (id, transport) = self.pairing_transport_via(peer, relay).await?;
-        match tokio::time::timeout(
-            self.pin_pairing_handshake_timeout,
-            qr_pairing_channel_from_io(transport, expected_pubkey),
-        )
-        .await
-        {
-            Err(_) => {
-                self.retire_and_notify(id).await;
-                Err(TunnelPoolError::Tls(
-                    "QR pairing TLS handshake timed out".to_string(),
+                    "pairing TLS handshake timed out".to_string(),
                 ))
             }
             Ok(Ok(channel)) => Ok(channel),
@@ -1212,16 +1184,14 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn pin_pairing_tls_timeout_removes_provisional_tunnel() {
+    async fn pairing_tls_timeout_removes_provisional_tunnel() {
         let (pool, _incoming_rx) = test_pool(HostId::from_u128(1));
-        let pool = pool.with_pin_pairing_handshake_timeout(Duration::from_millis(10));
+        let pool = pool.with_pairing_handshake_timeout(Duration::from_millis(10));
         let peer = HostId::from_u128(2);
         let (link_tx, _link_rx) = mpsc::channel(8);
         register_test_link(&pool, 99, link_tx).await;
 
-        let result = pool
-            .pin_pairing_channel_via(peer, HostId::from_u128(99))
-            .await;
+        let result = pool.pairing_channel_via(peer, HostId::from_u128(99)).await;
         assert!(
             matches!(result, Err(TunnelPoolError::Tls(message)) if message.contains("timed out"))
         );

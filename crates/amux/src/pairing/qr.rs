@@ -3,14 +3,16 @@ use serde::{Deserialize, Serialize};
 use crate::HostId;
 use crate::client::PairingStart;
 
-const QR_FIELD_LEN: usize = 32;
+const QR_SECRET_LEN: usize = 32;
 
+/// What the QR code carries: `{host_id, cloud_url, secret}`. The secret is
+/// a one-shot 256-bit SPAKE2 input — it never crosses the wire, so the QR
+/// needs no pubkey; SPAKE2 provides mutual authentication from possession.
 #[derive(Debug, Clone, Eq, PartialEq)]
 pub struct QrPairingPayload {
     pub host_id: HostId,
-    pub pubkey: Vec<u8>,
     pub cloud_url: String,
-    pub one_shot_token: Vec<u8>,
+    pub secret: Vec<u8>,
 }
 
 #[derive(Debug, thiserror::Error)]
@@ -37,20 +39,18 @@ pub enum QrPairingError {
 #[derive(Deserialize, Serialize)]
 struct WireQrPairingPayload {
     host_id: String,
-    pubkey: Vec<u8>,
     cloud_url: String,
-    one_shot_token: Vec<u8>,
+    secret: Vec<u8>,
 }
 
 pub fn encode_qr_pairing_payload(
     pairing: &PairingStart,
-    one_shot_token: &[u8],
+    secret: &[u8],
 ) -> Result<String, QrPairingError> {
     let payload = WireQrPairingPayload {
         host_id: pairing.identity.host_id.to_string(),
-        pubkey: pairing.identity.pubkey.clone(),
         cloud_url: pairing.cloud_url.clone(),
-        one_shot_token: one_shot_token.to_vec(),
+        secret: secret.to_vec(),
     };
     Ok(serde_json::to_string(&payload)?)
 }
@@ -62,13 +62,11 @@ pub fn parse_qr_pairing_payload(payload: &str) -> Result<QrPairingPayload, QrPai
             value: payload.host_id.clone(),
             source,
         })?;
-    validate_qr_payload_bytes("pubkey", &payload.pubkey)?;
-    validate_qr_payload_bytes("one_shot_token", &payload.one_shot_token)?;
+    validate_qr_payload_bytes("secret", &payload.secret)?;
     Ok(QrPairingPayload {
         host_id,
-        pubkey: payload.pubkey,
         cloud_url: payload.cloud_url,
-        one_shot_token: payload.one_shot_token,
+        secret: payload.secret,
     })
 }
 
@@ -96,12 +94,12 @@ pub fn validate_qr_payload_cloud_url(
 }
 
 fn validate_qr_payload_bytes(field: &'static str, bytes: &[u8]) -> Result<(), QrPairingError> {
-    if bytes.len() == QR_FIELD_LEN {
+    if bytes.len() == QR_SECRET_LEN {
         Ok(())
     } else {
         Err(QrPairingError::InvalidLength {
             field,
-            expected: QR_FIELD_LEN,
+            expected: QR_SECRET_LEN,
             actual: bytes.len(),
         })
     }
@@ -124,32 +122,51 @@ mod tests {
             ttl_seconds: 300,
             tcp_port: None,
             cloud_url: "https://relay.example".to_string(),
-            secret: PairingSecret::OneShotToken(vec![9; 32]),
+            secret: PairingSecret::QrSecret(vec![9; 32]),
         };
 
         let payload = encode_qr_pairing_payload(&pairing, &[9; 32]).unwrap();
         let parsed = parse_qr_pairing_payload_for_cloud(&payload, "https://relay.example").unwrap();
 
         assert_eq!(parsed.host_id, HostId::from_u128(1));
-        assert_eq!(parsed.pubkey, vec![7; 32]);
         assert_eq!(parsed.cloud_url, "https://relay.example");
-        assert_eq!(parsed.one_shot_token, vec![9; 32]);
+        assert_eq!(parsed.secret, vec![9; 32]);
+    }
+
+    #[test]
+    fn qr_pairing_payload_carries_no_pubkey() {
+        let pairing = PairingStart {
+            identity: SshPairingPeer {
+                host_id: HostId::from_u128(1),
+                pubkey: vec![7; 32],
+                name: "desktop".to_string(),
+            },
+            ttl_seconds: 300,
+            tcp_port: None,
+            cloud_url: "https://relay.example".to_string(),
+            secret: PairingSecret::QrSecret(vec![9; 32]),
+        };
+
+        let payload = encode_qr_pairing_payload(&pairing, &[9; 32]).unwrap();
+        let value: serde_json::Value = serde_json::from_str(&payload).unwrap();
+
+        assert!(value.get("pubkey").is_none());
+        assert!(value.get("name").is_none());
     }
 
     #[test]
     fn qr_pairing_payload_validates_shape_and_cloud_url() {
         let payload = serde_json::json!({
             "host_id": "00000000-0000-0000-0000-000000000001",
-            "pubkey": [7],
             "cloud_url": "https://relay.example",
-            "one_shot_token": vec![9_u8; 32],
+            "secret": [9],
         })
         .to_string();
 
         assert!(matches!(
             parse_qr_pairing_payload(&payload),
             Err(QrPairingError::InvalidLength {
-                field: "pubkey",
+                field: "secret",
                 ..
             })
         ));

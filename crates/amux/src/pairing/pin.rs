@@ -7,8 +7,8 @@ use crate::audit;
 use crate::client::{Client, ClientError};
 use crate::identity::load_or_create_device_identity_in;
 use crate::pairing::ssh::SshPairingPeer;
-use crate::services::{LocalPairingIdentity, pair_by_spake2_initiator};
-use crate::transport::{TransportError, pin_pairing_channel};
+use crate::services::{LocalPairingIdentity, pair_initiator};
+use crate::transport::{TransportError, pairing_channel};
 
 #[derive(Debug, thiserror::Error)]
 pub enum PinPairingError {
@@ -39,17 +39,17 @@ where
         identity_error(error)
     })?;
     let local_identity = LocalPairingIdentity::from_device_identity(&local_identity);
-    let channel = pin_pairing_channel(addr).inspect_err(|error| {
+    let channel = pairing_channel(addr).inspect_err(|error| {
         audit::pairing_start("direct_pin");
         audit::pairing_failure("direct_pin", error);
     })?;
     let mut pairing_client =
         crate::protocol::wire::pairing_service_client::PairingServiceClient::new(channel);
-    let peer = pair_by_spake2_initiator(
+    let peer = pair_initiator(
         &mut pairing_client,
         &local_identity,
         local_name.as_ref(),
-        pin,
+        pin.as_bytes(),
     )
     .await
     .map_err(|error| {

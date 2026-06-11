@@ -348,7 +348,7 @@ async fn run_command(command: Commands, mut config: Config) -> Result<()> {
                 )
                 .await?;
                 let peer = client
-                    .pair_qr_cloud_peer(payload.host_id, payload.pubkey, payload.one_shot_token)
+                    .pair_qr_cloud_peer(payload.host_id, payload.secret)
                     .await?;
                 println!("Paired with {} ({}) via QR.", peer.name, peer.host_id);
                 return Ok(());
@@ -685,8 +685,8 @@ fn print_pairing_start(pairing: &PairingStart) -> Result<()> {
                 println!("LAN direct listener: tcp_port {port}");
             }
         }
-        PairingSecret::OneShotToken(token) => {
-            let payload = qr_pairing_payload(pairing, token)?;
+        PairingSecret::QrSecret(secret) => {
+            let payload = qr_pairing_payload(pairing, secret)?;
             println!("{}", terminal_qr_code(&payload)?);
         }
     }
@@ -694,8 +694,8 @@ fn print_pairing_start(pairing: &PairingStart) -> Result<()> {
     Ok(())
 }
 
-fn qr_pairing_payload(pairing: &PairingStart, token: &[u8]) -> Result<String> {
-    amux::encode_qr_pairing_payload(pairing, token).context("failed to encode QR pairing payload")
+fn qr_pairing_payload(pairing: &PairingStart, secret: &[u8]) -> Result<String> {
+    amux::encode_qr_pairing_payload(pairing, secret).context("failed to encode QR pairing payload")
 }
 
 fn terminal_qr_code(payload: &str) -> Result<String> {
@@ -1031,21 +1031,21 @@ mod tests {
             ttl_seconds: 300,
             tcp_port: None,
             cloud_url: "https://relay.example".to_string(),
-            secret: PairingSecret::OneShotToken(vec![9; 32]),
+            secret: PairingSecret::QrSecret(vec![9; 32]),
         };
-        let PairingSecret::OneShotToken(token) = &pairing.secret else {
-            panic!("expected QR token");
+        let PairingSecret::QrSecret(secret) = &pairing.secret else {
+            panic!("expected QR secret");
         };
 
-        let payload = qr_pairing_payload(&pairing, token).unwrap();
+        let payload = qr_pairing_payload(&pairing, secret).unwrap();
         let value: serde_json::Value = serde_json::from_str(&payload).unwrap();
         let qr = terminal_qr_code(&payload).unwrap();
 
         assert_eq!(value["host_id"], "00000000-0000-0000-0000-000000000001");
-        assert_eq!(value["pubkey"].as_array().unwrap().len(), 32);
+        assert!(value.get("pubkey").is_none());
         assert!(value.get("name").is_none());
         assert_eq!(value["cloud_url"], "https://relay.example");
-        assert_eq!(value["one_shot_token"].as_array().unwrap().len(), 32);
+        assert_eq!(value["secret"].as_array().unwrap().len(), 32);
         assert!(qr.lines().count() > 4);
     }
 
@@ -1053,24 +1053,22 @@ mod tests {
     fn qr_pairing_payload_parser_validates_payload_shape() {
         let mut value = serde_json::json!({
             "host_id": "00000000-0000-0000-0000-000000000001",
-            "pubkey": vec![7_u8; 32],
             "cloud_url": "https://relay.example",
-            "one_shot_token": vec![9_u8; 32],
+            "secret": vec![9_u8; 32],
         });
         let payload = value.to_string();
         let parsed = amux::parse_qr_pairing_payload(&payload).unwrap();
         assert_eq!(parsed.host_id, uuid::Uuid::from_u128(1));
-        assert_eq!(parsed.pubkey, vec![7; 32]);
         assert_eq!(parsed.cloud_url, "https://relay.example");
-        assert_eq!(parsed.one_shot_token, vec![9; 32]);
+        assert_eq!(parsed.secret, vec![9; 32]);
 
-        value["pubkey"] = serde_json::json!([7_u8]);
+        value["secret"] = serde_json::json!([9_u8]);
         let bad = value.to_string();
         assert!(
             amux::parse_qr_pairing_payload(&bad)
                 .unwrap_err()
                 .to_string()
-                .contains("pubkey must be 32 bytes")
+                .contains("secret must be 32 bytes")
         );
         assert!(amux::validate_qr_payload_cloud_url("https://a", "https://b").is_err());
     }

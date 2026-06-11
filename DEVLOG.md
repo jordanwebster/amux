@@ -38,6 +38,97 @@ One paragraph describing what was done.
 
 ---
 
+## 2026-06-11: v6 chunk 4 — one pairing protocol (SPAKE2), two secret deliveries
+
+### Summary
+P2/D9 plus the D13 rename: pairing is now ONE wire protocol —
+`PairingService.Pair(stream PairMessage)`, the SPAKE2 exchange — with two
+out-of-band secret-delivery mechanisms: a typed 6-digit PIN (no camera) and
+a QR-carried 256-bit secret (scan → paired; the user never sees it). The QR
+payload shrinks to `{host_id, cloud_url, secret}` — the pubkey drops out
+because SPAKE2 provides mutual authentication from possession of the
+secret. This is stronger, not just simpler: the old `PairByToken` flow sent
+a bearer token through a pubkey-pinned TLS channel, so the secret crossed
+the wire; now it never does. One-shot consumption, ~5-minute TTL, and the
+5-attempt cap are uniform across both deliveries (the cap is moot for a
+256-bit secret but harmless). The cloud-only token-ingress restriction
+(review item D5) is deleted with the token protocol — the Pair stream is
+admitted on any pre-trust pairing transport. `PairBySpake2` → `Pair` and
+`PairBySpake2Message` → `PairMessage`: the qualifier was a fossil of the
+deleted second protocol.
+
+### Changes
+- `proto/amux/v1/amux.proto`: `PairByToken` RPC + request/response deleted;
+  `PairBySpake2(stream PairBySpake2Message)` → `Pair(stream PairMessage)`;
+  `PairingError.Reason::INVALID_TOKEN` deleted (reasons renumbered);
+  `PairQrCloudPeerRequest` is `{host_id, secret}`;
+  `StartPairingResponse.secret` oneof carries `qr_secret` not
+  `one_shot_token`.
+- `pairing/mod.rs`: `PairMode` collapses to one secret kind — bytes plus
+  attempt accounting (`failed/in_flight/reserved`) and an audit label.
+  `PairSecret::Token`, `PairModeTokenAttempt`, `begin/complete/abort`
+  token methods, `token_matches`, and `InvalidToken`/`NotTokenMode`/
+  `NotPinMode` errors deleted. The attempt machinery drops its PIN
+  qualifier (`PairModeAttempt`/`PairModeCommit`, `begin_attempt`,
+  `record_failure`, `begin_commit`, `complete_success`,
+  `PAIR_ATTEMPT_LIMIT`); `attempt.secret()` returns the SPAKE2 password
+  bytes. New `start_qr_secret[_for_duration]` mints the 256-bit secret.
+- `services/pairing.rs`: `pair_by_token` server method,
+  `pair_by_token_initiator`, `commit_pairing_token`, and the cloud-only
+  `token_pairing_request_reachability` deleted; the SPAKE2 initiator
+  (`pair_initiator`) takes `secret: &[u8]`; one `pair_mode_status` mapper.
+- QR-pinned TLS verifier mode deleted: `transport/tls.rs` loses
+  `QrServerVerification`, `qr_pairing_channel_from_io`, and the
+  `expected_pubkey` threading (`tunnel/pool.rs::qr_pairing_channel_via`,
+  `connection.rs::cloud_qr_pairing_channel_to`). The initiator verification
+  matrix is {trust-pinned, none}; the surviving anonymous-TLS channel
+  helpers drop their `pin_` prefix (`pairing_channel*`,
+  `pairing_channel_via`, `cloud_pairing_channel_to`).
+- `services/client.rs`: `PairPinCloudPeer`/`PairQrCloudPeer` now share one
+  `pair_cloud_peer_with_secret` path (channel → SPAKE2 → host-id match →
+  commit); the QR pubkey/duplicate-pubkey preflight went with the pubkey.
+  `pairing/qr.rs` encodes/parses the new payload; `client/mod.rs` has
+  `PairingSecret::QrSecret` and the two-argument `pair_qr_cloud_peer`;
+  `amux-cli` renders/consumes the new payload.
+- Harness: `testnet/pairing.rs::QrPayload` is `{host_id, secret}`;
+  `with_qr` drives the same admin RPC as before. Spec chapter prose updated
+  to D9 (no behavioral flips; all 43 specs unchanged and green).
+- Kept deliberately: `TunnelTransport::has_cloud_pairing_reachability`
+  (the responder still learns `Reachability::Cloud` from the pairing
+  tunnel's arrival link) and `StartPairing`'s "QR requires cloud mode"
+  check (the minted payload's `cloud_url` is what makes a QR consumable
+  today; the wire protocol itself no longer cares).
+
+### Decisions Made
+- Wrong-secret on the QR path reports the same opaque `INVALID_PIN` as the
+  PIN path: one protocol, one failure surface.
+- Lib tests that exercised `PairByToken` were deleted where the behavior
+  died with the token (cloud-only ingress, token race/reservation, token
+  self-pairing preflights) and rewritten on the unified path where the
+  behavior survives (trust-save failure releasing the reservation,
+  duplicate-pubkey rejection at staging, pubkey replacement incl. the D10
+  in-flight-tunnel teardown, QR-secret one-shot consumption).
+
+### Verification
+- `cargo build --workspace` and `cargo build -p amux --features testnet`
+  clean; `cargo fmt`; CI clippy
+  (`--workspace --all-targets --features amux/testnet -- -D warnings`)
+  clean.
+- `cargo test -p amux --lib`: 394 passed (was 402: token tests deleted,
+  several consolidated into unified-path equivalents).
+- Spec suite: 43 passed / 0 ignored, ×2 runs (~32.3s each), plus a third
+  green run after prose-only spec comment updates.
+
+### Next Steps
+- Chunk 5 (P5/D12 + P7/D15): delete `ReauthAck` and the reauth ack state
+  machine; shrink `HostEntry` reachability to `online` +
+  `last_dial_error`.
+- Ledger note: `StartPairing` still refuses QR mode without cloud config —
+  revisit if a non-cloud QR consumer path (e.g. LAN rendezvous by host_id)
+  ever exists.
+
+---
+
 ## 2026-06-11: v6 chunk 3 — every call is a tunnel, with an explicit lifecycle
 
 ### Summary

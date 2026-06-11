@@ -519,7 +519,7 @@ mod tests {
         assert!(pairing_rx.try_recv().is_err());
 
         pair_mode
-            .start_token_for_duration([1_u8; 32], Duration::from_secs(60))
+            .start_qr_secret_for_duration([1_u8; 32], Duration::from_secs(60))
             .unwrap();
         run_dispatch(
             dispatcher,
@@ -557,7 +557,7 @@ mod tests {
         )
         .unwrap();
         pair_mode
-            .start_token_for_duration([1_u8; 32], Duration::from_secs(60))
+            .start_pin_for_duration("123456".to_string(), Duration::from_secs(60))
             .unwrap();
 
         run_dispatch_with_reachability(

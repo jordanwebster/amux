@@ -1,10 +1,10 @@
 //! Chapter 2 — Pairing.
 //!
-//! Pairing is the out-of-band bootstrap of mutual trust: PIN (SPAKE2) over
-//! direct TCP or through the cloud, QR one-shot token through the cloud,
-//! and the SSH identity exchange. Pair-mode is local, time-bounded,
-//! attempt-capped, and one-shot. (docs/NETWORKING.md §4.3, §5,
-//! invariants N-P-*)
+//! Pairing is the out-of-band bootstrap of mutual trust: one SPAKE2
+//! protocol whose secret arrives as a typed PIN (over direct TCP or
+//! through the cloud) or as a QR-carried 256-bit secret, plus the SSH
+//! identity exchange. Pair-mode is local, time-bounded, attempt-capped,
+//! and one-shot. (docs/PROTOCOL.md "Identity and trust", invariants N-P-*)
 
 use std::time::Duration;
 
@@ -65,9 +65,9 @@ async fn pin_pairing_through_the_cloud() {
     desktop.can_call(&laptop).await;
 }
 
-/// QR pairing through the cloud: the initiator verifies the responder's
-/// QR-advertised pubkey at the TLS layer and presents the one-shot token;
-/// the token is consumed by the first success.
+/// QR pairing through the cloud: the scanned 256-bit secret feeds the same
+/// SPAKE2 stream the typed PIN does — the secret never crosses the wire —
+/// and is consumed by the first success.
 #[tokio::test]
 async fn qr_pairing_through_the_cloud() {
     let net = TestNet::builder()
@@ -91,7 +91,7 @@ async fn qr_pairing_through_the_cloud() {
     desktop.trusts(&phone).await;
     phone.can_call(&desktop).await;
     desktop.can_call(&phone).await;
-    desktop.pair_mode_ends().await; // the one-shot token is consumed
+    desktop.pair_mode_ends().await; // the one-shot secret is consumed
 }
 
 /// SSH pairing exchanges identities over the already-authenticated SSH

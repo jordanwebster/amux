@@ -120,7 +120,7 @@ pub struct PairingStart {
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub enum PairingSecret {
     Pin(String),
-    OneShotToken(Vec<u8>),
+    QrSecret(Vec<u8>),
 }
 
 #[derive(Clone, Debug, Eq, PartialEq)]
@@ -745,8 +745,7 @@ impl Client {
     pub async fn pair_qr_cloud_peer(
         &self,
         host_id: uuid::Uuid,
-        pubkey: Vec<u8>,
-        one_shot_token: Vec<u8>,
+        secret: Vec<u8>,
     ) -> Result<SshPairingPeer, ClientError> {
         self.ensure_open()?;
         let response = self
@@ -755,8 +754,7 @@ impl Client {
             .await
             .pair_qr_cloud_peer(wire::PairQrCloudPeerRequest {
                 host_id: host_id.as_bytes().to_vec(),
-                pubkey,
-                one_shot_token,
+                secret,
             })
             .await
             .map_err(status_to_client_error)?
@@ -1299,9 +1297,7 @@ fn pairing_start_from_wire(
         message: "missing StartPairingResponse.secret".to_string(),
     })? {
         wire::start_pairing_response::Secret::Pin(pin) => PairingSecret::Pin(pin),
-        wire::start_pairing_response::Secret::OneShotToken(token) => {
-            PairingSecret::OneShotToken(token)
-        }
+        wire::start_pairing_response::Secret::QrSecret(secret) => PairingSecret::QrSecret(secret),
     };
     Ok(PairingStart {
         identity: pairing_identity_to_peer(method::CLIENT_START_PAIRING_NAME, identity)?,
@@ -1510,10 +1506,7 @@ mod tests {
             ttl_seconds: 300,
             tcp_port: Some(u32::from(u16::MAX) + 1),
             cloud_url: "https://cloud.example".to_string(),
-            secret: Some(wire::start_pairing_response::Secret::OneShotToken(vec![
-                1;
-                32
-            ])),
+            secret: Some(wire::start_pairing_response::Secret::QrSecret(vec![1; 32])),
         })
         .unwrap_err();
 

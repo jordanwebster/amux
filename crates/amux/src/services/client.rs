@@ -33,7 +33,7 @@ use crate::server::{SHUTDOWN_REASON_METADATA_KEY, ShutdownReason};
 use crate::services::agent::AgentServiceCtx;
 use crate::services::pairing::{
     LocalPairingIdentity, PeerTrustCommitContext, PeerTrustUpdate, SharedTrustCommitLock,
-    commit_peer_trust, pair_by_spake2_initiator, pair_by_token_initiator,
+    commit_peer_trust, pair_initiator,
 };
 use crate::services::{ReachabilityLinkConnector, resume_agents};
 use crate::transport::{BoxedGrpcAuth, BoxedGrpcConnectInfo};
@@ -48,7 +48,7 @@ type ResponseStream<T> = Pin<Box<dyn Stream<Item = Result<T, tonic::Status>> + S
 const REMOTE_AGENT_SUBSCRIPTION_RETRY_DELAY: Duration = Duration::from_millis(100);
 const HOST_ID_LEN: usize = 16;
 const PUBKEY_LEN: usize = 32;
-const TOKEN_LEN: usize = 32;
+const QR_SECRET_LEN: usize = 32;
 const MAX_PAIRING_NAME_BYTES: usize = 256;
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -1063,77 +1063,13 @@ impl wire::client_service_server::ClientService for ClientService {
         request: tonic::Request<wire::PairPinCloudPeerRequest>,
     ) -> TonicResult<wire::PairPinCloudPeerResponse> {
         require_local_admin_client(&request)?;
-        let trust = &self.pairing_trust;
         let request = request.into_inner();
         let peer_host_id = uuid_from_bytes("PairPinCloudPeerRequest.host_id", &request.host_id)?;
-        if peer_host_id == self.local_agents.host_id() {
-            return Err(tonic::Status::invalid_argument("SELF_PAIRING"));
-        }
-        audit::pairing_start("cloud_pin");
-        let local_name = {
-            let state = self.server_state.read().await;
-            state.host_name().to_string()
-        };
-        let local_identity =
-            LocalPairingIdentity::new(self.local_agents.host_id(), trust.local_pubkey.clone());
-        let channel = self
-            .remote_agent_connections
-            .cloud_pin_pairing_channel_to(peer_host_id)
-            .await
-            .map_err(|error| {
-                audit::pairing_failure("cloud_pin", &error);
-                tonic::Status::unavailable(format!(
-                    "cloud pairing target {peer_host_id} is not reachable: {error}"
-                ))
-            })?;
-        let mut pairing_client = wire::pairing_service_client::PairingServiceClient::new(channel);
-        let peer = pair_by_spake2_initiator(
-            &mut pairing_client,
-            &local_identity,
-            &local_name,
-            &request.pin,
-        )
-        .await
-        .inspect_err(|error| {
-            audit::pairing_failure("cloud_pin", error);
-        })?;
-        if peer.host_id != peer_host_id {
-            audit::pairing_failure("cloud_pin", "paired identity did not match requested host");
-            return Err(tonic::Status::invalid_argument(
-                "PROTOCOL_VIOLATION: paired identity did not match requested host",
-            ));
-        }
-        if peer.pubkey == trust.local_pubkey {
-            audit::pairing_failure("cloud_pin", "SELF_PAIRING");
-            return Err(tonic::Status::invalid_argument("SELF_PAIRING"));
-        }
-
-        commit_peer_trust(
-            PeerTrustCommitContext::new(
-                trust.trust_store.clone(),
-                trust.trust_commit_lock.clone(),
-                self.remote_agent_connections.clone(),
-                trust.data_dir.clone(),
-            ),
-            PeerTrustUpdate::new(
-                peer.host_id,
-                peer.pubkey.clone(),
-                peer.name.clone(),
-                Some(Reachability::Cloud),
-            ),
-        )
-        .await
-        .inspect_err(|error| {
-            audit::pairing_failure("cloud_pin", error);
-        })?;
-        audit::pairing_success("cloud_pin", peer.host_id);
-        self.publish_host_status_update(peer.host_id).await;
+        let peer = self
+            .pair_cloud_peer_with_secret(peer_host_id, request.pin.as_bytes(), "cloud_pin")
+            .await?;
         Ok(tonic::Response::new(wire::PairPinCloudPeerResponse {
-            peer: Some(wire::PairingIdentity {
-                host_id: peer.host_id.as_bytes().to_vec(),
-                pubkey: peer.pubkey,
-                name: peer.name,
-            }),
+            peer: Some(peer),
         }))
     }
 
@@ -1142,77 +1078,14 @@ impl wire::client_service_server::ClientService for ClientService {
         request: tonic::Request<wire::PairQrCloudPeerRequest>,
     ) -> TonicResult<wire::PairQrCloudPeerResponse> {
         require_local_admin_client(&request)?;
-        let trust = &self.pairing_trust;
         let request = request.into_inner();
         let peer_host_id = uuid_from_bytes("PairQrCloudPeerRequest.host_id", &request.host_id)?;
-        validate_pairing_pubkey("PairQrCloudPeerRequest.pubkey", &request.pubkey)?;
-        validate_pairing_token(
-            "PairQrCloudPeerRequest.one_shot_token",
-            &request.one_shot_token,
-        )?;
-        preflight_pairing_peer(
-            trust,
-            self.local_agents.host_id(),
-            peer_host_id,
-            &request.pubkey,
-        )?;
-        audit::pairing_start("cloud_qr");
-        let local_name = {
-            let state = self.server_state.read().await;
-            state.host_name().to_string()
-        };
-        let local_identity =
-            LocalPairingIdentity::new(self.local_agents.host_id(), trust.local_pubkey.clone());
-        let channel = self
-            .remote_agent_connections
-            .cloud_qr_pairing_channel_to(peer_host_id, request.pubkey.clone())
-            .await
-            .map_err(|error| {
-                audit::pairing_failure("cloud_qr", &error);
-                tonic::Status::unavailable(format!(
-                    "cloud QR pairing target {peer_host_id} is not reachable: {error}"
-                ))
-            })?;
-        let mut pairing_client = wire::pairing_service_client::PairingServiceClient::new(channel);
-        let peer = pair_by_token_initiator(
-            &mut pairing_client,
-            &local_identity,
-            &local_name,
-            peer_host_id,
-            request.pubkey,
-            request.one_shot_token,
-        )
-        .await
-        .inspect_err(|error| {
-            audit::pairing_failure("cloud_qr", error);
-        })?;
-
-        commit_peer_trust(
-            PeerTrustCommitContext::new(
-                trust.trust_store.clone(),
-                trust.trust_commit_lock.clone(),
-                self.remote_agent_connections.clone(),
-                trust.data_dir.clone(),
-            ),
-            PeerTrustUpdate::new(
-                peer.host_id,
-                peer.pubkey.clone(),
-                peer.name.clone(),
-                Some(Reachability::Cloud),
-            ),
-        )
-        .await
-        .inspect_err(|error| {
-            audit::pairing_failure("cloud_qr", error);
-        })?;
-        audit::pairing_success("cloud_qr", peer.host_id);
-        self.publish_host_status_update(peer.host_id).await;
+        validate_pairing_qr_secret("PairQrCloudPeerRequest.secret", &request.secret)?;
+        let peer = self
+            .pair_cloud_peer_with_secret(peer_host_id, &request.secret, "cloud_qr")
+            .await?;
         Ok(tonic::Response::new(wire::PairQrCloudPeerResponse {
-            peer: Some(wire::PairingIdentity {
-                host_id: peer.host_id.as_bytes().to_vec(),
-                pubkey: peer.pubkey,
-                name: peer.name,
-            }),
+            peer: Some(peer),
         }))
     }
 
@@ -1740,6 +1613,81 @@ fn has_shutdown_reason_metadata(status: &tonic::Status) -> bool {
 }
 
 impl ClientService {
+    /// Runs the one pairing wire protocol — `PairingService.Pair`, SPAKE2 —
+    /// against `peer_host_id` over a cloud-routed pairing tunnel. The
+    /// out-of-band `secret` is the typed PIN's digits or the QR's 256-bit
+    /// secret; it never crosses the wire.
+    async fn pair_cloud_peer_with_secret(
+        &self,
+        peer_host_id: Uuid,
+        secret: &[u8],
+        method: &'static str,
+    ) -> Result<wire::PairingIdentity, tonic::Status> {
+        let trust = &self.pairing_trust;
+        if peer_host_id == self.local_agents.host_id() {
+            return Err(tonic::Status::invalid_argument("SELF_PAIRING"));
+        }
+        audit::pairing_start(method);
+        let local_name = {
+            let state = self.server_state.read().await;
+            state.host_name().to_string()
+        };
+        let local_identity =
+            LocalPairingIdentity::new(self.local_agents.host_id(), trust.local_pubkey.clone());
+        let channel = self
+            .remote_agent_connections
+            .cloud_pairing_channel_to(peer_host_id)
+            .await
+            .map_err(|error| {
+                audit::pairing_failure(method, &error);
+                tonic::Status::unavailable(format!(
+                    "cloud pairing target {peer_host_id} is not reachable: {error}"
+                ))
+            })?;
+        let mut pairing_client = wire::pairing_service_client::PairingServiceClient::new(channel);
+        let peer = pair_initiator(&mut pairing_client, &local_identity, &local_name, secret)
+            .await
+            .inspect_err(|error| {
+                audit::pairing_failure(method, error);
+            })?;
+        if peer.host_id != peer_host_id {
+            audit::pairing_failure(method, "paired identity did not match requested host");
+            return Err(tonic::Status::invalid_argument(
+                "PROTOCOL_VIOLATION: paired identity did not match requested host",
+            ));
+        }
+        if peer.pubkey == trust.local_pubkey {
+            audit::pairing_failure(method, "SELF_PAIRING");
+            return Err(tonic::Status::invalid_argument("SELF_PAIRING"));
+        }
+
+        commit_peer_trust(
+            PeerTrustCommitContext::new(
+                trust.trust_store.clone(),
+                trust.trust_commit_lock.clone(),
+                self.remote_agent_connections.clone(),
+                trust.data_dir.clone(),
+            ),
+            PeerTrustUpdate::new(
+                peer.host_id,
+                peer.pubkey.clone(),
+                peer.name.clone(),
+                Some(Reachability::Cloud),
+            ),
+        )
+        .await
+        .inspect_err(|error| {
+            audit::pairing_failure(method, error);
+        })?;
+        audit::pairing_success(method, peer.host_id);
+        self.publish_host_status_update(peer.host_id).await;
+        Ok(wire::PairingIdentity {
+            host_id: peer.host_id.as_bytes().to_vec(),
+            pubkey: peer.pubkey,
+            name: peer.name,
+        })
+    }
+
     fn is_local_host(&self, host_id: Uuid) -> bool {
         self.local_agents.host_id() == host_id
     }
@@ -2223,47 +2171,14 @@ fn uuid_from_bytes(field: &str, bytes: &[u8]) -> Result<Uuid, tonic::Status> {
         .map_err(|error| tonic::Status::invalid_argument(format!("{field} is invalid: {error}")))
 }
 
-fn validate_pairing_pubkey(field: &str, bytes: &[u8]) -> Result<(), tonic::Status> {
-    if bytes.len() == PUBKEY_LEN {
+fn validate_pairing_qr_secret(field: &str, bytes: &[u8]) -> Result<(), tonic::Status> {
+    if bytes.len() == QR_SECRET_LEN {
         Ok(())
     } else {
         Err(tonic::Status::invalid_argument(format!(
             "{field} must be 32 bytes"
         )))
     }
-}
-
-fn validate_pairing_token(field: &str, bytes: &[u8]) -> Result<(), tonic::Status> {
-    if bytes.len() == TOKEN_LEN {
-        Ok(())
-    } else {
-        Err(tonic::Status::invalid_argument(format!(
-            "{field} must be 32 bytes"
-        )))
-    }
-}
-
-fn preflight_pairing_peer(
-    trust: &PairingTrustAccess,
-    local_host_id: HostId,
-    peer_host_id: HostId,
-    peer_pubkey: &[u8],
-) -> Result<(), tonic::Status> {
-    if peer_host_id == local_host_id || peer_pubkey == trust.local_pubkey.as_slice() {
-        return Err(tonic::Status::invalid_argument("SELF_PAIRING"));
-    }
-    let store = trust
-        .trust_store
-        .read()
-        .map_err(|_| tonic::Status::internal("trust store lock is poisoned"))?;
-    if let Some(existing_host_id) = store.host_id_for_pubkey(peer_pubkey)
-        && existing_host_id != peer_host_id
-    {
-        return Err(tonic::Status::invalid_argument(
-            "PROTOCOL_VIOLATION: pubkey is already trusted",
-        ));
-    }
-    Ok(())
 }
 
 fn debug_format_from_wire(format: i32) -> Result<DebugFormat, tonic::Status> {
@@ -2303,8 +2218,8 @@ fn start_pairing_secret(
             .map(wire::start_pairing_response::Secret::Pin)
             .map_err(pair_mode_admin_status),
         wire::start_pairing_request::Mode::Qr => pair_mode
-            .start_token()
-            .map(|token| wire::start_pairing_response::Secret::OneShotToken(token.to_vec()))
+            .start_qr_secret()
+            .map(|secret| wire::start_pairing_response::Secret::QrSecret(secret.to_vec()))
             .map_err(pair_mode_admin_status),
     }
 }
@@ -2323,11 +2238,9 @@ fn pair_mode_admin_status(error: PairModeError) -> tonic::Status {
             tonic::Status::failed_precondition("PAIR_MODE_ALREADY_ACTIVE")
         }
         PairModeError::SecretGeneration => tonic::Status::internal("PAIR_MODE_ERROR"),
-        PairModeError::InvalidPinFormat
-        | PairModeError::InvalidToken
-        | PairModeError::NotActive
-        | PairModeError::NotPinMode
-        | PairModeError::NotTokenMode => tonic::Status::internal("PAIR_MODE_ERROR"),
+        PairModeError::InvalidPinFormat | PairModeError::NotActive => {
+            tonic::Status::internal("PAIR_MODE_ERROR")
+        }
     }
 }
 
@@ -4688,11 +4601,10 @@ mod tests {
             .await
             .unwrap()
             .into_inner();
-        let Some(wire::start_pairing_response::Secret::OneShotToken(token)) = response.secret
-        else {
-            panic!("expected QR token secret");
+        let Some(wire::start_pairing_response::Secret::QrSecret(secret)) = response.secret else {
+            panic!("expected QR secret");
         };
-        assert_eq!(token.len(), 32);
+        assert_eq!(secret.len(), 32);
         assert!(service.pair_mode.is_active());
     }
 
@@ -4872,8 +4784,7 @@ mod tests {
 
         let mut qr_cloud_request = tonic::Request::new(wire::PairQrCloudPeerRequest {
             host_id: Uuid::from_u128(2).as_bytes().to_vec(),
-            pubkey: vec![7; 32],
-            one_shot_token: vec![8; 32],
+            secret: vec![8; 32],
         });
         qr_cloud_request
             .extensions_mut()
@@ -4972,7 +4883,7 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn tonic_pair_qr_cloud_peer_rejects_self_identity_before_dialing() {
+    async fn tonic_pair_qr_cloud_peer_rejects_self_host_id_before_dialing() {
         let data_dir = TempDir::new().unwrap();
         let local = DeviceIdentity::for_test(Uuid::from_u128(1));
         let trust_store = Arc::new(std::sync::RwLock::new(TrustStore::default()));
@@ -4981,25 +4892,7 @@ mod tests {
 
         let mut request = tonic::Request::new(wire::PairQrCloudPeerRequest {
             host_id: local.host_id.as_bytes().to_vec(),
-            pubkey: vec![7; 32],
-            one_shot_token: vec![8; 32],
-        });
-        request.extensions_mut().insert(BoxedGrpcConnectInfo {
-            auth: BoxedGrpcAuth::LocalTrusted,
-        });
-        let error =
-            <ClientService as wire::client_service_server::ClientService>::pair_qr_cloud_peer(
-                &service, request,
-            )
-            .await
-            .unwrap_err();
-        assert_eq!(error.code(), tonic::Code::InvalidArgument);
-        assert_eq!(error.message(), "SELF_PAIRING");
-
-        let mut request = tonic::Request::new(wire::PairQrCloudPeerRequest {
-            host_id: Uuid::from_u128(2).as_bytes().to_vec(),
-            pubkey: local.public_key().to_vec(),
-            one_shot_token: vec![8; 32],
+            secret: vec![8; 32],
         });
         request.extensions_mut().insert(BoxedGrpcConnectInfo {
             auth: BoxedGrpcAuth::LocalTrusted,
@@ -5016,68 +4909,31 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn tonic_pair_qr_cloud_peer_preflights_token_length_and_duplicate_pubkey() {
+    async fn tonic_pair_qr_cloud_peer_validates_secret_length_before_dialing() {
         let data_dir = TempDir::new().unwrap();
         let local = DeviceIdentity::for_test(Uuid::from_u128(1));
-        let duplicate = DeviceIdentity::for_test(Uuid::from_u128(2));
         let trust_store = Arc::new(std::sync::RwLock::new(TrustStore::default()));
-        {
-            let mut store = trust_store.write().unwrap();
-            store.insert_for_test(
-                duplicate.host_id,
-                TrustEntry {
-                    pubkey: duplicate.public_key().to_vec(),
-                    name: "duplicate".to_string(),
-                    paired_at: Utc::now(),
-                    reachabilities: vec![Reachability::Cloud],
-                },
-            );
-        }
         let service =
             client_service_with_pairing_trust(data_dir.path(), &local, trust_store.clone());
 
-        let mut short_token = tonic::Request::new(wire::PairQrCloudPeerRequest {
+        let mut short_secret = tonic::Request::new(wire::PairQrCloudPeerRequest {
             host_id: Uuid::from_u128(3).as_bytes().to_vec(),
-            pubkey: vec![7; 32],
-            one_shot_token: vec![8; 31],
+            secret: vec![8; 31],
         });
-        short_token.extensions_mut().insert(BoxedGrpcConnectInfo {
+        short_secret.extensions_mut().insert(BoxedGrpcConnectInfo {
             auth: BoxedGrpcAuth::LocalTrusted,
         });
         let error =
             <ClientService as wire::client_service_server::ClientService>::pair_qr_cloud_peer(
                 &service,
-                short_token,
+                short_secret,
             )
             .await
             .unwrap_err();
         assert_eq!(error.code(), tonic::Code::InvalidArgument);
         assert_eq!(
             error.message(),
-            "PairQrCloudPeerRequest.one_shot_token must be 32 bytes"
-        );
-
-        let mut duplicate_pubkey = tonic::Request::new(wire::PairQrCloudPeerRequest {
-            host_id: Uuid::from_u128(3).as_bytes().to_vec(),
-            pubkey: duplicate.public_key().to_vec(),
-            one_shot_token: vec![8; 32],
-        });
-        duplicate_pubkey
-            .extensions_mut()
-            .insert(BoxedGrpcConnectInfo {
-                auth: BoxedGrpcAuth::LocalTrusted,
-            });
-        let error =
-            <ClientService as wire::client_service_server::ClientService>::pair_qr_cloud_peer(
-                &service,
-                duplicate_pubkey,
-            )
-            .await
-            .unwrap_err();
-        assert_eq!(error.code(), tonic::Code::InvalidArgument);
-        assert_eq!(
-            error.message(),
-            "PROTOCOL_VIOLATION: pubkey is already trusted"
+            "PairQrCloudPeerRequest.secret must be 32 bytes"
         );
     }
 

@@ -238,23 +238,10 @@ message Host {
 // ---------------------------------------------------------------------------
 
 service PairingService {
-  rpc PairByToken(PairByTokenRequest) returns (PairByTokenResponse);
-  rpc PairBySpake2(stream PairBySpake2Message) returns (stream PairBySpake2Message);
+  rpc Pair(stream PairMessage) returns (stream PairMessage);
 }
 
-message PairByTokenRequest {
-  bytes one_shot_token = 1;
-  bytes host_id = 2;
-  bytes pubkey = 3;
-  string name = 4;
-}
-
-message PairByTokenResponse {
-  bytes host_id = 1;
-  string name = 2;
-}
-
-message PairBySpake2Message {
+message PairMessage {
   oneof body {
     bytes spake2_message = 1;
     bytes key_confirmation = 2;
@@ -271,11 +258,10 @@ message PairingError {
     REASON_UNSPECIFIED = 0;
     NOT_IN_PAIRING_MODE = 1;
     INVALID_PIN = 2;
-    INVALID_TOKEN = 3;
-    PROTOCOL_VIOLATION = 4;
-    TIMEOUT = 5;
-    USER_REJECTED = 6;
-    SELF_PAIRING = 7;
+    PROTOCOL_VIOLATION = 3;
+    TIMEOUT = 4;
+    USER_REJECTED = 5;
+    SELF_PAIRING = 6;
   }
 
   Reason reason = 1;
@@ -622,8 +608,7 @@ message PairPinCloudPeerResponse {
 
 message PairQrCloudPeerRequest {
   bytes host_id = 1;
-  bytes pubkey = 2;
-  bytes one_shot_token = 3;
+  bytes secret = 2;
 }
 
 message PairQrCloudPeerResponse {
@@ -727,7 +712,7 @@ message StartPairingResponse {
 
   oneof secret {
     string pin = 10;
-    bytes one_shot_token = 11;
+    bytes qr_secret = 11;
   }
 }
 

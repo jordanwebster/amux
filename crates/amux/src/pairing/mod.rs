@@ -12,9 +12,9 @@ use ring::rand::{SecureRandom as _, SystemRandom};
 
 use crate::audit;
 
-const TOKEN_LEN: usize = 32;
+pub(crate) const QR_SECRET_LEN: usize = 32;
 pub(crate) const PAIR_MODE_TTL: Duration = Duration::from_secs(5 * 60);
-pub(crate) const PIN_FAILED_ATTEMPT_LIMIT: u8 = 5;
+pub(crate) const PAIR_ATTEMPT_LIMIT: u8 = 5;
 
 #[derive(Debug, thiserror::Error, PartialEq, Eq)]
 pub(crate) enum PairModeError {
@@ -22,30 +22,24 @@ pub(crate) enum PairModeError {
     AlreadyActive,
     #[error("pairing mode is not active")]
     NotActive,
-    #[error("active pairing mode is not token-based")]
-    NotTokenMode,
-    #[error("active pairing mode is not PIN-based")]
-    NotPinMode,
-    #[error("one-shot token is invalid")]
-    InvalidToken,
     #[error("PIN must be six decimal digits")]
     InvalidPinFormat,
     #[error("failed to generate pairing secret")]
     SecretGeneration,
 }
 
+/// The one-shot pairing secret with its attempt accounting. The delivery
+/// mechanism — a typed 6-digit PIN or a QR-carried 256-bit secret — only
+/// decides the bytes (and the audit label); the SPAKE2 wire protocol
+/// consuming them is the same, so the one-shot/TTL/attempt-cap rules are
+/// uniform too.
 #[derive(Debug)]
-enum PairSecret {
-    Token {
-        value: [u8; TOKEN_LEN],
-        reserved: bool,
-    },
-    Pin {
-        value: String,
-        failed_attempts: u8,
-        in_flight_attempts: u8,
-        reserved: bool,
-    },
+struct PairSecret {
+    value: Vec<u8>,
+    method: &'static str,
+    failed_attempts: u8,
+    in_flight_attempts: u8,
+    reserved: bool,
 }
 
 #[derive(Debug)]
@@ -66,20 +60,14 @@ struct PairModeState {
     session: Option<PairModeSession>,
 }
 
-pub(crate) struct PairModePinAttempt {
+pub(crate) struct PairModeAttempt {
     state: Arc<Mutex<PairModeState>>,
     session_id: u64,
-    pin: String,
+    secret: Vec<u8>,
     active: bool,
 }
 
-pub(crate) struct PairModeTokenAttempt {
-    state: Arc<Mutex<PairModeState>>,
-    session_id: u64,
-    active: bool,
-}
-
-pub(crate) struct PairModePinCommit {
+pub(crate) struct PairModeCommit {
     state: Arc<Mutex<PairModeState>>,
     session_id: u64,
     active: bool,
@@ -96,33 +84,19 @@ impl PairMode {
         state.session.is_some()
     }
 
-    pub(crate) fn start_token(&self) -> Result<[u8; TOKEN_LEN], PairModeError> {
-        let mut token = [0_u8; TOKEN_LEN];
-        SystemRandom::new()
-            .fill(&mut token)
-            .map_err(|_| PairModeError::SecretGeneration)?;
-        self.start_token_for_duration(token, PAIR_MODE_TTL)?;
-        Ok(token)
-    }
-
     pub(crate) fn start_pin(&self) -> Result<String, PairModeError> {
         let pin = generate_pin()?;
         self.start_pin_for_duration(pin.clone(), PAIR_MODE_TTL)?;
         Ok(pin)
     }
 
-    pub(crate) fn start_token_for_duration(
-        &self,
-        token: [u8; TOKEN_LEN],
-        ttl: Duration,
-    ) -> Result<(), PairModeError> {
-        self.start_session(
-            PairSecret::Token {
-                value: token,
-                reserved: false,
-            },
-            ttl,
-        )
+    pub(crate) fn start_qr_secret(&self) -> Result<[u8; QR_SECRET_LEN], PairModeError> {
+        let mut secret = [0_u8; QR_SECRET_LEN];
+        SystemRandom::new()
+            .fill(&mut secret)
+            .map_err(|_| PairModeError::SecretGeneration)?;
+        self.start_qr_secret_for_duration(secret, PAIR_MODE_TTL)?;
+        Ok(secret)
     }
 
     pub(crate) fn start_pin_for_duration(
@@ -132,8 +106,9 @@ impl PairMode {
     ) -> Result<(), PairModeError> {
         validate_pin(&pin)?;
         self.start_session(
-            PairSecret::Pin {
-                value: pin,
+            PairSecret {
+                value: pin.into_bytes(),
+                method: "pin",
                 failed_attempts: 0,
                 in_flight_attempts: 0,
                 reserved: false,
@@ -142,89 +117,52 @@ impl PairMode {
         )
     }
 
-    pub(crate) fn begin_token_attempt(
+    pub(crate) fn start_qr_secret_for_duration(
         &self,
-        token: &[u8],
-    ) -> Result<PairModeTokenAttempt, PairModeError> {
-        let mut state = self.state.lock().expect("pair mode mutex poisoned");
-        purge_expired(&mut state);
-        let Some(session) = state.session.as_mut() else {
-            return Err(PairModeError::NotActive);
-        };
-        match &mut session.secret {
-            PairSecret::Token { value, reserved } if token_matches(value, token) && !*reserved => {
-                *reserved = true;
-                Ok(PairModeTokenAttempt {
-                    state: self.state.clone(),
-                    session_id: session.id,
-                    active: true,
-                })
-            }
-            PairSecret::Token { .. } => Err(PairModeError::InvalidToken),
-            PairSecret::Pin { .. } => Err(PairModeError::NotTokenMode),
-        }
-    }
-
-    pub(crate) fn complete_token_success(
-        &self,
-        attempt: &mut PairModeTokenAttempt,
+        secret: [u8; QR_SECRET_LEN],
+        ttl: Duration,
     ) -> Result<(), PairModeError> {
-        let mut state = self.state.lock().expect("pair mode mutex poisoned");
-        let Some(session) = state.session.as_ref() else {
-            return Err(PairModeError::NotActive);
-        };
-        if session.id != attempt.session_id {
-            return Err(PairModeError::NotActive);
-        }
-        match &session.secret {
-            PairSecret::Token { reserved: true, .. } => {
-                state.session = None;
-                attempt.active = false;
-                Ok(())
-            }
-            PairSecret::Token {
-                reserved: false, ..
-            } => Err(PairModeError::InvalidToken),
-            PairSecret::Pin { .. } => Err(PairModeError::NotTokenMode),
-        }
+        self.start_session(
+            PairSecret {
+                value: secret.to_vec(),
+                method: "qr",
+                failed_attempts: 0,
+                in_flight_attempts: 0,
+                reserved: false,
+            },
+            ttl,
+        )
     }
 
-    pub(crate) fn abort_token_attempt(&self, attempt: &mut PairModeTokenAttempt) {
-        attempt.abort();
-    }
-
-    pub(crate) fn begin_pin_attempt(&self) -> Result<PairModePinAttempt, PairModeError> {
+    pub(crate) fn begin_attempt(&self) -> Result<PairModeAttempt, PairModeError> {
         let mut state = self.state.lock().expect("pair mode mutex poisoned");
         purge_expired(&mut state);
         let Some(session) = state.session.as_mut() else {
             return Err(PairModeError::NotActive);
         };
-        match &mut session.secret {
-            PairSecret::Pin {
-                value,
-                failed_attempts,
-                in_flight_attempts,
-                reserved: false,
-            } => {
-                if failed_attempts.saturating_add(*in_flight_attempts) >= PIN_FAILED_ATTEMPT_LIMIT {
-                    return Err(PairModeError::NotActive);
-                }
-                *in_flight_attempts = in_flight_attempts.saturating_add(1);
-                Ok(PairModePinAttempt {
-                    state: self.state.clone(),
-                    session_id: session.id,
-                    pin: value.clone(),
-                    active: true,
-                })
-            }
-            PairSecret::Pin { reserved: true, .. } => Err(PairModeError::NotActive),
-            PairSecret::Token { .. } => Err(PairModeError::NotPinMode),
+        let secret = &mut session.secret;
+        if secret.reserved {
+            return Err(PairModeError::NotActive);
         }
+        if secret
+            .failed_attempts
+            .saturating_add(secret.in_flight_attempts)
+            >= PAIR_ATTEMPT_LIMIT
+        {
+            return Err(PairModeError::NotActive);
+        }
+        secret.in_flight_attempts = secret.in_flight_attempts.saturating_add(1);
+        Ok(PairModeAttempt {
+            state: self.state.clone(),
+            session_id: session.id,
+            secret: secret.value.clone(),
+            active: true,
+        })
     }
 
-    pub(crate) fn record_pin_failure(
+    pub(crate) fn record_failure(
         &self,
-        attempt: &mut PairModePinAttempt,
+        attempt: &mut PairModeAttempt,
     ) -> Result<(), PairModeError> {
         let mut state = self.state.lock().expect("pair mode mutex poisoned");
         purge_expired(&mut state);
@@ -237,30 +175,23 @@ impl PairMode {
         if session.id != attempt.session_id {
             return Err(PairModeError::NotActive);
         }
-        match &mut session.secret {
-            PairSecret::Pin {
-                failed_attempts,
-                in_flight_attempts,
-                reserved: false,
-                ..
-            } => {
-                *in_flight_attempts = in_flight_attempts.saturating_sub(1);
-                *failed_attempts = failed_attempts.saturating_add(1);
-                if *failed_attempts >= PIN_FAILED_ATTEMPT_LIMIT {
-                    state.session = None;
-                }
-                attempt.active = false;
-                Ok(())
-            }
-            PairSecret::Pin { reserved: true, .. } => Err(PairModeError::NotActive),
-            PairSecret::Token { .. } => Err(PairModeError::NotPinMode),
+        let secret = &mut session.secret;
+        if secret.reserved {
+            return Err(PairModeError::NotActive);
         }
+        secret.in_flight_attempts = secret.in_flight_attempts.saturating_sub(1);
+        secret.failed_attempts = secret.failed_attempts.saturating_add(1);
+        if secret.failed_attempts >= PAIR_ATTEMPT_LIMIT {
+            state.session = None;
+        }
+        attempt.active = false;
+        Ok(())
     }
 
-    pub(crate) fn begin_pin_commit(
+    pub(crate) fn begin_commit(
         &self,
-        attempt: &mut PairModePinAttempt,
-    ) -> Result<PairModePinCommit, PairModeError> {
+        attempt: &mut PairModeAttempt,
+    ) -> Result<PairModeCommit, PairModeError> {
         let mut state = self.state.lock().expect("pair mode mutex poisoned");
         purge_expired(&mut state);
         if !attempt.active {
@@ -272,31 +203,23 @@ impl PairMode {
         if session.id != attempt.session_id {
             return Err(PairModeError::NotActive);
         }
-        match &mut session.secret {
-            PairSecret::Pin {
-                in_flight_attempts,
-                reserved: false,
-                ..
-            } => {
-                *in_flight_attempts = in_flight_attempts.saturating_sub(1);
-                if let PairSecret::Pin { reserved, .. } = &mut session.secret {
-                    *reserved = true;
-                }
-                attempt.active = false;
-                Ok(PairModePinCommit {
-                    state: self.state.clone(),
-                    session_id: attempt.session_id,
-                    active: true,
-                })
-            }
-            PairSecret::Pin { reserved: true, .. } => Err(PairModeError::NotActive),
-            PairSecret::Token { .. } => Err(PairModeError::NotPinMode),
+        let secret = &mut session.secret;
+        if secret.reserved {
+            return Err(PairModeError::NotActive);
         }
+        secret.in_flight_attempts = secret.in_flight_attempts.saturating_sub(1);
+        secret.reserved = true;
+        attempt.active = false;
+        Ok(PairModeCommit {
+            state: self.state.clone(),
+            session_id: attempt.session_id,
+            active: true,
+        })
     }
 
-    pub(crate) fn complete_pin_success(
+    pub(crate) fn complete_success(
         &self,
-        commit: &mut PairModePinCommit,
+        commit: &mut PairModeCommit,
     ) -> Result<(), PairModeError> {
         let mut state = self.state.lock().expect("pair mode mutex poisoned");
         let Some(session) = state.session.as_ref() else {
@@ -305,20 +228,15 @@ impl PairMode {
         if session.id != commit.session_id {
             return Err(PairModeError::NotActive);
         }
-        match &session.secret {
-            PairSecret::Pin { reserved: true, .. } => {
-                state.session = None;
-                commit.active = false;
-                Ok(())
-            }
-            PairSecret::Pin {
-                reserved: false, ..
-            } => Err(PairModeError::NotActive),
-            PairSecret::Token { .. } => Err(PairModeError::NotPinMode),
+        if !session.secret.reserved {
+            return Err(PairModeError::NotActive);
         }
+        state.session = None;
+        commit.active = false;
+        Ok(())
     }
 
-    pub(crate) fn abort_pin_commit(&self, commit: &mut PairModePinCommit) {
+    pub(crate) fn abort_commit(&self, commit: &mut PairModeCommit) {
         commit.abort();
     }
 
@@ -346,9 +264,11 @@ impl PairMode {
     }
 }
 
-impl PairModePinAttempt {
-    pub(crate) fn pin(&self) -> &str {
-        &self.pin
+impl PairModeAttempt {
+    /// The SPAKE2 password bytes for this attempt: the PIN's ASCII digits
+    /// or the QR secret's 32 raw bytes.
+    pub(crate) fn secret(&self) -> &[u8] {
+        &self.secret
     }
 
     fn abort(&mut self) {
@@ -358,69 +278,49 @@ impl PairModePinAttempt {
         let mut state = self.state.lock().expect("pair mode mutex poisoned");
         if let Some(session) = state.session.as_mut()
             && session.id == self.session_id
-            && let PairSecret::Pin {
-                in_flight_attempts, ..
-            } = &mut session.secret
         {
-            *in_flight_attempts = in_flight_attempts.saturating_sub(1);
+            session.secret.in_flight_attempts = session.secret.in_flight_attempts.saturating_sub(1);
         }
         purge_expired(&mut state);
         self.active = false;
     }
 }
 
-impl fmt::Debug for PairModeTokenAttempt {
+impl fmt::Debug for PairModeAttempt {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        f.debug_struct("PairModeTokenAttempt")
+        f.debug_struct("PairModeAttempt")
             .field("session_id", &self.session_id)
             .field("active", &self.active)
             .finish()
     }
 }
 
-impl PartialEq for PairModeTokenAttempt {
+impl PartialEq for PairModeAttempt {
     fn eq(&self, other: &Self) -> bool {
         self.session_id == other.session_id && self.active == other.active
     }
 }
 
-impl Eq for PairModeTokenAttempt {}
+impl Eq for PairModeAttempt {}
 
-impl fmt::Debug for PairModePinAttempt {
+impl fmt::Debug for PairModeCommit {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        f.debug_struct("PairModePinAttempt")
+        f.debug_struct("PairModeCommit")
             .field("session_id", &self.session_id)
             .field("active", &self.active)
             .finish()
     }
 }
 
-impl PartialEq for PairModePinAttempt {
+impl PartialEq for PairModeCommit {
     fn eq(&self, other: &Self) -> bool {
         self.session_id == other.session_id && self.active == other.active
     }
 }
 
-impl Eq for PairModePinAttempt {}
+impl Eq for PairModeCommit {}
 
-impl fmt::Debug for PairModePinCommit {
-    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        f.debug_struct("PairModePinCommit")
-            .field("session_id", &self.session_id)
-            .field("active", &self.active)
-            .finish()
-    }
-}
-
-impl PartialEq for PairModePinCommit {
-    fn eq(&self, other: &Self) -> bool {
-        self.session_id == other.session_id && self.active == other.active
-    }
-}
-
-impl Eq for PairModePinCommit {}
-
-impl PairModeTokenAttempt {
+impl PairModeCommit {
     fn abort(&mut self) {
         if !self.active {
             return;
@@ -428,45 +328,21 @@ impl PairModeTokenAttempt {
         let mut state = self.state.lock().expect("pair mode mutex poisoned");
         if let Some(session) = state.session.as_mut()
             && session.id == self.session_id
-            && let PairSecret::Token { reserved, .. } = &mut session.secret
         {
-            *reserved = false;
+            session.secret.reserved = false;
         }
         purge_expired(&mut state);
         self.active = false;
     }
 }
 
-impl PairModePinCommit {
-    fn abort(&mut self) {
-        if !self.active {
-            return;
-        }
-        let mut state = self.state.lock().expect("pair mode mutex poisoned");
-        if let Some(session) = state.session.as_mut()
-            && session.id == self.session_id
-            && let PairSecret::Pin { reserved, .. } = &mut session.secret
-        {
-            *reserved = false;
-        }
-        purge_expired(&mut state);
-        self.active = false;
-    }
-}
-
-impl Drop for PairModeTokenAttempt {
+impl Drop for PairModeAttempt {
     fn drop(&mut self) {
         self.abort();
     }
 }
 
-impl Drop for PairModePinAttempt {
-    fn drop(&mut self) {
-        self.abort();
-    }
-}
-
-impl Drop for PairModePinCommit {
+impl Drop for PairModeCommit {
     fn drop(&mut self) {
         self.abort();
     }
@@ -476,18 +352,11 @@ fn purge_expired(state: &mut PairModeState) {
     let Some(session) = state.session.as_ref() else {
         return;
     };
-    let expired = Instant::now() >= session.expires_at
-        && !matches!(
-            &session.secret,
-            PairSecret::Token { reserved: true, .. } | PairSecret::Pin { reserved: true, .. }
-        );
+    let expired = Instant::now() >= session.expires_at && !session.secret.reserved;
     if !expired {
         return;
     }
-    let method = match &session.secret {
-        PairSecret::Token { .. } => "qr",
-        PairSecret::Pin { .. } => "pin",
-    };
+    let method = session.secret.method;
     state.session = None;
     audit::pairing_failure(method, "pair mode expired");
 }
@@ -509,93 +378,26 @@ fn validate_pin(pin: &str) -> Result<(), PairModeError> {
     }
 }
 
-fn token_matches(expected: &[u8; TOKEN_LEN], token: &[u8]) -> bool {
-    if token.len() != TOKEN_LEN {
-        return false;
-    }
-    let diff = expected
-        .iter()
-        .zip(token)
-        .fold(0_u8, |diff, (left, right)| diff | (left ^ right));
-    diff == 0
-}
-
 #[cfg(test)]
 mod tests {
     use super::*;
 
     #[test]
-    fn token_mode_is_active_until_token_is_consumed() {
+    fn qr_secret_mode_is_active_until_the_secret_is_consumed() {
         let pair_mode = PairMode::new();
-        let token = [7_u8; TOKEN_LEN];
+        let secret = [7_u8; QR_SECRET_LEN];
 
         pair_mode
-            .start_token_for_duration(token, Duration::from_secs(60))
+            .start_qr_secret_for_duration(secret, Duration::from_secs(60))
             .unwrap();
 
         assert!(pair_mode.is_active());
-        let mut attempt = pair_mode.begin_token_attempt(&token).unwrap();
-        pair_mode.complete_token_success(&mut attempt).unwrap();
+        let mut attempt = pair_mode.begin_attempt().unwrap();
+        assert_eq!(attempt.secret(), secret.as_slice());
+        let mut commit = pair_mode.begin_commit(&mut attempt).unwrap();
+        pair_mode.complete_success(&mut commit).unwrap();
         assert!(!pair_mode.is_active());
-        assert_eq!(
-            pair_mode.begin_token_attempt(&token),
-            Err(PairModeError::NotActive)
-        );
-    }
-
-    #[test]
-    fn token_mismatch_does_not_consume_pair_mode() {
-        let pair_mode = PairMode::new();
-        let token = [7_u8; TOKEN_LEN];
-
-        pair_mode
-            .start_token_for_duration(token, Duration::from_secs(60))
-            .unwrap();
-
-        assert_eq!(
-            pair_mode.begin_token_attempt(&[8_u8; TOKEN_LEN]),
-            Err(PairModeError::InvalidToken)
-        );
-        assert!(pair_mode.is_active());
-        let mut attempt = pair_mode.begin_token_attempt(&token).unwrap();
-        pair_mode.complete_token_success(&mut attempt).unwrap();
-    }
-
-    #[test]
-    fn token_attempt_reservation_blocks_racing_consumers_until_aborted() {
-        let pair_mode = PairMode::new();
-        let token = [7_u8; TOKEN_LEN];
-
-        pair_mode
-            .start_token_for_duration(token, Duration::from_secs(60))
-            .unwrap();
-
-        let mut attempt = pair_mode.begin_token_attempt(&token).unwrap();
-        assert_eq!(
-            pair_mode.begin_token_attempt(&token),
-            Err(PairModeError::InvalidToken)
-        );
-        assert!(pair_mode.is_active());
-
-        pair_mode.abort_token_attempt(&mut attempt);
-        let mut retry = pair_mode.begin_token_attempt(&token).unwrap();
-        pair_mode.complete_token_success(&mut retry).unwrap();
-        assert!(!pair_mode.is_active());
-    }
-
-    #[test]
-    fn dropped_token_attempt_aborts_reservation() {
-        let pair_mode = PairMode::new();
-        let token = [7_u8; TOKEN_LEN];
-
-        pair_mode
-            .start_token_for_duration(token, Duration::from_secs(60))
-            .unwrap();
-
-        drop(pair_mode.begin_token_attempt(&token).unwrap());
-        let mut retry = pair_mode.begin_token_attempt(&token).unwrap();
-        pair_mode.complete_token_success(&mut retry).unwrap();
-        assert!(!pair_mode.is_active());
+        assert_eq!(pair_mode.begin_attempt(), Err(PairModeError::NotActive));
     }
 
     #[test]
@@ -607,13 +409,13 @@ mod tests {
             .unwrap();
 
         assert_eq!(
-            pair_mode.start_token_for_duration([1_u8; TOKEN_LEN], Duration::from_secs(60)),
+            pair_mode.start_qr_secret_for_duration([1_u8; QR_SECRET_LEN], Duration::from_secs(60)),
             Err(PairModeError::AlreadyActive)
         );
 
         pair_mode.cancel();
         pair_mode
-            .start_token_for_duration([1_u8; TOKEN_LEN], Duration::from_secs(60))
+            .start_qr_secret_for_duration([1_u8; QR_SECRET_LEN], Duration::from_secs(60))
             .unwrap();
     }
 
@@ -627,87 +429,104 @@ mod tests {
 
         assert!(!pair_mode.is_active());
         pair_mode
-            .start_token_for_duration([1_u8; TOKEN_LEN], Duration::from_secs(60))
+            .start_qr_secret_for_duration([1_u8; QR_SECRET_LEN], Duration::from_secs(60))
             .unwrap();
         assert!(pair_mode.is_active());
     }
 
     #[test]
-    fn pin_attempt_exposes_pin_and_cancels_after_failed_attempt_cap() {
+    fn attempt_exposes_the_pin_and_cancels_after_failed_attempt_cap() {
         let pair_mode = PairMode::new();
 
         pair_mode
             .start_pin_for_duration("123456".to_string(), Duration::from_secs(60))
             .unwrap();
 
-        let mut attempt = pair_mode.begin_pin_attempt().unwrap();
-        assert_eq!(attempt.pin(), "123456");
-        for _ in 0..PIN_FAILED_ATTEMPT_LIMIT {
-            pair_mode.record_pin_failure(&mut attempt).unwrap();
+        let mut attempt = pair_mode.begin_attempt().unwrap();
+        assert_eq!(attempt.secret(), b"123456");
+        for _ in 0..PAIR_ATTEMPT_LIMIT {
+            pair_mode.record_failure(&mut attempt).unwrap();
             if pair_mode.is_active() {
-                attempt = pair_mode.begin_pin_attempt().unwrap();
+                attempt = pair_mode.begin_attempt().unwrap();
             }
         }
         assert!(!pair_mode.is_active());
     }
 
     #[test]
-    fn pin_attempts_are_capped_including_in_flight_attempts() {
+    fn the_attempt_cap_applies_to_the_qr_secret_too() {
+        let pair_mode = PairMode::new();
+        let secret = [7_u8; QR_SECRET_LEN];
+
+        pair_mode
+            .start_qr_secret_for_duration(secret, Duration::from_secs(60))
+            .unwrap();
+
+        for _ in 0..PAIR_ATTEMPT_LIMIT {
+            let mut attempt = pair_mode.begin_attempt().unwrap();
+            pair_mode.record_failure(&mut attempt).unwrap();
+        }
+        assert!(!pair_mode.is_active());
+        assert_eq!(pair_mode.begin_attempt(), Err(PairModeError::NotActive));
+    }
+
+    #[test]
+    fn attempts_are_capped_including_in_flight_attempts() {
         let pair_mode = PairMode::new();
 
         pair_mode
             .start_pin_for_duration("123456".to_string(), Duration::from_secs(60))
             .unwrap();
 
-        let attempts = (0..PIN_FAILED_ATTEMPT_LIMIT)
-            .map(|_| pair_mode.begin_pin_attempt().unwrap())
+        let attempts = (0..PAIR_ATTEMPT_LIMIT)
+            .map(|_| pair_mode.begin_attempt().unwrap())
             .collect::<Vec<_>>();
-        assert_eq!(pair_mode.begin_pin_attempt(), Err(PairModeError::NotActive));
+        assert_eq!(pair_mode.begin_attempt(), Err(PairModeError::NotActive));
         drop(attempts);
-        assert!(pair_mode.begin_pin_attempt().is_ok());
+        assert!(pair_mode.begin_attempt().is_ok());
     }
 
     #[test]
-    fn pin_success_consumption_is_bound_to_attempt_session() {
+    fn success_consumption_is_bound_to_the_attempt_session() {
         let pair_mode = PairMode::new();
 
         pair_mode
             .start_pin_for_duration("123456".to_string(), Duration::from_secs(60))
             .unwrap();
 
-        let mut first = pair_mode.begin_pin_attempt().unwrap();
-        let mut second = pair_mode.begin_pin_attempt().unwrap();
-        assert_eq!(first.pin(), "123456");
-        assert_eq!(second.pin(), "123456");
+        let mut first = pair_mode.begin_attempt().unwrap();
+        let mut second = pair_mode.begin_attempt().unwrap();
+        assert_eq!(first.secret(), b"123456");
+        assert_eq!(second.secret(), b"123456");
 
-        let mut commit = pair_mode.begin_pin_commit(&mut first).unwrap();
+        let mut commit = pair_mode.begin_commit(&mut first).unwrap();
         assert_eq!(
-            pair_mode.begin_pin_commit(&mut second),
+            pair_mode.begin_commit(&mut second),
             Err(PairModeError::NotActive)
         );
-        pair_mode.complete_pin_success(&mut commit).unwrap();
+        pair_mode.complete_success(&mut commit).unwrap();
         assert_eq!(
-            pair_mode.begin_pin_commit(&mut second),
+            pair_mode.begin_commit(&mut second),
             Err(PairModeError::NotActive)
         );
         assert_eq!(
-            pair_mode.record_pin_failure(&mut second),
+            pair_mode.record_failure(&mut second),
             Err(PairModeError::NotActive)
         );
     }
 
     #[test]
-    fn dropped_pin_commit_aborts_reservation() {
+    fn dropped_commit_aborts_reservation() {
         let pair_mode = PairMode::new();
         pair_mode
             .start_pin_for_duration("123456".to_string(), Duration::from_secs(60))
             .unwrap();
 
-        let mut first = pair_mode.begin_pin_attempt().unwrap();
-        drop(pair_mode.begin_pin_commit(&mut first).unwrap());
-        let mut second = pair_mode.begin_pin_attempt().unwrap();
-        let mut commit = pair_mode.begin_pin_commit(&mut second).unwrap();
-        pair_mode.complete_pin_success(&mut commit).unwrap();
+        let mut first = pair_mode.begin_attempt().unwrap();
+        drop(pair_mode.begin_commit(&mut first).unwrap());
+        let mut second = pair_mode.begin_attempt().unwrap();
+        let mut commit = pair_mode.begin_commit(&mut second).unwrap();
+        pair_mode.complete_success(&mut commit).unwrap();
         assert!(!pair_mode.is_active());
     }
 

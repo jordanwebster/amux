@@ -3,9 +3,9 @@
 //!
 //! Responder verbs (`start_pairing`, `start_qr_pairing`, `cancel_pairing`)
 //! call the pairing admin RPCs. Initiator verbs run the real bootstrap
-//! flows: SPAKE2 over direct TCP or a cloud-routed tunnel, the QR one-shot
-//! token flow, and the SSH identity exchange (over an in-memory stream in
-//! place of a real `ssh` child).
+//! flows: the one SPAKE2 protocol over direct TCP or a cloud-routed tunnel
+//! (the secret typed as a PIN or scanned from a QR), and the SSH identity
+//! exchange (over an in-memory stream in place of a real `ssh` child).
 
 use std::time::Duration;
 
@@ -53,11 +53,9 @@ impl std::fmt::Display for Pin {
 pub struct QrPayload {
     /// The responder's host id.
     pub host_id: HostId,
-    /// The responder's device public key; the initiator pins it at the TLS
-    /// layer.
-    pub pubkey: Vec<u8>,
-    /// The one-shot bearer token consumed by the first successful pairing.
-    pub one_shot_token: Vec<u8>,
+    /// The one-shot 256-bit SPAKE2 secret consumed by the first successful
+    /// pairing; it never crosses the wire.
+    pub secret: Vec<u8>,
 }
 
 impl Daemon {
@@ -76,8 +74,8 @@ impl Daemon {
         let start = self.admin_client().await.start_pin_pairing().await?;
         match start.secret {
             PairingSecret::Pin(pin) => Ok(Pin(pin)),
-            PairingSecret::OneShotToken(_) => {
-                anyhow::bail!("StartPairing(PIN) returned a one-shot token")
+            PairingSecret::QrSecret(_) => {
+                anyhow::bail!("StartPairing(PIN) returned a QR secret")
             }
         }
     }
@@ -95,10 +93,9 @@ impl Daemon {
     pub async fn try_start_qr_pairing(&self) -> anyhow::Result<QrPayload> {
         let start = self.admin_client().await.start_qr_pairing().await?;
         match start.secret {
-            PairingSecret::OneShotToken(one_shot_token) => Ok(QrPayload {
+            PairingSecret::QrSecret(secret) => Ok(QrPayload {
                 host_id: start.identity.host_id,
-                pubkey: start.identity.pubkey,
-                one_shot_token,
+                secret,
             }),
             PairingSecret::Pin(_) => anyhow::bail!("StartPairing(QR) returned a PIN"),
         }
@@ -231,13 +228,13 @@ impl PairAttempt<'_> {
     }
 
     /// QR pairing through the cloud: the local-admin `PairQrCloudPeer` RPC
-    /// presents the QR's one-shot token over a cloud-routed pairing tunnel
-    /// whose TLS is pinned on the QR's pubkey.
+    /// feeds the QR's 256-bit secret into the same SPAKE2 stream the typed
+    /// PIN uses, over a cloud-routed pairing tunnel.
     pub async fn with_qr(self, qr: &QrPayload) -> anyhow::Result<()> {
         self.from
             .admin_client()
             .await
-            .pair_qr_cloud_peer(qr.host_id, qr.pubkey.clone(), qr.one_shot_token.clone())
+            .pair_qr_cloud_peer(qr.host_id, qr.secret.clone())
             .await?;
         Ok(())
     }

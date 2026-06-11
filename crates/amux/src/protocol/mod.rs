@@ -65,11 +65,9 @@ mod tests {
             "TunnelOpen",
             "TunnelData",
             "TunnelClose",
-            "PairByTokenRequest",
-            "PairByTokenResponse",
             "PairQrCloudPeerRequest",
             "PairQrCloudPeerResponse",
-            "PairBySpake2Message",
+            "PairMessage",
             "PairingComplete",
             "PairingError",
             "PairingIdentity",
@@ -115,10 +113,7 @@ mod tests {
         );
         assert_eq!(
             service_methods.get("PairingService").cloned(),
-            Some(std::collections::BTreeSet::from([
-                "PairBySpake2",
-                "PairByToken"
-            ]))
+            Some(std::collections::BTreeSet::from(["Pair"]))
         );
         assert_eq!(
             service_methods.get("AgentService").cloned(),
@@ -212,21 +207,15 @@ mod tests {
             .flat_map(|file| file.service.iter())
             .find(|service| service.name.as_deref() == Some("PairingService"))
             .expect("PairingService should exist");
-        let pair_by_spake2 = pairing_methods
+        let pair = pairing_methods
             .method
             .iter()
-            .find(|method| method.name.as_deref() == Some("PairBySpake2"))
-            .expect("PairBySpake2 should exist");
-        assert_eq!(
-            pair_by_spake2.input_type.as_deref(),
-            Some(".amux.v1.PairBySpake2Message")
-        );
-        assert_eq!(
-            pair_by_spake2.output_type.as_deref(),
-            Some(".amux.v1.PairBySpake2Message")
-        );
-        assert_eq!(pair_by_spake2.client_streaming, Some(true));
-        assert_eq!(pair_by_spake2.server_streaming, Some(true));
+            .find(|method| method.name.as_deref() == Some("Pair"))
+            .expect("Pair should exist");
+        assert_eq!(pair.input_type.as_deref(), Some(".amux.v1.PairMessage"));
+        assert_eq!(pair.output_type.as_deref(), Some(".amux.v1.PairMessage"));
+        assert_eq!(pair.client_streaming, Some(true));
+        assert_eq!(pair.server_streaming, Some(true));
     }
 
     #[test]

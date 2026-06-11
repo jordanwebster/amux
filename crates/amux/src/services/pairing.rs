@@ -18,7 +18,7 @@ use tonic::{Code, Status};
 use crate::connection::ConnectionManager;
 use crate::identity::{DeviceIdentity, IdentityError};
 use crate::pairing::ssh::SshPairingPeer;
-use crate::pairing::{PairMode, PairModePinAttempt, PairModeTokenAttempt};
+use crate::pairing::{PairMode, PairModeAttempt};
 use crate::protocol::{PROTOCOL_VERSION, wire};
 use crate::transport::{BoxedGrpcAuth, BoxedGrpcConnectInfo, PreTrustPairingReachability};
 use crate::trust::{Reachability, SharedTrustStore, TrustStore, TrustStorePairingUpdate};
@@ -26,7 +26,6 @@ use crate::{HostId, audit};
 
 const HOST_ID_LEN: usize = 16;
 const PUBKEY_LEN: usize = 32;
-const TOKEN_LEN: usize = 32;
 const MAX_PAIRING_NAME_BYTES: usize = 256;
 const PAIRING_HKDF_SALT: &[u8] = b"amux-pair-spake2-v1";
 const PAIR_CONFIRM_A: &[u8] = b"amux-pair-confirm-A";
@@ -36,8 +35,8 @@ const AEAD_A_TO_B_INFO: &[u8] = "aead/A→B".as_bytes();
 const AEAD_B_TO_A_INFO: &[u8] = "aead/B→A".as_bytes();
 const A_TO_B_DIRECTION: u8 = 0x01;
 const B_TO_A_DIRECTION: u8 = 0x02;
-pub(crate) const PAIR_BY_SPAKE2_INITIATOR_TIMEOUT: Duration = Duration::from_secs(30);
-const PAIR_BY_SPAKE2_RESPONDER_TIMEOUT: Duration = Duration::from_secs(30);
+pub(crate) const PAIR_INITIATOR_TIMEOUT: Duration = Duration::from_secs(30);
+const PAIR_RESPONDER_TIMEOUT: Duration = Duration::from_secs(30);
 const SPAKE2_ED25519_M: [u8; 32] = [
     0xd0, 0x48, 0x03, 0x2c, 0x6e, 0xa0, 0xb6, 0xd6, 0x97, 0xdd, 0xc2, 0xe8, 0x6b, 0xda, 0x85, 0xa3,
     0x3a, 0xda, 0xc9, 0x20, 0xf1, 0xbf, 0x18, 0xe1, 0xb0, 0xc6, 0xd1, 0x66, 0xa5, 0xce, 0xcd, 0xaf,
@@ -47,8 +46,7 @@ const SPAKE2_ED25519_N: [u8; 32] = [
     0xa1, 0xed, 0x32, 0x81, 0xdc, 0x69, 0xb3, 0x5d, 0xd8, 0x68, 0xba, 0x85, 0xf8, 0x86, 0xc4, 0xab,
 ];
 
-type PairBySpake2Stream =
-    Pin<Box<dyn Stream<Item = Result<wire::pb::PairBySpake2Message, Status>> + Send>>;
+type PairStream = Pin<Box<dyn Stream<Item = Result<wire::pb::PairMessage, Status>> + Send>>;
 pub(crate) type SharedTrustCommitLock = Arc<Mutex<()>>;
 
 #[derive(Clone)]
@@ -144,7 +142,7 @@ impl PairingService {
             trust_commit_lock,
             connections,
             data_dir,
-            spake2_responder_timeout: PAIR_BY_SPAKE2_RESPONDER_TIMEOUT,
+            spake2_responder_timeout: PAIR_RESPONDER_TIMEOUT,
         }
     }
 
@@ -173,36 +171,9 @@ impl PairingService {
         .await
     }
 
-    async fn commit_pairing_token(
+    async fn commit_pairing(
         &self,
-        mut attempt: PairModeTokenAttempt,
-        host_id: HostId,
-        pubkey: Vec<u8>,
-        name: String,
-        reachability: Option<Reachability>,
-    ) -> Result<(), Status> {
-        match self
-            .stage_peer_trust(host_id, pubkey, name, reachability)
-            .await
-        {
-            Ok(trust_commit) => match self.pair_mode.complete_token_success(&mut attempt) {
-                Ok(()) => trust_commit.commit().await,
-                Err(error) => {
-                    trust_commit.rollback().await;
-                    self.pair_mode.abort_token_attempt(&mut attempt);
-                    Err(pair_mode_status(error))
-                }
-            },
-            Err(error) => {
-                self.pair_mode.abort_token_attempt(&mut attempt);
-                Err(error)
-            }
-        }
-    }
-
-    async fn commit_pairing_pin(
-        &self,
-        attempt: &mut PairModePinAttempt,
+        attempt: &mut PairModeAttempt,
         host_id: HostId,
         pubkey: Vec<u8>,
         name: String,
@@ -210,22 +181,22 @@ impl PairingService {
     ) -> Result<(), Status> {
         let mut commit = self
             .pair_mode
-            .begin_pin_commit(attempt)
-            .map_err(pin_mode_status)?;
+            .begin_commit(attempt)
+            .map_err(pair_mode_status)?;
         match self
             .stage_peer_trust(host_id, pubkey, name, reachability)
             .await
         {
-            Ok(trust_commit) => match self.pair_mode.complete_pin_success(&mut commit) {
+            Ok(trust_commit) => match self.pair_mode.complete_success(&mut commit) {
                 Ok(()) => trust_commit.commit().await,
                 Err(error) => {
                     trust_commit.rollback().await;
-                    self.pair_mode.abort_pin_commit(&mut commit);
-                    Err(pin_mode_status(error))
+                    self.pair_mode.abort_commit(&mut commit);
+                    Err(pair_mode_status(error))
                 }
             },
             Err(error) => {
-                self.pair_mode.abort_pin_commit(&mut commit);
+                self.pair_mode.abort_commit(&mut commit);
                 Err(error)
             }
         }
@@ -233,10 +204,10 @@ impl PairingService {
 
     async fn run_spake2_responder(
         self,
-        mut pin_attempt: PairModePinAttempt,
+        mut attempt: PairModeAttempt,
         reachability: Option<Reachability>,
-        mut inbound: tonic::Streaming<wire::pb::PairBySpake2Message>,
-        outbound: mpsc::Sender<Result<wire::pb::PairBySpake2Message, Status>>,
+        mut inbound: tonic::Streaming<wire::pb::PairMessage>,
+        outbound: mpsc::Sender<Result<wire::pb::PairMessage, Status>>,
     ) -> Result<(), Status> {
         validate_name(&self.host_name)?;
         let peer_spake_msg = match read_spake2_message(&mut inbound).await? {
@@ -260,17 +231,17 @@ impl PairingService {
             }
         };
 
-        let (spake, local_spake_msg) = Spake2ResponderState::start(pin_attempt.pin().as_bytes())?;
+        let (spake, local_spake_msg) = Spake2ResponderState::start(attempt.secret())?;
         send_body(
             &outbound,
-            wire::pb::pair_by_spake2_message::Body::Spake2Message(local_spake_msg.clone()),
+            wire::pb::pair_message::Body::Spake2Message(local_spake_msg.clone()),
         )
         .await?;
 
         let shared = match spake.finish(&peer_spake_msg) {
             Ok(shared) => shared,
             Err(_) => {
-                let _ = self.pair_mode.record_pin_failure(&mut pin_attempt);
+                let _ = self.pair_mode.record_failure(&mut attempt);
                 send_pairing_error(
                     &outbound,
                     wire::pb::pairing_error::Reason::InvalidPin,
@@ -308,7 +279,7 @@ impl PairingService {
             &keys.transcript_hash,
             &peer_confirmation,
         ) {
-            let _ = self.pair_mode.record_pin_failure(&mut pin_attempt);
+            let _ = self.pair_mode.record_failure(&mut attempt);
             send_pairing_error(
                 &outbound,
                 wire::pb::pairing_error::Reason::InvalidPin,
@@ -319,7 +290,7 @@ impl PairingService {
         }
         send_body(
             &outbound,
-            wire::pb::pair_by_spake2_message::Body::KeyConfirmation(keys.confirm_a.clone()),
+            wire::pb::pair_message::Body::KeyConfirmation(keys.confirm_a.clone()),
         )
         .await?;
 
@@ -330,7 +301,7 @@ impl PairingService {
         };
         send_body(
             &outbound,
-            wire::pb::pair_by_spake2_message::Body::SealedIdentity(seal_identity(
+            wire::pb::pair_message::Body::SealedIdentity(seal_identity(
                 &keys.aead_a_to_b,
                 A_TO_B_DIRECTION,
                 &keys.transcript_hash,
@@ -367,7 +338,7 @@ impl PairingService {
         ) {
             Ok(identity) => identity,
             Err(()) => {
-                let _ = self.pair_mode.record_pin_failure(&mut pin_attempt);
+                let _ = self.pair_mode.record_failure(&mut attempt);
                 send_pairing_error(
                     &outbound,
                     wire::pb::pairing_error::Reason::InvalidPin,
@@ -400,8 +371,8 @@ impl PairingService {
             .await;
             return Ok(());
         }
-        self.commit_pairing_pin(
-            &mut pin_attempt,
+        self.commit_pairing(
+            &mut attempt,
             peer_host_id,
             peer_identity.pubkey,
             peer_identity.name,
@@ -410,7 +381,7 @@ impl PairingService {
         .await?;
         send_body(
             &outbound,
-            wire::pb::pair_by_spake2_message::Body::PairingComplete(wire::pb::PairingComplete {}),
+            wire::pb::pair_message::Body::PairingComplete(wire::pb::PairingComplete {}),
         )
         .await?;
         audit::pairing_success("spake2", peer_host_id);
@@ -428,73 +399,27 @@ pub(crate) async fn commit_peer_trust(
         .await
 }
 
-pub(crate) async fn pair_by_token_initiator(
+pub(crate) async fn pair_initiator(
     client: &mut wire::pairing_service_client::PairingServiceClient<tonic::transport::Channel>,
     local_identity: &LocalPairingIdentity,
     local_name: &str,
-    expected_peer_host_id: HostId,
-    expected_peer_pubkey: Vec<u8>,
-    one_shot_token: Vec<u8>,
+    secret: &[u8],
 ) -> Result<SshPairingPeer, Status> {
-    validate_name(local_name)?;
-    validate_pubkey(&expected_peer_pubkey)?;
-    if one_shot_token.len() != TOKEN_LEN {
-        return Err(pairing_status(
-            Code::InvalidArgument,
-            "PROTOCOL_VIOLATION: one_shot_token must be 32 bytes",
-        ));
-    }
-    if expected_peer_host_id == local_identity.host_id
-        || expected_peer_pubkey.as_slice() == local_identity.pubkey.as_slice()
-    {
-        return Err(pairing_status(Code::InvalidArgument, "SELF_PAIRING"));
-    }
-
-    let response = client
-        .pair_by_token(wire::pb::PairByTokenRequest {
-            one_shot_token,
-            host_id: local_identity.host_id.as_bytes().to_vec(),
-            pubkey: local_identity.pubkey.clone(),
-            name: local_name.to_string(),
-        })
-        .await?
-        .into_inner();
-    let peer_host_id = host_id_from_wire(&response.host_id)?;
-    if peer_host_id != expected_peer_host_id {
-        return Err(pairing_status(
-            Code::InvalidArgument,
-            "PROTOCOL_VIOLATION: paired identity did not match QR payload",
-        ));
-    }
-    validate_name(&response.name)?;
-    Ok(SshPairingPeer {
-        host_id: peer_host_id,
-        pubkey: expected_peer_pubkey,
-        name: response.name,
-    })
-}
-
-pub(crate) async fn pair_by_spake2_initiator(
-    client: &mut wire::pairing_service_client::PairingServiceClient<tonic::transport::Channel>,
-    local_identity: &LocalPairingIdentity,
-    local_name: &str,
-    pin: &str,
-) -> Result<SshPairingPeer, Status> {
-    pair_by_spake2_initiator_with_timeout(
+    pair_initiator_with_timeout(
         client,
         local_identity,
         local_name,
-        pin,
-        PAIR_BY_SPAKE2_INITIATOR_TIMEOUT,
+        secret,
+        PAIR_INITIATOR_TIMEOUT,
     )
     .await
 }
 
-async fn pair_by_spake2_initiator_inner(
+async fn pair_initiator_inner(
     client: &mut wire::pairing_service_client::PairingServiceClient<tonic::transport::Channel>,
     local_identity: &LocalPairingIdentity,
     local_name: &str,
-    pin: &str,
+    secret: &[u8],
 ) -> Result<SshPairingPeer, Status> {
     validate_name(local_name)?;
     let (tx, rx) = mpsc::channel(8);
@@ -502,14 +427,14 @@ async fn pair_by_spake2_initiator_inner(
         rx.recv().await.map(|message| (message, rx))
     });
     let mut inbound = client
-        .pair_by_spake2(tonic::Request::new(outbound))
+        .pair(tonic::Request::new(outbound))
         .await?
         .into_inner();
 
-    let (spake, msg_b) = Spake2InitiatorState::start(pin.as_bytes())?;
+    let (spake, msg_b) = Spake2InitiatorState::start(secret)?;
     send_client_pairing_body(
         &tx,
-        wire::pb::pair_by_spake2_message::Body::Spake2Message(msg_b.clone()),
+        wire::pb::pair_message::Body::Spake2Message(msg_b.clone()),
     )
     .await?;
 
@@ -530,7 +455,7 @@ async fn pair_by_spake2_initiator_inner(
     let keys = derive_spake2_keys(&shared, &msg_b, &msg_a)?;
     send_client_pairing_body(
         &tx,
-        wire::pb::pair_by_spake2_message::Body::KeyConfirmation(hmac_confirm(
+        wire::pb::pair_message::Body::KeyConfirmation(hmac_confirm(
             &keys.kc_b,
             PAIR_CONFIRM_B,
             &keys.transcript_hash,
@@ -591,7 +516,7 @@ async fn pair_by_spake2_initiator_inner(
     };
     send_client_pairing_body(
         &tx,
-        wire::pb::pair_by_spake2_message::Body::SealedIdentity(seal_identity(
+        wire::pb::pair_message::Body::SealedIdentity(seal_identity(
             &keys.aead_b_to_a,
             B_TO_A_DIRECTION,
             &keys.transcript_hash,
@@ -605,8 +530,8 @@ async fn pair_by_spake2_initiator_inner(
         .await?
         .ok_or_else(|| Status::unavailable("pairing stream closed"))?;
     match completion.body {
-        Some(wire::pb::pair_by_spake2_message::Body::PairingComplete(_)) => {}
-        Some(wire::pb::pair_by_spake2_message::Body::Error(error)) => {
+        Some(wire::pb::pair_message::Body::PairingComplete(_)) => {}
+        Some(wire::pb::pair_message::Body::Error(error)) => {
             return Err(peer_pairing_error_status(error));
         }
         Some(_) | None => {
@@ -624,16 +549,16 @@ async fn pair_by_spake2_initiator_inner(
     })
 }
 
-async fn pair_by_spake2_initiator_with_timeout(
+async fn pair_initiator_with_timeout(
     client: &mut wire::pairing_service_client::PairingServiceClient<tonic::transport::Channel>,
     local_identity: &LocalPairingIdentity,
     local_name: &str,
-    pin: &str,
+    secret: &[u8],
     timeout: Duration,
 ) -> Result<SshPairingPeer, Status> {
     match tokio::time::timeout(
         timeout,
-        pair_by_spake2_initiator_inner(client, local_identity, local_name, pin),
+        pair_initiator_inner(client, local_identity, local_name, secret),
     )
     .await
     {
@@ -837,68 +762,20 @@ impl Drop for PeerTrustCommitGuard {
 
 #[tonic::async_trait]
 impl wire::pairing_service_server::PairingService for PairingService {
-    async fn pair_by_token(
-        &self,
-        request: tonic::Request<wire::pb::PairByTokenRequest>,
-    ) -> Result<tonic::Response<wire::pb::PairByTokenResponse>, Status> {
-        audit::pairing_start("token");
-        let result = async {
-            let reachability = token_pairing_request_reachability(&request)?;
-            if !self.pair_mode.is_active() {
-                return Err(pairing_status(
-                    Code::FailedPrecondition,
-                    "NOT_IN_PAIRING_MODE",
-                ));
-            }
-            let request = request.into_inner();
-            let peer_host_id = host_id_from_wire(&request.host_id)?;
-            validate_pubkey(&request.pubkey)?;
-            validate_name(&request.name)?;
-            validate_name(&self.host_name)?;
-            if peer_host_id == self.local_identity.host_id
-                || request.pubkey.as_slice() == self.local_identity.pubkey.as_slice()
-            {
-                return Err(pairing_status(Code::InvalidArgument, "SELF_PAIRING"));
-            }
-            let attempt = self
-                .pair_mode
-                .begin_token_attempt(&request.one_shot_token)
-                .map_err(pair_mode_status)?;
-            self.commit_pairing_token(
-                attempt,
-                peer_host_id,
-                request.pubkey,
-                request.name,
-                reachability,
-            )
-            .await?;
-            audit::pairing_success("token", peer_host_id);
-            Ok(tonic::Response::new(wire::pb::PairByTokenResponse {
-                host_id: self.local_identity.host_id.as_bytes().to_vec(),
-                name: self.host_name.clone(),
-            }))
-        }
-        .await;
-        if let Err(error) = &result {
-            audit::pairing_failure("token", error);
-        }
-        result
-    }
+    type PairStream = PairStream;
 
-    type PairBySpake2Stream = PairBySpake2Stream;
-
-    async fn pair_by_spake2(
+    async fn pair(
         &self,
-        request: tonic::Request<tonic::Streaming<wire::pb::PairBySpake2Message>>,
-    ) -> Result<tonic::Response<Self::PairBySpake2Stream>, Status> {
+        request: tonic::Request<tonic::Streaming<wire::pb::PairMessage>>,
+    ) -> Result<tonic::Response<Self::PairStream>, Status> {
         audit::pairing_start("spake2");
         let reachability = pairing_request_reachability(&request).inspect_err(|error| {
             audit::pairing_failure("spake2", error);
         })?;
-        let pin_attempt = self
+        let attempt = self
             .pair_mode
-            .begin_pin_attempt()
-            .map_err(pin_mode_status)
+            .begin_attempt()
+            .map_err(pair_mode_status)
             .inspect_err(|error| {
                 audit::pairing_failure("spake2", error);
             })?;
@@ -907,7 +784,7 @@ impl wire::pairing_service_server::PairingService for PairingService {
         let responder_timeout = self.spake2_responder_timeout;
         tokio::spawn(async move {
             let responder = service.run_spake2_responder(
-                pin_attempt,
+                attempt,
                 reachability,
                 request.into_inner(),
                 tx.clone(),
@@ -933,29 +810,6 @@ impl wire::pairing_service_server::PairingService for PairingService {
             rx,
             |mut rx| async move { rx.recv().await.map(|item| (item, rx)) },
         ))))
-    }
-}
-
-fn host_id_from_wire(bytes: &[u8]) -> Result<HostId, Status> {
-    if bytes.len() != HOST_ID_LEN {
-        return Err(pairing_status(
-            Code::InvalidArgument,
-            "PROTOCOL_VIOLATION: host_id must be 16 bytes",
-        ));
-    }
-    let mut host_id = [0_u8; HOST_ID_LEN];
-    host_id.copy_from_slice(bytes);
-    Ok(HostId::from_bytes(host_id))
-}
-
-fn validate_pubkey(pubkey: &[u8]) -> Result<(), Status> {
-    if pubkey.len() == PUBKEY_LEN {
-        Ok(())
-    } else {
-        Err(pairing_status(
-            Code::InvalidArgument,
-            "PROTOCOL_VIOLATION: pubkey must be 32 bytes",
-        ))
     }
 }
 
@@ -1003,39 +857,15 @@ fn pairing_request_reachability<T>(
         })
 }
 
-fn token_pairing_request_reachability<T>(
-    request: &tonic::Request<T>,
-) -> Result<Option<Reachability>, Status> {
-    let info = request
-        .extensions()
-        .get::<BoxedGrpcConnectInfo>()
-        .ok_or_else(|| {
-            Status::permission_denied("pairing RPC requires pre-trust pairing transport")
-        })?;
-    match &info.auth {
-        BoxedGrpcAuth::PreTrustPairing {
-            reachability: PreTrustPairingReachability::Cloud,
-        } => Ok(Some(Reachability::Cloud)),
-        BoxedGrpcAuth::PreTrustPairing {
-            reachability: PreTrustPairingReachability::NoReusableReachability,
-        } => Err(Status::permission_denied(
-            "token pairing requires cloud pre-trust pairing transport",
-        )),
-        BoxedGrpcAuth::LocalTrusted | BoxedGrpcAuth::TlsTrusted { .. } => Err(
-            Status::permission_denied("pairing RPC requires pre-trust pairing transport"),
-        ),
-    }
-}
-
 struct Spake2ResponderState {
     x: Scalar,
     w: Scalar,
 }
 
 impl Spake2ResponderState {
-    fn start(pin: &[u8]) -> Result<(Self, Vec<u8>), Status> {
+    fn start(secret: &[u8]) -> Result<(Self, Vec<u8>), Status> {
         let x = random_spake2_scalar()?;
-        let w = spake2_password_scalar(pin);
+        let w = spake2_password_scalar(secret);
         let m = spake2_ed25519_point(&SPAKE2_ED25519_M)?;
         let msg_a = (ED25519_BASEPOINT_POINT * x + m * w)
             .compress()
@@ -1061,9 +891,9 @@ struct Spake2InitiatorState {
 }
 
 impl Spake2InitiatorState {
-    fn start(pin: &[u8]) -> Result<(Self, Vec<u8>), Status> {
+    fn start(secret: &[u8]) -> Result<(Self, Vec<u8>), Status> {
         let y = random_spake2_scalar()?;
-        let w = spake2_password_scalar(pin);
+        let w = spake2_password_scalar(secret);
         let n = spake2_ed25519_point(&SPAKE2_ED25519_N)?;
         let msg_b = (ED25519_BASEPOINT_POINT * y + n * w)
             .compress()
@@ -1097,10 +927,11 @@ fn random_spake2_scalar() -> Result<Scalar, Status> {
     Err(Status::internal("failed to generate nonzero SPAKE2 scalar"))
 }
 
-fn spake2_password_scalar(pin: &[u8]) -> Scalar {
-    // The user PIN remains the RFC 9382 password input; this is the
-    // ciphersuite-required hash-to-scalar step, not application stretching.
-    let digest = digest::digest(&digest::SHA512, pin);
+fn spake2_password_scalar(secret: &[u8]) -> Scalar {
+    // The out-of-band secret (PIN digits or QR secret bytes) is the
+    // RFC 9382 password input; this is the ciphersuite-required
+    // hash-to-scalar step, not application stretching.
+    let digest = digest::digest(&digest::SHA512, secret);
     let mut wide = [0_u8; 64];
     wide.copy_from_slice(digest.as_ref());
     Scalar::from_bytes_mod_order_wide(&wide)
@@ -1258,30 +1089,30 @@ fn pairing_identity_aad(direction: u8, transcript_hash: &[u8; 32]) -> Vec<u8> {
 }
 
 async fn read_spake2_message(
-    inbound: &mut tonic::Streaming<wire::pb::PairBySpake2Message>,
+    inbound: &mut tonic::Streaming<wire::pb::PairMessage>,
 ) -> Result<PairingRead<Vec<u8>>, Status> {
     read_expected_body(inbound, |body| match body {
-        wire::pb::pair_by_spake2_message::Body::Spake2Message(bytes) => Some(bytes),
+        wire::pb::pair_message::Body::Spake2Message(bytes) => Some(bytes),
         _ => None,
     })
     .await
 }
 
 async fn read_key_confirmation(
-    inbound: &mut tonic::Streaming<wire::pb::PairBySpake2Message>,
+    inbound: &mut tonic::Streaming<wire::pb::PairMessage>,
 ) -> Result<PairingRead<Vec<u8>>, Status> {
     read_expected_body(inbound, |body| match body {
-        wire::pb::pair_by_spake2_message::Body::KeyConfirmation(bytes) => Some(bytes),
+        wire::pb::pair_message::Body::KeyConfirmation(bytes) => Some(bytes),
         _ => None,
     })
     .await
 }
 
 async fn read_sealed_identity(
-    inbound: &mut tonic::Streaming<wire::pb::PairBySpake2Message>,
+    inbound: &mut tonic::Streaming<wire::pb::PairMessage>,
 ) -> Result<PairingRead<Vec<u8>>, Status> {
     read_expected_body(inbound, |body| match body {
-        wire::pb::pair_by_spake2_message::Body::SealedIdentity(bytes) => Some(bytes),
+        wire::pb::pair_message::Body::SealedIdentity(bytes) => Some(bytes),
         _ => None,
     })
     .await
@@ -1295,8 +1126,8 @@ enum PairingRead<T> {
 }
 
 async fn read_expected_body<T>(
-    inbound: &mut tonic::Streaming<wire::pb::PairBySpake2Message>,
-    f: impl FnOnce(wire::pb::pair_by_spake2_message::Body) -> Option<T>,
+    inbound: &mut tonic::Streaming<wire::pb::PairMessage>,
+    f: impl FnOnce(wire::pb::pair_message::Body) -> Option<T>,
 ) -> Result<PairingRead<T>, Status> {
     let Some(message) = inbound.message().await? else {
         return Ok(PairingRead::Eof);
@@ -1304,34 +1135,34 @@ async fn read_expected_body<T>(
     let Some(body) = message.body else {
         return Ok(PairingRead::Unexpected);
     };
-    if let wire::pb::pair_by_spake2_message::Body::Error(error) = body {
+    if let wire::pb::pair_message::Body::Error(error) = body {
         return Ok(PairingRead::PeerError(error));
     }
     Ok(f(body).map_or(PairingRead::Unexpected, PairingRead::Expected))
 }
 
 async fn send_body(
-    outbound: &mpsc::Sender<Result<wire::pb::PairBySpake2Message, Status>>,
-    body: wire::pb::pair_by_spake2_message::Body,
+    outbound: &mpsc::Sender<Result<wire::pb::PairMessage, Status>>,
+    body: wire::pb::pair_message::Body,
 ) -> Result<(), Status> {
     outbound
-        .send(Ok(wire::pb::PairBySpake2Message { body: Some(body) }))
+        .send(Ok(wire::pb::PairMessage { body: Some(body) }))
         .await
         .map_err(|_| Status::cancelled("pairing stream closed"))
 }
 
 async fn send_client_pairing_body(
-    outbound: &mpsc::Sender<wire::pb::PairBySpake2Message>,
-    body: wire::pb::pair_by_spake2_message::Body,
+    outbound: &mpsc::Sender<wire::pb::PairMessage>,
+    body: wire::pb::pair_message::Body,
 ) -> Result<(), Status> {
     outbound
-        .send(wire::pb::PairBySpake2Message { body: Some(body) })
+        .send(wire::pb::PairMessage { body: Some(body) })
         .await
         .map_err(|_| Status::cancelled("pairing stream closed"))
 }
 
 async fn send_pairing_error(
-    outbound: &mpsc::Sender<Result<wire::pb::PairBySpake2Message, Status>>,
+    outbound: &mpsc::Sender<Result<wire::pb::PairMessage, Status>>,
     reason: wire::pb::pairing_error::Reason,
     detail: impl Into<String>,
 ) {
@@ -1339,7 +1170,7 @@ async fn send_pairing_error(
     audit::pairing_failure("spake2", local_pairing_audit_reason(reason, &detail));
     let _ = send_body(
         outbound,
-        wire::pb::pair_by_spake2_message::Body::Error(wire::pb::PairingError {
+        wire::pb::pair_message::Body::Error(wire::pb::PairingError {
             reason: reason as i32,
             detail,
         }),
@@ -1350,7 +1181,6 @@ async fn send_pairing_error(
 fn local_pairing_audit_reason(reason: wire::pb::pairing_error::Reason, detail: &str) -> String {
     match reason {
         wire::pb::pairing_error::Reason::InvalidPin => "invalid PIN".to_string(),
-        wire::pb::pairing_error::Reason::InvalidToken => "invalid token".to_string(),
         wire::pb::pairing_error::Reason::SelfPairing => "self pairing is not allowed".to_string(),
         wire::pb::pairing_error::Reason::NotInPairingMode => "not in pairing mode".to_string(),
         wire::pb::pairing_error::Reason::Timeout => "pairing timed out".to_string(),
@@ -1377,25 +1207,7 @@ fn pair_mode_status(error: crate::pairing::PairModeError) -> Status {
 
     match error {
         PairModeError::NotActive => pairing_status(Code::FailedPrecondition, "NOT_IN_PAIRING_MODE"),
-        PairModeError::InvalidToken => pairing_status(Code::PermissionDenied, "INVALID_TOKEN"),
-        PairModeError::NotTokenMode => pairing_status(Code::PermissionDenied, "INVALID_TOKEN"),
         PairModeError::AlreadyActive
-        | PairModeError::NotPinMode
-        | PairModeError::InvalidPinFormat
-        | PairModeError::SecretGeneration => pairing_status(Code::Internal, "PAIR_MODE_ERROR"),
-    }
-}
-
-fn pin_mode_status(error: crate::pairing::PairModeError) -> Status {
-    use crate::pairing::PairModeError;
-
-    match error {
-        PairModeError::NotActive | PairModeError::NotPinMode => {
-            pairing_status(Code::FailedPrecondition, "NOT_IN_PAIRING_MODE")
-        }
-        PairModeError::AlreadyActive
-        | PairModeError::NotTokenMode
-        | PairModeError::InvalidToken
         | PairModeError::InvalidPinFormat
         | PairModeError::SecretGeneration => pairing_status(Code::Internal, "PAIR_MODE_ERROR"),
     }
@@ -1417,7 +1229,7 @@ fn peer_pairing_error_status(error: wire::pb::PairingError) -> Status {
     let reason = Reason::try_from(error.reason).unwrap_or(Reason::Unspecified);
     let code = match reason {
         Reason::NotInPairingMode => Code::FailedPrecondition,
-        Reason::InvalidPin | Reason::InvalidToken => Code::PermissionDenied,
+        Reason::InvalidPin => Code::PermissionDenied,
         Reason::ProtocolViolation | Reason::SelfPairing | Reason::Unspecified => {
             Code::InvalidArgument
         }
@@ -1428,7 +1240,6 @@ fn peer_pairing_error_status(error: wire::pb::PairingError) -> Status {
         Reason::Unspecified => "REASON_UNSPECIFIED",
         Reason::NotInPairingMode => "NOT_IN_PAIRING_MODE",
         Reason::InvalidPin => "INVALID_PIN",
-        Reason::InvalidToken => "INVALID_TOKEN",
         Reason::ProtocolViolation => "PROTOCOL_VIOLATION",
         Reason::Timeout => "TIMEOUT",
         Reason::UserRejected => "USER_REJECTED",
@@ -1455,7 +1266,6 @@ mod tests {
     use tokio::sync::mpsc;
 
     use super::*;
-    use crate::protocol::wire::pairing_service_server::PairingService as _;
     use crate::routing::{
         Capabilities, Host, LinkId, LinkRole, Route, RoutingCore, SupportedAgentType,
     };
@@ -1494,29 +1304,6 @@ mod tests {
             data_dir.path().to_path_buf(),
         );
         (data_dir, service, pair_mode, trust_store, responder, peer)
-    }
-
-    fn token_request(
-        token: [u8; 32],
-        peer: &DeviceIdentity,
-        name: &str,
-    ) -> wire::pb::PairByTokenRequest {
-        wire::pb::PairByTokenRequest {
-            one_shot_token: token.to_vec(),
-            host_id: peer.host_id.as_bytes().to_vec(),
-            pubkey: peer.public_key().to_vec(),
-            name: name.to_string(),
-        }
-    }
-
-    fn pre_trust_pairing_request<T>(message: T) -> tonic::Request<T> {
-        let mut request = tonic::Request::new(message);
-        request.extensions_mut().insert(BoxedGrpcConnectInfo {
-            auth: BoxedGrpcAuth::PreTrustPairing {
-                reachability: PreTrustPairingReachability::Cloud,
-            },
-        });
-        request
     }
 
     async fn pairing_client_for(
@@ -1594,32 +1381,25 @@ mod tests {
 
     #[tonic::async_trait]
     impl wire::pairing_service_server::PairingService for ErrorOnlyPairingService {
-        type PairBySpake2Stream = PairBySpake2Stream;
+        type PairStream = PairStream;
 
-        async fn pair_by_token(
+        async fn pair(
             &self,
-            _request: tonic::Request<wire::pb::PairByTokenRequest>,
-        ) -> Result<tonic::Response<wire::pb::PairByTokenResponse>, Status> {
-            Err(Status::unimplemented("not used"))
-        }
-
-        async fn pair_by_spake2(
-            &self,
-            request: tonic::Request<tonic::Streaming<wire::pb::PairBySpake2Message>>,
-        ) -> Result<tonic::Response<Self::PairBySpake2Stream>, Status> {
+            request: tonic::Request<tonic::Streaming<wire::pb::PairMessage>>,
+        ) -> Result<tonic::Response<Self::PairStream>, Status> {
             let mut inbound = request.into_inner();
             tokio::spawn(
                 async move { while inbound.message().await.is_ok_and(|m| m.is_some()) {} },
             );
-            let message = wire::pb::PairBySpake2Message {
-                body: Some(wire::pb::pair_by_spake2_message::Body::Error(
+            let message = wire::pb::PairMessage {
+                body: Some(wire::pb::pair_message::Body::Error(
                     wire::pb::PairingError {
                         reason: self.reason as i32,
                         detail: self.detail.to_string(),
                     },
                 )),
             };
-            let output: PairBySpake2Stream = Box::pin(stream::once(async move { Ok(message) }));
+            let output: PairStream = Box::pin(stream::once(async move { Ok(message) }));
             Ok(tonic::Response::new(output))
         }
     }
@@ -1629,19 +1409,12 @@ mod tests {
 
     #[tonic::async_trait]
     impl wire::pairing_service_server::PairingService for HangingPairingService {
-        type PairBySpake2Stream = PairBySpake2Stream;
+        type PairStream = PairStream;
 
-        async fn pair_by_token(
+        async fn pair(
             &self,
-            _request: tonic::Request<wire::pb::PairByTokenRequest>,
-        ) -> Result<tonic::Response<wire::pb::PairByTokenResponse>, Status> {
-            Err(Status::unimplemented("not used"))
-        }
-
-        async fn pair_by_spake2(
-            &self,
-            request: tonic::Request<tonic::Streaming<wire::pb::PairBySpake2Message>>,
-        ) -> Result<tonic::Response<Self::PairBySpake2Stream>, Status> {
+            request: tonic::Request<tonic::Streaming<wire::pb::PairMessage>>,
+        ) -> Result<tonic::Response<Self::PairStream>, Status> {
             let mut inbound = request.into_inner();
             tokio::spawn(
                 async move { while inbound.message().await.is_ok_and(|m| m.is_some()) {} },
@@ -1709,31 +1482,27 @@ mod tests {
         )
     }
 
-    fn spake2_message(bytes: Vec<u8>) -> wire::pb::PairBySpake2Message {
-        wire::pb::PairBySpake2Message {
-            body: Some(wire::pb::pair_by_spake2_message::Body::Spake2Message(bytes)),
+    fn spake2_message(bytes: Vec<u8>) -> wire::pb::PairMessage {
+        wire::pb::PairMessage {
+            body: Some(wire::pb::pair_message::Body::Spake2Message(bytes)),
         }
     }
 
-    fn key_confirmation(bytes: Vec<u8>) -> wire::pb::PairBySpake2Message {
-        wire::pb::PairBySpake2Message {
-            body: Some(wire::pb::pair_by_spake2_message::Body::KeyConfirmation(
-                bytes,
-            )),
+    fn key_confirmation(bytes: Vec<u8>) -> wire::pb::PairMessage {
+        wire::pb::PairMessage {
+            body: Some(wire::pb::pair_message::Body::KeyConfirmation(bytes)),
         }
     }
 
-    fn sealed_identity(bytes: Vec<u8>) -> wire::pb::PairBySpake2Message {
-        wire::pb::PairBySpake2Message {
-            body: Some(wire::pb::pair_by_spake2_message::Body::SealedIdentity(
-                bytes,
-            )),
+    fn sealed_identity(bytes: Vec<u8>) -> wire::pb::PairMessage {
+        wire::pb::PairMessage {
+            body: Some(wire::pb::pair_message::Body::SealedIdentity(bytes)),
         }
     }
 
-    fn pairing_error(reason: wire::pb::pairing_error::Reason) -> wire::pb::PairBySpake2Message {
-        wire::pb::PairBySpake2Message {
-            body: Some(wire::pb::pair_by_spake2_message::Body::Error(
+    fn pairing_error(reason: wire::pb::pairing_error::Reason) -> wire::pb::PairMessage {
+        wire::pb::PairMessage {
+            body: Some(wire::pb::pair_message::Body::Error(
                 wire::pb::PairingError {
                     reason: reason as i32,
                     detail: "peer abort".to_string(),
@@ -1743,8 +1512,8 @@ mod tests {
     }
 
     async fn next_spake2_body(
-        stream: &mut tonic::Streaming<wire::pb::PairBySpake2Message>,
-    ) -> wire::pb::pair_by_spake2_message::Body {
+        stream: &mut tonic::Streaming<wire::pb::PairMessage>,
+    ) -> wire::pb::pair_message::Body {
         stream
             .message()
             .await
@@ -1757,15 +1526,15 @@ mod tests {
     async fn start_spake2_client_stream(
         client: &mut wire::pairing_service_client::PairingServiceClient<tonic::transport::Channel>,
     ) -> (
-        mpsc::Sender<wire::pb::PairBySpake2Message>,
-        tonic::Streaming<wire::pb::PairBySpake2Message>,
+        mpsc::Sender<wire::pb::PairMessage>,
+        tonic::Streaming<wire::pb::PairMessage>,
     ) {
         let (tx, rx) = mpsc::channel(8);
         let outbound = stream::unfold(rx, |mut rx| async move {
             rx.recv().await.map(|message| (message, rx))
         });
         let inbound = client
-            .pair_by_spake2(tonic::Request::new(outbound))
+            .pair(tonic::Request::new(outbound))
             .await
             .unwrap()
             .into_inner();
@@ -1779,66 +1548,7 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn pair_by_token_requires_active_pair_mode() {
-        let (_dir, service, _pair_mode, _store, _responder, peer) = service_fixture();
-        let error = service
-            .pair_by_token(pre_trust_pairing_request(token_request(
-                [7_u8; 32], &peer, "peer",
-            )))
-            .await
-            .unwrap_err();
-
-        assert_eq!(error.code(), Code::FailedPrecondition);
-        assert_eq!(error.message(), "NOT_IN_PAIRING_MODE");
-    }
-
-    #[tokio::test]
-    async fn pairing_service_rejects_non_pairing_transport() {
-        let (_dir, service, _pair_mode, _store, _responder, peer) = service_fixture();
-        let (mut client, task) = local_trusted_pairing_client_for(service).await;
-
-        let error = client
-            .pair_by_token(token_request([7_u8; 32], &peer, "peer"))
-            .await
-            .unwrap_err();
-
-        assert_eq!(error.code(), Code::PermissionDenied);
-        assert_eq!(
-            error.message(),
-            "pairing RPC requires pre-trust pairing transport"
-        );
-        task.abort();
-    }
-
-    #[tokio::test]
-    async fn pair_by_token_rejects_non_cloud_pairing_transport() {
-        let (_dir, service, pair_mode, trust_store, _responder, peer) = service_fixture();
-        pair_mode
-            .start_token_for_duration([7_u8; 32], Duration::from_secs(60))
-            .unwrap();
-        let (mut client, task) = pairing_client_for_reachability(
-            service,
-            PreTrustPairingReachability::NoReusableReachability,
-        )
-        .await;
-
-        let error = client
-            .pair_by_token(token_request([7_u8; 32], &peer, "peer"))
-            .await
-            .unwrap_err();
-
-        assert_eq!(error.code(), Code::PermissionDenied);
-        assert_eq!(
-            error.message(),
-            "token pairing requires cloud pre-trust pairing transport"
-        );
-        assert!(pair_mode.is_active());
-        assert!(trust_store.read().unwrap().entry(peer.host_id).is_none());
-        task.abort();
-    }
-
-    #[tokio::test]
-    async fn pair_by_spake2_requires_pin_pair_mode() {
+    async fn pair_requires_active_pair_mode() {
         let (_dir, service, _pair_mode, _store, _responder, _peer) = service_fixture();
         let (mut client, task) = pairing_client_for(service).await;
         let (tx, rx) = mpsc::channel(1);
@@ -1848,7 +1558,7 @@ mod tests {
         });
 
         let error = client
-            .pair_by_spake2(tonic::Request::new(outbound))
+            .pair(tonic::Request::new(outbound))
             .await
             .unwrap_err();
         assert_eq!(error.code(), Code::FailedPrecondition);
@@ -1857,7 +1567,7 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn pair_by_spake2_success_stores_peer_and_consumes_pin() {
+    async fn pair_success_stores_peer_and_consumes_pin() {
         let (dir, service, pair_mode, trust_store, responder, peer) = service_fixture();
         pair_mode
             .start_pin_for_duration("123456".to_string(), Duration::from_secs(60))
@@ -1868,7 +1578,7 @@ mod tests {
 
         tx.send(spake2_message(msg_b.clone())).await.unwrap();
         let msg_a = match next_spake2_body(&mut inbound).await {
-            wire::pb::pair_by_spake2_message::Body::Spake2Message(bytes) => bytes,
+            wire::pb::pair_message::Body::Spake2Message(bytes) => bytes,
             other => panic!("unexpected SPAKE2 body: {other:?}"),
         };
         let shared = spake_b.finish(&msg_a).unwrap();
@@ -1881,13 +1591,13 @@ mod tests {
         .await
         .unwrap();
         match next_spake2_body(&mut inbound).await {
-            wire::pb::pair_by_spake2_message::Body::KeyConfirmation(bytes) => {
+            wire::pb::pair_message::Body::KeyConfirmation(bytes) => {
                 assert_eq!(bytes, keys.confirm_a)
             }
             other => panic!("unexpected key-confirmation body: {other:?}"),
         }
         let sealed_responder = match next_spake2_body(&mut inbound).await {
-            wire::pb::pair_by_spake2_message::Body::SealedIdentity(bytes) => bytes,
+            wire::pb::pair_message::Body::SealedIdentity(bytes) => bytes,
             other => panic!("unexpected sealed-identity body: {other:?}"),
         };
         let responder_identity = open_identity(
@@ -1919,7 +1629,7 @@ mod tests {
         .unwrap();
         drop(tx);
         match next_spake2_body(&mut inbound).await {
-            wire::pb::pair_by_spake2_message::Body::PairingComplete(_) => {}
+            wire::pb::pair_message::Body::PairingComplete(_) => {}
             other => panic!("unexpected completion body: {other:?}"),
         }
         assert!(!pair_mode.is_active());
@@ -1939,7 +1649,7 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn spake2_initiator_helper_pairs_against_responder() {
+    async fn pair_initiator_helper_pairs_against_responder() {
         let (dir, service, pair_mode, trust_store, responder, peer) = service_fixture();
         pair_mode
             .start_pin_for_duration("123456".to_string(), Duration::from_secs(60))
@@ -1951,10 +1661,9 @@ mod tests {
         .await;
 
         let peer_identity = LocalPairingIdentity::from_device_identity(&peer);
-        let responder_peer =
-            pair_by_spake2_initiator(&mut client, &peer_identity, "peer", "123456")
-                .await
-                .unwrap();
+        let responder_peer = pair_initiator(&mut client, &peer_identity, "peer", b"123456")
+            .await
+            .unwrap();
 
         assert_eq!(responder_peer.host_id, responder.host_id);
         assert_eq!(responder_peer.pubkey, responder.public_key());
@@ -1973,7 +1682,7 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn spake2_initiator_preserves_peer_error_reason() {
+    async fn pair_initiator_preserves_peer_error_reason() {
         let (_dir, _service, _pair_mode, _trust_store, _responder, peer) = service_fixture();
         let (mut client, task) = error_only_pairing_client_for(
             wire::pb::pairing_error::Reason::ProtocolViolation,
@@ -1982,7 +1691,7 @@ mod tests {
         .await;
 
         let peer_identity = LocalPairingIdentity::from_device_identity(&peer);
-        let error = pair_by_spake2_initiator(&mut client, &peer_identity, "peer", "123456")
+        let error = pair_initiator(&mut client, &peer_identity, "peer", b"123456")
             .await
             .unwrap_err();
 
@@ -1992,16 +1701,16 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn spake2_initiator_timeout_returns_pairing_timeout() {
+    async fn pair_initiator_timeout_returns_pairing_timeout() {
         let (_dir, _service, _pair_mode, _trust_store, _responder, peer) = service_fixture();
         let (mut client, task) = hanging_pairing_client().await;
 
         let peer_identity = LocalPairingIdentity::from_device_identity(&peer);
-        let error = pair_by_spake2_initiator_with_timeout(
+        let error = pair_initiator_with_timeout(
             &mut client,
             &peer_identity,
             "peer",
-            "123456",
+            b"123456",
             Duration::from_millis(10),
         )
         .await
@@ -2013,7 +1722,7 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn pair_by_spake2_invalid_pin_records_failure_without_consuming_pin() {
+    async fn pair_invalid_pin_records_failure_without_consuming_pin() {
         let (_dir, service, pair_mode, _trust_store, _responder, _peer) = service_fixture();
         pair_mode
             .start_pin_for_duration("123456".to_string(), Duration::from_secs(60))
@@ -2024,7 +1733,7 @@ mod tests {
 
         tx.send(spake2_message(msg_b.clone())).await.unwrap();
         let msg_a = match next_spake2_body(&mut inbound).await {
-            wire::pb::pair_by_spake2_message::Body::Spake2Message(bytes) => bytes,
+            wire::pb::pair_message::Body::Spake2Message(bytes) => bytes,
             other => panic!("unexpected SPAKE2 body: {other:?}"),
         };
         let shared = spake_b.finish(&msg_a).unwrap();
@@ -2038,7 +1747,7 @@ mod tests {
         .unwrap();
 
         match next_spake2_body(&mut inbound).await {
-            wire::pb::pair_by_spake2_message::Body::Error(error) => {
+            wire::pb::pair_message::Body::Error(error) => {
                 assert_eq!(
                     error.reason,
                     wire::pb::pairing_error::Reason::InvalidPin as i32
@@ -2050,17 +1759,16 @@ mod tests {
         drop(tx);
         task.abort();
 
-        let token = [3_u8; 32];
         assert_eq!(
-            pair_mode.start_token_for_duration(token, Duration::from_secs(60)),
+            pair_mode.start_qr_secret_for_duration([3_u8; 32], Duration::from_secs(60)),
             Err(crate::pairing::PairModeError::AlreadyActive)
         );
-        let attempt = pair_mode.begin_pin_attempt().unwrap();
-        assert_eq!(attempt.pin(), "123456");
+        let attempt = pair_mode.begin_attempt().unwrap();
+        assert_eq!(attempt.secret(), b"123456");
     }
 
     #[tokio::test]
-    async fn pair_by_spake2_peer_error_aborts_without_protocol_violation() {
+    async fn pair_peer_error_aborts_without_protocol_violation() {
         let (_dir, service, pair_mode, _trust_store, _responder, _peer) = service_fixture();
         pair_mode
             .start_pin_for_duration("123456".to_string(), Duration::from_secs(60))
@@ -2080,14 +1788,14 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn pair_by_spake2_caps_in_flight_pin_attempts() {
+    async fn pair_caps_in_flight_attempts() {
         let (_dir, service, pair_mode, _trust_store, _responder, _peer) = service_fixture();
         pair_mode
             .start_pin_for_duration("123456".to_string(), Duration::from_secs(60))
             .unwrap();
         let (mut client, task) = pairing_client_for(service).await;
         let mut held_attempts = Vec::new();
-        for _ in 0..crate::pairing::PIN_FAILED_ATTEMPT_LIMIT {
+        for _ in 0..crate::pairing::PAIR_ATTEMPT_LIMIT {
             held_attempts.push(start_spake2_client_stream(&mut client).await);
         }
 
@@ -2096,7 +1804,7 @@ mod tests {
             rx.recv().await.map(|message| (message, rx))
         });
         let error = client
-            .pair_by_spake2(tonic::Request::new(outbound))
+            .pair(tonic::Request::new(outbound))
             .await
             .unwrap_err();
         assert_eq!(error.code(), Code::FailedPrecondition);
@@ -2108,7 +1816,7 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn pair_by_spake2_responder_timeout_releases_idle_attempts() {
+    async fn pair_responder_timeout_releases_idle_attempts() {
         let (_dir, service, pair_mode, _trust_store, _responder, _peer) = service_fixture();
         let service = service.with_spake2_responder_timeout(Duration::from_millis(10));
         pair_mode
@@ -2116,7 +1824,7 @@ mod tests {
             .unwrap();
         let (mut client, task) = pairing_client_for(service).await;
         let mut held_attempts = Vec::new();
-        for _ in 0..crate::pairing::PIN_FAILED_ATTEMPT_LIMIT {
+        for _ in 0..crate::pairing::PAIR_ATTEMPT_LIMIT {
             held_attempts.push(start_spake2_client_stream(&mut client).await);
         }
 
@@ -2126,7 +1834,7 @@ mod tests {
                 let outbound = stream::unfold(rx, |mut rx| async move {
                     rx.recv().await.map(|message| (message, rx))
                 });
-                match client.pair_by_spake2(tonic::Request::new(outbound)).await {
+                match client.pair(tonic::Request::new(outbound)).await {
                     Ok(response) => return (tx, response.into_inner()),
                     Err(error) if error.code() == Code::FailedPrecondition => {
                         tokio::time::sleep(Duration::from_millis(5)).await;
@@ -2148,8 +1856,8 @@ mod tests {
         pair_mode
             .start_pin_for_duration("123456".to_string(), Duration::from_secs(60))
             .unwrap();
-        let mut attempt = pair_mode.begin_pin_attempt().unwrap();
-        let mut commit = pair_mode.begin_pin_commit(&mut attempt).unwrap();
+        let mut attempt = pair_mode.begin_attempt().unwrap();
+        let mut commit = pair_mode.begin_commit(&mut attempt).unwrap();
         let guard = service
             .stage_peer_trust(
                 peer.host_id,
@@ -2163,7 +1871,7 @@ mod tests {
 
         pair_mode.cancel();
         assert_eq!(
-            pair_mode.complete_pin_success(&mut commit),
+            pair_mode.complete_success(&mut commit),
             Err(crate::pairing::PairModeError::NotActive)
         );
         guard.rollback().await;
@@ -2171,167 +1879,6 @@ mod tests {
         assert!(trust_store.read().unwrap().entry(peer.host_id).is_none());
         let persisted = TrustStore::load_or_create_in(dir.path()).unwrap();
         assert!(persisted.entry(peer.host_id).is_none());
-    }
-
-    #[tokio::test]
-    async fn pair_by_token_rejects_invalid_token_without_consuming_secret() {
-        let (dir, service, pair_mode, _store, responder, peer) = service_fixture();
-        let token = [7_u8; 32];
-        pair_mode
-            .start_token_for_duration(token, Duration::from_secs(60))
-            .unwrap();
-
-        let error = service
-            .pair_by_token(pre_trust_pairing_request(token_request(
-                [8_u8; 32], &peer, "peer",
-            )))
-            .await
-            .unwrap_err();
-        assert_eq!(error.code(), Code::PermissionDenied);
-        assert_eq!(error.message(), "INVALID_TOKEN");
-
-        let response = service
-            .pair_by_token(pre_trust_pairing_request(token_request(
-                token, &peer, "peer",
-            )))
-            .await
-            .unwrap()
-            .into_inner();
-        assert_eq!(response.host_id, responder.host_id.as_bytes());
-        assert_eq!(response.name, "responder");
-        assert!(!pair_mode.is_active());
-
-        let persisted = TrustStore::load_or_create_in(dir.path()).unwrap();
-        assert_eq!(persisted.entry(peer.host_id).unwrap().name, "peer");
-    }
-
-    #[tokio::test]
-    async fn pair_by_token_rejects_duplicate_pubkey_without_leaking_host_id() {
-        let (_dir, service, pair_mode, trust_store, _responder, peer) = service_fixture();
-        trust_store.write().unwrap().insert_for_test(
-            HostId::from_u128(99),
-            TrustEntry {
-                pubkey: peer.public_key().to_vec(),
-                name: "other".to_string(),
-                paired_at: chrono::DateTime::<Utc>::from_timestamp(100, 0).unwrap(),
-                reachabilities: vec![Reachability::Cloud],
-            },
-        );
-        let token = [4_u8; 32];
-        pair_mode
-            .start_token_for_duration(token, Duration::from_secs(60))
-            .unwrap();
-
-        let error = service
-            .pair_by_token(pre_trust_pairing_request(token_request(
-                token, &peer, "peer",
-            )))
-            .await
-            .unwrap_err();
-        assert_eq!(error.code(), Code::InvalidArgument);
-        assert_eq!(
-            error.message(),
-            "PROTOCOL_VIOLATION: pubkey is already trusted"
-        );
-        assert!(!error.message().contains(&HostId::from_u128(99).to_string()));
-        assert!(pair_mode.is_active());
-    }
-
-    #[tokio::test]
-    async fn pair_by_token_aborts_token_reservation_when_trust_save_fails() {
-        let (dir, mut service, pair_mode, trust_store, responder, peer) = service_fixture();
-        let bad_data_dir = dir.path().join("not-a-directory");
-        fs::write(&bad_data_dir, b"not a directory").unwrap();
-        service.data_dir = bad_data_dir;
-        let token = [9_u8; 32];
-        pair_mode
-            .start_token_for_duration(token, Duration::from_secs(60))
-            .unwrap();
-
-        let error = service
-            .pair_by_token(pre_trust_pairing_request(token_request(
-                token, &peer, "peer",
-            )))
-            .await
-            .unwrap_err();
-        assert_eq!(error.code(), Code::Internal);
-        assert!(pair_mode.is_active());
-        assert!(trust_store.read().unwrap().entry(peer.host_id).is_none());
-
-        service.data_dir = dir.path().to_path_buf();
-        let response = service
-            .pair_by_token(pre_trust_pairing_request(token_request(
-                token, &peer, "peer",
-            )))
-            .await
-            .unwrap()
-            .into_inner();
-        assert_eq!(response.host_id, responder.host_id.as_bytes());
-        assert!(!pair_mode.is_active());
-    }
-
-    #[tokio::test]
-    async fn pair_by_token_replacement_save_failure_restores_trust_and_barriers() {
-        let (dir, mut service, pair_mode, trust_store, _responder, peer) = service_fixture();
-        let old_peer = DeviceIdentity::for_test(peer.host_id);
-        trust_store.write().unwrap().insert_for_test(
-            peer.host_id,
-            TrustEntry {
-                pubkey: old_peer.public_key().to_vec(),
-                name: "old".to_string(),
-                paired_at: chrono::DateTime::<Utc>::from_timestamp(100, 0).unwrap(),
-                reachabilities: vec![Reachability::Cloud],
-            },
-        );
-        let bad_data_dir = dir.path().join("not-a-directory");
-        fs::write(&bad_data_dir, b"not a directory").unwrap();
-        service.data_dir = bad_data_dir;
-        let token = [10_u8; 32];
-        pair_mode
-            .start_token_for_duration(token, Duration::from_secs(60))
-            .unwrap();
-
-        let error = service
-            .pair_by_token(pre_trust_pairing_request(token_request(
-                token, &peer, "new",
-            )))
-            .await
-            .unwrap_err();
-        assert_eq!(error.code(), Code::Internal);
-        assert!(pair_mode.is_active());
-        assert_eq!(
-            trust_store
-                .read()
-                .unwrap()
-                .pubkey_for_host(peer.host_id)
-                .unwrap(),
-            old_peer.public_key()
-        );
-
-        // The route barrier is lifted: a fresh adjacency claim registers.
-        let relay = HostId::from_u128(99);
-        service
-            .connections
-            .routing()
-            .apply_claim_up(
-                relay,
-                Host {
-                    id: peer.host_id,
-                    name: "peer".to_string(),
-                    version: "test".to_string(),
-                    capabilities: Capabilities {
-                        features: Vec::new(),
-                        supported_agent_types: vec![SupportedAgentType {
-                            agent_type: "test-agent".to_string(),
-                        }],
-                    },
-                },
-            )
-            .await;
-        assert_eq!(
-            service.connections.known_routes(peer.host_id).await,
-            vec![Route::Via(relay)]
-        );
     }
 
     #[tokio::test]
@@ -2425,38 +1972,6 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn pair_by_token_stores_peer_with_cloud_reachability_and_persists() {
-        let (dir, service, pair_mode, trust_store, responder, peer) = service_fixture();
-        let token = [3_u8; 32];
-        pair_mode
-            .start_token_for_duration(token, Duration::from_secs(60))
-            .unwrap();
-
-        let response = service
-            .pair_by_token(pre_trust_pairing_request(token_request(
-                token, &peer, "phone",
-            )))
-            .await
-            .unwrap()
-            .into_inner();
-
-        assert_eq!(response.host_id, responder.host_id.as_bytes());
-        assert_eq!(response.name, "responder");
-        let live = trust_store.read().unwrap();
-        let live_entry = live.entry(peer.host_id).unwrap();
-        assert_eq!(live_entry.pubkey, peer.public_key());
-        assert_eq!(live_entry.name, "phone");
-        assert_eq!(live_entry.reachabilities, vec![Reachability::Cloud]);
-        drop(live);
-
-        let persisted = TrustStore::load_or_create_in(dir.path()).unwrap();
-        assert_eq!(
-            persisted.entry(peer.host_id).unwrap().reachabilities,
-            vec![Reachability::Cloud]
-        );
-    }
-
-    #[tokio::test]
     async fn trust_commits_are_serialized_and_keep_distinct_peers() {
         let (dir, service, _pair_mode, trust_store, _responder, peer_a) = service_fixture();
         let peer_b = DeviceIdentity::for_test(HostId::from_u128(3));
@@ -2505,105 +2020,226 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn pair_by_token_rejects_self_pairing_before_consuming_token() {
-        let (_dir, service, pair_mode, _store, responder, peer) = service_fixture();
-        let token = [4_u8; 32];
-        pair_mode
-            .start_token_for_duration(token, Duration::from_secs(60))
-            .unwrap();
-
-        let error = service
-            .pair_by_token(pre_trust_pairing_request(token_request(
-                token, &responder, "self",
-            )))
-            .await
-            .unwrap_err();
-        assert_eq!(error.code(), Code::InvalidArgument);
-        assert_eq!(error.message(), "SELF_PAIRING");
-
-        service
-            .pair_by_token(pre_trust_pairing_request(token_request(
-                token, &peer, "peer",
-            )))
-            .await
-            .unwrap();
-    }
-
-    #[tokio::test]
-    async fn pair_by_token_rejects_matching_local_pubkey_before_consuming_token() {
-        let (_dir, service, pair_mode, _store, responder, peer) = service_fixture();
-        let token = [11_u8; 32];
-        pair_mode
-            .start_token_for_duration(token, Duration::from_secs(60))
-            .unwrap();
-        let mut request = token_request(token, &peer, "self-key");
-        request.host_id = HostId::from_u128(99).as_bytes().to_vec();
-        request.pubkey = responder.public_key().to_vec();
-
-        let error = service
-            .pair_by_token(pre_trust_pairing_request(request))
-            .await
-            .unwrap_err();
-        assert_eq!(error.code(), Code::InvalidArgument);
-        assert_eq!(error.message(), "SELF_PAIRING");
-
-        service
-            .pair_by_token(pre_trust_pairing_request(token_request(
-                token, &peer, "peer",
-            )))
-            .await
-            .unwrap();
-    }
-
-    #[tokio::test]
-    async fn pair_by_token_rejects_token_calls_while_pin_mode_is_active() {
-        let (_dir, service, pair_mode, _store, _responder, peer) = service_fixture();
+    async fn pairing_service_rejects_non_pairing_transport() {
+        let (_dir, service, pair_mode, _store, _responder, _peer) = service_fixture();
         pair_mode
             .start_pin_for_duration("123456".to_string(), Duration::from_secs(60))
             .unwrap();
+        let (mut client, task) = local_trusted_pairing_client_for(service).await;
+        let (tx, rx) = mpsc::channel::<wire::pb::PairMessage>(1);
+        let outbound = stream::unfold(rx, |mut rx| async move {
+            rx.recv().await.map(|message| (message, rx))
+        });
 
-        let error = service
-            .pair_by_token(pre_trust_pairing_request(token_request(
-                [12_u8; 32],
-                &peer,
-                "peer",
-            )))
+        let error = client
+            .pair(tonic::Request::new(outbound))
             .await
             .unwrap_err();
+
         assert_eq!(error.code(), Code::PermissionDenied);
-        assert_eq!(error.message(), "INVALID_TOKEN");
-        assert!(pair_mode.is_active());
+        assert_eq!(
+            error.message(),
+            "pairing RPC requires pre-trust pairing transport"
+        );
+        drop(tx);
+        task.abort();
+    }
+
+    /// D9: the QR-carried 256-bit secret feeds the very same SPAKE2 stream
+    /// the typed PIN does — same wire flow, same one-shot consumption. The
+    /// secret never crosses the wire; only possession is proven.
+    #[tokio::test]
+    async fn the_qr_secret_drives_the_same_pairing_stream() {
+        let (dir, service, pair_mode, trust_store, responder, peer) = service_fixture();
+        let secret = [9_u8; 32];
+        pair_mode
+            .start_qr_secret_for_duration(secret, Duration::from_secs(60))
+            .unwrap();
+        let (mut client, task) = pairing_client_for(service).await;
+
+        let peer_identity = LocalPairingIdentity::from_device_identity(&peer);
+        let responder_peer = pair_initiator(&mut client, &peer_identity, "peer", &secret)
+            .await
+            .unwrap();
+
+        assert_eq!(responder_peer.host_id, responder.host_id);
+        assert_eq!(responder_peer.pubkey, responder.public_key());
+        assert!(!pair_mode.is_active(), "the QR secret is one-shot");
+        assert_eq!(
+            trust_store
+                .read()
+                .unwrap()
+                .entry(peer.host_id)
+                .unwrap()
+                .pubkey,
+            peer.public_key()
+        );
+        let persisted = TrustStore::load_or_create_in(dir.path()).unwrap();
+        assert_eq!(
+            persisted.entry(peer.host_id).unwrap().pubkey,
+            peer.public_key()
+        );
+        task.abort();
     }
 
     #[tokio::test]
-    async fn pair_by_token_validates_responder_name_before_consuming_token() {
-        let (_dir, mut service, pair_mode, _store, _responder, peer) = service_fixture();
-        let token = [13_u8; 32];
+    async fn a_wrong_qr_secret_records_a_failure_without_consuming_the_secret() {
+        let (_dir, service, pair_mode, trust_store, _responder, peer) = service_fixture();
         pair_mode
-            .start_token_for_duration(token, Duration::from_secs(60))
+            .start_qr_secret_for_duration([9_u8; 32], Duration::from_secs(60))
             .unwrap();
-        service.host_name = "x".repeat(MAX_PAIRING_NAME_BYTES + 1);
+        let (mut client, task) = pairing_client_for(service).await;
 
-        let error = service
-            .pair_by_token(pre_trust_pairing_request(token_request(
-                token, &peer, "peer",
-            )))
+        let peer_identity = LocalPairingIdentity::from_device_identity(&peer);
+        let error = pair_initiator(&mut client, &peer_identity, "peer", &[0_u8; 32])
             .await
             .unwrap_err();
-        assert_eq!(error.code(), Code::InvalidArgument);
-        assert!(pair_mode.is_active());
 
-        service.host_name = "responder".to_string();
-        service
-            .pair_by_token(pre_trust_pairing_request(token_request(
-                token, &peer, "peer",
-            )))
-            .await
-            .unwrap();
+        assert_eq!(error.code(), Code::PermissionDenied);
+        assert!(
+            error.message().starts_with("INVALID_PIN"),
+            "a wrong secret must fail with the opaque INVALID_PIN, got: {}",
+            error.message()
+        );
+        assert!(
+            pair_mode.is_active(),
+            "a failed guess must not consume the secret"
+        );
+        assert!(trust_store.read().unwrap().entry(peer.host_id).is_none());
+        task.abort();
     }
 
     #[tokio::test]
-    async fn pair_by_token_replaces_existing_pubkey_after_teardown() {
+    async fn staged_trust_rejects_duplicate_pubkey_without_leaking_host_id() {
+        let (_dir, service, _pair_mode, trust_store, _responder, peer) = service_fixture();
+        trust_store.write().unwrap().insert_for_test(
+            HostId::from_u128(99),
+            TrustEntry {
+                pubkey: peer.public_key().to_vec(),
+                name: "other".to_string(),
+                paired_at: chrono::DateTime::<Utc>::from_timestamp(100, 0).unwrap(),
+                reachabilities: vec![Reachability::Cloud],
+            },
+        );
+
+        let Err(error) = service
+            .stage_peer_trust(
+                peer.host_id,
+                peer.public_key().to_vec(),
+                "peer".to_string(),
+                Some(Reachability::Cloud),
+            )
+            .await
+        else {
+            panic!("duplicate pubkey must not stage");
+        };
+
+        assert_eq!(error.code(), Code::InvalidArgument);
+        assert_eq!(
+            error.message(),
+            "PROTOCOL_VIOLATION: pubkey is already trusted"
+        );
+        assert!(!error.message().contains(&HostId::from_u128(99).to_string()));
+    }
+
+    #[tokio::test]
+    async fn trust_save_failure_aborts_the_secret_reservation() {
+        let (dir, mut service, pair_mode, trust_store, _responder, peer) = service_fixture();
+        let good_service = service.clone();
+        let bad_data_dir = dir.path().join("not-a-directory");
+        fs::write(&bad_data_dir, b"not a directory").unwrap();
+        service.data_dir = bad_data_dir;
+        pair_mode
+            .start_pin_for_duration("123456".to_string(), Duration::from_secs(60))
+            .unwrap();
+        let peer_identity = LocalPairingIdentity::from_device_identity(&peer);
+
+        let (mut bad_client, bad_task) = pairing_client_for(service).await;
+        let error = pair_initiator(&mut bad_client, &peer_identity, "peer", b"123456")
+            .await
+            .unwrap_err();
+        assert_eq!(error.code(), Code::Internal);
+        assert!(
+            pair_mode.is_active(),
+            "a failed trust commit must release the secret reservation"
+        );
+        assert!(trust_store.read().unwrap().entry(peer.host_id).is_none());
+
+        let (mut client, task) = pairing_client_for(good_service).await;
+        pair_initiator(&mut client, &peer_identity, "peer", b"123456")
+            .await
+            .unwrap();
+        assert!(!pair_mode.is_active());
+        bad_task.abort();
+        task.abort();
+    }
+
+    #[tokio::test]
+    async fn replacement_save_failure_restores_trust_and_route_barrier() {
+        let (dir, mut service, _pair_mode, trust_store, _responder, peer) = service_fixture();
+        let old_peer = DeviceIdentity::for_test(peer.host_id);
+        trust_store.write().unwrap().insert_for_test(
+            peer.host_id,
+            TrustEntry {
+                pubkey: old_peer.public_key().to_vec(),
+                name: "old".to_string(),
+                paired_at: chrono::DateTime::<Utc>::from_timestamp(100, 0).unwrap(),
+                reachabilities: vec![Reachability::Cloud],
+            },
+        );
+        let bad_data_dir = dir.path().join("not-a-directory");
+        fs::write(&bad_data_dir, b"not a directory").unwrap();
+        service.data_dir = bad_data_dir;
+
+        let Err(error) = service
+            .stage_peer_trust(
+                peer.host_id,
+                peer.public_key().to_vec(),
+                "new".to_string(),
+                Some(Reachability::Cloud),
+            )
+            .await
+        else {
+            panic!("a failed trust save must not stage");
+        };
+        assert_eq!(error.code(), Code::Internal);
+        assert_eq!(
+            trust_store
+                .read()
+                .unwrap()
+                .pubkey_for_host(peer.host_id)
+                .unwrap(),
+            old_peer.public_key()
+        );
+
+        // The route barrier is lifted: a fresh adjacency claim registers.
+        let relay = HostId::from_u128(99);
+        service
+            .connections
+            .routing()
+            .apply_claim_up(
+                relay,
+                Host {
+                    id: peer.host_id,
+                    name: "peer".to_string(),
+                    version: "test".to_string(),
+                    capabilities: Capabilities {
+                        features: Vec::new(),
+                        supported_agent_types: vec![SupportedAgentType {
+                            agent_type: "test-agent".to_string(),
+                        }],
+                    },
+                },
+            )
+            .await;
+        assert_eq!(
+            service.connections.known_routes(peer.host_id).await,
+            vec![Route::Via(relay)]
+        );
+    }
+
+    #[tokio::test]
+    async fn pairing_replaces_existing_pubkey_after_teardown() {
         let (dir, service, pair_mode, trust_store, _responder, peer) = service_fixture();
         let old_peer = DeviceIdentity::for_test(peer.host_id);
         trust_store.write().unwrap().insert_for_test(
@@ -2615,15 +2251,13 @@ mod tests {
                 reachabilities: vec![Reachability::Cloud],
             },
         );
-        let token = [5_u8; 32];
         pair_mode
-            .start_token_for_duration(token, Duration::from_secs(60))
+            .start_pin_for_duration("123456".to_string(), Duration::from_secs(60))
             .unwrap();
+        let (mut client, task) = pairing_client_for(service).await;
 
-        service
-            .pair_by_token(pre_trust_pairing_request(token_request(
-                token, &peer, "new",
-            )))
+        let peer_identity = LocalPairingIdentity::from_device_identity(&peer);
+        pair_initiator(&mut client, &peer_identity, "new", b"123456")
             .await
             .unwrap();
 
@@ -2637,6 +2271,7 @@ mod tests {
             persisted.entry(peer.host_id).unwrap().pubkey,
             peer.public_key()
         );
+        task.abort();
     }
 
     /// D10: committing a same-host_id/different-pubkey replacement tears
@@ -2644,7 +2279,7 @@ mod tests {
     /// tunnel that carried the pairing RPC itself. Nothing is preserved; an
     /// initiator that misses the response simply re-pairs.
     #[tokio::test]
-    async fn pair_by_token_replacement_retires_the_in_flight_pairing_tunnel() {
+    async fn pairing_replacement_retires_the_in_flight_pairing_tunnel() {
         let data_dir = tempfile::tempdir().unwrap();
         let responder = DeviceIdentity::for_test(HostId::from_u128(1));
         let peer = DeviceIdentity::for_test(HostId::from_u128(2));
@@ -2662,7 +2297,7 @@ mod tests {
         );
         let routing = Arc::new(RoutingCore::new());
         let (incoming_tx, mut incoming_rx) = mpsc::channel(2);
-        let tunnels = Arc::new(crate::tunnel::TunnelPool::new(
+        let tunnels = Arc::new(TunnelPool::new(
             responder.host_id,
             routing.clone(),
             incoming_tx,
@@ -2710,15 +2345,13 @@ mod tests {
             connections,
             data_dir.path().to_path_buf(),
         );
-        let token = [5_u8; 32];
         pair_mode
-            .start_token_for_duration(token, Duration::from_secs(60))
+            .start_pin_for_duration("123456".to_string(), Duration::from_secs(60))
             .unwrap();
+        let (mut client, task) = pairing_client_for(service).await;
 
-        service
-            .pair_by_token(pre_trust_pairing_request(token_request(
-                token, &peer, "new",
-            )))
+        let peer_identity = LocalPairingIdentity::from_device_identity(&peer);
+        pair_initiator(&mut client, &peer_identity, "new", b"123456")
             .await
             .unwrap();
 
@@ -2736,29 +2369,6 @@ mod tests {
                 .pubkey,
             peer.public_key()
         );
-    }
-
-    #[tokio::test]
-    async fn pair_by_token_rejects_invalid_identity_shapes_before_consuming_token() {
-        let (_dir, service, pair_mode, _store, _responder, peer) = service_fixture();
-        let token = [6_u8; 32];
-        pair_mode
-            .start_token_for_duration(token, Duration::from_secs(60))
-            .unwrap();
-        let mut request = token_request(token, &peer, "peer");
-        request.pubkey = vec![1, 2, 3];
-
-        let error = service
-            .pair_by_token(pre_trust_pairing_request(request))
-            .await
-            .unwrap_err();
-        assert_eq!(error.code(), Code::InvalidArgument);
-
-        service
-            .pair_by_token(pre_trust_pairing_request(token_request(
-                token, &peer, "peer",
-            )))
-            .await
-            .unwrap();
+        task.abort();
     }
 }

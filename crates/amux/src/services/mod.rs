@@ -12,7 +12,7 @@ pub(crate) use agent::{
 };
 #[cfg(feature = "testnet")]
 pub(crate) use client::ClientService;
-pub(crate) use pairing::{LocalPairingIdentity, PairingService, pair_by_spake2_initiator};
+pub(crate) use pairing::{LocalPairingIdentity, PairingService, pair_initiator};
 pub(crate) use reachability::ReachabilityLinkConnector;
 pub(crate) use startup::{
     CloudLinkService, DeviceRuntimeSecurity, StartedUserServices, establish_cloud_connection,

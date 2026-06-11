@@ -1240,7 +1240,7 @@ mod tests {
         let mut trusted_pairing_client =
             wire::pairing_service_client::PairingServiceClient::new(trusted_channel);
         let trusted_error = trusted_pairing_client
-            .pair_by_token(wire::pb::PairByTokenRequest::default())
+            .pair(futures_util::stream::empty::<wire::pb::PairMessage>())
             .await
             .unwrap_err();
         assert_eq!(trusted_error.code(), tonic::Code::Unimplemented);
@@ -1259,14 +1259,14 @@ mod tests {
         let mut pairing_client =
             wire::pairing_service_client::PairingServiceClient::new(pairing_channel);
         let pairing_error = pairing_client
-            .pair_by_token(wire::pb::PairByTokenRequest::default())
+            .pair(futures_util::stream::empty::<wire::pb::PairMessage>())
             .await
             .unwrap_err();
         assert_eq!(pairing_error.code(), tonic::Code::FailedPrecondition);
 
         services
             .pair_mode
-            .start_token_for_duration([1_u8; 32], Duration::from_secs(60))
+            .start_qr_secret_for_duration([1_u8; 32], Duration::from_secs(60))
             .unwrap();
         let (active_client_io, active_server_io) = tokio::io::duplex(64 * 1024);
         services
@@ -1281,11 +1281,13 @@ mod tests {
             channel_from_transport(TunnelTransport::new(active_client_io, Uuid::from_u128(11)));
         let mut active_pairing_client =
             wire::pairing_service_client::PairingServiceClient::new(active_pairing_channel);
-        let active_pairing_error = active_pairing_client
-            .pair_by_token(wire::pb::PairByTokenRequest::default())
-            .await
-            .unwrap_err();
-        assert_eq!(active_pairing_error.code(), tonic::Code::InvalidArgument);
+        let active_pairing_stream = active_pairing_client
+            .pair(futures_util::stream::empty::<wire::pb::PairMessage>())
+            .await;
+        assert!(
+            active_pairing_stream.is_ok(),
+            "an active pairing window must admit the Pair stream on pairing ingress"
+        );
     }
 
     #[tokio::test]
@@ -1884,7 +1886,7 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn cloud_qr_pairing_updates_both_trust_stores_and_pins_responder_pubkey() {
+    async fn cloud_qr_pairing_updates_both_trust_stores() {
         let user_id = Uuid::from_u128(101);
         let service = test_cloud_link_service(Uuid::from_u128(1), "token-a", user_id).await;
         let listener = TcpListener::bind(("127.0.0.1", 0)).await.unwrap();
@@ -1960,23 +1962,19 @@ mod tests {
         .await
         .expect("timed out waiting for cloud route to pairing target");
 
-        let token = [9_u8; 32];
+        let secret = [9_u8; 32];
         host_b
             .pair_mode
-            .start_token_for_duration(token, Duration::from_secs(60))
+            .start_qr_secret_for_duration(secret, Duration::from_secs(60))
             .unwrap();
         let (client_channel, client_server_task) = host_a.open_in_process_client_channel();
         let client = Client::from_client_service_channel(client_channel, None);
         client
-            .pair_qr_cloud_peer(identity_b.host_id, vec![42; 32], token.to_vec())
+            .pair_qr_cloud_peer(identity_b.host_id, vec![42; 32])
             .await
-            .expect_err("wrong QR pubkey must fail before token consumption");
+            .expect_err("a wrong QR secret must fail without consuming the real one");
         let paired_peer = client
-            .pair_qr_cloud_peer(
-                identity_b.host_id,
-                identity_b.public_key().to_vec(),
-                token.to_vec(),
-            )
+            .pair_qr_cloud_peer(identity_b.host_id, secret.to_vec())
             .await
             .unwrap();
 

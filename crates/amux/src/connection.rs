@@ -115,23 +115,12 @@ impl ConnectionManager {
         self.activate_route(peer, route).await
     }
 
-    pub(crate) async fn cloud_pin_pairing_channel_to(
+    pub(crate) async fn cloud_pairing_channel_to(
         &self,
         peer: HostId,
     ) -> Result<Channel, TunnelPoolError> {
         let relay = self.cloud_relay_for(peer).await?;
-        self.tunnels.pin_pairing_channel_via(peer, relay).await
-    }
-
-    pub(crate) async fn cloud_qr_pairing_channel_to(
-        &self,
-        peer: HostId,
-        expected_pubkey: Vec<u8>,
-    ) -> Result<Channel, TunnelPoolError> {
-        let relay = self.cloud_relay_for(peer).await?;
-        self.tunnels
-            .qr_pairing_channel_via(peer, relay, expected_pubkey)
-            .await
+        self.tunnels.pairing_channel_via(peer, relay).await
     }
 
     pub(crate) async fn has_cloud_route(&self, peer: HostId) -> bool {
@@ -459,7 +448,7 @@ mod tests {
     /// Cloud pairing must select the cloud link even when a direct route
     /// exists: the pairing TLS ClientHello leaves on the cloud link.
     #[tokio::test]
-    async fn cloud_pin_pairing_uses_the_cloud_link_not_the_direct_route() {
+    async fn cloud_pairing_uses_the_cloud_link_not_the_direct_route() {
         let routing = Arc::new(RoutingCore::new());
         let tunnels = test_pool(HostId::from_u128(1), &routing);
         let manager = Arc::new(ConnectionManager::new(routing.clone(), tunnels.clone()));
@@ -474,9 +463,7 @@ mod tests {
         let pairing_manager = manager.clone();
         let peer_id = peer.id;
         let pairing =
-            tokio::spawn(
-                async move { pairing_manager.cloud_pin_pairing_channel_to(peer_id).await },
-            );
+            tokio::spawn(async move { pairing_manager.cloud_pairing_channel_to(peer_id).await });
 
         // Links also carry adjacency events; the assertion is about where
         // the pairing *tunnel frames* go.
@@ -565,16 +552,13 @@ mod tests {
 
         routing.apply_claim_up(spoof.id, peer.clone()).await;
 
-        let error = manager
-            .cloud_pin_pairing_channel_to(peer.id)
-            .await
-            .unwrap_err();
+        let error = manager.cloud_pairing_channel_to(peer.id).await.unwrap_err();
 
         assert!(matches!(error, TunnelPoolError::NotFound { host_id } if host_id == peer.id));
     }
 
     #[tokio::test]
-    async fn cloud_pin_pairing_rejects_peers_without_cloud_claims() {
+    async fn cloud_pairing_rejects_peers_without_cloud_claims() {
         let routing = Arc::new(RoutingCore::new());
         let tunnels = test_pool(HostId::from_u128(1), &routing);
         let manager = ConnectionManager::new(routing.clone(), tunnels.clone());
@@ -582,10 +566,7 @@ mod tests {
         let (direct_link, _direct_rx) = register_link(&tunnels, &peer, LinkRole::Peer).await;
         routing.apply_direct_up(peer.clone(), direct_link).await;
 
-        let error = manager
-            .cloud_pin_pairing_channel_to(peer.id)
-            .await
-            .unwrap_err();
+        let error = manager.cloud_pairing_channel_to(peer.id).await.unwrap_err();
 
         assert!(matches!(error, TunnelPoolError::NotFound { host_id } if host_id == peer.id));
     }
