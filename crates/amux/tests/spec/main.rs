@@ -1,11 +1,24 @@
 //! The amux protocol spec suite.
 //!
 //! Whole-daemon black-box tests over the `amux::testnet` harness. Chapters
-//! mirror the protocol story, so reading the suite top-to-bottom works as
-//! documentation; the modules below are declared in that reading order. See
-//! `notes/SPEC_TESTS_DESIGN.md` for the design contract and test catalog.
+//! mirror the protocol story (`docs/PROTOCOL.md`), so reading the suite
+//! top-to-bottom works as documentation; the modules below are declared in
+//! that reading order.
 //!
-//! Run with: `cargo test -p amux --features testnet --test spec`
+//! Run with: `timeout 600 cargo test -p amux --features testnet --test spec`
+//!
+//! Adding a test: build a topology with `TestNet::builder()` —
+//! `.daemon(name)`, `.cloud()`, `.paired(a, b, Via::Tcp | Via::Cloud)`,
+//! `.trusted(a, b)` — then assert with the prose verbs on `Daemon`
+//! (`sees`, `cannot_see`, `can_call`, `connects_to(..).via_direct()`,
+//! `pair().with_pin()`, `attach`, `restart`, ...). Every verb retries
+//! internally with a bounded `eventually()`, so tests state outcomes,
+//! never sleeps. Wire-level cases the topology verbs cannot express use
+//! `WirePeer`, a scripted protocol actor (chapter 6). Conventions: test
+//! names are prose sentences; doc comments say *why* the behavior is the
+//! contract; keep daemons-per-test minimal (each is a real in-process
+//! daemon with real TLS); anything exercising a shared rate limiter gets
+//! its own `TestNet`.
 
 mod smoke; // the harness in one test: the canonical TestNet example
 
