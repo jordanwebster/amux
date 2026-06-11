@@ -60,10 +60,14 @@ only their own connection map.
 ## Tunnels: who am I calling
 
 Every call between peers rides a **tunnel** — an end-to-end byte stream
-identified by `TunnelId { initiator, nonce }` (16 random bytes), carried as
-`TunnelData { tunnel_id, dst, payload }` frames (≤ 64 KiB) over at most one
-relay. The first frame for an unknown id opens the tunnel; `TunnelClose`
-or link death ends it; replies travel back out the link they arrived on.
+over at most one relay, with the same lifecycle grammar as a link:
+`TunnelOpen { tunnel_id, src, dst }` opens it (a plain UUID id; the reply
+address travels exactly once, here), `TunnelData { tunnel_id, dst, payload }`
+frames (≤ 64 KiB) carry it, and `TunnelClose` — or link death — ends it.
+Only an Open allocates state; Data for an unknown id is a violation and is
+dropped without allocation. There is no open-ack: the mTLS handshake inside
+is the acknowledgement, and rejection is `TunnelClose`. Replies travel back
+out the link they arrived on.
 
 Inside **every** tunnel — even to an adjacent peer — runs an mTLS handshake
 pinned against the trust store. This is the system's single authority
@@ -90,9 +94,9 @@ paired peer; relaying is something every node can do.
 
 ## The complete wire vocabulary
 
-`Hello` / `HelloAck` · `NeighborUp` / `NeighborDown` · `TunnelData` ·
-`TunnelClose` · `LinkClose` · `Reauth` · `PairingService.Pair` (stream).
-`PROTOCOL_VERSION = 6`.
+`Hello` / `HelloAck` · `NeighborUp` / `NeighborDown` · `TunnelOpen` ·
+`TunnelData` · `TunnelClose` · `LinkClose` · `Reauth` ·
+`PairingService.Pair` (stream). `PROTOCOL_VERSION = 6`.
 
 ## What this protocol deliberately does not have
 

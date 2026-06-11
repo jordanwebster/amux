@@ -60,6 +60,11 @@ RoutingService → LinkService, PairBySpake2 → Pair.
   relay remap state), tunnels surviving link replacement (cross-link
   reordering), dropping Reauth entirely (hourly breaks of live cloud
   sessions).
+- Amended same day (D3a): tunnel lifecycle made explicit —
+  TunnelOpen/TunnelData/TunnelClose with plain UUID ids, no open-ack (inner
+  TLS is the ack, TunnelClose the rejection); only Opens allocate endpoint
+  state. Replaces implicit-open + `TunnelId{initiator, nonce}`; both
+  lifecycle grammars (link/tunnel) are now symmetric.
 
 ### Verification
 - Design-only change; no code. Spec suite unaffected (expected flips when
