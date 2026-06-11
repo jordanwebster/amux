@@ -38,6 +38,19 @@ One paragraph describing what was done.
 
 ---
 
+## 2026-06-11: e2e runner catches up with v6 config
+
+### Summary
+All 14 e2e tests failed after the v6 chunks with one cause: the runner's
+generated `local.yaml` still set `randomise_link_name`, deleted with wire
+link names in chunk 2 (the config parser rejects unknown fields). Removed
+the field from the template in `e2e-runner/src/executor.rs`.
+
+### Verification
+- `cargo run -p e2e-runner -- run`: 14 passed, 0 failed.
+
+---
+
 ## 2026-06-11: protocol v6 complete — docs graduate
 
 ### Summary

@@ -643,7 +643,7 @@ impl Executor {
                 .map_err(|e| format!("Failed to write auth file: {}", e))?;
             }
             let mut yaml_content = format!(
-                "host_name: '{}'\nsocket_path: '{}'\nrandomise_link_name: false\nenable_cloud_mode: {}\nprevent_idle_sleep: false\nstate_path: '{}'\n",
+                "host_name: '{}'\nsocket_path: '{}'\nenable_cloud_mode: {}\nprevent_idle_sleep: false\nstate_path: '{}'\n",
                 host_name,
                 socket_path.display(),
                 enable_cloud_mode,
