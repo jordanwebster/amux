@@ -81,15 +81,18 @@ enum Commands {
     /// Pair this device with another amux daemon
     Pair {
         /// Display a QR pairing payload, or consume a scanned QR JSON payload
-        #[arg(long, value_name = "PAYLOAD", num_args = 0..=1, conflicts_with_all = ["listen", "connect", "via_ssh"])]
+        #[arg(long, value_name = "PAYLOAD", num_args = 0..=1, conflicts_with_all = ["listen", "connect"])]
+        #[cfg_attr(unix, arg(conflicts_with = "via_ssh"))]
         qr: Option<Option<String>>,
 
         /// Require LAN-direct responder mode; errors when tcp_port is unset
-        #[arg(long, conflicts_with_all = ["qr", "connect", "via_ssh"])]
+        #[arg(long, conflicts_with_all = ["qr", "connect"])]
+        #[cfg_attr(unix, arg(conflicts_with = "via_ssh"))]
         listen: bool,
 
         /// Initiate PIN pairing to a direct target or online cloud host
-        #[arg(long, value_name = "TARGET", num_args = 0..=1, conflicts_with_all = ["qr", "listen", "via_ssh"])]
+        #[arg(long, value_name = "TARGET", num_args = 0..=1, conflicts_with_all = ["qr", "listen"])]
+        #[cfg_attr(unix, arg(conflicts_with = "via_ssh"))]
         connect: Option<Option<String>>,
 
         /// Pair through SSH and store the target for future SSH runtime links

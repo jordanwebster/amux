@@ -38,6 +38,23 @@ One paragraph describing what was done.
 
 ---
 
+## 2026-06-11: Fix Windows CLI arg conflicts referencing the unix-only --via-ssh
+
+### Summary
+CI's windows-latest test leg caught five failing `amux pair` arg-parsing
+tests: `qr`/`listen`/`connect` listed `via_ssh` in `conflicts_with_all`,
+but `via_ssh` is `#[cfg(unix)]`-only, so on Windows clap's debug
+assertion fired for a conflict against a nonexistent argument. The
+conflict is now declared via `#[cfg_attr(unix, arg(conflicts_with =
+"via_ssh"))]` on each of the three args. macOS-only local verification
+could not have caught this; the CI matrix did its job.
+
+### Verification
+- `cargo test -p amux-cli`: 43 passed (macOS); Windows leg verified by
+  the subsequent CI run.
+
+---
+
 ## 2026-06-11: Protocol version resets to 1
 
 ### Summary
