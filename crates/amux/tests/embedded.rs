@@ -130,7 +130,10 @@ async fn embedded_server_runs_update_checker_when_reporter_is_configured() {
 
 #[tokio::test]
 #[cfg(debug_assertions)]
-#[cfg_attr(windows, ignore = "agent PTY teardown hangs under ConPTY, like the disabled Windows e2e leg")]
+#[cfg_attr(
+    windows,
+    ignore = "agent PTY teardown hangs under ConPTY, like the disabled Windows e2e leg"
+)]
 async fn embedded_shutdown_stops_agents_and_closes_server_tasks() {
     let dir = tempdir().unwrap();
     let config = Config {
@@ -170,7 +173,10 @@ async fn embedded_shutdown_stops_agents_and_closes_server_tasks() {
 
 #[tokio::test]
 #[cfg(debug_assertions)]
-#[cfg_attr(windows, ignore = "agent PTY teardown hangs under ConPTY, like the disabled Windows e2e leg")]
+#[cfg_attr(
+    windows,
+    ignore = "agent PTY teardown hangs under ConPTY, like the disabled Windows e2e leg"
+)]
 async fn embedded_suspend_stops_agents_and_closes_server_tasks() {
     let dir = tempdir().unwrap();
     let state_path = dir.path().join("state.yaml");
