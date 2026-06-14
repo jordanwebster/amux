@@ -25,7 +25,7 @@ pub(crate) enum StateError {
 
 /// Persistent state for amux
 #[derive(Debug, Clone, Serialize, Deserialize, Default)]
-#[serde(default, deny_unknown_fields)]
+#[serde(default)]
 pub(crate) struct State {
     #[serde(default)]
     pub(crate) claude: ClaudeState,
@@ -33,7 +33,7 @@ pub(crate) struct State {
 
 /// Claude-specific state
 #[derive(Debug, Clone, Serialize, Deserialize, Default)]
-#[serde(default, deny_unknown_fields)]
+#[serde(default)]
 pub(crate) struct ClaudeState {
     /// Plugin version last successfully applied to Claude Code.
     pub(crate) applied_plugin_version: Option<String>,
@@ -142,14 +142,4 @@ mod tests {
         );
     }
 
-    #[test]
-    fn state_rejects_unknown_fields() {
-        let temp = TempDir::new().unwrap();
-        let path = temp.path().join("state.yaml");
-
-        fs::write(&path, "legacy:\n  ignored: abc123\n").unwrap();
-
-        let error = State::load(&path).unwrap_err();
-        assert!(error.to_string().contains("unknown field"));
-    }
 }
