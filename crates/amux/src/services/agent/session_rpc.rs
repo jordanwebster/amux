@@ -1,24 +1,58 @@
 //! Session subscription and input RPCs for AgentService.
 
+#[cfg(feature = "local-agents")]
 use serde_json::json;
+#[cfg(feature = "local-agents")]
 use tokio::sync::mpsc;
 use uuid::Uuid;
 
 use super::AgentServiceCtx;
-#[cfg(any(test, feature = "testnet"))]
+#[cfg(all(feature = "local-agents", any(test, feature = "testnet")))]
 use crate::agents::TEST_ECHO_V1;
+#[cfg(feature = "local-agents")]
 use crate::agents::claude::io::{
     self as claude_io, ClaudePtyTranscriptV1Action, ClaudePtyTranscriptV1Output,
     ClaudePtyTranscriptV1ReplayQuery, ClaudeRawV1ReplayQuery,
 };
+#[cfg(feature = "local-agents")]
 use crate::agents::{
     BroadcastRead, ByteReplayQuery, PtyHandle, SendInputRequest, SessionCloseReason,
     SessionInputEvent, StructuredInputTarget, StructuredOutput, SubscribeSessionEvent,
     SubscribeSessionRequest,
 };
-use crate::protocol::{ProtocolError, protocol_status};
+#[cfg(not(feature = "local-agents"))]
+use crate::agents::{SendInputRequest, SubscribeSessionRequest};
+use crate::protocol::ProtocolError;
+#[cfg(feature = "local-agents")]
+use crate::protocol::protocol_status;
+#[cfg(feature = "local-agents")]
 use crate::server::{SHUTDOWN_REASON_METADATA_KEY, ShutdownReason};
 
+#[cfg(not(feature = "local-agents"))]
+impl AgentServiceCtx {
+    pub(crate) async fn send_input(&self, request: SendInputRequest) -> Result<(), ProtocolError> {
+        let _ = request;
+        Err(local_agent_support_disabled())
+    }
+
+    pub(crate) async fn subscribe_session_response_stream(
+        &self,
+        request: SubscribeSessionRequest,
+    ) -> Result<super::ResponseStream<crate::protocol::wire::SubscribeSessionResponse>, ProtocolError>
+    {
+        let _ = request;
+        Err(local_agent_support_disabled())
+    }
+}
+
+#[cfg(not(feature = "local-agents"))]
+fn local_agent_support_disabled() -> ProtocolError {
+    ProtocolError::FailedPrecondition {
+        message: "local agent support is disabled".to_string(),
+    }
+}
+
+#[cfg(feature = "local-agents")]
 impl AgentServiceCtx {
     pub(crate) async fn send_input(&self, request: SendInputRequest) -> Result<(), ProtocolError> {
         send_session_input(self, request).await
@@ -51,6 +85,7 @@ impl AgentServiceCtx {
     }
 }
 
+#[cfg(feature = "local-agents")]
 enum SessionOutputReader {
     Raw(crate::agents::MultiplexByteReader),
     Structured {
@@ -59,10 +94,12 @@ enum SessionOutputReader {
     },
 }
 
+#[cfg(feature = "local-agents")]
 struct PreparedSessionSubscription {
     output: SessionOutputReader,
 }
 
+#[cfg(feature = "local-agents")]
 async fn prepare_direct_session_subscription(
     request: &SubscribeSessionRequest,
     ctx: &AgentServiceCtx,
@@ -101,6 +138,7 @@ async fn prepare_direct_session_subscription(
     }
 }
 
+#[cfg(feature = "local-agents")]
 async fn prepare_direct_raw_session_subscription(
     request: &SubscribeSessionRequest,
     ctx: &AgentServiceCtx,
@@ -125,7 +163,7 @@ async fn prepare_direct_raw_session_subscription(
         .ok_or(ProtocolError::NoAgentFound)
 }
 
-#[cfg(any(test, feature = "testnet"))]
+#[cfg(all(feature = "local-agents", any(test, feature = "testnet")))]
 async fn prepare_direct_test_echo_session_subscription(
     request: &SubscribeSessionRequest,
     ctx: &AgentServiceCtx,
@@ -141,6 +179,7 @@ async fn prepare_direct_test_echo_session_subscription(
         .ok_or(ProtocolError::NoAgentFound)
 }
 
+#[cfg(feature = "local-agents")]
 async fn prepare_direct_structured_session_subscription(
     request: &SubscribeSessionRequest,
     ctx: &AgentServiceCtx,
@@ -199,6 +238,7 @@ async fn prepare_direct_structured_session_subscription(
         .ok_or(ProtocolError::NoAgentFound)
 }
 
+#[cfg(feature = "local-agents")]
 async fn send_session_input(
     ctx: &AgentServiceCtx,
     request: SendInputRequest,
@@ -224,6 +264,7 @@ async fn send_session_input(
     }
 }
 
+#[cfg(feature = "local-agents")]
 async fn send_raw_session_input(
     ctx: &AgentServiceCtx,
     agent_id: Uuid,
@@ -254,6 +295,7 @@ async fn send_raw_session_input(
     }
 }
 
+#[cfg(feature = "local-agents")]
 async fn send_structured_session_input(
     ctx: &AgentServiceCtx,
     agent_id: Uuid,
@@ -277,6 +319,7 @@ async fn send_structured_session_input(
         .await
 }
 
+#[cfg(feature = "local-agents")]
 async fn agent_pty(
     ctx: &AgentServiceCtx,
     agent_id: Uuid,
@@ -297,6 +340,7 @@ async fn agent_pty(
         })
 }
 
+#[cfg(feature = "local-agents")]
 async fn structured_input_target(
     ctx: &AgentServiceCtx,
     agent_id: Uuid,
@@ -312,6 +356,7 @@ async fn structured_input_target(
     Ok(session.structured_input_target())
 }
 
+#[cfg(feature = "local-agents")]
 fn ensure_agent_supports_protocol(
     session: &crate::agents::AgentSession,
     agent_id: Uuid,
@@ -330,10 +375,12 @@ fn ensure_agent_supports_protocol(
     }
 }
 
+#[cfg(feature = "local-agents")]
 fn encode_transcript_cursor(seq: u64) -> Vec<u8> {
     claude_io::encode_pty_transcript_v1_cursor(seq)
 }
 
+#[cfg(feature = "local-agents")]
 fn transcript_actions_to_pty_input_json(
     actions: Vec<ClaudePtyTranscriptV1Action>,
 ) -> serde_json::Value {
@@ -348,6 +395,7 @@ fn transcript_actions_to_pty_input_json(
     )
 }
 
+#[cfg(feature = "local-agents")]
 enum DirectSessionStreamState {
     Opening {
         agent_id: Uuid,
@@ -364,6 +412,7 @@ enum DirectSessionStreamState {
     Done,
 }
 
+#[cfg(feature = "local-agents")]
 fn direct_session_response_stream(
     agent_id: Uuid,
     reader: SessionOutputReader,
@@ -465,6 +514,7 @@ fn direct_session_response_stream(
     ))
 }
 
+#[cfg(feature = "local-agents")]
 fn server_shutdown_status(reason: ShutdownReason) -> tonic::Status {
     let mut metadata = tonic::metadata::MetadataMap::new();
     metadata.insert(
@@ -474,6 +524,7 @@ fn server_shutdown_status(reason: ShutdownReason) -> tonic::Status {
     tonic::Status::with_metadata(tonic::Code::Unavailable, reason.to_string(), metadata)
 }
 
+#[cfg(feature = "local-agents")]
 async fn recv_close_reason_for_agent(
     close_rx: &mut mpsc::Receiver<(Uuid, SessionCloseReason)>,
     agent_id: Uuid,
@@ -488,12 +539,14 @@ async fn recv_close_reason_for_agent(
     })
 }
 
+#[cfg(feature = "local-agents")]
 fn session_output_response(
     event: SubscribeSessionEvent,
 ) -> Result<crate::protocol::wire::SubscribeSessionResponse, tonic::Status> {
     Ok(crate::agents::session_output_event_to_wire(&event))
 }
 
+#[cfg(feature = "local-agents")]
 async fn read_session_output_event(
     reader: &mut SessionOutputReader,
 ) -> Option<Result<SubscribeSessionEvent, ProtocolError>> {
@@ -526,6 +579,7 @@ async fn read_session_output_event(
     }
 }
 
+#[cfg(feature = "local-agents")]
 fn structured_output_event(
     output: StructuredOutput,
 ) -> Result<SubscribeSessionEvent, ProtocolError> {
@@ -540,7 +594,7 @@ fn structured_output_event(
     Ok(SubscribeSessionEvent::Output { payload })
 }
 
-#[cfg(test)]
+#[cfg(all(test, feature = "local-agents"))]
 mod tests {
     use futures_util::StreamExt;
 

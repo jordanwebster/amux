@@ -6,7 +6,7 @@ use uuid::Uuid;
 
 pub(crate) const AGENT_TYPE_CLAUDE: &str = "claude";
 
-#[cfg(any(debug_assertions, test))]
+#[cfg(all(feature = "local-agents", any(debug_assertions, test)))]
 pub(crate) const AGENT_TYPE_TEST_AGENT: &str = "test-agent";
 
 /// Type of agent to spawn.
@@ -16,7 +16,7 @@ pub enum AgentType {
     /// Claude Code agent.
     Claude,
     /// Test agent for E2E tests.
-    #[cfg(any(debug_assertions, test))]
+    #[cfg(all(feature = "local-agents", any(debug_assertions, test)))]
     TestAgent { command: String },
 }
 

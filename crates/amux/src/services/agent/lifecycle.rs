@@ -547,7 +547,7 @@ fn update_error_to_rename_error(error: String) -> RenameAgentError {
     }
 }
 
-#[cfg(test)]
+#[cfg(all(test, feature = "local-agents"))]
 mod tests {
     use std::sync::Arc;
 

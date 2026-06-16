@@ -5,14 +5,20 @@ edition.workspace = true
 description = "Agent multiplexer - library for building amux clients and servers"
 
 [features]
+default = ["local-agents"]
+# Desktop/local agent runtime. This owns PTY-backed Claude/test-agent process
+# spawning and is intentionally absent from embedded mobile client builds.
+local-agents = ["dep:portable-pty"]
+# Marker for client-only embedded builds. Use with `default-features = false`.
+client-only = []
 # Compiles the in-process spec-test harness (`amux::testnet`) into the
 # library. Test-only; never enable in production builds.
-testnet = ["dep:tempfile"]
+testnet = ["dep:tempfile", "local-agents"]
 
 [dependencies]
 anyhow = { workspace = true }
 tempfile = { workspace = true, optional = true }
-portable-pty = { workspace = true }
+portable-pty = { workspace = true, optional = true }
 tokio = { workspace = true }
 serde = { workspace = true }
 serde_json = { workspace = true }

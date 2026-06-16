@@ -1,7 +1,8 @@
 use uuid::Uuid;
 
+#[cfg(feature = "local-agents")]
 use crate::agents::AGENT_TYPE_CLAUDE;
-#[cfg(any(debug_assertions, test))]
+#[cfg(all(feature = "local-agents", any(debug_assertions, test)))]
 use crate::agents::AGENT_TYPE_TEST_AGENT;
 use crate::routing::{Capabilities, Host, SupportedAgentType};
 
@@ -57,24 +58,35 @@ pub(crate) fn local_capabilities(is_cloud_server: bool) -> Capabilities {
         };
     }
 
-    #[cfg(any(debug_assertions, test))]
-    let supported_agent_types = vec![
-        SupportedAgentType {
+    #[cfg(not(feature = "local-agents"))]
+    {
+        Capabilities {
+            features: Vec::new(),
+            supported_agent_types: Vec::new(),
+        }
+    }
+
+    #[cfg(feature = "local-agents")]
+    {
+        #[cfg(any(debug_assertions, test))]
+        let supported_agent_types = vec![
+            SupportedAgentType {
+                agent_type: AGENT_TYPE_CLAUDE.to_string(),
+            },
+            SupportedAgentType {
+                agent_type: AGENT_TYPE_TEST_AGENT.to_string(),
+            },
+        ];
+
+        #[cfg(not(any(debug_assertions, test)))]
+        let supported_agent_types = vec![SupportedAgentType {
             agent_type: AGENT_TYPE_CLAUDE.to_string(),
-        },
-        SupportedAgentType {
-            agent_type: AGENT_TYPE_TEST_AGENT.to_string(),
-        },
-    ];
+        }];
 
-    #[cfg(not(any(debug_assertions, test)))]
-    let supported_agent_types = vec![SupportedAgentType {
-        agent_type: AGENT_TYPE_CLAUDE.to_string(),
-    }];
-
-    Capabilities {
-        features: Vec::new(),
-        supported_agent_types,
+        Capabilities {
+            features: Vec::new(),
+            supported_agent_types,
+        }
     }
 }
 
@@ -122,6 +134,7 @@ mod tests {
         );
     }
 
+    #[cfg(feature = "local-agents")]
     #[test]
     fn non_cloud_local_host_advertises_claude_agent_type() {
         let host = local_host(Uuid::from_u128(1), "host", false);
@@ -132,5 +145,13 @@ mod tests {
                 .iter()
                 .any(|agent| agent.agent_type == AGENT_TYPE_CLAUDE)
         );
+    }
+
+    #[cfg(not(feature = "local-agents"))]
+    #[test]
+    fn non_cloud_local_host_advertises_no_agent_types_without_local_agents() {
+        let host = local_host(Uuid::from_u128(1), "host", false);
+
+        assert!(host.capabilities.supported_agent_types.is_empty());
     }
 }

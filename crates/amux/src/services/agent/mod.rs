@@ -280,7 +280,7 @@ impl AgentServiceCtx {
         &self,
         request: CreateAgentRpcRequest,
     ) -> Result<Agent, ProtocolError> {
-        if self.is_cloud_server() {
+        if self.is_cloud_server() || !self.has_supported_agent_types() {
             return Err(ProtocolError::FailedPrecondition {
                 message: "host has no supported agent types".to_string(),
             });
@@ -476,7 +476,7 @@ fn create_rpc_to_domain_request(
             terminal_size,
             args,
         }),
-        #[cfg(any(debug_assertions, test))]
+        #[cfg(all(feature = "local-agents", any(debug_assertions, test)))]
         CreateAgentConfig::TestAgent {
             command,
             working_dir,
@@ -490,7 +490,7 @@ fn create_rpc_to_domain_request(
             terminal_size,
             args: Vec::new(),
         }),
-        #[cfg(not(any(debug_assertions, test)))]
+        #[cfg(not(all(feature = "local-agents", any(debug_assertions, test))))]
         CreateAgentConfig::TestAgent {
             command,
             working_dir,
@@ -505,7 +505,7 @@ fn create_rpc_to_domain_request(
     }
 }
 
-#[cfg(test)]
+#[cfg(all(test, feature = "local-agents"))]
 mod tests {
     use std::io;
     use std::path::PathBuf;

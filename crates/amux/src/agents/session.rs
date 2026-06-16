@@ -14,16 +14,16 @@ use serde_json::Value;
 use tokio::sync::mpsc;
 use uuid::Uuid;
 
-#[cfg(any(debug_assertions, test))]
+#[cfg(all(feature = "local-agents", any(debug_assertions, test)))]
 use super::TestAgentSession;
+#[cfg(feature = "local-agents")]
 use super::claude::{ClaudeSession, ClaudeStructuredInputTarget};
-use super::{
-    ExternalHookBootstrap, HookError, HookOutcome, LocalAgentNameSource, PtyHandle,
-    StructuredLogSource,
-};
-#[cfg(any(debug_assertions, test))]
+#[cfg(feature = "local-agents")]
+use super::{ExternalHookBootstrap, HookError, HookOutcome, PtyHandle};
+use super::{LocalAgentNameSource, StructuredLogSource};
+#[cfg(all(feature = "local-agents", any(debug_assertions, test)))]
 use crate::agents::AGENT_TYPE_TEST_AGENT;
-#[cfg(any(test, feature = "testnet"))]
+#[cfg(all(feature = "local-agents", any(test, feature = "testnet")))]
 use crate::agents::TEST_ECHO_V1;
 use crate::agents::claude::io as claude_io;
 use crate::agents::{AGENT_TYPE_CLAUDE, Agent, AgentEvent, AgentType, CreateAgentRequest};
@@ -120,16 +120,22 @@ pub(crate) enum StopPolicy {
 
 /// Unified agent session handle, dispatching to concrete session types.
 pub(crate) enum AgentSession {
+    #[cfg(feature = "local-agents")]
     Claude(ClaudeSession),
-    #[cfg(any(debug_assertions, test))]
+    #[cfg(all(feature = "local-agents", any(debug_assertions, test)))]
     TestAgent(TestAgentSession),
+    #[cfg(not(feature = "local-agents"))]
+    Disabled,
 }
 
 #[derive(Clone)]
 pub(crate) enum StructuredInputTarget {
+    #[cfg(feature = "local-agents")]
     Claude(ClaudeStructuredInputTarget),
-    #[cfg(any(debug_assertions, test))]
+    #[cfg(all(feature = "local-agents", any(debug_assertions, test)))]
     Unsupported,
+    #[cfg(not(feature = "local-agents"))]
+    Disabled,
 }
 
 impl StructuredInputTarget {
@@ -139,10 +145,15 @@ impl StructuredInputTarget {
         payload: Value,
     ) -> std::result::Result<(), ProtocolError> {
         match self {
+            #[cfg(feature = "local-agents")]
             Self::Claude(target) => target.send_structured_input(client_seq, payload).await,
-            #[cfg(any(debug_assertions, test))]
+            #[cfg(all(feature = "local-agents", any(debug_assertions, test)))]
             Self::Unsupported => Err(ProtocolError::ServerError {
                 message: "structured input not supported".to_string(),
+            }),
+            #[cfg(not(feature = "local-agents"))]
+            Self::Disabled => Err(ProtocolError::FailedPrecondition {
+                message: "local agent support is disabled".to_string(),
             }),
         }
     }
@@ -150,6 +161,12 @@ impl StructuredInputTarget {
 
 impl AgentSession {
     pub(crate) fn try_new(req: &CreateAgentRequest) -> Result<Self> {
+        #[cfg(not(feature = "local-agents"))]
+        {
+            let _ = req;
+            return Err(anyhow!("local agent support is disabled"));
+        }
+        #[cfg(feature = "local-agents")]
         match &req.agent_type {
             AgentType::Claude => Ok(Self::Claude(ClaudeSession::new(req))),
             #[cfg(any(debug_assertions, test))]
@@ -161,41 +178,56 @@ impl AgentSession {
 
     pub(crate) fn agent_id(&self) -> Uuid {
         match self {
+            #[cfg(feature = "local-agents")]
             Self::Claude(s) => s.agent_id,
-            #[cfg(any(debug_assertions, test))]
+            #[cfg(all(feature = "local-agents", any(debug_assertions, test)))]
             Self::TestAgent(s) => s.agent_id,
+            #[cfg(not(feature = "local-agents"))]
+            Self::Disabled => unreachable!("local agent support is disabled"),
         }
     }
 
     pub(crate) fn name(&self) -> Option<&str> {
         match self {
+            #[cfg(feature = "local-agents")]
             Self::Claude(s) => s.name.as_deref(),
-            #[cfg(any(debug_assertions, test))]
+            #[cfg(all(feature = "local-agents", any(debug_assertions, test)))]
             Self::TestAgent(s) => s.name.as_deref(),
+            #[cfg(not(feature = "local-agents"))]
+            Self::Disabled => unreachable!("local agent support is disabled"),
         }
     }
 
     pub(crate) fn command(&self) -> &str {
         match self {
+            #[cfg(feature = "local-agents")]
             Self::Claude(s) => &s.command,
-            #[cfg(any(debug_assertions, test))]
+            #[cfg(all(feature = "local-agents", any(debug_assertions, test)))]
             Self::TestAgent(s) => &s.command,
+            #[cfg(not(feature = "local-agents"))]
+            Self::Disabled => unreachable!("local agent support is disabled"),
         }
     }
 
     pub(crate) fn working_dir(&self) -> &Path {
         match self {
+            #[cfg(feature = "local-agents")]
             Self::Claude(s) => &s.working_dir,
-            #[cfg(any(debug_assertions, test))]
+            #[cfg(all(feature = "local-agents", any(debug_assertions, test)))]
             Self::TestAgent(s) => &s.working_dir,
+            #[cfg(not(feature = "local-agents"))]
+            Self::Disabled => unreachable!("local agent support is disabled"),
         }
     }
 
     pub(crate) fn readonly(&self) -> bool {
         match self {
+            #[cfg(feature = "local-agents")]
             Self::Claude(s) => s.readonly,
-            #[cfg(any(debug_assertions, test))]
+            #[cfg(all(feature = "local-agents", any(debug_assertions, test)))]
             Self::TestAgent(_) => false,
+            #[cfg(not(feature = "local-agents"))]
+            Self::Disabled => unreachable!("local agent support is disabled"),
         }
     }
 
@@ -203,74 +235,99 @@ impl AgentSession {
     /// Returns an exit handle that completes when the agent process exits.
     pub(crate) fn start(&mut self) -> Result<tokio::task::JoinHandle<()>> {
         match self {
+            #[cfg(feature = "local-agents")]
             Self::Claude(s) => s.start(),
-            #[cfg(any(debug_assertions, test))]
+            #[cfg(all(feature = "local-agents", any(debug_assertions, test)))]
             Self::TestAgent(s) => s.start(),
+            #[cfg(not(feature = "local-agents"))]
+            Self::Disabled => unreachable!("local agent support is disabled"),
         }
     }
 
     /// Stop the agent according to the given policy.
     pub(crate) async fn stop(&self, policy: StopPolicy) {
         match self {
+            #[cfg(feature = "local-agents")]
             Self::Claude(s) => s.stop(policy).await,
-            #[cfg(any(debug_assertions, test))]
+            #[cfg(all(feature = "local-agents", any(debug_assertions, test)))]
             Self::TestAgent(s) => s.stop().await,
+            #[cfg(not(feature = "local-agents"))]
+            Self::Disabled => unreachable!("local agent support is disabled"),
         }
     }
 
     pub(crate) fn maybe_start_name_sniffer(&mut self, event_tx: &mpsc::Sender<SessionEvent>) {
         match self {
+            #[cfg(feature = "local-agents")]
             Self::Claude(s) => s.maybe_start_name_sniffer(event_tx),
-            #[cfg(any(debug_assertions, test))]
+            #[cfg(all(feature = "local-agents", any(debug_assertions, test)))]
             Self::TestAgent(_) => {}
+            #[cfg(not(feature = "local-agents"))]
+            Self::Disabled => unreachable!("local agent support is disabled"),
         }
     }
 
     pub(crate) fn local_name_source(&self) -> Option<LocalAgentNameSource> {
         match self {
+            #[cfg(feature = "local-agents")]
             Self::Claude(s) => Some(s.name_source()),
-            #[cfg(any(debug_assertions, test))]
+            #[cfg(all(feature = "local-agents", any(debug_assertions, test)))]
             Self::TestAgent(_) => None,
+            #[cfg(not(feature = "local-agents"))]
+            Self::Disabled => unreachable!("local agent support is disabled"),
         }
     }
 
     pub(crate) fn set_local_name(&mut self, name: Option<String>, source: LocalAgentNameSource) {
         match self {
+            #[cfg(feature = "local-agents")]
             Self::Claude(s) => s.set_name_and_source(name, source),
-            #[cfg(any(debug_assertions, test))]
+            #[cfg(all(feature = "local-agents", any(debug_assertions, test)))]
             Self::TestAgent(s) => s.name = name,
+            #[cfg(not(feature = "local-agents"))]
+            Self::Disabled => unreachable!("local agent support is disabled"),
         }
     }
 
     pub(crate) fn log_source(&self) -> Option<StructuredLogSource> {
         match self {
+            #[cfg(feature = "local-agents")]
             Self::Claude(s) => s.log_source(),
-            #[cfg(any(debug_assertions, test))]
+            #[cfg(all(feature = "local-agents", any(debug_assertions, test)))]
             Self::TestAgent(s) => s.log_source(),
+            #[cfg(not(feature = "local-agents"))]
+            Self::Disabled => unreachable!("local agent support is disabled"),
         }
     }
 
     pub(crate) fn io_protocols(&self) -> Vec<String> {
         let mut protocols = Vec::new();
+        #[cfg(feature = "local-agents")]
         if self.pty_handle().is_some() {
             protocols.push(claude_io::RAW_V1.to_string());
         }
         match self {
+            #[cfg(feature = "local-agents")]
             Self::Claude(_) => protocols.push(claude_io::PTY_TRANSCRIPT_V1.to_string()),
-            #[cfg(any(debug_assertions, test))]
+            #[cfg(all(feature = "local-agents", any(debug_assertions, test)))]
             Self::TestAgent(_) => {
                 #[cfg(any(test, feature = "testnet"))]
                 protocols.push(TEST_ECHO_V1.to_string());
             }
+            #[cfg(not(feature = "local-agents"))]
+            Self::Disabled => {}
         }
         protocols
     }
 
     pub(crate) fn structured_input_target(&self) -> StructuredInputTarget {
         match self {
+            #[cfg(feature = "local-agents")]
             Self::Claude(s) => StructuredInputTarget::Claude(s.structured_input_target()),
-            #[cfg(any(debug_assertions, test))]
+            #[cfg(all(feature = "local-agents", any(debug_assertions, test)))]
             Self::TestAgent(_) => StructuredInputTarget::Unsupported,
+            #[cfg(not(feature = "local-agents"))]
+            Self::Disabled => StructuredInputTarget::Disabled,
         }
     }
 
@@ -287,17 +344,20 @@ impl AgentSession {
     }
 
     /// Handle an opaque hook payload for this agent.
+    #[cfg(feature = "local-agents")]
     pub(crate) async fn handle_hook(
         &mut self,
         payload: &[u8],
     ) -> std::result::Result<HookOutcome, HookError> {
         match self {
+            #[cfg(feature = "local-agents")]
             Self::Claude(s) => s.handle_hook_payload(payload).await,
-            #[cfg(any(debug_assertions, test))]
+            #[cfg(all(feature = "local-agents", any(debug_assertions, test)))]
             Self::TestAgent(_) => Err(HookError::UnsupportedAgentType),
         }
     }
 
+    #[cfg(feature = "local-agents")]
     pub(crate) async fn bootstrap_external_hook(
         agent_id: Uuid,
         payload: &[u8],
@@ -311,6 +371,7 @@ impl AgentSession {
     }
 
     /// Get the PTY handle (if this session type has one).
+    #[cfg(feature = "local-agents")]
     pub(crate) fn pty_handle(&self) -> Option<&PtyHandle> {
         match self {
             Self::Claude(s) => s.pty.as_ref(),
@@ -321,17 +382,23 @@ impl AgentSession {
 
     pub(crate) fn created_at(&self) -> DateTime<Utc> {
         match self {
+            #[cfg(feature = "local-agents")]
             Self::Claude(s) => s.created_at,
-            #[cfg(any(debug_assertions, test))]
+            #[cfg(all(feature = "local-agents", any(debug_assertions, test)))]
             Self::TestAgent(s) => s.created_at,
+            #[cfg(not(feature = "local-agents"))]
+            Self::Disabled => unreachable!("local agent support is disabled"),
         }
     }
 
     pub(crate) fn args(&self) -> &[String] {
         match self {
+            #[cfg(feature = "local-agents")]
             Self::Claude(s) => &s.args,
-            #[cfg(any(debug_assertions, test))]
+            #[cfg(all(feature = "local-agents", any(debug_assertions, test)))]
             Self::TestAgent(_) => &[],
+            #[cfg(not(feature = "local-agents"))]
+            Self::Disabled => unreachable!("local agent support is disabled"),
         }
     }
 
@@ -344,9 +411,12 @@ impl AgentSession {
             command: self.command().to_string(),
             working_dir: self.working_dir().to_path_buf(),
             agent_type: match self {
+                #[cfg(feature = "local-agents")]
                 Self::Claude(_) => AGENT_TYPE_CLAUDE.to_string(),
-                #[cfg(any(debug_assertions, test))]
+                #[cfg(all(feature = "local-agents", any(debug_assertions, test)))]
                 Self::TestAgent(_) => AGENT_TYPE_TEST_AGENT.to_string(),
+                #[cfg(not(feature = "local-agents"))]
+                Self::Disabled => unreachable!("local agent support is disabled"),
             },
             io_protocols: self.io_protocols(),
             readonly: self.readonly(),
@@ -357,6 +427,7 @@ impl AgentSession {
 
     pub(crate) fn from_suspended(suspended: SuspendedAgent) -> Self {
         match suspended {
+            #[cfg(feature = "local-agents")]
             SuspendedAgent::Claude {
                 agent_id,
                 name,
@@ -383,7 +454,7 @@ impl AgentSession {
                     created_at,
                 ))
             }
-            #[cfg(any(debug_assertions, test))]
+            #[cfg(all(feature = "local-agents", any(debug_assertions, test)))]
             SuspendedAgent::TestAgent {
                 agent_id,
                 name,
@@ -405,12 +476,15 @@ impl AgentSession {
                 };
                 Self::TestAgent(TestAgentSession::from_suspended(&req, command, created_at))
             }
+            #[cfg(not(feature = "local-agents"))]
+            SuspendedAgent::Disabled => unreachable!("local agent support is disabled"),
         }
     }
 
     /// Build the serializable suspend state without stopping the running agent.
     pub(crate) fn suspended_state(&self) -> Result<SuspendedAgent> {
         match self {
+            #[cfg(feature = "local-agents")]
             Self::Claude(s) => {
                 let name_source = s.name_source();
                 let session_id = s.session_id.ok_or_else(|| {
@@ -430,7 +504,7 @@ impl AgentSession {
                     session_id,
                 })
             }
-            #[cfg(any(debug_assertions, test))]
+            #[cfg(all(feature = "local-agents", any(debug_assertions, test)))]
             Self::TestAgent(s) => Ok(SuspendedAgent::TestAgent {
                 agent_id: s.agent_id,
                 name: s.name.clone(),
@@ -439,6 +513,8 @@ impl AgentSession {
                 terminal_size: s.terminal_size,
                 created_at: s.created_at,
             }),
+            #[cfg(not(feature = "local-agents"))]
+            Self::Disabled => unreachable!("local agent support is disabled"),
         }
     }
 }
@@ -449,18 +525,21 @@ impl serde::Serialize for crate::debug::DebugView<'_, AgentSession> {
         serializer: S,
     ) -> std::result::Result<S::Ok, S::Error> {
         match self.inner {
+            #[cfg(feature = "local-agents")]
             AgentSession::Claude(s) => {
                 crate::debug::DebugView::new(s, self.verbose).serialize(serializer)
             }
-            #[cfg(any(debug_assertions, test))]
+            #[cfg(all(feature = "local-agents", any(debug_assertions, test)))]
             AgentSession::TestAgent(s) => {
                 crate::debug::DebugView::new(s, self.verbose).serialize(serializer)
             }
+            #[cfg(not(feature = "local-agents"))]
+            AgentSession::Disabled => serializer.serialize_none(),
         }
     }
 }
 
-#[cfg(test)]
+#[cfg(all(test, feature = "local-agents"))]
 mod tests {
     use serde_json::json;
 

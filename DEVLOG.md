@@ -38,6 +38,44 @@ One paragraph describing what was done.
 
 ---
 
+## 2026-06-16: Client-only feature gating for embedded iOS builds (first cut)
+
+### Summary
+First cut of compile-time gating so the amux lib can build for iOS and
+link into the React Native app without spawning local agents. Adds a
+`local-agents` default feature (owns PTY-backed Claude/test-agent
+spawning via `portable-pty`) plus a `client-only` marker; embedded
+builds use `default-features = false`. iOS gets its own state/data/log
+paths under the app container, and a `compile_error!` guard rejects iOS
+builds that leave `local-agents` enabled. A `runtime_profile` module
+centralizes the "is this a local-agent host" decision for listeners,
+reachability, sleep inhibition, and periodic update checks.
+
+### Changes
+- `Cargo.toml`: `local-agents` (default) + `client-only` features;
+  `portable-pty` now optional.
+- Feature-gated the agent runtime (`agents::{session,pty,hook,...}`,
+  `suspend`, `services::agent` hosting) with `Disabled` enum arms for
+  the client build.
+- `paths.rs`: iOS app-container state/data/log paths.
+- `runtime_profile.rs`: centralized daemonish gates.
+- `lib.rs`: `VERSION`/`PROTOCOL_VERSION` exports, iOS compile guard.
+- `services/client.rs`: `CreateAgent` now checks the target host's
+  supported agent types precisely (`FailedPrecondition` instead of a
+  generic `Unreachable`).
+
+### Verification
+- `cargo build -p amux --no-default-features`: clean (client-only).
+- The app bridge (`amuxapp/modules/amux-core`) builds against this with
+  `default-features = false, features = ["client-only"]`.
+
+### Next Steps
+- Simplify: collapse the leaf-level gating to a single module seam, move
+  the daemonish behaviors onto the builder/config runtime axis, and
+  delete `runtime_profile` and the redundant `client-only` marker.
+
+---
+
 ## 2026-06-11: Stop the pre-existing Windows test hang from eating 6-hour runners
 
 ### Summary

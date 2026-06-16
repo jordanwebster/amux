@@ -29,6 +29,7 @@ pub(crate) enum SuspendedLocalAgentNameSource {
 /// Serializable representation of a suspended agent session.
 #[derive(Serialize, Deserialize, Debug, Clone)]
 pub(crate) enum SuspendedAgent {
+    #[cfg(feature = "local-agents")]
     Claude {
         agent_id: Uuid,
         name: Option<String>,
@@ -39,7 +40,7 @@ pub(crate) enum SuspendedAgent {
         session_id: Uuid,
         created_at: DateTime<Utc>,
     },
-    #[cfg(any(debug_assertions, test))]
+    #[cfg(all(feature = "local-agents", any(debug_assertions, test)))]
     TestAgent {
         agent_id: Uuid,
         name: Option<String>,
@@ -48,22 +49,30 @@ pub(crate) enum SuspendedAgent {
         terminal_size: Option<TerminalSize>,
         created_at: DateTime<Utc>,
     },
+    #[cfg(not(feature = "local-agents"))]
+    Disabled,
 }
 
 impl SuspendedAgent {
     pub(crate) fn agent_id(&self) -> Uuid {
         match self {
+            #[cfg(feature = "local-agents")]
             Self::Claude { agent_id, .. } => *agent_id,
-            #[cfg(any(debug_assertions, test))]
+            #[cfg(all(feature = "local-agents", any(debug_assertions, test)))]
             Self::TestAgent { agent_id, .. } => *agent_id,
+            #[cfg(not(feature = "local-agents"))]
+            Self::Disabled => unreachable!("local agent support is disabled"),
         }
     }
 
     pub(crate) fn name(&self) -> Option<&str> {
         match self {
+            #[cfg(feature = "local-agents")]
             Self::Claude { name, .. } => name.as_deref(),
-            #[cfg(any(debug_assertions, test))]
+            #[cfg(all(feature = "local-agents", any(debug_assertions, test)))]
             Self::TestAgent { name, .. } => name.as_deref(),
+            #[cfg(not(feature = "local-agents"))]
+            Self::Disabled => unreachable!("local agent support is disabled"),
         }
     }
 }
@@ -133,7 +142,7 @@ fn suspended_path(state_path: &Path) -> PathBuf {
     state_path.with_file_name("suspended.yaml")
 }
 
-#[cfg(test)]
+#[cfg(all(test, feature = "local-agents"))]
 mod tests {
     use tempfile::TempDir;
 

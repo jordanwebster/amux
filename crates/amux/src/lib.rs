@@ -1,4 +1,19 @@
 #![allow(clippy::result_large_err)]
+#![cfg_attr(
+    not(feature = "local-agents"),
+    allow(
+        dead_code,
+        unused_imports,
+        unused_mut,
+        unused_variables,
+        unreachable_code
+    )
+)]
+
+#[cfg(all(target_os = "ios", feature = "local-agents"))]
+compile_error!(
+    "iOS builds must disable the `local-agents` feature; use `default-features = false` with `client-only`."
+);
 
 mod agents;
 mod audit;
@@ -14,6 +29,7 @@ mod paths;
 mod protocol;
 mod resource_limits;
 mod routing;
+mod runtime_profile;
 mod server;
 mod services;
 pub mod setup;
@@ -28,6 +44,8 @@ mod trust;
 mod tunnel;
 pub mod update;
 mod user_state;
+
+pub const VERSION: &str = env!("CARGO_PKG_VERSION");
 
 pub use agents::{
     Agent, AgentEvent, AgentType, CreateAgentRequest, SessionCloseReason, SubscribeSessionEvent,
@@ -53,7 +71,7 @@ pub use pairing::ssh::{
 #[cfg(unix)]
 pub use pairing::ssh::{pair_via_ssh_responder_stdio, relay_stdio_to_unix_socket};
 pub use paths::{default_data_dir, default_log_path};
-pub use protocol::ProtocolError;
+pub use protocol::{PROTOCOL_VERSION, ProtocolError};
 pub use routing::{Capabilities, Host, HostEntry, HostEvent, HostTrustStatus, SupportedAgentType};
 pub use server::{
     DaemonBuilder, EmbeddedBuilder, Server, ServerBuilder, ServerError, ShutdownReason,

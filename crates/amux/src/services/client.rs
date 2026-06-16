@@ -16,10 +16,11 @@ use tonic::transport::Channel;
 use uuid::Uuid;
 
 use crate::agents::{
-    Agent, AgentEvent, AgentSession, CreateAgentConfig, CreateAgentRpcRequest,
-    ExternalHookBootstrap, HookOutcome, SendInputRequest, SessionInputEvent, StopPolicy,
-    SubscribeSessionEvent, SubscribeSessionRequest, TerminalSize,
+    Agent, AgentEvent, CreateAgentConfig, CreateAgentRpcRequest, SendInputRequest,
+    SessionInputEvent, SubscribeSessionEvent, SubscribeSessionRequest, TerminalSize,
 };
+#[cfg(feature = "local-agents")]
+use crate::agents::{AgentSession, ExternalHookBootstrap, HookOutcome, StopPolicy};
 use crate::connection::ConnectionManager;
 use crate::debug::DebugFormat;
 use crate::identity::IdentityError;
@@ -30,12 +31,14 @@ use crate::routing::{
     HostTrustStatus, RoutingCore, capabilities_to_wire,
 };
 use crate::server::{SHUTDOWN_REASON_METADATA_KEY, ShutdownReason};
+use crate::services::ReachabilityLinkConnector;
 use crate::services::agent::AgentServiceCtx;
 use crate::services::pairing::{
     LocalPairingIdentity, PeerTrustCommitContext, PeerTrustUpdate, SharedTrustCommitLock,
     commit_peer_trust, pair_initiator,
 };
-use crate::services::{ReachabilityLinkConnector, resume_agents};
+#[cfg(feature = "local-agents")]
+use crate::services::resume_agents;
 use crate::transport::{BoxedGrpcAuth, BoxedGrpcConnectInfo};
 use crate::trust::{Reachability, SharedTrustStore, TrustEntry, TrustStore};
 use crate::tunnel::TunnelPoolError;
@@ -716,11 +719,13 @@ impl wire::client_service_server::ClientService for ClientService {
         request: tonic::Request<wire::ClientCreateAgentRequest>,
     ) -> TonicResult<wire::CreateAgentResponse> {
         let request = request.into_inner();
+        let requested_agent_type = client_create_agent_type(&request)?;
         if let Some(host_id) =
             optional_uuid_from_bytes("CreateAgentRequest.host_id", request.host_id.as_deref())?
             && !self.is_local_host(host_id)
         {
-            self.ensure_remote_create_target(host_id).await?;
+            self.ensure_remote_create_target(host_id, requested_agent_type)
+                .await?;
             return self
                 .remote_create_agent(host_id, client_create_to_agent_create_request(request))
                 .await;
@@ -962,6 +967,11 @@ impl wire::client_service_server::ClientService for ClientService {
                 "set `tcp_port` in your config, or use cloud / SSH pairing",
             ));
         }
+        if request.require_lan_direct && !crate::runtime_profile::direct_reachability_enabled() {
+            return Err(tonic::Status::failed_precondition(
+                "LAN direct pairing is disabled by this runtime profile",
+            ));
+        }
         if mode == wire::start_pairing_request::Mode::Qr && !cloud_enabled {
             return Err(tonic::Status::failed_precondition(
                 "QR pairing requires cloud mode",
@@ -1023,6 +1033,15 @@ impl wire::client_service_server::ClientService for ClientService {
         let reachability = pair_peer_reachability_from_wire(request.reachability)?;
         let link_reachability = reachability.clone();
         let method = pair_peer_audit_method(&link_reachability);
+        if matches!(
+            link_reachability,
+            Some(Reachability::DirectTcp { .. } | Reachability::Ssh { .. })
+        ) && !crate::runtime_profile::direct_reachability_enabled()
+        {
+            return Err(tonic::Status::failed_precondition(
+                "direct reachability is disabled by this runtime profile",
+            ));
+        }
 
         audit::pairing_start(method);
         commit_peer_trust(
@@ -1040,7 +1059,9 @@ impl wire::client_service_server::ClientService for ClientService {
         })?;
         audit::pairing_success(method, host_id);
         self.publish_host_status_update(host_id).await;
-        if let Some(reachability) = link_reachability {
+        if let Some(reachability) = link_reachability
+            && crate::runtime_profile::direct_reachability_enabled()
+        {
             self.reachability_links
                 .spawn_pair_time_link(host_id, reachability);
         }
@@ -1655,20 +1676,24 @@ impl ClientService {
         self.local_agents.clone()
     }
 
-    async fn ensure_remote_create_target(&self, host_id: Uuid) -> Result<(), tonic::Status> {
-        if self
-            .state
-            .read()
-            .await
-            .hosts_model
-            .get(&host_id)
-            .is_some_and(host_is_agent_capable)
-        {
+    async fn ensure_remote_create_target(
+        &self,
+        host_id: Uuid,
+        requested_agent_type: &str,
+    ) -> Result<(), tonic::Status> {
+        let host = self.state.read().await.hosts_model.get(&host_id).cloned();
+        let Some(host) = host else {
+            return Err(protocol_status(ProtocolError::Unreachable {
+                message: format!("CreateAgent target host {host_id} is not reachable"),
+            }));
+        };
+
+        if host_supports_agent_type(&host, requested_agent_type) {
             Ok(())
         } else {
-            Err(protocol_status(ProtocolError::Unreachable {
+            Err(protocol_status(ProtocolError::FailedPrecondition {
                 message: format!(
-                    "CreateAgent target host {host_id} is not reachable as an agent-capable host"
+                    "CreateAgent target host {host_id} does not support agent type `{requested_agent_type}`"
                 ),
             }))
         }
@@ -1707,48 +1732,59 @@ impl ClientService {
     }
 
     async fn resume_local_agents(&self) -> Result<(u64, u64), ProtocolError> {
-        let (state_path, host_id, is_cloud_server) = {
-            let state = self.server_state.read().await;
-            (state.state_path(), state.host_id(), state.is_cloud_server())
-        };
-        if is_cloud_server {
+        #[cfg(not(feature = "local-agents"))]
+        {
             return Err(ProtocolError::FailedPrecondition {
-                message: "cloud relays do not host local agents".to_string(),
+                message: "local agent support is disabled".to_string(),
             });
         }
 
-        let suspended = crate::suspend::load_suspended(&state_path).map_err(|error| {
-            ProtocolError::ServerError {
-                message: format!("failed to load state: {error}"),
+        #[cfg(feature = "local-agents")]
+        {
+            let (state_path, host_id, is_cloud_server) = {
+                let state = self.server_state.read().await;
+                (state.state_path(), state.host_id(), state.is_cloud_server())
+            };
+            if is_cloud_server {
+                return Err(ProtocolError::FailedPrecondition {
+                    message: "cloud relays do not host local agents".to_string(),
+                });
             }
-        })?;
-        let result = resume_agents(
-            self.local_agents.state(),
-            self.local_agents.event_tx(),
-            suspended.agents,
-            host_id,
-        )
-        .await;
-        if result.failed_agents.is_empty() {
-            crate::suspend::remove_suspended(&state_path).map_err(|error| {
+
+            let suspended = crate::suspend::load_suspended(&state_path).map_err(|error| {
                 ProtocolError::ServerError {
-                    message: format!("failed to remove state: {error}"),
+                    message: format!("failed to load state: {error}"),
                 }
             })?;
-        } else {
-            crate::suspend::save_suspended(
-                &state_path,
-                &crate::suspend::SuspendedServerState {
-                    agents: result.failed_agents,
-                },
+            let result = resume_agents(
+                self.local_agents.state(),
+                self.local_agents.event_tx(),
+                suspended.agents,
+                host_id,
             )
-            .map_err(|error| ProtocolError::ServerError {
-                message: format!("failed to save remaining state: {error}"),
-            })?;
+            .await;
+            if result.failed_agents.is_empty() {
+                crate::suspend::remove_suspended(&state_path).map_err(|error| {
+                    ProtocolError::ServerError {
+                        message: format!("failed to remove state: {error}"),
+                    }
+                })?;
+            } else {
+                crate::suspend::save_suspended(
+                    &state_path,
+                    &crate::suspend::SuspendedServerState {
+                        agents: result.failed_agents,
+                    },
+                )
+                .map_err(|error| ProtocolError::ServerError {
+                    message: format!("failed to save remaining state: {error}"),
+                })?;
+            }
+            Ok((result.resumed_count as u64, result.failed_count as u64))
         }
-        Ok((result.resumed_count as u64, result.failed_count as u64))
     }
 
+    #[cfg(feature = "local-agents")]
     async fn handle_local_hook(
         &self,
         agent_id: Uuid,
@@ -1806,6 +1842,19 @@ impl ClientService {
         }
 
         result
+    }
+
+    #[cfg(not(feature = "local-agents"))]
+    async fn handle_local_hook(
+        &self,
+        agent_id: Uuid,
+        payload: Vec<u8>,
+        external: bool,
+    ) -> Result<(), ProtocolError> {
+        let _ = (agent_id, payload, external);
+        Err(ProtocolError::FailedPrecondition {
+            message: "local agent support is disabled".to_string(),
+        })
     }
 
     async fn remote_agent_client(
@@ -2051,6 +2100,19 @@ fn ensure_local_create_target(
     }
 }
 
+fn client_create_agent_type(
+    request: &wire::ClientCreateAgentRequest,
+) -> Result<&'static str, tonic::Status> {
+    let agent = request
+        .agent
+        .as_ref()
+        .ok_or_else(|| tonic::Status::invalid_argument("ClientCreateAgentRequest missing agent"))?;
+    Ok(match agent {
+        wire::client_create_agent_request::Agent::Claude(_) => "claude",
+        wire::client_create_agent_request::Agent::TestAgent(_) => "test-agent",
+    })
+}
+
 fn client_create_to_create_rpc_request(
     request: wire::ClientCreateAgentRequest,
 ) -> Result<CreateAgentRpcRequest, tonic::Status> {
@@ -2284,6 +2346,13 @@ fn host_is_agent_capable(host: &Host) -> bool {
     !host.capabilities.supported_agent_types.is_empty()
 }
 
+fn host_supports_agent_type(host: &Host, agent_type: &str) -> bool {
+    host.capabilities
+        .supported_agent_types
+        .iter()
+        .any(|supported| supported.agent_type == agent_type)
+}
+
 fn is_cloud_relay_host(host: &Host) -> bool {
     host.capabilities
         .features
@@ -2291,7 +2360,7 @@ fn is_cloud_relay_host(host: &Host) -> bool {
         .any(|feature| feature == FEATURE_CLOUD_RELAY)
 }
 
-#[cfg(test)]
+#[cfg(all(test, feature = "local-agents"))]
 mod tests {
     use std::path::PathBuf;
     use std::pin::Pin;
@@ -2864,6 +2933,12 @@ mod tests {
         }]
     }
 
+    fn test_agent_types() -> Vec<SupportedAgentType> {
+        vec![SupportedAgentType {
+            agent_type: "test-agent".to_string(),
+        }]
+    }
+
     #[tokio::test]
     async fn host_model_filters_relays_and_snapshots_non_relays() {
         let service = client_service_with_local_services();
@@ -3060,8 +3135,8 @@ mod tests {
         .await
         .unwrap_err();
 
-        assert_eq!(error.code(), tonic::Code::Unavailable);
-        assert!(error.message().contains("agent-capable host"));
+        assert_eq!(error.code(), tonic::Code::FailedPrecondition);
+        assert!(error.message().contains("does not support agent type"));
     }
 
     #[tokio::test]
@@ -4141,7 +4216,7 @@ mod tests {
         let mut events = service.subscribe_agents().await;
         service
             .apply_host_event(HostReachabilityEvent::Added {
-                host: host(2, non_relay_types()),
+                host: host(2, test_agent_types()),
             })
             .await;
 
@@ -4254,7 +4329,7 @@ mod tests {
         let agent_id = Uuid::from_u128(130);
         service
             .apply_host_event(HostReachabilityEvent::Added {
-                host: host(2, non_relay_types()),
+                host: host(2, test_agent_types()),
             })
             .await;
 
@@ -4372,7 +4447,7 @@ mod tests {
         let service = client_service_for_tests();
         service
             .apply_host_event(HostReachabilityEvent::Added {
-                host: host(2, non_relay_types()),
+                host: host(2, test_agent_types()),
             })
             .await;
         let err = <ClientService as wire::client_service_server::ClientService>::create_agent(

@@ -43,19 +43,47 @@ pub(crate) fn amux_xdg_dir(env_var: &str, default_suffix: &str) -> PathBuf {
 
 /// Default state path: `$XDG_STATE_HOME/amux/state.yaml`,
 /// falling back to `~/.local/state/amux/state.yaml`.
+#[cfg(not(target_os = "ios"))]
 pub(crate) fn default_state_path() -> PathBuf {
     amux_xdg_dir("XDG_STATE_HOME", ".local/state").join("state.yaml")
 }
 
+/// Default iOS state path under the app container.
+#[cfg(target_os = "ios")]
+pub(crate) fn default_state_path() -> PathBuf {
+    ios_application_support_dir().join("state.yaml")
+}
+
 /// Default data directory: `$XDG_DATA_HOME/amux`,
 /// falling back to `~/.local/share/amux`.
+#[cfg(not(target_os = "ios"))]
 pub fn default_data_dir() -> PathBuf {
     amux_xdg_dir("XDG_DATA_HOME", ".local/share")
 }
 
+/// Default iOS data directory under the app container.
+#[cfg(target_os = "ios")]
+pub fn default_data_dir() -> PathBuf {
+    ios_application_support_dir()
+}
+
 /// Default log path: `$XDG_STATE_HOME/amux/amux.log` (co-located with state.yaml).
+#[cfg(not(target_os = "ios"))]
 pub fn default_log_path() -> PathBuf {
     amux_xdg_dir("XDG_STATE_HOME", ".local/state").join("amux.log")
+}
+
+/// Default iOS log path under the app container.
+#[cfg(target_os = "ios")]
+pub fn default_log_path() -> PathBuf {
+    ios_application_support_dir().join("amux.log")
+}
+
+#[cfg(target_os = "ios")]
+fn ios_application_support_dir() -> PathBuf {
+    home_dir()
+        .map(|home| home.join("Library/Application Support/amux"))
+        .unwrap_or_else(|| PathBuf::from("Library/Application Support/amux"))
 }
 
 /// Resolve `$HOME` when available.

@@ -829,7 +829,7 @@ where
     })
 }
 
-#[cfg(test)]
+#[cfg(all(test, feature = "local-agents"))]
 mod tests {
     use std::path::PathBuf;
     use std::sync::{Arc, Mutex};
