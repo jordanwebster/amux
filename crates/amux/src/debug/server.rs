@@ -47,7 +47,7 @@ struct ServerDebugView<'a> {
 
 impl Serialize for ServerDebugView<'_> {
     fn serialize<S: Serializer>(&self, serializer: S) -> Result<S::Ok, S::Error> {
-        let agent_count: usize = self.users.iter().map(|(_, us)| us.local_agents.len()).sum();
+        let agent_count: usize = self.users.iter().map(|(_, us)| us.local_agent_count()).sum();
 
         let mut map = serializer.serialize_map(None)?;
         map.serialize_entry("is_cloud_server", &self.state.is_cloud_server)?;
@@ -83,6 +83,12 @@ impl Serialize for ServerDebugView<'_> {
     }
 }
 
+#[cfg(not(feature = "local-agents"))]
+fn debug_agents(_us: &AgentServiceState, _host_id: Uuid) -> Vec<AgentRecord> {
+    Vec::new()
+}
+
+#[cfg(feature = "local-agents")]
 fn debug_agents(us: &AgentServiceState, host_id: Uuid) -> Vec<AgentRecord> {
     let mut agents: Vec<_> = us
         .local_agents
@@ -150,7 +156,7 @@ impl Serialize for UserView<'_> {
 
         let mut map = serializer.serialize_map(None)?;
         map.serialize_entry("user_id", self.user_id)?;
-        map.serialize_entry("agent_count", &us.local_agents.len())?;
+        map.serialize_entry("agent_count", &us.local_agent_count())?;
         map.serialize_entry("remote_agent_count", &0usize)?;
         map.serialize_entry("host_count", &0usize)?;
         map.serialize_entry("route_count", &0usize)?;
@@ -195,6 +201,7 @@ impl Serialize for AgentsView<'_> {
             seq.serialize_element(&AgentDebugEntry {
                 agent,
                 host_name,
+                #[cfg(feature = "local-agents")]
                 session: self
                     .user_state
                     .local_agents
@@ -210,6 +217,7 @@ impl Serialize for AgentsView<'_> {
 struct AgentDebugEntry<'a> {
     agent: &'a AgentRecord,
     host_name: Option<&'a str>,
+    #[cfg(feature = "local-agents")]
     session: Option<&'a crate::agents::AgentSession>,
     verbose: bool,
 }
@@ -234,6 +242,7 @@ impl Serialize for AgentDebugEntry<'_> {
         map.serialize_entry("working_dir", &LossyPath(&info.working_dir))?;
         map.serialize_entry("args", &info.args)?;
         map.serialize_entry("created_at", &info.created_at)?;
+        #[cfg(feature = "local-agents")]
         if let Some(session) = self.session {
             map.serialize_entry("session", &DebugView::new(session, self.verbose))?;
         }

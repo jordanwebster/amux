@@ -28,9 +28,9 @@ pub(crate) use log_source::StructuredLogSource;
 pub(crate) use naming::LocalAgentNameSource;
 #[cfg(feature = "local-agents")]
 pub(crate) use pty::{PtyHandle, spawn_pty_agent};
-pub(crate) use session::{
-    AgentRecord, AgentSession, SessionEvent, StopPolicy, StructuredInputTarget,
-};
+pub(crate) use session::{AgentRecord, SessionEvent, StopPolicy};
+#[cfg(feature = "local-agents")]
+pub(crate) use session::{AgentSession, StructuredInputTarget};
 pub use session_events::{SessionCloseReason, SubscribeSessionEvent};
 #[cfg(all(feature = "local-agents", any(debug_assertions, test)))]
 pub(crate) use test_agent::TestAgentSession;

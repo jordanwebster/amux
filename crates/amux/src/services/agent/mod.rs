@@ -1,5 +1,6 @@
 //! AgentService implementation for the protobuf AgentService surface.
 
+#[cfg(feature = "local-agents")]
 mod lifecycle;
 mod session_rpc;
 
@@ -8,6 +9,7 @@ use std::pin::Pin;
 use std::sync::Arc;
 
 use futures_util::Stream;
+#[cfg(feature = "local-agents")]
 pub(crate) use lifecycle::{
     CreateAgentError, RenameAgentError, commit_server_suspend, create_agent_record,
     delete_local_agent, prepare_server_suspend, rename_local_agent_record, resume_agents,
@@ -16,8 +18,10 @@ pub(crate) use lifecycle::{
 use tokio::sync::{RwLock, mpsc};
 use uuid::Uuid;
 
+#[cfg(feature = "local-agents")]
+use crate::agents::AgentSession;
 use crate::agents::{
-    Agent, AgentEvent, AgentRecord, AgentSession, AgentType, CreateAgentConfig, CreateAgentRequest,
+    Agent, AgentEvent, AgentRecord, AgentType, CreateAgentConfig, CreateAgentRequest,
     CreateAgentRpcRequest, RenameAgentRequest, SendInputRequest, SessionCloseReason, SessionEvent,
     StopPolicy, SubscribeSessionRequest,
 };
@@ -33,12 +37,14 @@ pub(crate) type SharedAgentServiceState = Arc<RwLock<AgentServiceState>>;
 
 #[derive(Default)]
 pub(crate) struct AgentServiceState {
+    #[cfg(feature = "local-agents")]
     pub(crate) local_agents: HashMap<Uuid, LocalAgentContext>,
     pub(crate) local_agent_events: EventSource<AgentEvent>,
     pub(crate) local_session_close_events: EventSource<(Uuid, SessionCloseReason)>,
     pub(crate) local_shutdown_events: EventSource<ShutdownReason>,
 }
 
+#[cfg(feature = "local-agents")]
 pub(crate) struct LocalAgentContext {
     pub(crate) session: AgentSession,
 }
@@ -48,18 +54,33 @@ impl AgentServiceState {
         Self::default()
     }
 
+    /// Number of locally-hosted agents (always `0` in client-only builds).
+    pub(crate) fn local_agent_count(&self) -> usize {
+        #[cfg(feature = "local-agents")]
+        {
+            self.local_agents.len()
+        }
+        #[cfg(not(feature = "local-agents"))]
+        {
+            0
+        }
+    }
+
+    #[cfg(feature = "local-agents")]
     pub(crate) fn agent_session_mut(&mut self, agent_id: &Uuid) -> Option<&mut AgentSession> {
         self.local_agents
             .get_mut(agent_id)
             .map(|context| &mut context.session)
     }
 
+    #[cfg(feature = "local-agents")]
     pub(crate) fn local_agent_info(&self, host_id: Uuid, agent_id: &Uuid) -> Option<AgentRecord> {
         self.local_agents
             .get(agent_id)
             .map(|context| context.session.to_agent(host_id))
     }
 
+    #[cfg(feature = "local-agents")]
     pub(crate) fn insert_registered_local_agent(
         &mut self,
         host_id: Uuid,
@@ -69,6 +90,7 @@ impl AgentServiceState {
         self.register_local_agent_context(host_id, agent_id, session)
     }
 
+    #[cfg(feature = "local-agents")]
     pub(crate) fn register_local_agent_context(
         &mut self,
         host_id: Uuid,
@@ -90,10 +112,12 @@ impl AgentServiceState {
         Ok(event)
     }
 
+    #[cfg(feature = "local-agents")]
     pub(crate) fn contains_agent_id(&self, agent_id: &Uuid) -> bool {
         self.local_agents.contains_key(agent_id)
     }
 
+    #[cfg(feature = "local-agents")]
     pub(crate) fn name_taken_by_other(&self, name: &str, agent_id: Uuid) -> bool {
         self.local_agents.values().any(|context| {
             context.session.agent_id() != agent_id && context.session.name() == Some(name)
@@ -116,7 +140,10 @@ impl AgentServiceCtx {
         is_cloud_server: bool,
     ) -> Self {
         let (event_tx, event_rx) = mpsc::channel(256);
+        #[cfg(feature = "local-agents")]
         spawn_session_event_loop(state.clone(), event_rx, host_id);
+        #[cfg(not(feature = "local-agents"))]
+        drop(event_rx);
         Self {
             state,
             event_tx,
@@ -266,16 +293,21 @@ impl AgentServiceCtx {
         }
 
         let mut state = self.state().write().await;
+        #[cfg(feature = "local-agents")]
         let mut snapshot: Vec<_> = state
             .local_agents
             .values()
             .map(|context| context.session.to_agent(self.host_id()).agent_event())
             .collect();
+        #[cfg(not(feature = "local-agents"))]
+        let snapshot: Vec<AgentEvent> = Vec::new();
+        #[cfg(feature = "local-agents")]
         snapshot.sort_unstable_by_key(agent_event_sort_key);
         let rx = state.local_agent_events.subscribe_drop_on_overflow();
         Ok((snapshot, rx))
     }
 
+    #[cfg(feature = "local-agents")]
     pub(crate) async fn create(
         &self,
         request: CreateAgentRpcRequest,
@@ -294,6 +326,17 @@ impl AgentServiceCtx {
             .map_err(create_error_to_protocol)
     }
 
+    #[cfg(not(feature = "local-agents"))]
+    pub(crate) async fn create(
+        &self,
+        _request: CreateAgentRpcRequest,
+    ) -> Result<Agent, ProtocolError> {
+        Err(ProtocolError::FailedPrecondition {
+            message: "local agent support is disabled".to_string(),
+        })
+    }
+
+    #[cfg(feature = "local-agents")]
     pub(crate) async fn rename(&self, request: RenameAgentRequest) -> Result<Agent, ProtocolError> {
         if request.name.is_empty() {
             return Err(ProtocolError::InvalidArgument {
@@ -307,6 +350,17 @@ impl AgentServiceCtx {
             .map_err(rename_error_to_protocol)
     }
 
+    #[cfg(not(feature = "local-agents"))]
+    pub(crate) async fn rename(
+        &self,
+        _request: RenameAgentRequest,
+    ) -> Result<Agent, ProtocolError> {
+        Err(ProtocolError::FailedPrecondition {
+            message: "local agent support is disabled".to_string(),
+        })
+    }
+
+    #[cfg(feature = "local-agents")]
     pub(crate) async fn delete(&self, agent_id: Uuid) -> Result<(), ProtocolError> {
         let session_to_stop = {
             let mut us = self.state().write().await;
@@ -321,8 +375,14 @@ impl AgentServiceCtx {
             None => Err(ProtocolError::NoAgentFound),
         }
     }
+
+    #[cfg(not(feature = "local-agents"))]
+    pub(crate) async fn delete(&self, _agent_id: Uuid) -> Result<(), ProtocolError> {
+        Err(ProtocolError::NoAgentFound)
+    }
 }
 
+#[cfg(feature = "local-agents")]
 fn delete_local_agent_and_emit_session_close(
     us: &mut AgentServiceState,
     agent_id: Uuid,
@@ -430,6 +490,7 @@ fn agent_event_sort_key(event: &AgentEvent) -> (String, u128) {
     }
 }
 
+#[cfg(feature = "local-agents")]
 fn create_error_to_protocol(error: CreateAgentError) -> ProtocolError {
     match error {
         err @ CreateAgentError::LimitReached { .. } => ProtocolError::ResourceExhausted {
@@ -446,6 +507,7 @@ fn create_error_to_protocol(error: CreateAgentError) -> ProtocolError {
     }
 }
 
+#[cfg(feature = "local-agents")]
 fn rename_error_to_protocol(error: RenameAgentError) -> ProtocolError {
     match error {
         RenameAgentError::NotFound(_) => ProtocolError::NoAgentFound,
@@ -458,6 +520,7 @@ fn rename_error_to_protocol(error: RenameAgentError) -> ProtocolError {
     }
 }
 
+#[cfg(feature = "local-agents")]
 fn create_rpc_to_domain_request(
     agent_id: Uuid,
     request: CreateAgentRpcRequest,

@@ -1718,9 +1718,9 @@ impl ClientService {
     async fn resume_local_agents(&self) -> Result<(u64, u64), ProtocolError> {
         #[cfg(not(feature = "local-agents"))]
         {
-            return Err(ProtocolError::FailedPrecondition {
+            Err(ProtocolError::FailedPrecondition {
                 message: "local agent support is disabled".to_string(),
-            });
+            })
         }
 
         #[cfg(feature = "local-agents")]

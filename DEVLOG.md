@@ -38,6 +38,49 @@ One paragraph describing what was done.
 
 ---
 
+## 2026-06-16: Gate the agent runtime at the AgentSession seam
+
+### Summary
+Collapsed the leaf-level `local-agents` gating into a single module seam.
+Previously `AgentSession`, `StructuredInputTarget`, and `SuspendedAgent`
+each carried a `Disabled` variant in client-only builds, forcing every
+match arm into a three-way `#[cfg]` split ending in `unreachable!()`. Now
+the agent-runtime types and their impls live entirely behind
+`#[cfg(feature = "local-agents")]`: client-only builds don't compile them
+at all, so the `Disabled` variants and ~20 `unreachable!()` arms are gone
+and `session.rs` / `suspend.rs` read like the original. The data the
+client still needs — `AgentRecord`, `SessionEvent`, `AgentType`,
+`claude_io` — stays compiled. `AgentServiceCtx` / `AgentServiceState`
+remain as the identity/event carrier; only their session-holding
+internals (the `local_agents` map, the `lifecycle` module, the
+create/rename/delete RPCs) are gated, with `FailedPrecondition` stubs in
+the client build.
+
+### Changes
+- `agents/session.rs`, `suspend.rs`: gate `AgentSession`,
+  `StructuredInputTarget`, `SuspendedAgent` + impls; remove `Disabled`.
+- `services/agent/{mod,lifecycle}.rs`: gate the `lifecycle` module and the
+  session-holding `AgentServiceState` methods; client-only `create` /
+  `rename` / `delete` stubs; added a build-agnostic `local_agent_count()`.
+- `services/mod.rs`, `agents/mod.rs`, `server.rs`, `debug/server.rs`:
+  gate the suspend/shutdown re-exports and the debug-dump session details.
+
+### Decisions Made
+- Gate the type, not the arm: a `#[cfg]` belongs on a module/type/field,
+  never inside a match. The `Disabled`/`unreachable!()` pattern was the
+  symptom of gating at the wrong altitude.
+- Keep `host_id` on `AgentServiceCtx` (Design Y): gating only the
+  session-holding internals avoids rippling into the `ClientService` /
+  startup / server construction for no functional gain.
+
+### Verification
+- `cargo build` / `clippy` (default + `--no-default-features`): clean.
+- `cargo test --lib`: 393 (default) / 298 (client-only) passed.
+- `cargo test --features testnet --test spec`: 43 passed.
+- `amux-core-bridge` `cargo check`: clean against the refactored lib.
+
+---
+
 ## 2026-06-16: Decouple daemonish behaviors from local-agents; drop client-only marker
 
 ### Summary

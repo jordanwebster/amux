@@ -23,10 +23,11 @@ use crate::client::{Client, ConnectError};
 use crate::config::{Config, ConfigError};
 use crate::identity;
 use crate::protocol::{ProtocolError, wire};
+#[cfg(feature = "local-agents")]
+use crate::services::{commit_server_suspend, prepare_server_suspend, shutdown_server};
 use crate::services::{
     CloudLinkService, DeviceRuntimeSecurity, SharedAgentServiceState, StartedUserServices,
-    commit_server_suspend, establish_cloud_connection, prepare_server_suspend, shutdown_server,
-    start_user_services,
+    establish_cloud_connection, start_user_services,
 };
 use crate::transport::{TransportError, create_tls_acceptor};
 use crate::trust::TrustStore;
@@ -720,6 +721,7 @@ async fn process_shutdown_request(
         ShutdownRequest::Shutdown { reply } => {
             if let Some(agent_state) = agent_state {
                 notify_local_clients(agent_state, ShutdownReason::UserRequested).await;
+                #[cfg(feature = "local-agents")]
                 shutdown_server(agent_state).await;
             }
             notify_routing_peers(tunnels, cloud_routing, ShutdownReason::UserRequested).await;
@@ -733,30 +735,44 @@ async fn process_shutdown_request(
                     suspended_count: 0,
                 });
             };
-            let (suspended, errors) = prepare_server_suspend(agent_state).await;
-            let suspended_count = suspended.agents.len();
-            if !errors.is_empty() {
-                let _ = reply.send(Err(ProtocolError::ServerError {
-                    message: errors.join("; "),
-                }));
-                return None;
-            }
-            if !suspended.agents.is_empty()
-                && let Err(error) = crate::suspend::save_suspended(state_path, &suspended)
+            #[cfg(not(feature = "local-agents"))]
             {
-                tracing::error!(error = %error, "failed to save suspended agents");
-                let _ = reply.send(Err(ProtocolError::ServerError {
-                    message: format!("failed to save state: {error}"),
-                }));
-                return None;
+                // Client-only builds host no local agents: nothing to suspend.
+                let _ = state_path;
+                notify_local_clients(agent_state, reason).await;
+                notify_routing_peers(tunnels, cloud_routing, reason).await;
+                Some(PendingShutdownReply::Suspend {
+                    reply,
+                    suspended_count: 0,
+                })
             }
-            notify_local_clients(agent_state, reason).await;
-            notify_routing_peers(tunnels, cloud_routing, reason).await;
-            commit_server_suspend(agent_state).await;
-            Some(PendingShutdownReply::Suspend {
-                reply,
-                suspended_count: suspended_count as u64,
-            })
+            #[cfg(feature = "local-agents")]
+            {
+                let (suspended, errors) = prepare_server_suspend(agent_state).await;
+                let suspended_count = suspended.agents.len();
+                if !errors.is_empty() {
+                    let _ = reply.send(Err(ProtocolError::ServerError {
+                        message: errors.join("; "),
+                    }));
+                    return None;
+                }
+                if !suspended.agents.is_empty()
+                    && let Err(error) = crate::suspend::save_suspended(state_path, &suspended)
+                {
+                    tracing::error!(error = %error, "failed to save suspended agents");
+                    let _ = reply.send(Err(ProtocolError::ServerError {
+                        message: format!("failed to save state: {error}"),
+                    }));
+                    return None;
+                }
+                notify_local_clients(agent_state, reason).await;
+                notify_routing_peers(tunnels, cloud_routing, reason).await;
+                commit_server_suspend(agent_state).await;
+                Some(PendingShutdownReply::Suspend {
+                    reply,
+                    suspended_count: suspended_count as u64,
+                })
+            }
         }
     }
 }

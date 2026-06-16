@@ -11,6 +11,7 @@ use uuid::Uuid;
 use crate::agents::TerminalSize;
 
 /// All suspended agent sessions, serialized to disk across server restarts.
+#[cfg(feature = "local-agents")]
 #[derive(Serialize, Deserialize, Debug, Clone)]
 pub(crate) struct SuspendedServerState {
     pub(crate) agents: Vec<SuspendedAgent>,
@@ -27,9 +28,9 @@ pub(crate) enum SuspendedLocalAgentNameSource {
 }
 
 /// Serializable representation of a suspended agent session.
+#[cfg(feature = "local-agents")]
 #[derive(Serialize, Deserialize, Debug, Clone)]
 pub(crate) enum SuspendedAgent {
-    #[cfg(feature = "local-agents")]
     Claude {
         agent_id: Uuid,
         name: Option<String>,
@@ -40,7 +41,7 @@ pub(crate) enum SuspendedAgent {
         session_id: Uuid,
         created_at: DateTime<Utc>,
     },
-    #[cfg(all(feature = "local-agents", any(debug_assertions, test)))]
+    #[cfg(any(debug_assertions, test))]
     TestAgent {
         agent_id: Uuid,
         name: Option<String>,
@@ -49,35 +50,29 @@ pub(crate) enum SuspendedAgent {
         terminal_size: Option<TerminalSize>,
         created_at: DateTime<Utc>,
     },
-    #[cfg(not(feature = "local-agents"))]
-    Disabled,
 }
 
+#[cfg(feature = "local-agents")]
 impl SuspendedAgent {
     pub(crate) fn agent_id(&self) -> Uuid {
         match self {
-            #[cfg(feature = "local-agents")]
             Self::Claude { agent_id, .. } => *agent_id,
-            #[cfg(all(feature = "local-agents", any(debug_assertions, test)))]
+            #[cfg(any(debug_assertions, test))]
             Self::TestAgent { agent_id, .. } => *agent_id,
-            #[cfg(not(feature = "local-agents"))]
-            Self::Disabled => unreachable!("local agent support is disabled"),
         }
     }
 
     pub(crate) fn name(&self) -> Option<&str> {
         match self {
-            #[cfg(feature = "local-agents")]
             Self::Claude { name, .. } => name.as_deref(),
-            #[cfg(all(feature = "local-agents", any(debug_assertions, test)))]
+            #[cfg(any(debug_assertions, test))]
             Self::TestAgent { name, .. } => name.as_deref(),
-            #[cfg(not(feature = "local-agents"))]
-            Self::Disabled => unreachable!("local agent support is disabled"),
         }
     }
 }
 
 /// Save suspended server state to `<state_dir>/suspended.yaml` (sibling of state.yaml).
+#[cfg(feature = "local-agents")]
 pub(crate) fn save_suspended(
     state_path: &Path,
     state: &SuspendedServerState,
@@ -108,6 +103,7 @@ pub(crate) fn save_suspended(
 }
 
 /// Load suspended server state from `<state_dir>/suspended.yaml`.
+#[cfg(feature = "local-agents")]
 pub(crate) fn load_suspended(
     state_path: &Path,
 ) -> Result<SuspendedServerState, Box<dyn std::error::Error + Send + Sync>> {
@@ -126,6 +122,7 @@ pub(crate) fn load_suspended(
 }
 
 /// Delete the suspended server state file if it exists.
+#[cfg(feature = "local-agents")]
 pub(crate) fn remove_suspended(state_path: &Path) -> Result<(), std::io::Error> {
     let suspended_path = suspended_path(state_path);
     match fs::remove_file(&suspended_path) {
@@ -138,6 +135,7 @@ pub(crate) fn remove_suspended(state_path: &Path) -> Result<(), std::io::Error> 
     }
 }
 
+#[cfg(feature = "local-agents")]
 fn suspended_path(state_path: &Path) -> PathBuf {
     state_path.with_file_name("suspended.yaml")
 }
