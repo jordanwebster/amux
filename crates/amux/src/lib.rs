@@ -29,7 +29,6 @@ mod paths;
 mod protocol;
 mod resource_limits;
 mod routing;
-mod runtime_profile;
 mod server;
 mod services;
 pub mod setup;

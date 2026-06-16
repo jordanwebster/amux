@@ -967,11 +967,6 @@ impl wire::client_service_server::ClientService for ClientService {
                 "set `tcp_port` in your config, or use cloud / SSH pairing",
             ));
         }
-        if request.require_lan_direct && !crate::runtime_profile::direct_reachability_enabled() {
-            return Err(tonic::Status::failed_precondition(
-                "LAN direct pairing is disabled by this runtime profile",
-            ));
-        }
         if mode == wire::start_pairing_request::Mode::Qr && !cloud_enabled {
             return Err(tonic::Status::failed_precondition(
                 "QR pairing requires cloud mode",
@@ -1033,15 +1028,6 @@ impl wire::client_service_server::ClientService for ClientService {
         let reachability = pair_peer_reachability_from_wire(request.reachability)?;
         let link_reachability = reachability.clone();
         let method = pair_peer_audit_method(&link_reachability);
-        if matches!(
-            link_reachability,
-            Some(Reachability::DirectTcp { .. } | Reachability::Ssh { .. })
-        ) && !crate::runtime_profile::direct_reachability_enabled()
-        {
-            return Err(tonic::Status::failed_precondition(
-                "direct reachability is disabled by this runtime profile",
-            ));
-        }
 
         audit::pairing_start(method);
         commit_peer_trust(
@@ -1059,9 +1045,7 @@ impl wire::client_service_server::ClientService for ClientService {
         })?;
         audit::pairing_success(method, host_id);
         self.publish_host_status_update(host_id).await;
-        if let Some(reachability) = link_reachability
-            && crate::runtime_profile::direct_reachability_enabled()
-        {
+        if let Some(reachability) = link_reachability {
             self.reachability_links
                 .spawn_pair_time_link(host_id, reachability);
         }

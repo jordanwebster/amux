@@ -128,9 +128,7 @@ impl ReachabilityLinkConnector {
         let ReachabilityLinkConnectorMode::Enabled(inner) = &self.mode else {
             return;
         };
-        if matches!(reachability, Reachability::Cloud)
-            || !crate::runtime_profile::direct_reachability_enabled()
-        {
+        if matches!(reachability, Reachability::Cloud) {
             return;
         };
         let Some(task) = self.spawn_attempt(ReachabilityLinkAttempt {
@@ -188,20 +186,6 @@ impl Drop for ReachabilityLinkConnectorInner {
 fn snapshot_direct_attempts(
     trust_store: &SharedTrustStore,
 ) -> Result<Vec<ReachabilityLinkAttempt>, ()> {
-    snapshot_direct_attempts_for_profile(
-        trust_store,
-        crate::runtime_profile::direct_reachability_enabled(),
-    )
-}
-
-fn snapshot_direct_attempts_for_profile(
-    trust_store: &SharedTrustStore,
-    direct_reachability_enabled: bool,
-) -> Result<Vec<ReachabilityLinkAttempt>, ()> {
-    if !direct_reachability_enabled {
-        return Ok(Vec::new());
-    }
-
     let store = trust_store.read().map_err(|_| ())?;
     let mut attempts = Vec::new();
     for (peer, entry) in store.entries() {
@@ -359,8 +343,7 @@ mod tests {
                 ],
             },
         );
-        let attempts =
-            snapshot_direct_attempts_for_profile(&Arc::new(RwLock::new(store)), true).unwrap();
+        let attempts = snapshot_direct_attempts(&Arc::new(RwLock::new(store))).unwrap();
 
         assert_eq!(attempts.len(), 2);
         assert!(matches!(
@@ -371,32 +354,5 @@ mod tests {
             &attempts[1].reachability,
             Reachability::Ssh { target } if target == "workstation"
         ));
-    }
-
-    #[test]
-    fn snapshot_direct_attempts_ignores_persisted_reachabilities_when_profile_disables_them() {
-        let peer = HostId::from_u128(2);
-        let addr: SocketAddr = "127.0.0.1:4321".parse().unwrap();
-        let mut store = TrustStore::default();
-        store.insert_for_test(
-            peer,
-            TrustEntry {
-                pubkey: vec![7; 32],
-                name: "peer".to_string(),
-                paired_at: Utc::now(),
-                reachabilities: vec![
-                    Reachability::Cloud,
-                    Reachability::DirectTcp { addr },
-                    Reachability::Ssh {
-                        target: "workstation".to_string(),
-                    },
-                ],
-            },
-        );
-
-        let attempts =
-            snapshot_direct_attempts_for_profile(&Arc::new(RwLock::new(store)), false).unwrap();
-
-        assert!(attempts.is_empty());
     }
 }

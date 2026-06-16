@@ -306,8 +306,7 @@ impl Server {
                 state.config.socket_path.clone(),
                 state.config.tcp_port,
                 state.config.cloud_url.clone(),
-                crate::runtime_profile::sleep_inhibition_enabled()
-                    && state.config.prevent_idle_sleep.unwrap_or(false),
+                state.config.prevent_idle_sleep.unwrap_or(false),
             )
         };
 
@@ -386,25 +385,21 @@ impl Server {
             .await
             .map_err(|error| ServerError::State(error.to_string()))?;
 
-            if let Some(port) = tcp_port
-                && crate::runtime_profile::external_tcp_listener_enabled()
-            {
+            if let Some(port) = tcp_port {
                 let addr = SocketAddr::from(([0, 0, 0, 0], port));
                 let listener = TcpListener::bind(addr).await?;
                 tracing::info!(addr = %addr, "listening on direct dispatcher TCP");
                 services.serve_external_tcp_listener(listener);
-            } else if tcp_port.is_some() {
-                tracing::info!("direct dispatcher TCP listener disabled by runtime profile");
             }
 
             #[cfg(unix)]
-            if crate::runtime_profile::local_client_listener_enabled() {
+            {
                 services.serve_client_service_on_unix_socket(&socket_path)?;
                 tracing::info!(path = %socket_path.display(), "listening on local ClientService");
             }
 
             background_tasks
-                .extend(spawn_local_background_tasks(self.state.clone(), &services).await);
+                .extend(spawn_local_background_tasks(self.state.clone(), &services, true).await);
             local_agent_state = Some(agent_state);
             started_services = Some(services);
         }
@@ -525,7 +520,8 @@ impl EmbeddedBuilder {
         .await
         .map_err(|error| ServerError::State(error.to_string()))?;
 
-        for task in spawn_local_background_tasks(server.state.clone(), &started_services).await {
+        for task in spawn_local_background_tasks(server.state.clone(), &started_services, false).await
+        {
             push_embedded_task(&tasks, task);
         }
 
@@ -665,9 +661,18 @@ async fn handle_embedded_shutdown(
     }
 }
 
+/// Spawn the background tasks a local host needs.
+///
+/// The cloud connection runs for every local host (desktop daemon and
+/// embedded client alike). The directly-reachable daemon behaviors —
+/// peer reachability links and the periodic self-update poll — run only
+/// when `with_daemon_tasks` is set, i.e. on the desktop daemon path.
+/// Embedded clients (mobile) pass `false`: they are not directly
+/// reachable and receive update status over the cloud connection.
 async fn spawn_local_background_tasks(
     state: Arc<RwLock<ServerState>>,
     started_services: &StartedUserServices,
+    with_daemon_tasks: bool,
 ) -> Vec<JoinHandle<()>> {
     let config = {
         let state = state.read().await;
@@ -683,23 +688,23 @@ async fn spawn_local_background_tasks(
             connector_ctx,
         ));
     }
-    if crate::runtime_profile::direct_reachability_enabled() {
-        tasks.extend(started_services.spawn_reachability_links());
+    if !with_daemon_tasks {
+        return tasks;
     }
+
+    tasks.extend(started_services.spawn_reachability_links());
 
     let update_reporter = {
         let state = state.read().await;
         state.update_reporter.clone()
     };
-    if crate::runtime_profile::periodic_update_checks_enabled() {
-        if let Some(task) = spawn_periodic_update_check(
-            update_reporter,
-            cloud_url,
-            env!("CARGO_PKG_VERSION").to_string(),
-            Duration::from_secs(3600),
-        ) {
-            tasks.push(task);
-        }
+    if let Some(task) = spawn_periodic_update_check(
+        update_reporter,
+        cloud_url,
+        env!("CARGO_PKG_VERSION").to_string(),
+        Duration::from_secs(3600),
+    ) {
+        tasks.push(task);
     }
     tasks
 }

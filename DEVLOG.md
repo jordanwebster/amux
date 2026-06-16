@@ -38,6 +38,49 @@ One paragraph describing what was done.
 
 ---
 
+## 2026-06-16: Decouple daemonish behaviors from local-agents; drop client-only marker
+
+### Summary
+Reworked the embedded-build gating along the right axes. The "daemonish"
+behaviors (peer reachability links, periodic self-update poll, direct
+dispatcher TCP listener, local client unix listener, sleep inhibition,
+LAN/direct pairing) had been coupled to the `local-agents` compile
+feature via a `runtime_profile` shim. Those are *runtime* concerns — a
+cloud relay is directly reachable yet hosts no agents — so they now live
+on the builder/config axis instead. `spawn_local_background_tasks` takes
+a `with_daemon_tasks` flag (desktop daemon `true`, embedded `false`); the
+listener/sleep gates revert to the existing `tcp_port` /
+`prevent_idle_sleep` config, which already sat in the daemon-only `run()`
+path. Deleted the `runtime_profile` module and the redundant
+`client-only` marker (an empty feature — `default-features = false` is
+the real signal).
+
+### Changes
+- `Cargo.toml`: removed `client-only`; documented that `local-agents`
+  gates only PTY hosting, not daemonish behavior.
+- `server.rs`: `spawn_local_background_tasks(..., with_daemon_tasks)`;
+  reverted the sleep / TCP / unix-listener runtime_profile gates.
+- `client/mod.rs`, `services/client.rs`, `services/reachability.rs`:
+  removed the `runtime_profile` pairing/reachability guards.
+- Deleted `runtime_profile.rs`.
+
+### Decisions Made
+- Daemonish = runtime, not a feature: keeps cloud-relay/desktop role
+  switching in one binary; only `local-agents` (native `portable-pty`)
+  earns a compile-time feature.
+
+### Verification
+- `cargo build -p amux` and `--no-default-features`: clean.
+- `cargo test -p amux --lib`: 393 (default) / 298 (client-only) passed.
+- `cargo test -p amux --features testnet --test spec`: 43 passed.
+
+### Next Steps
+- Collapse the remaining leaf-level `local-agents` gating: gate the agent
+  runtime at the `AgentSession` seam and remove the `Disabled` enum arms
+  / `unreachable!()` noise in `session.rs` and `suspend.rs`.
+
+---
+
 ## 2026-06-16: Client-only feature gating for embedded iOS builds (first cut)
 
 ### Summary

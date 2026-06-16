@@ -634,7 +634,6 @@ impl Client {
     }
 
     pub async fn start_lan_pin_pairing(&self) -> Result<PairingStart, ClientError> {
-        ensure_direct_reachability_enabled("LAN direct pairing")?;
         self.start_pairing(wire::start_pairing_request::Mode::Pin, true)
             .await
     }
@@ -693,9 +692,6 @@ impl Client {
         peer: SshPairingPeer,
         ssh_target: Option<String>,
     ) -> Result<(), ClientError> {
-        if ssh_target.is_some() {
-            ensure_direct_reachability_enabled("SSH peer reachability")?;
-        }
         let reachability = ssh_target.map(wire::pair_peer_request::Reachability::SshTarget);
         self.pair_peer(peer, reachability).await
     }
@@ -705,7 +701,6 @@ impl Client {
         peer: SshPairingPeer,
         address: SocketAddr,
     ) -> Result<(), ClientError> {
-        ensure_direct_reachability_enabled("direct TCP reachability")?;
         self.pair_peer(
             peer,
             Some(wire::pair_peer_request::Reachability::DirectTcpAddr(
@@ -977,15 +972,6 @@ fn agent_ref(identifier: AgentIdentifier) -> wire::AgentRef {
     wire::AgentRef {
         identifier: Some(identifier),
     }
-}
-
-fn ensure_direct_reachability_enabled(feature: &'static str) -> Result<(), ClientError> {
-    if crate::runtime_profile::direct_reachability_enabled() {
-        return Ok(());
-    }
-    Err(ClientError::Protocol(ProtocolError::FailedPrecondition {
-        message: format!("{feature} is disabled by this runtime profile"),
-    }))
 }
 
 fn peer_ref(identifier: PeerIdentifier) -> wire::PeerRef {
