@@ -92,3 +92,43 @@ jobs:
         run: cargo build --workspace
       - name: Run E2E tests
         run: cargo run -p e2e-runner -- run
+
+  client-only:
+    name: Client-only (embedded)
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          components: clippy
+      - uses: Swatinem/rust-cache@v2
+      # The embedded client build (`default-features = false`) drops the
+      # local-agent runtime. Integration tests (embedded.rs, spec) assume that
+      # runtime, so they are intentionally excluded here — lib only.
+      - name: Build amux (no default features)
+        run: cargo build -p amux --no-default-features
+      - name: Test amux lib (no default features)
+        run: cargo test -p amux --lib --no-default-features
+      - name: Clippy amux (no default features)
+        run: cargo clippy -p amux --no-default-features -- -D warnings
+
+  ios:
+    name: iOS target check
+    runs-on: macos-latest
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          targets: aarch64-apple-ios,aarch64-apple-ios-sim,x86_64-apple-ios
+      - uses: Swatinem/rust-cache@v2
+      # Cross-check the lib for the targets the React Native app builds
+      # (device + both simulator arches). This exercises the `target_os = "ios"`
+      # paths that host builds never compile, and confirms `portable-pty` stays
+      # out of the embedded build.
+      - name: Check amux for iOS device + simulator targets
+        run: |
+          cargo check -p amux --no-default-features --target aarch64-apple-ios
+          cargo check -p amux --no-default-features --target aarch64-apple-ios-sim
+          cargo check -p amux --no-default-features --target x86_64-apple-ios
