@@ -38,6 +38,43 @@ One paragraph describing what was done.
 
 ---
 
+## 2026-06-17: Self-update poll is a desktop-daemon concern, not embedded
+
+### Summary
+Fixes a regression from the 2026-06-16 "decouple daemonish" change: that
+commit gated the periodic self-update poll behind a `with_daemon_tasks`
+flag and conflated it with reachability, which broke the
+`embedded_server_runs_update_checker_when_reporter_is_configured` test and —
+more importantly — encoded the wrong model. The active manifest poll checks
+for a newer amux *binary* to install; a mobile client can't self-update (the
+app store owns its binary), so it must never poll. A too-old mobile client is
+instead told to update *over the cloud connection*: a relay rejects
+under-version clients (`Config::minimum_client_versions`) and the client
+surfaces `UpdateStatus::Required` to its `update_reporter`
+(`services/startup/cloud.rs`) — that lib path is already wired; acting on the
+signal (forcing an app-store update) is the host app's job and is not yet
+implemented in the mobile app.
+
+Split `spawn_local_background_tasks` (cloud connection — every local host)
+from a new `spawn_daemon_background_tasks` (reachability links + update poll —
+desktop daemon only). The `with_daemon_tasks` flag is gone; the embedded path
+simply never calls the daemon-only function.
+
+### Changes
+- `server.rs`: split the two task groups; deleted the `with_daemon_tasks`
+  flag; documented the poll-vs-enforcement distinction.
+- `tests/embedded.rs`: replaced the "embedded polls" test with
+  `embedded_server_does_not_poll_for_updates` (reaches a live manifest server,
+  asserts the embedded client never hits it).
+- `server.rs` unit tests: added `update_checker_is_spawned_with_reporter`.
+
+### Verification
+- `cargo build` / `clippy` (default + `--no-default-features`): clean.
+- `cargo test --lib`: 394 / 300 passed. `--test embedded`: 10 passed.
+- `cargo test --features testnet --test spec`: 43 passed.
+
+---
+
 ## 2026-06-16: Make local-agents a real seam (LocalAgentHost trait)
 
 ### Summary

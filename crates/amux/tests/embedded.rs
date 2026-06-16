@@ -92,7 +92,13 @@ async fn daemon_open_uses_local_client_service() {
 }
 
 #[tokio::test]
-async fn embedded_server_runs_update_checker_when_reporter_is_configured() {
+async fn embedded_server_does_not_poll_for_updates() {
+    // An embedded/mobile client must not poll for binary updates: it can't
+    // self-update (the app store owns its binary). The active manifest poll is a
+    // desktop-daemon concern. A too-old mobile client is instead told to update
+    // over the cloud connection (`UpdateStatus::Required`), which its
+    // `update_reporter` still receives. Here we reach a working manifest server
+    // and assert the embedded client never hits it.
     let dir = tempdir().unwrap();
     let (cloud_url, manifest_task) = spawn_manifest_server("999.0.0").await;
     let config = Config {
@@ -113,19 +119,16 @@ async fn embedded_server_runs_update_checker_when_reporter_is_configured() {
         .await
         .unwrap();
 
-    let status = tokio::time::timeout(Duration::from_secs(2), rx.recv())
-        .await
-        .expect("timed out waiting for embedded update status")
-        .expect("embedded update reporter channel closed");
-    match status {
-        UpdateStatus::Available(Some(info)) => {
-            assert_eq!(info.update_version, "999.0.0");
-        }
-        other => panic!("unexpected update status: {other:?}"),
-    }
+    // The update poll fires immediately when spawned, so a short window with no
+    // status reliably proves the embedded client never spawned one.
+    let result = tokio::time::timeout(Duration::from_millis(500), rx.recv()).await;
+    assert!(
+        result.is_err(),
+        "embedded client unexpectedly reported update status: {result:?}"
+    );
 
     drop(client);
-    manifest_task.await.unwrap();
+    manifest_task.abort();
 }
 
 #[tokio::test]

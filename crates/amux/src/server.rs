@@ -398,7 +398,9 @@ impl Server {
             }
 
             background_tasks
-                .extend(spawn_local_background_tasks(self.state.clone(), &services, true).await);
+                .extend(spawn_local_background_tasks(self.state.clone(), &services).await);
+            background_tasks
+                .extend(spawn_daemon_background_tasks(self.state.clone(), &services).await);
             local_agent_host = agent_host;
             started_services = Some(services);
         }
@@ -519,8 +521,7 @@ impl EmbeddedBuilder {
         .await
         .map_err(|error| ServerError::State(error.to_string()))?;
 
-        for task in spawn_local_background_tasks(server.state.clone(), &started_services, false).await
-        {
+        for task in spawn_local_background_tasks(server.state.clone(), &started_services).await {
             push_embedded_task(&tasks, task);
         }
 
@@ -660,24 +661,17 @@ async fn handle_embedded_shutdown(
     }
 }
 
-/// Spawn the background tasks a local host needs.
-///
-/// The cloud connection runs for every local host (desktop daemon and
-/// embedded client alike). The directly-reachable daemon behaviors —
-/// peer reachability links and the periodic self-update poll — run only
-/// when `with_daemon_tasks` is set, i.e. on the desktop daemon path.
-/// Embedded clients (mobile) pass `false`: they are not directly
-/// reachable and receive update status over the cloud connection.
+/// Background tasks every local host runs: the cloud connection (when cloud
+/// mode is enabled). Both the desktop daemon and the embedded/mobile client run
+/// this; the daemon-only behaviors live in [`spawn_daemon_background_tasks`].
 async fn spawn_local_background_tasks(
     state: Arc<RwLock<ServerState>>,
     started_services: &StartedUserServices,
-    with_daemon_tasks: bool,
 ) -> Vec<JoinHandle<()>> {
     let config = {
         let state = state.read().await;
         state.config.clone()
     };
-    let cloud_url = config.cloud_url.clone();
     let mut tasks = Vec::new();
     if crate::setup::cloud_enabled(&config) {
         let connector_ctx = started_services.link_connector_ctx();
@@ -687,15 +681,31 @@ async fn spawn_local_background_tasks(
             connector_ctx,
         ));
     }
-    if !with_daemon_tasks {
-        return tasks;
-    }
+    tasks
+}
 
-    tasks.extend(started_services.spawn_reachability_links());
+/// Background tasks only a desktop daemon runs. Both are inapplicable to an
+/// embedded/mobile client, so the embedded path never calls this:
+///
+/// - **Peer reachability links** — only a directly-reachable host dials peers.
+/// - **The periodic self-update poll** — checks for a newer amux *binary* to
+///   install. A mobile client can't self-update (the app store owns its
+///   binary), so it never polls. A too-old mobile client is instead told to
+///   update *over the cloud connection*: a relay rejects under-version clients
+///   (`Config::minimum_client_versions`) and the client surfaces
+///   `UpdateStatus::Required` to its `update_reporter` (see
+///   `services/startup/cloud.rs`). Acting on that signal — e.g. forcing an
+///   app-store update — is the host app's responsibility (not yet wired in the
+///   mobile app).
+async fn spawn_daemon_background_tasks(
+    state: Arc<RwLock<ServerState>>,
+    started_services: &StartedUserServices,
+) -> Vec<JoinHandle<()>> {
+    let mut tasks = started_services.spawn_reachability_links();
 
-    let update_reporter = {
+    let (cloud_url, update_reporter) = {
         let state = state.read().await;
-        state.update_reporter.clone()
+        (state.config.cloud_url.clone(), state.update_reporter.clone())
     };
     if let Some(task) = spawn_periodic_update_check(
         update_reporter,
@@ -820,6 +830,31 @@ mod tests {
         );
 
         assert!(task.is_none());
+    }
+
+    #[tokio::test]
+    async fn update_checker_is_spawned_with_reporter() {
+        use std::sync::Arc;
+
+        use crate::update::{UpdateReporter, UpdateStatus};
+
+        struct NoopReporter;
+        impl UpdateReporter for NoopReporter {
+            fn report(&self, _status: UpdateStatus) {}
+        }
+
+        // The daemon path wires the poll whenever a reporter is configured.
+        let task = super::spawn_periodic_update_check(
+            Some(Arc::new(NoopReporter)),
+            "http://127.0.0.1:1".to_string(),
+            env!("CARGO_PKG_VERSION").to_string(),
+            Duration::from_secs(3600),
+        );
+
+        assert!(task.is_some());
+        if let Some(task) = task {
+            task.abort();
+        }
     }
 
     #[test]
