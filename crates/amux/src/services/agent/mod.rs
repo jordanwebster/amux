@@ -1,163 +1,127 @@
 //! AgentService implementation for the protobuf AgentService surface.
 
 #[cfg(feature = "local-agents")]
+mod host;
+#[cfg(feature = "local-agents")]
 mod lifecycle;
+#[cfg(feature = "local-agents")]
 mod session_rpc;
 
-use std::collections::{HashMap, VecDeque};
+#[cfg(feature = "local-agents")]
+pub(crate) use host::PtyAgentHost;
+
+use std::collections::VecDeque;
+use std::path::PathBuf;
 use std::pin::Pin;
 use std::sync::Arc;
 
+use async_trait::async_trait;
 use futures_util::Stream;
-#[cfg(feature = "local-agents")]
-pub(crate) use lifecycle::{
-    CreateAgentError, RenameAgentError, commit_server_suspend, create_agent_record,
-    delete_local_agent, prepare_server_suspend, rename_local_agent_record, resume_agents,
-    shutdown_server, spawn_session_event_loop, withdraw_agent,
-};
-use tokio::sync::{RwLock, mpsc};
+use tokio::sync::mpsc;
 use uuid::Uuid;
 
-#[cfg(feature = "local-agents")]
-use crate::agents::AgentSession;
 use crate::agents::{
-    Agent, AgentEvent, AgentRecord, AgentType, CreateAgentConfig, CreateAgentRequest,
-    CreateAgentRpcRequest, RenameAgentRequest, SendInputRequest, SessionCloseReason, SessionEvent,
-    StopPolicy, SubscribeSessionRequest,
+    Agent, AgentEvent, AgentRecord, CreateAgentRpcRequest, RenameAgentRequest, SendInputRequest,
+    SubscribeSessionRequest,
 };
 use crate::protocol::{ProtocolError, protocol_status, wire};
-use crate::routing::EventSource;
 use crate::server::ShutdownReason;
 #[cfg(test)]
 use crate::tunnel::TunnelTransport;
 
-type TonicResult<T> = Result<tonic::Response<T>, tonic::Status>;
-type ResponseStream<T> = Pin<Box<dyn Stream<Item = Result<T, tonic::Status>> + Send + 'static>>;
-pub(crate) type SharedAgentServiceState = Arc<RwLock<AgentServiceState>>;
-
-#[derive(Default)]
-pub(crate) struct AgentServiceState {
-    #[cfg(feature = "local-agents")]
-    pub(crate) local_agents: HashMap<Uuid, LocalAgentContext>,
-    pub(crate) local_agent_events: EventSource<AgentEvent>,
-    pub(crate) local_session_close_events: EventSource<(Uuid, SessionCloseReason)>,
-    pub(crate) local_shutdown_events: EventSource<ShutdownReason>,
-}
-
 #[cfg(feature = "local-agents")]
-pub(crate) struct LocalAgentContext {
-    pub(crate) session: AgentSession,
+mod state;
+#[cfg(feature = "local-agents")]
+pub(crate) use state::{AgentServiceState, SharedAgentServiceState};
+
+type TonicResult<T> = Result<tonic::Response<T>, tonic::Status>;
+pub(crate) type ResponseStream<T> =
+    Pin<Box<dyn Stream<Item = Result<T, tonic::Status>> + Send + 'static>>;
+
+/// The seam between the core and the local agent runtime.
+///
+/// The runtime (sessions, PTY, hooks, lifecycle, suspend/resume) lives behind
+/// this trait; the core holds an `Option<Arc<dyn LocalAgentHost>>` and a
+/// `None` means "this build hosts no local agents" (the embedded client). The
+/// only implementor is [`PtyAgentHost`], compiled with `local-agents`.
+#[async_trait]
+pub(crate) trait LocalAgentHost: Send + Sync {
+    async fn create(&self, request: CreateAgentRpcRequest) -> Result<Agent, ProtocolError>;
+    async fn rename(&self, request: RenameAgentRequest) -> Result<Agent, ProtocolError>;
+    async fn delete(&self, agent_id: Uuid) -> Result<(), ProtocolError>;
+    async fn send_input(&self, request: SendInputRequest) -> Result<(), ProtocolError>;
+    async fn subscribe_session(
+        &self,
+        request: SubscribeSessionRequest,
+    ) -> Result<ResponseStream<wire::SubscribeSessionResponse>, ProtocolError>;
+    /// Snapshot of currently-hosted agents plus a live event subscription.
+    async fn agent_events_snapshot(&self) -> (Vec<AgentEvent>, mpsc::Receiver<AgentEvent>);
+    /// Live event subscription without a snapshot (for the client bridge).
+    async fn subscribe_agent_events(&self) -> mpsc::Receiver<AgentEvent>;
+    async fn handle_hook(
+        &self,
+        agent_id: Uuid,
+        payload: Vec<u8>,
+        external: bool,
+    ) -> Result<(), ProtocolError>;
+    async fn resume(&self, state_path: PathBuf) -> Result<(u64, u64), ProtocolError>;
+    async fn stop_all(&self);
+    async fn prepare_suspend(&self, state_path: PathBuf) -> Result<u64, ProtocolError>;
+    async fn commit_suspend(&self);
+    async fn notify_shutdown(&self, reason: ShutdownReason);
+    async fn agent_count(&self) -> usize;
+    /// Owned, serializable view of hosted agents for the debug dump.
+    async fn debug_dump(&self, verbose: bool) -> Vec<DebugAgent>;
 }
 
-impl AgentServiceState {
-    pub(crate) fn new() -> Self {
-        Self::default()
-    }
+/// One hosted agent rendered for the debug dump: its record plus the
+/// runtime-private session detail (rendered to JSON inside the host, only
+/// when verbose).
+pub(crate) struct DebugAgent {
+    pub(crate) record: AgentRecord,
+    pub(crate) session: Option<serde_json::Value>,
+}
 
-    /// Number of locally-hosted agents (always `0` in client-only builds).
-    pub(crate) fn local_agent_count(&self) -> usize {
-        #[cfg(feature = "local-agents")]
-        {
-            self.local_agents.len()
-        }
-        #[cfg(not(feature = "local-agents"))]
-        {
-            0
-        }
-    }
-
-    #[cfg(feature = "local-agents")]
-    pub(crate) fn agent_session_mut(&mut self, agent_id: &Uuid) -> Option<&mut AgentSession> {
-        self.local_agents
-            .get_mut(agent_id)
-            .map(|context| &mut context.session)
-    }
-
-    #[cfg(feature = "local-agents")]
-    pub(crate) fn local_agent_info(&self, host_id: Uuid, agent_id: &Uuid) -> Option<AgentRecord> {
-        self.local_agents
-            .get(agent_id)
-            .map(|context| context.session.to_agent(host_id))
-    }
-
-    #[cfg(feature = "local-agents")]
-    pub(crate) fn insert_registered_local_agent(
-        &mut self,
-        host_id: Uuid,
-        agent_id: Uuid,
-        session: AgentSession,
-    ) -> Result<AgentEvent, String> {
-        self.register_local_agent_context(host_id, agent_id, session)
-    }
-
-    #[cfg(feature = "local-agents")]
-    pub(crate) fn register_local_agent_context(
-        &mut self,
-        host_id: Uuid,
-        agent_id: Uuid,
-        session: AgentSession,
-    ) -> Result<AgentEvent, String> {
-        if self.contains_agent_id(&agent_id) {
-            return Err(format!("Agent already exists: {agent_id}"));
-        }
-        if let Some(name) = session.name()
-            && self.name_taken_by_other(name, agent_id)
-        {
-            return Err(format!("Agent already exists: {name}"));
-        }
-
-        let event = session.to_agent(host_id).agent_event();
-        self.local_agents
-            .insert(agent_id, LocalAgentContext { session });
-        Ok(event)
-    }
-
-    #[cfg(feature = "local-agents")]
-    pub(crate) fn contains_agent_id(&self, agent_id: &Uuid) -> bool {
-        self.local_agents.contains_key(agent_id)
-    }
-
-    #[cfg(feature = "local-agents")]
-    pub(crate) fn name_taken_by_other(&self, name: &str, agent_id: Uuid) -> bool {
-        self.local_agents.values().any(|context| {
-            context.session.agent_id() != agent_id && context.session.name() == Some(name)
-        })
+fn local_agents_disabled() -> ProtocolError {
+    ProtocolError::FailedPrecondition {
+        message: "local agent support is disabled".to_string(),
     }
 }
 
+fn no_supported_agent_types() -> ProtocolError {
+    ProtocolError::FailedPrecondition {
+        message: "host has no supported agent types".to_string(),
+    }
+}
+
+/// The tonic `AgentService`, and the core's handle to the local runtime.
+///
+/// Holds the runtime behind `Option<dyn LocalAgentHost>` (`None` in the
+/// embedded client) plus the host's identity. Every RPC delegates to the
+/// host; the `None` arm is ordinary control flow, not conditional
+/// compilation.
 #[derive(Clone)]
 pub(crate) struct AgentServiceCtx {
-    state: SharedAgentServiceState,
-    event_tx: mpsc::Sender<SessionEvent>,
+    host: Option<Arc<dyn LocalAgentHost>>,
     host_id: Uuid,
     is_cloud_server: bool,
 }
 
 impl AgentServiceCtx {
     pub(crate) fn new(
-        state: SharedAgentServiceState,
+        host: Option<Arc<dyn LocalAgentHost>>,
         host_id: Uuid,
         is_cloud_server: bool,
     ) -> Self {
-        let (event_tx, event_rx) = mpsc::channel(256);
-        #[cfg(feature = "local-agents")]
-        spawn_session_event_loop(state.clone(), event_rx, host_id);
-        #[cfg(not(feature = "local-agents"))]
-        drop(event_rx);
         Self {
-            state,
-            event_tx,
+            host,
             host_id,
             is_cloud_server,
         }
     }
 
-    pub(crate) fn state(&self) -> &SharedAgentServiceState {
-        &self.state
-    }
-
-    pub(crate) fn event_tx(&self) -> &mpsc::Sender<SessionEvent> {
-        &self.event_tx
+    pub(crate) fn host(&self) -> Option<&Arc<dyn LocalAgentHost>> {
+        self.host.as_ref()
     }
 
     pub(crate) fn host_id(&self) -> Uuid {
@@ -172,6 +136,60 @@ impl AgentServiceCtx {
         !crate::routing::local_capabilities(self.is_cloud_server)
             .supported_agent_types
             .is_empty()
+    }
+
+    fn require_host(&self) -> Result<&Arc<dyn LocalAgentHost>, ProtocolError> {
+        self.host.as_ref().ok_or_else(local_agents_disabled)
+    }
+
+    pub(crate) async fn subscribe_agent_events(
+        &self,
+    ) -> Result<mpsc::Receiver<AgentEvent>, ProtocolError> {
+        if !self.has_supported_agent_types() {
+            return Err(no_supported_agent_types());
+        }
+        Ok(self.require_host()?.subscribe_agent_events().await)
+    }
+
+    pub(crate) async fn subscribe_agent_events_with_snapshot(
+        &self,
+    ) -> Result<(Vec<AgentEvent>, mpsc::Receiver<AgentEvent>), ProtocolError> {
+        if !self.has_supported_agent_types() {
+            return Err(no_supported_agent_types());
+        }
+        Ok(self.require_host()?.agent_events_snapshot().await)
+    }
+
+    pub(crate) async fn create(
+        &self,
+        request: CreateAgentRpcRequest,
+    ) -> Result<Agent, ProtocolError> {
+        if self.is_cloud_server() || !self.has_supported_agent_types() {
+            return Err(no_supported_agent_types());
+        }
+        self.require_host()?.create(request).await
+    }
+
+    pub(crate) async fn rename(&self, request: RenameAgentRequest) -> Result<Agent, ProtocolError> {
+        self.require_host()?.rename(request).await
+    }
+
+    pub(crate) async fn delete(&self, agent_id: Uuid) -> Result<(), ProtocolError> {
+        match self.host() {
+            Some(host) => host.delete(agent_id).await,
+            None => Err(ProtocolError::NoAgentFound),
+        }
+    }
+
+    pub(crate) async fn send_input(&self, request: SendInputRequest) -> Result<(), ProtocolError> {
+        self.require_host()?.send_input(request).await
+    }
+
+    pub(crate) async fn subscribe_session_response_stream(
+        &self,
+        request: SubscribeSessionRequest,
+    ) -> Result<ResponseStream<wire::SubscribeSessionResponse>, ProtocolError> {
+        self.require_host()?.subscribe_session(request).await
     }
 }
 
@@ -270,131 +288,6 @@ impl wire::agent_service_server::AgentService for AgentServiceCtx {
     }
 }
 
-impl AgentServiceCtx {
-    pub(crate) async fn subscribe_agent_events(
-        &self,
-    ) -> Result<mpsc::Receiver<AgentEvent>, ProtocolError> {
-        if !self.has_supported_agent_types() {
-            return Err(ProtocolError::FailedPrecondition {
-                message: "host has no supported agent types".to_string(),
-            });
-        }
-
-        Ok(self.state().write().await.local_agent_events.subscribe())
-    }
-
-    pub(crate) async fn subscribe_agent_events_with_snapshot(
-        &self,
-    ) -> Result<(Vec<AgentEvent>, mpsc::Receiver<AgentEvent>), ProtocolError> {
-        if !self.has_supported_agent_types() {
-            return Err(ProtocolError::FailedPrecondition {
-                message: "host has no supported agent types".to_string(),
-            });
-        }
-
-        let mut state = self.state().write().await;
-        #[cfg(feature = "local-agents")]
-        let mut snapshot: Vec<_> = state
-            .local_agents
-            .values()
-            .map(|context| context.session.to_agent(self.host_id()).agent_event())
-            .collect();
-        #[cfg(not(feature = "local-agents"))]
-        let snapshot: Vec<AgentEvent> = Vec::new();
-        #[cfg(feature = "local-agents")]
-        snapshot.sort_unstable_by_key(agent_event_sort_key);
-        let rx = state.local_agent_events.subscribe_drop_on_overflow();
-        Ok((snapshot, rx))
-    }
-
-    #[cfg(feature = "local-agents")]
-    pub(crate) async fn create(
-        &self,
-        request: CreateAgentRpcRequest,
-    ) -> Result<Agent, ProtocolError> {
-        if self.is_cloud_server() || !self.has_supported_agent_types() {
-            return Err(ProtocolError::FailedPrecondition {
-                message: "host has no supported agent types".to_string(),
-            });
-        }
-
-        let req = create_rpc_to_domain_request(request.agent_id, request)?;
-
-        create_agent_record(self.state(), self.event_tx(), req, self.host_id())
-            .await
-            .map(Into::into)
-            .map_err(create_error_to_protocol)
-    }
-
-    #[cfg(not(feature = "local-agents"))]
-    pub(crate) async fn create(
-        &self,
-        _request: CreateAgentRpcRequest,
-    ) -> Result<Agent, ProtocolError> {
-        Err(ProtocolError::FailedPrecondition {
-            message: "local agent support is disabled".to_string(),
-        })
-    }
-
-    #[cfg(feature = "local-agents")]
-    pub(crate) async fn rename(&self, request: RenameAgentRequest) -> Result<Agent, ProtocolError> {
-        if request.name.is_empty() {
-            return Err(ProtocolError::InvalidArgument {
-                message: "RenameAgentRequest.name must not be empty".to_string(),
-            });
-        }
-        let host_id = self.host_id();
-        let mut us = self.state().write().await;
-        rename_local_agent_record(&mut us, host_id, &request)
-            .map(Into::into)
-            .map_err(rename_error_to_protocol)
-    }
-
-    #[cfg(not(feature = "local-agents"))]
-    pub(crate) async fn rename(
-        &self,
-        _request: RenameAgentRequest,
-    ) -> Result<Agent, ProtocolError> {
-        Err(ProtocolError::FailedPrecondition {
-            message: "local agent support is disabled".to_string(),
-        })
-    }
-
-    #[cfg(feature = "local-agents")]
-    pub(crate) async fn delete(&self, agent_id: Uuid) -> Result<(), ProtocolError> {
-        let session_to_stop = {
-            let mut us = self.state().write().await;
-            delete_local_agent_and_emit_session_close(&mut us, agent_id)
-        };
-
-        match session_to_stop {
-            Some(session) => {
-                session.stop(StopPolicy::Interrupt).await;
-                Ok(())
-            }
-            None => Err(ProtocolError::NoAgentFound),
-        }
-    }
-
-    #[cfg(not(feature = "local-agents"))]
-    pub(crate) async fn delete(&self, _agent_id: Uuid) -> Result<(), ProtocolError> {
-        Err(ProtocolError::NoAgentFound)
-    }
-}
-
-#[cfg(feature = "local-agents")]
-fn delete_local_agent_and_emit_session_close(
-    us: &mut AgentServiceState,
-    agent_id: Uuid,
-) -> Option<AgentSession> {
-    let session = delete_local_agent(us, agent_id);
-    if session.is_some() {
-        us.local_session_close_events
-            .emit((agent_id, SessionCloseReason::AgentDeleted));
-    }
-    session
-}
-
 fn decode_create_request(
     request: wire::CreateAgentRequest,
 ) -> Result<CreateAgentRpcRequest, tonic::Status> {
@@ -477,97 +370,6 @@ fn decode_status(error: wire::DecodeError) -> tonic::Status {
     tonic::Status::invalid_argument(error.to_string())
 }
 
-fn agent_event_sort_key(event: &AgentEvent) -> (String, u128) {
-    match event {
-        AgentEvent::AgentUp { agent } => {
-            (agent.name.clone().unwrap_or_default(), agent.id.as_u128())
-        }
-        AgentEvent::AgentUpdated { agent } => {
-            (agent.name.clone().unwrap_or_default(), agent.id.as_u128())
-        }
-        AgentEvent::AgentDown { agent_id } => (String::new(), agent_id.as_u128()),
-        AgentEvent::SnapshotComplete => (String::new(), 0),
-    }
-}
-
-#[cfg(feature = "local-agents")]
-fn create_error_to_protocol(error: CreateAgentError) -> ProtocolError {
-    match error {
-        err @ CreateAgentError::LimitReached { .. } => ProtocolError::ResourceExhausted {
-            message: err.to_string(),
-        },
-        err @ CreateAgentError::AlreadyExists(_) => ProtocolError::AlreadyExists {
-            message: err.to_string(),
-        },
-        err @ (CreateAgentError::Start(_) | CreateAgentError::Register(_)) => {
-            ProtocolError::ServerError {
-                message: err.to_string(),
-            }
-        }
-    }
-}
-
-#[cfg(feature = "local-agents")]
-fn rename_error_to_protocol(error: RenameAgentError) -> ProtocolError {
-    match error {
-        RenameAgentError::NotFound(_) => ProtocolError::NoAgentFound,
-        err @ RenameAgentError::AlreadyExists(_) => ProtocolError::AlreadyExists {
-            message: err.to_string(),
-        },
-        err @ RenameAgentError::Update(_) => ProtocolError::ServerError {
-            message: err.to_string(),
-        },
-    }
-}
-
-#[cfg(feature = "local-agents")]
-fn create_rpc_to_domain_request(
-    agent_id: Uuid,
-    request: CreateAgentRpcRequest,
-) -> Result<CreateAgentRequest, ProtocolError> {
-    match request.agent {
-        CreateAgentConfig::ClaudePty {
-            working_dir,
-            args,
-            terminal_size,
-        } => Ok(CreateAgentRequest {
-            agent_id,
-            host_id: None,
-            name: request.name,
-            agent_type: AgentType::Claude,
-            working_dir,
-            terminal_size,
-            args,
-        }),
-        #[cfg(all(feature = "local-agents", any(debug_assertions, test)))]
-        CreateAgentConfig::TestAgent {
-            command,
-            working_dir,
-            terminal_size,
-        } => Ok(CreateAgentRequest {
-            agent_id,
-            host_id: None,
-            name: request.name,
-            agent_type: AgentType::TestAgent { command },
-            working_dir,
-            terminal_size,
-            args: Vec::new(),
-        }),
-        #[cfg(not(all(feature = "local-agents", any(debug_assertions, test))))]
-        CreateAgentConfig::TestAgent {
-            command,
-            working_dir,
-            terminal_size,
-        } => {
-            let _ = (command, working_dir, terminal_size);
-            Err(ProtocolError::Unimplemented {
-                message: "test-agent creation over protobuf is not available in release builds"
-                    .to_string(),
-            })
-        }
-    }
-}
-
 #[cfg(all(test, feature = "local-agents"))]
 mod tests {
     use std::io;
@@ -583,14 +385,15 @@ mod tests {
     use tower::service_fn;
 
     use super::*;
-    use crate::agents::{TEST_ECHO_COMMAND, TEST_ECHO_V1};
+    use crate::agents::{CreateAgentConfig, TEST_ECHO_COMMAND, TEST_ECHO_V1};
+
+    fn service_host() -> Arc<PtyAgentHost> {
+        PtyAgentHost::new(Uuid::from_u128(1))
+    }
 
     fn service_ctx() -> AgentServiceCtx {
-        AgentServiceCtx::new(
-            Arc::new(RwLock::new(AgentServiceState::new())),
-            Uuid::from_u128(1),
-            false,
-        )
+        let host = service_host();
+        AgentServiceCtx::new(Some(host.clone()), host.host_id(), false)
     }
 
     fn agent(agent_id: Uuid, host_id: Uuid, name: &str) -> crate::agents::AgentRecord {
@@ -710,8 +513,9 @@ mod tests {
 
     #[tokio::test]
     async fn tonic_agent_service_subscribe_agent_events_streams_snapshot_and_live() {
-        let ctx = service_ctx();
-        let host_id = ctx.host_id();
+        let host = service_host();
+        let host_id = host.host_id();
+        let ctx = AgentServiceCtx::new(Some(host.clone()), host_id, false);
 
         let response =
             <AgentServiceCtx as wire::agent_service_server::AgentService>::subscribe_agent_events(
@@ -730,7 +534,7 @@ mod tests {
 
         let live_agent = agent(Uuid::from_u128(20), host_id, "live");
         {
-            let mut state = ctx.state().write().await;
+            let mut state = host.state().write().await;
             state.local_agent_events.emit(live_agent.agent_event());
         }
 

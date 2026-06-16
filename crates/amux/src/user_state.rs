@@ -8,7 +8,9 @@ use crate::auth::jwt::JwtValidator;
 use crate::config::Config;
 use crate::protocol::ProtocolError;
 use crate::server::ShutdownReason;
-use crate::services::{AgentServiceState, SharedAgentServiceState};
+use crate::services::LocalAgentHost;
+#[cfg(feature = "local-agents")]
+use crate::services::PtyAgentHost;
 use crate::update::UpdateReporter;
 
 /// Request from a service handler to shut down or suspend the server.
@@ -29,8 +31,24 @@ pub(crate) struct ServerState {
     pub(crate) update_reporter: Option<Arc<dyn UpdateReporter>>,
     pub(crate) is_cloud_server: bool,
     pub(crate) jwt_validator: Option<Arc<JwtValidator>>,
-    pub(crate) local_agent_service: SharedAgentServiceState,
+    pub(crate) local_agent_host: Option<Arc<dyn LocalAgentHost>>,
     pub(crate) shutdown_tx: mpsc::Sender<ShutdownRequest>,
+}
+
+/// Build the local agent host for this build: `Some` whenever `local-agents`
+/// is compiled in (cloud-vs-device is decided by runtime guards, not host
+/// presence), `None` for the embedded client. Spawns the host's session-event
+/// loop, so it must be called from within a tokio runtime.
+fn new_local_agent_host(host_id: Uuid) -> Option<Arc<dyn LocalAgentHost>> {
+    #[cfg(feature = "local-agents")]
+    {
+        Some(PtyAgentHost::new(host_id))
+    }
+    #[cfg(not(feature = "local-agents"))]
+    {
+        let _ = host_id;
+        None
+    }
 }
 
 impl ServerState {
@@ -48,7 +66,10 @@ impl ServerState {
             update_reporter,
             is_cloud_server: false,
             jwt_validator: None,
-            local_agent_service: Arc::new(RwLock::new(AgentServiceState::new())),
+            // Constructed lazily in `ensure_local_agent_host` from within the
+            // async startup path: building it spawns a tokio task, which
+            // `ServerState::new` (sync, sometimes off-runtime) cannot do.
+            local_agent_host: None,
             shutdown_tx,
         }
     }
@@ -84,13 +105,21 @@ impl ServerState {
     pub(crate) fn shutdown_tx(&self) -> mpsc::Sender<ShutdownRequest> {
         self.shutdown_tx.clone()
     }
-    pub(crate) fn local_agent_service(&self) -> SharedAgentServiceState {
-        self.local_agent_service.clone()
+    pub(crate) fn local_agent_host(&self) -> Option<Arc<dyn LocalAgentHost>> {
+        self.local_agent_host.clone()
     }
 }
 
-pub(crate) async fn get_local_agent_service_state(
+/// Return this daemon's local agent host, constructing (and storing) it on
+/// first call. Must run inside a tokio runtime — building the host spawns its
+/// session-event loop. Cloud relays never call this, so they keep `None`.
+pub(crate) async fn ensure_local_agent_host(
     state: &Arc<RwLock<ServerState>>,
-) -> SharedAgentServiceState {
-    state.read().await.local_agent_service()
+) -> Option<Arc<dyn LocalAgentHost>> {
+    let mut guard = state.write().await;
+    if guard.local_agent_host.is_none() {
+        let host_id = guard.host_id;
+        guard.local_agent_host = new_local_agent_host(host_id);
+    }
+    guard.local_agent_host.clone()
 }

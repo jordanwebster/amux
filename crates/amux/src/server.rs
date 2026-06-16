@@ -23,17 +23,15 @@ use crate::client::{Client, ConnectError};
 use crate::config::{Config, ConfigError};
 use crate::identity;
 use crate::protocol::{ProtocolError, wire};
-#[cfg(feature = "local-agents")]
-use crate::services::{commit_server_suspend, prepare_server_suspend, shutdown_server};
 use crate::services::{
-    CloudLinkService, DeviceRuntimeSecurity, SharedAgentServiceState, StartedUserServices,
+    CloudLinkService, DeviceRuntimeSecurity, LocalAgentHost, StartedUserServices,
     establish_cloud_connection, start_user_services,
 };
 use crate::transport::{TransportError, create_tls_acceptor};
 use crate::trust::TrustStore;
 use crate::tunnel::TunnelPool;
 use crate::update::{UpdateReporter, UpdateStatus};
-use crate::user_state::{ServerState, ShutdownRequest, get_local_agent_service_state};
+use crate::user_state::{ServerState, ShutdownRequest, ensure_local_agent_host};
 
 /// Maximum time allowed for a TLS handshake to complete.
 const TLS_HANDSHAKE_TIMEOUT: Duration = Duration::from_secs(10);
@@ -359,7 +357,7 @@ impl Server {
 
         let cloud_routing = is_cloud_server.then(|| CloudLinkService::new(self.state.clone()));
         let mut cloud_routing_task = None;
-        let mut local_agent_state = None;
+        let mut local_agent_host: Option<Arc<dyn LocalAgentHost>> = None;
         let mut started_services = None;
         let mut background_tasks: Vec<JoinHandle<()>> = Vec::new();
 
@@ -377,10 +375,10 @@ impl Server {
             cloud_routing_task =
                 Some(service.serve_on_tls_tcp_listener(listener, acceptor, TLS_HANDSHAKE_TIMEOUT));
         } else {
-            let agent_state = get_local_agent_service_state(&self.state).await;
+            let agent_host = ensure_local_agent_host(&self.state).await;
             let mut services = start_user_services(
                 self.state.clone(),
-                agent_state.clone(),
+                agent_host.clone(),
                 self.device_runtime_security(),
             )
             .await
@@ -401,7 +399,7 @@ impl Server {
 
             background_tasks
                 .extend(spawn_local_background_tasks(self.state.clone(), &services, true).await);
-            local_agent_state = Some(agent_state);
+            local_agent_host = agent_host;
             started_services = Some(services);
         }
 
@@ -418,7 +416,7 @@ impl Server {
             };
             if let Some(reply) = process_shutdown_request(
                 req,
-                local_agent_state.as_ref(),
+                local_agent_host.as_ref(),
                 &state_path,
                 started_services
                     .as_ref()
@@ -512,10 +510,10 @@ impl EmbeddedBuilder {
         )?;
 
         let tasks = Arc::new(Mutex::new(Vec::new()));
-        let agent_state = get_local_agent_service_state(&server.state).await;
+        let agent_host = ensure_local_agent_host(&server.state).await;
         let started_services = start_user_services(
             server.state.clone(),
-            agent_state.clone(),
+            agent_host.clone(),
             server.device_runtime_security(),
         )
         .await
@@ -534,7 +532,7 @@ impl EmbeddedBuilder {
             .shutdown_rx
             .take()
             .expect("open() called after run()");
-        let shutdown_agent_state = agent_state.clone();
+        let shutdown_agent_host = agent_host.clone();
         let shutdown_tasks = tasks.clone();
         let shutdown_tunnels = started_services.tunnels.clone();
         let state_path = {
@@ -547,7 +545,7 @@ impl EmbeddedBuilder {
                 while let Some(req) = shutdown_rx.recv().await {
                     if handle_embedded_shutdown(
                         req,
-                        shutdown_agent_state.clone(),
+                        shutdown_agent_host.clone(),
                         state_path.clone(),
                         shutdown_tasks.clone(),
                         shutdown_tunnels.clone(),
@@ -643,13 +641,13 @@ fn spawn_periodic_update_check(
 
 async fn handle_embedded_shutdown(
     req: ShutdownRequest,
-    agent_state: SharedAgentServiceState,
+    host: Option<Arc<dyn LocalAgentHost>>,
     state_path: std::path::PathBuf,
     tasks: Arc<Mutex<Vec<JoinHandle<()>>>>,
     tunnels: Arc<TunnelPool>,
 ) -> bool {
     if let Some(reply) =
-        process_shutdown_request(req, Some(&agent_state), &state_path, Some(&tunnels), None).await
+        process_shutdown_request(req, host.as_ref(), &state_path, Some(&tunnels), None).await
     {
         reply.send_success();
         tokio::spawn(async move {
@@ -712,73 +710,49 @@ async fn spawn_local_background_tasks(
 
 async fn process_shutdown_request(
     req: ShutdownRequest,
-    agent_state: Option<&SharedAgentServiceState>,
+    host: Option<&Arc<dyn LocalAgentHost>>,
     state_path: &Path,
     tunnels: Option<&TunnelPool>,
     cloud_routing: Option<&CloudLinkService>,
 ) -> Option<PendingShutdownReply> {
     match req {
         ShutdownRequest::Shutdown { reply } => {
-            if let Some(agent_state) = agent_state {
-                notify_local_clients(agent_state, ShutdownReason::UserRequested).await;
-                #[cfg(feature = "local-agents")]
-                shutdown_server(agent_state).await;
+            if let Some(host) = host {
+                host.notify_shutdown(ShutdownReason::UserRequested).await;
+                host.stop_all().await;
             }
             notify_routing_peers(tunnels, cloud_routing, ShutdownReason::UserRequested).await;
             Some(PendingShutdownReply::Shutdown { reply })
         }
         ShutdownRequest::Suspend { reason, reply } => {
-            let Some(agent_state) = agent_state else {
+            // No local host (embedded client or cloud relay): nothing to
+            // suspend; just tell routing peers we're going away.
+            let Some(host) = host else {
                 notify_routing_peers(tunnels, cloud_routing, reason).await;
                 return Some(PendingShutdownReply::Suspend {
                     reply,
                     suspended_count: 0,
                 });
             };
-            #[cfg(not(feature = "local-agents"))]
-            {
-                // Client-only builds host no local agents: nothing to suspend.
-                let _ = state_path;
-                notify_local_clients(agent_state, reason).await;
-                notify_routing_peers(tunnels, cloud_routing, reason).await;
-                Some(PendingShutdownReply::Suspend {
-                    reply,
-                    suspended_count: 0,
-                })
-            }
-            #[cfg(feature = "local-agents")]
-            {
-                let (suspended, errors) = prepare_server_suspend(agent_state).await;
-                let suspended_count = suspended.agents.len();
-                if !errors.is_empty() {
-                    let _ = reply.send(Err(ProtocolError::ServerError {
-                        message: errors.join("; "),
-                    }));
+
+            // prepare_suspend owns the save and folds prepare/save failures
+            // into Err; bail before notifying or committing on failure.
+            let suspended_count = match host.prepare_suspend(state_path.to_path_buf()).await {
+                Ok(count) => count,
+                Err(error) => {
+                    let _ = reply.send(Err(error));
                     return None;
                 }
-                if !suspended.agents.is_empty()
-                    && let Err(error) = crate::suspend::save_suspended(state_path, &suspended)
-                {
-                    tracing::error!(error = %error, "failed to save suspended agents");
-                    let _ = reply.send(Err(ProtocolError::ServerError {
-                        message: format!("failed to save state: {error}"),
-                    }));
-                    return None;
-                }
-                notify_local_clients(agent_state, reason).await;
-                notify_routing_peers(tunnels, cloud_routing, reason).await;
-                commit_server_suspend(agent_state).await;
-                Some(PendingShutdownReply::Suspend {
-                    reply,
-                    suspended_count: suspended_count as u64,
-                })
-            }
+            };
+            host.notify_shutdown(reason).await;
+            notify_routing_peers(tunnels, cloud_routing, reason).await;
+            host.commit_suspend().await;
+            Some(PendingShutdownReply::Suspend {
+                reply,
+                suspended_count,
+            })
         }
     }
-}
-
-async fn notify_local_clients(agent_state: &SharedAgentServiceState, reason: ShutdownReason) {
-    agent_state.write().await.local_shutdown_events.emit(reason);
 }
 
 async fn notify_routing_peers(

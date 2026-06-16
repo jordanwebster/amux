@@ -36,8 +36,8 @@ use crate::routing::{
 };
 use crate::services::client::{ClientService, PairingTrustAccess};
 use crate::services::{
-    AgentServiceCtx, LocalPairingIdentity, PairingService, ReachabilityLinkConnector,
-    SharedAgentServiceState,
+    AgentServiceCtx, LocalAgentHost, LocalPairingIdentity, PairingService,
+    ReachabilityLinkConnector,
 };
 #[cfg(test)]
 use crate::transport::PreTrustPairingReachability;
@@ -510,7 +510,7 @@ impl DeviceRuntimeSecurity {
 
 pub(crate) async fn start_user_services(
     state: Arc<RwLock<ServerState>>,
-    agent_state: SharedAgentServiceState,
+    agent_host: Option<Arc<dyn LocalAgentHost>>,
     device_security: DeviceRuntimeSecurity,
 ) -> Result<StartedUserServices, IdentityError> {
     let mut parts =
@@ -521,7 +521,7 @@ pub(crate) async fn start_user_services(
         state.is_cloud_server()
     };
 
-    let agent = AgentServiceCtx::new(agent_state.clone(), host_id, is_cloud_server);
+    let agent = AgentServiceCtx::new(agent_host.clone(), host_id, is_cloud_server);
     let trust_commit_lock = Arc::new(Mutex::new(()));
     let pair_mode = Arc::new(PairMode::new());
     let reachability_links = ReachabilityLinkConnector::new(
@@ -894,11 +894,12 @@ mod tests {
         trust_store: TrustStore,
     ) -> StartedUserServices {
         let state = test_state(identity.host_id);
-        let agent_state = Arc::new(RwLock::new(crate::services::AgentServiceState::new()));
+        let agent_host: Option<Arc<dyn LocalAgentHost>> =
+            Some(crate::services::PtyAgentHost::new(identity.host_id));
         let data_dir = tempfile::tempdir().unwrap();
         start_user_services(
             state,
-            agent_state,
+            agent_host,
             DeviceRuntimeSecurity::new(identity, trust_store, data_dir.keep()),
         )
         .await
@@ -1312,14 +1313,14 @@ mod tests {
         let responder_trust = responder_security.trust_store.clone();
         let initiator = start_user_services(
             test_state(initiator_identity.host_id),
-            Arc::new(RwLock::new(crate::services::AgentServiceState::new())),
+            Some(crate::services::PtyAgentHost::new(initiator_identity.host_id)),
             initiator_security,
         )
         .await
         .unwrap();
         let mut responder = start_user_services(
             test_state(responder_identity.host_id),
-            Arc::new(RwLock::new(crate::services::AgentServiceState::new())),
+            Some(crate::services::PtyAgentHost::new(responder_identity.host_id)),
             responder_security,
         )
         .await
@@ -1799,14 +1800,14 @@ mod tests {
         let trust_b = security_b.trust_store.clone();
         let host_a = start_user_services(
             test_state(identity_a.host_id),
-            Arc::new(RwLock::new(crate::services::AgentServiceState::new())),
+            Some(crate::services::PtyAgentHost::new(identity_a.host_id)),
             security_a,
         )
         .await
         .unwrap();
         let host_b = start_user_services(
             test_state(identity_b.host_id),
-            Arc::new(RwLock::new(crate::services::AgentServiceState::new())),
+            Some(crate::services::PtyAgentHost::new(identity_b.host_id)),
             security_b,
         )
         .await
@@ -1910,14 +1911,14 @@ mod tests {
         let trust_b = security_b.trust_store.clone();
         let host_a = start_user_services(
             test_state(identity_a.host_id),
-            Arc::new(RwLock::new(crate::services::AgentServiceState::new())),
+            Some(crate::services::PtyAgentHost::new(identity_a.host_id)),
             security_a,
         )
         .await
         .unwrap();
         let host_b = start_user_services(
             test_state(identity_b.host_id),
-            Arc::new(RwLock::new(crate::services::AgentServiceState::new())),
+            Some(crate::services::PtyAgentHost::new(identity_b.host_id)),
             security_b,
         )
         .await

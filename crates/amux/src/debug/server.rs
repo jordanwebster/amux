@@ -2,12 +2,11 @@ use std::sync::Arc;
 
 use serde::ser::{SerializeMap, SerializeSeq};
 use serde::{Serialize, Serializer};
-use tokio::sync::{RwLock, RwLockReadGuard};
-use uuid::Uuid;
+use tokio::sync::RwLock;
 
 use crate::agents::AgentRecord;
-use crate::debug::{DebugFormat, DebugView, LossyPath};
-use crate::services::AgentServiceState;
+use crate::debug::{DebugFormat, LossyPath};
+use crate::services::DebugAgent;
 use crate::setup;
 use crate::user_state::ServerState;
 
@@ -19,15 +18,18 @@ pub(crate) async fn dump_server_debug_info(
     let state_guard = state.read().await;
     let use_cloud_mode = setup::cloud_enabled(&state_guard.config);
 
-    let local_agent_state = state_guard.local_agent_service();
-    let local_agent_guard = local_agent_state.read().await;
-    let users = [("local", local_agent_guard)];
+    let host = state_guard.local_agent_host();
+    let (agents, agent_count) = match &host {
+        Some(host) => (host.debug_dump(verbose).await, host.agent_count().await),
+        None => (Vec::new(), 0),
+    };
 
     let view = ServerDebugView {
         state: &state_guard,
         use_cloud_mode,
         local_version: env!("CARGO_PKG_VERSION"),
-        users: &users,
+        agents: &agents,
+        agent_count,
         verbose,
     };
 
@@ -41,19 +43,18 @@ struct ServerDebugView<'a> {
     state: &'a ServerState,
     use_cloud_mode: bool,
     local_version: &'static str,
-    users: &'a [(&'a str, RwLockReadGuard<'a, AgentServiceState>)],
+    agents: &'a [DebugAgent],
+    agent_count: usize,
     verbose: bool,
 }
 
 impl Serialize for ServerDebugView<'_> {
     fn serialize<S: Serializer>(&self, serializer: S) -> Result<S::Ok, S::Error> {
-        let agent_count: usize = self.users.iter().map(|(_, us)| us.local_agent_count()).sum();
-
         let mut map = serializer.serialize_map(None)?;
         map.serialize_entry("is_cloud_server", &self.state.is_cloud_server)?;
         map.serialize_entry("use_cloud_mode", &self.use_cloud_mode)?;
-        map.serialize_entry("user_count", &self.users.len())?;
-        map.serialize_entry("agent_count", &agent_count)?;
+        map.serialize_entry("user_count", &1usize)?;
+        map.serialize_entry("agent_count", &self.agent_count)?;
         map.serialize_entry("remote_agent_count", &0usize)?;
         map.serialize_entry("host_count", &0usize)?;
         map.serialize_entry("route_count", &0usize)?;
@@ -73,7 +74,8 @@ impl Serialize for ServerDebugView<'_> {
                 "users",
                 &UsersListView {
                     state: self.state,
-                    users: self.users,
+                    agents: self.agents,
+                    agent_count: self.agent_count,
                     verbose: self.verbose,
                 },
             )?;
@@ -83,30 +85,8 @@ impl Serialize for ServerDebugView<'_> {
     }
 }
 
-#[cfg(not(feature = "local-agents"))]
-fn debug_agents(_us: &AgentServiceState, _host_id: Uuid) -> Vec<AgentRecord> {
-    Vec::new()
-}
-
-#[cfg(feature = "local-agents")]
-fn debug_agents(us: &AgentServiceState, host_id: Uuid) -> Vec<AgentRecord> {
-    let mut agents: Vec<_> = us
-        .local_agents
-        .values()
-        .map(|context| context.session.to_agent(host_id))
-        .collect();
-    agents.sort_unstable_by(|a, b| {
-        a.name
-            .as_deref()
-            .unwrap_or("")
-            .cmp(b.name.as_deref().unwrap_or(""))
-            .then_with(|| a.id.as_u128().cmp(&b.id.as_u128()))
-    });
-    agents
-}
-
 struct LocalHostView<'a> {
-    id: Uuid,
+    id: uuid::Uuid,
     name: &'a str,
     version: &'static str,
 }
@@ -123,21 +103,22 @@ impl Serialize for LocalHostView<'_> {
 
 struct UsersListView<'a> {
     state: &'a ServerState,
-    users: &'a [(&'a str, RwLockReadGuard<'a, AgentServiceState>)],
+    agents: &'a [DebugAgent],
+    agent_count: usize,
     verbose: bool,
 }
 
 impl Serialize for UsersListView<'_> {
     fn serialize<S: Serializer>(&self, serializer: S) -> Result<S::Ok, S::Error> {
-        let mut seq = serializer.serialize_seq(Some(self.users.len()))?;
-        for (user_id, us) in self.users {
-            seq.serialize_element(&UserView {
-                state: self.state,
-                user_id,
-                user_state: us,
-                verbose: self.verbose,
-            })?;
-        }
+        // One synthetic "local" user holds this daemon's local agents.
+        let mut seq = serializer.serialize_seq(Some(1))?;
+        seq.serialize_element(&UserView {
+            state: self.state,
+            user_id: "local",
+            agents: self.agents,
+            agent_count: self.agent_count,
+            verbose: self.verbose,
+        })?;
         seq.end()
     }
 }
@@ -145,18 +126,16 @@ impl Serialize for UsersListView<'_> {
 struct UserView<'a> {
     state: &'a ServerState,
     user_id: &'a str,
-    user_state: &'a AgentServiceState,
+    agents: &'a [DebugAgent],
+    agent_count: usize,
     verbose: bool,
 }
 
 impl Serialize for UserView<'_> {
     fn serialize<S: Serializer>(&self, serializer: S) -> Result<S::Ok, S::Error> {
-        let us = self.user_state;
-        let agents = debug_agents(us, self.state.host_id);
-
         let mut map = serializer.serialize_map(None)?;
         map.serialize_entry("user_id", self.user_id)?;
-        map.serialize_entry("agent_count", &us.local_agent_count())?;
+        map.serialize_entry("agent_count", &self.agent_count)?;
         map.serialize_entry("remote_agent_count", &0usize)?;
         map.serialize_entry("host_count", &0usize)?;
         map.serialize_entry("route_count", &0usize)?;
@@ -168,8 +147,7 @@ impl Serialize for UserView<'_> {
             "agents",
             &AgentsView {
                 state: self.state,
-                user_state: us,
-                agents: &agents,
+                agents: self.agents,
                 verbose: self.verbose,
             },
         )?;
@@ -187,8 +165,7 @@ impl Serialize for EmptySeq {
 
 struct AgentsView<'a> {
     state: &'a ServerState,
-    user_state: &'a AgentServiceState,
-    agents: &'a [AgentRecord],
+    agents: &'a [DebugAgent],
     verbose: bool,
 }
 
@@ -196,17 +173,12 @@ impl Serialize for AgentsView<'_> {
     fn serialize<S: Serializer>(&self, serializer: S) -> Result<S::Ok, S::Error> {
         let mut seq = serializer.serialize_seq(Some(self.agents.len()))?;
         for agent in self.agents {
-            let host_name = (agent.host_id == self.state.host_id)
+            let host_name = (agent.record.host_id == self.state.host_id)
                 .then_some(self.state.config.host_name.as_str());
             seq.serialize_element(&AgentDebugEntry {
-                agent,
+                agent: &agent.record,
                 host_name,
-                #[cfg(feature = "local-agents")]
-                session: self
-                    .user_state
-                    .local_agents
-                    .get(&agent.id)
-                    .map(|context| &context.session),
+                session: agent.session.as_ref(),
                 verbose: self.verbose,
             })?;
         }
@@ -217,13 +189,13 @@ impl Serialize for AgentsView<'_> {
 struct AgentDebugEntry<'a> {
     agent: &'a AgentRecord,
     host_name: Option<&'a str>,
-    #[cfg(feature = "local-agents")]
-    session: Option<&'a crate::agents::AgentSession>,
+    session: Option<&'a serde_json::Value>,
     verbose: bool,
 }
 
 impl Serialize for AgentDebugEntry<'_> {
     fn serialize<S: Serializer>(&self, serializer: S) -> Result<S::Ok, S::Error> {
+        let _ = self.verbose;
         let info = self.agent;
         let mut map = serializer.serialize_map(None)?;
         map.serialize_entry("id", &info.id)?;
@@ -242,9 +214,8 @@ impl Serialize for AgentDebugEntry<'_> {
         map.serialize_entry("working_dir", &LossyPath(&info.working_dir))?;
         map.serialize_entry("args", &info.args)?;
         map.serialize_entry("created_at", &info.created_at)?;
-        #[cfg(feature = "local-agents")]
         if let Some(session) = self.session {
-            map.serialize_entry("session", &DebugView::new(session, self.verbose))?;
+            map.serialize_entry("session", session)?;
         }
         map.end()
     }

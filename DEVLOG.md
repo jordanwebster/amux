@@ -38,6 +38,75 @@ One paragraph describing what was done.
 
 ---
 
+## 2026-06-16: Make local-agents a real seam (LocalAgentHost trait)
+
+### Summary
+Replaced the pervasive, implicit `local-agents` boundary with one explicit
+abstraction. The core no longer reaches the agent runtime by concrete type;
+it depends on a `LocalAgentHost` trait and holds an
+`Option<Arc<dyn LocalAgentHost>>` (`None` = the embedded client). The concrete
+runtime — sessions, PTY, hooks, lifecycle, suspend/resume, session I/O,
+the registry, and its three event sources — moved behind the seam into the
+`PtyAgentHost` impl, gated at its module declaration. Every RPC and shutdown
+path that used to carry a `#[cfg]` (and usually a hand-written client-only
+twin) is now a uniform delegator whose `None` arm is ordinary control flow.
+
+Derived the trait surface from the existing `#[cfg(not)]` stubs (they were the
+de-facto "what the core needs without a runtime"); cross-checking surfaced
+that the three `EventSource`s and the `SessionEvent` channel were structurally
+"core" but only ever fed by runtime code, so they moved into the host too —
+that is what makes the boundary clean rather than merely relocated. The
+shutdown *orchestration* stays in `server.rs` (so `notify_routing_peers` keeps
+interleaving between local-notify and commit); `prepare_suspend` owns the save
+and folds prepare/save failures into `Err`, and `server.rs` bails before
+notify/commit on `Err`.
+
+Result: `cfg(feature = "local-agents")` sites 87 → 21, and the 21 are all
+module declarations, re-exports, construction wiring, or the `routing/host.rs`
+capability statement — **no boundary/business-logic gate and no cfg twin
+remains**.
+
+### Changes
+- `services/agent/host.rs`: new — `PtyAgentHost` + `impl LocalAgentHost`
+  (create/rename/delete/send_input/subscribe_session/agent-events/handle_hook/
+  resume/stop_all/prepare_suspend/commit_suspend/notify_shutdown/debug_dump).
+- `services/agent/state.rs`: new — `AgentServiceState`/`LocalAgentContext`
+  registry (moved from `mod.rs`, gated at the `mod` site).
+- `services/agent/mod.rs`: `LocalAgentHost` trait + `DebugAgent` (always
+  compiled); `AgentServiceCtx` now `{ Option<host>, host_id, is_cloud }` and
+  delegates; removed the create/rename/delete twins and moved helpers to host.
+- `services/agent/session_rpc.rs`: retargeted `AgentServiceCtx` → `PtyAgentHost`,
+  dropped all per-item gates (module gated) and the client-only stub.
+- `services/{mod,client}.rs`, `server.rs`, `debug/server.rs`,
+  `user_state.rs`, `services/startup/mod.rs`, `testnet/daemon.rs`: route
+  through the host; `ServerState` holds `Option<Arc<dyn LocalAgentHost>>`,
+  built lazily in `ensure_local_agent_host` (the host spawns a task, so it
+  must be constructed inside the runtime, not in `ServerState::new`).
+- `debug/server.rs`: consumes owned `Vec<DebugAgent>` from `host.debug_dump`
+  (session detail rendered to JSON inside the host) instead of borrowing the
+  registry guard.
+
+### Decisions Made
+- Host presence = the feature, not the role: `Some` whenever `local-agents`
+  is compiled (cloud relays keep an empty registry); cloud-vs-device stays a
+  runtime guard. So the host needs only `host_id` to construct.
+- Keep suspend's pieces (`prepare`/`commit`/`notify`) as separate trait
+  methods: the shutdown orchestration interleaves `notify_routing_peers`, so a
+  merged `suspend()` could not preserve ordering.
+- `routing/host.rs` capabilities (3 gates) stay: a compile-time capability
+  fact consulted where no host handle exists.
+
+### Verification
+- `cargo build`/`clippy` (default + `--no-default-features` + `testnet`): clean
+  (pre-existing `serve_*_tracked` / embedded-no-default warnings unrelated).
+- `cargo test --lib`: 393 (default) / 299 (client-only) passed — including
+  `attach_local_agent_events_populates_client_agent_model` (the event-delivery
+  bridge through the host).
+- `cargo test --features testnet --test spec`: 43 passed.
+- `amux-core-bridge` `cargo check` (embedded, `default-features = false`): clean.
+
+---
+
 ## 2026-06-16: Split agent data types from the runtime (seam prep)
 
 ### Summary

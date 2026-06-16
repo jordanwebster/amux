@@ -8,7 +8,7 @@ use std::sync::{Arc, Weak};
 
 use hyper_util::rt::TokioIo;
 use tokio::net::TcpListener;
-use tokio::sync::{Mutex, RwLock};
+use tokio::sync::Mutex;
 use tokio::task::JoinHandle;
 use tonic::codegen::http::Uri;
 use tonic::transport::{Channel, Endpoint};
@@ -29,8 +29,7 @@ use crate::routing::{
     spawn_connector_to_channel_with_bearer_token,
 };
 use crate::services::{
-    AgentServiceState, ClientService, DeviceRuntimeSecurity, StartedUserServices,
-    start_user_services,
+    ClientService, DeviceRuntimeSecurity, PtyAgentHost, StartedUserServices, start_user_services,
 };
 use crate::trust::{Reachability, SharedTrustStore, TrustStore};
 use crate::tunnel::TunnelPool;
@@ -227,8 +226,8 @@ pub(crate) async fn start_daemon_runtime(
         inner.tcp_addr.map(|addr| addr.port()),
         inner.cloud.is_some(),
     );
-    let agent_state = Arc::new(RwLock::new(AgentServiceState::new()));
-    let mut services = start_user_services(state, agent_state, security)
+    let mut services =
+        start_user_services(state, Some(PtyAgentHost::new(inner.host_id)), security)
         .await
         .unwrap_or_else(|error| panic!("start daemon '{}': {error}", inner.name));
 

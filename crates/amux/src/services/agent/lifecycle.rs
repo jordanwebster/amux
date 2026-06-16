@@ -9,7 +9,7 @@ use crate::agents::{
     AgentEvent, AgentRecord, AgentSession, AgentType, LocalAgentNameSource, RenameAgentRequest,
     SessionEvent, StopPolicy,
 };
-use crate::services::{AgentServiceState, SharedAgentServiceState};
+use super::{AgentServiceState, SharedAgentServiceState};
 use crate::suspend::{SuspendedAgent, SuspendedServerState};
 
 /// Maximum local agents per user. Each agent holds a PTY and several tokio

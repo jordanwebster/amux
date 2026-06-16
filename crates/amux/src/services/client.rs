@@ -19,8 +19,6 @@ use crate::agents::{
     Agent, AgentEvent, CreateAgentConfig, CreateAgentRpcRequest, SendInputRequest,
     SessionInputEvent, SubscribeSessionEvent, SubscribeSessionRequest, TerminalSize,
 };
-#[cfg(feature = "local-agents")]
-use crate::agents::{AgentSession, ExternalHookBootstrap, HookOutcome, StopPolicy};
 use crate::connection::ConnectionManager;
 use crate::debug::DebugFormat;
 use crate::identity::IdentityError;
@@ -37,8 +35,6 @@ use crate::services::pairing::{
     LocalPairingIdentity, PeerTrustCommitContext, PeerTrustUpdate, SharedTrustCommitLock,
     commit_peer_trust, pair_initiator,
 };
-#[cfg(feature = "local-agents")]
-use crate::services::resume_agents;
 use crate::transport::{BoxedGrpcAuth, BoxedGrpcConnectInfo};
 use crate::trust::{Reachability, SharedTrustStore, TrustEntry, TrustStore};
 use crate::tunnel::TunnelPoolError;
@@ -1716,129 +1712,35 @@ impl ClientService {
     }
 
     async fn resume_local_agents(&self) -> Result<(u64, u64), ProtocolError> {
-        #[cfg(not(feature = "local-agents"))]
-        {
-            Err(ProtocolError::FailedPrecondition {
-                message: "local agent support is disabled".to_string(),
-            })
-        }
-
-        #[cfg(feature = "local-agents")]
-        {
-            let (state_path, host_id, is_cloud_server) = {
-                let state = self.server_state.read().await;
-                (state.state_path(), state.host_id(), state.is_cloud_server())
-            };
-            if is_cloud_server {
-                return Err(ProtocolError::FailedPrecondition {
-                    message: "cloud relays do not host local agents".to_string(),
-                });
-            }
-
-            let suspended = crate::suspend::load_suspended(&state_path).map_err(|error| {
-                ProtocolError::ServerError {
-                    message: format!("failed to load state: {error}"),
-                }
-            })?;
-            let result = resume_agents(
-                self.local_agents.state(),
-                self.local_agents.event_tx(),
-                suspended.agents,
-                host_id,
-            )
-            .await;
-            if result.failed_agents.is_empty() {
-                crate::suspend::remove_suspended(&state_path).map_err(|error| {
-                    ProtocolError::ServerError {
-                        message: format!("failed to remove state: {error}"),
-                    }
-                })?;
-            } else {
-                crate::suspend::save_suspended(
-                    &state_path,
-                    &crate::suspend::SuspendedServerState {
-                        agents: result.failed_agents,
-                    },
-                )
-                .map_err(|error| ProtocolError::ServerError {
-                    message: format!("failed to save remaining state: {error}"),
-                })?;
-            }
-            Ok((result.resumed_count as u64, result.failed_count as u64))
-        }
-    }
-
-    #[cfg(feature = "local-agents")]
-    async fn handle_local_hook(
-        &self,
-        agent_id: Uuid,
-        payload: Vec<u8>,
-        external: bool,
-    ) -> Result<(), ProtocolError> {
-        tracing::debug!(%agent_id, external, "received Claude hook event");
-
-        let mut session_to_stop = None;
-        let result = {
-            let mut state = self.local_agents.state().write().await;
-            if let Some(session) = state.agent_session_mut(&agent_id) {
-                match session.handle_hook(&payload).await {
-                    Ok(HookOutcome::Noop | HookOutcome::KeepSession) => Ok(()),
-                    Ok(HookOutcome::WithdrawSession) => {
-                        session_to_stop = crate::services::withdraw_agent(&mut state, agent_id);
-                        Ok(())
-                    }
-                    Err(error) => Err(error.into_protocol_error()),
-                }
-            } else if !external {
-                tracing::warn!(%agent_id, "hook target not found");
-                Err(ProtocolError::NoAgentFound)
-            } else {
-                match AgentSession::bootstrap_external_hook(agent_id, &payload).await {
-                    Ok(ExternalHookBootstrap::Noop) => Ok(()),
-                    Ok(ExternalHookBootstrap::Register(session)) => {
-                        match state.insert_registered_local_agent(
-                            self.local_agents.host_id(),
-                            agent_id,
-                            session,
-                        ) {
-                            Ok(announce) => {
-                                if let Some(session) = state.agent_session_mut(&agent_id) {
-                                    session.maybe_start_name_sniffer(self.local_agents.event_tx());
-                                }
-                                state.local_agent_events.emit(announce);
-                                tracing::info!(%agent_id, "created readonly session from external hook");
-                                Ok(())
-                            }
-                            Err(e) => Err(ProtocolError::ServerError {
-                                message: format!(
-                                    "failed to register readonly agent {agent_id}: {e}"
-                                ),
-                            }),
-                        }
-                    }
-                    Err(error) => Err(error.into_protocol_error()),
-                }
-            }
+        let (state_path, is_cloud_server) = {
+            let state = self.server_state.read().await;
+            (state.state_path(), state.is_cloud_server())
         };
-
-        if let Some(session) = session_to_stop {
-            session.stop(StopPolicy::Interrupt).await;
+        if is_cloud_server {
+            return Err(ProtocolError::FailedPrecondition {
+                message: "cloud relays do not host local agents".to_string(),
+            });
         }
-
-        result
+        match self.local_agents.host() {
+            Some(host) => host.resume(state_path).await,
+            None => Err(ProtocolError::FailedPrecondition {
+                message: "local agent support is disabled".to_string(),
+            }),
+        }
     }
 
-    #[cfg(not(feature = "local-agents"))]
     async fn handle_local_hook(
         &self,
         agent_id: Uuid,
         payload: Vec<u8>,
         external: bool,
     ) -> Result<(), ProtocolError> {
-        let _ = (agent_id, payload, external);
-        Err(ProtocolError::FailedPrecondition {
-            message: "local agent support is disabled".to_string(),
-        })
+        match self.local_agents.host() {
+            Some(host) => host.handle_hook(agent_id, payload, external).await,
+            None => Err(ProtocolError::FailedPrecondition {
+                message: "local agent support is disabled".to_string(),
+            }),
+        }
     }
 
     async fn remote_agent_client(
@@ -2365,7 +2267,7 @@ mod tests {
     use crate::routing::{
         Capabilities, LinkCloseRequest, LinkId, LinkRole, RoutingCore, SupportedAgentType,
     };
-    use crate::services::agent::{AgentServiceState, spawn_agent_tonic_server};
+    use crate::services::agent::{PtyAgentHost, spawn_agent_tonic_server};
     use crate::trust::{TrustEntry, TrustStore};
     use crate::tunnel::TunnelPool;
     use crate::user_state::{ServerState, ShutdownRequest};
@@ -2486,8 +2388,7 @@ mod tests {
 
     fn client_service_with_local_services() -> ClientService {
         let host_id = Uuid::from_u128(1);
-        let agent_state = Arc::new(RwLock::new(AgentServiceState::new()));
-        let agent_service = AgentServiceCtx::new(agent_state.clone(), host_id, false);
+        let agent_service = AgentServiceCtx::new(Some(PtyAgentHost::new(host_id)), host_id, false);
         let (shutdown_tx, _shutdown_rx) = mpsc::channel::<ShutdownRequest>(1);
         let server_state = Arc::new(RwLock::new(ServerState::new(
             Config::default(),
@@ -2502,8 +2403,7 @@ mod tests {
 
     fn client_service_with_admin_shutdown_rx() -> (ClientService, mpsc::Receiver<ShutdownRequest>) {
         let host_id = Uuid::from_u128(1);
-        let agent_state = Arc::new(RwLock::new(AgentServiceState::new()));
-        let agent_service = AgentServiceCtx::new(agent_state.clone(), host_id, false);
+        let agent_service = AgentServiceCtx::new(Some(PtyAgentHost::new(host_id)), host_id, false);
         let (shutdown_tx, shutdown_rx) = mpsc::channel::<ShutdownRequest>(1);
         let server_state = Arc::new(RwLock::new(ServerState::new(
             Config::default(),
@@ -2520,11 +2420,7 @@ mod tests {
     }
 
     fn agent_service_ctx(host_id: Uuid) -> AgentServiceCtx {
-        AgentServiceCtx::new(
-            Arc::new(RwLock::new(AgentServiceState::new())),
-            host_id,
-            false,
-        )
+        AgentServiceCtx::new(Some(PtyAgentHost::new(host_id)), host_id, false)
     }
 
     fn client_service_with_agent_and_tunnels(
@@ -2572,8 +2468,11 @@ mod tests {
         local_identity: &DeviceIdentity,
         trust_store: crate::trust::SharedTrustStore,
     ) -> ClientService {
-        let agent_state = Arc::new(RwLock::new(AgentServiceState::new()));
-        let agent_service = AgentServiceCtx::new(agent_state, local_identity.host_id, false);
+        let agent_service = AgentServiceCtx::new(
+            Some(PtyAgentHost::new(local_identity.host_id)),
+            local_identity.host_id,
+            false,
+        );
         let (shutdown_tx, _shutdown_rx) = mpsc::channel::<ShutdownRequest>(1);
         let server_state = Arc::new(RwLock::new(ServerState::new(
             Config::default(),
@@ -5015,8 +4914,8 @@ mod tests {
             store.save_in(data_dir.path()).unwrap();
         }
 
-        let agent_state = Arc::new(RwLock::new(AgentServiceState::new()));
-        let agent_service = AgentServiceCtx::new(agent_state, local.host_id, false);
+        let agent_service =
+            AgentServiceCtx::new(Some(PtyAgentHost::new(local.host_id)), local.host_id, false);
         let (shutdown_tx, _shutdown_rx) = mpsc::channel::<ShutdownRequest>(1);
         let server_state = Arc::new(RwLock::new(ServerState::new(
             Config::default(),
@@ -5333,8 +5232,7 @@ mod tests {
         };
 
         let host_id = Uuid::from_u128(1);
-        let agent_state = Arc::new(RwLock::new(AgentServiceState::new()));
-        let agent_service = AgentServiceCtx::new(agent_state, host_id, false);
+        let agent_service = AgentServiceCtx::new(Some(PtyAgentHost::new(host_id)), host_id, false);
         let (shutdown_tx, _shutdown_rx) = mpsc::channel::<ShutdownRequest>(1);
         let server_state = Arc::new(RwLock::new(ServerState::new(
             config,
