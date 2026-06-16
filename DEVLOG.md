@@ -38,6 +38,43 @@ One paragraph describing what was done.
 
 ---
 
+## 2026-06-16: Split agent data types from the runtime (seam prep)
+
+### Summary
+First chunk of the `local-agents` seam refactor. Separated the agent *data*
+types from the *runtime*, so the runtime gates at one module declaration
+instead of per item, and removed gates that `lib.rs`'s client-only
+`allow(dead_code)` already makes unnecessary. `AgentRecord`, `SessionEvent`,
+and `StopPolicy` (plus the `Agent: From<AgentRecord>` impls) moved to a new
+ungated `agents/record.rs`; `agents/session.rs` is now pure runtime
+(`AgentSession`/`StructuredInputTarget`) gated at `#[cfg] mod session`, with
+its 8 internal `local-agents` gates removed. `suspend.rs` references only
+ungated data, so its 7 gates were dropped outright — it simply compiles dead
+in client-only builds.
+
+### Changes
+- `agents/record.rs`: new, holds `AgentRecord`/`SessionEvent`/`StopPolicy`.
+- `agents/session.rs`: data types removed; per-item `local-agents` gates
+  dropped (module gated at the `mod` site).
+- `agents/mod.rs`: `mod record;`, `#[cfg] mod session;`, re-export data from
+  `record`.
+- `suspend.rs`: removed all 7 `local-agents` gates.
+
+### Decisions Made
+- Lean on the existing client-only `allow(dead_code)`: an item needs `#[cfg]`
+  only if it would fail to *compile* (names a gated type), not merely if it is
+  unused. This is why `suspend.rs` needs no gates.
+
+### Verification
+- `cargo build` / `--no-default-features`: clean, no warnings.
+- `cargo test --lib`: 393 (default) / 299 (client-only) passed.
+
+### Next Steps
+- Introduce the `LocalAgentHost` trait + `PtyAgentHost`; route
+  `AgentServiceCtx` and the core consumers through `Option<dyn LocalAgentHost>`.
+
+---
+
 ## 2026-06-16: Gate the agent runtime at the AgentSession seam
 
 ### Summary

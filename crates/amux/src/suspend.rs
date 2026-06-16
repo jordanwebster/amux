@@ -11,7 +11,6 @@ use uuid::Uuid;
 use crate::agents::TerminalSize;
 
 /// All suspended agent sessions, serialized to disk across server restarts.
-#[cfg(feature = "local-agents")]
 #[derive(Serialize, Deserialize, Debug, Clone)]
 pub(crate) struct SuspendedServerState {
     pub(crate) agents: Vec<SuspendedAgent>,
@@ -28,7 +27,6 @@ pub(crate) enum SuspendedLocalAgentNameSource {
 }
 
 /// Serializable representation of a suspended agent session.
-#[cfg(feature = "local-agents")]
 #[derive(Serialize, Deserialize, Debug, Clone)]
 pub(crate) enum SuspendedAgent {
     Claude {
@@ -52,7 +50,6 @@ pub(crate) enum SuspendedAgent {
     },
 }
 
-#[cfg(feature = "local-agents")]
 impl SuspendedAgent {
     pub(crate) fn agent_id(&self) -> Uuid {
         match self {
@@ -72,7 +69,6 @@ impl SuspendedAgent {
 }
 
 /// Save suspended server state to `<state_dir>/suspended.yaml` (sibling of state.yaml).
-#[cfg(feature = "local-agents")]
 pub(crate) fn save_suspended(
     state_path: &Path,
     state: &SuspendedServerState,
@@ -103,7 +99,6 @@ pub(crate) fn save_suspended(
 }
 
 /// Load suspended server state from `<state_dir>/suspended.yaml`.
-#[cfg(feature = "local-agents")]
 pub(crate) fn load_suspended(
     state_path: &Path,
 ) -> Result<SuspendedServerState, Box<dyn std::error::Error + Send + Sync>> {
@@ -122,7 +117,6 @@ pub(crate) fn load_suspended(
 }
 
 /// Delete the suspended server state file if it exists.
-#[cfg(feature = "local-agents")]
 pub(crate) fn remove_suspended(state_path: &Path) -> Result<(), std::io::Error> {
     let suspended_path = suspended_path(state_path);
     match fs::remove_file(&suspended_path) {
@@ -135,12 +129,11 @@ pub(crate) fn remove_suspended(state_path: &Path) -> Result<(), std::io::Error> 
     }
 }
 
-#[cfg(feature = "local-agents")]
 fn suspended_path(state_path: &Path) -> PathBuf {
     state_path.with_file_name("suspended.yaml")
 }
 
-#[cfg(all(test, feature = "local-agents"))]
+#[cfg(test)]
 mod tests {
     use tempfile::TempDir;
 

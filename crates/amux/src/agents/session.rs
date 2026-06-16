@@ -6,12 +6,13 @@
 //! that creates the PTY, spawns reader/writer/exit-monitor tasks, and returns a
 //! `PtyHandle` + `StructuredLogSource`.
 //!
-//! Everything that owns or drives a live agent process — [`AgentSession`],
-//! [`StructuredInputTarget`], and their impls — is gated behind the
-//! `local-agents` feature; client-only builds carry the data types
-//! ([`AgentRecord`], [`SessionEvent`]) but never spawn a session.
+//! This whole module owns or drives a live agent process — [`AgentSession`],
+//! [`StructuredInputTarget`], and their impls — so it is gated at its `mod`
+//! declaration behind the `local-agents` feature. The data types it produces
+//! ([`AgentRecord`], [`SessionEvent`], [`StopPolicy`]) live in
+//! [`super::record`] and stay compiled in every build.
 
-use std::path::{Path, PathBuf};
+use std::path::Path;
 
 use anyhow::{Result, anyhow};
 use chrono::{DateTime, Utc};
@@ -19,120 +20,29 @@ use serde_json::Value;
 use tokio::sync::mpsc;
 use uuid::Uuid;
 
-#[cfg(all(feature = "local-agents", any(debug_assertions, test)))]
+#[cfg(any(debug_assertions, test))]
 use super::TestAgentSession;
-#[cfg(feature = "local-agents")]
-use super::claude::{ClaudeSession, ClaudeStructuredInputTarget};
-#[cfg(feature = "local-agents")]
-use super::{ExternalHookBootstrap, HookError, HookOutcome, PtyHandle};
-use super::{LocalAgentNameSource, StructuredLogSource};
-#[cfg(all(feature = "local-agents", any(debug_assertions, test)))]
+#[cfg(any(debug_assertions, test))]
 use crate::agents::AGENT_TYPE_TEST_AGENT;
-#[cfg(all(feature = "local-agents", any(test, feature = "testnet")))]
+#[cfg(any(test, feature = "testnet"))]
 use crate::agents::TEST_ECHO_V1;
+use super::claude::{ClaudeSession, ClaudeStructuredInputTarget};
+use super::{
+    AgentRecord, ExternalHookBootstrap, HookError, HookOutcome, LocalAgentNameSource, PtyHandle,
+    SessionEvent, StopPolicy, StructuredLogSource,
+};
 use crate::agents::claude::io as claude_io;
-use crate::agents::{AGENT_TYPE_CLAUDE, Agent, AgentEvent, AgentType, CreateAgentRequest};
+use crate::agents::{AGENT_TYPE_CLAUDE, AgentType, CreateAgentRequest};
 use crate::protocol::ProtocolError;
-#[cfg(feature = "local-agents")]
 use crate::suspend::SuspendedAgent;
 
-/// Internal agent metadata owned by the runtime.
-#[derive(Debug, Clone)]
-pub(crate) struct AgentRecord {
-    pub(crate) id: Uuid,
-    pub(crate) host_id: Uuid,
-    pub(crate) name: Option<String>,
-    pub(crate) command: String,
-    pub(crate) working_dir: PathBuf,
-    pub(crate) agent_type: String,
-    pub(crate) io_protocols: Vec<String>,
-    pub(crate) readonly: bool,
-    pub(crate) args: Vec<String>,
-    pub(crate) created_at: DateTime<Utc>,
-}
-
-impl AgentRecord {
-    pub(crate) fn agent_event(&self) -> AgentEvent {
-        AgentEvent::AgentUp {
-            agent: Agent::from(self),
-        }
-    }
-
-    pub(crate) fn agent_updated_event(&self) -> AgentEvent {
-        AgentEvent::AgentUpdated {
-            agent: Agent::from(self),
-        }
-    }
-}
-
-impl From<&AgentRecord> for Agent {
-    fn from(agent: &AgentRecord) -> Self {
-        Self {
-            id: agent.id,
-            host_id: agent.host_id,
-            name: agent.name.clone(),
-            command: agent.command.clone(),
-            working_dir: agent.working_dir.clone(),
-            agent_type: agent.agent_type.clone(),
-            io_protocols: agent.io_protocols.clone(),
-            readonly: agent.readonly,
-            args: agent.args.clone(),
-            created_at: agent.created_at,
-        }
-    }
-}
-
-impl From<AgentRecord> for Agent {
-    fn from(agent: AgentRecord) -> Self {
-        Self {
-            id: agent.id,
-            host_id: agent.host_id,
-            name: agent.name,
-            command: agent.command,
-            working_dir: agent.working_dir,
-            agent_type: agent.agent_type,
-            io_protocols: agent.io_protocols.clone(),
-            readonly: agent.readonly,
-            args: agent.args,
-            created_at: agent.created_at,
-        }
-    }
-}
-
-/// Events sent from agent sessions to their owning AgentService.
-#[derive(Clone)]
-pub(crate) enum SessionEvent {
-    /// Session ended (agent exited)
-    Ended { agent_id: Uuid },
-    /// Session created (for post-creation side effects like fork detection)
-    Created {
-        agent_id: Uuid,
-        agent_type: AgentType,
-        args: Vec<String>,
-    },
-    /// A provider discovered a stronger local name candidate for this session.
-    NameCandidateChanged {
-        agent_id: Uuid,
-        name: String,
-        source: LocalAgentNameSource,
-    },
-}
-
-/// Policy for stopping an agent session
-pub(crate) enum StopPolicy {
-    /// Send interrupt signal (close PTY master)
-    Interrupt,
-}
-
 /// Unified agent session handle, dispatching to concrete session types.
-#[cfg(feature = "local-agents")]
 pub(crate) enum AgentSession {
     Claude(ClaudeSession),
     #[cfg(any(debug_assertions, test))]
     TestAgent(TestAgentSession),
 }
 
-#[cfg(feature = "local-agents")]
 #[derive(Clone)]
 pub(crate) enum StructuredInputTarget {
     Claude(ClaudeStructuredInputTarget),
@@ -140,7 +50,6 @@ pub(crate) enum StructuredInputTarget {
     Unsupported,
 }
 
-#[cfg(feature = "local-agents")]
 impl StructuredInputTarget {
     pub(crate) async fn send_structured_input(
         &self,
@@ -157,7 +66,6 @@ impl StructuredInputTarget {
     }
 }
 
-#[cfg(feature = "local-agents")]
 impl AgentSession {
     pub(crate) fn try_new(req: &CreateAgentRequest) -> Result<Self> {
         match &req.agent_type {
@@ -453,7 +361,6 @@ impl AgentSession {
     }
 }
 
-#[cfg(feature = "local-agents")]
 impl serde::Serialize for crate::debug::DebugView<'_, AgentSession> {
     fn serialize<S: serde::Serializer>(
         &self,
@@ -471,8 +378,10 @@ impl serde::Serialize for crate::debug::DebugView<'_, AgentSession> {
     }
 }
 
-#[cfg(all(test, feature = "local-agents"))]
+#[cfg(test)]
 mod tests {
+    use std::path::PathBuf;
+
     use serde_json::json;
 
     use super::*;
