@@ -38,6 +38,26 @@ One paragraph describing what was done.
 
 ---
 
+## 2026-06-17: Cleanup-review pass over the client-only/seam effort
+
+### Summary
+Reviewed the full client-only → seam effort (`f90a8de`..`1925197`) for
+vestigial code and stale references left by the superseded passes (the
+`LocalAgentHost` trait replaced the earlier "Design Y" gating). The
+codebase came back clean: no dead code, every suspect (`local_agent_count`,
+the dual agent-event subscribe paths, `is_cloud_server`, `DebugAgent`) is
+still reached in at least one feature config, and the ~21 residual
+`local-agents` cfgs are all module/re-export/construction/capability gates.
+
+One stale reference fixed: the iOS `compile_error!` in `lib.rs` still told
+callers to use the `client-only` feature, which was deleted in `40b426b`.
+Corrected to "depend on amux with `default-features = false`."
+
+### Verification
+- `cargo build -p amux` (default): clean.
+
+---
+
 ## 2026-06-17: Self-update poll is a desktop-daemon concern, not embedded
 
 ### Summary

@@ -12,7 +12,7 @@
 
 #[cfg(all(target_os = "ios", feature = "local-agents"))]
 compile_error!(
-    "iOS builds must disable the `local-agents` feature; use `default-features = false` with `client-only`."
+    "iOS builds must disable the `local-agents` feature; depend on amux with `default-features = false`."
 );
 
 mod agents;
