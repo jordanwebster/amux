@@ -17,9 +17,9 @@ use super::lifecycle::{
     delete_local_agent, prepare_server_suspend, rename_local_agent_record, resume_agents,
     shutdown_server, spawn_session_event_loop, withdraw_agent,
 };
-use super::session_rpc;
 use super::{
     AgentServiceState, DebugAgent, LocalAgentHost, ResponseStream, SharedAgentServiceState,
+    session_rpc,
 };
 use crate::agents::{
     Agent, AgentEvent, AgentSession, AgentType, CreateAgentConfig, CreateAgentRequest,

@@ -7,9 +7,6 @@ mod lifecycle;
 #[cfg(feature = "local-agents")]
 mod session_rpc;
 
-#[cfg(feature = "local-agents")]
-pub(crate) use host::PtyAgentHost;
-
 use std::collections::VecDeque;
 use std::path::PathBuf;
 use std::pin::Pin;
@@ -17,6 +14,8 @@ use std::sync::Arc;
 
 use async_trait::async_trait;
 use futures_util::Stream;
+#[cfg(feature = "local-agents")]
+pub(crate) use host::PtyAgentHost;
 use tokio::sync::mpsc;
 use uuid::Uuid;
 
