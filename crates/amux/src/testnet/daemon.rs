@@ -226,8 +226,7 @@ pub(crate) async fn start_daemon_runtime(
         inner.tcp_addr.map(|addr| addr.port()),
         inner.cloud.is_some(),
     );
-    let mut services =
-        start_user_services(state, Some(PtyAgentHost::new(inner.host_id)), security)
+    let mut services = start_user_services(state, Some(PtyAgentHost::new(inner.host_id)), security)
         .await
         .unwrap_or_else(|error| panic!("start daemon '{}': {error}", inner.name));
 

@@ -6,9 +6,9 @@ mod pairing;
 mod reachability;
 mod startup;
 
-pub(crate) use agent::{AgentServiceCtx, DebugAgent, LocalAgentHost};
 #[cfg(feature = "local-agents")]
 pub(crate) use agent::PtyAgentHost;
+pub(crate) use agent::{AgentServiceCtx, DebugAgent, LocalAgentHost};
 #[cfg(feature = "testnet")]
 pub(crate) use client::ClientService;
 pub(crate) use pairing::{LocalPairingIdentity, PairingService, pair_initiator};

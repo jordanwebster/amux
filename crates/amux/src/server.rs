@@ -705,7 +705,10 @@ async fn spawn_daemon_background_tasks(
 
     let (cloud_url, update_reporter) = {
         let state = state.read().await;
-        (state.config.cloud_url.clone(), state.update_reporter.clone())
+        (
+            state.config.cloud_url.clone(),
+            state.update_reporter.clone(),
+        )
     };
     if let Some(task) = spawn_periodic_update_check(
         update_reporter,

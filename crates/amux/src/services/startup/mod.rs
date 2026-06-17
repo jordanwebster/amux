@@ -1313,14 +1313,18 @@ mod tests {
         let responder_trust = responder_security.trust_store.clone();
         let initiator = start_user_services(
             test_state(initiator_identity.host_id),
-            Some(crate::services::PtyAgentHost::new(initiator_identity.host_id)),
+            Some(crate::services::PtyAgentHost::new(
+                initiator_identity.host_id,
+            )),
             initiator_security,
         )
         .await
         .unwrap();
         let mut responder = start_user_services(
             test_state(responder_identity.host_id),
-            Some(crate::services::PtyAgentHost::new(responder_identity.host_id)),
+            Some(crate::services::PtyAgentHost::new(
+                responder_identity.host_id,
+            )),
             responder_security,
         )
         .await

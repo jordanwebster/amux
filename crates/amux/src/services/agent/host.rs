@@ -17,12 +17,14 @@ use super::lifecycle::{
     delete_local_agent, prepare_server_suspend, rename_local_agent_record, resume_agents,
     shutdown_server, spawn_session_event_loop, withdraw_agent,
 };
-use super::{AgentServiceState, DebugAgent, LocalAgentHost, ResponseStream, SharedAgentServiceState};
 use super::session_rpc;
+use super::{
+    AgentServiceState, DebugAgent, LocalAgentHost, ResponseStream, SharedAgentServiceState,
+};
 use crate::agents::{
     Agent, AgentEvent, AgentSession, AgentType, CreateAgentConfig, CreateAgentRequest,
-    CreateAgentRpcRequest, ExternalHookBootstrap, HookOutcome, RenameAgentRequest, SendInputRequest,
-    SessionCloseReason, SessionEvent, StopPolicy, SubscribeSessionRequest,
+    CreateAgentRpcRequest, ExternalHookBootstrap, HookOutcome, RenameAgentRequest,
+    SendInputRequest, SessionCloseReason, SessionEvent, StopPolicy, SubscribeSessionRequest,
 };
 use crate::debug::DebugView;
 use crate::protocol::{ProtocolError, wire};
@@ -167,7 +169,9 @@ impl LocalAgentHost for PtyAgentHost {
                                 Ok(())
                             }
                             Err(e) => Err(ProtocolError::ServerError {
-                                message: format!("failed to register readonly agent {agent_id}: {e}"),
+                                message: format!(
+                                    "failed to register readonly agent {agent_id}: {e}"
+                                ),
                             }),
                         }
                     }
@@ -188,8 +192,13 @@ impl LocalAgentHost for PtyAgentHost {
             suspend::load_suspended(&state_path).map_err(|error| ProtocolError::ServerError {
                 message: format!("failed to load state: {error}"),
             })?;
-        let result =
-            resume_agents(self.state(), self.event_tx(), suspended.agents, self.host_id()).await;
+        let result = resume_agents(
+            self.state(),
+            self.event_tx(),
+            suspended.agents,
+            self.host_id(),
+        )
+        .await;
         if result.failed_agents.is_empty() {
             suspend::remove_suspended(&state_path).map_err(|error| ProtocolError::ServerError {
                 message: format!("failed to remove state: {error}"),
@@ -235,7 +244,11 @@ impl LocalAgentHost for PtyAgentHost {
     }
 
     async fn notify_shutdown(&self, reason: ShutdownReason) {
-        self.state().write().await.local_shutdown_events.emit(reason);
+        self.state()
+            .write()
+            .await
+            .local_shutdown_events
+            .emit(reason);
     }
 
     async fn agent_count(&self) -> usize {

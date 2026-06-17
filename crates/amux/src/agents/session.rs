@@ -22,15 +22,15 @@ use uuid::Uuid;
 
 #[cfg(any(debug_assertions, test))]
 use super::TestAgentSession;
-#[cfg(any(debug_assertions, test))]
-use crate::agents::AGENT_TYPE_TEST_AGENT;
-#[cfg(any(test, feature = "testnet"))]
-use crate::agents::TEST_ECHO_V1;
 use super::claude::{ClaudeSession, ClaudeStructuredInputTarget};
 use super::{
     AgentRecord, ExternalHookBootstrap, HookError, HookOutcome, LocalAgentNameSource, PtyHandle,
     SessionEvent, StopPolicy, StructuredLogSource,
 };
+#[cfg(any(debug_assertions, test))]
+use crate::agents::AGENT_TYPE_TEST_AGENT;
+#[cfg(any(test, feature = "testnet"))]
+use crate::agents::TEST_ECHO_V1;
 use crate::agents::claude::io as claude_io;
 use crate::agents::{AGENT_TYPE_CLAUDE, AgentType, CreateAgentRequest};
 use crate::protocol::ProtocolError;
