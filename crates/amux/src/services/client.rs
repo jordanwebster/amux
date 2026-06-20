@@ -305,8 +305,10 @@ impl ClientService {
         }
 
         let host_id = host.id;
-        let should_subscribe_remote = !self.is_local_host(host_id) && host_is_agent_capable(&host);
         let host_event_entry = self.host_entry_for_online_host(host.clone()).await;
+        let should_subscribe_remote = !self.is_local_host(host_id)
+            && host_is_agent_capable(&host)
+            && host_event_entry.trust_status == HostTrustStatus::Trusted;
         {
             let mut state = self.state.write().await;
             if let Some(existing) = state.remote_agent_subs.remove(&host_id) {
@@ -525,6 +527,11 @@ impl ClientService {
     /// trust transition (pairing) changes how it should be presented.
     async fn publish_host_status_update(&self, host_id: Uuid) {
         let online_host = self.state.read().await.hosts_model.get(&host_id).cloned();
+        let should_subscribe_remote = online_host.as_ref().is_some_and(|host| {
+            !self.is_local_host(host_id)
+                && host_is_agent_capable(host)
+                && self.trusted_host_name(host_id).is_some()
+        });
         let entry = match online_host {
             Some(host) => self.host_entry_for_online_host(host).await,
             None => {
@@ -534,9 +541,14 @@ impl ClientService {
                 self.trusted_host_entry(host_id, name).await
             }
         };
-        self.state
-            .write()
-            .await
+        let mut state = self.state.write().await;
+        if should_subscribe_remote && !state.remote_agent_subs.contains_key(&host_id) {
+            state.remote_agent_subs.insert(
+                host_id,
+                tokio::spawn(self.clone().run_remote_agent_subscription(host_id)),
+            );
+        }
+        state
             .host_events
             .emit(HostEvent::HostUpdated { host: entry });
     }
@@ -4268,12 +4280,10 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn host_added_starts_remote_agent_subscription_over_tunnel() {
+    async fn unpaired_host_added_does_not_start_remote_agent_subscription() {
         let harness = remote_dispatch_harness().await;
         let service = &harness.service;
         let remote_host_id = Uuid::from_u128(2);
-        let agent_id = Uuid::from_u128(128);
-        let mut events = service.subscribe_agents().await;
 
         assert_eq!(
             service
@@ -4282,6 +4292,47 @@ mod tests {
                 })
                 .await,
             HostEventOutcome::Added
+        );
+
+        assert!(
+            !service
+                .state
+                .read()
+                .await
+                .remote_agent_subs
+                .contains_key(&remote_host_id)
+        );
+    }
+
+    #[tokio::test]
+    async fn paired_host_added_starts_remote_agent_subscription_over_tunnel() {
+        let harness = remote_dispatch_harness().await;
+        let service = &harness.service;
+        let remote_host_id = Uuid::from_u128(2);
+        let agent_id = Uuid::from_u128(128);
+        let mut events = service.subscribe_agents().await;
+        service
+            .pairing_trust
+            .trust_store
+            .write()
+            .unwrap()
+            .insert_for_test(remote_host_id, trust_entry("trusted-remote", 2));
+
+        assert_eq!(
+            service
+                .apply_host_event(HostReachabilityEvent::Added {
+                    host: host(2, non_relay_types()),
+                })
+                .await,
+            HostEventOutcome::Added
+        );
+        assert!(
+            service
+                .state
+                .read()
+                .await
+                .remote_agent_subs
+                .contains_key(&remote_host_id)
         );
 
         let mut remote_agent_client = service

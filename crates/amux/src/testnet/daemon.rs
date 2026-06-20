@@ -23,7 +23,7 @@ use crate::dispatcher::TrackedTcpConnections;
 use crate::identity::{device_key_path, load_or_create_device_identity_in};
 use crate::protocol::wire;
 use crate::routing::{
-    HostEntry, LinkConnectorAuth, LinkConnectorCtx, LinkConnectorToken,
+    HostEntry, HostTrustStatus, LinkConnectorAuth, LinkConnectorCtx, LinkConnectorToken,
     LinkConnectorTokenRefresher, Route, RoutingCore,
     spawn_connector_to_channel_with_auth_and_establishment,
     spawn_connector_to_channel_with_bearer_token,
@@ -576,6 +576,51 @@ impl Daemon {
         .await;
     }
 
+    /// An untrusted cloud-visible host should be offered for pairing without
+    /// starting the normal trusted-device tunnel path. Before trust exists,
+    /// that path can only fail with mTLS errors and consume tunnel budget.
+    pub async fn sees_pairing_candidate_without_trusted_dial(&self, other: &Daemon) {
+        self.sees_pairing_candidate(other).await;
+
+        let assertion = format!(
+            "'{}' keeps '{}' as a pairing candidate without a trusted dial attempt",
+            self.name(),
+            other.name()
+        );
+        let other_id = other.host_id();
+        super::assertions::consistently_for(
+            &assertion,
+            std::time::Duration::from_millis(750),
+            async || {
+                let Some(entry) = self
+                    .host_table()
+                    .await
+                    .into_iter()
+                    .find(|host| host.id == other_id)
+                else {
+                    return false;
+                };
+                if entry.trust_status != HostTrustStatus::UntrustedButOnline
+                    || entry.last_dial_error.is_some()
+                {
+                    return false;
+                }
+
+                let Some(parts) = self.try_parts().await else {
+                    return false;
+                };
+                !parts
+                    .tunnels
+                    .active_tunnels()
+                    .await
+                    .into_iter()
+                    .any(|(_, peer, _)| peer == other_id)
+            },
+            self.failure_dump(),
+        )
+        .await;
+    }
+
     /// A routed `ClientService.ListHosts(PAIRING_CANDIDATES)` against
     /// `other`, i.e. what a *paired remote* caller gets when it asks for
     /// pairing-candidate inventory. The scope is reserved for local
@@ -1037,8 +1082,12 @@ impl Daemon {
                 for host in table {
                     let _ = writeln!(
                         out,
-                        "  - {} ({}) online={} trust={:?}",
-                        host.name, host.id, host.online, host.trust_status
+                        "  - {} ({}) online={} trust={:?} last_dial_error={}",
+                        host.name,
+                        host.id,
+                        host.online,
+                        host.trust_status,
+                        host.last_dial_error.as_deref().unwrap_or("none")
                     );
                 }
                 if let Some(parts) = daemon.try_parts().await {

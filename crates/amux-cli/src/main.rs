@@ -15,6 +15,8 @@ use std::time::Duration;
 
 use amux::{AgentType, Config, DebugFormat, PairingSecret, PairingStart, default_data_dir, setup};
 use anyhow::{Context, Result, anyhow};
+use base64::Engine as _;
+use base64::engine::general_purpose::URL_SAFE_NO_PAD;
 use clap::{CommandFactory, Parser, Subcommand, ValueEnum};
 use qrcode::QrCode;
 use qrcode::render::unicode;
@@ -24,6 +26,8 @@ use tracing_subscriber::{EnvFilter, fmt};
 
 use crate::server_client::ServerMode;
 use crate::update::MarkerFileReporter;
+
+const QR_PAIRING_DEEP_LINK_PREFIX: &str = "amux://pair?payload=";
 
 /// Agent multiplexer - terminal multiplexer for AI agents
 #[derive(Debug, Parser)]
@@ -80,10 +84,15 @@ enum Commands {
 
     /// Pair this device with another amux daemon
     Pair {
-        /// Display a QR pairing payload, or consume a scanned QR JSON payload
-        #[arg(long, value_name = "PAYLOAD", num_args = 0..=1, conflicts_with_all = ["listen", "connect"])]
+        /// Display a QR pairing code for this device
+        #[arg(long, conflicts_with_all = ["listen", "connect"])]
         #[cfg_attr(unix, arg(conflicts_with = "via_ssh"))]
-        qr: Option<Option<String>>,
+        qr: bool,
+
+        /// Also print the QR deep link for simulator pairing
+        #[arg(long, requires = "qr")]
+        #[cfg_attr(not(debug_assertions), arg(hide = true))]
+        link: bool,
 
         /// Require LAN-direct responder mode; errors when tcp_port is unset
         #[arg(long, conflicts_with_all = ["qr", "connect"])]
@@ -336,26 +345,13 @@ async fn run_command(command: Commands, mut config: Config) -> Result<()> {
         }
         Commands::Pair {
             qr,
+            link,
             listen,
             connect,
             #[cfg(unix)]
             via_ssh,
         } => {
-            if let Some(payload) = qr.clone().flatten() {
-                ensure_initialized(&mut config).await?;
-                let payload =
-                    amux::parse_qr_pairing_payload_for_cloud(&payload, &config.cloud_url)?;
-                let client = client_common::require_running_client(
-                    &config,
-                    Some("amux pair --qr <payload>"),
-                )
-                .await?;
-                let peer = client
-                    .pair_qr_cloud_peer(payload.host_id, payload.secret)
-                    .await?;
-                println!("Paired with {} ({}) via QR.", peer.name, peer.host_id);
-                return Ok(());
-            }
+            validate_pair_qr_link_usage(link, cfg!(debug_assertions))?;
             if let Some(connect_target) = connect {
                 match parse_pair_connect_target(connect_target) {
                     PairConnectTarget::Picker => {
@@ -424,7 +420,7 @@ async fn run_command(command: Commands, mut config: Config) -> Result<()> {
                 return Ok(());
             }
 
-            let retry_command = pair_start_retry_command(qr.is_some(), listen);
+            let retry_command = pair_start_retry_command(qr, listen);
             let client =
                 client_common::require_running_client(&config, Some(retry_command)).await?;
             if listen && config.tcp_port.is_none() {
@@ -432,14 +428,14 @@ async fn run_command(command: Commands, mut config: Config) -> Result<()> {
                     "set `tcp_port` in your config, or use cloud / SSH pairing"
                 ));
             }
-            let pairing = if qr.is_some() {
+            let pairing = if qr {
                 client.start_qr_pairing().await?
             } else if listen {
                 client.start_lan_pin_pairing().await?
             } else {
                 client.start_pin_pairing().await?
             };
-            if let Err(error) = print_pairing_start(&pairing) {
+            if let Err(error) = print_pairing_start(&pairing, link) {
                 client.cancel_pairing().await?;
                 return Err(error);
             }
@@ -598,6 +594,15 @@ fn pair_start_retry_command(qr: bool, listen: bool) -> &'static str {
     }
 }
 
+fn validate_pair_qr_link_usage(link: bool, debug_build: bool) -> Result<()> {
+    if link && !debug_build {
+        return Err(anyhow!(
+            "`amux pair --qr --link` is only available in debug builds"
+        ));
+    }
+    Ok(())
+}
+
 async fn pair_cloud_host(
     client: &amux::Client,
     host: &amux::HostEntry,
@@ -680,7 +685,7 @@ fn parse_pairing_host_selection(input: &str, host_count: usize) -> Result<usize>
     Ok(selection - 1)
 }
 
-fn print_pairing_start(pairing: &PairingStart) -> Result<()> {
+fn print_pairing_start(pairing: &PairingStart, print_link: bool) -> Result<()> {
     match &pairing.secret {
         PairingSecret::Pin(pin) => {
             println!("Pairing PIN: {pin}");
@@ -691,6 +696,9 @@ fn print_pairing_start(pairing: &PairingStart) -> Result<()> {
         PairingSecret::QrSecret(secret) => {
             let payload = qr_pairing_payload(pairing, secret)?;
             println!("{}", terminal_qr_code(&payload)?);
+            if print_link {
+                println!("Pairing link: {payload}");
+            }
         }
     }
     println!("Pairing mode active for {} seconds.", pairing.ttl_seconds);
@@ -698,7 +706,10 @@ fn print_pairing_start(pairing: &PairingStart) -> Result<()> {
 }
 
 fn qr_pairing_payload(pairing: &PairingStart, secret: &[u8]) -> Result<String> {
-    amux::encode_qr_pairing_payload(pairing, secret).context("failed to encode QR pairing payload")
+    let payload = amux::encode_qr_pairing_payload(pairing, secret)
+        .context("failed to encode QR pairing payload")?;
+    let encoded = URL_SAFE_NO_PAD.encode(payload.as_bytes());
+    Ok(format!("{QR_PAIRING_DEEP_LINK_PREFIX}{encoded}"))
 }
 
 fn terminal_qr_code(payload: &str) -> Result<String> {
@@ -907,19 +918,50 @@ mod tests {
     #[test]
     fn pair_qr_without_payload_parses_as_responder() {
         let cli = Cli::try_parse_from(["amux", "pair", "--qr"]).unwrap();
-        let Some(Commands::Pair { qr, .. }) = cli.command else {
+        let Some(Commands::Pair { qr, link, .. }) = cli.command else {
             panic!("expected pair command");
         };
-        assert_eq!(qr, Some(None));
+        assert!(qr);
+        assert!(!link);
     }
 
     #[test]
-    fn pair_qr_with_payload_parses_as_initiator() {
-        let cli = Cli::try_parse_from(["amux", "pair", "--qr", "{\"host_id\":\"x\"}"]).unwrap();
-        let Some(Commands::Pair { qr, .. }) = cli.command else {
+    fn pair_qr_link_parses_as_debug_link_request() {
+        let cli = Cli::try_parse_from(["amux", "pair", "--qr", "--link"]).unwrap();
+        let Some(Commands::Pair { qr, link, .. }) = cli.command else {
             panic!("expected pair command");
         };
-        assert_eq!(qr, Some(Some("{\"host_id\":\"x\"}".to_string())));
+        assert!(qr);
+        assert!(link);
+    }
+
+    #[test]
+    fn pair_qr_rejects_payload_argument() {
+        let error = Cli::try_parse_from(["amux", "pair", "--qr", "{\"host_id\":\"x\"}"])
+            .expect_err("QR mode should not accept external payloads");
+        assert_eq!(error.kind(), clap::error::ErrorKind::UnknownArgument);
+    }
+
+    #[test]
+    fn pair_link_requires_qr() {
+        let error = Cli::try_parse_from(["amux", "pair", "--link"])
+            .expect_err("--link should require QR mode");
+        assert_eq!(
+            error.kind(),
+            clap::error::ErrorKind::MissingRequiredArgument
+        );
+    }
+
+    #[test]
+    fn pair_qr_link_runtime_guard_rejects_release_usage() {
+        validate_pair_qr_link_usage(false, false).unwrap();
+        validate_pair_qr_link_usage(true, true).unwrap();
+        assert!(
+            validate_pair_qr_link_usage(true, false)
+                .unwrap_err()
+                .to_string()
+                .contains("debug builds")
+        );
     }
 
     #[test]
@@ -1040,40 +1082,26 @@ mod tests {
             panic!("expected QR secret");
         };
 
-        let payload = qr_pairing_payload(&pairing, secret).unwrap();
-        let value: serde_json::Value = serde_json::from_str(&payload).unwrap();
-        let qr = terminal_qr_code(&payload).unwrap();
+        let deep_link = qr_pairing_payload(&pairing, secret).unwrap();
+        let encoded_payload = deep_link
+            .strip_prefix(QR_PAIRING_DEEP_LINK_PREFIX)
+            .expect("QR payload should be a pairing deep link");
+        let decoded_payload = URL_SAFE_NO_PAD.decode(encoded_payload).unwrap();
+        let decoded_json = std::str::from_utf8(&decoded_payload).unwrap();
+        let value: serde_json::Value = serde_json::from_str(decoded_json).unwrap();
+        let parsed = amux::parse_qr_pairing_payload(decoded_json).unwrap();
+        let qr = terminal_qr_code(&deep_link).unwrap();
 
+        assert!(!encoded_payload.contains('='));
+        assert!(!encoded_payload.contains('+'));
+        assert!(!encoded_payload.contains('/'));
         assert_eq!(value["host_id"], "00000000-0000-0000-0000-000000000001");
         assert!(value.get("pubkey").is_none());
         assert!(value.get("name").is_none());
-        assert_eq!(value["cloud_url"], "https://relay.example");
-        assert_eq!(value["secret"].as_array().unwrap().len(), 32);
-        assert!(qr.lines().count() > 4);
-    }
-
-    #[test]
-    fn qr_pairing_payload_parser_validates_payload_shape() {
-        let mut value = serde_json::json!({
-            "host_id": "00000000-0000-0000-0000-000000000001",
-            "cloud_url": "https://relay.example",
-            "secret": vec![9_u8; 32],
-        });
-        let payload = value.to_string();
-        let parsed = amux::parse_qr_pairing_payload(&payload).unwrap();
         assert_eq!(parsed.host_id, uuid::Uuid::from_u128(1));
         assert_eq!(parsed.cloud_url, "https://relay.example");
         assert_eq!(parsed.secret, vec![9; 32]);
-
-        value["secret"] = serde_json::json!([9_u8]);
-        let bad = value.to_string();
-        assert!(
-            amux::parse_qr_pairing_payload(&bad)
-                .unwrap_err()
-                .to_string()
-                .contains("secret must be 32 bytes")
-        );
-        assert!(amux::validate_qr_payload_cloud_url("https://a", "https://b").is_err());
+        assert!(qr.lines().count() > 4);
     }
 
     #[cfg(unix)]

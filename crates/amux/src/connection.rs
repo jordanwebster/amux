@@ -218,6 +218,19 @@ impl ConnectionManager {
                 if host_is_cloud_relay(&host) {
                     return;
                 }
+                // Cloud claims make untrusted hosts visible for pairing.
+                // They are not proof of trust, so do not spend a normal
+                // device-mTLS tunnel on them until a caller explicitly needs
+                // one after trust has been established. QR/PIN cloud pairing
+                // uses the separate pre-trust pairing tunnel path.
+                if self
+                    .tunnels
+                    .link_registry()
+                    .has_cloud_relay_link_to(relay)
+                    .await
+                {
+                    return;
+                }
                 let has_active = self.state.read().await.active.contains_key(&host.id);
                 if !has_active
                     && let Err(error) = self.activate_route(host.id, Route::Via(relay)).await
@@ -523,6 +536,35 @@ mod tests {
             "the link is still a recorded route"
         );
         assert!(manager.active_route(cloud.id).await.is_none());
+        assert_eq!(tunnels.active_count().await, 0);
+    }
+
+    /// Cloud claims are discovery signals for pairing candidates, not proof
+    /// of trust. Seeing an untrusted host via the cloud must not spend a
+    /// normal trusted-device tunnel; QR/PIN pairing uses the pre-trust
+    /// pairing tunnel path explicitly.
+    #[tokio::test]
+    async fn cloud_claims_are_recorded_but_never_eagerly_activated() {
+        let routing = Arc::new(RoutingCore::new());
+        let tunnels = test_pool(HostId::from_u128(1), &routing);
+        let manager = Arc::new(ConnectionManager::new(routing.clone(), tunnels.clone()));
+        let _task = manager.clone().attach_routing_events().await;
+        let peer = host(2);
+        let cloud = cloud_host(100);
+        let (_cloud_link, _cloud_rx) = register_link(&tunnels, &cloud, LinkRole::CloudRelay).await;
+
+        routing.apply_claim_up(cloud.id, peer.clone()).await;
+
+        tokio::task::yield_now().await;
+        assert_eq!(
+            manager.known_routes(peer.id).await,
+            vec![Route::Via(cloud.id)],
+            "the cloud route is still recorded for pairing/discovery"
+        );
+        assert!(
+            manager.active_route(peer.id).await.is_none(),
+            "cloud claims must not auto-activate a trusted route"
+        );
         assert_eq!(tunnels.active_count().await, 0);
     }
 

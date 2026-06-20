@@ -32,6 +32,26 @@ async fn cloud_attached_daemons_see_each_other_come_online_and_go_offline() {
     laptop.cannot_see(&desktop).await;
 }
 
+/// A cloud-visible untrusted host is a pairing candidate, not a trusted
+/// transport target. Discovering it must not open a normal device-mTLS
+/// tunnel before pairing has established trust.
+#[tokio::test]
+async fn untrusted_cloud_pairing_candidates_do_not_trigger_trusted_tunnels() {
+    let net = TestNet::builder()
+        .cloud()
+        .daemon("laptop")
+        .cloud_only()
+        .daemon("desktop")
+        .cloud_only()
+        .start()
+        .await;
+    let [laptop, desktop] = net.daemons(["laptop", "desktop"]);
+
+    laptop
+        .sees_pairing_candidate_without_trusted_dial(&desktop)
+        .await;
+}
+
 /// A restarting daemon is seen going down, then up again, and is callable
 /// once it is back. (`restart()` itself blocks until every peer observed
 /// the daemon offline, so the "seen down" half is part of the verb.)

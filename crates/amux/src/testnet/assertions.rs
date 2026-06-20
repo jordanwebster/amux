@@ -56,3 +56,36 @@ where
         .unwrap_or_else(|_| "<state dump timed out>".to_string());
     panic!("spec assertion timed out after {DEFAULT_TIMEOUT:?}{hung_note}: {assertion}\n{dump}");
 }
+
+/// Polls `check` for `duration` and fails as soon as it returns `false`.
+///
+/// This is for absence/stability assertions where a one-shot "eventually
+/// true" check would race a short-lived bad transition.
+pub(crate) async fn consistently_for<C, D>(
+    assertion: &str,
+    duration: Duration,
+    mut check: C,
+    dump: D,
+) where
+    C: AsyncFnMut() -> bool,
+    D: Future<Output = String>,
+{
+    let deadline = Instant::now() + duration;
+    loop {
+        let remaining = deadline.saturating_duration_since(Instant::now());
+        match tokio::time::timeout(remaining, check()).await {
+            Ok(true) => {}
+            Ok(false) => {
+                let dump = tokio::time::timeout(DEFAULT_TIMEOUT, dump)
+                    .await
+                    .unwrap_or_else(|_| "<state dump timed out>".to_string());
+                panic!("spec assertion failed during {duration:?}: {assertion}\n{dump}");
+            }
+            Err(_) => return,
+        }
+        if Instant::now() >= deadline {
+            return;
+        }
+        tokio::time::sleep(POLL_INTERVAL).await;
+    }
+}

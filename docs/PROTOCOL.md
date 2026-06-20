@@ -24,11 +24,13 @@ and unpinned exactly one way — local revocation (`amux unpair`).
 **Pairing** is one protocol: SPAKE2, with the shared secret delivered
 out-of-band. Two delivery mechanisms, same wire flow: a 6-digit PIN the user
 types (no camera), or a 256-bit secret carried in a QR code (point phone at
-screen, payload `{host_id, cloud_url, secret}`). The secret itself never
-crosses the wire — SPAKE2 proves possession without transmitting it — and is
-one-shot with a ~5-minute window and a 5-attempt cap. The trust store also
-records, per peer, any *reachability hints* this device learned as the
-dialer (a TCP address, an SSH target); on startup the daemon re-dials them.
+screen). QR contents are always the production deep link
+`amux://pair?payload=<base64url-no-padding-json>`; the decoded JSON payload
+is `{host_id, cloud_url, secret}`. The secret itself never crosses the wire
+— SPAKE2 proves possession without transmitting it — and is one-shot with a
+~5-minute window and a 5-attempt cap. The trust store also records, per
+peer, any *reachability hints* this device learned as the dialer (a TCP
+address, an SSH target); on startup the daemon re-dials them.
 Re-establishment is always the dialer's job.
 
 The wire flow (`PairingService.Pair`, a bidi stream) and its crypto, for

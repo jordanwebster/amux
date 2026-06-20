@@ -20,13 +20,17 @@ It works like you'd hope:
 
 - **Type a PIN** — one device shows a 6-digit code, you type it into the
   other; or
-- **Scan a QR code** — point your phone at the screen.
+- **Scan a QR code** — point your phone's system camera at the screen.
 
 Under the hood both run the same password-authenticated key exchange
 (SPAKE2): the code proves to each device that the other one is the
 machine physically in front of you, *without the code itself ever
 crossing the network*. An eavesdropper learns nothing they can replay;
 codes are one-shot and expire in about five minutes.
+
+For QR pairing, `amux pair --qr` renders a production `amux://pair?...`
+deep link in the terminal QR. Development builds can also print that link
+with `amux pair --qr --link` for simulator testing.
 
 What pairing produces is small and local: each device **pins the other's
 public key** in its own trust store, like remembering a face. From then
