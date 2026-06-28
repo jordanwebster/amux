@@ -19,6 +19,7 @@ use amux::{
 };
 use serde::{Deserialize, Serialize};
 use thiserror::Error;
+use tokio::sync::Mutex as AsyncMutex;
 use uuid::Uuid;
 
 const CACHE_REFRESH_MARGIN: StdDuration = StdDuration::from_secs(60);
@@ -27,6 +28,7 @@ pub struct DeviceFlowProvider {
     auth_path: PathBuf,
     cloud_url: String,
     cached_access_token: Mutex<Option<AccessToken>>,
+    refresh_lock: AsyncMutex<()>,
 }
 
 impl DeviceFlowProvider {
@@ -35,6 +37,7 @@ impl DeviceFlowProvider {
             auth_path,
             cloud_url,
             cached_access_token: Mutex::new(None),
+            refresh_lock: AsyncMutex::new(()),
         }
     }
 
@@ -54,6 +57,13 @@ impl DeviceFlowProvider {
 #[async_trait::async_trait]
 impl CredentialProvider for DeviceFlowProvider {
     async fn access_token(&self) -> Result<AccessToken, AuthError> {
+        if let Some(token) = self.current_cached_token() {
+            return Ok(token);
+        }
+
+        // Serialize refresh so queued callers observe a successful rotated
+        // token in the cache instead of spending the same refresh token again.
+        let _refresh_guard = self.refresh_lock.lock().await;
         if let Some(token) = self.current_cached_token() {
             return Ok(token);
         }
@@ -263,6 +273,72 @@ mod tests {
         assert!(!provider.is_authenticated());
         set_refresh_token(&path, Some("refresh".to_string())).unwrap();
         assert!(provider.is_authenticated());
+    }
+
+    #[test]
+    fn invalidating_matching_access_token_preserves_refresh_token() {
+        let dir = tempdir().unwrap();
+        let path = dir.path().join("auth.yaml");
+        set_refresh_token(&path, Some("refresh".to_string())).unwrap();
+        let provider = DeviceFlowProvider::new(path.clone(), "https://example.com".to_string());
+        let token = AccessToken {
+            bearer: "access".to_string(),
+            expires_at: Some(SystemTime::now() + StdDuration::from_secs(3600)),
+        };
+        *provider
+            .cached_access_token
+            .lock()
+            .expect("access-token cache mutex poisoned") = Some(token.clone());
+
+        provider.invalidate(&token);
+
+        assert!(provider.cached_access_token.lock().unwrap().is_none());
+        assert_eq!(
+            load_refresh_token(&path).unwrap().as_deref(),
+            Some("refresh")
+        );
+    }
+
+    #[test]
+    fn invalidating_different_access_token_keeps_cached_token() {
+        let dir = tempdir().unwrap();
+        let path = dir.path().join("auth.yaml");
+        let provider = DeviceFlowProvider::new(path, "https://example.com".to_string());
+        let token = AccessToken {
+            bearer: "access".to_string(),
+            expires_at: Some(SystemTime::now() + StdDuration::from_secs(3600)),
+        };
+        *provider
+            .cached_access_token
+            .lock()
+            .expect("access-token cache mutex poisoned") = Some(token.clone());
+
+        provider.invalidate(&AccessToken {
+            bearer: "other".to_string(),
+            expires_at: token.expires_at,
+        });
+
+        assert_eq!(
+            provider
+                .cached_access_token
+                .lock()
+                .unwrap()
+                .as_ref()
+                .map(|token| token.bearer.as_str()),
+            Some("access")
+        );
+    }
+
+    #[test]
+    fn oauth_refresh_error_classification_preserves_retriable_provider_errors() {
+        assert!(matches!(
+            auth_error_from_oauth(OAuthError::RefreshTokenExpired),
+            AuthError::Unauthenticated
+        ));
+        assert!(matches!(
+            auth_error_from_oauth(OAuthError::Request("bad gateway".to_string())),
+            AuthError::Provider(message) if message.contains("bad gateway")
+        ));
     }
 
     #[test]

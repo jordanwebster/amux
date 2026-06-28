@@ -16,8 +16,12 @@ pub enum AuthError {
 
 #[async_trait::async_trait]
 pub trait CredentialProvider: Send + Sync + 'static {
-    /// Return a current access token. The provider owns refresh, caching, and
-    /// any external token-endpoint calls.
+    /// Return a current access token.
+    ///
+    /// The provider owns credential-source-specific freshness work, such as
+    /// token refresh, access-token caching, credential persistence, refresh
+    /// concurrency control, and classification of failures as unauthenticated
+    /// vs retriable provider errors. The core only consumes the returned bearer.
     async fn access_token(&self) -> Result<AccessToken, AuthError>;
 
     /// Called when the server learns that this token was rejected.
