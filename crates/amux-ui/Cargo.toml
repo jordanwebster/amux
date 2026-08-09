@@ -1,19 +1,19 @@
 [package]
 name = "amux-ui"
-version = "0.3.0"
+version = "0.4.0"
 edition.workspace = true
-description = "Reactive UI runtime for amux clients"
+description = "Client state library for amux UIs: reducer core, effects, runtime shell"
 
 [dependencies]
 amux = { workspace = true }
 tokio = { workspace = true }
 futures-util = { workspace = true }
-bytes = { workspace = true }
+serde = { workspace = true }
+serde_json = { workspace = true }
+chrono = { workspace = true }
 uuid = { workspace = true }
 thiserror = { workspace = true }
-async-trait = { workspace = true }
 tracing = { workspace = true }
 
 [dev-dependencies]
-chrono = { workspace = true }
 tempfile = { workspace = true }

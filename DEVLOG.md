@@ -38,6 +38,70 @@ One paragraph describing what was done.
 
 ---
 
+## 2026-08-09: TUI V1 M1 — amux-ui becomes the reducer
+
+### Summary
+Replaced the placeholder `amux-ui` crate (1.1k lines, zero consumers)
+wholesale with the reducer core from `docs/UI.md`: serializable `Msg`s
+in, pure `update(&mut Model, Msg) -> Vec<Effect>`, a `Runtime` shell
+that owns `amux::Client` and funnels every stimulus through one ordered
+bounded channel, and a `Recorder` ring whose dumps are self-contained
+JSONL replay bundles. Tier-1 spec suite (`tests/spec/`) with the
+differential fold≡live property wrapping every chapter's sequences, plus
+a tier-2 embedded-server integration test replacing the old ignored one.
+
+### Changes
+- `crates/amux-ui/src/{msg,model,update,effect,recorder,runtime,lib}.rs`
+  — new crate body; old `{agent_cache,cmd,error,inventory,notification,
+  runtime,session,types}.rs` deleted, no compat wrapper.
+- `crates/amux-ui/tests/spec/{main,harness,connection,inventory,ops,
+  sessions,wire_free}.rs` — tier-1 chapters; `tests/runtime.rs` — tier-2.
+
+### Decisions Made
+- Reconnect snapshot semantics: entities are epoch-tagged; the swap to
+  the new snapshot happens at the synchronized marker (both hosts and
+  agents snapshots complete), so stale rows stay visible during catch-up
+  and renderers distinguish "loading" from "empty".
+- `local_host_id` enters the Model via `ServerMsg::Connected` — the wire
+  does not mark the local host, so the embedding client reads the device
+  identity and hands it to the shell (wired up in M3; `None` degrades to
+  no local-subscription policy, honestly `Unknown` attention).
+- OpIds are minted by the shell (`Uuid::new_v4`) and enter via
+  `Msg::Command`; epochs are minted by the reducer (increment on
+  `Connected`) — both deterministic under replay.
+- The recorder checkpoint advances by folding evicted Msgs through the
+  same pure `update`, so `checkpoint + ring` always reproduces the live
+  Model; dumps are 0600, retention-bounded (20 files), never uploaded.
+- `cloud_auth_required` is Model state set by auth-required op/stream
+  failures (mapped from `ProtocolError::InvalidCredentials`), cleared on
+  reconnect; a connection-level credential failure maps to
+  `DisconnectReason::AuthenticationRequired`. Degraded banner, never a
+  blocking screen.
+- `Effect::OpenStream`/`CloseStream` are defined but the reducer does
+  not emit them yet — the subscription policy is M2's first bullet; the
+  shell executor lands with it.
+- Fleet ranking: `NeedsYou` first (permission, question, finished), then
+  recency, id as the deterministic tiebreak; pending creates render as
+  optimistic rows at the bottom in dispatch order.
+- `AgentPhase::Suspended` was not modeled: nothing on the wire reports
+  it (suspended agents leave inventory), and inventing it would violate
+  facts-only. `exited(N)` derives from stream-close facts.
+
+### Verification
+- `cargo +nightly fmt --all` (repo formats with nightly rustfmt).
+- `cargo clippy --workspace --all-targets --features amux/testnet -- -D
+  warnings` clean.
+- `timeout 600 cargo test -p amux-ui` — 18 passed (17 tier-1 spec, 1
+  tier-2 embedded-server integration).
+- `timeout 600 cargo test -p amux --features testnet --test spec` — 44
+  passed (protocol suite untouched).
+
+### Next Steps
+- M2: attention summarizer fold + subscription Effect policy.
+- M3: `amux-tui` fleet screen + golden frames; M4: attach round-trip.
+
+---
+
 ## 2026-08-09: Client-layer design — docs/UI.md, external review, V1 TUI spec
 
 ### Summary

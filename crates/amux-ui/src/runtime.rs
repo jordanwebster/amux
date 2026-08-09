@@ -1,104 +1,402 @@
-use std::sync::Mutex as StdMutex;
+//! The runtime shell: owns `amux::Client`, executes Effects on tokio tasks,
+//! and funnels every stimulus into one ordered Msg stream folded on the
+//! caller's thread.
+//!
+//! The shell's edges are actor-shaped tasks, but they make no semantic
+//! decisions: anything that affects which Msgs or Effects exist enters as a
+//! Msg and is decided in the pure reducer. Shell-private state manages
+//! resources only (sockets, reconnect backoff, buffers).
 
+use std::io;
+use std::path::PathBuf;
+use std::pin::Pin;
+use std::sync::{Arc, Mutex as StdMutex};
+use std::time::Duration;
+
+use amux::{Client, ClientError, CreateAgentRequest, HostId, ProtocolError};
+use chrono::{DateTime, Utc};
 use tokio::sync::mpsc;
 use tokio::task::JoinHandle;
+use uuid::Uuid;
 
-use super::agent_cache::AgentCache;
-use super::cmd::{self, Cmd, CmdId};
-use super::inventory;
-use super::notification::{self, DisconnectReason, Notification, NotificationStream};
-use super::session::SessionRegistry;
+use crate::effect::{DumpReason, Effect};
+use crate::model::Model;
+use crate::msg::{Command, DisconnectReason, Msg, OpError, OpId, OpOutcome, ServerMsg};
+use crate::recorder::{DEFAULT_RECORDER_CAPACITY, Recorder};
+use crate::update::{NOT_CONNECTED_ERROR, update};
 
-const NOTIFICATION_BUFFER: usize = 1024;
+/// Reducer build identity, stamped into recorder dumps.
+pub const BUILD: &str = concat!("amux-ui/", env!("CARGO_PKG_VERSION"));
 
+/// One ordered Msg stream; producers wait when it is full (lossless).
+const MSG_CHANNEL_CAPACITY: usize = 1024;
+
+/// Msgs folded per `next()` wakeup before control returns to the caller, so
+/// a flooding stream batches to a frame budget and never starves input.
+const DRAIN_BUDGET: usize = 256;
+
+const RECONNECT_BACKOFF_INITIAL: Duration = Duration::from_millis(250);
+const RECONNECT_BACKOFF_MAX: Duration = Duration::from_secs(4);
+
+/// Why a connection attempt failed.
+#[derive(Clone, Debug)]
+pub struct ConnectFailure {
+    pub message: String,
+    pub auth_required: bool,
+}
+
+/// Future returned by a [`Connector`].
+pub type ConnectFuture = Pin<Box<dyn Future<Output = Result<Client, ConnectFailure>> + Send>>;
+
+/// How the shell (re)establishes the daemon connection. Provided by the
+/// embedding client (the CLI knows how to spawn the daemon); called again
+/// after every disconnect.
+pub type Connector = Box<dyn FnMut() -> ConnectFuture + Send>;
+
+pub struct RuntimeOptions {
+    /// The daemon's own host id (read from the local device identity);
+    /// enters the Model via `ServerMsg::Connected`.
+    pub local_host_id: Option<HostId>,
+    /// Where recorder dumps land. `None` disables dumping.
+    pub dump_dir: Option<PathBuf>,
+    pub recorder_capacity: usize,
+}
+
+impl Default for RuntimeOptions {
+    fn default() -> Self {
+        Self {
+            local_host_id: None,
+            dump_dir: None,
+            recorder_capacity: DEFAULT_RECORDER_CAPACITY,
+        }
+    }
+}
+
+/// One Runtime per client process, one Model per daemon connection.
+/// Renderers access the Model in-process by borrow after [`Runtime::next`] /
+/// [`Runtime::drain`].
 pub struct Runtime {
-    client: amux::Client,
-    notifications_tx: mpsc::Sender<Notification>,
-    notifications_rx: StdMutex<Option<mpsc::Receiver<Notification>>>,
-    tasks: StdMutex<Vec<JoinHandle<()>>>,
-    agents: AgentCache,
-    sessions: SessionRegistry,
+    model: Model,
+    recorder: Recorder,
+    msg_tx: mpsc::Sender<Msg>,
+    msg_rx: mpsc::Receiver<Msg>,
+    client: Arc<StdMutex<Option<Client>>>,
+    tasks: Vec<JoinHandle<()>>,
+    dump_dir: Option<PathBuf>,
 }
 
 impl Runtime {
-    /// Construct a runtime over an already-built `amux::Client`.
-    pub fn start_with_client(client: amux::Client) -> Self {
-        let (notifications_tx, notifications_rx) = mpsc::channel(NOTIFICATION_BUFFER);
-        let agents = AgentCache::new();
-        let sessions = SessionRegistry::new();
+    /// Start the shell with a connector that dials (and re-dials) the
+    /// daemon.
+    pub fn start(connector: Connector, options: RuntimeOptions) -> Self {
+        let model = Model::default();
+        let recorder = Recorder::new(options.recorder_capacity, &model);
+        let (msg_tx, msg_rx) = mpsc::channel(MSG_CHANNEL_CAPACITY);
+        let client = Arc::new(StdMutex::new(None));
 
-        let runtime = Self {
-            client: client.clone(),
-            notifications_tx: notifications_tx.clone(),
-            notifications_rx: StdMutex::new(Some(notifications_rx)),
-            tasks: StdMutex::new(Vec::new()),
-            agents: agents.clone(),
-            sessions: sessions.clone(),
-        };
-
-        runtime.push_task(tokio::spawn(inventory::run(
-            client,
-            notifications_tx,
-            agents,
-        )));
-        runtime
-    }
-
-    /// Dispatch a command and receive its result through notifications.
-    pub fn dispatch(&self, cmd: Cmd) -> CmdId {
-        let id = cmd::new_id();
-        let task = tokio::spawn(cmd::handle(
-            id,
-            cmd,
-            self.client.clone(),
-            self.notifications_tx.clone(),
-            self.agents.clone(),
-            self.sessions.clone(),
+        let connection_task = tokio::spawn(connection_task(
+            connector,
+            msg_tx.clone(),
+            client.clone(),
+            options.local_host_id,
         ));
-        self.push_task(task);
-        id
-    }
 
-    /// Receive the next notification. Single-consumer.
-    pub fn notifications(&self) -> NotificationStream {
-        let rx = self
-            .notifications_rx
-            .lock()
-            .expect("notification receiver mutex poisoned")
-            .take()
-            .unwrap_or_else(notification::closed_receiver);
-        NotificationStream::new(rx)
-    }
-
-    /// Tear down runtime tasks and ask the server to shut down.
-    pub async fn shutdown(self) {
-        if self.client.owns_embedded_server() {
-            let _ = self.client.shutdown().await;
+        Self {
+            model,
+            recorder,
+            msg_tx,
+            msg_rx,
+            client,
+            tasks: vec![connection_task],
+            dump_dir: options.dump_dir,
         }
+    }
 
-        self.sessions.stop_all().await;
+    /// Start over an already-established client (tests, embedded servers).
+    pub fn start_with_client(client: Client, options: RuntimeOptions) -> Self {
+        let connector: Connector = Box::new(move || {
+            let client = client.clone();
+            Box::pin(async move { Ok(client) })
+        });
+        Self::start(connector, options)
+    }
 
-        for task in self
-            .tasks
-            .lock()
-            .expect("runtime task list mutex poisoned")
-            .drain(..)
-        {
+    pub fn model(&self) -> &Model {
+        &self.model
+    }
+
+    /// Dispatch a command; the outcome returns as state (a finished op).
+    pub fn dispatch(&mut self, command: Command) -> OpId {
+        let op = OpId(Uuid::new_v4());
+        self.process(Msg::Command { op, command });
+        op
+    }
+
+    /// Feed observed time for time-dependent display.
+    pub fn observe_now(&mut self, now: DateTime<Utc>) {
+        self.process(Msg::Tick { now });
+    }
+
+    /// Await the next Msg, then fold everything already pending (up to a
+    /// frame budget). Returns false when the shell has shut down.
+    pub async fn next(&mut self) -> bool {
+        let Some(msg) = self.msg_rx.recv().await else {
+            return false;
+        };
+        self.process(msg);
+        self.drain();
+        true
+    }
+
+    /// Fold every immediately-available Msg (bounded by the frame budget);
+    /// returns true if anything was folded.
+    pub fn drain(&mut self) -> bool {
+        let mut folded = false;
+        for _ in 0..DRAIN_BUDGET {
+            match self.msg_rx.try_recv() {
+                Ok(msg) => {
+                    self.process(msg);
+                    folded = true;
+                }
+                Err(_) => break,
+            }
+        }
+        folded
+    }
+
+    /// Dump the recorder ring for diagnosis. Local-only; never uploaded.
+    pub fn dump(&mut self, reason: DumpReason) -> io::Result<PathBuf> {
+        let Some(dir) = self.dump_dir.clone() else {
+            return Err(io::Error::other("no dump directory configured"));
+        };
+        let millis = std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .map(|elapsed| elapsed.as_millis())
+            .unwrap_or(0);
+        let stamp = format!("{millis:013}-{}", std::process::id());
+        self.recorder.write_dump(&dir, reason, BUILD, &stamp)
+    }
+
+    fn process(&mut self, msg: Msg) {
+        self.recorder.record(&msg);
+        let effects = update(&mut self.model, msg);
+        for effect in effects {
+            self.run_effect(effect);
+        }
+    }
+
+    fn run_effect(&mut self, effect: Effect) {
+        match effect {
+            Effect::Rpc { op, command } => {
+                let client = self.client.lock().expect("client mutex poisoned").clone();
+                let tx = self.msg_tx.clone();
+                tokio::spawn(async move {
+                    let outcome = match client {
+                        Some(client) => execute_rpc(&client, command).await,
+                        None => OpOutcome::Error {
+                            error: OpError {
+                                message: NOT_CONNECTED_ERROR.to_string(),
+                                auth_required: false,
+                            },
+                        },
+                    };
+                    let _ = tx.send(Msg::OpResult { op, outcome }).await;
+                });
+            }
+            // Session-stream effects arrive with the attention milestone;
+            // the reducer does not emit them yet.
+            Effect::OpenStream { .. } | Effect::CloseStream { .. } => {}
+            Effect::ScheduleTick { after_ms } => {
+                let tx = self.msg_tx.clone();
+                tokio::spawn(async move {
+                    tokio::time::sleep(Duration::from_millis(after_ms)).await;
+                    let _ = tx.send(Msg::Tick { now: Utc::now() }).await;
+                });
+            }
+            Effect::RequestDump { reason } => {
+                if let Err(error) = self.dump(reason.clone()) {
+                    tracing::warn!(?reason, %error, "failed to write requested ui dump");
+                }
+            }
+        }
+    }
+}
+
+impl Drop for Runtime {
+    fn drop(&mut self) {
+        for task in &self.tasks {
             task.abort();
         }
+    }
+}
 
-        let _ = self
-            .notifications_tx
-            .send(Notification::Disconnected {
-                reason: DisconnectReason::ApplicationShutdown,
-            })
-            .await;
+async fn execute_rpc(client: &Client, command: Command) -> OpOutcome {
+    match command {
+        Command::CreateAgent {
+            host,
+            name,
+            agent_type,
+            working_dir,
+        } => {
+            let request = CreateAgentRequest {
+                agent_id: Uuid::new_v4(),
+                host_id: host,
+                name: Some(name),
+                agent_type,
+                working_dir,
+                terminal_size: None,
+                args: Vec::new(),
+            };
+            match client.create_agent(request).await {
+                Ok(agent) => OpOutcome::AgentCreated { agent },
+                Err(error) => op_error_outcome(&error),
+            }
+        }
+        Command::RenameAgent { agent, name } => match client.rename_agent(agent, name).await {
+            Ok(agent) => OpOutcome::AgentRenamed { agent },
+            Err(error) => op_error_outcome(&error),
+        },
+        Command::DeleteAgent { agent } => match client.delete_agent(agent).await {
+            Ok(()) => OpOutcome::AgentDeleted,
+            Err(error) => op_error_outcome(&error),
+        },
+    }
+}
+
+fn op_error_outcome(error: &ClientError) -> OpOutcome {
+    OpOutcome::Error {
+        error: OpError {
+            message: error.to_string(),
+            auth_required: is_auth_error(error),
+        },
+    }
+}
+
+fn is_auth_error(error: &ClientError) -> bool {
+    matches!(
+        error,
+        ClientError::Protocol(ProtocolError::InvalidCredentials)
+    )
+}
+
+/// Map a client error to the disconnect vocabulary.
+/// `ProtocolError::InvalidCredentials` surfaces as authentication-required —
+/// the degraded state, never a dead app.
+fn disconnect_reason(error: &ClientError) -> DisconnectReason {
+    match error {
+        ClientError::ServerShutdown(reason) => DisconnectReason::ServerShutdown {
+            detail: reason.to_string(),
+        },
+        error if is_auth_error(error) => DisconnectReason::AuthenticationRequired,
+        error => DisconnectReason::TransportError {
+            message: error.to_string(),
+        },
+    }
+}
+
+/// Dial, subscribe, pump inventory events into Msgs; on failure report
+/// `Disconnected` and retry with backoff. This task manages resources; every
+/// semantic decision it forwards as a Msg.
+async fn connection_task(
+    mut connector: Connector,
+    tx: mpsc::Sender<Msg>,
+    shared_client: Arc<StdMutex<Option<Client>>>,
+    local_host_id: Option<HostId>,
+) {
+    let mut backoff = RECONNECT_BACKOFF_INITIAL;
+    loop {
+        let client = match connector().await {
+            Ok(client) => client,
+            Err(failure) => {
+                let reason = if failure.auth_required {
+                    DisconnectReason::AuthenticationRequired
+                } else {
+                    DisconnectReason::TransportError {
+                        message: failure.message,
+                    }
+                };
+                if send_msg(&tx, Msg::Server(ServerMsg::Disconnected { reason }))
+                    .await
+                    .is_err()
+                {
+                    return;
+                }
+                tokio::time::sleep(backoff).await;
+                backoff = (backoff * 2).min(RECONNECT_BACKOFF_MAX);
+                continue;
+            }
+        };
+
+        *shared_client.lock().expect("client mutex poisoned") = Some(client.clone());
+        let session_end = pump_inventory(&client, &tx, local_host_id).await;
+        *shared_client.lock().expect("client mutex poisoned") = None;
+
+        let Some(reason) = session_end else {
+            // The Msg channel closed: the Runtime is gone.
+            return;
+        };
+        if send_msg(&tx, Msg::Server(ServerMsg::Disconnected { reason }))
+            .await
+            .is_err()
+        {
+            return;
+        }
+        backoff = RECONNECT_BACKOFF_INITIAL;
+        tokio::time::sleep(backoff).await;
+    }
+}
+
+/// Subscribe to hosts and agents and forward events until either stream
+/// fails. Returns the disconnect reason, or `None` when the Msg channel
+/// closed beneath us.
+async fn pump_inventory(
+    client: &Client,
+    tx: &mpsc::Sender<Msg>,
+    local_host_id: Option<HostId>,
+) -> Option<DisconnectReason> {
+    let mut hosts_stream = match client.subscribe_hosts().await {
+        Ok(stream) => stream,
+        Err(error) => return Some(disconnect_reason(&error)),
+    };
+    let mut agents_stream = match client.subscribe_agents().await {
+        Ok(stream) => stream,
+        Err(error) => return Some(disconnect_reason(&error)),
+    };
+
+    if send_msg(tx, Msg::Server(ServerMsg::Connected { local_host_id }))
+        .await
+        .is_err()
+    {
+        return None;
     }
 
-    fn push_task(&self, task: JoinHandle<()>) {
-        self.tasks
-            .lock()
-            .expect("runtime task list mutex poisoned")
-            .push(task);
+    loop {
+        let event = tokio::select! {
+            event = hosts_stream.recv() => match event {
+                Ok(amux::HostEvent::HostUpdated { host }) => ServerMsg::HostUpserted { host },
+                Ok(amux::HostEvent::HostRemoved { id }) => ServerMsg::HostRemoved { id },
+                Ok(amux::HostEvent::SnapshotComplete) => ServerMsg::HostsSynchronized,
+                Err(error) => return Some(disconnect_reason(&error)),
+            },
+            event = agents_stream.recv() => match event {
+                Ok(amux::AgentEvent::AgentUp { agent })
+                | Ok(amux::AgentEvent::AgentUpdated { agent }) => {
+                    ServerMsg::AgentUpserted { agent }
+                }
+                Ok(amux::AgentEvent::AgentDown { agent_id }) => {
+                    ServerMsg::AgentRemoved { id: agent_id }
+                }
+                Ok(amux::AgentEvent::SnapshotComplete) => ServerMsg::AgentsSynchronized,
+                Err(error) => return Some(disconnect_reason(&error)),
+            },
+        };
+        if send_msg(tx, Msg::Server(event)).await.is_err() {
+            return None;
+        }
     }
+}
+
+async fn send_msg(tx: &mpsc::Sender<Msg>, msg: Msg) -> Result<(), ()> {
+    // Bounded lossless send: the producer waits, never drops.
+    tx.send(msg).await.map_err(|_| ())
 }
