@@ -9,6 +9,8 @@ edition = "2024"
 [workspace.dependencies]
 # Internal
 amux = { path = "crates/amux" }
+amux-ui = { path = "crates/amux-ui" }
+amux-tui = { path = "crates/amux-tui" }
 
 # Shared
 portable-pty = "0.8"
@@ -54,6 +56,7 @@ tracing-subscriber = { version = "0.3", features = ["env-filter", "fmt"] }
 tracing-appender = "0.2"
 tempfile = "3"
 crossterm = "0.28"
+ratatui = { version = "0.29", default-features = false, features = ["crossterm"] }
 shell-words = "1"
 bytes = "1"
 qrcode = { version = "0.14", default-features = false }

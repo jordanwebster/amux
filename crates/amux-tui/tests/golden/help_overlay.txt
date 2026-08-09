@@ -1,0 +1,18 @@
+┌ amux ────────────────────────────────────────────────────────────┐
+│ /                                                    5 agents    │
+│                                                                  │
+│   j/k or ↑/↓    move                                             │
+│   gg / G        top / bottom                                     │
+│   / or i        filter                                           │
+│   enter         attach                                           │
+│   n             new agent                                        │
+│   r             rename selected                                  │
+│   d             delete selected                                  │
+│   C-g           debug dump                                       │
+│   q             quit                                             │
+│                                                                  │
+│   C-a d         detach from session                              │
+│   C-a s         back to fleet                                    │
+│                                                                  │
+│ ● connected · 3 hosts        any key to close                    │
+└──────────────────────────────────────────────────────────────────┘

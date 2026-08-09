@@ -121,16 +121,17 @@ impl AgentCard {
             (Attention::Unknown, _) => "–".to_string(),
         }
     }
+}
 
-    fn attention_rank(&self) -> u8 {
-        match self.attention {
-            Attention::NeedsYou {
-                why: Why::Permission,
-            } => 0,
-            Attention::NeedsYou { why: Why::Question } => 1,
-            Attention::NeedsYou { why: Why::Finished } => 2,
-            _ => 3,
-        }
+/// Fleet ranking: `NeedsYou` first by urgency, everything else by recency.
+fn attention_rank(attention: Attention) -> u8 {
+    match attention {
+        Attention::NeedsYou {
+            why: Why::Permission,
+        } => 0,
+        Attention::NeedsYou { why: Why::Question } => 1,
+        Attention::NeedsYou { why: Why::Finished } => 2,
+        _ => 3,
     }
 }
 
@@ -350,6 +351,27 @@ impl Model {
         self.now
     }
 
+    /// What a fleet consumer should show for this card's attention: an
+    /// offline host means our knowledge is stale, so it degrades to
+    /// `Unknown` — computed here, once, for every renderer.
+    pub fn effective_attention(&self, card: &AgentCard) -> Attention {
+        if self.host_online(card.agent.host_id) {
+            card.attention
+        } else {
+            Attention::Unknown
+        }
+    }
+
+    /// The fleet status word with host reachability applied (offline rows
+    /// show `–`, never a stale badge word).
+    pub fn status_label_for(&self, card: &AgentCard) -> String {
+        if self.host_online(card.agent.host_id) {
+            card.status_label()
+        } else {
+            "–".to_string()
+        }
+    }
+
     /// The fleet: ONE flat list, globally ranked. `NeedsYou` first
     /// (permission, question, finished), then recency; host is a column, not
     /// a grouping. Pending creates render as optimistic rows at the bottom
@@ -357,8 +379,8 @@ impl Model {
     pub fn fleet(&self) -> Vec<FleetItem<'_>> {
         let mut cards: Vec<&AgentCard> = self.agents.values().collect();
         cards.sort_by(|a, b| {
-            a.attention_rank()
-                .cmp(&b.attention_rank())
+            attention_rank(self.effective_attention(a))
+                .cmp(&attention_rank(self.effective_attention(b)))
                 .then(b.last_activity.cmp(&a.last_activity))
                 .then(a.agent.id.cmp(&b.agent.id))
         });

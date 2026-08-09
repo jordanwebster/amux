@@ -78,6 +78,18 @@ pub fn device_identity_ready() -> bool {
     crate::identity::default_device_files_ready()
 }
 
+/// The host id of this device's stored identity, if initialized. Read-only:
+/// clients use it to recognize the local host in inventory (the wire does
+/// not mark the local host).
+pub fn local_host_id() -> Option<crate::HostId> {
+    local_host_id_in(&crate::paths::default_data_dir())
+}
+
+/// See [`local_host_id`]; explicit data dir for tests and embedding.
+pub fn local_host_id_in(data_dir: &Path) -> Option<crate::HostId> {
+    crate::identity::stored_host_id_in(data_dir)
+}
+
 /// Ensure the device identity and trust-store files from
 /// `docs/ARCHITECTURE.md` exist in the data directory.
 pub fn ensure_device_identity() -> Result<(), SetupError> {
@@ -190,6 +202,15 @@ mod tests {
     use tempfile::tempdir;
 
     use super::*;
+
+    #[test]
+    fn local_host_id_reads_the_stored_identity() {
+        let dir = tempdir().unwrap();
+        assert_eq!(local_host_id_in(dir.path()), None);
+
+        let identity = crate::identity::ensure_device_files_in(dir.path()).unwrap();
+        assert_eq!(local_host_id_in(dir.path()), Some(identity.host_id));
+    }
 
     #[test]
     fn cloud_enabled_requires_some_true() {

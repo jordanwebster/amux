@@ -1,0 +1,11 @@
+┌ amux ────────────────────────────────────────────────────────────┐
+│ /                                                    0 agents    │
+│                                                                  │
+│                                                                  │
+│                  Press n to create one on nova,                  │
+│                or pair a device: amux pair --help                │
+│                                                                  │
+│                                                                  │
+│                                                                  │
+│ ● connected · 1 host         n new  r rename  d delete  ? help   │
+└──────────────────────────────────────────────────────────────────┘

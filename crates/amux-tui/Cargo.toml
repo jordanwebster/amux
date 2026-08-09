@@ -1,0 +1,22 @@
+[package]
+name = "amux-tui"
+version = "0.4.0"
+edition.workspace = true
+description = "amux chrome TUI: the fleet around raw attach"
+
+# This crate consumes `amux-ui` exclusively. Depending on `amux` here is a
+# review-rejectable offense — the TUI must never touch `amux::Client`.
+[dependencies]
+amux-ui = { workspace = true }
+ratatui = { workspace = true }
+crossterm = { workspace = true, features = ["event-stream"] }
+tokio = { workspace = true }
+futures-util = { workspace = true }
+chrono = { workspace = true }
+anyhow = { workspace = true }
+tracing = { workspace = true }
+
+[dev-dependencies]
+serde_json = { workspace = true }
+uuid = { workspace = true }
+vt100 = "0.15"

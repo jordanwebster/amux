@@ -382,6 +382,13 @@ pub(crate) fn load_or_create_device_identity_in(
     DeviceIdentity::from_parts(host_id, private_key_pkcs8)
 }
 
+/// Read the stored host id without touching key material. Read-only client
+/// plumbing: UIs use it to recognize the local host in inventory (the wire
+/// does not mark the local host).
+pub(crate) fn stored_host_id_in(data_dir: &Path) -> Option<HostId> {
+    load_host_id(&host_id_path(data_dir)).ok()
+}
+
 fn load_device_identity_in(data_dir: &Path) -> Result<DeviceIdentity, IdentityError> {
     let host_id = load_host_id(&host_id_path(data_dir))?;
     let private_key_pkcs8 = load_device_key(&device_key_path(data_dir))?;

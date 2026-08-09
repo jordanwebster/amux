@@ -5,6 +5,7 @@ mod init;
 mod plugin;
 mod server_client;
 mod session_client;
+mod ui;
 mod update;
 
 use std::fs::OpenOptions;
@@ -17,7 +18,7 @@ use amux::{AgentType, Config, DebugFormat, PairingSecret, PairingStart, default_
 use anyhow::{Context, Result, anyhow};
 use base64::Engine as _;
 use base64::engine::general_purpose::URL_SAFE_NO_PAD;
-use clap::{CommandFactory, Parser, Subcommand, ValueEnum};
+use clap::{Parser, Subcommand, ValueEnum};
 use qrcode::QrCode;
 use qrcode::render::unicode;
 use tracing_appender::non_blocking::WorkerGuard;
@@ -45,6 +46,9 @@ struct Cli {
 
 #[derive(Debug, Subcommand)]
 enum Commands {
+    /// Open the fleet TUI (the default when run with no command)
+    Ui,
+
     /// Create a new agent session
     New {
         /// Agent type: claude or test-agent (test-agent only in dev builds)
@@ -229,8 +233,13 @@ async fn main() -> Result<()> {
 
     let cli = Cli::parse();
     let Some(command) = cli.command else {
-        print_top_level_help()?;
-        return Ok(());
+        // Bare `amux` opens the fleet TUI (init-first on a fresh machine —
+        // the dispatch decides before the TUI ever starts).
+        let config = load_config(cli.config)?;
+        config
+            .validate(false)
+            .map_err(|e| anyhow!("invalid config: {e}"))?;
+        return ui::run(config).await;
     };
 
     if handle_server_start_from_stdin(&command).await? {
@@ -240,12 +249,6 @@ async fn main() -> Result<()> {
     let config = load_validated_config(&command, cli.config)?;
 
     run_command(command, config).await
-}
-
-fn print_top_level_help() -> Result<()> {
-    let mut command = Cli::command();
-    command.print_help()?;
-    Ok(())
 }
 
 async fn handle_server_start_from_stdin(command: &Commands) -> Result<bool> {
@@ -293,6 +296,7 @@ fn command_server_mode(command: &Commands) -> ServerMode {
 
 async fn run_command(command: Commands, mut config: Config) -> Result<()> {
     match command {
+        Commands::Ui => ui::run(config).await?,
         Commands::New {
             agent_type,
             name,

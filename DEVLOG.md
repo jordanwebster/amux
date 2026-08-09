@@ -38,6 +38,86 @@ One paragraph describing what was done.
 
 ---
 
+## 2026-08-09: TUI V1 M3 — amux-tui fleet screen + golden frames
+
+### Summary
+New library crate `crates/amux-tui` (ratatui + crossterm), consumed by
+`amux-cli`: bare `amux` (and `amux ui`) opens the fleet. The renderer is
+a pure function of (Model, ViewState, FrameContext) building the whole
+chrome as styled text lines, so the tier-3 golden frames control every
+cell; the checked-in frames reproduce the spec mockups verbatim
+(byte-compared in this session). Event loop is event-driven — drain,
+fold, draw once, dirty-flag gated, ticks only while relative ages are on
+screen. Alt-screen only, RAII terminal guard with a chained panic hook
+that restores before reporting.
+
+### Changes
+- `crates/amux-tui/src/{lib,render,view,keys,run,terminal}.rs` — new.
+- `crates/amux-tui/tests/golden.rs` + `tests/golden/*.txt` — all named
+  frames: fleet_ranked, fleet_attention_badges, fleet_offline_host_rows,
+  fleet_cloud_auth_banner, fleet_empty_no_agents, fleet_daemon_starting,
+  fleet_daemon_unreachable (extra), picker_filtered, row_rename_inline,
+  delete_confirm_statusline, op_pending_and_failed, help_overlay,
+  fleet_ranked_80col/60col (column-collapse rule), plus a run-stability
+  test and style assertions (badge colors, offline dim) that text
+  goldens cannot see.
+- `crates/amux-cli/src/ui.rs` + `main.rs` dispatch — bare `amux` runs
+  init first on an uninitialized machine (CLI-owned auth; TUI stays
+  auth-passive), then opens the fleet; the connector wraps `get_client`
+  so daemon spawn shows as the "Starting daemon…" state. `amux ui` is
+  the explicit alias.
+- `crates/amux/src/{setup,identity}.rs` — minimal read-only plumbing:
+  `setup::local_host_id[_in]()` reads the stored identity's host id
+  (the wire does not mark the local host); with test.
+- `crates/amux-ui` — Model grew `effective_attention`/`status_label_for`
+  (offline hosts degrade display to Unknown, computed once for every
+  renderer) and fleet ranking now uses effective attention; summarizer
+  routing keys on the advertised `claude_pty_transcript_v1` protocol
+  fact instead of the `agent_type` string; op seq is 1-based; kernel
+  entity re-exports widened (Capabilities, HostTrustStatus).
+
+### Decisions Made
+- Whole-frame text rendering (one Paragraph of spans) instead of nested
+  ratatui widgets: the mockups are the contract, and byte-level control
+  is what makes "verbatim" testable.
+- Spec-mockup inconsistency flagged (NOT silently deviated): the rename
+  and pending-row mockup lines place age/status at columns 46/52 while
+  every fleet-frame row uses 48/54. The renderer uses the fleet grid
+  consistently; those two golden lines differ from the mockup by that
+  2-column shift only. All other mockup lines match byte-for-byte.
+- The attach handoff seam is in place (`run_fleet` takes an async attach
+  callback; chrome restores the terminal before calling it and resumes
+  after) but amux-cli passes a no-op until M4 wires the passthrough.
+- Rename mode hides the `▸` marker on the edited row (the draft cursor
+  `▌` marks focus) — matches the mockup.
+- Column collapse: the status-word column drops below 68 columns; key
+  hints drop when they no longer fit. Locked by the 80/60col frames.
+- Debug-dump keybinding is `C-g`; `amux debug ui-dump` (spec-listed)
+  needs an IPC surface to reach a running TUI's ring and is deferred
+  with a note — the keybinding plus tripwire/panic/overflow triggers
+  cover V1.
+- Layout math counts chars (fixtures are width-1 glyphs); wide-glyph
+  names will mis-pad until a unicode-width pass — accepted for V1.
+
+### Verification
+- `cargo +nightly fmt --all`; CI clippy invocation clean.
+- `timeout 600 cargo test -p amux-ui` — 26 passed; `timeout 600 cargo
+  test -p amux-tui` — 16 passed (goldens stable across two runs);
+  protocol spec suite 44 passed; `amux --help` lists `ui`.
+- `fleet_ranked` golden byte-compared against the spec mockup: verbatim
+  match; all other spec frame lines verified present verbatim except the
+  two flagged 46/52-column lines.
+- Windows leg NOT verifiable from this mac: `cargo check -p amux-tui
+  --target x86_64-pc-windows-msvc` fails building `ring`'s C code (no
+  Windows-target C toolchain locally). amux-tui itself has no
+  platform-specific code; CI's Windows runner builds ring natively.
+
+### Next Steps
+- M4: attach round-trip — reuse `session_client` passthrough in-process,
+  terminal hygiene tests over the vt100 harness.
+
+---
+
 ## 2026-08-09: TUI V1 M2 — attention (pure amux-ui, zero core changes)
 
 ### Summary

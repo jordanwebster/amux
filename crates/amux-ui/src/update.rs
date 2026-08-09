@@ -86,8 +86,9 @@ fn ensure_stream(model: &mut Model, agent_id: amux::AgentId) -> Option<Effect> {
 }
 
 fn update_command(model: &mut Model, op: OpId, command: Command) -> Vec<Effect> {
-    let seq = model.op_seq;
+    // 1-based so "no failures dismissed" is naturally seq 0 for viewers.
     model.op_seq += 1;
+    let seq = model.op_seq;
 
     if !model.is_connected() {
         push_finished(
@@ -307,8 +308,10 @@ fn update_stream(model: &mut Model, agent: amux::AgentId, event: StreamMsg) -> V
 }
 
 /// Run a fold step on the agent's claude summarizer (creating it on first
-/// evidence) and refresh the derived attention. Non-claude agents have no
-/// summarizer and honestly stay `Unknown`.
+/// evidence) and refresh the derived attention. Routing keys on the
+/// advertised protocol fact — the fold consumes `claude_pty_transcript_v1`
+/// rows, whatever the agent calls itself. Agents without the protocol have
+/// no summarizer and honestly stay `Unknown`.
 fn with_claude_summarizer(
     model: &mut Model,
     agent: amux::AgentId,
@@ -317,7 +320,12 @@ fn with_claude_summarizer(
     let Some(card) = model.agents.get_mut(&agent) else {
         return;
     };
-    if card.agent.agent_type != "claude" {
+    if !card
+        .agent
+        .io_protocols
+        .iter()
+        .any(|protocol| protocol == STRUCTURED_PROTOCOL)
+    {
         return;
     }
     let state = card

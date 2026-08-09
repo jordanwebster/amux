@@ -1,0 +1,11 @@
+┌ amux ────────────────────────────────────────────────────────────┐
+│ /                                                    0 agents    │
+│                                                                  │
+│                                                                  │
+│                       ✗ daemon unreachable                       │
+│                 start it with: amux server start                 │
+│                                                                  │
+│                                                                  │
+│                                                                  │
+│ ✗ disconnected               n new  r rename  d delete  ? help   │
+└──────────────────────────────────────────────────────────────────┘
