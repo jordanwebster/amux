@@ -38,6 +38,80 @@ One paragraph describing what was done.
 
 ---
 
+## 2026-08-09: TUI V1 M4 — attach round-trip (the spine)
+
+### Summary
+`enter` on a fleet row now runs the real passthrough: the chrome leaves
+the alternate screen and restores termios (RAII guard from M3), the
+existing `session_client` passthrough runs in-process on the real
+terminal, and on detach the chrome re-enters and repaints from the
+Model. `<leader>d` and `<leader>s` both detach (the fleet IS `s`'s
+target in V1). The passthrough was reused, not rewritten: the leader-
+scanning stdin reader and select loop moved intact into
+`spawn_stdin_reader`/`attach_loop`, now parameterized over injected
+input events and an output writer so the tier-2 suite drives them
+without a terminal; the CLI `amux attach`/`amux new` paths keep their
+exact print-and-exit behavior via `finish_cli_attach`.
+
+### Changes
+- `crates/amux-cli/src/session_client.rs` — `AttachOutcome`,
+  `subscribe_raw`, `spawn_stdin_reader` (+`s` chord, +stdin reclaim),
+  `attach_loop` (generic writer), `attach_terminal`, `attach_for_ui`;
+  tier-2 `mod attach` test suite (embedded daemon + pty `cat` agent).
+- `crates/amux-tui/src/run.rs` — attach callback now returns an optional
+  status-line notice; outcomes surface in the fleet status line.
+- `crates/amux-cli/src/ui.rs` — wires `attach_for_ui` as the handoff.
+
+### Decisions Made
+- Stdin reclaim: the blocking stdin reader cannot be killed portably
+  mid-read, so when a session ends WITHOUT a detach chord (agent exited,
+  killed, daemon shutdown) the TUI path prints
+  `[<label> — press any key to return to the fleet]` and the next
+  keypress is consumed to hand stdin back exclusively before the
+  chrome's event stream reads again. Detach chords need no prompt (the
+  reader exits as part of the chord). CLI paths never reclaim — the
+  process exits, as today.
+- Tier-2 tests use the embedded in-process daemon (same pattern as
+  amux-ui's runtime test) rather than the multi-daemon testnet: the
+  testnet's client accessors are pub(crate) and attach is single-daemon
+  work; a real daemon plus a real pty test-agent is the tier-2 contract.
+  Test names live under `session_client::attach::*` because amux-cli is
+  a binary crate (no lib target for integration tests to import).
+- Named tests: `attach::round_trip_repaints_fleet` (attach → echoed
+  output → detach → fleet repaints from Model → attach again → 100
+  scripted attach/detach cycles), `attach::detach_leaves_terminal_sane`
+  (vt100 over the real enter/restore byte sequences: alternate screen
+  entered and left, cursor re-shown),
+  `attach::kill_during_attach_still_restores_the_terminal` (delete the
+  agent mid-attach; the loop reports the close instead of hanging, and
+  the restore sequence still yields a sane vt100 screen),
+  `attach::offline_host_shows_dial_error_instead_of_attaching` (enter on
+  an offline host surfaces `last_dial_error` in the status line, no
+  attach).
+- Late attach relies on the existing buffer replay unchanged
+  (`replay_query: None`); how well real agent TUIs reconstruct was not
+  visually verified in this environment — the SIGWINCH-wiggle fallback
+  remains the known remedy, out of V1 scope.
+
+### Verification
+- `cargo +nightly fmt --all`; CI clippy invocation clean.
+- `timeout 600 cargo test -p amux-cli` — 52 passed (incl. the four
+  attach tests; the 100-cycle loop runs in ~0.1s against the embedded
+  daemon). `timeout 600 cargo test -p amux-ui` — 26 passed;
+  `-p amux-tui` — 16 passed; protocol spec suite 44 passed.
+- Non-TTY smoke: `amux ui` without a terminal fails gracefully
+  ("Device not configured"), no panic, no partial terminal state.
+- Interactive feel ("the loop feels instant") not verifiable headless;
+  the tier-2 round trip plus terminal-hygiene bytes are the executable
+  stand-in. Real-terminal pass recommended at review.
+
+### Next Steps
+- M5 (naming translation cleanup) deliberately not picked up.
+- Backlog: recorded claude-code fixture to supplement the authored M2
+  ones; `amux debug ui-dump` IPC; Windows CI leg for amux-tui.
+
+---
+
 ## 2026-08-09: TUI V1 M3 — amux-tui fleet screen + golden frames
 
 ### Summary

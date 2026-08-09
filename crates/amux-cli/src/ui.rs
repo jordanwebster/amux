@@ -51,9 +51,10 @@ pub async fn run(mut config: Config) -> Result<()> {
         default_agent_type: amux::AgentType::Claude,
     };
 
-    run_fleet(&mut runtime, tui_config, |_agent| async move {
-        // The raw-passthrough handoff lands with the attach milestone (M4).
-        Ok(())
+    let attach_config = config.clone();
+    run_fleet(&mut runtime, tui_config, move |agent| {
+        let config = attach_config.clone();
+        async move { crate::session_client::attach_for_ui(&config, agent).await }
     })
     .await
 }

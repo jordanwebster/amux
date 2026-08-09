@@ -40,7 +40,8 @@ enum ChromeExit {
 /// Run the fleet until the user quits. `attach` is the raw-passthrough
 /// handoff, provided by the embedding CLI — the TUI itself never touches
 /// `amux::Client`. The terminal is restored before `attach` runs and the
-/// chrome resumes (repainting from the Model) when it returns.
+/// chrome resumes (repainting from the Model) when it returns; a returned
+/// notice ("session ended", …) surfaces in the status line.
 pub async fn run_fleet<F, Fut>(
     runtime: &mut Runtime,
     config: TuiConfig,
@@ -48,7 +49,7 @@ pub async fn run_fleet<F, Fut>(
 ) -> Result<()>
 where
     F: FnMut(AgentId) -> Fut,
-    Fut: Future<Output = Result<()>>,
+    Fut: Future<Output = Result<Option<String>>>,
 {
     let mut view = ViewState {
         leader_label: config.leader_label.clone(),
@@ -62,8 +63,9 @@ where
                 // before we got here); widen the subscription policy, then
                 // hand the real terminal to the passthrough.
                 runtime.note_attached(agent);
-                if let Err(error) = attach(agent).await {
-                    view.notice = Some(format!("attach failed: {error:#}"));
+                match attach(agent).await {
+                    Ok(notice) => view.notice = notice,
+                    Err(error) => view.notice = Some(format!("attach failed: {error:#}")),
                 }
             }
         }

@@ -78,6 +78,7 @@ dependencies = [
  "fs2",
  "libc",
  "qrcode",
+ "ratatui",
  "reqwest 0.12.28",
  "semver",
  "serde",
@@ -91,6 +92,7 @@ dependencies = [
  "tracing-appender",
  "tracing-subscriber",
  "uuid",
+ "vt100",
 ]
 
 [[package]]
