@@ -38,6 +38,60 @@ One paragraph describing what was done.
 
 ---
 
+## 2026-08-09: Client-layer design — docs/UI.md, external review, V1 TUI spec
+
+### Summary
+Designed the client/UI layer and committed it as `docs/UI.md` (fourth
+committed doc; CLAUDE.md repointed). Core decisions: `amux-ui` is a
+reducer core — serializable Msgs in, pure `update`, Effects out to a
+shell — with CQRS edge vocabulary (`Command` in, entity-keyed idempotent
+`Delta` out, `Effect` internal, `Ephemeral` reserved/uninhabited); a
+kernel of protocol facts plus typed per-agent layers (no generic agent
+IR, no capability flags); the core↔UI boundary as three verbs (core
+transports and translates facts, never interprets — attention is a pure
+per-agent fold at observation time, zero core changes); chrome-first TUI
+(fleet around existing raw passthrough, alt-screen only, no scrollback
+writes, no split panes ever); four test tiers with a differential
+fold≡live property as the load-bearing test, plus a Msg recorder whose
+dumps replay as tier-1 regressions.
+
+The draft was reviewed externally before revision: a GPT 5.6 Sol xhigh
+design review (which read core source) plus three Opus agents comparing
+against openai/codex, sst/opencode, and pingdotgg/t3code. The two
+central rejections turned out to be empirical — t3code and opencode
+shipped the generic IR and per-client folds and the predicted failure
+modes are visible in their trees; t3code independently converged on the
+same reducer architecture. Revisions from the review: scoped and
+enforced determinism guarantee, authority rule (subscriptions are the
+sole entity writer; RPC results resolve ops only), per-Msg flow classes
+with loud overflow, retention rule (never evict live obligations),
+cloud-auth expiry as a degraded banner rather than a blocking screen,
+unknown-agent attach reduced to card-only pending an agent-independent
+raw terminal protocol. Full findings: notes/ui-review-findings.md
+(gitignored); V1 build spec with milestones, named tier-1 tests, and
+aligned golden-frame mockups (flat globally-ranked fleet):
+notes/tui-v1-spec.md (gitignored).
+
+### Changes
+- `docs/UI.md`: new — normative client-layer design.
+- `CLAUDE.md`: points at docs/UI.md.
+
+### Decisions Made
+- amux-tui will be a library crate invoked by amux-cli (one shipped
+  binary); bare `amux` opens the TUI, running the init flow first on an
+  uninitialized machine (CLI dispatch — the TUI stays auth-passive).
+- V1 attention subscribes local agents only (+ interacted-with
+  remotes); ClientService-side stream dedup/replica is a deferred,
+  seam-protected optimization.
+- Naming cleanup (`provider_label` translation, provenance deletion) is
+  a lightly-held candidate chunk, decided at pickup.
+
+### Verification
+- Docs-only. Spec suite green on current toolchain (44 passed, see the
+  catch-up entry below).
+
+---
+
 ## 2026-08-09: Catch-up — two June commits landed without entries
 
 ### Summary

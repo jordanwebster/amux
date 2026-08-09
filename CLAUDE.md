@@ -10,6 +10,8 @@ Use these sources as the current guidance:
   pairing, and the design rationale.
 - `docs/ARCHITECTURE.md` for the system: processes, the two-server model,
   the dispatcher, trust storage, service surfaces, internal layering.
+- `docs/UI.md` for the client layer: the amux-ui reducer core, the
+  kernel/per-agent-layer split, edge contracts, and the TUI.
 - `crates/amux/tests/spec/` — the executable spec. The suite reads as
   documentation and locks the protocol's guarantees; run it with
   `timeout 600 cargo test -p amux --features testnet --test spec`.
