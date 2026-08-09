@@ -1,0 +1,48 @@
+{
+  "capturedWith": {
+    "source": "authored",
+    "basis": "hook rows follow amux agents/claude/session/hooks.rs emission (raw Claude Code hook payload with injected `type`). Notification text variants mirror Claude Code's notification hook messages. Authored pending a recorded capture from a live claude-code run.",
+    "date": "2026-08-09",
+    "scenario": "turn completion via Stop; the two Notification flavors (permission vs waiting-for-input)"
+  },
+  "streamingThenStop": [
+    {
+      "type": "assistant",
+      "uuid": "1a2b3c4d-0000-4000-8000-000000000001",
+      "timestamp": "2026-08-09T11:00:00.000Z",
+      "sessionId": "8e0f7a3b-1111-4222-8333-444455556666",
+      "message": {
+        "role": "assistant",
+        "content": [{ "type": "text", "text": "Refactor complete; running the suite." }]
+      }
+    },
+    {
+      "type": "hook.stop",
+      "hook_event_name": "Stop",
+      "session_id": "8e0f7a3b-1111-4222-8333-444455556666",
+      "transcript_path": "/home/dev/.claude/projects/-work-amux/8e0f7a3b.jsonl",
+      "cwd": "/work/amux",
+      "stop_hook_active": false
+    }
+  ],
+  "permissionNotification": [
+    {
+      "type": "hook.notification",
+      "hook_event_name": "Notification",
+      "session_id": "8e0f7a3b-1111-4222-8333-444455556666",
+      "transcript_path": "/home/dev/.claude/projects/-work-amux/8e0f7a3b.jsonl",
+      "cwd": "/work/amux",
+      "message": "Claude needs your permission to use Bash"
+    }
+  ],
+  "waitingNotification": [
+    {
+      "type": "hook.notification",
+      "hook_event_name": "Notification",
+      "session_id": "8e0f7a3b-1111-4222-8333-444455556666",
+      "transcript_path": "/home/dev/.claude/projects/-work-amux/8e0f7a3b.jsonl",
+      "cwd": "/work/amux",
+      "message": "Claude is waiting for your input"
+    }
+  ]
+}

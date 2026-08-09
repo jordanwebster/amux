@@ -14,8 +14,16 @@
 
 mod harness;
 
+// Declared in reading order (blank lines keep rustfmt from re-sorting).
+
 mod connection; // Chapter 1 — Connection: epochs, snapshots, auth expiry
+
 mod inventory; // Chapter 2 — Inventory: upserts, unknown types, authority
+
 mod ops; // Chapter 3 — Operations: the Command write surface
+
 mod sessions; // Chapter 4 — Session streams: lifecycle facts
-mod wire_free; // Chapter 5 — Determinism: differential fold, replay, serde
+
+mod attention; // Chapter 5 — Attention: summarizer folds, subscription policy
+
+mod wire_free; // Chapter 6 — Determinism: differential fold, replay, serde

@@ -49,6 +49,10 @@ pub enum Msg {
     /// Per-agent session-stream events. High-rate entries arrive coalesced:
     /// the recorded Msg is the batch.
     Stream { agent: AgentId, event: StreamMsg },
+    /// The user attached to an agent — a reified interaction fact. The
+    /// subscription policy widens to any agent the user interacts with, so
+    /// its attention stays fresh after detach.
+    UserAttached { agent: AgentId },
     /// Observed time for time-dependent display. Data, not a timer: the shell
     /// schedules ticks only while something on screen needs them.
     Tick { now: DateTime<Utc> },
@@ -58,7 +62,10 @@ impl Msg {
     /// Every Msg kind answers its flow class (`docs/UI.md`, "Flow").
     pub fn flow_class(&self) -> FlowClass {
         match self {
-            Msg::Command { .. } | Msg::Server(_) | Msg::OpResult { .. } => FlowClass::Lossless,
+            Msg::Command { .. }
+            | Msg::Server(_)
+            | Msg::OpResult { .. }
+            | Msg::UserAttached { .. } => FlowClass::Lossless,
             Msg::Stream { event, .. } => match event {
                 StreamMsg::Batch { .. } => FlowClass::Coalescable,
                 StreamMsg::Opened { .. } | StreamMsg::ReplayComplete | StreamMsg::Closed { .. } => {

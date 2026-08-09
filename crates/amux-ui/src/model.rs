@@ -14,6 +14,7 @@ use chrono::{DateTime, Utc};
 use serde::{Deserialize, Serialize};
 
 use crate::msg::{Command, DisconnectReason, OpId, OpOutcome, StreamCloseReason};
+use crate::summarizers::SummarizerState;
 
 /// How many finished ops the Model retains (retention is explicitly bounded;
 /// old outcomes age out, pending obligations never do — they live in
@@ -80,6 +81,9 @@ pub struct AgentCard {
     /// the creation time.
     pub last_activity: DateTime<Utc>,
     pub phase: AgentPhase,
+    /// Typed per-agent fold state deriving `attention`; `None` for agent
+    /// types without a summarizer (their attention stays `Unknown`).
+    pub(crate) summarizer: Option<SummarizerState>,
     /// Epoch of the last upsert; entities from older epochs are pruned when
     /// a reconnect snapshot completes.
     pub(crate) epoch: u64,

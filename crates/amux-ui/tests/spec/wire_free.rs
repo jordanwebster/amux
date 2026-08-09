@@ -127,6 +127,9 @@ fn every_msg_variant_round_trips_through_serde() {
             },
         ),
         stream("fix-auth-bug", StreamMsg::ReplayComplete),
+        Msg::UserAttached {
+            agent: agent_id("fix-auth-bug"),
+        },
         tick(60),
     ];
     for reason in [

@@ -38,6 +38,71 @@ One paragraph describing what was done.
 
 ---
 
+## 2026-08-09: TUI V1 M2 — attention (pure amux-ui, zero core changes)
+
+### Summary
+Attention lands as a pure per-agent fold with zero changes under
+`crates/amux` (verified: empty diff). `summarizers/claude.rs` folds the
+`claude_pty_transcript_v1` stream — raw transcript rows interleaved with
+the three hook rows the claude session emits — into the kernel
+`Attention` vocabulary, with the entry/clear table written exhaustively
+in the module docs. The kernel subscription policy is in the reducer:
+every local agent advertising the structured stream is subscribed (tail
+1000, one policy constant), remote agents join on a reified
+`Msg::UserAttached`. The shell grew the stream executor: per-agent tasks
+that coalesce entries into batched Msgs before the recorder sees them
+and derive the truncation fact from the first replayed seq.
+
+### Changes
+- `crates/amux-ui/src/summarizers/{mod,claude}.rs` — new; typed
+  `SummarizerState` carried on the `AgentCard`.
+- `crates/amux-ui/src/{update,model,msg,runtime,lib}.rs` — subscription
+  policy (`ensure_stream`), attention folding on stream Msgs,
+  `Msg::UserAttached`, `Effect::OpenStream/CloseStream` executor.
+- `crates/amux-ui/tests/spec/attention.rs` + `tests/spec/fixtures/
+  claude_{permission_flow,stop_and_notification,truncated_tail}.json`.
+
+### Decisions Made
+- Clearing rules: a permission answered through raw passthrough is only
+  visible as subsequent activity — and a blocked agent emits nothing, so
+  any activity row IS the unblock evidence. Only hook rows leave
+  `Working`, so streaming output cannot strobe (hysteresis by
+  construction rather than by timer).
+- `ClaudeHookKind` enumerated: SessionStart/SessionEnd are
+  internal-only, Unknown is dropped at the core — the stream carries
+  exactly permission_request/stop/notification plus transcript rows.
+- Question-vs-permission: hooks alone do not distinguish them; both
+  arrive as Notification differing in text. The fold inspects the
+  message ("permission" → Permission, else Question) — interpretation at
+  observation time, resolving M2's open question in the spec.
+- Honest degrade: truncation = first replayed seq > 1 (the source buffer
+  is bounded, so this also covers server-side eviction). A truncated
+  window with no attention-bearing rows reports `Unknown`; the same
+  window over complete history reports `Idle`. Weak rows (`summary`,
+  `system`, unknown shapes) carry no signal either way.
+- Stream-loss degrade: transport-ish closes invalidate the fold to
+  `Unknown`; orderly agent exit resets it (phase carries the exit).
+  Retryable closes reopen on the next inventory upsert — bounded, no
+  timer loops.
+- Fixtures are authored (shapes from `agents/claude/session/hooks.rs` +
+  the Claude Code transcript/hook schema) and say so in `capturedWith`.
+  No live claude-code capture was available in this environment; the
+  spec's intent is recorded-first, so replacing/supplementing these with
+  a real redacted capture stays on the backlog.
+
+### Verification
+- `cargo +nightly fmt --all`; CI clippy invocation clean.
+- `timeout 600 cargo test -p amux-ui` — 26 passed (25 tier-1 incl. the
+  six named attention tests wrapped by the differential property, 1
+  tier-2).
+- `timeout 600 cargo test -p amux --features testnet --test spec` — 44
+  passed; `git diff crates/amux` empty (zero core changes).
+
+### Next Steps
+- M3: `amux-tui` fleet screen + golden frames; M4: attach round-trip.
+
+---
+
 ## 2026-08-09: TUI V1 M1 — amux-ui becomes the reducer
 
 ### Summary

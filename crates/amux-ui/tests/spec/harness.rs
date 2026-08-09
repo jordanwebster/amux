@@ -243,5 +243,6 @@ pub fn all_sequences() -> Vec<(&'static str, Vec<Msg>)> {
     sequences.extend(crate::inventory::sequences());
     sequences.extend(crate::ops::sequences());
     sequences.extend(crate::sessions::sequences());
+    sequences.extend(crate::attention::sequences());
     sequences
 }

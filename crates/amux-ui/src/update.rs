@@ -11,10 +11,21 @@ use crate::model::{
     Model, PendingOp, StreamPhase, StreamState,
 };
 use crate::msg::{Command, Msg, OpError, OpId, OpOutcome, ServerMsg, StreamCloseReason, StreamMsg};
+use crate::summarizers::SummarizerState;
+use crate::summarizers::claude::ClaudeSummarizer;
 
 /// Error message for commands dispatched while the daemon link is down.
 /// Commands fail fast — there is no offline queue.
 pub const NOT_CONNECTED_ERROR: &str = "not connected — daemon unreachable";
+
+/// Structured-stream catch-up window (`Tail{count}`): the one place this
+/// policy number lives. Generous on purpose; the honest-degrade rule covers
+/// whatever it misses.
+pub const REPLAY_TAIL: u64 = 1000;
+
+/// The structured stream the subscription policy watches. Advertised by the
+/// agent's `io_protocols` — the fact, not an assumption about its type.
+const STRUCTURED_PROTOCOL: &str = "claude_pty_transcript_v1";
 
 pub fn update(model: &mut Model, msg: Msg) -> Vec<Effect> {
     match msg {
@@ -22,11 +33,56 @@ pub fn update(model: &mut Model, msg: Msg) -> Vec<Effect> {
         Msg::Server(server) => update_server(model, server),
         Msg::OpResult { op, outcome } => update_op_result(model, op, outcome),
         Msg::Stream { agent, event } => update_stream(model, agent, event),
+        Msg::UserAttached { agent } => {
+            // Widen the subscription policy to agents the user interacts
+            // with, wherever they run.
+            ensure_stream(model, agent).into_iter().collect()
+        }
         Msg::Tick { now } => {
             model.now = Some(now);
             Vec::new()
         }
     }
+}
+
+/// Subscription policy: open the structured stream for an agent when it
+/// advertises one and none is already live. Emits at most one effect;
+/// re-upserts are idempotent. Retryable closes (transport loss) reopen on
+/// the next inventory event; terminal closes (deleted, exited) do not.
+fn ensure_stream(model: &mut Model, agent_id: amux::AgentId) -> Option<Effect> {
+    let card = model.agents.get(&agent_id)?;
+    if !card
+        .agent
+        .io_protocols
+        .iter()
+        .any(|protocol| protocol == STRUCTURED_PROTOCOL)
+    {
+        return None;
+    }
+    let reopen = match model.streams.get(&agent_id) {
+        None => true,
+        Some(state) => match &state.phase {
+            StreamPhase::Opening | StreamPhase::Replaying | StreamPhase::Live => false,
+            StreamPhase::Closed { reason } => !matches!(
+                reason,
+                StreamCloseReason::AgentDeleted | StreamCloseReason::AgentExited { .. }
+            ),
+        },
+    };
+    if !reopen {
+        return None;
+    }
+    model.streams.insert(
+        agent_id,
+        StreamState {
+            phase: StreamPhase::Opening,
+            truncated: false,
+        },
+    );
+    Some(Effect::OpenStream {
+        agent: agent_id,
+        tail: REPLAY_TAIL,
+    })
 }
 
 fn update_command(model: &mut Model, op: OpId, command: Command) -> Vec<Effect> {
@@ -139,7 +195,9 @@ fn update_server(model: &mut Model, server: ServerMsg) -> Vec<Effect> {
                 return tripwire("agent upsert while not connected");
             }
             let epoch = model.epoch;
-            match model.agents.get_mut(&agent.id) {
+            let agent_id = agent.id;
+            let is_local = model.local_host_id == Some(agent.host_id);
+            match model.agents.get_mut(&agent_id) {
                 Some(card) => {
                     // Facts update; UI-layer derived state persists across
                     // upserts of the same entity.
@@ -152,13 +210,20 @@ fn update_server(model: &mut Model, server: ServerMsg) -> Vec<Effect> {
                         provider_label: None,
                         attention: Attention::Unknown,
                         phase: AgentPhase::Running,
+                        summarizer: None,
                         epoch,
                         agent,
                     };
-                    model.agents.insert(card.agent.id, card);
+                    model.agents.insert(agent_id, card);
                 }
             }
-            Vec::new()
+            // Kernel policy: every local agent's structured stream is
+            // subscribed (in-process, cheap); remote agents join on attach.
+            if is_local {
+                ensure_stream(model, agent_id).into_iter().collect()
+            } else {
+                Vec::new()
+            }
         }
         ServerMsg::AgentRemoved { id } => {
             if !model.is_connected() {
@@ -199,11 +264,17 @@ fn update_stream(model: &mut Model, agent: amux::AgentId, event: StreamMsg) -> V
                     truncated,
                 },
             );
+            with_claude_summarizer(model, agent, |fold| fold.begin_window(truncated));
         }
-        StreamMsg::Batch { at, entries: _ } => {
+        StreamMsg::Batch { at, entries } => {
             if let Some(card) = model.agents.get_mut(&agent) {
                 card.last_activity = card.last_activity.max(at);
             }
+            with_claude_summarizer(model, agent, |fold| {
+                for entry in &entries {
+                    fold.observe(&entry.payload);
+                }
+            });
         }
         StreamMsg::ReplayComplete => {
             if let Some(stream) = model.streams.get_mut(&agent) {
@@ -214,10 +285,18 @@ fn update_stream(model: &mut Model, agent: amux::AgentId, event: StreamMsg) -> V
             if reason == StreamCloseReason::AuthenticationRequired {
                 model.cloud_auth_required = true;
             }
-            if let StreamCloseReason::AgentExited { exit_code } = reason
-                && let Some(card) = model.agents.get_mut(&agent)
-            {
-                card.phase = AgentPhase::Exited { exit_code };
+            match &reason {
+                StreamCloseReason::AgentExited { exit_code } => {
+                    let exit_code = *exit_code;
+                    if let Some(card) = model.agents.get_mut(&agent) {
+                        card.phase = AgentPhase::Exited { exit_code };
+                    }
+                    with_claude_summarizer(model, agent, |fold| fold.observe_exit());
+                }
+                StreamCloseReason::AgentDeleted => {}
+                // The stream died underneath us: whatever the fold knew is
+                // stale. Degrade to Unknown, never to a wrong badge.
+                _ => with_claude_summarizer(model, agent, |fold| fold.invalidate()),
             }
             if let Some(stream) = model.streams.get_mut(&agent) {
                 stream.phase = StreamPhase::Closed { reason };
@@ -225,6 +304,28 @@ fn update_stream(model: &mut Model, agent: amux::AgentId, event: StreamMsg) -> V
         }
     }
     Vec::new()
+}
+
+/// Run a fold step on the agent's claude summarizer (creating it on first
+/// evidence) and refresh the derived attention. Non-claude agents have no
+/// summarizer and honestly stay `Unknown`.
+fn with_claude_summarizer(
+    model: &mut Model,
+    agent: amux::AgentId,
+    step: impl FnOnce(&mut ClaudeSummarizer),
+) {
+    let Some(card) = model.agents.get_mut(&agent) else {
+        return;
+    };
+    if card.agent.agent_type != "claude" {
+        return;
+    }
+    let state = card
+        .summarizer
+        .get_or_insert_with(|| SummarizerState::Claude(ClaudeSummarizer::default()));
+    let SummarizerState::Claude(fold) = state;
+    step(fold);
+    card.attention = state.attention();
 }
 
 fn tripwire(detail: &str) -> Vec<Effect> {

@@ -7,21 +7,29 @@
 //! Msg and is decided in the pure reducer. Shell-private state manages
 //! resources only (sockets, reconnect backoff, buffers).
 
+use std::collections::HashMap;
 use std::io;
 use std::path::PathBuf;
 use std::pin::Pin;
 use std::sync::{Arc, Mutex as StdMutex};
 use std::time::Duration;
 
-use amux::{Client, ClientError, CreateAgentRequest, HostId, ProtocolError};
+use amux::{
+    AgentId, AgentIdentifier, Client, ClientError, CreateAgentRequest, HostId, ProtocolError,
+    SessionCloseReason, SubscribeSessionEvent, SubscribeSessionRequest, claude_io,
+};
 use chrono::{DateTime, Utc};
+use futures_util::FutureExt;
 use tokio::sync::mpsc;
 use tokio::task::JoinHandle;
 use uuid::Uuid;
 
 use crate::effect::{DumpReason, Effect};
 use crate::model::Model;
-use crate::msg::{Command, DisconnectReason, Msg, OpError, OpId, OpOutcome, ServerMsg};
+use crate::msg::{
+    Command, DisconnectReason, Msg, OpError, OpId, OpOutcome, ServerMsg, StreamCloseReason,
+    StreamEntry, StreamMsg,
+};
 use crate::recorder::{DEFAULT_RECORDER_CAPACITY, Recorder};
 use crate::update::{NOT_CONNECTED_ERROR, update};
 
@@ -37,6 +45,10 @@ const DRAIN_BUDGET: usize = 256;
 
 const RECONNECT_BACKOFF_INITIAL: Duration = Duration::from_millis(250);
 const RECONNECT_BACKOFF_MAX: Duration = Duration::from_secs(4);
+
+/// Structured entries coalesced into one `Msg::Stream(Batch)` — the recorded
+/// Msg is the batch, so replay is independent of arrival timing.
+const MAX_STREAM_BATCH: usize = 256;
 
 /// Why a connection attempt failed.
 #[derive(Clone, Debug)]
@@ -82,6 +94,9 @@ pub struct Runtime {
     msg_rx: mpsc::Receiver<Msg>,
     client: Arc<StdMutex<Option<Client>>>,
     tasks: Vec<JoinHandle<()>>,
+    /// Live per-agent stream tasks (shell resource bookkeeping only; the
+    /// semantic stream state lives in the Model).
+    streams: HashMap<AgentId, JoinHandle<()>>,
     dump_dir: Option<PathBuf>,
 }
 
@@ -108,6 +123,7 @@ impl Runtime {
             msg_rx,
             client,
             tasks: vec![connection_task],
+            streams: HashMap::new(),
             dump_dir: options.dump_dir,
         }
     }
@@ -135,6 +151,12 @@ impl Runtime {
     /// Feed observed time for time-dependent display.
     pub fn observe_now(&mut self, now: DateTime<Utc>) {
         self.process(Msg::Tick { now });
+    }
+
+    /// Reify a user attach: the subscription policy widens to agents the
+    /// user interacts with.
+    pub fn note_attached(&mut self, agent: AgentId) {
+        self.process(Msg::UserAttached { agent });
     }
 
     /// Await the next Msg, then fold everything already pending (up to a
@@ -203,9 +225,21 @@ impl Runtime {
                     let _ = tx.send(Msg::OpResult { op, outcome }).await;
                 });
             }
-            // Session-stream effects arrive with the attention milestone;
-            // the reducer does not emit them yet.
-            Effect::OpenStream { .. } | Effect::CloseStream { .. } => {}
+            Effect::OpenStream { agent, tail } => {
+                let client = self.client.lock().expect("client mutex poisoned").clone();
+                let tx = self.msg_tx.clone();
+                if let Some(stale) = self
+                    .streams
+                    .insert(agent, tokio::spawn(stream_task(client, agent, tail, tx)))
+                {
+                    stale.abort();
+                }
+            }
+            Effect::CloseStream { agent } => {
+                if let Some(task) = self.streams.remove(&agent) {
+                    task.abort();
+                }
+            }
             Effect::ScheduleTick { after_ms } => {
                 let tx = self.msg_tx.clone();
                 tokio::spawn(async move {
@@ -225,6 +259,9 @@ impl Runtime {
 impl Drop for Runtime {
     fn drop(&mut self) {
         for task in &self.tasks {
+            task.abort();
+        }
+        for task in self.streams.values() {
             task.abort();
         }
     }
@@ -399,4 +436,181 @@ async fn pump_inventory(
 async fn send_msg(tx: &mpsc::Sender<Msg>, msg: Msg) -> Result<(), ()> {
     // Bounded lossless send: the producer waits, never drops.
     tx.send(msg).await.map_err(|_| ())
+}
+
+/// Subscribe an agent's structured stream and forward coalesced batches.
+/// Always terminates with a `Closed` Msg (unless the Runtime is gone), so
+/// the Model never holds a stream open that no task backs.
+async fn stream_task(client: Option<Client>, agent: AgentId, tail: u64, tx: mpsc::Sender<Msg>) {
+    if let Some(reason) = pump_structured_stream(client, agent, tail, &tx).await {
+        let _ = send_msg(
+            &tx,
+            Msg::Stream {
+                agent,
+                event: StreamMsg::Closed { reason },
+            },
+        )
+        .await;
+    }
+}
+
+/// Batches structured output opportunistically: block for the first entry,
+/// then take whatever is already available (bounded), then flush one Batch
+/// Msg — coalescing happens BEFORE the recorder sees the Msg. The `Opened`
+/// Msg is derived at first flush because truncation is only knowable from
+/// the first replayed seq.
+async fn pump_structured_stream(
+    client: Option<Client>,
+    agent: AgentId,
+    tail: u64,
+    tx: &mpsc::Sender<Msg>,
+) -> Option<StreamCloseReason> {
+    let Some(client) = client else {
+        return Some(StreamCloseReason::TransportError {
+            message: NOT_CONNECTED_ERROR.to_string(),
+        });
+    };
+    let args = claude_io::encode_pty_transcript_v1_args(claude_io::ClaudePtyTranscriptV1Args {
+        terminal_size: None,
+        replay_query: Some(claude_io::ClaudePtyTranscriptV1ReplayQuery::Tail { count: tail }),
+    });
+    let mut session = match client
+        .subscribe_session(SubscribeSessionRequest {
+            agent: AgentIdentifier::Id(agent),
+            io_protocol: claude_io::PTY_TRANSCRIPT_V1.to_string(),
+            args: args.map(Into::into),
+        })
+        .await
+    {
+        Ok(session) => session,
+        Err(error) => return Some(stream_close_from_client_error(&error)),
+    };
+
+    let mut sent_opened = false;
+    let mut batch: Vec<StreamEntry> = Vec::new();
+    loop {
+        // Block only when there is nothing to flush; otherwise poll
+        // opportunistically and flush on Pending or a full batch.
+        let event = if batch.is_empty() {
+            Some(session.recv().await)
+        } else if batch.len() >= MAX_STREAM_BATCH {
+            None
+        } else {
+            session.recv().now_or_never()
+        };
+        match event {
+            None => {
+                flush_stream_batch(tx, agent, &mut sent_opened, &mut batch).await?;
+            }
+            Some(Ok(SubscribeSessionEvent::Opened)) => {}
+            Some(Ok(SubscribeSessionEvent::Output { payload })) => {
+                match decode_structured_entry(&payload) {
+                    Ok(entry) => batch.push(entry),
+                    Err(reason) => {
+                        flush_stream_batch(tx, agent, &mut sent_opened, &mut batch).await?;
+                        return Some(reason);
+                    }
+                }
+            }
+            Some(Ok(SubscribeSessionEvent::ReplayComplete { .. })) => {
+                flush_stream_batch(tx, agent, &mut sent_opened, &mut batch).await?;
+                send_msg(
+                    tx,
+                    Msg::Stream {
+                        agent,
+                        event: StreamMsg::ReplayComplete,
+                    },
+                )
+                .await
+                .ok()?;
+            }
+            Some(Ok(SubscribeSessionEvent::Closed { reason })) => {
+                flush_stream_batch(tx, agent, &mut sent_opened, &mut batch).await?;
+                return Some(stream_close_from_session(reason));
+            }
+            Some(Err(error)) => {
+                flush_stream_batch(tx, agent, &mut sent_opened, &mut batch).await?;
+                return Some(stream_close_from_client_error(&error));
+            }
+        }
+    }
+}
+
+/// Send the pending batch (and, first time, the `Opened` Msg carrying the
+/// truncation fact: replay beginning past seq 1 means history was bounded
+/// at the source). Returns `None` when the Runtime is gone.
+async fn flush_stream_batch(
+    tx: &mpsc::Sender<Msg>,
+    agent: AgentId,
+    sent_opened: &mut bool,
+    batch: &mut Vec<StreamEntry>,
+) -> Option<()> {
+    if !*sent_opened {
+        let truncated = batch.first().is_some_and(|entry| entry.seq > 1);
+        send_msg(
+            tx,
+            Msg::Stream {
+                agent,
+                event: StreamMsg::Opened { truncated },
+            },
+        )
+        .await
+        .ok()?;
+        *sent_opened = true;
+    }
+    if batch.is_empty() {
+        return Some(());
+    }
+    let entries = std::mem::take(batch);
+    send_msg(
+        tx,
+        Msg::Stream {
+            agent,
+            event: StreamMsg::Batch {
+                at: Utc::now(),
+                entries,
+            },
+        },
+    )
+    .await
+    .ok()?;
+    Some(())
+}
+
+fn decode_structured_entry(payload: &[u8]) -> Result<StreamEntry, StreamCloseReason> {
+    let output = claude_io::decode_pty_transcript_v1_output(payload).map_err(|error| {
+        StreamCloseReason::InternalError {
+            detail: error.to_string(),
+        }
+    })?;
+    let payload = serde_json::from_slice(&output.payload).map_err(|error| {
+        StreamCloseReason::InternalError {
+            detail: format!("structured entry {} is not JSON: {error}", output.seq_id),
+        }
+    })?;
+    Ok(StreamEntry {
+        seq: output.seq_id,
+        payload,
+    })
+}
+
+fn stream_close_from_session(reason: SessionCloseReason) -> StreamCloseReason {
+    match reason {
+        SessionCloseReason::AgentDeleted => StreamCloseReason::AgentDeleted,
+        SessionCloseReason::AgentExited { exit_code } => {
+            StreamCloseReason::AgentExited { exit_code }
+        }
+        SessionCloseReason::HostUnreachable => StreamCloseReason::HostUnreachable,
+        SessionCloseReason::InternalError { detail } => StreamCloseReason::InternalError { detail },
+    }
+}
+
+fn stream_close_from_client_error(error: &ClientError) -> StreamCloseReason {
+    if is_auth_error(error) {
+        StreamCloseReason::AuthenticationRequired
+    } else {
+        StreamCloseReason::TransportError {
+            message: error.to_string(),
+        }
+    }
 }
