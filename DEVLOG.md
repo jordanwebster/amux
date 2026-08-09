@@ -38,6 +38,28 @@ One paragraph describing what was done.
 
 ---
 
+## 2026-08-09: Catch-up — two June commits landed without entries
+
+### Summary
+Work paused ~6 weeks after 2026-06-28; two commits predate the break and
+have no entries. `2e5f9d8` (2026-06-20) added QR pairing deeplinks
+(production `amux://pair` links from `pair --qr`, debug-only `--link`
+helper for simulator pairing) and tucked in two behavior changes
+documented only in the commit message: untrusted cloud pairing
+candidates no longer trigger eager trusted-tunnel activation, and remote
+agent-event subscriptions are gated on trusted hosts. `baaebc3`
+(2026-06-28) serialized CLI refresh-token rotation
+(`DeviceFlowProvider` refresh lock in `amux-cli/src/auth.rs`),
+coordinated same-day with amuxapp ("Handle rotating runtime
+credentials") and amuxcloud ("Test rotating refresh token clients").
+
+### Verification
+- Spec suite re-verified green on the current toolchain 2026-08-09:
+  44 passed / 0 failed / 0 ignored, 32.3s (the 44th is the presence
+  spec test added by `2e5f9d8`).
+
+---
+
 ## 2026-06-17: Cleanup-review pass over the client-only/seam effort
 
 ### Summary
