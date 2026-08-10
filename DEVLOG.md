@@ -38,6 +38,60 @@ One paragraph describing what was done.
 
 ---
 
+## 2026-08-10: Restore the terminal on SIGINT/SIGTERM/SIGHUP
+
+### Summary
+The chrome now restores the terminal when killed by SIGINT/SIGTERM/
+SIGHUP, closing the gap `docs/UI.md` already scoped ("nothing survives
+SIGKILL" — but the catchable signals should not leave a raw-mode alt
+screen either). A `signal_restore` module in `amux-tui/src/terminal.rs`
+installs an async-signal-safe low-level handler (via `signal-hook`)
+that restores the cooked termios saved before raw mode first engaged
+(`tcsetattr`), writes the leave-alt-screen/show-cursor bytes with a raw
+`write`, then re-raises the default disposition so the process still
+dies exactly as expected. Installed once from `install_panic_hook`, so
+every chrome entry point gets it.
+
+### Changes
+- `Cargo.toml` — workspace dep `signal-hook = "0.3"`.
+- `crates/amux-tui/Cargo.toml` — `[target.'cfg(unix)'.dependencies]`
+  libc + signal-hook.
+- `crates/amux-tui/src/terminal.rs` — `signal_restore` module
+  (cfg(unix)); `install_panic_hook` calls its `install()`; unit test
+  `signal_restore_bytes_match_write_restore` locks the handler's
+  hardcoded `RESTORE_BYTES` to what `write_restore` (crossterm)
+  actually emits.
+
+### Decisions Made
+- Not a tokio signal arm in the chrome loop: the handler must cover
+  the mid-attach passthrough phase, where nothing polls the event
+  stream — a stream-based handler would leave the process deaf to
+  signals exactly when the terminal is rawest. The low-level handler
+  works process-wide regardless of what the main thread is doing.
+- The restore is deliberately unconditional (no CHROME_OWNS_TERMINAL
+  gate): on a sane terminal it is a no-op, and that is what lets one
+  handler cover both chrome mode and mid-attach.
+- Signals covered: SIGINT, SIGTERM, SIGHUP. SIGQUIT is left at its
+  default (core dump semantics stay untouched); SIGKILL is
+  uncatchable by definition.
+
+### Verification
+- `signal_restore_bytes_match_write_restore` passes; fmt + CI clippy
+  clean; full per-crate suites and the 44-test spec suite pass;
+  e2e-runner 14/14.
+- Automated signal-delivery testing is deliberately absent: kill-based
+  tests of terminal state are flaky by construction. One manual
+  `kill -TERM` verification on a real terminal is still pending.
+- Known remaining gap (pre-existing, milder): CLI-only `amux attach`
+  (never entered the TUI) does not install the handler, so a signal
+  mid-passthrough there still leaves the terminal raw.
+
+### Next Steps
+- Manual `kill -TERM` check during chrome and mid-attach on a real
+  terminal.
+
+---
+
 ## 2026-08-10: TUI V1 review fixes — resize guard, stream lifecycle, scroll clamp
 
 ### Summary
