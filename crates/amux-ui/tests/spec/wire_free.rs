@@ -42,6 +42,15 @@ fn differential_fold_matches_live_state_after_every_msg() {
                 serde_json::to_value(&live).unwrap(),
                 "{name}: serialized fold != live after Msg {index}"
             );
+
+            // No public fold sequence may ever leave the Model structurally
+            // incoherent — the same check the shell enforces at the fold
+            // seam (panic in debug, dump-once-per-kind in release).
+            let violations = live.check_invariants();
+            assert!(
+                violations.is_empty(),
+                "{name}: invariants violated after Msg {index}: {violations:?}"
+            );
         }
     }
 }

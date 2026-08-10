@@ -236,6 +236,15 @@ is the eventual guaranteed Windows client experience.
   see (FFI, threading, real terminals — the attach/restore path
   especially). Kept deliberately small.
 
+Assertions draw a three-way line. Input violations — a Msg the protocol
+says cannot arrive — hit tripwires at the receiving reducer arm: refuse
+the write, request a dump. State coherence — the Model's structural
+index (ids, epochs, counts, phases), never content — is checked by
+`Model::check_invariants` at the fold seam in every build: panic in
+debug, dump once per violation kind in release, keep folding.
+Renderer-vs-Model staleness is neither: a stale ViewState is tolerance
+territory, clamped at render, never asserted against.
+
 ## Rejected alternatives
 
 Recorded so they are not helpfully reintroduced. The first two are now

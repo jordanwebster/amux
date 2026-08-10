@@ -7,7 +7,7 @@
 //! Msg and is decided in the pure reducer. Shell-private state manages
 //! resources only (sockets, reconnect backoff, buffers).
 
-use std::collections::HashMap;
+use std::collections::{HashMap, HashSet};
 use std::io;
 use std::path::PathBuf;
 use std::pin::Pin;
@@ -98,6 +98,10 @@ pub struct Runtime {
     /// semantic stream state lives in the Model).
     streams: HashMap<AgentId, JoinHandle<()>>,
     dump_dir: Option<PathBuf>,
+    /// Violation kinds already dumped this session: release-mode invariant
+    /// dumps are throttled to once per kind so a persistent incoherence
+    /// cannot fill the dump directory.
+    reported_violations: HashSet<&'static str>,
 }
 
 impl Runtime {
@@ -125,6 +129,7 @@ impl Runtime {
             tasks: vec![connection_task],
             streams: HashMap::new(),
             dump_dir: options.dump_dir,
+            reported_violations: HashSet::new(),
         }
     }
 
@@ -219,8 +224,50 @@ impl Runtime {
             self.streams.remove(agent);
         }
         let effects = update(&mut self.model, msg);
+        self.enforce_invariants();
         for effect in effects {
             self.run_effect(effect);
+        }
+        self.enforce_invariants();
+        // Shell companion invariant: every live stream task is known to the
+        // Model (the inverse does not hold — a Closed stream keeps its Model
+        // entry with no task behind it). Checked AFTER the effects loop
+        // because a `CloseStream` decided by this very fold removes the
+        // Model entry in `update` but only removes the task when the effect
+        // executes — between the two, the task map is legitimately ahead.
+        #[cfg(debug_assertions)]
+        for agent in self.streams.keys() {
+            debug_assert!(
+                self.model.stream(*agent).is_some(),
+                "shell stream task for agent {agent} has no Model stream entry"
+            );
+        }
+    }
+
+    /// Model coherence at the fold seam (`docs/UI.md`, Testing): distinct
+    /// from input tripwires, which refuse impossible inputs at the receiving
+    /// reducer arm — this checks the folded state itself, in every build.
+    /// Debug builds panic (an incoherent Model is a reducer bug to fix);
+    /// release builds dump once per violation kind and keep folding — a
+    /// degraded fleet beats a dead client.
+    fn enforce_invariants(&mut self) {
+        let violations = self.model.check_invariants();
+        if violations.is_empty() {
+            return;
+        }
+        if cfg!(debug_assertions) {
+            let details: Vec<String> = violations.iter().map(ToString::to_string).collect();
+            panic!("model invariants violated: {}", details.join("; "));
+        }
+        for violation in violations {
+            if self.reported_violations.insert(violation.kind()) {
+                tracing::warn!(%violation, "model invariant violated; dumping recorder ring");
+                if let Err(error) = self.dump(DumpReason::Tripwire {
+                    detail: format!("invariant: {violation}"),
+                }) {
+                    tracing::warn!(%violation, %error, "failed to write invariant dump");
+                }
+            }
         }
     }
 

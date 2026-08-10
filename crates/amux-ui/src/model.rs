@@ -428,6 +428,193 @@ impl Model {
     }
 }
 
+/// A broken Model invariant, typed and entity-addressed so a release-mode
+/// dump names the exact entity that went incoherent.
+#[derive(Clone, Debug, PartialEq)]
+pub enum Violation {
+    /// A `streams` key with no corresponding agent card.
+    StreamWithoutAgent { agent: AgentId },
+    /// An agent card stamped with an epoch the Model has not reached.
+    CardEpochAhead {
+        agent: AgentId,
+        card_epoch: u64,
+        model_epoch: u64,
+    },
+    /// A host stamped with an epoch the Model has not reached.
+    HostEpochAhead {
+        host: HostId,
+        host_epoch: u64,
+        model_epoch: u64,
+    },
+    /// A stale-epoch agent card survived snapshot pruning.
+    CardEpochStale {
+        agent: AgentId,
+        card_epoch: u64,
+        model_epoch: u64,
+    },
+    /// A stale-epoch host survived snapshot pruning.
+    HostEpochStale {
+        host: HostId,
+        host_epoch: u64,
+        model_epoch: u64,
+    },
+    /// `finished_ops` exceeded its explicit retention bound.
+    FinishedOpsOverflow { len: usize, cap: usize },
+    /// A card's cached attention disagrees with its own summarizer fold.
+    AttentionMismatch {
+        agent: AgentId,
+        card: Attention,
+        summarizer: Attention,
+    },
+}
+
+impl Violation {
+    /// Stable per-class key, used by the shell to throttle release-mode
+    /// dumps to once per kind per session.
+    pub fn kind(&self) -> &'static str {
+        match self {
+            Violation::StreamWithoutAgent { .. } => "stream-without-agent",
+            Violation::CardEpochAhead { .. } => "card-epoch-ahead",
+            Violation::HostEpochAhead { .. } => "host-epoch-ahead",
+            Violation::CardEpochStale { .. } => "card-epoch-stale",
+            Violation::HostEpochStale { .. } => "host-epoch-stale",
+            Violation::FinishedOpsOverflow { .. } => "finished-ops-overflow",
+            Violation::AttentionMismatch { .. } => "attention-mismatch",
+        }
+    }
+}
+
+impl std::fmt::Display for Violation {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            Violation::StreamWithoutAgent { agent } => {
+                write!(f, "stream for {agent} has no agent card")
+            }
+            Violation::CardEpochAhead {
+                agent,
+                card_epoch,
+                model_epoch,
+            } => write!(
+                f,
+                "agent {agent} card epoch {card_epoch} is ahead of model epoch {model_epoch}"
+            ),
+            Violation::HostEpochAhead {
+                host,
+                host_epoch,
+                model_epoch,
+            } => write!(
+                f,
+                "host {host} epoch {host_epoch} is ahead of model epoch {model_epoch}"
+            ),
+            Violation::CardEpochStale {
+                agent,
+                card_epoch,
+                model_epoch,
+            } => write!(
+                f,
+                "agent {agent} card epoch {card_epoch} survived pruning at model epoch \
+                 {model_epoch}"
+            ),
+            Violation::HostEpochStale {
+                host,
+                host_epoch,
+                model_epoch,
+            } => write!(
+                f,
+                "host {host} epoch {host_epoch} survived pruning at model epoch {model_epoch}"
+            ),
+            Violation::FinishedOpsOverflow { len, cap } => {
+                write!(
+                    f,
+                    "finished_ops holds {len} entries over the bound of {cap}"
+                )
+            }
+            Violation::AttentionMismatch {
+                agent,
+                card,
+                summarizer,
+            } => write!(
+                f,
+                "agent {agent} attention {card:?} disagrees with its summarizer's {summarizer:?}"
+            ),
+        }
+    }
+}
+
+impl Model {
+    /// Structural coherence of the folded state, checked by the shell at
+    /// the fold seam after every Msg (panic in debug, dump-once-per-kind in
+    /// release). Distinct from input tripwires, which refuse impossible
+    /// *inputs* at the receiving reducer arm — this checks that the fold
+    /// itself left the Model coherent.
+    ///
+    /// Discipline rule: invariants range over the structural index — ids,
+    /// counts, phases, epochs — NEVER over content. `check_invariants`
+    /// stays O(entities) forever; anything that would re-derive content
+    /// (re-running folds over entries, inspecting payloads) belongs in the
+    /// spec suite, not here.
+    pub fn check_invariants(&self) -> Vec<Violation> {
+        let mut violations = Vec::new();
+        let synchronized = self.is_synchronized();
+
+        for agent in self.streams.keys() {
+            if !self.agents.contains_key(agent) {
+                violations.push(Violation::StreamWithoutAgent { agent: *agent });
+            }
+        }
+
+        for (id, card) in &self.agents {
+            if card.epoch > self.epoch {
+                violations.push(Violation::CardEpochAhead {
+                    agent: *id,
+                    card_epoch: card.epoch,
+                    model_epoch: self.epoch,
+                });
+            } else if synchronized && card.epoch != self.epoch {
+                violations.push(Violation::CardEpochStale {
+                    agent: *id,
+                    card_epoch: card.epoch,
+                    model_epoch: self.epoch,
+                });
+            }
+            if let Some(state) = &card.summarizer
+                && card.attention != state.attention()
+            {
+                violations.push(Violation::AttentionMismatch {
+                    agent: *id,
+                    card: card.attention,
+                    summarizer: state.attention(),
+                });
+            }
+        }
+
+        for (id, host) in &self.hosts {
+            if host.epoch > self.epoch {
+                violations.push(Violation::HostEpochAhead {
+                    host: *id,
+                    host_epoch: host.epoch,
+                    model_epoch: self.epoch,
+                });
+            } else if synchronized && host.epoch != self.epoch {
+                violations.push(Violation::HostEpochStale {
+                    host: *id,
+                    host_epoch: host.epoch,
+                    model_epoch: self.epoch,
+                });
+            }
+        }
+
+        if self.finished_ops.len() > FINISHED_OPS_RETAINED {
+            violations.push(Violation::FinishedOpsOverflow {
+                len: self.finished_ops.len(),
+                cap: FINISHED_OPS_RETAINED,
+            });
+        }
+
+        violations
+    }
+}
+
 /// Short human label for a typed agent kind (pending rows; live rows carry
 /// the wire's `agent_type` string).
 pub fn agent_type_label(agent_type: &amux::AgentType) -> &'static str {
@@ -450,5 +637,179 @@ pub fn format_relative_age(now: DateTime<Utc>, then: DateTime<Utc>) -> String {
         format!("{}h", seconds / 3600)
     } else {
         format!("{}d", seconds / 86_400)
+    }
+}
+
+/// `check_invariants` is proven two ways: the wire_free differential spec
+/// asserts no public fold sequence ever violates it, and these tests prove
+/// each invariant class actually FIRES — a coherent Model is built through
+/// public folds, then one field is corrupted directly (private access) per
+/// class.
+#[cfg(test)]
+mod tests {
+    use amux::{Agent, Capabilities, HostEntry, HostTrustStatus};
+    use uuid::Uuid;
+
+    use super::*;
+    use crate::msg::{Msg, OpOutcome, ServerMsg, StreamMsg};
+    use crate::update::update;
+
+    fn host_id() -> HostId {
+        Uuid::from_u128(1)
+    }
+
+    fn agent_id() -> AgentId {
+        Uuid::from_u128(2)
+    }
+
+    fn t0() -> DateTime<Utc> {
+        DateTime::from_timestamp(1_754_697_600, 0).expect("valid fixture epoch")
+    }
+
+    fn a_host() -> HostEntry {
+        HostEntry {
+            id: host_id(),
+            name: "nova".to_string(),
+            online: true,
+            version: Some("0.4.0".to_string()),
+            capabilities: Some(Capabilities::default()),
+            trust_status: HostTrustStatus::Trusted,
+            last_dial_error: None,
+        }
+    }
+
+    fn an_agent() -> Agent {
+        Agent {
+            id: agent_id(),
+            host_id: host_id(),
+            name: Some("fix-auth-bug".to_string()),
+            command: "claude".to_string(),
+            working_dir: std::path::PathBuf::from("/work"),
+            agent_type: "claude".to_string(),
+            io_protocols: vec![
+                "claude_raw_v1".to_string(),
+                "claude_pty_transcript_v1".to_string(),
+            ],
+            readonly: false,
+            args: Vec::new(),
+            created_at: t0(),
+        }
+    }
+
+    /// A synchronized Model — one host, one local agent with a summarizer —
+    /// built exclusively through public folds, and coherent by construction.
+    fn coherent_model() -> Model {
+        let mut model = Model::default();
+        for msg in [
+            Msg::Server(ServerMsg::Connected {
+                local_host_id: Some(host_id()),
+            }),
+            Msg::Server(ServerMsg::HostUpserted { host: a_host() }),
+            Msg::Server(ServerMsg::AgentUpserted { agent: an_agent() }),
+            Msg::Server(ServerMsg::HostsSynchronized),
+            Msg::Server(ServerMsg::AgentsSynchronized),
+            Msg::Stream {
+                agent: agent_id(),
+                event: StreamMsg::Opened { truncated: false },
+            },
+        ] {
+            update(&mut model, msg);
+        }
+        let violations = model.check_invariants();
+        assert!(
+            violations.is_empty(),
+            "fixture must start coherent: {violations:?}"
+        );
+        assert!(
+            model.agents[&agent_id()].summarizer.is_some(),
+            "fixture must carry a summarizer for the attention class"
+        );
+        model
+    }
+
+    #[test]
+    fn detects_stream_without_agent() {
+        let mut model = coherent_model();
+        model.agents.clear();
+        assert!(
+            model
+                .check_invariants()
+                .iter()
+                .any(|violation| matches!(violation, Violation::StreamWithoutAgent { .. })),
+            "clearing agents must orphan the stream key"
+        );
+    }
+
+    #[test]
+    fn detects_epochs_ahead_of_the_model() {
+        let mut model = coherent_model();
+        model.agents.get_mut(&agent_id()).unwrap().epoch = model.epoch + 1;
+        model.hosts.get_mut(&host_id()).unwrap().epoch = model.epoch + 1;
+        let violations = model.check_invariants();
+        assert!(
+            violations
+                .iter()
+                .any(|violation| matches!(violation, Violation::CardEpochAhead { .. })),
+            "card epoch past the model must be reported: {violations:?}"
+        );
+        assert!(
+            violations
+                .iter()
+                .any(|violation| matches!(violation, Violation::HostEpochAhead { .. })),
+            "host epoch past the model must be reported: {violations:?}"
+        );
+    }
+
+    #[test]
+    fn detects_stale_epochs_while_synchronized() {
+        let mut model = coherent_model();
+        model.agents.get_mut(&agent_id()).unwrap().epoch = model.epoch - 1;
+        model.hosts.get_mut(&host_id()).unwrap().epoch = model.epoch - 1;
+        let violations = model.check_invariants();
+        assert!(
+            violations
+                .iter()
+                .any(|violation| matches!(violation, Violation::CardEpochStale { .. })),
+            "stale card epoch under a synchronized model must be reported: {violations:?}"
+        );
+        assert!(
+            violations
+                .iter()
+                .any(|violation| matches!(violation, Violation::HostEpochStale { .. })),
+            "stale host epoch under a synchronized model must be reported: {violations:?}"
+        );
+    }
+
+    #[test]
+    fn detects_finished_ops_over_retention() {
+        let mut model = coherent_model();
+        for seq in 0..=FINISHED_OPS_RETAINED as u64 {
+            model.finished_ops.push(FinishedOp {
+                op: crate::msg::OpId(Uuid::from_u128(u128::from(seq) + 100)),
+                seq,
+                command: crate::msg::Command::DeleteAgent { agent: agent_id() },
+                outcome: OpOutcome::AgentDeleted,
+            });
+        }
+        assert!(
+            model
+                .check_invariants()
+                .iter()
+                .any(|violation| matches!(violation, Violation::FinishedOpsOverflow { .. })),
+            "finished_ops past the retention bound must be reported"
+        );
+    }
+
+    #[test]
+    fn detects_attention_disagreeing_with_the_summarizer() {
+        let mut model = coherent_model();
+        model.agents.get_mut(&agent_id()).unwrap().attention = Attention::Working;
+        assert!(
+            model
+                .check_invariants()
+                .iter()
+                .any(|violation| matches!(violation, Violation::AttentionMismatch { .. })),
+            "a cached attention that disagrees with its summarizer must be reported"
+        );
     }
 }

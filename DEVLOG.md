@@ -38,6 +38,65 @@ One paragraph describing what was done.
 
 ---
 
+## 2026-08-10: Model invariants checked at the fold seam
+
+### Summary
+`Model::check_invariants()` reports structural incoherence as typed,
+entity-addressed `Violation` values, and the Runtime enforces it after
+every fold: panic in debug builds, dump-once-per-violation-kind
+(`DumpReason::Tripwire`, detail `invariant: …`) plus `tracing::warn`
+in release — never a release panic, folding continues. This is the
+third assertion class, distinct from input tripwires (refuse + dump at
+the receiving reducer arm) and renderer staleness (tolerance/clamps,
+never assertions); docs/UI.md's Testing section now draws that
+three-way line.
+
+### Changes
+- `crates/amux-ui/src/model.rs` — `Violation` (kind() throttle key +
+  Display) and `check_invariants()`: streams ⊆ agents; card/host
+  epochs never ahead of the model epoch; when synchronized, all card/
+  host epochs equal it; `finished_ops` within retention; cached
+  `card.attention` equals its summarizer's derived attention. Doc
+  comment carries the discipline rule: invariants range over the
+  structural index (ids, counts, phases, epochs), never content —
+  O(entities) forever.
+- `crates/amux-ui/src/runtime.rs` — `enforce_invariants()` runs in
+  `process()` after `update` AND after the effects loop;
+  `reported_violations: HashSet<&'static str>` throttles release
+  dumps. Debug-only shell companion (post-effects, where a CloseStream
+  decided by the same fold has already executed): every live stream
+  task key exists in `model.streams`.
+- `crates/amux-ui/src/lib.rs` — export `Violation`.
+- `crates/amux-ui/tests/spec/wire_free.rs` — the differential wrapper
+  additionally asserts `check_invariants().is_empty()` after every Msg
+  of every registered sequence.
+- `docs/UI.md` — Testing: the three-way assertion line.
+
+### Decisions Made
+- Checked at the seam (shell), not inside `update`: the reducer stays
+  a pure fold; coherence enforcement is shell policy, like dumping.
+- Reused `DumpReason::Tripwire` rather than adding a variant — the
+  meaning ("state the protocol says cannot happen") is the same; the
+  detail string distinguishes fold-seam invariants.
+- Both check points matter: after `update` catches the fold that broke
+  the Model; after the effects loop catches shell bookkeeping drift
+  and is where the task-map companion is race-free.
+
+### Verification
+- New unit tests (model.rs): `detects_stream_without_agent`,
+  `detects_epochs_ahead_of_the_model`,
+  `detects_stale_epochs_while_synchronized`,
+  `detects_finished_ops_over_retention`,
+  `detects_attention_disagreeing_with_the_summarizer` — each corrupts
+  a fold-built Model directly and asserts its class fires.
+- fmt + CI clippy clean; amux-ui/amux-tui/amux-cli suites and the
+  44-test spec suite pass.
+
+### Next Steps
+- None; the invariant list grows only with new structural state.
+
+---
+
 ## 2026-08-10: Restore the terminal on SIGINT/SIGTERM/SIGHUP
 
 ### Summary
