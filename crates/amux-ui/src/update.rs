@@ -51,6 +51,11 @@ pub fn update(model: &mut Model, msg: Msg) -> Vec<Effect> {
 /// the next inventory event; terminal closes (deleted, exited) do not.
 fn ensure_stream(model: &mut Model, agent_id: amux::AgentId) -> Option<Effect> {
     let card = model.agents.get(&agent_id)?;
+    // Readonly agents are hidden from the fleet; a badge nobody can see is
+    // not worth a stream.
+    if card.agent.readonly {
+        return None;
+    }
     if !card
         .agent
         .io_protocols

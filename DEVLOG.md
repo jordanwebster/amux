@@ -391,6 +391,26 @@ a tier-2 embedded-server integration test replacing the old ignored one.
 
 ---
 
+## 2026-08-10: Readonly agents hidden from the fleet
+
+### Summary
+UX pass #2: readonly agents (externally captured sessions the chrome
+cannot drive) are hidden from the fleet until the structured chat view
+can render them. Per "views format, never decide" the filter lives in
+`Model::fleet()`; a new `fleet_agent_count()` keeps the header, empty
+state, and ticker consistent with the visible list (`agent_count()`
+stays the honest entity total); and the subscription policy skips
+readonly agents — a badge nobody can see is not worth a stream.
+
+### Verification
+- `timeout 600 cargo test -p amux-ui` 29 passed incl.
+  `inventory::readonly_agents_are_hidden_from_the_fleet` (visibility,
+  counts, and no `OpenStream` in one sequence, wrapped by the
+  differential property); `-p amux-tui` 19 (goldens untouched);
+  `-p amux-cli` 53; e2e 14/14; CI clippy clean.
+
+---
+
 ## 2026-08-10: `<leader>d` detaches to the shell; `<leader>s` is the fleet
 
 ### Summary

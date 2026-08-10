@@ -161,7 +161,7 @@ async fn chrome_session(
                 // The interval itself always fires; only the repaint is
                 // gated on agents being on screen — a deliberate V1
                 // simplification of "ticks scheduled only while needed".
-                if runtime.model().agent_count() > 0 {
+                if runtime.model().fleet_agent_count() > 0 {
                     runtime.observe_now(Utc::now());
                     dirty = true;
                 }

@@ -317,6 +317,15 @@ impl Model {
         self.agents.get(&id)
     }
 
+    /// Agents the fleet shows (excludes readonly); the header, empty state,
+    /// and tickers key on this so counts never disagree with the list.
+    pub fn fleet_agent_count(&self) -> usize {
+        self.agents
+            .values()
+            .filter(|card| !card.agent.readonly)
+            .count()
+    }
+
     pub fn agent_count(&self) -> usize {
         self.agents.len()
     }
@@ -376,8 +385,15 @@ impl Model {
     /// (permission, question, finished), then recency; host is a column, not
     /// a grouping. Pending creates render as optimistic rows at the bottom
     /// in dispatch order.
+    /// Readonly agents (externally captured sessions the chrome cannot
+    /// drive) are hidden from the fleet until the structured chat view can
+    /// render them; `fleet_agent_count` matches this visibility.
     pub fn fleet(&self) -> Vec<FleetItem<'_>> {
-        let mut cards: Vec<&AgentCard> = self.agents.values().collect();
+        let mut cards: Vec<&AgentCard> = self
+            .agents
+            .values()
+            .filter(|card| !card.agent.readonly)
+            .collect();
         cards.sort_by(|a, b| {
             attention_rank(self.effective_attention(a))
                 .cmp(&attention_rank(self.effective_attention(b)))

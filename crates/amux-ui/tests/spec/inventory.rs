@@ -119,9 +119,48 @@ fn stale_rpc_result_does_not_overwrite_subscription_state() {
     assert!(model.finished_op(op(1)).is_some());
 }
 
+fn readonly_sequence() -> Vec<Msg> {
+    let mut readonly = an_agent("captured-session", "nova");
+    readonly.readonly = true;
+    vec![
+        connected("nova"),
+        host_up(&a_host("nova")),
+        hosts_synced(),
+        agent_up(&an_agent("fix-auth-bug", "nova")),
+        agent_up(&readonly),
+        agents_synced(),
+    ]
+}
+
+/// Readonly agents (captured sessions the chrome cannot drive) are hidden
+/// from the fleet — and get no stream subscription, because a badge nobody
+/// can see is not worth a stream — until the chat view can render them.
+#[test]
+fn readonly_agents_are_hidden_from_the_fleet() {
+    let (model, effects) = fold_with_effects(readonly_sequence());
+    assert_eq!(model.agent_count(), 2, "both entities exist in the Model");
+    assert_eq!(model.fleet_agent_count(), 1, "only one is fleet-visible");
+    assert_eq!(model.fleet().len(), 1);
+    let visible: Vec<_> = model
+        .fleet()
+        .iter()
+        .filter_map(|item| match item {
+            amux_ui::FleetItem::Agent(card) => Some(card.display_name()),
+            _ => None,
+        })
+        .collect();
+    assert_eq!(visible, ["fix-auth-bug"]);
+    let opened = effects
+        .iter()
+        .filter(|effect| matches!(effect, amux_ui::Effect::OpenStream { .. }))
+        .count();
+    assert_eq!(opened, 1, "no stream for the hidden readonly agent");
+}
+
 pub fn sequences() -> Vec<(&'static str, Vec<Msg>)> {
     vec![
         ("inventory::base", base()),
+        ("inventory::readonly_hidden", readonly_sequence()),
         ("inventory::unknown_type", unknown_type_sequence()),
         ("inventory::unnamed_agent", unnamed_agent_sequence()),
         ("inventory::stale_rename", stale_rename_sequence()),

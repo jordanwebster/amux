@@ -166,7 +166,7 @@ fn screen_state(model: &Model, view: &ViewState, rows: &[VisibleRow<'_>]) -> Scr
     if !model.is_synchronized() {
         return ScreenState::Message(vec![("Loading… ◌".to_string(), dim())]);
     }
-    if model.agent_count() == 0 && view.filter.is_empty() {
+    if model.fleet_agent_count() == 0 && view.filter.is_empty() {
         let host = model
             .local_host_id()
             .and_then(|id| model.host_name(id))
@@ -273,9 +273,9 @@ fn filter_line(model: &Model, view: &ViewState, width: usize, visible: usize) ->
         }
     }
     let info = if view.mode == Mode::Filter || !view.filter.is_empty() {
-        format!("{visible}/{}", model.agent_count())
+        format!("{visible}/{}", model.fleet_agent_count())
     } else {
-        format!("{} agents", model.agent_count())
+        format!("{} agents", model.fleet_agent_count())
     };
     push_span(&mut line, width - RIGHT_INFO_FROM_EDGE, info, dim());
     finish_line(&mut line, width);
