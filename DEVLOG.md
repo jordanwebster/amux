@@ -391,6 +391,26 @@ a tier-2 embedded-server integration test replacing the old ignored one.
 
 ---
 
+## 2026-08-10: Bare `amux` keeps printing help off-TTY; e2e green again
+
+### Summary
+First TUI push turned the e2e leg red on both unix runners: `bare_help`
+runs bare `amux` in a context without a usable TTY, where the new
+open-the-fleet dispatch errored (ENXIO) instead of printing help. Bare
+`amux` now checks `IsTerminal` on stdin+stdout: real terminal → fleet
+TUI (init-first unchanged); scripts/pipes → top-level help, exactly the
+pre-TUI behavior (`amux ui` still errors honestly off-TTY). The
+`bare_help` expected output also needed the new `ui` command line.
+Process lesson recorded: the local review battery covered every cargo
+suite but not `cargo run -p e2e-runner -- run` — e2e belongs in the
+pre-push battery for anything touching the CLI surface.
+
+### Verification
+- `timeout 600 cargo run -p e2e-runner -- run`: 14 passed, 0 failed.
+- CI run on the fix watched to completion (see push).
+
+---
+
 ## 2026-08-10: CI hardening for the TUI suites before first push
 
 ### Summary

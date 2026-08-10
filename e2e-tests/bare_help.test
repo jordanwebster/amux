@@ -1,5 +1,6 @@
 # test: bare_help
-# description: Bare amux prints top-level help instead of auto-attaching
+# description: Bare amux without a real TTY prints top-level help (on a TTY it
+# opens the fleet TUI; scripts and pipes get help, never an alt-screen)
 
 ## Environment
 
@@ -15,6 +16,7 @@ Terminal multiplexer for AI agents (Claude, Codex, etc.)
 Usage: amux [OPTIONS] [COMMAND]
 
 Commands:
+  ui      Open the fleet TUI (the default when run with no command)
   new     Create a new agent session
   attach  Attach to an existing agent session
   list    List all running agent sessions

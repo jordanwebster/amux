@@ -18,7 +18,7 @@ use amux::{AgentType, Config, DebugFormat, PairingSecret, PairingStart, default_
 use anyhow::{Context, Result, anyhow};
 use base64::Engine as _;
 use base64::engine::general_purpose::URL_SAFE_NO_PAD;
-use clap::{Parser, Subcommand, ValueEnum};
+use clap::{CommandFactory, Parser, Subcommand, ValueEnum};
 use qrcode::QrCode;
 use qrcode::render::unicode;
 use tracing_appender::non_blocking::WorkerGuard;
@@ -234,7 +234,14 @@ async fn main() -> Result<()> {
     let cli = Cli::parse();
     let Some(command) = cli.command else {
         // Bare `amux` opens the fleet TUI (init-first on a fresh machine —
-        // the dispatch decides before the TUI ever starts).
+        // the dispatch decides before the TUI ever starts). Without a real
+        // terminal (scripts, pipes, e2e) it prints help instead, like any
+        // bare CLI; explicit `amux ui` still errors honestly there.
+        use std::io::IsTerminal;
+        if !(std::io::stdin().is_terminal() && std::io::stdout().is_terminal()) {
+            Cli::command().print_help()?;
+            return Ok(());
+        }
         let config = load_config(cli.config)?;
         config
             .validate(false)
