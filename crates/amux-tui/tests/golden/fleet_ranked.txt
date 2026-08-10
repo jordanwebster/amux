@@ -7,5 +7,5 @@
 │   ⋯ refactor-tunnels      claude   nova       12s   working      │
 │     docs-cleanup          claude   nova       1h    idle         │
 │                                                                  │
-│ ● connected · 3 hosts        n new  r rename  d delete  ? help   │
+│ ● connected · 3 hosts  n new  r rename  d delete  q quit  ? help │
 └──────────────────────────────────────────────────────────────────┘

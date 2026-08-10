@@ -9,5 +9,5 @@
 │   – log-archaeology       claude   tessin     1h    –            │
 │   ◌ claude-4 (creating…)  claude   nova       —                  │
 │                                                                  │
-│ ● connected · 3 hosts        n new  r rename  d delete  ? help   │
+│ ● connected · 3 hosts  n new  r rename  d delete  q quit  ? help │
 └──────────────────────────────────────────────────────────────────┘

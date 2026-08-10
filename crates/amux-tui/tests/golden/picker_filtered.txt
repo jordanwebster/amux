@@ -7,5 +7,5 @@
 │                                                                  │
 │                                                                  │
 │                                                                  │
-│ ● connected · 3 hosts        esc nav-mode  enter attach          │
+│ ● connected · 3 hosts  esc nav-mode  enter attach                │
 └──────────────────────────────────────────────────────────────────┘

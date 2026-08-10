@@ -23,6 +23,13 @@ pub fn handle_key(
     }
     let pending_g = std::mem::take(&mut view.pending_g);
 
+    // Ctrl-C quits from ANY mode: the chrome is a stateless viewer and must
+    // never feel like it traps the terminal. `esc` cancels modes; `C-c`
+    // (like `q` in normal mode) exits.
+    if key.code == KeyCode::Char('c') && key.modifiers.contains(KeyModifiers::CONTROL) {
+        return Some(UiAction::Quit);
+    }
+
     match view.mode.clone() {
         Mode::Help => {
             view.mode = Mode::Normal;
@@ -203,4 +210,53 @@ fn attach_selected(view: &mut ViewState, model: &Model) -> Option<UiAction> {
         return None;
     }
     Some(UiAction::Attach(card.agent.id))
+}
+
+#[cfg(test)]
+mod tests {
+    use amux_ui::Model;
+    use crossterm::event::{KeyCode, KeyEvent, KeyModifiers};
+
+    use super::*;
+    use crate::view::{Mode, UiAction, ViewState};
+
+    fn ctrl_c() -> KeyEvent {
+        KeyEvent::new(KeyCode::Char('c'), KeyModifiers::CONTROL)
+    }
+
+    /// Ctrl-C exits from every mode — including filter/rename, where a bare
+    /// `c` would otherwise be text input.
+    #[test]
+    fn ctrl_c_quits_from_any_mode() {
+        let model = Model::default();
+        for mode in [
+            Mode::Normal,
+            Mode::Filter,
+            Mode::Rename {
+                agent: uuid::Uuid::from_u128(7),
+                draft: "half-typed".to_string(),
+            },
+            Mode::Help,
+        ] {
+            let mut view = ViewState {
+                mode,
+                ..ViewState::default()
+            };
+            let action = handle_key(&mut view, &model, ctrl_c(), 10);
+            assert!(matches!(action, Some(UiAction::Quit)), "mode should quit");
+        }
+    }
+
+    #[test]
+    fn q_quits_in_normal_mode() {
+        let model = Model::default();
+        let mut view = ViewState::default();
+        let action = handle_key(
+            &mut view,
+            &model,
+            KeyEvent::new(KeyCode::Char('q'), KeyModifiers::NONE),
+            10,
+        );
+        assert!(matches!(action, Some(UiAction::Quit)));
+    }
 }

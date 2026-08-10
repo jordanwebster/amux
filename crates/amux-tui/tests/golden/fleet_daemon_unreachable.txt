@@ -7,5 +7,5 @@
 │                                                                  │
 │                                                                  │
 │                                                                  │
-│ ✗ disconnected               n new  r rename  d delete  ? help   │
+│ ✗ disconnected         n new  r rename  d delete  q quit  ? help │
 └──────────────────────────────────────────────────────────────────┘

@@ -7,5 +7,5 @@
 │                                                                  │
 │                                                                  │
 │                                                                  │
-│ ● connected · 1 host         n new  r rename  d delete  ? help   │
+│ ● connected · 1 host   n new  r rename  d delete  q quit  ? help │
 └──────────────────────────────────────────────────────────────────┘

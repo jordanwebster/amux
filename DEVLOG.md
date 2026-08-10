@@ -391,6 +391,42 @@ a tier-2 embedded-server integration test replacing the old ignored one.
 
 ---
 
+## 2026-08-10: `q quit` in the hint bar; Ctrl-C quits the chrome
+
+### Summary
+UX pass #3. The status-line hints gain `q quit` (HINTS_COL 31 → 25 so
+the longer string still fits the 68-col frame), and Ctrl-C now quits
+the chrome from ANY mode — the chrome is a stateless viewer and must
+never feel like it traps the terminal (`esc` cancels modes). First
+intentional run of the golden regeneration workflow: 11 frames
+regenerated with UPDATE_GOLDENS=1 and diff-reviewed — every change is
+the hint shift/addition plus two help-overlay lines (`q / C-c  quit`;
+`C-a d` relabeled "detach to shell" post-chord-split). Verified the
+passthrough is untouched: `handle_key`'s only production caller is the
+chrome loop (unreachable while attached), the stdin reader intercepts
+leader chords only (0x03 forwards to the agent as always), and Claude's
+interrupt injection (`session/core.rs` StopPolicy) is server-side.
+
+### Decisions Made
+- Ctrl-C is global quit even mid-rename/filter; esc is the cancel key.
+- Backlog (noted, not fixed): an external `kill -INT` terminates the
+  chrome without unwinding (keyboard cannot produce SIGINT in raw
+  mode), skipping terminal restore — a signal handler running the same
+  restore would close it. Also: the panic hook restores but does not
+  yet write a `DumpReason::Panic` recorder dump (ring handle not shared
+  with the hook); and a `Model::check_invariants()` harness pass
+  (state invariants beyond protocol tripwires: streams ⊆ agents,
+  epoch bounds, attention == summarizer-derived) is agreed direction
+  for the next amux-ui chunk.
+
+### Verification
+- `timeout 600 cargo test -p amux-tui` 21 passed (19 + 2 new key
+  tests: `ctrl_c_quits_from_any_mode` incl. filter/rename where `c` is
+  text input, `q_quits_in_normal_mode`); goldens stable post-regen.
+- `-p amux-ui` 29; `-p amux-cli` 53; e2e 14/14; CI clippy clean.
+
+---
+
 ## 2026-08-10: Readonly agents hidden from the fleet
 
 ### Summary

@@ -37,8 +37,9 @@ const RIGHT_INFO_FROM_EDGE: usize = 13;
 /// anchors at `width - RIGHT_INFO_FROM_EDGE`, which must not underflow):
 /// the frame degrades to the too-small notice instead.
 const MIN_FRAME_WIDTH: usize = RIGHT_INFO_FROM_EDGE;
-/// Key hints in the status line.
-const HINTS_COL: usize = 31;
+/// Key hints in the status line (col 25 leaves two clear columns after the
+/// widest normal left status, and `q quit` still fits the 68-col frame).
+const HINTS_COL: usize = 25;
 
 /// Rows of chrome that are not list rows: two borders, filter line, spacer,
 /// banner/spacer, status line.
@@ -479,7 +480,7 @@ fn status_line(model: &Model, view: &ViewState, width: usize) -> Line<'static> {
     push_span(&mut line, BADGE_COL, summary, plain());
 
     let hints = match &view.mode {
-        Mode::Normal => "n new  r rename  d delete  ? help",
+        Mode::Normal => "n new  r rename  d delete  q quit  ? help",
         Mode::Filter => "esc nav-mode  enter attach",
         Mode::Rename { .. } => "enter apply  esc cancel",
         Mode::ConfirmDelete { .. } => "",
@@ -503,9 +504,9 @@ fn help_lines(view: &ViewState, _width: usize) -> Vec<Line<'static>> {
         ("r".to_string(), "rename selected".to_string()),
         ("d".to_string(), "delete selected".to_string()),
         ("C-g".to_string(), "debug dump".to_string()),
-        ("q".to_string(), "quit".to_string()),
+        ("q / C-c".to_string(), "quit".to_string()),
         (String::new(), String::new()),
-        (format!("{leader} d"), "detach from session".to_string()),
+        (format!("{leader} d"), "detach to shell".to_string()),
         (format!("{leader} s"), "back to fleet".to_string()),
     ];
     rows.into_iter()
