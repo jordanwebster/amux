@@ -128,6 +128,13 @@ fn classify(row: &serde_json::Value) -> RowClass {
         // ("Claude needs your permission to use X" vs "Claude is waiting
         // for your input"). Interpretation belongs here, at observation
         // time — not in the core.
+        //
+        // KNOWN-FRAGILE SEAM: this is a string match on Claude Code's
+        // notification wording. If upstream rewords its permission
+        // notifications, the split silently degrades Permission → Question
+        // (a `?` badge where `!` belongs) with no error anywhere. Accepted
+        // for V1 — do not trust this branch blindly; revisit if the hook
+        // payload ever grows a structured reason.
         "hook.notification" => {
             let message = row
                 .get("message")

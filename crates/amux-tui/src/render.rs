@@ -33,6 +33,10 @@ const STATUS_COL: usize = 54;
 const STATUS_MIN_FRAME_WIDTH: usize = 68;
 /// Header right block ("5 agents" / "1/5") is left-anchored here.
 const RIGHT_INFO_FROM_EDGE: usize = 13;
+/// Below this width the column grid cannot lay out (the right-info block
+/// anchors at `width - RIGHT_INFO_FROM_EDGE`, which must not underflow):
+/// the frame degrades to the too-small notice instead.
+const MIN_FRAME_WIDTH: usize = RIGHT_INFO_FROM_EDGE;
 /// Key hints in the status line.
 const HINTS_COL: usize = 31;
 
@@ -75,7 +79,7 @@ fn plain() -> Style {
 pub fn build_lines(model: &Model, view: &ViewState, ctx: &FrameContext) -> Vec<Line<'static>> {
     let width = ctx.viewport.0 as usize;
     let height = ctx.viewport.1 as usize;
-    if width < 4 || height < CHROME_ROWS {
+    if width < MIN_FRAME_WIDTH || height < CHROME_ROWS {
         return vec![Line::from("amux: terminal too small")];
     }
 
@@ -89,20 +93,18 @@ pub fn build_lines(model: &Model, view: &ViewState, ctx: &FrameContext) -> Vec<L
 
     let mut list_lines = match screen_state(model, view, &rows) {
         ScreenState::Fleet => {
+            // Key handling clamps scroll/selection, but a subscription-driven
+            // fleet shrink can land between keypresses: clamp the stale
+            // ViewState values against the rows actually being rendered, so
+            // the list never draws empty (or loses the selection marker)
+            // until the next keypress. Clamping a stale value against the
+            // Model is formatting, not deciding — render stays pure.
+            let selected = view.selected.min(rows.len().saturating_sub(1));
+            let scroll = view.scroll.min(rows.len().saturating_sub(capacity));
             let mut list = Vec::with_capacity(capacity);
-            let window = rows
-                .iter()
-                .enumerate()
-                .skip(view.scroll.min(rows.len()))
-                .take(capacity);
+            let window = rows.iter().enumerate().skip(scroll).take(capacity);
             for (index, row) in window {
-                list.push(fleet_row_line(
-                    model,
-                    view,
-                    ctx,
-                    row,
-                    index == view.selected,
-                ));
+                list.push(fleet_row_line(model, view, ctx, row, index == selected));
             }
             list
         }

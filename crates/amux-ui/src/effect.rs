@@ -19,8 +19,6 @@ pub enum Effect {
     OpenStream { agent: AgentId, tail: u64 },
     /// Close a previously opened stream.
     CloseStream { agent: AgentId },
-    /// Deliver a `Msg::Tick` after this many milliseconds.
-    ScheduleTick { after_ms: u64 },
     /// A reducer tripwire observed an impossible state: dump the recorder
     /// ring for diagnosis. The pure reducer never writes files — it requests.
     RequestDump { reason: DumpReason },

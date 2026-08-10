@@ -38,6 +38,76 @@ One paragraph describing what was done.
 
 ---
 
+## 2026-08-10: TUI V1 review fixes — resize guard, stream lifecycle, scroll clamp
+
+### Summary
+Fixed the code-review findings on the V1 TUI. P1: the fleet renderer
+underflowed `width - RIGHT_INFO_FROM_EDGE` below ~13 columns (debug
+panic / huge `pad_to` allocation in release) — the below-minimum guard
+now covers it and a sweep test renders every viewport 1..=200 ×
+1..=60. P2s: late stream events for removed agents no longer
+re-materialize `Model::streams` ghosts; `prune_if_synchronized` emits
+`Effect::CloseStream` for every stream it drops so reconnect pruning
+no longer orphans shell tasks; and render clamps stale scroll/selection
+against the rows it is actually drawing, so a subscription-driven fleet
+shrink cannot draw an empty list until the next keypress. Minors:
+finished stream `JoinHandle`s are dropped when their `Closed` Msg is
+observed, the dead `Effect::ScheduleTick` vocabulary is deleted, and
+the Claude notification permission/question string-match is marked as
+a known-fragile seam.
+
+### Changes
+- `crates/amux-tui/src/render.rs` — `MIN_FRAME_WIDTH` guard
+  (too-small notice below 13 cols); render-time clamp of stale
+  `view.scroll`/`view.selected` (formatting a stale ViewState against
+  the Model, not deciding — render stays pure).
+- `crates/amux-ui/src/update.rs` — `update_stream` discards events for
+  agents absent from `model.agents` (all arms);
+  `prune_if_synchronized` returns `CloseStream` effects, propagated
+  from both synchronized arms (skipping already-Closed streams,
+  matching the `AgentRemoved` arm).
+- `crates/amux-ui/src/runtime.rs` — `process` drops an agent's stream
+  `JoinHandle` on an observed `Closed` Msg when the task is finished
+  (shell resource bookkeeping; `is_finished` guards against a stale
+  Closed racing a newer OpenStream); `ScheduleTick` executor arm gone.
+- `crates/amux-ui/src/effect.rs` — `Effect::ScheduleTick` deleted
+  (nothing emitted it; the TUI drives ticks via its own interval +
+  `observe_now`).
+- `crates/amux-tui/src/run.rs` — ticker comment: the interval always
+  fires, only the repaint is gated (deliberate V1 simplification).
+- `crates/amux-ui/src/summarizers/claude.rs` — KNOWN-FRAGILE SEAM
+  comment on the notification-text permission/question split.
+- Tests: `sessions::late_stream_events_after_removal_leave_no_ghost_state`,
+  `connection::epoch_prune_emits_close_stream_for_dropped_streams`
+  (both sequences registered, so the wire_free differential wraps
+  them), golden `fleet_too_narrow` (new frame; existing frames
+  untouched), `rendering_never_panics_at_any_viewport_size`,
+  `stale_scroll_after_fleet_shrink_clamps_at_render`.
+
+### Decisions Made
+- Below-minimum widths reuse the existing "amux: terminal too small"
+  state rather than growing a second degraded layout; the new
+  `fleet_too_narrow` golden locks it as a byte contract.
+- Discarding late stream events keys on `model.agents` membership,
+  which restores the invariant `streams ⊆ agents` everywhere (Opened
+  inserts only for known agents; removal and prune delete both sides).
+- Handle cleanup on `Closed` only removes finished tasks: best-effort
+  cleanup that can never discard a live task's handle.
+
+### Verification
+- `cargo +nightly fmt --all`; `timeout 600 cargo clippy --workspace
+  --all-targets --features amux/testnet -- -D warnings` clean.
+- `timeout 600 cargo test -p amux-ui` (28 passed), `-p amux-tui`
+  (19 passed), `-p amux-cli` (52 passed), `-p amux --features testnet
+  --test spec` (44 passed).
+
+### Next Steps
+- The stale-Closed-vs-new-OpenStream reducer race (stream Msgs carry
+  no generation id, so a queued Closed can overwrite a reopened
+  stream's phase) is noted but out of scope here.
+
+---
+
 ## 2026-08-09: TUI V1 M4 — attach round-trip (the spine)
 
 ### Summary

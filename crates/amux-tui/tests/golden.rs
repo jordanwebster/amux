@@ -364,6 +364,53 @@ fn fleet_empty_no_agents() {
     assert_golden("fleet_empty_no_agents", &rendered);
 }
 
+/// Below the layout minimum (the right-info anchor at width−13) the frame
+/// degrades to the too-small notice instead of underflowing the column grid.
+#[test]
+fn fleet_too_narrow() {
+    let rendered = render_frame(&fleet_model(), &view_default(), 12, 11);
+    assert_golden("fleet_too_narrow", &rendered);
+}
+
+/// No viewport size may panic the renderer: sweep the fleet across every
+/// width and height a terminal could plausibly report. (Regression: widths
+/// below the layout minimum underflowed the right-info column arithmetic.)
+#[test]
+fn rendering_never_panics_at_any_viewport_size() {
+    let model = fleet_model();
+    let view = view_default();
+    for width in 1..=200u16 {
+        for height in 1..=60u16 {
+            let _ = render_frame(&model, &view, width, height);
+        }
+    }
+}
+
+/// A subscription-driven fleet shrink can leave ViewState's scroll and
+/// selection pointing past the rows; render clamps the stale values against
+/// the Model instead of drawing an empty, marker-less list until the next
+/// keypress. The frame equals the one an in-range ViewState produces.
+#[test]
+fn stale_scroll_after_fleet_shrink_clamps_at_render() {
+    let model = fleet_model(); // five rows, all fitting at height 11
+    let stale = ViewState {
+        selected: 12,
+        scroll: 9,
+        ..view_default()
+    };
+    let clamped = ViewState {
+        selected: 4,
+        scroll: 0,
+        ..view_default()
+    };
+    let rendered = render_frame(&model, &stale, 68, 11);
+    assert!(
+        rendered.contains("▸"),
+        "the selection marker survives the shrink"
+    );
+    assert_eq!(rendered, render_frame(&model, &clamped, 68, 11));
+}
+
 #[test]
 fn fleet_daemon_starting() {
     let rendered = render_frame(&Model::default(), &view_default(), 68, 11);

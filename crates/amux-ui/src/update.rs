@@ -188,8 +188,7 @@ fn update_server(model: &mut Model, server: ServerMsg) -> Vec<Effect> {
                 return tripwire("hosts synchronized while not connected");
             };
             *hosts_synchronized = true;
-            prune_if_synchronized(model);
-            Vec::new()
+            prune_if_synchronized(model)
         }
         ServerMsg::AgentUpserted { agent } => {
             if !model.is_connected() {
@@ -247,15 +246,20 @@ fn update_server(model: &mut Model, server: ServerMsg) -> Vec<Effect> {
                 return tripwire("agents synchronized while not connected");
             };
             *agents_synchronized = true;
-            prune_if_synchronized(model);
-            Vec::new()
+            prune_if_synchronized(model)
         }
     }
 }
 
 fn update_stream(model: &mut Model, agent: amux::AgentId, event: StreamMsg) -> Vec<Effect> {
     // Stream tasks race the inventory stream: events for agents we no longer
-    // know (or after a disconnect) are legitimate latecomers, not tripwires.
+    // know (or after a disconnect) are legitimate latecomers, not tripwires —
+    // but folding them would re-materialize state for entities that no
+    // longer exist (a late `Opened`, queued before `AgentRemoved` aborted
+    // its task, must not leave a ghost in `streams`). Discard them all.
+    if !model.agents.contains_key(&agent) {
+        return Vec::new();
+    }
     match event {
         StreamMsg::Opened { truncated } => {
             model.streams.insert(
@@ -345,20 +349,32 @@ fn tripwire(detail: &str) -> Vec<Effect> {
 }
 
 /// Reconnect replaces state by snapshot: once both snapshots for the new
-/// epoch are complete, entities not re-upserted under it are gone.
-fn prune_if_synchronized(model: &mut Model) {
+/// epoch are complete, entities not re-upserted under it are gone. Streams
+/// dropped here still have a shell task behind them — each one leaves as a
+/// `CloseStream` effect so no task is orphaned across reconnects (both
+/// synchronized arms call this and must propagate the effects).
+fn prune_if_synchronized(model: &mut Model) -> Vec<Effect> {
     if !model.is_synchronized() {
-        return;
+        return Vec::new();
     }
     let epoch = model.epoch;
     model.hosts.retain(|_, host| host.epoch == epoch);
     model.agents.retain(|_, card| card.epoch == epoch);
-    let live: Vec<amux::AgentId> = model.streams.keys().copied().collect();
-    for id in live {
-        if !model.agents.contains_key(&id) {
-            model.streams.remove(&id);
+    let stale: Vec<amux::AgentId> = model
+        .streams
+        .keys()
+        .filter(|id| !model.agents.contains_key(id))
+        .copied()
+        .collect();
+    let mut effects = Vec::new();
+    for id in stale {
+        if let Some(stream) = model.streams.remove(&id)
+            && !matches!(stream.phase, StreamPhase::Closed { .. })
+        {
+            effects.push(Effect::CloseStream { agent: id });
         }
     }
+    effects
 }
 
 fn push_finished(model: &mut Model, finished: FinishedOp) {

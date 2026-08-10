@@ -201,6 +201,23 @@ impl Runtime {
 
     fn process(&mut self, msg: Msg) {
         self.recorder.record(&msg);
+        // Shell-side resource bookkeeping keyed on an observed Msg (allowed:
+        // the shell manages resources, never decides semantics): a stream
+        // task always ends by sending `Closed`, so drop its finished
+        // JoinHandle here instead of letting it linger until Drop. The
+        // is_finished guard keeps a stale Closed — queued before a newer
+        // OpenStream replaced the handle — from discarding the live task.
+        if let Msg::Stream {
+            agent,
+            event: StreamMsg::Closed { .. },
+        } = &msg
+            && self
+                .streams
+                .get(agent)
+                .is_some_and(|task| task.is_finished())
+        {
+            self.streams.remove(agent);
+        }
         let effects = update(&mut self.model, msg);
         for effect in effects {
             self.run_effect(effect);
@@ -239,13 +256,6 @@ impl Runtime {
                 if let Some(task) = self.streams.remove(&agent) {
                     task.abort();
                 }
-            }
-            Effect::ScheduleTick { after_ms } => {
-                let tx = self.msg_tx.clone();
-                tokio::spawn(async move {
-                    tokio::time::sleep(Duration::from_millis(after_ms)).await;
-                    let _ = tx.send(Msg::Tick { now: Utc::now() }).await;
-                });
             }
             Effect::RequestDump { reason } => {
                 if let Err(error) = self.dump(reason.clone()) {
