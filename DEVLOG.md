@@ -412,12 +412,15 @@ interrupt injection (`session/core.rs` StopPolicy) is server-side.
 - Backlog (noted, not fixed): an external `kill -INT` terminates the
   chrome without unwinding (keyboard cannot produce SIGINT in raw
   mode), skipping terminal restore — a signal handler running the same
-  restore would close it. Also: the panic hook restores but does not
-  yet write a `DumpReason::Panic` recorder dump (ring handle not shared
-  with the hook); and a `Model::check_invariants()` harness pass
-  (state invariants beyond protocol tripwires: streams ⊆ agents,
-  epoch bounds, attention == summarizer-derived) is agreed direction
-  for the next amux-ui chunk.
+  restore would close it; parked, vanishingly rare. Also candidates,
+  discussed but NOT committed to: a `DumpReason::Panic` recorder dump
+  from the panic hook (cheap, fires exactly when a recording matters
+  most — do opportunistically), and a `Model::check_invariants()`
+  harness pass (streams ⊆ agents, epoch bounds, attention ==
+  summarizer-derived). The invariant checker is an oracle without a
+  generator today — hand-authored sequences only reach "normal" states
+  — so it waits for whichever arrives first: fuzzed Msg sequences, the
+  chat-milestone Model growth, or a second shipped state-lifecycle bug.
 
 ### Verification
 - `timeout 600 cargo test -p amux-tui` 21 passed (19 + 2 new key
