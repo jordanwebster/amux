@@ -19,6 +19,15 @@ use crate::render::{FrameContext, Theme, list_capacity, render};
 use crate::terminal::TerminalGuard;
 use crate::view::{UiAction, ViewState, next_agent_name};
 
+/// What the embedding CLI's attach handoff decided: resume the fleet
+/// (optionally with a status-line notice) or exit the TUI entirely
+/// (`<leader>d` — detach means back to the shell).
+#[derive(Debug)]
+pub enum AttachReturn {
+    Fleet(Option<String>),
+    Exit,
+}
+
 pub struct TuiConfig {
     /// Working directory for created agents (read at the CLI edge, not
     /// here — the TUI performs no environment reads).
@@ -49,7 +58,7 @@ pub async fn run_fleet<F, Fut>(
 ) -> Result<()>
 where
     F: FnMut(AgentId) -> Fut,
-    Fut: Future<Output = Result<Option<String>>>,
+    Fut: Future<Output = Result<AttachReturn>>,
 {
     let mut view = ViewState {
         leader_label: config.leader_label.clone(),
@@ -64,7 +73,9 @@ where
                 // hand the real terminal to the passthrough.
                 runtime.note_attached(agent);
                 match attach(agent).await {
-                    Ok(notice) => view.notice = notice,
+                    // `<leader>d`: detach means the shell, not the chrome.
+                    Ok(AttachReturn::Exit) => return Ok(()),
+                    Ok(AttachReturn::Fleet(notice)) => view.notice = notice,
                     Err(error) => view.notice = Some(format!("attach failed: {error:#}")),
                 }
             }

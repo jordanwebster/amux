@@ -21,15 +21,18 @@ use crate::client_common::{get_client, print_update_banner, require_running_clie
 pub(crate) enum StdinEvent {
     /// Raw input data to send to agent
     Data(Vec<u8>),
-    /// User requested detach (<leader>d, or <leader>s back to the fleet —
-    /// the fleet IS the detach target in V1)
+    /// User requested detach to the shell (<leader>d).
     Detach,
+    /// User requested the fleet picker (<leader>s). From the TUI this
+    /// resumes the chrome; from CLI attach it behaves like detach.
+    SwitchToFleet,
 }
 
 /// How an attached session ended (transport errors surface as `Err`).
 #[derive(Debug)]
 pub(crate) enum AttachOutcome {
     Detached,
+    SwitchedToFleet,
     SessionEnded,
     SessionClosed(SessionCloseReason),
     Shutdown(ShutdownReason),
@@ -123,7 +126,10 @@ pub async fn attach(target: Option<&str>, config: &Config) -> Result<()> {
 /// come back with an optional status-line notice instead of exiting the
 /// process. Stdin is fully reclaimed before returning so the chrome's event
 /// stream is the only reader again.
-pub(crate) async fn attach_for_ui(config: &Config, agent: amux::AgentId) -> Result<Option<String>> {
+pub(crate) async fn attach_for_ui(
+    config: &Config,
+    agent: amux::AgentId,
+) -> Result<amux_tui::AttachReturn> {
     let rpc = require_running_client(config, None).await?;
     let outcome = attach_terminal(
         &rpc,
@@ -132,11 +138,15 @@ pub(crate) async fn attach_for_ui(config: &Config, agent: amux::AgentId) -> Resu
         StdinHandback::ReclaimForCaller,
     )
     .await?;
+    use amux_tui::AttachReturn;
     Ok(match outcome {
-        AttachOutcome::Detached => None,
-        AttachOutcome::SessionEnded => Some("session ended".to_string()),
-        AttachOutcome::SessionClosed(reason) => Some(session_close_label(&reason).to_string()),
-        AttachOutcome::Shutdown(reason) => Some(format!("daemon: {reason}")),
+        AttachOutcome::Detached => AttachReturn::Exit,
+        AttachOutcome::SwitchedToFleet => AttachReturn::Fleet(None),
+        AttachOutcome::SessionEnded => AttachReturn::Fleet(Some("session ended".to_string())),
+        AttachOutcome::SessionClosed(reason) => {
+            AttachReturn::Fleet(Some(session_close_label(&reason).to_string()))
+        }
+        AttachOutcome::Shutdown(reason) => AttachReturn::Fleet(Some(format!("daemon: {reason}"))),
     })
 }
 
@@ -257,7 +267,10 @@ async fn attach_terminal(
 
     if handback == StdinHandback::ReclaimForCaller {
         stop_reading.store(true, Ordering::SeqCst);
-        let needs_key = !matches!(outcome, Ok(AttachOutcome::Detached)) && !reader.is_finished();
+        let needs_key = !matches!(
+            outcome,
+            Ok(AttachOutcome::Detached | AttachOutcome::SwitchedToFleet)
+        ) && !reader.is_finished();
         if needs_key {
             let label = match &outcome {
                 Ok(AttachOutcome::SessionClosed(reason)) => session_close_label(reason),
@@ -282,7 +295,7 @@ fn finish_cli_attach(outcome: AttachOutcome, state_path: &Path) -> Result<()> {
             }
             std::process::exit(1);
         }
-        AttachOutcome::Detached => {
+        AttachOutcome::Detached | AttachOutcome::SwitchedToFleet => {
             println!("\n[detached from session]");
         }
         AttachOutcome::SessionEnded => {
@@ -339,9 +352,9 @@ fn spawn_stdin_reader(
                         }
                         let after = pos + leader_csi_u.len();
                         if after < n {
-                            if is_detach_chord(data[after]) {
-                                tracing::info!("detaching");
-                                let _ = input_tx.blocking_send(StdinEvent::Detach);
+                            if let Some(event) = chord_event(data[after]) {
+                                tracing::info!("leader chord");
+                                let _ = input_tx.blocking_send(event);
                                 return;
                             }
                             let mut remaining = vec![leader_raw];
@@ -359,9 +372,9 @@ fn spawn_stdin_reader(
                     while i < n {
                         if pending_leader {
                             pending_leader = false;
-                            if is_detach_chord(data[i]) {
-                                tracing::info!("detaching");
-                                let _ = input_tx.blocking_send(StdinEvent::Detach);
+                            if let Some(event) = chord_event(data[i]) {
+                                tracing::info!("leader chord");
+                                let _ = input_tx.blocking_send(event);
                                 return;
                             }
                             if input_tx
@@ -403,9 +416,9 @@ fn spawn_stdin_reader(
                         if stop_reading.load(Ordering::SeqCst) {
                             return;
                         }
-                        if is_detach_chord(next[0]) {
-                            tracing::info!("detaching");
-                            let _ = input_tx.blocking_send(StdinEvent::Detach);
+                        if let Some(event) = chord_event(next[0]) {
+                            tracing::info!("leader chord");
+                            let _ = input_tx.blocking_send(event);
                             return;
                         }
                         if input_tx
@@ -424,10 +437,13 @@ fn spawn_stdin_reader(
     (input_rx, reader)
 }
 
-/// `<leader>d` detaches; `<leader>s` goes back to the fleet, which IS the
-/// detach target in V1.
-fn is_detach_chord(byte: u8) -> bool {
-    byte == b'd' || byte == b's'
+/// `<leader>d` detaches to the shell; `<leader>s` goes to the fleet.
+fn chord_event(byte: u8) -> Option<StdinEvent> {
+    match byte {
+        b'd' => Some(StdinEvent::Detach),
+        b's' => Some(StdinEvent::SwitchToFleet),
+        _ => None,
+    }
 }
 
 /// The passthrough loop: session output to `output`, input events to
@@ -457,6 +473,7 @@ pub(crate) async fn attach_loop<W: Write>(
                     }
                 }
                 Some(StdinEvent::Detach) => return Ok(AttachOutcome::Detached),
+                Some(StdinEvent::SwitchToFleet) => return Ok(AttachOutcome::SwitchedToFleet),
                 None => return Ok(AttachOutcome::SessionEnded),
             },
             event = session.recv() => match event {
@@ -519,6 +536,19 @@ impl Drop for RawModeGuard {
 /// TestBackend is blind to.
 #[cfg(test)]
 mod attach {
+    #[test]
+    fn leader_chords_split_detach_from_fleet() {
+        assert!(matches!(
+            super::chord_event(b'd'),
+            Some(super::StdinEvent::Detach)
+        ));
+        assert!(matches!(
+            super::chord_event(b's'),
+            Some(super::StdinEvent::SwitchToFleet)
+        ));
+        assert!(super::chord_event(b'x').is_none());
+    }
+
     use std::sync::Mutex as StdMutex;
     use std::time::Duration;
 
@@ -704,9 +734,16 @@ mod attach {
             .unwrap();
         let output = attached.output.clone();
         wait_until("second echo", || output.contains("second-visit")).await;
-        attached.input.send(StdinEvent::Detach).await.unwrap();
+        attached
+            .input
+            .send(StdinEvent::SwitchToFleet)
+            .await
+            .unwrap();
         let outcome = attached.loop_task.await.unwrap().unwrap();
-        assert!(matches!(outcome, AttachOutcome::Detached), "{outcome:?}");
+        assert!(
+            matches!(outcome, AttachOutcome::SwitchedToFleet),
+            "{outcome:?}"
+        );
 
         // 100 scripted attach/detach cycles.
         for cycle in 0..100 {

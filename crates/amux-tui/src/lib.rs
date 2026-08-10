@@ -14,6 +14,6 @@ pub mod terminal;
 pub mod view;
 
 pub use render::{FrameContext, Theme, build_lines, render};
-pub use run::{TuiConfig, run_fleet};
+pub use run::{AttachReturn, TuiConfig, run_fleet};
 pub use terminal::{TerminalGuard, install_panic_hook, write_enter_chrome, write_restore};
 pub use view::{Mode, UiAction, ViewState};

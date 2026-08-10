@@ -391,6 +391,29 @@ a tier-2 embedded-server integration test replacing the old ignored one.
 
 ---
 
+## 2026-08-10: `<leader>d` detaches to the shell; `<leader>s` is the fleet
+
+### Summary
+First UX-pass fix: V1 had collapsed both chords into return-to-fleet
+(noted in the M4 entry); real usage immediately surfaced the tmux
+muscle-memory expectation — `d` means the shell. The chords now split
+all the way through: `StdinEvent::{Detach,SwitchToFleet}`,
+`AttachOutcome::{Detached,SwitchedToFleet}`, and `attach_for_ui`
+returns a typed `amux_tui::AttachReturn::{Fleet(notice),Exit}` that
+`run_fleet` honors (`Exit` ends the TUI; the terminal was already
+restored by the handoff). CLI `amux attach` treats `s` like detach
+(no fleet to return to — opening the TUI from there is a future
+nicety). The help overlay already documented these semantics, so no
+golden changes: behavior caught up with the documentation.
+
+### Verification
+- `timeout 600 cargo test -p amux-cli` 53 passed (round-trip second leg
+  now locks `s`→`SwitchedToFleet`; first leg and the 100-cycle loop
+  still lock `d`→`Detached`; new `leader_chords_split_detach_from_fleet`).
+- `-p amux-tui` 19, `-p amux-ui` 28, e2e 14/14, CI clippy clean.
+
+---
+
 ## 2026-08-10: Bare `amux` keeps printing help off-TTY; e2e green again
 
 ### Summary
