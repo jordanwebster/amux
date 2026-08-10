@@ -11,7 +11,7 @@ use std::collections::{HashMap, HashSet};
 use std::io;
 use std::path::PathBuf;
 use std::pin::Pin;
-use std::sync::{Arc, Mutex as StdMutex};
+use std::sync::{Arc, Mutex as StdMutex, OnceLock};
 use std::time::Duration;
 
 use amux::{
@@ -89,7 +89,10 @@ impl Default for RuntimeOptions {
 /// [`Runtime::drain`].
 pub struct Runtime {
     model: Model,
-    recorder: Recorder,
+    /// Shared with the process panic hook ([`Runtime::install_panic_dump`])
+    /// so a panic can dump the ring after terminal restore. The fold is
+    /// single-threaded — contention is nil; the mutex exists for the hook.
+    recorder: Arc<StdMutex<Recorder>>,
     msg_tx: mpsc::Sender<Msg>,
     msg_rx: mpsc::Receiver<Msg>,
     client: Arc<StdMutex<Option<Client>>>,
@@ -109,7 +112,10 @@ impl Runtime {
     /// daemon.
     pub fn start(connector: Connector, options: RuntimeOptions) -> Self {
         let model = Model::default();
-        let recorder = Recorder::new(options.recorder_capacity, &model);
+        let recorder = Arc::new(StdMutex::new(Recorder::new(
+            options.recorder_capacity,
+            &model,
+        )));
         let (msg_tx, msg_rx) = mpsc::channel(MSG_CHANNEL_CAPACITY);
         let client = Arc::new(StdMutex::new(None));
 
@@ -196,16 +202,21 @@ impl Runtime {
         let Some(dir) = self.dump_dir.clone() else {
             return Err(io::Error::other("no dump directory configured"));
         };
-        let millis = std::time::SystemTime::now()
-            .duration_since(std::time::UNIX_EPOCH)
-            .map(|elapsed| elapsed.as_millis())
-            .unwrap_or(0);
-        let stamp = format!("{millis:013}-{}", std::process::id());
-        self.recorder.write_dump(&dir, reason, BUILD, &stamp)
+        lock_recorder(&self.recorder).write_dump(&dir, reason, BUILD, &dump_stamp())
+    }
+
+    /// Register this Runtime's recorder with the process-global panic-dump
+    /// slot read by [`write_panic_dump`]. Call once after start; a Runtime
+    /// without a dump directory registers nothing.
+    pub fn install_panic_dump(&self) {
+        let Some(dir) = self.dump_dir.clone() else {
+            return;
+        };
+        let _ = PANIC_DUMP.set((self.recorder.clone(), dir, BUILD));
     }
 
     fn process(&mut self, msg: Msg) {
-        self.recorder.record(&msg);
+        lock_recorder(&self.recorder).record(&msg);
         // Shell-side resource bookkeeping keyed on an observed Msg (allowed:
         // the shell manages resources, never decides semantics): a stream
         // task always ends by sending `Closed`, so drop its finished
@@ -322,6 +333,48 @@ impl Drop for Runtime {
             task.abort();
         }
     }
+}
+
+/// The recorder registered for panic dumps: set once by
+/// [`Runtime::install_panic_dump`], read by [`write_panic_dump`] inside the
+/// panic hook.
+static PANIC_DUMP: OnceLock<(Arc<StdMutex<Recorder>>, PathBuf, &'static str)> = OnceLock::new();
+
+/// Lock the recorder even when poisoned: a panic mid-record must not block
+/// the panic hook from dumping. The ring holds pre-serialized lines, so the
+/// worst a poisoned lock can cost is the newest entry.
+fn lock_recorder(recorder: &StdMutex<Recorder>) -> std::sync::MutexGuard<'_, Recorder> {
+    recorder
+        .lock()
+        .unwrap_or_else(std::sync::PoisonError::into_inner)
+}
+
+/// Unique dump-file stamp: zero-padded wall millis (name order is age
+/// order, which the pruner relies on) plus pid.
+fn dump_stamp() -> String {
+    let millis = std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .map(|elapsed| elapsed.as_millis())
+        .unwrap_or(0);
+    format!("{millis:013}-{}", std::process::id())
+}
+
+/// Best-effort recorder dump from the process panic hook, called AFTER
+/// terminal restore (a dump is worthless if writing it destroys the panic
+/// report). Returns quietly on every failure — nothing may panic or block
+/// here; the process is already dying.
+pub fn write_panic_dump(detail: &str) {
+    let Some((recorder, dir, build)) = PANIC_DUMP.get() else {
+        return;
+    };
+    let _ = lock_recorder(recorder).write_dump(
+        dir,
+        DumpReason::Panic {
+            detail: detail.to_string(),
+        },
+        build,
+        &dump_stamp(),
+    );
 }
 
 async fn execute_rpc(client: &Client, command: Command) -> OpOutcome {
@@ -669,5 +722,70 @@ fn stream_close_from_client_error(error: &ClientError) -> StreamCloseReason {
         StreamCloseReason::TransportError {
             message: error.to_string(),
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    /// A Runtime with no shell tasks: Msgs enter only through the direct
+    /// fold surface (`dispatch`/`observe_now`), which is all the panic-dump
+    /// path needs. No tokio runtime required.
+    fn a_runtime(dump_dir: PathBuf) -> Runtime {
+        let model = Model::default();
+        let recorder = Arc::new(StdMutex::new(Recorder::new(
+            DEFAULT_RECORDER_CAPACITY,
+            &model,
+        )));
+        let (msg_tx, msg_rx) = mpsc::channel(MSG_CHANNEL_CAPACITY);
+        Runtime {
+            model,
+            recorder,
+            msg_tx,
+            msg_rx,
+            client: Arc::new(StdMutex::new(None)),
+            tasks: Vec::new(),
+            streams: HashMap::new(),
+            dump_dir: Some(dump_dir),
+            reported_violations: HashSet::new(),
+        }
+    }
+
+    /// The panic hook's dump path, exercised WITHOUT panicking: install,
+    /// call `write_panic_dump`, and the dump directory holds a bundle whose
+    /// header carries the panic reason.
+    #[test]
+    fn write_panic_dump_writes_a_dump_after_install() {
+        let dir = tempfile::tempdir().expect("tempdir");
+        let mut runtime = a_runtime(dir.path().to_path_buf());
+        runtime.observe_now(DateTime::from_timestamp(1_754_697_600, 0).expect("valid time"));
+        runtime.dispatch(Command::DeleteAgent {
+            agent: Uuid::from_u128(7),
+        });
+        runtime.install_panic_dump();
+
+        write_panic_dump("test");
+
+        let dump = std::fs::read_dir(dir.path())
+            .expect("read dump dir")
+            .filter_map(|entry| entry.ok())
+            .map(|entry| entry.path())
+            .find(|path| {
+                path.file_name()
+                    .and_then(|name| name.to_str())
+                    .is_some_and(|name| name.starts_with("ui-dump-") && name.ends_with(".jsonl"))
+            })
+            .expect("a dump file exists");
+        let contents = std::fs::read_to_string(&dump).expect("read dump");
+        let header = contents.lines().next().expect("header line");
+        assert!(
+            header.contains("panic"),
+            "dump header must carry the panic reason: {header}"
+        );
+        assert!(
+            contents.lines().count() > 1,
+            "the recorded Msgs ride along in the dump"
+        );
     }
 }

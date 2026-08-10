@@ -38,6 +38,53 @@ One paragraph describing what was done.
 
 ---
 
+## 2026-08-10: Panic-hook recorder dump
+
+### Summary
+Panics now leave a Msg recording. The Runtime's recorder became
+`Arc<StdMutex<Recorder>>` (single-threaded fold — contention nil; the
+mutex exists for the hook, and a poisoned lock is entered via
+`PoisonError::into_inner` so a panic mid-record cannot block the
+hook). `Runtime::install_panic_dump()` registers (recorder, dump dir,
+BUILD) in a process-global OnceLock; the free function
+`amux_ui::write_panic_dump(detail)` reads it and writes a
+`DumpReason::Panic` bundle, returning quietly on any error. The
+amux-tui panic hook calls it AFTER `restore_now()` (a dump is
+worthless if writing it destroys the panic report), and `amux ui`
+installs it right after `Runtime::start`. This completes the
+dump-trigger set from the spec: tripwire, overflow-reserved
+(`ChannelOverflow`), panic, and user-requested (`C-g`).
+
+### Changes
+- `crates/amux-ui/src/runtime.rs` — shared recorder; `lock_recorder`
+  (poison-tolerant) + `dump_stamp` helpers; `install_panic_dump`;
+  `write_panic_dump`; unit test.
+- `crates/amux-ui/src/lib.rs` — export `write_panic_dump`.
+- `crates/amux-tui/src/terminal.rs` — panic hook: restore, then
+  `write_panic_dump(&info.to_string())`, then the previous hook.
+- `crates/amux-cli/src/ui.rs` — `runtime.install_panic_dump()`.
+
+### Decisions Made
+- A process-global OnceLock, not a hook re-registration: terminal.rs
+  owns hook installation order (restore FIRST); amux-ui only exposes
+  the write. One Runtime per client process makes the single global
+  slot honest.
+- The test exercises the hook's dump path without panicking (build a
+  Runtime with a tempdir dump dir, record Msgs, install, call
+  `write_panic_dump`, assert the file and its header) — actually
+  panicking in tests buys nothing and poisons test output.
+
+### Verification
+- New unit test: `runtime::tests::write_panic_dump_writes_a_dump_after_install`.
+- fmt + CI clippy clean; amux-ui/amux-tui/amux-cli suites, the 44-test
+  spec suite, and e2e-runner 14/14.
+
+### Next Steps
+- `amux debug ui-dump` (IPC-triggered dump of a running TUI) remains
+  deferred.
+
+---
+
 ## 2026-08-10: Model invariants checked at the fold seam
 
 ### Summary

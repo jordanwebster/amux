@@ -44,6 +44,10 @@ pub async fn run(mut config: Config) -> Result<()> {
             ..RuntimeOptions::default()
         },
     );
+    // A panic anywhere in the TUI leaves a Msg recording: the terminal.rs
+    // panic hook calls amux_ui::write_panic_dump after restoring the
+    // terminal.
+    runtime.install_panic_dump();
 
     let tui_config = TuiConfig {
         working_dir: std::env::current_dir()?,

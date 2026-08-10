@@ -35,6 +35,8 @@ pub use recorder::{
     DEFAULT_RECORDER_CAPACITY, DUMP_FORMAT_VERSION, DUMP_RETAINED_FILES, DumpHeader, Recorder,
     ReplayError, replay,
 };
-pub use runtime::{BUILD, ConnectFailure, ConnectFuture, Connector, Runtime, RuntimeOptions};
+pub use runtime::{
+    BUILD, ConnectFailure, ConnectFuture, Connector, Runtime, RuntimeOptions, write_panic_dump,
+};
 pub use summarizers::SummarizerState;
 pub use update::{NOT_CONNECTED_ERROR, REPLAY_TAIL, update};
