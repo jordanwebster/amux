@@ -1,0 +1,4 @@
+# Golden frames are byte-contracts: tests compare them against LF-joined
+# rendered strings, so checkout must never translate their line endings
+# (Windows runners default to autocrlf).
+crates/amux-tui/tests/golden/*.txt text eol=lf

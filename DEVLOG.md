@@ -391,6 +391,27 @@ a tier-2 embedded-server integration test replacing the old ignored one.
 
 ---
 
+## 2026-08-10: CI hardening for the TUI suites before first push
+
+### Summary
+CI's test job already runs `cargo test --workspace --all-targets` on all
+three OSes, so the new amux-ui/amux-tui/amux-cli suites are covered with
+zero workflow changes — but two Windows hazards needed closing first.
+The three PTY-backed tier-2 tests (`attach::round_trip_repaints_fleet`,
+`attach::kill_during_attach_still_restores_the_terminal`,
+`runtime_reflects_daemon_state_in_the_model`) get the existing ConPTY
+ignore gate (same attribute and reason as the embedded suite; the pure
+byte-sequence and no-agent attach tests stay ungated everywhere). New
+`.gitattributes` pins LF on the tier-3 golden frames so Windows
+checkouts cannot CRLF-translate byte-contract fixtures.
+
+### Verification
+- `cargo +nightly fmt --all` clean; `timeout 600 cargo test -p amux-ui`
+  28 passed, `-p amux-cli` 52 passed, `-p amux-tui` 19 passed (macOS —
+  gates are windows-only, nothing ignored here).
+
+---
+
 ## 2026-08-09: Client-layer design — docs/UI.md, external review, V1 TUI spec
 
 ### Summary

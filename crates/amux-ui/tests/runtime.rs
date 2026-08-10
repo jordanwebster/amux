@@ -28,6 +28,10 @@ async fn wait_for(runtime: &mut Runtime, what: &str, predicate: impl Fn(&Model) 
 }
 
 #[tokio::test(flavor = "multi_thread")]
+#[cfg_attr(
+    windows,
+    ignore = "agent PTY teardown hangs under ConPTY, like the disabled Windows e2e leg"
+)]
 async fn runtime_reflects_daemon_state_in_the_model() {
     let dir = tempdir().unwrap();
     let config = Config {

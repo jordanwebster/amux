@@ -662,6 +662,10 @@ mod attach {
     /// Model, attach again — then 100 scripted cycles with zero corruption
     /// (every cycle detaches cleanly and the next attach still streams).
     #[tokio::test(flavor = "multi_thread")]
+    #[cfg_attr(
+        windows,
+        ignore = "agent PTY teardown hangs under ConPTY, like the disabled Windows e2e leg"
+    )]
     async fn round_trip_repaints_fleet() {
         let dir = tempfile::tempdir().unwrap();
         let client = embedded_client(dir.path()).await;
@@ -745,6 +749,10 @@ mod attach {
     /// hanging or corrupting, and the chrome's restore sequence still
     /// yields a sane terminal.
     #[tokio::test(flavor = "multi_thread")]
+    #[cfg_attr(
+        windows,
+        ignore = "agent PTY teardown hangs under ConPTY, like the disabled Windows e2e leg"
+    )]
     async fn kill_during_attach_still_restores_the_terminal() {
         let dir = tempfile::tempdir().unwrap();
         let client = embedded_client(dir.path()).await;
