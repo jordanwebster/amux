@@ -38,6 +38,79 @@ One paragraph describing what was done.
 
 ---
 
+## 2026-08-11: Chat V1 Phase 0 — transcript persistence fix + capture harness
+
+### Summary
+Fixed the transcript-persistence bug that starved the structured
+stream, and built the real-Claude capture harness that produced the
+first baseline fixture set (including the previously-UNOBSERVED
+ExitPlanMode rows). Empirical root cause: an amux daemon whose ancestry
+includes a Claude session inherits Claude Code's child-session marker
+set (`CLAUDE_CODE_CHILD_SESSION=1`, `CLAUDECODE=1`, `CLAUDE_PID`,
+`CLAUDE_CODE_SESSION_ID`, …) and leaks it to every claude it spawns;
+the child sees itself as a nested session and turns transcript saving
+off. Confirmed by `ps eww` on daemon + spawned claude, and by
+disassembling the claude 2.1.228 binary's env-builder and suppression
+check.
+
+### Changes
+- `crates/amux/src/agents/pty.rs`: `spawn_pty_agent` grew an
+  `env_remove` param; new `apply_env` helper (env_remove then env).
+- `crates/amux/src/agents/claude/session/core.rs`: at the Claude spawn
+  seam, scrub `CLAUDE_CHILD_SESSION_ENV_SCRUB` (explicit list, not a
+  `CLAUDE_*` wipe — `CLAUDE_CONFIG_DIR` must survive) and set
+  `CLAUDE_CODE_FORCE_SESSION_PERSISTENCE=1`. Unit-tested.
+- `crates/amux/src/agents/test_agent.rs`: pass `&[]` for env_remove.
+- `crates/amux/tests/capture/`: opt-in real-Claude capture harness
+  (`harness=false`), driving keystrokes through the structured input
+  seq-guarded path; scenario redaction with a fail-loud verify pass.
+- `crates/amux/tests/fixtures/chat-v1/`: 9 redacted, provenance-stamped
+  baseline fixtures (pong, tools, permission, question single/multi,
+  interrupt, plan approve/reject, compact) + README.
+
+### Decisions Made
+- Scrub AND force (not force alone): force fixes persistence, but the
+  leaked SESSION_ID/PID/MESSAGING_SOCKET point the child at the parent
+  session's identity/IPC — scrubbing is the correct hygiene regardless.
+- Poisoned-daemon-by-default in the harness: every capture run doubles
+  as a live regression test of the scrub (empty capture ⇒ scrub broke).
+- Explicit scrub list, not a prefix wipe: user config like
+  `CLAUDE_CONFIG_DIR` must survive.
+
+### Verification
+- Unit: env-scrub + force assertions (core.rs), apply_env (pty.rs).
+- Live: `ps eww` of the spawned claude showed the markers gone and
+  `FORCE=1` set; all 9 poisoned-daemon capture runs produced rows and
+  `amux.transcript_ready`.
+- Gate: fmt clean, clippy (`--all-targets --features testnet`) clean,
+  `cargo test -p amux --lib` 400 passed, spec suite 44 passed.
+- Codex review (5 findings, all accepted & fixed before this commit):
+  redaction now drops config-bearing attachment rows
+  (skills/agents/MCP-tool inventory) that had leaked the owner's Claude
+  config — profile isolation breaks auth on macOS (keychain is config-dir
+  gated, verified), so the fix strips at capture time + fails-loud verify;
+  question_multi asserts every selection + the Other value (encoding solved:
+  Space commits the Other checkbox); tools asserts recorded Edit+Bash rows;
+  harness holds the daemon child in a kill-on-drop guard across startup;
+  plan_approve stops at the ExitPlanMode resolution (264s→26s). All 9
+  fixtures recaptured through the new redaction; leak sweep = 0.
+
+### Spec drift recorded (notes/chat-v1/transcript-semantics.md §18a)
+- Plan approve (manual) does NOT emit a `permission-mode` change —
+  contradicts the docs-sourced C3/§18 rule; approval FACT is the
+  tool_result success + canonical content. Rejection = `is_error:true`.
+- AskUserQuestion `answers` keyed by question TEXT, not header;
+  options are `{label,description}` objects.
+- Transcript file is created lazily on the first turn, not at
+  SessionStart. docs/CHAT.md deltas queued for the orchestrator in
+  notes/chat-v1/phases/00-report.md.
+
+### Next Steps
+- Phase 1 (Claude layer fold) can read these fixtures raw.
+- Phase 3 owns the multi-select joined-selection encoding (captured
+  structurally here but the exact keystroke table is unconfirmed) and a
+  mode-cycle capture for D4.
+
 ## 2026-08-11: Chat V1 spec (docs/CHAT.md)
 
 ### Summary

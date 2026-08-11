@@ -74,6 +74,13 @@ name = "spec"
 path = "tests/spec/main.rs"
 required-features = ["testnet"]
 
+# Opt-in real-Claude capture harness (the seed of the CHAT.md §H suite).
+# Does nothing unless scenarios are named: see tests/capture/main.rs.
+[[test]]
+name = "capture"
+path = "tests/capture/main.rs"
+harness = false
+
 [build-dependencies]
 prost-build = { workspace = true }
 tonic-build = { workspace = true }

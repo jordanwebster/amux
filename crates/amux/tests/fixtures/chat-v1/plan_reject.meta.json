@@ -1,0 +1,47 @@
+{
+  "captured_at": "2026-08-11T22:45:42.981928+00:00",
+  "claude_version": "2.1.228 (Claude Code)",
+  "failure": null,
+  "harness": "cargo test -p amux --test capture -- plan_reject",
+  "model": "haiku",
+  "notes": {
+    "keys": [
+      {
+        "actions": [
+          "write \"\\r\""
+        ],
+        "note": "workspace trust dialog: Enter (preselected 'Yes, I trust this folder')",
+        "seq_retries": 0
+      },
+      {
+        "actions": [
+          "write \"Make a short plan for adding a README.md that documents config.txt. Do not ask any clarifying questions — make reasonable assumptions. When the plan is ready, use the ExitPlanMode tool to present it directly.\"",
+          "delay 300ms",
+          "write \"\\r\""
+        ],
+        "note": "prompt: Make a short plan for adding a README.md that documents config.txt. Do not ask any clarifying questions — make reasonable assumptions. When the plan is ready, use the ExitPlanMode tool to present it directly.",
+        "seq_retries": 0
+      },
+      {
+        "actions": [
+          "write \"3\"",
+          "delay 800ms",
+          "write \"Please also document the meaning of VALUE.\"",
+          "delay 400ms",
+          "write \"\\r\""
+        ],
+        "note": "plan reject: digit 3, then feedback text + Enter",
+        "seq_retries": 0
+      },
+      {
+        "actions": [
+          "write \"\\u{1b}\""
+        ],
+        "note": "end scenario: Esc",
+        "seq_retries": 0
+      }
+    ]
+  },
+  "poisoned_daemon_env": true,
+  "scenario": "plan_reject"
+}

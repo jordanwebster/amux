@@ -87,17 +87,37 @@ impl PtyHandle {
     }
 }
 
+/// Apply environment additions and removals to a spawn command.
+///
+/// `CommandBuilder` inherits the daemon's full environment by default;
+/// `env_remove` scrubs inherited variables that must not reach the child
+/// (see `ClaudeSession::start` for the Claude scrub list and its rationale).
+pub(in crate::agents) fn apply_env(
+    cmd: &mut CommandBuilder,
+    env: &[(&str, String)],
+    env_remove: &[&str],
+) {
+    for key in env_remove {
+        cmd.env_remove(key);
+    }
+    for (key, value) in env {
+        cmd.env(key, value);
+    }
+}
+
 /// Spawn a PTY process and return a handle + structured log source + exit handle.
 ///
 /// Creates the PTY, spawns the command, and starts reader/writer/exit-monitor
 /// tasks. The exit handle completes when the child exits (after internal cleanup).
-/// Used by both [`super::ClaudeSession`] and [`super::TestAgentSession`].
+/// The spawned environment is the daemon's environment minus `env_remove` plus
+/// `env`. Used by both [`super::ClaudeSession`] and [`super::TestAgentSession`].
 pub(crate) fn spawn_pty_agent(
     agent_id: Uuid,
     command: &str,
     args: &[String],
     working_dir: &Path,
     env: &[(&str, String)],
+    env_remove: &[&str],
     terminal_size: Option<TerminalSize>,
 ) -> Result<(PtyHandle, StructuredLogSource, tokio::task::JoinHandle<()>)> {
     let session_span = tracing::info_span!("session", agent_id = %agent_id, command = %command);
@@ -119,9 +139,7 @@ pub(crate) fn spawn_pty_agent(
         cmd.arg(arg);
     }
     cmd.cwd(working_dir);
-    for (key, value) in env {
-        cmd.env(key, value);
-    }
+    apply_env(&mut cmd, env, env_remove);
     let mut child = pair
         .slave
         .spawn_command(cmd)
@@ -204,4 +222,35 @@ pub(crate) fn spawn_pty_agent(
     };
 
     Ok((pty, log_source, exit_handle))
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    /// `apply_env` scrubs inherited variables and applies additions on top —
+    /// the seam every PTY agent spawn goes through.
+    #[test]
+    fn apply_env_removes_inherited_vars_and_sets_additions() {
+        let mut cmd = CommandBuilder::new("some-agent");
+        // Simulate an inherited (daemon) environment carrying a poisoned var.
+        cmd.env("POISONED_INHERITED_VAR", "1");
+        cmd.env("UNRELATED_VAR", "keep");
+
+        apply_env(
+            &mut cmd,
+            &[("ADDED_VAR", "added".to_string())],
+            &["POISONED_INHERITED_VAR", "NEVER_SET_VAR"],
+        );
+
+        assert_eq!(cmd.get_env("POISONED_INHERITED_VAR"), None);
+        assert_eq!(
+            cmd.get_env("UNRELATED_VAR").and_then(|v| v.to_str()),
+            Some("keep")
+        );
+        assert_eq!(
+            cmd.get_env("ADDED_VAR").and_then(|v| v.to_str()),
+            Some("added")
+        );
+    }
 }

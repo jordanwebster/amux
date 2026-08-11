@@ -98,6 +98,7 @@ impl TestAgentSession {
             &[],
             &self.working_dir,
             &[],
+            &[],
             self.terminal_size,
         )?;
         self.pty = Some(pty);

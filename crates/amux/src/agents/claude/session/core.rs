@@ -17,6 +17,51 @@ use crate::agents::{
 };
 use crate::debug::DebugView;
 
+/// Inherited environment variables scrubbed before spawning Claude Code.
+///
+/// Claude Code stamps every subprocess it spawns with a child-session marker
+/// set (verified against the claude 2.1.228 binary and by `ps eww` dumps of a
+/// daemon started from inside a Claude session): `CLAUDECODE=1`,
+/// `CLAUDE_CODE_SESSION_ID`, `CLAUDE_CODE_CHILD_SESSION=1`, `CLAUDE_PID`,
+/// plus `AI_AGENT`, `CLAUDE_EFFORT`, and `TRACEPARENT` when applicable, and
+/// its process context (`CLAUDE_CODE_ENTRYPOINT`, `CLAUDE_CODE_EXECPATH`,
+/// `CLAUDE_CODE_MESSAGING_SOCKET`) leaks alongside. An amux daemon whose
+/// ancestry includes a Claude session (the CLI auto-spawns the daemon with
+/// full env inheritance — one `amux` command run from Claude's Bash tool is
+/// enough) carries these vars for its whole lifetime, and a claude spawned
+/// under that daemon inherits `CLAUDE_CODE_CHILD_SESSION`, sees itself as a
+/// nested child session, and turns transcript persistence off ("Transcript
+/// saving is off — inherited CLAUDE_CODE_CHILD_SESSION marker") — which
+/// starves the structured transcript stream entirely.
+///
+/// The list is explicit, not a `CLAUDE_*` prefix wipe: variables like
+/// `CLAUDE_CONFIG_DIR` are legitimate user configuration and must survive.
+const CLAUDE_CHILD_SESSION_ENV_SCRUB: &[&str] = &[
+    "CLAUDECODE",
+    "CLAUDE_CODE_CHILD_SESSION",
+    "CLAUDE_CODE_SESSION_ID",
+    "CLAUDE_PID",
+    "CLAUDE_EFFORT",
+    "AI_AGENT",
+    "TRACEPARENT",
+    "CLAUDE_CODE_ENTRYPOINT",
+    "CLAUDE_CODE_EXECPATH",
+    "CLAUDE_CODE_MESSAGING_SOCKET",
+];
+
+/// Environment additions for a spawned Claude Code process.
+///
+/// `CLAUDE_CODE_FORCE_SESSION_PERSISTENCE=1` is belt-and-braces on top of the
+/// scrub: claude's own suppression check honors it unconditionally, so
+/// transcripts persist even if a future Claude Code version grows a new
+/// child-session marker the scrub list does not yet know about.
+fn claude_spawn_env(agent_id: Uuid) -> [(&'static str, String); 2] {
+    [
+        ("AMUX_AGENT_ID", agent_id.to_string()),
+        ("CLAUDE_CODE_FORCE_SESSION_PERSISTENCE", "1".to_string()),
+    ]
+}
+
 pub(crate) struct ClaudeSession {
     pub(in crate::agents) agent_id: Uuid,
     pub(in crate::agents) name: Option<String>,
@@ -145,7 +190,7 @@ impl ClaudeSession {
     /// when the process exits. If `session_id` is set, passes `--resume <id>`.
     /// Extra args from creation are appended.
     pub(crate) fn start(&mut self) -> Result<tokio::task::JoinHandle<()>> {
-        let env = [("AMUX_AGENT_ID", self.agent_id.to_string())];
+        let env = claude_spawn_env(self.agent_id);
         let mut args: Vec<String> = match self.session_id {
             Some(id) => vec!["--resume".to_string(), id.to_string()],
             None => vec![],
@@ -157,6 +202,7 @@ impl ClaudeSession {
             &args,
             &self.working_dir,
             &env,
+            CLAUDE_CHILD_SESSION_ENV_SCRUB,
             self.terminal_size,
         )?;
         self.pty = Some(pty);
@@ -215,5 +261,61 @@ impl Serialize for DebugView<'_, ClaudeSession> {
             map.serialize_entry("transcript", &DebugView::new(log_source, self.verbose))?;
         }
         map.end()
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::agents::pty::apply_env;
+
+    /// The environment a spawned claude actually receives: every inherited
+    /// Claude Code child-session marker is scrubbed, and the force-persistence
+    /// var plus the agent id are set. Guards against the "Transcript saving is
+    /// off — inherited CLAUDE_CODE_CHILD_SESSION marker" failure, where a
+    /// daemon whose ancestry includes a Claude session poisoned every claude
+    /// it spawned and the structured transcript stream had no rows to tail.
+    #[test]
+    fn spawned_claude_env_scrubs_child_session_markers_and_forces_persistence() {
+        let agent_id = Uuid::new_v4();
+        let mut cmd = portable_pty::CommandBuilder::new("claude");
+        // Simulate a daemon started from inside a Claude session: the full
+        // marker set observed via `ps eww` on such a daemon.
+        for key in CLAUDE_CHILD_SESSION_ENV_SCRUB {
+            cmd.env(key, "poisoned");
+        }
+        // Deliberate user configuration must survive the scrub.
+        cmd.env("CLAUDE_CONFIG_DIR", "/custom/claude");
+
+        apply_env(
+            &mut cmd,
+            &claude_spawn_env(agent_id),
+            CLAUDE_CHILD_SESSION_ENV_SCRUB,
+        );
+
+        for key in CLAUDE_CHILD_SESSION_ENV_SCRUB {
+            assert_eq!(cmd.get_env(key), None, "{key} must be scrubbed");
+        }
+        assert_eq!(
+            cmd.get_env("CLAUDE_CODE_FORCE_SESSION_PERSISTENCE")
+                .and_then(|v| v.to_str()),
+            Some("1")
+        );
+        assert_eq!(
+            cmd.get_env("AMUX_AGENT_ID").and_then(|v| v.to_str()),
+            Some(agent_id.to_string().as_str())
+        );
+        assert_eq!(
+            cmd.get_env("CLAUDE_CONFIG_DIR").and_then(|v| v.to_str()),
+            Some("/custom/claude")
+        );
+    }
+
+    /// The scrub list stays explicit: `CLAUDE_CODE_CHILD_SESSION` is the
+    /// specific variable Claude Code's persistence check reads, so it must be
+    /// present in the list regardless of how the list evolves.
+    #[test]
+    fn scrub_list_contains_the_child_session_marker() {
+        assert!(CLAUDE_CHILD_SESSION_ENV_SCRUB.contains(&"CLAUDE_CODE_CHILD_SESSION"));
     }
 }
