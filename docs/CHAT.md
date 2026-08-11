@@ -207,7 +207,10 @@ Everything before the `amux.transcript_ready` marker is replay;
 everything after is live. During catch-up the chat renders a
 `⟳ loading transcript…` band where the feed will be — visually distinct
 from an empty chat, which renders the composer with a placeholder and
-no band. On source-shrink recovery the tailer re-replays from the
+no band. A fresh session has no transcript file until its first turn —
+creation is lazy (Phase 0, observed) — so a new agent renders the
+empty-chat state, not the loading band, and `transcript_ready` arrives
+with the first turn. On source-shrink recovery the tailer re-replays from the
 start; the fold treats a repeated prefix as re-replay (idempotent by
 row `uuid`), not new content.
 
@@ -220,9 +223,12 @@ An ask is `{id, kind, payload}` in the Model: id is the `tool_use` id
 (permissions); kind is permission or question; the payload is typed per
 kind, and a permission carrying an `ExitPlanMode` plan is the
 plan-review variant. Pending signals: the amux
-`hook.permission_request` row (FACT, arrival-ordered) for permissions;
-an unpaired `AskUserQuestion` tool_use in a final message (FACT-grade
-pairing rule) for questions. Multiple pending asks queue; the head is
+`hook.permission_request` row (FACT, arrival-ordered), which fires
+for tool permissions AND for `AskUserQuestion`/`ExitPlanMode` (Phase
+0, observed) — extraction routes on its `tool_name`, never assuming a
+plain permission; the unpaired tool_use in a final message is the
+transcript-only signal (FACT-grade pairing rule) and the fallback
+where hook rows are absent. Multiple pending asks queue; the head is
 shown with an honest `(1 of N)` count.
 
 Lifecycle (C5): **pending** → panel open → answer submitted
@@ -303,13 +309,15 @@ feed carries the truncated plan entry and Ctrl+T reopens the reader on
 the newest accepted plan (←/→ steps between plans when several exist),
 with no action row once resolved.
 
-The `ExitPlanMode` row shapes are UNOBSERVED in the local evidence base
-(no plan-mode sessions in the survey). The proposed resolution rule —
-approval ⇒ tool_result success plus a `permission-mode` row change,
-rejection ⇒ `is_error:true` — is docs/community-sourced only. E2E
-scenario H.5 captures real fixtures for both paths, and the plan
-surface's resolution and encoding rules are gated on those fixtures
-landing.
+The `ExitPlanMode` resolution rules are fixture-grounded (Phase 0
+captures, claude 2.1.228): approval ⇒ a non-error tool_result with
+the canonical "User has approved your plan" content — manual approval
+emits NO `permission-mode` row change, contrary to the earlier
+docs-sourced rule; rejection ⇒ `is_error:true`. The tool input
+carries `{plan, planFilePath}`; the plan is also written under
+`~/.claude/plans/`. Still owed to H.5: the approve-auto path (whether
+*auto* approval flips the permission mode is unobserved) and the
+exact plan-menu keystroke encodings.
 
 ### Diffs and the reader's artifacts
 

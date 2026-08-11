@@ -38,6 +38,30 @@ One paragraph describing what was done.
 
 ---
 
+## 2026-08-12: Phase 0 gate — spec corrections from fixtures
+
+### Summary
+docs/CHAT.md absorbs the Phase 0 fixture-grounded corrections: plan
+review resolution rules (manual approval emits no `permission-mode`
+change; approval fact is the canonical tool_result, rejection is
+`is_error:true`; approve-auto still owed to H.5), lazy transcript
+creation on fresh sessions (empty-chat state, `transcript_ready`
+arrives with the first turn), and ask extraction routing on the hook
+payload's `tool_name` (`hook.permission_request` also fires for
+AskUserQuestion/ExitPlanMode). Gate context: codex review
+(gpt-5.6-sol, high) of the phase diff returned five findings — one P1
+fixture-privacy leak, four P2 harness defects — all five fixed and
+the phase recommitted clean (`0b7f0d4`) before anything was pushed;
+leak grep over committed fixtures independently verified zero.
+
+### Changes
+- docs/CHAT.md — three corrections, each evidence-tagged "Phase 0".
+
+### Verification
+- Prose only; wireframes remain exactly 80 columns (machine-checked).
+
+---
+
 ## 2026-08-11: Chat V1 Phase 0 — transcript persistence fix + capture harness
 
 ### Summary
