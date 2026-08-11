@@ -302,9 +302,8 @@ pub async fn start_daemon(scratch: &Scratch, env: &DaemonEnv) -> Result<ScratchD
 }
 
 fn target_debug_dir() -> Result<PathBuf> {
-    // tests/capture is compiled into target/debug/deps; the workspace target
-    // dir is two levels up from the manifest dir's sibling — resolve from the
-    // current exe, which lives in <target>/debug/deps/.
+    // This test binary lives in <target>/debug/deps/; the amux binary lands
+    // one level up, in <target>/debug/.
     let exe = std::env::current_exe().context("current_exe")?;
     let deps = exe
         .parent()
@@ -318,13 +317,13 @@ fn target_debug_dir() -> Result<PathBuf> {
 /// A live capture session over one claude agent: the transcript subscription
 /// recorded row by row, plus the raw PTY byte stream for menu debugging.
 pub struct CaptureSession {
-    pub agent_name: String,
-    pub rows: Arc<Mutex<Vec<Row>>>,
+    agent_name: String,
+    rows: Arc<Mutex<Vec<Row>>>,
     /// Lossy accumulated PTY screen bytes — used only to detect and answer
     /// claude's *startup* dialogs (workspace trust), never to interpret
     /// conversation state; the transcript rows are the truth for that.
-    pub raw_screen: Arc<Mutex<String>>,
-    pub keys_log: Vec<serde_json::Value>,
+    raw_screen: Arc<Mutex<String>>,
+    keys_log: Vec<serde_json::Value>,
     client: Client,
     raw_task: tokio::task::JoinHandle<()>,
     rows_task: tokio::task::JoinHandle<()>,
@@ -616,14 +615,15 @@ impl CaptureSession {
         .await
     }
 
-    /// Close the capture: delete the agent and stop the recorder tasks.
-    pub async fn close(self) -> Result<Vec<serde_json::Value>> {
+    /// Close the capture: delete the agent, stop the recorder tasks, and hand
+    /// back the keystroke log (a JSON array) for the scenario's meta notes.
+    pub async fn close(self) -> Result<serde_json::Value> {
         let _ = self.client.delete_agent(self.agent_name.as_str()).await;
         // Give the recorders a moment to observe the close, then stop them.
         tokio::time::sleep(Duration::from_millis(500)).await;
         self.raw_task.abort();
         self.rows_task.abort();
-        Ok(self.keys_log)
+        Ok(serde_json::Value::Array(self.keys_log))
     }
 }
 

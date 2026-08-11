@@ -224,10 +224,6 @@ async fn open(
     Ok((session, index))
 }
 
-fn keys_json(session: &CaptureSession) -> serde_json::Value {
-    serde_json::Value::Array(session.keys_log.clone())
-}
-
 /// The `toolUseResult.answers` object of the most recent AskUserQuestion
 /// result row in the capture, if any.
 fn latest_answers(rows: &[harness::Row]) -> Option<serde_json::Map<String, serde_json::Value>> {
@@ -249,8 +245,7 @@ async fn pong(daemon: &ScratchDaemon, scratch: &Scratch, model: &str) -> Result<
     )
     .await?;
     session.wait_for_turn_end(index, TURN_TIMEOUT).await?;
-    let keys = keys_json(&session);
-    session.close().await?;
+    let keys = session.close().await?;
     Ok(serde_json::json!({ "keys": keys }))
 }
 
@@ -281,8 +276,7 @@ async fn tools(
     let has_edit = rows.iter().any(|r| r.is_tool_use("Edit"));
     let has_bash = rows.iter().any(|r| r.is_tool_use("Bash"));
     let result_count = rows.iter().filter(|r| r.is_tool_result()).count();
-    let keys = keys_json(&session);
-    session.close().await?;
+    let keys = session.close().await?;
     if !content.contains("VALUE=2") {
         bail!("world assertion failed: config.txt does not contain VALUE=2 (got {content:?})");
     }
@@ -356,8 +350,7 @@ async fn permission(
 
     let allowed = scratch.projects.join("permission/allowed.txt").exists();
     let denied = scratch.projects.join("permission/denied.txt").exists();
-    let keys = keys_json(&session);
-    session.close().await?;
+    let keys = session.close().await?;
     if !allowed {
         bail!("world assertion failed: allowed.txt missing after allow");
     }
@@ -409,8 +402,7 @@ async fn question_single(
         })
         .await?;
     let _ = session.wait_for_turn_end(index, TURN_TIMEOUT).await;
-    let keys = keys_json(&session);
-    session.close().await?;
+    let keys = session.close().await?;
     Ok(serde_json::json!({ "keys": keys }))
 }
 
@@ -511,8 +503,7 @@ async fn question_multi(
             );
         }
     }
-    let keys = keys_json(&session);
-    session.close().await?;
+    let keys = session.close().await?;
     Ok(serde_json::json!({ "keys": keys, "answers": answers }))
 }
 
@@ -539,15 +530,13 @@ async fn interrupt(
     session
         .send_keys("interrupt: Esc", vec![Act::Write(b"\x1b".to_vec())])
         .await?;
-    let index = session
+    session
         .wait_for_row(index, ASK_TIMEOUT, "interrupt artifact row", |row| {
             row.raw.contains("Request interrupted by user")
                 || row.raw.contains("interruptedMessageId")
         })
         .await?;
-    let _ = index;
-    let keys = keys_json(&session);
-    session.close().await?;
+    let keys = session.close().await?;
     Ok(serde_json::json!({ "keys": keys }))
 }
 
@@ -601,7 +590,7 @@ async fn plan(
         // for turn end: after a manual approve, claude proceeds and blocks on
         // the next Write permission, so wait_for_turn_end would burn the full
         // timeout for a row we've already captured.
-        let index = session
+        session
             .wait_for_row(index, ASK_TIMEOUT, "ExitPlanMode resolution row", |row| {
                 match &plan_tool_id {
                     Some(id) => row.is_tool_result_for(id),
@@ -609,7 +598,6 @@ async fn plan(
                 }
             })
             .await?;
-        let _ = index;
         // Brief settle so the trailing permission-mode row flushes into the
         // capture, then stop the scenario.
         tokio::time::sleep(Duration::from_secs(2)).await;
@@ -642,8 +630,7 @@ async fn plan(
             .await?;
         tokio::time::sleep(Duration::from_secs(2)).await;
     }
-    let keys = keys_json(&session);
-    session.close().await?;
+    let keys = session.close().await?;
     Ok(serde_json::json!({ "keys": keys }))
 }
 
@@ -677,13 +664,11 @@ async fn compact(
             ],
         )
         .await?;
-    let index = session
+    session
         .wait_for_row(index, TURN_TIMEOUT, "compact_boundary row", |row| {
             row.raw.contains("compact_boundary")
         })
         .await?;
-    let _ = index;
-    let keys = keys_json(&session);
-    session.close().await?;
+    let keys = session.close().await?;
     Ok(serde_json::json!({ "keys": keys }))
 }

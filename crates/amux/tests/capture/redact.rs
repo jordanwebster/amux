@@ -34,7 +34,7 @@ use anyhow::{Result, bail};
 /// Plan-mode attachments (`plan_mode`, `plan_mode_exit`), permission facts
 /// (`command_permissions`), and turn/tool attachments stay: they are the
 /// scenario.
-pub const CONFIG_ATTACHMENT_TYPES: &[&str] = &[
+const CONFIG_ATTACHMENT_TYPES: &[&str] = &[
     "skill_listing",
     "agent_listing_delta",
     "deferred_tools_delta",

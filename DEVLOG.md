@@ -38,6 +38,37 @@ One paragraph describing what was done.
 
 ---
 
+## 2026-08-12: Phase 0 simplification pass
+
+### Summary
+Simplification pass over the Phase 0 diff (`41243f9..0b7f0d4`), scoped
+to the capture harness. Main finding: `CaptureSession::close` returned
+the keystroke log but every scenario discarded it, cloning the same
+data out of the pub `keys_log` field via a `keys_json` helper one line
+earlier — `close` now returns the keys JSON directly, the helper is
+gone, and `agent_name`/`rows`/`raw_screen`/`keys_log` went private.
+Also: dropped three `let index = …; let _ = index;` dances in
+scenarios, made `CONFIG_ATTACHMENT_TYPES` private (redact.rs-internal),
+and fixed the garbled `target_debug_dir` comment. Deliberately left
+alone: `DaemonEnv` (named-field call-site clarity beats a bare bool),
+`claude_spawn_env`/`apply_env` (exist so the unit tests exercise the
+exact production seam), `wait_for_transcript_ready` (named domain
+boundary), and the `Row` predicate duplication (merging `is_tool_use`
+into `tool_use_id().is_some()` would change edge behavior on id-less
+blocks). Altitude check: src/testnet is in-process only — no existing
+utility covers a real subprocess daemon, which the env-inheritance
+seam requires. No fixture row content touched; no recapture needed.
+
+### Changes
+- crates/amux/tests/capture/harness.rs, main.rs, redact.rs — above.
+
+### Verification
+- `cargo fmt`, clippy (`-p amux --all-targets --features testnet`),
+  `cargo test -p amux --lib` (400 ok), spec suite (44 ok), and the
+  capture binary's opt-in no-op path — all green.
+
+---
+
 ## 2026-08-12: Phase 0 gate — spec corrections from fixtures
 
 ### Summary
