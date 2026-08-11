@@ -38,6 +38,51 @@ One paragraph describing what was done.
 
 ---
 
+## 2026-08-11: Chat V1 spec (docs/CHAT.md)
+
+### Summary
+docs/CHAT.md lands: the normative V1 spec for the structured chat
+view over `claude_pty_transcript_v1` — vocabulary (feed / ask /
+composer / phase / reader), modes and entry, feed semantics grounded
+in a transcript evidence survey with fact-vs-inferred discipline
+throughout, the ask lifecycle, principle-derived keybindings (guarded
+Ctrl+C, no Alt ever, readline in text fields), diff/artifact
+rendering, seven 80-col wireframes, and the real-Claude E2E suite.
+Designed from first principles with UX studies of Codex CLI and
+opencode plus a transcript semantics survey (working material in
+notes/chat-v1/, gitignored per convention). Implementation is phased
+in notes/chat-v1/orchestration.md.
+
+### Changes
+- docs/CHAT.md — new; companion to docs/UI.md.
+
+### Decisions Made
+- The chat is a typed Claude layer over native transcript rows (no
+  IR). Asks have two kinds — permission and question; plan review is
+  a permission variant with a fullscreen reader.
+- Shipped default open mode: raw attach; chat is one setting away in
+  the standard config; mobile clients are chat-only.
+- Keybindings derive from ten recorded principles: Esc never answers
+  or interrupts; interrupt is Ctrl+X alone; Ctrl+C is the guarded
+  abandon key (clears a non-empty field as a yankable kill; two-press
+  rendered quit when empty), one rule chrome-wide.
+- UI.md's deferred content-windowing decision is resolved for the
+  chat milestone: window = bounded source tail, relink = epoch.
+- Diffs render precomputed `structuredPatch` facts; the only diff
+  ever computed client-side is the ask-time preview (`similar`, in
+  the fold), numberless and estimated — ask-time hunks do not exist.
+
+### Verification
+- Prose spec only; wireframes machine-checked at exactly 80 columns;
+  all 34 requirement IDs traceable to their sections. The executable
+  half arrives with the phased implementation.
+
+### Next Steps
+- Phase 0 (notes/chat-v1/orchestration.md): transcript-persistence
+  bug fix + baseline fixture capture; overnight autonomous run.
+
+---
+
 ## 2026-08-10: Panic-hook recorder dump
 
 ### Summary
