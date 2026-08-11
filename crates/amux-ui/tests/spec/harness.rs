@@ -5,6 +5,7 @@
 //! deterministically from names so sequences replay identically forever.
 
 use amux::{Agent, AgentId, Capabilities, HostEntry, HostId, HostTrustStatus};
+use amux_ui::claude::ClaudeLayer;
 use amux_ui::{
     Command, DisconnectReason, Effect, Model, Msg, OpId, OpOutcome, ServerMsg, StreamEntry,
     StreamMsg, update,
@@ -213,6 +214,66 @@ pub fn tick(at_seconds: i64) -> Msg {
     }
 }
 
+// --- Chat fixtures ----------------------------------------------------------
+
+/// Rows of a committed chat-v1 fixture: a redacted, provenance-stamped
+/// capture of the `claude_pty_transcript_v1` stream from a real claude
+/// (`crates/amux/tests/fixtures/chat-v1/`, Phase 0). Referenced across
+/// crates by compile-time include so the spec suite stays IO-free.
+pub fn chat_rows(fixture: &str) -> Vec<serde_json::Value> {
+    let raw = match fixture {
+        "pong" => include_str!("../../../amux/tests/fixtures/chat-v1/pong.rows.jsonl"),
+        "tools" => include_str!("../../../amux/tests/fixtures/chat-v1/tools.rows.jsonl"),
+        "permission" => include_str!("../../../amux/tests/fixtures/chat-v1/permission.rows.jsonl"),
+        "question_single" => {
+            include_str!("../../../amux/tests/fixtures/chat-v1/question_single.rows.jsonl")
+        }
+        "question_multi" => {
+            include_str!("../../../amux/tests/fixtures/chat-v1/question_multi.rows.jsonl")
+        }
+        "interrupt" => include_str!("../../../amux/tests/fixtures/chat-v1/interrupt.rows.jsonl"),
+        "plan_approve" => {
+            include_str!("../../../amux/tests/fixtures/chat-v1/plan_approve.rows.jsonl")
+        }
+        "plan_reject" => {
+            include_str!("../../../amux/tests/fixtures/chat-v1/plan_reject.rows.jsonl")
+        }
+        "compact" => include_str!("../../../amux/tests/fixtures/chat-v1/compact.rows.jsonl"),
+        other => panic!("unknown chat fixture {other}"),
+    };
+    raw.lines()
+        .filter(|line| !line.trim().is_empty())
+        .map(|line| serde_json::from_str(line).expect("fixture row parses"))
+        .collect()
+}
+
+/// A local claude agent with a live structured stream (complete window):
+/// the base every feed chapter folds fixture batches onto.
+pub fn chat_base(agent: &str) -> Vec<Msg> {
+    seq([
+        vec![
+            connected("nova"),
+            host_up(&a_host("nova")),
+            agent_up(&an_agent(agent, "nova")),
+        ],
+        synced(),
+        vec![
+            stream(agent, StreamMsg::Opened { truncated: false }),
+            stream(agent, StreamMsg::ReplayComplete),
+        ],
+    ])
+}
+
+/// The base plus one coalesced batch of a fixture's rows.
+pub fn chat_feed(agent: &str, fixture: &str) -> Vec<Msg> {
+    seq([chat_base(agent), vec![batch(agent, 10, chat_rows(fixture))]])
+}
+
+/// The folded Claude layer for an agent.
+pub fn claude_layer<'m>(model: &'m Model, agent: &str) -> &'m ClaudeLayer {
+    model.claude(agent_id(agent)).expect("claude layer folded")
+}
+
 // --- Folding --------------------------------------------------------------
 
 /// Fold a sequence into a Model, discarding effects (replay semantics).
@@ -244,5 +305,9 @@ pub fn all_sequences() -> Vec<(&'static str, Vec<Msg>)> {
     sequences.extend(crate::ops::sequences());
     sequences.extend(crate::sessions::sequences());
     sequences.extend(crate::attention::sequences());
+    sequences.extend(crate::feed_replay::sequences());
+    sequences.extend(crate::feed_turns::sequences());
+    sequences.extend(crate::feed_tools::sequences());
+    sequences.extend(crate::feed_edges::sequences());
     sequences
 }

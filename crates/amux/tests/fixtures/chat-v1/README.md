@@ -10,7 +10,7 @@ Tier-1 input for Phase 1's Claude-layer fold.
 
 | file | scenario | key rows it locks in |
 |---|---|---|
-| `pong.rows.jsonl` | H.1 prompt round trip | user prompt, assistant, `system/turn_duration`, `hook.stop` |
+| `pong.rows.jsonl` | H.1 prompt round trip | user prompt, `hook.stop` arriving before the transcript tail caught up (the capture window closed at the hook — no assistant rows, no `turn_duration`; the arrival-ordering consequence of transcript-semantics §1, demonstrated) |
 | `tools.rows.jsonl` | Edit + Bash tool use | `toolUseResult` Edit `structuredPatch`, Bash `{stdout,…}` |
 | `permission.rows.jsonl` | permission allow + deny | `hook.permission_request`, deny `toolDenialKind:"user-rejected"` |
 | `question_single.rows.jsonl` | AskUserQuestion single-select | `toolUseResult.{questions,answers}` (answers keyed by question text — see drift note) |

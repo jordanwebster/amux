@@ -13,6 +13,7 @@ use amux::{Agent, AgentId, HostEntry, HostId};
 use chrono::{DateTime, Utc};
 use serde::{Deserialize, Serialize};
 
+use crate::claude::ClaudeLayer;
 use crate::msg::{Command, DisconnectReason, OpId, OpOutcome, StreamCloseReason};
 use crate::summarizers::SummarizerState;
 
@@ -84,12 +85,23 @@ pub struct AgentCard {
     /// Typed per-agent fold state deriving `attention`; `None` for agent
     /// types without a summarizer (their attention stays `Unknown`).
     pub(crate) summarizer: Option<SummarizerState>,
+    /// The typed Claude chat layer (`docs/CHAT.md` §The feed): feed facts
+    /// folded from the agent's native structured stream. `None` until the
+    /// stream produces evidence; agents without the protocol never grow
+    /// one.
+    pub(crate) claude: Option<ClaudeLayer>,
     /// Epoch of the last upsert; entities from older epochs are pruned when
     /// a reconnect snapshot completes.
     pub(crate) epoch: u64,
 }
 
 impl AgentCard {
+    /// The Claude chat layer's feed facts, when the agent's structured
+    /// stream has produced any.
+    pub fn claude(&self) -> Option<&ClaudeLayer> {
+        self.claude.as_ref()
+    }
+
     /// Display name fallback: user-assigned name, then provider label, then
     /// short id.
     pub fn display_name(&self) -> String {
@@ -334,6 +346,11 @@ impl Model {
         self.streams.get(&id)
     }
 
+    /// The Claude chat layer for an agent (the chat view's read surface).
+    pub fn claude(&self, id: AgentId) -> Option<&ClaudeLayer> {
+        self.agents.get(&id).and_then(AgentCard::claude)
+    }
+
     pub fn pending_ops(&self) -> impl Iterator<Item = &PendingOp> {
         self.pending_ops.values()
     }
@@ -466,6 +483,30 @@ pub enum Violation {
         card: Attention,
         summarizer: Attention,
     },
+    /// A Claude-layer store exceeded its explicit retention bound.
+    ClaudeRetentionOverflow {
+        agent: AgentId,
+        store: &'static str,
+        len: usize,
+        cap: usize,
+    },
+    /// The Claude feed's id arithmetic broke: ids are assigned sequentially
+    /// and evicted only from the front, so evicted + retained must equal
+    /// the next id and the retained ids must be the contiguous tail.
+    ClaudeFeedOrder { agent: AgentId },
+    /// A Claude-layer index references an entry id the feed never assigned.
+    ClaudeIndexAhead {
+        agent: AgentId,
+        index: &'static str,
+        entry: u64,
+        next: u64,
+    },
+    /// The row-uuid dedupe queue and its lookup set disagree.
+    ClaudeDedupeIncoherent {
+        agent: AgentId,
+        rows: usize,
+        set: usize,
+    },
 }
 
 impl Violation {
@@ -480,6 +521,10 @@ impl Violation {
             Violation::HostEpochStale { .. } => "host-epoch-stale",
             Violation::FinishedOpsOverflow { .. } => "finished-ops-overflow",
             Violation::AttentionMismatch { .. } => "attention-mismatch",
+            Violation::ClaudeRetentionOverflow { .. } => "claude-retention-overflow",
+            Violation::ClaudeFeedOrder { .. } => "claude-feed-order",
+            Violation::ClaudeIndexAhead { .. } => "claude-index-ahead",
+            Violation::ClaudeDedupeIncoherent { .. } => "claude-dedupe-incoherent",
         }
     }
 }
@@ -537,6 +582,31 @@ impl std::fmt::Display for Violation {
                 f,
                 "agent {agent} attention {card:?} disagrees with its summarizer's {summarizer:?}"
             ),
+            Violation::ClaudeRetentionOverflow {
+                agent,
+                store,
+                len,
+                cap,
+            } => write!(
+                f,
+                "agent {agent} claude {store} holds {len} entries over the bound of {cap}"
+            ),
+            Violation::ClaudeFeedOrder { agent } => {
+                write!(f, "agent {agent} claude feed id arithmetic is incoherent")
+            }
+            Violation::ClaudeIndexAhead {
+                agent,
+                index,
+                entry,
+                next,
+            } => write!(
+                f,
+                "agent {agent} claude {index} index references entry {entry} past next id {next}"
+            ),
+            Violation::ClaudeDedupeIncoherent { agent, rows, set } => write!(
+                f,
+                "agent {agent} claude dedupe queue ({rows}) and set ({set}) disagree"
+            ),
         }
     }
 }
@@ -585,6 +655,9 @@ impl Model {
                     card: card.attention,
                     summarizer: state.attention(),
                 });
+            }
+            if let Some(layer) = &card.claude {
+                layer.check_invariants(*id, &mut violations);
             }
         }
 

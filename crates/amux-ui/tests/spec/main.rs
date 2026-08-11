@@ -26,4 +26,12 @@ mod sessions; // Chapter 4 — Session streams: lifecycle facts
 
 mod attention; // Chapter 5 — Attention: summarizer folds, subscription policy
 
-mod wire_free; // Chapter 6 — Determinism: differential fold, replay, serde
+mod feed_replay; // Chapter 6 — Chat feed: replay, epochs, retention
+
+mod feed_turns; // Chapter 7 — Chat feed: prompts, messages, markers
+
+mod feed_tools; // Chapter 8 — Chat feed: tool pairing, result facts
+
+mod feed_edges; // Chapter 9 — Chat feed: status, subagents, unknown rows
+
+mod wire_free; // Chapter 10 — Determinism: differential fold, replay, serde

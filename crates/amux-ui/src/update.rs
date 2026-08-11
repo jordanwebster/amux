@@ -216,6 +216,7 @@ fn update_server(model: &mut Model, server: ServerMsg) -> Vec<Effect> {
                         attention: Attention::Unknown,
                         phase: AgentPhase::Running,
                         summarizer: None,
+                        claude: None,
                         epoch,
                         agent,
                     };
@@ -275,6 +276,10 @@ fn update_stream(model: &mut Model, agent: amux::AgentId, event: StreamMsg) -> V
                 },
             );
             with_claude_summarizer(model, agent, |fold| fold.begin_window(truncated));
+            // A fresh subscription replays the source tail from scratch, so
+            // the chat layer folds from scratch too — its window carries
+            // the same truncation fact (B9's honest boundary).
+            with_claude_layer(model, agent, |layer| layer.begin_window(truncated));
         }
         StreamMsg::Batch { at, entries } => {
             if let Some(card) = model.agents.get_mut(&agent) {
@@ -283,6 +288,11 @@ fn update_stream(model: &mut Model, agent: amux::AgentId, event: StreamMsg) -> V
             with_claude_summarizer(model, agent, |fold| {
                 for entry in &entries {
                     fold.observe(&entry.payload);
+                }
+            });
+            with_claude_layer(model, agent, |layer| {
+                for entry in &entries {
+                    layer.observe(entry.seq, &entry.payload);
                 }
             });
         }
@@ -343,6 +353,29 @@ fn with_claude_summarizer(
     let SummarizerState::Claude(fold) = state;
     step(fold);
     card.attention = state.attention();
+}
+
+/// Run a fold step on the agent's Claude chat layer (creating it on first
+/// evidence), gated on the same advertised-protocol fact as the summarizer.
+/// The chat layer is always folded, chat open or not: opening a chat
+/// changes what is rendered, never what is known (`docs/CHAT.md` E3).
+fn with_claude_layer(
+    model: &mut Model,
+    agent: amux::AgentId,
+    step: impl FnOnce(&mut crate::claude::ClaudeLayer),
+) {
+    let Some(card) = model.agents.get_mut(&agent) else {
+        return;
+    };
+    if !card
+        .agent
+        .io_protocols
+        .iter()
+        .any(|protocol| protocol == STRUCTURED_PROTOCOL)
+    {
+        return;
+    }
+    step(card.claude.get_or_insert_with(Default::default));
 }
 
 fn tripwire(detail: &str) -> Vec<Effect> {

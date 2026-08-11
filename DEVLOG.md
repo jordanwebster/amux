@@ -38,6 +38,70 @@ One paragraph describing what was done.
 
 ---
 
+## 2026-08-12: Chat V1 Phase 1 — the Claude feed-facts layer
+
+### Summary
+The typed Claude chat layer (docs/CHAT.md §The feed, B1–B10 + G1) landed
+in amux-ui: `claude::ClaudeLayer`, a per-agent child model folding native
+`claude_pty_transcript_v1` rows into typed feed entries — prompts,
+messages (upsert by `message.id`, dedupe by row `uuid`, finality on
+non-null `stop_reason`, abandoned/interrupted closure), thinking/turn/
+compaction markers with the FACT-vs-INFERRED tags, tool entries paired by
+`tool_use.id` with typed sidecar facts (Edit magnitude, question answers
+keyed by question text, subagent launch/completion, plan approval),
+status entries (API errors, interruptions), and explicit unrecognized
+entries for unknown shapes. Retention is bounded and honest: the feed
+evicts from the front counted (`history_truncated`), while the pairing
+index, accepted plans, and session facts live outside the window —
+the structure Phase 2's obligations-outlive-eviction rule builds on.
+Replay/live rides `amux.transcript_ready`; a differing `sessionId` is the
+relink fact and opens a fresh epoch; re-replay after source shrink is
+idempotent by row uuid. Research-first against the Phase 0 fixtures
+found real drift — recorded in transcript-semantics.md §18b (agent-name
+rows returned, plan_mode attachments, bare `/compact` user rows,
+Write-create's empty structuredPatch, same-message rows resuming after a
+tool_result, turn_duration closing denial-interrupt turns, duplicated
+hook rows, the plan-approval notification wording that defeats the
+summarizer's substring split).
+
+### Changes
+- crates/amux-ui/src/claude/{mod.rs,fold.rs} — the layer: entry types,
+  bounded state, the fold, `check_invariants` extension (+ firing tests).
+- crates/amux-ui/src/model.rs — `AgentCard.claude` + accessors; four new
+  Violation classes (retention overflow, feed-order arithmetic,
+  index-ahead, dedupe incoherence).
+- crates/amux-ui/src/update.rs — `with_claude_layer` routing beside the
+  summarizer (unification is Phase 2); layer window resets on `Opened`.
+- crates/amux-ui/tests/spec/{feed_replay,feed_turns,feed_tools,
+  feed_edges}.rs — Chapters 6–9, fixture-driven against
+  crates/amux/tests/fixtures/chat-v1 (referenced via `include_str!`, so
+  the suite stays IO-free); sequences registered so the wire_free
+  differential wraps them.
+- crates/amux/tests/fixtures/chat-v1/README.md — corrected the pong row
+  claim (the fixture holds no assistant rows; the capture closed at the
+  arrival-ordered hook.stop).
+
+### Decisions Made
+- No new Msg kinds: the layer folds from the existing Stream Msgs, so
+  the recorder, flow classes, and the differential property cover it by
+  construction (fold-from-recording == live proven over the new
+  sequences).
+- The layer lives beside `ClaudeSummarizer`, not unified with it — E2's
+  one-fold unification is Phase 2's brief; duplicating interpretation
+  now was rejected in favor of leaving the summarizer untouched.
+- Session-epoch detection keys on transcript `sessionId` only (never
+  hook `session_id`, which is arrival-ordered and could false-trigger).
+- Meta user rows, local-command records, attachments, file-history and
+  queue rows fold to no entry (known bookkeeping); the bare `/compact`
+  row renders as an unstated-source prompt.
+
+### Verification
+- fmt + CI clippy (`--workspace --all-targets --features amux/testnet
+  -D warnings`) clean; `timeout 600 cargo test -p amux-ui` (10 lib + 1
+  runtime + 62 spec, all green); amux spec suite 44 green.
+
+---
+
 ## 2026-08-12: Phase 0 simplification pass
 
 ### Summary

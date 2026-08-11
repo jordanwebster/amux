@@ -11,6 +11,7 @@
 //! IO, clocks, or randomness are imported there. The shell (`runtime`,
 //! `recorder`) owns every resource.
 
+pub mod claude;
 mod effect;
 mod model;
 mod msg;

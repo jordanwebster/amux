@@ -1,0 +1,440 @@
+//! Chapter 7 — The chat feed: prompts, messages, and markers.
+//!
+//! `docs/CHAT.md` B1/B2/B3 against the Phase 0 fixtures. Message identity
+//! rides `message.id` (one content block per row, appended in file order);
+//! finality is FACT on a non-null `stop_reason`; "streaming" is never a
+//! state. Thinking durations are INFERRED from FACT timestamps and never
+//! cross an interrupt or compaction. The turn authority is
+//! `system/turn_duration`; the amux `hook.stop` row is the arrival-ordered
+//! pre-signal, reconciled when the authority lands.
+
+use amux_ui::Msg;
+use amux_ui::claude::{FeedEntryKind, MessageFinality, PromptSource, ToolOutcome, TurnDuration};
+use serde_json::json;
+
+use crate::harness::*;
+
+/// Compact names for a whole-feed shape walk.
+fn kind_words(model: &amux_ui::Model, agent: &str) -> Vec<&'static str> {
+    claude_layer(model, agent)
+        .entries()
+        .map(|entry| match &entry.kind {
+            FeedEntryKind::Prompt(_) => "prompt",
+            FeedEntryKind::Message(_) => "message",
+            FeedEntryKind::Thinking(_) => "thinking",
+            FeedEntryKind::Turn(_) => "turn",
+            FeedEntryKind::Compaction(_) => "compaction",
+            FeedEntryKind::CompactSummary(_) => "compact-summary",
+            FeedEntryKind::Tool(_) => "tool",
+            FeedEntryKind::TaskNotification(_) => "task-notification",
+            FeedEntryKind::Interruption(_) => "interruption",
+            FeedEntryKind::ApiError(_) => "api-error",
+            FeedEntryKind::Unrecognized(_) => "unrecognized",
+        })
+        .collect()
+}
+
+/// The pong fixture stopped at the hook: the prompt is in the feed, the
+/// `hook.stop` pre-signal is recorded, and no turn marker exists — hook
+/// rows are arrival-ordered and may precede the transcript tail, so the
+/// marker waits for the `turn_duration` authority (B3).
+#[test]
+fn hook_stop_is_a_presignal_not_a_marker() {
+    let model = fold(chat_feed("fix-auth-bug", "pong"));
+    assert_eq!(kind_words(&model, "fix-auth-bug"), vec!["prompt"]);
+    let layer = claude_layer(&model, "fix-auth-bug");
+    assert!(layer.turn_end_presignal());
+    let prompt = layer
+        .entries()
+        .find_map(|entry| match &entry.kind {
+            FeedEntryKind::Prompt(prompt) => Some(prompt),
+            _ => None,
+        })
+        .expect("the prompt entry");
+    assert_eq!(prompt.text, "Reply with exactly PONG and nothing else.");
+    assert_eq!(prompt.source, PromptSource::Typed);
+    assert!(prompt.prompt_id.is_some(), "Phase 3's reconciliation key");
+}
+
+/// The permission fixture, walked whole: two turns — an allowed Bash run
+/// closed by the `turn_duration` authority, then a denied one closed by
+/// interrupt with the authority reconciling the inferred marker in place.
+#[test]
+fn the_permission_fixture_folds_to_the_documented_feed() {
+    let model = fold(chat_feed("fix-auth-bug", "permission"));
+    assert_eq!(
+        kind_words(&model, "fix-auth-bug"),
+        vec![
+            "prompt",       // Use the Bash tool… allowed.txt
+            "thinking",     // ~ thought for 3.8s
+            "tool",         // ✔ Bash echo allowed-probe…
+            "thinking",     // ~ thought for 2.6s
+            "message",      // final text, end_turn
+            "turn",         // ─ turn · 7.5s (measured)
+            "prompt",       // Use the Bash tool… denied.txt
+            "thinking",     // ~ thought for 2.2s
+            "tool",         // ✗ Bash echo denied-probe… (denied)
+            "interruption", // [Request interrupted by user for tool use]
+            "turn",         // measured 4.2s — reconciled over the inferred marker
+        ]
+    );
+}
+
+/// A message spans several rows sharing `message.id`: blocks append in
+/// file order, and finality is the FACT on the rows' `stop_reason` (B2).
+#[test]
+fn messages_upsert_by_message_id_and_finalize_on_stop_reason() {
+    let model = fold(chat_feed("fix-auth-bug", "permission"));
+    let layer = claude_layer(&model, "fix-auth-bug");
+    let messages: Vec<_> = layer
+        .entries()
+        .filter_map(|entry| match &entry.kind {
+            FeedEntryKind::Message(message) => Some(message),
+            _ => None,
+        })
+        .collect();
+    assert_eq!(messages.len(), 1, "one text-bearing message in the fixture");
+    let message = messages[0];
+    assert_eq!(message.message_id, "msg_011CdwkZYnEDMwi2xkEr5nxn");
+    assert_eq!(message.segments.len(), 1);
+    assert!(!message.segments[0].is_empty());
+    assert_eq!(
+        message.finality,
+        MessageFinality::Final {
+            stop_reason: "end_turn".to_string()
+        }
+    );
+}
+
+/// Thinking markers are retroactive and INFERRED from FACT timestamps:
+/// thinking row minus the previous uuid row, clamped at zero (B3). The
+/// fixture's wall clock makes the expected values exact.
+#[test]
+fn thinking_durations_come_from_the_timestamp_chain() {
+    let model = fold(chat_feed("fix-auth-bug", "permission"));
+    let layer = claude_layer(&model, "fix-auth-bug");
+    let durations: Vec<Option<i64>> = layer
+        .entries()
+        .filter_map(|entry| match &entry.kind {
+            FeedEntryKind::Thinking(thinking) => Some(thinking.duration_ms),
+            _ => None,
+        })
+        .collect();
+    assert_eq!(
+        durations,
+        vec![
+            Some(3835), // prompt 22:29:42.123 → thinking 22:29:45.958
+            Some(2621), // tool_result 48.434 → thinking 51.055
+            Some(2206), // prompt 51.624 → thinking 53.830
+        ]
+    );
+}
+
+/// The turn authority carries the wall-time-verified duration and the
+/// cumulative message count (FACTs); the pre-signal is cleared once it
+/// lands.
+#[test]
+fn turn_duration_is_the_authority() {
+    let model = fold(chat_feed("fix-auth-bug", "permission"));
+    let layer = claude_layer(&model, "fix-auth-bug");
+    let turns: Vec<_> = layer
+        .entries()
+        .filter_map(|entry| match &entry.kind {
+            FeedEntryKind::Turn(turn) => Some(turn),
+            _ => None,
+        })
+        .collect();
+    assert_eq!(turns.len(), 2);
+    assert_eq!(turns[0].duration, TurnDuration::Measured { ms: 7483 });
+    assert_eq!(turns[0].message_count, Some(11));
+    // The denied turn ended by interrupt; the inferred elapsed marker was
+    // reconciled in place when the authority arrived two rows later.
+    assert_eq!(turns[1].duration, TurnDuration::Measured { ms: 4172 });
+    assert_eq!(turns[1].message_count, Some(17));
+    assert!(!layer.turn_end_presignal());
+}
+
+/// A mid-generation interrupt: the flushed null-`stop_reason` message is
+/// closed as interrupted — FACT-paired via `interruptedMessageId` — and
+/// the turn marker shows elapsed-from-prompt, tagged inferred (B2/B3/§17).
+#[test]
+fn an_interrupt_closes_the_flushed_message_and_infers_the_turn() {
+    let model = fold(chat_feed("fix-auth-bug", "interrupt"));
+    assert_eq!(
+        kind_words(&model, "fix-auth-bug"),
+        vec!["prompt", "thinking", "message", "interruption", "turn"]
+    );
+    let layer = claude_layer(&model, "fix-auth-bug");
+    let message = layer
+        .entries()
+        .find_map(|entry| match &entry.kind {
+            FeedEntryKind::Message(message) => Some(message),
+            _ => None,
+        })
+        .expect("the flushed message");
+    assert_eq!(message.finality, MessageFinality::Interrupted);
+    let interruption = layer
+        .entries()
+        .find_map(|entry| match &entry.kind {
+            FeedEntryKind::Interruption(interruption) => Some(interruption),
+            _ => None,
+        })
+        .expect("the interruption entry");
+    assert_eq!(
+        interruption.interrupted_message_id.as_deref(),
+        Some("msg_011CdwkbJ3WwiT2t3eeb7i5M")
+    );
+    let turn = layer
+        .entries()
+        .find_map(|entry| match &entry.kind {
+            FeedEntryKind::Turn(turn) => Some(turn),
+            _ => None,
+        })
+        .expect("the inferred turn marker");
+    assert_eq!(
+        turn.duration,
+        TurnDuration::SincePrompt { ms: 6263 },
+        "18.577 − 12.314, elapsed from the prompt row"
+    );
+}
+
+/// The compact fixture end to end: two measured turns, the typed `/compact`
+/// as a bare prompt (no origin — never a turn start), the boundary with its
+/// FACT token counts, and the transcript-only summary. Meta and
+/// local-command records fold to session bookkeeping, not entries.
+#[test]
+fn compaction_folds_to_boundary_plus_summary() {
+    let model = fold(chat_feed("fix-auth-bug", "compact"));
+    assert_eq!(
+        kind_words(&model, "fix-auth-bug"),
+        vec![
+            "prompt",
+            "thinking",
+            "message",
+            "turn",
+            "prompt",
+            "thinking",
+            "message",
+            "turn",
+            "prompt", // the bare `/compact` record, source unstated
+            "compaction",
+            "compact-summary",
+        ]
+    );
+    let layer = claude_layer(&model, "fix-auth-bug");
+    let bare = layer
+        .entries()
+        .filter_map(|entry| match &entry.kind {
+            FeedEntryKind::Prompt(prompt) => Some(prompt),
+            _ => None,
+        })
+        .nth(2)
+        .expect("the /compact record");
+    assert_eq!(bare.text, "/compact");
+    assert_eq!(bare.source, PromptSource::Unstated);
+    let compaction = layer
+        .entries()
+        .find_map(|entry| match &entry.kind {
+            FeedEntryKind::Compaction(compaction) => Some(compaction),
+            _ => None,
+        })
+        .expect("the boundary");
+    assert_eq!(compaction.trigger.as_deref(), Some("manual"));
+    assert_eq!(compaction.pre_tokens, Some(31641));
+    assert_eq!(compaction.post_tokens, Some(1795));
+}
+
+/// Durations are never computed across a compaction (B3): a thinking row
+/// whose previous uuid row sits before the boundary reports no duration
+/// rather than a wrong one.
+#[test]
+fn thinking_durations_never_cross_a_compaction() {
+    let thinking_after_boundary = json!({
+        "type": "assistant",
+        "uuid": uuid::Uuid::from_u128(0x4000).to_string(),
+        "sessionId": "70b0fb0d-1cf7-4a52-9ee7-d4f21bcc35b4",
+        "timestamp": "2026-08-11T22:31:00.000Z",
+        "message": {
+            "id": "msg_after_compact",
+            "role": "assistant",
+            "stop_reason": "end_turn",
+            "content": [{"type": "thinking", "thinking": "", "signature": ""}]
+        }
+    });
+    let mut rows = chat_rows("compact");
+    rows.push(thinking_after_boundary);
+    let model = fold(seq([
+        chat_base("fix-auth-bug"),
+        vec![batch("fix-auth-bug", 10, rows)],
+    ]));
+    let layer = claude_layer(&model, "fix-auth-bug");
+    let last_thinking = layer
+        .entries()
+        .filter_map(|entry| match &entry.kind {
+            FeedEntryKind::Thinking(thinking) => Some(thinking),
+            _ => None,
+        })
+        .last()
+        .expect("the post-boundary thinking marker");
+    assert_eq!(
+        last_thinking.duration_ms, None,
+        "the chain broke at the boundary — no duration, not a wrong one"
+    );
+}
+
+/// A new `message.id` closes a still-open (null-stop) message as
+/// abandoned; a later row carrying the stop FACT wins over the inference
+/// (B2: never left "streaming").
+#[test]
+fn abandoned_closure_yields_to_a_late_finality_fact() {
+    let session = "22222222-2222-4222-8222-222222222222";
+    let open_text = |id: &str, uuid: u128, text: &str| {
+        json!({
+            "type": "assistant",
+            "uuid": uuid::Uuid::from_u128(uuid).to_string(),
+            "sessionId": session,
+            "timestamp": "2026-08-11T22:00:01.000Z",
+            "message": {
+                "id": id, "role": "assistant", "stop_reason": null,
+                "content": [{"type": "text", "text": text}]
+            }
+        })
+    };
+    let final_row = |id: &str, uuid: u128| {
+        json!({
+            "type": "assistant",
+            "uuid": uuid::Uuid::from_u128(uuid).to_string(),
+            "sessionId": session,
+            "timestamp": "2026-08-11T22:00:02.000Z",
+            "message": {
+                "id": id, "role": "assistant", "stop_reason": "end_turn",
+                "content": [{"type": "text", "text": "tail"}]
+            }
+        })
+    };
+
+    // Abandonment: a new id arrives while msg_a is still open.
+    let model = fold(seq([
+        chat_base("fix-auth-bug"),
+        vec![batch(
+            "fix-auth-bug",
+            10,
+            vec![
+                open_text("msg_a", 0x5000, "left open"),
+                open_text("msg_b", 0x5001, "next"),
+            ],
+        )],
+    ]));
+    let finality = |model: &amux_ui::Model, id: &str| {
+        claude_layer(model, "fix-auth-bug")
+            .entries()
+            .find_map(|entry| match &entry.kind {
+                FeedEntryKind::Message(message) if message.message_id == id => {
+                    Some(message.finality.clone())
+                }
+                _ => None,
+            })
+            .expect("message entry")
+    };
+    assert_eq!(finality(&model, "msg_a"), MessageFinality::Abandoned);
+    assert_eq!(finality(&model, "msg_b"), MessageFinality::Open);
+
+    // The late FACT upgrades the inference.
+    let model = fold(seq([
+        chat_base("fix-auth-bug"),
+        vec![batch(
+            "fix-auth-bug",
+            10,
+            vec![
+                open_text("msg_a", 0x5000, "left open"),
+                open_text("msg_b", 0x5001, "next"),
+                final_row("msg_a", 0x5002),
+            ],
+        )],
+    ]));
+    assert_eq!(
+        finality(&model, "msg_a"),
+        MessageFinality::Final {
+            stop_reason: "end_turn".to_string()
+        }
+    );
+}
+
+/// An unpaired tool in a final message is the running-INFERRED display
+/// state — visible in the question fixtures, where the fixture also
+/// resolves it (FACT once the result lands).
+#[test]
+fn an_unpaired_tool_in_a_final_message_is_pending_until_the_result() {
+    let mut msgs = chat_base("fix-auth-bug");
+    let rows = chat_rows("question_single");
+    let (before, after) = rows.split_at(10); // split before the tool_result row
+    assert!(
+        before
+            .iter()
+            .rev()
+            .all(|row| row["message"]["content"][0]["type"] != "tool_result")
+    );
+    msgs.push(batch("fix-auth-bug", 10, before.to_vec()));
+    let model = fold(msgs.clone());
+    let layer = claude_layer(&model, "fix-auth-bug");
+    let tool = layer
+        .entries()
+        .find_map(|entry| match &entry.kind {
+            FeedEntryKind::Tool(tool) => Some(tool),
+            _ => None,
+        })
+        .expect("the question tool line");
+    assert_eq!(tool.outcome, ToolOutcome::Pending);
+    assert!(tool.message_final, "renders as running, not streaming");
+
+    msgs.push(batch("fix-auth-bug", 20, after.to_vec()));
+    let model = fold(msgs);
+    let layer = claude_layer(&model, "fix-auth-bug");
+    let tool = layer
+        .entries()
+        .find_map(|entry| match &entry.kind {
+            FeedEntryKind::Tool(tool) => Some(tool),
+            _ => None,
+        })
+        .expect("the question tool line");
+    assert!(matches!(tool.outcome, ToolOutcome::Success { .. }));
+    assert_eq!(layer.open_tool_count(), 0);
+}
+
+/// Session-state rows fold as latest-wins facts, never feed entries: the
+/// permission mode (D4's source of truth), the generated title, and the
+/// 2.1.228 `agent-name` row.
+#[test]
+fn session_state_rows_fold_to_latest_wins_facts() {
+    let model = fold(chat_feed("fix-auth-bug", "plan_approve"));
+    let layer = claude_layer(&model, "fix-auth-bug");
+    assert_eq!(layer.session().permission_mode.as_deref(), Some("plan"));
+    assert_eq!(
+        layer.session().agent_name.as_deref(),
+        Some("add-readme-config-documentation")
+    );
+    assert!(layer.session().ai_title.is_some());
+
+    let tools = fold(chat_feed("fix-auth-bug", "tools"));
+    assert_eq!(
+        claude_layer(&tools, "fix-auth-bug")
+            .session()
+            .permission_mode
+            .as_deref(),
+        Some("bypassPermissions")
+    );
+}
+
+pub fn sequences() -> Vec<(&'static str, Vec<Msg>)> {
+    vec![
+        (
+            "feed_turns::permission",
+            chat_feed("fix-auth-bug", "permission"),
+        ),
+        (
+            "feed_turns::interrupt",
+            chat_feed("fix-auth-bug", "interrupt"),
+        ),
+        ("feed_turns::compact", chat_feed("fix-auth-bug", "compact")),
+    ]
+}

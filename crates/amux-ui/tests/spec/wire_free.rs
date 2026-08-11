@@ -1,4 +1,4 @@
-//! Chapter 5 — Determinism: the properties everything else stands on.
+//! Chapter 10 — Determinism: the properties everything else stands on.
 //!
 //! The determinism guarantee is scoped and enforced here: the same reducer
 //! build, folding the same checkpoint and ordered Msgs, produces identical
