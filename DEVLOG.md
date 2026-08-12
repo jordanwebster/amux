@@ -38,6 +38,44 @@ One paragraph describing what was done.
 
 ---
 
+## 2026-08-12: Chat V1 Phase 7 — codex review fixes
+
+### Summary
+Closed the final three Phase 7 review findings. Canceled capture
+scenarios now abort and join both recorder tasks and delete their Claude
+agent before finalization or a later scenario can run; H.7 waits for the
+advanced stream cursor before issuing its retry; and the reduced waiter
+captures no longer retain private tool-inventory counts. The waiter
+fixture directory now passes the same fail-loud redaction verifier as
+graduated fixtures.
+
+### Changes
+- `crates/amux/tests/capture/{main,harness}.rs` — scenario-scoped active
+  session cleanup, recorder liveness guard, and H.7 cursor ordering wait.
+- `crates/amux/tests/capture_unit.rs` — offline cancellation coverage and
+  directory-wide waiter-fixture redaction verification (10 tests total).
+- `crates/amux/tests/fixtures/capture-waiter/phase7-fixes2-*.rows.jsonl`
+  — neutralized `total_deferred_tools` to zero.
+
+### Decisions Made
+- Register cleanup immediately after agent creation, before either stream
+  subscription, so cancellation during partial session startup is covered
+  too. Cleanup errors stop the run rather than allowing a possibly-live
+  agent into the next scenario.
+- Treat the daemon sequence and reducer cursor as separate authorities in
+  H.7: retry only after the reducer has folded through `advanced_seq`.
+
+### Verification
+- `cargo fmt --all -- --check`; workspace clippy with all targets,
+  `testnet`, and `-D warnings`; capture harness compile/opt-in skip; and
+  `capture_unit` 10/10 — green under `timeout 600`.
+- Sandbox-runnable tests green: amux 396, amux-ui 30 + spec 123,
+  amux-tui 109 + 54 + 21, amux-cli 51. Full invocations were also attempted:
+  the sandbox denied socket binding for 8 amux startup tests, the amux-ui
+  runtime test, 2 amux-cli attach tests, all 44 testnet specs, and 13/14 E2E
+  scenarios (`EPERM`, with downstream PTY `EIO`); E2E `bare_help` passed.
+  No live-Claude legs were run, per the remediation brief.
+
 ## 2026-08-12: Chat V1 Phase 7 — the real-Claude E2E leg (H suite)
 
 ### Summary

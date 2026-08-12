@@ -352,6 +352,15 @@ async fn run(scenarios: Vec<&ScenarioSpec>) -> Result<()> {
         .await
         .map_err(|_| anyhow::anyhow!("scenario timeout after {:?}", spec.timeout))
         .and_then(|result| result);
+        // A timeout drops the scenario future, so it cannot call
+        // CaptureSession::close itself. Abort and join its recorder tasks and
+        // delete its agent before finalization reads the candidate files or
+        // the next scenario starts. This is also a safety net for any early
+        // structural-assertion error.
+        scratch
+            .cancel_active_session(&daemon.client)
+            .await
+            .context("clean up canceled scenario")?;
         match result {
             Ok(notes) => {
                 finalize(&scratch, spec, model, &version, poisoned, notes, None)?;
@@ -2147,7 +2156,23 @@ async fn stale_seq(
         );
     }
 
-    // The retry is a fresh typed command, now using the folded notification's
+    // The daemon-side hook delivery and Runtime stream folding are independent
+    // tasks. Do not dispatch the retry until the advanced batch is folded:
+    // otherwise this scenario can reuse captured_seq and race into a second
+    // stale failure even though the production retry behavior is correct.
+    wait_runtime(
+        &mut runtime,
+        ASK_TIMEOUT,
+        "advanced stale-seq batch",
+        |model| {
+            model
+                .claude(agent)
+                .is_some_and(|layer| layer.cursor() >= advanced_seq)
+        },
+    )
+    .await?;
+
+    // The retry is a fresh typed command using the folded notification's
     // cursor. It must be accepted and resolve the real permission menu.
     let retry = runtime.dispatch(Command::AnswerAsk {
         agent,

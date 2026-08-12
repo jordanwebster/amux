@@ -1,5 +1,8 @@
 #[path = "capture/graduate.rs"]
 mod graduate;
+#[allow(dead_code)]
+#[path = "capture/harness.rs"]
+mod harness;
 #[path = "capture/redact.rs"]
 mod redact;
 #[path = "capture/structure.rs"]
@@ -200,4 +203,51 @@ fn redaction_and_graduation_fail_loud_then_copy_only_verified_candidates() {
     fs::write(run.join("sample.redacted.jsonl"), "Bearer secret\n").unwrap();
     let error = graduate::verify_run(&run, &["sample".to_string()]).unwrap_err();
     assert!(error.to_string().contains("verify"));
+}
+
+#[test]
+fn every_capture_waiter_fixture_passes_redaction_verification() {
+    let fixtures =
+        std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("tests/fixtures/capture-waiter");
+    let mut verified = 0;
+    for entry in fs::read_dir(&fixtures).unwrap() {
+        let path = entry.unwrap().path();
+        if path.extension().and_then(|extension| extension.to_str()) != Some("jsonl") {
+            continue;
+        }
+        let candidate = fs::read_to_string(&path).unwrap();
+        redact::verify_candidate(&candidate).unwrap_or_else(|error| {
+            panic!("{} failed redaction verify: {error:#}", path.display())
+        });
+        verified += 1;
+    }
+    assert!(verified > 0, "no capture-waiter fixtures were verified");
+}
+
+#[tokio::test]
+async fn canceled_scenario_leaves_no_live_recorder_tasks() {
+    let state = std::sync::Arc::new(harness::RecorderState::default());
+    let raw_live = state.enter();
+    let raw = tokio::spawn(async move {
+        let _live = raw_live;
+        std::future::pending::<()>().await;
+    });
+    let rows_live = state.enter();
+    let rows = tokio::spawn(async move {
+        let _live = rows_live;
+        std::future::pending::<()>().await;
+    });
+    let recorders = harness::RecorderTasks::new(raw, rows);
+    assert_eq!(state.live_tasks(), 2);
+
+    let scenario = tokio::spawn(async move {
+        let _recorders = recorders;
+        std::future::pending::<()>().await;
+    });
+    tokio::task::yield_now().await;
+    scenario.abort();
+    let _ = scenario.await;
+    state.wait_stopped().await.unwrap();
+
+    assert_eq!(state.live_tasks(), 0);
 }

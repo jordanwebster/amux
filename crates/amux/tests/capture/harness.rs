@@ -19,7 +19,7 @@ use std::io::Write as _;
 use std::path::{Path, PathBuf};
 use std::process::{Child, Command, Stdio};
 use std::sync::Arc;
-use std::sync::atomic::{AtomicBool, Ordering};
+use std::sync::atomic::{AtomicBool, AtomicUsize, Ordering};
 use std::time::{Duration, Instant};
 
 use amux::claude_io::{
@@ -32,7 +32,155 @@ use amux::{
 };
 use anyhow::{Context, Result, anyhow, bail};
 use tokio::sync::Mutex;
+use tokio::task::{AbortHandle, JoinHandle};
 use uuid::Uuid;
+
+#[derive(Default)]
+pub(super) struct RecorderState {
+    live_tasks: AtomicUsize,
+}
+
+impl RecorderState {
+    pub(super) fn enter(self: &Arc<Self>) -> LiveRecorder {
+        self.live_tasks.fetch_add(1, Ordering::SeqCst);
+        LiveRecorder(self.clone())
+    }
+
+    pub(super) fn live_tasks(&self) -> usize {
+        self.live_tasks.load(Ordering::SeqCst)
+    }
+
+    pub(super) async fn wait_stopped(&self) -> Result<()> {
+        tokio::time::timeout(Duration::from_secs(5), async {
+            while self.live_tasks() != 0 {
+                tokio::task::yield_now().await;
+            }
+        })
+        .await
+        .context("recorder tasks did not stop after cancellation")
+    }
+}
+
+pub(super) struct LiveRecorder(Arc<RecorderState>);
+
+impl Drop for LiveRecorder {
+    fn drop(&mut self) {
+        self.0.live_tasks.fetch_sub(1, Ordering::SeqCst);
+    }
+}
+
+pub(super) struct RecorderTasks {
+    raw: Option<JoinHandle<()>>,
+    rows: Option<JoinHandle<()>>,
+}
+
+impl RecorderTasks {
+    pub(super) fn new(raw: JoinHandle<()>, rows: JoinHandle<()>) -> Self {
+        Self {
+            raw: Some(raw),
+            rows: Some(rows),
+        }
+    }
+
+    fn abort(&self) {
+        if let Some(task) = &self.raw {
+            task.abort();
+        }
+        if let Some(task) = &self.rows {
+            task.abort();
+        }
+    }
+
+    async fn stop(&mut self) {
+        self.abort();
+        if let Some(task) = self.raw.take() {
+            let _ = task.await;
+        }
+        if let Some(task) = self.rows.take() {
+            let _ = task.await;
+        }
+    }
+}
+
+impl Drop for RecorderTasks {
+    fn drop(&mut self) {
+        self.abort();
+    }
+}
+
+#[derive(Clone, Default)]
+struct ActiveSessionRegistry {
+    inner: Arc<std::sync::Mutex<Option<ActiveSession>>>,
+}
+
+struct ActiveSession {
+    agent_name: String,
+    raw: Option<AbortHandle>,
+    rows: Option<AbortHandle>,
+    recorder_state: Arc<RecorderState>,
+}
+
+impl ActiveSessionRegistry {
+    fn register(&self, agent_name: String, recorder_state: Arc<RecorderState>) {
+        let mut active = self.inner.lock().expect("active session registry poisoned");
+        assert!(active.is_none(), "capture scenarios must run sequentially");
+        *active = Some(ActiveSession {
+            agent_name,
+            raw: None,
+            rows: None,
+            recorder_state,
+        });
+    }
+
+    fn attach_raw(&self, agent_name: &str, task: AbortHandle) {
+        let mut active = self.inner.lock().expect("active session registry poisoned");
+        let active = active.as_mut().expect("capture session was not registered");
+        assert_eq!(active.agent_name, agent_name);
+        active.raw = Some(task);
+    }
+
+    fn attach_rows(&self, agent_name: &str, task: AbortHandle) {
+        let mut active = self.inner.lock().expect("active session registry poisoned");
+        let active = active.as_mut().expect("capture session was not registered");
+        assert_eq!(active.agent_name, agent_name);
+        active.rows = Some(task);
+    }
+
+    fn disarm(&self, agent_name: &str) {
+        let mut active = self.inner.lock().expect("active session registry poisoned");
+        if active
+            .as_ref()
+            .is_some_and(|active| active.agent_name == agent_name)
+        {
+            active.take();
+        }
+    }
+
+    async fn cancel(&self, client: &Client) -> Result<()> {
+        let active = self
+            .inner
+            .lock()
+            .expect("active session registry poisoned")
+            .take();
+        let Some(active) = active else {
+            return Ok(());
+        };
+        if let Some(task) = active.raw {
+            task.abort();
+        }
+        if let Some(task) = active.rows {
+            task.abort();
+        }
+        let recorder_result = active.recorder_state.wait_stopped().await;
+        let delete_result = client
+            .delete_agent(active.agent_name.as_str())
+            .await
+            .context("delete canceled capture agent");
+        recorder_result?;
+        delete_result?;
+        Ok(())
+    }
+}
 
 /// One received transcript-stream row.
 #[derive(Clone)]
@@ -126,6 +274,7 @@ pub struct Scratch {
     pub root: PathBuf,
     pub projects: PathBuf,
     pub out: PathBuf,
+    active_session: ActiveSessionRegistry,
 }
 
 impl Scratch {
@@ -155,6 +304,7 @@ impl Scratch {
             projects: root.join("projects"),
             out,
             root,
+            active_session: ActiveSessionRegistry::default(),
         })
     }
 
@@ -187,6 +337,13 @@ impl Scratch {
             "seed",
         ])?;
         Ok(dir)
+    }
+
+    /// Finish cleanup for a scenario future that returned or was canceled
+    /// without consuming [`CaptureSession::close`]. Recorder tasks are fully
+    /// stopped before the caller reads their output during finalization.
+    pub async fn cancel_active_session(&self, client: &Client) -> Result<()> {
+        self.active_session.cancel(client).await
     }
 }
 
@@ -442,8 +599,9 @@ pub struct CaptureSession {
     rows_closed: Arc<AtomicBool>,
     keys_log: Vec<serde_json::Value>,
     client: Client,
-    raw_task: tokio::task::JoinHandle<()>,
-    rows_task: tokio::task::JoinHandle<()>,
+    recorder_state: Arc<RecorderState>,
+    recorder_tasks: RecorderTasks,
+    active_session: ActiveSessionRegistry,
 }
 
 impl CaptureSession {
@@ -476,6 +634,10 @@ impl CaptureSession {
             .await
             .context("create claude agent")?;
         debug_assert_eq!(agent.id, agent_id);
+        let recorder_state = Arc::new(RecorderState::default());
+        scratch
+            .active_session
+            .register(agent_name.clone(), recorder_state.clone());
 
         // Raw PTY subscription: debugging eyes on the menus (H.8 coexistence).
         let raw_stream = daemon
@@ -492,7 +654,9 @@ impl CaptureSession {
         let raw_screen_clone = raw_screen.clone();
         let raw_closed = Arc::new(AtomicBool::new(false));
         let raw_closed_task = raw_closed.clone();
+        let raw_live = recorder_state.enter();
         let raw_task = tokio::spawn(async move {
+            let _live = raw_live;
             let mut stream = raw_stream;
             let Ok(mut file) = std::fs::File::create(&raw_path) else {
                 return;
@@ -517,6 +681,9 @@ impl CaptureSession {
             }
             raw_closed_task.store(true, Ordering::SeqCst);
         });
+        scratch
+            .active_session
+            .attach_raw(&agent_name, raw_task.abort_handle());
 
         let transcript_stream = daemon
             .client
@@ -532,7 +699,9 @@ impl CaptureSession {
         let rows_closed = Arc::new(AtomicBool::new(false));
         let rows_closed_task = rows_closed.clone();
         let rows_path = scratch.out.join(format!("{scenario}.rows.jsonl"));
+        let rows_live = recorder_state.enter();
         let rows_task = tokio::spawn(async move {
+            let _live = rows_live;
             let mut stream = transcript_stream;
             let Ok(mut file) = std::fs::File::create(&rows_path) else {
                 return;
@@ -559,6 +728,9 @@ impl CaptureSession {
             }
             rows_closed_task.store(true, Ordering::SeqCst);
         });
+        scratch
+            .active_session
+            .attach_rows(&agent_name, rows_task.abort_handle());
 
         Ok(Self {
             agent_id,
@@ -569,8 +741,9 @@ impl CaptureSession {
             rows_closed,
             keys_log: Vec::new(),
             client: daemon.client.clone(),
-            raw_task,
-            rows_task,
+            recorder_state,
+            recorder_tasks: RecorderTasks::new(raw_task, rows_task),
+            active_session: scratch.active_session.clone(),
         })
     }
 
@@ -773,13 +946,17 @@ impl CaptureSession {
 
     /// Close the capture: delete the agent, stop the recorder tasks, and hand
     /// back the keystroke log (a JSON array) for the scenario's meta notes.
-    pub async fn close(self) -> Result<serde_json::Value> {
-        let _ = self.client.delete_agent(self.agent_name.as_str()).await;
+    pub async fn close(mut self) -> Result<serde_json::Value> {
+        self.client
+            .delete_agent(self.agent_name.as_str())
+            .await
+            .context("delete capture agent")?;
         // Give the recorders a moment to observe the close, then stop them.
         tokio::time::sleep(Duration::from_millis(500)).await;
-        self.raw_task.abort();
-        self.rows_task.abort();
-        Ok(serde_json::Value::Array(self.keys_log))
+        self.recorder_tasks.stop().await;
+        self.recorder_state.wait_stopped().await?;
+        self.active_session.disarm(&self.agent_name);
+        Ok(serde_json::Value::Array(std::mem::take(&mut self.keys_log)))
     }
 }
 
