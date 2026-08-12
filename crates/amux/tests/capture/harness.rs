@@ -23,9 +23,10 @@ use std::sync::atomic::{AtomicBool, AtomicUsize, Ordering};
 use std::time::{Duration, Instant};
 
 use amux::claude_io::{
-    ClaudePtyTranscriptV1Action, ClaudePtyTranscriptV1Input, PTY_TRANSCRIPT_V1, RAW_V1,
+    ClaudePtyTranscriptV1Action, ClaudePtyTranscriptV1Input, PTY_TRANSCRIPT_V1,
     decode_pty_transcript_v1_output, encode_pty_transcript_v1_input,
 };
+use amux::terminal_io::TERMINAL_V1;
 use amux::{
     AgentType, Client, Config, CreateAgentRequest, ProtocolError, SendInputRequest,
     SubscribeSessionEvent, SubscribeSessionRequest, TerminalSize,
@@ -635,7 +636,7 @@ impl CaptureSession {
             .client
             .subscribe_session(SubscribeSessionRequest {
                 agent: agent_name.as_str().into(),
-                io_protocol: RAW_V1.to_string(),
+                io_protocol: TERMINAL_V1.to_string(),
                 args: None,
             })
             .await
@@ -913,7 +914,7 @@ impl CaptureSession {
         self.client
             .send_input(SendInputRequest {
                 agent: self.agent_name.as_str().into(),
-                io_protocol: RAW_V1.to_string(),
+                io_protocol: TERMINAL_V1.to_string(),
                 payload: payload.to_vec().into(),
             })
             .await

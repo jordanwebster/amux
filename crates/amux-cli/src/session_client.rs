@@ -4,7 +4,7 @@ use std::path::Path;
 use std::sync::Arc;
 use std::sync::atomic::{AtomicBool, Ordering};
 
-use amux::claude_io::{self, ClaudeRawV1Args};
+use amux::terminal_io::{self, TerminalV1Args};
 use amux::{
     AgentIdentifier, AgentType, Client, ClientError, Config, CreateAgentRequest, LeaderKey,
     SendInputRequest, SessionCloseReason, ShutdownReason, SubscribeSessionEvent,
@@ -223,8 +223,8 @@ pub(crate) async fn subscribe_raw(
     let session = rpc
         .subscribe_session(SubscribeSessionRequest {
             agent: agent.clone(),
-            io_protocol: claude_io::RAW_V1.to_string(),
-            args: claude_io::encode_raw_v1_args(ClaudeRawV1Args {
+            io_protocol: terminal_io::TERMINAL_V1.to_string(),
+            args: terminal_io::encode_terminal_v1_args(TerminalV1Args {
                 terminal_size,
                 replay_query: None,
             })
@@ -463,7 +463,7 @@ pub(crate) async fn attach_loop<W: Write>(
                     if rpc
                         .send_input(SendInputRequest {
                             agent: agent.clone(),
-                            io_protocol: claude_io::RAW_V1.to_string(),
+                            io_protocol: terminal_io::TERMINAL_V1.to_string(),
                             payload: data.into(),
                         })
                         .await

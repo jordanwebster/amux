@@ -13,6 +13,7 @@ mod record;
 #[cfg(feature = "local-agents")]
 mod session;
 mod session_events;
+pub(crate) mod terminal_io;
 #[cfg(all(feature = "local-agents", any(debug_assertions, test)))]
 mod test_agent;
 mod types;

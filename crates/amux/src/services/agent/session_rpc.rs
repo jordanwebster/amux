@@ -9,8 +9,9 @@ use super::PtyAgentHost;
 use crate::agents::TEST_ECHO_V1;
 use crate::agents::claude::io::{
     self as claude_io, ClaudePtyTranscriptV1Action, ClaudePtyTranscriptV1Output,
-    ClaudePtyTranscriptV1ReplayQuery, ClaudeRawV1ReplayQuery,
+    ClaudePtyTranscriptV1ReplayQuery,
 };
+use crate::agents::terminal_io::{self, TerminalV1Control, TerminalV1ReplayQuery};
 use crate::agents::{
     BroadcastRead, ByteReplayQuery, PtyHandle, SendInputRequest, SessionCloseReason,
     SessionInputEvent, StructuredInputTarget, StructuredOutput, SubscribeSessionEvent,
@@ -61,7 +62,7 @@ async fn prepare_direct_session_subscription(
     host: &PtyAgentHost,
 ) -> Result<PreparedSessionSubscription, ProtocolError> {
     match request.io_protocol.as_str() {
-        claude_io::RAW_V1 => {
+        terminal_io::TERMINAL_V1 => {
             let reader = prepare_direct_raw_session_subscription(request, host).await?;
             Ok(PreparedSessionSubscription {
                 output: SessionOutputReader::Raw(reader),
@@ -87,7 +88,7 @@ async fn prepare_direct_session_subscription(
         other => Err(ProtocolError::InvalidArgument {
             message: format!(
                 "unsupported SubscribeSession io_protocol `{other}`; expected `{}` or `{}`",
-                claude_io::RAW_V1,
+                terminal_io::TERMINAL_V1,
                 claude_io::PTY_TRANSCRIPT_V1
             ),
         }),
@@ -98,13 +99,13 @@ async fn prepare_direct_raw_session_subscription(
     request: &SubscribeSessionRequest,
     host: &PtyAgentHost,
 ) -> Result<crate::agents::MultiplexByteReader, ProtocolError> {
-    let args = claude_io::decode_raw_v1_args(request.args.as_deref())?;
+    let args = terminal_io::decode_terminal_v1_args(request.args.as_deref())?;
     let replay_query = args
         .replay_query
         .as_ref()
-        .map(|ClaudeRawV1ReplayQuery::TailBytes { count }| ByteReplayQuery::Tail { count: *count });
+        .map(|TerminalV1ReplayQuery::TailBytes { count }| ByteReplayQuery::Tail { count: *count });
 
-    let pty = agent_pty(host, request.agent_id, claude_io::RAW_V1).await?;
+    let pty = agent_pty(host, request.agent_id, terminal_io::TERMINAL_V1).await?;
     if let Some(size) = args.terminal_size {
         pty.resize(size)
             .await
@@ -197,8 +198,14 @@ pub(super) async fn send_session_input(
     request: SendInputRequest,
 ) -> Result<(), ProtocolError> {
     match request.io_protocol.as_str() {
-        claude_io::RAW_V1 => {
-            send_raw_session_input(host, request.agent_id, claude_io::RAW_V1, request.event).await
+        terminal_io::TERMINAL_V1 => {
+            send_raw_session_input(
+                host,
+                request.agent_id,
+                terminal_io::TERMINAL_V1,
+                request.event,
+            )
+            .await
         }
         claude_io::PTY_TRANSCRIPT_V1 => {
             send_structured_session_input(host, request.agent_id, request.event).await
@@ -210,7 +217,7 @@ pub(super) async fn send_session_input(
         other => Err(ProtocolError::InvalidArgument {
             message: format!(
                 "unsupported SendInput io_protocol `{other}`; expected `{}` or `{}`",
-                claude_io::RAW_V1,
+                terminal_io::TERMINAL_V1,
                 claude_io::PTY_TRANSCRIPT_V1
             ),
         }),
@@ -233,9 +240,9 @@ async fn send_raw_session_input(
                 })
         }
         SessionInputEvent::Control { payload } => {
-            let control = claude_io::decode_raw_v1_control(&payload)?;
+            let control = terminal_io::decode_terminal_v1_control(&payload)?;
             match control {
-                claude_io::ClaudeRawV1Control::Resize(size) => {
+                TerminalV1Control::Resize(size) => {
                     pty.resize(size)
                         .await
                         .map_err(|error| ProtocolError::ServerError {

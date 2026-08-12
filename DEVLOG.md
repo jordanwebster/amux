@@ -38,6 +38,22 @@ One paragraph describing what was done.
 
 ---
 
+## 2026-08-12: P1 — agent-independent `terminal_v1` byte plane
+
+### Summary
+Renamed the raw PTY byte-plane protocol from the Claude-owned
+`claude_raw_v1` surface to core-owned `terminal_v1` with no compatibility
+alias: the protobuf payloads moved from `claude.proto` into `amux.proto` as
+`TerminalV1Args`, `TerminalV1ReplayQuery`, and `TerminalV1Control`; their Rust
+codec moved from `agents/claude/io.rs` to `agents/terminal_io.rs` and is
+publicly exposed through `amux::terminal_io`; PTY advertisement, server
+dispatch, CLI attach, capture support, and UI/TUI test builders now use the new
+name, while `claude_io` retains only `claude_pty_transcript_v1`. Formatting,
+workspace clippy/tests, and the testnet spec suite pass without fixture,
+snapshot, or assertion changes.
+
+---
+
 ## 2026-08-12: Chat V1 — retrospective; docs/CHAT.md flips to implemented
 
 ### Summary

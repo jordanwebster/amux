@@ -2,11 +2,12 @@ syntax = "proto3";
 
 package amux.v1;
 
-// Claude-specific creation config and io_protocol payloads.
+// Claude-specific creation config and structured io_protocol payloads.
 //
 // These messages are intentionally independent from amux.proto. The core
 // protocol treats session args/input/control/output as opaque bytes; callers
-// serialize these inner messages only when they opt into a Claude io_protocol.
+// serialize these inner messages only when they opt into the Claude protocol.
+// TerminalSize is also shared by the core terminal protocol.
 
 message TerminalSize {
   uint32 rows = 1;
@@ -17,23 +18,6 @@ message ClaudeCreateConfig {
   string working_dir = 1;
   repeated string args = 2;
   optional TerminalSize initial_terminal_size = 10;
-}
-
-message ClaudeRawV1Args {
-  optional TerminalSize terminal_size = 1;
-  optional ClaudeRawV1ReplayQuery replay_query = 2;
-}
-
-message ClaudeRawV1ReplayQuery {
-  oneof query {
-    uint64 tail_bytes = 1;
-  }
-}
-
-message ClaudeRawV1Control {
-  oneof control {
-    TerminalSize resize = 1;
-  }
 }
 
 message ClaudePtyTranscriptV1Args {

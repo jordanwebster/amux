@@ -81,11 +81,16 @@ pub use update::{UpdateInfo, UpdateReporter, UpdateStatus};
 pub mod claude_io {
     pub use crate::agents::claude::io::{
         ClaudePtyTranscriptV1Action, ClaudePtyTranscriptV1Args, ClaudePtyTranscriptV1Input,
-        ClaudePtyTranscriptV1Output, ClaudePtyTranscriptV1ReplayQuery, ClaudeRawV1Args,
-        ClaudeRawV1Control, ClaudeRawV1ReplayQuery, PTY_TRANSCRIPT_V1, RAW_V1,
+        ClaudePtyTranscriptV1Output, ClaudePtyTranscriptV1ReplayQuery, PTY_TRANSCRIPT_V1,
         decode_pty_transcript_v1_cursor, decode_pty_transcript_v1_output,
-        encode_pty_transcript_v1_args, encode_pty_transcript_v1_input, encode_raw_v1_args,
-        encode_raw_v1_control,
+        encode_pty_transcript_v1_args, encode_pty_transcript_v1_input,
+    };
+}
+
+pub mod terminal_io {
+    pub use crate::agents::terminal_io::{
+        TERMINAL_V1, TerminalV1Args, TerminalV1Control, TerminalV1ReplayQuery,
+        encode_terminal_v1_args, encode_terminal_v1_control,
     };
 }
 

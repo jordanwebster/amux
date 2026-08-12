@@ -480,7 +480,7 @@ mod tests {
             &ctx,
             tonic::Request::new(wire::pb::SendInputRequest {
                 agent_id: missing_agent_id.as_bytes().to_vec(),
-                io_protocol: "claude_raw_v1".to_string(),
+                io_protocol: "terminal_v1".to_string(),
                 event: Some(wire::pb::send_input_request::Event::Input(
                     wire::pb::SessionInput {
                         input_id: vec![1],

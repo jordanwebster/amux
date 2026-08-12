@@ -9,24 +9,7 @@ use prost::Message as ProstMessage;
 use crate::agents::TerminalSize;
 use crate::protocol::{ProtocolError, wire};
 
-pub const RAW_V1: &str = "claude_raw_v1";
 pub const PTY_TRANSCRIPT_V1: &str = "claude_pty_transcript_v1";
-
-#[derive(Debug, Clone, PartialEq, Eq)]
-pub struct ClaudeRawV1Args {
-    pub terminal_size: Option<TerminalSize>,
-    pub replay_query: Option<ClaudeRawV1ReplayQuery>,
-}
-
-#[derive(Debug, Clone, PartialEq, Eq)]
-pub enum ClaudeRawV1ReplayQuery {
-    TailBytes { count: u64 },
-}
-
-#[derive(Debug, Clone, PartialEq, Eq)]
-pub enum ClaudeRawV1Control {
-    Resize(TerminalSize),
-}
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct ClaudePtyTranscriptV1Args {
@@ -61,79 +44,6 @@ pub enum ClaudePtyTranscriptV1Action {
 pub struct ClaudePtyTranscriptV1Output {
     pub seq_id: u64,
     pub payload: Vec<u8>,
-}
-
-pub(crate) fn decode_raw_v1_args(args: Option<&[u8]>) -> Result<ClaudeRawV1Args, ProtocolError> {
-    let args = decode_optional_args::<wire::ClaudeRawV1Args>(RAW_V1, args)?;
-    Ok(ClaudeRawV1Args {
-        terminal_size: args
-            .terminal_size
-            .map(terminal_size_from_wire)
-            .transpose()?,
-        replay_query: args
-            .replay_query
-            .map(|query| {
-                let query = query.query.ok_or_else(|| ProtocolError::InvalidArgument {
-                    message: format!("`{RAW_V1}` replay_query missing query"),
-                })?;
-                match query {
-                    wire::claude_raw_v1_replay_query::Query::TailBytes(count) => {
-                        Ok(ClaudeRawV1ReplayQuery::TailBytes { count })
-                    }
-                }
-            })
-            .transpose()?,
-    })
-}
-
-pub fn encode_raw_v1_args(args: ClaudeRawV1Args) -> Option<Vec<u8>> {
-    if args.terminal_size.is_none() && args.replay_query.is_none() {
-        return None;
-    }
-    Some(
-        wire::ClaudeRawV1Args {
-            terminal_size: args.terminal_size.map(terminal_size_to_wire),
-            replay_query: args.replay_query.map(|query| wire::ClaudeRawV1ReplayQuery {
-                query: Some(match query {
-                    ClaudeRawV1ReplayQuery::TailBytes { count } => {
-                        wire::claude_raw_v1_replay_query::Query::TailBytes(count)
-                    }
-                }),
-            }),
-        }
-        .encode_to_vec(),
-    )
-}
-
-pub fn encode_raw_v1_control(control: ClaudeRawV1Control) -> Vec<u8> {
-    wire::ClaudeRawV1Control {
-        control: Some(match control {
-            ClaudeRawV1Control::Resize(size) => {
-                wire::claude_raw_v1_control::Control::Resize(terminal_size_to_wire(size))
-            }
-        }),
-    }
-    .encode_to_vec()
-}
-
-pub(crate) fn decode_raw_v1_control(payload: &[u8]) -> Result<ClaudeRawV1Control, ProtocolError> {
-    let control = wire::ClaudeRawV1Control::decode(payload).map_err(|error| {
-        ProtocolError::InvalidArgument {
-            message: format!(
-                "`{RAW_V1}` control payload must be ClaudeRawV1Control protobuf: {error}"
-            ),
-        }
-    })?;
-    let control = control
-        .control
-        .ok_or_else(|| ProtocolError::InvalidArgument {
-            message: format!("`{RAW_V1}` control payload missing control"),
-        })?;
-    match control {
-        wire::claude_raw_v1_control::Control::Resize(size) => {
-            Ok(ClaudeRawV1Control::Resize(terminal_size_from_wire(size)?))
-        }
-    }
 }
 
 pub(crate) fn decode_pty_transcript_v1_args(
@@ -322,23 +232,6 @@ fn terminal_size_from_wire(size: wire::TerminalSize) -> Result<TerminalSize, Pro
 #[cfg(test)]
 mod tests {
     use super::*;
-
-    #[test]
-    fn raw_args_roundtrip_terminal_size_and_replay_query() {
-        let args = encode_raw_v1_args(ClaudeRawV1Args {
-            terminal_size: Some(TerminalSize { rows: 24, cols: 80 }),
-            replay_query: Some(ClaudeRawV1ReplayQuery::TailBytes { count: 4096 }),
-        })
-        .unwrap();
-
-        assert_eq!(
-            decode_raw_v1_args(Some(&args)).unwrap(),
-            ClaudeRawV1Args {
-                terminal_size: Some(TerminalSize { rows: 24, cols: 80 }),
-                replay_query: Some(ClaudeRawV1ReplayQuery::TailBytes { count: 4096 }),
-            }
-        );
-    }
 
     #[test]
     fn transcript_args_decode_terminal_size_and_replay_query() {

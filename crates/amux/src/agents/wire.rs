@@ -435,7 +435,7 @@ mod tests {
             command: "claude".to_string(),
             working_dir: PathBuf::from(OsString::from_vec(vec![0xff])),
             agent_type: "claude".to_string(),
-            io_protocols: vec!["claude_raw_v1".to_string()],
+            io_protocols: vec!["terminal_v1".to_string()],
             readonly: false,
             args: Vec::new(),
             created_at: Utc::now(),
@@ -498,7 +498,7 @@ mod tests {
         let agent_id = Uuid::new_v4();
         let request = SubscribeSessionRequest {
             agent_id,
-            io_protocol: "claude_raw_v1".to_string(),
+            io_protocol: "terminal_v1".to_string(),
             args: Some(vec![1, 2, 3]),
         };
         let decoded = subscribe_session_request_from_wire(pb::SubscribeSessionRequest {
@@ -524,7 +524,7 @@ mod tests {
 
         for event in events {
             let agent_id = Uuid::new_v4();
-            let io_protocol = "claude_raw_v1".to_string();
+            let io_protocol = "terminal_v1".to_string();
             let wire_event = match event.clone() {
                 SessionInputEvent::Input { input_id, payload } => {
                     pb::send_input_request::Event::Input(pb::SessionInput { input_id, payload })

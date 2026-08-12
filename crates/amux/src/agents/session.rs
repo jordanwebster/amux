@@ -32,6 +32,7 @@ use crate::agents::AGENT_TYPE_TEST_AGENT;
 #[cfg(any(test, feature = "testnet"))]
 use crate::agents::TEST_ECHO_V1;
 use crate::agents::claude::io as claude_io;
+use crate::agents::terminal_io;
 use crate::agents::{AGENT_TYPE_CLAUDE, AgentType, CreateAgentRequest};
 use crate::protocol::ProtocolError;
 use crate::suspend::SuspendedAgent;
@@ -171,7 +172,7 @@ impl AgentSession {
     pub(crate) fn io_protocols(&self) -> Vec<String> {
         let mut protocols = Vec::new();
         if self.pty_handle().is_some() {
-            protocols.push(claude_io::RAW_V1.to_string());
+            protocols.push(terminal_io::TERMINAL_V1.to_string());
         }
         match self {
             Self::Claude(_) => protocols.push(claude_io::PTY_TRANSCRIPT_V1.to_string()),

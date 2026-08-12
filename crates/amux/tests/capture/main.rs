@@ -2318,7 +2318,7 @@ async fn external_readonly(daemon: &ScratchDaemon, scratch: &Scratch) -> Result<
         || external
             .io_protocols
             .iter()
-            .any(|protocol| protocol == amux::claude_io::RAW_V1)
+            .any(|protocol| protocol == amux::terminal_io::TERMINAL_V1)
     {
         bail!("external inventory shape is not structured-only readonly: {external:?}");
     }

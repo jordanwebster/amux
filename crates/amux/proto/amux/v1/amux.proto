@@ -32,6 +32,25 @@ message ReplayComplete {
   optional bytes cursor = 1;
 }
 
+// Agent-independent raw terminal byte-plane payloads. The core protocol
+// carries these as opaque args/control bytes on session RPCs.
+message TerminalV1Args {
+  optional TerminalSize terminal_size = 1;
+  optional TerminalV1ReplayQuery replay_query = 2;
+}
+
+message TerminalV1ReplayQuery {
+  oneof query {
+    uint64 tail_bytes = 1;
+  }
+}
+
+message TerminalV1Control {
+  oneof control {
+    TerminalSize resize = 1;
+  }
+}
+
 message AgentRef {
   oneof identifier {
     bytes agent_id = 1;

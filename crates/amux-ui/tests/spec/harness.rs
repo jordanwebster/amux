@@ -81,7 +81,7 @@ pub fn an_agent(name: &str, on: &str) -> Agent {
         working_dir: std::path::PathBuf::from("/work"),
         agent_type: "claude".to_string(),
         io_protocols: vec![
-            "claude_raw_v1".to_string(),
+            "terminal_v1".to_string(),
             "claude_pty_transcript_v1".to_string(),
         ],
         readonly: false,
