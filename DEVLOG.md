@@ -38,6 +38,52 @@ One paragraph describing what was done.
 
 ---
 
+## 2026-08-12: Chat V1 Phase 6 — fleet entry + leader chords in chat
+
+### Summary
+Chat is reachable (A1/A3): the fleet's Enter opens the settings-default
+mode (`ui.default_open_mode`, shipped raw attach), Ctrl+Enter opens the
+other one where the kitty probe says the terminal can deliver it, and
+`o` is the guaranteed plain fallback ("open in the other mode") in
+Normal mode — in Filter mode `o` types (P2), Enter/Ctrl+Enter work.
+Read-only agents open in chat from EVERY entry key: raw attach is
+absent, not disabled (A3). An offline host refuses both modes with the
+dial error (chat needs the host's stream as attach needs its PTY). The
+new `UiAction::OpenChat` stays inside the chrome — no terminal handoff
+— and the run loop calls `runtime.note_attached` (Phase 5's note), so
+the subscription policy widens exactly as for raw attach and read-only
+feeds light up through `UserAttached`. Leader chords work from chat —
+`<leader> s` fleet, `<leader> d` shell — from every focus including
+read-only; the pending chord composes BEFORE every other binding
+(Ctrl+C included, matching raw attach where the leader is the one byte
+passthrough does not forward) and consumes unrecognized chord keys, so
+`<leader> x` can never interrupt and no chord key leaks into a draft.
+`TuiConfig` now carries `leader: char` + `default_open_mode` (label
+derived); the filter hint says `enter open` (truthful for either
+default).
+
+### Changes
+- `view.rs`: `OpenMode` (+`other()`), `UiAction::OpenChat`,
+  `ViewState.{leader,default_open_mode}`; `open_chat` passes the leader.
+- `keys.rs`: `attach_selected` → `open_selected(other_mode)` with the
+  A1/A3 resolution; Enter/Ctrl+Enter/`o` bindings; entry-resolution
+  tests (default raw, default chat, readonly, filter mode, offline).
+- `chat/mod.rs` + `chat/keys.rs`: `ChatView.{leader,pending_leader}`;
+  chord interception + tests (every focus, unrecognized-chord
+  consumption, configured non-default leader).
+- `run.rs`: `TuiConfig` reshape; OpenChat handling with note_attached
+  + immediate reconcile.
+- `amux-cli/src/ui.rs`: maps `config.ui.default_open_mode` and the
+  leader char into `TuiConfig`.
+- Golden regenerated: `picker_filtered` (filter hint `enter attach` →
+  `enter open` — the only cell change). Chat goldens byte-identical.
+
+### Verification
+- `timeout 600 cargo test -p amux-tui` — 103 lib + 51 chat golden + 21
+  fleet golden; `-p amux-cli` — 53.
+
+---
+
 ## 2026-08-12: Chat V1 Phase 6 — kitty detection + Shift+Enter
 
 ### Summary

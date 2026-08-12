@@ -18,4 +18,4 @@ pub use chat::ChatView;
 pub use render::{FrameContext, Theme, build_lines, render};
 pub use run::{AttachReturn, TuiConfig, run_fleet};
 pub use terminal::{TerminalGuard, install_panic_hook, write_enter_chrome, write_restore};
-pub use view::{Mode, UiAction, ViewState};
+pub use view::{Mode, OpenMode, UiAction, ViewState};

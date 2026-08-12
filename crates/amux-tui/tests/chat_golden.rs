@@ -451,7 +451,7 @@ const WORKING_NOW: &str = "2026-08-12T09:10:24Z";
 
 fn chat_view() -> ViewState {
     ViewState {
-        chat: Some(ChatView::open(agent_id())),
+        chat: Some(ChatView::open(agent_id(), 'a')),
         ..ViewState::default()
     }
 }

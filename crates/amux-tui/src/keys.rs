@@ -5,7 +5,7 @@ use amux_ui::{Command, Model};
 use chrono::{DateTime, Utc};
 use crossterm::event::{KeyCode, KeyEvent, KeyEventKind, KeyModifiers};
 
-use crate::view::{Mode, UiAction, ViewState, VisibleRow, visible_rows};
+use crate::view::{Mode, OpenMode, UiAction, ViewState, VisibleRow, visible_rows};
 
 pub fn handle_key(
     view: &mut ViewState,
@@ -101,7 +101,14 @@ pub fn handle_key(
                 view.mode = Mode::Normal;
                 None
             }
-            KeyCode::Enter => attach_selected(view, model),
+            // Ctrl+Enter (kitty tier — only a kitty-probed terminal can
+            // deliver it) opens the non-default mode; plain Enter the
+            // default. The `o` fallback is Normal-mode only — here it is
+            // a printable (P2).
+            KeyCode::Enter if key.modifiers.contains(KeyModifiers::CONTROL) => {
+                open_selected(view, model, true)
+            }
+            KeyCode::Enter => open_selected(view, model, false),
             KeyCode::Down => {
                 move_selection(view, model, 1, list_rows);
                 None
@@ -168,7 +175,14 @@ pub fn handle_key(
                 view.mode = Mode::Filter;
                 None
             }
-            KeyCode::Enter => attach_selected(view, model),
+            // Entry (A1): Enter opens the settings-default mode;
+            // Ctrl+Enter (kitty tier) and the guaranteed plain fallback
+            // `o` open the other one.
+            KeyCode::Enter if key.modifiers.contains(KeyModifiers::CONTROL) => {
+                open_selected(view, model, true)
+            }
+            KeyCode::Enter => open_selected(view, model, false),
+            KeyCode::Char('o') => open_selected(view, model, true),
             KeyCode::Char('n') => {
                 let host = selected_agent_host(view, model);
                 Some(UiAction::Create { host })
@@ -223,9 +237,11 @@ fn selected_agent_host(view: &ViewState, model: &Model) -> Option<amux_ui::HostI
     selected_agent(view, model).map(|card| card.agent.host_id)
 }
 
-/// Enter on a row: attach, unless the host is known-offline — then the
-/// status line carries the daemon's `last_dial_error` instead.
-fn attach_selected(view: &mut ViewState, model: &Model) -> Option<UiAction> {
+/// An entry key on a row: open the agent in the resolved mode (A1) —
+/// unless the host is known-offline, when the status line carries the
+/// daemon's `last_dial_error` instead (both modes need the host: attach
+/// for the PTY, chat for the stream subscription).
+fn open_selected(view: &mut ViewState, model: &Model, other_mode: bool) -> Option<UiAction> {
     let card = selected_agent(view, model)?;
     let host_id = card.agent.host_id;
     if !model.host_online(host_id) {
@@ -237,7 +253,19 @@ fn attach_selected(view: &mut ViewState, model: &Model) -> Option<UiAction> {
         view.notice = Some(format!("{host} is offline: {detail}"));
         return None;
     }
-    Some(UiAction::Attach(card.agent.id))
+    let mut mode = view.default_open_mode;
+    if other_mode {
+        mode = mode.other();
+    }
+    // A3: read-only agents open in chat only — raw attach is absent, not
+    // disabled, so every entry key opens the one mode that exists.
+    if card.agent.readonly {
+        mode = OpenMode::Chat;
+    }
+    Some(match mode {
+        OpenMode::RawAttach => UiAction::Attach(card.agent.id),
+        OpenMode::Chat => UiAction::OpenChat(card.agent.id),
+    })
 }
 
 #[cfg(test)]
@@ -342,6 +370,165 @@ mod tests {
         };
         assert!(draft.is_empty());
         assert!(!view.quit_guard.is_armed());
+    }
+
+    // --- entry-mode resolution (A1/A3) ------------------------------------
+
+    use amux_ui::{Msg, ServerMsg, update};
+    use uuid::Uuid;
+
+    fn agent_id() -> amux_ui::AgentId {
+        Uuid::from_u128(7)
+    }
+
+    /// One synced host with one agent; `readonly` and `online` shape the
+    /// A3 and offline cases.
+    fn entry_model(readonly: bool, online: bool) -> Model {
+        let mut model = Model::default();
+        let host = amux_ui::HostEntry {
+            id: Uuid::from_u128(1),
+            name: "mbp".to_string(),
+            online,
+            version: None,
+            capabilities: None,
+            trust_status: amux_ui::HostTrustStatus::Trusted,
+            last_dial_error: (!online).then(|| "connection refused".to_string()),
+        };
+        let agent = amux_ui::Agent {
+            id: agent_id(),
+            host_id: Uuid::from_u128(1),
+            name: Some("fix-auth".to_string()),
+            command: "claude".to_string(),
+            working_dir: std::path::PathBuf::from("/work"),
+            agent_type: "claude".to_string(),
+            io_protocols: vec![
+                "claude_raw_v1".to_string(),
+                "claude_pty_transcript_v1".to_string(),
+            ],
+            readonly,
+            args: Vec::new(),
+            created_at: chrono::DateTime::from_timestamp(1_755_000_000, 0).expect("epoch"),
+        };
+        for msg in [
+            Msg::Server(ServerMsg::Connected {
+                local_host_id: Some(Uuid::from_u128(1)),
+            }),
+            Msg::Server(ServerMsg::HostUpserted { host }),
+            Msg::Server(ServerMsg::AgentUpserted { agent }),
+            Msg::Server(ServerMsg::HostsSynchronized),
+            Msg::Server(ServerMsg::AgentsSynchronized),
+        ] {
+            update(&mut model, msg);
+        }
+        model
+    }
+
+    fn enter() -> KeyEvent {
+        KeyEvent::new(KeyCode::Enter, KeyModifiers::NONE)
+    }
+
+    fn ctrl_enter() -> KeyEvent {
+        KeyEvent::new(KeyCode::Enter, KeyModifiers::CONTROL)
+    }
+
+    fn o_key() -> KeyEvent {
+        KeyEvent::new(KeyCode::Char('o'), KeyModifiers::NONE)
+    }
+
+    /// A1 with the shipped default (raw attach): Enter attaches;
+    /// Ctrl+Enter (kitty-delivered) and the plain fallback `o` open the
+    /// chat.
+    #[test]
+    fn enter_opens_the_default_mode_and_o_the_other() {
+        let model = entry_model(false, true);
+        let mut view = ViewState::default();
+        assert_eq!(
+            handle_key(&mut view, &model, enter(), 10, t(0)),
+            Some(UiAction::Attach(agent_id()))
+        );
+        assert_eq!(
+            handle_key(&mut view, &model, ctrl_enter(), 10, t(0)),
+            Some(UiAction::OpenChat(agent_id()))
+        );
+        assert_eq!(
+            handle_key(&mut view, &model, o_key(), 10, t(0)),
+            Some(UiAction::OpenChat(agent_id()))
+        );
+    }
+
+    /// Flipping `ui.default_open_mode` to chat swaps the pair — a
+    /// settings change, not a migration (A1).
+    #[test]
+    fn a_chat_default_swaps_the_entry_pair() {
+        let model = entry_model(false, true);
+        let mut view = ViewState {
+            default_open_mode: crate::view::OpenMode::Chat,
+            ..ViewState::default()
+        };
+        assert_eq!(
+            handle_key(&mut view, &model, enter(), 10, t(0)),
+            Some(UiAction::OpenChat(agent_id()))
+        );
+        assert_eq!(
+            handle_key(&mut view, &model, o_key(), 10, t(0)),
+            Some(UiAction::Attach(agent_id()))
+        );
+    }
+
+    /// A3: read-only agents open in chat only — raw attach is absent,
+    /// not disabled, so every entry key opens the one mode that exists.
+    #[test]
+    fn readonly_agents_open_in_chat_from_every_entry_key() {
+        let model = entry_model(true, true);
+        let mut view = ViewState::default();
+        for key in [enter(), ctrl_enter(), o_key()] {
+            assert_eq!(
+                handle_key(&mut view, &model, key, 10, t(0)),
+                Some(UiAction::OpenChat(agent_id()))
+            );
+        }
+    }
+
+    /// Enter in Filter mode opens the default mode too (Ctrl+Enter the
+    /// other); `o` stays a printable there (P2).
+    #[test]
+    fn filter_mode_enter_opens_and_o_types() {
+        let model = entry_model(false, true);
+        let mut view = ViewState {
+            mode: Mode::Filter,
+            ..ViewState::default()
+        };
+        assert_eq!(
+            handle_key(&mut view, &model, o_key(), 10, t(0)),
+            None,
+            "`o` narrows the filter, never opens"
+        );
+        assert_eq!(view.filter, "o");
+        view.filter.clear();
+        assert_eq!(
+            handle_key(&mut view, &model, enter(), 10, t(0)),
+            Some(UiAction::Attach(agent_id()))
+        );
+        assert_eq!(
+            handle_key(&mut view, &model, ctrl_enter(), 10, t(0)),
+            Some(UiAction::OpenChat(agent_id()))
+        );
+    }
+
+    /// An offline host refuses both modes with the dial error in the
+    /// status line — chat needs the host's stream as much as attach
+    /// needs its PTY.
+    #[test]
+    fn an_offline_host_refuses_entry_with_the_dial_error() {
+        let model = entry_model(false, false);
+        let mut view = ViewState::default();
+        for key in [enter(), o_key()] {
+            assert_eq!(handle_key(&mut view, &model, key, 10, t(0)), None);
+            assert_eq!(
+                view.notice.as_deref(),
+                Some("mbp is offline: connection refused")
+            );
+        }
     }
 
     #[test]

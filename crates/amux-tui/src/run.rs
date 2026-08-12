@@ -32,9 +32,12 @@ pub struct TuiConfig {
     /// Working directory for created agents (read at the CLI edge, not
     /// here — the TUI performs no environment reads).
     pub working_dir: std::path::PathBuf,
-    /// Display label of the configured leader key ("C-a"), for the help
-    /// overlay.
-    pub leader_label: String,
+    /// The configured leader character (`a` for ctrl+a): labels the help
+    /// overlay and composes the chat's leader chords.
+    pub leader: char,
+    /// The mode the fleet's Enter opens (A1), from the amux config's
+    /// `ui.default_open_mode`.
+    pub default_open_mode: crate::view::OpenMode,
     /// Default agent type for `n` (no form in V1).
     pub default_agent_type: amux_ui::AgentType,
 }
@@ -61,7 +64,9 @@ where
     Fut: Future<Output = Result<AttachReturn>>,
 {
     let mut view = ViewState {
-        leader_label: config.leader_label.clone(),
+        leader_label: format!("C-{}", config.leader),
+        leader: config.leader,
+        default_open_mode: config.default_open_mode,
         ..ViewState::default()
     };
     loop {
@@ -151,6 +156,20 @@ async fn chrome_session(
                     match action {
                         Some(UiAction::Quit) => break ChromeExit::Quit,
                         Some(UiAction::Attach(agent)) => break ChromeExit::Attach(agent),
+                        Some(UiAction::OpenChat(agent)) => {
+                            // Chat entry (A1/A3) stays inside the chrome —
+                            // no terminal handoff — but widens the
+                            // subscription policy exactly like raw attach:
+                            // the reducer subscribes readonly agents'
+                            // streams on UserAttached (Phase 5), so the
+                            // read-only chat's feed lights up through the
+                            // normal policy.
+                            view.open_chat(agent);
+                            runtime.note_attached(agent);
+                            if let Some(chat) = view.chat.as_mut() {
+                                chat.reconcile(runtime.model());
+                            }
+                        }
                         Some(UiAction::Dispatch(command)) => {
                             let op = runtime.dispatch(command.clone());
                             // The shell owns op identity; hand it back so

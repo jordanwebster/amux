@@ -51,7 +51,13 @@ pub async fn run(mut config: Config) -> Result<()> {
 
     let tui_config = TuiConfig {
         working_dir: std::env::current_dir()?,
-        leader_label: format!("C-{}", config.keybinds.leader.char as char),
+        leader: config.keybinds.leader.char as char,
+        // The A1 entry-mode setting, from the usual amux config
+        // (`ui.default_open_mode`; shipped default: raw attach).
+        default_open_mode: match config.ui.default_open_mode {
+            amux::OpenMode::Raw => amux_tui::OpenMode::RawAttach,
+            amux::OpenMode::Chat => amux_tui::OpenMode::Chat,
+        },
         default_agent_type: amux::AgentType::Claude,
     };
 

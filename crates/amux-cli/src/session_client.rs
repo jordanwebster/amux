@@ -878,6 +878,7 @@ mod attach {
             &model,
             crossterm::event::KeyEvent::from(crossterm::event::KeyCode::Enter),
             5,
+            chrono::Utc::now(),
         );
         assert_eq!(action, None, "no attach action for an offline host");
         let notice = view.notice.clone().expect("status-line notice");

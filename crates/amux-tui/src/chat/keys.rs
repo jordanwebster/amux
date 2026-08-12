@@ -37,6 +37,34 @@ pub fn handle_chat_key(
     // Defensive sync: keys may arrive before the first reconcile.
     chat.sync_ask(model);
 
+    // The chrome leader chords work from chat exactly as from raw attach
+    // (`docs/CHAT.md` §State transitions): `<leader> s` back to the
+    // fleet, `<leader> d` detach to the shell. Leaving is a chrome
+    // affair, never an Esc stage — a pending ask survives it (the Model
+    // keeps the obligation; reopening re-docks the panel). Chat never
+    // shadows the leader, so this composes BEFORE every other binding —
+    // Ctrl+C included, matching raw attach where the leader is the one
+    // byte passthrough does not forward. An unrecognized chord key is
+    // consumed: the leader must never leak a keystroke into panels or
+    // the draft.
+    if chat.pending_leader {
+        chat.pending_leader = false;
+        chat.quit_guard.disarm();
+        return match key.code {
+            KeyCode::Char('s') => Some(UiAction::CloseChat),
+            KeyCode::Char('d') => Some(UiAction::Quit),
+            _ => None,
+        };
+    }
+    if let KeyCode::Char(c) = key.code
+        && key.modifiers.contains(KeyModifiers::CONTROL)
+        && c == chat.leader
+    {
+        chat.pending_leader = true;
+        chat.quit_guard.disarm();
+        return None;
+    }
+
     // Ctrl+C is the chrome-wide guarded abandon key — ONE rule
     // (`docs/CHAT.md` §Keybindings), intercepted before any panel,
     // reader, or read-only surface sees the key, because it must never
@@ -713,7 +741,7 @@ mod tests {
     }
 
     fn chat_with_draft(text: &str) -> ChatView {
-        let mut chat = ChatView::open(agent_id());
+        let mut chat = ChatView::open(agent_id(), 'a');
         chat.composer.insert_str(text);
         chat
     }
@@ -747,7 +775,7 @@ mod tests {
     #[test]
     fn enter_on_an_empty_draft_is_a_noop() {
         let model = idle_model();
-        let mut chat = ChatView::open(agent_id());
+        let mut chat = ChatView::open(agent_id(), 'a');
         assert_eq!(
             handle_chat_key(&mut chat, &model, press(KeyCode::Enter), VIEWPORT, t(0)),
             None
@@ -790,7 +818,7 @@ mod tests {
     #[test]
     fn ctrl_c_on_an_empty_draft_arms_then_a_second_press_quits() {
         let model = idle_model();
-        let mut chat = ChatView::open(agent_id());
+        let mut chat = ChatView::open(agent_id(), 'a');
         assert_eq!(
             handle_chat_key(&mut chat, &model, ctrl('c'), VIEWPORT, t(0)),
             None,
@@ -806,7 +834,7 @@ mod tests {
     #[test]
     fn any_other_key_disarms_and_a_stale_arm_rearms() {
         let model = idle_model();
-        let mut chat = ChatView::open(agent_id());
+        let mut chat = ChatView::open(agent_id(), 'a');
         handle_chat_key(&mut chat, &model, ctrl('c'), VIEWPORT, t(0));
         handle_chat_key(&mut chat, &model, press(KeyCode::End), VIEWPORT, t(1));
         assert!(!chat.quit_guard.is_armed(), "another key disarms");
@@ -821,7 +849,7 @@ mod tests {
 
     #[test]
     fn shift_tab_cycles_the_mode_only_when_the_injection_would_reach_claude() {
-        let mut chat = ChatView::open(agent_id());
+        let mut chat = ChatView::open(agent_id(), 'a');
         let action = handle_chat_key(
             &mut chat,
             &idle_model(),
@@ -860,7 +888,7 @@ mod tests {
     #[test]
     fn tab_is_reserved_and_question_mark_types() {
         let model = idle_model();
-        let mut chat = ChatView::open(agent_id());
+        let mut chat = ChatView::open(agent_id(), 'a');
         assert_eq!(
             handle_chat_key(&mut chat, &model, press(KeyCode::Tab), VIEWPORT, t(0)),
             None
@@ -892,7 +920,7 @@ mod tests {
     #[test]
     fn pgup_pauses_with_a_watermark_and_pgdn_at_the_bottom_resumes() {
         let model = long_feed_model();
-        let mut chat = ChatView::open(agent_id());
+        let mut chat = ChatView::open(agent_id(), 'a');
         handle_chat_key(&mut chat, &model, press(KeyCode::PageUp), VIEWPORT, t(0));
         let FeedScroll::Paused {
             entry_watermark, ..
@@ -920,7 +948,7 @@ mod tests {
     #[test]
     fn pgup_with_a_short_feed_stays_following() {
         let model = idle_model();
-        let mut chat = ChatView::open(agent_id());
+        let mut chat = ChatView::open(agent_id(), 'a');
         handle_chat_key(&mut chat, &model, press(KeyCode::PageUp), VIEWPORT, t(0));
         assert_eq!(chat.scroll, FeedScroll::Following);
     }
@@ -1071,7 +1099,7 @@ mod tests {
     #[test]
     fn paste_inserts_literally_and_dismisses_a_stated_failure() {
         let model = idle_model();
-        let mut chat = ChatView::open(agent_id());
+        let mut chat = ChatView::open(agent_id(), 'a');
         chat.send_failure = Some("older failure".to_string());
         handle_chat_paste(&mut chat, &model, "one\n\ttwo");
         assert_eq!(chat.composer.text(), "one\n    two");
@@ -1084,7 +1112,7 @@ mod tests {
     #[test]
     fn paste_in_a_readonly_chat_retains_nothing() {
         let model = readonly_ask_model();
-        let mut chat = ChatView::open(agent_id());
+        let mut chat = ChatView::open(agent_id(), 'a');
         handle_chat_paste(&mut chat, &model, "secret scratch text");
         assert!(chat.composer.is_empty(), "no composer surface exists");
         assert!(
@@ -1102,7 +1130,7 @@ mod tests {
     #[test]
     fn paste_with_a_pending_ask_before_reconcile_retains_nothing() {
         let model = edit_ask_model();
-        let mut chat = ChatView::open(agent_id()); // deliberately not reconciled
+        let mut chat = ChatView::open(agent_id(), 'a'); // deliberately not reconciled
         handle_chat_paste(&mut chat, &model, "stray paste");
         assert!(chat.composer.is_empty(), "menu stage has no text field");
         let ui = chat.ask_ui.as_ref().expect("the paste synced the panel");
@@ -1187,7 +1215,7 @@ mod tests {
     }
 
     fn open_chat(model: &Model) -> ChatView {
-        let mut chat = ChatView::open(agent_id());
+        let mut chat = ChatView::open(agent_id(), 'a');
         chat.reconcile(model);
         chat
     }
@@ -1361,6 +1389,68 @@ mod tests {
             handle_chat_key(&mut chat, &model, ctrl('c'), VIEWPORT, t(1)),
             Some(UiAction::Quit),
             "the guard is the same chrome-wide rule here"
+        );
+    }
+
+    // --- leader chords (chrome navigation from chat) -----------------------
+
+    /// `<leader> s` returns to the fleet and `<leader> d` detaches to
+    /// the shell, from every focus — composer, docked ask, read-only —
+    /// exactly as from raw attach. A pending ask survives leaving.
+    #[test]
+    fn leader_chords_navigate_from_every_focus() {
+        for model in [idle_model(), edit_ask_model(), readonly_ask_model()] {
+            let mut chat = open_chat(&model);
+            assert_eq!(
+                handle_chat_key(&mut chat, &model, ctrl('a'), VIEWPORT, t(0)),
+                None,
+                "the leader press itself is pending, not an action"
+            );
+            assert_eq!(
+                handle_chat_key(&mut chat, &model, press(KeyCode::Char('s')), VIEWPORT, t(0)),
+                Some(UiAction::CloseChat)
+            );
+            let mut chat = open_chat(&model);
+            handle_chat_key(&mut chat, &model, ctrl('a'), VIEWPORT, t(0));
+            assert_eq!(
+                handle_chat_key(&mut chat, &model, press(KeyCode::Char('d')), VIEWPORT, t(0)),
+                Some(UiAction::Quit),
+                "detach means the shell"
+            );
+        }
+    }
+
+    /// An unrecognized chord key is consumed — the leader never leaks a
+    /// keystroke into the draft, and `<leader> x` must not interrupt.
+    #[test]
+    fn an_unrecognized_leader_chord_consumes_the_key() {
+        let model = idle_model();
+        let mut chat = ChatView::open(agent_id(), 'a');
+        handle_chat_key(&mut chat, &model, ctrl('a'), VIEWPORT, t(0));
+        assert_eq!(
+            handle_chat_key(&mut chat, &model, ctrl('x'), VIEWPORT, t(0)),
+            None,
+            "no interrupt fires through a broken chord"
+        );
+        handle_chat_key(&mut chat, &model, ctrl('a'), VIEWPORT, t(0));
+        handle_chat_key(&mut chat, &model, press(KeyCode::Char('z')), VIEWPORT, t(0));
+        assert!(chat.composer.is_empty(), "the chord key never types");
+        // The chord state is one-shot: the next `s` is a plain printable.
+        handle_chat_key(&mut chat, &model, press(KeyCode::Char('s')), VIEWPORT, t(0));
+        assert_eq!(chat.composer.text(), "s");
+    }
+
+    /// The chords compose with the CONFIGURED leader (ctrl+b here):
+    /// ctrl+a is then unbound chrome-side and consumed by readline as a
+    /// no-op (C-a stays the leader's sacrifice, never line-start).
+    #[test]
+    fn a_configured_leader_moves_the_chord() {
+        let model = idle_model();
+        let mut chat = ChatView::open(agent_id(), 'b');
+        handle_chat_key(&mut chat, &model, ctrl('b'), VIEWPORT, t(0));
+        assert_eq!(
+            handle_chat_key(&mut chat, &model, press(KeyCode::Char('s')), VIEWPORT, t(0)),
+            Some(UiAction::CloseChat)
         );
     }
 

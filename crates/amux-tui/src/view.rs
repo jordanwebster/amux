@@ -77,6 +77,27 @@ impl QuitGuard {
     }
 }
 
+/// Which mode an entry key opens a Claude agent in (`docs/CHAT.md` A1):
+/// raw attach (the byte passthrough) or the structured chat. The default
+/// comes from the amux config (`ui.default_open_mode`, shipped `raw`);
+/// the non-default mode opens via Ctrl+Enter (kitty tier) or `o`.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+pub enum OpenMode {
+    #[default]
+    RawAttach,
+    Chat,
+}
+
+impl OpenMode {
+    /// The non-default mode ("open in the other mode").
+    pub fn other(self) -> Self {
+        match self {
+            OpenMode::RawAttach => OpenMode::Chat,
+            OpenMode::Chat => OpenMode::RawAttach,
+        }
+    }
+}
+
 /// Interaction mode of the fleet screen.
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub enum Mode {
@@ -111,6 +132,12 @@ pub struct ViewState {
     /// Human label of the leader key ("C-a"), shown in help. View-config,
     /// set once at startup.
     pub leader_label: String,
+    /// The configured leader character (`a` for ctrl+a). View-config; the
+    /// chat's leader chords compose against it.
+    pub leader: char,
+    /// The mode the fleet's Enter opens (A1); view-config from the amux
+    /// config's `ui.default_open_mode`.
+    pub default_open_mode: OpenMode,
     /// Whether the terminal answered the kitty keyboard-enhancement probe
     /// (view-config, set when the chrome session enters). Gates the
     /// kitty-tier bindings in hints and the `?` overlay — hints advertise
@@ -136,6 +163,8 @@ impl Default for ViewState {
             dismissed_error_seq: 0,
             notice: None,
             leader_label: "C-a".to_string(),
+            leader: 'a',
+            default_open_mode: OpenMode::default(),
             kitty: false,
             quit_guard: QuitGuard::default(),
             chat: None,
@@ -144,10 +173,12 @@ impl Default for ViewState {
 }
 
 impl ViewState {
-    /// Enter the chat screen for an agent — the entry seam the Phase 6
-    /// fleet bindings (Enter/Ctrl+Enter/`o` per A1) will invoke.
+    /// Enter the chat screen for an agent — invoked by the fleet's entry
+    /// bindings (Enter/Ctrl+Enter/`o` per A1) through
+    /// [`UiAction::OpenChat`]; the run loop notes the attach so the
+    /// subscription policy widens.
     pub fn open_chat(&mut self, agent: AgentId) {
-        self.chat = Some(crate::chat::ChatView::open(agent));
+        self.chat = Some(crate::chat::ChatView::open(agent, self.leader));
     }
 
     /// Leave the chat screen back to the fleet (chrome navigation — a
@@ -242,6 +273,10 @@ pub fn next_agent_name(model: &Model) -> String {
 pub enum UiAction {
     Quit,
     Attach(AgentId),
+    /// Open the chat screen for an agent (A1/A3): stays inside the
+    /// chrome — no terminal handoff — and notes the attach for the
+    /// subscription policy.
+    OpenChat(AgentId),
     Dispatch(Command),
     /// Leave the chat back to the fleet (read-only chats' `q`, F1; the
     /// writable chat leaves via the chrome leader — Phase 6).

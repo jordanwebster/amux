@@ -647,7 +647,10 @@ fn status_line(model: &Model, view: &ViewState, width: usize) -> Line<'static> {
 
     let hints = match &view.mode {
         Mode::Normal => "n new  r rename  d delete  q quit  ? help",
-        Mode::Filter => "esc nav-mode  enter attach",
+        // "open", not "attach": Enter opens the settings-default mode
+        // (A1), which may be the chat — the hint stays truthful either
+        // way.
+        Mode::Filter => "esc nav-mode  enter open",
         Mode::Rename { .. } => "enter apply  esc cancel",
         Mode::ConfirmDelete { .. } => "",
         Mode::Help => "any key to close",

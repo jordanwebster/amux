@@ -92,10 +92,16 @@ pub struct ChatView {
     /// The chrome-wide two-press quit guard (chat side — same type, same
     /// rule as the fleet's).
     pub quit_guard: QuitGuard,
+    /// The configured leader character (view-config, copied at open):
+    /// chat never shadows the leader, and the chords compose here.
+    pub leader: char,
+    /// A leader press is pending its chord key (`<leader> s` fleet,
+    /// `<leader> d` shell).
+    pub pending_leader: bool,
 }
 
 impl ChatView {
-    pub fn open(agent: AgentId) -> Self {
+    pub fn open(agent: AgentId, leader: char) -> Self {
         Self {
             agent,
             composer: Composer::default(),
@@ -107,6 +113,8 @@ impl ChatView {
             ask_ui: None,
             reader: None,
             quit_guard: QuitGuard::default(),
+            leader,
+            pending_leader: false,
         }
     }
 
