@@ -10,9 +10,9 @@ use amux_ui::Model;
 use amux_ui::claude::{Ask, AskArtifact, AskKind, AskState, DiffArtifact, ToolInvocation};
 use ratatui::text::{Line, Span};
 
-use crate::chat::ask_ui::AskStage;
+use crate::chat::ask_ui::{AskStage, AskUi};
 use crate::chat::{ChatView, diff, markdown, panel};
-use crate::render::{Theme, blank_line, finish_line, line_len, new_line, push_span};
+use crate::render::{Theme, blank_line, finish_line, new_line, push_right, push_span};
 
 /// Fullscreen reader ViewState: what is being read and where the viewport
 /// sits. The artifact itself is resolved from the Model at render — a
@@ -22,6 +22,16 @@ use crate::render::{Theme, blank_line, finish_line, line_len, new_line, push_spa
 pub(crate) struct ReaderView {
     pub source: ReaderSource,
     pub scroll: usize,
+}
+
+impl ReaderView {
+    /// Open on the pending ask's artifact, at the top.
+    pub fn ask() -> Self {
+        Self {
+            source: ReaderSource::Ask,
+            scroll: 0,
+        }
+    }
 }
 
 #[derive(Clone, Debug, PartialEq, Eq)]
@@ -229,15 +239,15 @@ fn reader_tail(
     let acting = resolved
         .ask
         .filter(|ask| !readonly && matches!(ask.state, AskState::Pending));
-    let plan_review = acting.is_some_and(super::ask_ui::is_plan);
 
     let mut tail: Vec<Line<'static>> = Vec::new();
-    let ui = chat.ask_ui.as_ref();
     if let Some(ask) = acting {
-        let feedback_stage = plan_review
-            && ui.is_some_and(|ui| ui.ask_id == ask.id && ui.stage == AskStage::PlanFeedback);
-        if feedback_stage {
-            let field = &ui.expect("checked above").plan_feedback;
+        let plan_review = super::ask_ui::is_plan(ask);
+        let ui = chat.ask_ui.as_ref().filter(|ui| ui.ask_id == ask.id);
+        if plan_review
+            && let Some(ui) = ui
+            && ui.stage == AskStage::PlanFeedback
+        {
             let mut label = new_line();
             push_span(
                 &mut label,
@@ -248,18 +258,17 @@ fn reader_tail(
             tail.push(label);
             let mut line = new_line();
             push_span(&mut line, 2, "›", theme.text());
-            push_span(&mut line, 4, field.display_with_cursor(), theme.text());
+            push_span(
+                &mut line,
+                4,
+                ui.plan_feedback.display_with_cursor(),
+                theme.text(),
+            );
             tail.push(line);
             tail.push(new_line());
             tail.extend(hint("enter request changes · esc back (keeps text)", theme));
         } else {
-            let cursor = ui
-                .filter(|ui| ui.ask_id == ask.id)
-                .and_then(|ui| match &ui.stage {
-                    AskStage::Menu { cursor } => Some(*cursor),
-                    _ => None,
-                })
-                .unwrap_or(0);
+            let cursor = ui.map(AskUi::menu_cursor).unwrap_or(0);
             if plan_review {
                 tail.extend(panel::plan_actions(Some(cursor), width, theme));
                 tail.push(new_line());
@@ -342,10 +351,7 @@ fn title_line(
     } else {
         format!("lines {}-{}/{}", start + 1, start + shown, total)
     };
-    let col = width.saturating_sub(2 + position.chars().count());
-    if col > line_len(&line) {
-        push_span(&mut line, col, position, theme.muted());
-    }
+    push_right(&mut line, position, width, theme.muted());
     line
 }
 

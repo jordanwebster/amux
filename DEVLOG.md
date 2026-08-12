@@ -38,6 +38,40 @@ One paragraph describing what was done.
 
 ---
 
+## 2026-08-12: Phase 5 — simplification pass
+
+### Summary
+Behavior-preserving cleanup of the Phase 5 surfaces (orchestration step
+8); all goldens byte-identical, no test assertion touched. The main
+altitude fix: the ask panels' text fields and the main composer now
+share ONE readline dispatch — `composer::readline_key` (motion, kills,
+yank, printable insertion) — instead of two parallel key matches;
+`composer_key` and `ask_ui::field_key` keep only their own layers
+(multiline row motion / send / scroll vs. the consume-everything
+one-line frame). Repeated idioms got one home each: `ReaderView::ask()`
+for the four open-on-ask literals, `ChatView::ask_reader_open` for the
+five source-match checks, `AskUi::menu_cursor` for the three cursor
+extractions, and `render::push_right` for the three right-aligned
+annotation computations (`(1 of N)`, the reader's position indicator).
+`sync_ask` restructured from the `head_exists` boolean block into a
+let-else early return so the no-head / new-head / in-flight rules read
+in order; `reader_tail` filters the panel state by ask id once, killing
+the `expect("checked above")`. Premature abstraction removed: panel.rs's
+single-caller `StyleKind` enum folded into `answer_summary(theme)`
+returning styles directly. Dead pub surface trimmed: `diff::
+magnitude_text` and `diff::new_file_rows` drop to `pub(crate)`
+(`reader_rows` stays pub — the golden suite drives it directly). Net
+-91 lines.
+
+### Verification
+- `cargo fmt`; workspace clippy `--all-targets --features amux/testnet
+  -D warnings` clean.
+- `timeout 600 cargo test -p amux-tui` (goldens unchanged on disk),
+  `-p amux-ui`, `-p amux --lib`, `-p amux --features testnet --test
+  spec`, `-p amux-cli` — all green.
+
+---
+
 ## 2026-08-12: Chat V1 Phase 5 — codex review fixes
 
 ### Summary

@@ -166,13 +166,7 @@ impl ChatView {
                     // which renders it — the same drop an async
                     // SendFailed takes, so no lost outcome ever hides
                     // behind the overlay.
-                    if matches!(
-                        self.reader,
-                        Some(ReaderView {
-                            source: ReaderSource::Ask,
-                            ..
-                        })
-                    ) {
+                    if self.ask_reader_open() {
                         self.reader = None;
                     }
                 }
@@ -186,70 +180,38 @@ impl ChatView {
     /// called defensively at key time (a chat may render before its first
     /// reconcile).
     pub(crate) fn sync_ask(&mut self, model: &Model) {
-        let readonly = self.read_only(model);
-        let head_exists = {
-            let head = model.claude(self.agent).and_then(|layer| layer.ask_head());
-            match head {
-                None => false,
-                Some(ask) => {
-                    let fresh = self.ask_ui.as_ref().map(|ui| ui.ask_id) != Some(ask.id);
-                    if fresh {
-                        self.ask_ui = Some(AskUi::for_ask(ask));
-                        self.ask_failure = None;
-                        // A reader left open for the previous ask is stale.
-                        if matches!(
-                            self.reader,
-                            Some(ReaderView {
-                                source: ReaderSource::Ask,
-                                ..
-                            })
-                        ) {
-                            self.reader = None;
-                        }
-                        // Plan review opens the reader directly (C3): the
-                        // full plan is the point. Read-only chats render
-                        // the fact panel instead; `f` opens the reader.
-                        if !readonly
-                            && ask_ui::is_plan(ask)
-                            && matches!(ask.state, AskState::Pending)
-                        {
-                            self.reader = Some(ReaderView {
-                                source: ReaderSource::Ask,
-                                scroll: 0,
-                            });
-                        }
-                    }
-                    // Once the answer is in flight the reader closes — the
-                    // collapsed pending marker renders docked (C5).
-                    if !matches!(ask.state, AskState::Pending)
-                        && matches!(
-                            self.reader,
-                            Some(ReaderView {
-                                source: ReaderSource::Ask,
-                                ..
-                            })
-                        )
-                    {
-                        self.reader = None;
-                    }
-                    true
-                }
-            }
-        };
-        if !head_exists {
+        let Some(ask) = model.claude(self.agent).and_then(|layer| layer.ask_head()) else {
             // Remote resolution (or local confirmation) dismisses the
             // panel; the B5 fact renders in the feed (C5).
             self.ask_ui = None;
             self.ask_failure = None;
-            if matches!(
-                self.reader,
-                Some(ReaderView {
-                    source: ReaderSource::Ask,
-                    ..
-                })
-            ) {
+            if self.ask_reader_open() {
                 self.reader = None;
             }
+            return;
+        };
+        if self.ask_ui.as_ref().map(|ui| ui.ask_id) != Some(ask.id) {
+            // A new head gets a fresh panel; the old ask's typed state,
+            // stated failure, and reader die with it.
+            self.ask_ui = Some(AskUi::for_ask(ask));
+            self.ask_failure = None;
+            if self.ask_reader_open() {
+                self.reader = None;
+            }
+            // Plan review opens the reader directly (C3): the full plan
+            // is the point. Read-only chats render the fact panel
+            // instead; `f` opens the reader.
+            if !self.read_only(model)
+                && ask_ui::is_plan(ask)
+                && matches!(ask.state, AskState::Pending)
+            {
+                self.reader = Some(ReaderView::ask());
+            }
+        }
+        // Once the answer is in flight the reader closes — the collapsed
+        // pending marker renders docked (C5).
+        if !matches!(ask.state, AskState::Pending) && self.ask_reader_open() {
+            self.reader = None;
         }
     }
 
@@ -264,6 +226,18 @@ impl ChatView {
     /// The pending ask head, when one is docked.
     pub(crate) fn ask_head<'m>(&self, model: &'m Model) -> Option<&'m Ask> {
         model.claude(self.agent).and_then(|layer| layer.ask_head())
+    }
+
+    /// The reader is open on the pending ask's artifact (as opposed to a
+    /// resolved plan) — the form every ask-lifecycle rule dismisses.
+    fn ask_reader_open(&self) -> bool {
+        matches!(
+            self.reader,
+            Some(ReaderView {
+                source: ReaderSource::Ask,
+                ..
+            })
+        )
     }
 
     /// The 1 Hz tick is needed only while something time-dependent is on

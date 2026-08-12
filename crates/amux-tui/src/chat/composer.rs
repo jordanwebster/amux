@@ -7,6 +7,13 @@
 //! buffer (keybindings §5.3), so no clearing key is destructive: Ctrl+Y
 //! restores the last kill. Cursor arithmetic is char-based throughout —
 //! byte offsets never leave this module.
+//!
+//! [`readline_key`] is the one definition of the readline editing set:
+//! the main composer and the ask panels' one-line fields both dispatch
+//! through it (P6 applies to every text field), layering their own
+//! bindings around it.
+
+use crossterm::event::{KeyCode, KeyEvent, KeyModifiers};
 
 /// The editable draft with a char-indexed cursor and the single-slot kill
 /// buffer.
@@ -257,6 +264,70 @@ impl Composer {
         if let Some(kill) = self.kill.clone() {
             self.insert_str(&kill);
         }
+    }
+}
+
+/// The shared readline editing set (P6): cursor and word motion, kills,
+/// yank, printable insertion. Returns `true` when the key was consumed
+/// as editing; keys outside the set — submit, stage navigation,
+/// multiline row motion, scroll — return `false` for the caller's own
+/// bindings.
+pub(crate) fn readline_key(field: &mut Composer, key: &KeyEvent) -> bool {
+    let ctrl = key.modifiers.contains(KeyModifiers::CONTROL);
+    match key.code {
+        KeyCode::Char(c) if ctrl => {
+            match c {
+                'b' => field.left(),
+                'f' => field.right(),
+                'e' => field.end(),
+                'w' => field.kill_word_back(),
+                'u' => field.kill_to_line_start(),
+                'k' => field.kill_to_line_end(),
+                'd' => field.delete_forward(),
+                'y' => field.yank(),
+                _ => return false,
+            }
+            true
+        }
+        KeyCode::Left if ctrl => {
+            field.word_left();
+            true
+        }
+        KeyCode::Right if ctrl => {
+            field.word_right();
+            true
+        }
+        KeyCode::Left => {
+            field.left();
+            true
+        }
+        KeyCode::Right => {
+            field.right();
+            true
+        }
+        KeyCode::Home => {
+            field.home();
+            true
+        }
+        KeyCode::End => {
+            field.end();
+            true
+        }
+        KeyCode::Backspace => {
+            field.backspace();
+            true
+        }
+        KeyCode::Delete => {
+            field.delete_forward();
+            true
+        }
+        // Printables belong to the draft (P2) — `q`, `f`, digits, `?`
+        // all type.
+        KeyCode::Char(c) => {
+            field.insert(c);
+            true
+        }
+        _ => false,
     }
 }
 

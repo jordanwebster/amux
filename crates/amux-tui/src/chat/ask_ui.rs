@@ -14,7 +14,7 @@ use amux_ui::claude::encoding::{AskAnswer, PermissionAnswer, PlanAnswer, Questio
 use amux_ui::claude::{Ask, AskKind, QuestionFact, ToolInvocation};
 use crossterm::event::{KeyCode, KeyEvent, KeyModifiers};
 
-use crate::chat::composer::Composer;
+use crate::chat::composer::{self, Composer};
 
 /// Panel state for one ask (keyed by `ask_id`: a new head gets a fresh
 /// panel; the old ask's typed state dies with its ask).
@@ -105,6 +105,16 @@ impl AskUi {
                 form.drafts.get_mut(form.tab).map(|draft| &mut draft.other)
             }
             _ => None,
+        }
+    }
+
+    /// The action-list cursor: the menu stage's, or the top row when
+    /// another stage is open (the list still renders under text stages
+    /// in some frames).
+    pub fn menu_cursor(&self) -> usize {
+        match &self.stage {
+            AskStage::Menu { cursor } => *cursor,
+            _ => 0,
         }
     }
 
@@ -459,8 +469,9 @@ impl QuestionUi {
 
 // --- text fields -------------------------------------------------------------
 
-/// Readline inside a panel's one-line text field (P6 applies to every
-/// text field). Returns `true` when the key was consumed as editing;
+/// A panel's one-line text field: the shared readline set
+/// ([`composer::readline_key`] — P6 applies to every text field) with the
+/// panel's own frame around it. Returns `true` when the key was consumed;
 /// Enter and Esc are left to the caller (submit / stage-back). Ctrl+C
 /// clears a non-empty field as a kill; on an empty field it is the
 /// chrome quit guard's key — a Phase 6 no-op here, consumed either way
@@ -470,69 +481,21 @@ pub(crate) fn field_key(field: &mut Composer, key: &KeyEvent) -> bool {
     match key.code {
         KeyCode::Enter | KeyCode::Esc => false,
         KeyCode::Char('x') if ctrl => false, // interrupt is handled above
+        // The feed stays scrollable behind an open text stage.
+        KeyCode::PageUp | KeyCode::PageDown => false,
         KeyCode::Char('c') if ctrl => {
             if !field.is_empty() {
                 field.kill_all();
             }
             true
         }
-        KeyCode::Char(c) if ctrl => {
-            match c {
-                'b' => field.left(),
-                'f' => field.right(),
-                'e' => field.end(),
-                'w' => field.kill_word_back(),
-                'u' => field.kill_to_line_start(),
-                'k' => field.kill_to_line_end(),
-                'd' => field.delete_forward(),
-                'y' => field.yank(),
-                // One-line fields: no newline (Ctrl+J), no history —
-                // everything else is a no-op, still consumed (a chord must
-                // not leak into menu navigation).
-                _ => {}
-            }
+        // The shared readline set (printables type here — `q`, `f`,
+        // digits, `?` — P2). Whatever it leaves — no newline (Ctrl+J), no
+        // history, no row motion on a one-line field — is a no-op, still
+        // consumed (a chord must not leak into menu navigation).
+        _ => {
+            composer::readline_key(field, key);
             true
         }
-        KeyCode::Left if ctrl => {
-            field.word_left();
-            true
-        }
-        KeyCode::Right if ctrl => {
-            field.word_right();
-            true
-        }
-        KeyCode::Left => {
-            field.left();
-            true
-        }
-        KeyCode::Right => {
-            field.right();
-            true
-        }
-        KeyCode::Home => {
-            field.home();
-            true
-        }
-        KeyCode::End => {
-            field.end();
-            true
-        }
-        KeyCode::Backspace => {
-            field.backspace();
-            true
-        }
-        KeyCode::Delete => {
-            field.delete_forward();
-            true
-        }
-        // Printables belong to the draft (P2) — `q`, `f`, digits, `?`
-        // all type here.
-        KeyCode::Char(c) => {
-            field.insert(c);
-            true
-        }
-        // The feed stays scrollable behind an open text stage.
-        KeyCode::PageUp | KeyCode::PageDown => false,
-        _ => true,
     }
 }

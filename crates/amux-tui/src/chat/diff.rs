@@ -35,7 +35,7 @@ pub(crate) const PREVIEW_BUDGET: usize = 8;
 /// `(+9 -2)` / `(replaces every occurrence)` — magnitude as the header
 /// states it. Estimated counts render in the same form as facts; the
 /// epistemic tag is Model state, not V1 chrome.
-pub fn magnitude_text(magnitude: &DiffMagnitude) -> String {
+pub(crate) fn magnitude_text(magnitude: &DiffMagnitude) -> String {
     match magnitude {
         DiffMagnitude::Fact { added, removed } | DiffMagnitude::Estimated { added, removed } => {
             match (added, removed) {
@@ -293,7 +293,7 @@ pub(crate) fn diff_preview(
 /// A new file's content as a `+` block (`docs/CHAT.md`: Write asks and
 /// Diff's create case share it): numbered `1..=N` in the reader,
 /// numberless in the panel preview.
-pub fn new_file_rows(
+pub(crate) fn new_file_rows(
     content: &str,
     width: usize,
     theme: Theme,

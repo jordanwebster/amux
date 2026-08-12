@@ -18,7 +18,7 @@ use ratatui::text::{Line, Span};
 use crate::chat::ask_ui::{self, AskStage, AskUi, QuestionDraft, QuestionUi};
 use crate::chat::composer::Composer;
 use crate::chat::{diff, markdown};
-use crate::render::{Theme, line_len, new_line, push_span, str_width};
+use crate::render::{Theme, line_len, new_line, push_right, push_span, str_width};
 
 /// Column grid shared with the feed: glyphs at 2, text at 4.
 const GLYPH_COL: usize = 2;
@@ -144,43 +144,19 @@ fn scoped_label(suggestions: &[SuggestionFact]) -> String {
 }
 
 /// The optimistic pending marker's summary: what was answered, plainly.
-fn answer_summary(answer: &AskAnswer) -> (&'static str, StyleKind, String) {
+fn answer_summary(answer: &AskAnswer, theme: Theme) -> (&'static str, Style, &'static str) {
     match answer {
-        AskAnswer::Permission(PermissionAnswer::AllowOnce) => {
-            ("✔", StyleKind::Ok, "allowed once".to_string())
-        }
+        AskAnswer::Permission(PermissionAnswer::AllowOnce) => ("✔", theme.ok(), "allowed once"),
         AskAnswer::Permission(PermissionAnswer::AllowScoped) => {
-            ("✔", StyleKind::Ok, "allowed (scoped)".to_string())
+            ("✔", theme.ok(), "allowed (scoped)")
         }
-        AskAnswer::Permission(PermissionAnswer::Deny { .. }) => {
-            ("✗", StyleKind::Error, "denied".to_string())
-        }
-        AskAnswer::Plan(PlanAnswer::ApproveAuto) => {
-            ("✔", StyleKind::Ok, "plan approved (auto)".to_string())
-        }
-        AskAnswer::Plan(PlanAnswer::ApproveManual) => {
-            ("✔", StyleKind::Ok, "plan approved (manual)".to_string())
-        }
+        AskAnswer::Permission(PermissionAnswer::Deny { .. }) => ("✗", theme.error(), "denied"),
+        AskAnswer::Plan(PlanAnswer::ApproveAuto) => ("✔", theme.ok(), "plan approved (auto)"),
+        AskAnswer::Plan(PlanAnswer::ApproveManual) => ("✔", theme.ok(), "plan approved (manual)"),
         AskAnswer::Plan(PlanAnswer::RequestChanges { .. }) => {
-            ("✗", StyleKind::Error, "changes requested".to_string())
+            ("✗", theme.error(), "changes requested")
         }
-        AskAnswer::Question { .. } => ("?", StyleKind::Warn, "answered".to_string()),
-    }
-}
-
-enum StyleKind {
-    Ok,
-    Warn,
-    Error,
-}
-
-impl StyleKind {
-    fn style(&self, theme: Theme) -> Style {
-        match self {
-            StyleKind::Ok => theme.ok(),
-            StyleKind::Warn => theme.warn(),
-            StyleKind::Error => theme.error(),
-        }
+        AskAnswer::Question { .. } => ("?", theme.warn(), "answered"),
     }
 }
 
@@ -200,11 +176,12 @@ fn header_line(
     push_span(&mut line, GLYPH_COL, glyph.to_string(), glyph_style);
     push_span(&mut line, TEXT_COL, title.to_string(), theme.text());
     if ask_count > 1 {
-        let right = format!("(1 of {ask_count})");
-        let col = width.saturating_sub(2 + right.chars().count());
-        if col > line_len(&line) {
-            push_span(&mut line, col, right, theme.muted());
-        }
+        push_right(
+            &mut line,
+            format!("(1 of {ask_count})"),
+            width,
+            theme.muted(),
+        );
     }
     line
 }
@@ -408,10 +385,10 @@ pub(crate) fn panel_lines(
     // The optimistic collapse (C5): a dim pending marker holds the
     // collapsed entry until the transcript confirms.
     if let AskState::AnsweredOptimistic { answer, .. } = &ask.state {
-        let (glyph, kind, summary) = answer_summary(answer);
+        let (glyph, glyph_style, summary) = answer_summary(answer, theme);
         let mut lines = vec![rule_line(width, theme)];
         let mut line = new_line();
-        push_span(&mut line, GLYPH_COL, glyph.to_string(), kind.style(theme));
+        push_span(&mut line, GLYPH_COL, glyph.to_string(), glyph_style);
         push_span(
             &mut line,
             TEXT_COL,
@@ -505,10 +482,7 @@ fn permission_panel(
             ));
         }
         _ => {
-            let cursor = match &ui.stage {
-                AskStage::Menu { cursor } => *cursor,
-                _ => 0,
-            };
+            let cursor = ui.menu_cursor();
             let body = body_lines(ask, width, theme);
             let has_body = !body.is_empty();
             lines.extend(body);
@@ -611,10 +585,7 @@ fn plan_panel(
             ));
         }
         _ => {
-            let cursor = match &ui.stage {
-                AskStage::Menu { cursor } => *cursor,
-                _ => 0,
-            };
+            let cursor = ui.menu_cursor();
             lines.extend(body_lines(ask, width, theme));
             lines.push(blank());
             lines.extend(plan_actions(Some(cursor), width, theme));
@@ -759,11 +730,12 @@ fn question_header(
         push_span(&mut line, col + 1, format!("[submit{star}]"), style);
     }
     if ask_count > 1 {
-        let right = format!("(1 of {ask_count})");
-        let col = width.saturating_sub(2 + right.chars().count());
-        if col > line_len(&line) {
-            push_span(&mut line, col, right, theme.muted());
-        }
+        push_right(
+            &mut line,
+            format!("(1 of {ask_count})"),
+            width,
+            theme.muted(),
+        );
     }
     line
 }

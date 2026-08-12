@@ -356,6 +356,16 @@ pub(crate) fn push_span(
     line.spans.push(Span::styled(text.into(), style));
 }
 
+/// A right-aligned annotation inside the border margin — the panel
+/// headers' `(1 of N)` queue count, the reader's position indicator.
+/// Skipped when it would collide with the line's left content.
+pub(crate) fn push_right(line: &mut Line<'static>, text: String, width: usize, style: Style) {
+    let col = width.saturating_sub(2 + text.chars().count());
+    if col > line_len(line) {
+        push_span(line, col, text, style);
+    }
+}
+
 pub(crate) fn finish_line(line: &mut Line<'static>, width: usize) {
     pad_to(line, width - 1);
     // Drop overflow defensively, by display cells: goldens keep us honest

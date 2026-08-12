@@ -15,7 +15,7 @@ use crossterm::event::{KeyCode, KeyEvent, KeyEventKind, KeyModifiers};
 
 use crate::chat::ask_ui::{self, AskKeyOutcome, AskStage};
 use crate::chat::reader::{self, ReaderSource, ReaderView};
-use crate::chat::{ChatView, FeedScroll, entry_watermark, render};
+use crate::chat::{ChatView, FeedScroll, composer, entry_watermark, render};
 use crate::view::UiAction;
 
 pub fn handle_chat_key(
@@ -78,8 +78,10 @@ pub fn handle_chat_key(
     composer_key(chat, model, key, viewport)
 }
 
-/// The composer focus (Phase 4's key set, plus Ctrl+T for the plan
-/// reader).
+/// The composer focus: the chat-level bindings (Phase 4's key set, plus
+/// Ctrl+T for the plan reader) layered over the shared readline set
+/// ([`composer::readline_key`] — the same machinery the panel text
+/// fields dispatch through).
 fn composer_key(
     chat: &mut ChatView,
     model: &Model,
@@ -98,7 +100,6 @@ fn composer_key(
             if !chat.composer.is_empty() {
                 chat.composer.kill_all();
             }
-            None
         }
         // Ctrl+T: the reader on the newest accepted plan (B6); ←/→ steps
         // between plans once open. Only bound while a plan exists — the
@@ -114,120 +115,48 @@ fn composer_key(
                     scroll: 0,
                 });
             }
-            None
         }
-        KeyCode::Enter => send(chat, model),
+        KeyCode::Enter => return send(chat, model),
         // Ctrl+J: the guaranteed newline in any terminal (Shift+Enter is
-        // kitty sugar, Phase 6).
-        KeyCode::Char('j') if ctrl => {
-            chat.composer.insert_newline();
-            None
-        }
+        // kitty sugar, Phase 6). Ctrl+P/N and the arrows are multiline
+        // row motion — above the one-line readline set.
+        KeyCode::Char('j') if ctrl => chat.composer.insert_newline(),
+        KeyCode::Char('p') if ctrl => chat.composer.up(),
+        KeyCode::Char('n') if ctrl => chat.composer.down(),
+        KeyCode::Up => chat.composer.up(),
+        KeyCode::Down => chat.composer.down(),
         // D4: Shift+Tab cycles the permission mode; the current mode
         // renders in the footer from hook facts. Gated exactly where the
         // injected CSI Z would not reach claude's composer.
         KeyCode::BackTab => {
             if model.claude_mode_cycle_gate(chat.agent).is_none() {
-                Some(UiAction::Dispatch(Command::CyclePermissionMode {
+                return Some(UiAction::Dispatch(Command::CyclePermissionMode {
                     agent: chat.agent,
-                }))
-            } else {
-                None
+                }));
             }
         }
         // Tab is reserved for the future queueing door (D2) — a no-op
         // until that lands deliberately.
-        KeyCode::Tab => None,
-        KeyCode::PageUp => {
-            page_up(chat, model, viewport);
-            None
-        }
-        KeyCode::PageDown => {
-            page_down(chat, model, viewport);
-            None
-        }
+        KeyCode::Tab => {}
+        KeyCode::PageUp => page_up(chat, model, viewport),
+        KeyCode::PageDown => page_down(chat, model, viewport),
         // Ctrl+Home / Ctrl+End: feed oldest / newest (ext tier —
         // convenience, never the sole path; PgUp/PgDn are guaranteed).
-        KeyCode::Home if ctrl => {
-            jump_top(chat, model, viewport);
-            None
+        KeyCode::Home if ctrl => jump_top(chat, model, viewport),
+        KeyCode::End if ctrl => chat.scroll = FeedScroll::Following,
+        // The shared readline set (P6): motion, kills, yank, printables —
+        // including `?` (the help overlay on an empty draft is Phase 6's
+        // chrome work; until it exists, `?` types). What it leaves stays
+        // unbound, each an act of restraint: Ctrl+A (chrome leader),
+        // Ctrl+G (emacs abort reflex — must never fire agent actions),
+        // Ctrl+R (reserved: history search), Ctrl+L (shell redraw
+        // reflex), Ctrl+V (bracketed paste owns pasting), and the
+        // byte-aliases Ctrl+H/I/M.
+        _ => {
+            composer::readline_key(&mut chat.composer, &key);
         }
-        KeyCode::End if ctrl => {
-            chat.scroll = FeedScroll::Following;
-            None
-        }
-        // The readline set (P6). Ctrl+A is the chrome leader and is never
-        // shadowed here; Home and Ctrl+E serve line motion.
-        KeyCode::Home => {
-            chat.composer.home();
-            None
-        }
-        KeyCode::End => {
-            chat.composer.end();
-            None
-        }
-        KeyCode::Left if ctrl => {
-            chat.composer.word_left();
-            None
-        }
-        KeyCode::Right if ctrl => {
-            chat.composer.word_right();
-            None
-        }
-        KeyCode::Left => {
-            chat.composer.left();
-            None
-        }
-        KeyCode::Right => {
-            chat.composer.right();
-            None
-        }
-        KeyCode::Up => {
-            chat.composer.up();
-            None
-        }
-        KeyCode::Down => {
-            chat.composer.down();
-            None
-        }
-        KeyCode::Backspace => {
-            chat.composer.backspace();
-            None
-        }
-        KeyCode::Delete => {
-            chat.composer.delete_forward();
-            None
-        }
-        KeyCode::Char(c) if ctrl => {
-            match c {
-                'b' => chat.composer.left(),
-                'f' => chat.composer.right(),
-                'p' => chat.composer.up(),
-                'n' => chat.composer.down(),
-                'e' => chat.composer.end(),
-                'w' => chat.composer.kill_word_back(),
-                'u' => chat.composer.kill_to_line_start(),
-                'k' => chat.composer.kill_to_line_end(),
-                'd' => chat.composer.delete_forward(),
-                'y' => chat.composer.yank(),
-                // Deliberately unbound, each an act of restraint: Ctrl+A
-                // (chrome leader), Ctrl+G (emacs abort reflex — must never
-                // fire agent actions), Ctrl+R (reserved: history search),
-                // Ctrl+L (shell redraw reflex), Ctrl+V (bracketed paste
-                // owns pasting), and the byte-aliases Ctrl+H/I/M.
-                _ => {}
-            }
-            None
-        }
-        // Printables belong to the draft (P2) — including `?`: the help
-        // overlay on an empty draft is Phase 6's chrome work; until it
-        // exists, `?` types.
-        KeyCode::Char(c) => {
-            chat.composer.insert(c);
-            None
-        }
-        _ => None,
     }
+    None
 }
 
 /// Bracketed paste into the chat: literal insertion into the focused text
@@ -290,8 +219,8 @@ fn esc_chain(chat: &mut ChatView) {
     // first (the request-changes stage steps back to the action row with
     // its text kept), then the reader itself; a plan-review reader drops
     // to its docked panel form.
-    if let Some(reader) = &chat.reader {
-        if matches!(reader.source, ReaderSource::Ask)
+    if chat.reader.is_some() {
+        if chat.ask_reader_open()
             && let Some(ui) = chat.ask_ui.as_mut()
             && ui.step_back()
         {
@@ -330,10 +259,7 @@ fn panel_key(
     // route — only the read affordance and the feed scroll live.
     if encoding::menu_shape_refusal(&head.kind).is_some() {
         if key.code == KeyCode::Char('f') && ask_ui::has_readable(head) {
-            chat.reader = Some(ReaderView {
-                source: ReaderSource::Ask,
-                scroll: 0,
-            });
+            chat.reader = Some(ReaderView::ask());
             return None;
         }
         scroll_keys(chat, model, &key, viewport);
@@ -348,10 +274,7 @@ fn panel_key(
     match outcome {
         AskKeyOutcome::Answer(answer) => Some(dispatch_answer(chat, ask_id, answer)),
         AskKeyOutcome::OpenReader => {
-            chat.reader = Some(ReaderView {
-                source: ReaderSource::Ask,
-                scroll: 0,
-            });
+            chat.reader = Some(ReaderView::ask());
             None
         }
         AskKeyOutcome::Handled => None,
@@ -379,14 +302,7 @@ fn reader_key(
     key: KeyEvent,
     viewport: (u16, u16),
 ) -> Option<UiAction> {
-    let ask_reader = matches!(
-        chat.reader,
-        Some(ReaderView {
-            source: ReaderSource::Ask,
-            ..
-        })
-    );
-    if ask_reader
+    if chat.ask_reader_open()
         && let Some(head) = chat.ask_head(model)
         && matches!(head.state, AskState::Pending)
         && encoding::menu_shape_refusal(&head.kind).is_none()
@@ -506,10 +422,7 @@ fn readonly_key(
         // panel's one read affordance.
         KeyCode::Char('f') => {
             if chat.ask_head(model).is_some_and(ask_ui::has_readable) {
-                chat.reader = Some(ReaderView {
-                    source: ReaderSource::Ask,
-                    scroll: 0,
-                });
+                chat.reader = Some(ReaderView::ask());
             }
         }
         KeyCode::Esc => {
