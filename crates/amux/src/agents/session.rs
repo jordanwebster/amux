@@ -4,7 +4,8 @@
 //! ([`ClaudeSession`], [`TestAgentSession`]). [`PtyHandle`] encapsulates PTY I/O
 //! (input, output subscription, resize). [`spawn_pty_agent`] is the shared helper
 //! that creates the PTY, spawns reader/writer/exit-monitor tasks, and returns a
-//! `PtyHandle` + `StructuredLogSource`.
+//! `PtyHandle` plus the process exit handle. Structured log state is concrete-session
+//! policy, not PTY policy.
 //!
 //! This whole module owns or drives a live agent process — [`AgentSession`],
 //! [`StructuredInputTarget`], and their impls — so it is gated at its `mod`

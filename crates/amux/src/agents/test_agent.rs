@@ -145,9 +145,7 @@ impl Serialize for DebugView<'_, TestAgentSession> {
         let mut map = serializer.serialize_map(None)?;
         map.serialize_entry("kind", "test_agent")?;
         map.serialize_entry("has_pty", &session.pty.is_some())?;
-        if session.log_source.is_some() {
-            map.serialize_entry("transcript", &serde_json::json!({}))?;
-        }
+        map.serialize_entry("has_structured_log", &session.log_source.is_some())?;
         map.end()
     }
 }

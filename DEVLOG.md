@@ -54,6 +54,13 @@ Follow-up (orchestrator): untracked the two phase reports that had
 been force-added under gitignored `notes/` against repo convention;
 reports stay on disk, untracked.
 
+Follow-up (simplification): dropped the test agent's vestigial
+`"transcript": {}` debug field for an honest `has_structured_log` bool
+(a test agent has no transcript), refreshed the `agents::session`
+module doc that still claimed `spawn_pty_agent` returns a
+`StructuredLogSource`, and restored the std/external import break in
+`claude/transcript.rs`. No production behavior change.
+
 ---
 
 ## 2026-08-12: P1 — agent-independent `terminal_v1` byte plane
