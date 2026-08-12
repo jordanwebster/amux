@@ -453,6 +453,10 @@ async fn execute_rpc(client: &Client, command: Command) -> OpOutcome {
 /// program retries is the reducer's decision, carried on the effect.
 const STALE_RETRY_LIMIT: u32 = 3;
 
+/// The stated form of a seq-guard refusal (C5: the resurfaced ask carries
+/// the failure stated; the technical detail rides in parentheses).
+pub const STALE_INPUT_ERROR: &str = "input raced the session — it moved on before the keys landed";
+
 /// Inject a keystroke program under the seq guard. The KeySteps map onto
 /// the `claude_pty_transcript_v1` actions verbatim — no bytes are authored
 /// here (the C6 module owns every encoding).
@@ -498,6 +502,14 @@ async fn execute_send_input(
                 // this branch — they fail fast and resurface (C5).
                 expected_seq = current_seq;
                 attempts += 1;
+            }
+            Err(error @ ClientError::Protocol(ProtocolError::SequenceNumberMismatch { .. })) => {
+                return OpOutcome::Error {
+                    error: OpError {
+                        message: format!("{STALE_INPUT_ERROR} ({error})"),
+                        auth_required: false,
+                    },
+                };
             }
             Err(error) => return op_error_outcome(&error),
         }

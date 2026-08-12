@@ -148,8 +148,9 @@ pub struct QuestionResponse {
 
 /// Why an intent could not be encoded. Typed, never a guessed byte
 /// sequence: `UnverifiedMenuShape` is the honest refusal for menu shapes
-/// no capture has confirmed.
-#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+/// no capture has confirmed. Never serialized — a refusal becomes the
+/// finished op's stated message, not Msg traffic.
+#[derive(Clone, Debug, PartialEq, Eq)]
 pub enum EncodingError {
     /// The answer kind does not fit the ask (or misses/doubles answers).
     AnswerMismatchesAsk { detail: String },

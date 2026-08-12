@@ -36,6 +36,7 @@ pub use recorder::{
     ReplayError, replay,
 };
 pub use runtime::{
-    BUILD, ConnectFailure, ConnectFuture, Connector, Runtime, RuntimeOptions, write_panic_dump,
+    BUILD, ConnectFailure, ConnectFuture, Connector, Runtime, RuntimeOptions, STALE_INPUT_ERROR,
+    write_panic_dump,
 };
 pub use update::{NOT_CONNECTED_ERROR, REPLAY_TAIL, update};

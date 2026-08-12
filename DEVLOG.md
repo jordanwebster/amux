@@ -93,6 +93,11 @@ facts (the D4 verdict made code).
 - `Effect::SendInput.retry_stale` carries the reducer's policy; the
   shell retries mechanically (bounded) with the server-reported seq —
   interrupt only.
+- Stale-seq refusals are stated, not jargoned: the shell maps an
+  unretried/exhausted `SequenceNumberMismatch` to `STALE_INPUT_ERROR`
+  ("input raced the session — it moved on before the keys landed")
+  with the technical detail in parentheses; `EncodingError` carries no
+  serde — a refusal is a finished-op message, never Msg traffic.
 
 ### Verification
 - fmt; workspace clippy `-D warnings` clean.
