@@ -38,6 +38,52 @@ One paragraph describing what was done.
 
 ---
 
+## 2026-08-12: Chat V1 Phase 4 — simplification pass
+
+### Summary
+The Phase 4 diff re-read for altitude and dead surface; every change is
+behavior-preserving (all goldens byte-identical, no regeneration). The
+chat layout's clamp arithmetic now reads as one rule: `FIXED_ROWS`
+(3 above the feed + 4 below) and a free `extra_rows(working, paused)`
+feed both the composer budget in `layout()` and a single
+`feed_height_for(paused)` — previously the same sums lived in three
+places as `3 + … + 4`, `7 + extra`, and a duplicated inline `extra`.
+`composer_width` was `text_width` under a second name (composer and
+feed text share TEXT_COL) — merged. The chat's `finished_blank`
+duplicated the chrome's `blank_line` that this phase had already made
+pub(crate) — the chrome helper now serves both screens. In markdown,
+the two copies of the close-row-and-hang-indent step in `wrap_runs`
+collapsed into one nested `break_row`; `find` lost its slice-of-one-
+char generality; `wrap_runs` went private (no callers outside the
+module). `kill_to_line_end` had hand-expanded `kill_range`'s body
+(minus a no-op cursor self-assign) — routed through the one kill
+primitive. Thin wrappers `plain_text_rows`/`message_lines` inlined to
+match the direct `markdown::plain_rows` idiom of every other call
+site; the unexercised root re-export of `handle_chat_key` dropped
+(`chat::handle_chat_key` remains the path). Deliberately untouched:
+`ViewState::open_chat`/`close_chat` (the documented Phase 6 seam), the
+chat/fleet renderer split (their line-building needs genuinely
+differ), and every test and golden.
+
+### Changes
+- `crates/amux-tui/src/chat/render.rs`: `FIXED_ROWS` + `extra_rows` +
+  `feed_height_for`; `composer_width`→`text_width`;
+  `finished_blank`→`crate::render::blank_line`; inlined
+  `plain_text_rows`/`message_lines`.
+- `crates/amux-tui/src/chat/markdown.rs`: `break_row` extraction;
+  single-char `find`; `wrap_runs` private.
+- `crates/amux-tui/src/chat/composer.rs`: `kill_to_line_end` via
+  `kill_range`.
+- `crates/amux-tui/src/lib.rs`: root re-export trimmed to `ChatView`.
+
+### Verification
+- fmt clean; workspace clippy `-D warnings` (`--features
+  amux/testnet`) clean; amux-tui 51 lib + 21 chat golden + 19 fleet
+  golden with every golden byte-identical; amux-ui, amux --lib, amux
+  spec (testnet), and amux-cli suites green.
+
+---
+
 ## 2026-08-12: Chat V1 Phase 4 — codex review fixes
 
 ### Summary

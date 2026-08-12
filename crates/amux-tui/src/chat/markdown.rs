@@ -116,7 +116,7 @@ fn inline_runs(text: &str, theme: Theme) -> Vec<Run> {
     while i < chars.len() {
         let c = chars[i];
         if c == '`'
-            && let Some(close) = find(&chars, i + 1, &['`'])
+            && let Some(close) = find(&chars, i + 1, '`')
         {
             flush(&mut plain, &mut runs);
             runs.push((chars[i + 1..close].iter().collect(), theme.code()));
@@ -132,7 +132,7 @@ fn inline_runs(text: &str, theme: Theme) -> Vec<Run> {
                     i = close + 2;
                     continue;
                 }
-            } else if let Some(close) = find(&chars, i + 1, &['*']) {
+            } else if let Some(close) = find(&chars, i + 1, '*') {
                 flush(&mut plain, &mut runs);
                 runs.push((chars[i + 1..close].iter().collect(), theme.italic()));
                 i = close + 1;
@@ -146,8 +146,8 @@ fn inline_runs(text: &str, theme: Theme) -> Vec<Run> {
     runs
 }
 
-fn find(chars: &[char], from: usize, wanted: &[char]) -> Option<usize> {
-    (from..chars.len()).find(|&i| wanted.contains(&chars[i]))
+fn find(chars: &[char], from: usize, wanted: char) -> Option<usize> {
+    (from..chars.len()).find(|&i| chars[i] == wanted)
 }
 
 fn find_pair(chars: &[char], from: usize) -> Option<usize> {
@@ -157,7 +157,7 @@ fn find_pair(chars: &[char], from: usize) -> Option<usize> {
 /// Greedy word wrap over styled runs. Words never split unless longer than
 /// a whole line — the URL-aware rule (B2): a link that fits any line is
 /// never broken. `hang` indents continuation rows (list items).
-pub(crate) fn wrap_runs(runs: &[Run], width: usize, hang: usize) -> Vec<Vec<Span<'static>>> {
+fn wrap_runs(runs: &[Run], width: usize, hang: usize) -> Vec<Vec<Span<'static>>> {
     let width = width.max(1);
     let hang = hang.min(width.saturating_sub(1));
     struct Word {
@@ -166,6 +166,20 @@ pub(crate) fn wrap_runs(runs: &[Run], width: usize, hang: usize) -> Vec<Vec<Span
         /// Preceded by whitespace in the source (first word of a run glues
         /// to the previous run's tail — inline styles split mid-word).
         spaced: bool,
+    }
+    /// Close the current row and open its continuation (hang-indented);
+    /// returns the continuation row's width.
+    fn break_row(
+        rows: &mut Vec<Vec<Span<'static>>>,
+        row: &mut Vec<Span<'static>>,
+        width: usize,
+        hang: usize,
+    ) -> usize {
+        rows.push(std::mem::take(row));
+        if hang > 0 {
+            row.push(Span::raw(" ".repeat(hang)));
+        }
+        width.saturating_sub(hang).max(1)
     }
     let mut words: Vec<Word> = Vec::new();
     // A run boundary carries a space when either side of it does — inline
@@ -196,12 +210,8 @@ pub(crate) fn wrap_runs(runs: &[Run], width: usize, hang: usize) -> Vec<Vec<Span
         let len = str_width(&word.text);
         let sep = usize::from(word.spaced && used > 0);
         if used > 0 && used + sep + len > row_width {
-            rows.push(std::mem::take(&mut row));
+            row_width = break_row(&mut rows, &mut row, width, hang);
             used = 0;
-            row_width = width.saturating_sub(hang).max(1);
-            if hang > 0 {
-                row.push(Span::raw(" ".repeat(hang)));
-            }
         } else if sep > 0 {
             row.push(Span::styled(" ".to_string(), word.style));
             used += 1;
@@ -219,12 +229,8 @@ pub(crate) fn wrap_runs(runs: &[Run], width: usize, hang: usize) -> Vec<Vec<Span
                     // loop forever.
                     break;
                 }
-                rows.push(std::mem::take(&mut row));
+                row_width = break_row(&mut rows, &mut row, width, hang);
                 used = 0;
-                row_width = width.saturating_sub(hang).max(1);
-                if hang > 0 {
-                    row.push(Span::raw(" ".repeat(hang)));
-                }
                 continue;
             }
             used += str_width(head);

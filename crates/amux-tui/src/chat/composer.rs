@@ -229,13 +229,7 @@ impl Composer {
 
     /// Ctrl+K — kill to line end.
     pub fn kill_to_line_end(&mut self) {
-        let (start, end) = (self.cursor, self.line_end());
-        if start >= end {
-            return;
-        }
-        let killed: String = self.chars[start..end].iter().collect();
-        self.chars.drain(start..end);
-        self.kill = Some(killed);
+        self.kill_range(self.cursor, self.line_end());
     }
 
     /// Ctrl+W — delete word backward (readline unix-word-rubout:

@@ -10,8 +10,8 @@
 //! gates, counts — the code below formats and never decides.
 
 use amux_ui::claude::{
-    ChatPhase, FeedEntry, FeedEntryKind, InterruptionKind, MessageEntry, PromptEcho, SuccessFacts,
-    ToolEntry, ToolInvocation, ToolOutcome, TurnDuration,
+    ChatPhase, FeedEntry, FeedEntryKind, InterruptionKind, PromptEcho, SuccessFacts, ToolEntry,
+    ToolInvocation, ToolOutcome, TurnDuration,
 };
 use amux_ui::{AgentId, Model};
 use ratatui::style::Style;
@@ -19,7 +19,9 @@ use ratatui::text::{Line, Span};
 
 use crate::chat::{ChatView, FeedScroll, entry_watermark};
 use crate::chat::{composer::Composer, markdown};
-use crate::render::{FrameContext, Theme, finish_line, line_len, new_line, pad_to, push_span};
+use crate::render::{
+    FrameContext, Theme, blank_line, finish_line, line_len, new_line, pad_to, push_span, str_width,
+};
 
 /// Column grid from the wireframes: glyphs (`›`, `✔`, `~`, `─`) at 2,
 /// entry text at 4, `└` continuation text at 6.
@@ -43,6 +45,18 @@ const PLAN_PREVIEW_LINES: usize = 6;
 
 // --- layout -----------------------------------------------------------------
 
+/// The frame's fixed rows: top border, header, rule (3) above the feed;
+/// blank, blank, footer, bottom border (4) below it. Everything else —
+/// feed, working/paused rows, composer growth — divides the remainder.
+const FIXED_ROWS: usize = 3 + 4;
+
+/// Rows between the feed and the composer block: the reserved
+/// queue-preview row (occupied by the paused rule when scrolled back)
+/// plus the working line.
+fn extra_rows(working: bool, paused: bool) -> usize {
+    usize::from(working || paused) + usize::from(working)
+}
+
 /// The frame's row budget, shared between the renderer and the key
 /// handler so scroll paging and rendering agree on the feed viewport.
 pub(crate) struct ChatLayout {
@@ -53,26 +67,20 @@ pub(crate) struct ChatLayout {
 }
 
 impl ChatLayout {
-    /// Rows between the feed and the composer block: the reserved
-    /// queue-preview row (occupied by the paused rule when scrolled back)
-    /// plus the working line.
-    fn extra_rows(&self, paused: bool) -> usize {
-        usize::from(self.working || paused) + usize::from(self.working)
+    fn feed_height_for(&self, paused: bool) -> usize {
+        self.height
+            .saturating_sub(FIXED_ROWS + extra_rows(self.working, paused) + self.composer_rows)
     }
 
-    /// Feed viewport height for the current scroll state. Top chrome is 3
-    /// rows (border, header, rule); bottom is blank + composer + blank +
-    /// footer + border.
+    /// Feed viewport height for the current scroll state.
     pub fn feed_height(&self) -> usize {
-        self.height
-            .saturating_sub(3 + self.extra_rows(self.paused) + self.composer_rows + 4)
+        self.feed_height_for(self.paused)
     }
 
     /// Feed viewport height once scrolled back — the scroll keys target
     /// the paused layout (the paused rule takes one row).
     pub fn feed_height_when_paused(&self) -> usize {
-        self.height
-            .saturating_sub(3 + self.extra_rows(true) + self.composer_rows + 4)
+        self.feed_height_for(true)
     }
 }
 
@@ -82,14 +90,14 @@ pub(crate) fn layout(model: &Model, chat: &ChatView, viewport: (u16, u16)) -> Ch
     let working = matches!(model.claude_phase(chat.agent), ChatPhase::Working);
     let paused = matches!(chat.scroll, FeedScroll::Paused { .. });
     // The composer auto-grows to six rows but never past the viewport's
-    // static-row budget (7 fixed chrome rows + the working/paused rows):
-    // the footer and border survive every height, the feed gives way
-    // first.
-    let extra = usize::from(working || paused) + usize::from(working);
-    // Never below 1: a 1-row composer always renders (the too-small guard
-    // keeps heights where even that cannot fit out of this path).
-    let budget = height.saturating_sub(7 + extra).max(1);
-    let (rows, _) = composer_display_rows(&chat.composer, composer_width(width));
+    // fixed-row budget: the footer and border survive every height, the
+    // feed gives way first. Never below 1: a 1-row composer always
+    // renders (the too-small guard keeps heights where even that cannot
+    // fit out of this path).
+    let budget = height
+        .saturating_sub(FIXED_ROWS + extra_rows(working, paused))
+        .max(1);
+    let (rows, _) = composer_display_rows(&chat.composer, text_width(width));
     ChatLayout {
         height,
         composer_rows: rows.len().clamp(1, budget.min(6)),
@@ -98,14 +106,13 @@ pub(crate) fn layout(model: &Model, chat: &ChatView, viewport: (u16, u16)) -> Ch
     }
 }
 
-fn composer_width(width: usize) -> usize {
-    width.saturating_sub(TEXT_COL + 1).max(1)
-}
-
+/// Cells available to content at TEXT_COL — feed text and the composer
+/// share the column — inside the right border's one-cell margin.
 fn text_width(width: usize) -> usize {
     width.saturating_sub(TEXT_COL + 1).max(1)
 }
 
+/// Cells available to `└` continuation text at CONT_COL.
 fn cont_width(width: usize) -> usize {
     width.saturating_sub(CONT_COL + 1).max(1)
 }
@@ -156,7 +163,7 @@ pub(crate) fn build_chat_lines(
         };
         let mut window: Vec<Line<'static>> = feed.into_iter().skip(start).take(feed_h).collect();
         while window.len() < feed_h {
-            window.push(finished_blank(width));
+            window.push(blank_line(width));
         }
         (window, at_top)
     };
@@ -187,17 +194,17 @@ pub(crate) fn build_chat_lines(
                 model, chat, theme, width, feed_h, *mark, *top_line,
             ));
         }
-        FeedScroll::Paused { .. } => lines.push(finished_blank(width)),
-        FeedScroll::Following if layout.working => lines.push(finished_blank(width)),
+        FeedScroll::Paused { .. } => lines.push(blank_line(width)),
+        FeedScroll::Following if layout.working => lines.push(blank_line(width)),
         FeedScroll::Following => {}
     }
     if layout.working {
         lines.push(working_line(model, chat, ctx, width));
     }
 
-    lines.push(finished_blank(width));
+    lines.push(blank_line(width));
     lines.extend(composer_lines(chat, theme, width, layout.composer_rows));
-    lines.push(finished_blank(width));
+    lines.push(blank_line(width));
     lines.push(footer_line(model, chat, theme, width));
     lines.push(crate::render::bottom_border(width));
     lines.truncate(height);
@@ -211,12 +218,6 @@ fn top_border(width: usize, theme: Theme) -> Line<'static> {
     }
     text.push('┐');
     Line::from(Span::styled(text, theme.muted()))
-}
-
-fn finished_blank(width: usize) -> Line<'static> {
-    let mut line = new_line();
-    finish_line(&mut line, width);
-    line
 }
 
 fn header_line(
@@ -284,7 +285,7 @@ fn loading_band(theme: Theme, width: usize, feed_h: usize) -> Vec<Line<'static>>
             finish_line(&mut line, width);
             rows.push(line);
         } else {
-            rows.push(finished_blank(width));
+            rows.push(blank_line(width));
         }
     }
     rows
@@ -369,7 +370,7 @@ fn composer_display_rows(composer: &Composer, width: usize) -> (Vec<String>, usi
         let mut row = String::new();
         let mut row_cells = 0usize;
         for grapheme in logical.graphemes(true) {
-            let cells = crate::render::str_width(grapheme);
+            let cells = str_width(grapheme);
             if row_cells + cells > width && !row.is_empty() {
                 rows.push(std::mem::take(&mut row));
                 row_cells = 0;
@@ -403,7 +404,7 @@ fn composer_lines(
         finish_line(&mut line, width);
         return vec![line];
     }
-    let (rows, cursor_row) = composer_display_rows(&chat.composer, composer_width(width));
+    let (rows, cursor_row) = composer_display_rows(&chat.composer, text_width(width));
     // Auto-grow one to six rows; past six, the window follows the cursor.
     let start = if rows.len() <= visible_rows {
         0
@@ -551,7 +552,7 @@ fn append_grouped_tool(previous: &mut Block, tool: &ToolEntry, theme: Theme, wid
         rest.push(' ');
     }
     rest.push_str(&tool_main_text(tool));
-    let added = 3 + crate::render::str_width(&rest);
+    let added = 3 + str_width(&rest);
     if line_len(main) + added > width.saturating_sub(2) {
         return false;
     }
@@ -566,7 +567,11 @@ fn append_grouped_tool(previous: &mut Block, tool: &ToolEntry, theme: Theme, wid
 }
 
 fn echo_block(echo: &PromptEcho, theme: Theme, width: usize) -> Block {
-    let mut lines = glyph_block("›", theme.text(), plain_text_rows(&echo.text, theme, width));
+    let mut lines = glyph_block(
+        "›",
+        theme.text(),
+        markdown::plain_rows(&echo.text, text_width(width), theme.text()),
+    );
     let mut sending = new_line();
     push_span(&mut sending, TEXT_COL, "sending…", theme.muted());
     lines.push(sending);
@@ -579,12 +584,14 @@ fn entry_block(entry: &FeedEntry, theme: Theme, width: usize) -> Block {
             lines: glyph_block(
                 "›",
                 theme.text(),
-                plain_text_rows(&prompt.text, theme, width),
+                markdown::plain_rows(&prompt.text, text_width(width), theme.text()),
             ),
             tool: false,
         },
+        // One markdown source per message: blocks joined the way the API
+        // separates them.
         FeedEntryKind::Message(message) => Block {
-            lines: message_lines(message, theme, width),
+            lines: markdown_block(&message.segments.join("\n\n"), theme, width),
             tool: false,
         },
         FeedEntryKind::Thinking(thinking) => {
@@ -691,13 +698,6 @@ fn entry_block(entry: &FeedEntry, theme: Theme, width: usize) -> Block {
             }
         }
     }
-}
-
-fn message_lines(message: &MessageEntry, theme: Theme, width: usize) -> Vec<Line<'static>> {
-    // One markdown source per message: blocks joined the way the API
-    // separates them.
-    let source = message.segments.join("\n\n");
-    markdown_block(&source, theme, width)
 }
 
 fn markdown_block(source: &str, theme: Theme, width: usize) -> Vec<Line<'static>> {
@@ -961,10 +961,6 @@ fn glyph_block(
             line
         })
         .collect()
-}
-
-fn plain_text_rows(text: &str, theme: Theme, width: usize) -> Vec<Vec<Span<'static>>> {
-    markdown::plain_rows(text, text_width(width), theme.text())
 }
 
 /// A dim marker at the glyph column (`~ thought for 6s`).

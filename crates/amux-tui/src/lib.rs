@@ -14,7 +14,7 @@ pub mod run;
 pub mod terminal;
 pub mod view;
 
-pub use chat::{ChatView, handle_chat_key};
+pub use chat::ChatView;
 pub use render::{FrameContext, Theme, build_lines, render};
 pub use run::{AttachReturn, TuiConfig, run_fleet};
 pub use terminal::{TerminalGuard, install_panic_hook, write_enter_chrome, write_restore};
