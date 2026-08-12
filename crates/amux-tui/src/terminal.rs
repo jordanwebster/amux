@@ -7,11 +7,14 @@
 //! `Write` so the tier-3 vt100 harness can assert the exact sequences.
 
 use std::io::{self, Write};
-use std::sync::Once;
 use std::sync::atomic::{AtomicBool, Ordering};
+use std::sync::{Once, OnceLock};
 
 use crossterm::cursor::{Hide, Show};
-use crossterm::event::{DisableBracketedPaste, EnableBracketedPaste};
+use crossterm::event::{
+    DisableBracketedPaste, EnableBracketedPaste, KeyboardEnhancementFlags,
+    PopKeyboardEnhancementFlags, PushKeyboardEnhancementFlags,
+};
 use crossterm::terminal::{
     EnterAlternateScreen, LeaveAlternateScreen, disable_raw_mode, enable_raw_mode,
 };
@@ -20,6 +23,24 @@ use crossterm::terminal::{
 /// panic hook restores iff set, and clears it so restore runs once.
 static CHROME_OWNS_TERMINAL: AtomicBool = AtomicBool::new(false);
 static PANIC_HOOK: Once = Once::new();
+
+/// Whether the terminal answered the kitty keyboard-enhancement probe —
+/// probed once per process (the terminal does not change under us), on
+/// the first chrome entry, inside the guard lifecycle. Tier gate for the
+/// kitty-only chords (Ctrl+Enter, Shift+Enter): hints and the `?`
+/// overlay derive from it; dispatch itself trusts the events that
+/// actually arrive.
+static KITTY_SUPPORTED: OnceLock<bool> = OnceLock::new();
+
+/// Whether enhancement flags are currently pushed (on the alternate
+/// screen's stack). Restore pops iff set — kitty keeps per-screen flag
+/// stacks, so the pop must happen before leaving the alternate screen.
+static KITTY_PUSHED: AtomicBool = AtomicBool::new(false);
+
+/// The probe result, once a chrome session has run; false before.
+pub fn kitty_active() -> bool {
+    KITTY_SUPPORTED.get().copied().unwrap_or(false)
+}
 
 /// Bytes that put the terminal into chrome mode (alternate screen, hidden
 /// cursor, bracketed paste — without it a pasted CR would arrive as Enter
@@ -38,6 +59,12 @@ pub fn write_restore(out: &mut impl Write) -> io::Result<()> {
 }
 
 fn restore_now() {
+    // Pop the keyboard-enhancement flags first, while still on the
+    // alternate screen (kitty keeps per-screen flag stacks). Guarded by
+    // the pushed flag so legacy-Windows consoles never see the CSI.
+    if KITTY_PUSHED.swap(false, Ordering::SeqCst) {
+        let _ = crossterm::execute!(io::stdout(), PopKeyboardEnhancementFlags);
+    }
     let _ = disable_raw_mode();
     let _ = write_restore(&mut io::stdout());
 }
@@ -77,6 +104,23 @@ impl TerminalGuard {
             return Err(error);
         }
         CHROME_OWNS_TERMINAL.store(true, Ordering::SeqCst);
+        // Kitty keyboard protocol, feature-detected (CHAT.md
+        // §Keybindings' kitty tier): probe once per process — the query
+        // needs raw mode and rides crossterm's internal event reader —
+        // then push the disambiguate flag each session so Ctrl+Enter and
+        // Shift+Enter arrive distinguishable. Pushed on the alternate
+        // screen, popped by every restore path before leaving it.
+        let supported = *KITTY_SUPPORTED
+            .get_or_init(|| crossterm::terminal::supports_keyboard_enhancement().unwrap_or(false));
+        if supported
+            && crossterm::execute!(
+                io::stdout(),
+                PushKeyboardEnhancementFlags(KeyboardEnhancementFlags::DISAMBIGUATE_ESCAPE_CODES)
+            )
+            .is_ok()
+        {
+            KITTY_PUSHED.store(true, Ordering::SeqCst);
+        }
         Ok(Self { restored: false })
     }
 
@@ -120,10 +164,14 @@ mod signal_restore {
     static INSTALL: Once = Once::new();
     static SAVED_TERMIOS: OnceLock<libc::termios> = OnceLock::new();
 
-    /// Leave alternate screen + show cursor + disable bracketed paste,
-    /// mirroring [`super::write_restore`] (locked to crossterm's actual
-    /// bytes by a unit test below).
-    pub(super) const RESTORE_BYTES: &[u8] = b"\x1b[?1049l\x1b[?25h\x1b[?2004l";
+    /// Pop keyboard-enhancement flags (before leaving the alternate
+    /// screen — kitty keeps per-screen stacks; a pop with nothing pushed
+    /// is a no-op, and unknown-CSI-tolerant terminals ignore it), then
+    /// leave alternate screen + show cursor + disable bracketed paste,
+    /// mirroring [`super::restore_now`] (locked to crossterm's actual
+    /// bytes by a unit test below). Deliberately unconditional, like the
+    /// rest of this handler.
+    pub(super) const RESTORE_BYTES: &[u8] = b"\x1b[<1u\x1b[?1049l\x1b[?25h\x1b[?2004l";
 
     pub(super) fn install() {
         INSTALL.call_once(|| {
@@ -157,11 +205,13 @@ mod signal_restore {
 mod tests {
     use super::*;
 
-    /// The signal handler's hardcoded bytes must stay in lockstep with what
-    /// `write_restore` (crossterm) actually emits.
+    /// The signal handler's hardcoded bytes must stay in lockstep with
+    /// what the orderly restore path (crossterm) actually emits: the
+    /// keyboard-enhancement pop, then `write_restore`.
     #[test]
     fn signal_restore_bytes_match_write_restore() {
         let mut out: Vec<u8> = Vec::new();
+        crossterm::execute!(out, PopKeyboardEnhancementFlags).expect("write to vec");
         write_restore(&mut out).expect("write to vec");
         assert_eq!(out, signal_restore::RESTORE_BYTES);
     }

@@ -38,6 +38,35 @@ One paragraph describing what was done.
 
 ---
 
+## 2026-08-12: Chat V1 Phase 6 — kitty detection + Shift+Enter
+
+### Summary
+The kitty keyboard protocol is feature-detected inside the terminal-
+guard lifecycle: `TerminalGuard::enter` probes once per process
+(crossterm's `supports_keyboard_enhancement` — the CSI ? u / DA1 query,
+needing raw mode) and, when answered, pushes
+`DISAMBIGUATE_ESCAPE_CODES` each session so Ctrl+Enter (fleet entry,
+next chunk) and Shift+Enter (composer newline sugar) arrive as distinct
+events. Every restore path pops before leaving the alternate screen
+(kitty keeps per-screen flag stacks): the orderly path guards the pop
+on having pushed (legacy Windows consoles never see the CSI); the
+async-signal-safe handler stays deliberately unconditional —
+`RESTORE_BYTES` now leads with `CSI < 1 u`, and the lockstep test
+asserts pop + `write_restore` byte-for-byte. `ViewState.kitty` carries
+the probe result as view-config, feeding the tier gate for hints and
+the `?` overlay; dispatch itself trusts delivered events (a plain
+terminal cannot produce Enter+SHIFT). Shift+Enter in the composer
+inserts a newline, never sends; Ctrl+J stays canonical.
+
+### Verification
+- `timeout 600 cargo test -p amux-tui --lib` — 95 (incl. the updated
+  restore-bytes lockstep and the Shift+Enter newline test).
+- crossterm 0.28.1 parses kitty CSI u back to the same
+  KeyCode/modifier shapes the handlers already match (Tab+SHIFT →
+  BackTab; Esc; Ctrl+C), so no legacy binding moves under the flags.
+
+---
+
 ## 2026-08-12: Chat V1 Phase 6 — chrome-wide guarded Ctrl+C
 
 ### Summary

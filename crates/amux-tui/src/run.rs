@@ -91,6 +91,10 @@ async fn chrome_session(
     config: &TuiConfig,
 ) -> Result<ChromeExit> {
     let guard = TerminalGuard::enter()?;
+    // The guard probed for the kitty keyboard protocol on the way in;
+    // hints and the `?` overlay derive from the effective tier (P10 —
+    // hints advertise only what works).
+    view.kitty = crate::terminal::kitty_active();
     let mut terminal = Terminal::new(CrosstermBackend::new(io::stdout()))?;
     let mut events = EventStream::new();
     let mut ticker = tokio::time::interval(Duration::from_secs(1));

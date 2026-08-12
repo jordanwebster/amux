@@ -159,10 +159,17 @@ fn composer_key(
                 });
             }
         }
+        // Shift+Enter: kitty-tier newline sugar. Dispatch trusts the
+        // delivered event — a plain terminal cannot produce it (Enter and
+        // Shift+Enter are byte-identical without the kitty protocol);
+        // the tier gate lives in hints and the `?` overlay.
+        KeyCode::Enter if key.modifiers.contains(KeyModifiers::SHIFT) => {
+            chat.composer.insert_newline()
+        }
         KeyCode::Enter => return send(chat, model),
-        // Ctrl+J: the guaranteed newline in any terminal (Shift+Enter is
-        // kitty sugar, Phase 6). Ctrl+P/N and the arrows are multiline
-        // row motion — above the one-line readline set.
+        // Ctrl+J: the guaranteed newline in any terminal (Shift+Enter
+        // above is the kitty sugar). Ctrl+P/N and the arrows are
+        // multiline row motion — above the one-line readline set.
         KeyCode::Char('j') if ctrl => chat.composer.insert_newline(),
         KeyCode::Char('p') if ctrl => chat.composer.up(),
         KeyCode::Char('n') if ctrl => chat.composer.down(),
@@ -953,6 +960,24 @@ mod tests {
         let model = idle_model();
         let mut chat = chat_with_draft("first");
         let action = handle_chat_key(&mut chat, &model, ctrl('j'), VIEWPORT, t(0));
+        assert_eq!(action, None);
+        assert_eq!(chat.composer.text(), "first\n");
+    }
+
+    /// Shift+Enter is the kitty-tier newline sugar: when the terminal
+    /// delivers it (only the kitty protocol can), it is a newline, never
+    /// a send.
+    #[test]
+    fn shift_enter_inserts_a_newline_instead_of_sending() {
+        let model = idle_model();
+        let mut chat = chat_with_draft("first");
+        let action = handle_chat_key(
+            &mut chat,
+            &model,
+            KeyEvent::new(KeyCode::Enter, KeyModifiers::SHIFT),
+            VIEWPORT,
+            t(0),
+        );
         assert_eq!(action, None);
         assert_eq!(chat.composer.text(), "first\n");
     }
