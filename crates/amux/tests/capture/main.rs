@@ -876,6 +876,40 @@ async fn permission_deny_feedback(
     }))
 }
 
+/// Wait for the question form's answers row; while it has not landed a
+/// review/submit step is still up — confirm it with Enter (up to three).
+/// Returns how many extra Enters were needed, recorded per scenario as
+/// `observed.extra_submit_steps` (evidence for the C6 submit tables: zero
+/// means the scenario's own program submitted the form).
+async fn confirm_question_submit(
+    session: &mut CaptureSession,
+    index: usize,
+    flow: &str,
+) -> Result<u32> {
+    let mut extra_submit_steps = 0u32;
+    loop {
+        let answered = session
+            .wait_for_row(
+                index,
+                Duration::from_secs(15),
+                "question answers row",
+                |row| row.raw.contains("\"answers\""),
+            )
+            .await
+            .is_ok();
+        if answered {
+            return Ok(extra_submit_steps);
+        }
+        if extra_submit_steps >= 3 {
+            bail!("no answers row after the {flow} flow (+{extra_submit_steps} submit Enters)");
+        }
+        extra_submit_steps += 1;
+        session
+            .send_keys("submit step: Enter", vec![Act::Write(b"\r".to_vec())])
+            .await?;
+    }
+}
+
 /// AskUserQuestion with TWO single-select questions: verifies the
 /// multi-question tab flow — digit selects, Enter advances to the next
 /// question tab, the final submit step confirms all answers.
@@ -922,36 +956,7 @@ async fn question_tabs(
             ],
         )
         .await?;
-    // If the answers row has not landed, a submit/review step is up: confirm
-    // it with Enter (and record that the extra step was needed).
-    let mut extra_submit_steps = 0;
-    let mut answered = session
-        .wait_for_row(
-            index,
-            Duration::from_secs(15),
-            "question answers row",
-            |row| row.raw.contains("\"answers\""),
-        )
-        .await
-        .is_ok();
-    while !answered && extra_submit_steps < 3 {
-        extra_submit_steps += 1;
-        session
-            .send_keys("submit step: Enter", vec![Act::Write(b"\r".to_vec())])
-            .await?;
-        answered = session
-            .wait_for_row(
-                index,
-                Duration::from_secs(15),
-                "question answers row",
-                |row| row.raw.contains("\"answers\""),
-            )
-            .await
-            .is_ok();
-    }
-    if !answered {
-        bail!("no answers row after the tab flow (+{extra_submit_steps} submit Enters)");
-    }
+    let extra_submit_steps = confirm_question_submit(&mut session, index, "tab").await?;
     let _ = session
         .wait_for_turn_end(index, Duration::from_secs(60))
         .await;
@@ -1020,34 +1025,7 @@ async fn question_other_single(
             ],
         )
         .await?;
-    let mut extra_submit_steps = 0;
-    let mut answered = session
-        .wait_for_row(
-            index,
-            Duration::from_secs(15),
-            "question answers row",
-            |row| row.raw.contains("\"answers\""),
-        )
-        .await
-        .is_ok();
-    while !answered && extra_submit_steps < 3 {
-        extra_submit_steps += 1;
-        session
-            .send_keys("submit step: Enter", vec![Act::Write(b"\r".to_vec())])
-            .await?;
-        answered = session
-            .wait_for_row(
-                index,
-                Duration::from_secs(15),
-                "question answers row",
-                |row| row.raw.contains("\"answers\""),
-            )
-            .await
-            .is_ok();
-    }
-    if !answered {
-        bail!("no answers row after the Other flow (+{extra_submit_steps} submit Enters)");
-    }
+    let extra_submit_steps = confirm_question_submit(&mut session, index, "Other").await?;
     let _ = session
         .wait_for_turn_end(index, Duration::from_secs(60))
         .await;
@@ -1115,34 +1093,7 @@ async fn question_mixed(
             ],
         )
         .await?;
-    let mut extra_submit_steps = 0;
-    let mut answered = session
-        .wait_for_row(
-            index,
-            Duration::from_secs(15),
-            "question answers row",
-            |row| row.raw.contains("\"answers\""),
-        )
-        .await
-        .is_ok();
-    while !answered && extra_submit_steps < 3 {
-        extra_submit_steps += 1;
-        session
-            .send_keys("submit step: Enter", vec![Act::Write(b"\r".to_vec())])
-            .await?;
-        answered = session
-            .wait_for_row(
-                index,
-                Duration::from_secs(15),
-                "question answers row",
-                |row| row.raw.contains("\"answers\""),
-            )
-            .await
-            .is_ok();
-    }
-    if !answered {
-        bail!("no answers row after the mixed flow (+{extra_submit_steps} submit Enters)");
-    }
+    let extra_submit_steps = confirm_question_submit(&mut session, index, "mixed").await?;
     let _ = session
         .wait_for_turn_end(index, Duration::from_secs(60))
         .await;

@@ -38,6 +38,47 @@ One paragraph describing what was done.
 
 ---
 
+## 2026-08-12: Phase 3 simplification pass
+
+### Summary
+The phase-gate simplification sweep over the Phase 3 diff. Three small
+cuts, no behavior change: (1) dead surface — `STALE_INPUT_ERROR` was
+re-exported from `amux_ui` but nothing outside `runtime.rs` uses it;
+the re-export is gone and the const is module-private. (2) noise — six
+`command.clone()` calls on `update.rs` refusal paths were redundant
+(NLL lets the command move on every early-return path); refusals now
+consume the command plainly. (3) copy-paste drift — the three new
+question capture scenarios (`question_tabs`, `question_other_single`,
+`question_mixed`) carried verbatim copies of the wait-for-answers /
+press-Enter-for-a-lingering-submit-step loop; it is now one
+`confirm_question_submit` helper returning the recorded
+`extra_submit_steps`, leaving each scenario's documented keystroke
+program in-line. Reviewed and deliberately left alone: the refusal
+plumbing (already ONE mechanism — `refuse` plus typed `EncodingError`
+rendered to stated messages, not parallel copies), the `InputDispatch`
+parameter object (four callers; keeps `retry_stale` named at call
+sites), `PromptEcho.at` / `SuggestionFact.directories` (fold facts with
+a stated Phase 4 consumer), the encoding fns' `pub` visibility (the
+module is the documented seam), and every spec chapter.
+
+### Changes
+- `crates/amux-ui/src/lib.rs`, `runtime.rs`: drop the unused
+  `STALE_INPUT_ERROR` export; const is now private to the shell.
+- `crates/amux-ui/src/update.rs`: refusal paths move `command` instead
+  of cloning it.
+- `crates/amux/tests/capture/main.rs`: shared
+  `confirm_question_submit` for the three Phase 3 question scenarios
+  (identical messages and retry bounds preserved).
+
+### Verification
+- fmt; workspace clippy `--all-targets --features amux/testnet`
+  `-D warnings` clean; `timeout 600 cargo test -p amux-ui` (25 lib +
+  119 spec + 1), `-p amux --lib` (401), `-p amux --features testnet
+  --test spec` (44), `-p amux-tui` (22) all green. No spec assertion
+  changed; no fixture touched.
+
+---
+
 ## 2026-08-12: Chat V1 Phase 3 — codex review fixes
 
 ### Summary

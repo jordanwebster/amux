@@ -180,12 +180,12 @@ fn update_send_prompt(model: &mut Model, op: OpId, seq: u64, command: Command) -
         unreachable!("routed by update_command");
     };
     if let Some(refusal) = model.claude_send_gate(agent).refusal() {
-        return refuse(model, op, seq, command.clone(), refusal);
+        return refuse(model, op, seq, command, refusal);
     }
     let text = encoding::normalize_prompt(text);
     let program = match encoding::prompt_program(&text) {
         Ok(program) => program,
-        Err(error) => return refuse(model, op, seq, command.clone(), &error.to_string()),
+        Err(error) => return refuse(model, op, seq, command, &error.to_string()),
     };
     let now = model.now;
     with_existing_claude_layer(model, agent, |layer| {
@@ -221,14 +221,14 @@ fn update_answer_ask(model: &mut Model, op: OpId, seq: u64, command: Command) ->
             model,
             op,
             seq,
-            command.clone(),
+            command,
             "chat input unavailable for this agent",
         );
     };
     let Some(entry) = layer.asks().find(|entry| entry.id == ask) else {
         // Remote resolution wins over local intent: the ask is gone, the
         // panel has already collapsed to the fact.
-        return refuse(model, op, seq, command.clone(), "ask already resolved");
+        return refuse(model, op, seq, command, "ask already resolved");
     };
     // Claude's remote menu only ever displays the HEAD of the queue: a
     // program addressed to a later ask would encode that ask's digits and
@@ -239,7 +239,7 @@ fn update_answer_ask(model: &mut Model, op: OpId, seq: u64, command: Command) ->
             model,
             op,
             seq,
-            command.clone(),
+            command,
             "ask is queued behind the current menu — answer the head ask first",
         );
     }
@@ -248,13 +248,13 @@ fn update_answer_ask(model: &mut Model, op: OpId, seq: u64, command: Command) ->
             model,
             op,
             seq,
-            command.clone(),
+            command,
             "answer already in flight — awaiting confirmation",
         );
     }
     let program = match encoding::answer_program(&entry.kind, answer) {
         Ok(program) => program,
-        Err(error) => return refuse(model, op, seq, command.clone(), &error.to_string()),
+        Err(error) => return refuse(model, op, seq, command, &error.to_string()),
     };
     let answer = answer.clone();
     with_existing_claude_layer(model, agent, |layer| {

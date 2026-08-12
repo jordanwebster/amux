@@ -455,7 +455,7 @@ const STALE_RETRY_LIMIT: u32 = 3;
 
 /// The stated form of a seq-guard refusal (C5: the resurfaced ask carries
 /// the failure stated; the technical detail rides in parentheses).
-pub const STALE_INPUT_ERROR: &str = "input raced the session — it moved on before the keys landed";
+const STALE_INPUT_ERROR: &str = "input raced the session — it moved on before the keys landed";
 
 /// Inject a keystroke program under the seq guard. The KeySteps map onto
 /// the `claude_pty_transcript_v1` actions verbatim — no bytes are authored
