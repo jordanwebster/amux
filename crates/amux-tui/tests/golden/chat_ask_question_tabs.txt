@@ -1,22 +1,20 @@
 ┌──────────────────────────────────────────────────────────────────────────────┐
 │ fix-auth · claude @ mbp                                     chat · needs you │
 │──────────────────────────────────────────────────────────────────────────────│
+│                                                                              │
 │ ✔ Read sync/config.rs                                                        │
 │ ▸ Bash cargo check -p amux-sync                                              │
 │   └ running                                                                  │
 │──────────────────────────────────────────────────────────────────────────────│
-│ ⚠ permission — Edit sync/config.rs (+2 -1)                                   │
+│ ? questions   [storage*] [rollout] [submit]                                  │
 │                                                                              │
-│      pub struct RetryConfig {                                                │
-│    -     pub max_attempts: u8,                                               │
-│    +     pub max_attempts: u8,        // capped at 6                         │
-│    +     pub jitter_ms: u16,                                                 │
-│          pub base_delay: Duration,                                           │
-│      }                                                                       │
+│   Which stores should the migration cover? (select all that apply)           │
 │                                                                              │
-│ › 1. Allow once                                                              │
-│   2. Always allow access to /work from this project                          │
-│   3. Deny — tell the agent why (optional)                                    │
+│   1. [x] trust store       pairing + relay trust records                     │
+│   2. [ ] session index     bounded tail metadata                             │
+│ › 3. [x] recorder dumps    panic-hook recordings                             │
+│   4. [ ] Other…            type your own answer                              │
 │                                                                              │
-│   1-3/↑↓ select · enter confirm · f full diff · esc back (never answers)     │
+│   1-4/↑↓ select · space toggle · tab next question · enter advance · esc back│
+│   (never answers)                                                            │
 └──────────────────────────────────────────────────────────────────────────────┘

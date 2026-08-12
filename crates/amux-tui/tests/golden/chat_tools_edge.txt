@@ -16,7 +16,7 @@
 │   step 4: do the thing                                                       │
 │   step 5: do the thing                                                       │
 │   step 6: do the thing                                                       │
-│   ⋮ 3 more lines                                                             │
+│   ⋮ 3 more lines · ctrl+t to read                                            │
 │ ✔ Task audit the trust store                                                 │
 │   └ done · 34s · 12 tools                                                    │
 │ ✔ Task long refactor (background)                                            │

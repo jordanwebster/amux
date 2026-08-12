@@ -1,22 +1,18 @@
 ┌──────────────────────────────────────────────────────────────────────────────┐
 │ fix-auth · claude @ mbp                                     chat · needs you │
 │──────────────────────────────────────────────────────────────────────────────│
+│ ~ thought for 6s                                                             │
+│                                                                              │
+│   The cap belongs in RetryConfig; I'll thread it through SyncOptions.        │
+│                                                                              │
 │ ✔ Read sync/config.rs                                                        │
 │ ▸ Bash cargo check -p amux-sync                                              │
 │   └ running                                                                  │
 │──────────────────────────────────────────────────────────────────────────────│
-│ ⚠ permission — Edit sync/config.rs (+2 -1)                                   │
+│ ? questions   [storage] [rollout] [submit*]                                  │
 │                                                                              │
-│      pub struct RetryConfig {                                                │
-│    -     pub max_attempts: u8,                                               │
-│    +     pub max_attempts: u8,        // capped at 6                         │
-│    +     pub jitter_ms: u16,                                                 │
-│          pub base_delay: Duration,                                           │
-│      }                                                                       │
+│   storage — trust store                                                      │
+│   rollout — unanswered                                                       │
 │                                                                              │
-│ › 1. Allow once                                                              │
-│   2. Always allow access to /work from this project                          │
-│   3. Deny — tell the agent why (optional)                                    │
-│                                                                              │
-│   1-3/↑↓ select · enter confirm · f full diff · esc back (never answers)     │
+│   enter submit · tab/←→ questions · esc back (never answers)                 │
 └──────────────────────────────────────────────────────────────────────────────┘

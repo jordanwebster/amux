@@ -165,6 +165,9 @@ async fn chrome_session(
                                 working_dir: config.working_dir.clone(),
                             });
                         }
+                        Some(UiAction::CloseChat) => {
+                            view.close_chat();
+                        }
                         Some(UiAction::DebugDump) => {
                             match runtime.dump(DumpReason::UserRequested) {
                                 Ok(path) => {

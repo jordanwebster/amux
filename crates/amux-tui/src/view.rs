@@ -161,6 +161,9 @@ pub enum UiAction {
     Quit,
     Attach(AgentId),
     Dispatch(Command),
+    /// Leave the chat back to the fleet (read-only chats' `q`, F1; the
+    /// writable chat leaves via the chrome leader — Phase 6).
+    CloseChat,
     /// Create on this host (name and working dir are filled in by the
     /// runtime edge, which owns id/name generation).
     Create {

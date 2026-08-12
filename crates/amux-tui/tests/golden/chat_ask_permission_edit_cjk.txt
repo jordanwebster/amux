@@ -1,17 +1,17 @@
 ┌──────────────────────────────────────────────────────────────────────────────┐
 │ fix-auth · claude @ mbp                                     chat · needs you │
 │──────────────────────────────────────────────────────────────────────────────│
+│                                                                              │
 │ ✔ Read sync/config.rs                                                        │
 │ ▸ Bash cargo check -p amux-sync                                              │
 │   └ running                                                                  │
 │──────────────────────────────────────────────────────────────────────────────│
-│ ⚠ permission — Edit sync/config.rs (+2 -1)                                   │
+│ ⚠ permission — Edit sync/リ ト ラ イ .rs (+1 -1)                                 │
 │                                                                              │
-│      pub struct RetryConfig {                                                │
-│    -     pub max_attempts: u8,                                               │
-│    +     pub max_attempts: u8,        // capped at 6                         │
-│    +     pub jitter_ms: u16,                                                 │
-│          pub base_delay: Duration,                                           │
+│      fn 設 定 () {                                                             │
+│    -     let 上 限  = 3;                                                       │
+│    +     let 上 限  = 6; // 指 数 バ ッ ク オ フ の 再 試 行 回 数 の 上 限 を こ こ で 決 め る  — 長 │
+│      い 行 は 折 り 返 し て 右 枠 を 壊 さ な い こ と                                       │
 │      }                                                                       │
 │                                                                              │
 │ › 1. Allow once                                                              │

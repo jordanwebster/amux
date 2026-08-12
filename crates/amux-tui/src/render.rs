@@ -108,6 +108,33 @@ impl Theme {
     pub(crate) fn error(self) -> Style {
         Style::default().fg(Color::Red)
     }
+
+    // The diff family (`docs/CHAT.md` §Diffs): four semantic tokens,
+    // foreground-only in V1 — theme-proof by construction (named ANSI
+    // resolves per palette). Background tints are the named additive
+    // extension; adding them later touches these tokens only. The V1
+    // values coincide with ok/error/text/muted, but the vocabulary is
+    // fixed separately so the palettes may diverge without a relayout.
+
+    /// `+` sign + added content foreground.
+    pub(crate) fn diff_added(self) -> Style {
+        Style::default().fg(Color::Green)
+    }
+
+    /// `-` sign + removed content foreground.
+    pub(crate) fn diff_removed(self) -> Style {
+        Style::default().fg(Color::Red)
+    }
+
+    /// Context content.
+    pub(crate) fn diff_context(self) -> Style {
+        Style::default()
+    }
+
+    /// Line numbers, `⋮` gaps, remainder lines, blank gutters.
+    pub(crate) fn diff_meta(self) -> Style {
+        self.muted()
+    }
 }
 
 /// The frame's environment: everything a render may depend on besides the

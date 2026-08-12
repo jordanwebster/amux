@@ -1,0 +1,24 @@
+┌──────────────────────────────────────────────────────────────────────────────┐
+│ fix-auth · claude @ mbp                                     chat · needs you │
+│──────────────────────────────────────────────────────────────────────────────│
+│ ✔ Read sync/config.rs                                                        │
+│ ▸ Bash cargo check -p amux-sync                                              │
+│   └ running                                                                  │
+│──────────────────────────────────────────────────────────────────────────────│
+│ ⚠ plan review                                                                │
+│                                                                              │
+│   ## Approach                                                                │
+│                                                                              │
+│   1. Wrap Client::reconnect in retry_with_backoff                            │
+│   - exponential base 200 ms, cap 5 s, jitter bounded                         │
+│   2. Thread RetryConfig through SyncOptions                                  │
+│   3. Spec chapter sync::retry — cold start, mid-stream drop,                 │
+│   give-up-after-cap                                                          │
+│   ⋮  +25 more lines · f full plan                                            │
+│                                                                              │
+│ › 1. Approve — auto       agent proceeds, edits apply without asking         │
+│   2. Approve — manual     agent asks before each edit                        │
+│   3. Request changes      feedback required                                  │
+│                                                                              │
+│   1-3/↑↓ select · enter confirm · f full plan · esc back (never answers)     │
+└──────────────────────────────────────────────────────────────────────────────┘

@@ -8,9 +8,13 @@
 //! nothing (P5). Kitty-tier sugar (Shift+Enter newline) is absent until
 //! the chrome feature-detects kitty — Phase 6; hints never advertise it.
 
+use amux_ui::claude::AskState;
+use amux_ui::claude::encoding::{self, AskAnswer};
 use amux_ui::{Command, Model};
 use crossterm::event::{KeyCode, KeyEvent, KeyEventKind, KeyModifiers};
 
+use crate::chat::ask_ui::{self, AskKeyOutcome, AskStage};
+use crate::chat::reader::{self, ReaderSource, ReaderView};
 use crate::chat::{ChatView, FeedScroll, entry_watermark, render};
 use crate::view::UiAction;
 
@@ -23,18 +27,67 @@ pub fn handle_chat_key(
     if key.kind == KeyEventKind::Release {
         return None;
     }
-    // Any keypress dismisses a stated send failure (dismissal is view
-    // state; the Model keeps the outcome).
+    // Any keypress dismisses a stated failure (dismissal is view state;
+    // the Model keeps the outcome).
     chat.send_failure = None;
-    let ctrl = key.modifiers.contains(KeyModifiers::CONTROL);
+    chat.ask_failure = None;
+    // Defensive sync: keys may arrive before the first reconcile.
+    chat.sync_ask(model);
 
+    // Read-only chats have a single viewing focus: scroll keys, `f`, and
+    // `q` only (F1) — write affordances are absent, not disabled, so the
+    // interrupt and composer branches below simply do not exist here.
+    if chat.read_only(model) {
+        return readonly_key(chat, model, key, viewport);
+    }
+
+    let ctrl = key.modifiers.contains(KeyModifiers::CONTROL);
     match key.code {
         // D3: interrupt is the one deliberate binding that works in every
-        // focus state, even while send is gated. Never on Esc, never on
-        // Ctrl+C. The reducer dispatches it ungated.
+        // focus state — open ask panels and readers included, even while
+        // send is gated. Never on Esc, never on Ctrl+C. The reducer
+        // dispatches it ungated.
         KeyCode::Char('x') if ctrl => {
-            Some(UiAction::Dispatch(Command::Interrupt { agent: chat.agent }))
+            return Some(UiAction::Dispatch(Command::Interrupt { agent: chat.agent }));
         }
+        // The settled view-only Esc chain: never answers, never
+        // interrupts.
+        KeyCode::Esc => {
+            esc_chain(chat);
+            return None;
+        }
+        _ => {}
+    }
+
+    // The fullscreen reader owns keys while open.
+    if chat.reader.is_some() {
+        return reader_key(chat, model, key, viewport);
+    }
+
+    // A docked ask owns the composer area and its keys (C1).
+    if let Some(head) = chat.ask_head(model) {
+        if matches!(head.state, AskState::AnsweredOptimistic { .. }) {
+            // PENDING: the collapsed marker holds the panel; only the feed
+            // scrolls (the answer is in flight — nothing to select).
+            scroll_keys(chat, model, &key, viewport);
+            return None;
+        }
+        return panel_key(chat, model, key, viewport);
+    }
+
+    composer_key(chat, model, key, viewport)
+}
+
+/// The composer focus (Phase 4's key set, plus Ctrl+T for the plan
+/// reader).
+fn composer_key(
+    chat: &mut ChatView,
+    model: &Model,
+    key: KeyEvent,
+    viewport: (u16, u16),
+) -> Option<UiAction> {
+    let ctrl = key.modifiers.contains(KeyModifiers::CONTROL);
+    match key.code {
         // Ctrl+C on a non-empty draft: abandon the whole draft as a kill
         // (yankable — a single ^C never loses text it didn't visibly
         // kill). On an empty draft this arms the chrome-wide two-press
@@ -47,10 +100,20 @@ pub fn handle_chat_key(
             }
             None
         }
-        // The settled view-only Esc chain: never answers, never
-        // interrupts.
-        KeyCode::Esc => {
-            esc_chain(chat);
+        // Ctrl+T: the reader on the newest accepted plan (B6); ←/→ steps
+        // between plans once open. Only bound while a plan exists — the
+        // feed's `ctrl+t to read` affordance is the hint.
+        KeyCode::Char('t') if ctrl => {
+            let plans = model
+                .claude(chat.agent)
+                .map(|layer| layer.accepted_plans().len())
+                .unwrap_or(0);
+            if plans > 0 {
+                chat.reader = Some(ReaderView {
+                    source: ReaderSource::Plans { index: plans - 1 },
+                    scroll: 0,
+                });
+            }
             None
         }
         KeyCode::Enter => send(chat, model),
@@ -86,11 +149,7 @@ pub fn handle_chat_key(
         // Ctrl+Home / Ctrl+End: feed oldest / newest (ext tier —
         // convenience, never the sole path; PgUp/PgDn are guaranteed).
         KeyCode::Home if ctrl => {
-            let (_, feed_h) = scroll_metrics(chat, model, viewport);
-            let total = render::feed_line_count(model, chat, viewport.0 as usize);
-            if total > feed_h {
-                pause_at(chat, model, 0);
-            }
+            jump_top(chat, model, viewport);
             None
         }
         KeyCode::End if ctrl => {
@@ -154,9 +213,8 @@ pub fn handle_chat_key(
                 // Deliberately unbound, each an act of restraint: Ctrl+A
                 // (chrome leader), Ctrl+G (emacs abort reflex — must never
                 // fire agent actions), Ctrl+R (reserved: history search),
-                // Ctrl+L (shell redraw reflex), Ctrl+T (plan reader,
-                // Phase 5), Ctrl+V (bracketed paste owns pasting), and the
-                // byte-aliases Ctrl+H/I/M.
+                // Ctrl+L (shell redraw reflex), Ctrl+V (bracketed paste
+                // owns pasting), and the byte-aliases Ctrl+H/I/M.
                 _ => {}
             }
             None
@@ -172,12 +230,29 @@ pub fn handle_chat_key(
     }
 }
 
-/// Bracketed paste into the chat: literal insertion into the draft —
-/// tabs and newlines land as text, never as bindings (a pasted CR must
-/// never submit a partial prompt). The composer normalizes and expands;
-/// see [`crate::chat::composer::Composer::paste`].
+/// Bracketed paste into the chat: literal insertion into the focused text
+/// surface — tabs and newlines land as text, never as bindings (a pasted
+/// CR must never submit a partial prompt). An open panel text stage takes
+/// the paste (newlines flattened to spaces — panel fields are one-line);
+/// with a panel docked but no field open the paste is dropped rather than
+/// typed into the invisible composer; otherwise the composer takes it
+/// (see [`crate::chat::composer::Composer::paste`]).
 pub fn handle_chat_paste(chat: &mut ChatView, text: &str) {
     chat.send_failure = None;
+    chat.ask_failure = None;
+    if let Some(ui) = chat.ask_ui.as_mut() {
+        if let Some(field) = ui.active_field() {
+            let one_line = text
+                .replace("\r\n", "\n")
+                .replace('\r', "\n")
+                .replace('\n', " ");
+            field.paste(&one_line);
+        }
+        return;
+    }
+    if chat.reader.is_some() {
+        return;
+    }
     chat.composer.paste(text);
 }
 
@@ -202,16 +277,246 @@ fn send(chat: &mut ChatView, model: &Model) -> Option<UiAction> {
 /// transitions), checked in order — first hit wins. Esc never answers an
 /// ask and never interrupts.
 fn esc_chain(chat: &mut ChatView) {
-    // Stage 1 (Phase 5): close the reader — a plan-review reader drops to
-    // its docked panel.
-    // Stage 2 (Phase 5): step back ask stages, flooring at the menu stage
-    // — the panel is never dismissed while its ask pends.
+    // Stage 1: close the reader — an open text field inside it closes
+    // first (the request-changes stage steps back to the action row with
+    // its text kept), then the reader itself; a plan-review reader drops
+    // to its docked panel form.
+    if let Some(reader) = &chat.reader {
+        if matches!(reader.source, ReaderSource::Ask)
+            && let Some(ui) = chat.ask_ui.as_mut()
+            && ui.step_back()
+        {
+            return;
+        }
+        chat.reader = None;
+        return;
+    }
+    // Stage 2: step back ask stages, flooring at the menu stage — the
+    // panel is never dismissed while its ask pends.
+    if let Some(ui) = chat.ask_ui.as_mut()
+        && ui.step_back()
+    {
+        return;
+    }
     // Stage 3: reset feed scroll to following — empty draft only.
     if matches!(chat.scroll, FeedScroll::Paused { .. }) && chat.composer.is_empty() {
         chat.scroll = FeedScroll::Following;
     }
-    // Stage 4: nothing. (Each earlier stage must `return` once Phase 5
-    // adds stages 1–2 — first hit wins.)
+    // Stage 4: nothing.
+}
+
+// --- panel and reader routing ------------------------------------------------
+
+/// Keys while an ask panel is docked and interactive (Pending or
+/// SendFailed): the stage machine first, the feed's scroll keys as the
+/// fallback — the feed stays scrollable behind the docked panel.
+fn panel_key(
+    chat: &mut ChatView,
+    model: &Model,
+    key: KeyEvent,
+    viewport: (u16, u16),
+) -> Option<UiAction> {
+    let head = chat.ask_head(model)?;
+    // Unverified menu shapes render read-only-style (C2): no actions to
+    // route — only the read affordance and the feed scroll live.
+    if encoding::menu_shape_refusal(&head.kind).is_some() {
+        if key.code == KeyCode::Char('f') && ask_ui::has_readable(head) {
+            chat.reader = Some(ReaderView {
+                source: ReaderSource::Ask,
+                scroll: 0,
+            });
+            return None;
+        }
+        scroll_keys(chat, model, &key, viewport);
+        return None;
+    }
+    let ask_id = head.id;
+    let outcome = chat
+        .ask_ui
+        .as_mut()
+        .map(|ui| ui.handle_key(head, &key, true))
+        .unwrap_or(AskKeyOutcome::NotHandled);
+    match outcome {
+        AskKeyOutcome::Answer(answer) => Some(dispatch_answer(chat, ask_id, answer)),
+        AskKeyOutcome::OpenReader => {
+            chat.reader = Some(ReaderView {
+                source: ReaderSource::Ask,
+                scroll: 0,
+            });
+            None
+        }
+        AskKeyOutcome::Handled => None,
+        AskKeyOutcome::NotHandled => {
+            scroll_keys(chat, model, &key, viewport);
+            None
+        }
+    }
+}
+
+fn dispatch_answer(chat: &ChatView, ask: u64, answer: AskAnswer) -> UiAction {
+    UiAction::Dispatch(Command::AnswerAsk {
+        agent: chat.agent,
+        ask,
+        answer,
+    })
+}
+
+/// Keys while the fullscreen reader is open: the writable ask's action
+/// row / feedback stage first, then pager motion (P7 — no text field
+/// means bare letters are safe; in the request-changes stage they type).
+fn reader_key(
+    chat: &mut ChatView,
+    model: &Model,
+    key: KeyEvent,
+    viewport: (u16, u16),
+) -> Option<UiAction> {
+    let ask_reader = matches!(
+        chat.reader,
+        Some(ReaderView {
+            source: ReaderSource::Ask,
+            ..
+        })
+    );
+    if ask_reader
+        && let Some(head) = chat.ask_head(model)
+        && matches!(head.state, AskState::Pending)
+        && encoding::menu_shape_refusal(&head.kind).is_none()
+    {
+        let ask_id = head.id;
+        let outcome = chat
+            .ask_ui
+            .as_mut()
+            .map(|ui| ui.handle_key(head, &key, false))
+            .unwrap_or(AskKeyOutcome::NotHandled);
+        match outcome {
+            AskKeyOutcome::Answer(answer) => return Some(dispatch_answer(chat, ask_id, answer)),
+            AskKeyOutcome::Handled | AskKeyOutcome::OpenReader => {
+                // Enter on Deny opens the one-line feedback stage, which
+                // is docked (C2): the reader closes to the panel.
+                if chat
+                    .ask_ui
+                    .as_ref()
+                    .is_some_and(|ui| ui.stage == AskStage::DenyFeedback)
+                {
+                    chat.reader = None;
+                }
+                return None;
+            }
+            AskKeyOutcome::NotHandled => {}
+        }
+    }
+    match key.code {
+        // q leaves a read surface (P7); in the writable review reader it
+        // is the Esc-stage alias — the plan stays, the docked panel
+        // remains (text stages consumed q above as a printable).
+        KeyCode::Char('q') => {
+            chat.reader = None;
+            None
+        }
+        // ←/→ step between accepted plans (resolved reader only).
+        KeyCode::Left => {
+            if let Some(index) = reader::plans_step(model, chat, -1)
+                && let Some(view) = chat.reader.as_mut()
+            {
+                view.source = ReaderSource::Plans { index };
+                view.scroll = 0;
+            }
+            None
+        }
+        KeyCode::Right => {
+            if let Some(index) = reader::plans_step(model, chat, 1)
+                && let Some(view) = chat.reader.as_mut()
+            {
+                view.source = ReaderSource::Plans { index };
+                view.scroll = 0;
+            }
+            None
+        }
+        _ => {
+            reader_scroll(chat, model, &key, viewport);
+            None
+        }
+    }
+}
+
+/// Pager motion over the reader body: ↑↓ j/k, PgUp/PgDn, Home/End g/G.
+fn reader_scroll(chat: &mut ChatView, model: &Model, key: &KeyEvent, viewport: (u16, u16)) -> bool {
+    let Some((page, max_top)) = reader::scroll_metrics(model, chat, viewport) else {
+        return false;
+    };
+    let Some(view) = chat.reader.as_mut() else {
+        return false;
+    };
+    match key.code {
+        KeyCode::Up | KeyCode::Char('k') => view.scroll = view.scroll.saturating_sub(1),
+        KeyCode::Down | KeyCode::Char('j') => view.scroll = (view.scroll + 1).min(max_top),
+        KeyCode::PageUp => view.scroll = view.scroll.saturating_sub(page),
+        KeyCode::PageDown => view.scroll = (view.scroll + page).min(max_top),
+        KeyCode::Home | KeyCode::Char('g') => view.scroll = 0,
+        KeyCode::End | KeyCode::Char('G') => view.scroll = max_top,
+        _ => return false,
+    }
+    true
+}
+
+/// The feed's scroll keys, shared by every docked focus state.
+fn scroll_keys(chat: &mut ChatView, model: &Model, key: &KeyEvent, viewport: (u16, u16)) -> bool {
+    let ctrl = key.modifiers.contains(KeyModifiers::CONTROL);
+    match key.code {
+        KeyCode::PageUp => page_up(chat, model, viewport),
+        KeyCode::PageDown => page_down(chat, model, viewport),
+        KeyCode::Home if ctrl => jump_top(chat, model, viewport),
+        KeyCode::End if ctrl => chat.scroll = FeedScroll::Following,
+        _ => return false,
+    }
+    true
+}
+
+/// The read-only chat (F1): a pager over the live feed. Bare letters are
+/// safe — no text field exists here — and every write affordance is
+/// absent, not disabled: no interrupt, no answers, no composer.
+fn readonly_key(
+    chat: &mut ChatView,
+    model: &Model,
+    key: KeyEvent,
+    viewport: (u16, u16),
+) -> Option<UiAction> {
+    if chat.reader.is_some() {
+        match key.code {
+            KeyCode::Esc | KeyCode::Char('q') => chat.reader = None,
+            _ => {
+                reader_scroll(chat, model, &key, viewport);
+            }
+        }
+        return None;
+    }
+    match key.code {
+        // q leaves the read surface — back to the fleet.
+        KeyCode::Char('q') => return Some(UiAction::CloseChat),
+        // f opens the pending ask's diff or plan in the reader — the fact
+        // panel's one read affordance.
+        KeyCode::Char('f') => {
+            if chat.ask_head(model).is_some_and(ask_ui::has_readable) {
+                chat.reader = Some(ReaderView {
+                    source: ReaderSource::Ask,
+                    scroll: 0,
+                });
+            }
+        }
+        KeyCode::Esc => {
+            if matches!(chat.scroll, FeedScroll::Paused { .. }) {
+                chat.scroll = FeedScroll::Following;
+            }
+        }
+        KeyCode::PageUp => page_up(chat, model, viewport),
+        KeyCode::PageDown => page_down(chat, model, viewport),
+        KeyCode::Up | KeyCode::Char('k') => line_up(chat, model, viewport),
+        KeyCode::Down | KeyCode::Char('j') => line_down(chat, model, viewport),
+        KeyCode::Home | KeyCode::Char('g') => jump_top(chat, model, viewport),
+        KeyCode::End | KeyCode::Char('G') => chat.scroll = FeedScroll::Following,
+        _ => {}
+    }
+    None
 }
 
 /// Scroll bounds under the paused layout (the paused rule takes a row, so
@@ -270,6 +575,45 @@ fn page_down(chat: &mut ChatView, model: &Model, viewport: (u16, u16)) {
         chat.scroll = FeedScroll::Following;
     } else {
         pause_at(chat, model, next);
+    }
+}
+
+/// Jump to the feed's oldest retained line (Ctrl+Home; `g`/Home in the
+/// read-only pager).
+fn jump_top(chat: &mut ChatView, model: &Model, viewport: (u16, u16)) {
+    let (_, feed_h) = scroll_metrics(chat, model, viewport);
+    let total = render::feed_line_count(model, chat, viewport.0 as usize);
+    if total > feed_h {
+        pause_at(chat, model, 0);
+    }
+}
+
+/// One-line pager motion (read-only chats: ↑/k, ↓/j).
+fn line_up(chat: &mut ChatView, model: &Model, viewport: (u16, u16)) {
+    let (_, feed_h) = scroll_metrics(chat, model, viewport);
+    let total = render::feed_line_count(model, chat, viewport.0 as usize);
+    let max_top = total.saturating_sub(feed_h);
+    match chat.scroll {
+        FeedScroll::Following => {
+            if max_top > 0 {
+                pause_at(chat, model, max_top - 1);
+            }
+        }
+        FeedScroll::Paused { top_line, .. } => pause_at(chat, model, top_line.saturating_sub(1)),
+    }
+}
+
+fn line_down(chat: &mut ChatView, model: &Model, viewport: (u16, u16)) {
+    let FeedScroll::Paused { top_line, .. } = chat.scroll else {
+        return;
+    };
+    let (_, feed_h) = scroll_metrics(chat, model, viewport);
+    let total = render::feed_line_count(model, chat, viewport.0 as usize);
+    let max_top = total.saturating_sub(feed_h);
+    if top_line + 1 >= max_top {
+        chat.scroll = FeedScroll::Following;
+    } else {
+        pause_at(chat, model, top_line + 1);
     }
 }
 
@@ -705,6 +1049,605 @@ mod tests {
         handle_chat_paste(&mut chat, "one\n\ttwo");
         assert_eq!(chat.composer.text(), "one\n    two");
         assert_eq!(chat.send_failure(), None, "paste is input; it dismisses");
+    }
+
+    // --- ask panels, reader, read-only (Phase 5) ----------------------------
+
+    use amux_ui::claude::encoding::{PermissionAnswer, PlanAnswer, QuestionResponse};
+
+    fn hook_row(tool: &str, input: serde_json::Value, suggestions: usize) -> serde_json::Value {
+        let mut row = json!({
+            "type": "hook.permission_request",
+            "tool_name": tool,
+            "tool_input": input,
+            "permission_mode": "default",
+        });
+        if suggestions > 0 {
+            let entries: Vec<serde_json::Value> = (0..suggestions)
+                .map(|_| {
+                    json!({"type": "addDirectories", "destination": "session",
+                                "directories": ["/work"]})
+                })
+                .collect();
+            row["permission_suggestions"] = serde_json::Value::Array(entries);
+        }
+        row
+    }
+
+    fn edit_ask_model() -> Model {
+        let mut model = working_model();
+        fold(
+            &mut model,
+            vec![rows(
+                3,
+                3,
+                vec![hook_row(
+                    "Edit",
+                    json!({"file_path": "sync/config.rs", "old_string": "a\n", "new_string": "b\n"}),
+                    1,
+                )],
+            )],
+        );
+        model
+    }
+
+    fn plan_ask_model() -> Model {
+        let mut model = working_model();
+        fold(
+            &mut model,
+            vec![rows(
+                3,
+                3,
+                vec![hook_row(
+                    "ExitPlanMode",
+                    json!({"plan": "# plan\n\n- step"}),
+                    0,
+                )],
+            )],
+        );
+        model
+    }
+
+    fn question_model(multi: bool) -> Model {
+        let mut model = working_model();
+        fold(
+            &mut model,
+            vec![rows(
+                3,
+                3,
+                vec![hook_row(
+                    "AskUserQuestion",
+                    json!({"questions": [
+                        {"header": "Color", "question": "Which?", "multiSelect": multi,
+                         "options": [{"label": "Red"}, {"label": "Blue"}]}
+                    ]}),
+                    1,
+                )],
+            )],
+        );
+        model
+    }
+
+    fn open_chat(model: &Model) -> ChatView {
+        let mut chat = ChatView::open(agent_id());
+        chat.reconcile(model);
+        chat
+    }
+
+    fn answer_of(action: Option<UiAction>) -> amux_ui::claude::encoding::AskAnswer {
+        match action {
+            Some(UiAction::Dispatch(Command::AnswerAsk { agent, ask, answer })) => {
+                assert_eq!(agent, agent_id());
+                assert_eq!(ask, 0, "the head ask");
+                answer
+            }
+            other => panic!("expected an AnswerAsk dispatch, got {other:?}"),
+        }
+    }
+
+    #[test]
+    fn digits_select_and_enter_dispatches_the_answer() {
+        let model = edit_ask_model();
+        let mut chat = open_chat(&model);
+        assert_eq!(
+            handle_chat_key(&mut chat, &model, press(KeyCode::Char('2')), VIEWPORT),
+            None,
+            "digits select, never submit (P8)"
+        );
+        let answer = answer_of(handle_chat_key(
+            &mut chat,
+            &model,
+            press(KeyCode::Enter),
+            VIEWPORT,
+        ));
+        assert_eq!(
+            answer,
+            amux_ui::claude::encoding::AskAnswer::Permission(PermissionAnswer::AllowScoped)
+        );
+    }
+
+    #[test]
+    fn esc_floors_at_the_menu_and_never_dismisses_the_panel() {
+        let model = edit_ask_model();
+        let mut chat = open_chat(&model);
+        for _ in 0..3 {
+            assert_eq!(
+                handle_chat_key(&mut chat, &model, press(KeyCode::Esc), VIEWPORT),
+                None
+            );
+        }
+        assert!(
+            chat.ask_ui.is_some(),
+            "the panel is not dismissible while its ask pends"
+        );
+    }
+
+    #[test]
+    fn deny_stage_preserves_text_and_enter_carries_the_feedback() {
+        let model = edit_ask_model();
+        let mut chat = open_chat(&model);
+        handle_chat_key(&mut chat, &model, press(KeyCode::Char('3')), VIEWPORT);
+        handle_chat_key(&mut chat, &model, press(KeyCode::Enter), VIEWPORT);
+        for c in "why".chars() {
+            handle_chat_key(&mut chat, &model, press(KeyCode::Char(c)), VIEWPORT);
+        }
+        // Esc steps back to the menu; the typed text survives (P8).
+        handle_chat_key(&mut chat, &model, press(KeyCode::Esc), VIEWPORT);
+        assert!(matches!(
+            chat.ask_ui.as_ref().expect("panel").stage,
+            crate::chat::ask_ui::AskStage::Menu { cursor: 2 }
+        ));
+        handle_chat_key(&mut chat, &model, press(KeyCode::Enter), VIEWPORT);
+        let answer = answer_of(handle_chat_key(
+            &mut chat,
+            &model,
+            press(KeyCode::Enter),
+            VIEWPORT,
+        ));
+        assert_eq!(
+            answer,
+            amux_ui::claude::encoding::AskAnswer::Permission(PermissionAnswer::Deny {
+                feedback: Some("why".to_string())
+            })
+        );
+    }
+
+    #[test]
+    fn deny_with_empty_text_is_a_plain_deny() {
+        let model = edit_ask_model();
+        let mut chat = open_chat(&model);
+        handle_chat_key(&mut chat, &model, press(KeyCode::Char('3')), VIEWPORT);
+        handle_chat_key(&mut chat, &model, press(KeyCode::Enter), VIEWPORT);
+        let answer = answer_of(handle_chat_key(
+            &mut chat,
+            &model,
+            press(KeyCode::Enter),
+            VIEWPORT,
+        ));
+        assert_eq!(
+            answer,
+            amux_ui::claude::encoding::AskAnswer::Permission(PermissionAnswer::Deny {
+                feedback: None
+            })
+        );
+    }
+
+    #[test]
+    fn ctrl_x_interrupts_from_the_panel_and_its_text_stage() {
+        let model = edit_ask_model();
+        let mut chat = open_chat(&model);
+        assert_eq!(
+            handle_chat_key(&mut chat, &model, ctrl('x'), VIEWPORT),
+            Some(UiAction::Dispatch(Command::Interrupt { agent: agent_id() }))
+        );
+        handle_chat_key(&mut chat, &model, press(KeyCode::Char('3')), VIEWPORT);
+        handle_chat_key(&mut chat, &model, press(KeyCode::Enter), VIEWPORT);
+        assert_eq!(
+            handle_chat_key(&mut chat, &model, ctrl('x'), VIEWPORT),
+            Some(UiAction::Dispatch(Command::Interrupt { agent: agent_id() })),
+            "interrupt works in every focus state (D3)"
+        );
+    }
+
+    #[test]
+    fn ctrl_c_clears_the_panel_field_never_the_draft() {
+        let model = edit_ask_model();
+        let mut chat = open_chat(&model);
+        chat.composer.insert_str("precious draft");
+        handle_chat_key(&mut chat, &model, press(KeyCode::Char('3')), VIEWPORT);
+        handle_chat_key(&mut chat, &model, press(KeyCode::Enter), VIEWPORT);
+        for c in "oops".chars() {
+            handle_chat_key(&mut chat, &model, press(KeyCode::Char(c)), VIEWPORT);
+        }
+        handle_chat_key(&mut chat, &model, ctrl('c'), VIEWPORT);
+        assert!(
+            chat.ask_ui
+                .as_ref()
+                .expect("panel")
+                .deny_feedback
+                .is_empty(),
+            "^C cleared the focused field"
+        );
+        assert_eq!(
+            chat.composer.text(),
+            "precious draft",
+            "the draft survives (D1)"
+        );
+    }
+
+    #[test]
+    fn a_single_select_question_submits_on_the_confirmed_selection() {
+        let model = question_model(false);
+        let mut chat = open_chat(&model);
+        handle_chat_key(&mut chat, &model, press(KeyCode::Char('2')), VIEWPORT);
+        let answer = answer_of(handle_chat_key(
+            &mut chat,
+            &model,
+            press(KeyCode::Enter),
+            VIEWPORT,
+        ));
+        assert_eq!(
+            answer,
+            amux_ui::claude::encoding::AskAnswer::Question {
+                responses: vec![QuestionResponse {
+                    selected: vec![1],
+                    other: None
+                }]
+            }
+        );
+    }
+
+    #[test]
+    fn the_other_field_types_and_submits_its_text() {
+        let model = question_model(false);
+        let mut chat = open_chat(&model);
+        handle_chat_key(&mut chat, &model, press(KeyCode::Char('3')), VIEWPORT);
+        for c in "ochre".chars() {
+            handle_chat_key(&mut chat, &model, press(KeyCode::Char(c)), VIEWPORT);
+        }
+        let answer = answer_of(handle_chat_key(
+            &mut chat,
+            &model,
+            press(KeyCode::Enter),
+            VIEWPORT,
+        ));
+        assert_eq!(
+            answer,
+            amux_ui::claude::encoding::AskAnswer::Question {
+                responses: vec![QuestionResponse {
+                    selected: vec![],
+                    other: Some("ochre".to_string())
+                }]
+            }
+        );
+    }
+
+    #[test]
+    fn multi_select_space_toggles_and_the_review_gates_submission() {
+        let model = question_model(true);
+        let mut chat = open_chat(&model);
+        // Tab straight to the submit tab with nothing answered: Enter is a
+        // no-op — the review states the unanswered item instead.
+        handle_chat_key(&mut chat, &model, press(KeyCode::Tab), VIEWPORT);
+        assert_eq!(
+            handle_chat_key(&mut chat, &model, press(KeyCode::Enter), VIEWPORT),
+            None,
+            "unanswered forms do not submit"
+        );
+        // Back to the question, toggle two options, advance, submit.
+        handle_chat_key(&mut chat, &model, press(KeyCode::Tab), VIEWPORT);
+        handle_chat_key(&mut chat, &model, press(KeyCode::Char(' ')), VIEWPORT);
+        handle_chat_key(&mut chat, &model, press(KeyCode::Down), VIEWPORT);
+        handle_chat_key(&mut chat, &model, press(KeyCode::Char(' ')), VIEWPORT);
+        handle_chat_key(&mut chat, &model, press(KeyCode::Enter), VIEWPORT);
+        let answer = answer_of(handle_chat_key(
+            &mut chat,
+            &model,
+            press(KeyCode::Enter),
+            VIEWPORT,
+        ));
+        assert_eq!(
+            answer,
+            amux_ui::claude::encoding::AskAnswer::Question {
+                responses: vec![QuestionResponse {
+                    selected: vec![0, 1],
+                    other: None
+                }]
+            }
+        );
+    }
+
+    #[test]
+    fn plan_review_opens_the_reader_first_and_esc_docks_it() {
+        let model = plan_ask_model();
+        let mut chat = open_chat(&model);
+        assert!(chat.reader.is_some(), "plan review opens the reader (C3)");
+        handle_chat_key(&mut chat, &model, press(KeyCode::Esc), VIEWPORT);
+        assert!(chat.reader.is_none(), "Esc drops to the docked panel");
+        assert!(chat.ask_ui.is_some(), "the docked form remains");
+        handle_chat_key(&mut chat, &model, press(KeyCode::Char('f')), VIEWPORT);
+        assert!(chat.reader.is_some(), "`f` returns to the full reader");
+    }
+
+    #[test]
+    fn request_changes_requires_feedback_and_q_types_there() {
+        let model = plan_ask_model();
+        let mut chat = open_chat(&model);
+        handle_chat_key(&mut chat, &model, press(KeyCode::Char('3')), VIEWPORT);
+        handle_chat_key(&mut chat, &model, press(KeyCode::Enter), VIEWPORT);
+        assert_eq!(
+            handle_chat_key(&mut chat, &model, press(KeyCode::Enter), VIEWPORT),
+            None,
+            "request-changes will not submit empty (C3)"
+        );
+        // `q` is a printable while the feedback field is focused (P2).
+        handle_chat_key(&mut chat, &model, press(KeyCode::Char('q')), VIEWPORT);
+        assert!(chat.reader.is_some(), "q typed instead of closing");
+        let answer = answer_of(handle_chat_key(
+            &mut chat,
+            &model,
+            press(KeyCode::Enter),
+            VIEWPORT,
+        ));
+        assert_eq!(
+            answer,
+            amux_ui::claude::encoding::AskAnswer::Plan(PlanAnswer::RequestChanges {
+                feedback: "q".to_string()
+            })
+        );
+    }
+
+    #[test]
+    fn plan_approve_dispatches_from_the_reader() {
+        let model = plan_ask_model();
+        let mut chat = open_chat(&model);
+        handle_chat_key(&mut chat, &model, press(KeyCode::Char('2')), VIEWPORT);
+        let answer = answer_of(handle_chat_key(
+            &mut chat,
+            &model,
+            press(KeyCode::Enter),
+            VIEWPORT,
+        ));
+        assert_eq!(
+            answer,
+            amux_ui::claude::encoding::AskAnswer::Plan(PlanAnswer::ApproveManual)
+        );
+    }
+
+    /// Accepted plans reopen with Ctrl+T; ←/→ steps between them; q
+    /// closes (B6).
+    #[test]
+    fn ctrl_t_opens_the_newest_plan_and_arrows_step() {
+        let mut model = idle_model();
+        for (n, id) in [(2u8, "toolu_a"), (5u8, "toolu_b")] {
+            fold(
+                &mut model,
+                vec![rows(
+                    n as i64,
+                    n as u64 * 10,
+                    vec![
+                        json!({
+                            "type": "assistant",
+                            "uuid": format!("dddddddd-0000-4000-8000-00000000aa{n:02}"),
+                            "sessionId": "22222222-2222-4222-8222-222222222222",
+                            "timestamp": "2026-08-12T09:00:01.000Z",
+                            "message": {"id": format!("msg_{id}"), "role": "assistant",
+                                        "stop_reason": "tool_use",
+                                        "content": [{"type": "tool_use", "id": id,
+                                                     "name": "ExitPlanMode",
+                                                     "input": {"plan": format!("# plan {id}")}}]},
+                        }),
+                        json!({
+                            "type": "user",
+                            "uuid": format!("dddddddd-0000-4000-8000-00000000bb{n:02}"),
+                            "sessionId": "22222222-2222-4222-8222-222222222222",
+                            "timestamp": "2026-08-12T09:00:02.000Z",
+                            "message": {"role": "user", "content": [
+                                {"type": "tool_result", "tool_use_id": id,
+                                 "content": "User has approved your plan."}
+                            ]},
+                            "toolUseResult": {"plan": format!("# plan {id}")},
+                        }),
+                    ],
+                )],
+            );
+        }
+        let mut chat = open_chat(&model);
+        handle_chat_key(&mut chat, &model, ctrl('t'), VIEWPORT);
+        assert!(
+            matches!(
+                &chat.reader,
+                Some(super::ReaderView {
+                    source: super::ReaderSource::Plans { index: 1 },
+                    ..
+                })
+            ),
+            "Ctrl+T opens the newest accepted plan"
+        );
+        handle_chat_key(&mut chat, &model, press(KeyCode::Left), VIEWPORT);
+        assert!(matches!(
+            &chat.reader,
+            Some(super::ReaderView {
+                source: super::ReaderSource::Plans { index: 0 },
+                ..
+            })
+        ));
+        handle_chat_key(&mut chat, &model, press(KeyCode::Char('q')), VIEWPORT);
+        assert!(chat.reader.is_none(), "q closes the reader");
+    }
+
+    fn readonly_ask_model() -> Model {
+        let mut model = Model::default();
+        let mut msgs = base_msgs();
+        if let Msg::Server(amux_ui::ServerMsg::AgentUpserted { agent }) = &mut msgs[2] {
+            agent.readonly = true;
+        } else {
+            panic!("fixture shape");
+        }
+        fold(&mut model, msgs);
+        fold(&mut model, vec![rows(1, 1, vec![ready_row()])]);
+        fold(&mut model, vec![rows(2, 2, vec![prompt_row(1)])]);
+        fold(
+            &mut model,
+            vec![rows(
+                3,
+                3,
+                vec![hook_row(
+                    "Edit",
+                    json!({"file_path": "sync/config.rs", "old_string": "a\n", "new_string": "b\n"}),
+                    1,
+                )],
+            )],
+        );
+        model
+    }
+
+    #[test]
+    fn readonly_chats_read_and_leave_but_never_write() {
+        let model = readonly_ask_model();
+        let mut chat = open_chat(&model);
+        assert!(
+            chat.reader.is_none(),
+            "read-only plan/ask never auto-opens a reader — the fact panel renders"
+        );
+        // Write affordances are absent, not disabled: no interrupt, no
+        // answers, no typing.
+        assert_eq!(
+            handle_chat_key(&mut chat, &model, ctrl('x'), VIEWPORT),
+            None
+        );
+        assert_eq!(
+            handle_chat_key(&mut chat, &model, press(KeyCode::Char('1')), VIEWPORT),
+            None
+        );
+        assert_eq!(
+            handle_chat_key(&mut chat, &model, press(KeyCode::Enter), VIEWPORT),
+            None
+        );
+        assert!(chat.composer.is_empty(), "nothing typed anywhere");
+        // The one read affordance: f opens the diff reader.
+        handle_chat_key(&mut chat, &model, press(KeyCode::Char('f')), VIEWPORT);
+        assert!(chat.reader.is_some());
+        handle_chat_key(&mut chat, &model, press(KeyCode::Char('q')), VIEWPORT);
+        assert!(chat.reader.is_none(), "q closes the reader first");
+        // q with no reader leaves the chat — back to the fleet (F1).
+        assert_eq!(
+            handle_chat_key(&mut chat, &model, press(KeyCode::Char('q')), VIEWPORT),
+            Some(UiAction::CloseChat)
+        );
+    }
+
+    #[test]
+    fn a_pending_answer_leaves_the_panel_inert() {
+        let mut model = edit_ask_model();
+        let mut chat = open_chat(&model);
+        let action = {
+            handle_chat_key(&mut chat, &model, press(KeyCode::Char('1')), VIEWPORT);
+            handle_chat_key(&mut chat, &model, press(KeyCode::Enter), VIEWPORT)
+        };
+        let Some(UiAction::Dispatch(command)) = action else {
+            panic!("the confirm dispatches");
+        };
+        let op = OpId(Uuid::from_u128(41));
+        chat.note_dispatched(op, &command);
+        fold(&mut model, vec![Msg::Command { op, command }]);
+        chat.reconcile(&model);
+        // The answer is optimistically in flight: no second dispatch, no
+        // stage changes.
+        assert_eq!(
+            handle_chat_key(&mut chat, &model, press(KeyCode::Enter), VIEWPORT),
+            None
+        );
+        assert_eq!(
+            handle_chat_key(&mut chat, &model, press(KeyCode::Char('1')), VIEWPORT),
+            None
+        );
+    }
+
+    #[test]
+    fn remote_resolution_dismisses_the_panel() {
+        let mut model = edit_ask_model();
+        let mut chat = open_chat(&model);
+        assert!(chat.ask_ui.is_some());
+        // The turn-end authority closes the ask (remote resolution's
+        // catch-up path); the panel dismisses on reconcile.
+        fold(
+            &mut model,
+            vec![rows(
+                4,
+                4,
+                vec![json!({
+                    "type": "system",
+                    "subtype": "turn_duration",
+                    "uuid": "dddddddd-0000-4000-8000-0000000000ff",
+                    "sessionId": "22222222-2222-4222-8222-222222222222",
+                    "timestamp": "2026-08-12T09:00:30.000Z",
+                    "durationMs": 30000,
+                })],
+            )],
+        );
+        chat.reconcile(&model);
+        assert!(
+            chat.ask_ui.is_none(),
+            "the panel dismissed; the fact renders"
+        );
+    }
+
+    #[test]
+    fn a_new_head_gets_a_fresh_panel() {
+        let mut model = working_model();
+        fold(
+            &mut model,
+            vec![rows(
+                3,
+                3,
+                vec![
+                    hook_row("Bash", json!({"command": "echo one"}), 1),
+                    hook_row("Bash", json!({"command": "echo two"}), 1),
+                ],
+            )],
+        );
+        let mut chat = open_chat(&model);
+        // Open the deny stage on the first ask.
+        handle_chat_key(&mut chat, &model, press(KeyCode::Char('3')), VIEWPORT);
+        handle_chat_key(&mut chat, &model, press(KeyCode::Enter), VIEWPORT);
+        // The first ask resolves (its tool_use correlates, then denies).
+        fold(
+            &mut model,
+            vec![rows(
+                4,
+                4,
+                vec![
+                    json!({
+                        "type": "assistant",
+                        "uuid": "dddddddd-0000-4000-8000-0000000000e1",
+                        "sessionId": "22222222-2222-4222-8222-222222222222",
+                        "timestamp": "2026-08-12T09:00:10.000Z",
+                        "message": {"id": "msg_e1", "role": "assistant", "stop_reason": "tool_use",
+                                    "content": [{"type": "tool_use", "id": "toolu_e1",
+                                                 "name": "Bash", "input": {"command": "echo one"}}]},
+                    }),
+                    json!({
+                        "type": "user",
+                        "uuid": "dddddddd-0000-4000-8000-0000000000e2",
+                        "sessionId": "22222222-2222-4222-8222-222222222222",
+                        "timestamp": "2026-08-12T09:00:11.000Z",
+                        "toolDenialKind": "user-rejected",
+                        "message": {"role": "user", "content": [
+                            {"type": "tool_result", "tool_use_id": "toolu_e1", "is_error": true,
+                             "content": "denied"}
+                        ]},
+                    }),
+                ],
+            )],
+        );
+        chat.reconcile(&model);
+        let ui = chat.ask_ui.as_ref().expect("second ask heads the queue");
+        assert_eq!(ui.ask_id, 1, "fresh panel for the new head");
+        assert!(
+            matches!(ui.stage, crate::chat::ask_ui::AskStage::Menu { cursor: 0 }),
+            "the old ask's deny stage died with it"
+        );
     }
 
     #[test]

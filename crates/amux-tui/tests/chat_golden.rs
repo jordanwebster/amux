@@ -11,11 +11,14 @@
 
 use amux_tui::view::ViewState;
 use amux_tui::{ChatView, FrameContext, Theme, render};
+use amux_ui::claude::encoding::{AskAnswer, PermissionAnswer};
+use amux_ui::claude::{DiffArtifact, DiffHunk, DiffMagnitude, DiffNumbering};
 use amux_ui::{
     Agent, AgentId, Command, HostEntry, HostId, Model, Msg, OpId, ServerMsg, StreamEntry,
     StreamMsg, update,
 };
 use chrono::{DateTime, Utc};
+use crossterm::event::{KeyCode, KeyEvent, KeyModifiers};
 use ratatui::Terminal;
 use ratatui::backend::TestBackend;
 use ratatui::style::{Color, Modifier};
@@ -49,10 +52,14 @@ fn uuid_row(n: u32) -> String {
 }
 
 fn base_msgs() -> Vec<Msg> {
+    base_msgs_readonly(false)
+}
+
+fn base_msgs_readonly(readonly: bool) -> Vec<Msg> {
     let agent = Agent {
         id: agent_id(),
         host_id: host_id(),
-        name: Some("fix-auth".to_string()),
+        name: Some(if readonly { "ci-triage" } else { "fix-auth" }.to_string()),
         command: "claude".to_string(),
         working_dir: std::path::PathBuf::from("/work"),
         agent_type: "claude".to_string(),
@@ -60,7 +67,7 @@ fn base_msgs() -> Vec<Msg> {
             "claude_raw_v1".to_string(),
             "claude_pty_transcript_v1".to_string(),
         ],
-        readonly: false,
+        readonly,
         args: Vec::new(),
         created_at: at("2026-08-12T08:00:00Z"),
     };
@@ -216,6 +223,94 @@ fn edit_sidecar(path: &str, added: usize, removed: usize) -> Value {
         .chain((0..removed).map(|i| format!("-line {i}")))
         .collect();
     json!({"filePath": path, "structuredPatch": [{"lines": lines}]})
+}
+
+// --- ask fixtures (hook rows per transcript-semantics §18) -------------------
+
+/// A `hook.permission_request` row with `count` copies of the verified
+/// one-suggestion shape (`addDirectories`/`session`).
+fn hook_row(tool: &str, input: Value, suggestions: usize) -> Value {
+    let mut row = json!({
+        "type": "hook.permission_request",
+        "tool_name": tool,
+        "tool_input": input,
+        "permission_mode": "default",
+    });
+    if suggestions > 0 {
+        let entries: Vec<Value> = (0..suggestions)
+            .map(|_| {
+                json!({
+                    "type": "addDirectories",
+                    "destination": "session",
+                    "directories": ["/work"],
+                })
+            })
+            .collect();
+        row["permission_suggestions"] = Value::Array(entries);
+    }
+    row
+}
+
+fn edit_hook(path: &str, old: &str, new: &str) -> Value {
+    hook_row(
+        "Edit",
+        json!({"file_path": path, "old_string": old, "new_string": new}),
+        1,
+    )
+}
+
+/// The wireframe plan (C3), padded so the reader has something to scroll.
+fn wireframe_plan() -> String {
+    let mut plan = String::from(
+        "## Approach\n\n1. Wrap Client::reconnect in retry_with_backoff\n   \
+         - exponential base 200 ms, cap 5 s, jitter bounded\n2. Thread RetryConfig \
+         through SyncOptions\n3. Spec chapter sync::retry — cold start, mid-stream \
+         drop, give-up-after-cap\n\n## Out of scope\n\n- relay-side backpressure\n",
+    );
+    for step in 1..=20 {
+        plan.push_str(&format!("\nStep detail {step}: keep the reader scrolling."));
+    }
+    plan
+}
+
+/// A working conversation with an Edit permission ask heading the queue
+/// (the C2 wireframe's shape: a real snippet diff, one suggestion).
+fn edit_ask_msgs() -> Vec<Msg> {
+    let mut msgs = working_msgs();
+    msgs.push(batch(
+        "2026-08-12T09:10:20Z",
+        40,
+        vec![edit_hook(
+            "sync/config.rs",
+            "pub struct RetryConfig {\n    pub max_attempts: u8,\n    pub base_delay: Duration,\n    pub max_delay: Duration,\n    pub multiplier: f32,\n}",
+            "pub struct RetryConfig {\n    pub max_attempts: u8,        // capped at 6\n    pub jitter_ms: u16,\n    pub retry_budget: u32,\n    pub on_exhausted: Behavior,\n    pub base_delay: Duration,\n    pub max_delay: Duration,\n    pub multiplier: f32,\n}",
+        )],
+    ));
+    msgs
+}
+
+/// A chat view reconciled against the model (what the run loop does after
+/// every fold) — panels and readers sync to the ask head.
+fn reconciled_view(model: &Model) -> ViewState {
+    let mut view = chat_view();
+    view.chat.as_mut().expect("chat open").reconcile(model);
+    view
+}
+
+fn press(view: &mut ViewState, model: &Model, code: KeyCode) {
+    let chat = view.chat.as_mut().expect("chat open");
+    amux_tui::chat::handle_chat_key(
+        chat,
+        model,
+        KeyEvent::new(code, KeyModifiers::NONE),
+        (80, 24),
+    );
+}
+
+fn type_text(view: &mut ViewState, model: &Model, text: &str) {
+    for c in text.chars() {
+        press(view, model, KeyCode::Char(c));
+    }
 }
 
 // --- the idle conversation (mirrors the idle wireframe) ---------------------
@@ -918,29 +1013,29 @@ fn chat_tools_edge() {
     assert_golden("chat_tools_edge", &rendered);
 }
 
-/// A pending permission ask: the header says needs-you (the panel itself
-/// is Phase 5), and the footer gates the kept draft honestly.
+/// A pending permission ask docks its panel over the composer area (C1):
+/// the header says needs-you, the draft survives untouched beneath
+/// (D1 — invisible while docked, back the moment the ask resolves).
 #[test]
 fn chat_needs_you() {
     let mut msgs = working_msgs();
     msgs.push(batch(
         "2026-08-12T09:10:20Z",
         40,
-        vec![json!({
-            "type": "hook.permission_request",
-            "tool_name": "Edit",
-            "tool_input": {"file_path": "sync/config.rs", "old_string": "a", "new_string": "b"},
-            "permission_mode": "default",
-        })],
+        vec![edit_hook(
+            "sync/config.rs",
+            "pub struct RetryConfig {\n    pub max_attempts: u8,\n    pub base_delay: Duration,\n}",
+            "pub struct RetryConfig {\n    pub max_attempts: u8,        // capped at 6\n    pub jitter_ms: u16,\n    pub base_delay: Duration,\n}",
+        )],
     ));
     let model = fold(msgs);
     let mut view = chat_view();
-    view.chat
-        .as_mut()
-        .expect("chat open")
-        .composer
-        .insert_str("wait — use a u16");
-    let rendered = render_frame(&model, &view, 80, 20, WORKING_NOW);
+    {
+        let chat = view.chat.as_mut().expect("chat open");
+        chat.composer.insert_str("wait — use a u16");
+        chat.reconcile(&model);
+    }
+    let rendered = render_frame(&model, &view, 80, 22, WORKING_NOW);
     assert_golden("chat_needs_you", &rendered);
 }
 
@@ -955,6 +1050,660 @@ fn chat_composer_multiline() {
         .insert_str("first line of the draft\nsecond line\nthird line");
     let rendered = render_frame(&idle_model(), &view, 80, 20, IDLE_NOW);
     assert_golden("chat_composer_multiline", &rendered);
+}
+
+// --- ask panels (C1/C2) -----------------------------------------------------
+
+/// The C2 wireframe: an Edit permission panel with the ask-time
+/// numberless mini-diff (leading context dropped to one row, the
+/// remainder line stating the arithmetic), suggestion-derived option 2,
+/// and the honest `(1 of 2)` with a second ask queued.
+#[test]
+fn chat_ask_permission_edit() {
+    let mut msgs = edit_ask_msgs();
+    msgs.push(batch(
+        "2026-08-12T09:10:21Z",
+        41,
+        vec![hook_row("Bash", json!({"command": "cargo fmt"}), 1)],
+    ));
+    let model = fold(msgs);
+    let view = reconciled_view(&model);
+    let rendered = render_frame(&model, &view, 80, 24, WORKING_NOW);
+    assert_golden("chat_ask_permission_edit", &rendered);
+}
+
+/// Wide graphemes wrap inside the mini-diff with a blank gutter — the
+/// sign column never lies about rows and the border never drifts.
+#[test]
+fn chat_ask_permission_edit_cjk() {
+    let mut msgs = working_msgs();
+    msgs.push(batch(
+        "2026-08-12T09:10:20Z",
+        40,
+        vec![edit_hook(
+            "sync/リトライ.rs",
+            "fn 設定() {\n    let 上限 = 3;\n}",
+            "fn 設定() {\n    let 上限 = 6; // 指数バックオフの再試行回数の上限をここで決める — 長い行は折り返して右枠を壊さないこと\n}",
+        )],
+    ));
+    let model = fold(msgs);
+    let view = reconciled_view(&model);
+    let buffer = render_buffer(&model, &view, 80, 22, Theme::Dark, WORKING_NOW);
+    for y in 0..22u16 {
+        let symbol = buffer.cell((79, y)).expect("border cell").symbol();
+        assert!(
+            matches!(symbol, "│" | "┐" | "┘"),
+            "row {y} must end with a border cell, got {symbol:?}"
+        );
+    }
+    assert_golden("chat_ask_permission_edit_cjk", &buffer_text(&buffer));
+}
+
+/// A Write ask: `+` block head with `(N lines)` — create-vs-overwrite is
+/// unknowable before the tool runs and the header claims neither.
+#[test]
+fn chat_ask_permission_write() {
+    let mut msgs = working_msgs();
+    msgs.push(batch(
+        "2026-08-12T09:10:20Z",
+        40,
+        vec![hook_row(
+            "Write",
+            json!({
+                "file_path": "sync/retry.rs",
+                "content": "use std::time::Duration;\n\npub struct RetryPolicy {\n    pub max_attempts: u8,\n    pub base_delay: Duration,\n    pub jitter_ms: u16,\n    pub cap: Duration,\n    pub budget: u32,\n    pub on_exhausted: Behavior,\n    pub telemetry: bool,\n    pub docs: &'static str,\n}",
+            }),
+            1,
+        )],
+    ));
+    let model = fold(msgs);
+    let view = reconciled_view(&model);
+    let rendered = render_frame(&model, &view, 80, 24, WORKING_NOW);
+    assert_golden("chat_ask_permission_write", &rendered);
+}
+
+/// A Bash ask: the `$ command` body.
+#[test]
+fn chat_ask_permission_bash() {
+    let mut msgs = working_msgs();
+    msgs.push(batch(
+        "2026-08-12T09:10:20Z",
+        40,
+        vec![hook_row(
+            "Bash",
+            json!({"command": "cargo test -p amux-sync -- --nocapture"}),
+            1,
+        )],
+    ));
+    let model = fold(msgs);
+    let view = reconciled_view(&model);
+    let rendered = render_frame(&model, &view, 80, 20, WORKING_NOW);
+    assert_golden("chat_ask_permission_bash", &rendered);
+}
+
+/// An unknown tool: the compact typed fallback — header identity, no
+/// body, the same three actions (C2 covers unknown tools too).
+#[test]
+fn chat_ask_permission_fallback() {
+    let mut msgs = working_msgs();
+    msgs.push(batch(
+        "2026-08-12T09:10:20Z",
+        40,
+        vec![hook_row(
+            "mcp__deploy__release",
+            json!({"environment": "staging"}),
+            1,
+        )],
+    ));
+    let model = fold(msgs);
+    let view = reconciled_view(&model);
+    let rendered = render_frame(&model, &view, 80, 18, WORKING_NOW);
+    assert_golden("chat_ask_permission_fallback", &rendered);
+}
+
+/// A permission menu shape no capture verified (two suggestions): the
+/// panel renders read-only-style with the typed refusal stated —
+/// consistent with the encoder, which would refuse the same shape (C2).
+#[test]
+fn chat_ask_permission_unverified() {
+    let mut msgs = working_msgs();
+    msgs.push(batch(
+        "2026-08-12T09:10:20Z",
+        40,
+        vec![hook_row(
+            "Edit",
+            json!({"file_path": "sync/config.rs", "old_string": "a", "new_string": "b"}),
+            2,
+        )],
+    ));
+    let model = fold(msgs);
+    let view = reconciled_view(&model);
+    let rendered = render_frame(&model, &view, 80, 20, WORKING_NOW);
+    assert_golden("chat_ask_permission_unverified", &rendered);
+}
+
+/// Deny opens the optional one-line feedback stage (C2): Enter with empty
+/// text is a plain deny; the typed text rides the same program.
+#[test]
+fn chat_ask_deny_feedback() {
+    let model = fold(edit_ask_msgs());
+    let mut view = reconciled_view(&model);
+    press(&mut view, &model, KeyCode::Char('3'));
+    press(&mut view, &model, KeyCode::Enter);
+    type_text(&mut view, &model, "use a u16 instead");
+    let rendered = render_frame(&model, &view, 80, 20, WORKING_NOW);
+    assert_golden("chat_ask_deny_feedback", &rendered);
+}
+
+/// The optimistic collapse (C5): a dispatched answer collapses the panel
+/// to the pending marker until the transcript confirms.
+#[test]
+fn chat_ask_pending() {
+    let mut msgs = edit_ask_msgs();
+    msgs.push(Msg::Command {
+        op: op(2),
+        command: Command::AnswerAsk {
+            agent: agent_id(),
+            ask: 0,
+            answer: AskAnswer::Permission(PermissionAnswer::AllowOnce),
+        },
+    });
+    let model = fold(msgs);
+    let view = reconciled_view(&model);
+    let rendered = render_frame(&model, &view, 80, 18, WORKING_NOW);
+    assert_golden("chat_ask_pending", &rendered);
+}
+
+/// A failed send resurfaces the ask with the failure stated verbatim —
+/// never a stuck spinner (C5).
+#[test]
+fn chat_ask_send_failed() {
+    let mut msgs = edit_ask_msgs();
+    msgs.push(Msg::Command {
+        op: op(2),
+        command: Command::AnswerAsk {
+            agent: agent_id(),
+            ask: 0,
+            answer: AskAnswer::Permission(PermissionAnswer::AllowOnce),
+        },
+    });
+    msgs.push(Msg::OpResult {
+        op: op(2),
+        outcome: amux_ui::OpOutcome::Error {
+            error: amux_ui::OpError {
+                message: "input raced the session — it moved on before the keys landed".to_string(),
+                auth_required: false,
+            },
+        },
+    });
+    let model = fold(msgs);
+    let view = reconciled_view(&model);
+    let rendered = render_frame(&model, &view, 80, 24, WORKING_NOW);
+    assert_golden("chat_ask_send_failed", &rendered);
+}
+
+// --- question forms (C4) ----------------------------------------------------
+
+fn question_hook(questions: Value) -> Value {
+    hook_row("AskUserQuestion", json!({"questions": questions}), 1)
+}
+
+fn single_question_msgs() -> Vec<Msg> {
+    let mut msgs = working_msgs();
+    msgs.push(batch(
+        "2026-08-12T09:10:20Z",
+        40,
+        vec![question_hook(json!([
+            {"header": "Color", "question": "Which color do you prefer?",
+             "multiSelect": false, "options": [
+                {"label": "Red", "description": "warm, loud"},
+                {"label": "Blue", "description": "cool, calm"},
+             ]}
+        ]))],
+    ));
+    msgs
+}
+
+/// The two-question wireframe fixture: a multi-select with descriptions
+/// plus a single-select, so the tab row and submit step exist.
+fn tabbed_question_msgs() -> Vec<Msg> {
+    let mut msgs = working_msgs();
+    msgs.push(batch(
+        "2026-08-12T09:10:20Z",
+        40,
+        vec![question_hook(json!([
+            {"header": "storage", "question": "Which stores should the migration cover?",
+             "multiSelect": true, "options": [
+                {"label": "trust store", "description": "pairing + relay trust records"},
+                {"label": "session index", "description": "bounded tail metadata"},
+                {"label": "recorder dumps", "description": "panic-hook recordings"},
+             ]},
+            {"header": "rollout", "question": "How should it roll out?",
+             "multiSelect": false, "options": [
+                {"label": "all at once"},
+                {"label": "store by store"},
+             ]}
+        ]))],
+    ));
+    msgs
+}
+
+/// A single question, single-select: numbered options with dim
+/// descriptions, no tab row — Enter on the selection submits (C4).
+#[test]
+fn chat_ask_question_single() {
+    let model = fold(single_question_msgs());
+    let view = reconciled_view(&model);
+    let rendered = render_frame(&model, &view, 80, 18, WORKING_NOW);
+    assert_golden("chat_ask_question_single", &rendered);
+}
+
+/// The C4 wireframe: tab row with the current tab starred, `[x]`
+/// checkboxes toggled with Space, the appended `Other…`.
+#[test]
+fn chat_ask_question_tabs() {
+    let model = fold(tabbed_question_msgs());
+    let mut view = reconciled_view(&model);
+    press(&mut view, &model, KeyCode::Char(' ')); // toggle trust store
+    press(&mut view, &model, KeyCode::Down);
+    press(&mut view, &model, KeyCode::Down);
+    press(&mut view, &model, KeyCode::Char(' ')); // toggle recorder dumps
+    let rendered = render_frame(&model, &view, 80, 20, WORKING_NOW);
+    assert_golden("chat_ask_question_tabs", &rendered);
+}
+
+/// The `Other…` inline free-text field, open with typed text (C4: one
+/// free-text idiom, not two).
+#[test]
+fn chat_ask_question_other() {
+    let model = fold(single_question_msgs());
+    let mut view = reconciled_view(&model);
+    press(&mut view, &model, KeyCode::Char('3')); // the appended Other row
+    type_text(&mut view, &model, "a warm ochre");
+    let rendered = render_frame(&model, &view, 80, 18, WORKING_NOW);
+    assert_golden("chat_ask_question_other", &rendered);
+}
+
+/// The submit tab's review list: answered questions summarized,
+/// unanswered ones in error color; Enter submits only when complete (C4).
+#[test]
+fn chat_ask_question_review() {
+    let model = fold(tabbed_question_msgs());
+    let mut view = reconciled_view(&model);
+    press(&mut view, &model, KeyCode::Char(' ')); // answer storage
+    press(&mut view, &model, KeyCode::Enter); // advance to rollout
+    press(&mut view, &model, KeyCode::Tab); // skip to submit, rollout unanswered
+    let rendered = render_frame(&model, &view, 80, 18, WORKING_NOW);
+    assert_golden("chat_ask_question_review", &rendered);
+}
+
+// --- plan review (C3/B6) ----------------------------------------------------
+
+fn plan_ask_msgs() -> Vec<Msg> {
+    let mut msgs = working_msgs();
+    msgs.push(batch(
+        "2026-08-12T09:10:20Z",
+        40,
+        vec![hook_row(
+            "ExitPlanMode",
+            json!({"plan": wireframe_plan(), "planFilePath": "~/.claude/plans/retry.md"}),
+            0,
+        )],
+    ));
+    msgs
+}
+
+/// A plan-review ask opens the READER directly (C3): fullscreen plan,
+/// position indicator, the three-way action row.
+#[test]
+fn chat_plan_reader() {
+    let model = fold(plan_ask_msgs());
+    let view = reconciled_view(&model);
+    let rendered = render_frame(&model, &view, 80, 24, WORKING_NOW);
+    assert_golden("chat_plan_reader", &rendered);
+}
+
+/// Esc drops the plan reader to the docked panel form: truncated plan,
+/// the same three actions, `f` back to the full reader.
+#[test]
+fn chat_plan_docked() {
+    let model = fold(plan_ask_msgs());
+    let mut view = reconciled_view(&model);
+    press(&mut view, &model, KeyCode::Esc);
+    let rendered = render_frame(&model, &view, 80, 24, WORKING_NOW);
+    assert_golden("chat_plan_docked", &rendered);
+}
+
+/// Request-changes swaps the reader's action row for the mandatory
+/// feedback stage (C3: will not submit empty; `q` types here — P2).
+#[test]
+fn chat_plan_reader_feedback() {
+    let model = fold(plan_ask_msgs());
+    let mut view = reconciled_view(&model);
+    press(&mut view, &model, KeyCode::Char('3'));
+    press(&mut view, &model, KeyCode::Enter);
+    type_text(&mut view, &model, "sequence the rollout store by store");
+    let rendered = render_frame(&model, &view, 80, 24, WORKING_NOW);
+    assert_golden("chat_plan_reader_feedback", &rendered);
+}
+
+/// An accepted-plans model: two approved plans retained as session state
+/// (B6), reopenable after resolution.
+fn accepted_plans_msgs() -> Vec<Msg> {
+    let mut msgs = base_msgs();
+    msgs.extend(opened(false));
+    let plan_b = wireframe_plan();
+    msgs.push(batch(
+        "2026-08-12T09:02:00Z",
+        1,
+        vec![
+            ready_row(),
+            mode_row("default"),
+            prompt_row(1, "2026-08-12T09:00:00Z", "plan the retry work"),
+            tool_use_row(
+                2,
+                "2026-08-12T09:00:10Z",
+                "msg_81",
+                vec![tool_use(
+                    "toolu_81",
+                    "ExitPlanMode",
+                    json!({"plan": "# earlier plan\n\n- step one\n- step two"}),
+                )],
+            ),
+            tool_result_row(
+                3,
+                "2026-08-12T09:00:20Z",
+                vec![tool_result("toolu_81", "User has approved your plan.")],
+                Some(json!({"plan": "# earlier plan\n\n- step one\n- step two"})),
+            ),
+            tool_use_row(
+                4,
+                "2026-08-12T09:00:30Z",
+                "msg_82",
+                vec![tool_use(
+                    "toolu_82",
+                    "ExitPlanMode",
+                    json!({"plan": plan_b}),
+                )],
+            ),
+            tool_result_row(
+                5,
+                "2026-08-12T09:00:40Z",
+                vec![tool_result("toolu_82", "User has approved your plan.")],
+                Some(json!({"plan": plan_b})),
+            ),
+            turn_duration_row(6, "2026-08-12T09:00:50Z", 50_000),
+        ],
+    ));
+    msgs
+}
+
+/// Ctrl+T reopens the newest accepted plan in the reader — no action row
+/// once resolved; ←/→ steps between plans when several exist (B6).
+#[test]
+fn chat_plan_resolved_reader() {
+    let model = fold(accepted_plans_msgs());
+    let mut view = reconciled_view(&model);
+    {
+        let chat = view.chat.as_mut().expect("chat open");
+        amux_tui::chat::handle_chat_key(
+            chat,
+            &model,
+            KeyEvent::new(KeyCode::Char('t'), KeyModifiers::CONTROL),
+            (80, 24),
+        );
+    }
+    press(&mut view, &model, KeyCode::Left); // step to the older plan
+    let rendered = render_frame(&model, &view, 80, 24, IDLE_NOW);
+    assert_golden("chat_plan_resolved_reader", &rendered);
+}
+
+// --- the reader over diffs and files ----------------------------------------
+
+/// `f` on an Edit ask opens the full diff in the reader: ask-time
+/// numberless form, action row live (§4.3).
+#[test]
+fn chat_reader_diff_ask() {
+    let model = fold(edit_ask_msgs());
+    let mut view = reconciled_view(&model);
+    press(&mut view, &model, KeyCode::Char('f'));
+    let rendered = render_frame(&model, &view, 80, 24, WORKING_NOW);
+    assert_golden("chat_reader_diff_ask", &rendered);
+}
+
+/// `f` on a Write ask: the numbered `+` block (shared with Diff's create
+/// case).
+#[test]
+fn chat_reader_newfile() {
+    let mut msgs = working_msgs();
+    msgs.push(batch(
+        "2026-08-12T09:10:20Z",
+        40,
+        vec![hook_row(
+            "Write",
+            json!({"file_path": "sync/retry.rs", "content": "use std::time::Duration;\n\npub struct RetryPolicy {\n    pub max_attempts: u8,\n}"}),
+            1,
+        )],
+    ));
+    let model = fold(msgs);
+    let mut view = reconciled_view(&model);
+    press(&mut view, &model, KeyCode::Char('f'));
+    let rendered = render_frame(&model, &view, 80, 20, WORKING_NOW);
+    assert_golden("chat_reader_newfile", &rendered);
+}
+
+/// The post-hoc numbered form (`structuredPatch` restated): absolute
+/// numbers walked from the hunk starts, replaced pairs repeating theirs,
+/// `⋮` between hunks. Rendered through the same pure body renderer the
+/// reader mounts — no Model path reaches this form in V1 (post-hoc diff
+/// reading is a recorded door), so the body is golden-locked directly.
+fn numbered_diff() -> DiffArtifact {
+    DiffArtifact {
+        numbering: DiffNumbering::Absolute,
+        magnitude: DiffMagnitude::Fact {
+            added: 4,
+            removed: 2,
+        },
+        hunks: vec![
+            DiffHunk {
+                old_start: 14,
+                new_start: 14,
+                lines: vec![
+                    " pub struct RetryConfig {".to_string(),
+                    "-    pub max_attempts: u8,".to_string(),
+                    "+    pub max_attempts: u8,        // capped at 6".to_string(),
+                    "+    pub jitter_ms: u16,".to_string(),
+                    "     pub base_delay: Duration,".to_string(),
+                    " }".to_string(),
+                ],
+            },
+            DiffHunk {
+                old_start: 64,
+                new_start: 65,
+                lines: vec![
+                    " impl SyncOptions {".to_string(),
+                    "-    pub fn defaults() -> Self { Self { retries: 3 } }".to_string(),
+                    "+    pub fn defaults() -> Self {".to_string(),
+                    "+        Self { retries: RetryConfig::default() }".to_string(),
+                    "+    }".to_string(),
+                    " }".to_string(),
+                ],
+            },
+        ],
+    }
+}
+
+fn diff_body_buffer(theme: Theme) -> ratatui::buffer::Buffer {
+    let lines = amux_tui::chat::diff::reader_rows(&numbered_diff(), 72, theme);
+    let backend = TestBackend::new(72, lines.len() as u16);
+    let mut terminal = Terminal::new(backend).expect("terminal");
+    terminal
+        .draw(|frame| {
+            frame.render_widget(
+                ratatui::widgets::Paragraph::new(lines.clone()),
+                frame.area(),
+            )
+        })
+        .expect("draw");
+    terminal.backend().buffer().clone()
+}
+
+#[test]
+fn chat_reader_diff_numbered() {
+    assert_golden(
+        "chat_reader_diff_numbered",
+        &buffer_text(&diff_body_buffer(Theme::Dark)),
+    );
+}
+
+#[test]
+fn chat_reader_diff_styles_dark() {
+    assert_golden(
+        "chat_reader_diff_styles_dark",
+        &buffer_styles(&diff_body_buffer(Theme::Dark)),
+    );
+}
+
+#[test]
+fn chat_reader_diff_styles_light() {
+    assert_golden(
+        "chat_reader_diff_styles_light",
+        &buffer_styles(&diff_body_buffer(Theme::Light)),
+    );
+}
+
+// --- read-only chats (F1) ---------------------------------------------------
+
+fn readonly_msgs() -> Vec<Msg> {
+    let mut msgs = base_msgs_readonly(true);
+    msgs.extend(opened(false));
+    msgs.push(batch(
+        "2026-08-12T09:02:00Z",
+        1,
+        vec![
+            ready_row(),
+            prompt_row(1, "2026-08-12T09:00:00Z", "fix the flaky teardown"),
+            assistant_text_row(
+                2,
+                "2026-08-12T09:01:00Z",
+                "msg_91",
+                "The flake is a teardown race in the testnet harness; serializing the shutdown.",
+                Some("end_turn"),
+            ),
+            tool_use_row(
+                3,
+                "2026-08-12T09:01:10Z",
+                "msg_92",
+                vec![tool_use(
+                    "toolu_91",
+                    "Bash",
+                    json!({"command": "cargo test -p amux --test spec"}),
+                )],
+            ),
+            tool_result_row(
+                4,
+                "2026-08-12T09:01:20Z",
+                vec![tool_result(
+                    "toolu_91",
+                    "2 failed: token_refresh, expired_session",
+                )],
+                None,
+            ),
+            turn_duration_row(5, "2026-08-12T09:01:30Z", 90_000),
+        ],
+    ));
+    msgs
+}
+
+/// The read-only chat: same feed, `⊘ read-only` where the composer would
+/// be, pager hints, no composer, no interrupt (F1 — write affordances
+/// absent, not disabled).
+#[test]
+fn chat_readonly() {
+    let model = fold(readonly_msgs());
+    let view = reconciled_view(&model);
+    let rendered = render_frame(&model, &view, 80, 18, IDLE_NOW);
+    assert_golden("chat_readonly", &rendered);
+}
+
+/// A pending ask in a read-only chat renders as a fact panel: the
+/// identical preview, the honest wait, read affordances only — and the
+/// header says needs OWNER, not needs you.
+#[test]
+fn chat_readonly_ask() {
+    let mut msgs = readonly_msgs();
+    msgs.push(batch(
+        "2026-08-12T09:02:10Z",
+        20,
+        vec![
+            prompt_row(10, "2026-08-12T09:02:05Z", "serialize the shutdown"),
+            edit_hook(
+                "testnet/harness.rs",
+                "fn teardown() {\n    kill();\n}",
+                "fn teardown() {\n    drain();\n    kill();\n}",
+            ),
+        ],
+    ));
+    let model = fold(msgs);
+    let view = reconciled_view(&model);
+    let rendered = render_frame(&model, &view, 80, 22, IDLE_NOW);
+    assert_golden("chat_readonly_ask", &rendered);
+}
+
+/// `f` in the read-only chat opens the reader with NO action row — read
+/// affordances only (F1).
+#[test]
+fn chat_readonly_reader() {
+    let mut msgs = readonly_msgs();
+    msgs.push(batch(
+        "2026-08-12T09:02:10Z",
+        20,
+        vec![
+            prompt_row(10, "2026-08-12T09:02:05Z", "serialize the shutdown"),
+            edit_hook(
+                "testnet/harness.rs",
+                "fn teardown() {\n    kill();\n}",
+                "fn teardown() {\n    drain();\n    kill();\n}",
+            ),
+        ],
+    ));
+    let model = fold(msgs);
+    let mut view = reconciled_view(&model);
+    press(&mut view, &model, KeyCode::Char('f'));
+    let rendered = render_frame(&model, &view, 80, 20, IDLE_NOW);
+    assert_golden("chat_readonly_reader", &rendered);
+}
+
+// --- ask panel style maps ---------------------------------------------------
+
+#[test]
+fn chat_ask_permission_styles_dark() {
+    let model = fold(edit_ask_msgs());
+    let view = reconciled_view(&model);
+    let styles = buffer_styles(&render_buffer(
+        &model,
+        &view,
+        80,
+        24,
+        Theme::Dark,
+        WORKING_NOW,
+    ));
+    assert_golden("chat_ask_permission_styles_dark", &styles);
+}
+
+#[test]
+fn chat_ask_permission_styles_light() {
+    let model = fold(edit_ask_msgs());
+    let view = reconciled_view(&model);
+    let styles = buffer_styles(&render_buffer(
+        &model,
+        &view,
+        80,
+        24,
+        Theme::Light,
+        WORKING_NOW,
+    ));
+    assert_golden("chat_ask_permission_styles_light", &styles);
 }
 
 // --- themes (style maps lock the token application) -------------------------
@@ -1148,10 +1897,37 @@ fn chat_rendering_never_panics_at_any_viewport_size() {
             entry_watermark: 0,
         };
     }
+    // Panel, reader, and read-only states join the sweep: their bottom
+    // blocks clamp (tail kept, body rows give way) so the footer and
+    // border survive every height.
+    let ask = fold(edit_ask_msgs());
+    let questions = fold(tabbed_question_msgs());
+    let plan = fold(plan_ask_msgs());
+    let readonly = fold({
+        let mut msgs = readonly_msgs();
+        msgs.push(batch(
+            "2026-08-12T09:02:10Z",
+            20,
+            vec![edit_hook("harness.rs", "a\n", "b\n")],
+        ));
+        msgs
+    });
+    let mut docked_plan_view = reconciled_view(&plan);
+    press(&mut docked_plan_view, &plan, KeyCode::Esc);
+    let states: Vec<(&Model, ViewState, &str)> = vec![
+        (&model, view.clone(), IDLE_NOW),
+        (&working, view, WORKING_NOW),
+        (&ask, reconciled_view(&ask), WORKING_NOW),
+        (&questions, reconciled_view(&questions), WORKING_NOW),
+        (&plan, reconciled_view(&plan), WORKING_NOW),
+        (&plan, docked_plan_view, WORKING_NOW),
+        (&readonly, reconciled_view(&readonly), IDLE_NOW),
+    ];
+
     for width in 1..=120u16 {
         for height in 1..=40u16 {
-            for (model, now) in [(&model, IDLE_NOW), (&working, WORKING_NOW)] {
-                let rendered = render_frame(model, &view, width, height, now);
+            for (model, view, now) in &states {
+                let rendered = render_frame(model, view, width, height, now);
                 if width >= MIN_WIDTH && height >= MIN_HEIGHT {
                     let lines: Vec<&str> = rendered.lines().collect();
                     assert_eq!(lines.len(), height as usize);

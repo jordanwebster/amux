@@ -38,6 +38,89 @@ One paragraph describing what was done.
 
 ---
 
+## 2026-08-12: Chat V1 Phase 5 — docked ask panels, the reader, read-only chat
+
+### Summary
+The chat's interactive surface: every ask form, the fullscreen reader,
+and the read-only variant. A pending ask takes over the composer area
+behind a dim rule (C1) — head-of-queue with an honest `(1 of N)`, the
+draft untouched beneath (D1), not dismissible while pending: Esc steps
+back stages and floors at the menu. The permission panel (C2) renders
+tool identity + magnitude, the ask-time numberless mini-diff (≤8
+screen rows, wraps counted, leading context dropped to one when tight,
+`⋮ +K more lines · f full diff`), the Write `+` block with `(N
+lines)`, `$ command` for Bash, a compact fallback otherwise; option
+2's label derives from the hook's suggestion facts; unverified menu
+shapes render read-only-style with the encoder's typed refusal stated;
+deny opens the optional one-line feedback stage (empty = plain deny).
+The question form (C4): digit/↑↓ select + Enter confirm (never
+instant-submit), tab row + mandatory submit/review step when
+multi-question or any multi-select, `[x]` Space toggles, inline
+`Other…` editor, unanswered review items in error color. Plan review
+(C3) opens the READER directly — full plan, position indicator, the
+three-way action row; Esc docks to the truncated panel form, `f`
+returns; request-changes swaps the action row for the mandatory
+feedback field (q types there — P2). The reader is ONE overlay over
+typed artifacts: Plan (Phase 4's markdown renderer), Diff (chat::diff
+— absolute numbers walked from `structuredPatch`-shaped hunks with the
+repeat-number convention, numberless ask-time, blank-gutter wrap
+continuations, `⋮` hunk gaps, four fg-only diff.* tokens), NewFile
+(numbered `+` block); pager keys j/k g/G PgUp/PgDn Home/End, q/Esc
+close; Ctrl+T reopens accepted plans with ←/→ stepping (the feed's
+plan entry now carries `· ctrl+t to read`). The read-only chat (F1):
+same feed, asks as fact panels with the identical preview and
+`waiting for a writable client · f read the diff`, `⊘ read-only`
+where the composer would be, header `chat · read-only · needs owner`,
+bare-letter pager keys, `q` back to the fleet — write affordances
+absent, not disabled (no interrupt, no composer, no actions).
+AnsweredOptimistic collapses the panel to the pending marker;
+SendFailed resurfaces with the failure verbatim; remote resolution
+dismisses panel and reader on reconcile; synchronous answer refusals
+are watched and stated in the panel.
+
+### Changes
+- `crates/amux-tui/src/chat/diff.rs` (new, pub): the §4 diff renderer
+  — number walk, gutters, wraps, preview budget/remainder, new-file
+  blocks; unit-locked layout tables.
+- `crates/amux-tui/src/chat/ask_ui.rs` (new): the C2/C3/C4 stage
+  machines (AskUi/AskStage/QuestionUi), panel text-field readline.
+- `crates/amux-tui/src/chat/panel.rs` (new): docked panel renderer,
+  all forms + read-only fact panels.
+- `crates/amux-tui/src/chat/reader.rs` (new): ReaderView + the
+  fullscreen frame, artifact resolution from the Model, plans nav.
+- `chat/{mod,keys,render}.rs`: focus routing (reader → panel →
+  composer; read-only pager), the Esc chain's stages 1–2, reconcile
+  syncs panel/reader to the ask head (plan reader-first), the bottom
+  block replacing FIXED_ROWS (panel/read-only/composer variants, tail
+  kept on short viewports), read-only header/working-line, plan
+  affordance; `render.rs`: the four diff.* Theme tokens.
+- `view.rs`/`run.rs`: `UiAction::CloseChat` (read-only `q`).
+- Goldens: 27 new frames/style-maps (permission edit incl. CJK wrap +
+  truncation arithmetic, write, bash, fallback, unverified refusal,
+  deny feedback, pending marker, send-failed resurfacing, question
+  single/tabs/other/review, plan reader/docked/feedback/resolved,
+  ask diff reader, new-file reader, post-hoc numbered multi-hunk +
+  both-theme style maps, read-only ×3, panel style maps ×2);
+  chat_needs_you and chat_tools_edge regenerated (the two surfaces
+  Phase 4 explicitly deferred to this phase); every other Phase 4 and
+  fleet golden byte-identical. The never-panic sweep grew panel,
+  question, plan-reader, docked-plan, and read-only states. 17 new
+  key/state-machine unit tests.
+
+### Verification
+- fmt clean; workspace clippy `-D warnings` (`--features
+  amux/testnet`) clean.
+- amux-tui 78 lib + 48 chat golden + 19 fleet golden; amux-ui 29 lib
+  + 1 runtime + 123 spec; amux --lib 401; amux spec (testnet) 44;
+  amux-cli 53 — all under `timeout 600`.
+
+### Next Steps
+- Phase 5 report; orchestrator review gate + simplification pass.
+- Phase 6 wires entry (fleet bindings, UserAttached on chat open),
+  the chrome-wide Ctrl+C guard, and the `?` overlay.
+
+---
+
 ## 2026-08-12: Chat V1 Phase 5 — ask artifacts in the layer, menu-shape refusal, readonly attach subscription
 
 ### Summary

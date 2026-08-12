@@ -17,8 +17,8 @@ use amux_ui::{AgentId, Model};
 use ratatui::style::Style;
 use ratatui::text::{Line, Span};
 
-use crate::chat::{ChatView, FeedScroll, entry_watermark};
-use crate::chat::{composer::Composer, markdown};
+use crate::chat::{ChatView, FeedScroll, entry_watermark, panel, reader};
+use crate::chat::{ask_ui, composer::Composer, markdown};
 use crate::render::{
     FrameContext, Theme, blank_line, finish_line, line_len, new_line, pad_to, push_span, str_width,
 };
@@ -45,14 +45,16 @@ const PLAN_PREVIEW_LINES: usize = 6;
 
 // --- layout -----------------------------------------------------------------
 
-/// The frame's fixed rows: top border, header, rule (3) above the feed;
-/// blank, blank, footer, bottom border (4) below it. Everything else —
-/// feed, working/paused rows, composer growth — divides the remainder.
-const FIXED_ROWS: usize = 3 + 4;
+/// The frame's rows outside the feed and the bottom block: top border,
+/// header, rule (3) above the feed; the bottom border (1) below
+/// everything. The bottom block — composer rows with their blanks and
+/// footer, or the docked ask panel, or the read-only block — divides the
+/// remainder with the feed, the feed giving way first.
+const FIXED_TOP: usize = 3;
 
-/// Rows between the feed and the composer block: the reserved
-/// queue-preview row (occupied by the paused rule when scrolled back)
-/// plus the working line.
+/// Rows between the feed and the bottom block: the reserved queue-preview
+/// row (occupied by the paused rule when scrolled back) plus the working
+/// line.
 fn extra_rows(working: bool, paused: bool) -> usize {
     usize::from(working || paused) + usize::from(working)
 }
@@ -61,7 +63,7 @@ fn extra_rows(working: bool, paused: bool) -> usize {
 /// handler so scroll paging and rendering agree on the feed viewport.
 pub(crate) struct ChatLayout {
     pub height: usize,
-    pub composer_rows: usize,
+    pub bottom_rows: usize,
     pub working: bool,
     pub paused: bool,
 }
@@ -69,7 +71,7 @@ pub(crate) struct ChatLayout {
 impl ChatLayout {
     fn feed_height_for(&self, paused: bool) -> usize {
         self.height
-            .saturating_sub(FIXED_ROWS + extra_rows(self.working, paused) + self.composer_rows)
+            .saturating_sub(FIXED_TOP + 1 + extra_rows(self.working, paused) + self.bottom_rows)
     }
 
     /// Feed viewport height for the current scroll state.
@@ -89,21 +91,128 @@ pub(crate) fn layout(model: &Model, chat: &ChatView, viewport: (u16, u16)) -> Ch
     let height = viewport.1 as usize;
     let working = matches!(model.claude_phase(chat.agent), ChatPhase::Working);
     let paused = matches!(chat.scroll, FeedScroll::Paused { .. });
-    // The composer auto-grows to six rows but never past the viewport's
-    // fixed-row budget: the footer and border survive every height, the
-    // feed gives way first. Never below 1: a 1-row composer always
-    // renders (the too-small guard keeps heights where even that cannot
-    // fit out of this path).
-    let budget = height
-        .saturating_sub(FIXED_ROWS + extra_rows(working, paused))
-        .max(1);
-    let (rows, _) = composer_display_rows(&chat.composer, text_width(width));
+    // Layout is theme-independent (tokens change styles, never cells —
+    // test-locked), so the count renders with the default theme.
+    let bottom = bottom_lines(
+        model,
+        chat,
+        Theme::default(),
+        width,
+        height,
+        working,
+        paused,
+    );
     ChatLayout {
         height,
-        composer_rows: rows.len().clamp(1, budget.min(6)),
+        bottom_rows: bottom.len(),
         working,
         paused,
     }
+}
+
+/// Everything below the feed and the working/paused rows, above the
+/// bottom border — finished lines. Three shapes: the read-only block
+/// (F1), the docked ask panel (C1 — the ask takes over the composer
+/// area), or the composer block. Clamped so the frame always fits: the
+/// block keeps its tail (actions and hints beat body rows) on short
+/// viewports.
+fn bottom_lines(
+    model: &Model,
+    chat: &ChatView,
+    theme: Theme,
+    width: usize,
+    height: usize,
+    working: bool,
+    paused: bool,
+) -> Vec<Line<'static>> {
+    let max_rows = height
+        .saturating_sub(FIXED_TOP + 1 + extra_rows(working, paused))
+        .max(1);
+    let readonly = chat.read_only(model);
+    let head = chat.ask_head(model);
+
+    let mut lines: Vec<Line<'static>> = if readonly {
+        readonly_bottom(model, chat, theme, width)
+    } else if let Some(ask) = head {
+        let count = model
+            .claude(chat.agent)
+            .map(|layer| layer.ask_count())
+            .unwrap_or(1);
+        panel::panel_lines(
+            ask,
+            count,
+            chat.ask_ui.as_ref(),
+            chat.ask_failure.as_deref(),
+            width,
+            theme,
+        )
+    } else {
+        // The composer block: blank, the auto-growing composer (one to
+        // six rows, never past the viewport's budget — the footer and
+        // border survive every height), blank, footer.
+        let budget = max_rows.saturating_sub(3).max(1);
+        let (rows, _) = composer_display_rows(&chat.composer, text_width(width));
+        let composer_rows = rows.len().clamp(1, budget.min(6));
+        let mut lines = vec![blank_line(width)];
+        lines.extend(composer_lines(chat, theme, width, composer_rows));
+        lines.push(blank_line(width));
+        lines.push(footer_line(model, chat, theme, width));
+        return lines;
+    };
+
+    for line in &mut lines {
+        finish_line(line, width);
+    }
+    if lines.len() > max_rows {
+        // Keep the tail: the hint and action rows survive, body rows give
+        // way (mirrors the feed giving way to the composer).
+        lines.drain(..lines.len() - max_rows);
+    }
+    lines
+}
+
+/// The read-only chat's bottom block (F1): the ask fact panel when one
+/// pends, the `⊘ read-only` statement where the composer would be, and
+/// the pager hints.
+fn readonly_bottom(
+    model: &Model,
+    chat: &ChatView,
+    theme: Theme,
+    width: usize,
+) -> Vec<Line<'static>> {
+    let mut lines: Vec<Line<'static>> = Vec::new();
+    if let Some(ask) = chat.ask_head(model) {
+        let count = model
+            .claude(chat.agent)
+            .map(|layer| layer.ask_count())
+            .unwrap_or(1);
+        lines.extend(panel::readonly_panel_lines(ask, count, width, theme));
+    }
+    lines.push(new_line());
+    let mut marker = new_line();
+    push_span(
+        &mut marker,
+        GLYPH_COL,
+        "⊘ read-only — you are observing this session",
+        theme.muted(),
+    );
+    lines.push(marker);
+    lines.push(new_line());
+    let mut hints = String::from("pgup/pgdn scroll");
+    if let Some(ask) = chat.ask_head(model)
+        && ask_ui::has_readable(ask)
+    {
+        hints.push_str(match &ask.artifact {
+            Some(amux_ui::claude::AskArtifact::Diff(_)) => " · f view diff",
+            Some(amux_ui::claude::AskArtifact::NewFile { .. }) => " · f view file",
+            None => " · f view plan",
+        });
+    }
+    hints.push_str(" · q back to fleet");
+    let mut footer = new_line();
+    push_span(&mut footer, TEXT_COL, hints, theme.muted());
+    lines.push(footer);
+    lines
 }
 
 /// Cells available to content at TEXT_COL — feed text and the composer
@@ -135,13 +244,31 @@ pub(crate) fn build_chat_lines(
         return vec![Line::from("amux: terminal too small")];
     }
     let theme = ctx.theme;
-    let layout = layout(model, chat, ctx.viewport);
+    let readonly = chat.read_only(model);
+
+    // The fullscreen reader replaces the whole frame while open (falling
+    // back to the chat when its source no longer resolves).
+    if chat.reader.is_some()
+        && let Some(frame) = reader::reader_frame(model, chat, theme, width, height, readonly)
+    {
+        return frame;
+    }
+
+    let working = matches!(model.claude_phase(chat.agent), ChatPhase::Working);
+    let paused = matches!(chat.scroll, FeedScroll::Paused { .. });
+    let bottom = bottom_lines(model, chat, theme, width, height, working, paused);
+    let layout = ChatLayout {
+        height,
+        bottom_rows: bottom.len(),
+        working,
+        paused,
+    };
     let phase = model.claude_phase(chat.agent);
     let feed_h = layout.feed_height();
 
     let mut lines: Vec<Line<'static>> = Vec::with_capacity(height);
     lines.push(top_border(width, theme));
-    lines.push(header_line(model, chat, theme, phase, width));
+    lines.push(header_line(model, chat, theme, phase, width, readonly));
 
     // The feed viewport: everything before `transcript_ready` is replay —
     // the loading band is visually distinct from an empty chat (B10).
@@ -199,13 +326,10 @@ pub(crate) fn build_chat_lines(
         FeedScroll::Following => {}
     }
     if layout.working {
-        lines.push(working_line(model, chat, ctx, width));
+        lines.push(working_line(model, chat, ctx, width, readonly));
     }
 
-    lines.push(blank_line(width));
-    lines.extend(composer_lines(chat, theme, width, layout.composer_rows));
-    lines.push(blank_line(width));
-    lines.push(footer_line(model, chat, theme, width));
+    lines.extend(bottom);
     lines.push(crate::render::bottom_border(width));
     lines.truncate(height);
     lines
@@ -226,6 +350,7 @@ fn header_line(
     theme: Theme,
     phase: ChatPhase,
     width: usize,
+    readonly: bool,
 ) -> Line<'static> {
     let mut line = new_line();
     if let Some(card) = model.agent(chat.agent) {
@@ -240,9 +365,21 @@ fn header_line(
         ));
     }
     let (word, style) = phase_word(phase, theme);
-    let right_len = "chat · ".chars().count() + word.chars().count();
+    // Read-only chats say so in the header, and "needs you" becomes
+    // "needs owner" — the observer is not the you who can answer (F1).
+    let word = if readonly && matches!(phase, ChatPhase::NeedsYou { .. }) {
+        "needs owner".to_string()
+    } else {
+        word
+    };
+    let left = if readonly {
+        "chat · read-only · "
+    } else {
+        "chat · "
+    };
+    let right_len = left.chars().count() + word.chars().count();
     let col = (width.saturating_sub(2 + right_len)).max(line_len(&line) + 1);
-    push_span(&mut line, col, "chat · ", theme.muted());
+    push_span(&mut line, col, left, theme.muted());
     line.spans.push(Span::styled(word, style));
     finish_line(&mut line, width);
     line
@@ -331,8 +468,16 @@ fn paused_rule(
 /// `◐ working · 24s · ctrl+x interrupt` (D5). Elapsed ticks locally from
 /// the prompt row's timestamp; the authoritative duration replaces it in
 /// the turn marker at close. The token count is omitted: the layer folds
-/// no usage facts yet (recorded in the phase report).
-fn working_line(model: &Model, chat: &ChatView, ctx: &FrameContext, width: usize) -> Line<'static> {
+/// no usage facts yet (recorded in the phase report). Read-only chats
+/// show the same liveness without the interrupt hint — interrupt is a
+/// write affordance, absent not disabled (F1).
+fn working_line(
+    model: &Model,
+    chat: &ChatView,
+    ctx: &FrameContext,
+    width: usize,
+    readonly: bool,
+) -> Line<'static> {
     let theme = ctx.theme;
     let elapsed = model
         .claude(chat.agent)
@@ -345,8 +490,10 @@ fn working_line(model: &Model, chat: &ChatView, ctx: &FrameContext, width: usize
         label.push_str(&format!(" · {}", fmt_secs(secs)));
     }
     push_span(&mut line, GLYPH_COL, label, theme.text());
-    line.spans
-        .push(Span::styled(" · ctrl+x interrupt", theme.muted()));
+    if !readonly {
+        line.spans
+            .push(Span::styled(" · ctrl+x interrupt", theme.muted()));
+    }
     finish_line(&mut line, width);
     line
 }
@@ -503,6 +650,9 @@ pub(crate) fn feed_lines(
     let Some(layer) = model.claude(agent) else {
         return Vec::new();
     };
+    // The plan reader affordance is a write-side binding; read-only chats
+    // never advertise it (hints tell the truth, F1).
+    let plan_hint = !model.agent(agent).is_some_and(|card| card.agent.readonly);
     let mut blocks: Vec<Block> = Vec::new();
     for entry in layer.entries() {
         // B4's grouping fact: consecutive read/search one-liners join onto
@@ -515,7 +665,7 @@ pub(crate) fn feed_lines(
         {
             continue;
         }
-        blocks.push(entry_block(entry, theme, width));
+        blocks.push(entry_block(entry, theme, width, plan_hint));
     }
     for echo in layer.pending_echoes() {
         blocks.push(echo_block(echo, theme, width));
@@ -578,7 +728,7 @@ fn echo_block(echo: &PromptEcho, theme: Theme, width: usize) -> Block {
     Block { lines, tool: false }
 }
 
-fn entry_block(entry: &FeedEntry, theme: Theme, width: usize) -> Block {
+fn entry_block(entry: &FeedEntry, theme: Theme, width: usize, plan_hint: bool) -> Block {
     match &entry.kind {
         FeedEntryKind::Prompt(prompt) => Block {
             lines: glyph_block(
@@ -647,7 +797,7 @@ fn entry_block(entry: &FeedEntry, theme: Theme, width: usize) -> Block {
             lines: markdown_block(&summary.text, theme, width),
             tool: false,
         },
-        FeedEntryKind::Tool(tool) => tool_block(tool, theme, width),
+        FeedEntryKind::Tool(tool) => tool_block(tool, theme, width, plan_hint),
         FeedEntryKind::TaskNotification(notification) => Block {
             lines: glyph_block(
                 "✔",
@@ -727,7 +877,7 @@ fn outcome_glyph(tool: &ToolEntry, theme: Theme) -> (&'static str, Style) {
     }
 }
 
-fn tool_block(tool: &ToolEntry, theme: Theme, width: usize) -> Block {
+fn tool_block(tool: &ToolEntry, theme: Theme, width: usize, plan_hint: bool) -> Block {
     // Question answers collapse to per-answer fact lines.
     if let ToolOutcome::Success {
         facts: SuccessFacts::Answers { answers },
@@ -760,9 +910,9 @@ fn tool_block(tool: &ToolEntry, theme: Theme, width: usize) -> Block {
         markdown::plain_rows(&main, text_width(width), theme.text()),
     );
 
-    // The accepted plan stays readable in the feed, truncated (B6). The
-    // `ctrl+t` reader affordance is Phase 5's; until it exists no hint
-    // advertises it (hints tell the truth).
+    // The accepted plan stays readable in the feed, truncated to its
+    // preview with the reader affordance (B6: `plan · ctrl+t to read`);
+    // read-only chats state the truncation without the dead binding.
     if let (
         ToolInvocation::Plan {
             plan: Some(plan), ..
@@ -781,14 +931,17 @@ fn tool_block(tool: &ToolEntry, theme: Theme, width: usize) -> Block {
                 lines.push(out);
             }
         }
-        if total > PLAN_PREVIEW_LINES {
+        let mut affordance = if total > PLAN_PREVIEW_LINES {
+            format!("⋮ {} more lines", total - PLAN_PREVIEW_LINES)
+        } else {
+            "plan".to_string()
+        };
+        if plan_hint {
+            affordance.push_str(" · ctrl+t to read");
+        }
+        if total > PLAN_PREVIEW_LINES || plan_hint {
             let mut out = new_line();
-            push_span(
-                &mut out,
-                TEXT_COL,
-                format!("⋮ {} more lines", total - PLAN_PREVIEW_LINES),
-                theme.muted(),
-            );
+            push_span(&mut out, TEXT_COL, affordance, theme.muted());
             lines.push(out);
         }
     }
