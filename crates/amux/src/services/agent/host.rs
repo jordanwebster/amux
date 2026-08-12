@@ -25,8 +25,8 @@ use crate::agents::{
     Agent, AgentEvent, AgentSession, AgentType, CreateAgentConfig, CreateAgentRequest,
     CreateAgentRpcRequest, ExternalHookBootstrap, HookOutcome, RenameAgentRequest,
     SendInputRequest, SessionCloseReason, SessionEvent, StopPolicy, SubscribeSessionRequest,
+    bootstrap_external_hook,
 };
-use crate::debug::DebugView;
 use crate::protocol::{ProtocolError, wire};
 use crate::server::ShutdownReason;
 use crate::suspend;
@@ -143,7 +143,7 @@ impl LocalAgentHost for PtyAgentHost {
         let result = {
             let mut state = self.state().write().await;
             if let Some(session) = state.agent_session_mut(&agent_id) {
-                match session.handle_hook(&payload).await {
+                match session.handle_hook_payload(&payload).await {
                     Ok(HookOutcome::Noop | HookOutcome::KeepSession) => Ok(()),
                     Ok(HookOutcome::WithdrawSession) => {
                         session_to_stop = withdraw_agent(&mut state, agent_id);
@@ -155,14 +155,11 @@ impl LocalAgentHost for PtyAgentHost {
                 tracing::warn!(%agent_id, "hook target not found");
                 Err(ProtocolError::NoAgentFound)
             } else {
-                match AgentSession::bootstrap_external_hook(agent_id, &payload).await {
+                match bootstrap_external_hook(agent_id, &payload).await {
                     Ok(ExternalHookBootstrap::Noop) => Ok(()),
                     Ok(ExternalHookBootstrap::Register(session)) => {
-                        match state.insert_registered_local_agent(
-                            self.host_id(),
-                            agent_id,
-                            *session,
-                        ) {
+                        match state.insert_registered_local_agent(self.host_id(), agent_id, session)
+                        {
                             Ok(announce) => {
                                 if let Some(session) = state.agent_session_mut(&agent_id) {
                                     session.maybe_start_name_sniffer(self.event_tx());
@@ -267,7 +264,7 @@ impl LocalAgentHost for PtyAgentHost {
             .map(|context| DebugAgent {
                 record: context.session.to_agent(host_id),
                 session: verbose
-                    .then(|| serde_json::to_value(DebugView::new(&context.session, verbose)).ok())
+                    .then(|| context.session.debug_json(verbose).ok())
                     .flatten(),
             })
             .collect();

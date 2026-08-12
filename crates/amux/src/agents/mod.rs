@@ -33,7 +33,10 @@ pub(crate) use naming::LocalAgentNameSource;
 pub(crate) use pty::{PtyHandle, spawn_pty_agent};
 pub(crate) use record::{AgentRecord, SessionEvent, StopPolicy};
 #[cfg(feature = "local-agents")]
-pub(crate) use session::{AgentSession, StructuredInputTarget};
+pub(crate) use session::{
+    AgentBackend, AgentSession, StructuredInput, agent_from_suspended, bootstrap_external_hook,
+    new_agent, terminal_io_protocols,
+};
 pub use session_events::{SessionCloseReason, SubscribeSessionEvent};
 #[cfg(all(feature = "local-agents", any(debug_assertions, test)))]
 pub(crate) use test_agent::TestAgentSession;

@@ -4,9 +4,7 @@ use crate::protocol::ProtocolError;
 
 pub(crate) enum ExternalHookBootstrap {
     Noop,
-    /// Boxed: an `AgentSession` is hundreds of bytes against `Noop`'s zero,
-    /// and this value rides through async plumbing by value.
-    Register(Box<crate::agents::AgentSession>),
+    Register(crate::agents::AgentSession),
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -19,7 +17,6 @@ pub(crate) enum HookOutcome {
 #[derive(Debug, Error)]
 pub(crate) enum HookError {
     #[error("hooks are not supported for this agent type")]
-    #[cfg(any(debug_assertions, test))]
     UnsupportedAgentType,
     #[error("invalid Claude hook payload: {message}")]
     InvalidPayload { message: String },

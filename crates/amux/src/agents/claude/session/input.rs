@@ -1,10 +1,11 @@
 use std::time::Duration;
 
+use async_trait::async_trait;
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
 
 use super::core::ClaudeSession;
-use crate::agents::{PtyHandle, StructuredLogSource};
+use crate::agents::{PtyHandle, StructuredInput, StructuredLogSource};
 use crate::protocol::ProtocolError;
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
@@ -115,6 +116,17 @@ impl ClaudeStructuredInputTarget {
             }
         }
         Ok(())
+    }
+}
+
+#[async_trait]
+impl StructuredInput for ClaudeStructuredInputTarget {
+    async fn send(
+        &self,
+        client_seq: u64,
+        payload: Value,
+    ) -> std::result::Result<(), ProtocolError> {
+        self.send_structured_input(client_seq, payload).await
     }
 }
 

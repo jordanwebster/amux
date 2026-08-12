@@ -38,6 +38,21 @@ One paragraph describing what was done.
 
 ---
 
+## 2026-08-13: P3 — trait-dispatched agent backends
+
+Replaced the `AgentSession` enum and its repeated Claude/test-agent match arms
+with an object-safe `AgentBackend` trait stored as `Box<dyn AgentBackend>`.
+Claude and test-agent now implement their instance behavior in their own
+modules; shared code contains only the new-agent and suspended-state factories,
+plus the explicitly Claude-owned external-hook bootstrap. Structured input is
+an optional backend-neutral owned handle, captured under the session-registry
+lock and awaited after the lock is released; Claude retains its sequence guard.
+The shared terminal protocol advertisement remains centralized. Formatting,
+workspace clippy/tests, and the 44-test testnet spec gate pass with no fixture,
+golden, spec, protocol, UI, or TUI source changes.
+
+---
+
 ## 2026-08-12: P2 — agent-agnostic structured log sink
 
 Split `StructuredLogSource` into a retained, sequenced sink with caller-selected

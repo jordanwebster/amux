@@ -8,7 +8,7 @@ use uuid::Uuid;
 use super::{AgentServiceState, SharedAgentServiceState};
 use crate::agents::{
     AgentEvent, AgentRecord, AgentSession, AgentType, LocalAgentNameSource, RenameAgentRequest,
-    SessionEvent, StopPolicy,
+    SessionEvent, StopPolicy, agent_from_suspended, new_agent,
 };
 use crate::suspend::{SuspendedAgent, SuspendedServerState};
 
@@ -134,8 +134,8 @@ pub(crate) async fn create_agent_record(
             return Err(CreateAgentError::AlreadyExists(a.clone()));
         }
 
-        let mut session = AgentSession::try_new(&req)
-            .map_err(|error| CreateAgentError::Start(error.to_string()))?;
+        let mut session =
+            new_agent(&req).map_err(|error| CreateAgentError::Start(error.to_string()))?;
         let exit_handle = session.start().map_err(|error| {
             CreateAgentError::Start(format!("failed to start local agent {agent_id}: {error}"))
         })?;
@@ -287,7 +287,7 @@ pub(crate) async fn resume_agents(
         let name = sa.name().map(String::from);
         tracing::info!(agent_id = %agent_id, name = ?name, "resuming agent");
 
-        let mut session = AgentSession::from_suspended(sa);
+        let mut session = agent_from_suspended(sa);
         match session.start() {
             Ok(exit_handle) => {
                 let info = session.to_agent(host_id);
@@ -567,7 +567,7 @@ mod tests {
 
         {
             let mut state = agent_state.write().await;
-            let session = AgentSession::TestAgent(TestAgentSession::echo_for_tests(
+            let session: AgentSession = Box::new(TestAgentSession::echo_for_tests(
                 agent_id,
                 Some("existing".to_string()),
             ));
@@ -609,7 +609,7 @@ mod tests {
 
         {
             let mut state = agent_state.write().await;
-            let session = AgentSession::try_new(&CreateAgentRequest {
+            let session = new_agent(&CreateAgentRequest {
                 agent_id,
                 host_id: None,
                 name: Some("not-ready".to_string()),

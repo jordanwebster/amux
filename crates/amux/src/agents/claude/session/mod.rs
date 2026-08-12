@@ -12,6 +12,7 @@ use crate::agents::StructuredLogSource;
 #[cfg(test)]
 use crate::agents::claude::hooks::{ClaudeHookKind, HookCommon, ParsedClaudeHook};
 
+mod backend;
 mod core;
 mod hooks;
 mod input;
@@ -19,7 +20,6 @@ mod name_sniffer;
 
 pub(crate) use core::ClaudeSession;
 
-pub(crate) use input::ClaudeStructuredInputTarget;
 #[cfg(test)]
 use input::PtyInput;
 #[cfg(test)]

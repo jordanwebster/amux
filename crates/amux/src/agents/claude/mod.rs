@@ -10,4 +10,4 @@ mod transcript;
 mod transcript_ingest;
 
 #[cfg(feature = "local-agents")]
-pub(crate) use session::{ClaudeSession, ClaudeStructuredInputTarget};
+pub(crate) use session::ClaudeSession;

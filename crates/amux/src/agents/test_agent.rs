@@ -6,13 +6,17 @@
 use std::path::PathBuf;
 
 use anyhow::Result;
+use async_trait::async_trait;
 use chrono::{DateTime, Utc};
 use serde::ser::SerializeMap;
 use serde::{Serialize, Serializer};
 use uuid::Uuid;
 
 use super::{PtyHandle, spawn_pty_agent};
-use crate::agents::{CreateAgentRequest, StructuredLogSource, TerminalSize};
+use crate::agents::{
+    AGENT_TYPE_TEST_AGENT, AgentBackend, CreateAgentRequest, LocalAgentNameSource, StopPolicy,
+    StructuredLogSource, TerminalSize, terminal_io_protocols,
+};
 #[cfg(test)]
 use crate::agents::{MultiplexStructuredReader, SequencedReplayQuery};
 use crate::debug::DebugView;
@@ -136,6 +140,89 @@ impl TestAgentSession {
         if let Some(log_source) = &self.log_source {
             log_source.close().await;
         }
+    }
+}
+
+#[async_trait]
+impl AgentBackend for TestAgentSession {
+    fn agent_id(&self) -> Uuid {
+        self.agent_id
+    }
+
+    fn name(&self) -> Option<&str> {
+        self.name.as_deref()
+    }
+
+    fn set_local_name(&mut self, name: Option<String>, _source: LocalAgentNameSource) {
+        self.name = name;
+    }
+
+    fn command(&self) -> &str {
+        &self.command
+    }
+
+    fn working_dir(&self) -> &std::path::Path {
+        &self.working_dir
+    }
+
+    fn readonly(&self) -> bool {
+        false
+    }
+
+    fn args(&self) -> &[String] {
+        &[]
+    }
+
+    fn created_at(&self) -> DateTime<Utc> {
+        self.created_at
+    }
+
+    fn start(&mut self) -> Result<tokio::task::JoinHandle<()>> {
+        TestAgentSession::start(self)
+    }
+
+    async fn stop(&self, _policy: StopPolicy) {
+        TestAgentSession::stop(self).await;
+    }
+
+    fn agent_type(&self) -> &'static str {
+        AGENT_TYPE_TEST_AGENT
+    }
+
+    fn io_protocols(&self) -> Vec<String> {
+        #[cfg(any(test, feature = "testnet"))]
+        {
+            let mut protocols = terminal_io_protocols(self.pty.as_ref());
+            protocols.push(io::TEST_ECHO_V1.to_string());
+            protocols
+        }
+        #[cfg(not(any(test, feature = "testnet")))]
+        {
+            terminal_io_protocols(self.pty.as_ref())
+        }
+    }
+
+    fn log_source(&self) -> Option<StructuredLogSource> {
+        TestAgentSession::log_source(self)
+    }
+
+    fn pty_handle(&self) -> Option<&PtyHandle> {
+        self.pty.as_ref()
+    }
+
+    fn suspended_state(&self) -> Result<crate::suspend::SuspendedAgent> {
+        Ok(crate::suspend::SuspendedAgent::TestAgent {
+            agent_id: self.agent_id,
+            name: self.name.clone(),
+            command: self.command.clone(),
+            working_dir: self.working_dir.clone(),
+            terminal_size: self.terminal_size,
+            created_at: self.created_at,
+        })
+    }
+
+    fn debug_json(&self, verbose: bool) -> serde_json::Result<serde_json::Value> {
+        serde_json::to_value(DebugView::new(self, verbose))
     }
 }
 

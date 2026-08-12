@@ -14,7 +14,7 @@ use crate::agents::claude::io::{
 use crate::agents::terminal_io::{self, TerminalV1Control, TerminalV1ReplayQuery};
 use crate::agents::{
     BroadcastRead, ByteReplayQuery, PtyHandle, SendInputRequest, SessionCloseReason,
-    SessionInputEvent, StructuredInputTarget, StructuredOutput, SubscribeSessionEvent,
+    SessionInputEvent, StructuredInput, StructuredOutput, SubscribeSessionEvent,
     SubscribeSessionRequest,
 };
 use crate::protocol::{ProtocolError, protocol_status};
@@ -270,7 +270,7 @@ async fn send_structured_session_input(
     let input = claude_io::decode_pty_transcript_v1_input(&payload)?;
     let target = structured_input_target(host, agent_id, claude_io::PTY_TRANSCRIPT_V1).await?;
     target
-        .send_structured_input(
+        .send(
             input.expected_seq,
             transcript_actions_to_pty_input_json(input.actions),
         )
@@ -301,7 +301,7 @@ async fn structured_input_target(
     host: &PtyAgentHost,
     agent_id: Uuid,
     io_protocol: &str,
-) -> Result<StructuredInputTarget, ProtocolError> {
+) -> Result<Box<dyn StructuredInput>, ProtocolError> {
     let state = host.state().read().await;
     let session = state
         .local_agents
@@ -309,7 +309,11 @@ async fn structured_input_target(
         .map(|context| &context.session)
         .ok_or(ProtocolError::NoAgentFound)?;
     ensure_agent_supports_protocol(session, agent_id, io_protocol)?;
-    Ok(session.structured_input_target())
+    session
+        .structured_input()
+        .ok_or_else(|| ProtocolError::ServerError {
+            message: "structured input not supported".to_string(),
+        })
 }
 
 fn ensure_agent_supports_protocol(
