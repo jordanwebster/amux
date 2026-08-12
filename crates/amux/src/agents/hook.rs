@@ -4,7 +4,9 @@ use crate::protocol::ProtocolError;
 
 pub(crate) enum ExternalHookBootstrap {
     Noop,
-    Register(crate::agents::AgentSession),
+    /// Boxed: an `AgentSession` is hundreds of bytes against `Noop`'s zero,
+    /// and this value rides through async plumbing by value.
+    Register(Box<crate::agents::AgentSession>),
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]

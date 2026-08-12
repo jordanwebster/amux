@@ -69,6 +69,56 @@ pair documenting the eviction-tolerant read).
 
 ---
 
+## 2026-08-12: Dedupe duplicate Claude hook deliveries at the daemon seam
+
+### Summary
+Root cause of the Phase 1 "every hook row arrives twice" observation,
+found in the transcript's own records rather than theorized: Claude Code
+runs EVERY registered hook command per event, and this machine carries
+two registrations of the amux hook — a legacy user-scope
+`~/.claude/settings.json` entry (`amux-dev hooks claude`, from the
+owner's pre-plugin dev setup; no current repo code writes settings.json)
+beside the plugin's `amux hooks claude`. The capture transcripts'
+`stop_hook_summary` rows record it verbatim: `hookCount: 2, hookInfos:
+[{amux-dev hooks claude}, {amux hooks claude}]`. Both processes read the
+same stdin JSON and deliver byte-identical payloads to the same daemon,
+which wrote each — hence duplicate adjacent `hook.*` rows in every
+fixture. Hook delivery is at-least-once by construction (user settings,
+project settings, and plugins can all legitimately carry the
+registration), so the fix is at the seam where deliveries become stream
+facts: `ClaudeSession::handle_hook` now fingerprints each emitted
+payload and drops a byte-identical re-delivery within a 2 s window. The
+three structured-emission arms collapsed into one in passing. Client
+folds still tolerate duplicates (historical streams and replays contain
+them) — that lands with the Phase 2 layer work.
+
+### Changes
+- crates/amux/src/agents/claude/session/hooks.rs — dedupe window +
+  fingerprint, consolidated emission arm, `tokio::time`-paused test
+  proving collapse/distinct/past-window behavior.
+- crates/amux/src/agents/claude/session/core.rs — `last_emitted_hook`
+  suppression state on `ClaudeSession`.
+- crates/amux/src/agents/hook.rs (+ two call sites) — boxed
+  `ExternalHookBootstrap::Register` (the grown session tripped clippy's
+  variant-size lint).
+
+### Decisions Made
+- Dedupe in core, not only in client folds: two identical deliveries of
+  one event are one fact, and the daemon is the transport seam; a
+  2-second window keeps a genuinely identical future event (same
+  notification re-fired minutes later) honest. This is transport
+  hygiene, not interpretation.
+- The legacy settings.json registration itself is owner-machine state,
+  not repo code; flagged in the phase report rather than auto-edited
+  (amux does not rewrite user Claude config).
+
+### Verification
+- `timeout 600 cargo test -p amux --lib` (401), `timeout 600 cargo test
+  -p amux --features testnet --test spec` (44), clippy
+  `--all-targets --features testnet` clean, fmt clean.
+
+---
+
 ## 2026-08-12: Phase 1 gate — spec corrections from the layer build
 
 ### Summary

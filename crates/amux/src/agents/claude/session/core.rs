@@ -81,6 +81,10 @@ pub(crate) struct ClaudeSession {
     pub(super) name_source: LocalAgentNameSource,
     pub(super) name_sniffer_abort: Option<AbortHandle>,
     pub(in crate::agents) created_at: DateTime<Utc>,
+    /// Fingerprint and arrival time of the last hook payload emitted as
+    /// structured output — duplicate-delivery suppression state (see
+    /// `hooks.rs`: hook delivery is at-least-once by construction).
+    pub(super) last_emitted_hook: Option<(u64, tokio::time::Instant)>,
 }
 
 impl ClaudeSession {
@@ -105,6 +109,7 @@ impl ClaudeSession {
             },
             name_sniffer_abort: None,
             created_at: Utc::now(),
+            last_emitted_hook: None,
         }
     }
 
@@ -128,6 +133,7 @@ impl ClaudeSession {
             name_source,
             name_sniffer_abort: None,
             created_at,
+            last_emitted_hook: None,
         }
     }
 
@@ -148,6 +154,7 @@ impl ClaudeSession {
             name_source: LocalAgentNameSource::Unset,
             name_sniffer_abort: None,
             created_at: Utc::now(),
+            last_emitted_hook: None,
         }
     }
 

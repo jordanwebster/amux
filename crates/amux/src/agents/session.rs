@@ -223,7 +223,7 @@ impl AgentSession {
         ClaudeSession::bootstrap_external_hook(agent_id, payload)
             .await
             .map(|session| match session {
-                Some(session) => ExternalHookBootstrap::Register(Self::Claude(session)),
+                Some(session) => ExternalHookBootstrap::Register(Box::new(Self::Claude(session))),
                 None => ExternalHookBootstrap::Noop,
             })
     }
