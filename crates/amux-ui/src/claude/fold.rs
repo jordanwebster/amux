@@ -105,17 +105,10 @@ pub(super) fn observe(layer: &mut ClaudeLayer, seq: u64, row: &Value) {
 
     // Row-uuid dedupe: a source-shrink re-replay repeats the file prefix;
     // the fold must be idempotent by row uuid (B10).
-    if let Some(uuid) = str_of(row, "uuid").and_then(|text| Uuid::parse_str(text).ok()) {
-        if layer.seen_set.contains(&uuid) {
-            return;
-        }
-        layer.seen_set.insert(uuid);
-        layer.seen_rows.push_back(uuid);
-        if layer.seen_rows.len() > SEEN_ROWS_RETAINED
-            && let Some(evicted) = layer.seen_rows.pop_front()
-        {
-            layer.seen_set.remove(&evicted);
-        }
+    if let Some(uuid) = str_of(row, "uuid").and_then(|text| Uuid::parse_str(text).ok())
+        && !remember(layer, uuid)
+    {
+        return;
     }
 
     match kind {
@@ -138,6 +131,13 @@ pub(super) fn observe(layer: &mut ClaudeLayer, seq: u64, row: &Value) {
         // in V1 (queueing is a reserved door).
         Some("last-prompt") | Some("queue-operation") => {}
         other => {
+            // Unknown shapes may carry no uuid at all (the vanished
+            // `progress`/`summary` generations) — B10's re-replay
+            // idempotency still applies to the entries they produce, so
+            // they dedupe by content hash within the same bounded window.
+            if str_of(row, "uuid").is_none() && !remember(layer, content_key(row)) {
+                return;
+            }
             push(
                 layer,
                 seq,
@@ -146,12 +146,45 @@ pub(super) fn observe(layer: &mut ClaudeLayer, seq: u64, row: &Value) {
                     detail: None,
                 }),
             );
+            // Unknown rows advance the timestamp chain like every other
+            // row: a thinking marker after one must measure from it, not
+            // from an older row (the chain rule below).
+            touch_row_chain(layer, row);
         }
     }
 }
 
+/// Record one row identity in the bounded dedupe window; `false` when the
+/// row was already folded this window (a re-replay).
+fn remember(layer: &mut ClaudeLayer, key: Uuid) -> bool {
+    if layer.seen_set.contains(&key) {
+        return false;
+    }
+    layer.seen_set.insert(key);
+    layer.seen_rows.push_back(key);
+    if layer.seen_rows.len() > SEEN_ROWS_RETAINED
+        && let Some(evicted) = layer.seen_rows.pop_front()
+    {
+        layer.seen_set.remove(&evicted);
+    }
+    true
+}
+
+/// Deterministic identity for a row without a uuid: FNV-1a over its
+/// canonical JSON (serde_json maps are key-sorted), domain-tagged so it
+/// cannot collide with a genuine row uuid's random bits.
+fn content_key(row: &Value) -> Uuid {
+    let mut hash = 0xcbf2_9ce4_8422_2325u64;
+    for byte in row.to_string().as_bytes() {
+        hash ^= u64::from(*byte);
+        hash = hash.wrapping_mul(0x0000_0100_0000_01b3);
+    }
+    Uuid::from_u128((0xc0deu128 << 64) | u128::from(hash))
+}
+
 /// Every uuid row advances the thinking-duration chain (§15: previous uuid
-/// row in file order), even when it makes no entry.
+/// row in file order), even when it makes no entry. Timestamp-gated, so
+/// rows without one leave the chain alone.
 fn touch_row_chain(layer: &mut ClaudeLayer, row: &Value) {
     if let Some(at) = timestamp_of(row) {
         layer.turn.last_row_at = Some(at);
@@ -161,6 +194,14 @@ fn touch_row_chain(layer: &mut ClaudeLayer, row: &Value) {
 // --- user rows --------------------------------------------------------------
 
 fn fold_user(layer: &mut ClaudeLayer, seq: u64, row: &Value) {
+    // Injected meta rows (caveats, hook feedback) are the session's own
+    // bookkeeping in EITHER content form (§5) — filtered on the top-level
+    // discriminator before any interrupt/tool/closure handling, so a meta
+    // row can never abandon a message or masquerade as content.
+    if bool_of(row, "isMeta") {
+        touch_row_chain(layer, row);
+        return;
+    }
     let content = row.pointer("/message/content");
     match content {
         Some(Value::String(text)) => fold_user_text(layer, seq, row, text),
@@ -226,14 +267,11 @@ fn fold_user_text(layer: &mut ClaudeLayer, seq: u64, row: &Value, text: &str) {
         return;
     }
 
-    // Injected meta rows (caveats, hook feedback) and local-command records
-    // (`<command-name>…`, `<local-command-stdout>…`) are the session's own
-    // bookkeeping, not conversation (§5). Known and deliberately not feed
-    // entries.
-    if bool_of(row, "isMeta")
-        || text.starts_with("<command-")
-        || text.starts_with("<local-command-")
-    {
+    // Local-command records (`<command-name>…`, `<local-command-stdout>…`)
+    // are the session's own bookkeeping, not conversation (§5). Known and
+    // deliberately not feed entries. (isMeta rows were filtered before the
+    // content dispatch.)
+    if text.starts_with("<command-") || text.starts_with("<local-command-") {
         touch_row_chain(layer, row);
         return;
     }
@@ -286,13 +324,16 @@ fn fold_user_text(layer: &mut ClaudeLayer, seq: u64, row: &Value, text: &str) {
     };
 
     let at = timestamp_of(row);
-    let turn_start = matches!(
-        source,
-        PromptSource::Typed
-            | PromptSource::Queued
-            | PromptSource::SuggestionAccepted
-            | PromptSource::Human
-    );
+    // Turn start (§14): `origin.kind:"human"` is the definitive
+    // discriminator — an unknown `promptSource` label is decoration and
+    // must not silently alter turn semantics (tolerate-unknown degrades
+    // gracefully). Without an origin, the known human source labels stand
+    // in; a fully unstated row never starts a turn.
+    let turn_start = origin_kind == Some("human")
+        || matches!(
+            source,
+            PromptSource::Typed | PromptSource::Queued | PromptSource::SuggestionAccepted
+        );
     push(
         layer,
         seq,
@@ -606,8 +647,12 @@ fn retain_plan(layer: &mut ClaudeLayer, tool_use_id: &str, row: &Value) {
 
 fn fold_assistant(layer: &mut ClaudeLayer, seq: u64, row: &Value) {
     // API errors are synthetic rows (plain-uuid id, `<synthetic>` model) —
-    // status entries, not messages (B8/§20).
+    // status entries, not messages (B8/§20). Their arrival still means the
+    // request that carried any open message is over: B2's new-message-id
+    // closure applies before the error is recorded, so no null-stop
+    // message is left "streaming" behind an error.
     if bool_of(row, "isApiErrorMessage") {
+        close_open_messages(layer, None, MessageFinality::Abandoned);
         let text = row
             .pointer("/message/content")
             .and_then(Value::as_array)
@@ -930,10 +975,24 @@ fn finalize_message(layer: &mut ClaudeLayer, message_id: &str, stop_reason: Stri
 fn fold_system(layer: &mut ClaudeLayer, seq: u64, row: &Value) {
     match str_of(row, "subtype") {
         Some("turn_duration") => {
+            // Zero is not a fact: a row without a readable `durationMs`
+            // cannot claim a measured duration (and must not overwrite a
+            // better inferred marker) — it degrades to an unrecognized
+            // entry instead, uninterpreted.
+            let Some(duration_ms) = u64_of(row, "durationMs") else {
+                push(
+                    layer,
+                    seq,
+                    FeedEntryKind::Unrecognized(UnrecognizedEntry {
+                        row_type: Some("system".to_string()),
+                        detail: Some("turn_duration without durationMs".to_string()),
+                    }),
+                );
+                touch_row_chain(layer, row);
+                return;
+            };
             let turn = TurnEntry {
-                duration: TurnDuration::Measured {
-                    ms: u64_of(row, "durationMs").unwrap_or(0),
-                },
+                duration: TurnDuration::Measured { ms: duration_ms },
                 message_count: u64_of(row, "messageCount"),
                 pending_background_agents: u64_of(row, "pendingBackgroundAgentCount"),
             };
@@ -970,8 +1029,12 @@ fn fold_system(layer: &mut ClaudeLayer, seq: u64, row: &Value) {
                     post_tokens: u64_of(metadata, "postTokens"),
                 }),
             );
-            // Durations are never computed across a compaction (B3).
+            // Durations are never computed across a compaction (B3): the
+            // thinking chain, the elapsed prompt base, and any pending
+            // marker reconciliation all end at the boundary.
             layer.turn.last_row_at = None;
+            layer.turn.prompt_at = None;
+            layer.turn.inferred_turn_entry = None;
         }
         // Idle-return summaries and local-command records (§8): known, not
         // feed entries in V1.

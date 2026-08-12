@@ -38,6 +38,57 @@ One paragraph describing what was done.
 
 ---
 
+## 2026-08-12: Chat V1 Phase 1 — codex review fixes
+
+### Summary
+All seven codex findings on the Phase 1 diff accepted and fixed in the
+Claude layer fold — each one was the fold breaking a rule docs/CHAT.md
+or its own module docs state, and each fix now carries a Tier-1 spec
+case documenting the rule: (1) feed-producing rows WITHOUT uuids (the
+retained unknown shapes) now dedupe by content hash in the same bounded
+window, so a source-shrink re-replay stays idempotent (B10); (2) the
+top-level `isMeta` discriminator is filtered before any interrupt/tool/
+closure handling, so an array-form meta row can no longer abandon a
+message or emit unrecognized entries — meta rows are fully inert in
+either content form; (3) `origin.kind:"human"` is the definitive
+turn-start discriminator — an unknown `promptSource` label degrades
+gracefully instead of silently killing the turn clock; (4) an API-error
+row closes any open null-stop message as abandoned before recording the
+error (B2); (5) a `turn_duration` row without a readable `durationMs`
+degrades to an unrecognized entry — zero is not a fact, and it can no
+longer overwrite a better inferred marker; (6) a compaction boundary
+invalidates the elapsed prompt base and pending marker reconciliation,
+so no duration state crosses it (B3); (7) unknown uuid rows advance the
+thinking-duration timestamp chain like every other row.
+
+### Changes
+- crates/amux-ui/src/claude/fold.rs — the seven fixes (`remember` /
+  `content_key` dedupe helpers, hoisted isMeta filter, turn-start rule,
+  API-error closure, malformed-authority degrade, boundary
+  invalidation, chain touch in the unknown arm).
+- crates/amux-ui/tests/spec/{feed_replay,feed_turns,feed_edges}.rs —
+  one spec case per finding (7 new tests, 62 → 69), plus four new
+  differential sequences.
+
+### Decisions Made
+- No-uuid dedupe strategy: content hash (FNV-1a over canonical JSON,
+  domain-tagged) within the SAME bounded seen-window as row uuids —
+  identical unknown rows fold once per window, which mirrors what a
+  uuid would give them; a distinct-content repeat still folds.
+- Malformed `turn_duration` degrades to unrecognized (uninterpreted —
+  no turn-state changes) rather than "measured unknown": zero facts
+  are never invented, and the row stays visible.
+- The isMeta hoist also stops string-form meta rows from closing open
+  messages (previously they did): machine-injected rows are not user
+  actions, so B2's user-row closure does not apply to them.
+
+### Verification
+- fmt + CI clippy clean; `timeout 600 cargo test -p amux-ui` (10 lib +
+  1 runtime + 69 spec) green; amux spec suite 44 green; differential
+  wraps the new sequences.
+
+---
+
 ## 2026-08-12: Chat V1 Phase 1 — the Claude feed-facts layer
 
 ### Summary

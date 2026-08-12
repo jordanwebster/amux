@@ -425,6 +425,186 @@ fn session_state_rows_fold_to_latest_wins_facts() {
     );
 }
 
+const REVIEW_SESSION: &str = "22222222-2222-4222-8222-222222222222";
+
+fn review_row(uuid: u128, at: &str, mut extra: serde_json::Value) -> serde_json::Value {
+    let mut base = json!({
+        "uuid": uuid::Uuid::from_u128(uuid).to_string(),
+        "sessionId": REVIEW_SESSION,
+        "timestamp": at,
+    });
+    base.as_object_mut()
+        .expect("object")
+        .append(extra.as_object_mut().expect("object"));
+    base
+}
+
+fn interrupt_row(uuid: u128, at: &str) -> serde_json::Value {
+    review_row(
+        uuid,
+        at,
+        json!({
+            "type": "user",
+            "message": {"role": "user", "content": [
+                {"type": "text", "text": "[Request interrupted by user]"}
+            ]}
+        }),
+    )
+}
+
+/// `origin.kind:"human"` is the definitive turn-start discriminator: a
+/// `promptSource` label this build does not know is decoration, and
+/// tolerate-unknown means it degrades gracefully — the turn clock still
+/// starts, so a later interrupt can still infer its elapsed marker.
+#[test]
+fn a_human_origin_prompt_with_an_unknown_source_still_starts_the_turn() {
+    let prompt = review_row(
+        0x8000,
+        "2026-08-11T22:00:00.000Z",
+        json!({
+            "type": "user",
+            "message": {"role": "user", "content": "carry on"},
+            "origin": {"kind": "human"},
+            "promptSource": "telepathy"
+        }),
+    );
+    let model = fold(seq([
+        chat_base("fix-auth-bug"),
+        vec![batch(
+            "fix-auth-bug",
+            10,
+            vec![prompt, interrupt_row(0x8001, "2026-08-11T22:00:07.500Z")],
+        )],
+    ]));
+    let layer = claude_layer(&model, "fix-auth-bug");
+    let prompt = layer
+        .entries()
+        .find_map(|entry| match &entry.kind {
+            FeedEntryKind::Prompt(prompt) => Some(prompt),
+            _ => None,
+        })
+        .expect("the prompt entry");
+    assert_eq!(
+        prompt.source,
+        PromptSource::Other {
+            label: "telepathy".to_string()
+        }
+    );
+    let turn = layer
+        .entries()
+        .find_map(|entry| match &entry.kind {
+            FeedEntryKind::Turn(turn) => Some(turn),
+            _ => None,
+        })
+        .expect("the interrupt still measures from the prompt");
+    assert_eq!(turn.duration, TurnDuration::SincePrompt { ms: 7500 });
+}
+
+/// Zero is not a fact: a `turn_duration` row without a readable
+/// `durationMs` degrades to an unrecognized entry — it never fabricates a
+/// measured zero and never overwrites a better inferred marker.
+#[test]
+fn a_malformed_turn_duration_never_fabricates_a_measured_zero() {
+    let prompt = review_row(
+        0x8100,
+        "2026-08-11T22:00:00.000Z",
+        json!({
+            "type": "user",
+            "message": {"role": "user", "content": "work"},
+            "origin": {"kind": "human"},
+            "promptSource": "typed"
+        }),
+    );
+    let malformed = review_row(
+        0x8102,
+        "2026-08-11T22:00:04.000Z",
+        json!({"type": "system", "subtype": "turn_duration", "messageCount": 3}),
+    );
+    let model = fold(seq([
+        chat_base("fix-auth-bug"),
+        vec![batch(
+            "fix-auth-bug",
+            10,
+            vec![
+                prompt,
+                interrupt_row(0x8101, "2026-08-11T22:00:03.000Z"),
+                malformed,
+            ],
+        )],
+    ]));
+    let layer = claude_layer(&model, "fix-auth-bug");
+    let turn = layer
+        .entries()
+        .find_map(|entry| match &entry.kind {
+            FeedEntryKind::Turn(turn) => Some(turn),
+            _ => None,
+        })
+        .expect("the inferred marker");
+    assert_eq!(
+        turn.duration,
+        TurnDuration::SincePrompt { ms: 3000 },
+        "the inferred marker stands; no measured zero was invented"
+    );
+    assert!(
+        layer.entries().any(|entry| matches!(
+            &entry.kind,
+            FeedEntryKind::Unrecognized(entry)
+                if entry.detail.as_deref() == Some("turn_duration without durationMs")
+        )),
+        "the malformed authority row is stated, not interpreted"
+    );
+}
+
+/// Durations are never computed across a compaction (B3) — the elapsed
+/// prompt base ends at the boundary too, so an interrupt landing after it
+/// infers no elapsed marker rather than one measured across the boundary.
+#[test]
+fn an_interrupt_after_a_compaction_infers_no_elapsed_marker() {
+    let prompt = review_row(
+        0x8200,
+        "2026-08-11T22:00:00.000Z",
+        json!({
+            "type": "user",
+            "message": {"role": "user", "content": "work"},
+            "origin": {"kind": "human"},
+            "promptSource": "typed"
+        }),
+    );
+    let boundary = review_row(
+        0x8201,
+        "2026-08-11T22:00:10.000Z",
+        json!({
+            "type": "system", "subtype": "compact_boundary",
+            "compactMetadata": {"trigger": "auto", "preTokens": 1000, "postTokens": 100}
+        }),
+    );
+    let model = fold(seq([
+        chat_base("fix-auth-bug"),
+        vec![batch(
+            "fix-auth-bug",
+            10,
+            vec![
+                prompt,
+                boundary,
+                interrupt_row(0x8202, "2026-08-11T22:00:20.000Z"),
+            ],
+        )],
+    ]));
+    let layer = claude_layer(&model, "fix-auth-bug");
+    assert!(
+        layer
+            .entries()
+            .any(|entry| matches!(entry.kind, FeedEntryKind::Interruption(_))),
+        "the interruption itself is recorded"
+    );
+    assert!(
+        !layer
+            .entries()
+            .any(|entry| matches!(entry.kind, FeedEntryKind::Turn(_))),
+        "no elapsed marker measured across the boundary"
+    );
+}
+
 pub fn sequences() -> Vec<(&'static str, Vec<Msg>)> {
     vec![
         (
@@ -436,5 +616,59 @@ pub fn sequences() -> Vec<(&'static str, Vec<Msg>)> {
             chat_feed("fix-auth-bug", "interrupt"),
         ),
         ("feed_turns::compact", chat_feed("fix-auth-bug", "compact")),
+        (
+            "feed_turns::unknown_source_turn",
+            seq([
+                chat_base("fix-auth-bug"),
+                vec![batch(
+                    "fix-auth-bug",
+                    10,
+                    vec![
+                        review_row(
+                            0x8000,
+                            "2026-08-11T22:00:00.000Z",
+                            json!({
+                                "type": "user",
+                                "message": {"role": "user", "content": "carry on"},
+                                "origin": {"kind": "human"},
+                                "promptSource": "telepathy"
+                            }),
+                        ),
+                        interrupt_row(0x8001, "2026-08-11T22:00:07.500Z"),
+                    ],
+                )],
+            ]),
+        ),
+        (
+            "feed_turns::compaction_interrupt",
+            seq([
+                chat_base("fix-auth-bug"),
+                vec![batch(
+                    "fix-auth-bug",
+                    10,
+                    vec![
+                        review_row(
+                            0x8200,
+                            "2026-08-11T22:00:00.000Z",
+                            json!({
+                                "type": "user",
+                                "message": {"role": "user", "content": "work"},
+                                "origin": {"kind": "human"},
+                                "promptSource": "typed"
+                            }),
+                        ),
+                        review_row(
+                            0x8201,
+                            "2026-08-11T22:00:10.000Z",
+                            json!({
+                                "type": "system", "subtype": "compact_boundary",
+                                "compactMetadata": {"trigger": "auto"}
+                            }),
+                        ),
+                        interrupt_row(0x8202, "2026-08-11T22:00:20.000Z"),
+                    ],
+                )],
+            ]),
+        ),
     ]
 }

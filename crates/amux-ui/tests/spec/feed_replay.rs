@@ -79,6 +79,38 @@ fn re_replay_is_idempotent_by_row_uuid() {
     );
 }
 
+/// B10's idempotency covers rows WITHOUT uuids too: an unknown retained
+/// shape (the vanished `progress`/`summary` generations) dedupes by
+/// content hash within the same bounded window, so a source-shrink
+/// re-replay cannot append duplicate unrecognized entries and evict real
+/// content. Distinct unknown rows still all fold.
+#[test]
+fn re_replay_deduplicates_unknown_rows_without_uuids() {
+    let unknown_a = json!({"type": "progress", "data": {"step": 1}});
+    let unknown_b = json!({"type": "progress", "data": {"step": 2}});
+    let model = fold(seq([
+        chat_base("fix-auth-bug"),
+        vec![
+            batch(
+                "fix-auth-bug",
+                10,
+                vec![unknown_a.clone(), unknown_b.clone()],
+            ),
+            // The re-replayed prefix delivers the same rows again.
+            batch("fix-auth-bug", 20, vec![unknown_a, unknown_b]),
+        ],
+    ]));
+    let layer = claude_layer(&model, "fix-auth-bug");
+    assert_eq!(
+        layer
+            .entries()
+            .filter(|entry| matches!(entry.kind, FeedEntryKind::Unrecognized(_)))
+            .count(),
+        2,
+        "each distinct unknown row folds exactly once"
+    );
+}
+
 /// A row from a different `sessionId` IS the relink (`/clear`, resume,
 /// fork): the buffer was cleared and a new file replays. The layer opens a
 /// fresh epoch — feed, session facts, and the ready marker all belong to
@@ -252,6 +284,24 @@ pub fn sequences() -> Vec<(&'static str, Vec<Msg>)> {
     vec![
         ("feed_replay::fresh", chat_base("fix-auth-bug")),
         ("feed_replay::pong", chat_feed("fix-auth-bug", "pong")),
+        (
+            "feed_replay::unknown_dedupe",
+            seq([
+                chat_base("fix-auth-bug"),
+                vec![
+                    batch(
+                        "fix-auth-bug",
+                        10,
+                        vec![json!({"type": "progress", "data": {"step": 1}})],
+                    ),
+                    batch(
+                        "fix-auth-bug",
+                        20,
+                        vec![json!({"type": "progress", "data": {"step": 1}})],
+                    ),
+                ],
+            ]),
+        ),
         (
             "feed_replay::re_replay",
             seq([

@@ -315,6 +315,169 @@ fn skeletal_rows_never_crash_the_fold() {
     );
 }
 
+/// An assistant row still generating (null `stop_reason`).
+fn an_open_message_row(uuid: u128, id: &str) -> serde_json::Value {
+    row(
+        uuid,
+        json!({
+            "type": "assistant",
+            "message": {"id": id, "role": "assistant", "stop_reason": null,
+                         "content": [{"type": "text", "text": "generating…"}]}
+        }),
+    )
+}
+
+fn finality_of(model: &amux_ui::Model, id: &str) -> amux_ui::claude::MessageFinality {
+    claude_layer(model, "fix-auth-bug")
+        .entries()
+        .find_map(|entry| match &entry.kind {
+            FeedEntryKind::Message(message) if message.message_id == id => {
+                Some(message.finality.clone())
+            }
+            _ => None,
+        })
+        .expect("the message entry")
+}
+
+/// A top-level `isMeta` row is the session's own bookkeeping in EITHER
+/// content form (§5): it never closes an open message, never emits
+/// entries, and never masquerades as an interrupt or tool result.
+#[test]
+fn meta_rows_are_inert_in_either_content_form() {
+    let meta_array = row(
+        0x7600,
+        json!({
+            "type": "user",
+            "isMeta": true,
+            "message": {"role": "user", "content": [
+                {"type": "text", "text": "<system-note>hook feedback</system-note>"}
+            ]}
+        }),
+    );
+    let meta_string = row(
+        0x7601,
+        json!({
+            "type": "user",
+            "isMeta": true,
+            "message": {"role": "user", "content": "Caveat: injected by the local command"}
+        }),
+    );
+    let model = fold(seq([
+        chat_base("fix-auth-bug"),
+        vec![batch(
+            "fix-auth-bug",
+            10,
+            vec![
+                an_open_message_row(0x7602, "msg_open"),
+                meta_array,
+                meta_string,
+            ],
+        )],
+    ]));
+    let layer = claude_layer(&model, "fix-auth-bug");
+    assert_eq!(
+        finality_of(&model, "msg_open"),
+        amux_ui::claude::MessageFinality::Open,
+        "machine-injected rows are not user actions and close nothing"
+    );
+    assert_eq!(
+        layer
+            .entries()
+            .filter(|entry| !matches!(entry.kind, FeedEntryKind::Message(_)))
+            .count(),
+        0,
+        "meta rows make no entries of any kind"
+    );
+}
+
+/// An API error is the end of the request that carried any open message:
+/// B2's closure applies before the error is recorded, so nothing is left
+/// "streaming" behind an error entry.
+#[test]
+fn an_api_error_closes_the_open_message_as_abandoned() {
+    let error = row(
+        0x7700,
+        json!({
+            "type": "assistant",
+            "isApiErrorMessage": true,
+            "error": "server_error",
+            "message": {"id": "e", "role": "assistant", "stop_reason": "stop_sequence",
+                         "content": [{"type": "text", "text": "API Error"}]}
+        }),
+    );
+    let model = fold(seq([
+        chat_base("fix-auth-bug"),
+        vec![batch(
+            "fix-auth-bug",
+            10,
+            vec![an_open_message_row(0x7701, "msg_open"), error],
+        )],
+    ]));
+    assert_eq!(
+        finality_of(&model, "msg_open"),
+        amux_ui::claude::MessageFinality::Abandoned
+    );
+    assert!(
+        claude_layer(&model, "fix-auth-bug")
+            .entries()
+            .any(|entry| matches!(entry.kind, FeedEntryKind::ApiError(_))),
+        "the error entry still lands after the closure"
+    );
+}
+
+/// Unknown uuid rows advance the timestamp chain like every other row: a
+/// thinking marker after one measures from it, not from an older row —
+/// otherwise the inferred duration overstates.
+#[test]
+fn unknown_uuid_rows_advance_the_timestamp_chain() {
+    let prompt = json!({
+        "type": "user",
+        "uuid": uuid::Uuid::from_u128(0x7800).to_string(),
+        "sessionId": SESSION,
+        "timestamp": "2026-08-11T22:00:00.000Z",
+        "message": {"role": "user", "content": "think"},
+        "origin": {"kind": "human"},
+        "promptSource": "typed"
+    });
+    let unknown = json!({
+        "type": "wormhole",
+        "uuid": uuid::Uuid::from_u128(0x7801).to_string(),
+        "sessionId": SESSION,
+        "timestamp": "2026-08-11T22:00:05.000Z"
+    });
+    let thinking = json!({
+        "type": "assistant",
+        "uuid": uuid::Uuid::from_u128(0x7802).to_string(),
+        "sessionId": SESSION,
+        "timestamp": "2026-08-11T22:00:08.000Z",
+        "message": {"id": "msg_t", "role": "assistant", "stop_reason": "end_turn",
+                     "content": [{"type": "thinking", "thinking": "", "signature": ""}]}
+    });
+    let model = fold(seq([
+        chat_base("fix-auth-bug"),
+        vec![batch("fix-auth-bug", 10, vec![prompt, unknown, thinking])],
+    ]));
+    let layer = claude_layer(&model, "fix-auth-bug");
+    assert!(
+        layer
+            .entries()
+            .any(|entry| matches!(entry.kind, FeedEntryKind::Unrecognized(_))),
+        "the unknown row is still stated"
+    );
+    let marker = layer
+        .entries()
+        .find_map(|entry| match &entry.kind {
+            FeedEntryKind::Thinking(thinking) => Some(thinking),
+            _ => None,
+        })
+        .expect("the thinking marker");
+    assert_eq!(
+        marker.duration_ms,
+        Some(3000),
+        "measured from the unknown row (22:00:05), not the prompt (22:00:00)"
+    );
+}
+
 /// `redacted_thinking` renders the same marker flagged redacted (B3).
 #[test]
 fn redacted_thinking_is_a_flagged_marker() {
@@ -341,28 +504,64 @@ fn redacted_thinking_is_a_flagged_marker() {
 }
 
 pub fn sequences() -> Vec<(&'static str, Vec<Msg>)> {
-    vec![(
-        "feed_edges::authored_rows",
-        seq([
-            chat_base("fix-auth-bug"),
-            vec![batch(
-                "fix-auth-bug",
-                10,
-                vec![
-                    json!({"type": "progress", "data": {}}),
-                    row(
-                        0x7500,
-                        json!({
-                            "type": "assistant",
-                            "isApiErrorMessage": true,
-                            "error": "server_error",
-                            "message": {"id": "e", "role": "assistant",
-                                         "stop_reason": "stop_sequence",
-                                         "content": [{"type": "text", "text": "API Error"}]}
-                        }),
-                    ),
-                ],
-            )],
-        ]),
-    )]
+    vec![
+        (
+            "feed_edges::authored_rows",
+            seq([
+                chat_base("fix-auth-bug"),
+                vec![batch(
+                    "fix-auth-bug",
+                    10,
+                    vec![
+                        json!({"type": "progress", "data": {}}),
+                        row(
+                            0x7500,
+                            json!({
+                                "type": "assistant",
+                                "isApiErrorMessage": true,
+                                "error": "server_error",
+                                "message": {"id": "e", "role": "assistant",
+                                             "stop_reason": "stop_sequence",
+                                             "content": [{"type": "text", "text": "API Error"}]}
+                            }),
+                        ),
+                    ],
+                )],
+            ]),
+        ),
+        (
+            "feed_edges::meta_and_error_closure",
+            seq([
+                chat_base("fix-auth-bug"),
+                vec![batch(
+                    "fix-auth-bug",
+                    10,
+                    vec![
+                        an_open_message_row(0x7602, "msg_open"),
+                        row(
+                            0x7600,
+                            json!({
+                                "type": "user",
+                                "isMeta": true,
+                                "message": {"role": "user", "content": [
+                                    {"type": "text", "text": "<system-note>hook feedback</system-note>"}
+                                ]}
+                            }),
+                        ),
+                        row(
+                            0x7700,
+                            json!({
+                                "type": "assistant",
+                                "isApiErrorMessage": true,
+                                "error": "server_error",
+                                "message": {"id": "e", "role": "assistant",
+                                             "stop_reason": "stop_sequence",
+                                             "content": [{"type": "text", "text": "API Error"}]}
+                            }),
+                        ),
+                    ],
+                )],
+            ]),
+        ),
+    ]
 }
