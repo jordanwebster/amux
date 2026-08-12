@@ -27,9 +27,11 @@ const GLYPH_COL: usize = 2;
 const TEXT_COL: usize = 4;
 const CONT_COL: usize = 6;
 
-/// Below these, the chat frame cannot lay out; degrade to the notice.
+/// Below these, the chat frame cannot lay out (7 static chrome rows + up
+/// to 2 working/paused rows + a 1-row composer need 10); degrade to the
+/// chrome's too-small notice.
 const MIN_WIDTH: usize = 24;
-const MIN_HEIGHT: usize = 9;
+const MIN_HEIGHT: usize = 10;
 
 /// One 1 Hz Tick drives the spinner and the elapsed text together (D5);
 /// the frame index derives from elapsed seconds — no renderer state.
@@ -77,12 +79,22 @@ impl ChatLayout {
 pub(crate) fn layout(model: &Model, chat: &ChatView, viewport: (u16, u16)) -> ChatLayout {
     let width = viewport.0 as usize;
     let height = viewport.1 as usize;
+    let working = matches!(model.claude_phase(chat.agent), ChatPhase::Working);
+    let paused = matches!(chat.scroll, FeedScroll::Paused { .. });
+    // The composer auto-grows to six rows but never past the viewport's
+    // static-row budget (7 fixed chrome rows + the working/paused rows):
+    // the footer and border survive every height, the feed gives way
+    // first.
+    let extra = usize::from(working || paused) + usize::from(working);
+    // Never below 1: a 1-row composer always renders (the too-small guard
+    // keeps heights where even that cannot fit out of this path).
+    let budget = height.saturating_sub(7 + extra).max(1);
     let (rows, _) = composer_display_rows(&chat.composer, composer_width(width));
     ChatLayout {
         height,
-        composer_rows: rows.len().clamp(1, 6),
-        working: matches!(model.claude_phase(chat.agent), ChatPhase::Working),
-        paused: matches!(chat.scroll, FeedScroll::Paused { .. }),
+        composer_rows: rows.len().clamp(1, budget.min(6)),
+        working,
+        paused,
     }
 }
 
@@ -341,30 +353,36 @@ fn working_line(model: &Model, chat: &ChatView, ctx: &FrameContext, width: usize
 // --- composer ---------------------------------------------------------------
 
 /// The draft (cursor glyph inserted) as hard-wrapped display rows, plus
-/// the row holding the cursor — the auto-grow and windowing base.
+/// the row holding the cursor — the auto-grow and windowing base. Rows
+/// wrap by display cells at grapheme boundaries (CJK/emoji are two cells,
+/// combining marks zero); cursor tracking stays char-indexed because the
+/// `▌` glyph is a real char in the display string.
 fn composer_display_rows(composer: &Composer, width: usize) -> (Vec<String>, usize) {
+    use unicode_segmentation::UnicodeSegmentation;
+    let width = width.max(1);
     let display = composer.display_with_cursor();
     let cursor_pos = composer.cursor();
-    let mut rows = Vec::new();
-    let mut cursor_row = 0;
-    let mut consumed = 0usize;
+    let mut rows: Vec<String> = Vec::new();
+    let mut cursor_row = 0usize;
+    let mut chars_seen = 0usize;
     for logical in display.split('\n') {
-        let chars: Vec<char> = logical.chars().collect();
-        let mut start = 0;
-        loop {
-            let end = (start + width).min(chars.len());
-            if cursor_pos >= consumed + start && cursor_pos <= consumed + end && end > start
-                || (chars.is_empty() && cursor_pos == consumed)
-            {
+        let mut row = String::new();
+        let mut row_cells = 0usize;
+        for grapheme in logical.graphemes(true) {
+            let cells = crate::render::str_width(grapheme);
+            if row_cells + cells > width && !row.is_empty() {
+                rows.push(std::mem::take(&mut row));
+                row_cells = 0;
+            }
+            if cursor_pos >= chars_seen && cursor_pos < chars_seen + grapheme.chars().count() {
                 cursor_row = rows.len();
             }
-            rows.push(chars[start..end].iter().collect());
-            if end >= chars.len() {
-                break;
-            }
-            start = end;
+            row.push_str(grapheme);
+            row_cells += cells;
+            chars_seen += grapheme.chars().count();
         }
-        consumed += chars.len() + 1;
+        rows.push(row);
+        chars_seen += 1; // the newline
     }
     (rows, cursor_row)
 }
@@ -533,7 +551,7 @@ fn append_grouped_tool(previous: &mut Block, tool: &ToolEntry, theme: Theme, wid
         rest.push(' ');
     }
     rest.push_str(&tool_main_text(tool));
-    let added = 3 + rest.chars().count();
+    let added = 3 + crate::render::str_width(&rest);
     if line_len(main) + added > width.saturating_sub(2) {
         return false;
     }

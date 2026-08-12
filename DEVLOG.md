@@ -38,6 +38,60 @@ One paragraph describing what was done.
 
 ---
 
+## 2026-08-12: Chat V1 Phase 4 — codex review fixes
+
+### Summary
+The four codex findings on the Phase 4 diff, all accepted. (1) A
+command the reducer refuses SYNCHRONOUSLY (whitespace-only prompt,
+disconnected fail-fast) finished before the run loop's reconcile ever
+ran — the cleared draft could never resurface; the loop now reconciles
+immediately after dispatch. (2) The paste deferral was overridden by
+review: with bracketed paste disabled, a pasted CR arrived as Enter and
+submitted a partial prompt — actively harmful. Bracketed paste joins
+the terminal-hygiene set (enabled with the chrome, restored on every
+exit path incl. the signal handler's locked byte string), and
+`Event::Paste` inserts literally into the draft: CRLF/CR→LF, tabs
+expand to four spaces at insertion (mirroring the reader's
+tabs-expand-before-width-math policy, keeping the draft sendable past
+the C6 control-byte validator), all other control bytes stripped
+(invisible AND unsendable — a trap in both directions). (3) Composer
+growth is clamped to the viewport's static-row budget, so the footer
+and bottom border survive every height ≥ the (raised) minimum; the
+never-panics sweep now asserts both at every size. (4) Wrapping and
+border math measure display cells, not codepoints: `str_width`/
+`clip_to_width` (unicode-width 0.2 + unicode-segmentation — the exact
+versions ratatui renders with) drive markdown wrap, hard wrap, composer
+rows, grouped-join fits, and `finish_line`'s clip/pad, so CJK/emoji
+never displace the right border and combining marks never widen a row.
+
+### Changes
+- `crates/amux-tui/src/run.rs`: reconcile after dispatch;
+  `Event::Paste` routes into the chat composer.
+- `crates/amux-tui/src/terminal.rs`: Enable/DisableBracketedPaste in
+  `write_enter_chrome`/`write_restore`; `RESTORE_BYTES` extended (the
+  lockstep unit test still guards it).
+- `crates/amux-tui/src/chat/composer.rs`: `paste()` with
+  normalization/expansion/stripping + five tests.
+- `crates/amux-tui/src/chat/keys.rs`: `handle_chat_paste`; tests for
+  the synchronous-refusal resurface and paste dismissal.
+- `crates/amux-tui/src/render.rs`: `str_width`/`clip_to_width`;
+  `line_len`/`finish_line` measure and clip by cells (re-padding after
+  a wide-grapheme clip so the border cannot drift).
+- `crates/amux-tui/src/chat/{markdown,render}.rs`: width-based wrap
+  paths; composer budget clamp; MIN_HEIGHT 10.
+- `crates/amux-tui/tests/chat_golden.rs` + `tests/golden/
+  chat_unicode.txt`: CJK/emoji/combining-marks frame with per-row
+  border-cell assertions; the viewport sweep asserts frame height,
+  footer, and bottom border at every viable size.
+
+### Verification
+- amux-tui 51 lib + 21 chat golden + 19 fleet golden; every
+  pre-existing golden byte-identical. fmt clean; workspace clippy
+  `-D warnings` (`--features amux/testnet`) clean; amux-ui, amux
+  --lib, amux spec (testnet), amux-cli suites green.
+
+---
+
 ## 2026-08-12: Chat V1 Phase 4 — the chat screen: feed + composer
 
 ### Summary

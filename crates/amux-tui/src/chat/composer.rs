@@ -69,10 +69,31 @@ impl Composer {
         self.insert('\n');
     }
 
-    /// Bracketed paste and yank insert whole strings.
+    /// Yank and programmatic insertion of whole strings.
     pub fn insert_str(&mut self, text: &str) {
         for c in text.chars() {
             self.insert(c);
+        }
+    }
+
+    /// Bracketed paste: literal text insertion — newlines and tabs land in
+    /// the draft, never as bindings. CRLF/CR normalize to LF (matching the
+    /// send path's `normalize_prompt`), tabs expand to spaces at insertion
+    /// (mirroring the reader's tabs-expand-before-width-math policy) so
+    /// the draft stays sendable — the C6 encoder refuses control bytes
+    /// other than `\n`. Any other control character is stripped: it would
+    /// be invisible in the composer AND unsendable, a trap in both
+    /// directions.
+    pub fn paste(&mut self, text: &str) {
+        const TAB: &str = "    ";
+        let normalized = text.replace("\r\n", "\n").replace('\r', "\n");
+        for c in normalized.chars() {
+            match c {
+                '\n' => self.insert('\n'),
+                '\t' => self.insert_str(TAB),
+                c if c.is_control() => {}
+                c => self.insert(c),
+            }
         }
     }
 
@@ -376,5 +397,49 @@ mod tests {
         let mut c = Composer::default();
         c.restore("failed send text");
         assert_eq!(c.display_with_cursor(), "failed send text▌");
+    }
+
+    #[test]
+    fn paste_with_newlines_grows_the_draft_without_sending() {
+        let mut c = Composer::default();
+        c.paste("line one\nline two\nline three");
+        assert_eq!(c.text(), "line one\nline two\nline three");
+        // Sendable as one prompt: the encoder accepts printable + \n.
+        assert!(amux_ui::claude::encoding::prompt_program(&c.text()).is_ok());
+    }
+
+    #[test]
+    fn paste_normalizes_crlf_and_lone_cr_to_newlines() {
+        let mut c = Composer::default();
+        c.paste("a\r\nb\rc");
+        assert_eq!(c.text(), "a\nb\nc");
+    }
+
+    #[test]
+    fn paste_expands_tabs_and_the_draft_stays_sendable() {
+        let mut c = Composer::default();
+        c.paste("indent:\n\tcode line");
+        assert_eq!(c.text(), "indent:\n    code line");
+        assert!(
+            amux_ui::claude::encoding::prompt_program(&c.text()).is_ok(),
+            "expanded tabs pass the C6 control-byte validator"
+        );
+    }
+
+    #[test]
+    fn paste_strips_other_control_bytes() {
+        let mut c = Composer::default();
+        // An ESC mid-paste could otherwise form the bracketed-paste
+        // terminator inside the injected program (Phase 3's P2 finding).
+        c.paste("safe\x1b[201~text\x07");
+        assert_eq!(c.text(), "safe[201~text");
+        assert!(amux_ui::claude::encoding::prompt_program(&c.text()).is_ok());
+    }
+
+    #[test]
+    fn paste_lands_at_the_cursor() {
+        let mut c = composer("ab", 1);
+        c.paste("XY");
+        assert_eq!(c.display_with_cursor(), "aXY▌b");
     }
 }

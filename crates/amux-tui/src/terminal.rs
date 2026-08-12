@@ -11,6 +11,7 @@ use std::sync::Once;
 use std::sync::atomic::{AtomicBool, Ordering};
 
 use crossterm::cursor::{Hide, Show};
+use crossterm::event::{DisableBracketedPaste, EnableBracketedPaste};
 use crossterm::terminal::{
     EnterAlternateScreen, LeaveAlternateScreen, disable_raw_mode, enable_raw_mode,
 };
@@ -21,16 +22,19 @@ static CHROME_OWNS_TERMINAL: AtomicBool = AtomicBool::new(false);
 static PANIC_HOOK: Once = Once::new();
 
 /// Bytes that put the terminal into chrome mode (alternate screen, hidden
-/// cursor). Raw mode is termios, not bytes, and is handled by the guard.
+/// cursor, bracketed paste — without it a pasted CR would arrive as Enter
+/// and submit a partial prompt). Raw mode is termios, not bytes, and is
+/// handled by the guard.
 pub fn write_enter_chrome(out: &mut impl Write) -> io::Result<()> {
-    crossterm::execute!(out, EnterAlternateScreen, Hide)
+    crossterm::execute!(out, EnterAlternateScreen, Hide, EnableBracketedPaste)
 }
 
 /// Bytes that restore the terminal from chrome mode: leave the alternate
-/// screen, show the cursor. Every exit path — orderly, error, panic — must
-/// emit these.
+/// screen, show the cursor, disable bracketed paste. Every exit path —
+/// orderly, error, panic, signal — must emit these (the terminal-hygiene
+/// set, `docs/UI.md`).
 pub fn write_restore(out: &mut impl Write) -> io::Result<()> {
-    crossterm::execute!(out, LeaveAlternateScreen, Show)
+    crossterm::execute!(out, LeaveAlternateScreen, Show, DisableBracketedPaste)
 }
 
 fn restore_now() {
@@ -116,9 +120,10 @@ mod signal_restore {
     static INSTALL: Once = Once::new();
     static SAVED_TERMIOS: OnceLock<libc::termios> = OnceLock::new();
 
-    /// Leave alternate screen + show cursor, mirroring [`super::write_restore`]
-    /// (locked to crossterm's actual bytes by a unit test below).
-    pub(super) const RESTORE_BYTES: &[u8] = b"\x1b[?1049l\x1b[?25h";
+    /// Leave alternate screen + show cursor + disable bracketed paste,
+    /// mirroring [`super::write_restore`] (locked to crossterm's actual
+    /// bytes by a unit test below).
+    pub(super) const RESTORE_BYTES: &[u8] = b"\x1b[?1049l\x1b[?25h\x1b[?2004l";
 
     pub(super) fn install() {
         INSTALL.call_once(|| {

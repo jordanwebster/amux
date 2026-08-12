@@ -282,11 +282,34 @@ pub(crate) fn new_line() -> Line<'static> {
     Line::from(vec![Span::styled("│", dim())])
 }
 
+/// Display width in terminal cells — the measurement every wrap, pad, and
+/// clip in this crate uses. CJK and emoji occupy two cells, combining
+/// marks zero; ratatui renders with the same `unicode-width` version, so
+/// this arithmetic and the backend never disagree.
+pub(crate) fn str_width(text: &str) -> usize {
+    unicode_width::UnicodeWidthStr::width(text)
+}
+
+/// The longest prefix of `text` fitting `max` display cells, cut at a
+/// grapheme boundary — a wide grapheme never straddles the cut.
+pub(crate) fn clip_to_width(text: &str, max: usize) -> &str {
+    use unicode_segmentation::UnicodeSegmentation;
+    let mut used = 0usize;
+    let mut end = 0usize;
+    for (offset, grapheme) in text.grapheme_indices(true) {
+        let width = str_width(grapheme);
+        if used + width > max {
+            break;
+        }
+        used += width;
+        end = offset + grapheme.len();
+    }
+    &text[..end]
+}
+
+/// Line width in display cells.
 pub(crate) fn line_len(line: &Line<'_>) -> usize {
-    line.spans
-        .iter()
-        .map(|span| span.content.chars().count())
-        .sum()
+    line.spans.iter().map(|span| str_width(&span.content)).sum()
 }
 
 pub(crate) fn pad_to(line: &mut Line<'static>, col: usize) {
@@ -308,17 +331,23 @@ pub(crate) fn push_span(
 
 pub(crate) fn finish_line(line: &mut Line<'static>, width: usize) {
     pad_to(line, width - 1);
-    // Drop overflow defensively: goldens keep us honest about fit.
-    let mut len = 0usize;
+    // Drop overflow defensively, by display cells: goldens keep us honest
+    // about fit, and the right border must land in the last column even
+    // when wide graphemes are in play.
+    let budget = width - 1;
+    let mut used = 0usize;
     for span in line.spans.iter_mut() {
-        let span_len = span.content.chars().count();
-        if len + span_len > width - 1 {
-            let keep = (width - 1).saturating_sub(len);
-            span.content = span.content.chars().take(keep).collect::<String>().into();
+        let span_width = str_width(&span.content);
+        if used + span_width > budget {
+            let keep = budget.saturating_sub(used);
+            span.content = clip_to_width(&span.content, keep).to_string().into();
         }
-        len += span.content.chars().count();
+        used += str_width(&span.content);
     }
     line.spans.retain(|span| !span.content.is_empty());
+    // A clipped wide grapheme can leave a one-cell gap; re-pad so the
+    // border never drifts out of the last column.
+    pad_to(line, width - 1);
     line.spans.push(Span::styled("│", dim()));
 }
 

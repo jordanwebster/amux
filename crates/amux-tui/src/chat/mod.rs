@@ -19,7 +19,7 @@ mod keys;
 mod markdown;
 mod render;
 
-pub use keys::handle_chat_key;
+pub use keys::{handle_chat_key, handle_chat_paste};
 pub(crate) use render::build_chat_lines;
 
 use amux_ui::claude::ChatPhase;

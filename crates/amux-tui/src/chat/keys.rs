@@ -172,6 +172,15 @@ pub fn handle_chat_key(
     }
 }
 
+/// Bracketed paste into the chat: literal insertion into the draft —
+/// tabs and newlines land as text, never as bindings (a pasted CR must
+/// never submit a partial prompt). The composer normalizes and expands;
+/// see [`crate::chat::composer::Composer::paste`].
+pub fn handle_chat_paste(chat: &mut ChatView, text: &str) {
+    chat.send_failure = None;
+    chat.composer.paste(text);
+}
+
 /// Enter: send, gated on phase by the same derivation the footer states
 /// (D2) — while gated, Enter is a no-op and the draft is kept.
 fn send(chat: &mut ChatView, model: &Model) -> Option<UiAction> {
@@ -663,6 +672,39 @@ mod tests {
         chat.reconcile(&model);
         assert_eq!(chat.composer.text(), "newer thought");
         assert_eq!(chat.send_failure(), Some("transport lost"));
+    }
+
+    /// The run loop reconciles immediately after dispatch: a command the
+    /// reducer refuses SYNCHRONOUSLY (here: a whitespace-only prompt —
+    /// the encoder's EmptyText refusal; the disconnected fail-fast is the
+    /// same shape) must resurface the draft and state the failure without
+    /// any further runtime message.
+    #[test]
+    fn a_synchronous_refusal_resurfaces_the_draft_without_further_messages() {
+        let mut model = idle_model();
+        let mut chat = chat_with_draft("   ");
+        let Some(UiAction::Dispatch(command)) =
+            handle_chat_key(&mut chat, &model, press(KeyCode::Enter), VIEWPORT)
+        else {
+            panic!("enter dispatches (the draft is non-empty, the gate is Ready)");
+        };
+        let op = OpId(Uuid::from_u128(99));
+        chat.note_dispatched(op, &command);
+        // `Runtime::dispatch` folds the Command synchronously; the refusal
+        // is finished state before dispatch even returns.
+        fold(&mut model, vec![Msg::Command { op, command }]);
+        chat.reconcile(&model); // what run.rs does right after dispatch
+        assert_eq!(chat.composer.text(), "   ", "draft resurfaced");
+        assert_eq!(chat.send_failure(), Some("prompt must not be empty"));
+    }
+
+    #[test]
+    fn paste_inserts_literally_and_dismisses_a_stated_failure() {
+        let mut chat = ChatView::open(agent_id());
+        chat.send_failure = Some("older failure".to_string());
+        handle_chat_paste(&mut chat, "one\n\ttwo");
+        assert_eq!(chat.composer.text(), "one\n    two");
+        assert_eq!(chat.send_failure(), None, "paste is input; it dismisses");
     }
 
     #[test]

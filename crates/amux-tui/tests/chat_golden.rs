@@ -1049,6 +1049,53 @@ fn chat_markdown_styles_light() {
     assert_golden("chat_markdown_styles_light", &styles);
 }
 
+/// Wide graphemes (CJK, emoji) and combining marks measure in display
+/// cells, not codepoints: wrapping stays inside the frame and the right
+/// border never drifts out of the last column.
+#[test]
+fn chat_unicode_width() {
+    let source = "指数バックオフを実装しました。テストは全部緑です。🎉 café noe\u{0308}l bleibt ausgerichtet.\n\n- 日本語の箇条書き項目が折り返しでも右枠を壊さないことを確認するための長い行です";
+    let mut msgs = base_msgs();
+    msgs.extend(opened(false));
+    msgs.push(batch(
+        "2026-08-12T09:02:00Z",
+        1,
+        vec![
+            ready_row(),
+            mode_row("default"),
+            prompt_row(
+                1,
+                "2026-08-12T09:00:00Z",
+                "レビューコメントを反映して、リトライ処理を直してください",
+            ),
+            assistant_text_row(
+                2,
+                "2026-08-12T09:00:30Z",
+                "msg_71",
+                source,
+                Some("end_turn"),
+            ),
+            turn_duration_row(3, "2026-08-12T09:00:32Z", 9_000),
+        ],
+    ));
+    let model = fold(msgs);
+    let mut view = chat_view();
+    view.chat
+        .as_mut()
+        .expect("chat open")
+        .composer
+        .insert_str("繁体字と emoji 🚀 のドラフト");
+    let buffer = render_buffer(&model, &view, 80, 22, Theme::Dark, IDLE_NOW);
+    for y in 0..22u16 {
+        let symbol = buffer.cell((79, y)).expect("border cell").symbol();
+        assert!(
+            matches!(symbol, "│" | "┐" | "┘"),
+            "row {y} must end with a border cell, got {symbol:?}"
+        );
+    }
+    assert_golden("chat_unicode", &buffer_text(&buffer));
+}
+
 /// Both themes lay out identically — tokens change styles, never cells.
 #[test]
 fn themes_agree_on_text_layout() {
@@ -1081,10 +1128,15 @@ fn chat_frames_are_stable_across_runs() {
     assert_eq!(first, second);
 }
 
-/// No viewport size may panic the chat renderer: sweep every plausible
-/// terminal size across the richest states (working + scrolled + draft).
+/// No viewport size may panic the chat renderer, and on every layout-
+/// viable size the frame stays inside the viewport: the composer's growth
+/// is clamped so the footer and the bottom border survive at every
+/// height (the feed gives way first).
 #[test]
 fn chat_rendering_never_panics_at_any_viewport_size() {
+    /// The renderer's layout minimums (below them: the too-small notice).
+    const MIN_WIDTH: u16 = 24;
+    const MIN_HEIGHT: u16 = 10;
     let model = fold(idle_msgs());
     let working = working_model();
     let mut view = chat_view();
@@ -1098,8 +1150,21 @@ fn chat_rendering_never_panics_at_any_viewport_size() {
     }
     for width in 1..=120u16 {
         for height in 1..=40u16 {
-            let _ = render_frame(&model, &view, width, height, IDLE_NOW);
-            let _ = render_frame(&working, &view, width, height, WORKING_NOW);
+            for (model, now) in [(&model, IDLE_NOW), (&working, WORKING_NOW)] {
+                let rendered = render_frame(model, &view, width, height, now);
+                if width >= MIN_WIDTH && height >= MIN_HEIGHT {
+                    let lines: Vec<&str> = rendered.lines().collect();
+                    assert_eq!(lines.len(), height as usize);
+                    assert!(
+                        lines[height as usize - 1].starts_with('└'),
+                        "bottom border survives at {width}x{height}"
+                    );
+                    assert!(
+                        lines[height as usize - 2].starts_with('│'),
+                        "footer row survives at {width}x{height}"
+                    );
+                }
+            }
         }
     }
 }

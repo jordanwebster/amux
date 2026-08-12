@@ -146,9 +146,14 @@ async fn chrome_session(
                         Some(UiAction::Dispatch(command)) => {
                             let op = runtime.dispatch(command.clone());
                             // The shell owns op identity; hand it back so
-                            // the chat can watch the outcome (C5).
+                            // the chat can watch the outcome (C5). Dispatch
+                            // can finish synchronously (a reducer refusal,
+                            // the disconnected fail-fast): reconcile NOW so
+                            // a refused send resurfaces the draft without
+                            // waiting for another runtime message.
                             if let Some(chat) = view.chat.as_mut() {
                                 chat.note_dispatched(op, &command);
+                                chat.reconcile(runtime.model());
                             }
                         }
                         Some(UiAction::Create { host }) => {
@@ -171,6 +176,15 @@ async fn chrome_session(
                             }
                         }
                         None => {}
+                    }
+                }
+                Some(Ok(Event::Paste(text))) => {
+                    // Bracketed paste (enabled with the chrome, restored
+                    // with it): literal insertion into the chat draft —
+                    // newlines and tabs are text here, never bindings.
+                    if let Some(chat) = view.chat.as_mut() {
+                        crate::chat::handle_chat_paste(chat, &text);
+                        dirty = true;
                     }
                 }
                 Some(Ok(Event::Resize(..))) => {

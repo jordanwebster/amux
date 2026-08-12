@@ -13,7 +13,7 @@
 use ratatui::style::Style;
 use ratatui::text::Span;
 
-use crate::render::Theme;
+use crate::render::{Theme, clip_to_width, str_width};
 
 /// One styled run of text (pre-wrap).
 type Run = (String, Style);
@@ -193,7 +193,7 @@ pub(crate) fn wrap_runs(runs: &[Run], width: usize, hang: usize) -> Vec<Vec<Span
     let mut used = 0usize;
     let mut row_width = width;
     for word in words {
-        let len = word.text.chars().count();
+        let len = str_width(&word.text);
         let sep = usize::from(word.spaced && used > 0);
         if used > 0 && used + sep + len > row_width {
             rows.push(std::mem::take(&mut row));
@@ -207,15 +207,18 @@ pub(crate) fn wrap_runs(runs: &[Run], width: usize, hang: usize) -> Vec<Vec<Span
             used += 1;
         }
         // A word longer than the whole line hard-splits (the unavoidable
-        // case, URLs included).
-        let mut remaining: Vec<char> = word.text.chars().collect();
-        let style_word = |chunk: String, row: &mut Vec<Span<'static>>, used: &mut usize| {
-            *used += chunk.chars().count();
-            row.push(Span::styled(chunk, word.style));
-        };
-        while remaining.len() > row_width.saturating_sub(used) {
+        // case, URLs included) — by display cells, at grapheme boundaries.
+        let mut remaining = word.text.as_str();
+        while str_width(remaining) > row_width.saturating_sub(used) {
             let take = row_width - used;
-            if take == 0 {
+            let head = clip_to_width(remaining, take);
+            if head.is_empty() {
+                if used == 0 {
+                    // A single grapheme wider than the whole row: take it
+                    // anyway (finish_line clips defensively) rather than
+                    // loop forever.
+                    break;
+                }
                 rows.push(std::mem::take(&mut row));
                 used = 0;
                 row_width = width.saturating_sub(hang).max(1);
@@ -224,11 +227,13 @@ pub(crate) fn wrap_runs(runs: &[Run], width: usize, hang: usize) -> Vec<Vec<Span
                 }
                 continue;
             }
-            let chunk: String = remaining.drain(..take).collect();
-            style_word(chunk, &mut row, &mut used);
+            used += str_width(head);
+            row.push(Span::styled(head.to_string(), word.style));
+            remaining = &remaining[head.len()..];
         }
         if !remaining.is_empty() {
-            style_word(remaining.into_iter().collect(), &mut row, &mut used);
+            used += str_width(remaining);
+            row.push(Span::styled(remaining.to_string(), word.style));
         }
     }
     if !row.is_empty() || rows.is_empty() {
@@ -238,17 +243,29 @@ pub(crate) fn wrap_runs(runs: &[Run], width: usize, hang: usize) -> Vec<Vec<Span
 }
 
 /// Verbatim hard wrap (code, tables): internal spacing survives, overlong
-/// rows split at exactly the width.
+/// rows split at the display width, at grapheme boundaries.
 fn hard_wrap(line: &str, width: usize, style: Style) -> Vec<Vec<Span<'static>>> {
     let width = width.max(1);
-    let chars: Vec<char> = line.chars().collect();
-    if chars.is_empty() {
+    if line.is_empty() {
         return vec![vec![Span::styled(String::new(), style)]];
     }
-    chars
-        .chunks(width)
-        .map(|chunk| vec![Span::styled(chunk.iter().collect::<String>(), style)])
-        .collect()
+    let mut rows = Vec::new();
+    let mut rest = line;
+    while !rest.is_empty() {
+        let head = clip_to_width(rest, width);
+        if head.is_empty() {
+            // A single grapheme wider than the row: emit it whole rather
+            // than loop (finish_line clips defensively).
+            use unicode_segmentation::UnicodeSegmentation;
+            let grapheme = rest.graphemes(true).next().expect("non-empty rest");
+            rows.push(vec![Span::styled(grapheme.to_string(), style)]);
+            rest = &rest[grapheme.len()..];
+            continue;
+        }
+        rows.push(vec![Span::styled(head.to_string(), style)]);
+        rest = &rest[head.len()..];
+    }
+    rows
 }
 
 #[cfg(test)]
