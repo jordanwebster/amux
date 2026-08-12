@@ -17,6 +17,7 @@
 //! This module is part of the pure reducer core: no IO, no clocks, no
 //! randomness may be imported here.
 
+pub mod encoding;
 mod fold;
 
 use std::collections::{BTreeSet, VecDeque};
@@ -25,7 +26,9 @@ use chrono::{DateTime, TimeDelta, Utc};
 use serde::{Deserialize, Serialize};
 use uuid::Uuid;
 
+use crate::claude::encoding::AskAnswer;
 use crate::model::{Attention, Violation, Why};
+use crate::msg::OpId;
 
 /// Feed retention bound (B9): matches the source's bounded tail, so the fold
 /// never retains more than one window of history. Eviction is from the
@@ -56,6 +59,10 @@ pub(crate) const PLANS_RETAINED: usize = 8;
 /// Realistically a handful pend at once (parallel tool use enqueues a few);
 /// overflow drops the oldest, honestly bounded like everything else.
 pub(crate) const ASKS_RETAINED: usize = 32;
+
+/// Optimistic prompt echoes awaiting their transcript row (B1). The
+/// send-in-flight gate keeps one in flight; the bound is defensive.
+pub(crate) const ECHOES_RETAINED: usize = 4;
 
 /// Staleness cap on the INFERRED working phase (E1): a crashed claude
 /// leaves "working" stuck, so a turn with no observed delivery for this
@@ -448,9 +455,27 @@ pub enum AskKind {
     Permission {
         tool_name: Option<String>,
         invocation: ToolInvocation,
+        /// The hook payload's `permission_suggestions` facts: claude's
+        /// menu is generated from them (`1. Yes` · one option per
+        /// suggestion · `No` last — §18d), so the C6 encoder's digit
+        /// table and the panel's scope label both read these.
+        /// Transcript-only fallback asks carry none.
+        suggestions: Vec<SuggestionFact>,
     },
     /// `AskUserQuestion` (C4 facts).
     Question { questions: Vec<QuestionFact> },
+}
+
+/// One `permission_suggestions` entry, extracted tolerantly (unknown
+/// suggestion kinds keep their tag and render generically).
+#[derive(Clone, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
+pub struct SuggestionFact {
+    /// The suggestion's `type` (observed: `addDirectories`).
+    pub kind: Option<String>,
+    /// The grant's scope (observed: `session`).
+    pub destination: Option<String>,
+    /// Directories for directory-grant suggestions.
+    pub directories: Vec<String>,
 }
 
 /// Why an ask needs the user — the phase's needs-you discriminator.
@@ -462,23 +487,42 @@ pub enum AskWhy {
 }
 
 /// C5 lifecycle state living in the Model. Resolution removes the ask from
-/// the queue — the collapsed B5 fact renders from the tool entry. The two
-/// non-pending states are driven by Phase 3's Commands (optimistic submit,
-/// seq-mismatch/send-failure resurfacing); the shape exists now so Phase 3
-/// adds Commands, not model shape.
+/// the queue — the collapsed B5 fact renders from the tool entry — and
+/// wins over any local state (remote resolution included).
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(tag = "state", rename_all = "snake_case")]
 pub enum AskState {
     Pending,
-    /// An answer was submitted optimistically; a dim pending marker holds
-    /// until the transcript's resolution fact confirms (C5).
-    AnsweredOptimistic,
-    /// The send failed (seq mismatch / transport): resurfaced with the
-    /// failure stated — never a stuck spinner. No transcript artifact
-    /// exists for this; it is purely client-side state.
+    /// An answer was submitted optimistically: the retained answer is the
+    /// dim pending marker's data, `op` the in-flight operation whose
+    /// failure would resurface the ask (C5). Confirmation is the
+    /// transcript's resolution fact.
+    AnsweredOptimistic {
+        op: OpId,
+        answer: AskAnswer,
+    },
+    /// The send failed (seq mismatch / transport / server rejection):
+    /// resurfaced with the failure stated — never a stuck spinner. No
+    /// transcript artifact exists for this; it is purely client-side
+    /// state.
     SendFailed {
         message: String,
     },
+}
+
+/// An optimistic local prompt echo (B1): rendered as the sent prompt with
+/// a dim `sending…` marker until the transcript's user row reconciles it
+/// (content equality — the injected paste lands byte-identical, §18d) or
+/// the send fails (the draft resurfaces from renderer ViewState; the
+/// finished op carries the failure fact).
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+pub struct PromptEcho {
+    pub op: OpId,
+    /// The normalized prompt text — the reconciliation key.
+    pub text: String,
+    /// The Model's observed time at dispatch (`Model::now`), the display
+    /// base; `None` before any Tick.
+    pub at: Option<DateTime<Utc>>,
 }
 
 /// Fact-vs-inferred tag on derived phase values (E1).
@@ -634,6 +678,13 @@ pub struct ClaudeLayer {
     /// eviction never touches this queue (B9).
     asks: VecDeque<Ask>,
     next_ask_id: u64,
+    /// Optimistic prompt echoes awaiting their transcript row (B1).
+    echoes: Vec<PromptEcho>,
+    /// Newest observed stream seq — the `expected_seq` the write path's
+    /// seq guard sends (the source refuses input unless the client has
+    /// seen its newest row). Advanced by every delivered row, deduped or
+    /// not: the guard tracks the SOURCE, not the fold.
+    cursor: u64,
     /// The stream died underneath us (transport loss): whatever the fold
     /// knew is stale. Phase and attention degrade to Unknown until a fresh
     /// window replays; obligations are kept (the replay refolds them).
@@ -686,6 +737,7 @@ impl ClaudeLayer {
     /// Unknown forever).
     pub(crate) fn observe_exit(&mut self) {
         self.asks.clear();
+        self.echoes.clear();
         self.turn.open = false;
         self.turn.stop_presignal = false;
         self.turn.closed_by = None;
@@ -782,6 +834,57 @@ impl ClaudeLayer {
 
     pub fn ask_count(&self) -> usize {
         self.asks.len()
+    }
+
+    /// Optimistic prompt echoes, oldest first (B1). Rendered after the
+    /// feed entries with the dim `sending…` marker.
+    pub fn pending_echoes(&self) -> &[PromptEcho] {
+        &self.echoes
+    }
+
+    /// The newest observed stream seq — the write path's `expected_seq`.
+    pub(crate) fn cursor(&self) -> u64 {
+        self.cursor
+    }
+
+    /// A prompt send was dispatched: the optimistic echo pends until the
+    /// transcript's user row reconciles it (C5/B1).
+    pub(crate) fn note_prompt_sent(&mut self, op: OpId, text: String, at: Option<DateTime<Utc>>) {
+        self.echoes.push(PromptEcho { op, text, at });
+        if self.echoes.len() > ECHOES_RETAINED {
+            self.echoes.remove(0);
+        }
+    }
+
+    /// The prompt send failed: the echo leaves; the finished op carries
+    /// the failure fact and the draft resurfaces from ViewState (B1).
+    pub(crate) fn note_prompt_send_failed(&mut self, op: OpId) {
+        self.echoes.retain(|echo| echo.op != op);
+    }
+
+    /// An answer was dispatched for an ask: flip it to the optimistic
+    /// state carrying the pending-marker data (C5). `false` when the ask
+    /// is gone (remote resolution won before dispatch folded).
+    pub(crate) fn note_ask_answered(&mut self, ask: u64, op: OpId, answer: AskAnswer) -> bool {
+        match self.asks.iter_mut().find(|entry| entry.id == ask) {
+            Some(entry) => {
+                entry.state = AskState::AnsweredOptimistic { op, answer };
+                true
+            }
+            None => false,
+        }
+    }
+
+    /// The answer send failed: resurface the ask with the failure stated
+    /// (C5). Only the op that flipped it may fail it — a late failure for
+    /// a superseded answer must not clobber a newer one — and an ask that
+    /// already left the queue stays gone (remote resolution wins).
+    pub(crate) fn note_ask_send_failed(&mut self, ask: u64, op: OpId, message: String) {
+        if let Some(entry) = self.asks.iter_mut().find(|entry| entry.id == ask)
+            && matches!(&entry.state, AskState::AnsweredOptimistic { op: in_flight, .. } if *in_flight == op)
+        {
+            entry.state = AskState::SendFailed { message };
+        }
     }
 
     /// The derived session phase (the E1 table), layer view. `now` enters
@@ -939,6 +1042,7 @@ impl ClaudeLayer {
             ("open-tools", self.open_tools.len(), OPEN_TOOLS_RETAINED),
             ("plans", self.plans.len(), PLANS_RETAINED),
             ("asks", self.asks.len(), ASKS_RETAINED),
+            ("echoes", self.echoes.len(), ECHOES_RETAINED),
         ] {
             if len > cap {
                 out.push(Violation::ClaudeRetentionOverflow {
@@ -985,6 +1089,17 @@ impl ClaudeLayer {
             && self.asks.back().is_none_or(|ask| ask.id < self.next_ask_id);
         if !ask_ids_coherent {
             out.push(Violation::ClaudeAskOrder { agent });
+        }
+
+        // Echo identity: each dispatched send mints one op, so two echoes
+        // sharing an op would mean a double-recorded dispatch.
+        let echo_ops_distinct = self
+            .echoes
+            .iter()
+            .enumerate()
+            .all(|(i, a)| self.echoes[i + 1..].iter().all(|b| a.op != b.op));
+        if !echo_ops_distinct {
+            out.push(Violation::ClaudeEchoDuplicate { agent });
         }
 
         let index_refs = self
@@ -1166,6 +1281,20 @@ mod tests {
             .seen_rows
             .push_back(Uuid::from_u128(99));
         assert!(fires(&model, "claude-dedupe-incoherent"));
+    }
+
+    #[test]
+    fn detects_duplicate_echo_ops() {
+        let mut model = a_model_with_a_folded_layer();
+        let layer = layer_mut(&mut model);
+        for _ in 0..2 {
+            layer.echoes.push(PromptEcho {
+                op: OpId(Uuid::from_u128(41)),
+                text: "hi".to_string(),
+                at: None,
+            });
+        }
+        assert!(fires(&model, "claude-echo-duplicate"));
     }
 
     #[test]

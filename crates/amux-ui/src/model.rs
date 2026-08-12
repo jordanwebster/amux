@@ -215,6 +215,42 @@ pub enum StreamPhase {
     },
 }
 
+/// The prompt-send gate (D2): send is gated on phase; the draft is always
+/// editable (ViewState) and a refusal states the gate plainly.
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum SendGate {
+    Ready,
+    /// No card/layer/stream to send through.
+    Unavailable,
+    /// The agent process exited.
+    Exited,
+    Replaying,
+    Working,
+    /// An ask panel owns the keystroke channel (C1).
+    NeedsYou,
+    Unknown,
+    /// An optimistic prompt echo is still awaiting its transcript row.
+    SendInFlight,
+}
+
+impl SendGate {
+    /// The gate stated plainly (D2's footer wording); `None` when sending
+    /// is allowed.
+    pub fn refusal(&self) -> Option<&'static str> {
+        match self {
+            SendGate::Ready => None,
+            SendGate::Unavailable => Some("chat input unavailable for this agent"),
+            SendGate::Exited => Some("agent exited"),
+            SendGate::Replaying => Some("send gated while replaying"),
+            SendGate::Working => Some("send gated while working"),
+            SendGate::NeedsYou => Some("send gated — answer the pending ask"),
+            SendGate::Unknown => Some("send gated — session state unknown"),
+            SendGate::SendInFlight => Some("send gated — a prompt is in flight"),
+        }
+    }
+}
+
 /// One row of the ranked fleet.
 #[derive(Clone, Debug, PartialEq)]
 pub enum FleetItem<'a> {
@@ -368,6 +404,60 @@ impl Model {
                 reason: StreamCloseReason::AgentExited { .. } | StreamCloseReason::AgentDeleted,
             }) => layer.phase(self.now),
             _ => ChatPhase::Unknown,
+        }
+    }
+
+    /// The prompt-send gate (D2), derived here once: the reducer enforces
+    /// it on dispatch and the composer footer states it — same decision,
+    /// one derivation. The draft itself is renderer ViewState and is
+    /// never touched by a gate.
+    pub fn claude_send_gate(&self, id: AgentId) -> SendGate {
+        use crate::claude::ChatPhase;
+        let Some(card) = self.agents.get(&id) else {
+            return SendGate::Unavailable;
+        };
+        if matches!(card.phase, AgentPhase::Exited { .. }) {
+            return SendGate::Exited;
+        }
+        let Some(layer) = card.claude() else {
+            return SendGate::Unavailable;
+        };
+        if !layer.pending_echoes().is_empty() {
+            // One optimistic echo in flight at a time: reconciliation is
+            // content-keyed, and claude queues raced sends anyway.
+            return SendGate::SendInFlight;
+        }
+        match self.claude_phase(id) {
+            // Errored allows sending: recovery may need a prompt, and the
+            // agent's own composer accepts one.
+            ChatPhase::Idle { .. } | ChatPhase::Errored => SendGate::Ready,
+            ChatPhase::Replaying => SendGate::Replaying,
+            ChatPhase::Working => SendGate::Working,
+            ChatPhase::NeedsYou { .. } => SendGate::NeedsYou,
+            ChatPhase::Unknown => SendGate::Unknown,
+        }
+    }
+
+    /// The permission-mode cycle gate (D4): allowed whenever the injected
+    /// Shift+Tab would reach claude's composer. While an ask panel is up
+    /// the same byte navigates the form instead — refused; degraded
+    /// windows refuse honestly.
+    pub fn claude_mode_cycle_gate(&self, id: AgentId) -> Option<&'static str> {
+        use crate::claude::ChatPhase;
+        let Some(card) = self.agents.get(&id) else {
+            return Some("chat input unavailable for this agent");
+        };
+        if matches!(card.phase, AgentPhase::Exited { .. }) {
+            return Some("agent exited");
+        }
+        if card.claude().is_none() {
+            return Some("chat input unavailable for this agent");
+        }
+        match self.claude_phase(id) {
+            ChatPhase::Idle { .. } | ChatPhase::Working | ChatPhase::Errored => None,
+            ChatPhase::Replaying => Some("mode cycle gated while replaying"),
+            ChatPhase::NeedsYou { .. } => Some("mode cycle gated while an ask is pending"),
+            ChatPhase::Unknown => Some("mode cycle gated — session state unknown"),
         }
     }
 
@@ -545,6 +635,9 @@ pub enum Violation {
     /// and the queue appends at the back, so retained ids must be strictly
     /// increasing and below the next id.
     ClaudeAskOrder { agent: AgentId },
+    /// Two optimistic prompt echoes share an op id — one dispatch recorded
+    /// twice.
+    ClaudeEchoDuplicate { agent: AgentId },
 }
 
 impl Violation {
@@ -564,6 +657,7 @@ impl Violation {
             Violation::ClaudeIndexAhead { .. } => "claude-index-ahead",
             Violation::ClaudeDedupeIncoherent { .. } => "claude-dedupe-incoherent",
             Violation::ClaudeAskOrder { .. } => "claude-ask-order",
+            Violation::ClaudeEchoDuplicate { .. } => "claude-echo-duplicate",
         }
     }
 }
@@ -648,6 +742,9 @@ impl std::fmt::Display for Violation {
             ),
             Violation::ClaudeAskOrder { agent } => {
                 write!(f, "agent {agent} claude ask id arithmetic is incoherent")
+            }
+            Violation::ClaudeEchoDuplicate { agent } => {
+                write!(f, "agent {agent} claude prompt echoes share an op id")
             }
         }
     }

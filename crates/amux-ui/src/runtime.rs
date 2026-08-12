@@ -16,7 +16,8 @@ use std::time::Duration;
 
 use amux::{
     AgentId, AgentIdentifier, Client, ClientError, CreateAgentRequest, HostId, ProtocolError,
-    SessionCloseReason, SubscribeSessionEvent, SubscribeSessionRequest, claude_io,
+    SendInputRequest, SessionCloseReason, SubscribeSessionEvent, SubscribeSessionRequest,
+    claude_io,
 };
 use chrono::{DateTime, Utc};
 use futures_util::FutureExt;
@@ -24,6 +25,7 @@ use tokio::sync::mpsc;
 use tokio::task::JoinHandle;
 use uuid::Uuid;
 
+use crate::claude::encoding::KeyStep;
 use crate::effect::{DumpReason, Effect};
 use crate::model::Model;
 use crate::msg::{
@@ -300,6 +302,31 @@ impl Runtime {
                     let _ = tx.send(Msg::OpResult { op, outcome }).await;
                 });
             }
+            Effect::SendInput {
+                op,
+                agent,
+                expected_seq,
+                program,
+                retry_stale,
+            } => {
+                let client = self.client.lock().expect("client mutex poisoned").clone();
+                let tx = self.msg_tx.clone();
+                tokio::spawn(async move {
+                    let outcome = match client {
+                        Some(client) => {
+                            execute_send_input(&client, agent, expected_seq, program, retry_stale)
+                                .await
+                        }
+                        None => OpOutcome::Error {
+                            error: OpError {
+                                message: NOT_CONNECTED_ERROR.to_string(),
+                                auth_required: false,
+                            },
+                        },
+                    };
+                    let _ = tx.send(Msg::OpResult { op, outcome }).await;
+                });
+            }
             Effect::OpenStream { agent, tail } => {
                 let client = self.client.lock().expect("client mutex poisoned").clone();
                 let tx = self.msg_tx.clone();
@@ -407,6 +434,73 @@ async fn execute_rpc(client: &Client, command: Command) -> OpOutcome {
             Ok(()) => OpOutcome::AgentDeleted,
             Err(error) => op_error_outcome(&error),
         },
+        // Input commands never ride Effect::Rpc — the reducer emits
+        // Effect::SendInput for them (encoded program + seq guard).
+        Command::SendPrompt { .. }
+        | Command::AnswerAsk { .. }
+        | Command::Interrupt { .. }
+        | Command::CyclePermissionMode { .. } => OpOutcome::Error {
+            error: OpError {
+                message: "input command routed to the RPC executor".to_string(),
+                auth_required: false,
+            },
+        },
+    }
+}
+
+/// How many times a `retry_stale` input program is re-sent with the seq
+/// the refusal reported. Mechanical execution policy only: WHETHER a
+/// program retries is the reducer's decision, carried on the effect.
+const STALE_RETRY_LIMIT: u32 = 3;
+
+/// Inject a keystroke program under the seq guard. The KeySteps map onto
+/// the `claude_pty_transcript_v1` actions verbatim — no bytes are authored
+/// here (the C6 module owns every encoding).
+async fn execute_send_input(
+    client: &Client,
+    agent: AgentId,
+    expected_seq: u64,
+    program: Vec<KeyStep>,
+    retry_stale: bool,
+) -> OpOutcome {
+    let actions: Vec<claude_io::ClaudePtyTranscriptV1Action> = program
+        .into_iter()
+        .map(|step| match step {
+            KeyStep::Write { text } => {
+                claude_io::ClaudePtyTranscriptV1Action::Write(text.into_bytes())
+            }
+            KeyStep::Delay { ms } => claude_io::ClaudePtyTranscriptV1Action::DelayMs(ms),
+        })
+        .collect();
+    let mut expected_seq = expected_seq;
+    let mut attempts = 0;
+    loop {
+        let payload =
+            claude_io::encode_pty_transcript_v1_input(claude_io::ClaudePtyTranscriptV1Input {
+                expected_seq,
+                actions: actions.clone(),
+            });
+        match client
+            .send_input(SendInputRequest {
+                agent: AgentIdentifier::Id(agent),
+                io_protocol: claude_io::PTY_TRANSCRIPT_V1.to_string(),
+                payload: payload.into(),
+            })
+            .await
+        {
+            Ok(()) => return OpOutcome::InputSent,
+            Err(ClientError::Protocol(ProtocolError::SequenceNumberMismatch {
+                current_seq,
+                ..
+            })) if retry_stale && attempts < STALE_RETRY_LIMIT => {
+                // Position-independent programs (interrupt) re-send with
+                // the seq the source reported; positional ones never take
+                // this branch — they fail fast and resurface (C5).
+                expected_seq = current_seq;
+                attempts += 1;
+            }
+            Err(error) => return op_error_outcome(&error),
+        }
     }
 }
 

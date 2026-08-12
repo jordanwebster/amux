@@ -39,3 +39,5 @@ mod wire_free; // Chapter 10 — Determinism: differential fold, replay, serde
 mod asks; // Chapter 11 — Asks: extraction, correlation, lifecycle
 
 mod phase; // Chapter 12 — Phase: the E1 derivation table
+
+mod write; // Chapter 13 — The write path: intents, programs, optimism

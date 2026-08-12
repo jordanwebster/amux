@@ -4,6 +4,7 @@
 //! build, folding the same checkpoint and ordered Msgs, produces identical
 //! Models. Replay folds but never executes Effects.
 
+use amux_ui::claude::encoding::{AskAnswer, PermissionAnswer, PlanAnswer, QuestionResponse};
 use amux_ui::{
     BUILD, DisconnectReason, DumpReason, Effect, Model, Msg, OpOutcome, Recorder,
     StreamCloseReason, StreamEntry, StreamMsg, replay, update,
@@ -91,6 +92,59 @@ fn every_msg_variant_round_trips_through_serde() {
         command(op(1), create_cmd("claude-4", Some("nova"))),
         command(op(2), rename_cmd("claude-4", "renamed")),
         command(op(3), delete_cmd("claude-4")),
+        command(
+            op(6),
+            amux_ui::Command::SendPrompt {
+                agent: agent_id("fix-auth-bug"),
+                text: "fix the sync bug\nthen test".to_string(),
+            },
+        ),
+        command(
+            op(7),
+            amux_ui::Command::AnswerAsk {
+                agent: agent_id("fix-auth-bug"),
+                ask: 0,
+                answer: AskAnswer::Permission(PermissionAnswer::Deny {
+                    feedback: Some("not that file".to_string()),
+                }),
+            },
+        ),
+        command(
+            op(8),
+            amux_ui::Command::AnswerAsk {
+                agent: agent_id("fix-auth-bug"),
+                ask: 1,
+                answer: AskAnswer::Question {
+                    responses: vec![QuestionResponse {
+                        selected: vec![0, 2],
+                        other: Some("a torque wrench".to_string()),
+                    }],
+                },
+            },
+        ),
+        command(
+            op(9),
+            amux_ui::Command::AnswerAsk {
+                agent: agent_id("fix-auth-bug"),
+                ask: 2,
+                answer: AskAnswer::Plan(PlanAnswer::RequestChanges {
+                    feedback: "document VALUE too".to_string(),
+                }),
+            },
+        ),
+        command(
+            op(10),
+            amux_ui::Command::Interrupt {
+                agent: agent_id("fix-auth-bug"),
+            },
+        ),
+        command(
+            op(11),
+            amux_ui::Command::CyclePermissionMode {
+                agent: agent_id("fix-auth-bug"),
+            },
+        ),
+        op_result(op(6), OpOutcome::InputSent),
         connected("nova"),
         disconnected(DisconnectReason::ServerShutdown {
             detail: "updating".to_string(),

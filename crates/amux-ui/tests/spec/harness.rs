@@ -239,6 +239,26 @@ pub fn chat_rows(fixture: &str) -> Vec<serde_json::Value> {
             include_str!("../../../amux/tests/fixtures/chat-v1/plan_reject.rows.jsonl")
         }
         "compact" => include_str!("../../../amux/tests/fixtures/chat-v1/compact.rows.jsonl"),
+        "mode_cycle" => include_str!("../../../amux/tests/fixtures/chat-v1/mode_cycle.rows.jsonl"),
+        "permission_session" => {
+            include_str!("../../../amux/tests/fixtures/chat-v1/permission_session.rows.jsonl")
+        }
+        "permission_deny_feedback" => {
+            include_str!("../../../amux/tests/fixtures/chat-v1/permission_deny_feedback.rows.jsonl")
+        }
+        "question_tabs" => {
+            include_str!("../../../amux/tests/fixtures/chat-v1/question_tabs.rows.jsonl")
+        }
+        "question_mixed" => {
+            include_str!("../../../amux/tests/fixtures/chat-v1/question_mixed.rows.jsonl")
+        }
+        "question_other_single" => {
+            include_str!("../../../amux/tests/fixtures/chat-v1/question_other_single.rows.jsonl")
+        }
+        "plan_auto" => include_str!("../../../amux/tests/fixtures/chat-v1/plan_auto.rows.jsonl"),
+        "prompt_multiline" => {
+            include_str!("../../../amux/tests/fixtures/chat-v1/prompt_multiline.rows.jsonl")
+        }
         other => panic!("unknown chat fixture {other}"),
     };
     raw.lines()
@@ -320,5 +340,6 @@ pub fn all_sequences() -> Vec<(&'static str, Vec<Msg>)> {
     sequences.extend(crate::feed_edges::sequences());
     sequences.extend(crate::asks::sequences());
     sequences.extend(crate::phase::sequences());
+    sequences.extend(crate::write::sequences());
     sequences
 }

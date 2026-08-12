@@ -49,6 +49,7 @@ fn a_permission_hook_extracts_one_pending_ask_despite_duplicate_delivery() {
     let AskKind::Permission {
         tool_name,
         invocation: ToolInvocation::Bash { command, .. },
+        suggestions,
     } = &ask.kind
     else {
         panic!("a Bash permission: {:?}", ask.kind);
@@ -59,6 +60,13 @@ fn a_permission_hook_extracts_one_pending_ask_despite_duplicate_delivery() {
         Some("echo allowed-probe > allowed.txt"),
         "the typed per-tool payload is the same extraction tool entries use"
     );
+    assert_eq!(
+        suggestions.len(),
+        1,
+        "the hook's permission_suggestions ride the ask (the menu is generated from them)"
+    );
+    assert_eq!(suggestions[0].kind.as_deref(), Some("addDirectories"));
+    assert_eq!(suggestions[0].destination.as_deref(), Some("session"));
 }
 
 /// When the transcript tail catches up, the unpaired `tool_use` in the
@@ -166,6 +174,7 @@ fn an_exit_plan_mode_hook_extracts_the_plan_review_variant() {
         invocation: ToolInvocation::Plan {
             plan: Some(plan), ..
         },
+        ..
     } = &ask.kind
     else {
         panic!("a plan-review permission: {:?}", ask.kind);

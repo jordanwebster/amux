@@ -424,6 +424,13 @@ fn command_verb(command: &Command) -> &'static str {
         Command::CreateAgent { .. } => "create",
         Command::RenameAgent { .. } => "rename",
         Command::DeleteAgent { .. } => "delete",
+        // Chat write-path commands (`docs/CHAT.md` C5/D3/D4); the chat
+        // screen itself arrives in Phase 4 — until then a failure still
+        // states its verb honestly in the chrome status line.
+        Command::SendPrompt { .. } => "send",
+        Command::AnswerAsk { .. } => "answer",
+        Command::Interrupt { .. } => "interrupt",
+        Command::CyclePermissionMode { .. } => "mode cycle",
     }
 }
 

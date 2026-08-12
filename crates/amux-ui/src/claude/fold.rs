@@ -21,8 +21,8 @@ use super::{
     InterruptionEntry, InterruptionKind, MESSAGES_RETAINED, MessageEntry, MessageFinality,
     MessageSlot, OPEN_TOOLS_RETAINED, OUTPUT_HEAD_MAX, OpenTool, PLANS_RETAINED, PromptEntry,
     PromptSource, QuestionAnswer, QuestionFact, QuestionOption, SEEN_ROWS_RETAINED, SlotState,
-    SuccessFacts, TaskNotificationEntry, ThinkingEntry, ToolEntry, ToolInvocation, ToolOutcome,
-    TurnCloseSource, TurnDuration, TurnEntry, UnrecognizedEntry,
+    SuccessFacts, SuggestionFact, TaskNotificationEntry, ThinkingEntry, ToolEntry, ToolInvocation,
+    ToolOutcome, TurnCloseSource, TurnDuration, TurnEntry, UnrecognizedEntry,
 };
 
 // --- tolerant readers -------------------------------------------------------
@@ -68,6 +68,10 @@ pub(super) fn observe(layer: &mut ClaudeLayer, seq: u64, arrived: DateTime<Utc>,
     // Every delivery is liveness evidence — the base of the E1 staleness
     // clock (a crashed claude delivers nothing).
     layer.last_arrival = Some(arrived);
+    // The seq-guard cursor tracks the SOURCE: every delivered row advances
+    // it, deduped or not (the guard asks "has the client seen the newest
+    // row", not "did the fold keep it").
+    layer.cursor = layer.cursor.max(seq);
 
     let kind = str_of(row, "type");
 
@@ -89,6 +93,13 @@ pub(super) fn observe(layer: &mut ClaudeLayer, seq: u64, arrived: DateTime<Utc>,
             // events collide only when truly identical.
             if !remember(layer, content_key(row)) {
                 return;
+            }
+            // The effective permission mode rides hook payloads — the D4
+            // live source: a mid-session Shift+Tab cycle emits NO
+            // `permission-mode` row (§18d), so the row alone goes stale.
+            // Latest-wins across both sources by arrival.
+            if let Some(mode) = str_of(row, "permission_mode") {
+                layer.session.permission_mode = Some(mode.to_string());
             }
             if kind == Some("hook.stop") {
                 // Arrival-ordered turn-end pre-signal (B3);
@@ -129,9 +140,11 @@ pub(super) fn observe(layer: &mut ClaudeLayer, seq: u64, arrived: DateTime<Utc>,
                 let truncated = false;
                 layer.begin_window(truncated);
                 layer.session_id = Some(session_id.to_string());
-                // The reset wiped the arrival clock the triggering row set;
-                // this row is a delivery of the new window.
+                // The reset wiped the arrival clock and seq cursor the
+                // triggering row set; this row is a delivery of the new
+                // window (seqs keep increasing across relinks, §1).
                 layer.last_arrival = Some(arrived);
+                layer.cursor = seq;
             }
             Some(_) => {}
             None => layer.session_id = Some(session_id.to_string()),
@@ -251,14 +264,45 @@ fn ask_key(tool_name: &str, input: &Value) -> u64 {
 
 /// The ask kind for one request, from the same typed per-tool extraction
 /// the feed's tool entries use — one interpretation, both consumers (E2).
-fn ask_kind(tool_name: Option<&str>, input: &Value) -> AskKind {
+/// `suggestions` come from the hook payload (the transcript-only fallback
+/// has none — its permission menu shape is unknown, which the C6 encoder
+/// states honestly).
+fn ask_kind(tool_name: Option<&str>, input: &Value, suggestions: Vec<SuggestionFact>) -> AskKind {
     match extract_invocation(tool_name.unwrap_or_default(), input) {
         ToolInvocation::Question { questions } => AskKind::Question { questions },
         invocation => AskKind::Permission {
             tool_name: tool_name.map(str::to_string),
             invocation,
+            suggestions,
         },
     }
+}
+
+/// `permission_suggestions` facts from the hook payload, tolerantly.
+fn extract_suggestions(row: &Value) -> Vec<SuggestionFact> {
+    row.get("permission_suggestions")
+        .and_then(Value::as_array)
+        .map(|suggestions| {
+            suggestions
+                .iter()
+                .map(|suggestion| SuggestionFact {
+                    kind: string_of(suggestion, "type"),
+                    destination: string_of(suggestion, "destination"),
+                    directories: suggestion
+                        .get("directories")
+                        .and_then(Value::as_array)
+                        .map(|directories| {
+                            directories
+                                .iter()
+                                .filter_map(Value::as_str)
+                                .map(str::to_string)
+                                .collect()
+                        })
+                        .unwrap_or_default(),
+                })
+                .collect()
+        })
+        .unwrap_or_default()
 }
 
 fn push_ask(
@@ -300,7 +344,7 @@ fn fold_permission_request(layer: &mut ClaudeLayer, seq: u64, row: &Value) {
     if layer.asks.iter().any(|ask| ask.hook_key == Some(key)) {
         return;
     }
-    let kind = ask_kind(tool_name, input);
+    let kind = ask_kind(tool_name, input, extract_suggestions(row));
     push_ask(layer, seq, None, Some(key), kind);
 }
 
@@ -447,6 +491,13 @@ fn fold_user_text(layer: &mut ClaudeLayer, seq: u64, row: &Value, text: &str) {
             source,
             PromptSource::Typed | PromptSource::Queued | PromptSource::SuggestionAccepted
         );
+    // B1 echo reconciliation: an injected prompt lands as a human row
+    // whose string content is byte-identical to the pasted text (§18d) —
+    // the optimistic echo collapses into the real entry. Oldest match
+    // only: two echoes with one landing must not both reconcile.
+    if turn_start && let Some(reconciled) = layer.echoes.iter().position(|echo| echo.text == text) {
+        layer.echoes.remove(reconciled);
+    }
     push(
         layer,
         seq,
@@ -1056,7 +1107,7 @@ fn correlate_ask(
             seq,
             Some(tool_use_id.to_string()),
             Some(key),
-            ask_kind(Some(name), input),
+            ask_kind(Some(name), input, Vec::new()),
         ),
     }
 }

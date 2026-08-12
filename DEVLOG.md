@@ -38,6 +38,68 @@ One paragraph describing what was done.
 
 ---
 
+## 2026-08-12: Chat V1 Phase 3 — the write path (C6 module, Commands, C5 lifecycle)
+
+### Summary
+The chat write path lands: typed intents become keystroke programs
+injected under the seq guard, with the C5 optimistic lifecycle in the
+Model. One encoding module (`amux-ui/src/claude/encoding.rs`) owns every
+Claude key byte in the workspace — typed intent in, `KeyStep` program
+out, each table documented with its capture provenance (claude 2.1.228),
+and any menu shape no capture confirmed returns a typed
+`UnverifiedMenuShape` error instead of guessed bytes (the permission
+menu is generated from the hook's `permission_suggestions`, so its digit
+table is verified for the one-suggestion shape only). Four new Commands
+(`SendPrompt`, `AnswerAsk`, `Interrupt`, `CyclePermissionMode`) dispatch
+with OpIds and finish as state; the reducer encodes, gates (D2 via
+`Model::claude_send_gate`, D4 via the mode-cycle gate, D3 ungated),
+flips the optimistic state (prompt echoes with content-equality
+reconciliation; `AskState::AnsweredOptimistic{op, answer}` carrying the
+pending-marker data), and emits `Effect::SendInput` with the layer's
+stream cursor as `expected_seq`. The shell maps steps onto the
+`claude_pty_transcript_v1` actions and always answers — a stale-seq
+interrupt (position-independent by design) retries mechanically with
+the seq the refusal reported; everything else fails fast and resurfaces
+with the failure stated. Remote resolution wins over local pending
+state everywhere; readonly rejection is the server's and the model
+states it. Hook payloads' `permission_mode` now folds into the session
+facts (the D4 verdict made code).
+
+### Changes
+- crates/amux-ui/src/claude/encoding.rs — the C6 module + table tests.
+- crates/amux-ui/src/claude/{mod,fold}.rs — ask `suggestions` facts,
+  prompt echoes, seq cursor, hook permission_mode fold, ask-state
+  mutators, echo invariant.
+- crates/amux-ui/src/{msg,effect,update,model,runtime,lib}.rs — the
+  Command/OpOutcome/Effect vocabulary, gates, dispatch, op-result
+  resurfacing, `SendGate`, the shell executor.
+- crates/amux-ui/tests/spec/write.rs — Chapter 13 (13 cases, 5
+  differential sequences); wire_free serde variants extended; asks
+  chapter asserts the suggestion facts.
+- crates/amux-tui/src/render.rs — status-line verbs for the new
+  commands (no chat rendering — that is Phase 4).
+
+### Decisions Made
+- Prompts always inject as bracketed paste: literal text (no `/`/`!`
+  grammar triggers), newline-safe, and the transcript row lands
+  byte-identical — which makes content equality the echo reconciliation
+  key (verified).
+- One optimistic echo in flight at a time (`SendGate::SendInFlight`):
+  reconciliation stays unambiguous; claude queues raced sends anyway.
+- Deny-with-feedback is ONE program (digit, settle, pasted feedback as
+  a follow-up prompt) — the permission menu has no feedback field
+  (verified; the plan menu's request-changes does and keeps its field
+  encoding).
+- `Effect::SendInput.retry_stale` carries the reducer's policy; the
+  shell retries mechanically (bounded) with the server-reported seq —
+  interrupt only.
+
+### Verification
+- fmt; workspace clippy `-D warnings` clean.
+- amux-ui: 24 lib + 1 runtime + 117 spec (differential wraps the new
+  sequences; fold==live after every Msg). amux --lib 401; amux spec 44
+  (testnet); amux-tui 3+19 green.
+
 ## 2026-08-12: Chat V1 Phase 3 — live keystroke verification (C6 research)
 
 ### Summary

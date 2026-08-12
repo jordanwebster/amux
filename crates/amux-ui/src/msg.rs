@@ -97,6 +97,30 @@ pub enum Command {
     DeleteAgent {
         agent: AgentId,
     },
+    /// Submit a prompt to a Claude chat (B1/D2). Gated on phase by the
+    /// reducer (`Model::claude_send_gate`); success renders the optimistic
+    /// echo until the transcript row reconciles it.
+    SendPrompt {
+        agent: AgentId,
+        text: String,
+    },
+    /// Answer the addressed ask (C5): the reducer encodes the typed answer
+    /// through the C6 module and flips the ask to answered-optimistic.
+    AnswerAsk {
+        agent: AgentId,
+        ask: u64,
+        answer: crate::claude::encoding::AskAnswer,
+    },
+    /// Interrupt the session (D3): allowed in every state; the transcript
+    /// records the interruption entry (B8).
+    Interrupt {
+        agent: AgentId,
+    },
+    /// Cycle the permission mode (D4, Shift+Tab). The mode fact returns
+    /// via hook payloads — the cycle itself emits no transcript row.
+    CyclePermissionMode {
+        agent: AgentId,
+    },
 }
 
 /// Connection and inventory events. Entity events are idempotent upserts —
@@ -155,10 +179,20 @@ pub enum DisconnectReason {
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
 #[serde(tag = "outcome", rename_all = "snake_case")]
 pub enum OpOutcome {
-    AgentCreated { agent: Agent },
-    AgentRenamed { agent: Agent },
+    AgentCreated {
+        agent: Agent,
+    },
+    AgentRenamed {
+        agent: Agent,
+    },
     AgentDeleted,
-    Error { error: OpError },
+    /// The keystroke program was injected under the seq guard. Injection
+    /// is not confirmation: prompts confirm by echo reconciliation, ask
+    /// answers by the transcript's resolution fact (C5).
+    InputSent,
+    Error {
+        error: OpError,
+    },
 }
 
 impl OpOutcome {
