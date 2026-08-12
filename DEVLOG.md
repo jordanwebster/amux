@@ -38,6 +38,33 @@ One paragraph describing what was done.
 
 ---
 
+## 2026-08-12: Phase 2 gate — spec corrections from the ask/phase build
+
+### Summary
+docs/CHAT.md absorbs the Phase 2 fixture-grounded corrections:
+plan request-changes spawns a NEW ask without ending the turn
+(rejection carries `toolDenialKind:"user-rejected"`); permission-ask
+correlation is content identity (hooks carry no tool_use id;
+`tool_name` + byte-equal `tool_input` is the join); the phase decay/
+staleness thresholds are named constants (60 s idle decay, 600 s
+working cap) so E2E can assert them; hook delivery is documented
+at-least-once with core-side dedupe; the fleet's errored→Unknown
+mapping is design, not omission. Gate context: codex review returned
+one P1 (truncated live windows stuck Replaying forever for
+late-attaching clients) and two P2s — all fixed with locking spec
+cases (`9d1df25`) — plus capture-env hardening after the Phase 0
+installer incident (the owner's `~/.local/bin/claude` symlink was
+repointed into a capture temp dir; restored to the durable install,
+and the harness now hard-locks claude's updater in the spawn env).
+
+### Changes
+- docs/CHAT.md — five corrections, each evidence-tagged "Phase 2".
+
+### Verification
+- Prose only; wireframes remain exactly 80 columns.
+
+---
+
 ## 2026-08-12: Phase 1 gate — simplification pass
 
 ### Summary

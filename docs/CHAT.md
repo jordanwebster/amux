@@ -229,10 +229,13 @@ row `uuid`), not new content.
 ### Model and lifecycle
 
 An ask is `{id, kind, payload}` in the Model: id is the `tool_use` id
-(questions, plan review) or the hook-correlated tool identity
-(permissions); kind is permission or question; the payload is typed per
-kind, and a permission carrying an `ExitPlanMode` plan is the
-plan-review variant. Pending signals: the amux
+(questions, plan review) or, for permissions, the hook row's content
+identity — hook payloads carry no tool_use id (Phase 2,
+fixture-verified); `tool_name` + `tool_input` equals the transcript
+`tool_use.input` byte-for-byte, and that equality is the correlation.
+Kind is permission or question; the payload is typed per kind, and a
+permission carrying an `ExitPlanMode` plan is the plan-review
+variant. Pending signals: the amux
 `hook.permission_request` row (FACT, arrival-ordered), which fires
 for tool permissions AND for `AskUserQuestion`/`ExitPlanMode` (Phase
 0, observed) — extraction routes on its `tool_name`, never assuming a
@@ -312,7 +315,11 @@ the action row is:
       3. Request changes      feedback required
 
 Request-changes swaps the action row for a feedback composer and will
-not submit empty (C3). Esc closes the reader without answering,
+not submit empty (C3). A request-changes rejection does not end the
+turn (Phase 2, fixture-verified): the agent may revise and re-ask,
+which is a NEW ask — the docked panel re-appears with the revised
+plan. Rejection rows carry `toolDenialKind:"user-rejected"`, like
+tool denials. Esc closes the reader without answering,
 dropping to the docked panel form of the ask — truncated plan, the
 same three actions, `f` back to the full reader. After approval the
 feed carries the truncated plan entry and Ctrl+T reopens the reader on
@@ -445,16 +452,27 @@ The Model derives one session phase, each value tagged fact vs inferred
 | errored | `isApiErrorMessage:true` row | FACT | retry progress invisible; recovery only visible as the next normal message |
 | unknown | truncation/reset/staleness degradation | — | never guess; UI.md: degrade to Unknown, not a wrong badge |
 
+The decay and staleness thresholds are named constants — idle
+Fact→Inferred at 60 s, the working staleness cap into unknown at
+600 s — so E2E can assert them (Phase 2).
+
 There is exactly one fold (E2): chat phase derivation and the fleet
 attention summarizer share row interpretation. Notification-wording
 heuristics are forbidden ground for that fold: the plan-approval
 notification says "needs your approval" — no "permission" substring
 (Phase 1, fixture-verified) — so interpretation routes on
-`hook.permission_request.tool_name`, never on notification text. Attention remains the
+`hook.permission_request.tool_name`, never on notification text.
+Hook delivery is at-least-once by construction — registration may
+exist in multiple scopes — so the daemon dedupes and emits each fact
+once (core-side, Phase 2), and folds tolerate historical duplicates
+regardless. Attention remains the
 kernel's chrome vocabulary ("this agent needs you"), derived from the
 same facts, so fleet attention behaves identically whether or not the
 chat is open (E3) — opening a chat changes what is rendered, never what
-is known.
+is known. The kernel vocabulary has no errored badge: chat phase
+carries the errored FACT and the fleet maps it to Unknown — by
+design, not omission; wording heuristics must not be reintroduced to
+"fix" it.
 
 ## Read-only chats (F)
 
