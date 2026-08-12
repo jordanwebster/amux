@@ -671,7 +671,7 @@ mod attach {
         let view = amux_tui::ViewState::default();
         let ctx = amux_tui::FrameContext {
             viewport: (68, 11),
-            theme: amux_tui::Theme,
+            theme: amux_tui::Theme::default(),
             now: chrono::Utc::now(),
         };
         terminal
@@ -899,7 +899,7 @@ mod attach {
         let mut terminal = Terminal::new(TestBackend::new(68, 11)).expect("terminal");
         let ctx = amux_tui::FrameContext {
             viewport: (68, 11),
-            theme: amux_tui::Theme,
+            theme: amux_tui::Theme::default(),
             now: chrono::Utc::now(),
         };
         terminal

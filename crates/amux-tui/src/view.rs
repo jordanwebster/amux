@@ -39,6 +39,10 @@ pub struct ViewState {
     /// Human label of the leader key ("C-a"), shown in help. View-config,
     /// set once at startup.
     pub leader_label: String,
+    /// The chat screen, when open: it replaces the fleet inside the same
+    /// chrome (`docs/CHAT.md`). Opening from the fleet is Phase 6's
+    /// binding work; [`ViewState::open_chat`] is the seam it invokes.
+    pub chat: Option<crate::chat::ChatView>,
 }
 
 impl Default for ViewState {
@@ -52,7 +56,23 @@ impl Default for ViewState {
             dismissed_error_seq: 0,
             notice: None,
             leader_label: "C-a".to_string(),
+            chat: None,
         }
+    }
+}
+
+impl ViewState {
+    /// Enter the chat screen for an agent — the entry seam the Phase 6
+    /// fleet bindings (Enter/Ctrl+Enter/`o` per A1) will invoke.
+    pub fn open_chat(&mut self, agent: AgentId) {
+        self.chat = Some(crate::chat::ChatView::open(agent));
+    }
+
+    /// Leave the chat screen back to the fleet (chrome navigation — a
+    /// pending ask survives leaving; reopening re-derives everything from
+    /// the Model).
+    pub fn close_chat(&mut self) {
+        self.chat = None;
     }
 }
 

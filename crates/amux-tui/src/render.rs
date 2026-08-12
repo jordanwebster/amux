@@ -45,9 +45,70 @@ const HINTS_COL: usize = 25;
 /// banner/spacer, status line.
 const CHROME_ROWS: usize = 6;
 
-/// Placeholder for future theming; styles are currently fixed.
-#[derive(Clone, Copy, Debug, Default)]
-pub struct Theme;
+/// The two shipped themes, selecting a palette of semantic tokens
+/// (`docs/CHAT.md` deferred-decisions: background/panel, text/muted,
+/// semantic accents — palettes may multiply later, the vocabulary is
+/// fixed). Named ANSI colors resolve through the terminal's own palette,
+/// so most tokens are theme-independent; the variants differ only where
+/// the palette cannot help (muted and inline-code contrast on light
+/// backgrounds). The fleet renderer predates the tokens and keeps its
+/// fixed styles — they equal the Dark tokens byte-for-byte.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+pub enum Theme {
+    #[default]
+    Dark,
+    Light,
+}
+
+impl Theme {
+    /// Body text.
+    pub(crate) fn text(self) -> Style {
+        Style::default()
+    }
+
+    /// De-emphasis: markers, rules, continuations, hints.
+    pub(crate) fn muted(self) -> Style {
+        match self {
+            // DIM renders poorly on many light backgrounds; a real grey
+            // keeps the de-emphasis readable there.
+            Theme::Dark => Style::default().add_modifier(Modifier::DIM),
+            Theme::Light => Style::default().fg(Color::DarkGray),
+        }
+    }
+
+    /// Markdown emphasis (bold) and headings.
+    pub(crate) fn emphasis(self) -> Style {
+        Style::default().add_modifier(Modifier::BOLD)
+    }
+
+    /// Markdown italic emphasis.
+    pub(crate) fn italic(self) -> Style {
+        Style::default().add_modifier(Modifier::ITALIC)
+    }
+
+    /// Inline code and fenced code blocks.
+    pub(crate) fn code(self) -> Style {
+        match self {
+            Theme::Dark => Style::default().fg(Color::Cyan),
+            Theme::Light => Style::default().fg(Color::Blue),
+        }
+    }
+
+    /// Success accents (`✔`).
+    pub(crate) fn ok(self) -> Style {
+        Style::default().fg(Color::Green)
+    }
+
+    /// Attention accents (`needs you`, question marks).
+    pub(crate) fn warn(self) -> Style {
+        Style::default().fg(Color::Yellow)
+    }
+
+    /// Failure accents (`✗`, api errors, failed sends).
+    pub(crate) fn error(self) -> Style {
+        Style::default().fg(Color::Red)
+    }
+}
 
 /// The frame's environment: everything a render may depend on besides the
 /// Model and the ViewState.
@@ -76,8 +137,16 @@ fn plain() -> Style {
 }
 
 /// Build the full frame as styled lines (the whole chrome is text — no
-/// nested widgets, so goldens control every cell).
+/// nested widgets, so goldens control every cell). The chat screen, when
+/// open, replaces the fleet inside the same chrome.
 pub fn build_lines(model: &Model, view: &ViewState, ctx: &FrameContext) -> Vec<Line<'static>> {
+    match &view.chat {
+        Some(chat) => crate::chat::build_chat_lines(model, chat, ctx),
+        None => build_fleet_lines(model, view, ctx),
+    }
+}
+
+fn build_fleet_lines(model: &Model, view: &ViewState, ctx: &FrameContext) -> Vec<Line<'static>> {
     let width = ctx.viewport.0 as usize;
     let height = ctx.viewport.1 as usize;
     if width < MIN_FRAME_WIDTH || height < CHROME_ROWS {
@@ -193,7 +262,7 @@ fn title_line(width: usize) -> Line<'static> {
     Line::from(Span::styled(line, dim()))
 }
 
-fn bottom_border(width: usize) -> Line<'static> {
+pub(crate) fn bottom_border(width: usize) -> Line<'static> {
     let mut line = String::from("└");
     while line.chars().count() < width - 1 {
         line.push('─');
@@ -202,37 +271,42 @@ fn bottom_border(width: usize) -> Line<'static> {
     Line::from(Span::styled(line, dim()))
 }
 
-fn blank_line(width: usize) -> Line<'static> {
+pub(crate) fn blank_line(width: usize) -> Line<'static> {
     let mut line = new_line();
     finish_line(&mut line, width);
     line
 }
 
 /// A content line: left border plus spans; `finish_line` pads and closes it.
-fn new_line() -> Line<'static> {
+pub(crate) fn new_line() -> Line<'static> {
     Line::from(vec![Span::styled("│", dim())])
 }
 
-fn line_len(line: &Line<'_>) -> usize {
+pub(crate) fn line_len(line: &Line<'_>) -> usize {
     line.spans
         .iter()
         .map(|span| span.content.chars().count())
         .sum()
 }
 
-fn pad_to(line: &mut Line<'static>, col: usize) {
+pub(crate) fn pad_to(line: &mut Line<'static>, col: usize) {
     let len = line_len(line);
     if col > len {
         line.spans.push(Span::raw(" ".repeat(col - len)));
     }
 }
 
-fn push_span(line: &mut Line<'static>, col: usize, text: impl Into<String>, style: Style) {
+pub(crate) fn push_span(
+    line: &mut Line<'static>,
+    col: usize,
+    text: impl Into<String>,
+    style: Style,
+) {
     pad_to(line, col);
     line.spans.push(Span::styled(text.into(), style));
 }
 
-fn finish_line(line: &mut Line<'static>, width: usize) {
+pub(crate) fn finish_line(line: &mut Line<'static>, width: usize) {
     pad_to(line, width - 1);
     // Drop overflow defensively: goldens keep us honest about fit.
     let mut len = 0usize;

@@ -103,7 +103,7 @@ async fn chrome_session(
                 let area = frame.area();
                 let ctx = FrameContext {
                     viewport: (area.width, area.height),
-                    theme: Theme,
+                    theme: Theme::default(),
                     now: Utc::now(),
                 };
                 render(runtime.model(), view, &ctx, frame);
@@ -115,17 +115,41 @@ async fn chrome_session(
                 if !alive {
                     break ChromeExit::RuntimeGone;
                 }
+                // Reconcile chat view state against the fresh fold: a
+                // finished send op may carry the failure fact that
+                // resurfaces the draft (C5).
+                if let Some(chat) = view.chat.as_mut() {
+                    chat.reconcile(runtime.model());
+                }
                 dirty = true;
             }
             maybe_event = events.next() => match maybe_event {
                 Some(Ok(Event::Key(key))) => {
                     dirty = true;
-                    let capacity = list_capacity(terminal.size()?.height);
-                    match handle_key(view, runtime.model(), key, capacity) {
+                    let size = terminal.size()?;
+                    // The chat screen, when open, owns the keys — its
+                    // Ctrl+C semantics (clear-as-kill) differ from the
+                    // fleet's quit, so routing happens before the fleet
+                    // handler sees anything.
+                    let action = match view.chat.as_mut() {
+                        Some(chat) => crate::chat::handle_chat_key(
+                            chat,
+                            runtime.model(),
+                            key,
+                            (size.width, size.height),
+                        ),
+                        None => handle_key(view, runtime.model(), key, list_capacity(size.height)),
+                    };
+                    match action {
                         Some(UiAction::Quit) => break ChromeExit::Quit,
                         Some(UiAction::Attach(agent)) => break ChromeExit::Attach(agent),
                         Some(UiAction::Dispatch(command)) => {
-                            runtime.dispatch(command);
+                            let op = runtime.dispatch(command.clone());
+                            // The shell owns op identity; hand it back so
+                            // the chat can watch the outcome (C5).
+                            if let Some(chat) = view.chat.as_mut() {
+                                chat.note_dispatched(op, &command);
+                            }
                         }
                         Some(UiAction::Create { host }) => {
                             let name = next_agent_name(runtime.model());
@@ -157,11 +181,18 @@ async fn chrome_session(
                 None => break ChromeExit::Quit,
             },
             _ = ticker.tick() => {
-                // Ticks are data for time-dependent display (relative ages).
+                // Ticks are data for time-dependent display (relative
+                // ages; the chat working line's spinner and elapsed time).
                 // The interval itself always fires; only the repaint is
-                // gated on agents being on screen — a deliberate V1
-                // simplification of "ticks scheduled only while needed".
-                if runtime.model().fleet_agent_count() > 0 {
+                // gated on something on screen needing time — a deliberate
+                // V1 simplification of "ticks scheduled only while
+                // needed". One 1 Hz tick serves fleet and chat alike.
+                let model = runtime.model();
+                let needed = match view.chat.as_ref() {
+                    Some(chat) => chat.needs_tick(model),
+                    None => model.fleet_agent_count() > 0,
+                };
+                if needed {
                     runtime.observe_now(Utc::now());
                     dirty = true;
                 }

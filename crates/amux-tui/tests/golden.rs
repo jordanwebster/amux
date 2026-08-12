@@ -253,7 +253,7 @@ fn render_frame(model: &Model, view: &ViewState, width: u16, height: u16) -> Str
     let mut terminal = Terminal::new(backend).expect("terminal");
     let ctx = FrameContext {
         viewport: (width, height),
-        theme: Theme,
+        theme: Theme::default(),
         now: at(NOW),
     };
     terminal
@@ -559,7 +559,7 @@ fn badge_styles_and_offline_dim() {
     let mut terminal = Terminal::new(backend).expect("terminal");
     let ctx = FrameContext {
         viewport: (68, 11),
-        theme: Theme,
+        theme: Theme::default(),
         now: at(NOW),
     };
     terminal

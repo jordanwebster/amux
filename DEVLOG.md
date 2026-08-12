@@ -38,6 +38,82 @@ One paragraph describing what was done.
 
 ---
 
+## 2026-08-12: Chat V1 Phase 4 — the chat screen: feed + composer
+
+### Summary
+The chat screen lands in amux-tui as a screen within the existing
+chrome (`docs/CHAT.md` §Wireframes normative): a new `chat` module with
+the feed renderer, the multiline readline composer, scroll/follow
+ViewState, and the D5 working line — all wired to Phase 1–3's Model
+surface (`ClaudeLayer` entries/echoes/session facts,
+`Model::claude_phase`, `claude_send_gate`, `claude_mode_cycle_gate`,
+`Command::{SendPrompt, Interrupt, CyclePermissionMode}`). Rendering
+stays a pure function of (Model, ViewState, FrameContext); every
+derivation (phase, gate, magnitudes, counts) comes from the Model and
+the views format only. The screen is reachable in-code via
+`ViewState::open_chat` — the seam Phase 6's fleet bindings will invoke;
+no fleet binding changes here.
+
+### Changes
+- `crates/amux-tui/src/chat/{mod,composer,markdown,render,keys}.rs`:
+  the chat screen. Feed rendering for every Phase 1 entry kind
+  (terminal markdown per B2 — headings bold keeping `#`, fenced code,
+  lists, inline emphasis/code, preformatted tables, URL-aware wrap;
+  tool lines with FACT magnitudes and dim `└` continuations; grouped
+  read/search one-liners; thinking/turn/compaction markers; the
+  truncation boundary; loading-vs-empty; optimistic echo with
+  `sending…`; stated send failures), sticky-bottom scroll with the
+  paused rule (`↓ following paused · N new entries · pgdn to resume` +
+  position %), the 1–6 row auto-growing composer with the full
+  readline set and single-slot kill buffer, Enter gated by
+  `claude_send_gate` (draft kept, footer states the gate), Ctrl+X
+  interrupt in every state, Shift+Tab mode cycle, the Esc chain with
+  Phase 5's stages slotted, and the working line driven by the one
+  1 Hz tick.
+- `crates/amux-tui/src/render.rs`: `Theme` grew Dark/Light variants
+  with semantic tokens (text/muted/emphasis/code/ok/warn/error); the
+  fleet keeps its fixed styles (byte-identical goldens); line helpers
+  opened pub(crate) for the chat module.
+- `crates/amux-tui/src/{view,run,lib}.rs`: `ViewState.chat` +
+  `open_chat`/`close_chat` seam; run-loop routing (chat owns keys when
+  open — its Ctrl+C is clear-as-kill, never quit), dispatch op
+  feedback for C5 failure resurfacing, tick gating extended to the
+  chat working line.
+- `crates/amux-tui/tests/chat_golden.rs` + `tests/golden/chat_*`: 20
+  Tier-3 tests — idle/working/scrolled-back/truncated/loading/empty/
+  echo/failure/needs-you/markdown/entry-edges/tool-edges frames, style
+  maps for both themes, layout-equality across themes, stability, and
+  a never-panics viewport sweep.
+
+### Decisions Made
+- Working-line token count omitted: the layer folds no usage facts
+  yet (D5 words it "when cheaply available"); recorded for a later
+  phase rather than half-derived in the view.
+- Grouped tool entries join with ` · ` only when they fit the line;
+  otherwise they fall back to their own row — grouping compresses,
+  never clips.
+- Footer hints tell the truth (P10): `? help` and `end newest` from
+  the wireframe footers are absent until Phase 6 lands the overlay and
+  the ext-tier jumps; the scrolled hint says `pgup/pgdn scroll · esc
+  newest` (empty draft only).
+- Ctrl+C on an empty draft is a deliberate no-op with a comment naming
+  Phase 6's chrome-wide two-press guard; a single ^C never quits.
+
+### Verification
+- `cargo fmt`; amux-tui: 44 lib + 19 fleet-golden + 20 chat-golden
+  tests green; fleet goldens byte-identical; workspace clippy clean.
+- Full gate (amux-ui suite, amux lib, amux spec under testnet) run at
+  phase close.
+
+### Next Steps
+- Phase 5: ask panels docked at the composer, the reader, read-only
+  chats — the Esc chain's stages 1–2 slots are marked in
+  `chat/keys.rs::esc_chain`.
+- Phase 6: fleet entry bindings via `ViewState::open_chat`, chrome-wide
+  guarded Ctrl+C, `?` overlay, kitty detection (Shift+Enter sugar).
+
+---
+
 ## 2026-08-12: Phase 3 simplification pass
 
 ### Summary
