@@ -51,6 +51,9 @@ dispatch, CLI attach, capture support, and UI/TUI test builders now use the new
 name, while `claude_io` retains only `claude_pty_transcript_v1`. Formatting,
 workspace clippy/tests, and the testnet spec suite pass without fixture,
 snapshot, or assertion changes.
+Follow-up (orchestrator): docs/UI.md updated — raw attach is now
+agent-independent via `terminal_v1`, the core-prerequisite caveat and the
+deferred-decision clause it satisfied are retired.
 
 ---
 

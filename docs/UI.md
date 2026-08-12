@@ -130,10 +130,9 @@ structurally different — a transcript-shaped Claude layer, a
 control-plane-shaped Codex layer — the asymmetry is expressed, not
 papered over. There is no generic intermediate representation of agent
 content and there are no capability flags. A client that does not know an
-agent type degrades to the `AgentCard`; raw terminal attach for unknown
-types additionally requires an agent-independent raw terminal protocol on
-the wire (a core prerequisite — until it exists, the promise for unknown
-types is the card alone; today's agent types are all known).
+agent type degrades to the `AgentCard` and can still attach to its raw
+terminal when the session advertises the agent-independent core protocol
+`terminal_v1`; every PTY-backed session currently advertises it.
 
 Where shared chrome needs cross-agent facts (badges, sort order),
 per-agent **summarizers** derive kernel vocabulary — a handful of fields.
@@ -288,7 +287,7 @@ constraint.
   rides the peer wire, and multi-writer "attention" pushes are
   specifically to be avoided.
 - **Lightweight per-agent stream views** (e.g. a hooks-only protocol
-  alongside `claude_raw_v1`) as a bandwidth lever: a new `io_protocols`
+  alongside `terminal_v1`) as a bandwidth lever: a new `io_protocols`
   string on the existing subscription surface, not a new RPC, and still
   fact emission.
 - **Session-content access** goes through the Effect seam; no layer may
@@ -301,7 +300,8 @@ constraint.
 - **Typed agent identity on the wire.** `agent_type` string +
   `io_protocols` strings function as an open capability set; when the
   inventory message is next reshaped, prefer a typed known/unknown agent
-  descriptor and an agent-independent raw terminal protocol.
+  descriptor. Raw terminal attachment is already agent-independent
+  through `terminal_v1`; only the typed descriptor remains deferred.
 - **Naming fields.** Current leaning: `name` (user-assigned, written only
   by rename) plus adapter-translated `provider_label`, display fallback in
   the Model; the provenance machinery in `agents/naming.rs` then deletes.
