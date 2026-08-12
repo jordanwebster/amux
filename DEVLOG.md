@@ -69,6 +69,83 @@ pair documenting the eviction-tolerant read).
 
 ---
 
+## 2026-08-12: Chat V1 Phase 2 — the ask model and the phase derivation
+
+### Summary
+The Claude layer grows the ASK model and the E1 phase derivation
+(docs/CHAT.md §Asks, §Phase and attention). An `Ask` is `{id, kind,
+payload}` queued in arrival order with an honest head + count: the
+pending signal is the `hook.permission_request` row routed on
+`tool_name` (AskUserQuestion → question kind; ExitPlanMode → the
+plan-review permission variant carrying the plan; anything else → plain
+permission with the SAME typed per-tool payload tool entries use — one
+extraction, both consumers), with the unpaired
+AskUserQuestion/ExitPlanMode in a final message as the transcript-only
+fallback. Hook payloads carry NO tool_use id (fixture-verified), so
+correlation rides content identity — the hook's `tool_input` equals the
+transcript `tool_use.input` byte-for-byte on every fixture. Resolution
+is the B5 facts (non-error result / typed denial / answers / plan
+approval), plus interrupt-closes-ask, turn-end closers for lagging
+resolutions, and human-turn-start as the stale guard. The C5
+answered-optimistic and send-failed states exist structurally; Phase 3
+drives them with Commands. Phase: `ClaudeLayer::phase(now)` +
+`Model::claude_phase` implement the E1 table row by row — replaying /
+working / idle / needs-you(permission|question) / errored / unknown,
+each value tagged fact vs inferred, working staleness-capped into
+Unknown (600 s), idle decaying FACT→INFERRED (60 s), truncated blind
+windows Unknown, transport loss Unknown-with-obligations-kept.
+
+Hook rows now dedupe by bounded content hash in the fold (the same
+window unknown rows use): historical streams and replays carry every
+hook row twice (§18b), and without the dedupe a shrink re-replay would
+resurrect a long-resolved ask as pending — the re-replay spec case locks
+this on the permission fixture. Recorded trade-off: a byte-identical
+genuine re-request within the window folds once (payloads carry
+prompt_id and tool_input, so distinct events collide only when truly
+identical).
+
+### Changes
+- crates/amux-ui/src/claude/mod.rs — Ask/AskKind/AskState/AskWhy,
+  ChatPhase/PhaseTag, TurnState activity signals, asks queue +
+  invariants (`claude-ask-order` + asks retention bound, firing tests).
+- crates/amux-ui/src/claude/fold.rs — ask extraction, correlation,
+  resolution and closers; hook-row content dedupe; error_live; turn
+  open/close bookkeeping; `observe` gains the batch arrival time (the
+  staleness clock enters through Msgs).
+- crates/amux-ui/src/model.rs — `Model::claude_phase`, the
+  `ClaudeAskOrder` violation class.
+- crates/amux-ui/src/update.rs — arrival time threaded; stream close
+  wires `observe_exit` (asks die with the process) and `invalidate`
+  (stale → Unknown, obligations kept).
+- crates/amux-ui/tests/spec/asks.rs (Chapter 11) and phase.rs (Chapter
+  12); harness `chat_feed_prefix`; feed_replay's re-replay case
+  extended to the hook-carrying permission fixture. 99 spec tests, all
+  sequences registered into the differential.
+
+### Decisions Made
+- No new Msg kinds (recorder/flow-class coverage by construction).
+- One extraction for ask payloads and tool entries: `AskKind` wraps
+  `ToolInvocation`, so plan review is literally a permission whose
+  invocation is the Plan variant (CHAT.md: not a third kind).
+- Ask identity is per request content, not per row or per prompt_id —
+  plan_reject proves a revised plan re-ask shares prompt_id.
+- Turn-end signals (`turn_duration`, non-active `hook.stop`) close
+  pending asks: an ended turn is incompatible with a blocking ask; this
+  is the catch-up path when another client answered and the resolving
+  rows lag.
+- The transcript-only plain-permission inference (E1's read-only
+  failure mode: unpaired non-question tool in a final message) is
+  deliberately NOT implemented — unpaired = running; only
+  question/plan tools are self-evident asks. Recorded for Phase 5.
+- Staleness caps are policy constants (600 s working, 60 s idle-fact
+  decay), applied at read time so the folded state stays time-free.
+
+### Verification
+- `timeout 600 cargo test -p amux-ui` — 10 lib + 1 runtime + 99 spec
+  green; every new sequence wrapped by the wire_free differential.
+
+---
+
 ## 2026-08-12: Dedupe duplicate Claude hook deliveries at the daemon seam
 
 ### Summary

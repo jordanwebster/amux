@@ -351,6 +351,27 @@ impl Model {
         self.agents.get(&id).and_then(AgentCard::claude)
     }
 
+    /// The derived chat phase (`docs/CHAT.md` E1), computed here once for
+    /// every renderer: kernel subscription catch-up gates to Replaying, a
+    /// dead transport degrades to Unknown, an exited agent keeps its
+    /// layer's last honest state (the card's `phase` carries the exit
+    /// itself), and the layer derives the rest — with `now` (entering via
+    /// Ticks) capping the inferred states.
+    pub fn claude_phase(&self, id: AgentId) -> crate::claude::ChatPhase {
+        use crate::claude::ChatPhase;
+        let Some(layer) = self.claude(id) else {
+            return ChatPhase::Unknown;
+        };
+        match self.streams.get(&id).map(|stream| &stream.phase) {
+            Some(StreamPhase::Opening | StreamPhase::Replaying) => ChatPhase::Replaying,
+            Some(StreamPhase::Live)
+            | Some(StreamPhase::Closed {
+                reason: StreamCloseReason::AgentExited { .. } | StreamCloseReason::AgentDeleted,
+            }) => layer.phase(self.now),
+            _ => ChatPhase::Unknown,
+        }
+    }
+
     pub fn pending_ops(&self) -> impl Iterator<Item = &PendingOp> {
         self.pending_ops.values()
     }
@@ -507,6 +528,10 @@ pub enum Violation {
         rows: usize,
         set: usize,
     },
+    /// The ask queue's id arithmetic broke: ids are minted monotonically
+    /// and the queue appends at the back, so retained ids must be strictly
+    /// increasing and below the next id.
+    ClaudeAskOrder { agent: AgentId },
 }
 
 impl Violation {
@@ -525,6 +550,7 @@ impl Violation {
             Violation::ClaudeFeedOrder { .. } => "claude-feed-order",
             Violation::ClaudeIndexAhead { .. } => "claude-index-ahead",
             Violation::ClaudeDedupeIncoherent { .. } => "claude-dedupe-incoherent",
+            Violation::ClaudeAskOrder { .. } => "claude-ask-order",
         }
     }
 }
@@ -607,6 +633,9 @@ impl std::fmt::Display for Violation {
                 f,
                 "agent {agent} claude dedupe queue ({rows}) and set ({set}) disagree"
             ),
+            Violation::ClaudeAskOrder { agent } => {
+                write!(f, "agent {agent} claude ask id arithmetic is incoherent")
+            }
         }
     }
 }

@@ -269,6 +269,15 @@ pub fn chat_feed(agent: &str, fixture: &str) -> Vec<Msg> {
     seq([chat_base(agent), vec![batch(agent, 10, chat_rows(fixture))]])
 }
 
+/// The base plus a fixture PREFIX (rows before `end`): how the spec
+/// observes mid-lifecycle states on captured reality.
+pub fn chat_feed_prefix(agent: &str, fixture: &str, end: usize) -> Vec<Msg> {
+    seq([
+        chat_base(agent),
+        vec![batch(agent, 10, chat_rows(fixture)[..end].to_vec())],
+    ])
+}
+
 /// The folded Claude layer for an agent.
 pub fn claude_layer<'m>(model: &'m Model, agent: &str) -> &'m ClaudeLayer {
     model.claude(agent_id(agent)).expect("claude layer folded")
@@ -309,5 +318,7 @@ pub fn all_sequences() -> Vec<(&'static str, Vec<Msg>)> {
     sequences.extend(crate::feed_turns::sequences());
     sequences.extend(crate::feed_tools::sequences());
     sequences.extend(crate::feed_edges::sequences());
+    sequences.extend(crate::asks::sequences());
+    sequences.extend(crate::phase::sequences());
     sequences
 }

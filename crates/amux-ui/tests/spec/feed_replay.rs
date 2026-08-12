@@ -63,20 +63,33 @@ fn a_truncated_window_states_the_boundary() {
 }
 
 /// Source-shrink recovery re-replays the file from the start; the fold
-/// treats the repeated prefix as re-replay, idempotent by row uuid (B10) —
-/// folding the same rows twice yields the identical layer.
+/// treats the repeated prefix as re-replay, idempotent by row uuid for
+/// transcript rows and by bounded content hash for hook rows (B10) —
+/// folding the same rows twice yields the identical layer. The permission
+/// fixture is the sharp case: without hook-row dedupe, a re-replayed
+/// `hook.permission_request` would resurrect its long-resolved ask as
+/// pending, because the resolving transcript rows dedupe away by uuid.
+/// (Both folds observe the same arrival time: re-delivery advances the
+/// liveness clock by design — arrival is knowledge, not content.)
 #[test]
 fn re_replay_is_idempotent_by_row_uuid() {
-    let once = fold(chat_feed("fix-auth-bug", "tools"));
-    let twice = fold(seq([
-        chat_feed("fix-auth-bug", "tools"),
-        vec![batch("fix-auth-bug", 20, chat_rows("tools"))],
-    ]));
-    assert_eq!(
-        claude_layer(&once, "fix-auth-bug"),
-        claude_layer(&twice, "fix-auth-bug"),
-        "a repeated prefix is re-replay, not new content"
-    );
+    for fixture in ["tools", "permission"] {
+        let once = fold(chat_feed("fix-auth-bug", fixture));
+        let twice = fold(seq([
+            chat_feed("fix-auth-bug", fixture),
+            vec![batch("fix-auth-bug", 10, chat_rows(fixture))],
+        ]));
+        assert_eq!(
+            claude_layer(&once, "fix-auth-bug"),
+            claude_layer(&twice, "fix-auth-bug"),
+            "{fixture}: a repeated prefix is re-replay, not new content"
+        );
+        assert_eq!(
+            claude_layer(&twice, "fix-auth-bug").ask_count(),
+            0,
+            "{fixture}: re-replay resurrects no resolved ask"
+        );
+    }
 }
 
 /// B10's idempotency covers rows WITHOUT uuids too: an unknown retained
@@ -135,9 +148,9 @@ fn a_different_session_id_opens_a_fresh_epoch() {
 }
 
 /// A re-subscription replays the source tail from scratch, and the layer
-/// folds from scratch with it: rows without uuids (hooks, markers,
-/// session-state) carry no dedupe key, so the window reset is what keeps
-/// them exactly-once.
+/// folds from scratch with it: session-state rows and markers carry no
+/// dedupe key at all (and hook rows only a per-window content hash), so
+/// the window reset is what keeps them exactly-once.
 #[test]
 fn reopening_the_stream_refolds_the_window() {
     let reopened = fold(seq([
@@ -307,6 +320,13 @@ pub fn sequences() -> Vec<(&'static str, Vec<Msg>)> {
             seq([
                 chat_feed("fix-auth-bug", "tools"),
                 vec![batch("fix-auth-bug", 20, chat_rows("tools"))],
+            ]),
+        ),
+        (
+            "feed_replay::re_replay_hooks",
+            seq([
+                chat_feed("fix-auth-bug", "permission"),
+                vec![batch("fix-auth-bug", 20, chat_rows("permission"))],
             ]),
         ),
         (

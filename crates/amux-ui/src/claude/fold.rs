@@ -16,12 +16,13 @@ use serde_json::Value;
 use uuid::Uuid;
 
 use super::{
-    AcceptedPlan, ApiErrorEntry, ClaudeLayer, CompactSummaryEntry, CompactionEntry, FEED_RETAINED,
-    FeedEntry, FeedEntryKind, InterruptionEntry, InterruptionKind, MESSAGES_RETAINED, MessageEntry,
-    MessageFinality, MessageSlot, OPEN_TOOLS_RETAINED, OUTPUT_HEAD_MAX, OpenTool, PLANS_RETAINED,
-    PromptEntry, PromptSource, QuestionAnswer, QuestionFact, QuestionOption, SEEN_ROWS_RETAINED,
-    SlotState, SuccessFacts, TaskNotificationEntry, ThinkingEntry, ToolEntry, ToolInvocation,
-    ToolOutcome, TurnDuration, TurnEntry, UnrecognizedEntry,
+    ASKS_RETAINED, AcceptedPlan, ApiErrorEntry, Ask, AskKind, AskState, ClaudeLayer,
+    CompactSummaryEntry, CompactionEntry, FEED_RETAINED, FeedEntry, FeedEntryKind,
+    InterruptionEntry, InterruptionKind, MESSAGES_RETAINED, MessageEntry, MessageFinality,
+    MessageSlot, OPEN_TOOLS_RETAINED, OUTPUT_HEAD_MAX, OpenTool, PLANS_RETAINED, PromptEntry,
+    PromptSource, QuestionAnswer, QuestionFact, QuestionOption, SEEN_ROWS_RETAINED, SlotState,
+    SuccessFacts, TaskNotificationEntry, ThinkingEntry, ToolEntry, ToolInvocation, ToolOutcome,
+    TurnCloseSource, TurnDuration, TurnEntry, UnrecognizedEntry,
 };
 
 // --- tolerant readers -------------------------------------------------------
@@ -63,7 +64,11 @@ const INTERRUPT_TOOL: &str = "[Request interrupted by user for tool use]";
 
 // --- the fold ---------------------------------------------------------------
 
-pub(super) fn observe(layer: &mut ClaudeLayer, seq: u64, row: &Value) {
+pub(super) fn observe(layer: &mut ClaudeLayer, seq: u64, arrived: DateTime<Utc>, row: &Value) {
+    // Every delivery is liveness evidence — the base of the E1 staleness
+    // clock (a crashed claude delivers nothing).
+    layer.last_arrival = Some(arrived);
+
     let kind = str_of(row, "type");
 
     // amux-layer rows first: they carry no transcript identity.
@@ -72,17 +77,44 @@ pub(super) fn observe(layer: &mut ClaudeLayer, seq: u64, row: &Value) {
             layer.transcript_ready = true;
             return;
         }
-        Some("hook.stop") => {
-            // Arrival-ordered turn-end pre-signal (B3); `stop_hook_active`
-            // means a stop hook forced continuation — not an end.
-            if !bool_of(row, "stop_hook_active") {
-                layer.turn.stop_presignal = true;
+        Some("hook.stop") | Some("hook.permission_request") => {
+            // Hook rows carry no uuid, historical streams carry duplicate
+            // deliveries (§18b — two hook registrations each delivered
+            // every event), and a shrink re-replay repeats them all: the
+            // bounded content-hash dedupe makes hook folds idempotent per
+            // window, so a re-replay can never resurrect a resolved ask as
+            // pending. Trade-off (bounded, recorded): a byte-identical
+            // genuine re-request within the dedupe window folds once —
+            // payloads carry `prompt_id` and `tool_input`, so distinct
+            // events collide only when truly identical.
+            if !remember(layer, content_key(row)) {
+                return;
+            }
+            if kind == Some("hook.stop") {
+                // Arrival-ordered turn-end pre-signal (B3);
+                // `stop_hook_active` means a stop hook forced continuation
+                // — not an end.
+                if !bool_of(row, "stop_hook_active") {
+                    layer.turn.stop_presignal = true;
+                    // An ended turn is incompatible with a blocking ask:
+                    // the pre-signal is also the catch-up closer when the
+                    // resolving transcript rows lag behind (remote
+                    // resolution, C5).
+                    layer.asks.clear();
+                }
+            } else {
+                // The pending-ask FACT (C): fires for tool permissions AND
+                // for AskUserQuestion/ExitPlanMode — extraction routes on
+                // `tool_name`.
+                fold_permission_request(layer, seq, row);
             }
             return;
         }
-        // Ask material (Phase 2's extraction); no feed fact today. The
-        // attention summarizer consumes them separately.
-        Some("hook.permission_request") | Some("hook.notification") => return,
+        // Notification wording is forbidden interpretation ground (E2): the
+        // plan-approval notification says "needs your approval" with no
+        // "permission" substring (fixture-verified). Every signal it could
+        // carry arrives better-typed elsewhere, so it folds to nothing.
+        Some("hook.notification") => return,
         _ => {}
     }
 
@@ -103,6 +135,10 @@ pub(super) fn observe(layer: &mut ClaudeLayer, seq: u64, row: &Value) {
         }
     }
 
+    // Everything from here down is a transcript row: the replay-vs-fresh
+    // discriminator (B10 — a fresh session has no transcript file yet).
+    layer.transcript_rows_seen = true;
+
     // Row-uuid dedupe: a source-shrink re-replay repeats the file prefix;
     // the fold must be idempotent by row uuid (B10).
     if let Some(uuid) = str_of(row, "uuid").and_then(|text| Uuid::parse_str(text).ok())
@@ -112,9 +148,9 @@ pub(super) fn observe(layer: &mut ClaudeLayer, seq: u64, row: &Value) {
     }
 
     match kind {
-        Some("user") => fold_user(layer, seq, row),
+        Some("user") => fold_user(layer, seq, arrived, row),
         Some("assistant") => fold_assistant(layer, seq, row),
-        Some("system") => fold_system(layer, seq, row),
+        Some("system") => fold_system(layer, seq, arrived, row),
         // Attachments are system-injected context riding a turn — never
         // feed entries (`docs/CHAT.md` §The feed).
         Some("attachment") => touch_row_chain(layer, row),
@@ -191,9 +227,85 @@ fn touch_row_chain(layer: &mut ClaudeLayer, row: &Value) {
     }
 }
 
+// --- asks -------------------------------------------------------------------
+
+/// Content identity of one ask request: FNV-1a over the tool name and the
+/// canonical JSON of its input (serde_json objects iterate key-sorted). The
+/// hook's `tool_input` equals the transcript `tool_use.input` byte-for-byte
+/// (fixture-verified), so one key both dedupes the at-least-once hook
+/// delivery and correlates the transcript row to the hook-born ask.
+fn ask_key(tool_name: &str, input: &Value) -> u64 {
+    let mut hash = 0xcbf2_9ce4_8422_2325u64;
+    for byte in tool_name
+        .as_bytes()
+        .iter()
+        .chain([0x1fu8].iter())
+        .chain(input.to_string().as_bytes())
+    {
+        hash ^= u64::from(*byte);
+        hash = hash.wrapping_mul(0x0000_0100_0000_01b3);
+    }
+    hash
+}
+
+/// The ask kind for one request, from the same typed per-tool extraction
+/// the feed's tool entries use — one interpretation, both consumers (E2).
+fn ask_kind(tool_name: Option<&str>, input: &Value) -> AskKind {
+    match extract_invocation(tool_name.unwrap_or_default(), input) {
+        ToolInvocation::Question { questions } => AskKind::Question { questions },
+        invocation => AskKind::Permission {
+            tool_name: tool_name.map(str::to_string),
+            invocation,
+        },
+    }
+}
+
+fn push_ask(
+    layer: &mut ClaudeLayer,
+    seq: u64,
+    tool_use_id: Option<String>,
+    hook_key: Option<u64>,
+    kind: AskKind,
+) {
+    let id = layer.next_ask_id;
+    layer.next_ask_id += 1;
+    layer.asks.push_back(Ask {
+        id,
+        seq,
+        tool_use_id,
+        kind,
+        state: AskState::Pending,
+        hook_key,
+    });
+    if layer.asks.len() > ASKS_RETAINED {
+        layer.asks.pop_front();
+    }
+}
+
+/// The amux `hook.permission_request` row: the pending-ask FACT
+/// (arrival-ordered — it normally precedes the transcript tail). Routing is
+/// on `tool_name`, never notification wording: AskUserQuestion is a
+/// question ask, ExitPlanMode a plan-review permission, anything else a
+/// plain permission with its typed per-tool payload.
+fn fold_permission_request(layer: &mut ClaudeLayer, seq: u64, row: &Value) {
+    let tool_name = str_of(row, "tool_name");
+    let input = row.get("tool_input").unwrap_or(&Value::Null);
+    let key = ask_key(tool_name.unwrap_or_default(), input);
+    // Hook delivery is at-least-once (§18b: every hook row observed twice —
+    // multiple registrations each deliver the identical payload): a request
+    // identical to one already queued is the same event re-delivered, not a
+    // new ask. After resolution the ask has left the queue, so a genuine
+    // re-ask with identical content becomes a new ask.
+    if layer.asks.iter().any(|ask| ask.hook_key == Some(key)) {
+        return;
+    }
+    let kind = ask_kind(tool_name, input);
+    push_ask(layer, seq, None, Some(key), kind);
+}
+
 // --- user rows --------------------------------------------------------------
 
-fn fold_user(layer: &mut ClaudeLayer, seq: u64, row: &Value) {
+fn fold_user(layer: &mut ClaudeLayer, seq: u64, arrived: DateTime<Utc>, row: &Value) {
     // Injected meta rows (caveats, hook feedback) are the session's own
     // bookkeeping in EITHER content form (§5) — filtered on the top-level
     // discriminator before any interrupt/tool/closure handling, so a meta
@@ -215,7 +327,7 @@ fn fold_user(layer: &mut ClaudeLayer, seq: u64, row: &Value) {
                 _ => None,
             });
             if let Some(kind) = interrupt {
-                fold_interrupt(layer, seq, row, kind);
+                fold_interrupt(layer, seq, arrived, row, kind);
                 return;
             }
             // A user row closes any still-open message as abandoned (B2).
@@ -349,12 +461,29 @@ fn fold_user_text(layer: &mut ClaudeLayer, seq: u64, row: &Value, text: &str) {
         layer.turn.prompt_at = at;
         layer.turn.stop_presignal = false;
         layer.turn.inferred_turn_entry = None;
+        layer.turn.open = true;
+        layer.turn.closed_by = None;
+        layer.turn.closed_at = None;
+        layer.turn.error_live = false;
+        // A new human turn implies nothing was blocking: any ask still
+        // queued is stale (its closing rows fell outside the window).
+        layer.asks.clear();
     }
     touch_row_chain(layer, row);
 }
 
-fn fold_interrupt(layer: &mut ClaudeLayer, seq: u64, row: &Value, kind: InterruptionKind) {
+fn fold_interrupt(
+    layer: &mut ClaudeLayer,
+    seq: u64,
+    arrived: DateTime<Utc>,
+    row: &Value,
+    kind: InterruptionKind,
+) {
     let interrupted_message_id = string_of(row, "interruptedMessageId");
+
+    // Interrupt closes every ask (C5): the user chose to cut the turn
+    // instead of answering — the panel dismisses and the facts render.
+    layer.asks.clear();
 
     // Close the message it cut off: FACT-paired by `interruptedMessageId`
     // when that slot is still indexed, otherwise any still-open message
@@ -394,10 +523,15 @@ fn fold_interrupt(layer: &mut ClaudeLayer, seq: u64, row: &Value, kind: Interrup
         layer.turn.inferred_turn_entry = Some(entry);
     }
 
-    // Durations are never computed across an interrupt (B3).
+    // Durations are never computed across an interrupt (B3), and the turn
+    // is over — closed by the user (FACT, §17 rows).
     layer.turn.last_row_at = None;
     layer.turn.prompt_at = None;
     layer.turn.stop_presignal = false;
+    layer.turn.open = false;
+    layer.turn.closed_by = Some(TurnCloseSource::Interrupt);
+    layer.turn.closed_at = Some(arrived);
+    layer.turn.error_live = false;
 }
 
 /// A still-open message slot — the target of every "this row ends the
@@ -450,6 +584,13 @@ fn fold_tool_result(layer: &mut ClaudeLayer, seq: u64, row: &Value, block: &Valu
     };
 
     let outcome = tool_outcome(row, block);
+
+    // The result resolves the correlated ask whatever its state — allow
+    // and deny alike, local answer or remote (C5): the ask leaves the
+    // queue and the collapsed B5 fact renders from the tool entry.
+    layer
+        .asks
+        .retain(|ask| ask.tool_use_id.as_deref() != Some(tool_use_id));
 
     // B6: an approved plan is retained as session state keyed by tool_use
     // id, outside feed windowing — even if the feed entry was evicted.
@@ -674,9 +815,16 @@ fn fold_assistant(layer: &mut ClaudeLayer, seq: u64, row: &Value) {
                 text,
             }),
         );
+        // Phase FACT (E1): errored until the next normal signal. The turn
+        // stays open — retries run invisibly and may recover it.
+        layer.turn.error_live = true;
         touch_row_chain(layer, row);
         return;
     }
+
+    // Recovery from an API error is only visible as the next normal
+    // assistant message (§20).
+    layer.turn.error_live = false;
 
     let message = row.get("message");
     let message_id = message
@@ -831,7 +979,7 @@ fn fold_tool_use(
         seq,
         FeedEntryKind::Tool(ToolEntry {
             tool_use_id: tool_use_id.clone(),
-            name: Some(name),
+            name: Some(name.clone()),
             invocation,
             outcome: ToolOutcome::Pending,
             message_final: stop_reason.is_some(),
@@ -840,15 +988,75 @@ fn fold_tool_use(
         }),
     );
 
-    if !tool_use_id.is_empty() {
-        layer.open_tools.push_back(OpenTool {
-            tool_use_id,
-            entry,
-            message_id: Some(message_id.to_string()),
-        });
-        if layer.open_tools.len() > OPEN_TOOLS_RETAINED {
-            layer.open_tools.pop_front();
-        }
+    if tool_use_id.is_empty() {
+        return;
+    }
+    layer.open_tools.push_back(OpenTool {
+        tool_use_id: tool_use_id.clone(),
+        entry,
+        message_id: Some(message_id.to_string()),
+    });
+    if layer.open_tools.len() > OPEN_TOOLS_RETAINED {
+        layer.open_tools.pop_front();
+    }
+
+    correlate_ask(layer, seq, &tool_use_id, &name, input, stop_reason);
+}
+
+/// Attach the transcript identity to the ask this `tool_use` embodies (C).
+///
+/// The hook payload carries no tool_use id, so a hook-born ask is matched
+/// by content key — the hook's `tool_input` equals this block's `input`
+/// byte-for-byte (fixture-verified). Where no hook ask exists, the unpaired
+/// AskUserQuestion/ExitPlanMode in a FINAL message is itself the ask
+/// (FACT-grade pairing rule): the fallback where hook rows are absent, and
+/// the kind-match fallback covers an input-drifted hook. A plain tool's
+/// unpaired use is "running", never a permission inference — the
+/// transcript-only INFERRED-and-laggy permission detection (E1's read-only
+/// failure mode) is deliberately not implemented in V1.
+fn correlate_ask(
+    layer: &mut ClaudeLayer,
+    seq: u64,
+    tool_use_id: &str,
+    name: &str,
+    input: &Value,
+    stop_reason: &Option<String>,
+) {
+    let key = ask_key(name, input);
+    if let Some(ask) = layer
+        .asks
+        .iter_mut()
+        .find(|ask| ask.tool_use_id.is_none() && ask.hook_key == Some(key))
+    {
+        ask.tool_use_id = Some(tool_use_id.to_string());
+        return;
+    }
+    if stop_reason.is_none() || !matches!(name, "AskUserQuestion" | "ExitPlanMode") {
+        return;
+    }
+    let uncorrelated_same_kind = layer.asks.iter_mut().find(|ask| {
+        ask.tool_use_id.is_none()
+            && matches!(
+                (&ask.kind, name),
+                (AskKind::Question { .. }, "AskUserQuestion")
+                    | (
+                        AskKind::Permission {
+                            invocation: ToolInvocation::Plan { .. },
+                            ..
+                        },
+                        "ExitPlanMode",
+                    )
+            )
+    });
+    match uncorrelated_same_kind {
+        Some(ask) => ask.tool_use_id = Some(tool_use_id.to_string()),
+        None => push_ask(
+            layer,
+            seq,
+            Some(tool_use_id.to_string()),
+            Some(key),
+            ask_kind(Some(name), input),
+        ),
     }
 }
 
@@ -964,7 +1172,7 @@ fn finalize_message(layer: &mut ClaudeLayer, message_id: &str, stop_reason: Stri
 
 // --- system rows ------------------------------------------------------------
 
-fn fold_system(layer: &mut ClaudeLayer, seq: u64, row: &Value) {
+fn fold_system(layer: &mut ClaudeLayer, seq: u64, arrived: DateTime<Utc>, row: &Value) {
     match str_of(row, "subtype") {
         Some("turn_duration") => {
             // Zero is not a fact: a row without a readable `durationMs`
@@ -1005,6 +1213,15 @@ fn fold_system(layer: &mut ClaudeLayer, seq: u64, row: &Value) {
             }
             layer.turn.stop_presignal = false;
             layer.turn.prompt_at = None;
+            // The turn-end authority (§14 FACT): the turn is over, and an
+            // ended turn is incompatible with a blocking ask — any ask
+            // still queued was resolved out-of-window or by the same
+            // signals that ended the turn.
+            layer.turn.open = false;
+            layer.turn.closed_by = Some(TurnCloseSource::Authority);
+            layer.turn.closed_at = Some(arrived);
+            layer.turn.error_live = false;
+            layer.asks.clear();
             touch_row_chain(layer, row);
         }
         // The stop-hook execution report rides ~2ms before its paired

@@ -158,8 +158,11 @@ impl LocalAgentHost for PtyAgentHost {
                 match AgentSession::bootstrap_external_hook(agent_id, &payload).await {
                     Ok(ExternalHookBootstrap::Noop) => Ok(()),
                     Ok(ExternalHookBootstrap::Register(session)) => {
-                        match state.insert_registered_local_agent(self.host_id(), agent_id, *session)
-                        {
+                        match state.insert_registered_local_agent(
+                            self.host_id(),
+                            agent_id,
+                            *session,
+                        ) {
                             Ok(announce) => {
                                 if let Some(session) = state.agent_session_mut(&agent_id) {
                                     session.maybe_start_name_sniffer(self.event_tx());

@@ -21,11 +21,11 @@ mod fold;
 
 use std::collections::{BTreeSet, VecDeque};
 
-use chrono::{DateTime, Utc};
+use chrono::{DateTime, TimeDelta, Utc};
 use serde::{Deserialize, Serialize};
 use uuid::Uuid;
 
-use crate::model::Violation;
+use crate::model::{Attention, Violation, Why};
 
 /// Feed retention bound (B9): matches the source's bounded tail, so the fold
 /// never retains more than one window of history. Eviction is from the
@@ -50,6 +50,24 @@ pub(crate) const OPEN_TOOLS_RETAINED: usize = 256;
 /// Accepted plan payload retention (B6): session state keyed by tool_use
 /// id, outside feed windowing, bounded by count.
 pub(crate) const PLANS_RETAINED: usize = 8;
+
+/// Pending-ask retention (C): asks queue outside the feed window — evicting
+/// content never evicts asks (B9) — under their own explicit bound.
+/// Realistically a handful pend at once (parallel tool use enqueues a few);
+/// overflow drops the oldest, honestly bounded like everything else.
+pub(crate) const ASKS_RETAINED: usize = 32;
+
+/// Staleness cap on the INFERRED working phase (E1): a crashed claude
+/// leaves "working" stuck, so a turn with no observed delivery for this
+/// long degrades to Unknown — never to a wrong badge. Generous because
+/// long silent stretches are legal (a 10-minute Bash timeout, a long
+/// generation burst-written only at completion).
+pub(crate) const WORKING_STALENESS_CAP_SECS: i64 = 600;
+
+/// How long the idle-from-authority phase stays tagged FACT (E1: "FACT at
+/// the signal, decays to INFERRED" — an external session may already be
+/// typing).
+pub(crate) const IDLE_FACT_DECAY_SECS: i64 = 60;
 
 /// Bounded head of tool output retained for the compact one-liner (B4).
 /// The full text stays on disk behind the Effect seam.
@@ -386,8 +404,141 @@ pub struct AcceptedPlan {
     pub plan_file_path: Option<String>,
 }
 
-/// Turn-scoped fold state (B3): the pre-signal reconciliation and the
-/// timestamp chains that duration inferences ride.
+/// An agent-initiated blocking request (`docs/CHAT.md` §Asks) — the
+/// chat-layer surface of a live obligation. Queued in arrival order; the
+/// head renders with an honest `(1 of N)` count.
+#[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
+pub struct Ask {
+    /// Monotonic per window — the stable handle renderers and Phase 3
+    /// commands address the ask by.
+    pub id: u64,
+    /// Stream seq of the creating row (provenance).
+    pub seq: u64,
+    /// The `toolu_*` id once the transcript row is correlated — the
+    /// resolution key. Hook payloads carry NO tool_use id
+    /// (fixture-verified), so a hook-born ask starts uncorrelated and gains
+    /// the id when the transcript tail catches up.
+    pub tool_use_id: Option<String>,
+    pub kind: AskKind,
+    pub state: AskState,
+    /// Hook-side identity: hash of (tool_name, canonical tool_input). The
+    /// hook's `tool_input` equals the transcript `tool_use.input`
+    /// byte-for-byte (fixture-verified), so one key both dedupes
+    /// at-least-once hook delivery and correlates the transcript row.
+    hook_key: Option<u64>,
+}
+
+impl Ask {
+    pub fn why(&self) -> AskWhy {
+        match self.kind {
+            AskKind::Permission { .. } => AskWhy::Permission,
+            AskKind::Question { .. } => AskWhy::Question,
+        }
+    }
+}
+
+/// Exactly two kinds (`docs/CHAT.md` §Vocabulary): plan review is a
+/// permission whose invocation is [`ToolInvocation::Plan`] — the payload
+/// carries the plan — not a third kind.
+#[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
+#[serde(tag = "ask", rename_all = "snake_case")]
+pub enum AskKind {
+    /// Permission for one tool use, with the same typed per-tool payload
+    /// the feed's tool entries carry (one extraction, both consumers).
+    Permission {
+        tool_name: Option<String>,
+        invocation: ToolInvocation,
+    },
+    /// `AskUserQuestion` (C4 facts).
+    Question { questions: Vec<QuestionFact> },
+}
+
+/// Why an ask needs the user — the phase's needs-you discriminator.
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum AskWhy {
+    Permission,
+    Question,
+}
+
+/// C5 lifecycle state living in the Model. Resolution removes the ask from
+/// the queue — the collapsed B5 fact renders from the tool entry. The two
+/// non-pending states are driven by Phase 3's Commands (optimistic submit,
+/// seq-mismatch/send-failure resurfacing); the shape exists now so Phase 3
+/// adds Commands, not model shape.
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(tag = "state", rename_all = "snake_case")]
+pub enum AskState {
+    Pending,
+    /// An answer was submitted optimistically; a dim pending marker holds
+    /// until the transcript's resolution fact confirms (C5).
+    AnsweredOptimistic,
+    /// The send failed (seq mismatch / transport): resurfaced with the
+    /// failure stated — never a stuck spinner. No transcript artifact
+    /// exists for this; it is purely client-side state.
+    SendFailed {
+        message: String,
+    },
+}
+
+/// Fact-vs-inferred tag on derived phase values (E1).
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum PhaseTag {
+    Fact,
+    Inferred,
+}
+
+/// The derived session phase (`docs/CHAT.md` §Phase and attention — the E1
+/// table). Variants whose epistemic status is fixed carry no tag field;
+/// [`ChatPhase::tag`] states every variant's status.
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(tag = "phase", rename_all = "snake_case")]
+pub enum ChatPhase {
+    /// Before `amux.transcript_ready` (FACT at the amux layer).
+    Replaying,
+    /// Prompt seen, no turn-end signal (INFERRED — capped by the staleness
+    /// timer into Unknown; see `phase(now)`).
+    Working,
+    /// Turn closed, nothing after. FACT at the authority signal, decaying
+    /// to INFERRED (an external session may already be typing).
+    Idle { tag: PhaseTag },
+    /// A pending ask heads the queue (E1: the request FACT is newer than
+    /// any resolving result).
+    NeedsYou { why: AskWhy, tag: PhaseTag },
+    /// `isApiErrorMessage:true` row (FACT); recovery is only visible as the
+    /// next normal assistant message.
+    Errored,
+    /// Truncation/reset/staleness degradation — never a guess.
+    Unknown,
+}
+
+impl ChatPhase {
+    /// The E1 fact-vs-inferred tag; `None` for Unknown (degradation has no
+    /// epistemic claim to tag).
+    pub fn tag(&self) -> Option<PhaseTag> {
+        match self {
+            ChatPhase::Replaying | ChatPhase::Errored => Some(PhaseTag::Fact),
+            ChatPhase::Working => Some(PhaseTag::Inferred),
+            ChatPhase::Idle { tag } | ChatPhase::NeedsYou { tag, .. } => Some(*tag),
+            ChatPhase::Unknown => None,
+        }
+    }
+}
+
+/// How the last turn closed (idle provenance).
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub(crate) enum TurnCloseSource {
+    /// The in-transcript `turn_duration` row (FACT).
+    Authority,
+    /// The §17 interrupt artifacts (FACT — the user closed it).
+    Interrupt,
+}
+
+/// Turn-scoped fold state: the pre-signal reconciliation and timestamp
+/// chains duration inferences ride (B3), plus the activity signals the
+/// phase derivation reads (E1).
 #[derive(Clone, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
 struct TurnState {
     /// The current turn's prompt row timestamp (turn start, §14 FACT).
@@ -401,6 +552,19 @@ struct TurnState {
     /// Timestamp of the previous uuid row in file order — the thinking
     /// duration chain. Cleared across interrupts and compaction.
     last_row_at: Option<DateTime<Utc>>,
+    /// A human prompt opened a turn and no turn-end signal closed it (the
+    /// phase's working input). Distinct from `prompt_at`, which duration
+    /// inference rides and a compaction boundary clears — an auto-compact
+    /// mid-turn ends duration chains, not the turn.
+    open: bool,
+    /// How the last turn closed, with the closing signal's arrival time
+    /// (idle FACT decays to INFERRED).
+    closed_by: Option<TurnCloseSource>,
+    closed_at: Option<DateTime<Utc>>,
+    /// An `isApiErrorMessage` row is the newest signal; cleared by the next
+    /// normal assistant row, prompt, or interrupt (§20: recovery is only
+    /// visible as the next normal message).
+    error_live: bool,
 }
 
 /// Message upsert slot (B2).
@@ -459,6 +623,21 @@ pub struct ClaudeLayer {
     /// lookup.
     seen_rows: VecDeque<Uuid>,
     seen_set: BTreeSet<Uuid>,
+    /// Pending asks in arrival order (C). Outside the feed window: feed
+    /// eviction never touches this queue (B9).
+    asks: VecDeque<Ask>,
+    next_ask_id: u64,
+    /// The stream died underneath us (transport loss): whatever the fold
+    /// knew is stale. Phase and attention degrade to Unknown until a fresh
+    /// window replays; obligations are kept (the replay refolds them).
+    stale: bool,
+    /// Any transcript row folded this window — distinguishes a fresh
+    /// session whose file does not exist yet (empty chat) from a replay in
+    /// progress (loading), B10.
+    transcript_rows_seen: bool,
+    /// Arrival time of the newest folded delivery (the batch's observed
+    /// `at`): the staleness clock's base.
+    last_arrival: Option<DateTime<Utc>>,
 }
 
 impl ClaudeLayer {
@@ -474,8 +653,30 @@ impl ClaudeLayer {
     }
 
     /// Fold one structured row (transcript row, hook row, or amux marker).
-    pub(crate) fn observe(&mut self, seq: u64, row: &serde_json::Value) {
-        fold::observe(self, seq, row);
+    /// `arrived` is the shell's observed arrival time from the batch Msg —
+    /// the staleness clock's base (time enters through Msgs).
+    pub(crate) fn observe(&mut self, seq: u64, arrived: DateTime<Utc>, row: &serde_json::Value) {
+        fold::observe(self, seq, arrived, row);
+    }
+
+    /// The stream died underneath us (transport loss / relink of the
+    /// subscription): whatever the fold knew is stale. Degrade to Unknown,
+    /// never to a wrong badge; keep the obligations — the reopened window
+    /// replays and refolds them.
+    pub(crate) fn invalidate(&mut self) {
+        self.stale = true;
+    }
+
+    /// The agent process ended in an orderly way: nothing is left to need.
+    /// The feed stays readable; the obligations and activity signals do not
+    /// outlive the process that owned them.
+    pub(crate) fn observe_exit(&mut self) {
+        self.asks.clear();
+        self.turn.open = false;
+        self.turn.stop_presignal = false;
+        self.turn.closed_by = None;
+        self.turn.closed_at = None;
+        self.turn.error_live = false;
     }
 
     /// The feed, in file order.
@@ -531,10 +732,157 @@ impl ClaudeLayer {
         self.turn.prompt_at
     }
 
-    /// Count of unpaired tool uses (the pairing index Phase 2's ask
-    /// extraction reads).
+    /// Count of unpaired tool uses (the pairing index ask correlation
+    /// reads).
     pub fn open_tool_count(&self) -> usize {
         self.open_tools.len()
+    }
+
+    /// The ask queue in arrival order; the head is the docked panel, the
+    /// length the honest `(1 of N)` count (C).
+    pub fn asks(&self) -> impl Iterator<Item = &Ask> {
+        self.asks.iter()
+    }
+
+    pub fn ask_head(&self) -> Option<&Ask> {
+        self.asks.front()
+    }
+
+    pub fn ask_count(&self) -> usize {
+        self.asks.len()
+    }
+
+    /// The derived session phase (the E1 table), layer view. `now` enters
+    /// via `Msg::Tick` and caps inferred states: a stuck "working" degrades
+    /// to Unknown, an authority-fresh "idle" decays from FACT to INFERRED.
+    /// The Model wraps this with kernel subscription state
+    /// (`Model::claude_phase`).
+    pub fn phase(&self, now: Option<DateTime<Utc>>) -> ChatPhase {
+        if self.stale {
+            return ChatPhase::Unknown;
+        }
+        if !self.transcript_ready {
+            // Mid-replay of an existing transcript is Replaying; a window
+            // with no transcript rows at all and no truncation is a fresh
+            // session whose file does not exist yet (B10) — an idle empty
+            // chat, inferred.
+            return if self.transcript_rows_seen || self.truncated_start {
+                ChatPhase::Replaying
+            } else {
+                ChatPhase::Idle {
+                    tag: PhaseTag::Inferred,
+                }
+            };
+        }
+        if let Some(ask) = self.asks.front() {
+            // The request FACT is newer than any resolving result (E1):
+            // resolution facts remove asks from the queue as they land.
+            return ChatPhase::NeedsYou {
+                why: ask.why(),
+                tag: PhaseTag::Fact,
+            };
+        }
+        if self.turn.error_live {
+            return ChatPhase::Errored;
+        }
+        if self.turn.open {
+            if self.turn.stop_presignal {
+                // Arrival-ordered pre-signal: the turn ended, the
+                // transcript tail has not caught up (INFERRED until the
+                // authority lands).
+                return ChatPhase::Idle {
+                    tag: PhaseTag::Inferred,
+                };
+            }
+            if self.working_is_stale(now) {
+                return ChatPhase::Unknown;
+            }
+            return ChatPhase::Working;
+        }
+        if self.turn.closed_by.is_some() {
+            let fresh = match (now, self.turn.closed_at) {
+                (Some(now), Some(at)) => now - at <= TimeDelta::seconds(IDLE_FACT_DECAY_SECS),
+                _ => true,
+            };
+            return ChatPhase::Idle {
+                tag: if fresh {
+                    PhaseTag::Fact
+                } else {
+                    PhaseTag::Inferred
+                },
+            };
+        }
+        // No evidence at all: over a truncated window that is Unknown —
+        // absence of evidence in a bounded history is not evidence of
+        // idleness.
+        if self.truncated_start {
+            ChatPhase::Unknown
+        } else {
+            ChatPhase::Idle {
+                tag: PhaseTag::Inferred,
+            }
+        }
+    }
+
+    /// Kernel attention derived from the SAME interpretation as the phase
+    /// (E2: one fold, not two). Time-free so the cached card value stays
+    /// coherent between Ticks; the read-time staleness degrade lives in
+    /// `Model::effective_attention`, keeping fleet and chat in agreement
+    /// (E3).
+    pub fn attention(&self) -> Attention {
+        if self.stale {
+            return Attention::Unknown;
+        }
+        if !self.transcript_ready {
+            return if self.transcript_rows_seen || self.truncated_start {
+                Attention::Unknown
+            } else {
+                Attention::Idle
+            };
+        }
+        if let Some(ask) = self.asks.front() {
+            return Attention::NeedsYou {
+                why: match ask.why() {
+                    AskWhy::Permission => Why::Permission,
+                    AskWhy::Question => Why::Question,
+                },
+            };
+        }
+        if self.turn.error_live {
+            // The kernel vocabulary cannot say "errored"; Unknown is the
+            // honest word — never a wrong badge (retries may already be
+            // running invisibly).
+            return Attention::Unknown;
+        }
+        if self.turn.open {
+            return if self.turn.stop_presignal {
+                Attention::NeedsYou { why: Why::Finished }
+            } else {
+                Attention::Working
+            };
+        }
+        match self.turn.closed_by {
+            // The turn finished and nothing came after: come look.
+            Some(TurnCloseSource::Authority) => Attention::NeedsYou { why: Why::Finished },
+            // The user closed it deliberately; nothing to come look at.
+            Some(TurnCloseSource::Interrupt) => Attention::Idle,
+            None => {
+                if self.truncated_start {
+                    Attention::Unknown
+                } else {
+                    Attention::Idle
+                }
+            }
+        }
+    }
+
+    /// The E1 staleness cap: the working inference is stale once no
+    /// delivery has been observed for [`WORKING_STALENESS_CAP_SECS`].
+    pub(crate) fn working_is_stale(&self, now: Option<DateTime<Utc>>) -> bool {
+        match (now, self.last_arrival) {
+            (Some(now), Some(at)) => now - at > TimeDelta::seconds(WORKING_STALENESS_CAP_SECS),
+            _ => false,
+        }
     }
 
     /// Structural coherence (`Model::check_invariants` extension): ids,
@@ -546,6 +894,7 @@ impl ClaudeLayer {
             ("messages", self.messages.len(), MESSAGES_RETAINED),
             ("open-tools", self.open_tools.len(), OPEN_TOOLS_RETAINED),
             ("plans", self.plans.len(), PLANS_RETAINED),
+            ("asks", self.asks.len(), ASKS_RETAINED),
         ] {
             if len > cap {
                 out.push(Violation::ClaudeRetentionOverflow {
@@ -579,6 +928,19 @@ impl ClaudeLayer {
                 rows: self.seen_rows.len(),
                 set: self.seen_set.len(),
             });
+        }
+
+        // Ask arithmetic: ids are assigned monotonically and the queue is
+        // append-only at the back, so retained ids are strictly increasing
+        // and below the next id.
+        let ask_ids_coherent = self
+            .asks
+            .iter()
+            .zip(self.asks.iter().skip(1))
+            .all(|(a, b)| a.id < b.id)
+            && self.asks.back().is_none_or(|ask| ask.id < self.next_ask_id);
+        if !ask_ids_coherent {
+            out.push(Violation::ClaudeAskOrder { agent });
         }
 
         let index_refs = self
@@ -760,5 +1122,23 @@ mod tests {
             .seen_rows
             .push_back(Uuid::from_u128(99));
         assert!(fires(&model, "claude-dedupe-incoherent"));
+    }
+
+    #[test]
+    fn detects_ask_id_incoherence() {
+        let mut model = a_model_with_a_folded_layer();
+        let layer = layer_mut(&mut model);
+        // An ask id at or past the mint counter breaks the monotonic rule.
+        layer.asks.push_back(Ask {
+            id: layer.next_ask_id + 3,
+            seq: 9,
+            tool_use_id: None,
+            kind: AskKind::Question {
+                questions: Vec::new(),
+            },
+            state: AskState::Pending,
+            hook_key: None,
+        });
+        assert!(fires(&model, "claude-ask-order"));
     }
 }

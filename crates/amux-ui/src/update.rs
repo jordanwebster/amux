@@ -292,7 +292,7 @@ fn update_stream(model: &mut Model, agent: amux::AgentId, event: StreamMsg) -> V
             });
             with_claude_layer(model, agent, |layer| {
                 for entry in &entries {
-                    layer.observe(entry.seq, &entry.payload);
+                    layer.observe(entry.seq, at, &entry.payload);
                 }
             });
         }
@@ -312,11 +312,17 @@ fn update_stream(model: &mut Model, agent: amux::AgentId, event: StreamMsg) -> V
                         card.phase = AgentPhase::Exited { exit_code };
                     }
                     with_claude_summarizer(model, agent, |fold| fold.observe_exit());
+                    // Nothing is left to need: obligations do not outlive
+                    // the process that owned them.
+                    with_claude_layer(model, agent, |layer| layer.observe_exit());
                 }
                 StreamCloseReason::AgentDeleted => {}
                 // The stream died underneath us: whatever the fold knew is
                 // stale. Degrade to Unknown, never to a wrong badge.
-                _ => with_claude_summarizer(model, agent, |fold| fold.invalidate()),
+                _ => {
+                    with_claude_summarizer(model, agent, |fold| fold.invalidate());
+                    with_claude_layer(model, agent, |layer| layer.invalidate());
+                }
             }
             if let Some(stream) = model.streams.get_mut(&agent) {
                 stream.phase = StreamPhase::Closed { reason };

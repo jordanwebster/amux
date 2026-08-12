@@ -35,3 +35,7 @@ mod feed_tools; // Chapter 8 — Chat feed: tool pairing, result facts
 mod feed_edges; // Chapter 9 — Chat feed: status, subagents, unknown rows
 
 mod wire_free; // Chapter 10 — Determinism: differential fold, replay, serde
+
+mod asks; // Chapter 11 — Asks: extraction, correlation, lifecycle
+
+mod phase; // Chapter 12 — Phase: the E1 derivation table
