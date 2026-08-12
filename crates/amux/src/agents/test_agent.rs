@@ -17,6 +17,8 @@ use crate::agents::{CreateAgentRequest, StructuredLogSource, TerminalSize};
 use crate::agents::{MultiplexStructuredReader, SequencedReplayQuery};
 use crate::debug::DebugView;
 
+const STRUCTURED_LOG_RETENTION: usize = 1000;
+
 #[cfg(any(test, feature = "testnet"))]
 pub(crate) mod io {
     pub(crate) const TEST_ECHO_COMMAND: &str = "__amux_test_echo__";
@@ -92,7 +94,7 @@ impl TestAgentSession {
             return Ok(tokio::spawn(std::future::pending::<()>()));
         }
 
-        let (pty, log_source, exit_handle) = spawn_pty_agent(
+        let (pty, exit_handle) = spawn_pty_agent(
             self.agent_id,
             &self.command,
             &[],
@@ -101,9 +103,14 @@ impl TestAgentSession {
             &[],
             self.terminal_size,
         )?;
+        let log_source = StructuredLogSource::new(STRUCTURED_LOG_RETENTION);
+        let exit_log_source = log_source.clone();
         self.pty = Some(pty);
         self.log_source = Some(log_source);
-        Ok(exit_handle)
+        Ok(tokio::spawn(async move {
+            let _ = exit_handle.await;
+            exit_log_source.close().await;
+        }))
     }
 
     pub(crate) fn log_source(&self) -> Option<StructuredLogSource> {
@@ -138,8 +145,8 @@ impl Serialize for DebugView<'_, TestAgentSession> {
         let mut map = serializer.serialize_map(None)?;
         map.serialize_entry("kind", "test_agent")?;
         map.serialize_entry("has_pty", &session.pty.is_some())?;
-        if let Some(log_source) = &session.log_source {
-            map.serialize_entry("transcript", &DebugView::new(log_source, self.verbose))?;
+        if session.log_source.is_some() {
+            map.serialize_entry("transcript", &serde_json::json!({}))?;
         }
         map.end()
     }
@@ -157,7 +164,7 @@ mod tests {
             command: "test-agent".to_string(),
             working_dir: std::env::temp_dir(),
             pty: None,
-            log_source: Some(StructuredLogSource::new()),
+            log_source: Some(StructuredLogSource::new(STRUCTURED_LOG_RETENTION)),
             terminal_size: None,
             created_at: Utc::now(),
         };

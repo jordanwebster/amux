@@ -122,7 +122,7 @@ impl ClaudeSession {
     pub(in crate::agents) fn structured_input_target(&self) -> ClaudeStructuredInputTarget {
         ClaudeStructuredInputTarget {
             readonly: self.readonly,
-            log_source: self.log_source.clone(),
+            log_source: self.log_source(),
             pty: self.pty.clone(),
         }
     }

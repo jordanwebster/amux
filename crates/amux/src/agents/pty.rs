@@ -8,7 +8,6 @@ use tokio::sync::{Mutex, mpsc};
 use tracing::Instrument;
 use uuid::Uuid;
 
-use super::StructuredLogSource;
 use crate::agents::{ByteReplayQuery, MultiplexByteBuffer, MultiplexByteReader, TerminalSize};
 
 /// Maximum replay buffer size for PTY bytes.
@@ -105,7 +104,7 @@ pub(in crate::agents) fn apply_env(
     }
 }
 
-/// Spawn a PTY process and return a handle + structured log source + exit handle.
+/// Spawn a PTY process and return a handle plus an exit handle.
 ///
 /// Creates the PTY, spawns the command, and starts reader/writer/exit-monitor
 /// tasks. The exit handle completes when the child exits (after internal cleanup).
@@ -119,7 +118,7 @@ pub(crate) fn spawn_pty_agent(
     env: &[(&str, String)],
     env_remove: &[&str],
     terminal_size: Option<TerminalSize>,
-) -> Result<(PtyHandle, StructuredLogSource, tokio::task::JoinHandle<()>)> {
+) -> Result<(PtyHandle, tokio::task::JoinHandle<()>)> {
     let session_span = tracing::info_span!("session", agent_id = %agent_id, command = %command);
     tracing::info!(parent: &session_span, dir = %working_dir.display(), "creating session");
 
@@ -156,7 +155,6 @@ pub(crate) fn spawn_pty_agent(
     let master: Arc<Mutex<Option<Box<dyn MasterPty + Send>>>> = Arc::new(Mutex::new(Some(master)));
     let current_size: Arc<Mutex<(u16, u16)>> = Arc::new(Mutex::new((size.rows, size.cols)));
     let buffer = Arc::new(MultiplexByteBuffer::new(MAX_REPLAY_BUFFER));
-    let log_source = StructuredLogSource::new();
     let (input_tx, mut input_rx) = mpsc::channel::<Vec<u8>>(256);
 
     // Task: Read from PTY, write to multiplex buffer.
@@ -195,7 +193,6 @@ pub(crate) fn spawn_pty_agent(
     // Task: Wait for child to exit, then clean up (server monitors this handle).
     let master_clone = master.clone();
     let buffer_clone = buffer.clone();
-    let log_source_clone = log_source.clone();
     let span = session_span;
     let exit_handle = tokio::task::spawn_blocking(move || {
         let _guard = span.enter();
@@ -208,9 +205,7 @@ pub(crate) fn spawn_pty_agent(
                 let mut master = master_clone.lock().await;
                 master.take();
             }
-
             buffer_clone.close().await;
-            log_source_clone.close().await;
         });
     });
 
@@ -221,7 +216,7 @@ pub(crate) fn spawn_pty_agent(
         buffer,
     };
 
-    Ok((pty, log_source, exit_handle))
+    Ok((pty, exit_handle))
 }
 
 #[cfg(test)]

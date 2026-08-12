@@ -5,7 +5,9 @@ mod hooks;
 pub mod io;
 #[cfg(feature = "local-agents")]
 mod session;
-pub(in crate::agents) mod transcript;
+mod transcript;
+#[cfg(feature = "local-agents")]
+mod transcript_ingest;
 
 #[cfg(feature = "local-agents")]
 pub(crate) use session::{ClaudeSession, ClaudeStructuredInputTarget};

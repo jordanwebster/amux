@@ -40,8 +40,8 @@ fn hook_fingerprint(raw: &Value) -> u64 {
 impl ClaudeSession {
     /// Link a transcript file for structured output tailing.
     async fn link_transcript(&self, path: PathBuf) {
-        if let Some(log_source) = &self.log_source {
-            log_source.link_transcript(path).await;
+        if let Some(ingest) = &self.transcript_ingest {
+            ingest.link_transcript(path).await;
         }
     }
 
@@ -121,7 +121,7 @@ impl ClaudeSession {
     /// structured row.
     pub(crate) async fn handle_hook(&mut self, hook: ParsedClaudeHook) {
         self.sync_hook_metadata(&hook).await;
-        if self.log_source.is_none() {
+        if self.transcript_ingest.is_none() {
             return;
         }
         // Internal-only kinds return; emitted kinds name their structured
@@ -161,8 +161,8 @@ impl ClaudeSession {
         if let Some(obj) = value.as_object_mut() {
             obj.insert("type".to_string(), json!(type_tag));
         }
-        if let Some(log_source) = &self.log_source {
-            log_source.write(value).await;
+        if let Some(ingest) = &self.transcript_ingest {
+            ingest.log_source().write(value).await;
         }
     }
 
@@ -205,7 +205,7 @@ mod tests {
     async fn duplicate_hook_deliveries_emit_one_structured_row() {
         let mut session =
             ClaudeSession::new_readonly(Uuid::from_u128(1), PathBuf::from("/nonexistent"));
-        let log = session.log_source.clone().expect("readonly session tails");
+        let log = session.log_source().expect("readonly session tails");
 
         session
             .handle_hook_payload(&permission_payload("echo one"))

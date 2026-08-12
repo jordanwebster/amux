@@ -38,6 +38,20 @@ One paragraph describing what was done.
 
 ---
 
+## 2026-08-12: P2 — agent-agnostic structured log sink
+
+Split `StructuredLogSource` into a retained, sequenced sink with caller-selected
+retention and a Claude-owned `TranscriptIngest` that now owns transcript path,
+tailer, relink/clear, shutdown, and debug serialization. Claude and test-agent
+sessions each select the existing 1000-entry policy; generic PTY spawning no
+longer creates structured state, while concrete session exit wrappers preserve
+automatic sink cleanup and ensure Claude stops its tailer before closing the
+sink. The existing transcript marker, replay, same-path no-op, relink-clear,
+and sequence behavior are unchanged. Formatting, workspace clippy/tests, and
+the 44-test testnet spec gate pass with no fixture, golden, or spec changes.
+
+---
+
 ## 2026-08-12: P1 — agent-independent `terminal_v1` byte plane
 
 ### Summary

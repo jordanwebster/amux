@@ -11,11 +11,14 @@ use uuid::Uuid;
 
 use super::input::sanitize_resume_args;
 use super::name_sniffer::spawn_name_sniffer;
+use crate::agents::claude::transcript_ingest::TranscriptIngest;
 use crate::agents::{
     CreateAgentRequest, LocalAgentNameSource, PtyHandle, SessionEvent, StopPolicy,
     StructuredLogSource, TerminalSize, spawn_pty_agent,
 };
 use crate::debug::DebugView;
+
+const STRUCTURED_LOG_RETENTION: usize = 1000;
 
 /// Inherited environment variables scrubbed before spawning Claude Code.
 ///
@@ -68,7 +71,7 @@ pub(crate) struct ClaudeSession {
     pub(in crate::agents) command: String,
     pub(in crate::agents) working_dir: PathBuf,
     pub(in crate::agents) pty: Option<PtyHandle>,
-    pub(super) log_source: Option<StructuredLogSource>,
+    pub(super) transcript_ingest: Option<TranscriptIngest>,
 
     pub(in crate::agents) terminal_size: Option<TerminalSize>,
     /// Claude session ID. Set from SessionStart hook during normal operation,
@@ -97,7 +100,7 @@ impl ClaudeSession {
             command: "claude".to_string(),
             working_dir: req.working_dir.clone(),
             pty: None,
-            log_source: None,
+            transcript_ingest: None,
             terminal_size: req.terminal_size,
             session_id: None,
             readonly: false,
@@ -125,7 +128,7 @@ impl ClaudeSession {
             command: "claude".to_string(),
             working_dir: req.working_dir.clone(),
             pty: None,
-            log_source: None,
+            transcript_ingest: None,
             terminal_size: req.terminal_size,
             session_id: Some(session_id),
             readonly: false,
@@ -138,7 +141,7 @@ impl ClaudeSession {
     }
 
     /// Create a readonly session for an externally-started Claude process.
-    /// Has a StructuredLogSource (for transcript tailing) but no PTY.
+    /// Has transcript ingest but no PTY.
     pub(in crate::agents) fn new_readonly(agent_id: Uuid, working_dir: PathBuf) -> Self {
         Self {
             agent_id,
@@ -146,7 +149,9 @@ impl ClaudeSession {
             command: "claude".to_string(),
             working_dir,
             pty: None,
-            log_source: Some(StructuredLogSource::new()),
+            transcript_ingest: Some(TranscriptIngest::new(StructuredLogSource::new(
+                STRUCTURED_LOG_RETENTION,
+            ))),
             terminal_size: None,
             session_id: None,
             readonly: true,
@@ -185,11 +190,11 @@ impl ClaudeSession {
         {
             return;
         }
-        let Some(log_source) = &self.log_source else {
+        let Some(log_source) = self.log_source() else {
             return;
         };
 
-        let handle = spawn_name_sniffer(log_source.clone(), event_tx.clone(), self.agent_id);
+        let handle = spawn_name_sniffer(log_source, event_tx.clone(), self.agent_id);
         self.name_sniffer_abort = Some(handle.abort_handle());
     }
 
@@ -203,7 +208,7 @@ impl ClaudeSession {
             None => vec![],
         };
         args.extend(self.args.iter().cloned());
-        let (pty, log_source, exit_handle) = spawn_pty_agent(
+        let (pty, exit_handle) = spawn_pty_agent(
             self.agent_id,
             &self.command,
             &args,
@@ -212,22 +217,30 @@ impl ClaudeSession {
             CLAUDE_CHILD_SESSION_ENV_SCRUB,
             self.terminal_size,
         )?;
+        let transcript_ingest =
+            TranscriptIngest::new(StructuredLogSource::new(STRUCTURED_LOG_RETENTION));
+        let exit_ingest = transcript_ingest.clone();
         self.pty = Some(pty);
-        self.log_source = Some(log_source);
-        Ok(exit_handle)
+        self.transcript_ingest = Some(transcript_ingest);
+        Ok(tokio::spawn(async move {
+            let _ = exit_handle.await;
+            exit_ingest.close().await;
+        }))
     }
 
     /// Return the current structured output sequence number.
     #[cfg(test)]
     pub(super) async fn current_seq(&self) -> u64 {
-        match &self.log_source {
-            Some(log_source) => log_source.current_seq().await,
+        match &self.transcript_ingest {
+            Some(ingest) => ingest.log_source().current_seq().await,
             None => 0,
         }
     }
 
     pub(in crate::agents) fn log_source(&self) -> Option<StructuredLogSource> {
-        self.log_source.clone()
+        self.transcript_ingest
+            .as_ref()
+            .map(|ingest| ingest.log_source().clone())
     }
 
     /// Shut down the session according to the given policy.
@@ -248,8 +261,8 @@ impl ClaudeSession {
         if let Some(pty) = &self.pty {
             pty.close().await;
         }
-        if let Some(log_source) = &self.log_source {
-            log_source.close().await;
+        if let Some(ingest) = &self.transcript_ingest {
+            ingest.close().await;
         }
     }
 }
@@ -264,8 +277,8 @@ impl Serialize for DebugView<'_, ClaudeSession> {
         }
         map.serialize_entry("readonly", &session.readonly)?;
         map.serialize_entry("has_pty", &session.pty.is_some())?;
-        if let Some(log_source) = &session.log_source {
-            map.serialize_entry("transcript", &DebugView::new(log_source, self.verbose))?;
+        if let Some(ingest) = &session.transcript_ingest {
+            map.serialize_entry("transcript", &DebugView::new(ingest, self.verbose))?;
         }
         map.end()
     }

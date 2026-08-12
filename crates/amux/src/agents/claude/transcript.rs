@@ -5,59 +5,57 @@
 //! amux does not interpret transcript semantics — that is the client's job.
 
 use std::path::PathBuf;
-use std::sync::Arc;
-
 use tokio::fs::File;
 use tokio::io::{AsyncBufReadExt, AsyncSeekExt, BufReader};
 use tokio::sync::watch;
 use tokio::task::JoinHandle;
 
-use crate::agents::MultiplexStructuredBuffer;
+use crate::agents::StructuredLogSource;
 
 // ============================================================================
 // TranscriptTailer
 // ============================================================================
 
 /// Tails a Claude transcript file and writes raw JSON entries to a buffer.
-pub(in crate::agents) struct TranscriptTailer {
+pub(super) struct TranscriptTailer {
     path: PathBuf,
-    buffer: Arc<MultiplexStructuredBuffer>,
+    source: StructuredLogSource,
     shutdown_tx: watch::Sender<bool>,
 }
 
 impl TranscriptTailer {
     /// Create a new TranscriptTailer for the given transcript path.
-    pub(in crate::agents) fn new(path: PathBuf, buffer: Arc<MultiplexStructuredBuffer>) -> Self {
+    pub(super) fn new(path: PathBuf, source: StructuredLogSource) -> Self {
         let (shutdown_tx, _) = watch::channel(false);
         Self {
             path,
-            buffer,
+            source,
             shutdown_tx,
         }
     }
 
     /// Start tailing the transcript file in a background task.
-    pub(in crate::agents) fn start(&self) -> JoinHandle<()> {
+    pub(super) fn start(&self) -> JoinHandle<()> {
         let path = self.path.clone();
-        let buffer = self.buffer.clone();
+        let source = self.source.clone();
         let mut shutdown_rx = self.shutdown_tx.subscribe();
 
         tokio::spawn(async move {
-            if let Err(e) = tail_transcript(path, buffer, &mut shutdown_rx).await {
+            if let Err(e) = tail_transcript(path, source, &mut shutdown_rx).await {
                 tracing::warn!(error = %e, "transcript tailer error");
             }
         })
     }
 
     /// Signal the tailer to stop.
-    pub(in crate::agents) fn stop(&self) {
+    pub(super) fn stop(&self) {
         let _ = self.shutdown_tx.send(true);
     }
 }
 
 async fn tail_transcript(
     path: PathBuf,
-    buffer: Arc<MultiplexStructuredBuffer>,
+    source: StructuredLogSource,
     shutdown_rx: &mut watch::Receiver<bool>,
 ) -> std::io::Result<()> {
     while !path.exists() {
@@ -83,7 +81,7 @@ async fn tail_transcript(
         if !trimmed.is_empty()
             && let Ok(value) = serde_json::from_str::<serde_json::Value>(trimmed)
         {
-            buffer.write(value).await;
+            source.write(value).await;
         }
     }
 
@@ -92,7 +90,7 @@ async fn tail_transcript(
     // know the existing content has been fully drained. The marker lives in the
     // broadcast buffer like any other entry, so new subscribers see it in their
     // replay in position, and a relink-driven clear just emits another one.
-    buffer
+    source
         .write(serde_json::json!({ "type": "amux.transcript_ready" }))
         .await;
 
@@ -123,7 +121,7 @@ async fn tail_transcript(
             if !trimmed.is_empty()
                 && let Ok(value) = serde_json::from_str::<serde_json::Value>(trimmed)
             {
-                buffer.write(value).await;
+                source.write(value).await;
             }
         }
     }
@@ -132,7 +130,7 @@ async fn tail_transcript(
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::agents::MultiplexStructuredBuffer;
+    use crate::agents::StructuredLogSource;
 
     fn parse_line(line: &str) -> Vec<serde_json::Value> {
         let trimmed = line.trim();
@@ -223,14 +221,14 @@ mod tests {
         .await
         .unwrap();
 
-        let buffer = Arc::new(MultiplexStructuredBuffer::new(100));
-        let tailer = TranscriptTailer::new(path, buffer.clone());
+        let source = StructuredLogSource::new(100);
+        let tailer = TranscriptTailer::new(path, source.clone());
         let handle = tailer.start();
 
         // Two transcript lines + one trailing transcript_ready marker.
         tokio::time::timeout(std::time::Duration::from_secs(2), async {
             loop {
-                if buffer.current_seq().await == 3 {
+                if source.current_seq().await == 3 {
                     break;
                 }
                 tokio::time::sleep(std::time::Duration::from_millis(10)).await;
@@ -239,7 +237,7 @@ mod tests {
         .await
         .unwrap();
 
-        let (mut reader, seq) = buffer.subscribe_with_query(None).await.unwrap();
+        let (mut reader, seq) = source.subscribe_with_query(None).await.unwrap();
         assert_eq!(seq, 3);
 
         let first = reader.read().await.unwrap();
@@ -259,13 +257,13 @@ mod tests {
         let path = dir.path().join("transcript.jsonl");
         tokio::fs::write(&path, "").await.unwrap();
 
-        let buffer = Arc::new(MultiplexStructuredBuffer::new(100));
-        let tailer = TranscriptTailer::new(path, buffer.clone());
+        let source = StructuredLogSource::new(100);
+        let tailer = TranscriptTailer::new(path, source.clone());
         let handle = tailer.start();
 
         tokio::time::timeout(std::time::Duration::from_secs(2), async {
             loop {
-                if buffer.current_seq().await == 1 {
+                if source.current_seq().await == 1 {
                     break;
                 }
                 tokio::time::sleep(std::time::Duration::from_millis(10)).await;
@@ -274,7 +272,7 @@ mod tests {
         .await
         .unwrap();
 
-        let (mut reader, seq) = buffer.subscribe_with_query(None).await.unwrap();
+        let (mut reader, seq) = source.subscribe_with_query(None).await.unwrap();
         assert_eq!(seq, 1);
         let entry = reader.read().await.unwrap();
         assert_eq!(entry.payload["type"], "amux.transcript_ready");

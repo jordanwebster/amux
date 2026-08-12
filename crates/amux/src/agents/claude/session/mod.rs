@@ -169,7 +169,7 @@ mod tests {
 
     #[tokio::test]
     async fn name_sniffer_ignores_custom_title() {
-        let log_source = StructuredLogSource::new();
+        let log_source = StructuredLogSource::new(1000);
         let (event_tx, mut event_rx) = mpsc::channel(4);
         let sniffer = spawn_name_sniffer(log_source.clone(), event_tx, Uuid::new_v4());
 
@@ -190,7 +190,7 @@ mod tests {
 
     #[tokio::test]
     async fn name_sniffer_emits_same_name_when_source_upgrades() {
-        let log_source = StructuredLogSource::new();
+        let log_source = StructuredLogSource::new(1000);
         let agent_id = Uuid::new_v4();
         let (event_tx, mut event_rx) = mpsc::channel(4);
         let sniffer = spawn_name_sniffer(log_source.clone(), event_tx, agent_id);
