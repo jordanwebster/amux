@@ -64,7 +64,6 @@ where
     Fut: Future<Output = Result<AttachReturn>>,
 {
     let mut view = ViewState {
-        leader_label: format!("C-{}", config.leader),
         leader: config.leader,
         default_open_mode: config.default_open_mode,
         ..ViewState::default()
@@ -242,13 +241,9 @@ async fn chrome_session(
                 // The quit guard's disarm check runs only while armed —
                 // the arm tick of the gate extension; the disarm itself
                 // owes a repaint (the warning footer must vanish).
-                if view.quit_guard.expire(now) {
-                    needed = true;
-                }
-                if let Some(chat) = view.chat.as_mut()
-                    && chat.quit_guard.expire(now)
-                {
-                    needed = true;
+                needed |= view.quit_guard.expire(now);
+                if let Some(chat) = view.chat.as_mut() {
+                    needed |= chat.quit_guard.expire(now);
                 }
                 if needed {
                     runtime.observe_now(now);

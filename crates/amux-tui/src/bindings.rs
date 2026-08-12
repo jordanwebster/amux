@@ -48,6 +48,17 @@ pub struct Effective {
     pub leader_label: String,
 }
 
+impl Effective {
+    /// Build from the probed kitty fact and the configured leader
+    /// character — the `C-<leader>` label rule lives here, once.
+    pub fn new(kitty: bool, leader: char) -> Self {
+        Self {
+            kitty,
+            leader_label: format!("C-{leader}"),
+        }
+    }
+}
+
 fn row(keys: impl Into<String>, action: impl Into<String>, tier: Tier) -> Binding {
     Binding {
         keys: keys.into(),

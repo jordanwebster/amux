@@ -24,6 +24,11 @@ impl QuitGuard {
     /// no armed state lurks (keybindings derivation §5.5, accepted).
     pub const WINDOW_SECS: i64 = 3;
 
+    /// The armed footer text — every surface (fleet status line, chat
+    /// footer, panel hints, reader tail) renders this one message in
+    /// warning color while the guard is armed.
+    pub(crate) const HINT: &'static str = "press ctrl+c again to quit";
+
     fn window() -> TimeDelta {
         TimeDelta::seconds(Self::WINDOW_SECS)
     }
@@ -129,11 +134,9 @@ pub struct ViewState {
     /// Transient view-side notice (e.g. refusing to attach to an offline
     /// host); cleared on the next keypress.
     pub notice: Option<String>,
-    /// Human label of the leader key ("C-a"), shown in help. View-config,
-    /// set once at startup.
-    pub leader_label: String,
-    /// The configured leader character (`a` for ctrl+a). View-config; the
-    /// chat's leader chords compose against it.
+    /// The configured leader character (`a` for ctrl+a). View-config, set
+    /// once at startup; the chat's leader chords compose against it and
+    /// the help overlays derive their `C-<leader>` labels from it.
     pub leader: char,
     /// The mode the fleet's Enter opens (A1); view-config from the amux
     /// config's `ui.default_open_mode`.
@@ -162,7 +165,6 @@ impl Default for ViewState {
             pending_g: false,
             dismissed_error_seq: 0,
             notice: None,
-            leader_label: "C-a".to_string(),
             leader: 'a',
             default_open_mode: OpenMode::default(),
             kitty: false,

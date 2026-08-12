@@ -14,7 +14,7 @@ use ratatui::style::{Color, Modifier, Style};
 use ratatui::text::{Line, Span};
 use ratatui::widgets::Paragraph;
 
-use crate::view::{Mode, ViewState, VisibleRow, visible_rows};
+use crate::view::{Mode, QuitGuard, ViewState, VisibleRow, visible_rows};
 
 // Column grid (0-indexed), from the aligned 68-column frames in the spec.
 const MARKER_COL: usize = 2;
@@ -590,7 +590,7 @@ fn status_line(model: &Model, view: &ViewState, width: usize) -> Line<'static> {
         push_span(
             &mut line,
             BADGE_COL,
-            "press ctrl+c again to quit",
+            QuitGuard::HINT,
             Style::default().fg(Color::Yellow),
         );
         finish_line(&mut line, width);
@@ -668,10 +668,7 @@ fn status_line(model: &Model, view: &ViewState, width: usize) -> Line<'static> {
 /// (P10: hints tell the truth).
 fn help_lines(view: &ViewState, _width: usize) -> Vec<Line<'static>> {
     let sections = crate::bindings::fleet_sections(
-        &crate::bindings::Effective {
-            kitty: view.kitty,
-            leader_label: view.leader_label.clone(),
-        },
+        &crate::bindings::Effective::new(view.kitty, view.leader),
         view.default_open_mode,
     );
     let mut lines = Vec::new();

@@ -143,23 +143,23 @@ pub fn handle_chat_key(
 }
 
 /// The focused text field, if any — the surface the guarded Ctrl+C
-/// clears: a read-only chat has none (F1); an interactive ask head
-/// (Pending or SendFailed) owns its open text stage, and its menu stages
-/// have no field; the optimistic-pending marker and the accepted-plans
-/// reader have none; otherwise the composer is the focused field. This
-/// mirrors the focus derivation keys and paste routing use — the
-/// invisible composer behind a docked panel is never "focused".
+/// clears. This mirrors the focus derivation keys and paste routing use —
+/// the invisible composer behind a docked panel is never "focused".
 fn focused_field<'c>(chat: &'c mut ChatView, model: &Model) -> Option<&'c mut Composer> {
+    // A read-only chat has no field anywhere (F1); the open help overlay
+    // covers whatever field there was.
     if chat.read_only(model) || chat.help {
         return None;
     }
-    let ask_state = chat.ask_head(model).map(|ask| match ask.state {
-        AskState::Pending | AskState::SendFailed { .. } => true,
-        AskState::AnsweredOptimistic { .. } => false,
-    });
-    match ask_state {
-        Some(true) => chat.ask_ui.as_mut().and_then(AskUi::active_field),
-        Some(false) => None,
+    match chat.ask_head(model).map(|ask| &ask.state) {
+        // An interactive ask head owns the surface: its open text stage
+        // is the field; its menu stages have none.
+        Some(AskState::Pending | AskState::SendFailed { .. }) => {
+            chat.ask_ui.as_mut().and_then(AskUi::active_field)
+        }
+        // The optimistic-pending marker has no field, and nor does the
+        // accepted-plans reader; otherwise the composer is focused.
+        Some(AskState::AnsweredOptimistic { .. }) => None,
         None if chat.reader.is_some() => None,
         None => Some(&mut chat.composer),
     }

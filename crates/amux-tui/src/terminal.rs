@@ -38,7 +38,7 @@ static KITTY_SUPPORTED: OnceLock<bool> = OnceLock::new();
 static KITTY_PUSHED: AtomicBool = AtomicBool::new(false);
 
 /// The probe result, once a chrome session has run; false before.
-pub fn kitty_active() -> bool {
+pub(crate) fn kitty_active() -> bool {
     KITTY_SUPPORTED.get().copied().unwrap_or(false)
 }
 

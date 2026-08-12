@@ -22,6 +22,7 @@ use crate::chat::{ask_ui, composer::Composer, markdown};
 use crate::render::{
     FrameContext, Theme, blank_line, finish_line, line_len, new_line, pad_to, push_span, str_width,
 };
+use crate::view::QuitGuard;
 
 /// Column grid from the wireframes: glyphs (`›`, `✔`, `~`, `─`) at 2,
 /// entry text at 4, `└` continuation text at 6.
@@ -42,11 +43,6 @@ const SPINNER: [&str; 4] = ["◐", "◓", "◑", "◒"];
 /// The plan entry's feed preview length (B6: "truncated to its first ~6
 /// lines").
 const PLAN_PREVIEW_LINES: usize = 6;
-
-/// The armed quit guard's footer text (`docs/CHAT.md` §Keybindings): it
-/// replaces the hint line — wherever that line lives (composer footer,
-/// panel hints, read-only footer, reader tail) — in warning color.
-pub(crate) const ARMED_QUIT_HINT: &str = "press ctrl+c again to quit";
 
 // --- layout -----------------------------------------------------------------
 
@@ -198,11 +194,13 @@ fn help_hinted(chat: &ChatView, hints: String) -> String {
     }
 }
 
-/// The armed quit guard's replacement hint row (left open; callers
-/// finish it).
+/// The armed quit guard's replacement hint row (`docs/CHAT.md`
+/// §Keybindings): it replaces the hint line — wherever that line lives
+/// (composer footer, panel hints, read-only footer, reader tail) — in
+/// warning color. Left open; callers finish it.
 pub(crate) fn armed_quit_line(theme: Theme) -> Line<'static> {
     let mut line = new_line();
-    push_span(&mut line, TEXT_COL, ARMED_QUIT_HINT, theme.warn());
+    push_span(&mut line, TEXT_COL, QuitGuard::HINT, theme.warn());
     line
 }
 
@@ -382,10 +380,8 @@ pub(crate) fn build_chat_lines(
 /// Fullscreen like the reader; any key closes. On short viewports the
 /// tail gives way and a `⋮` row states the cut honestly.
 fn help_frame(chat: &ChatView, theme: Theme, width: usize, height: usize) -> Vec<Line<'static>> {
-    let sections = crate::bindings::chat_sections(&crate::bindings::Effective {
-        kitty: chat.kitty,
-        leader_label: format!("C-{}", chat.leader),
-    });
+    let sections =
+        crate::bindings::chat_sections(&crate::bindings::Effective::new(chat.kitty, chat.leader));
     // One aligned action column across every section.
     let key_col = TEXT_COL
         + 2
@@ -711,7 +707,7 @@ fn footer_line(model: &Model, chat: &ChatView, theme: Theme, width: usize) -> Li
     if chat.quit_guard.is_armed() {
         // The armed quit guard replaces the hints (warning color); the
         // mode segment on the right stays.
-        push_span(&mut line, TEXT_COL, ARMED_QUIT_HINT, theme.warn());
+        line = armed_quit_line(theme);
     } else if let Some(message) = chat.send_failure() {
         push_span(&mut line, GLYPH_COL, "✗", theme.error());
         push_span(

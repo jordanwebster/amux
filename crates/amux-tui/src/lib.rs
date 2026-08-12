@@ -7,7 +7,7 @@
 //! leaves as a Command through the runtime. `docs/UI.md` owns the design;
 //! the golden-frame suite locks every screen.
 
-pub mod bindings;
+pub(crate) mod bindings;
 pub mod chat;
 pub mod keys;
 pub mod render;

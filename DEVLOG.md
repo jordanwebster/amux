@@ -38,6 +38,38 @@ One paragraph describing what was done.
 
 ---
 
+## 2026-08-12: Phase 6 simplification pass
+
+### Summary
+Render-neutral cleanups over the Phase 6 diff. Derived state:
+`ViewState.leader_label` dropped — the label always was
+`C-<leader>`, and that rule now lives once in
+`bindings::Effective::new` (both help overlays derive through it).
+One message: the armed-quit footer text moves onto
+`QuitGuard::HINT`; the fleet status line and the chat's
+`armed_quit_line` both pull from it (the chat footer's armed branch
+now reuses `armed_quit_line` instead of hand-building the same
+row). Clarity: `focused_field` loses its `Option<bool>`
+intermediate — `ask_head` borrows only the Model, so the derivation
+reads as one match. Surface: `kitty_active` and `mod bindings` are
+`pub(crate)` — nothing outside the crate exercises them. Left
+alone, deliberately: `fleet_agent_count`/`agent_count` now share a
+body but state different contracts (fleet-visible vs. Model
+entities — the spec asserts both); `note_clear`/`disarm` share a
+body but name distinct guard transitions; `PanelContext` earns its
+keep against clippy's arg-count line.
+
+### Changes
+- crates/amux-tui/src/{view,run,render,lib,terminal,bindings}.rs
+- crates/amux-tui/src/chat/{keys,render}.rs
+
+### Verification
+- fmt; workspace clippy `-D warnings` (testnet); amux-tui
+  109+54+21; amux-ui 30+1+123; amux --lib 404; spec 44;
+  amux-cli 53; e2e 14/14. Goldens untouched — byte-identical.
+
+---
+
 ## 2026-08-12: Phase 6 gate — wheel-scroll deferral in the spec
 
 ### Summary
