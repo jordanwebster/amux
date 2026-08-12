@@ -209,15 +209,23 @@ fn remember(layer: &mut ClaudeLayer, key: Uuid) -> bool {
     true
 }
 
+/// FNV-1a over concatenated byte parts: the one content hash every no-uuid
+/// identity in this fold rides. Explicit (not std's hasher) because the
+/// values land in serialized model state and must be stable across builds.
+fn fnv1a(parts: &[&[u8]]) -> u64 {
+    let mut hash = 0xcbf2_9ce4_8422_2325u64;
+    for byte in parts.iter().flat_map(|part| part.iter()) {
+        hash ^= u64::from(*byte);
+        hash = hash.wrapping_mul(0x0000_0100_0000_01b3);
+    }
+    hash
+}
+
 /// Deterministic identity for a row without a uuid: FNV-1a over its
 /// canonical JSON (serde_json maps are key-sorted), domain-tagged so it
 /// cannot collide with a genuine row uuid's random bits.
 fn content_key(row: &Value) -> Uuid {
-    let mut hash = 0xcbf2_9ce4_8422_2325u64;
-    for byte in row.to_string().as_bytes() {
-        hash ^= u64::from(*byte);
-        hash = hash.wrapping_mul(0x0000_0100_0000_01b3);
-    }
+    let hash = fnv1a(&[row.to_string().as_bytes()]);
     Uuid::from_u128((0xc0deu128 << 64) | u128::from(hash))
 }
 
@@ -238,17 +246,7 @@ fn touch_row_chain(layer: &mut ClaudeLayer, row: &Value) {
 /// (fixture-verified), so one key both dedupes the at-least-once hook
 /// delivery and correlates the transcript row to the hook-born ask.
 fn ask_key(tool_name: &str, input: &Value) -> u64 {
-    let mut hash = 0xcbf2_9ce4_8422_2325u64;
-    for byte in tool_name
-        .as_bytes()
-        .iter()
-        .chain([0x1fu8].iter())
-        .chain(input.to_string().as_bytes())
-    {
-        hash ^= u64::from(*byte);
-        hash = hash.wrapping_mul(0x0000_0100_0000_01b3);
-    }
-    hash
+    fnv1a(&[tool_name.as_bytes(), &[0x1f], input.to_string().as_bytes()])
 }
 
 /// The ask kind for one request, from the same typed per-tool extraction

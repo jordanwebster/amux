@@ -38,6 +38,41 @@ One paragraph describing what was done.
 
 ---
 
+## 2026-08-12: Phase 2 gate — simplification pass
+
+### Summary
+The Phase 2 simplification pass over the ask/phase build. Three small
+cuts, no behavior change: `structured_type()` in the core hook seam was
+a single-caller helper whose `None` arm was unreachable at its call
+site (the internal-only kinds are matched above it), leaving a dead
+`else { return }` — the emitted kinds now name their `type` tag
+directly in `handle_hook`'s one flat match; `fold.rs` carried the
+FNV-1a loop twice (`content_key`, `ask_key`), now one `fnv1a` helper
+with identical hash output (the constants stay explicit because ask
+keys are serialized model state); two doc comments in `model.rs` still
+said "summarizer" after the E2 deletion. Reviewed and deliberately
+left: the phase()/attention() parallel derivations (attention is not a
+function of ChatPhase — Authority-close and the stop pre-signal map to
+NeedsYou(Finished) on the badge but Idle on the phase, so the mirrored
+precedence IS the one story), `observe_exit`'s field clearing beside
+the `exited` early-return (accessors like `ask_count()` are
+spec-asserted post-exit), the `AskState` variants only Phase 3
+constructs (documented shape-ahead), and the capture harness's
+`env_map`/assert split (the guard's point is checking exactly what the
+daemon receives).
+
+### Changes
+- crates/amux/src/agents/claude/session/hooks.rs — helper inlined.
+- crates/amux-ui/src/claude/fold.rs — one FNV-1a implementation.
+- crates/amux-ui/src/model.rs — stale summarizer wording in two docs.
+
+### Verification
+- cargo fmt; workspace clippy `-D warnings` clean.
+- amux-ui 104-spec suite, amux --lib (401), amux spec (44, testnet),
+  amux-tui (19 + goldens): all green, no assertion touched.
+
+---
+
 ## 2026-08-12: Phase 2 gate — spec corrections from the ask/phase build
 
 ### Summary

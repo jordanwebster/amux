@@ -21,8 +21,8 @@ use crate::msg::{Command, DisconnectReason, OpId, OpOutcome, StreamCloseReason};
 /// `pending_ops` until resolved).
 pub(crate) const FINISHED_OPS_RETAINED: usize = 64;
 
-/// Kernel attention vocabulary: "does this agent need you". Derived by
-/// per-agent summarizer folds at observation time; unsubscribed or
+/// Kernel attention vocabulary: "does this agent need you". Derived from
+/// the per-agent layer fold at observation time (E2); unsubscribed or
 /// truncated-history agents stay `Unknown` — degradation is always to
 /// `Unknown`, never to a wrong badge.
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
@@ -809,8 +809,9 @@ mod tests {
         }
     }
 
-    /// A synchronized Model — one host, one local agent with a summarizer —
-    /// built exclusively through public folds, and coherent by construction.
+    /// A synchronized Model — one host, one local agent with a folded
+    /// claude layer — built exclusively through public folds, and coherent
+    /// by construction.
     fn coherent_model() -> Model {
         let mut model = Model::default();
         for msg in [

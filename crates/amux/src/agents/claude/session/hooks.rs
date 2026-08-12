@@ -37,17 +37,6 @@ fn hook_fingerprint(raw: &Value) -> u64 {
     hash
 }
 
-/// The structured-output `type` tag for hook kinds emitted to the stream;
-/// `None` for internal-only kinds.
-fn structured_type(kind: ClaudeHookKind) -> Option<&'static str> {
-    match kind {
-        ClaudeHookKind::PermissionRequest => Some("hook.permission_request"),
-        ClaudeHookKind::Stop => Some("hook.stop"),
-        ClaudeHookKind::Notification => Some("hook.notification"),
-        ClaudeHookKind::SessionStart | ClaudeHookKind::SessionEnd | ClaudeHookKind::Unknown => None,
-    }
-}
-
 impl ClaudeSession {
     /// Link a transcript file for structured output tailing.
     async fn link_transcript(&self, path: PathBuf) {
@@ -135,7 +124,9 @@ impl ClaudeSession {
         if self.log_source.is_none() {
             return;
         }
-        match hook.kind {
+        // Internal-only kinds return; emitted kinds name their structured
+        // `type` tag.
+        let type_tag = match hook.kind {
             ClaudeHookKind::SessionStart => {
                 let Some(common) = hook.common else {
                     return;
@@ -146,32 +137,32 @@ impl ClaudeSession {
                     transcript_path = common.transcript_path,
                     "session started"
                 );
+                return;
             }
             ClaudeHookKind::SessionEnd => {
                 tracing::debug!(agent_id = %self.agent_id, "session ended");
+                return;
             }
-            ClaudeHookKind::Unknown => {}
-            kind => {
-                let Some(type_tag) = structured_type(kind) else {
-                    return;
-                };
-                if self.is_duplicate_hook_delivery(&hook.raw) {
-                    tracing::debug!(
-                        agent_id = %self.agent_id,
-                        hook = type_tag,
-                        "suppressed duplicate hook delivery"
-                    );
-                    return;
-                }
-                tracing::debug!(agent_id = %self.agent_id, hook = type_tag, "structured hook");
-                let mut value = hook.raw;
-                if let Some(obj) = value.as_object_mut() {
-                    obj.insert("type".to_string(), json!(type_tag));
-                }
-                if let Some(log_source) = &self.log_source {
-                    log_source.write(value).await;
-                }
-            }
+            ClaudeHookKind::Unknown => return,
+            ClaudeHookKind::PermissionRequest => "hook.permission_request",
+            ClaudeHookKind::Stop => "hook.stop",
+            ClaudeHookKind::Notification => "hook.notification",
+        };
+        if self.is_duplicate_hook_delivery(&hook.raw) {
+            tracing::debug!(
+                agent_id = %self.agent_id,
+                hook = type_tag,
+                "suppressed duplicate hook delivery"
+            );
+            return;
+        }
+        tracing::debug!(agent_id = %self.agent_id, hook = type_tag, "structured hook");
+        let mut value = hook.raw;
+        if let Some(obj) = value.as_object_mut() {
+            obj.insert("type".to_string(), json!(type_tag));
+        }
+        if let Some(log_source) = &self.log_source {
+            log_source.write(value).await;
         }
     }
 
