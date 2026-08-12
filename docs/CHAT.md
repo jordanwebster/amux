@@ -562,7 +562,7 @@ rendered from the effective binding table. `▌` is the text cursor.
 │                                                                              │
 │ › and please document it▌                                                    │
 │                                                                              │
-│   draft kept — send gated while working · ? help              mode default   │
+│   draft kept — send gated while working                       mode default   │
 └──────────────────────────────────────────────────────────────────────────────┘
 ```
 
@@ -791,7 +791,7 @@ excepted, as today.
 | Tab | composer | reserved (future queueing) | — |
 | PgUp / PgDn | chat | scroll feed; reaching bottom resumes following | plain |
 | Ctrl+Home / Ctrl+End | chat | feed oldest / newest + follow | ext |
-| wheel | chat | scroll feed (alternate-scroll mode; no mouse capture, native selection preserved) | plain |
+| wheel | chat | deferred (see Deferred decisions) — PgUp/PgDn is the guaranteed path | — |
 | j k, g G, Home/End | reader, read-only chat | pager motion (line, top/bottom) | plain |
 | q | reader, read-only chat | close reader / back to fleet | plain |
 | ? | composer, empty | help overlay (full key list); types `?` otherwise | plain |
@@ -980,7 +980,15 @@ above.
   discoverability is the footer line + `?` overlay.
 - **Syntax highlighting** in fenced code and diffs — additive renderer
   work; plain blocks ship first.
-- **Mouse support beyond wheel scrolling** — any future affordance must
+- **Wheel scrolling** (Phase 6 drift). Alternate-scroll mode delivers
+  wheel motion as arrow keys indistinguishable from the keyboard's —
+  but the composer owns arrows for line motion and ↑-at-top is
+  reserved for history recall, so wheel-as-arrows would move the
+  cursor, not the feed, whenever the composer has focus. Branching on
+  focus would put meaning on invisible state (P3). Deferred until a
+  design honors both; PgUp/PgDn is the guaranteed path, and mouse
+  capture remains rejected.
+- **Mouse support generally** — any future affordance must
   stay keyboard-reachable and renderer-pure.
 - **Theming beyond dark/light on semantic tokens** — the token
   vocabulary (background/panel, text/muted, semantic accents, diff

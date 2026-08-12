@@ -38,6 +38,26 @@ One paragraph describing what was done.
 
 ---
 
+## 2026-08-12: Phase 6 gate — wheel-scroll deferral in the spec
+
+### Summary
+docs/CHAT.md absorbs Phase 6's drift: wheel scrolling moves to
+Deferred decisions with the conflict stated — alternate-scroll mode
+delivers wheel motion as arrow keys indistinguishable from the
+keyboard's, the composer owns arrows for line motion, and branching
+on focus would put meaning on invisible state (P3); PgUp/PgDn is the
+guaranteed path and mouse capture stays rejected. The working
+wireframe also drops its `? help` hint beside a kept draft (`?`
+types into non-empty drafts, so the hint would lie). Gate context:
+codex review returned three P2s on the help/guard rendering — the
+help goldens had locked an off-by-one — all fixed in `b1df217`.
+
+### Changes
+- docs/CHAT.md — wheel row → deferred; deferred-decisions entry;
+  working-wireframe footer hint removed. Wireframes remain 80 cols.
+
+---
+
 ## 2026-08-12: Chat V1 Phase 6 — codex review fixes
 
 ### Summary
