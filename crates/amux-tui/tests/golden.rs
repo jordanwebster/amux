@@ -299,6 +299,19 @@ fn fleet_ranked() {
     assert_golden("fleet_ranked", &rendered);
 }
 
+/// A read-only agent surfaces in the fleet (CHAT.md A3): the normal row
+/// idioms with `read-only` as its resting status word. The entry keys
+/// open it in chat only — raw attach is absent, not disabled.
+#[test]
+fn fleet_readonly_row() {
+    let mut msgs = fleet_msgs();
+    let mut captured = an_agent("ci-triage", "claude", "nova");
+    captured.readonly = true;
+    msgs.push(agent_up(&captured));
+    let rendered = render_frame(&fold(msgs), &view_default(), 68, 12);
+    assert_golden("fleet_readonly_row", &rendered);
+}
+
 /// Stability: two renders of the same fixture are identical.
 #[test]
 fn frames_are_stable_across_runs() {

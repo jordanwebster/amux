@@ -112,7 +112,10 @@ impl AgentCard {
     /// The fleet status word for the given EFFECTIVE attention — the Model
     /// applies read-time policy (host reachability, staleness) before
     /// calling, so the label and the badge are always the same fact.
-    /// Attention takes precedence; phase shows when not running.
+    /// Attention takes precedence; phase shows when not running. Readonly
+    /// rows (A3: they open in chat only) state `read-only` as their
+    /// resting word — an inventory fact, more informative than idle/`–` —
+    /// while live attention words still win over it.
     pub(crate) fn status_label(&self, attention: Attention) -> String {
         match (&attention, &self.phase) {
             (_, AgentPhase::Exited { exit_code }) => match exit_code {
@@ -128,6 +131,9 @@ impl AgentCard {
             (Attention::NeedsYou { why: Why::Question }, _) => "question".to_string(),
             (Attention::NeedsYou { why: Why::Finished }, _) => "finished".to_string(),
             (Attention::Working, _) => "working".to_string(),
+            (Attention::Idle, _) | (Attention::Unknown, _) if self.agent.readonly => {
+                "read-only".to_string()
+            }
             (Attention::Idle, _) => "idle".to_string(),
             (Attention::Unknown, _) => "–".to_string(),
         }
@@ -364,13 +370,10 @@ impl Model {
         self.agents.get(&id)
     }
 
-    /// Agents the fleet shows (excludes readonly); the header, empty state,
-    /// and tickers key on this so counts never disagree with the list.
+    /// Agents the fleet shows; the header, empty state, and tickers key on
+    /// this so counts never disagree with the list.
     pub fn fleet_agent_count(&self) -> usize {
-        self.agents
-            .values()
-            .filter(|card| !card.agent.readonly)
-            .count()
+        self.agents.len()
     }
 
     pub fn agent_count(&self) -> usize {
@@ -526,14 +529,11 @@ impl Model {
     /// a grouping. Pending creates render as optimistic rows at the bottom
     /// in dispatch order.
     /// Readonly agents (externally captured sessions the chrome cannot
-    /// drive) are hidden from the fleet until the structured chat view can
-    /// render them; `fleet_agent_count` matches this visibility.
+    /// drive) surface like any other row now that the chat renders them
+    /// (A3: they open in chat only — the entry keys enforce it); their
+    /// resting status word is `read-only`.
     pub fn fleet(&self) -> Vec<FleetItem<'_>> {
-        let mut cards: Vec<&AgentCard> = self
-            .agents
-            .values()
-            .filter(|card| !card.agent.readonly)
-            .collect();
+        let mut cards: Vec<&AgentCard> = self.agents.values().collect();
         cards.sort_by(|a, b| {
             attention_rank(self.effective_attention(a))
                 .cmp(&attention_rank(self.effective_attention(b)))

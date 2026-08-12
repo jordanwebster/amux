@@ -132,37 +132,37 @@ fn readonly_sequence() -> Vec<Msg> {
     ]
 }
 
-/// Readonly agents (captured sessions the chrome cannot drive) are hidden
-/// from the fleet — and get no EAGER stream subscription, because a badge
-/// nobody can see is not worth a stream. A user opening one subscribes it
-/// deliberately (`Msg::UserAttached` — the read-only chat's feed, F1;
-/// covered in the attention chapter).
+/// Readonly agents (captured sessions the chrome cannot drive) surface in
+/// the fleet — A3: they exist and open in chat only, with their resting
+/// status word stating `read-only` — but still get no EAGER stream
+/// subscription: a resting row is not worth a stream. A user opening one
+/// subscribes it deliberately (`Msg::UserAttached` — the read-only chat's
+/// feed, F1; covered in the attention chapter).
 #[test]
-fn readonly_agents_are_hidden_from_the_fleet() {
+fn readonly_agents_surface_in_the_fleet_without_an_eager_stream() {
     let (model, effects) = fold_with_effects(readonly_sequence());
     assert_eq!(model.agent_count(), 2, "both entities exist in the Model");
-    assert_eq!(model.fleet_agent_count(), 1, "only one is fleet-visible");
-    assert_eq!(model.fleet().len(), 1);
-    let visible: Vec<_> = model
-        .fleet()
-        .iter()
-        .filter_map(|item| match item {
-            amux_ui::FleetItem::Agent(card) => Some(card.display_name()),
-            _ => None,
-        })
-        .collect();
-    assert_eq!(visible, ["fix-auth-bug"]);
+    assert_eq!(model.fleet_agent_count(), 2, "both are fleet-visible");
+    assert_eq!(model.fleet().len(), 2);
+    let readonly = model
+        .agent(agent_id("captured-session"))
+        .expect("card exists");
+    assert_eq!(
+        model.status_label_for(readonly),
+        "read-only",
+        "the resting status word states the inventory fact"
+    );
     let opened = effects
         .iter()
         .filter(|effect| matches!(effect, amux_ui::Effect::OpenStream { .. }))
         .count();
-    assert_eq!(opened, 1, "no stream for the hidden readonly agent");
+    assert_eq!(opened, 1, "still no eager stream for the readonly agent");
 }
 
 pub fn sequences() -> Vec<(&'static str, Vec<Msg>)> {
     vec![
         ("inventory::base", base()),
-        ("inventory::readonly_hidden", readonly_sequence()),
+        ("inventory::readonly", readonly_sequence()),
         ("inventory::unknown_type", unknown_type_sequence()),
         ("inventory::unnamed_agent", unnamed_agent_sequence()),
         ("inventory::stale_rename", stale_rename_sequence()),

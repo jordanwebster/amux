@@ -38,6 +38,37 @@ One paragraph describing what was done.
 
 ---
 
+## 2026-08-12: Chat V1 Phase 6 — readonly agents surface in the fleet (A3)
+
+### Summary
+`Model::fleet()` no longer hides readonly agents: A3 requires they exist
+in the fleet and open in chat only, and Phase 5 shipped the read-only
+chat that renders them. They follow the fleet's existing row idioms —
+ranked by the same attention/recency rules, normal columns — with
+`read-only` as their resting status word (an inventory fact, more
+informative than `idle`/`–`); live attention words still take
+precedence, so a captured session that needs its owner shows
+`permission`/`question` like any row. The eager-subscription skip is
+unchanged: surfacing a resting row buys no stream; opening one still
+subscribes deliberately via `Msg::UserAttached`.
+
+### Changes
+- `crates/amux-ui/src/model.rs`: `fleet()`/`fleet_agent_count()` drop the
+  readonly filter; `status_label` states `read-only` for readonly cards
+  at Idle/Unknown.
+- `crates/amux-ui/tests/spec/inventory.rs`: the hidden-from-fleet chapter
+  becomes `readonly_agents_surface_in_the_fleet_without_an_eager_stream`
+  (sequence renamed `inventory::readonly`).
+- `crates/amux-tui/tests/golden.rs` + `tests/golden/fleet_readonly_row.txt`:
+  new golden — a readonly row among the canonical fleet.
+
+### Verification
+- `timeout 600 cargo test -p amux-ui` green (spec 123).
+- `timeout 600 cargo test -p amux-tui` green; every pre-existing golden
+  byte-identical (no fixture contains a readonly agent).
+
+---
+
 ## 2026-08-12: Chat V1 Phase 6 — default-open-mode setting (A1)
 
 ### Summary
