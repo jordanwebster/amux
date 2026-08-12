@@ -15,7 +15,6 @@ use serde::{Deserialize, Serialize};
 
 use crate::claude::ClaudeLayer;
 use crate::msg::{Command, DisconnectReason, OpId, OpOutcome, StreamCloseReason};
-use crate::summarizers::SummarizerState;
 
 /// How many finished ops the Model retains (retention is explicitly bounded;
 /// old outcomes age out, pending obligations never do — they live in
@@ -82,13 +81,11 @@ pub struct AgentCard {
     /// the creation time.
     pub last_activity: DateTime<Utc>,
     pub phase: AgentPhase,
-    /// Typed per-agent fold state deriving `attention`; `None` for agent
-    /// types without a summarizer (their attention stays `Unknown`).
-    pub(crate) summarizer: Option<SummarizerState>,
     /// The typed Claude chat layer (`docs/CHAT.md` §The feed): feed facts
-    /// folded from the agent's native structured stream. `None` until the
+    /// folded from the agent's native structured stream, and the ONE
+    /// interpretation `attention` derives from (E2). `None` until the
     /// stream produces evidence; agents without the protocol never grow
-    /// one.
+    /// one and honestly stay `Unknown`.
     pub(crate) claude: Option<ClaudeLayer>,
     /// Epoch of the last upsert; entities from older epochs are pruned when
     /// a reconnect snapshot completes.
@@ -400,13 +397,24 @@ impl Model {
 
     /// What a fleet consumer should show for this card's attention: an
     /// offline host means our knowledge is stale, so it degrades to
-    /// `Unknown` — computed here, once, for every renderer.
+    /// `Unknown` — computed here, once, for every renderer. The E1
+    /// staleness cap applies at read time too: a crashed claude leaves the
+    /// cached `Working` stuck, and degrading it here keeps the fleet badge
+    /// in agreement with the chat phase (E3) while the folded state stays
+    /// time-free.
     pub fn effective_attention(&self, card: &AgentCard) -> Attention {
-        if self.host_online(card.agent.host_id) {
-            card.attention
-        } else {
-            Attention::Unknown
+        if !self.host_online(card.agent.host_id) {
+            return Attention::Unknown;
         }
+        if card.attention == Attention::Working
+            && card
+                .claude
+                .as_ref()
+                .is_some_and(|layer| layer.working_is_stale(self.now))
+        {
+            return Attention::Unknown;
+        }
+        card.attention
     }
 
     /// The fleet status word with host reachability applied (offline rows
@@ -498,11 +506,12 @@ pub enum Violation {
     },
     /// `finished_ops` exceeded its explicit retention bound.
     FinishedOpsOverflow { len: usize, cap: usize },
-    /// A card's cached attention disagrees with its own summarizer fold.
+    /// A card's cached attention disagrees with the one derived from its
+    /// own layer fold (E2: attention IS a projection of the layer).
     AttentionMismatch {
         agent: AgentId,
         card: Attention,
-        summarizer: Attention,
+        derived: Attention,
     },
     /// A Claude-layer store exceeded its explicit retention bound.
     ClaudeRetentionOverflow {
@@ -603,10 +612,10 @@ impl std::fmt::Display for Violation {
             Violation::AttentionMismatch {
                 agent,
                 card,
-                summarizer,
+                derived,
             } => write!(
                 f,
-                "agent {agent} attention {card:?} disagrees with its summarizer's {summarizer:?}"
+                "agent {agent} attention {card:?} disagrees with its layer's {derived:?}"
             ),
             Violation::ClaudeRetentionOverflow {
                 agent,
@@ -676,16 +685,14 @@ impl Model {
                     model_epoch: self.epoch,
                 });
             }
-            if let Some(state) = &card.summarizer
-                && card.attention != state.attention()
-            {
-                violations.push(Violation::AttentionMismatch {
-                    agent: *id,
-                    card: card.attention,
-                    summarizer: state.attention(),
-                });
-            }
             if let Some(layer) = &card.claude {
+                if card.attention != layer.attention() {
+                    violations.push(Violation::AttentionMismatch {
+                        agent: *id,
+                        card: card.attention,
+                        derived: layer.attention(),
+                    });
+                }
                 layer.check_invariants(*id, &mut violations);
             }
         }
@@ -823,8 +830,8 @@ mod tests {
             "fixture must start coherent: {violations:?}"
         );
         assert!(
-            model.agents[&agent_id()].summarizer.is_some(),
-            "fixture must carry a summarizer for the attention class"
+            model.agents[&agent_id()].claude.is_some(),
+            "fixture must carry a claude layer for the attention class"
         );
         model
     }
@@ -903,7 +910,7 @@ mod tests {
     }
 
     #[test]
-    fn detects_attention_disagreeing_with_the_summarizer() {
+    fn detects_attention_disagreeing_with_the_layer() {
         let mut model = coherent_model();
         model.agents.get_mut(&agent_id()).unwrap().attention = Attention::Working;
         assert!(
@@ -911,7 +918,7 @@ mod tests {
                 .check_invariants()
                 .iter()
                 .any(|violation| matches!(violation, Violation::AttentionMismatch { .. })),
-            "a cached attention that disagrees with its summarizer must be reported"
+            "a cached attention that disagrees with its layer's derivation must be reported"
         );
     }
 }

@@ -1,151 +1,29 @@
-//! Chapter 5 — Attention: the Claude summarizer fold and the subscription
-//! policy behind it.
+//! Chapter 5 — Attention: the unified Claude interpretation and the
+//! subscription policy behind it.
 //!
-//! Attention is derived at observation time by a pure per-agent fold —
-//! stream entries in, attention out — with zero core changes. Fixture rows
-//! live in `fixtures/*.json`, each carrying `capturedWith` provenance.
-//! Degradation is always to `Unknown`, never to a wrong badge.
+//! There is exactly ONE fold (`docs/CHAT.md` E2): kernel attention is a
+//! projection of the same Claude-layer state the chat phase derives from —
+//! stream entries in, attention out — so fleet badges and the chat agree
+//! whether or not a chat is open (E3). Notification-wording heuristics are
+//! forbidden ground: interpretation routes on
+//! `hook.permission_request.tool_name`. Degradation is always to
+//! `Unknown`, never to a wrong badge.
 
-use amux_ui::{Attention, Effect, FleetItem, Msg, StreamMsg, Why};
+use amux_ui::claude::{AskWhy, ChatPhase};
+use amux_ui::{Attention, Effect, FleetItem, Model, Msg, StreamCloseReason, StreamMsg, Why};
 
 use crate::harness::*;
 
-fn fixture_rows(file: &str, key: &str) -> Vec<serde_json::Value> {
-    let contents: serde_json::Value = match file {
-        "claude_permission_flow" => {
-            serde_json::from_str(include_str!("fixtures/claude_permission_flow.json"))
-        }
-        "claude_stop_and_notification" => {
-            serde_json::from_str(include_str!("fixtures/claude_stop_and_notification.json"))
-        }
-        "claude_truncated_tail" => {
-            serde_json::from_str(include_str!("fixtures/claude_truncated_tail.json"))
-        }
-        other => panic!("unknown fixture {other}"),
-    }
-    .expect("fixture parses");
-    assert!(
-        contents.get("capturedWith").is_some(),
-        "fixtures carry provenance"
-    );
-    contents
-        .get(key)
-        .and_then(|rows| rows.as_array())
-        .unwrap_or_else(|| panic!("fixture {file} has rows under {key}"))
-        .clone()
+fn attention_of(model: &Model, agent: &str) -> Attention {
+    let card = model.agent(agent_id(agent)).expect("card exists");
+    model.effective_attention(card)
 }
 
-/// A local claude agent whose stream is live (complete window).
-fn subscribed_base() -> Vec<Msg> {
-    seq([
-        vec![
-            connected("nova"),
-            host_up(&a_host("nova")),
-            agent_up(&an_agent("fix-auth-bug", "nova")),
-        ],
-        synced(),
-        vec![
-            stream("fix-auth-bug", StreamMsg::Opened { truncated: false }),
-            stream("fix-auth-bug", StreamMsg::ReplayComplete),
-        ],
-    ])
-}
-
-fn permission_pending_sequence() -> Vec<Msg> {
-    seq([
-        subscribed_base(),
-        vec![
-            batch(
-                "fix-auth-bug",
-                10,
-                fixture_rows("claude_permission_flow", "workingTurn"),
-            ),
-            batch(
-                "fix-auth-bug",
-                40,
-                fixture_rows("claude_permission_flow", "permissionRequest"),
-            ),
-        ],
-    ])
-}
-
-fn permission_answered_sequence() -> Vec<Msg> {
-    seq([
-        permission_pending_sequence(),
-        vec![batch(
-            "fix-auth-bug",
-            70,
-            fixture_rows("claude_permission_flow", "answeredAndResumed"),
-        )],
-    ])
-}
-
-fn stop_sequence() -> Vec<Msg> {
-    seq([
-        subscribed_base(),
-        vec![batch(
-            "fix-auth-bug",
-            10,
-            fixture_rows("claude_stop_and_notification", "streamingThenStop"),
-        )],
-    ])
-}
-
-fn late_join_sequence() -> Vec<Msg> {
-    // Replay begins mid-stream (truncated) but the window still holds the
-    // request: the fold derives the pending permission from replay alone.
-    seq([
-        vec![
-            connected("nova"),
-            host_up(&a_host("nova")),
-            agent_up(&an_agent("fix-auth-bug", "nova")),
-        ],
-        synced(),
-        vec![
-            stream("fix-auth-bug", StreamMsg::Opened { truncated: true }),
-            batch(
-                "fix-auth-bug",
-                5,
-                [
-                    fixture_rows("claude_permission_flow", "workingTurn"),
-                    fixture_rows("claude_permission_flow", "permissionRequest"),
-                ]
-                .concat(),
-            ),
-            stream("fix-auth-bug", StreamMsg::ReplayComplete),
-        ],
-    ])
-}
-
-fn truncated_blind_window_sequence() -> Vec<Msg> {
-    seq([
-        vec![
-            connected("nova"),
-            host_up(&a_host("nova")),
-            agent_up(&an_agent("fix-auth-bug", "nova")),
-        ],
-        synced(),
-        vec![
-            stream("fix-auth-bug", StreamMsg::Opened { truncated: true }),
-            batch(
-                "fix-auth-bug",
-                5,
-                fixture_rows("claude_truncated_tail", "weakRowsOnly"),
-            ),
-            stream("fix-auth-bug", StreamMsg::ReplayComplete),
-        ],
-    ])
-}
-
-fn attention_of(model: &amux_ui::Model, agent: &str) -> Attention {
-    model.agent(agent_id(agent)).expect("card exists").attention
-}
-
-/// A permission request in the stream marks the agent as needing you, and
-/// the fleet ranks it first.
+/// A pending permission marks the agent as needing you, and the fleet
+/// ranks it first.
 #[test]
 fn permission_request_marks_needs_you() {
-    let model = fold(permission_pending_sequence());
+    let model = fold(chat_feed_prefix("fix-auth-bug", "permission", 8));
     assert_eq!(
         attention_of(&model, "fix-auth-bug"),
         Attention::NeedsYou {
@@ -161,61 +39,25 @@ fn permission_request_marks_needs_you() {
     );
 }
 
-/// A permission answered through raw passthrough is only visible as
-/// subsequent activity — which is exactly what clears the badge.
+/// A pending AskUserQuestion is NeedsYou(Question) — routed on the hook's
+/// `tool_name`, which fires for questions too.
 #[test]
-fn activity_after_permission_clears_to_working() {
-    let model = fold(permission_answered_sequence());
-    assert_eq!(attention_of(&model, "fix-auth-bug"), Attention::Working);
-}
-
-/// Stop marks the turn complete: the agent finished and wants your review.
-#[test]
-fn stop_marks_turn_complete() {
-    let model = fold(stop_sequence());
+fn a_pending_question_marks_needs_you_question() {
+    let model = fold(chat_feed_prefix("fix-auth-bug", "question_single", 8));
     assert_eq!(
         attention_of(&model, "fix-auth-bug"),
-        Attention::NeedsYou { why: Why::Finished }
-    );
-}
-
-/// Hooks alone do not distinguish question from permission — Notification
-/// text does, interpreted here at observation time.
-#[test]
-fn notification_text_distinguishes_permission_from_question() {
-    let permission = fold(seq([
-        subscribed_base(),
-        vec![batch(
-            "fix-auth-bug",
-            10,
-            fixture_rows("claude_stop_and_notification", "permissionNotification"),
-        )],
-    ]));
-    assert_eq!(
-        attention_of(&permission, "fix-auth-bug"),
-        Attention::NeedsYou {
-            why: Why::Permission
-        }
-    );
-
-    let question = fold(seq([
-        subscribed_base(),
-        vec![batch(
-            "fix-auth-bug",
-            10,
-            fixture_rows("claude_stop_and_notification", "waitingNotification"),
-        )],
-    ]));
-    assert_eq!(
-        attention_of(&question, "fix-auth-bug"),
         Attention::NeedsYou { why: Why::Question }
     );
 }
 
-/// A late-joining client derives the pending permission purely from replay.
+/// The plan-approval notification says "needs your approval" — no
+/// "permission" substring (fixture-verified). The old notification-text
+/// split would have shown `?` where `!` belongs; the unified fold routes
+/// on `tool_name` and cannot be fooled by wording.
 #[test]
-fn late_join_replay_derives_pending_permission() {
-    let model = fold(late_join_sequence());
+fn plan_approval_is_permission_not_question_whatever_the_wording_says() {
+    // plan_reject prefix through BOTH hook.notification rows.
+    let model = fold(chat_feed_prefix("fix-auth-bug", "plan_reject", 39));
     assert_eq!(
         attention_of(&model, "fix-auth-bug"),
         Attention::NeedsYou {
@@ -224,44 +66,192 @@ fn late_join_replay_derives_pending_permission() {
     );
 }
 
-/// A truncated window with no attention-bearing rows reports Unknown — the
-/// request may have fallen outside the window, and absence of evidence in a
-/// bounded history is not evidence of idleness.
+/// Between prompt and turn-end signal the agent is Working; activity rows
+/// cannot strobe the badge — only turn signals and asks leave Working.
 #[test]
-fn tail_window_missing_the_request_degrades_to_unknown_not_wrong() {
-    let model = fold(truncated_blind_window_sequence());
-    assert_eq!(attention_of(&model, "fix-auth-bug"), Attention::Unknown);
-
-    // The same blind window over a complete history is honest Idle.
-    let complete = fold(seq([
-        subscribed_base(),
-        vec![batch(
-            "fix-auth-bug",
-            5,
-            fixture_rows("claude_truncated_tail", "weakRowsOnly"),
-        )],
-    ]));
-    assert_eq!(attention_of(&complete, "fix-auth-bug"), Attention::Idle);
-}
-
-/// Streaming output cannot strobe the badge: fold assistant activity row by
-/// row and the attention stays Working at every step (hysteresis by
-/// construction — only hook rows leave Working).
-#[test]
-fn streaming_output_does_not_strobe_working() {
-    let mut model = fold(permission_answered_sequence());
+fn activity_between_prompt_and_turn_end_is_working() {
+    let mut model = fold(chat_feed_prefix("fix-auth-bug", "permission", 6));
     assert_eq!(attention_of(&model, "fix-auth-bug"), Attention::Working);
-    let chunk = &fixture_rows("claude_permission_flow", "workingTurn")[1];
-    for step in 0..20 {
+    // Fold the first turn's transcript rows one at a time, skipping the
+    // hook pair (rows 6-7): message, tool_use, and result rows keep it
+    // Working at every step.
+    for (step, row) in chat_rows("permission")[8..11].iter().enumerate() {
         amux_ui::update(
             &mut model,
-            batch("fix-auth-bug", 100 + step, vec![chunk.clone()]),
+            batch("fix-auth-bug", 11 + step as i64, vec![row.clone()]),
         );
         assert_eq!(
             attention_of(&model, "fix-auth-bug"),
             Attention::Working,
-            "attention left Working at streaming step {step}"
+            "attention left Working at step {step}"
         );
+    }
+}
+
+/// The turn authority (and the arrival-ordered stop pre-signal before it)
+/// marks the turn complete: the agent finished and wants your review.
+#[test]
+fn a_completed_turn_marks_finished() {
+    let model = fold(chat_feed("fix-auth-bug", "permission"));
+    assert_eq!(
+        attention_of(&model, "fix-auth-bug"),
+        Attention::NeedsYou { why: Why::Finished }
+    );
+    // The pre-signal alone reports the same, before the tail catches up
+    // (the question fixture's capture window closed at the hook).
+    let presignal = fold(chat_feed("fix-auth-bug", "question_single"));
+    assert_eq!(
+        attention_of(&presignal, "fix-auth-bug"),
+        Attention::NeedsYou { why: Why::Finished }
+    );
+}
+
+/// An interrupt is the user closing the turn deliberately: nothing to come
+/// look at — Idle, not Finished.
+#[test]
+fn an_interrupted_turn_settles_to_idle() {
+    let model = fold(chat_feed("fix-auth-bug", "interrupt"));
+    assert_eq!(attention_of(&model, "fix-auth-bug"), Attention::Idle);
+}
+
+/// A fresh, empty, complete window is honest Idle; the same absence of
+/// evidence over a TRUNCATED window is Unknown — the request may have
+/// fallen outside the window.
+#[test]
+fn blind_windows_are_idle_only_when_complete() {
+    let fresh = fold(chat_base("fix-auth-bug"));
+    assert_eq!(attention_of(&fresh, "fix-auth-bug"), Attention::Idle);
+
+    let truncated = fold(seq([
+        vec![
+            connected("nova"),
+            host_up(&a_host("nova")),
+            agent_up(&an_agent("fix-auth-bug", "nova")),
+        ],
+        synced(),
+        vec![
+            stream("fix-auth-bug", StreamMsg::Opened { truncated: true }),
+            batch(
+                "fix-auth-bug",
+                5,
+                vec![serde_json::json!({"type": "amux.transcript_ready"})],
+            ),
+            stream("fix-auth-bug", StreamMsg::ReplayComplete),
+        ],
+    ]));
+    assert_eq!(attention_of(&truncated, "fix-auth-bug"), Attention::Unknown);
+}
+
+/// A late-joining client derives the pending permission purely from
+/// replay: the request rides the buffer like every other row.
+#[test]
+fn late_join_replay_derives_pending_permission() {
+    let model = fold(seq([
+        vec![
+            connected("nova"),
+            host_up(&a_host("nova")),
+            agent_up(&an_agent("fix-auth-bug", "nova")),
+        ],
+        synced(),
+        vec![
+            stream("fix-auth-bug", StreamMsg::Opened { truncated: true }),
+            batch("fix-auth-bug", 5, chat_rows("permission")[..8].to_vec()),
+            stream("fix-auth-bug", StreamMsg::ReplayComplete),
+        ],
+    ]));
+    assert_eq!(
+        attention_of(&model, "fix-auth-bug"),
+        Attention::NeedsYou {
+            why: Why::Permission
+        }
+    );
+}
+
+/// An API error degrades attention to Unknown — the kernel vocabulary
+/// cannot say "errored", retries run invisibly, and a Working or Idle
+/// badge would be a lie. The chat phase carries the errored FACT.
+#[test]
+fn an_api_error_degrades_attention_to_unknown() {
+    let error_row = serde_json::json!({
+        "type": "assistant",
+        "uuid": "cccccccc-0000-4000-8000-000000000009",
+        "sessionId": "9f635f35-5e8c-49a8-b035-8408c6981b11",
+        "timestamp": "2026-08-11T22:00:05.000Z",
+        "isApiErrorMessage": true,
+        "error": "server_error",
+        "message": {
+            "id": "e0000000-0000-4000-8000-000000000009",
+            "model": "<synthetic>", "role": "assistant", "stop_reason": "stop_sequence",
+            "content": [{"type": "text", "text": "API error"}]
+        },
+    });
+    let model = fold(seq([
+        chat_feed_prefix("fix-auth-bug", "permission", 6),
+        vec![batch("fix-auth-bug", 20, vec![error_row])],
+    ]));
+    assert_eq!(attention_of(&model, "fix-auth-bug"), Attention::Unknown);
+    assert_eq!(
+        model.claude_phase(agent_id("fix-auth-bug")),
+        ChatPhase::Errored,
+        "the chat states the error the badge cannot"
+    );
+}
+
+/// The E1 staleness cap applies to the fleet badge at read time: a silent
+/// "working" past the cap degrades to Unknown, in agreement with the chat
+/// phase (E3).
+#[test]
+fn stale_working_degrades_the_fleet_badge_to_unknown() {
+    let live = fold(seq([
+        chat_feed_prefix("fix-auth-bug", "permission", 6),
+        vec![tick(10 + 599)],
+    ]));
+    assert_eq!(attention_of(&live, "fix-auth-bug"), Attention::Working);
+    let stale = fold(seq([
+        chat_feed_prefix("fix-auth-bug", "permission", 6),
+        vec![tick(10 + 601)],
+    ]));
+    assert_eq!(attention_of(&stale, "fix-auth-bug"), Attention::Unknown);
+}
+
+/// THE unification property (E2/E3): on every fixture, folded row by row,
+/// the fleet's needs-you badge and the chat phase's needs-you state are
+/// the same interpretation — never two folds drifting apart.
+#[test]
+fn fleet_attention_and_chat_phase_share_one_interpretation() {
+    for fixture in [
+        "pong",
+        "tools",
+        "permission",
+        "question_single",
+        "question_multi",
+        "interrupt",
+        "plan_approve",
+        "plan_reject",
+        "compact",
+    ] {
+        let mut model = fold(chat_base("fix-auth-bug"));
+        for (step, row) in chat_rows(fixture).into_iter().enumerate() {
+            amux_ui::update(
+                &mut model,
+                batch("fix-auth-bug", 10 + step as i64, vec![row]),
+            );
+            let attention_needs = match attention_of(&model, "fix-auth-bug") {
+                Attention::NeedsYou {
+                    why: Why::Permission,
+                } => Some(AskWhy::Permission),
+                Attention::NeedsYou { why: Why::Question } => Some(AskWhy::Question),
+                _ => None,
+            };
+            let phase_needs = match model.claude_phase(agent_id("fix-auth-bug")) {
+                ChatPhase::NeedsYou { why, .. } => Some(why),
+                _ => None,
+            };
+            assert_eq!(
+                attention_needs, phase_needs,
+                "{fixture} step {step}: fleet and chat disagree on needs-you"
+            );
+        }
     }
 }
 
@@ -322,17 +312,43 @@ pub fn sequences() -> Vec<(&'static str, Vec<Msg>)> {
     vec![
         (
             "attention::permission_pending",
-            permission_pending_sequence(),
+            chat_feed_prefix("fix-auth-bug", "permission", 8),
         ),
         (
-            "attention::permission_answered",
-            permission_answered_sequence(),
+            "attention::plan_wording_lock",
+            chat_feed_prefix("fix-auth-bug", "plan_reject", 39),
         ),
-        ("attention::stop", stop_sequence()),
-        ("attention::late_join", late_join_sequence()),
         (
-            "attention::truncated_blind_window",
-            truncated_blind_window_sequence(),
+            "attention::finished",
+            chat_feed("fix-auth-bug", "question_single"),
+        ),
+        (
+            "attention::late_join",
+            seq([
+                vec![
+                    connected("nova"),
+                    host_up(&a_host("nova")),
+                    agent_up(&an_agent("fix-auth-bug", "nova")),
+                ],
+                synced(),
+                vec![
+                    stream("fix-auth-bug", StreamMsg::Opened { truncated: true }),
+                    batch("fix-auth-bug", 5, chat_rows("permission")[..8].to_vec()),
+                    stream("fix-auth-bug", StreamMsg::ReplayComplete),
+                ],
+            ]),
+        ),
+        (
+            "attention::exited",
+            seq([
+                chat_feed("fix-auth-bug", "interrupt"),
+                vec![stream(
+                    "fix-auth-bug",
+                    StreamMsg::Closed {
+                        reason: StreamCloseReason::AgentExited { exit_code: Some(0) },
+                    },
+                )],
+            ]),
         ),
     ]
 }

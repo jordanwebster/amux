@@ -145,20 +145,46 @@ fn stream_rows(agent: &str, at_seconds: i64, rows: Vec<serde_json::Value>) -> Ve
     ]
 }
 
-fn permission_row() -> serde_json::Value {
-    serde_json::json!({"type": "hook.permission_request", "tool_name": "Bash"})
+/// The replay-complete marker: everything after is live. Attention over a
+/// window that never reached it stays honestly Unknown, so every fixture
+/// stream leads with it.
+fn ready_row() -> serde_json::Value {
+    serde_json::json!({"type": "amux.transcript_ready"})
 }
 
+/// A human prompt: the turn-start fact working/finished derive from.
+fn prompt_row(n: u8) -> serde_json::Value {
+    serde_json::json!({
+        "type": "user",
+        "uuid": format!("dddddddd-0000-4000-8000-0000000000{n:02}"),
+        "sessionId": "22222222-2222-4222-8222-222222222222",
+        "timestamp": "2026-08-11T22:00:00.000Z",
+        "message": {"role": "user", "content": "do the thing"},
+        "origin": {"kind": "human"},
+        "promptSource": "typed",
+    })
+}
+
+fn permission_row() -> serde_json::Value {
+    serde_json::json!({
+        "type": "hook.permission_request",
+        "tool_name": "Bash",
+        "tool_input": {"command": "echo probe"},
+    })
+}
+
+/// A pending question is the AskUserQuestion permission-request hook —
+/// routed on `tool_name`, never notification wording (CHAT.md E2).
 fn question_row() -> serde_json::Value {
-    serde_json::json!({"type": "hook.notification", "message": "Claude is waiting for your input"})
+    serde_json::json!({
+        "type": "hook.permission_request",
+        "tool_name": "AskUserQuestion",
+        "tool_input": {"questions": []},
+    })
 }
 
 fn stop_row() -> serde_json::Value {
     serde_json::json!({"type": "hook.stop"})
-}
-
-fn assistant_row() -> serde_json::Value {
-    serde_json::json!({"type": "assistant", "message": {"role": "assistant"}})
 }
 
 fn weak_row() -> serde_json::Value {
@@ -191,20 +217,28 @@ fn fleet_msgs() -> Vec<Msg> {
     msgs.extend(stream_rows(
         "fix-auth-bug",
         NOW - 120,
-        vec![assistant_row(), permission_row()],
+        vec![ready_row(), prompt_row(1), permission_row()],
     ));
     msgs.extend(stream_rows(
         "migration-plan",
         NOW - 45,
-        vec![question_row()],
+        vec![ready_row(), prompt_row(2), question_row()],
     ));
-    msgs.extend(stream_rows("nightly-refactor", NOW - 180, vec![stop_row()]));
+    msgs.extend(stream_rows(
+        "nightly-refactor",
+        NOW - 180,
+        vec![ready_row(), prompt_row(3), stop_row()],
+    ));
     msgs.extend(stream_rows(
         "refactor-tunnels",
         NOW - 12,
-        vec![assistant_row()],
+        vec![ready_row(), prompt_row(4)],
     ));
-    msgs.extend(stream_rows("docs-cleanup", NOW - 3600, vec![weak_row()]));
+    msgs.extend(stream_rows(
+        "docs-cleanup",
+        NOW - 3600,
+        vec![ready_row(), weak_row()],
+    ));
     msgs
 }
 

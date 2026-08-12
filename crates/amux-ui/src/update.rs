@@ -11,8 +11,6 @@ use crate::model::{
     Model, PendingOp, StreamPhase, StreamState,
 };
 use crate::msg::{Command, Msg, OpError, OpId, OpOutcome, ServerMsg, StreamCloseReason, StreamMsg};
-use crate::summarizers::SummarizerState;
-use crate::summarizers::claude::ClaudeSummarizer;
 
 /// Error message for commands dispatched while the daemon link is down.
 /// Commands fail fast — there is no offline queue.
@@ -215,7 +213,6 @@ fn update_server(model: &mut Model, server: ServerMsg) -> Vec<Effect> {
                         provider_label: None,
                         attention: Attention::Unknown,
                         phase: AgentPhase::Running,
-                        summarizer: None,
                         claude: None,
                         epoch,
                         agent,
@@ -275,7 +272,6 @@ fn update_stream(model: &mut Model, agent: amux::AgentId, event: StreamMsg) -> V
                     truncated,
                 },
             );
-            with_claude_summarizer(model, agent, |fold| fold.begin_window(truncated));
             // A fresh subscription replays the source tail from scratch, so
             // the chat layer folds from scratch too — its window carries
             // the same truncation fact (B9's honest boundary).
@@ -285,11 +281,6 @@ fn update_stream(model: &mut Model, agent: amux::AgentId, event: StreamMsg) -> V
             if let Some(card) = model.agents.get_mut(&agent) {
                 card.last_activity = card.last_activity.max(at);
             }
-            with_claude_summarizer(model, agent, |fold| {
-                for entry in &entries {
-                    fold.observe(&entry.payload);
-                }
-            });
             with_claude_layer(model, agent, |layer| {
                 for entry in &entries {
                     layer.observe(entry.seq, at, &entry.payload);
@@ -311,7 +302,6 @@ fn update_stream(model: &mut Model, agent: amux::AgentId, event: StreamMsg) -> V
                     if let Some(card) = model.agents.get_mut(&agent) {
                         card.phase = AgentPhase::Exited { exit_code };
                     }
-                    with_claude_summarizer(model, agent, |fold| fold.observe_exit());
                     // Nothing is left to need: obligations do not outlive
                     // the process that owned them.
                     with_claude_layer(model, agent, |layer| layer.observe_exit());
@@ -319,10 +309,7 @@ fn update_stream(model: &mut Model, agent: amux::AgentId, event: StreamMsg) -> V
                 StreamCloseReason::AgentDeleted => {}
                 // The stream died underneath us: whatever the fold knew is
                 // stale. Degrade to Unknown, never to a wrong badge.
-                _ => {
-                    with_claude_summarizer(model, agent, |fold| fold.invalidate());
-                    with_claude_layer(model, agent, |layer| layer.invalidate());
-                }
+                _ => with_claude_layer(model, agent, |layer| layer.invalidate()),
             }
             if let Some(stream) = model.streams.get_mut(&agent) {
                 stream.phase = StreamPhase::Closed { reason };
@@ -332,39 +319,14 @@ fn update_stream(model: &mut Model, agent: amux::AgentId, event: StreamMsg) -> V
     Vec::new()
 }
 
-/// Run a fold step on the agent's claude summarizer (creating it on first
-/// evidence) and refresh the derived attention. Routing keys on the
-/// advertised protocol fact — the fold consumes `claude_pty_transcript_v1`
-/// rows, whatever the agent calls itself. Agents without the protocol have
-/// no summarizer and honestly stay `Unknown`.
-fn with_claude_summarizer(
-    model: &mut Model,
-    agent: amux::AgentId,
-    step: impl FnOnce(&mut ClaudeSummarizer),
-) {
-    let Some(card) = model.agents.get_mut(&agent) else {
-        return;
-    };
-    if !card
-        .agent
-        .io_protocols
-        .iter()
-        .any(|protocol| protocol == STRUCTURED_PROTOCOL)
-    {
-        return;
-    }
-    let state = card
-        .summarizer
-        .get_or_insert_with(|| SummarizerState::Claude(ClaudeSummarizer::default()));
-    let SummarizerState::Claude(fold) = state;
-    step(fold);
-    card.attention = state.attention();
-}
-
 /// Run a fold step on the agent's Claude chat layer (creating it on first
-/// evidence), gated on the same advertised-protocol fact as the summarizer.
-/// The chat layer is always folded, chat open or not: opening a chat
-/// changes what is rendered, never what is known (`docs/CHAT.md` E3).
+/// evidence), gated on the advertised-protocol fact — the fold consumes
+/// `claude_pty_transcript_v1` rows, whatever the agent calls itself.
+/// The layer is always folded, chat open or not, and the kernel attention
+/// summary is derived from the SAME fold state afterwards (E2: one fold,
+/// not two) — so fleet attention behaves identically whether or not a chat
+/// is open (E3). Agents without the protocol have no layer and honestly
+/// stay `Unknown`.
 fn with_claude_layer(
     model: &mut Model,
     agent: amux::AgentId,
@@ -381,7 +343,9 @@ fn with_claude_layer(
     {
         return;
     }
-    step(card.claude.get_or_insert_with(Default::default));
+    let layer = card.claude.get_or_insert_with(Default::default);
+    step(layer);
+    card.attention = layer.attention();
 }
 
 fn tripwire(detail: &str) -> Vec<Effect> {

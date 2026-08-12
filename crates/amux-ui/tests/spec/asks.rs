@@ -26,7 +26,7 @@ fn the_layer(model: &amux_ui::Model) -> &ClaudeLayer {
     claude_layer(model, "fix-auth-bug")
 }
 
-fn head<'m>(model: &'m amux_ui::Model) -> &'m Ask {
+fn head(model: &amux_ui::Model) -> &Ask {
     the_layer(model).ask_head().expect("an ask pending")
 }
 

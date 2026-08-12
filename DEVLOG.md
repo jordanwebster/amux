@@ -69,6 +69,66 @@ pair documenting the eviction-tolerant read).
 
 ---
 
+## 2026-08-12: Chat V1 Phase 2 — one fold: the summarizer unification (E2)
+
+### Summary
+The duplicate interpretation dies. `summarizers/claude.rs` — the
+separate attention fold with its KNOWN-FRAGILE notification-wording
+split (which the plan-approval notification defeats: "needs your
+approval", no "permission" substring) — is deleted; kernel attention is
+now a pure projection of the SAME Claude-layer state the chat phase
+derives from: `ClaudeLayer::attention()`, cached on the card by the one
+`with_claude_layer` gate (the `with_claude_summarizer` duplication dies
+with it). The kernel Attention vocabulary is unchanged; the
+AttentionMismatch invariant now checks card-vs-layer. Fleet gains: the
+badge routes asks on `hook.permission_request.tool_name` (plan review
+is `!`, never `?`), `turn_duration` now closes Working → Finished (the
+old fold left tool-denial turns stuck Working forever — it treated
+system rows as weak and the deny turn has no hook.stop), an interrupt
+settles to Idle instead of Working, an API error degrades to Unknown
+instead of lying Working, and the E1 staleness cap applies to the badge
+at read time (`effective_attention`), keeping fleet and chat in
+agreement (E3). Chapter 5 is rewritten onto the chat fixtures — its
+three authored summarizer-era fixture JSONs are deleted — and closes
+with the unification property: on every fixture, folded row by row,
+fleet needs-you equals chat-phase needs-you.
+
+### Changes
+- crates/amux-ui/src/summarizers/ — deleted (claude.rs + mod.rs).
+- crates/amux-ui/src/update.rs — one gate; attention refreshed from the
+  layer after every fold step.
+- crates/amux-ui/src/model.rs — `AgentCard.summarizer` removed;
+  AttentionMismatch retargeted (card vs layer-derived);
+  `effective_attention` staleness degrade.
+- crates/amux-ui/src/lib.rs — `SummarizerState` unexported.
+- crates/amux-ui/tests/spec/attention.rs — rewritten for the unified
+  fold; authored fixtures claude_permission_flow/stop_and_notification/
+  truncated_tail.json deleted.
+- crates/amux-tui/tests/golden.rs — fixture rows restated in the
+  unified fold's facts (ready marker, human-prompt turn starts, the
+  question as an AskUserQuestion permission_request). Every golden
+  FRAME is byte-identical — the badges' meaning survived the fold swap,
+  which is exactly the E3 guarantee.
+
+### Decisions Made
+- Attention stays TIME-FREE on the card (cache-vs-fold invariant holds
+  between Ticks); read-time policy (host offline, working staleness)
+  lives in `Model::effective_attention` — computed once for every
+  renderer.
+- Errored maps to Attention::Unknown: the kernel vocabulary cannot say
+  "errored", retries run invisibly, and Working/Idle would be wrong
+  badges. The chat phase carries the errored FACT.
+- Interrupt-closed turns map to Idle (the user closed it deliberately);
+  authority/presignal-closed turns keep NeedsYou(Finished).
+
+### Verification
+- `timeout 600 cargo test -p amux-ui`: 11 lib + 1 runtime + 103 spec
+  green (equivalence property sweeps all 9 fixtures row-by-row);
+  workspace clippy `-D warnings` clean; amux-tui, amux lib, and the
+  amux spec suite green (phase gate).
+
+---
+
 ## 2026-08-12: Chat V1 Phase 2 — the ask model and the phase derivation
 
 ### Summary

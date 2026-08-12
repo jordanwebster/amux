@@ -17,7 +17,6 @@ mod model;
 mod msg;
 mod recorder;
 mod runtime;
-pub mod summarizers;
 mod update;
 
 // Kernel entity vocabulary re-exported so renderers depend on amux-ui alone.
@@ -39,5 +38,4 @@ pub use recorder::{
 pub use runtime::{
     BUILD, ConnectFailure, ConnectFuture, Connector, Runtime, RuntimeOptions, write_panic_dump,
 };
-pub use summarizers::SummarizerState;
 pub use update::{NOT_CONNECTED_ERROR, REPLAY_TAIL, update};
