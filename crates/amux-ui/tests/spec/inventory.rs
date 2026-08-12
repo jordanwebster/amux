@@ -133,8 +133,10 @@ fn readonly_sequence() -> Vec<Msg> {
 }
 
 /// Readonly agents (captured sessions the chrome cannot drive) are hidden
-/// from the fleet — and get no stream subscription, because a badge nobody
-/// can see is not worth a stream — until the chat view can render them.
+/// from the fleet — and get no EAGER stream subscription, because a badge
+/// nobody can see is not worth a stream. A user opening one subscribes it
+/// deliberately (`Msg::UserAttached` — the read-only chat's feed, F1;
+/// covered in the attention chapter).
 #[test]
 fn readonly_agents_are_hidden_from_the_fleet() {
     let (model, effects) = fold_with_effects(readonly_sequence());

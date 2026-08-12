@@ -319,11 +319,70 @@ fn subscription_policy_covers_local_agents_and_attached_remotes() {
     );
 }
 
+/// Readonly agents are skipped by the eager inventory subscription (a
+/// fleet badge nobody can see is not worth a stream) — but a user opening
+/// one IS the interaction the policy widens for: the read-only chat (F1)
+/// renders the live feed, and the feed needs the stream.
+#[test]
+fn attaching_to_a_readonly_agent_subscribes_its_stream() {
+    let mut readonly = an_agent("captured-session", "nova");
+    readonly.readonly = true;
+    let (_, effects) = fold_with_effects(seq([
+        vec![
+            connected("nova"),
+            host_up(&a_host("nova")),
+            agent_up(&readonly),
+        ],
+        synced(),
+    ]));
+    assert!(
+        !effects
+            .iter()
+            .any(|effect| matches!(effect, Effect::OpenStream { .. })),
+        "inventory alone opens nothing for a readonly agent"
+    );
+
+    let (_, effects) = fold_with_effects(seq([
+        vec![
+            connected("nova"),
+            host_up(&a_host("nova")),
+            agent_up(&readonly),
+        ],
+        synced(),
+        vec![Msg::UserAttached {
+            agent: agent_id("captured-session"),
+        }],
+    ]));
+    assert!(
+        effects.iter().any(|effect| matches!(
+            effect,
+            Effect::OpenStream { agent, .. } if *agent == agent_id("captured-session")
+        )),
+        "the user's open subscribes the readonly agent's stream"
+    );
+}
+
 pub fn sequences() -> Vec<(&'static str, Vec<Msg>)> {
+    let mut readonly = an_agent("captured-session", "nova");
+    readonly.readonly = true;
     vec![
         (
             "attention::permission_pending",
             chat_feed_prefix("fix-auth-bug", "permission", 8),
+        ),
+        (
+            "attention::readonly_attach",
+            seq([
+                vec![
+                    connected("nova"),
+                    host_up(&a_host("nova")),
+                    agent_up(&readonly),
+                ],
+                synced(),
+                vec![Msg::UserAttached {
+                    agent: agent_id("captured-session"),
+                }],
+            ]),
         ),
         (
             "attention::plan_wording_lock",

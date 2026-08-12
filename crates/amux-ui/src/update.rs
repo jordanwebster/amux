@@ -35,8 +35,12 @@ pub fn update(model: &mut Model, msg: Msg) -> Vec<Effect> {
         Msg::Stream { agent, event } => update_stream(model, agent, event),
         Msg::UserAttached { agent } => {
             // Widen the subscription policy to agents the user interacts
-            // with, wherever they run.
-            ensure_stream(model, agent).into_iter().collect()
+            // with, wherever they run — readonly agents included: opening
+            // a read-only chat (F1) IS the interaction, and the feed it
+            // renders needs the stream.
+            ensure_stream(model, agent, StreamWanted::UserRequested)
+                .into_iter()
+                .collect()
         }
         Msg::Tick { now } => {
             model.now = Some(now);
@@ -45,15 +49,30 @@ pub fn update(model: &mut Model, msg: Msg) -> Vec<Effect> {
     }
 }
 
+/// Why a stream is being ensured: kernel inventory policy subscribes
+/// eagerly (fleet badges), a user interaction subscribes deliberately —
+/// and only the latter covers readonly agents.
+#[derive(Clone, Copy, PartialEq, Eq)]
+enum StreamWanted {
+    InventoryPolicy,
+    UserRequested,
+}
+
 /// Subscription policy: open the structured stream for an agent when it
 /// advertises one and none is already live. Emits at most one effect;
 /// re-upserts are idempotent. Retryable closes (transport loss) reopen on
 /// the next inventory event; terminal closes (deleted, exited) do not.
-fn ensure_stream(model: &mut Model, agent_id: amux::AgentId) -> Option<Effect> {
+fn ensure_stream(
+    model: &mut Model,
+    agent_id: amux::AgentId,
+    wanted: StreamWanted,
+) -> Option<Effect> {
     let card = model.agents.get(&agent_id)?;
-    // Readonly agents are hidden from the fleet; a badge nobody can see is
-    // not worth a stream.
-    if card.agent.readonly {
+    // Readonly agents are hidden from the fleet, so the eager inventory
+    // subscription skips them (a badge nobody can see is not worth a
+    // stream) — but a user opening one (the read-only chat, F1) is
+    // exactly the interaction the policy widens for.
+    if card.agent.readonly && wanted == StreamWanted::InventoryPolicy {
         return None;
     }
     if !card
@@ -443,7 +462,9 @@ fn update_server(model: &mut Model, server: ServerMsg) -> Vec<Effect> {
             // Kernel policy: every local agent's structured stream is
             // subscribed (in-process, cheap); remote agents join on attach.
             if is_local {
-                ensure_stream(model, agent_id).into_iter().collect()
+                ensure_stream(model, agent_id, StreamWanted::InventoryPolicy)
+                    .into_iter()
+                    .collect()
             } else {
                 Vec::new()
             }

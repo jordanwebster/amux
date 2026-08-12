@@ -15,6 +15,7 @@ use chrono::{DateTime, Utc};
 use serde_json::Value;
 use uuid::Uuid;
 
+use super::artifact::{self, AskArtifact};
 use super::{
     ASKS_RETAINED, AcceptedPlan, ApiErrorEntry, Ask, AskKind, AskState, ClaudeLayer,
     CompactSummaryEntry, CompactionEntry, FEED_RETAINED, FeedEntry, FeedEntryKind,
@@ -305,12 +306,35 @@ fn extract_suggestions(row: &Value) -> Vec<SuggestionFact> {
         .unwrap_or_default()
 }
 
+/// The ask's typed panel/reader body (C2), computed once at creation — the
+/// one place a diff is ever computed (diff-rendering §1.4: the transcript
+/// states no diff at ask time). Routed on the tool name like everything
+/// else; tools without a body artifact carry `None`.
+fn ask_artifact(tool_name: Option<&str>, input: &Value) -> Option<AskArtifact> {
+    match tool_name {
+        Some("Edit") => {
+            let old = str_of(input, "old_string")?;
+            let new = str_of(input, "new_string")?;
+            Some(AskArtifact::Diff(artifact::ask_time_diff(
+                old,
+                new,
+                bool_of(input, "replace_all"),
+            )))
+        }
+        Some("Write") => Some(AskArtifact::NewFile {
+            content: str_of(input, "content")?.to_string(),
+        }),
+        _ => None,
+    }
+}
+
 fn push_ask(
     layer: &mut ClaudeLayer,
     seq: u64,
     tool_use_id: Option<String>,
     hook_key: Option<u64>,
     kind: AskKind,
+    artifact: Option<AskArtifact>,
 ) {
     let id = layer.next_ask_id;
     layer.next_ask_id += 1;
@@ -320,6 +344,7 @@ fn push_ask(
         tool_use_id,
         kind,
         state: AskState::Pending,
+        artifact,
         hook_key,
     });
     if layer.asks.len() > ASKS_RETAINED {
@@ -345,7 +370,8 @@ fn fold_permission_request(layer: &mut ClaudeLayer, seq: u64, row: &Value) {
         return;
     }
     let kind = ask_kind(tool_name, input, extract_suggestions(row));
-    push_ask(layer, seq, None, Some(key), kind);
+    let artifact = ask_artifact(tool_name, input);
+    push_ask(layer, seq, None, Some(key), kind, artifact);
 }
 
 // --- user rows --------------------------------------------------------------
@@ -1102,12 +1128,16 @@ fn correlate_ask(
     });
     match uncorrelated_same_kind {
         Some(ask) => ask.tool_use_id = Some(tool_use_id.to_string()),
+        // The transcript-only fallback exists for question and plan asks
+        // only; neither carries a body artifact (the plan markdown rides
+        // the invocation).
         None => push_ask(
             layer,
             seq,
             Some(tool_use_id.to_string()),
             Some(key),
             ask_kind(Some(name), input, Vec::new()),
+            None,
         ),
     }
 }

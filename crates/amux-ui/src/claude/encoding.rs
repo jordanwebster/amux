@@ -198,6 +198,33 @@ impl std::fmt::Display for EncodingError {
     }
 }
 
+/// The one verified permission-menu shape: exactly one
+/// `permission_suggestions` entry (`1. Yes` · the suggestion · `No` —
+/// §18d). Menus with any other count have no verified digit table.
+fn unverified_permission_menu(suggestion_count: usize) -> Option<EncodingError> {
+    (suggestion_count != 1).then(|| EncodingError::UnverifiedMenuShape {
+        detail: format!(
+            "permission menu with {suggestion_count} suggestions (verified for exactly 1)"
+        ),
+    })
+}
+
+/// Whether an ask's remote menu shape is outside the live-verified tables
+/// — the panel's read-only gate (C2): a panel must not offer actions the
+/// encoder would refuse, so unverified shapes render read-only-style with
+/// this typed refusal stated. `None` for every answerable shape (plan
+/// menus are fixed three-way; question navigation is arrow-driven).
+pub fn menu_shape_refusal(kind: &AskKind) -> Option<EncodingError> {
+    match kind {
+        AskKind::Permission {
+            invocation: ToolInvocation::Plan { .. },
+            ..
+        } => None,
+        AskKind::Permission { suggestions, .. } => unverified_permission_menu(suggestions.len()),
+        AskKind::Question { .. } => None,
+    }
+}
+
 /// Normalized prompt text: CRLF and lone CR become LF, so the injected
 /// bytes equal the transcript row's content (B1's reconciliation key).
 pub fn normalize_prompt(text: &str) -> String {
@@ -296,30 +323,13 @@ fn permission_program(
     suggestion_count: usize,
     answer: &PermissionAnswer,
 ) -> Result<Vec<KeyStep>, EncodingError> {
-    let verified = suggestion_count == 1;
-    let unverified = |what: &str| EncodingError::UnverifiedMenuShape {
-        detail: format!(
-            "{what} on a permission menu with {suggestion_count} suggestions \
-             (verified for exactly 1)"
-        ),
-    };
+    if let Some(refusal) = unverified_permission_menu(suggestion_count) {
+        return Err(refusal);
+    }
     match answer {
-        PermissionAnswer::AllowOnce => {
-            if !verified {
-                return Err(unverified("allow once"));
-            }
-            Ok(vec![write("1")])
-        }
-        PermissionAnswer::AllowScoped => {
-            if !verified {
-                return Err(unverified("scoped allow"));
-            }
-            Ok(vec![write("2")])
-        }
+        PermissionAnswer::AllowOnce => Ok(vec![write("1")]),
+        PermissionAnswer::AllowScoped => Ok(vec![write("2")]),
         PermissionAnswer::Deny { feedback } => {
-            if !verified {
-                return Err(unverified("deny"));
-            }
             // Deny is the last digit: 1 (Yes) + suggestions + No.
             let mut program = vec![write("3")];
             let feedback = feedback.as_deref().map(str::trim).unwrap_or_default();
@@ -773,6 +783,28 @@ mod tests {
                     "{answer:?} on a {suggestions}-suggestion menu must refuse"
                 );
             }
+        }
+    }
+
+    /// The panel's read-only gate agrees with the program encoders: any
+    /// shape `menu_shape_refusal` clears must encode, and any shape it
+    /// refuses must refuse in the encoder too — the panel never offers an
+    /// action the bytes cannot back.
+    #[test]
+    fn menu_shape_refusal_matches_the_program_tables() {
+        assert!(menu_shape_refusal(&permission_kind(1)).is_none());
+        assert!(menu_shape_refusal(&plan_kind()).is_none());
+        assert!(
+            menu_shape_refusal(&AskKind::Question {
+                questions: vec![question(false, &["Red"])],
+            })
+            .is_none()
+        );
+        for suggestions in [0, 2] {
+            assert!(matches!(
+                menu_shape_refusal(&permission_kind(suggestions)),
+                Some(EncodingError::UnverifiedMenuShape { .. })
+            ));
         }
     }
 

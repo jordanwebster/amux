@@ -60,6 +60,10 @@ crossterm = "0.28"
 ratatui = { version = "0.29", default-features = false, features = ["crossterm"] }
 shell-words = "1"
 bytes = "1"
+# The ONE computed diff seam: the ask-time Edit preview
+# (notes/chat-v1/diff-rendering.md §3.1 — everything else restates
+# `structuredPatch` facts).
+similar = "2.7"
 qrcode = { version = "0.14", default-features = false }
 
 [profile.dev]

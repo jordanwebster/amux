@@ -17,8 +17,11 @@
 //! This module is part of the pure reducer core: no IO, no clocks, no
 //! randomness may be imported here.
 
+pub mod artifact;
 pub mod encoding;
 mod fold;
+
+pub use artifact::{AskArtifact, DiffArtifact, DiffHunk, DiffMagnitude, DiffNumbering};
 
 use std::collections::{BTreeSet, VecDeque};
 
@@ -428,6 +431,12 @@ pub struct Ask {
     pub tool_use_id: Option<String>,
     pub kind: AskKind,
     pub state: AskState,
+    /// The typed panel/reader body (C2): the ask-time mini-diff for Edit,
+    /// the proposed content for Write, `None` otherwise — computed once in
+    /// the fold at ask creation and retained with the ask (evict bytes,
+    /// never obligations). Plan asks carry their markdown on the
+    /// invocation instead.
+    pub artifact: Option<AskArtifact>,
     /// Hook-side identity: hash of (tool_name, canonical tool_input). The
     /// hook's `tool_input` equals the transcript `tool_use.input`
     /// byte-for-byte (fixture-verified), so one key both dedupes
@@ -1310,6 +1319,7 @@ mod tests {
                 questions: Vec::new(),
             },
             state: AskState::Pending,
+            artifact: None,
             hook_key: None,
         });
         assert!(fires(&model, "claude-ask-order"));

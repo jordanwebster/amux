@@ -38,6 +38,58 @@ One paragraph describing what was done.
 
 ---
 
+## 2026-08-12: Chat V1 Phase 5 — ask artifacts in the layer, menu-shape refusal, readonly attach subscription
+
+### Summary
+The Model half of Phase 5 (ask panels/reader/read-only). Permission asks
+now carry a typed body artifact computed once in the fold at ask
+creation: `claude::artifact` defines the jsdiff-shaped hunk model
+(`DiffArtifact`/`DiffHunk`, `DiffNumbering::{Absolute,None}`,
+`DiffMagnitude::{Fact,Estimated,ReplacesEveryOccurrence}`) and
+`ask_time_diff` — the ONE computed diff in the design (diff-rendering
+§1.4: at ask time the transcript states no diff; everything post-hoc
+restates `structuredPatch`). Edit asks get a numberless,
+estimated-magnitude mini-diff via `similar` (line-level, context 3,
+the jsdiff convention); `replace_all` states "replaces every
+occurrence" instead of counts; Write asks retain their proposed
+`content` (`AskArtifact::NewFile` — create-vs-overwrite unknowable
+pre-run, the artifact claims neither); other tools carry `None`. The
+artifact lives ON the ask (evict bytes, never obligations) so panel
+and reader render it and never compute. `encoding::menu_shape_refusal`
+exports the panel's read-only gate — the same one-suggestion check the
+permission program table enforces, so a panel can never offer an
+action the encoder would refuse. And `Msg::UserAttached` now
+subscribes readonly agents' streams too (`StreamWanted::UserRequested`
+vs the eager `InventoryPolicy` skip): opening a read-only chat (F1) IS
+the interaction the subscription policy widens for; inventory alone
+still opens nothing for them.
+
+### Changes
+- `crates/amux-ui/src/claude/artifact.rs` (new): hunk model + the
+  ask-time producer, unit tests (grouping, magnitude, replace_all).
+- `crates/amux-ui/src/claude/{mod,fold}.rs`: `Ask.artifact` field,
+  computed in `fold_permission_request`; transcript-only fallback asks
+  (question/plan) carry none.
+- `crates/amux-ui/src/claude/encoding.rs`: `menu_shape_refusal` +
+  `unverified_permission_menu` shared with `permission_program`.
+- `crates/amux-ui/src/update.rs`: `ensure_stream` takes
+  `StreamWanted`; readonly skip applies to inventory policy only.
+- Workspace/amux-ui manifests: `similar = "2.7"`.
+- Spec: asks chapter grows the artifact cases (+ differential sequence
+  `asks::edit_artifact`); attention chapter grows the readonly-attach
+  case (+ sequence `attention::readonly_attach`); inventory's
+  readonly comment updated (its assertion unchanged).
+
+### Verification
+- `timeout 600 cargo test -p amux-ui`: 28 lib + 1 runtime + 123 spec.
+- `cargo clippy -p amux-ui --all-targets -- -D warnings` clean; fmt.
+
+### Next Steps
+- The TUI half: docked panels, the reader, read-only chat (this
+  phase's remaining chunks).
+
+---
+
 ## 2026-08-12: Chat V1 Phase 4 — simplification pass
 
 ### Summary

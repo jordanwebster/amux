@@ -13,7 +13,10 @@
 //! `tool_use.input` byte-for-byte, fixture-verified).
 
 use amux_ui::Msg;
-use amux_ui::claude::{Ask, AskKind, AskState, AskWhy, ClaudeLayer, ToolInvocation};
+use amux_ui::claude::{
+    Ask, AskArtifact, AskKind, AskState, AskWhy, ClaudeLayer, DiffMagnitude, DiffNumbering,
+    ToolInvocation,
+};
 use serde_json::json;
 
 use crate::harness::*;
@@ -272,6 +275,133 @@ fn a_prompt_row() -> serde_json::Value {
 
 fn ready() -> serde_json::Value {
     json!({"type": "amux.transcript_ready"})
+}
+
+fn edit_hook(old: &str, new: &str, replace_all: bool) -> serde_json::Value {
+    json!({
+        "type": "hook.permission_request",
+        "hook_event_name": "PermissionRequest",
+        "session_id": "22222222-2222-4222-8222-222222222222",
+        "tool_name": "Edit",
+        "tool_input": {
+            "file_path": "sync/config.rs",
+            "old_string": old,
+            "new_string": new,
+            "replace_all": replace_all,
+        },
+        "permission_mode": "default",
+    })
+}
+
+fn edit_ask_sequence() -> Vec<Msg> {
+    seq([
+        chat_base("fix-auth-bug"),
+        vec![batch(
+            "fix-auth-bug",
+            10,
+            vec![
+                ready(),
+                a_prompt_row(),
+                edit_hook(
+                    "pub struct RetryConfig {\n    pub max_attempts: u8,\n}\n",
+                    "pub struct RetryConfig {\n    pub max_attempts: u8, // capped\n    pub jitter_ms: u16,\n}\n",
+                    false,
+                ),
+            ],
+        )],
+    ])
+}
+
+/// An Edit permission ask carries the ask-time mini-diff, computed in the
+/// fold at creation (diff-rendering §1.4): the transcript states no diff
+/// before the tool runs, so the hook's `old_string`/`new_string` become a
+/// numberless, ESTIMATED-magnitude artifact retained with the ask — the
+/// panel and reader render it, they never compute it.
+#[test]
+fn an_edit_ask_carries_the_computed_numberless_diff() {
+    let model = fold(edit_ask_sequence());
+    let ask = head(&model);
+    let Some(AskArtifact::Diff(diff)) = &ask.artifact else {
+        panic!("an Edit ask carries a diff artifact: {:?}", ask.artifact);
+    };
+    assert_eq!(
+        diff.numbering,
+        DiffNumbering::None,
+        "numbers are not a fact at ask time"
+    );
+    assert_eq!(
+        diff.magnitude,
+        DiffMagnitude::Estimated {
+            added: 2,
+            removed: 1
+        }
+    );
+    assert_eq!(diff.hunks.len(), 1);
+    assert_eq!(
+        diff.hunks[0].lines,
+        vec![
+            " pub struct RetryConfig {",
+            "-    pub max_attempts: u8,",
+            "+    pub max_attempts: u8, // capped",
+            "+    pub jitter_ms: u16,",
+            " }",
+        ],
+        "jsdiff-shaped rows: prefix embedded, snippet context preserved"
+    );
+}
+
+/// `replace_all` makes the snippet counts a lie (N sites change): the
+/// artifact states the semantics instead of numbers.
+#[test]
+fn a_replace_all_edit_ask_states_replaces_every_occurrence() {
+    let model = fold(seq([
+        chat_base("fix-auth-bug"),
+        vec![batch(
+            "fix-auth-bug",
+            10,
+            vec![ready(), a_prompt_row(), edit_hook("old\n", "new\n", true)],
+        )],
+    ]));
+    let Some(AskArtifact::Diff(diff)) = &head(&model).artifact else {
+        panic!("a diff artifact");
+    };
+    assert_eq!(diff.magnitude, DiffMagnitude::ReplacesEveryOccurrence);
+}
+
+/// A Write ask carries the proposed content whole (create-vs-overwrite is
+/// unknowable before the tool runs — the artifact claims neither), and a
+/// tool without a body artifact carries none.
+#[test]
+fn a_write_ask_carries_its_content_and_bash_carries_none() {
+    let model = fold(seq([
+        chat_base("fix-auth-bug"),
+        vec![batch(
+            "fix-auth-bug",
+            10,
+            vec![
+                ready(),
+                a_prompt_row(),
+                json!({
+                    "type": "hook.permission_request",
+                    "tool_name": "Write",
+                    "tool_input": {"file_path": "sync/retry.rs", "content": "use std::time::Duration;\n\npub struct RetryPolicy;\n"},
+                    "permission_mode": "default",
+                }),
+                permission_hook("echo probe"),
+            ],
+        )],
+    ]));
+    let layer = the_layer(&model);
+    let asks: Vec<&Ask> = layer.asks().collect();
+    assert_eq!(asks.len(), 2);
+    let Some(AskArtifact::NewFile { content }) = &asks[0].artifact else {
+        panic!("a Write ask carries its content: {:?}", asks[0].artifact);
+    };
+    assert_eq!(
+        content,
+        "use std::time::Duration;\n\npub struct RetryPolicy;\n"
+    );
+    assert_eq!(asks[1].artifact, None, "Bash has no body artifact");
 }
 
 /// Multiple pending asks queue in arrival order with an honest head +
@@ -566,6 +696,7 @@ fn eviction_never_evicts_a_pending_ask() {
 pub fn sequences() -> Vec<(&'static str, Vec<Msg>)> {
     vec![
         ("asks::permission_pending", feed_prefix("permission", 8)),
+        ("asks::edit_artifact", edit_ask_sequence()),
         ("asks::permission_correlated", feed_prefix("permission", 10)),
         ("asks::question_pending", feed_prefix("question_single", 8)),
         ("asks::plan_pending", feed_prefix("plan_approve", 19)),
