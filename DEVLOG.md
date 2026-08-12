@@ -38,6 +38,34 @@ One paragraph describing what was done.
 
 ---
 
+## 2026-08-12: Chat V1 Phase 6 — codex review fixes
+
+### Summary
+Three review findings fixed (implementation by codex/gpt-5.6-sol —
+the first codex-implemented chunk; committed by the orchestrator
+after running the two suites codex's sandbox cannot: loopback binds
+are denied there). Help overlay geometry: the six-row chrome was
+budgeted as seven, leaving every help frame one row short with the
+bottom border early — the two help goldens had locked the defect and
+are regenerated; the never-panics sweep now asserts help-open frames
+fill the viewport. Paste while the help overlay is open no longer
+falls through to the hidden composer (overlay owns focus; paste
+drops, same rule as read-only). Arming the quit guard at widths
+where the ask-panel hint wraps now replaces the complete hint range,
+not just the last continuation row (new narrow-width golden).
+
+### Changes
+- crates/amux-tui/src/chat/{render,keys,panel}.rs; goldens
+  regenerated (2) + added (chat_quit_armed_panel_narrow).
+
+### Verification
+- fmt, workspace clippy `-D warnings` (testnet), amux-tui
+  109+54+21, amux-ui 30+1+123, amux-cli 53 (codex, in-sandbox);
+  amux --lib 404 and spec suite 44 (orchestrator, outside the
+  sandbox — loopback-bind EPERM in codex's sandbox).
+
+---
+
 ## 2026-08-12: Chat V1 Phase 6 — gate + phase report
 
 ### Summary

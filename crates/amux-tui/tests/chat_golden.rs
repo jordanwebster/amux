@@ -616,6 +616,34 @@ fn chat_quit_armed_panel() {
     assert_golden("chat_quit_armed_panel", &rendered);
 }
 
+/// At narrow widths the normal panel hint wraps. Arming the quit guard
+/// replaces that complete wrapped range with one row before tail
+/// truncation, leaving every action visible and no hint fragment behind.
+#[test]
+fn chat_quit_armed_panel_narrow() {
+    let model = fold(edit_ask_msgs());
+    let mut view = reconciled_view(&model);
+    let unarmed = render_frame(&model, &view, 60, 20, WORKING_NOW);
+    let hint_rows: Vec<&str> = unarmed
+        .lines()
+        .filter(|line| line.contains("select · enter confirm") || line.contains("never answers"))
+        .collect();
+    assert_eq!(hint_rows.len(), 2, "the fixture's normal hint wraps");
+    view.chat
+        .as_mut()
+        .expect("chat open")
+        .quit_guard
+        .press(at(WORKING_NOW));
+    let rendered = render_frame(&model, &view, 60, 20, WORKING_NOW);
+    assert!(rendered.contains("1. Allow once"));
+    assert!(rendered.contains("2. Always allow access to /work"));
+    assert!(rendered.contains("3. Deny — tell the agent why"));
+    assert!(rendered.contains("press ctrl+c again to quit"));
+    assert!(!rendered.contains("select · enter confirm"));
+    assert!(!rendered.contains("esc back (never answers)"));
+    assert_golden("chat_quit_armed_panel_narrow", &rendered);
+}
+
 /// The working wireframe: thinking marker, running Bash, the reserved
 /// queue-preview blank, the 1 Hz working line (spinner + elapsed from the
 /// prompt row), and the D2 gate stated with a kept draft.
@@ -1994,6 +2022,8 @@ fn chat_rendering_never_panics_at_any_viewport_size() {
     });
     let mut docked_plan_view = reconciled_view(&plan);
     press(&mut docked_plan_view, &plan, KeyCode::Esc);
+    let mut help_view = chat_view();
+    help_view.chat.as_mut().expect("chat open").help = true;
     let states: Vec<(&Model, ViewState, &str)> = vec![
         (&model, view.clone(), IDLE_NOW),
         (&working, view, WORKING_NOW),
@@ -2002,6 +2032,7 @@ fn chat_rendering_never_panics_at_any_viewport_size() {
         (&plan, reconciled_view(&plan), WORKING_NOW),
         (&plan, docked_plan_view, WORKING_NOW),
         (&readonly, reconciled_view(&readonly), IDLE_NOW),
+        (&model, help_view, IDLE_NOW),
     ];
 
     for width in 1..=120u16 {

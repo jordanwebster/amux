@@ -17,8 +17,8 @@
 │     shift+enter               newline · kitty                                │
 │     shift+tab                 cycle permission mode                          │
 │     home/end · ctrl+b/f/p/n   motion                                         │
+│     ctrl+←/→                  word motion · terminal-dependent               │
 │ ⋮ more — a taller terminal shows the full list                               │
 │──────────────────────────────────────────────────────────────────────────────│
 │   any key to close                                                           │
 └──────────────────────────────────────────────────────────────────────────────┘
-                                                                                

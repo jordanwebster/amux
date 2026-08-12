@@ -150,6 +150,7 @@ fn bottom_lines(
             chat.ask_failure.as_deref(),
             width,
             theme,
+            chat.quit_guard.is_armed(),
         )
     } else {
         // The composer block: blank, the auto-growing composer (one to
@@ -165,10 +166,12 @@ fn bottom_lines(
         return lines;
     };
 
-    // Every bottom-block shape ends with its hint row — the chat's footer
-    // hint line — which the armed quit guard replaces (one rule, one
-    // rendering, wherever the hints live).
-    if chat.quit_guard.is_armed()
+    // The read-only shape ends with one unwrapped footer row. Interactive
+    // panels replace their complete wrapped hint range at the source,
+    // before the row budget is clamped, so no continuation fragments can
+    // survive above the armed message.
+    if readonly
+        && chat.quit_guard.is_armed()
         && let Some(last) = lines.last_mut()
     {
         *last = armed_quit_line(theme);
@@ -414,8 +417,9 @@ fn help_frame(chat: &ChatView, theme: Theme, width: usize, height: usize) -> Vec
         }
     }
 
-    // Frame rows: top border, title, rule, body, rule, hint, bottom.
-    let body_h = height.saturating_sub(7).max(1);
+    // Fixed chrome is six rows: top border, title, two rules, hint, and
+    // bottom border. The body consumes every remaining viewport row.
+    let body_h = height.saturating_sub(6).max(1);
     if rows.len() > body_h {
         rows.truncate(body_h.saturating_sub(1));
         let mut more = new_line();

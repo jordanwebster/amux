@@ -28,6 +28,13 @@ const TEXT_COL: usize = 4;
 /// the whole).
 const PLAN_PREVIEW_LINES: usize = 6;
 
+#[derive(Clone, Copy)]
+struct PanelContext {
+    width: usize,
+    theme: Theme,
+    quit_guard_armed: bool,
+}
+
 /// A dim interior rule — the takeover boundary above the panel (C1).
 pub(crate) fn rule_line(width: usize, theme: Theme) -> Line<'static> {
     let mut line = new_line();
@@ -44,7 +51,15 @@ fn blank() -> Line<'static> {
 
 /// Wrapped dim hint rows at the text column (panel hint lines may wrap to
 /// a second row — the C4 wireframe does).
-fn hint_lines(text: &str, width: usize, theme: Theme) -> Vec<Line<'static>> {
+fn hint_lines(
+    text: &str,
+    width: usize,
+    theme: Theme,
+    quit_guard_armed: bool,
+) -> Vec<Line<'static>> {
+    if quit_guard_armed {
+        return vec![super::render::armed_quit_line(theme)];
+    }
     markdown::plain_rows(
         text,
         width.saturating_sub(TEXT_COL + 1).max(1),
@@ -381,7 +396,13 @@ pub(crate) fn panel_lines(
     ask_failure: Option<&str>,
     width: usize,
     theme: Theme,
+    quit_guard_armed: bool,
 ) -> Vec<Line<'static>> {
+    let ctx = PanelContext {
+        width,
+        theme,
+        quit_guard_armed,
+    };
     // The optimistic collapse (C5): a dim pending marker holds the
     // collapsed entry until the transcript confirms.
     if let AskState::AnsweredOptimistic { answer, .. } = &ask.state {
@@ -402,6 +423,7 @@ pub(crate) fn panel_lines(
             "answer sent — awaiting confirmation",
             width,
             theme,
+            quit_guard_armed,
         ));
         return lines;
     }
@@ -423,17 +445,15 @@ pub(crate) fn panel_lines(
     };
 
     match &ask.kind {
-        AskKind::Question { questions } => {
-            question_panel(questions, ui, failed, ask_count, width, theme)
-        }
+        AskKind::Question { questions } => question_panel(questions, ui, failed, ask_count, ctx),
         AskKind::Permission { suggestions, .. } => {
             if ask_ui::is_plan(ask) {
-                return plan_panel(ask, ui, failed, ask_count, width, theme);
+                return plan_panel(ask, ui, failed, ask_count, ctx);
             }
             if let Some(refusal) = encoding::menu_shape_refusal(&ask.kind) {
-                return refusal_panel(ask, &refusal.to_string(), ask_count, width, theme);
+                return refusal_panel(ask, &refusal.to_string(), ask_count, ctx);
             }
-            permission_panel(ask, suggestions, ui, failed, ask_count, width, theme)
+            permission_panel(ask, suggestions, ui, failed, ask_count, ctx)
         }
     }
 }
@@ -444,9 +464,13 @@ fn permission_panel(
     ui: &AskUi,
     failed: Option<&str>,
     ask_count: usize,
-    width: usize,
-    theme: Theme,
+    ctx: PanelContext,
 ) -> Vec<Line<'static>> {
+    let PanelContext {
+        width,
+        theme,
+        quit_guard_armed,
+    } = ctx;
     let mut lines = vec![
         rule_line(width, theme),
         header_line(
@@ -479,6 +503,7 @@ fn permission_panel(
                 "enter deny (empty = plain deny) · esc back (never answers)",
                 width,
                 theme,
+                quit_guard_armed,
             ));
         }
         _ => {
@@ -503,6 +528,7 @@ fn permission_panel(
                 &format!("1-3/↑↓ select · enter confirm{f_hint} · esc back (never answers)"),
                 width,
                 theme,
+                quit_guard_armed,
             ));
         }
     }
@@ -517,9 +543,13 @@ fn refusal_panel(
     ask: &Ask,
     refusal: &str,
     ask_count: usize,
-    width: usize,
-    theme: Theme,
+    ctx: PanelContext,
 ) -> Vec<Line<'static>> {
+    let PanelContext {
+        width,
+        theme,
+        quit_guard_armed,
+    } = ctx;
     let mut lines = vec![
         rule_line(width, theme),
         header_line(
@@ -545,6 +575,7 @@ fn refusal_panel(
         &format!("answer from the raw attach · {f_hint}ctrl+x interrupt"),
         width,
         theme,
+        quit_guard_armed,
     ));
     lines
 }
@@ -554,9 +585,13 @@ fn plan_panel(
     ui: &AskUi,
     failed: Option<&str>,
     ask_count: usize,
-    width: usize,
-    theme: Theme,
+    ctx: PanelContext,
 ) -> Vec<Line<'static>> {
+    let PanelContext {
+        width,
+        theme,
+        quit_guard_armed,
+    } = ctx;
     let mut lines = vec![
         rule_line(width, theme),
         header_line("⚠", theme.warn(), "plan review", ask_count, width, theme),
@@ -582,6 +617,7 @@ fn plan_panel(
                 "enter request changes · esc back (keeps text)",
                 width,
                 theme,
+                quit_guard_armed,
             ));
         }
         _ => {
@@ -594,6 +630,7 @@ fn plan_panel(
                 "1-3/↑↓ select · enter confirm · f full plan · esc back (never answers)",
                 width,
                 theme,
+                quit_guard_armed,
             ));
         }
     }
@@ -607,9 +644,13 @@ fn question_panel(
     ui: &AskUi,
     failed: Option<&str>,
     ask_count: usize,
-    width: usize,
-    theme: Theme,
+    ctx: PanelContext,
 ) -> Vec<Line<'static>> {
+    let PanelContext {
+        width,
+        theme,
+        quit_guard_armed,
+    } = ctx;
     let fresh = QuestionUi::new(questions);
     let form = match &ui.stage {
         AskStage::Question(form) if form.drafts.len() == questions.len() => form,
@@ -633,6 +674,7 @@ fn question_panel(
             "enter submit · tab/←→ questions · esc back (never answers)",
             width,
             theme,
+            quit_guard_armed,
         ));
         return lines;
     }
@@ -679,7 +721,7 @@ fn question_panel(
     } else {
         format!("1-{count}/↑↓ select · enter confirm · esc back (never answers)")
     };
-    lines.extend(hint_lines(&hint, width, theme));
+    lines.extend(hint_lines(&hint, width, theme, quit_guard_armed));
     lines
 }
 
@@ -926,6 +968,6 @@ pub(crate) fn readonly_panel_lines(
         wait.push_str(" · ");
         wait.push_str(hint);
     }
-    lines.extend(hint_lines(&wait, width, theme));
+    lines.extend(hint_lines(&wait, width, theme, false));
     lines
 }

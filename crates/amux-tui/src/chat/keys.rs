@@ -264,6 +264,12 @@ pub fn handle_chat_paste(chat: &mut ChatView, model: &Model, text: &str) {
     chat.ask_failure = None;
     // Paste is input like any other key: it disarms the quit guard.
     chat.quit_guard.disarm();
+    // The fullscreen help overlay owns focus. Keep it open and drop the
+    // paste, just as a read-only chat drops input instead of mutating the
+    // hidden composer behind its visible surface.
+    if chat.help {
+        return;
+    }
     // The same defensive sync keys run: a pending ask that has not been
     // reconciled yet still owns the surface — the paste must not slip
     // into the composer through that window.
@@ -1168,6 +1174,23 @@ mod tests {
                 .is_none_or(|ui| ui.deny_feedback.is_empty()),
             "no panel field took it either"
         );
+    }
+
+    /// The help overlay owns the visible focus. A paste disarms the
+    /// chrome guard like any input, but cannot close the overlay or mutate
+    /// the composer hidden behind it.
+    #[test]
+    fn paste_with_help_open_retains_nothing_and_leaves_help_open() {
+        let model = idle_model();
+        let mut chat = ChatView::open(agent_id(), 'a', false);
+        chat.help = true;
+        chat.quit_guard.press(t(0));
+
+        handle_chat_paste(&mut chat, &model, "invisible draft");
+
+        assert!(chat.help, "paste does not close the help overlay");
+        assert!(chat.composer.is_empty(), "the hidden draft is untouched");
+        assert!(!chat.quit_guard.is_armed(), "paste disarms the quit guard");
     }
 
     /// A pending ask owns the surface even before the first reconcile:
