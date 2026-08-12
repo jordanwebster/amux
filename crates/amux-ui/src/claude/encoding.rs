@@ -159,6 +159,14 @@ pub enum EncodingError {
     EmptyText { what: &'static str },
     /// Menu text fields are single-line; a newline would submit early.
     MultilineUnsupported { what: &'static str },
+    /// Control bytes in free text are refused whole: a literal ESC could
+    /// form the bracketed-paste terminator (`ESC[201~`) mid-text — the
+    /// remainder would break out of the paste and run as live keystrokes
+    /// in the remote session — and the transcript transparency of any
+    /// control byte other than `\n` is unverified (a normalized byte
+    /// would desync the echo). Rejection over neutralization: stripping
+    /// would claim reassembly knowledge no capture confirms.
+    ControlBytesUnsupported { what: &'static str },
     /// A menu shape outside the live-verified tables (§18d provenance).
     UnverifiedMenuShape { detail: String },
 }
@@ -172,6 +180,13 @@ impl std::fmt::Display for EncodingError {
             EncodingError::EmptyText { what } => write!(f, "{what} must not be empty"),
             EncodingError::MultilineUnsupported { what } => {
                 write!(f, "{what} must be a single line")
+            }
+            EncodingError::ControlBytesUnsupported { what } => {
+                write!(
+                    f,
+                    "{what} must not contain control characters — an escape byte could break \
+                     out of the injected input and run as live keystrokes"
+                )
             }
             EncodingError::UnverifiedMenuShape { detail } => {
                 write!(
@@ -189,6 +204,28 @@ pub fn normalize_prompt(text: &str) -> String {
     text.replace("\r\n", "\n").replace('\r', "\n")
 }
 
+/// Free text carried inside an injected program may contain printable
+/// characters and (where the caller allows multiline) `\n` — nothing
+/// else. Every other control byte is refused: ESC could form the
+/// bracketed-paste terminator mid-text (injection into the remote
+/// session), and no capture verifies how claude's input handling treats
+/// any of them (a normalized byte would desync the content-equality
+/// reconciliation). The verified transparency claim is printable + `\n`,
+/// exactly (`prompt_multiline`).
+fn reject_control(text: &str, what: &'static str) -> Result<(), EncodingError> {
+    if text.chars().any(|c| c.is_control() && c != '\n') {
+        return Err(EncodingError::ControlBytesUnsupported { what });
+    }
+    Ok(())
+}
+
+/// The paste-wrapped form of free text, validated so the wrapper cannot
+/// be broken from inside (every paste in this module goes through here).
+fn paste_block(text: &str, what: &'static str) -> Result<String, EncodingError> {
+    reject_control(text, what)?;
+    Ok(format!("{PASTE_BEGIN}{text}{PASTE_END}"))
+}
+
 /// A prompt submission: bracketed paste + CR. Paste keeps the text
 /// literal — `/`, `!`, `@`, `#` prefixes and embedded newlines never
 /// trigger claude's composer grammar — and the transcript user row's
@@ -200,7 +237,7 @@ pub fn prompt_program(text: &str) -> Result<Vec<KeyStep>, EncodingError> {
         return Err(EncodingError::EmptyText { what: "prompt" });
     }
     Ok(vec![
-        write(format!("{PASTE_BEGIN}{text}{PASTE_END}")),
+        write(paste_block(&text, "prompt")?),
         delay(AFTER_PASTE),
         write(CR),
     ])
@@ -290,10 +327,10 @@ fn permission_program(
                 // The denial flushes immediately; the feedback follows as
                 // a prompt in the same program (one-program form verified).
                 program.push(delay(AFTER_DENY));
-                program.push(write(format!(
-                    "{PASTE_BEGIN}{}{PASTE_END}",
-                    normalize_prompt(feedback)
-                )));
+                program.push(write(paste_block(
+                    &normalize_prompt(feedback),
+                    "deny feedback",
+                )?));
                 program.push(delay(AFTER_PASTE));
                 program.push(write(CR));
             }
@@ -310,17 +347,7 @@ fn plan_program(answer: &PlanAnswer) -> Result<Vec<KeyStep>, EncodingError> {
         PlanAnswer::ApproveAuto => Ok(vec![write("1")]),
         PlanAnswer::ApproveManual => Ok(vec![write("2")]),
         PlanAnswer::RequestChanges { feedback } => {
-            let feedback = feedback.trim();
-            if feedback.is_empty() {
-                return Err(EncodingError::EmptyText {
-                    what: "request-changes feedback",
-                });
-            }
-            if feedback.contains('\n') || feedback.contains('\r') {
-                return Err(EncodingError::MultilineUnsupported {
-                    what: "request-changes feedback",
-                });
-            }
+            let feedback = menu_text(feedback, "request-changes feedback")?;
             Ok(vec![
                 write("3"),
                 delay(AFTER_MENU_TEXT_OPEN),
@@ -413,6 +440,10 @@ fn digit(position: usize) -> Result<KeyStep, EncodingError> {
     Ok(write(position.to_string()))
 }
 
+/// Free text typed RAW into a menu field (Other editor, plan feedback):
+/// single-line, and control-byte-free — an ESC here would navigate the
+/// menu instead of typing (the same in-band-injection class the paste
+/// wrapper guards against).
 fn menu_text<'t>(text: &'t str, what: &'static str) -> Result<&'t str, EncodingError> {
     let text = text.trim();
     if text.is_empty() {
@@ -421,6 +452,7 @@ fn menu_text<'t>(text: &'t str, what: &'static str) -> Result<&'t str, EncodingE
     if text.contains('\n') || text.contains('\r') {
         return Err(EncodingError::MultilineUnsupported { what });
     }
+    reject_control(text, what)?;
     Ok(text)
 }
 
@@ -600,6 +632,78 @@ mod tests {
         assert!(matches!(
             prompt_program("   "),
             Err(EncodingError::EmptyText { .. })
+        ));
+    }
+
+    /// The in-band-delimiter class: free text that could break out of its
+    /// wrapper refuses whole — a literal `ESC[201~` inside a paste would
+    /// terminate it early and run the remainder as live keystrokes, and
+    /// an ESC in a raw menu field would navigate the menu. Every
+    /// free-text path takes the same refusal.
+    #[test]
+    fn control_bytes_in_free_text_refuse_on_every_path() {
+        // The paste wrapper: prompt and deny-feedback.
+        assert!(matches!(
+            prompt_program("evil\u{1b}[201~\u{1b}[Zrest"),
+            Err(EncodingError::ControlBytesUnsupported { what: "prompt" })
+        ));
+        assert!(matches!(
+            answer_program(
+                &permission_kind(1),
+                &AskAnswer::Permission(PermissionAnswer::Deny {
+                    feedback: Some("no\u{1b}[201~\u{1b}stop".to_string()),
+                })
+            ),
+            Err(EncodingError::ControlBytesUnsupported {
+                what: "deny feedback"
+            })
+        ));
+        // Raw menu fields: Other text (single- and multi-select) and the
+        // plan request-changes feedback.
+        let single = AskKind::Question {
+            questions: vec![question(false, &["Red", "Blue"])],
+        };
+        assert!(matches!(
+            answer_program(
+                &single,
+                &AskAnswer::Question {
+                    responses: vec![QuestionResponse {
+                        selected: vec![],
+                        other: Some("ochre\u{1b}".to_string()),
+                    }]
+                }
+            ),
+            Err(EncodingError::ControlBytesUnsupported { .. })
+        ));
+        let multi = AskKind::Question {
+            questions: vec![question(true, &["Hammer", "Saw"])],
+        };
+        assert!(matches!(
+            answer_program(
+                &multi,
+                &AskAnswer::Question {
+                    responses: vec![QuestionResponse {
+                        selected: vec![0],
+                        other: Some("wrench\u{1b}".to_string()),
+                    }]
+                }
+            ),
+            Err(EncodingError::ControlBytesUnsupported { .. })
+        ));
+        assert!(matches!(
+            answer_program(
+                &plan_kind(),
+                &AskAnswer::Plan(PlanAnswer::RequestChanges {
+                    feedback: "fix\u{1b}[201~it".to_string()
+                })
+            ),
+            Err(EncodingError::ControlBytesUnsupported { .. })
+        ));
+        // Tabs are control bytes too: only printable + `\n` is the
+        // verified transparency claim.
+        assert!(matches!(
+            prompt_program("a\tb"),
+            Err(EncodingError::ControlBytesUnsupported { .. })
         ));
     }
 

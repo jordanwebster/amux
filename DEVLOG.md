@@ -38,6 +38,50 @@ One paragraph describing what was done.
 
 ---
 
+## 2026-08-12: Chat V1 Phase 3 — codex review fixes
+
+### Summary
+Two accepted findings, both with locking spec cases. [P1] `AnswerAsk`
+addressed the whole queue while claude's remote menu only ever displays
+the HEAD: an answer for a later queued ask would encode that ask's
+digits and apply them to the head's menu — potentially approving the
+wrong tool — while marking the later ask optimistic. The reducer now
+requires the target to equal `ask_head()`; a non-head target refuses
+with a typed outcome ("ask is queued behind the current menu — answer
+the head ask first"), no bytes, no state touched. [P2] Free text wrapped
+in bracketed paste could carry a literal `ESC[201~` terminator: the
+paste would close early and the remainder run as LIVE keystrokes in the
+remote session (injection; also an echo desync wedging SendInFlight).
+Decision: **rejection over neutralization** — the verified transcript-
+transparency claim is printable + `\n` exactly (`prompt_multiline`), so
+stripping/splitting ESC would assert reassembly knowledge no capture
+confirms (the same honesty rule as unverified menu shapes). Every
+control character except `\n` now refuses with the new typed
+`EncodingError::ControlBytesUnsupported`, on EVERY free-text path — the
+sweep covered the prompt paste, the deny-feedback paste (shared
+`paste_block` helper), and the raw menu fields (Other text single- and
+multi-select, plan request-changes feedback — all now through
+`menu_text`, where an ESC would navigate the menu instead of typing).
+
+### Changes
+- crates/amux-ui/src/update.rs — the head-only answer guard.
+- crates/amux-ui/src/msg.rs — AnswerAsk doc states the head rule.
+- crates/amux-ui/src/claude/encoding.rs — `ControlBytesUnsupported`,
+  `reject_control` + `paste_block`, menu_text sweep, plan feedback
+  routed through menu_text; table test
+  `control_bytes_in_free_text_refuse_on_every_path`.
+- crates/amux-ui/tests/spec/write.rs — locking cases
+  `an_answer_addressed_past_the_head_refuses_without_bytes` (two queued
+  asks: non-head refusal, head answers normally; differential sequence
+  `write::head_guard`) and
+  `a_prompt_carrying_the_paste_terminator_is_refused` (no effect, no
+  echo, gate stays Ready).
+
+### Verification
+- fmt clean; workspace clippy `-D warnings` clean.
+- amux-ui 25 lib + 1 runtime + 119 spec; amux --lib 401; amux spec 44
+  (testnet); amux-tui 3 + 19 — all green.
+
 ## 2026-08-12: Chat V1 Phase 3 — the write path (C6 module, Commands, C5 lifecycle)
 
 ### Summary

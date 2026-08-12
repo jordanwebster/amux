@@ -230,6 +230,19 @@ fn update_answer_ask(model: &mut Model, op: OpId, seq: u64, command: Command) ->
         // panel has already collapsed to the fact.
         return refuse(model, op, seq, command.clone(), "ask already resolved");
     };
+    // Claude's remote menu only ever displays the HEAD of the queue: a
+    // program addressed to a later ask would encode that ask's digits and
+    // apply them to the head's menu — answering the wrong request. The
+    // queue is the model's honesty about depth, not an addressing space.
+    if layer.ask_head().is_some_and(|head| head.id != ask) {
+        return refuse(
+            model,
+            op,
+            seq,
+            command.clone(),
+            "ask is queued behind the current menu — answer the head ask first",
+        );
+    }
     if matches!(entry.state, AskState::AnsweredOptimistic { .. }) {
         return refuse(
             model,

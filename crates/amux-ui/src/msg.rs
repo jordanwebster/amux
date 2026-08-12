@@ -106,6 +106,8 @@ pub enum Command {
     },
     /// Answer the addressed ask (C5): the reducer encodes the typed answer
     /// through the C6 module and flips the ask to answered-optimistic.
+    /// Only the HEAD of the queue may be answered — claude's remote menu
+    /// displays nothing else, so a non-head target refuses without bytes.
     AnswerAsk {
         agent: AgentId,
         ask: u64,
