@@ -38,6 +38,55 @@ One paragraph describing what was done.
 
 ---
 
+## 2026-08-12: Chat V1 Phase 3 — live keystroke verification (C6 research)
+
+### Summary
+The write path's core risk retired first: every keystroke encoding the C6
+module will state was driven against a REAL claude (2.1.228, haiku) via
+six new capture-harness scenarios, and the open D4 question is answered.
+Verdicts: a mid-session Shift+Tab cycle emits NO `permission-mode` row
+(three presses, two turns, zero rows — the hook payloads' 
+`permission_mode` is the live mode source; cycle order default →
+acceptEdits → plan → default); plan approve-AUTO (digit 1, the owed H.5
+sub-capture) does not flip the row either while the effective mode
+becomes acceptEdits and edits land ask-free; the permission menu is
+generated from the hook's `permission_suggestions` (1 Yes / one digit per
+suggestion / last No) and its deny digit denies IMMEDIATELY with the
+interrupt artifacts — no feedback field, so deny-with-feedback composes
+as digit + follow-up prompt; question digits SELECT-and-advance (a
+single single-select form submits on selection; multi-question/multi-
+select forms end on a review step where one Enter submits — claude's own
+form implements C4's mandatory-submit rule); the single-select Other is
+digit + type + Enter; mixed forms compose with Tab advancing off the
+multi-select question; and multiline prompts inject via bracketed paste
+with the transcript row byte-identical to the sent text (B1's echo
+correlation is content equality). Eight redacted fixtures graduated
+(leak sweep clean); semantics recorded in transcript-semantics.md §18d.
+
+### Changes
+- crates/amux/tests/capture/main.rs — scenarios permission_session,
+  permission_deny_feedback, question_tabs, question_other_single,
+  question_mixed, plan_auto, mode_cycle, prompt_multiline.
+- crates/amux/tests/fixtures/chat-v1/ — 8 new fixture pairs + README.
+- notes/chat-v1/transcript-semantics.md — §18d; §10 permission-mode row
+  entry resolved.
+
+### Decisions Made
+- Deny encoding: the last menu digit, never Esc — Esc-deny and digit-deny
+  differ (both interrupt-close the turn on the plain permission menu, but
+  the digit is the labeled option C2 requires; the plan menu's digit 3
+  keeps the turn alive with a feedback field).
+- The question_tabs pre-run that CANCELLED the form (digit+Enter surplus
+  keys walked the review onto Cancel) is kept as negative evidence in the
+  phase report — digits auto-advance, so per-question Enters are wrong.
+
+### Verification
+- All 8 scenarios green against claude 2.1.228 on haiku (no sonnet
+  needed); every run under the auto-update guards on a poisoned scratch
+  daemon (the spawn-seam scrub live-proved again).
+- Fixture leak sweep: username/home/hostname/scratch/mcp/credential
+  patterns × 17 fixture pairs = 0 hits.
+
 ## 2026-08-12: Phase 2 gate — simplification pass
 
 ### Summary

@@ -20,6 +20,20 @@ Tier-1 input for Phase 1's Claude-layer fold.
 | `plan_reject.rows.jsonl` | ExitPlanMode request-changes | rejection `tool_result` `is_error:true` |
 | `compact.rows.jsonl` | `/compact` | `system/compact_boundary` + `isCompactSummary` summary row |
 
+Phase 3 added the encoding-verification set (claude 2.1.228, haiku; the
+C6 keystroke tables in `amux-ui/src/claude/encoding.rs` cite these runs):
+
+| file | scenario | key rows it locks in |
+|---|---|---|
+| `permission_session.rows.jsonl` | permission menu digit 2 | the menu's middle option comes from the hook's `permission_suggestions` (`addDirectories`, destination `session`); digit 2 allows AND applies it — **no** `command_permissions` attachment for a directory-scope grant, and a different Bash command re-asks |
+| `permission_deny_feedback.rows.jsonl` | permission menu digit 3 | digit 3 (`No`) denies IMMEDIATELY — typed denial + `[Request interrupted by user for tool use]` + `turn_duration`, **no feedback field** (unlike the plan menu); the feedback composition is a follow-up prompt |
+| `question_tabs.rows.jsonl` | two single-select questions | a digit SELECTS the option and auto-advances to the next question tab; the last answer lands on the review step (`1. Submit answers` preselected) and one Enter submits; answers keyed by both question texts |
+| `question_other_single.rows.jsonl` | Other on single-select | digit (options+1) opens the inline editor; type + Enter commits — a single-question form submits on selection, no review step (C4's mandatory-submit rule matches claude's own behavior) |
+| `question_mixed.rows.jsonl` | multi-select + single-select in one form | Space toggles, Tab advances from the multi-select question to the NEXT question tab, digit auto-advances the single-select, Enter confirms the review |
+| `plan_auto.rows.jsonl` | ExitPlanMode approve — auto (H.5) | digit 1 approves; edits then land with NO further asks; the `permission-mode` row does **not** flip (stays `plan`) while `hook.stop`'s `permission_mode` says `acceptEdits` — the hook payload is the effective-mode fact |
+| `mode_cycle.rows.jsonl` | Shift+Tab mode cycling (D4) | CSI Z cycles default → acceptEdits → plan → default; **zero** `permission-mode` rows across three presses and two turns — the hook payloads' `permission_mode` is the only prompt fact source |
+| `prompt_multiline.rows.jsonl` | bracketed-paste multiline prompt | `ESC[200~ … ESC[201~` + Enter lands ONE user row whose string content is byte-identical to the sent text, newline included (B1's echo-correlation evidence) |
+
 Each `<scenario>.meta.json` sidecar carries the provenance stamp: capture
 date, `claude --version`, model, the harness invocation, whether the daemon
 env was poisoned (it is, by default — see below), and the exact keystroke

@@ -1,0 +1,75 @@
+{
+  "captured_at": "2026-08-12T02:18:45.132+00:00",
+  "claude_version": "2.1.228 (Claude Code)",
+  "failure": null,
+  "harness": "cargo test -p amux --test capture -- mode_cycle",
+  "model": "haiku",
+  "notes": {
+    "keys": [
+      {
+        "actions": [
+          "write \"\\r\""
+        ],
+        "note": "workspace trust dialog: Enter (preselected 'Yes, I trust this folder')",
+        "seq_retries": 0
+      },
+      {
+        "actions": [
+          "write \"Reply with exactly OK and nothing else.\"",
+          "delay 300ms",
+          "write \"\\r\""
+        ],
+        "note": "prompt: Reply with exactly OK and nothing else.",
+        "seq_retries": 0
+      },
+      {
+        "actions": [
+          "write \"\\u{1b}[Z\""
+        ],
+        "note": "cycle permission mode: Shift+Tab (CSI Z)",
+        "seq_retries": 0
+      },
+      {
+        "actions": [
+          "write \"Reply with exactly OK and nothing else.\"",
+          "delay 300ms",
+          "write \"\\r\""
+        ],
+        "note": "prompt: Reply with exactly OK and nothing else.",
+        "seq_retries": 0
+      },
+      {
+        "actions": [
+          "write \"\\u{1b}[Z\""
+        ],
+        "note": "cycle permission mode: Shift+Tab (CSI Z)",
+        "seq_retries": 0
+      },
+      {
+        "actions": [
+          "write \"\\u{1b}[Z\""
+        ],
+        "note": "cycle permission mode: Shift+Tab (CSI Z)",
+        "seq_retries": 0
+      },
+      {
+        "actions": [
+          "write \"Reply with exactly OK and nothing else.\"",
+          "delay 300ms",
+          "write \"\\r\""
+        ],
+        "note": "prompt: Reply with exactly OK and nothing else.",
+        "seq_retries": 0
+      }
+    ],
+    "observed": {
+      "hook_permission_mode_by_probe": [
+        "acceptEdits",
+        "default"
+      ],
+      "permission_mode_rows_after_cycling": []
+    }
+  },
+  "poisoned_daemon_env": true,
+  "scenario": "mode_cycle"
+}

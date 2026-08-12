@@ -10,7 +10,10 @@
 //! ```
 //!
 //! Scenarios: pong, tools, permission, question_single, question_multi,
-//! interrupt, plan_approve, plan_reject, compact (or `all`).
+//! interrupt, plan_approve, plan_reject, compact (or `all`), plus the
+//! Phase 3 encoding-verification set: permission_session,
+//! permission_deny_feedback, question_tabs, plan_auto, mode_cycle,
+//! prompt_multiline.
 //!
 //! Environment:
 //! - `AMUX_CAPTURE_OUT`   output dir (default `target/capture/<unix-secs>`)
@@ -63,6 +66,14 @@ fn main() -> Result<()> {
         "plan_approve",
         "plan_reject",
         "compact",
+        "permission_session",
+        "permission_deny_feedback",
+        "question_tabs",
+        "question_other_single",
+        "question_mixed",
+        "plan_auto",
+        "mode_cycle",
+        "prompt_multiline",
     ];
     let selected: Vec<&str> = if scenario_names.iter().any(|name| name == "all") {
         all.to_vec()
@@ -195,6 +206,14 @@ async fn run_scenario(
         "plan_approve" => plan(daemon, scratch, model, true).await,
         "plan_reject" => plan(daemon, scratch, model, false).await,
         "compact" => compact(daemon, scratch, model).await,
+        "permission_session" => permission_session(daemon, scratch, model).await,
+        "permission_deny_feedback" => permission_deny_feedback(daemon, scratch, model).await,
+        "question_tabs" => question_tabs(daemon, scratch, model).await,
+        "question_other_single" => question_other_single(daemon, scratch, model).await,
+        "question_mixed" => question_mixed(daemon, scratch, model).await,
+        "plan_auto" => plan_auto(daemon, scratch, model).await,
+        "mode_cycle" => mode_cycle(daemon, scratch, model).await,
+        "prompt_multiline" => prompt_multiline(daemon, scratch, model).await,
         _ => unreachable!("scenario names validated in main"),
     }
 }
@@ -671,4 +690,740 @@ async fn compact(
         .await?;
     let keys = session.close().await?;
     Ok(serde_json::json!({ "keys": keys }))
+}
+
+// --- Phase 3 encoding-verification scenarios --------------------------------
+//
+// Each scenario exists to confirm one C6 keystroke table empirically before
+// the amux-ui encoding module states it. Assertions are structural (world +
+// row shapes), never prose; the `notes` object records the observed evidence
+// the phase report cites.
+
+/// Permission menu digit 2 — "allow for this session"/"don't ask again".
+/// Verifies: digit 2 resolves the ask as allowed AND the session-scope fact
+/// (`command_permissions` attachment / no re-ask for the same command shape).
+async fn permission_session(
+    daemon: &ScratchDaemon,
+    scratch: &Scratch,
+    model: &str,
+) -> Result<serde_json::Value> {
+    let (mut session, index) = open(
+        daemon,
+        scratch,
+        "permission_session",
+        &[],
+        model,
+        "Use the Bash tool to run exactly: echo probe-one > one.txt. Then, in a \
+         second separate Bash tool call, run exactly: echo probe-two > two.txt. \
+         Then stop.",
+    )
+    .await?;
+    let index = session
+        .wait_for_row(index, ASK_TIMEOUT, "permission request", |row| {
+            row.row_type() == "hook.permission_request"
+        })
+        .await?;
+    tokio::time::sleep(MENU_SETTLE).await;
+    session
+        .send_keys(
+            "allow for session: digit 2",
+            vec![Act::Write(b"2".to_vec())],
+        )
+        .await?;
+    // The second Bash call may be covered by the session allowance (no second
+    // menu) or re-ask (then we allow once). Watch for either a second
+    // permission request or the turn end.
+    let mut cursor = index;
+    let mut second_ask = false;
+    loop {
+        let rows = session.snapshot().await;
+        if rows.iter().skip(cursor).any(|row| {
+            row.row_type() == "system"
+                && row.json.get("subtype").and_then(|s| s.as_str()) == Some("turn_duration")
+        }) {
+            break;
+        }
+        if let Some(pos) = rows
+            .iter()
+            .enumerate()
+            .skip(cursor)
+            .find(|(_, row)| row.row_type() == "hook.permission_request")
+            .map(|(i, _)| i + 1)
+        {
+            second_ask = true;
+            cursor = pos;
+            tokio::time::sleep(MENU_SETTLE).await;
+            session
+                .send_keys(
+                    "allow once (second ask): digit 1",
+                    vec![Act::Write(b"1".to_vec())],
+                )
+                .await?;
+        }
+        if rows.len() > cursor {
+            cursor = rows.len();
+        }
+        tokio::time::sleep(Duration::from_millis(500)).await;
+    }
+
+    let one = scratch.projects.join("permission_session/one.txt").exists();
+    let two = scratch.projects.join("permission_session/two.txt").exists();
+    let rows = session.snapshot().await;
+    let command_permissions = rows
+        .iter()
+        .any(|row| row.raw.contains("command_permissions"));
+    let keys = session.close().await?;
+    if !one || !two {
+        bail!("world assertion failed: one.txt={one} two.txt={two} after digit-2 allow");
+    }
+    Ok(serde_json::json!({
+        "keys": keys,
+        "world": { "one.txt": one, "two.txt": two },
+        "observed": {
+            "command_permissions_attachment": command_permissions,
+            "second_permission_ask": second_ask,
+        },
+    }))
+}
+
+/// Permission menu digit 3 — deny with feedback. Verifies whether digit 3
+/// opens a feedback field (like the plan menu's request-changes) and how the
+/// feedback lands (`userFeedback` on the denial row vs a separate prompt).
+async fn permission_deny_feedback(
+    daemon: &ScratchDaemon,
+    scratch: &Scratch,
+    model: &str,
+) -> Result<serde_json::Value> {
+    let (mut session, index) = open(
+        daemon,
+        scratch,
+        "permission_deny_feedback",
+        &[],
+        model,
+        "Use the Bash tool to run exactly: echo denied-probe > denied.txt. Then stop.",
+    )
+    .await?;
+    let index = session
+        .wait_for_row(index, ASK_TIMEOUT, "permission request", |row| {
+            row.row_type() == "hook.permission_request"
+        })
+        .await?;
+    tokio::time::sleep(MENU_SETTLE).await;
+    // First run of this scenario (claude 2.1.228): the Bash permission
+    // menu's last option is a bare `No` — digit 3 denies IMMEDIATELY
+    // (typed denial + `[Request interrupted by user for tool use]` +
+    // turn_duration; no feedback field, unlike the plan menu). The
+    // deny-with-feedback composition is therefore digit 3, then the
+    // feedback as a normal follow-up prompt.
+    session
+        .send_keys("deny: digit 3 (No)", vec![Act::Write(b"3".to_vec())])
+        .await?;
+    let index = session
+        .wait_for_row(index, ASK_TIMEOUT, "typed denial row", |row| {
+            row.json.get("toolDenialKind").is_some()
+        })
+        .await?;
+    let index = session.wait_for_turn_end(index, TURN_TIMEOUT).await?;
+    session
+        .send_prompt("Do not create that file; it is not needed. Acknowledge and stop.")
+        .await?;
+    let index = session
+        .wait_for_row(index, ASK_TIMEOUT, "feedback prompt row", |row| {
+            row.row_type() == "user"
+                && row
+                    .json
+                    .pointer("/message/content")
+                    .and_then(|c| c.as_str())
+                    .is_some_and(|c| c.contains("Do not create that file"))
+        })
+        .await?;
+    let _ = session.wait_for_turn_end(index, TURN_TIMEOUT).await;
+
+    let rows = session.snapshot().await;
+    let denial_feedback = rows
+        .iter()
+        .rev()
+        .find_map(|row| row.json.get("userFeedback").and_then(|f| f.as_str()))
+        .map(str::to_string);
+    let denied = scratch
+        .projects
+        .join("permission_deny_feedback/denied.txt")
+        .exists();
+    let keys = session.close().await?;
+    if denied {
+        bail!("world assertion failed: denied.txt exists after deny");
+    }
+    Ok(serde_json::json!({
+        "keys": keys,
+        "world": { "denied.txt": denied },
+        "observed": {
+            "denial_userFeedback": denial_feedback,
+            "deny_is_immediate_no_feedback_field": true,
+        },
+    }))
+}
+
+/// AskUserQuestion with TWO single-select questions: verifies the
+/// multi-question tab flow — digit selects, Enter advances to the next
+/// question tab, the final submit step confirms all answers.
+async fn question_tabs(
+    daemon: &ScratchDaemon,
+    scratch: &Scratch,
+    model: &str,
+) -> Result<serde_json::Value> {
+    let (mut session, index) = open(
+        daemon,
+        scratch,
+        "question_tabs",
+        &[],
+        model,
+        "Use the AskUserQuestion tool to ask me exactly two single-select \
+         questions in ONE tool call. Question 1: header Color, question \
+         'Which color do you prefer?', options Red, Blue. Question 2: header \
+         Size, question 'Which size fits best?', options Small, Large. After \
+         I answer, reply with both answers and stop.",
+    )
+    .await?;
+    let index = session
+        .wait_for_row(index, ASK_TIMEOUT, "AskUserQuestion request", |row| {
+            row.row_type() == "hook.permission_request" && row.raw.contains("AskUserQuestion")
+        })
+        .await?;
+    tokio::time::sleep(MENU_SETTLE).await;
+    // Observed model (first run of this scenario, claude 2.1.228): on a
+    // single-select question list a DIGIT selects that option and advances
+    // to the next question tab immediately — no Enter. Answering the last
+    // question advances to the review step (`1. Submit answers` /
+    // `2. Cancel`, Submit preselected), where Enter confirms. (The first
+    // run pressed digit+Enter per question and the surplus keys walked the
+    // review onto Cancel — captured as the decline denial artifacts.)
+    session
+        .send_keys(
+            "Q1: digit 1 (Red, selects+advances); Q2: digit 2 (Large); review: Enter submits",
+            vec![
+                Act::Write(b"1".to_vec()),
+                Act::DelayMs(800),
+                Act::Write(b"2".to_vec()),
+                Act::DelayMs(800),
+                Act::Write(b"\r".to_vec()),
+            ],
+        )
+        .await?;
+    // If the answers row has not landed, a submit/review step is up: confirm
+    // it with Enter (and record that the extra step was needed).
+    let mut extra_submit_steps = 0;
+    let mut answered = session
+        .wait_for_row(
+            index,
+            Duration::from_secs(15),
+            "question answers row",
+            |row| row.raw.contains("\"answers\""),
+        )
+        .await
+        .is_ok();
+    while !answered && extra_submit_steps < 3 {
+        extra_submit_steps += 1;
+        session
+            .send_keys("submit step: Enter", vec![Act::Write(b"\r".to_vec())])
+            .await?;
+        answered = session
+            .wait_for_row(
+                index,
+                Duration::from_secs(15),
+                "question answers row",
+                |row| row.raw.contains("\"answers\""),
+            )
+            .await
+            .is_ok();
+    }
+    if !answered {
+        bail!("no answers row after the tab flow (+{extra_submit_steps} submit Enters)");
+    }
+    let _ = session
+        .wait_for_turn_end(index, Duration::from_secs(60))
+        .await;
+
+    let answers = latest_answers(&session.snapshot().await)
+        .ok_or_else(|| anyhow::anyhow!("no toolUseResult.answers found in the capture"))?;
+    let keys = session.close().await?;
+    if answers.len() != 2 {
+        bail!("expected answers for BOTH questions, got {answers:?}");
+    }
+    let joined = answers
+        .values()
+        .filter_map(|v| v.as_str())
+        .collect::<Vec<_>>()
+        .join(" | ");
+    for expected in ["Red", "Large"] {
+        if !joined.contains(expected) {
+            bail!("expected '{expected}' among answers, got {joined:?}");
+        }
+    }
+    Ok(serde_json::json!({
+        "keys": keys,
+        "answers": answers,
+        "observed": { "extra_submit_steps": extra_submit_steps },
+    }))
+}
+
+/// The Other ("Type something") flow on a SINGLE-select question: the
+/// appended Other option's digit opens an inline editor; typing + Enter
+/// commits the custom answer (multi-select needs a trailing Space —
+/// verified separately in question_multi).
+async fn question_other_single(
+    daemon: &ScratchDaemon,
+    scratch: &Scratch,
+    model: &str,
+) -> Result<serde_json::Value> {
+    let (mut session, index) = open(
+        daemon,
+        scratch,
+        "question_other_single",
+        &[],
+        model,
+        "Use the AskUserQuestion tool to ask me exactly one single-select question. \
+         Header: Color. Question: Which color do you prefer? Options: Red, Blue. \
+         After I answer, reply with the answer and stop.",
+    )
+    .await?;
+    let index = session
+        .wait_for_row(index, ASK_TIMEOUT, "AskUserQuestion request", |row| {
+            row.row_type() == "hook.permission_request" && row.raw.contains("AskUserQuestion")
+        })
+        .await?;
+    tokio::time::sleep(MENU_SETTLE).await;
+    // Two predefined options, so the appended `Type something.` (Other) is
+    // digit 3. Open it, type, Enter to save; if the flow lands on the
+    // review step, Enter confirms Submit.
+    session
+        .send_keys(
+            "Other: digit 3 opens the editor; type; Enter saves",
+            vec![
+                Act::Write(b"3".to_vec()),
+                Act::DelayMs(800),
+                Act::Write(b"a warm ochre".to_vec()),
+                Act::DelayMs(500),
+                Act::Write(b"\r".to_vec()),
+            ],
+        )
+        .await?;
+    let mut extra_submit_steps = 0;
+    let mut answered = session
+        .wait_for_row(
+            index,
+            Duration::from_secs(15),
+            "question answers row",
+            |row| row.raw.contains("\"answers\""),
+        )
+        .await
+        .is_ok();
+    while !answered && extra_submit_steps < 3 {
+        extra_submit_steps += 1;
+        session
+            .send_keys("submit step: Enter", vec![Act::Write(b"\r".to_vec())])
+            .await?;
+        answered = session
+            .wait_for_row(
+                index,
+                Duration::from_secs(15),
+                "question answers row",
+                |row| row.raw.contains("\"answers\""),
+            )
+            .await
+            .is_ok();
+    }
+    if !answered {
+        bail!("no answers row after the Other flow (+{extra_submit_steps} submit Enters)");
+    }
+    let _ = session
+        .wait_for_turn_end(index, Duration::from_secs(60))
+        .await;
+    let answers = latest_answers(&session.snapshot().await)
+        .ok_or_else(|| anyhow::anyhow!("no toolUseResult.answers found in the capture"))?;
+    let keys = session.close().await?;
+    let joined = answers
+        .values()
+        .filter_map(|v| v.as_str())
+        .collect::<Vec<_>>()
+        .join(" | ");
+    if !joined.contains("ochre") {
+        bail!("the Other free-text did not land in the answers: {joined:?}");
+    }
+    Ok(serde_json::json!({
+        "keys": keys,
+        "answers": answers,
+        "observed": { "extra_submit_steps": extra_submit_steps },
+    }))
+}
+
+/// A MIXED multi-question form (multi-select first, single-select second):
+/// verifies the one remaining navigation hop — Tab advancing from a
+/// multi-select question to the NEXT question tab (not straight to
+/// Submit), composing with the digit auto-advance and the review Enter.
+async fn question_mixed(
+    daemon: &ScratchDaemon,
+    scratch: &Scratch,
+    model: &str,
+) -> Result<serde_json::Value> {
+    let (mut session, index) = open(
+        daemon,
+        scratch,
+        "question_mixed",
+        &[],
+        model,
+        "Use the AskUserQuestion tool to ask me exactly two questions in ONE \
+         tool call. Question 1: header Tools, question 'Which tools should I \
+         use?', options Hammer, Saw, Drill, with multiSelect true. Question 2: \
+         header Size, question 'Which size fits best?', options Small, Large, \
+         single-select. After I answer, reply with both answers and stop.",
+    )
+    .await?;
+    let index = session
+        .wait_for_row(index, ASK_TIMEOUT, "AskUserQuestion request", |row| {
+            row.row_type() == "hook.permission_request" && row.raw.contains("AskUserQuestion")
+        })
+        .await?;
+    tokio::time::sleep(MENU_SETTLE).await;
+    session
+        .send_keys(
+            "Q1 (multi): Space Hammer, down, Space Saw, Tab to Q2; Q2: digit 2 (Large); review: Enter",
+            vec![
+                Act::Write(b" ".to_vec()),
+                Act::DelayMs(500),
+                Act::Write(b"\x1b[B".to_vec()),
+                Act::DelayMs(400),
+                Act::Write(b" ".to_vec()),
+                Act::DelayMs(500),
+                Act::Write(b"\t".to_vec()),
+                Act::DelayMs(800),
+                Act::Write(b"2".to_vec()),
+                Act::DelayMs(800),
+                Act::Write(b"\r".to_vec()),
+            ],
+        )
+        .await?;
+    let mut extra_submit_steps = 0;
+    let mut answered = session
+        .wait_for_row(
+            index,
+            Duration::from_secs(15),
+            "question answers row",
+            |row| row.raw.contains("\"answers\""),
+        )
+        .await
+        .is_ok();
+    while !answered && extra_submit_steps < 3 {
+        extra_submit_steps += 1;
+        session
+            .send_keys("submit step: Enter", vec![Act::Write(b"\r".to_vec())])
+            .await?;
+        answered = session
+            .wait_for_row(
+                index,
+                Duration::from_secs(15),
+                "question answers row",
+                |row| row.raw.contains("\"answers\""),
+            )
+            .await
+            .is_ok();
+    }
+    if !answered {
+        bail!("no answers row after the mixed flow (+{extra_submit_steps} submit Enters)");
+    }
+    let _ = session
+        .wait_for_turn_end(index, Duration::from_secs(60))
+        .await;
+    let answers = latest_answers(&session.snapshot().await)
+        .ok_or_else(|| anyhow::anyhow!("no toolUseResult.answers found in the capture"))?;
+    let keys = session.close().await?;
+    if answers.len() != 2 {
+        bail!("expected answers for BOTH questions, got {answers:?}");
+    }
+    let joined = answers
+        .values()
+        .filter_map(|v| v.as_str())
+        .collect::<Vec<_>>()
+        .join(" | ");
+    for expected in ["Hammer", "Saw", "Large"] {
+        if !joined.contains(expected) {
+            bail!("expected '{expected}' among answers, got {joined:?}");
+        }
+    }
+    Ok(serde_json::json!({
+        "keys": keys,
+        "answers": answers,
+        "observed": { "extra_submit_steps": extra_submit_steps },
+    }))
+}
+
+/// Plan review — approve with AUTO edit acceptance (menu digit 1): the H.5
+/// sub-capture. Verifies the digit AND whether auto-approval flips the
+/// `permission-mode` row (manual approval does not — Phase 0).
+async fn plan_auto(
+    daemon: &ScratchDaemon,
+    scratch: &Scratch,
+    model: &str,
+) -> Result<serde_json::Value> {
+    let (mut session, index) = open(
+        daemon,
+        scratch,
+        "plan_auto",
+        &["--permission-mode", "plan"],
+        model,
+        "Make a short plan for adding a README.md that documents config.txt. \
+         Do not ask any clarifying questions — make reasonable assumptions. \
+         When the plan is ready, use the ExitPlanMode tool to present it \
+         directly.",
+    )
+    .await?;
+    let index = session
+        .wait_for_row(index, ASK_TIMEOUT, "ExitPlanMode request", |row| {
+            row.row_type() == "hook.permission_request" && row.raw.contains("ExitPlanMode")
+        })
+        .await?;
+    let plan_tool_id = session
+        .snapshot()
+        .await
+        .iter()
+        .find_map(|row| row.tool_use_id("ExitPlanMode"));
+    tokio::time::sleep(MENU_SETTLE).await;
+    session
+        .send_keys(
+            "plan approve (auto): digit 1",
+            vec![Act::Write(b"1".to_vec())],
+        )
+        .await?;
+    let index =
+        session
+            .wait_for_row(index, ASK_TIMEOUT, "ExitPlanMode resolution row", |row| {
+                match &plan_tool_id {
+                    Some(id) => row.is_tool_result_for(id),
+                    None => row.row_type() == "user" && row.raw.contains("tool_use_id"),
+                }
+            })
+            .await?;
+    // Under auto acceptance claude proceeds to write README.md WITHOUT a
+    // permission ask; the turn end closes the scenario and its hook.stop
+    // payload carries the effective permission_mode.
+    let _ = session.wait_for_turn_end(index, TURN_TIMEOUT).await;
+    tokio::time::sleep(Duration::from_secs(2)).await;
+
+    let rows = session.snapshot().await;
+    let mode_rows: Vec<String> = rows
+        .iter()
+        .filter(|row| row.row_type() == "permission-mode")
+        .filter_map(|row| {
+            row.json
+                .get("permissionMode")
+                .and_then(|m| m.as_str())
+                .map(str::to_string)
+        })
+        .collect();
+    let hook_modes: Vec<String> = rows
+        .iter()
+        .filter(|row| row.row_type().starts_with("hook."))
+        .filter_map(|row| {
+            row.json
+                .get("permission_mode")
+                .and_then(|m| m.as_str())
+                .map(str::to_string)
+        })
+        .collect();
+    let ask_count = rows
+        .iter()
+        .filter(|row| row.row_type() == "hook.permission_request")
+        .count();
+    let readme = scratch.projects.join("plan_auto/README.md").exists();
+    let keys = session.close().await?;
+    if !readme {
+        bail!("world assertion failed: README.md missing — auto-approved edits did not land");
+    }
+    Ok(serde_json::json!({
+        "keys": keys,
+        "world": { "README.md": readme },
+        "observed": {
+            "permission_mode_rows": mode_rows,
+            "hook_permission_modes": hook_modes,
+            "permission_request_rows": ask_count,
+        },
+    }))
+}
+
+/// Shift+Tab permission-mode cycling — the OPEN D4 question: does a
+/// mid-session cycle re-emit the `permission-mode` row with the new value?
+/// A follow-up permission prompt captures the hook payload's
+/// `permission_mode` as the fallback source either way.
+async fn mode_cycle(
+    daemon: &ScratchDaemon,
+    scratch: &Scratch,
+    model: &str,
+) -> Result<serde_json::Value> {
+    let (mut session, mut index) = open(
+        daemon,
+        scratch,
+        "mode_cycle",
+        &[],
+        model,
+        "Reply with exactly OK and nothing else.",
+    )
+    .await?;
+    index = session.wait_for_turn_end(index, TURN_TIMEOUT).await?;
+    let rows_before = session.snapshot().await.len();
+
+    // The probe pattern: cycle N times, then run a trivial turn whose
+    // arrival-ordered hook.stop payload states the EFFECTIVE
+    // permission_mode — the D4 fallback source, and the proof the cycle
+    // registered even if no `permission-mode` row is ever written. One
+    // press (default → acceptEdits) is probed directly; the wrap probe
+    // presses twice more (acceptEdits → plan → default) WITHOUT prompting
+    // in between — a prompt in plan mode triggers the whole plan flow
+    // (observed on the first run of this scenario).
+    let mut hook_modes_by_probe: Vec<Option<String>> = Vec::new();
+    for (probe, presses) in [(1u32, 1u32), (2, 2)] {
+        for _ in 0..presses {
+            session
+                .send_keys(
+                    "cycle permission mode: Shift+Tab (CSI Z)",
+                    vec![Act::Write(b"\x1b[Z".to_vec())],
+                )
+                .await?;
+            tokio::time::sleep(Duration::from_secs(2)).await;
+        }
+        session
+            .send_prompt("Reply with exactly OK and nothing else.")
+            .await?;
+        index = session
+            .wait_for_row(index, TURN_TIMEOUT, "hook.stop after cycle", |row| {
+                row.row_type() == "hook.stop"
+            })
+            .await?;
+        let mode = session
+            .snapshot()
+            .await
+            .iter()
+            .rev()
+            .find(|row| row.row_type() == "hook.stop")
+            .and_then(|row| {
+                row.json
+                    .get("permission_mode")
+                    .and_then(|m| m.as_str())
+                    .map(str::to_string)
+            });
+        println!("capture: mode after probe {probe}: {mode:?}");
+        hook_modes_by_probe.push(mode);
+        // Let the transcript tail (turn_duration + any session-state
+        // re-emission) land before the next press.
+        let _ = session
+            .wait_for_row(index, Duration::from_secs(30), "turn_duration", |row| {
+                row.row_type() == "system"
+                    && row.json.get("subtype").and_then(|s| s.as_str()) == Some("turn_duration")
+            })
+            .await;
+        tokio::time::sleep(Duration::from_secs(2)).await;
+        index = session.snapshot().await.len();
+    }
+
+    // Every permission-mode row written after the first cycle keystroke —
+    // the D4 row-emission verdict.
+    let rows = session.snapshot().await;
+    let mode_rows_all: Vec<String> = rows
+        .iter()
+        .skip(rows_before)
+        .filter(|row| row.row_type() == "permission-mode")
+        .filter_map(|row| {
+            row.json
+                .get("permissionMode")
+                .and_then(|m| m.as_str())
+                .map(str::to_string)
+        })
+        .collect();
+    let keys = session.close().await?;
+    if hook_modes_by_probe.iter().any(|mode| mode.is_none()) {
+        bail!("hook.stop after a cycle carried no permission_mode: {hook_modes_by_probe:?}");
+    }
+    if hook_modes_by_probe[0].as_deref() == Some("default") {
+        bail!("the first Shift+Tab did not register (mode still default)");
+    }
+    Ok(serde_json::json!({
+        "keys": keys,
+        "observed": {
+            "hook_permission_mode_by_probe": hook_modes_by_probe,
+            "permission_mode_rows_after_cycling": mode_rows_all,
+        },
+    }))
+}
+
+/// Multiline prompt submit via bracketed paste (ESC[200~ … ESC[201~), plus
+/// the B1 echo-correlation evidence: the transcript user row's string
+/// content vs the injected text.
+async fn prompt_multiline(
+    daemon: &ScratchDaemon,
+    scratch: &Scratch,
+    model: &str,
+) -> Result<serde_json::Value> {
+    let (mut session, index) = open(
+        daemon,
+        scratch,
+        "prompt_multiline",
+        &[],
+        model,
+        "Reply with exactly PONG and nothing else.",
+    )
+    .await?;
+    let index = session.wait_for_turn_end(index, TURN_TIMEOUT).await?;
+
+    let text = "Reply with exactly DONE and nothing else.\nThis second line is part of one prompt.";
+    let mut payload = Vec::new();
+    payload.extend_from_slice(b"\x1b[200~");
+    payload.extend_from_slice(text.as_bytes());
+    payload.extend_from_slice(b"\x1b[201~");
+    session
+        .send_keys(
+            "multiline prompt: bracketed paste, then Enter",
+            vec![
+                Act::Write(payload),
+                Act::DelayMs(400),
+                Act::Write(b"\r".to_vec()),
+            ],
+        )
+        .await?;
+    let index = session
+        .wait_for_row(index, ASK_TIMEOUT, "multiline prompt user row", |row| {
+            row.row_type() == "user"
+                && row
+                    .json
+                    .pointer("/message/content")
+                    .and_then(|c| c.as_str())
+                    .is_some_and(|c| c.contains("DONE"))
+        })
+        .await?;
+    let echoed = session
+        .snapshot()
+        .await
+        .iter()
+        .rev()
+        .find_map(|row| {
+            if row.row_type() != "user" {
+                return None;
+            }
+            row.json
+                .pointer("/message/content")
+                .and_then(|c| c.as_str())
+                .filter(|c| c.contains("DONE"))
+                .map(str::to_string)
+        })
+        .ok_or_else(|| anyhow::anyhow!("multiline prompt row vanished from the snapshot"))?;
+    let _ = session.wait_for_turn_end(index, TURN_TIMEOUT).await;
+    let keys = session.close().await?;
+    if !echoed.contains('\n') {
+        bail!("the newline did not survive bracketed paste: {echoed:?}");
+    }
+    Ok(serde_json::json!({
+        "keys": keys,
+        "observed": {
+            "sent_text": text,
+            "row_content": echoed,
+            "content_equals_sent": echoed == text,
+        },
+    }))
 }

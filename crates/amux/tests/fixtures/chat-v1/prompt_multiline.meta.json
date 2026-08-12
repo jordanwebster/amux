@@ -1,0 +1,43 @@
+{
+  "captured_at": "2026-08-12T02:00:53.512228+00:00",
+  "claude_version": "2.1.228 (Claude Code)",
+  "failure": null,
+  "harness": "cargo test -p amux --test capture -- prompt_multiline",
+  "model": "haiku",
+  "notes": {
+    "keys": [
+      {
+        "actions": [
+          "write \"\\r\""
+        ],
+        "note": "workspace trust dialog: Enter (preselected 'Yes, I trust this folder')",
+        "seq_retries": 0
+      },
+      {
+        "actions": [
+          "write \"Reply with exactly PONG and nothing else.\"",
+          "delay 300ms",
+          "write \"\\r\""
+        ],
+        "note": "prompt: Reply with exactly PONG and nothing else.",
+        "seq_retries": 0
+      },
+      {
+        "actions": [
+          "write \"\\u{1b}[200~Reply with exactly DONE and nothing else.\\nThis second line is part of one prompt.\\u{1b}[201~\"",
+          "delay 400ms",
+          "write \"\\r\""
+        ],
+        "note": "multiline prompt: bracketed paste, then Enter",
+        "seq_retries": 0
+      }
+    ],
+    "observed": {
+      "content_equals_sent": true,
+      "row_content": "Reply with exactly DONE and nothing else.\nThis second line is part of one prompt.",
+      "sent_text": "Reply with exactly DONE and nothing else.\nThis second line is part of one prompt."
+    }
+  },
+  "poisoned_daemon_env": true,
+  "scenario": "prompt_multiline"
+}

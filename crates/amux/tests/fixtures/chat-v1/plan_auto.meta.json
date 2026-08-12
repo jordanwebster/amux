@@ -1,0 +1,50 @@
+{
+  "captured_at": "2026-08-12T02:19:33.056281+00:00",
+  "claude_version": "2.1.228 (Claude Code)",
+  "failure": null,
+  "harness": "cargo test -p amux --test capture -- plan_auto",
+  "model": "haiku",
+  "notes": {
+    "keys": [
+      {
+        "actions": [
+          "write \"\\r\""
+        ],
+        "note": "workspace trust dialog: Enter (preselected 'Yes, I trust this folder')",
+        "seq_retries": 0
+      },
+      {
+        "actions": [
+          "write \"Make a short plan for adding a README.md that documents config.txt. Do not ask any clarifying questions — make reasonable assumptions. When the plan is ready, use the ExitPlanMode tool to present it directly.\"",
+          "delay 300ms",
+          "write \"\\r\""
+        ],
+        "note": "prompt: Make a short plan for adding a README.md that documents config.txt. Do not ask any clarifying questions — make reasonable assumptions. When the plan is ready, use the ExitPlanMode tool to present it directly.",
+        "seq_retries": 0
+      },
+      {
+        "actions": [
+          "write \"1\""
+        ],
+        "note": "plan approve (auto): digit 1",
+        "seq_retries": 0
+      }
+    ],
+    "observed": {
+      "hook_permission_modes": [
+        "plan",
+        "acceptEdits"
+      ],
+      "permission_mode_rows": [
+        "plan",
+        "plan"
+      ],
+      "permission_request_rows": 1
+    },
+    "world": {
+      "README.md": true
+    }
+  },
+  "poisoned_daemon_env": true,
+  "scenario": "plan_auto"
+}
