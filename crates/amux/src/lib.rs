@@ -89,8 +89,7 @@ pub mod claude_io {
 
 pub mod terminal_io {
     pub use crate::agents::terminal_io::{
-        TERMINAL_V1, TerminalV1Args, TerminalV1Control, TerminalV1ReplayQuery,
-        encode_terminal_v1_args, encode_terminal_v1_control,
+        TERMINAL_V1, TerminalV1Args, TerminalV1ReplayQuery, encode_terminal_v1_args,
     };
 }
 

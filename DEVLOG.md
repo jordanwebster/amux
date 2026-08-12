@@ -38,6 +38,25 @@ One paragraph describing what was done.
 
 ---
 
+## 2026-08-13: Checkpoint #1 — P1–P3 seam audit
+
+Fable checkpoint between the refactor phases and the codex build-out.
+Verdicts on the queued items: `StructuredLogSource` stays (it narrows the
+generic `BroadcastBuffer` surface to the sink contract at the backend seam —
+not a pure pass-through); per-agent retention consts stay per-agent
+(per-protocol policy, deliberately not centralized); `TerminalSize` stays
+declared in `claude.proto` (amux.proto imports claude.proto permanently for
+`ClaudeCreateConfig`, so a third proto file would add a file without removing
+a dependency); `to_agent` stays a provided trait method; the hook-under-
+registry-write-guard exception in `host.rs` stays (Claude-only exposure,
+bounded awaits — but it sets the anti-pattern P5a must not repeat with the
+shared codex client). One deletion applied: the dead client half of the
+terminal_v1 resize control (`encode_terminal_v1_control` and the public
+`TerminalV1Control` re-export had zero in-repo callers and zero tests); the
+wire message, server decode, and pty resize dispatch remain. Full gate green.
+
+---
+
 ## 2026-08-13: P3 — trait-dispatched agent backends
 
 Replaced the `AgentSession` enum and its repeated Claude/test-agent match arms

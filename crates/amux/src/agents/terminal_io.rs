@@ -74,17 +74,6 @@ pub fn encode_terminal_v1_args(args: TerminalV1Args) -> Option<Vec<u8>> {
     )
 }
 
-pub fn encode_terminal_v1_control(control: TerminalV1Control) -> Vec<u8> {
-    wire::TerminalV1Control {
-        control: Some(match control {
-            TerminalV1Control::Resize(size) => {
-                wire::terminal_v1_control::Control::Resize(terminal_size_to_wire(size))
-            }
-        }),
-    }
-    .encode_to_vec()
-}
-
 pub(crate) fn decode_terminal_v1_control(
     payload: &[u8],
 ) -> Result<TerminalV1Control, ProtocolError> {
