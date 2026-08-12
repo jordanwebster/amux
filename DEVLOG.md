@@ -38,6 +38,30 @@ One paragraph describing what was done.
 
 ---
 
+## 2026-08-12: Phase 1 gate — spec corrections from the layer build
+
+### Summary
+docs/CHAT.md absorbs the Phase 1 fixture-grounded corrections: B3
+(tool-denial interrupts ARE followed by `turn_duration`; the inferred
+marker reconciles in place), B4 (Write-create carries an empty
+`structuredPatch`; magnitude = created line count), B1 (bare
+local-command rows render with unstated source, never start a turn),
+B7 (task notifications are their own entry — no agent-id key to
+correlate), and E2 (notification-wording heuristics are forbidden;
+interpretation routes on `hook.permission_request.tool_name` — the
+plan-approval notification says "needs your approval", no
+"permission" substring). Gate context: codex review returned seven
+P2 fold findings — every one an edge-path violation of a stated spec
+rule — all fixed with a locking spec-chapter case each (`2df0e8b`).
+
+### Changes
+- docs/CHAT.md — five corrections, each evidence-tagged "Phase 1".
+
+### Verification
+- Prose only; wireframes remain exactly 80 columns.
+
+---
+
 ## 2026-08-12: Chat V1 Phase 1 — codex review fixes
 
 ### Summary

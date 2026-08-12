@@ -95,7 +95,9 @@ truncation recovery must fold to the identical Model.
   transcript's user row when it lands (string content plus
   `origin.kind:"human"` / `promptSource` on ≥2.1.22x; string-content +
   non-meta discriminators as the fallback for older rows — FACT).
-  A failed send resurfaces the draft with the failure stated.
+  A failed send resurfaces the draft with the failure stated. A bare
+  local-command row (no origin/promptSource — observed for `/compact`)
+  renders as a prompt with unstated source and never starts a turn.
 - **Assistant messages** (B2). Rendered as terminal markdown: headings
   bold (keeping their `#`), fenced code blocks, lists, inline
   emphasis/code; markdown tables render as preformatted blocks in V1;
@@ -123,8 +125,11 @@ truncation recovery must fold to the identical Model.
   (FACT, wall-time-verified `durationMs`); the amux `hook.stop` row is
   the low-latency pre-signal, reconciled when `turn_duration` lands
   (hook rows are arrival-ordered and may precede the transcript tail).
-  Interrupt-ended turns have no `turn_duration`; the marker shows
-  elapsed-from-prompt, tagged inferred.
+  An interrupt yields an inferred elapsed-from-prompt marker,
+  reconciled in place if the authority lands — tool-denial interrupts
+  ARE followed by `turn_duration` (Phase 1, fixture-verified); the
+  purely-inferred marker stands only when the authority never
+  arrives.
 - **Compaction boundaries** (B3). The `system/compact_boundary` row is
   FACT; render a titled rule with the pre/post token counts. Durations
   are never computed across it. `/clear` writes no row — the only
@@ -135,7 +140,9 @@ truncation recovery must fold to the identical Model.
   File-modifying tools (Edit/Write) are distinct entries with file name
   and change magnitude from the `toolUseResult` sidecar
   (`filePath` + `structuredPatch`), e.g. `✔ Edit sync/config.rs
-  (+9 -2)`. Other tools render as compact one-liners; consecutive
+  (+9 -2)`. A Write that creates a file carries an EMPTY
+  `structuredPatch` (Phase 1, observed); its magnitude FACT is the
+  created content's line count — `✔ Write plans/x.md (+20)`. Other tools render as compact one-liners; consecutive
   read/search one-liners group with no blank line between them, so runs
   of exploration compress without extra chrome — grouping is computed
   in the Claude-layer fold from entry kinds, never by renderer layout
@@ -164,8 +171,11 @@ truncation recovery must fold to the identical Model.
   background launch is FACT (`async_launched`), completion arrives as a
   task-notification user row (FACT that it finished), running is
   INFERRED (launched ∧ ¬done, capped by a staleness timer —
-  `pendingBackgroundAgentCount` on turn ends is the FACT count). Child
-  transcript files are not tailed in V1; nested timelines are deferred.
+  `pendingBackgroundAgentCount` on turn ends is the FACT count).
+  Task-notification notices render as their own one-line entry: the
+  row carries no agent-id key, so the fold cannot correlate the prose
+  to a specific child (Phase 1, observed). Child transcript files are
+  not tailed in V1; nested timelines are deferred.
 - **Status entries** (B8). API errors are FACT
   (`isApiErrorMessage:true` rows) and render as an error entry. Retry
   progress is written nowhere in the transcript — "retrying 3/10" is
@@ -436,7 +446,11 @@ The Model derives one session phase, each value tagged fact vs inferred
 | unknown | truncation/reset/staleness degradation | — | never guess; UI.md: degrade to Unknown, not a wrong badge |
 
 There is exactly one fold (E2): chat phase derivation and the fleet
-attention summarizer share row interpretation. Attention remains the
+attention summarizer share row interpretation. Notification-wording
+heuristics are forbidden ground for that fold: the plan-approval
+notification says "needs your approval" — no "permission" substring
+(Phase 1, fixture-verified) — so interpretation routes on
+`hook.permission_request.tool_name`, never on notification text. Attention remains the
 kernel's chrome vocabulary ("this agent needs you"), derived from the
 same facts, so fleet attention behaves identically whether or not the
 chat is open (E3) — opening a chat changes what is rendered, never what
