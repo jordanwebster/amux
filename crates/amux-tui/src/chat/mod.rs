@@ -160,6 +160,21 @@ impl ChatView {
                     });
                 if still_pending {
                     self.ask_failure = Some(error.message.clone());
+                    // An answer submitted FROM the reader that was refused
+                    // synchronously must state its failure somewhere
+                    // visible: the reader closes to the docked panel,
+                    // which renders it — the same drop an async
+                    // SendFailed takes, so no lost outcome ever hides
+                    // behind the overlay.
+                    if matches!(
+                        self.reader,
+                        Some(ReaderView {
+                            source: ReaderSource::Ask,
+                            ..
+                        })
+                    ) {
+                        self.reader = None;
+                    }
                 }
             }
             self.pending_answer = None;

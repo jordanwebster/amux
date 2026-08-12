@@ -183,10 +183,12 @@ async fn chrome_session(
                 }
                 Some(Ok(Event::Paste(text))) => {
                     // Bracketed paste (enabled with the chrome, restored
-                    // with it): literal insertion into the chat draft —
-                    // newlines and tabs are text here, never bindings.
+                    // with it): literal insertion into the focused chat
+                    // text surface — newlines and tabs are text here,
+                    // never bindings; read-only chats and docked panels
+                    // without a field drop it.
                     if let Some(chat) = view.chat.as_mut() {
-                        crate::chat::handle_chat_paste(chat, &text);
+                        crate::chat::handle_chat_paste(chat, runtime.model(), &text);
                         dirty = true;
                     }
                 }

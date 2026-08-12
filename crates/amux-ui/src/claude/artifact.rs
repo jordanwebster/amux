@@ -128,6 +128,19 @@ pub(crate) fn ask_time_diff(old: &str, new: &str, replace_all: bool) -> DiffArti
                 let text = text.strip_suffix('\n').unwrap_or(text);
                 let text = text.strip_suffix('\r').unwrap_or(text);
                 lines.push(format!("{sign}{text}"));
+                // A ± row that does not end in a newline is a real
+                // difference the stripped text can no longer show: an
+                // edit adding only a final newline would otherwise render
+                // as visually identical -/+ rows. State it the way jsdiff
+                // and git do — a marker row the renderer shows dim
+                // verbatim (its `\` prefix is outside the sign
+                // vocabulary, so it takes no line number and the meta
+                // tone). Context rows are exempt: an unchanged EOF
+                // missing its newline on both sides states no difference
+                // the approval needs.
+                if change.missing_newline() && change.tag() != ChangeTag::Equal {
+                    lines.push("\\ No newline at end of file".to_string());
+                }
             }
         }
         hunks.push(DiffHunk {
@@ -203,6 +216,36 @@ mod tests {
                 added: 2,
                 removed: 2
             }
+        );
+    }
+
+    /// An edit differing only by a final newline must not render as
+    /// visually identical -/+ rows: the missing-newline fact becomes the
+    /// jsdiff/git marker row, so the user can tell what they are
+    /// approving.
+    #[test]
+    fn a_newline_only_edit_states_the_missing_newline() {
+        let artifact = ask_time_diff("VALUE=1", "VALUE=1\n", false);
+        assert_eq!(artifact.hunks.len(), 1);
+        assert_eq!(
+            artifact.hunks[0].lines,
+            vec!["-VALUE=1", "\\ No newline at end of file", "+VALUE=1",]
+        );
+        assert_eq!(
+            artifact.magnitude,
+            DiffMagnitude::Estimated {
+                added: 1,
+                removed: 1
+            },
+            "the marker is a statement, not a change row"
+        );
+
+        // The other direction: the NEW text is the one missing its
+        // newline — the marker follows the added row.
+        let artifact = ask_time_diff("VALUE=1\n", "VALUE=2", false);
+        assert_eq!(
+            artifact.hunks[0].lines,
+            vec!["-VALUE=1", "+VALUE=2", "\\ No newline at end of file",]
         );
     }
 

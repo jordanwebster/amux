@@ -170,75 +170,7 @@ pub(crate) fn reader_frame(
     let resolved = resolve(model, chat)?;
     let body = body_lines(&resolved.body, width, theme);
     let total = body.len();
-
-    // The action row lives only while a writable ask is open.
-    let acting = resolved
-        .ask
-        .filter(|ask| !readonly && matches!(ask.state, AskState::Pending));
-    let plan_review = acting.is_some_and(super::ask_ui::is_plan);
-
-    // The tail below the body: action rows / feedback stage / hints.
-    let mut tail: Vec<Line<'static>> = Vec::new();
-    let ui = chat.ask_ui.as_ref();
-    if let Some(ask) = acting {
-        let feedback_stage = plan_review
-            && ui.is_some_and(|ui| ui.ask_id == ask.id && ui.stage == AskStage::PlanFeedback);
-        if feedback_stage {
-            let field = &ui.expect("checked above").plan_feedback;
-            let mut label = new_line();
-            push_span(
-                &mut label,
-                4,
-                "Request changes — tell the agent what to change (required)",
-                theme.text(),
-            );
-            tail.push(label);
-            let mut line = new_line();
-            push_span(&mut line, 2, "›", theme.text());
-            push_span(&mut line, 4, field.display_with_cursor(), theme.text());
-            tail.push(line);
-            tail.push(new_line());
-            tail.extend(hint("enter request changes · esc back (keeps text)", theme));
-        } else {
-            let cursor = ui
-                .filter(|ui| ui.ask_id == ask.id)
-                .and_then(|ui| match &ui.stage {
-                    AskStage::Menu { cursor } => Some(*cursor),
-                    _ => None,
-                })
-                .unwrap_or(0);
-            if plan_review {
-                tail.extend(panel::plan_actions(Some(cursor), width, theme));
-                tail.push(new_line());
-                tail.extend(hint(
-                    "↑↓/pgup scroll plan · 1-3 select · enter confirm · esc back (plan stays)",
-                    theme,
-                ));
-            } else {
-                let AskKind::Permission { suggestions, .. } = &ask.kind else {
-                    return None;
-                };
-                tail.extend(panel::permission_actions(
-                    suggestions,
-                    Some(cursor),
-                    width,
-                    theme,
-                ));
-                tail.push(new_line());
-                tail.extend(hint(
-                    "j/k scroll · g/G top/bottom · 1-3 select · enter confirm · esc back",
-                    theme,
-                ));
-            }
-        }
-    } else {
-        let mut text = String::from("j/k scroll · g/G top/bottom");
-        if matches!(resolved.plans_nav, Some((_, count)) if count > 1) {
-            text.push_str(" · ←/→ other plans");
-        }
-        text.push_str(" · q close");
-        tail.extend(hint(&text, theme));
-    }
+    let tail = reader_tail(&resolved, chat, readonly, width, theme);
 
     // Frame rows: top, title, rule, body, rule, tail, bottom.
     let body_h = height.saturating_sub(5 + tail.len()).max(1);
@@ -283,7 +215,87 @@ pub(crate) fn reader_frame(
     Some(lines)
 }
 
-/// Reader scroll metrics for the key handler: (page height, max top).
+/// The rows below the body: the writable ask's action rows / feedback
+/// stage, or the read hints — ONE derivation, consumed by the frame and
+/// by the scroll metrics so paging and rendering agree on the viewport.
+fn reader_tail(
+    resolved: &Resolved<'_>,
+    chat: &ChatView,
+    readonly: bool,
+    width: usize,
+    theme: Theme,
+) -> Vec<Line<'static>> {
+    // The action row lives only while a writable ask is open.
+    let acting = resolved
+        .ask
+        .filter(|ask| !readonly && matches!(ask.state, AskState::Pending));
+    let plan_review = acting.is_some_and(super::ask_ui::is_plan);
+
+    let mut tail: Vec<Line<'static>> = Vec::new();
+    let ui = chat.ask_ui.as_ref();
+    if let Some(ask) = acting {
+        let feedback_stage = plan_review
+            && ui.is_some_and(|ui| ui.ask_id == ask.id && ui.stage == AskStage::PlanFeedback);
+        if feedback_stage {
+            let field = &ui.expect("checked above").plan_feedback;
+            let mut label = new_line();
+            push_span(
+                &mut label,
+                4,
+                "Request changes — tell the agent what to change (required)",
+                theme.text(),
+            );
+            tail.push(label);
+            let mut line = new_line();
+            push_span(&mut line, 2, "›", theme.text());
+            push_span(&mut line, 4, field.display_with_cursor(), theme.text());
+            tail.push(line);
+            tail.push(new_line());
+            tail.extend(hint("enter request changes · esc back (keeps text)", theme));
+        } else {
+            let cursor = ui
+                .filter(|ui| ui.ask_id == ask.id)
+                .and_then(|ui| match &ui.stage {
+                    AskStage::Menu { cursor } => Some(*cursor),
+                    _ => None,
+                })
+                .unwrap_or(0);
+            if plan_review {
+                tail.extend(panel::plan_actions(Some(cursor), width, theme));
+                tail.push(new_line());
+                tail.extend(hint(
+                    "↑↓/pgup scroll plan · 1-3 select · enter confirm · esc back (plan stays)",
+                    theme,
+                ));
+            } else if let AskKind::Permission { suggestions, .. } = &ask.kind {
+                tail.extend(panel::permission_actions(
+                    suggestions,
+                    Some(cursor),
+                    width,
+                    theme,
+                ));
+                tail.push(new_line());
+                tail.extend(hint(
+                    "j/k scroll · g/G top/bottom · 1-3 select · enter confirm · esc back",
+                    theme,
+                ));
+            }
+        }
+    } else {
+        let mut text = String::from("j/k scroll · g/G top/bottom");
+        if matches!(resolved.plans_nav, Some((_, count)) if count > 1) {
+            text.push_str(" · ←/→ other plans");
+        }
+        text.push_str(" · q close");
+        tail.extend(hint(&text, theme));
+    }
+    tail
+}
+
+/// Reader scroll metrics for the key handler: (page height, max top) —
+/// computed from the SAME tail derivation the frame renders, so End and
+/// PgDn land exactly where render clamps and a following Up moves
+/// immediately.
 pub(crate) fn scroll_metrics(
     model: &Model,
     chat: &ChatView,
@@ -292,11 +304,11 @@ pub(crate) fn scroll_metrics(
     let resolved = resolve(model, chat)?;
     let width = viewport.0 as usize;
     let height = viewport.1 as usize;
+    // Layout is theme-independent (tokens change styles, never cells).
+    let readonly = chat.read_only(model);
+    let tail = reader_tail(&resolved, chat, readonly, width, Theme::default());
     let total = body_lines(&resolved.body, width, Theme::default()).len();
-    // The tail length varies by a row or two across stages; a page of
-    // body_h-1 with render-time clamping keeps paging honest enough
-    // (stale ViewState is tolerance territory, clamped at render).
-    let body_h = height.saturating_sub(10).max(1);
+    let body_h = height.saturating_sub(5 + tail.len()).max(1);
     Some((body_h, total.saturating_sub(body_h)))
 }
 

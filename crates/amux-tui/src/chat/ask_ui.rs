@@ -254,9 +254,18 @@ pub(crate) fn tabbed(questions: &[QuestionFact]) -> bool {
     questions.len() > 1 || questions.iter().any(|question| question.multi_select)
 }
 
-/// A question is answered when a selection or a non-empty Other exists.
+/// The Other field carries an answer: the ENCODER's emptiness rule
+/// (`menu_text` trims before refusing), applied here as the one rule —
+/// whitespace-only text must not count as answered and then refuse at
+/// dispatch.
+pub(crate) fn other_present(draft: &QuestionDraft) -> bool {
+    !draft.other.text().trim().is_empty()
+}
+
+/// A question is answered when a selection or a chosen non-blank Other
+/// exists.
 pub(crate) fn answered(draft: &QuestionDraft) -> bool {
-    !draft.selected.is_empty() || (draft.other_chosen && !draft.other.is_empty())
+    !draft.selected.is_empty() || (draft.other_chosen && other_present(draft))
 }
 
 impl QuestionUi {
@@ -284,8 +293,7 @@ impl QuestionUi {
                 .iter()
                 .map(|draft| QuestionResponse {
                     selected: draft.selected.clone(),
-                    other: (draft.other_chosen && !draft.other.is_empty())
-                        .then(|| draft.other.text()),
+                    other: (draft.other_chosen && other_present(draft)).then(|| draft.other.text()),
                 })
                 .collect(),
         }
@@ -366,7 +374,9 @@ impl QuestionUi {
             }
             if key.code == KeyCode::Enter {
                 self.editing_other = false;
-                draft.other_chosen = !draft.other.is_empty();
+                // The encoder's emptiness rule: whitespace-only text is
+                // no answer — committing it chooses nothing.
+                draft.other_chosen = other_present(draft);
                 if draft.other_chosen && !question.multi_select {
                     // The Other IS the selection on single-select.
                     draft.selected.clear();
@@ -405,7 +415,10 @@ impl QuestionUi {
                 if self.cursor == other_row {
                     if draft.other_chosen {
                         draft.other_chosen = false;
-                    } else if draft.other.is_empty() {
+                    } else if !other_present(draft) {
+                        // Nothing (or only whitespace) to check: open the
+                        // editor instead of a box the encoder would
+                        // refuse.
                         self.editing_other = true;
                     } else {
                         draft.other_chosen = true;

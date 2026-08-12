@@ -1099,6 +1099,24 @@ fn chat_ask_permission_edit_cjk() {
     assert_golden("chat_ask_permission_edit_cjk", &buffer_text(&buffer));
 }
 
+/// An edit that only adds the missing final newline: without the
+/// jsdiff/git `\ No newline at end of file` marker the -/+ pair would be
+/// visually identical and the user could not tell what they are
+/// approving.
+#[test]
+fn chat_ask_permission_newline() {
+    let mut msgs = working_msgs();
+    msgs.push(batch(
+        "2026-08-12T09:10:20Z",
+        40,
+        vec![edit_hook("sync/.env", "VALUE=1", "VALUE=1\n")],
+    ));
+    let model = fold(msgs);
+    let view = reconciled_view(&model);
+    let rendered = render_frame(&model, &view, 80, 20, WORKING_NOW);
+    assert_golden("chat_ask_permission_newline", &rendered);
+}
+
 /// A Write ask: `+` block head with `(N lines)` — create-vs-overwrite is
 /// unknowable before the tool runs and the header claims neither.
 #[test]
@@ -1172,7 +1190,7 @@ fn chat_ask_permission_unverified() {
         40,
         vec![hook_row(
             "Edit",
-            json!({"file_path": "sync/config.rs", "old_string": "a", "new_string": "b"}),
+            json!({"file_path": "sync/config.rs", "old_string": "a\n", "new_string": "b\n"}),
             2,
         )],
     ));

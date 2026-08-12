@@ -837,7 +837,7 @@ fn option_lines(
                 format!("› {}", draft.other.display_with_cursor()),
                 theme.text(),
             );
-        } else if other && !draft.other.is_empty() {
+        } else if other && ask_ui::other_present(draft) {
             push_span(&mut line, desc_col, draft.other.text(), theme.text());
         } else {
             let description = if other {
@@ -880,7 +880,7 @@ fn review_lines(
                 .filter_map(|selected| question.options.get(*selected))
                 .map(|option| option.label.clone())
                 .collect();
-            if draft.other_chosen && !draft.other.is_empty() {
+            if draft.other_chosen && ask_ui::other_present(draft) {
                 parts.push(draft.other.text());
             }
             push_span(&mut line, TEXT_COL, format!("{name} — "), theme.text());

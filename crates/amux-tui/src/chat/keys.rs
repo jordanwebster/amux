@@ -232,14 +232,23 @@ fn composer_key(
 
 /// Bracketed paste into the chat: literal insertion into the focused text
 /// surface — tabs and newlines land as text, never as bindings (a pasted
-/// CR must never submit a partial prompt). An open panel text stage takes
-/// the paste (newlines flattened to spaces — panel fields are one-line);
-/// with a panel docked but no field open the paste is dropped rather than
-/// typed into the invisible composer; otherwise the composer takes it
-/// (see [`crate::chat::composer::Composer::paste`]).
-pub fn handle_chat_paste(chat: &mut ChatView, text: &str) {
+/// CR must never submit a partial prompt). Routing follows the same
+/// model/focus derivation as keys: a read-only chat has NO composer
+/// (F1 — the paste is dropped, never retained invisibly); an open panel
+/// text stage takes it (newlines flattened to spaces — panel fields are
+/// one-line); a docked panel without a field, or an open reader, drops
+/// it rather than typing into the invisible composer; only the composer
+/// focus inserts (see [`crate::chat::composer::Composer::paste`]).
+pub fn handle_chat_paste(chat: &mut ChatView, model: &Model, text: &str) {
     chat.send_failure = None;
     chat.ask_failure = None;
+    // The same defensive sync keys run: a pending ask that has not been
+    // reconciled yet still owns the surface — the paste must not slip
+    // into the composer through that window.
+    chat.sync_ask(model);
+    if chat.read_only(model) {
+        return;
+    }
     if let Some(ui) = chat.ask_ui.as_mut() {
         if let Some(field) = ui.active_field() {
             let one_line = text
@@ -1044,11 +1053,43 @@ mod tests {
 
     #[test]
     fn paste_inserts_literally_and_dismisses_a_stated_failure() {
+        let model = idle_model();
         let mut chat = ChatView::open(agent_id());
         chat.send_failure = Some("older failure".to_string());
-        handle_chat_paste(&mut chat, "one\n\ttwo");
+        handle_chat_paste(&mut chat, &model, "one\n\ttwo");
         assert_eq!(chat.composer.text(), "one\n    two");
         assert_eq!(chat.send_failure(), None, "paste is input; it dismisses");
+    }
+
+    /// A read-only chat has NO composer (F1 — absent, not disabled): a
+    /// paste must not be retained invisibly, exposable later if the
+    /// agent ever became writable.
+    #[test]
+    fn paste_in_a_readonly_chat_retains_nothing() {
+        let model = readonly_ask_model();
+        let mut chat = ChatView::open(agent_id());
+        handle_chat_paste(&mut chat, &model, "secret scratch text");
+        assert!(chat.composer.is_empty(), "no composer surface exists");
+        assert!(
+            chat.ask_ui
+                .as_ref()
+                .is_none_or(|ui| ui.deny_feedback.is_empty()),
+            "no panel field took it either"
+        );
+    }
+
+    /// A pending ask owns the surface even before the first reconcile:
+    /// the paste routes through the same sync the keys use and is
+    /// dropped at the menu stage, never slipped into the hidden
+    /// composer.
+    #[test]
+    fn paste_with_a_pending_ask_before_reconcile_retains_nothing() {
+        let model = edit_ask_model();
+        let mut chat = ChatView::open(agent_id()); // deliberately not reconciled
+        handle_chat_paste(&mut chat, &model, "stray paste");
+        assert!(chat.composer.is_empty(), "menu stage has no text field");
+        let ui = chat.ask_ui.as_ref().expect("the paste synced the panel");
+        assert!(ui.deny_feedback.is_empty());
     }
 
     // --- ask panels, reader, read-only (Phase 5) ----------------------------
@@ -1534,6 +1575,157 @@ mod tests {
         assert_eq!(
             handle_chat_key(&mut chat, &model, press(KeyCode::Char('q')), VIEWPORT),
             Some(UiAction::CloseChat)
+        );
+    }
+
+    /// End then one Up must move immediately in a resolved-plan reader:
+    /// the scroll metrics use the SAME tail derivation the frame renders
+    /// (a one-row hint tail here, not the writable action-row tail), so
+    /// the stored offset never lands past the render clamp.
+    #[test]
+    fn end_then_up_moves_immediately_in_a_resolved_reader() {
+        let plan: String = (1..=30)
+            .map(|n| format!("line {n}"))
+            .collect::<Vec<_>>()
+            .join("\n");
+        let mut model = idle_model();
+        fold(
+            &mut model,
+            vec![rows(
+                2,
+                10,
+                vec![
+                    json!({
+                        "type": "assistant",
+                        "uuid": "dddddddd-0000-4000-8000-00000000cc01",
+                        "sessionId": "22222222-2222-4222-8222-222222222222",
+                        "timestamp": "2026-08-12T09:00:01.000Z",
+                        "message": {"id": "msg_long", "role": "assistant",
+                                    "stop_reason": "tool_use",
+                                    "content": [{"type": "tool_use", "id": "toolu_long",
+                                                 "name": "ExitPlanMode",
+                                                 "input": {"plan": plan}}]},
+                    }),
+                    json!({
+                        "type": "user",
+                        "uuid": "dddddddd-0000-4000-8000-00000000cc02",
+                        "sessionId": "22222222-2222-4222-8222-222222222222",
+                        "timestamp": "2026-08-12T09:00:02.000Z",
+                        "message": {"role": "user", "content": [
+                            {"type": "tool_result", "tool_use_id": "toolu_long",
+                             "content": "User has approved your plan."}
+                        ]},
+                        "toolUseResult": {"plan": plan},
+                    }),
+                ],
+            )],
+        );
+        let mut chat = open_chat(&model);
+        handle_chat_key(&mut chat, &model, ctrl('t'), VIEWPORT);
+        // Resolved reader: tail is the one hint row, so at 80x20 the body
+        // shows 14 rows of the 30-line plan — max top is 16.
+        handle_chat_key(&mut chat, &model, press(KeyCode::End), VIEWPORT);
+        assert_eq!(
+            chat.reader.as_ref().expect("reader open").scroll,
+            16,
+            "End lands exactly on the render clamp"
+        );
+        handle_chat_key(&mut chat, &model, press(KeyCode::Up), VIEWPORT);
+        assert_eq!(
+            chat.reader.as_ref().expect("reader open").scroll,
+            15,
+            "one Up moves immediately — no dead presses"
+        );
+    }
+
+    /// An answer submitted FROM the reader that the reducer refuses
+    /// synchronously must state its failure visibly: the reader closes
+    /// to the docked panel, which renders the refusal on the next frame
+    /// (the same drop an async SendFailed takes).
+    #[test]
+    fn a_refused_answer_from_the_reader_surfaces_in_the_docked_panel() {
+        let mut model = plan_ask_model();
+        let mut chat = open_chat(&model);
+        assert!(chat.reader.is_some(), "plan review opens the reader");
+        // The daemon link drops; the next dispatch refuses synchronously.
+        fold(
+            &mut model,
+            vec![Msg::Server(ServerMsg::Disconnected {
+                reason: amux_ui::DisconnectReason::ApplicationShutdown,
+            })],
+        );
+        handle_chat_key(&mut chat, &model, press(KeyCode::Char('1')), VIEWPORT);
+        let Some(UiAction::Dispatch(command)) =
+            handle_chat_key(&mut chat, &model, press(KeyCode::Enter), VIEWPORT)
+        else {
+            panic!("the confirm dispatches");
+        };
+        let op = OpId(Uuid::from_u128(43));
+        chat.note_dispatched(op, &command);
+        fold(&mut model, vec![Msg::Command { op, command }]);
+        chat.reconcile(&model);
+        assert!(
+            chat.reader.is_none(),
+            "the reader dropped to the docked panel"
+        );
+        assert_eq!(
+            chat.ask_failure.as_deref(),
+            Some(amux_ui::NOT_CONNECTED_ERROR)
+        );
+        // The next frame states it: the docked panel renders the failure.
+        let ctx = crate::render::FrameContext {
+            viewport: VIEWPORT,
+            theme: crate::render::Theme::Dark,
+            now: t(60),
+        };
+        let frame = crate::chat::build_chat_lines(&model, &chat, &ctx);
+        let text: String = frame
+            .iter()
+            .flat_map(|line| line.spans.iter().map(|span| span.content.as_ref()))
+            .collect();
+        assert!(
+            text.contains("not connected"),
+            "the refusal is visible on the next frame"
+        );
+    }
+
+    /// Whitespace-only Other text is no answer (the encoder's trimmed
+    /// emptiness rule, applied at the form): it neither submits a
+    /// single-select question nor marks the review tab answered.
+    #[test]
+    fn whitespace_only_other_stays_unanswered() {
+        // Single-select: committing spaces chooses nothing and Enter
+        // cannot submit the form.
+        let model = question_model(false);
+        let mut chat = open_chat(&model);
+        handle_chat_key(&mut chat, &model, press(KeyCode::Char('3')), VIEWPORT);
+        for _ in 0..3 {
+            handle_chat_key(&mut chat, &model, press(KeyCode::Char(' ')), VIEWPORT);
+        }
+        assert_eq!(
+            handle_chat_key(&mut chat, &model, press(KeyCode::Enter), VIEWPORT),
+            None,
+            "committing whitespace chooses nothing"
+        );
+        assert_eq!(
+            handle_chat_key(&mut chat, &model, press(KeyCode::Enter), VIEWPORT),
+            None,
+            "the form stays unanswered — no dispatch, no encoder refusal"
+        );
+
+        // Multi-select: the review tab must not lie about answered state.
+        let model = question_model(true);
+        let mut chat = open_chat(&model);
+        handle_chat_key(&mut chat, &model, press(KeyCode::Char('3')), VIEWPORT);
+        for _ in 0..2 {
+            handle_chat_key(&mut chat, &model, press(KeyCode::Char(' ')), VIEWPORT);
+        }
+        handle_chat_key(&mut chat, &model, press(KeyCode::Enter), VIEWPORT); // commit: not chosen
+        handle_chat_key(&mut chat, &model, press(KeyCode::Tab), VIEWPORT); // to submit
+        assert_eq!(
+            handle_chat_key(&mut chat, &model, press(KeyCode::Enter), VIEWPORT),
+            None,
+            "the unanswered review refuses to submit"
         );
     }
 

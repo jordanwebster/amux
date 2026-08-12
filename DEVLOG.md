@@ -38,6 +38,65 @@ One paragraph describing what was done.
 
 ---
 
+## 2026-08-12: Chat V1 Phase 5 — codex review fixes
+
+### Summary
+Five accepted findings from the phase's codex review, each fixed with a
+covering test. (1) The ask-time diff no longer discards `similar`'s
+missing-newline fact: a ± row lacking its final newline is followed by
+the jsdiff/git `\ No newline at end of file` marker row (rendered dim
+verbatim via the existing unknown-prefix path, no line number), so an
+edit differing only by a final newline no longer shows visually
+identical -/+ rows; Equal rows are exempt — an unchanged EOF missing
+its newline on both sides states no difference the approval needs.
+(2) Reader scroll metrics now compute bounds from the SAME tail
+derivation the frame renders (`reader_tail`, extracted; one layout, two
+consumers) instead of assuming the writable action-row tail — End/PgDn
+in a resolved-plan or read-only reader land exactly on the render clamp
+and the next Up moves immediately. (3) A synchronous refusal of an
+answer submitted from the reader now closes the reader to the docked
+panel, where the stated failure renders — the same drop an async
+SendFailed takes, so no lost outcome hides behind the overlay.
+(4) Paste routes on the model/focus state like keys do: read-only chats
+drop it (no composer surface exists to retain it invisibly), and the
+pre-reconciliation pending-ask window is closed by the same defensive
+`sync_ask` — a docked menu stage drops the paste instead of feeding the
+hidden composer. (5) The Other field uses the encoder's trimmed
+emptiness rule everywhere (`ask_ui::other_present`): whitespace-only
+text neither counts as answered, nor checks a box, nor rides a
+response — no avoidable synchronous refusal, no lying review tab.
+
+### Changes
+- `crates/amux-ui/src/claude/artifact.rs`: missing-newline marker rows;
+  test `a_newline_only_edit_states_the_missing_newline` (both
+  directions).
+- `crates/amux-tui/src/chat/reader.rs`: `reader_tail` extraction;
+  `scroll_metrics` uses it (+ readonly derivation).
+- `crates/amux-tui/src/chat/mod.rs`: reconcile closes an Ask-source
+  reader when a sync refusal is stated.
+- `crates/amux-tui/src/chat/keys.rs`: `handle_chat_paste(chat, model,
+  text)` — read-only drop + sync-first routing; tests
+  `paste_in_a_readonly_chat_retains_nothing`,
+  `paste_with_a_pending_ask_before_reconcile_retains_nothing`,
+  `end_then_up_moves_immediately_in_a_resolved_reader`,
+  `a_refused_answer_from_the_reader_surfaces_in_the_docked_panel`
+  (frame-asserted), `whitespace_only_other_stays_unanswered`.
+- `crates/amux-tui/src/chat/{ask_ui,panel}.rs`: `other_present`
+  (trimmed) replaces raw emptiness in answered/commit/toggle/display.
+- `crates/amux-tui/src/run.rs`: paste call site passes the model.
+- Golden: `chat_ask_permission_newline` (new); the unverified-shape
+  fixture gained trailing newlines so its refusal stays the subject;
+  every other golden byte-identical.
+
+### Verification
+- fmt clean; workspace clippy `-D warnings` (`--features
+  amux/testnet`) clean.
+- amux-tui 83 lib + 49 chat golden + 19 fleet golden; amux-ui 30 lib
+  + 1 runtime + 123 spec; amux --lib 401; amux spec (testnet) 44;
+  amux-cli 53 — all under `timeout 600`.
+
+---
+
 ## 2026-08-12: Chat V1 Phase 5 — docked ask panels, the reader, read-only chat
 
 ### Summary
