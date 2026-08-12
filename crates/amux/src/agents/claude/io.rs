@@ -49,7 +49,16 @@ pub struct ClaudePtyTranscriptV1Output {
 pub(crate) fn decode_pty_transcript_v1_args(
     args: Option<&[u8]>,
 ) -> Result<ClaudePtyTranscriptV1Args, ProtocolError> {
-    let args = decode_optional_args::<wire::ClaudePtyTranscriptV1Args>(PTY_TRANSCRIPT_V1, args)?;
+    let args = match args {
+        Some(args) => wire::ClaudePtyTranscriptV1Args::decode(args).map_err(|error| {
+            ProtocolError::InvalidArgument {
+                message: format!(
+                    "`{PTY_TRANSCRIPT_V1}` SubscribeSession args must be protobuf: {error}"
+                ),
+            }
+        })?,
+        None => wire::ClaudePtyTranscriptV1Args::default(),
+    };
     Ok(ClaudePtyTranscriptV1Args {
         terminal_size: args
             .terminal_size
@@ -191,18 +200,6 @@ pub fn decode_pty_transcript_v1_cursor(cursor: &[u8]) -> Result<u64, ProtocolErr
                 "`{PTY_TRANSCRIPT_V1}` cursor must be ClaudePtyTranscriptV1Cursor protobuf: {error}"
             ),
         })
-}
-
-fn decode_optional_args<M>(io_protocol: &str, args: Option<&[u8]>) -> Result<M, ProtocolError>
-where
-    M: ProstMessage + Default,
-{
-    match args {
-        Some(args) => M::decode(args).map_err(|error| ProtocolError::InvalidArgument {
-            message: format!("`{io_protocol}` SubscribeSession args must be protobuf: {error}"),
-        }),
-        None => Ok(M::default()),
-    }
 }
 
 fn terminal_size_to_wire(size: TerminalSize) -> wire::TerminalSize {

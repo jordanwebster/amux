@@ -54,6 +54,10 @@ snapshot, or assertion changes.
 Follow-up (orchestrator): docs/UI.md updated — raw attach is now
 agent-independent via `terminal_v1`, the core-prerequisite caveat and the
 deferred-decision clause it satisfied are retired.
+Follow-up (simplification): the generic `decode_optional_args` helper in
+`agents/claude/io.rs` lost its second caller in the move and is inlined into
+`decode_pty_transcript_v1_args`, so both codec modules decode their own args
+the same way; identical error text, no behavior change.
 
 ---
 
