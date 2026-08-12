@@ -814,18 +814,31 @@ async fn permission_deny_feedback(
     // (typed denial + `[Request interrupted by user for tool use]` +
     // turn_duration; no feedback field, unlike the plan menu). The
     // deny-with-feedback composition is therefore digit 3, then the
-    // feedback as a normal follow-up prompt.
+    // feedback as a follow-up prompt — verified here as the ONE program
+    // the C6 encoder emits (the settle delay covers the denial flush and
+    // the composer regaining focus; bracketed paste keeps the text
+    // literal).
+    let feedback = "Do not create that file; it is not needed. Acknowledge and stop.";
+    let mut paste = Vec::new();
+    paste.extend_from_slice(b"\x1b[200~");
+    paste.extend_from_slice(feedback.as_bytes());
+    paste.extend_from_slice(b"\x1b[201~");
     session
-        .send_keys("deny: digit 3 (No)", vec![Act::Write(b"3".to_vec())])
+        .send_keys(
+            "deny with feedback, one program: digit 3, settle, paste feedback, Enter",
+            vec![
+                Act::Write(b"3".to_vec()),
+                Act::DelayMs(1500),
+                Act::Write(paste),
+                Act::DelayMs(400),
+                Act::Write(b"\r".to_vec()),
+            ],
+        )
         .await?;
     let index = session
         .wait_for_row(index, ASK_TIMEOUT, "typed denial row", |row| {
             row.json.get("toolDenialKind").is_some()
         })
-        .await?;
-    let index = session.wait_for_turn_end(index, TURN_TIMEOUT).await?;
-    session
-        .send_prompt("Do not create that file; it is not needed. Acknowledge and stop.")
         .await?;
     let index = session
         .wait_for_row(index, ASK_TIMEOUT, "feedback prompt row", |row| {

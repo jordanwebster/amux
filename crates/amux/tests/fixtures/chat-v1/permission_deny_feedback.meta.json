@@ -1,5 +1,5 @@
 {
-  "captured_at": "2026-08-12T02:18:26.298468+00:00",
+  "captured_at": "2026-08-12T02:31:10.636033+00:00",
   "claude_version": "2.1.228 (Claude Code)",
   "failure": null,
   "harness": "cargo test -p amux --test capture -- permission_deny_feedback",
@@ -24,18 +24,13 @@
       },
       {
         "actions": [
-          "write \"3\""
-        ],
-        "note": "deny: digit 3 (No)",
-        "seq_retries": 0
-      },
-      {
-        "actions": [
-          "write \"Do not create that file; it is not needed. Acknowledge and stop.\"",
-          "delay 300ms",
+          "write \"3\"",
+          "delay 1500ms",
+          "write \"\\u{1b}[200~Do not create that file; it is not needed. Acknowledge and stop.\\u{1b}[201~\"",
+          "delay 400ms",
           "write \"\\r\""
         ],
-        "note": "prompt: Do not create that file; it is not needed. Acknowledge and stop.",
+        "note": "deny with feedback, one program: digit 3, settle, paste feedback, Enter",
         "seq_retries": 0
       }
     ],
