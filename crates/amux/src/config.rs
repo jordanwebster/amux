@@ -138,6 +138,31 @@ pub struct Keybinds {
     pub leader: LeaderKey,
 }
 
+/// Which mode Enter opens a Claude agent in from the fleet
+/// (`docs/CHAT.md` A1). The shipped default is raw attach — the
+/// battle-tested path stays the path of least surprise; flipping the
+/// default is this settings change, not a migration. Mobile clients are
+/// chat-only and carry no such setting.
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "lowercase")]
+pub enum OpenMode {
+    /// Raw byte passthrough to the agent's own TUI.
+    #[default]
+    Raw,
+    /// The structured chat view.
+    Chat,
+}
+
+/// Client UI configuration (the TUI; future desktop clients read the same
+/// keys).
+#[derive(Debug, Clone, Default, Serialize, Deserialize)]
+#[serde(default, deny_unknown_fields)]
+pub struct UiSettings {
+    /// The mode the fleet's Enter opens; the non-default mode opens via
+    /// Ctrl+Enter (kitty-detected) or `o`.
+    pub default_open_mode: OpenMode,
+}
+
 /// Server configuration
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(default, deny_unknown_fields)]
@@ -183,6 +208,10 @@ pub struct Config {
     #[serde(default)]
     pub keybinds: Keybinds,
 
+    /// Client UI configuration
+    #[serde(default)]
+    pub ui: UiSettings,
+
     #[serde(skip)]
     pub path: Option<PathBuf>,
 }
@@ -199,6 +228,7 @@ impl Default for Config {
             prevent_idle_sleep: None,
             minimum_client_versions: HashMap::new(),
             keybinds: Keybinds::default(),
+            ui: UiSettings::default(),
             path: None,
         }
     }
@@ -353,6 +383,34 @@ mod tests {
         let config: Config = serde_yaml::from_str(yaml).unwrap();
         assert_eq!(config.tcp_port, Some(9999));
         assert_eq!(config.keybinds.leader.char, b'a');
+    }
+
+    /// The shipped default open mode is raw attach (`docs/CHAT.md` A1).
+    #[test]
+    fn default_open_mode_is_raw() {
+        let config = Config::default();
+        assert_eq!(config.ui.default_open_mode, OpenMode::Raw);
+        let yaml = "tcp_port: 9999\n";
+        let config: Config = serde_yaml::from_str(yaml).unwrap();
+        assert_eq!(config.ui.default_open_mode, OpenMode::Raw);
+    }
+
+    #[test]
+    fn default_open_mode_yaml_roundtrip() {
+        let yaml = "ui:\n  default_open_mode: chat\n";
+        let config: Config = serde_yaml::from_str(yaml).unwrap();
+        assert_eq!(config.ui.default_open_mode, OpenMode::Chat);
+
+        let serialized = serde_yaml::to_string(&config).unwrap();
+        let parsed: Config = serde_yaml::from_str(&serialized).unwrap();
+        assert_eq!(parsed.ui.default_open_mode, OpenMode::Chat);
+    }
+
+    #[test]
+    fn unknown_open_mode_is_rejected() {
+        let error =
+            serde_yaml::from_str::<Config>("ui:\n  default_open_mode: telepathy\n").unwrap_err();
+        assert!(error.to_string().contains("unknown variant"));
     }
 
     #[test]

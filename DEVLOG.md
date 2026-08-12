@@ -38,6 +38,29 @@ One paragraph describing what was done.
 
 ---
 
+## 2026-08-12: Chat V1 Phase 6 — default-open-mode setting (A1)
+
+### Summary
+The chat entry mode setting lands in the usual amux config
+(`docs/CHAT.md` A1, owner directive "Config home"): `ui.
+default_open_mode: raw | chat` in `config.yaml`, following the
+`keybinds.leader` idiom — a serde-defaulted section struct with
+`deny_unknown_fields`. The shipped default is `raw`; `chat` flips what
+the fleet's Enter opens (the non-default mode stays reachable via
+Ctrl+Enter/`o`, wired in the next chunks). Mobile clients are always
+structured and read no such setting.
+
+### Changes
+- `crates/amux/src/config.rs`: `OpenMode` (raw|chat, Default=Raw),
+  `UiSettings { default_open_mode }`, `Config.ui` field; tests for the
+  shipped default, the YAML round-trip, and unknown-variant rejection.
+- `crates/amux/src/lib.rs`: export `OpenMode`, `UiSettings`.
+
+### Verification
+- `timeout 600 cargo test -p amux --lib config::` — 25 passed.
+
+---
+
 ## 2026-08-12: Phase 5 — simplification pass
 
 ### Summary
