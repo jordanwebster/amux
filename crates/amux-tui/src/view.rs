@@ -178,7 +178,7 @@ impl ViewState {
     /// [`UiAction::OpenChat`]; the run loop notes the attach so the
     /// subscription policy widens.
     pub fn open_chat(&mut self, agent: AgentId) {
-        self.chat = Some(crate::chat::ChatView::open(agent, self.leader));
+        self.chat = Some(crate::chat::ChatView::open(agent, self.leader, self.kitty));
     }
 
     /// Leave the chat screen back to the fleet (chrome navigation — a

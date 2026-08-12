@@ -451,7 +451,7 @@ const WORKING_NOW: &str = "2026-08-12T09:10:24Z";
 
 fn chat_view() -> ViewState {
     ViewState {
-        chat: Some(ChatView::open(agent_id(), 'a')),
+        chat: Some(ChatView::open(agent_id(), 'a', false)),
         ..ViewState::default()
     }
 }
@@ -554,6 +554,34 @@ const IDLE_NOW: &str = "2026-08-12T09:02:10Z";
 fn chat_idle() {
     let rendered = render_frame(&idle_model(), &chat_view(), 80, 20, IDLE_NOW);
     assert_golden("chat_idle", &rendered);
+}
+
+/// The `?` overlay: the chat's full effective key list with tier
+/// annotations, from the one binding table — plain terminal (no kitty
+/// row; ctrl+home/end and ctrl+←/→ marked terminal-dependent), tall
+/// enough for the full list.
+#[test]
+fn chat_help_overlay() {
+    let model = idle_model();
+    let mut view = chat_view();
+    view.chat.as_mut().expect("chat open").help = true;
+    let rendered = render_frame(&model, &view, 80, 46, IDLE_NOW);
+    assert_golden("chat_help_overlay", &rendered);
+}
+
+/// The overlay on a kitty terminal grows the shift+enter row (tier
+/// named); on a short viewport the tail gives way behind an honest `⋮`.
+#[test]
+fn chat_help_overlay_kitty_short() {
+    let model = idle_model();
+    let mut view = chat_view();
+    {
+        let chat = view.chat.as_mut().expect("chat open");
+        chat.help = true;
+        chat.kitty = true;
+    }
+    let rendered = render_frame(&model, &view, 80, 24, IDLE_NOW);
+    assert_golden("chat_help_overlay_kitty_short", &rendered);
 }
 
 /// The armed quit guard (chrome-wide Ctrl+C): the footer hint line

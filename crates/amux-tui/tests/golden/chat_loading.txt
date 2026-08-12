@@ -12,5 +12,5 @@
 │                                                                              │
 │ › Type a message▌                                                            │
 │                                                                              │
-│   send gated while replaying                                                 │
+│   send gated while replaying · ? help                                        │
 └──────────────────────────────────────────────────────────────────────────────┘

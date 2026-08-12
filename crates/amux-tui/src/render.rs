@@ -662,36 +662,50 @@ fn status_line(model: &Model, view: &ViewState, width: usize) -> Line<'static> {
     line
 }
 
+/// The fleet help overlay, derived from the one binding table — kitty
+/// rows appear only when the probe succeeded, the configured leader
+/// substitutes into chords, and the entry rows name the effective modes
+/// (P10: hints tell the truth).
 fn help_lines(view: &ViewState, _width: usize) -> Vec<Line<'static>> {
-    let leader = view_leader(view);
-    let rows = vec![
-        ("j/k or ↑/↓".to_string(), "move".to_string()),
-        ("gg / G".to_string(), "top / bottom".to_string()),
-        ("/ or i".to_string(), "filter".to_string()),
-        ("enter".to_string(), "attach".to_string()),
-        ("n".to_string(), "new agent".to_string()),
-        ("r".to_string(), "rename selected".to_string()),
-        ("d".to_string(), "delete selected".to_string()),
-        ("C-g".to_string(), "debug dump".to_string()),
-        ("q / C-c".to_string(), "quit".to_string()),
-        (String::new(), String::new()),
-        (format!("{leader} d"), "detach to shell".to_string()),
-        (format!("{leader} s"), "back to fleet".to_string()),
-    ];
-    rows.into_iter()
-        .map(|(key, label)| {
+    let sections = crate::bindings::fleet_sections(
+        &crate::bindings::Effective {
+            kitty: view.kitty,
+            leader_label: view.leader_label.clone(),
+        },
+        view.default_open_mode,
+    );
+    let mut lines = Vec::new();
+    for (index, section) in sections.iter().enumerate() {
+        if index > 0 {
+            lines.push(new_line());
+        }
+        for binding in &section.bindings {
             let mut line = new_line();
-            if !key.is_empty() {
-                push_span(&mut line, BADGE_COL, format!("{key:<14}"), plain());
-                push_span(&mut line, BADGE_COL + 14, label, dim());
+            push_span(
+                &mut line,
+                BADGE_COL,
+                format!("{:<14}", binding.keys),
+                plain(),
+            );
+            push_span(&mut line, BADGE_COL + 14, binding.action.clone(), dim());
+            if let Some(mark) = tier_mark(binding.tier) {
+                line.spans.push(Span::styled(format!(" · {mark}"), dim()));
             }
-            line
-        })
-        .collect()
+            lines.push(line);
+        }
+    }
+    lines
 }
 
-fn view_leader(view: &ViewState) -> String {
-    view.leader_label.clone()
+/// The overlay's tier annotation: ext is marked terminal-dependent,
+/// kitty named (a kitty row only exists when delivered); plain is the
+/// unmarked default.
+pub(crate) fn tier_mark(tier: crate::bindings::Tier) -> Option<&'static str> {
+    match tier {
+        crate::bindings::Tier::Plain => None,
+        crate::bindings::Tier::Ext => Some("terminal-dependent"),
+        crate::bindings::Tier::Kitty => Some("kitty"),
+    }
 }
 
 fn centered_lines(

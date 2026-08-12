@@ -36,5 +36,5 @@
 │                                                                              │
 │ › Type a message▌                                                            │
 │                                                                              │
-│   enter send · ctrl+j newline                               mode acceptEdits │
+│   enter send · ctrl+j newline · ? help                      mode acceptEdits │
 └──────────────────────────────────────────────────────────────────────────────┘

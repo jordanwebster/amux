@@ -38,6 +38,54 @@ One paragraph describing what was done.
 
 ---
 
+## 2026-08-12: Chat V1 Phase 6 — the one binding table + `?` overlay
+
+### Summary
+Discoverability's two layers close (`docs/CHAT.md` §Keybindings):
+`crates/amux-tui/src/bindings.rs` is the one named binding table —
+sections of typed rows `{keys, action, tier}` per context, palette-ready
+data — and everything discoverable derives from it: the fleet help
+overlay (rebuilt from `fleet_sections`; entry rows name the EFFECTIVE
+modes from the A1 default, the ctrl+enter row exists only when the kitty
+probe succeeded, the leader label substitutes into chords, the guard row
+states two-press quit while `q` stays single-press) and the new chat `?`
+overlay (`chat_sections`: chat/composer/ask/reader/read-only groups —
+the full effective key list; ext rows marked `terminal-dependent`, kitty
+rows hidden when undelivered). `?` opens the overlay from the composer
+with an EMPTY draft only — with anything typed it types (P2) — and any
+other key closes it; the leader chords and the Ctrl+C guard compose over
+it like everywhere else in the chrome (no field is focused under the
+overlay, so ^C arms). The footer's `? help` hint appears exactly when
+the branch is live (empty draft), matching the wireframes' idle frame;
+on short viewports the overlay's tail gives way behind an honest `⋮`
+row. Dispatch stays in the key handlers — deriving dispatch from the
+table too is palette-era work, not V1.
+
+### Changes
+- `bindings.rs` (new): Tier/Binding/Section/Effective +
+  `fleet_sections`/`chat_sections`; unit tests for kitty-row gating,
+  effective-mode naming, leader substitution, ext annotation.
+- `render.rs`: `help_lines` rebuilt from the table; `tier_mark`.
+- `chat/mod.rs`: `ChatView.{kitty, help}` (view-config copy + overlay
+  flag); `chat/keys.rs`: `?` branch, any-key close, guard/leader
+  precedence; `chat/render.rs`: `help_frame` + the `? help` footer hint
+  derivation (`help_hinted`).
+- Goldens: new `chat_help_overlay` (80x46, full list, plain terminal),
+  `chat_help_overlay_kitty_short` (kitty row + the honest `⋮` cut);
+  regenerated for the truthful `? help` hint on empty-draft footers
+  (chat_idle, chat_empty, chat_loading, chat_markdown, chat_echo_sending,
+  chat_entries_edge, chat_tools_edge, chat_truncated_top + the idle/
+  markdown style maps) and for the rebuilt fleet help (help_overlay, now
+  at 68x21 so the attach section fits). Frames with non-empty drafts
+  (chat_working, chat_scrolled_back, chat_composer_multiline) and every
+  panel/reader frame stayed byte-identical.
+
+### Verification
+- `timeout 600 cargo test -p amux-tui` — lib (incl. bindings tests) +
+  chat goldens + fleet goldens all green.
+
+---
+
 ## 2026-08-12: Chat V1 Phase 6 — fleet entry + leader chords in chat
 
 ### Summary

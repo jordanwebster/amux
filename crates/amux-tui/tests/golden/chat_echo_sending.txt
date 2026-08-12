@@ -18,5 +18,5 @@
 │                                                                              │
 │ › Type a message▌                                                            │
 │                                                                              │
-│   send gated — a prompt is in flight                            mode default │
+│   send gated — a prompt is in flight · ? help                   mode default │
 └──────────────────────────────────────────────────────────────────────────────┘

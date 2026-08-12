@@ -4,15 +4,18 @@
 │   j/k or ↑/↓    move                                             │
 │   gg / G        top / bottom                                     │
 │   / or i        filter                                           │
-│   enter         attach                                           │
+│   enter         open in raw attach                               │
+│   o             open in chat                                     │
 │   n             new agent                                        │
 │   r             rename selected                                  │
 │   d             delete selected                                  │
 │   C-g           debug dump                                       │
-│   q / C-c       quit                                             │
+│   q             quit                                             │
+│   ctrl+c ctrl+c quit (guarded: two presses)                      │
 │                                                                  │
 │   C-a d         detach to shell                                  │
 │   C-a s         back to fleet                                    │
+│                                                                  │
 │                                                                  │
 │ ● connected · 3 hosts  any key to close                          │
 └──────────────────────────────────────────────────────────────────┘

@@ -98,10 +98,15 @@ pub struct ChatView {
     /// A leader press is pending its chord key (`<leader> s` fleet,
     /// `<leader> d` shell).
     pub pending_leader: bool,
+    /// Whether the kitty probe succeeded (view-config, copied at open):
+    /// the `?` overlay's tier gate.
+    pub kitty: bool,
+    /// The `?` help overlay is open (any key closes it).
+    pub help: bool,
 }
 
 impl ChatView {
-    pub fn open(agent: AgentId, leader: char) -> Self {
+    pub fn open(agent: AgentId, leader: char, kitty: bool) -> Self {
         Self {
             agent,
             composer: Composer::default(),
@@ -115,6 +120,8 @@ impl ChatView {
             quit_guard: QuitGuard::default(),
             leader,
             pending_leader: false,
+            kitty,
+            help: false,
         }
     }
 

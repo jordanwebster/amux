@@ -565,7 +565,7 @@ fn help_overlay() {
         mode: Mode::Help,
         ..view_default()
     };
-    let rendered = render_frame(&fleet_model(), &view, 68, 18);
+    let rendered = render_frame(&fleet_model(), &view, 68, 21);
     assert_golden("help_overlay", &rendered);
 }
 

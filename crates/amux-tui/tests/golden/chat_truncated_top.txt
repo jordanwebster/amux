@@ -14,5 +14,5 @@
 │                                                                              │
 │ › Type a message▌                                                            │
 │                                                                              │
-│   pgup/pgdn scroll · esc newest                                              │
+│   pgup/pgdn scroll · esc newest · ? help                                     │
 └──────────────────────────────────────────────────────────────────────────────┘

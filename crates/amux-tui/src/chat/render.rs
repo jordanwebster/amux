@@ -184,6 +184,17 @@ fn bottom_lines(
     lines
 }
 
+/// `? help` joins the footer hints exactly when `?` opens the overlay —
+/// composer focus, empty draft (with anything typed, `?` types; a hint
+/// would lie, P10).
+fn help_hinted(chat: &ChatView, hints: String) -> String {
+    if chat.composer.is_empty() {
+        format!("{hints} · ? help")
+    } else {
+        hints
+    }
+}
+
 /// The armed quit guard's replacement hint row (left open; callers
 /// finish it).
 pub(crate) fn armed_quit_line(theme: Theme) -> Line<'static> {
@@ -266,6 +277,12 @@ pub(crate) fn build_chat_lines(
     }
     let theme = ctx.theme;
     let readonly = chat.read_only(model);
+
+    // The `?` overlay replaces the whole frame while open (any key
+    // closes it).
+    if chat.help {
+        return help_frame(chat, theme, width, height);
+    }
 
     // The fullscreen reader replaces the whole frame while open (falling
     // back to the chat when its source no longer resolves).
@@ -353,6 +370,89 @@ pub(crate) fn build_chat_lines(
     lines.extend(bottom);
     lines.push(crate::render::bottom_border(width));
     lines.truncate(height);
+    lines
+}
+
+/// The `?` overlay: the chat's full effective key list with tier
+/// annotations, from the one binding table (`crate::bindings`) — kitty
+/// rows appear only when probed, ext rows are marked terminal-dependent.
+/// Fullscreen like the reader; any key closes. On short viewports the
+/// tail gives way and a `⋮` row states the cut honestly.
+fn help_frame(chat: &ChatView, theme: Theme, width: usize, height: usize) -> Vec<Line<'static>> {
+    let sections = crate::bindings::chat_sections(&crate::bindings::Effective {
+        kitty: chat.kitty,
+        leader_label: format!("C-{}", chat.leader),
+    });
+    // One aligned action column across every section.
+    let key_col = TEXT_COL
+        + 2
+        + sections
+            .iter()
+            .flat_map(|section| &section.bindings)
+            .map(|binding| str_width(&binding.keys))
+            .max()
+            .unwrap_or(0)
+        + 3;
+
+    let mut rows: Vec<Line<'static>> = Vec::new();
+    for (index, section) in sections.iter().enumerate() {
+        if index > 0 {
+            rows.push(new_line());
+        }
+        let mut title = new_line();
+        push_span(&mut title, GLYPH_COL, section.title, theme.muted());
+        rows.push(title);
+        for binding in &section.bindings {
+            let mut line = new_line();
+            push_span(&mut line, TEXT_COL + 2, binding.keys.clone(), theme.text());
+            push_span(&mut line, key_col, binding.action.clone(), theme.muted());
+            if let Some(mark) = crate::render::tier_mark(binding.tier) {
+                line.spans
+                    .push(Span::styled(format!(" · {mark}"), theme.muted()));
+            }
+            rows.push(line);
+        }
+    }
+
+    // Frame rows: top border, title, rule, body, rule, hint, bottom.
+    let body_h = height.saturating_sub(7).max(1);
+    if rows.len() > body_h {
+        rows.truncate(body_h.saturating_sub(1));
+        let mut more = new_line();
+        push_span(
+            &mut more,
+            GLYPH_COL,
+            "⋮ more — a taller terminal shows the full list",
+            theme.muted(),
+        );
+        rows.push(more);
+    }
+    while rows.len() < body_h {
+        rows.push(new_line());
+    }
+
+    let mut title = new_line();
+    push_span(&mut title, GLYPH_COL, "keys", theme.text());
+    let hint = if chat.quit_guard.is_armed() {
+        armed_quit_line(theme)
+    } else {
+        let mut line = new_line();
+        push_span(&mut line, TEXT_COL, "any key to close", theme.muted());
+        line
+    };
+
+    let mut lines: Vec<Line<'static>> = Vec::with_capacity(height);
+    lines.push(top_border(width, theme));
+    lines.push(title);
+    lines.push(chrome_rule(width, theme, ""));
+    lines.extend(rows);
+    lines.push(chrome_rule(width, theme, ""));
+    lines.push(hint);
+    for line in lines.iter_mut().skip(1) {
+        finish_line(line, width);
+    }
+    lines.truncate(height.saturating_sub(1));
+    lines.push(crate::render::bottom_border(width));
     lines
 }
 
@@ -621,7 +721,7 @@ fn footer_line(model: &Model, chat: &ChatView, theme: Theme, width: usize) -> Li
         if chat.composer.is_empty() {
             hints.push_str(" · esc newest");
         }
-        push_span(&mut line, TEXT_COL, hints, theme.muted());
+        push_span(&mut line, TEXT_COL, help_hinted(chat, hints), theme.muted());
     } else if let Some(refusal) = model.claude_send_gate(chat.agent).refusal() {
         let hint = if chat.composer.is_empty() {
             refusal.to_string()
@@ -630,12 +730,12 @@ fn footer_line(model: &Model, chat: &ChatView, theme: Theme, width: usize) -> Li
             // kept — Enter is a no-op, never a loss.
             format!("draft kept — {refusal}")
         };
-        push_span(&mut line, TEXT_COL, hint, theme.muted());
+        push_span(&mut line, TEXT_COL, help_hinted(chat, hint), theme.muted());
     } else {
         push_span(
             &mut line,
             TEXT_COL,
-            "enter send · ctrl+j newline",
+            help_hinted(chat, "enter send · ctrl+j newline".to_string()),
             theme.muted(),
         );
     }

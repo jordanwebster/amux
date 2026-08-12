@@ -12,5 +12,5 @@
 │                                                                              │
 │ › Type a message▌                                                            │
 │                                                                              │
-│   enter send · ctrl+j newline                                                │
+│   enter send · ctrl+j newline · ? help                                       │
 └──────────────────────────────────────────────────────────────────────────────┘
