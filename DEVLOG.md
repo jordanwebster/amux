@@ -38,6 +38,37 @@ One paragraph describing what was done.
 
 ---
 
+## 2026-08-12: Phase 1 gate — simplification pass
+
+### Summary
+The Phase 1 simplification pass over the Claude layer. One real seam:
+the review fixes had left two copies of the message-closure machinery
+(`close_open_messages` with a hidden targeted-fallback mode, plus the
+bolted-on `close_others_as_abandoned`), each duplicating the
+close-and-retag loop. Both collapse into one `close_messages(layer,
+closure, selects)` whose slot-selection rule now reads at each call
+site — the interrupt's pair-by-`interruptedMessageId`-else-all-open
+fallback moved to `fold_interrupt`, where §17 states it. Two
+micro-cleanups: the thinking arm binds its already-matched block type
+instead of re-reading the discriminator, and `retain_plan`'s fallback
+flattens to `find` + `?`. Behavior frozen: no spec chapter changed.
+Left alone deliberately: `prompt_at()`/`session_id()` (documented
+D5/header read surfaces), the `with_claude_summarizer`/
+`with_claude_layer` gate duplication (the summarizer is deleted by
+Phase 2's unification), and `entry_kind`/`entry_kind_mut` (mut/non-mut
+pair documenting the eviction-tolerant read).
+
+### Changes
+- crates/amux-ui/src/claude/fold.rs — closure machinery unified; net −8
+  lines with the rules stated at the call sites.
+
+### Verification
+- cargo fmt + clippy `-D warnings` clean; `timeout 600 cargo test -p
+  amux-ui` (69 spec + unit tests) and `timeout 600 cargo test -p amux
+  --features testnet --test spec` (44) all green, assertions untouched.
+
+---
+
 ## 2026-08-12: Phase 1 gate — spec corrections from the layer build
 
 ### Summary

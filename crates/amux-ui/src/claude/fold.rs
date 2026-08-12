@@ -219,7 +219,7 @@ fn fold_user(layer: &mut ClaudeLayer, seq: u64, row: &Value) {
                 return;
             }
             // A user row closes any still-open message as abandoned (B2).
-            close_open_messages(layer, None, MessageFinality::Abandoned);
+            close_messages(layer, MessageFinality::Abandoned, slot_open);
             for block in blocks {
                 match str_of(block, "type") {
                     Some("tool_result") => fold_tool_result(layer, seq, row, block),
@@ -251,7 +251,7 @@ fn fold_user(layer: &mut ClaudeLayer, seq: u64, row: &Value) {
 }
 
 fn fold_user_text(layer: &mut ClaudeLayer, seq: u64, row: &Value, text: &str) {
-    close_open_messages(layer, None, MessageFinality::Abandoned);
+    close_messages(layer, MessageFinality::Abandoned, slot_open);
 
     // The post-compaction summary row (§16): renderable, flagged
     // transcript-only at the source.
@@ -357,13 +357,16 @@ fn fold_interrupt(layer: &mut ClaudeLayer, seq: u64, row: &Value, kind: Interrup
     let interrupted_message_id = string_of(row, "interruptedMessageId");
 
     // Close the message it cut off: FACT-paired by `interruptedMessageId`
-    // where present, otherwise any still-open message (§17: a null-stop
-    // message followed by an interrupt row is final-as-interrupted).
-    close_open_messages(
-        layer,
-        interrupted_message_id.as_deref(),
-        MessageFinality::Interrupted,
-    );
+    // when that slot is still indexed, otherwise any still-open message
+    // (§17: a null-stop message followed by an interrupt row is
+    // final-as-interrupted).
+    match interrupted_message_id
+        .as_deref()
+        .filter(|id| layer.messages.iter().any(|slot| slot.id == *id))
+    {
+        Some(id) => close_messages(layer, MessageFinality::Interrupted, |slot| slot.id == id),
+        None => close_messages(layer, MessageFinality::Interrupted, slot_open),
+    }
 
     push(
         layer,
@@ -397,18 +400,24 @@ fn fold_interrupt(layer: &mut ClaudeLayer, seq: u64, row: &Value, kind: Interrup
     layer.turn.stop_presignal = false;
 }
 
-/// Close open message slots: the targeted id (or every open slot when no
-/// target matches) leaves `Open`, its entry tagged with `closure`. A
-/// closing FACT that lands later still upgrades (`fold_assistant`).
-fn close_open_messages(layer: &mut ClaudeLayer, target: Option<&str>, closure: MessageFinality) {
-    let targeted = target.is_some_and(|id| layer.messages.iter().any(|slot| slot.id == id));
+/// A still-open message slot — the target of every "this row ends the
+/// request" closure (B2).
+fn slot_open(slot: &MessageSlot) -> bool {
+    slot.state == SlotState::Open
+}
+
+/// Close the message slots `selects` picks, as an inference: each moves to
+/// `ClosedInferred`, and its entry — when still retained and still `Open`
+/// — takes `closure`. A FACT-final slot is never touched, and a closing
+/// FACT that lands later still upgrades (`fold_assistant`).
+fn close_messages(
+    layer: &mut ClaudeLayer,
+    closure: MessageFinality,
+    selects: impl Fn(&MessageSlot) -> bool,
+) {
     let mut closed_entries: Vec<u64> = Vec::new();
     for slot in &mut layer.messages {
-        let matches_target = match target {
-            Some(id) if targeted => slot.id == id,
-            _ => slot.state == SlotState::Open,
-        };
-        if !matches_target || slot.state == SlotState::FinalFact {
+        if slot.state == SlotState::FinalFact || !selects(slot) {
             continue;
         }
         slot.state = SlotState::ClosedInferred;
@@ -619,18 +628,17 @@ fn retain_plan(layer: &mut ClaudeLayer, tool_use_id: &str, row: &Value) {
         .map(str::to_string)
         .or_else(|| {
             // Fall back to the tool_use input payload retained on the entry.
-            layer.open_tools.iter().find_map(|tool| {
-                if tool.tool_use_id != tool_use_id {
-                    return None;
-                }
-                match entry_kind(layer, tool.entry) {
-                    Some(FeedEntryKind::Tool(ToolEntry {
-                        invocation: ToolInvocation::Plan { plan, .. },
-                        ..
-                    })) => plan.clone(),
-                    _ => None,
-                }
-            })
+            let tool = layer
+                .open_tools
+                .iter()
+                .find(|tool| tool.tool_use_id == tool_use_id)?;
+            match entry_kind(layer, tool.entry) {
+                Some(FeedEntryKind::Tool(ToolEntry {
+                    invocation: ToolInvocation::Plan { plan, .. },
+                    ..
+                })) => plan.clone(),
+                _ => None,
+            }
         });
     let Some(plan) = plan else { return };
     layer.plans.push(AcceptedPlan {
@@ -652,7 +660,7 @@ fn fold_assistant(layer: &mut ClaudeLayer, seq: u64, row: &Value) {
     // closure applies before the error is recorded, so no null-stop
     // message is left "streaming" behind an error.
     if bool_of(row, "isApiErrorMessage") {
-        close_open_messages(layer, None, MessageFinality::Abandoned);
+        close_messages(layer, MessageFinality::Abandoned, slot_open);
         let text = row
             .pointer("/message/content")
             .and_then(Value::as_array)
@@ -682,7 +690,9 @@ fn fold_assistant(layer: &mut ClaudeLayer, seq: u64, row: &Value) {
 
     // A new message id closes any OTHER still-open message as abandoned
     // (B2) — same-id rows are the normal multi-row upsert.
-    close_others_as_abandoned(layer, &message_id);
+    close_messages(layer, MessageFinality::Abandoned, |slot| {
+        slot.id != message_id && slot_open(slot)
+    });
 
     let at = timestamp_of(row);
     let previous_row_at = layer.turn.last_row_at;
@@ -711,8 +721,8 @@ fn fold_assistant(layer: &mut ClaudeLayer, seq: u64, row: &Value) {
                 let text = str_of(block, "text").unwrap_or_default().to_string();
                 append_message_text(layer, seq, &message_id, text, at);
             }
-            Some("thinking") | Some("redacted_thinking") => {
-                let redacted = str_of(block, "type") == Some("redacted_thinking");
+            kind @ (Some("thinking") | Some("redacted_thinking")) => {
+                let redacted = kind == Some("redacted_thinking");
                 // INFERRED from FACT timestamps; the chain is broken (None)
                 // across interrupts and compaction (B3/§15).
                 let duration_ms = match (previous_row_at, at) {
@@ -756,30 +766,12 @@ fn fold_assistant(layer: &mut ClaudeLayer, seq: u64, row: &Value) {
             .find(|slot| slot.id == message_id)
             .is_some_and(|slot| slot.state == SlotState::ClosedInferred);
         if closed {
-            close_open_messages(layer, Some(&message_id), MessageFinality::Abandoned);
+            close_messages(layer, MessageFinality::Abandoned, |slot| {
+                slot.id == message_id
+            });
         }
     }
     touch_row_chain(layer, row);
-}
-
-fn close_others_as_abandoned(layer: &mut ClaudeLayer, current: &str) {
-    let mut closed_entries: Vec<u64> = Vec::new();
-    for slot in &mut layer.messages {
-        if slot.id == current || slot.state != SlotState::Open {
-            continue;
-        }
-        slot.state = SlotState::ClosedInferred;
-        if let Some(entry) = slot.entry {
-            closed_entries.push(entry);
-        }
-    }
-    for entry in closed_entries {
-        if let Some(FeedEntryKind::Message(message)) = entry_kind_mut(layer, entry)
-            && message.finality == MessageFinality::Open
-        {
-            message.finality = MessageFinality::Abandoned;
-        }
-    }
 }
 
 fn append_message_text(
