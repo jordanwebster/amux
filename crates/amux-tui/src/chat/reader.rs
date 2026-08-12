@@ -298,6 +298,14 @@ fn reader_tail(
         text.push_str(" · q close");
         tail.extend(hint(&text, theme));
     }
+    // The armed quit guard replaces the tail's hint row (the reader's
+    // footer hint line) — same rule as every other bottom block. The row
+    // count is unchanged, so scroll metrics agree.
+    if chat.quit_guard.is_armed()
+        && let Some(last) = tail.last_mut()
+    {
+        *last = super::render::armed_quit_line(theme);
+    }
     tail
 }
 

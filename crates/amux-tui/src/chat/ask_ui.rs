@@ -473,9 +473,9 @@ impl QuestionUi {
 /// ([`composer::readline_key`] — P6 applies to every text field) with the
 /// panel's own frame around it. Returns `true` when the key was consumed;
 /// Enter and Esc are left to the caller (submit / stage-back). Ctrl+C
-/// clears a non-empty field as a kill; on an empty field it is the
-/// chrome quit guard's key — a Phase 6 no-op here, consumed either way
-/// (it must never fall through to answer anything).
+/// never reaches here — the chrome-wide guard intercepts it in
+/// `handle_chat_key` (clear-as-kill on a non-empty field, via the same
+/// `active_field` derivation; arm-then-quit otherwise).
 pub(crate) fn field_key(field: &mut Composer, key: &KeyEvent) -> bool {
     let ctrl = key.modifiers.contains(KeyModifiers::CONTROL);
     match key.code {
@@ -483,12 +483,6 @@ pub(crate) fn field_key(field: &mut Composer, key: &KeyEvent) -> bool {
         KeyCode::Char('x') if ctrl => false, // interrupt is handled above
         // The feed stays scrollable behind an open text stage.
         KeyCode::PageUp | KeyCode::PageDown => false,
-        KeyCode::Char('c') if ctrl => {
-            if !field.is_empty() {
-                field.kill_all();
-            }
-            true
-        }
         // The shared readline set (printables type here — `q`, `f`,
         // digits, `?` — P2). Whatever it leaves — no newline (Ctrl+J), no
         // history, no row motion on a one-line field — is a no-op, still

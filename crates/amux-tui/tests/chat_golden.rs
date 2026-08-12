@@ -304,6 +304,7 @@ fn press(view: &mut ViewState, model: &Model, code: KeyCode) {
         model,
         KeyEvent::new(code, KeyModifiers::NONE),
         (80, 24),
+        at(IDLE_NOW),
     );
 }
 
@@ -553,6 +554,38 @@ const IDLE_NOW: &str = "2026-08-12T09:02:10Z";
 fn chat_idle() {
     let rendered = render_frame(&idle_model(), &chat_view(), 80, 20, IDLE_NOW);
     assert_golden("chat_idle", &rendered);
+}
+
+/// The armed quit guard (chrome-wide Ctrl+C): the footer hint line
+/// becomes `press ctrl+c again to quit` in warning color — hints
+/// replaced, the mode segment kept. Warning color is theme-independent
+/// (named ANSI yellow in both themes), so one frame locks it.
+#[test]
+fn chat_quit_armed() {
+    let model = idle_model();
+    let mut view = chat_view();
+    view.chat
+        .as_mut()
+        .expect("chat open")
+        .quit_guard
+        .press(at(IDLE_NOW));
+    let rendered = render_frame(&model, &view, 80, 20, IDLE_NOW);
+    assert_golden("chat_quit_armed", &rendered);
+}
+
+/// The armed guard with a docked panel: the panel's hint row is the
+/// footer hint line there — same rule, same message.
+#[test]
+fn chat_quit_armed_panel() {
+    let model = fold(edit_ask_msgs());
+    let mut view = reconciled_view(&model);
+    view.chat
+        .as_mut()
+        .expect("chat open")
+        .quit_guard
+        .press(at(WORKING_NOW));
+    let rendered = render_frame(&model, &view, 80, 24, WORKING_NOW);
+    assert_golden("chat_quit_armed_panel", &rendered);
 }
 
 /// The working wireframe: thinking marker, running Bash, the reserved
@@ -1469,6 +1502,7 @@ fn chat_plan_resolved_reader() {
             &model,
             KeyEvent::new(KeyCode::Char('t'), KeyModifiers::CONTROL),
             (80, 24),
+            at(IDLE_NOW),
         );
     }
     press(&mut view, &model, KeyCode::Left); // step to the older plan

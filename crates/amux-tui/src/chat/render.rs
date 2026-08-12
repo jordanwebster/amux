@@ -43,6 +43,11 @@ const SPINNER: [&str; 4] = ["◐", "◓", "◑", "◒"];
 /// lines").
 const PLAN_PREVIEW_LINES: usize = 6;
 
+/// The armed quit guard's footer text (`docs/CHAT.md` §Keybindings): it
+/// replaces the hint line — wherever that line lives (composer footer,
+/// panel hints, read-only footer, reader tail) — in warning color.
+pub(crate) const ARMED_QUIT_HINT: &str = "press ctrl+c again to quit";
+
 // --- layout -----------------------------------------------------------------
 
 /// The frame's rows outside the feed and the bottom block: top border,
@@ -160,6 +165,14 @@ fn bottom_lines(
         return lines;
     };
 
+    // Every bottom-block shape ends with its hint row — the chat's footer
+    // hint line — which the armed quit guard replaces (one rule, one
+    // rendering, wherever the hints live).
+    if chat.quit_guard.is_armed()
+        && let Some(last) = lines.last_mut()
+    {
+        *last = armed_quit_line(theme);
+    }
     for line in &mut lines {
         finish_line(line, width);
     }
@@ -169,6 +182,14 @@ fn bottom_lines(
         lines.drain(..lines.len() - max_rows);
     }
     lines
+}
+
+/// The armed quit guard's replacement hint row (left open; callers
+/// finish it).
+pub(crate) fn armed_quit_line(theme: Theme) -> Line<'static> {
+    let mut line = new_line();
+    push_span(&mut line, TEXT_COL, ARMED_QUIT_HINT, theme.warn());
+    line
 }
 
 /// The read-only chat's bottom block (F1): the ask fact panel when one
@@ -583,7 +604,11 @@ fn composer_lines(
 /// hook-fact sourced).
 fn footer_line(model: &Model, chat: &ChatView, theme: Theme, width: usize) -> Line<'static> {
     let mut line = new_line();
-    if let Some(message) = chat.send_failure() {
+    if chat.quit_guard.is_armed() {
+        // The armed quit guard replaces the hints (warning color); the
+        // mode segment on the right stays.
+        push_span(&mut line, TEXT_COL, ARMED_QUIT_HINT, theme.warn());
+    } else if let Some(message) = chat.send_failure() {
         push_span(&mut line, GLYPH_COL, "✗", theme.error());
         push_span(
             &mut line,

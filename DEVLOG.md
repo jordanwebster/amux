@@ -38,6 +38,54 @@ One paragraph describing what was done.
 
 ---
 
+## 2026-08-12: Chat V1 Phase 6 — chrome-wide guarded Ctrl+C
+
+### Summary
+The behavior change this phase owns (`docs/CHAT.md` §Keybindings,
+derivation `notes/chat-v1/keybindings.md` §2.1): Ctrl+C is ONE rule
+everywhere in the TUI. A focused non-empty text field is cleared —
+as a yankable kill in the chat's Composer-backed fields; the fleet's
+filter/rename line-edits clear without a kill slot (they are bare
+Strings; recorded) — and the clearing press never arms. Otherwise the
+press arms `QuitGuard` (the footer hint line becomes `press ctrl+c
+again to quit` in warning color) and a second press within 3 s quits;
+any other key, paste, or the timeout disarms; a stale arm re-arms
+instead of quitting. This REPLACES the fleet's single-press Ctrl+C
+quit; `q` keeps single-press (a deliberately typed letter, not a
+reflex — recorded in keys.rs where they meet). Raw attach passthrough
+is untouched. The chat's three Phase 4/5 stubs (composer empty-draft
+branch, panel-field empty branch, read-only chats) are filled by one
+interception at the top of `handle_chat_key`, before any panel or
+reader sees the key — so ^C can never answer, deny, or interrupt.
+
+### Changes
+- `view.rs`: `QuitGuard` (press/note_clear/disarm/is_armed/expire,
+  WINDOW_SECS=3) + unit tests; `ViewState.quit_guard`.
+- `keys.rs`: guarded branch replaces single-press quit; filter/rename
+  clear; `now` param; tests rewritten for the two-press contract.
+- `chat/mod.rs`: `ChatView.quit_guard`. `chat/keys.rs`: top-level ^C
+  interception over a new `focused_field` derivation (mirrors
+  key/paste focus routing: read-only → none, interactive ask head →
+  its open text stage, plans reader/PENDING → none, else composer);
+  `now` param; paste disarms; composer/field_key ^C arms removed.
+- `run.rs`: handlers get `Utc::now()`; the tick gate extension —
+  `QuitGuard::expire` checked only while armed, disarm owes a repaint.
+- Rendering: fleet status line early-return (⚠ + warning); chat
+  `footer_line` armed branch (mode segment kept); every other bottom
+  block (panel hints, read-only footer, reader tail) swaps its hint
+  row for `armed_quit_line` — the hint row IS the footer hint line in
+  those shapes, and row counts are unchanged so scroll metrics agree.
+- Goldens: `fleet_quit_armed`, `chat_quit_armed`,
+  `chat_quit_armed_panel`. Warning color is named-ANSI yellow in both
+  themes (theme-independent), so single-theme frames lock it.
+
+### Verification
+- `timeout 600 cargo test -p amux-tui` — 94 lib + 51 chat golden + 21
+  fleet golden; all pre-existing goldens byte-identical (the armed
+  line renders only while armed, and nothing arms in old fixtures).
+
+---
+
 ## 2026-08-12: Chat V1 Phase 6 — readonly agents surface in the fleet (A3)
 
 ### Summary

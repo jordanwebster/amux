@@ -4,6 +4,78 @@
 //! scroll, drafts, navigation. Everything domain-shaped stays in the Model.
 
 use amux_ui::{AgentId, Command, FleetItem, Model};
+use chrono::{DateTime, TimeDelta, Utc};
+
+/// The chrome-wide guarded Ctrl+C (`docs/CHAT.md` §Keybindings) — ONE
+/// rule for the whole TUI: with a focused non-empty text field the press
+/// clears that field (and never arms); otherwise the first press arms
+/// this guard — the footer hint line becomes `press ctrl+c again to
+/// quit` in warning color — and a second press within the window quits.
+/// Any other key or the timeout disarms. The invariant, teachable in one
+/// line: a single Ctrl+C never quits, never interrupts, and never loses
+/// text it didn't visibly kill.
+#[derive(Clone, Debug, Default, PartialEq, Eq)]
+pub struct QuitGuard {
+    armed_at: Option<DateTime<Utc>>,
+}
+
+impl QuitGuard {
+    /// The arm window: long enough to read the message, short enough that
+    /// no armed state lurks (keybindings derivation §5.5, accepted).
+    pub const WINDOW_SECS: i64 = 3;
+
+    fn window() -> TimeDelta {
+        TimeDelta::seconds(Self::WINDOW_SECS)
+    }
+
+    /// A Ctrl+C press with nothing to clear: quits when armed and fresh,
+    /// arms otherwise. A stale arm re-arms instead of quitting — the
+    /// rendered message may never have been read.
+    pub fn press(&mut self, now: DateTime<Utc>) -> bool {
+        match self.armed_at {
+            Some(at) if now - at <= Self::window() => {
+                self.armed_at = None;
+                true
+            }
+            _ => {
+                self.armed_at = Some(now);
+                false
+            }
+        }
+    }
+
+    /// A Ctrl+C press that cleared a focused field: the clearing press
+    /// never arms (and never quits) — the branch is taken per press by
+    /// buffer state.
+    pub fn note_clear(&mut self) {
+        self.armed_at = None;
+    }
+
+    /// Any key that is not Ctrl+C disarms.
+    pub fn disarm(&mut self) {
+        self.armed_at = None;
+    }
+
+    /// Whether the armed footer renders. Expiry is the tick's job
+    /// ([`QuitGuard::expire`]); a render between the deadline and the
+    /// next tick may show the message up to a second late — tolerated.
+    pub fn is_armed(&self) -> bool {
+        self.armed_at.is_some()
+    }
+
+    /// The tick check, gated on being armed (the event-driven rule's
+    /// extension): disarms a stale arm; true when state changed and a
+    /// repaint is owed.
+    pub fn expire(&mut self, now: DateTime<Utc>) -> bool {
+        match self.armed_at {
+            Some(at) if now - at > Self::window() => {
+                self.armed_at = None;
+                true
+            }
+            _ => false,
+        }
+    }
+}
 
 /// Interaction mode of the fleet screen.
 #[derive(Clone, Debug, PartialEq, Eq)]
@@ -39,6 +111,14 @@ pub struct ViewState {
     /// Human label of the leader key ("C-a"), shown in help. View-config,
     /// set once at startup.
     pub leader_label: String,
+    /// Whether the terminal answered the kitty keyboard-enhancement probe
+    /// (view-config, set when the chrome session enters). Gates the
+    /// kitty-tier bindings in hints and the `?` overlay — hints advertise
+    /// only what works; dispatch trusts delivered events.
+    pub kitty: bool,
+    /// The chrome-wide two-press quit guard (fleet side; an open chat
+    /// carries its own instance — same type, same rule).
+    pub quit_guard: QuitGuard,
     /// The chat screen, when open: it replaces the fleet inside the same
     /// chrome (`docs/CHAT.md`). Opening from the fleet is Phase 6's
     /// binding work; [`ViewState::open_chat`] is the seam it invokes.
@@ -56,6 +136,8 @@ impl Default for ViewState {
             dismissed_error_seq: 0,
             notice: None,
             leader_label: "C-a".to_string(),
+            kitty: false,
+            quit_guard: QuitGuard::default(),
             chat: None,
         }
     }
@@ -171,6 +253,57 @@ pub enum UiAction {
     },
     /// Dump the recorder ring (`C-g`).
     DebugDump,
+}
+
+#[cfg(test)]
+mod quit_guard_tests {
+    use super::*;
+
+    fn t(seconds: i64) -> DateTime<Utc> {
+        DateTime::from_timestamp(1_755_000_000 + seconds, 0).expect("epoch")
+    }
+
+    #[test]
+    fn the_first_press_arms_and_a_fresh_second_press_quits() {
+        let mut guard = QuitGuard::default();
+        assert!(!guard.press(t(0)), "a single Ctrl+C never quits");
+        assert!(guard.is_armed());
+        assert!(guard.press(t(2)), "second press within the window quits");
+        assert!(!guard.is_armed(), "the quitting press consumes the arm");
+    }
+
+    #[test]
+    fn a_stale_arm_rearms_instead_of_quitting() {
+        let mut guard = QuitGuard::default();
+        guard.press(t(0));
+        assert!(
+            !guard.press(t(QuitGuard::WINDOW_SECS + 1)),
+            "past the window the press arms again"
+        );
+        assert!(guard.is_armed());
+    }
+
+    #[test]
+    fn any_other_key_and_the_clearing_press_disarm() {
+        let mut guard = QuitGuard::default();
+        guard.press(t(0));
+        guard.disarm();
+        assert!(!guard.is_armed());
+        guard.press(t(1));
+        guard.note_clear();
+        assert!(!guard.is_armed(), "the clearing press never arms");
+    }
+
+    #[test]
+    fn the_tick_expires_a_stale_arm_exactly_once() {
+        let mut guard = QuitGuard::default();
+        assert!(!guard.expire(t(0)), "nothing to expire while disarmed");
+        guard.press(t(0));
+        assert!(!guard.expire(t(QuitGuard::WINDOW_SECS)), "still fresh");
+        assert!(guard.expire(t(QuitGuard::WINDOW_SECS + 1)), "stale: disarm");
+        assert!(!guard.is_armed());
+        assert!(!guard.expire(t(10)), "already disarmed: no repaint owed");
+    }
 }
 
 impl ViewState {

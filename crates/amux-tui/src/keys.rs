@@ -2,6 +2,7 @@
 //! `UiAction`s; all domain writes leave as Commands through the runtime.
 
 use amux_ui::{Command, Model};
+use chrono::{DateTime, Utc};
 use crossterm::event::{KeyCode, KeyEvent, KeyEventKind, KeyModifiers};
 
 use crate::view::{Mode, UiAction, ViewState, VisibleRow, visible_rows};
@@ -11,6 +12,7 @@ pub fn handle_key(
     model: &Model,
     key: KeyEvent,
     list_rows: usize,
+    now: DateTime<Utc>,
 ) -> Option<UiAction> {
     if key.kind == KeyEventKind::Release {
         return None;
@@ -23,12 +25,34 @@ pub fn handle_key(
     }
     let pending_g = std::mem::take(&mut view.pending_g);
 
-    // Ctrl-C quits from ANY mode: the chrome is a stateless viewer and must
-    // never feel like it traps the terminal. `esc` cancels modes; `C-c`
-    // (like `q` in normal mode) exits.
+    // Ctrl+C is the chrome-wide guarded abandon key (`docs/CHAT.md`
+    // §Keybindings), ONE rule for the whole TUI: a focused non-empty text
+    // field (here: the filter, the rename draft) is cleared — the
+    // clearing press never arms — and otherwise the first press arms the
+    // quit guard, a second within the window quits. A single Ctrl+C never
+    // quits; the arm renders in the status line.
     if key.code == KeyCode::Char('c') && key.modifiers.contains(KeyModifiers::CONTROL) {
-        return Some(UiAction::Quit);
+        match &mut view.mode {
+            Mode::Filter if !view.filter.is_empty() => {
+                view.filter.clear();
+                view.selected = 0;
+                view.scroll = 0;
+                view.quit_guard.note_clear();
+            }
+            Mode::Rename { draft, .. } if !draft.is_empty() => {
+                draft.clear();
+                view.quit_guard.note_clear();
+            }
+            _ => {
+                if view.quit_guard.press(now) {
+                    return Some(UiAction::Quit);
+                }
+            }
+        }
+        return None;
     }
+    // Any other key disarms the quit guard.
+    view.quit_guard.disarm();
 
     match view.mode.clone() {
         Mode::Help => {
@@ -109,6 +133,10 @@ pub fn handle_key(
             _ => None,
         },
         Mode::Normal => match key.code {
+            // `q` keeps its single-press quit where the guarded Ctrl+C
+            // takes two: a deliberately typed letter is not a reflex —
+            // the guard exists for the shell's ^C muscle memory, and
+            // Normal mode has no text field for `q` to type into.
             KeyCode::Char('q') => Some(UiAction::Quit),
             KeyCode::Char('g') if key.modifiers.contains(KeyModifiers::CONTROL) => {
                 Some(UiAction::DebugDump)
@@ -224,27 +252,96 @@ mod tests {
         KeyEvent::new(KeyCode::Char('c'), KeyModifiers::CONTROL)
     }
 
-    /// Ctrl-C exits from every mode — including filter/rename, where a bare
-    /// `c` would otherwise be text input.
+    fn t(seconds: i64) -> DateTime<Utc> {
+        DateTime::from_timestamp(1_755_000_000 + seconds, 0).expect("epoch")
+    }
+
+    /// The chrome-wide guarded Ctrl+C: with no text field to clear, the
+    /// first press arms (a single Ctrl+C never quits) and a fresh second
+    /// press quits — from every field-less mode.
     #[test]
-    fn ctrl_c_quits_from_any_mode() {
+    fn ctrl_c_arms_then_a_second_press_quits_from_any_fieldless_mode() {
         let model = Model::default();
-        for mode in [
-            Mode::Normal,
-            Mode::Filter,
-            Mode::Rename {
-                agent: uuid::Uuid::from_u128(7),
-                draft: "half-typed".to_string(),
-            },
-            Mode::Help,
-        ] {
+        for mode in [Mode::Normal, Mode::Filter, Mode::Help] {
             let mut view = ViewState {
                 mode,
                 ..ViewState::default()
             };
-            let action = handle_key(&mut view, &model, ctrl_c(), 10);
-            assert!(matches!(action, Some(UiAction::Quit)), "mode should quit");
+            let first = handle_key(&mut view, &model, ctrl_c(), 10, t(0));
+            assert_eq!(first, None, "the first press arms, never quits");
+            assert!(view.quit_guard.is_armed(), "armed state renders");
+            let second = handle_key(&mut view, &model, ctrl_c(), 10, t(2));
+            assert!(matches!(second, Some(UiAction::Quit)), "second quits");
         }
+    }
+
+    #[test]
+    fn a_stale_arm_rearms_instead_of_quitting() {
+        let model = Model::default();
+        let mut view = ViewState::default();
+        handle_key(&mut view, &model, ctrl_c(), 10, t(0));
+        let late = handle_key(&mut view, &model, ctrl_c(), 10, t(10));
+        assert_eq!(late, None, "past the window the press only re-arms");
+        assert!(view.quit_guard.is_armed());
+    }
+
+    #[test]
+    fn any_other_key_disarms() {
+        let model = Model::default();
+        let mut view = ViewState::default();
+        handle_key(&mut view, &model, ctrl_c(), 10, t(0));
+        handle_key(
+            &mut view,
+            &model,
+            KeyEvent::new(KeyCode::Char('j'), KeyModifiers::NONE),
+            10,
+            t(1),
+        );
+        assert!(!view.quit_guard.is_armed(), "another key disarms");
+        let press = handle_key(&mut view, &model, ctrl_c(), 10, t(2));
+        assert_eq!(press, None, "disarmed: the press arms again, no quit");
+    }
+
+    /// A non-empty focused text field makes Ctrl+C a clear — the clearing
+    /// press never arms; the NEXT press (field now empty) arms; a third
+    /// quits. Quit-from-a-full-field is three deliberate presses.
+    #[test]
+    fn ctrl_c_clears_the_filter_and_never_arms() {
+        let model = Model::default();
+        let mut view = ViewState {
+            mode: Mode::Filter,
+            filter: "auth".to_string(),
+            selected: 2,
+            ..ViewState::default()
+        };
+        assert_eq!(handle_key(&mut view, &model, ctrl_c(), 10, t(0)), None);
+        assert!(view.filter.is_empty(), "the press cleared the filter");
+        assert_eq!(view.selected, 0, "clearing resets the selection");
+        assert!(!view.quit_guard.is_armed(), "the clearing press never arms");
+        assert_eq!(handle_key(&mut view, &model, ctrl_c(), 10, t(1)), None);
+        assert!(view.quit_guard.is_armed(), "empty now: the press arms");
+        assert!(matches!(
+            handle_key(&mut view, &model, ctrl_c(), 10, t(2)),
+            Some(UiAction::Quit)
+        ));
+    }
+
+    #[test]
+    fn ctrl_c_clears_the_rename_draft_and_never_arms() {
+        let model = Model::default();
+        let mut view = ViewState {
+            mode: Mode::Rename {
+                agent: uuid::Uuid::from_u128(7),
+                draft: "half-typed".to_string(),
+            },
+            ..ViewState::default()
+        };
+        assert_eq!(handle_key(&mut view, &model, ctrl_c(), 10, t(0)), None);
+        let Mode::Rename { draft, .. } = &view.mode else {
+            panic!("still renaming — Ctrl+C cleared, it did not cancel");
+        };
+        assert!(draft.is_empty());
+        assert!(!view.quit_guard.is_armed());
     }
 
     #[test]
@@ -256,6 +353,7 @@ mod tests {
             &model,
             KeyEvent::new(KeyCode::Char('q'), KeyModifiers::NONE),
             10,
+            t(0),
         );
         assert!(matches!(action, Some(UiAction::Quit)));
     }

@@ -11,9 +11,11 @@
 use amux_ui::claude::AskState;
 use amux_ui::claude::encoding::{self, AskAnswer};
 use amux_ui::{Command, Model};
+use chrono::{DateTime, Utc};
 use crossterm::event::{KeyCode, KeyEvent, KeyEventKind, KeyModifiers};
 
-use crate::chat::ask_ui::{self, AskKeyOutcome, AskStage};
+use crate::chat::ask_ui::{self, AskKeyOutcome, AskStage, AskUi};
+use crate::chat::composer::Composer;
 use crate::chat::reader::{self, ReaderSource, ReaderView};
 use crate::chat::{ChatView, FeedScroll, composer, entry_watermark, render};
 use crate::view::UiAction;
@@ -23,6 +25,7 @@ pub fn handle_chat_key(
     model: &Model,
     key: KeyEvent,
     viewport: (u16, u16),
+    now: DateTime<Utc>,
 ) -> Option<UiAction> {
     if key.kind == KeyEventKind::Release {
         return None;
@@ -33,6 +36,31 @@ pub fn handle_chat_key(
     chat.ask_failure = None;
     // Defensive sync: keys may arrive before the first reconcile.
     chat.sync_ask(model);
+
+    // Ctrl+C is the chrome-wide guarded abandon key — ONE rule
+    // (`docs/CHAT.md` §Keybindings), intercepted before any panel,
+    // reader, or read-only surface sees the key, because it must never
+    // answer, deny, or interrupt anything (P5): a focused non-empty text
+    // field is cleared as a kill (yankable; the clearing press never
+    // arms); otherwise — ask menu stages, PENDING, readers, read-only
+    // chats, the empty composer — the press arms the quit guard, and a
+    // fresh second press quits.
+    if key.code == KeyCode::Char('c') && key.modifiers.contains(KeyModifiers::CONTROL) {
+        match focused_field(chat, model).filter(|field| !field.is_empty()) {
+            Some(field) => {
+                field.kill_all();
+                chat.quit_guard.note_clear();
+            }
+            None => {
+                if chat.quit_guard.press(now) {
+                    return Some(UiAction::Quit);
+                }
+            }
+        }
+        return None;
+    }
+    // Any other key disarms the quit guard.
+    chat.quit_guard.disarm();
 
     // Read-only chats have a single viewing focus: scroll keys, `f`, and
     // `q` only (F1) — write affordances are absent, not disabled, so the
@@ -78,6 +106,29 @@ pub fn handle_chat_key(
     composer_key(chat, model, key, viewport)
 }
 
+/// The focused text field, if any — the surface the guarded Ctrl+C
+/// clears: a read-only chat has none (F1); an interactive ask head
+/// (Pending or SendFailed) owns its open text stage, and its menu stages
+/// have no field; the optimistic-pending marker and the accepted-plans
+/// reader have none; otherwise the composer is the focused field. This
+/// mirrors the focus derivation keys and paste routing use — the
+/// invisible composer behind a docked panel is never "focused".
+fn focused_field<'c>(chat: &'c mut ChatView, model: &Model) -> Option<&'c mut Composer> {
+    if chat.read_only(model) {
+        return None;
+    }
+    let ask_state = chat.ask_head(model).map(|ask| match ask.state {
+        AskState::Pending | AskState::SendFailed { .. } => true,
+        AskState::AnsweredOptimistic { .. } => false,
+    });
+    match ask_state {
+        Some(true) => chat.ask_ui.as_mut().and_then(AskUi::active_field),
+        Some(false) => None,
+        None if chat.reader.is_some() => None,
+        None => Some(&mut chat.composer),
+    }
+}
+
 /// The composer focus: the chat-level bindings (Phase 4's key set, plus
 /// Ctrl+T for the plan reader) layered over the shared readline set
 /// ([`composer::readline_key`] — the same machinery the panel text
@@ -90,17 +141,9 @@ fn composer_key(
 ) -> Option<UiAction> {
     let ctrl = key.modifiers.contains(KeyModifiers::CONTROL);
     match key.code {
-        // Ctrl+C on a non-empty draft: abandon the whole draft as a kill
-        // (yankable — a single ^C never loses text it didn't visibly
-        // kill). On an empty draft this arms the chrome-wide two-press
-        // quit guard — Phase 6's chrome integration; until it lands the
-        // empty branch is a deliberate no-op (a single ^C must never
-        // quit).
-        KeyCode::Char('c') if ctrl => {
-            if !chat.composer.is_empty() {
-                chat.composer.kill_all();
-            }
-        }
+        // Ctrl+C never reaches here — the chrome-wide guard intercepts it
+        // in `handle_chat_key` (clear-as-kill on a non-empty draft;
+        // arm-then-quit otherwise).
         // Ctrl+T: the reader on the newest accepted plan (B6); ←/→ steps
         // between plans once open. Only bound while a plan exists — the
         // feed's `ctrl+t to read` affordance is the hint.
@@ -171,6 +214,8 @@ fn composer_key(
 pub fn handle_chat_paste(chat: &mut ChatView, model: &Model, text: &str) {
     chat.send_failure = None;
     chat.ask_failure = None;
+    // Paste is input like any other key: it disarms the quit guard.
+    chat.quit_guard.disarm();
     // The same defensive sync keys run: a pending ask that has not been
     // reconciled yet still owns the surface — the paste must not slip
     // into the composer through that window.
@@ -672,7 +717,7 @@ mod tests {
     fn enter_sends_when_ready_and_clears_the_draft() {
         let model = idle_model();
         let mut chat = chat_with_draft("add retry");
-        let action = handle_chat_key(&mut chat, &model, press(KeyCode::Enter), VIEWPORT);
+        let action = handle_chat_key(&mut chat, &model, press(KeyCode::Enter), VIEWPORT, t(0));
         assert_eq!(
             action,
             Some(UiAction::Dispatch(Command::SendPrompt {
@@ -687,7 +732,7 @@ mod tests {
     fn enter_is_a_noop_while_gated_and_keeps_the_draft() {
         let model = working_model();
         let mut chat = chat_with_draft("and document it");
-        let action = handle_chat_key(&mut chat, &model, press(KeyCode::Enter), VIEWPORT);
+        let action = handle_chat_key(&mut chat, &model, press(KeyCode::Enter), VIEWPORT, t(0));
         assert_eq!(action, None, "send is gated while working (D2)");
         assert_eq!(chat.composer.text(), "and document it", "draft kept");
     }
@@ -697,7 +742,7 @@ mod tests {
         let model = idle_model();
         let mut chat = ChatView::open(agent_id());
         assert_eq!(
-            handle_chat_key(&mut chat, &model, press(KeyCode::Enter), VIEWPORT),
+            handle_chat_key(&mut chat, &model, press(KeyCode::Enter), VIEWPORT, t(0)),
             None
         );
     }
@@ -706,7 +751,7 @@ mod tests {
     fn ctrl_x_interrupts_in_every_state_and_never_touches_the_draft() {
         for model in [idle_model(), working_model()] {
             let mut chat = chat_with_draft("precious draft");
-            let action = handle_chat_key(&mut chat, &model, ctrl('x'), VIEWPORT);
+            let action = handle_chat_key(&mut chat, &model, ctrl('x'), VIEWPORT, t(0));
             assert_eq!(
                 action,
                 Some(UiAction::Dispatch(Command::Interrupt { agent: agent_id() }))
@@ -716,33 +761,67 @@ mod tests {
     }
 
     #[test]
-    fn ctrl_c_clears_a_nonempty_draft_as_a_yankable_kill() {
+    fn ctrl_c_clears_a_nonempty_draft_as_a_yankable_kill_and_never_arms() {
         let model = idle_model();
         let mut chat = chat_with_draft("half a thought");
         assert_eq!(
-            handle_chat_key(&mut chat, &model, ctrl('c'), VIEWPORT),
+            handle_chat_key(&mut chat, &model, ctrl('c'), VIEWPORT, t(0)),
             None
         );
         assert!(chat.composer.is_empty());
+        assert!(
+            !chat.quit_guard.is_armed(),
+            "the clearing press never arms (2.1)"
+        );
         chat.composer.yank();
         assert_eq!(chat.composer.text(), "half a thought", "clear is a kill");
     }
 
+    /// The chrome-wide guard in the chat: empty draft → arm (rendered),
+    /// fresh second press → quit; any other key disarms; a stale arm
+    /// re-arms. Quit-from-a-full-composer is three deliberate presses.
     #[test]
-    fn ctrl_c_on_an_empty_draft_is_a_noop_until_phase_6() {
+    fn ctrl_c_on_an_empty_draft_arms_then_a_second_press_quits() {
         let model = idle_model();
         let mut chat = ChatView::open(agent_id());
         assert_eq!(
-            handle_chat_key(&mut chat, &model, ctrl('c'), VIEWPORT),
-            None
+            handle_chat_key(&mut chat, &model, ctrl('c'), VIEWPORT, t(0)),
+            None,
+            "a single Ctrl+C never quits"
         );
-        assert!(chat.composer.is_empty());
+        assert!(chat.quit_guard.is_armed());
+        assert_eq!(
+            handle_chat_key(&mut chat, &model, ctrl('c'), VIEWPORT, t(2)),
+            Some(UiAction::Quit)
+        );
+    }
+
+    #[test]
+    fn any_other_key_disarms_and_a_stale_arm_rearms() {
+        let model = idle_model();
+        let mut chat = ChatView::open(agent_id());
+        handle_chat_key(&mut chat, &model, ctrl('c'), VIEWPORT, t(0));
+        handle_chat_key(&mut chat, &model, press(KeyCode::End), VIEWPORT, t(1));
+        assert!(!chat.quit_guard.is_armed(), "another key disarms");
+        handle_chat_key(&mut chat, &model, ctrl('c'), VIEWPORT, t(2));
+        assert_eq!(
+            handle_chat_key(&mut chat, &model, ctrl('c'), VIEWPORT, t(10)),
+            None,
+            "a stale arm re-arms instead of quitting"
+        );
+        assert!(chat.quit_guard.is_armed());
     }
 
     #[test]
     fn shift_tab_cycles_the_mode_only_when_the_injection_would_reach_claude() {
         let mut chat = ChatView::open(agent_id());
-        let action = handle_chat_key(&mut chat, &idle_model(), press(KeyCode::BackTab), VIEWPORT);
+        let action = handle_chat_key(
+            &mut chat,
+            &idle_model(),
+            press(KeyCode::BackTab),
+            VIEWPORT,
+            t(0),
+        );
         assert_eq!(
             action,
             Some(UiAction::Dispatch(Command::CyclePermissionMode {
@@ -766,7 +845,7 @@ mod tests {
             )],
         );
         assert_eq!(
-            handle_chat_key(&mut chat, &model, press(KeyCode::BackTab), VIEWPORT),
+            handle_chat_key(&mut chat, &model, press(KeyCode::BackTab), VIEWPORT, t(0)),
             None
         );
     }
@@ -776,14 +855,14 @@ mod tests {
         let model = idle_model();
         let mut chat = ChatView::open(agent_id());
         assert_eq!(
-            handle_chat_key(&mut chat, &model, press(KeyCode::Tab), VIEWPORT),
+            handle_chat_key(&mut chat, &model, press(KeyCode::Tab), VIEWPORT, t(0)),
             None
         );
         assert!(
             chat.composer.is_empty(),
             "tab stays a no-op (queueing door)"
         );
-        handle_chat_key(&mut chat, &model, press(KeyCode::Char('?')), VIEWPORT);
+        handle_chat_key(&mut chat, &model, press(KeyCode::Char('?')), VIEWPORT, t(0));
         assert_eq!(
             chat.composer.text(),
             "?",
@@ -807,7 +886,7 @@ mod tests {
     fn pgup_pauses_with_a_watermark_and_pgdn_at_the_bottom_resumes() {
         let model = long_feed_model();
         let mut chat = ChatView::open(agent_id());
-        handle_chat_key(&mut chat, &model, press(KeyCode::PageUp), VIEWPORT);
+        handle_chat_key(&mut chat, &model, press(KeyCode::PageUp), VIEWPORT, t(0));
         let FeedScroll::Paused {
             entry_watermark, ..
         } = chat.scroll
@@ -816,14 +895,14 @@ mod tests {
         };
         assert_eq!(entry_watermark, 20, "watermark is the entry count at pause");
 
-        handle_chat_key(&mut chat, &model, press(KeyCode::PageUp), VIEWPORT);
-        handle_chat_key(&mut chat, &model, press(KeyCode::PageDown), VIEWPORT);
+        handle_chat_key(&mut chat, &model, press(KeyCode::PageUp), VIEWPORT, t(0));
+        handle_chat_key(&mut chat, &model, press(KeyCode::PageDown), VIEWPORT, t(0));
         assert!(
             matches!(chat.scroll, FeedScroll::Paused { .. }),
             "mid-feed PgDn stays paused"
         );
-        handle_chat_key(&mut chat, &model, press(KeyCode::PageDown), VIEWPORT);
-        handle_chat_key(&mut chat, &model, press(KeyCode::PageDown), VIEWPORT);
+        handle_chat_key(&mut chat, &model, press(KeyCode::PageDown), VIEWPORT, t(0));
+        handle_chat_key(&mut chat, &model, press(KeyCode::PageDown), VIEWPORT, t(0));
         assert_eq!(
             chat.scroll,
             FeedScroll::Following,
@@ -835,7 +914,7 @@ mod tests {
     fn pgup_with_a_short_feed_stays_following() {
         let model = idle_model();
         let mut chat = ChatView::open(agent_id());
-        handle_chat_key(&mut chat, &model, press(KeyCode::PageUp), VIEWPORT);
+        handle_chat_key(&mut chat, &model, press(KeyCode::PageUp), VIEWPORT, t(0));
         assert_eq!(chat.scroll, FeedScroll::Following);
     }
 
@@ -843,14 +922,14 @@ mod tests {
     fn esc_resets_scroll_only_on_an_empty_draft() {
         let model = long_feed_model();
         let mut chat = chat_with_draft("reading notes");
-        handle_chat_key(&mut chat, &model, press(KeyCode::PageUp), VIEWPORT);
-        handle_chat_key(&mut chat, &model, press(KeyCode::Esc), VIEWPORT);
+        handle_chat_key(&mut chat, &model, press(KeyCode::PageUp), VIEWPORT, t(0));
+        handle_chat_key(&mut chat, &model, press(KeyCode::Esc), VIEWPORT, t(0));
         assert!(
             matches!(chat.scroll, FeedScroll::Paused { .. }),
             "a non-empty draft keeps Esc away from the scroll (stage 3 gate)"
         );
         chat.composer.kill_all();
-        handle_chat_key(&mut chat, &model, press(KeyCode::Esc), VIEWPORT);
+        handle_chat_key(&mut chat, &model, press(KeyCode::Esc), VIEWPORT, t(0));
         assert_eq!(chat.scroll, FeedScroll::Following);
     }
 
@@ -858,14 +937,14 @@ mod tests {
     fn readline_chords_edit_the_draft() {
         let model = idle_model();
         let mut chat = chat_with_draft("fix the tests");
-        handle_chat_key(&mut chat, &model, ctrl('w'), VIEWPORT);
+        handle_chat_key(&mut chat, &model, ctrl('w'), VIEWPORT, t(0));
         assert_eq!(chat.composer.text(), "fix the ");
-        handle_chat_key(&mut chat, &model, ctrl('u'), VIEWPORT);
+        handle_chat_key(&mut chat, &model, ctrl('u'), VIEWPORT, t(0));
         assert!(chat.composer.is_empty());
-        handle_chat_key(&mut chat, &model, ctrl('y'), VIEWPORT);
+        handle_chat_key(&mut chat, &model, ctrl('y'), VIEWPORT, t(0));
         assert_eq!(chat.composer.text(), "fix the ");
-        handle_chat_key(&mut chat, &model, ctrl('b'), VIEWPORT);
-        handle_chat_key(&mut chat, &model, ctrl('d'), VIEWPORT);
+        handle_chat_key(&mut chat, &model, ctrl('b'), VIEWPORT, t(0));
+        handle_chat_key(&mut chat, &model, ctrl('d'), VIEWPORT, t(0));
         assert_eq!(chat.composer.text(), "fix the");
     }
 
@@ -873,7 +952,7 @@ mod tests {
     fn ctrl_j_inserts_a_newline_instead_of_sending() {
         let model = idle_model();
         let mut chat = chat_with_draft("first");
-        let action = handle_chat_key(&mut chat, &model, ctrl('j'), VIEWPORT);
+        let action = handle_chat_key(&mut chat, &model, ctrl('j'), VIEWPORT, t(0));
         assert_eq!(action, None);
         assert_eq!(chat.composer.text(), "first\n");
     }
@@ -882,7 +961,7 @@ mod tests {
     fn a_failed_send_restores_the_draft_and_states_the_failure() {
         let mut model = idle_model();
         let mut chat = chat_with_draft("add retry");
-        let action = handle_chat_key(&mut chat, &model, press(KeyCode::Enter), VIEWPORT);
+        let action = handle_chat_key(&mut chat, &model, press(KeyCode::Enter), VIEWPORT, t(0));
         let Some(UiAction::Dispatch(command)) = action else {
             panic!("enter dispatches");
         };
@@ -906,7 +985,7 @@ mod tests {
         assert_eq!(chat.send_failure(), Some("input raced the session"));
 
         // The next keypress dismisses the stated failure.
-        handle_chat_key(&mut chat, &model, press(KeyCode::End), VIEWPORT);
+        handle_chat_key(&mut chat, &model, press(KeyCode::End), VIEWPORT, t(0));
         assert_eq!(chat.send_failure(), None);
     }
 
@@ -915,7 +994,7 @@ mod tests {
         let mut model = idle_model();
         let mut chat = chat_with_draft("add retry");
         let Some(UiAction::Dispatch(command)) =
-            handle_chat_key(&mut chat, &model, press(KeyCode::Enter), VIEWPORT)
+            handle_chat_key(&mut chat, &model, press(KeyCode::Enter), VIEWPORT, t(0))
         else {
             panic!("enter dispatches");
         };
@@ -950,7 +1029,7 @@ mod tests {
         let mut model = idle_model();
         let mut chat = chat_with_draft("   ");
         let Some(UiAction::Dispatch(command)) =
-            handle_chat_key(&mut chat, &model, press(KeyCode::Enter), VIEWPORT)
+            handle_chat_key(&mut chat, &model, press(KeyCode::Enter), VIEWPORT, t(0))
         else {
             panic!("enter dispatches (the draft is non-empty, the gate is Ready)");
         };
@@ -1104,7 +1183,7 @@ mod tests {
         let model = edit_ask_model();
         let mut chat = open_chat(&model);
         assert_eq!(
-            handle_chat_key(&mut chat, &model, press(KeyCode::Char('2')), VIEWPORT),
+            handle_chat_key(&mut chat, &model, press(KeyCode::Char('2')), VIEWPORT, t(0)),
             None,
             "digits select, never submit (P8)"
         );
@@ -1113,6 +1192,7 @@ mod tests {
             &model,
             press(KeyCode::Enter),
             VIEWPORT,
+            t(0),
         ));
         assert_eq!(
             answer,
@@ -1126,7 +1206,7 @@ mod tests {
         let mut chat = open_chat(&model);
         for _ in 0..3 {
             assert_eq!(
-                handle_chat_key(&mut chat, &model, press(KeyCode::Esc), VIEWPORT),
+                handle_chat_key(&mut chat, &model, press(KeyCode::Esc), VIEWPORT, t(0)),
                 None
             );
         }
@@ -1140,23 +1220,24 @@ mod tests {
     fn deny_stage_preserves_text_and_enter_carries_the_feedback() {
         let model = edit_ask_model();
         let mut chat = open_chat(&model);
-        handle_chat_key(&mut chat, &model, press(KeyCode::Char('3')), VIEWPORT);
-        handle_chat_key(&mut chat, &model, press(KeyCode::Enter), VIEWPORT);
+        handle_chat_key(&mut chat, &model, press(KeyCode::Char('3')), VIEWPORT, t(0));
+        handle_chat_key(&mut chat, &model, press(KeyCode::Enter), VIEWPORT, t(0));
         for c in "why".chars() {
-            handle_chat_key(&mut chat, &model, press(KeyCode::Char(c)), VIEWPORT);
+            handle_chat_key(&mut chat, &model, press(KeyCode::Char(c)), VIEWPORT, t(0));
         }
         // Esc steps back to the menu; the typed text survives (P8).
-        handle_chat_key(&mut chat, &model, press(KeyCode::Esc), VIEWPORT);
+        handle_chat_key(&mut chat, &model, press(KeyCode::Esc), VIEWPORT, t(0));
         assert!(matches!(
             chat.ask_ui.as_ref().expect("panel").stage,
             crate::chat::ask_ui::AskStage::Menu { cursor: 2 }
         ));
-        handle_chat_key(&mut chat, &model, press(KeyCode::Enter), VIEWPORT);
+        handle_chat_key(&mut chat, &model, press(KeyCode::Enter), VIEWPORT, t(0));
         let answer = answer_of(handle_chat_key(
             &mut chat,
             &model,
             press(KeyCode::Enter),
             VIEWPORT,
+            t(0),
         ));
         assert_eq!(
             answer,
@@ -1170,13 +1251,14 @@ mod tests {
     fn deny_with_empty_text_is_a_plain_deny() {
         let model = edit_ask_model();
         let mut chat = open_chat(&model);
-        handle_chat_key(&mut chat, &model, press(KeyCode::Char('3')), VIEWPORT);
-        handle_chat_key(&mut chat, &model, press(KeyCode::Enter), VIEWPORT);
+        handle_chat_key(&mut chat, &model, press(KeyCode::Char('3')), VIEWPORT, t(0));
+        handle_chat_key(&mut chat, &model, press(KeyCode::Enter), VIEWPORT, t(0));
         let answer = answer_of(handle_chat_key(
             &mut chat,
             &model,
             press(KeyCode::Enter),
             VIEWPORT,
+            t(0),
         ));
         assert_eq!(
             answer,
@@ -1191,13 +1273,13 @@ mod tests {
         let model = edit_ask_model();
         let mut chat = open_chat(&model);
         assert_eq!(
-            handle_chat_key(&mut chat, &model, ctrl('x'), VIEWPORT),
+            handle_chat_key(&mut chat, &model, ctrl('x'), VIEWPORT, t(0)),
             Some(UiAction::Dispatch(Command::Interrupt { agent: agent_id() }))
         );
-        handle_chat_key(&mut chat, &model, press(KeyCode::Char('3')), VIEWPORT);
-        handle_chat_key(&mut chat, &model, press(KeyCode::Enter), VIEWPORT);
+        handle_chat_key(&mut chat, &model, press(KeyCode::Char('3')), VIEWPORT, t(0));
+        handle_chat_key(&mut chat, &model, press(KeyCode::Enter), VIEWPORT, t(0));
         assert_eq!(
-            handle_chat_key(&mut chat, &model, ctrl('x'), VIEWPORT),
+            handle_chat_key(&mut chat, &model, ctrl('x'), VIEWPORT, t(0)),
             Some(UiAction::Dispatch(Command::Interrupt { agent: agent_id() })),
             "interrupt works in every focus state (D3)"
         );
@@ -1208,12 +1290,12 @@ mod tests {
         let model = edit_ask_model();
         let mut chat = open_chat(&model);
         chat.composer.insert_str("precious draft");
-        handle_chat_key(&mut chat, &model, press(KeyCode::Char('3')), VIEWPORT);
-        handle_chat_key(&mut chat, &model, press(KeyCode::Enter), VIEWPORT);
+        handle_chat_key(&mut chat, &model, press(KeyCode::Char('3')), VIEWPORT, t(0));
+        handle_chat_key(&mut chat, &model, press(KeyCode::Enter), VIEWPORT, t(0));
         for c in "oops".chars() {
-            handle_chat_key(&mut chat, &model, press(KeyCode::Char(c)), VIEWPORT);
+            handle_chat_key(&mut chat, &model, press(KeyCode::Char(c)), VIEWPORT, t(0));
         }
-        handle_chat_key(&mut chat, &model, ctrl('c'), VIEWPORT);
+        handle_chat_key(&mut chat, &model, ctrl('c'), VIEWPORT, t(0));
         assert!(
             chat.ask_ui
                 .as_ref()
@@ -1222,6 +1304,7 @@ mod tests {
                 .is_empty(),
             "^C cleared the focused field"
         );
+        assert!(!chat.quit_guard.is_armed(), "the clearing press never arms");
         assert_eq!(
             chat.composer.text(),
             "precious draft",
@@ -1229,16 +1312,61 @@ mod tests {
         );
     }
 
+    /// In chat with no text field focused (ask menu stage) the buffer in
+    /// scope is empty by definition: ^C arms the quit guard — and still
+    /// never answers, denies, or interrupts anything (P5). The invisible
+    /// composer behind the panel is never cleared.
+    #[test]
+    fn ctrl_c_in_the_ask_menu_arms_and_never_answers() {
+        let model = edit_ask_model();
+        let mut chat = open_chat(&model);
+        chat.composer.insert_str("precious draft");
+        assert_eq!(
+            handle_chat_key(&mut chat, &model, ctrl('c'), VIEWPORT, t(0)),
+            None
+        );
+        assert!(chat.quit_guard.is_armed());
+        assert!(chat.ask_ui.is_some(), "the panel stays; nothing answered");
+        assert_eq!(
+            chat.composer.text(),
+            "precious draft",
+            "the invisible draft is not the focused field"
+        );
+        assert_eq!(
+            handle_chat_key(&mut chat, &model, ctrl('c'), VIEWPORT, t(1)),
+            Some(UiAction::Quit),
+            "the guard is the same chrome-wide rule here"
+        );
+    }
+
+    /// Read-only chats have no text field anywhere: ^C is always the
+    /// arm/quit branch (F1 keeps every write affordance absent).
+    #[test]
+    fn ctrl_c_in_a_readonly_chat_arms_then_quits() {
+        let model = readonly_ask_model();
+        let mut chat = open_chat(&model);
+        assert_eq!(
+            handle_chat_key(&mut chat, &model, ctrl('c'), VIEWPORT, t(0)),
+            None
+        );
+        assert!(chat.quit_guard.is_armed());
+        assert_eq!(
+            handle_chat_key(&mut chat, &model, ctrl('c'), VIEWPORT, t(1)),
+            Some(UiAction::Quit)
+        );
+    }
+
     #[test]
     fn a_single_select_question_submits_on_the_confirmed_selection() {
         let model = question_model(false);
         let mut chat = open_chat(&model);
-        handle_chat_key(&mut chat, &model, press(KeyCode::Char('2')), VIEWPORT);
+        handle_chat_key(&mut chat, &model, press(KeyCode::Char('2')), VIEWPORT, t(0));
         let answer = answer_of(handle_chat_key(
             &mut chat,
             &model,
             press(KeyCode::Enter),
             VIEWPORT,
+            t(0),
         ));
         assert_eq!(
             answer,
@@ -1255,15 +1383,16 @@ mod tests {
     fn the_other_field_types_and_submits_its_text() {
         let model = question_model(false);
         let mut chat = open_chat(&model);
-        handle_chat_key(&mut chat, &model, press(KeyCode::Char('3')), VIEWPORT);
+        handle_chat_key(&mut chat, &model, press(KeyCode::Char('3')), VIEWPORT, t(0));
         for c in "ochre".chars() {
-            handle_chat_key(&mut chat, &model, press(KeyCode::Char(c)), VIEWPORT);
+            handle_chat_key(&mut chat, &model, press(KeyCode::Char(c)), VIEWPORT, t(0));
         }
         let answer = answer_of(handle_chat_key(
             &mut chat,
             &model,
             press(KeyCode::Enter),
             VIEWPORT,
+            t(0),
         ));
         assert_eq!(
             answer,
@@ -1282,23 +1411,24 @@ mod tests {
         let mut chat = open_chat(&model);
         // Tab straight to the submit tab with nothing answered: Enter is a
         // no-op — the review states the unanswered item instead.
-        handle_chat_key(&mut chat, &model, press(KeyCode::Tab), VIEWPORT);
+        handle_chat_key(&mut chat, &model, press(KeyCode::Tab), VIEWPORT, t(0));
         assert_eq!(
-            handle_chat_key(&mut chat, &model, press(KeyCode::Enter), VIEWPORT),
+            handle_chat_key(&mut chat, &model, press(KeyCode::Enter), VIEWPORT, t(0)),
             None,
             "unanswered forms do not submit"
         );
         // Back to the question, toggle two options, advance, submit.
-        handle_chat_key(&mut chat, &model, press(KeyCode::Tab), VIEWPORT);
-        handle_chat_key(&mut chat, &model, press(KeyCode::Char(' ')), VIEWPORT);
-        handle_chat_key(&mut chat, &model, press(KeyCode::Down), VIEWPORT);
-        handle_chat_key(&mut chat, &model, press(KeyCode::Char(' ')), VIEWPORT);
-        handle_chat_key(&mut chat, &model, press(KeyCode::Enter), VIEWPORT);
+        handle_chat_key(&mut chat, &model, press(KeyCode::Tab), VIEWPORT, t(0));
+        handle_chat_key(&mut chat, &model, press(KeyCode::Char(' ')), VIEWPORT, t(0));
+        handle_chat_key(&mut chat, &model, press(KeyCode::Down), VIEWPORT, t(0));
+        handle_chat_key(&mut chat, &model, press(KeyCode::Char(' ')), VIEWPORT, t(0));
+        handle_chat_key(&mut chat, &model, press(KeyCode::Enter), VIEWPORT, t(0));
         let answer = answer_of(handle_chat_key(
             &mut chat,
             &model,
             press(KeyCode::Enter),
             VIEWPORT,
+            t(0),
         ));
         assert_eq!(
             answer,
@@ -1316,10 +1446,10 @@ mod tests {
         let model = plan_ask_model();
         let mut chat = open_chat(&model);
         assert!(chat.reader.is_some(), "plan review opens the reader (C3)");
-        handle_chat_key(&mut chat, &model, press(KeyCode::Esc), VIEWPORT);
+        handle_chat_key(&mut chat, &model, press(KeyCode::Esc), VIEWPORT, t(0));
         assert!(chat.reader.is_none(), "Esc drops to the docked panel");
         assert!(chat.ask_ui.is_some(), "the docked form remains");
-        handle_chat_key(&mut chat, &model, press(KeyCode::Char('f')), VIEWPORT);
+        handle_chat_key(&mut chat, &model, press(KeyCode::Char('f')), VIEWPORT, t(0));
         assert!(chat.reader.is_some(), "`f` returns to the full reader");
     }
 
@@ -1327,21 +1457,22 @@ mod tests {
     fn request_changes_requires_feedback_and_q_types_there() {
         let model = plan_ask_model();
         let mut chat = open_chat(&model);
-        handle_chat_key(&mut chat, &model, press(KeyCode::Char('3')), VIEWPORT);
-        handle_chat_key(&mut chat, &model, press(KeyCode::Enter), VIEWPORT);
+        handle_chat_key(&mut chat, &model, press(KeyCode::Char('3')), VIEWPORT, t(0));
+        handle_chat_key(&mut chat, &model, press(KeyCode::Enter), VIEWPORT, t(0));
         assert_eq!(
-            handle_chat_key(&mut chat, &model, press(KeyCode::Enter), VIEWPORT),
+            handle_chat_key(&mut chat, &model, press(KeyCode::Enter), VIEWPORT, t(0)),
             None,
             "request-changes will not submit empty (C3)"
         );
         // `q` is a printable while the feedback field is focused (P2).
-        handle_chat_key(&mut chat, &model, press(KeyCode::Char('q')), VIEWPORT);
+        handle_chat_key(&mut chat, &model, press(KeyCode::Char('q')), VIEWPORT, t(0));
         assert!(chat.reader.is_some(), "q typed instead of closing");
         let answer = answer_of(handle_chat_key(
             &mut chat,
             &model,
             press(KeyCode::Enter),
             VIEWPORT,
+            t(0),
         ));
         assert_eq!(
             answer,
@@ -1355,12 +1486,13 @@ mod tests {
     fn plan_approve_dispatches_from_the_reader() {
         let model = plan_ask_model();
         let mut chat = open_chat(&model);
-        handle_chat_key(&mut chat, &model, press(KeyCode::Char('2')), VIEWPORT);
+        handle_chat_key(&mut chat, &model, press(KeyCode::Char('2')), VIEWPORT, t(0));
         let answer = answer_of(handle_chat_key(
             &mut chat,
             &model,
             press(KeyCode::Enter),
             VIEWPORT,
+            t(0),
         ));
         assert_eq!(
             answer,
@@ -1407,7 +1539,7 @@ mod tests {
             );
         }
         let mut chat = open_chat(&model);
-        handle_chat_key(&mut chat, &model, ctrl('t'), VIEWPORT);
+        handle_chat_key(&mut chat, &model, ctrl('t'), VIEWPORT, t(0));
         assert!(
             matches!(
                 &chat.reader,
@@ -1418,7 +1550,7 @@ mod tests {
             ),
             "Ctrl+T opens the newest accepted plan"
         );
-        handle_chat_key(&mut chat, &model, press(KeyCode::Left), VIEWPORT);
+        handle_chat_key(&mut chat, &model, press(KeyCode::Left), VIEWPORT, t(0));
         assert!(matches!(
             &chat.reader,
             Some(super::ReaderView {
@@ -1426,7 +1558,7 @@ mod tests {
                 ..
             })
         ));
-        handle_chat_key(&mut chat, &model, press(KeyCode::Char('q')), VIEWPORT);
+        handle_chat_key(&mut chat, &model, press(KeyCode::Char('q')), VIEWPORT, t(0));
         assert!(chat.reader.is_none(), "q closes the reader");
     }
 
@@ -1467,26 +1599,26 @@ mod tests {
         // Write affordances are absent, not disabled: no interrupt, no
         // answers, no typing.
         assert_eq!(
-            handle_chat_key(&mut chat, &model, ctrl('x'), VIEWPORT),
+            handle_chat_key(&mut chat, &model, ctrl('x'), VIEWPORT, t(0)),
             None
         );
         assert_eq!(
-            handle_chat_key(&mut chat, &model, press(KeyCode::Char('1')), VIEWPORT),
+            handle_chat_key(&mut chat, &model, press(KeyCode::Char('1')), VIEWPORT, t(0)),
             None
         );
         assert_eq!(
-            handle_chat_key(&mut chat, &model, press(KeyCode::Enter), VIEWPORT),
+            handle_chat_key(&mut chat, &model, press(KeyCode::Enter), VIEWPORT, t(0)),
             None
         );
         assert!(chat.composer.is_empty(), "nothing typed anywhere");
         // The one read affordance: f opens the diff reader.
-        handle_chat_key(&mut chat, &model, press(KeyCode::Char('f')), VIEWPORT);
+        handle_chat_key(&mut chat, &model, press(KeyCode::Char('f')), VIEWPORT, t(0));
         assert!(chat.reader.is_some());
-        handle_chat_key(&mut chat, &model, press(KeyCode::Char('q')), VIEWPORT);
+        handle_chat_key(&mut chat, &model, press(KeyCode::Char('q')), VIEWPORT, t(0));
         assert!(chat.reader.is_none(), "q closes the reader first");
         // q with no reader leaves the chat — back to the fleet (F1).
         assert_eq!(
-            handle_chat_key(&mut chat, &model, press(KeyCode::Char('q')), VIEWPORT),
+            handle_chat_key(&mut chat, &model, press(KeyCode::Char('q')), VIEWPORT, t(0)),
             Some(UiAction::CloseChat)
         );
     }
@@ -1534,16 +1666,16 @@ mod tests {
             )],
         );
         let mut chat = open_chat(&model);
-        handle_chat_key(&mut chat, &model, ctrl('t'), VIEWPORT);
+        handle_chat_key(&mut chat, &model, ctrl('t'), VIEWPORT, t(0));
         // Resolved reader: tail is the one hint row, so at 80x20 the body
         // shows 14 rows of the 30-line plan — max top is 16.
-        handle_chat_key(&mut chat, &model, press(KeyCode::End), VIEWPORT);
+        handle_chat_key(&mut chat, &model, press(KeyCode::End), VIEWPORT, t(0));
         assert_eq!(
             chat.reader.as_ref().expect("reader open").scroll,
             16,
             "End lands exactly on the render clamp"
         );
-        handle_chat_key(&mut chat, &model, press(KeyCode::Up), VIEWPORT);
+        handle_chat_key(&mut chat, &model, press(KeyCode::Up), VIEWPORT, t(0));
         assert_eq!(
             chat.reader.as_ref().expect("reader open").scroll,
             15,
@@ -1567,9 +1699,9 @@ mod tests {
                 reason: amux_ui::DisconnectReason::ApplicationShutdown,
             })],
         );
-        handle_chat_key(&mut chat, &model, press(KeyCode::Char('1')), VIEWPORT);
+        handle_chat_key(&mut chat, &model, press(KeyCode::Char('1')), VIEWPORT, t(0));
         let Some(UiAction::Dispatch(command)) =
-            handle_chat_key(&mut chat, &model, press(KeyCode::Enter), VIEWPORT)
+            handle_chat_key(&mut chat, &model, press(KeyCode::Enter), VIEWPORT, t(0))
         else {
             panic!("the confirm dispatches");
         };
@@ -1611,17 +1743,17 @@ mod tests {
         // cannot submit the form.
         let model = question_model(false);
         let mut chat = open_chat(&model);
-        handle_chat_key(&mut chat, &model, press(KeyCode::Char('3')), VIEWPORT);
+        handle_chat_key(&mut chat, &model, press(KeyCode::Char('3')), VIEWPORT, t(0));
         for _ in 0..3 {
-            handle_chat_key(&mut chat, &model, press(KeyCode::Char(' ')), VIEWPORT);
+            handle_chat_key(&mut chat, &model, press(KeyCode::Char(' ')), VIEWPORT, t(0));
         }
         assert_eq!(
-            handle_chat_key(&mut chat, &model, press(KeyCode::Enter), VIEWPORT),
+            handle_chat_key(&mut chat, &model, press(KeyCode::Enter), VIEWPORT, t(0)),
             None,
             "committing whitespace chooses nothing"
         );
         assert_eq!(
-            handle_chat_key(&mut chat, &model, press(KeyCode::Enter), VIEWPORT),
+            handle_chat_key(&mut chat, &model, press(KeyCode::Enter), VIEWPORT, t(0)),
             None,
             "the form stays unanswered — no dispatch, no encoder refusal"
         );
@@ -1629,14 +1761,14 @@ mod tests {
         // Multi-select: the review tab must not lie about answered state.
         let model = question_model(true);
         let mut chat = open_chat(&model);
-        handle_chat_key(&mut chat, &model, press(KeyCode::Char('3')), VIEWPORT);
+        handle_chat_key(&mut chat, &model, press(KeyCode::Char('3')), VIEWPORT, t(0));
         for _ in 0..2 {
-            handle_chat_key(&mut chat, &model, press(KeyCode::Char(' ')), VIEWPORT);
+            handle_chat_key(&mut chat, &model, press(KeyCode::Char(' ')), VIEWPORT, t(0));
         }
-        handle_chat_key(&mut chat, &model, press(KeyCode::Enter), VIEWPORT); // commit: not chosen
-        handle_chat_key(&mut chat, &model, press(KeyCode::Tab), VIEWPORT); // to submit
+        handle_chat_key(&mut chat, &model, press(KeyCode::Enter), VIEWPORT, t(0)); // commit: not chosen
+        handle_chat_key(&mut chat, &model, press(KeyCode::Tab), VIEWPORT, t(0)); // to submit
         assert_eq!(
-            handle_chat_key(&mut chat, &model, press(KeyCode::Enter), VIEWPORT),
+            handle_chat_key(&mut chat, &model, press(KeyCode::Enter), VIEWPORT, t(0)),
             None,
             "the unanswered review refuses to submit"
         );
@@ -1647,8 +1779,8 @@ mod tests {
         let mut model = edit_ask_model();
         let mut chat = open_chat(&model);
         let action = {
-            handle_chat_key(&mut chat, &model, press(KeyCode::Char('1')), VIEWPORT);
-            handle_chat_key(&mut chat, &model, press(KeyCode::Enter), VIEWPORT)
+            handle_chat_key(&mut chat, &model, press(KeyCode::Char('1')), VIEWPORT, t(0));
+            handle_chat_key(&mut chat, &model, press(KeyCode::Enter), VIEWPORT, t(0))
         };
         let Some(UiAction::Dispatch(command)) = action else {
             panic!("the confirm dispatches");
@@ -1660,11 +1792,11 @@ mod tests {
         // The answer is optimistically in flight: no second dispatch, no
         // stage changes.
         assert_eq!(
-            handle_chat_key(&mut chat, &model, press(KeyCode::Enter), VIEWPORT),
+            handle_chat_key(&mut chat, &model, press(KeyCode::Enter), VIEWPORT, t(0)),
             None
         );
         assert_eq!(
-            handle_chat_key(&mut chat, &model, press(KeyCode::Char('1')), VIEWPORT),
+            handle_chat_key(&mut chat, &model, press(KeyCode::Char('1')), VIEWPORT, t(0)),
             None
         );
     }
@@ -1714,8 +1846,8 @@ mod tests {
         );
         let mut chat = open_chat(&model);
         // Open the deny stage on the first ask.
-        handle_chat_key(&mut chat, &model, press(KeyCode::Char('3')), VIEWPORT);
-        handle_chat_key(&mut chat, &model, press(KeyCode::Enter), VIEWPORT);
+        handle_chat_key(&mut chat, &model, press(KeyCode::Char('3')), VIEWPORT, t(0));
+        handle_chat_key(&mut chat, &model, press(KeyCode::Enter), VIEWPORT, t(0));
         // The first ask resolves (its tool_use correlates, then denies).
         fold(
             &mut model,
@@ -1760,7 +1892,7 @@ mod tests {
         let mut model = idle_model();
         let mut chat = chat_with_draft("add retry");
         let Some(UiAction::Dispatch(command)) =
-            handle_chat_key(&mut chat, &model, press(KeyCode::Enter), VIEWPORT)
+            handle_chat_key(&mut chat, &model, press(KeyCode::Enter), VIEWPORT, t(0))
         else {
             panic!("enter dispatches");
         };

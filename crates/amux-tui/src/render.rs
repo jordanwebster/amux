@@ -577,6 +577,25 @@ fn command_verb(command: &Command) -> &'static str {
 fn status_line(model: &Model, view: &ViewState, width: usize) -> Line<'static> {
     let mut line = new_line();
 
+    // The armed quit guard replaces the hint line in warning color: a
+    // second Ctrl+C within the window quits; any other key (or the
+    // timeout tick) disarms and the hints return.
+    if view.quit_guard.is_armed() {
+        push_span(
+            &mut line,
+            MARKER_COL,
+            "⚠",
+            Style::default().fg(Color::Yellow),
+        );
+        push_span(
+            &mut line,
+            BADGE_COL,
+            "press ctrl+c again to quit",
+            Style::default().fg(Color::Yellow),
+        );
+        finish_line(&mut line, width);
+        return line;
+    }
     if let Some(notice) = &view.notice {
         push_span(&mut line, MARKER_COL, "✗", Style::default().fg(Color::Red));
         push_span(&mut line, BADGE_COL, notice.clone(), plain());

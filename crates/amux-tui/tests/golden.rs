@@ -299,6 +299,17 @@ fn fleet_ranked() {
     assert_golden("fleet_ranked", &rendered);
 }
 
+/// The armed quit guard (chrome-wide Ctrl+C, CHAT.md §Keybindings): the
+/// status line's hints are replaced by `press ctrl+c again to quit` in
+/// warning color; a fresh second press quits, anything else disarms.
+#[test]
+fn fleet_quit_armed() {
+    let mut view = view_default();
+    view.quit_guard.press(at(NOW));
+    let rendered = render_frame(&fleet_model(), &view, 68, 11);
+    assert_golden("fleet_quit_armed", &rendered);
+}
+
 /// A read-only agent surfaces in the fleet (CHAT.md A3): the normal row
 /// idioms with `read-only` as its resting status word. The entry keys
 /// open it in chat only — raw attach is absent, not disabled.

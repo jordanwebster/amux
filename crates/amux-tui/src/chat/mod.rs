@@ -33,6 +33,8 @@ use ask_ui::AskUi;
 use composer::Composer;
 use reader::{ReaderSource, ReaderView};
 
+use crate::view::QuitGuard;
+
 /// Feed scroll state: sticky-bottom following until the user scrolls back
 /// (`docs/CHAT.md` §Wireframes, scrolled-back frame).
 #[derive(Clone, Debug, PartialEq, Eq)]
@@ -87,6 +89,9 @@ pub struct ChatView {
     ask_ui: Option<AskUi>,
     /// The fullscreen reader, when open.
     reader: Option<ReaderView>,
+    /// The chrome-wide two-press quit guard (chat side — same type, same
+    /// rule as the fleet's).
+    pub quit_guard: QuitGuard,
 }
 
 impl ChatView {
@@ -101,6 +106,7 @@ impl ChatView {
             ask_failure: None,
             ask_ui: None,
             reader: None,
+            quit_guard: QuitGuard::default(),
         }
     }
 

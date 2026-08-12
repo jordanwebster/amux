@@ -127,18 +127,22 @@ async fn chrome_session(
                 Some(Ok(Event::Key(key))) => {
                     dirty = true;
                     let size = terminal.size()?;
-                    // The chat screen, when open, owns the keys — its
-                    // Ctrl+C semantics (clear-as-kill) differ from the
-                    // fleet's quit, so routing happens before the fleet
-                    // handler sees anything.
+                    let now = Utc::now();
+                    // The chat screen, when open, owns the keys (its
+                    // focus derivation differs from the fleet's modes);
+                    // both handlers share the chrome-wide guarded Ctrl+C
+                    // rule, each through its own QuitGuard.
                     let action = match view.chat.as_mut() {
                         Some(chat) => crate::chat::handle_chat_key(
                             chat,
                             runtime.model(),
                             key,
                             (size.width, size.height),
+                            now,
                         ),
-                        None => handle_key(view, runtime.model(), key, list_capacity(size.height)),
+                        None => {
+                            handle_key(view, runtime.model(), key, list_capacity(size.height), now)
+                        }
                     };
                     match action {
                         Some(UiAction::Quit) => break ChromeExit::Quit,
@@ -206,13 +210,25 @@ async fn chrome_session(
                 // gated on something on screen needing time — a deliberate
                 // V1 simplification of "ticks scheduled only while
                 // needed". One 1 Hz tick serves fleet and chat alike.
+                let now = Utc::now();
                 let model = runtime.model();
-                let needed = match view.chat.as_ref() {
+                let mut needed = match view.chat.as_ref() {
                     Some(chat) => chat.needs_tick(model),
                     None => model.fleet_agent_count() > 0,
                 };
+                // The quit guard's disarm check runs only while armed —
+                // the arm tick of the gate extension; the disarm itself
+                // owes a repaint (the warning footer must vanish).
+                if view.quit_guard.expire(now) {
+                    needed = true;
+                }
+                if let Some(chat) = view.chat.as_mut()
+                    && chat.quit_guard.expire(now)
+                {
+                    needed = true;
+                }
                 if needed {
-                    runtime.observe_now(Utc::now());
+                    runtime.observe_now(now);
                     dirty = true;
                 }
             }
