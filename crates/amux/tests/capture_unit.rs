@@ -34,6 +34,22 @@ fn fixture_rows(name: &str) -> Vec<serde_json::Value> {
         .collect()
 }
 
+/// Offline equivalent of the live plan-resolution waiter: the first row at or
+/// after `from_index` with the requested plan resolution shape.
+fn find_plan_resolution(
+    rows: &[serde_json::Value],
+    from_index: usize,
+    outcome: structure::PlanOutcome,
+) -> Option<(usize, &str)> {
+    rows.iter()
+        .enumerate()
+        .skip(from_index)
+        .find_map(|(index, row)| {
+            let (id, observed) = structure::plan_resolution(row)?;
+            (observed == outcome).then_some((index + 1, id))
+        })
+}
+
 #[test]
 fn tool_use_id_is_independent_of_json_key_order() {
     let id_then_name: serde_json::Value = serde_json::from_str(
@@ -78,9 +94,8 @@ fn offline_waiter_finds_captured_exit_plan_approval() {
         .position(structure::is_exit_plan_request)
         .expect("captured ExitPlanMode hook")
         + 1;
-    let (after_result, id) =
-        structure::find_plan_resolution(&rows, request, structure::PlanOutcome::Approved)
-            .expect("captured typed approval");
+    let (after_result, id) = find_plan_resolution(&rows, request, structure::PlanOutcome::Approved)
+        .expect("captured typed approval");
     assert_eq!(id, "toolu_plan_auto");
     assert!(after_result > request);
     assert_eq!(
@@ -98,9 +113,8 @@ fn offline_waiter_finds_captured_exit_plan_rejection_facts() {
         .position(structure::is_exit_plan_request)
         .expect("captured ExitPlanMode hook")
         + 1;
-    let (after_result, id) =
-        structure::find_plan_resolution(&rows, request, structure::PlanOutcome::Rejected)
-            .expect("captured typed rejection with denial kind and feedback");
+    let (after_result, id) = find_plan_resolution(&rows, request, structure::PlanOutcome::Rejected)
+        .expect("captured typed rejection with denial kind and feedback");
     assert_eq!(id, "toolu_plan_reject");
     assert_eq!(
         rows.iter()

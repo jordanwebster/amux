@@ -104,6 +104,13 @@ const fn scenario(
     }
 }
 
+const fn probe(name: &'static str, requirement: &'static str, kind: Scenario) -> ScenarioSpec {
+    ScenarioSpec {
+        probe: true,
+        ..scenario(name, requirement, kind, false)
+    }
+}
+
 /// The one scenario grammar. Supporting captures are kept in the same table
 /// as H.1–H.9 so selection, provenance, timeout policy, and dispatch share a
 /// single source of truth.
@@ -181,24 +188,16 @@ const SCENARIOS: &[ScenarioSpec] = &[
         Scenario::PromptMultiline,
         false,
     ),
-    ScenarioSpec {
-        name: "permission_multi_probe",
-        requirement: "probe/permission-suggestions>=2",
-        kind: Scenario::PermissionMultiProbe,
-        default_model: "haiku",
-        timeout: Duration::from_secs(360),
-        in_h_suite: false,
-        probe: true,
-    },
-    ScenarioSpec {
-        name: "question_chat_probe",
-        requirement: "probe/question-chat-about-this",
-        kind: Scenario::QuestionChatProbe,
-        default_model: "haiku",
-        timeout: Duration::from_secs(360),
-        in_h_suite: false,
-        probe: true,
-    },
+    probe(
+        "permission_multi_probe",
+        "probe/permission-suggestions>=2",
+        Scenario::PermissionMultiProbe,
+    ),
+    probe(
+        "question_chat_probe",
+        "probe/question-chat-about-this",
+        Scenario::QuestionChatProbe,
+    ),
 ];
 
 fn main() -> Result<()> {
@@ -285,11 +284,12 @@ fn run_tooling(args: &[String]) -> Result<()> {
         }
         "verify" | "graduate" => {
             let scenarios = tooling_scenarios(&run_dir, &args[2..])?;
-            graduate::verify_run(&run_dir, &scenarios)?;
             if command == "graduate" {
+                // `graduate` re-verifies internally before copying any bytes.
                 graduate::graduate(&run_dir, &fixture_dir(), &scenarios)?;
                 println!("graduated fixtures: {scenarios:?}");
             } else {
+                graduate::verify_run(&run_dir, &scenarios)?;
                 println!("verified fixture candidates: {scenarios:?}");
             }
         }
@@ -535,11 +535,7 @@ fn tool_result_block<'a>(
     tool_use_id: &str,
 ) -> Option<(&'a harness::Row, &'a serde_json::Value)> {
     rows.iter().find_map(|row| {
-        let blocks = row
-            .json
-            .pointer("/message/content")
-            .and_then(serde_json::Value::as_array)?;
-        blocks
+        structure::message_blocks(&row.json)
             .iter()
             .find(|block| {
                 block.get("type").and_then(serde_json::Value::as_str) == Some("tool_result")
@@ -548,6 +544,27 @@ fn tool_result_block<'a>(
             })
             .map(|block| (row, block))
     })
+}
+
+/// The `permission_suggestions` array of the most recent permission-request
+/// hook row in the capture; empty when absent.
+fn latest_permission_suggestions(rows: &[harness::Row]) -> Vec<serde_json::Value> {
+    rows.iter()
+        .rev()
+        .find(|row| row.row_type() == "hook.permission_request")
+        .and_then(|row| row.json.get("permission_suggestions"))
+        .and_then(serde_json::Value::as_array)
+        .cloned()
+        .unwrap_or_default()
+}
+
+/// Wrap text in a bracketed-paste envelope (ESC[200~ … ESC[201~) so the
+/// composer takes it literally — newlines included — instead of as keys.
+fn bracketed_paste(text: &str) -> Vec<u8> {
+    let mut payload = b"\x1b[200~".to_vec();
+    payload.extend_from_slice(text.as_bytes());
+    payload.extend_from_slice(b"\x1b[201~");
+    payload
 }
 
 async fn wait_for_plan_resolution(
@@ -565,19 +582,27 @@ async fn wait_for_plan_resolution(
                 .is_some_and(|(_, observed)| observed == outcome)
         })
         .await?;
-    let snapshot = session.snapshot().await;
-    let parsed: Vec<_> = snapshot.iter().map(|row| row.json.clone()).collect();
-    let (_, id) = structure::find_plan_resolution(&parsed, from_index, outcome)
-        .ok_or_else(|| anyhow::anyhow!("{what} vanished after structural wait"))?;
-    let id = id.to_string();
-    Ok((index, id))
+    // Rows are append-only, so the matched row is still at `index - 1`.
+    let rows = session.snapshot().await;
+    let (id, _) = rows[index - 1]
+        .plan_resolution()
+        .expect("append-only rows keep the matched resolution");
+    Ok((index, id.to_string()))
+}
+
+/// Wait specifically for the transcript authority, not the earlier
+/// arrival-ordered hook.stop.
+async fn wait_for_turn_duration(session: &CaptureSession, from: usize) -> Result<usize> {
+    session
+        .wait_for_row(from, TURN_TIMEOUT, "system/turn_duration", |row| {
+            row.is_turn_duration()
+        })
+        .await
 }
 
 fn question_tool_input(rows: &[harness::Row]) -> Option<&serde_json::Value> {
     rows.iter().find_map(|row| {
-        row.json
-            .pointer("/message/content")?
-            .as_array()?
+        structure::message_blocks(&row.json)
             .iter()
             .find(|block| {
                 block.get("type").and_then(serde_json::Value::as_str) == Some("tool_use")
@@ -599,13 +624,7 @@ async fn pong(daemon: &ScratchDaemon, scratch: &Scratch, model: &str) -> Result<
         "Reply with exactly PONG and nothing else.",
     )
     .await?;
-    session
-        .wait_for_row(index, TURN_TIMEOUT, "system/turn_duration", |row| {
-            row.row_type() == "system"
-                && row.json.get("subtype").and_then(serde_json::Value::as_str)
-                    == Some("turn_duration")
-        })
-        .await?;
+    wait_for_turn_duration(&session, index).await?;
     let rows = session.snapshot().await;
     let prompt = rows.iter().any(|row| {
         row.row_type() == "user"
@@ -711,15 +730,7 @@ async fn permission(
             |row| row.row_type() == "hook.permission_request",
         )
         .await?;
-    let allow_suggestions = session
-        .snapshot()
-        .await
-        .iter()
-        .rev()
-        .find(|row| row.row_type() == "hook.permission_request")
-        .and_then(|row| row.json.get("permission_suggestions"))
-        .and_then(serde_json::Value::as_array)
-        .map_or(0, Vec::len);
+    let allow_suggestions = latest_permission_suggestions(&session.snapshot().await).len();
     if allow_suggestions != 1 {
         bail!("H.4 verified menu requires one permission suggestion, saw {allow_suggestions}");
     }
@@ -738,15 +749,7 @@ async fn permission(
             row.row_type() == "hook.permission_request"
         })
         .await?;
-    let deny_suggestions = session
-        .snapshot()
-        .await
-        .iter()
-        .rev()
-        .find(|row| row.row_type() == "hook.permission_request")
-        .and_then(|row| row.json.get("permission_suggestions"))
-        .and_then(serde_json::Value::as_array)
-        .map_or(0, Vec::len);
+    let deny_suggestions = latest_permission_suggestions(&session.snapshot().await).len();
     let deny_digit = deny_suggestions + 2;
     tokio::time::sleep(MENU_SETTLE).await;
     session
@@ -1099,13 +1102,25 @@ async fn plan(
         .and_then(|row| row.json.get("tool_input"))
         .cloned()
         .ok_or_else(|| anyhow::anyhow!("ExitPlanMode hook tool_input missing"))?;
+    // A "new ask" after a rejection is any permission request that is not the
+    // original plan re-presented verbatim: a different tool, or ExitPlanMode
+    // with revised input (a revised plan or a clarification question).
+    let is_new_ask = |row: &harness::Row| {
+        row.row_type() == "hook.permission_request"
+            && (row
+                .json
+                .get("tool_name")
+                .and_then(serde_json::Value::as_str)
+                != Some("ExitPlanMode")
+                || row.json.get("tool_input") != Some(&original_plan_input))
+    };
     // The permission hook is the menu-readiness fact. Claude is allowed to
     // withhold the assistant tool_use transcript row until the menu resolves;
     // waiting for that row before answering deadlocks. The typed result after
     // input supplies the correlation id, and the final assertions pair it to
     // the assistant row once the transcript flushes.
     tokio::time::sleep(MENU_SETTLE).await;
-    if approve {
+    let plan_id = if approve {
         // Option 2: approve with manual edit approval — captures the
         // ExitPlanMode tool_result success + the following permission-mode row.
         session
@@ -1118,10 +1133,12 @@ async fn plan(
         // for turn end: after a manual approve, claude proceeds and blocks on
         // the next Write permission, so wait_for_turn_end would burn the full
         // timeout for a row we've already captured.
-        let _ = wait_for_plan_resolution(&session, index, structure::PlanOutcome::Approved).await?;
+        let (_, id) =
+            wait_for_plan_resolution(&session, index, structure::PlanOutcome::Approved).await?;
         // Brief settle so the trailing permission-mode row flushes into the
         // capture, then stop the scenario.
         tokio::time::sleep(Duration::from_secs(2)).await;
+        id
     } else {
         // Option 3: reject — keep planning, with feedback text.
         session
@@ -1136,46 +1153,36 @@ async fn plan(
                 ],
             )
             .await?;
-        let (index, _) =
+        let (index, id) =
             wait_for_plan_resolution(&session, index, structure::PlanOutcome::Rejected).await?;
         // Request-changes is not a turn end. End only after the rejection
-        // facts and a subsequent, newly emitted ask are both observed. The
-        // next ask can be a revised plan or a clarification question.
+        // facts and a subsequent, newly emitted ask are both observed.
         session
-            .wait_for_row(index, ASK_TIMEOUT, "new ask after plan rejection", |row| {
-                row.row_type() == "hook.permission_request"
-                    && (row
-                        .json
-                        .get("tool_name")
-                        .and_then(serde_json::Value::as_str)
-                        != Some("ExitPlanMode")
-                        || row.json.get("tool_input") != Some(&original_plan_input))
-            })
+            .wait_for_row(
+                index,
+                ASK_TIMEOUT,
+                "new ask after plan rejection",
+                &is_new_ask,
+            )
             .await?;
         session
             .send_keys("end scenario: Esc", vec![Act::Write(b"\x1b".to_vec())])
             .await?;
         tokio::time::sleep(Duration::from_secs(2)).await;
-    }
+        id
+    };
     let rows = session.snapshot().await;
     let plan_ids = tool_use_ids(&rows, "ExitPlanMode");
-    let expected_outcome = if approve {
-        structure::PlanOutcome::Approved
-    } else {
-        structure::PlanOutcome::Rejected
-    };
-    let first_id = rows
-        .iter()
-        .find_map(|row| {
-            row.plan_resolution()
-                .and_then(|(id, outcome)| (outcome == expected_outcome).then_some(id))
-        })
-        .ok_or_else(|| anyhow::anyhow!("ExitPlanMode typed result missing"))?;
-    if !plan_ids.iter().any(|id| id == first_id) {
-        bail!("ExitPlanMode assistant tool_use did not pair to result {first_id}");
+    if !plan_ids.contains(&plan_id) {
+        bail!("ExitPlanMode assistant tool_use did not pair to result {plan_id}");
     }
-    let (result_row, result) = tool_result_block(&rows, first_id)
-        .ok_or_else(|| anyhow::anyhow!("ExitPlanMode result did not pair to {first_id}"))?;
+    let (result_row, result) = tool_result_block(&rows, &plan_id)
+        .ok_or_else(|| anyhow::anyhow!("ExitPlanMode result did not pair to {plan_id}"))?;
+    let new_ask = rows
+        .iter()
+        .skip_while(|row| !row.is_tool_result_for(&plan_id))
+        .skip(1)
+        .find(|&row| is_new_ask(row));
     if approve {
         if result.get("is_error").and_then(serde_json::Value::as_bool) == Some(true)
             || !result_row
@@ -1196,39 +1203,15 @@ async fn plan(
             .get("userFeedback")
             .and_then(serde_json::Value::as_str)
             .is_none()
-        || !rows
-            .iter()
-            .skip_while(|row| !row.is_tool_result_for(first_id))
-            .skip(1)
-            .any(|row| {
-                row.row_type() == "hook.permission_request"
-                    && (row
-                        .json
-                        .get("tool_name")
-                        .and_then(serde_json::Value::as_str)
-                        != Some("ExitPlanMode")
-                        || row.json.get("tool_input") != Some(&original_plan_input))
-            })
+        || new_ask.is_none()
     {
         bail!("request-changes must carry denial+feedback and lead to a new ask");
     }
-    let new_ask_tool = (!approve).then(|| {
-        rows.iter()
-            .skip_while(|row| !row.is_tool_result_for(first_id))
-            .skip(1)
-            .find(|row| {
-                row.row_type() == "hook.permission_request"
-                    && (row
-                        .json
-                        .get("tool_name")
-                        .and_then(serde_json::Value::as_str)
-                        != Some("ExitPlanMode")
-                        || row.json.get("tool_input") != Some(&original_plan_input))
-            })
-            .and_then(|row| row.json.get("tool_name"))
-            .and_then(serde_json::Value::as_str)
-            .map(str::to_string)
-    });
+    let new_ask_tool = new_ask
+        .filter(|_| !approve)
+        .and_then(|row| row.json.get("tool_name"))
+        .and_then(serde_json::Value::as_str)
+        .map(str::to_string);
     let keys = session.close().await?;
     Ok(serde_json::json!({
         "keys": keys,
@@ -1236,7 +1219,7 @@ async fn plan(
             "exit_plan_mode_ids": plan_ids,
             "approved": approve,
             "rejection_facts_observed": !approve,
-            "new_ask_after_rejection": new_ask_tool.flatten()
+            "new_ask_after_rejection": new_ask_tool
         }
     }))
 }
@@ -1327,10 +1310,7 @@ async fn permission_session(
     let mut second_ask = false;
     loop {
         let rows = session.snapshot().await;
-        if rows.iter().skip(cursor).any(|row| {
-            row.row_type() == "system"
-                && row.json.get("subtype").and_then(|s| s.as_str()) == Some("turn_duration")
-        }) {
+        if rows.iter().skip(cursor).any(harness::Row::is_turn_duration) {
             break;
         }
         if let Some(pos) = rows
@@ -1414,25 +1394,14 @@ async fn permission_deny_feedback(
     // the composer regaining focus; bracketed paste keeps the text
     // literal).
     let feedback = "Do not create that file; it is not needed. Acknowledge and stop.";
-    let suggestion_count = session
-        .snapshot()
-        .await
-        .iter()
-        .rev()
-        .find(|row| row.row_type() == "hook.permission_request")
-        .and_then(|row| row.json.get("permission_suggestions"))
-        .and_then(serde_json::Value::as_array)
-        .map_or(0, Vec::len);
+    let suggestion_count = latest_permission_suggestions(&session.snapshot().await).len();
     if suggestion_count != 1 {
         bail!(
             "verified feedback program requires one permission suggestion, saw {suggestion_count}"
         );
     }
     let deny_digit = suggestion_count + 2;
-    let mut paste = Vec::new();
-    paste.extend_from_slice(b"\x1b[200~");
-    paste.extend_from_slice(feedback.as_bytes());
-    paste.extend_from_slice(b"\x1b[201~");
+    let paste = bracketed_paste(feedback);
     session
         .send_keys(
             "deny with feedback, one program: generated last digit, settle, paste feedback, Enter",
@@ -1903,8 +1872,7 @@ async fn mode_cycle(
         // re-emission) land before the next press.
         let _ = session
             .wait_for_row(index, Duration::from_secs(30), "turn_duration", |row| {
-                row.row_type() == "system"
-                    && row.json.get("subtype").and_then(|s| s.as_str()) == Some("turn_duration")
+                row.is_turn_duration()
             })
             .await;
         tokio::time::sleep(Duration::from_secs(2)).await;
@@ -1961,10 +1929,7 @@ async fn prompt_multiline(
     let index = session.wait_for_turn_end(index, TURN_TIMEOUT).await?;
 
     let text = "Reply with exactly DONE and nothing else.\nThis second line is part of one prompt.";
-    let mut payload = Vec::new();
-    payload.extend_from_slice(b"\x1b[200~");
-    payload.extend_from_slice(text.as_bytes());
-    payload.extend_from_slice(b"\x1b[201~");
+    let payload = bracketed_paste(text);
     session
         .send_keys(
             "multiline prompt: bracketed paste, then Enter",
@@ -2214,18 +2179,6 @@ async fn stale_seq(
             "fresh_retry": "input_sent"
         }
     }))
-}
-
-/// Wait specifically for the transcript authority, not the earlier
-/// arrival-ordered hook.stop.
-async fn wait_for_turn_duration(session: &CaptureSession, from: usize) -> Result<usize> {
-    session
-        .wait_for_row(from, TURN_TIMEOUT, "system/turn_duration", |row| {
-            row.row_type() == "system"
-                && row.json.get("subtype").and_then(serde_json::Value::as_str)
-                    == Some("turn_duration")
-        })
-        .await
 }
 
 /// H.8 — keep raw and structured subscriptions open while each input path
@@ -2494,16 +2447,7 @@ async fn permission_multi_probe(
             row.row_type() == "hook.permission_request"
         })
         .await?;
-    let suggestions = session
-        .snapshot()
-        .await
-        .iter()
-        .rev()
-        .find(|row| row.row_type() == "hook.permission_request")
-        .and_then(|row| row.json.get("permission_suggestions"))
-        .and_then(serde_json::Value::as_array)
-        .cloned()
-        .unwrap_or_default();
+    let suggestions = latest_permission_suggestions(&session.snapshot().await);
     if suggestions.len() < 2 {
         bail!(
             "probe produced {} suggestion(s), need >=2",
@@ -2558,9 +2502,7 @@ async fn question_chat_probe(
         .await?;
     tokio::time::sleep(MENU_SETTLE).await;
     let discussion = "I want to discuss the tradeoffs before choosing.";
-    let mut paste = b"\x1b[200~".to_vec();
-    paste.extend_from_slice(discussion.as_bytes());
-    paste.extend_from_slice(b"\x1b[201~");
+    let paste = bracketed_paste(discussion);
     session
         .send_keys(
             "Chat about this: digit options+2, then a discussion prompt",

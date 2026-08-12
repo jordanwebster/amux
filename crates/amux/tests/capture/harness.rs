@@ -194,20 +194,17 @@ impl Row {
         self.json.get("type").and_then(|t| t.as_str()).unwrap_or("")
     }
 
+    fn blocks(&self) -> &[serde_json::Value] {
+        crate::structure::message_blocks(&self.json)
+    }
+
     /// True if this is an `assistant` row carrying a `tool_use` block for the
     /// named tool.
     pub fn is_tool_use(&self, tool_name: &str) -> bool {
-        if self.row_type() != "assistant" {
-            return false;
-        }
-        self.json
-            .pointer("/message/content")
-            .and_then(|c| c.as_array())
-            .is_some_and(|blocks| {
-                blocks.iter().any(|b| {
-                    b.get("type").and_then(|t| t.as_str()) == Some("tool_use")
-                        && b.get("name").and_then(|n| n.as_str()) == Some(tool_name)
-                })
+        self.row_type() == "assistant"
+            && self.blocks().iter().any(|b| {
+                b.get("type").and_then(|t| t.as_str()) == Some("tool_use")
+                    && b.get("name").and_then(|n| n.as_str()) == Some(tool_name)
             })
     }
 
@@ -220,33 +217,27 @@ impl Row {
     /// True if this is a `user` row carrying a `tool_result` block whose
     /// `tool_use_id` matches `id`.
     pub fn is_tool_result_for(&self, id: &str) -> bool {
-        if self.row_type() != "user" {
-            return false;
-        }
-        self.json
-            .pointer("/message/content")
-            .and_then(|c| c.as_array())
-            .is_some_and(|blocks| {
-                blocks.iter().any(|b| {
-                    b.get("type").and_then(|t| t.as_str()) == Some("tool_result")
-                        && b.get("tool_use_id").and_then(|t| t.as_str()) == Some(id)
-                })
+        self.row_type() == "user"
+            && self.blocks().iter().any(|b| {
+                b.get("type").and_then(|t| t.as_str()) == Some("tool_result")
+                    && b.get("tool_use_id").and_then(|t| t.as_str()) == Some(id)
             })
     }
 
     /// True if this is a `user` row carrying a `tool_result` block (any tool).
     pub fn is_tool_result(&self) -> bool {
-        if self.row_type() != "user" {
-            return false;
-        }
-        self.json
-            .pointer("/message/content")
-            .and_then(|c| c.as_array())
-            .is_some_and(|blocks| {
-                blocks
-                    .iter()
-                    .any(|b| b.get("type").and_then(|t| t.as_str()) == Some("tool_result"))
-            })
+        self.row_type() == "user"
+            && self
+                .blocks()
+                .iter()
+                .any(|b| b.get("type").and_then(|t| t.as_str()) == Some("tool_result"))
+    }
+
+    /// True for the transcript's turn-end authority row
+    /// (`system`/`turn_duration`).
+    pub fn is_turn_duration(&self) -> bool {
+        self.row_type() == "system"
+            && self.json.get("subtype").and_then(|s| s.as_str()) == Some("turn_duration")
     }
 
     /// True if this is a parsed permission-request hook for `tool_name`.
@@ -854,9 +845,7 @@ impl CaptureSession {
     /// Wait for a turn-end signal (amux `hook.stop` or `system/turn_duration`).
     pub async fn wait_for_turn_end(&self, from_index: usize, timeout: Duration) -> Result<usize> {
         self.wait_for_row(from_index, timeout, "turn end", |row| {
-            row.row_type() == "hook.stop"
-                || (row.row_type() == "system"
-                    && row.json.get("subtype").and_then(|s| s.as_str()) == Some("turn_duration"))
+            row.row_type() == "hook.stop" || row.is_turn_duration()
         })
         .await
     }

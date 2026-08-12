@@ -38,6 +38,39 @@ One paragraph describing what was done.
 
 ---
 
+## 2026-08-12: Phase 7 — simplification pass
+
+### Summary
+Simplification-only pass over the Phase 7 H-suite code (gate step 8). No
+scenario behavior changed: every keystroke program, prompt, timeout, and
+assertion is byte-identical. The remediation rounds had left bolt-on
+seams; each is now one mechanism. `plan()` reuses the resolution id its
+own waiter returns (as `plan_auto` already did) instead of re-deriving it
+with a second full-capture scan, and its thrice-duplicated "new ask after
+rejection" predicate is a single named closure. `wait_for_plan_resolution`
+reads the matched row back by index (rows are append-only) instead of
+deep-cloning the capture and re-running the offline finder — the finder
+moved next to its only remaining callers, the capture_unit offline-waiter
+tests. Row-walking now goes through one seam, `structure::message_blocks`.
+
+### Changes
+- `crates/amux/tests/capture/main.rs` — `latest_permission_suggestions`
+  (4 sites), `bracketed_paste` (3 sites), `probe()` scenario-table
+  constructor, `pong` uses `wait_for_turn_duration`, tooling `graduate`
+  no longer verifies twice (graduate re-verifies internally).
+- `crates/amux/tests/capture/harness.rs` — `Row::is_turn_duration` named
+  fact (5 sites), block probes via `Row::blocks()`.
+- `crates/amux/tests/capture/structure.rs` — `message_blocks` seam;
+  `plan_resolution` finds the first tool_result block once instead of
+  via `tool_result_id` plus a re-find (fn now folded in);
+  `find_plan_resolution` moved to `capture_unit.rs`.
+
+### Verification
+All under `timeout 600`: capture_unit 10/10, amux --lib 404, testnet spec
+44/44, amux-ui 30+123, amux-tui 109+54+21, amux-cli 53, capture binary
+no-scenario path exits 0. Workspace clippy `--all-targets` with `testnet`
+and `-D warnings` clean; `cargo fmt` clean. No live captures run.
+
 ## 2026-08-12: Chat V1 Phase 7 — codex review fixes
 
 ### Summary

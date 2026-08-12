@@ -28,14 +28,21 @@ pub fn workspace_path(path: impl AsRef<Path>) -> PathBuf {
     }
 }
 
+/// The parsed `message.content` blocks of a row — empty when the row has no
+/// block array. The one row-walking seam shared by every block probe.
+pub fn message_blocks(row: &Value) -> &[Value] {
+    row.pointer("/message/content")
+        .and_then(Value::as_array)
+        .map_or(&[], Vec::as_slice)
+}
+
 /// Read a named tool's id from parsed assistant content blocks. Object key
 /// order is deliberately irrelevant.
 pub fn tool_use_id<'a>(row: &'a Value, tool_name: &str) -> Option<&'a str> {
     if row.get("type").and_then(Value::as_str) != Some("assistant") {
         return None;
     }
-    row.pointer("/message/content")?
-        .as_array()?
+    message_blocks(row)
         .iter()
         .find(|block| {
             block.get("type").and_then(Value::as_str) == Some("tool_use")
@@ -45,33 +52,18 @@ pub fn tool_use_id<'a>(row: &'a Value, tool_name: &str) -> Option<&'a str> {
         .as_str()
 }
 
-/// The id carried by the first parsed `tool_result` block in a user row.
-pub fn tool_result_id(row: &Value) -> Option<&str> {
-    if row.get("type").and_then(Value::as_str) != Some("user") {
-        return None;
-    }
-    row.pointer("/message/content")?
-        .as_array()?
-        .iter()
-        .find(|block| block.get("type").and_then(Value::as_str) == Some("tool_result"))?
-        .get("tool_use_id")?
-        .as_str()
-}
-
 /// Classify the typed result of an ExitPlanMode menu answer without relying
 /// on a preceding assistant row. Claude may not flush that row while the menu
 /// is blocked, so the hook is the readiness fact and this result is the first
 /// reliable correlation id after input.
 pub fn plan_resolution(row: &Value) -> Option<(&str, PlanOutcome)> {
-    let id = tool_result_id(row)?;
-    let result = row
-        .pointer("/message/content")?
-        .as_array()?
+    if row.get("type").and_then(Value::as_str) != Some("user") {
+        return None;
+    }
+    let result = message_blocks(row)
         .iter()
-        .find(|block| {
-            block.get("type").and_then(Value::as_str) == Some("tool_result")
-                && block.get("tool_use_id").and_then(Value::as_str) == Some(id)
-        })?;
+        .find(|block| block.get("type").and_then(Value::as_str) == Some("tool_result"))?;
+    let id = result.get("tool_use_id")?.as_str()?;
 
     let rejected = result.get("is_error").and_then(Value::as_bool) == Some(true)
         && row.get("toolDenialKind").and_then(Value::as_str) == Some("user-rejected")
@@ -99,20 +91,4 @@ pub fn is_exit_plan_request(row: &Value) -> bool {
     row.get("type").and_then(Value::as_str) == Some("hook.permission_request")
         && row.get("tool_name").and_then(Value::as_str) == Some("ExitPlanMode")
         && row.get("tool_input").and_then(Value::as_object).is_some()
-}
-
-/// Offline equivalent of the live row waiter: find the first row at or after
-/// `from_index` with the requested plan resolution shape.
-pub fn find_plan_resolution(
-    rows: &[Value],
-    from_index: usize,
-    outcome: PlanOutcome,
-) -> Option<(usize, &str)> {
-    rows.iter()
-        .enumerate()
-        .skip(from_index)
-        .find_map(|(index, row)| {
-            let (id, observed) = plan_resolution(row)?;
-            (observed == outcome).then_some((index + 1, id))
-        })
 }
