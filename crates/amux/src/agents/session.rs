@@ -1,13 +1,15 @@
 //! Agent session abstraction: lifecycle management decoupled from PTY details.
 //!
-//! [`AgentSession`] owns a dynamic [`AgentBackend`]. [`PtyHandle`] encapsulates
-//! PTY I/O (input, output subscription, resize), while [`spawn_pty_agent`] is
-//! the shared helper that creates the PTY and its reader/writer/exit-monitor
-//! tasks. Structured log state is concrete-backend policy, not PTY policy.
+//! [`AgentBackend`] is the instance behavior every locally hosted agent
+//! implements; [`AgentSession`] is the owned handle the runtime stores.
+//! [`StructuredInput`] is the optional owned input endpoint a backend hands out
+//! so callers can send once the session registry lock is released. The Claude
+//! and test-agent impls live beside their sessions; this module keeps only the
+//! factories and the shared [`terminal_io_protocols`] advertisement.
 //!
-//! This whole module owns or drives a live agent process, so it is gated at its
-//! `mod` declaration behind the `local-agents` feature. The data types it
-//! produces ([`AgentRecord`], [`SessionEvent`], [`StopPolicy`]) live in
+//! This module constructs live agent sessions, so it is gated at its `mod`
+//! declaration behind the `local-agents` feature. The data types it produces
+//! ([`AgentRecord`], [`SessionEvent`], [`StopPolicy`]) live in
 //! [`super::record`] and stay compiled in every build.
 
 use std::path::Path;
@@ -53,9 +55,9 @@ pub(crate) trait AgentBackend: Send + Sync {
     async fn stop(&self, policy: StopPolicy);
     fn agent_type(&self) -> &'static str;
 
-    fn io_protocols(&self) -> Vec<String> {
-        terminal_io_protocols(self.pty_handle())
-    }
+    /// Advertised I/O protocols; PTY-backed backends build on
+    /// [`terminal_io_protocols`].
+    fn io_protocols(&self) -> Vec<String>;
 
     fn log_source(&self) -> Option<StructuredLogSource>;
     fn pty_handle(&self) -> Option<&PtyHandle>;

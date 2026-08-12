@@ -50,7 +50,6 @@ pub(super) fn sanitize_resume_args(args: Vec<String>) -> Vec<String> {
     sanitized
 }
 
-#[derive(Clone)]
 pub(crate) struct ClaudeStructuredInputTarget {
     readonly: bool,
     log_source: Option<StructuredLogSource>,
@@ -64,8 +63,11 @@ impl ClaudeStructuredInputTarget {
             None => 0,
         }
     }
+}
 
-    pub(crate) async fn send_structured_input(
+#[async_trait]
+impl StructuredInput for ClaudeStructuredInputTarget {
+    async fn send(
         &self,
         client_seq: u64,
         payload: Value,
@@ -116,17 +118,6 @@ impl ClaudeStructuredInputTarget {
             }
         }
         Ok(())
-    }
-}
-
-#[async_trait]
-impl StructuredInput for ClaudeStructuredInputTarget {
-    async fn send(
-        &self,
-        client_seq: u64,
-        payload: Value,
-    ) -> std::result::Result<(), ProtocolError> {
-        self.send_structured_input(client_seq, payload).await
     }
 }
 

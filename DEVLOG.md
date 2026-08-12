@@ -51,6 +51,15 @@ The shared terminal protocol advertisement remains centralized. Formatting,
 workspace clippy/tests, and the 44-test testnet spec gate pass with no fixture,
 golden, spec, protocol, UI, or TUI source changes.
 
+Follow-up (simplification): `AgentBackend::io_protocols` lost its default body
+(both backends override it, so the default was never reached) and now documents
+`terminal_io_protocols` as the shared piece to build on; Claude's structured
+input target folded its single-caller `send_structured_input` into the
+`StructuredInput::send` impl and dropped the `Clone` derive the deleted
+`StructuredInputTarget` enum had required; the `agents::session` module doc now
+describes the trait/handle/factories it actually holds instead of PTY plumbing
+that lives in `agents::pty`. No behavior change.
+
 ---
 
 ## 2026-08-12: P2 — agent-agnostic structured log sink
