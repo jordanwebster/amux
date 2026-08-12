@@ -1,0 +1,42 @@
+{
+  "captured_at": "2026-08-12T10:24:37.358396+00:00",
+  "claude_version": "2.1.228 (Claude Code)",
+  "failure": null,
+  "graduated_at": "2026-08-12T11:02:58.616309+00:00",
+  "graduated_from": "redacted capture run",
+  "harness": "cargo test -p amux --test capture -- stale_seq",
+  "model": "haiku",
+  "notes": {
+    "assertions": {
+      "advanced_seq": 11,
+      "ask_resurfaced": true,
+      "captured_seq": 10,
+      "fresh_retry": "input_sent",
+      "typed_mismatch": "input raced the session — it moved on before the keys landed (sequence number mismatch (client 10, server 11))"
+    },
+    "keys": [
+      {
+        "actions": [
+          "write \"\\r\""
+        ],
+        "note": "workspace trust dialog: Enter (preselected 'Yes, I trust this folder')",
+        "seq_retries": 0
+      },
+      {
+        "actions": [
+          "write \"Use the Bash tool to run exactly: echo stale-race > stale.txt. Then stop.\"",
+          "delay 300ms",
+          "write \"\\r\""
+        ],
+        "note": "prompt: Use the Bash tool to run exactly: echo stale-race > stale.txt. Then stop.",
+        "seq_retries": 0
+      }
+    ],
+    "world": {
+      "stale.txt": true
+    }
+  },
+  "poisoned_daemon_env": true,
+  "requirement": "H.7",
+  "scenario": "stale_seq"
+}

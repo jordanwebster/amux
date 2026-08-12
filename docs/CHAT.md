@@ -1,13 +1,14 @@
 # The amux chat TUI
 
-Status: normative design for the chat V1 milestone, pre-implementation.
+Status: normative, implemented — chat V1 shipped across Phases 0–7
+(2026-08-11/12; see DEVLOG and notes/chat-v1/ for the build record).
 Companion to `docs/UI.md`, which owns the client layer this view stands
 on — the reducer core, the kernel/per-agent split, the facts/translation/
 interpretation boundary, and the chrome-first TUI rules all bind here
 and are not restated. `docs/PROTOCOL.md` owns the wire,
 `docs/ARCHITECTURE.md` the system. The executable half of this document
-will be the amux-ui chat spec suite — Tier-1 reducer chapters, golden
-frames, and the opt-in real-Claude E2E leg (requirement H); where prose
+is live — the amux-ui chat spec chapters, the golden-frame suites, and
+the opt-in real-Claude H suite (crates/amux/tests/capture); where prose
 and passing spec disagree, the spec wins. Row semantics below are
 grounded in an evidence survey of ~10,100 transcript rows across Claude
 Code 2.1.198–2.1.227 (working spec in `notes/chat-v1/`, graduating into

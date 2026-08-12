@@ -38,6 +38,51 @@ One paragraph describing what was done.
 
 ---
 
+## 2026-08-12: Chat V1 — retrospective; docs/CHAT.md flips to implemented
+
+### Summary
+The chat V1 milestone is complete: eight phases (0–7) from the
+transcript-persistence bug to the live-verified H suite, ~35 commits,
+executed as an orchestrated overnight-and-morning run (Claude
+subagents for Phases 0–6, codex/gpt-5.6-sol implementing from Phase
+6's remediation onward, Claude simplification passes throughout,
+codex reviews at every gate). docs/CHAT.md's status flips to
+implemented; its executable half is live (amux-ui chat spec
+chapters 123, amux-tui goldens 54+21, capture_unit 10, the opt-in H
+suite 11/11 on claude 2.1.228). Also committed here: the stale_seq
+and subscriptions new-scenario fixtures the Phase 7 graduation
+produced (new anchors, leak-checked; the graduation-policy revert
+had left them untracked).
+
+### The numbers
+- 7 codex reviews, 32 findings, all triaged fix-with-locking-test:
+  3 P1 (fixture privacy leak scrubbed pre-push; late-attach phases
+  stuck Replaying forever; ask answers could bind past the queue
+  head and approve the wrong permission), 29 P2.
+- Real bugs found beyond the chat: transcript persistence starved by
+  inherited CLAUDE_CODE_CHILD_SESSION markers (fixed at the spawn
+  seam); every hook event delivered twice (legacy user-scope
+  registration beside the plugin; deduped at the daemon seam); two
+  live fleet-attention bugs (tool-denial stuck Working; plan
+  notifications misclassified by wording heuristics).
+- Spec-first discipline held: every fixture-contradicted rule in
+  docs/CHAT.md was amended at the phase gate with evidence tags
+  (Phase 0–3 corrections; wheel-scroll deferral), and the doc's
+  Deferred/Rejected sections carry the full decision record.
+
+### Next
+- Dogfooding is the real gate now: `ui.default_open_mode = chat`
+  (or Ctrl+Enter/`o` from the fleet) drives Claude sessions through
+  the structured chat end-to-end.
+- Owner actions still open: remove the legacy `amux-dev hooks
+  claude` entry from ~/.claude/settings.json; re-add the plugin
+  marketplace path (`claude plugin marketplace add
+  ~/.local/share/amux/claude-marketplace`).
+- Push when ready — main is many commits ahead of origin; nothing
+  has been pushed all run.
+
+---
+
 ## 2026-08-12: Phase 7 — simplification pass
 
 ### Summary
