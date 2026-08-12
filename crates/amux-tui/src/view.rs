@@ -290,6 +290,23 @@ pub enum UiAction {
     DebugDump,
 }
 
+impl ViewState {
+    pub fn clamp_selection(&mut self, visible: usize, list_rows: usize) {
+        if visible == 0 {
+            self.selected = 0;
+            self.scroll = 0;
+            return;
+        }
+        self.selected = self.selected.min(visible - 1);
+        if self.selected < self.scroll {
+            self.scroll = self.selected;
+        }
+        if list_rows > 0 && self.selected >= self.scroll + list_rows {
+            self.scroll = self.selected + 1 - list_rows;
+        }
+    }
+}
+
 #[cfg(test)]
 mod quit_guard_tests {
     use super::*;
@@ -338,22 +355,5 @@ mod quit_guard_tests {
         assert!(guard.expire(t(QuitGuard::WINDOW_SECS + 1)), "stale: disarm");
         assert!(!guard.is_armed());
         assert!(!guard.expire(t(10)), "already disarmed: no repaint owed");
-    }
-}
-
-impl ViewState {
-    pub fn clamp_selection(&mut self, visible: usize, list_rows: usize) {
-        if visible == 0 {
-            self.selected = 0;
-            self.scroll = 0;
-            return;
-        }
-        self.selected = self.selected.min(visible - 1);
-        if self.selected < self.scroll {
-            self.scroll = self.selected;
-        }
-        if list_rows > 0 && self.selected >= self.scroll + list_rows {
-            self.scroll = self.selected + 1 - list_rows;
-        }
     }
 }

@@ -38,6 +38,25 @@ One paragraph describing what was done.
 
 ---
 
+## 2026-08-12: Chat V1 Phase 6 — gate + phase report
+
+### Summary
+The full Phase 6 gate chain, in order, all green: fmt; workspace
+clippy `-D warnings` (`--features amux/testnet`) — one finding fixed
+(`items_after_test_module`: the QuitGuard tests moved below
+`ViewState::clamp_selection` in view.rs); amux-tui 108 lib + 53 chat
+golden + 21 fleet golden; amux-ui 30+1+123; amux --lib 404; amux spec
+(testnet) 44; amux-cli 53; e2e-runner **14/14** (no leg asserted the
+old single-press Ctrl+C — the legs drive CLI surfaces, not the TUI's
+keys, so the deliberate contract change touched none). Wheel scroll is
+recorded as the phase's one deferral, with a CHAT.md drift note for
+the orchestrator: alternate-scroll (wheel→arrows) cannot honor the
+table's "wheel scrolls the feed" while the composer owns arrows and
+↑-at-top is reserved for history recall — no code shipped either way.
+Phase report: `notes/chat-v1/phases/06-report.md`.
+
+---
+
 ## 2026-08-12: Chat V1 Phase 6 — the one binding table + `?` overlay
 
 ### Summary
