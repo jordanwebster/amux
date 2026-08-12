@@ -19,6 +19,7 @@ use std::io::Write as _;
 use std::path::{Path, PathBuf};
 use std::process::{Child, Command, Stdio};
 use std::sync::Arc;
+use std::sync::atomic::{AtomicBool, Ordering};
 use std::time::{Duration, Instant};
 
 use amux::claude_io::{
@@ -37,7 +38,6 @@ use uuid::Uuid;
 #[derive(Clone)]
 pub struct Row {
     pub seq: u64,
-    pub raw: String,
     pub json: serde_json::Value,
 }
 
@@ -66,18 +66,7 @@ impl Row {
     /// The `tool_use.id` of the first `tool_use` block for `tool_name` in this
     /// assistant row, if any.
     pub fn tool_use_id(&self, tool_name: &str) -> Option<String> {
-        if self.row_type() != "assistant" {
-            return None;
-        }
-        self.json
-            .pointer("/message/content")?
-            .as_array()?
-            .iter()
-            .find(|b| {
-                b.get("type").and_then(|t| t.as_str()) == Some("tool_use")
-                    && b.get("name").and_then(|n| n.as_str()) == Some(tool_name)
-            })
-            .and_then(|b| b.get("id").and_then(|i| i.as_str()).map(str::to_string))
+        crate::structure::tool_use_id(&self.json, tool_name).map(str::to_string)
     }
 
     /// True if this is a `user` row carrying a `tool_result` block whose
@@ -110,6 +99,26 @@ impl Row {
                     .iter()
                     .any(|b| b.get("type").and_then(|t| t.as_str()) == Some("tool_result"))
             })
+    }
+
+    /// True if this is a parsed permission-request hook for `tool_name`.
+    pub fn is_permission_request_for(&self, tool_name: &str) -> bool {
+        if tool_name == "ExitPlanMode" {
+            return crate::structure::is_exit_plan_request(&self.json);
+        }
+        self.row_type() == "hook.permission_request"
+            && self.json.get("tool_name").and_then(|name| name.as_str()) == Some(tool_name)
+    }
+
+    pub fn plan_resolution(&self) -> Option<(&str, crate::structure::PlanOutcome)> {
+        crate::structure::plan_resolution(&self.json)
+    }
+
+    /// True if this row structurally carries AskUserQuestion answers.
+    pub fn has_question_answers(&self) -> bool {
+        self.json
+            .pointer("/toolUseResult/answers")
+            .is_some_and(serde_json::Value::is_object)
     }
 }
 
@@ -302,6 +311,50 @@ pub struct ScratchDaemon {
     pub client: Client,
 }
 
+impl ScratchDaemon {
+    /// Deliver a hook through the exact CLI seam Claude registrations use.
+    /// `managed_agent` sets the child process's AMUX_AGENT_ID; `None` models
+    /// an external Claude process and lets the hook's session_id bootstrap a
+    /// readonly agent. The parent process environment is never mutated.
+    pub fn deliver_hook(
+        &self,
+        scratch: &Scratch,
+        managed_agent: Option<Uuid>,
+        payload: &serde_json::Value,
+    ) -> Result<()> {
+        let amux = target_debug_dir()?.join("amux");
+        let mut command = Command::new(amux);
+        command
+            .args(["hooks", "claude"])
+            .env(
+                "XDG_CONFIG_HOME",
+                scratch.root.join("config").display().to_string(),
+            )
+            .env_remove("AMUX_AGENT_ID")
+            .stdin(Stdio::piped())
+            .stdout(Stdio::null())
+            .stderr(Stdio::piped());
+        if let Some(agent) = managed_agent {
+            command.env("AMUX_AGENT_ID", agent.to_string());
+        }
+        let mut child = command.spawn().context("spawn amux hooks claude")?;
+        child
+            .stdin
+            .take()
+            .ok_or_else(|| anyhow!("hook child had no stdin"))?
+            .write_all(serde_json::to_string(payload)?.as_bytes())?;
+        let output = child.wait_with_output()?;
+        if !output.status.success() {
+            bail!(
+                "amux hooks claude exited {}: {}",
+                output.status,
+                String::from_utf8_lossy(&output.stderr)
+            );
+        }
+        Ok(())
+    }
+}
+
 impl Drop for ScratchDaemon {
     fn drop(&mut self) {
         let _ = self.child.kill();
@@ -378,12 +431,15 @@ fn target_debug_dir() -> Result<PathBuf> {
 /// A live capture session over one claude agent: the transcript subscription
 /// recorded row by row, plus the raw PTY byte stream for menu debugging.
 pub struct CaptureSession {
+    agent_id: Uuid,
     agent_name: String,
     rows: Arc<Mutex<Vec<Row>>>,
     /// Lossy accumulated PTY screen bytes — used only to detect and answer
     /// claude's *startup* dialogs (workspace trust), never to interpret
     /// conversation state; the transcript rows are the truth for that.
     raw_screen: Arc<Mutex<String>>,
+    raw_closed: Arc<AtomicBool>,
+    rows_closed: Arc<AtomicBool>,
     keys_log: Vec<serde_json::Value>,
     client: Client,
     raw_task: tokio::task::JoinHandle<()>,
@@ -402,10 +458,11 @@ impl CaptureSession {
         let agent_name = format!("cap-{scenario}");
         let mut args = vec!["--model".to_string(), model.to_string()];
         args.extend(extra_args.iter().map(|s| s.to_string()));
-        daemon
+        let agent_id = Uuid::new_v4();
+        let agent = daemon
             .client
             .create_agent(CreateAgentRequest {
-                agent_id: Uuid::new_v4(),
+                agent_id,
                 host_id: None,
                 name: Some(agent_name.clone()),
                 agent_type: AgentType::Claude,
@@ -418,6 +475,7 @@ impl CaptureSession {
             })
             .await
             .context("create claude agent")?;
+        debug_assert_eq!(agent.id, agent_id);
 
         // Raw PTY subscription: debugging eyes on the menus (H.8 coexistence).
         let raw_stream = daemon
@@ -432,6 +490,8 @@ impl CaptureSession {
         let raw_path = scratch.out.join(format!("{scenario}.raw.log"));
         let raw_screen: Arc<Mutex<String>> = Arc::new(Mutex::new(String::new()));
         let raw_screen_clone = raw_screen.clone();
+        let raw_closed = Arc::new(AtomicBool::new(false));
+        let raw_closed_task = raw_closed.clone();
         let raw_task = tokio::spawn(async move {
             let mut stream = raw_stream;
             let Ok(mut file) = std::fs::File::create(&raw_path) else {
@@ -455,6 +515,7 @@ impl CaptureSession {
                     _ => {}
                 }
             }
+            raw_closed_task.store(true, Ordering::SeqCst);
         });
 
         let transcript_stream = daemon
@@ -468,6 +529,8 @@ impl CaptureSession {
             .context("subscribe transcript")?;
         let rows: Arc<Mutex<Vec<Row>>> = Arc::new(Mutex::new(Vec::new()));
         let rows_clone = rows.clone();
+        let rows_closed = Arc::new(AtomicBool::new(false));
+        let rows_closed_task = rows_closed.clone();
         let rows_path = scratch.out.join(format!("{scenario}.rows.jsonl"));
         let rows_task = tokio::spawn(async move {
             let mut stream = transcript_stream;
@@ -487,7 +550,6 @@ impl CaptureSession {
                         let _ = file.flush();
                         rows_clone.lock().await.push(Row {
                             seq: output.seq_id,
-                            raw,
                             json,
                         });
                     }
@@ -495,12 +557,16 @@ impl CaptureSession {
                     _ => {}
                 }
             }
+            rows_closed_task.store(true, Ordering::SeqCst);
         });
 
         Ok(Self {
+            agent_id,
             agent_name,
             rows,
             raw_screen,
+            raw_closed,
+            rows_closed,
             keys_log: Vec::new(),
             client: daemon.client.clone(),
             raw_task,
@@ -512,6 +578,22 @@ impl CaptureSession {
     /// on what the capture actually contains.
     pub async fn snapshot(&self) -> Vec<Row> {
         self.rows.lock().await.clone()
+    }
+
+    pub fn agent_id(&self) -> Uuid {
+        self.agent_id
+    }
+
+    pub async fn current_seq(&self) -> u64 {
+        self.rows.lock().await.last().map_or(0, |row| row.seq)
+    }
+
+    pub async fn raw_len(&self) -> usize {
+        self.raw_screen.lock().await.len()
+    }
+
+    pub fn streams_open(&self) -> bool {
+        !self.raw_closed.load(Ordering::SeqCst) && !self.rows_closed.load(Ordering::SeqCst)
     }
 
     /// Prepare the session to accept its first prompt: answer claude's
@@ -661,6 +743,19 @@ impl CaptureSession {
             }
         }
         bail!("send_input ({note}): seq mismatch persisted after 5 retries")
+    }
+
+    /// Raw-PTY input for H.8. The structured recorder remains subscribed;
+    /// the resulting transcript row proves raw input did not disturb chat.
+    pub async fn send_raw(&self, payload: &[u8]) -> Result<()> {
+        self.client
+            .send_input(SendInputRequest {
+                agent: self.agent_name.as_str().into(),
+                io_protocol: RAW_V1.to_string(),
+                payload: payload.to_vec().into(),
+            })
+            .await
+            .context("send raw input")
     }
 
     /// Type a prompt and submit it with CR.

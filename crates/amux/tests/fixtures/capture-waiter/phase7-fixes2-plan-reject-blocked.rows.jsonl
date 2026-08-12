@@ -1,0 +1,4 @@
+{"type":"assistant","message":{"role":"assistant","type":"message","content":[{"type":"tool_use","name":"ToolSearch","id":"toolu_search_reject","input":{"max_results":1,"query":"[CONTENT]"}}]}}
+{"type":"user","message":{"role":"user","content":[{"type":"tool_result","tool_use_id":"toolu_search_reject","content":[{"type":"tool_reference","tool_name":"ExitPlanMode"}]}]},"toolUseResult":{"matches":["ExitPlanMode"],"query":"[CONTENT]","total_deferred_tools":56}}
+{"type":"hook.permission_request","hook_event_name":"PermissionRequest","permission_mode":"plan","prompt_id":"[ID]","session_id":"[ID]","tool_input":{"plan":"[CONTENT]","planFilePath":"[PATH]"},"tool_name":"ExitPlanMode","transcript_path":"[PATH]","cwd":"[SCRATCH]/projects/plan_reject"}
+{"type":"hook.notification","hook_event_name":"Notification","message":"[CONTENT]","notification_type":"permission_prompt","prompt_id":"[ID]","session_id":"[ID]","transcript_path":"[PATH]","cwd":"[SCRATCH]/projects/plan_reject"}

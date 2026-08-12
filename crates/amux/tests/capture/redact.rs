@@ -241,3 +241,10 @@ fn verify(redacted: &str, scratch_root: &Path) -> Result<()> {
         bail!("redaction verification failed: {violations:?}")
     }
 }
+
+/// Re-run the leak checks on a fixture candidate after the ephemeral scratch
+/// root is gone. Graduation calls this immediately before copying bytes into
+/// the repository; placeholders are required for every path-bearing capture.
+pub fn verify_candidate(redacted: &str) -> Result<()> {
+    verify(redacted, Path::new("[SCRATCH-ROOT-NOT-AVAILABLE]"))
+}

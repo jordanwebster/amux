@@ -852,7 +852,10 @@ impl ClaudeLayer {
     }
 
     /// The newest observed stream seq — the write path's `expected_seq`.
-    pub(crate) fn cursor(&self) -> u64 {
+    /// Public for diagnostics and the real-daemon H.7 race assertion; views
+    /// have no reason to render or derive from this transport fact.
+    #[doc(hidden)]
+    pub fn cursor(&self) -> u64 {
         self.cursor
     }
 

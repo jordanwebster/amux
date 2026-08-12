@@ -68,6 +68,7 @@ windows-sys = { version = "0.61.2", features = [
 [dev-dependencies]
 tempfile = { workspace = true }
 prost-types = { workspace = true }
+amux-ui = { workspace = true }
 
 [[test]]
 name = "spec"

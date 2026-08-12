@@ -1,0 +1,2 @@
+{"cwd":"[SCRATCH]/projects/external_readonly","isSidechain":false,"message":{"content":"H9 scratch observation","role":"user"},"parentUuid":null,"sessionId":"5815c6da-e97a-4b9e-8604-d1c830f3e4d1","timestamp":"2026-08-12T10:24:47.716734+00:00","type":"user","uuid":"b0e356ca-ac14-4547-b2cc-c7b258a018a5","version":"h9-synthetic"}
+{"type":"amux.transcript_ready"}

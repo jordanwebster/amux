@@ -38,6 +38,47 @@ One paragraph describing what was done.
 
 ---
 
+## 2026-08-12: Chat V1 Phase 7 — the real-Claude E2E leg (H suite)
+
+### Summary
+The capture harness is formalized into the maintained opt-in H
+suite, H.1–H.9 per docs/CHAT.md (implementation by codex/
+gpt-5.6-sol; live legs run by the orchestrator — codex's sandbox
+cannot reach the network or bind sockets). Live result: 11/11
+scenarios PASS on claude 2.1.228, including the previously-parked
+H.7 stale-seq race (typed SequenceNumberMismatch surfaces as a
+resurfaced ask, never a crash) and H.9 read-only observation of a
+hook-discovered external session built entirely on scratch state.
+Two remediation rounds: order-sensitive raw-text JSON extraction
+replaced with parsed-structure waiters, which then gained OFFLINE
+unit tests driven by redacted rows from the actual failing captures
+— waiter-vs-recorder disagreement is now catchable in-sandbox; and
+plan_reject now asserts the revise-and-re-ask rule instead of
+waiting for a turn end the spec says never comes. Redaction verify
+and taxonomy drift tooling ship with the suite (drift is data: the
+sonnet fallback legs revealed new row fields — usage.iterations,
+stop_details, effort — recorded, not failed). Committed fixtures
+were deliberately NOT rolled forward: they are the Tier-1 chapters'
+regression anchors (a trial wholesale refresh broke 30 spec tests
+and was reverted; graduation policy recorded in the orchestration
+notes).
+
+### Changes
+- crates/amux/tests/capture/{main,harness,redact}.rs — the H suite,
+  scenario grammar dedup, workspace-rooted AMUX_CAPTURE_OUT,
+  parsed-structure waiters + offline waiter tests (capture_unit 8).
+- crates/amux/tests/capture/graduate.{rs,sh} — the
+  recording→redaction→fixture graduation tooling.
+- crates/amux-ui/src/claude/mod.rs — minor surface the suite needed.
+
+### Verification
+- Live H suite 11/11; redaction verify + drift tooling green; fmt,
+  workspace clippy `-D warnings` (testnet), amux-ui 30+1+123, amux
+  --lib 404, spec 44, capture_unit 8, amux-tui 109+54+21, amux-cli
+  53 — all green with fixtures at their committed anchors.
+
+---
+
 ## 2026-08-12: Phase 6 simplification pass
 
 ### Summary
