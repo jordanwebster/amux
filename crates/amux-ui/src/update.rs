@@ -291,6 +291,12 @@ fn update_stream(model: &mut Model, agent: amux::AgentId, event: StreamMsg) -> V
             if let Some(stream) = model.streams.get_mut(&agent) {
                 stream.phase = StreamPhase::Live;
             }
+            // The out-of-band liveness unlock: a truncated tail may no
+            // longer contain the in-band `amux.transcript_ready` marker (a
+            // long-running session wrote past the bounded buffer), and a
+            // window that never unlocks would suppress live prompts and
+            // permission hooks forever.
+            with_claude_layer(model, agent, |layer| layer.observe_replay_complete());
         }
         StreamMsg::Closed { reason } => {
             if reason == StreamCloseReason::AuthenticationRequired {

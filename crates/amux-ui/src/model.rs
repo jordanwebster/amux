@@ -109,10 +109,12 @@ impl AgentCard {
         )
     }
 
-    /// The fleet status word. Attention takes precedence; phase shows when
-    /// not running.
-    pub fn status_label(&self) -> String {
-        match (&self.attention, &self.phase) {
+    /// The fleet status word for the given EFFECTIVE attention — the Model
+    /// applies read-time policy (host reachability, staleness) before
+    /// calling, so the label and the badge are always the same fact.
+    /// Attention takes precedence; phase shows when not running.
+    pub(crate) fn status_label(&self, attention: Attention) -> String {
+        match (&attention, &self.phase) {
             (_, AgentPhase::Exited { exit_code }) => match exit_code {
                 Some(code) => format!("exited({code})"),
                 None => "exited".to_string(),
@@ -417,14 +419,16 @@ impl Model {
         card.attention
     }
 
-    /// The fleet status word with host reachability applied (offline rows
-    /// show `–`, never a stale badge word).
+    /// The fleet status word with read-time policy applied: offline rows
+    /// show `–`, and the word derives from the SAME effective attention as
+    /// the badge — one derivation, so a staleness-degraded Unknown badge
+    /// can never sit beside a stale "working" label (views format, never
+    /// decide).
     pub fn status_label_for(&self, card: &AgentCard) -> String {
-        if self.host_online(card.agent.host_id) {
-            card.status_label()
-        } else {
-            "–".to_string()
+        if !self.host_online(card.agent.host_id) {
+            return "–".to_string();
         }
+        card.status_label(self.effective_attention(card))
     }
 
     /// The fleet: ONE flat list, globally ranked. `NeedsYou` first

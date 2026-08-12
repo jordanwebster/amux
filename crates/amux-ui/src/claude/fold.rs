@@ -129,6 +129,9 @@ pub(super) fn observe(layer: &mut ClaudeLayer, seq: u64, arrived: DateTime<Utc>,
                 let truncated = false;
                 layer.begin_window(truncated);
                 layer.session_id = Some(session_id.to_string());
+                // The reset wiped the arrival clock the triggering row set;
+                // this row is a delivery of the new window.
+                layer.last_arrival = Some(arrived);
             }
             Some(_) => {}
             None => layer.session_id = Some(session_id.to_string()),

@@ -607,6 +607,13 @@ pub struct ClaudeLayer {
     /// The `amux.transcript_ready` marker was seen for the current link:
     /// everything before it was replay (B10).
     transcript_ready: bool,
+    /// Kernel subscription catch-up finished (`StreamMsg::ReplayComplete`):
+    /// everything arriving after is live even when the in-band ready marker
+    /// never came — a long-running session writes past the bounded source
+    /// tail, so a late attacher's truncated window no longer CONTAINS the
+    /// marker. Liveness is never suppressed by truncation; the honest
+    /// missing-history boundary (B9) is `truncated_start`, not this.
+    replay_complete: bool,
     /// Identity of the tailed transcript file (`sessionId` on rows, which
     /// always equals the file basename). A row from a different session is
     /// the relink fact and opens a fresh epoch (§16: the only reliable
@@ -631,6 +638,10 @@ pub struct ClaudeLayer {
     /// knew is stale. Phase and attention degrade to Unknown until a fresh
     /// window replays; obligations are kept (the replay refolds them).
     stale: bool,
+    /// The agent process ended in an orderly way (stream closed
+    /// `AgentExited`): a definitive FACT that overrides truncation and
+    /// staleness — nothing is running, nothing can need you.
+    exited: bool,
     /// Any transcript row folded this window — distinguishes a fresh
     /// session whose file does not exist yet (empty chat) from a replay in
     /// progress (loading), B10.
@@ -669,7 +680,10 @@ impl ClaudeLayer {
 
     /// The agent process ended in an orderly way: nothing is left to need.
     /// The feed stays readable; the obligations and activity signals do not
-    /// outlive the process that owned them.
+    /// outlive the process that owned them. The exit closure is recorded as
+    /// a FACT that settles the phase — it overrides truncation and
+    /// staleness (a truncated window must not report an exited agent as
+    /// Unknown forever).
     pub(crate) fn observe_exit(&mut self) {
         self.asks.clear();
         self.turn.open = false;
@@ -677,6 +691,24 @@ impl ClaudeLayer {
         self.turn.closed_by = None;
         self.turn.closed_at = None;
         self.turn.error_live = false;
+        self.exited = true;
+    }
+
+    /// Kernel subscription catch-up finished: everything after is live.
+    /// This is the out-of-band unlock for truncated windows whose tail no
+    /// longer contains the in-band `amux.transcript_ready` marker (the most
+    /// common real-world attach — a long-running session). A relink resets
+    /// it with the window; the relink replay arrives on the live stream and
+    /// its fresh in-band marker unlocks that window instead.
+    pub(crate) fn observe_replay_complete(&mut self) {
+        self.replay_complete = true;
+    }
+
+    /// The window is live: the in-band ready marker was seen, or kernel
+    /// replay completed without it (truncated-tail attach). Before either,
+    /// everything is replay (B10).
+    fn live(&self) -> bool {
+        self.transcript_ready || self.replay_complete
     }
 
     /// The feed, in file order.
@@ -758,10 +790,18 @@ impl ClaudeLayer {
     /// The Model wraps this with kernel subscription state
     /// (`Model::claude_phase`).
     pub fn phase(&self, now: Option<DateTime<Utc>>) -> ChatPhase {
+        if self.exited {
+            // Orderly process termination is a FACT that overrides
+            // truncation and staleness: nothing is running, nothing can
+            // need you. The card's own `phase` carries the exit itself.
+            return ChatPhase::Idle {
+                tag: PhaseTag::Fact,
+            };
+        }
         if self.stale {
             return ChatPhase::Unknown;
         }
-        if !self.transcript_ready {
+        if !self.live() {
             // Mid-replay of an existing transcript is Replaying; a window
             // with no transcript rows at all and no truncation is a fresh
             // session whose file does not exist yet (B10) — an idle empty
@@ -830,10 +870,14 @@ impl ClaudeLayer {
     /// `Model::effective_attention`, keeping fleet and chat in agreement
     /// (E3).
     pub fn attention(&self) -> Attention {
+        if self.exited {
+            // Definitive termination: nothing left to need.
+            return Attention::Idle;
+        }
         if self.stale {
             return Attention::Unknown;
         }
-        if !self.transcript_ready {
+        if !self.live() {
             return if self.transcript_rows_seen || self.truncated_start {
                 Attention::Unknown
             } else {

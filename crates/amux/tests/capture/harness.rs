@@ -14,6 +14,7 @@
 //! regressed, claude would suppress transcript persistence and the run would
 //! observe zero rows.
 
+use std::collections::BTreeMap;
 use std::io::Write as _;
 use std::path::{Path, PathBuf};
 use std::process::{Child, Command, Stdio};
@@ -180,37 +181,97 @@ impl Scratch {
     }
 }
 
+/// Claude auto-update kill switches, present in every capture environment.
+///
+/// INCIDENT (Phase 2 hardening): during the Phase 0 captures, claude's
+/// auto-updater ran inside the scratch env, downloaded a version into the
+/// scratch `XDG_DATA_HOME` (`…/data/claude/versions/2.1.228`) and
+/// REPOINTED the owner's real `~/.local/bin/claude` launcher symlink at
+/// that temp dir. The launcher path is derived from `homedir()` in the
+/// 2.1.228 binary — `join(homedir(), ".local/bin/claude")`, not
+/// overridable by any env — and the harness must keep the real HOME
+/// (keychain auth requires it, Phase 0). So the only safe stance is to
+/// prevent the installer from ever running: `DISABLE_AUTOUPDATER` turns
+/// off background auto-updates, `DISABLE_UPDATES` is the hard lock
+/// (`claude update` itself refuses under it), and
+/// `DISABLE_INSTALLATION_CHECKS` disables the install-repair path — all
+/// three verified against the 2.1.228 binary's env registry.
+const CLAUDE_UPDATE_GUARDS: &[(&str, &str)] = &[
+    ("DISABLE_AUTOUPDATER", "1"),
+    ("DISABLE_UPDATES", "1"),
+    ("DISABLE_INSTALLATION_CHECKS", "1"),
+];
+
 /// The environment handed to the scratch daemon: a curated allowlist of the
 /// parent environment plus scratch XDG overrides — never a blind inherit.
+/// Spawned claudes inherit this environment, so everything here reaches
+/// them.
 pub struct DaemonEnv {
     pub poisoned: bool,
 }
 
 impl DaemonEnv {
-    fn apply(&self, cmd: &mut Command, scratch: &Scratch, target_debug: &Path) {
-        cmd.env_clear();
+    /// The full environment as a map — pure, so the guard assertion below
+    /// checks exactly what the daemon (and every claude under it) receives.
+    fn env_map(&self, scratch: &Scratch, target_debug: &Path) -> BTreeMap<String, String> {
+        let mut env = BTreeMap::new();
         for key in ["HOME", "USER", "LOGNAME", "SHELL", "LANG", "LC_ALL"] {
             if let Ok(value) = std::env::var(key) {
-                cmd.env(key, value);
+                env.insert(key.to_string(), value);
             }
         }
-        cmd.env("TERM", "xterm-256color");
+        env.insert("TERM".into(), "xterm-256color".into());
         let path = std::env::var("PATH").unwrap_or_else(|_| "/usr/bin:/bin".to_string());
-        cmd.env("PATH", format!("{}:{path}", target_debug.display()));
-        cmd.env("XDG_CONFIG_HOME", scratch.root.join("config"));
-        cmd.env("XDG_DATA_HOME", scratch.root.join("data"));
-        cmd.env("XDG_STATE_HOME", scratch.root.join("state"));
-        cmd.env("TMPDIR", scratch.root.join("tmp"));
+        env.insert("PATH".into(), format!("{}:{path}", target_debug.display()));
+        env.insert(
+            "XDG_CONFIG_HOME".into(),
+            scratch.root.join("config").display().to_string(),
+        );
+        env.insert(
+            "XDG_DATA_HOME".into(),
+            scratch.root.join("data").display().to_string(),
+        );
+        env.insert(
+            "XDG_STATE_HOME".into(),
+            scratch.root.join("state").display().to_string(),
+        );
+        env.insert(
+            "TMPDIR".into(),
+            scratch.root.join("tmp").display().to_string(),
+        );
+        for (key, value) in CLAUDE_UPDATE_GUARDS {
+            env.insert((*key).into(), (*value).into());
+        }
         if self.poisoned {
             // The exact marker set `ps eww` shows on a daemon whose ancestry
             // includes a Claude session (the transcript-persistence bug).
-            cmd.env("CLAUDECODE", "1");
-            cmd.env("CLAUDE_CODE_CHILD_SESSION", "1");
-            cmd.env("CLAUDE_CODE_SESSION_ID", Uuid::new_v4().to_string());
-            cmd.env("CLAUDE_PID", "99999");
-            cmd.env("CLAUDE_EFFORT", "high");
-            cmd.env("AI_AGENT", "capture-poison-probe");
-            cmd.env("CLAUDE_CODE_ENTRYPOINT", "cli");
+            env.insert("CLAUDECODE".into(), "1".into());
+            env.insert("CLAUDE_CODE_CHILD_SESSION".into(), "1".into());
+            env.insert("CLAUDE_CODE_SESSION_ID".into(), Uuid::new_v4().to_string());
+            env.insert("CLAUDE_PID".into(), "99999".into());
+            env.insert("CLAUDE_EFFORT".into(), "high".into());
+            env.insert("AI_AGENT".into(), "capture-poison-probe".into());
+            env.insert("CLAUDE_CODE_ENTRYPOINT".into(), "cli".into());
+        }
+        env
+    }
+
+    fn apply(&self, cmd: &mut Command, scratch: &Scratch, target_debug: &Path) {
+        let env = self.env_map(scratch, target_debug);
+        // The incident guard, asserted on every capture run (this binary
+        // has no #[test] harness — the next scheduled capture validates
+        // live): the spawned claude must never be able to run its
+        // installer against the owner's real launcher symlink.
+        for (key, value) in CLAUDE_UPDATE_GUARDS {
+            assert_eq!(
+                env.get(*key).map(String::as_str),
+                Some(*value),
+                "capture env must carry the auto-update guard {key}"
+            );
+        }
+        cmd.env_clear();
+        for (key, value) in env {
+            cmd.env(key, value);
         }
     }
 }

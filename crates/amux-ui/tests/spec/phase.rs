@@ -43,11 +43,97 @@ fn before_transcript_ready_the_phase_is_replaying() {
     ]));
     assert_eq!(phase_of(&opening), ChatPhase::Replaying);
 
-    // Transcript catch-up: rows folded, ready marker not yet seen
-    // (permission fixture rows before its ready marker).
-    let mid_transcript = fold(chat_feed_prefix("fix-auth-bug", "permission", 2));
+    // Transcript catch-up: rows folded mid-replay (before ReplayComplete),
+    // ready marker not yet seen — the permission fixture's rows before its
+    // marker.
+    let mid_transcript = fold(seq([
+        vec![
+            connected("nova"),
+            host_up(&a_host("nova")),
+            agent_up(&an_agent("fix-auth-bug", "nova")),
+        ],
+        synced(),
+        vec![
+            stream("fix-auth-bug", StreamMsg::Opened { truncated: false }),
+            batch("fix-auth-bug", 5, chat_rows("permission")[..2].to_vec()),
+        ],
+    ]));
     assert_eq!(phase_of(&mid_transcript), ChatPhase::Replaying);
     assert_eq!(phase_of(&mid_transcript).tag(), Some(PhaseTag::Fact));
+}
+
+/// THE truncated-live-window unlock (the most common real-world attach):
+/// a long-running session writes >1000 rows after `amux.transcript_ready`,
+/// so a late attacher's truncated tail no longer CONTAINS the marker.
+/// `StreamMsg::ReplayComplete` is the out-of-band unlock — after it, the
+/// window is LIVE with truncated history: phase derives from the tail's
+/// facts, live prompts and permission hooks surface, and the honest
+/// missing-history boundary (B9) stays. Liveness is never suppressed by
+/// truncation.
+#[test]
+fn a_truncated_live_window_unlocks_after_replay_complete() {
+    // The replayed tail: rows AFTER the evicted ready marker — a snapshot,
+    // prompt, and title from the permission fixture (indices 3..6; the
+    // marker at index 2 fell off the source buffer).
+    let attach = seq([
+        vec![
+            connected("nova"),
+            host_up(&a_host("nova")),
+            agent_up(&an_agent("fix-auth-bug", "nova")),
+        ],
+        synced(),
+        vec![
+            stream("fix-auth-bug", StreamMsg::Opened { truncated: true }),
+            batch("fix-auth-bug", 5, chat_rows("permission")[3..6].to_vec()),
+        ],
+    ]);
+    let mid_replay = fold(attach.clone());
+    assert_eq!(
+        phase_of(&mid_replay),
+        ChatPhase::Replaying,
+        "still catching up before ReplayComplete"
+    );
+
+    let live = seq([
+        attach,
+        vec![stream("fix-auth-bug", StreamMsg::ReplayComplete)],
+    ]);
+    let unlocked = fold(live.clone());
+    assert_eq!(
+        phase_of(&unlocked),
+        ChatPhase::Working,
+        "the tail's open turn surfaces — never Replaying forever"
+    );
+    assert!(
+        claude_layer(&unlocked, "fix-auth-bug").history_truncated(),
+        "missing-history honesty stays"
+    );
+
+    // A live permission hook after the unlock surfaces immediately, on the
+    // badge and the phase alike.
+    let asked = fold(seq([
+        live,
+        vec![batch(
+            "fix-auth-bug",
+            20,
+            chat_rows("permission")[6..8].to_vec(),
+        )],
+    ]));
+    assert_eq!(
+        phase_of(&asked),
+        ChatPhase::NeedsYou {
+            why: AskWhy::Permission,
+            tag: PhaseTag::Fact
+        }
+    );
+    let card = asked.agent(agent_id("fix-auth-bug")).expect("card");
+    assert_eq!(
+        asked.effective_attention(card),
+        amux_ui::Attention::NeedsYou {
+            why: amux_ui::Why::Permission
+        },
+        "attention updates on the live window too"
+    );
 }
 
 /// A fresh session has no transcript file until its first turn (B10): a
@@ -301,29 +387,76 @@ fn transport_loss_degrades_to_unknown_and_keeps_obligations() {
 }
 
 /// An exited agent has nothing left to need: asks close with the process,
-/// and the phase settles to idle (the card's own phase carries the exit).
+/// and the phase settles — orderly termination is a FACT that overrides
+/// truncation and staleness, so even a truncated window settles to idle
+/// instead of degrading to Unknown (the card's own phase carries the
+/// exit).
 #[test]
 fn agent_exit_closes_asks_and_settles_the_phase() {
-    let model = fold(seq([
-        chat_feed_prefix("fix-auth-bug", "permission", 8),
-        vec![stream(
+    let exit = || {
+        stream(
             "fix-auth-bug",
             StreamMsg::Closed {
                 reason: StreamCloseReason::AgentExited { exit_code: Some(0) },
             },
-        )],
+        )
+    };
+    let model = fold(seq([
+        chat_feed_prefix("fix-auth-bug", "permission", 8),
+        vec![exit()],
     ]));
     assert_eq!(claude_layer(&model, "fix-auth-bug").ask_count(), 0);
     assert_eq!(
         phase_of(&model),
         ChatPhase::Idle {
-            tag: PhaseTag::Inferred
+            tag: PhaseTag::Fact
         }
+    );
+
+    // The truncated-window variant: without the exit FACT this window
+    // would fall to Unknown; termination settles it.
+    let truncated = fold(seq([
+        vec![
+            connected("nova"),
+            host_up(&a_host("nova")),
+            agent_up(&an_agent("fix-auth-bug", "nova")),
+        ],
+        synced(),
+        vec![
+            stream("fix-auth-bug", StreamMsg::Opened { truncated: true }),
+            batch("fix-auth-bug", 5, chat_rows("permission")[3..6].to_vec()),
+            stream("fix-auth-bug", StreamMsg::ReplayComplete),
+            exit(),
+        ],
+    ]));
+    assert_eq!(
+        phase_of(&truncated),
+        ChatPhase::Idle {
+            tag: PhaseTag::Fact
+        },
+        "definitive termination overrides truncation"
     );
 }
 
 pub fn sequences() -> Vec<(&'static str, Vec<Msg>)> {
     vec![
+        (
+            "phase::truncated_live_unlock",
+            seq([
+                vec![
+                    connected("nova"),
+                    host_up(&a_host("nova")),
+                    agent_up(&an_agent("fix-auth-bug", "nova")),
+                ],
+                synced(),
+                vec![
+                    stream("fix-auth-bug", StreamMsg::Opened { truncated: true }),
+                    batch("fix-auth-bug", 5, chat_rows("permission")[3..6].to_vec()),
+                    stream("fix-auth-bug", StreamMsg::ReplayComplete),
+                    batch("fix-auth-bug", 20, chat_rows("permission")[6..8].to_vec()),
+                ],
+            ]),
+        ),
         (
             "phase::working_then_stale",
             seq([

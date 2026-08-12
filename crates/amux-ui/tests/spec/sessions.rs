@@ -114,7 +114,7 @@ fn exit_close_reports_exited_phase() {
     let model = fold(exited_sequence());
     let card = model.agent(agent_id("refactor-tunnels")).expect("card");
     assert_eq!(card.phase, AgentPhase::Exited { exit_code: Some(0) });
-    assert_eq!(card.status_label(), "exited(0)");
+    assert_eq!(model.status_label_for(card), "exited(0)");
 }
 
 /// Stream events for an agent the Model no longer knows are discarded: a

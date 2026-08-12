@@ -73,7 +73,7 @@ fn unknown_agent_type_still_renders_a_card() {
     assert_eq!(card.agent.agent_type, "frobnicator-2000");
     assert_eq!(card.attention, Attention::Unknown);
     assert_eq!(card.display_name(), "mystery");
-    assert_eq!(card.status_label(), "–");
+    assert_eq!(model.status_label_for(card), "–");
 }
 
 /// Display naming is a Model derivation, computed once for every renderer:

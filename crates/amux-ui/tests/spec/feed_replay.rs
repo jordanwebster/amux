@@ -134,11 +134,21 @@ fn a_different_session_id_opens_a_fresh_epoch() {
         chat_feed("fix-auth-bug", "pong"),
         vec![batch("fix-auth-bug", 20, chat_rows("tools"))],
     ]));
-    // The same tools batch folded alone, at the same stream position, so
-    // even the provenance seqs match.
+    // The same tools batch folded alone, at the same stream position and
+    // the same subscription state — the relink reset the kernel
+    // replay-complete latch (the new file's own ready marker is what
+    // unlocks the relinked window), so the direct fold replays too.
     let direct = fold(seq([
-        chat_base("fix-auth-bug"),
-        vec![batch("fix-auth-bug", 20, chat_rows("tools"))],
+        vec![
+            connected("nova"),
+            host_up(&a_host("nova")),
+            agent_up(&an_agent("fix-auth-bug", "nova")),
+        ],
+        synced(),
+        vec![
+            stream("fix-auth-bug", StreamMsg::Opened { truncated: false }),
+            batch("fix-auth-bug", 20, chat_rows("tools")),
+        ],
     ]));
     assert_eq!(
         claude_layer(&relinked, "fix-auth-bug"),

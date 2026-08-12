@@ -199,19 +199,30 @@ fn an_api_error_degrades_attention_to_unknown() {
 
 /// The E1 staleness cap applies to the fleet badge at read time: a silent
 /// "working" past the cap degrades to Unknown, in agreement with the chat
-/// phase (E3).
+/// phase (E3) — and the status WORD degrades with the badge, because both
+/// derive from the same effective attention. An unknown badge beside a
+/// "working" label would be two derivations of one fact.
 #[test]
-fn stale_working_degrades_the_fleet_badge_to_unknown() {
+fn stale_working_degrades_the_fleet_badge_and_label_together() {
     let live = fold(seq([
         chat_feed_prefix("fix-auth-bug", "permission", 6),
         vec![tick(10 + 599)],
     ]));
     assert_eq!(attention_of(&live, "fix-auth-bug"), Attention::Working);
+    assert_eq!(
+        live.status_label_for(live.agent(agent_id("fix-auth-bug")).expect("card")),
+        "working"
+    );
     let stale = fold(seq([
         chat_feed_prefix("fix-auth-bug", "permission", 6),
         vec![tick(10 + 601)],
     ]));
     assert_eq!(attention_of(&stale, "fix-auth-bug"), Attention::Unknown);
+    assert_eq!(
+        stale.status_label_for(stale.agent(agent_id("fix-auth-bug")).expect("card")),
+        "–",
+        "the label is the badge's fact, not the cached one"
+    );
 }
 
 /// THE unification property (E2/E3): on every fixture, folded row by row,

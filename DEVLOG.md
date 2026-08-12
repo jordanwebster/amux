@@ -69,6 +69,77 @@ pair documenting the eviction-tolerant read).
 
 ---
 
+## 2026-08-12: Chat V1 Phase 2 — codex review fixes + capture hardening
+
+### Summary
+Three accepted codex findings plus one incident hardening item.
+
+[P1] **Truncated live windows never unlocked.** A long-running session
+writes past the bounded source tail, so a late attacher's truncated
+window no longer CONTAINS the `amux.transcript_ready` marker — the layer
+reported Replaying (and attention Unknown) forever, suppressing live
+prompts and permission hooks on the most common real-world attach.
+`StreamMsg::ReplayComplete` is now the out-of-band unlock: the layer
+records `replay_complete`, and liveness is `ready-marker OR
+replay-complete`. Truncation honesty (B9's boundary) is unchanged; a
+relink resets the latch and is unlocked by the new file's own fresh
+marker (B10's loading band survives). Locked by
+`phase::a_truncated_live_window_unlocks_after_replay_complete`
+(mid-replay Replaying → unlock → tail's Working surfaces → live
+permission hook surfaces on phase AND badge, history_truncated stays).
+
+[P2] **Stale badge beside a stale-free label.** After the 600 s cap,
+`effective_attention` degraded to Unknown while `status_label_for`
+still rendered the cached "working". One derivation now: the status
+word derives from the same effective attention as the badge
+(`AgentCard::status_label` takes the effective attention and is
+crate-private; `Model::status_label_for` is the only entry). Locked by
+`attention::stale_working_degrades_the_fleet_badge_and_label_together`.
+
+[P2] **Exit on a truncated window fell to Unknown.** `observe_exit`
+cleared activity but left `truncated_start`, so the phase degraded
+instead of settling. Orderly termination is now a recorded FACT
+(`exited`) that overrides truncation and staleness: phase settles to
+`Idle{Fact}` (choice recorded — the vocabulary has no exited phase; the
+card's `AgentPhase::Exited` carries the exit itself), attention to
+Idle. Locked by the extended
+`phase::agent_exit_closes_asks_and_settles_the_phase` (plus a
+truncated-window variant).
+
+[Hardening] **The capture harness can no longer let claude's installer
+touch the owner's real launcher.** During Phase 0 captures the
+auto-updater downloaded into the scratch XDG_DATA_HOME and REPOINTED
+`~/.local/bin/claude` at the temp dir (the launcher path is
+`join(homedir(), ".local/bin/claude")` in the 2.1.228 binary — not
+env-overridable — and the harness must keep the real HOME for keychain
+auth). The harness env now carries `DISABLE_AUTOUPDATER=1`,
+`DISABLE_UPDATES=1` (the hard lock — `claude update` itself refuses),
+and `DISABLE_INSTALLATION_CHECKS=1`, all three verified against the
+2.1.228 binary's env registry; env construction moved to a pure map
+with the guard asserted on every capture run (the capture binary has no
+test harness; Phase 7's scheduled capture validates live). No new
+captures were run.
+
+### Changes
+- crates/amux-ui/src/claude/mod.rs — `replay_complete` + `exited`
+  facts, `observe_replay_complete`, `live()` gate in phase/attention.
+- crates/amux-ui/src/update.rs — ReplayComplete reaches the layer.
+- crates/amux-ui/src/model.rs — label derives from effective attention.
+- crates/amux-ui/src/claude/fold.rs — the relink reset re-stamps the
+  arrival clock the triggering row set.
+- crates/amux-ui/tests/spec/{phase,attention,feed_replay,inventory,
+  sessions}.rs — locking cases; the mid-replay and relink sequences
+  restated so ReplayComplete sits where reality puts it (after replay
+  batches).
+- crates/amux/tests/capture/harness.rs — update guards + assertion.
+
+### Verification
+- fmt + workspace clippy `-D warnings` clean; `timeout 600 cargo test
+  -p amux-ui` (11 + 1 + 104 spec), `-p amux --lib` (401), amux spec
+  suite (44), `-p amux-tui` (3 + 19 goldens) all green.
+
+---
+
 ## 2026-08-12: Chat V1 Phase 2 — one fold: the summarizer unification (E2)
 
 ### Summary
