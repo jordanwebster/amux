@@ -50,6 +50,10 @@ sink. The existing transcript marker, replay, same-path no-op, relink-clear,
 and sequence behavior are unchanged. Formatting, workspace clippy/tests, and
 the 44-test testnet spec gate pass with no fixture, golden, or spec changes.
 
+Follow-up (orchestrator): untracked the two phase reports that had
+been force-added under gitignored `notes/` against repo convention;
+reports stay on disk, untracked.
+
 ---
 
 ## 2026-08-12: P1 — agent-independent `terminal_v1` byte plane
