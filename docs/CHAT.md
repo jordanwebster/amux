@@ -156,8 +156,9 @@ truncation recovery must fold to the identical Model.
   dumps`, `✔ plan approved (manual)`. Sources are transcript facts, not
   heuristics: allow ⇔ a non-error tool_result for that id; deny ⇔
   `is_error:true` plus `toolDenialKind:"user-rejected"`; question
-  answers from `toolUseResult.{questions,answers}`; allow-for-session
-  additionally emits a `command_permissions` attachment.
+  answers from `toolUseResult.{questions,answers}`; command-rule
+  session grants additionally emit a `command_permissions` attachment
+  — directory-scope grants emit none (Phase 3, observed).
 - **Plans** (B6). An accepted plan appears in the feed truncated to its
   first ~6 lines with a `plan · ctrl+t to read` affordance, and stays
   permanently re-openable in the reader (opencode's plan-stays-
@@ -284,8 +285,18 @@ as a numbered list — the one list idiom every ask uses:
 
 Digits or ↑/↓ select; Enter confirms. Deny opens an optional one-line
 feedback stage (Enter with empty text is a plain deny). Option labels
-state plain outcomes and scopes ("for this session"), never rule
-syntax. After resolution the panel collapses to the B5 fact with its
+state plain outcomes and scopes, never rule syntax.
+
+Two Phase 3 facts shape the encoding beneath this surface. Claude's
+remote menu is GENERATED from the hook's `permission_suggestions`
+(1 Yes · one digit per suggestion · No last), so option 2's label
+derives from the suggestion (e.g. "always allow access to <dir> from
+this project") rather than a fixed phrase — and menu shapes with
+suggestion counts other than the verified one refuse with a typed
+error until captured. And claude's own deny is immediate, with no
+feedback field (it carries the interrupt artifacts and ends the
+turn): the optional-feedback stage is delivered as one composed
+program — deny digit, then a follow-up prompt (verified). After resolution the panel collapses to the B5 fact with its
 pending marker until the transcript confirms.
 
 ### Question asks (C4)
@@ -301,7 +312,9 @@ an inline free-text field. The submit tab shows a review list with
 unanswered items in error color; Enter there submits all — the
 mandatory submit step whenever there is more than one question or any
 multi-select. Codex's per-question Tab-notes are folded into `Other…`:
-one free-text idiom, not two.
+one free-text idiom, not two. Claude's own form appends a
+`Chat about this` option beside `Other…` (Phase 3, observed) —
+unmodeled in V1 panels, tolerated in the transcript facts.
 
 ### Plan review (C3, B6)
 
@@ -332,9 +345,10 @@ the canonical "User has approved your plan" content — manual approval
 emits NO `permission-mode` row change, contrary to the earlier
 docs-sourced rule; rejection ⇒ `is_error:true`. The tool input
 carries `{plan, planFilePath}`; the plan is also written under
-`~/.claude/plans/`. Still owed to H.5: the approve-auto path (whether
-*auto* approval flips the permission mode is unobserved) and the
-exact plan-menu keystroke encodings.
+`~/.claude/plans/`. H.5 resolved (Phase 3): the plan menu is 1 approve-auto /
+2 approve-manual / 3 request-changes; approve-auto does NOT flip the
+`permission-mode` row either — the effective mode becomes acceptEdits
+per hook facts, and edits proceed ask-free.
 
 ### Diffs and the reader's artifacts
 
@@ -388,7 +402,11 @@ joined-selection submit, plan-review keys, the interrupt Esc. Views
 never encode keys; renderers dispatch typed Commands and the module
 owns the bytes. This module is also the seam for a future native
 structured-input protocol: when one exists, the module's typed surface
-stays and its PTY backend is replaced.
+stays and its PTY backend is replaced. The module is
+`amux-ui/src/claude/encoding.rs`; every table carries its
+verification provenance (claude version, capture run), and an
+unverified menu shape refuses with a typed error — never guessed
+bytes.
 
 ## Composer and control (D)
 
@@ -420,11 +438,11 @@ every focus state including open ask panels, even while send is gated
 
 Permission mode displays in the footer's right segment and cycles with
 Shift+Tab when the composer has focus (D4). The current mode is sourced
-from transcript facts — the latest `permission-mode` row (FACT at
-emission); whether mid-session cycling re-emits the row is UNOBSERVED,
-so E2E must confirm it, with the hook payload's `permission_mode` field
-as the fallback source. The cycle order respects the session's launch
-arguments (no offering bypass to a session not launched with it).
+from the hook payloads' `permission_mode` field — the live source
+(Phase 3, fixture-verified: mid-session cycling emits NO
+`permission-mode` row; that row is a launch-time/bookkeeping signal).
+Cycle order: default → acceptEdits → plan → default, with bypass
+offered only to a session launched with it.
 
 The working indicator renders while phase is working: spinner, elapsed
 time, interrupt hint — `◐ working · 24s · ctrl+x interrupt` (D5).

@@ -233,6 +233,35 @@ daemon receives).
 
 ---
 
+## 2026-08-12: Phase 3 gate — spec corrections from the write path
+
+### Summary
+docs/CHAT.md absorbs the Phase 3 live-verified corrections: D4
+resolved (mid-session cycling emits NO `permission-mode` row; hook
+payloads' `permission_mode` is the live source; cycle order default →
+acceptEdits → plan → default), H.5 resolved (plan menu 1/2/3;
+approve-auto never flips the row either — effective mode via hook
+facts), C2 gains the suggestion-generated menu reality (option
+labels derive from `permission_suggestions`; unverified menu shapes
+refuse typed; deny is immediate with feedback as a composed
+follow-up prompt), B5's `command_permissions` claim narrowed to
+command-rule grants, C6 cites the encoding module and its refusal
+rule, C4 notes claude's appended "Chat about this" option. Gate
+context: codex review returned a P1 (answers could bind past the
+queue head and approve the wrong permission — now head-only with a
+typed refusal) and a P2 (bracketed-paste terminator injection —
+resolved by rejecting control bytes on every free-text path,
+rejection chosen over neutralization per the honesty rule); both
+fixed with locking spec cases (`a637fa8`).
+
+### Changes
+- docs/CHAT.md — six corrections, each evidence-tagged "Phase 3".
+
+### Verification
+- Prose only; wireframes remain exactly 80 columns.
+
+---
+
 ## 2026-08-12: Phase 2 gate — spec corrections from the ask/phase build
 
 ### Summary
