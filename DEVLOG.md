@@ -82,6 +82,8 @@ match structured input-result rows.
 
 Follow-up (simplification): the phase left each Claude gate derived twice — `ClaudeLayer::{phase,send_gate,mode_cycle_gate}` took the kernel bits (`AgentPhase`, `StreamState`, `now`) that their only callers, the `claude` module's `Model`-level functions of the same names, had just extracted; the methods folded into those functions (`folded_phase` stays private), and the speculative `Model::layer` accessor (no callers) plus the `AgentLayer` re-export (P7 adds it when a renderer needs it) were dropped.
 
+Follow-up (regression): the move also inverted both gates' check order, so an exited agent whose structured stream never produced layer evidence refused with "chat input unavailable for this agent" instead of "agent exited". Exit is authoritative — `AgentCard::phase` reaches `Exited` only from the `StreamCloseReason::AgentExited` fact, never inferred from layer evidence — so the pre-P6 order (card → exit → layer) is restored in both gates and locked by a test; nothing had covered it, which is why a green gate missed it.
+
 ## 2026-08-13: Checkpoint #2 — one owner for the Codex disconnect invariant
 
 ### Summary

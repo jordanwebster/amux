@@ -1309,12 +1309,15 @@ pub fn send_gate(model: &Model, agent: amux::AgentId) -> SendGate {
     let Some(card) = model.agent(agent) else {
         return SendGate::Unavailable;
     };
-    let Some(layer) = card.claude() else {
-        return SendGate::Unavailable;
-    };
+    // Exit is checked before layer presence: an agent that exited before its
+    // structured stream produced any evidence is still EXITED, and saying so
+    // beats the vaguer unavailable refusal.
     if matches!(card.phase, AgentPhase::Exited { .. }) {
         return SendGate::Exited;
     }
+    let Some(layer) = card.claude() else {
+        return SendGate::Unavailable;
+    };
     if !layer.pending_echoes().is_empty() {
         // One optimistic echo in flight at a time: reconciliation is
         // content-keyed, and claude queues raced sends anyway.
@@ -1339,11 +1342,11 @@ pub fn mode_cycle_gate(model: &Model, agent: amux::AgentId) -> Option<&'static s
     let Some(card) = model.agent(agent) else {
         return Some("chat input unavailable for this agent");
     };
-    if card.claude().is_none() {
-        return Some("chat input unavailable for this agent");
-    }
     if matches!(card.phase, AgentPhase::Exited { .. }) {
         return Some("agent exited");
+    }
+    if card.claude().is_none() {
+        return Some("chat input unavailable for this agent");
     }
     match phase(model, agent) {
         ChatPhase::Idle { .. } | ChatPhase::Working | ChatPhase::Errored => None,
@@ -1441,6 +1444,21 @@ mod tests {
             "fixture must carry a folded claude layer"
         );
         model
+    }
+
+    /// An exited agent is EXITED whether or not its structured stream ever
+    /// produced layer evidence. Both gates check exit before layer presence,
+    /// so the specific fact wins over the vaguer unavailable refusal. (P6
+    /// inverted this order; nothing covered it, so it is locked here.)
+    #[test]
+    fn both_gates_report_exit_before_a_missing_layer() {
+        let mut model = a_model_with_a_folded_layer();
+        let card = model.agents.get_mut(&agent_id()).expect("agent card");
+        card.layer = None;
+        card.phase = AgentPhase::Exited { exit_code: Some(1) };
+
+        assert_eq!(send_gate(&model, agent_id()), SendGate::Exited);
+        assert_eq!(mode_cycle_gate(&model, agent_id()), Some("agent exited"));
     }
 
     fn layer_mut(model: &mut Model) -> &mut ClaudeLayer {
