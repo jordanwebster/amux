@@ -3,8 +3,8 @@ use serde_json::Value;
 
 use crate::approval::RequestId;
 use crate::types::{
-    AccountUpdate, CommandExecOutputDelta, DynamicToolCallRequest, FileChangeInfo, HookInfo,
-    OutputStream, PlanStep, ThreadInfo, ThreadItem, ThreadStatus, ThreadTokenUsage, Turn,
+    AccountUpdate, DynamicToolCallRequest, FileChangeInfo, HookInfo, OutputStream, PlanStep,
+    ThreadInfo, ThreadItem, ThreadStatus, ThreadTokenUsage, Turn,
 };
 
 // ── ThreadEvent ──────────────────────────────────────────────────
@@ -151,7 +151,6 @@ pub enum TurnEvent {
 #[derive(Debug, Clone)]
 pub enum ServerNotification {
     AccountUpdated(AccountUpdate),
-    CommandExecOutputDelta(CommandExecOutputDelta),
     Warning {
         message: String,
         thread_id: Option<String>,

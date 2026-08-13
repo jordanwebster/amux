@@ -58,16 +58,17 @@ async fn real_daemon_initialize_and_thread_list() {
             })
         );
         if let Ok(expected_id) = std::env::var("CODEX_SDK_EXPECT_THREAD_ID") {
-            let thread = codex
-                .read_thread(&expected_id, false)
-                .await
-                .unwrap_or_else(|error| panic!("thread/read failed for `{expected_id}`: {error}"));
+            let thread = threads
+                .data
+                .iter()
+                .find(|thread| thread.id == expected_id)
+                .unwrap_or_else(|| panic!("thread/list did not list `{expected_id}`"));
             if let Ok(expected_name) = std::env::var("CODEX_SDK_EXPECT_THREAD_NAME") {
-                assert_eq!(thread.thread.name.as_deref(), Some(expected_name.as_str()));
+                assert_eq!(thread.name.as_deref(), Some(expected_name.as_str()));
             }
             eprintln!(
-                "thread/read named match -> {}",
-                serde_json::json!({"id": thread.thread.id, "name": thread.thread.name})
+                "thread/list named match -> {}",
+                serde_json::json!({"id": thread.id, "name": thread.name})
             );
         }
 

@@ -1,10 +1,8 @@
 use std::collections::HashMap;
 use std::path::PathBuf;
-use std::sync::Arc;
 
 use serde::{Deserialize, Serialize};
 
-use crate::approval::ApprovalHandler;
 use crate::types::ServiceTier;
 
 // ── CodexConfig ───────────────────────────────────────────────────
@@ -24,9 +22,6 @@ pub struct CodexConfig {
     pub experimental_api: bool,
     /// Exact notification method names to suppress for this connection.
     pub opt_out_notification_methods: Vec<String>,
-    /// Optional approval handler for server-initiated permission requests.
-    /// If `None`, approvals surface as `TurnEvent::ApprovalRequired`.
-    pub approval_handler: Option<Arc<dyn ApprovalHandler>>,
     /// Extra environment variables for the subprocess.
     pub env: Option<HashMap<String, String>>,
     /// `--config key=value` pairs passed to the codex CLI.
@@ -36,7 +31,8 @@ pub struct CodexConfig {
     pub record_io: Option<PathBuf>,
 }
 
-// Manual Default because `Option<Arc<dyn ApprovalHandler>>` prevents derive.
+// Manual Default because the identity and experimental-API defaults are not
+// the field types' own defaults.
 impl Default for CodexConfig {
     fn default() -> Self {
         Self {
@@ -47,7 +43,6 @@ impl Default for CodexConfig {
             client_version: env!("CARGO_PKG_VERSION").into(),
             experimental_api: true,
             opt_out_notification_methods: Vec::new(),
-            approval_handler: None,
             env: None,
             config_overrides: Vec::new(),
             record_io: None,

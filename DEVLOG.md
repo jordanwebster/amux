@@ -38,6 +38,45 @@ One paragraph describing what was done.
 
 ---
 
+## 2026-08-13: Checkpoint #2 — delete unreached codex-sdk surface
+
+### Summary
+`codex-sdk` was copied in-tree with no upstream to sync against, so its
+unreached API is amux's maintenance cost and nothing else. Removed every
+surface with no product consumer and no path to one in P6-P8: the per-turn
+`TurnStream`, the turn/review/compact/rollback/fork/archive/read/prompt/
+list_models/read_config/exec_command families, and the auto-`ApprovalHandler`
+path amux never uses (it always answers approvals manually).
+
+### Changes
+- Deleted `crates/codex-sdk/src/turn_stream.rs` and the `TurnSlot` receiver
+  borrow it needed; `Thread::events()` is now the only event consumer.
+- Trimmed `Codex` to the methods amux and the live probe actually call.
+- Deleted `ApprovalHandler`/`AutoApprove` and the dispatch branch that
+  answered approvals without a consumer.
+- Removed the orphaned type blocks (model list, exec command, review,
+  `ThreadReadResponse`, `ConfigReadParams`).
+
+### Decisions Made
+- Retarget rather than drop tests whose subject survives: the 512 KiB
+  single-frame WebSocket regression now drives `thread/name/set`, the
+  added-notification replay test drives `events()` + `start_turn`, and the
+  `item/tool/requestUserInput` regression keeps its load-bearing half.
+- Keep `list_threads`, `read_account`, and `take_notifications`: the first
+  is exercised by the live probe and the envelope anchor, the other two have
+  named jobs in the checkpoint-2 directives.
+
+### Verification
+- `cargo fmt --all`; `timeout 600 cargo clippy --workspace --all-targets`
+  (only the two accepted tracked-listener warnings).
+- `timeout 600 cargo test --workspace` — pass.
+- `timeout 600 cargo test -p amux --features testnet --test spec` — 44/44.
+- Live: `amux new codex` + structured prompt + raw `terminal_v1` codex TUI +
+  suspend/restart/resume + second prompt, all green against codex-cli 0.147.0.
+
+### Next Steps
+- P6 (amux-ui kernel generalization), carrying the checkpoint-2 directives.
+
 ## 2026-08-13: P5c — Codex raw TUI, suspension, and lifecycle recovery
 
 ### Summary

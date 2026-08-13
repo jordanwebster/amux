@@ -55,28 +55,29 @@ async fn parses_added_thread_notifications_and_emitted_timestamp() {
         .start_thread(ThreadConfig::default())
         .await
         .expect("thread/start");
-    let mut turn = thread.turn("hello").await.expect("turn/start");
+    let mut events = thread.events().await.expect("thread events");
+    thread.start_turn("hello").await.expect("turn/start");
 
     assert!(matches!(
-        turn.next().await,
-        Ok(Some(TurnEvent::FileChangePatchUpdated { ref item_id, ref changes }))
+        events.next().await.unwrap().map(|event| event.event),
+        Some(TurnEvent::FileChangePatchUpdated { ref item_id, ref changes })
             if item_id == "item-1" && changes.len() == 1
     ));
     assert!(matches!(
-        turn.next().await,
-        Ok(Some(TurnEvent::ModelRerouted { ref to_model, .. })) if to_model == "model-b"
+        events.next().await.unwrap().map(|event| event.event),
+        Some(TurnEvent::ModelRerouted { ref to_model, .. }) if to_model == "model-b"
     ));
     assert!(matches!(
-        turn.next().await,
-        Ok(Some(TurnEvent::ThreadCompacted { ref turn_id })) if turn_id == "turn-1"
+        events.next().await.unwrap().map(|event| event.event),
+        Some(TurnEvent::ThreadCompacted { ref turn_id }) if turn_id == "turn-1"
     ));
     assert!(matches!(
-        turn.next().await,
-        Ok(Some(TurnEvent::Warning { ref message })) if message == "careful"
+        events.next().await.unwrap().map(|event| event.event),
+        Some(TurnEvent::Warning { ref message }) if message == "careful"
     ));
     assert!(matches!(
-        turn.next().await,
-        Ok(Some(TurnEvent::TurnCompleted { .. }))
+        events.next().await.unwrap().map(|event| event.event),
+        Some(TurnEvent::TurnCompleted { .. })
     ));
     driver.await.expect("replay driver");
 }

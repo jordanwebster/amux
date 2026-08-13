@@ -2,13 +2,11 @@ use std::sync::Arc;
 use std::sync::OnceLock;
 use std::sync::atomic::AtomicU64;
 
-use serde::Serialize;
 use tokio::io::{AsyncBufRead, AsyncWrite};
 use tokio::sync::{Mutex, mpsc};
 use tokio_util::sync::CancellationToken;
 
-use crate::approval::ApprovalHandler;
-use crate::config::{self, CodexConfig, ThreadConfig, TurnInput};
+use crate::config::{self, CodexConfig, ThreadConfig};
 use crate::dispatch::ServerInner;
 use crate::error::Error;
 use crate::init::{ClientInfo, InitializationResult, InitializeCapabilities, InitializeParams};
@@ -16,10 +14,8 @@ use crate::notification::ServerNotification;
 use crate::thread::Thread;
 use crate::transport;
 use crate::types::{
-    AccountReadParams, AccountReadResponse, ConfigReadParams, ExecCommandParams,
-    ExecCommandResizeParams, ExecCommandResult, ExecCommandTerminateParams, ExecCommandWriteParams,
-    ListThreadsParams, Model, ModelListParams, ThreadInfo, ThreadListResponse, ThreadReadResponse,
-    ThreadSessionInfo, Turn,
+    AccountReadParams, AccountReadResponse, ListThreadsParams, ThreadListResponse,
+    ThreadSessionInfo,
 };
 
 // ── Codex ────────────────────────────────────────────────────────
@@ -54,10 +50,6 @@ impl Codex {
             stdin_tx,
             pending_requests: Mutex::new(std::collections::HashMap::new()),
             thread_channels: Mutex::new(std::collections::HashMap::new()),
-            approval_handler: config
-                .approval_handler
-                .clone()
-                .map(|h| h as Arc<dyn ApprovalHandler>),
             global_notif_tx,
             init_result: OnceLock::new(),
             request_counter: AtomicU64::new(1),
@@ -116,10 +108,6 @@ impl Codex {
             stdin_tx,
             pending_requests: Mutex::new(std::collections::HashMap::new()),
             thread_channels: Mutex::new(std::collections::HashMap::new()),
-            approval_handler: config
-                .approval_handler
-                .clone()
-                .map(|handler| handler as Arc<dyn ApprovalHandler>),
             global_notif_tx,
             init_result: OnceLock::new(),
             request_counter: AtomicU64::new(1),
@@ -165,8 +153,12 @@ impl Codex {
 
     /// Start a new thread.
     pub async fn start_thread(&self, config: ThreadConfig) -> Result<Thread, Error> {
-        self.request_thread("thread/start", config::thread_config_to_params(&config))
-            .await
+        let session: ThreadSessionInfo = self
+            .inner
+            .request("thread/start", config::thread_config_to_params(&config))
+            .await?;
+        let registration = self.inner.register_thread(&session.thread.id).await;
+        Ok(Thread::new(self.inner.clone(), session, registration))
     }
 
     /// Resume an existing thread by ID.
@@ -187,58 +179,12 @@ impl Codex {
         Ok(Thread::new(self.inner.clone(), session, registration))
     }
 
-    /// Fork an existing thread.
-    pub async fn fork_thread(&self, thread_id: &str) -> Result<Thread, Error> {
-        self.fork_thread_with(thread_id, ThreadConfig::default())
-            .await
-    }
-
-    /// Fork an existing thread with explicit config overrides.
-    pub async fn fork_thread_with(
-        &self,
-        thread_id: &str,
-        config: ThreadConfig,
-    ) -> Result<Thread, Error> {
-        let mut params = config::thread_config_to_params(&config);
-        if let serde_json::Value::Object(ref mut m) = params {
-            m.insert("threadId".into(), serde_json::json!(thread_id));
-        }
-        self.request_thread("thread/fork", params).await
-    }
-
     /// List threads.
     pub async fn list_threads(
         &self,
         params: ListThreadsParams,
     ) -> Result<ThreadListResponse, Error> {
         self.inner.request("thread/list", params).await
-    }
-
-    /// Read a thread's info (and optionally its turns).
-    pub async fn read_thread(
-        &self,
-        thread_id: &str,
-        include_turns: bool,
-    ) -> Result<ThreadReadResponse, Error> {
-        self.inner
-            .request(
-                "thread/read",
-                serde_json::json!({
-                    "threadId": thread_id,
-                    "includeTurns": include_turns,
-                }),
-            )
-            .await
-    }
-
-    /// Archive a thread.
-    pub async fn archive_thread(&self, thread_id: &str) -> Result<(), Error> {
-        self.inner
-            .request_unit(
-                "thread/archive",
-                serde_json::json!({ "threadId": thread_id }),
-            )
-            .await
     }
 
     /// Rename a thread.
@@ -251,55 +197,7 @@ impl Codex {
             .await
     }
 
-    /// Unarchive a thread.
-    pub async fn unarchive_thread(&self, thread_id: &str) -> Result<ThreadInfo, Error> {
-        let response: crate::types::ThreadReadResponse = self
-            .inner
-            .request(
-                "thread/unarchive",
-                serde_json::json!({ "threadId": thread_id }),
-            )
-            .await?;
-        Ok(response.thread)
-    }
-
-    // ── One-shot convenience ─────────────────────────────────────
-
-    /// Start a thread, run one turn, collect the completed turn, close the thread.
-    pub async fn prompt(
-        &self,
-        input: impl Into<TurnInput>,
-        thread_config: ThreadConfig,
-    ) -> Result<Turn, Error> {
-        let thread = self.start_thread(thread_config).await?;
-        let mut stream = thread.turn(input).await?;
-        while stream.next().await?.is_some() {}
-        stream
-            .completed_turn()
-            .cloned()
-            .ok_or_else(|| Error::Internal(anyhow::anyhow!("turn did not complete")))
-    }
-
     // ── Non-thread operations ────────────────────────────────────
-
-    /// List available models.
-    pub async fn list_models(&self) -> Result<Vec<Model>, Error> {
-        self.list_models_with(ModelListParams::default()).await
-    }
-
-    /// List available models with protocol-aligned pagination params.
-    pub async fn list_models_with(&self, params: ModelListParams) -> Result<Vec<Model>, Error> {
-        let resp: crate::types::ModelListResponse =
-            self.inner.request("model/list", params).await?;
-        Ok(resp.data)
-    }
-
-    /// Read the server's active configuration.
-    pub async fn read_config(&self) -> Result<serde_json::Value, Error> {
-        self.inner
-            .request("config/read", ConfigReadParams::default())
-            .await
-    }
 
     /// Read the currently authenticated account, optionally refreshing its token first.
     pub async fn read_account(
@@ -307,34 +205,6 @@ impl Codex {
         params: AccountReadParams,
     ) -> Result<AccountReadResponse, Error> {
         self.inner.request("account/read", params).await
-    }
-
-    /// Execute a command on the server.
-    pub async fn exec_command(
-        &self,
-        params: ExecCommandParams,
-    ) -> Result<ExecCommandResult, Error> {
-        self.inner.request("command/exec", params).await
-    }
-
-    /// Write stdin bytes to a running standalone command execution.
-    pub async fn exec_command_write(&self, params: ExecCommandWriteParams) -> Result<(), Error> {
-        self.inner.request_unit("command/exec/write", params).await
-    }
-
-    /// Resize a PTY-backed standalone command execution.
-    pub async fn exec_command_resize(&self, params: ExecCommandResizeParams) -> Result<(), Error> {
-        self.inner.request_unit("command/exec/resize", params).await
-    }
-
-    /// Terminate a running standalone command execution.
-    pub async fn exec_command_terminate(
-        &self,
-        params: ExecCommandTerminateParams,
-    ) -> Result<(), Error> {
-        self.inner
-            .request_unit("command/exec/terminate", params)
-            .await
     }
 
     // ── Global notifications ─────────────────────────────────────
@@ -355,18 +225,6 @@ impl Codex {
     /// Whether the underlying transport reader has terminated.
     pub fn is_closed(&self) -> bool {
         self.inner.cancel.is_cancelled()
-    }
-
-    // ── Internal ─────────────────────────────────────────────────
-
-    async fn register_thread(&self, session: ThreadSessionInfo) -> Thread {
-        let registration = self.inner.register_thread(&session.thread.id).await;
-        Thread::new(self.inner.clone(), session, registration)
-    }
-
-    async fn request_thread<P: Serialize>(&self, method: &str, params: P) -> Result<Thread, Error> {
-        let session: ThreadSessionInfo = self.inner.request(method, params).await?;
-        Ok(self.register_thread(session).await)
     }
 }
 
@@ -446,50 +304,6 @@ mod remediation_tests {
             "sandbox": {"type": "readOnly", "networkAccess": false},
             "reasoningEffort": null
         })
-    }
-
-    #[tokio::test]
-    async fn config_read_sends_object_params() {
-        let (client_reader, client_writer, mut server_reader, mut server_writer) = test_io();
-        let connect = tokio::spawn(Codex::from_io(
-            client_reader,
-            client_writer,
-            CodexConfig::default(),
-        ));
-
-        let initialize = read_json_line(&mut server_reader).await;
-        write_json_line(
-            &mut server_writer,
-            serde_json::json!({
-                "id": initialize["id"],
-                "result": {
-                    "userAgent": "test",
-                    "codexHome": "/tmp",
-                    "platformFamily": "unix",
-                    "platformOs": "test"
-                }
-            }),
-        )
-        .await;
-        let codex = connect.await.unwrap().unwrap();
-        let initialized = read_json_line(&mut server_reader).await;
-        assert_eq!(initialized["method"], "initialized");
-
-        let read_config = tokio::spawn(async move {
-            let result = codex.read_config().await;
-            codex.close().await;
-            result
-        });
-        let request = read_json_line(&mut server_reader).await;
-        assert_eq!(request["method"], "config/read");
-        assert_eq!(request["params"], serde_json::json!({}));
-        write_json_line(
-            &mut server_writer,
-            serde_json::json!({"id": request["id"], "result": {"config": {}}}),
-        )
-        .await;
-
-        assert!(read_config.await.unwrap().is_ok());
     }
 
     #[tokio::test]

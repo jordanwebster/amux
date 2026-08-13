@@ -1,6 +1,4 @@
-use std::future::Future;
 use std::path::PathBuf;
-use std::pin::Pin;
 
 use serde::{Deserialize, Serialize};
 
@@ -12,19 +10,6 @@ use crate::types::CommandAction;
 pub enum RequestId {
     String(String),
     Integer(i64),
-}
-
-// ── ApprovalHandler trait ─────────────────────────────────────────
-
-/// Trait for handling server-initiated approval requests.
-///
-/// If set on `CodexConfig`, approval requests are handled automatically.
-/// If not set, they surface as `TurnEvent::ApprovalRequired` for manual response.
-pub trait ApprovalHandler: Send + Sync {
-    fn handle(
-        &self,
-        request: ApprovalRequest,
-    ) -> Pin<Box<dyn Future<Output = ApprovalResponse> + Send + '_>>;
 }
 
 // ── ApprovalRequest ───────────────────────────────────────────────
@@ -239,19 +224,4 @@ pub struct RequestPermissionProfile {
     pub network: Option<AdditionalNetworkPermissions>,
     #[serde(rename = "fileSystem")]
     pub file_system: Option<AdditionalFileSystemPermissions>,
-}
-
-// ── AutoApprove ───────────────────────────────────────────────────
-
-/// Built-in handler that approves everything.
-/// Use for non-interactive or sandboxed scenarios.
-pub struct AutoApprove;
-
-impl ApprovalHandler for AutoApprove {
-    fn handle(
-        &self,
-        _request: ApprovalRequest,
-    ) -> Pin<Box<dyn Future<Output = ApprovalResponse> + Send + '_>> {
-        Box::pin(async { ApprovalResponse::Accept })
-    }
 }

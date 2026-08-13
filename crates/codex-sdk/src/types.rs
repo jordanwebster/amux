@@ -188,13 +188,6 @@ pub struct TurnStartResponse {
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
-pub struct ReviewStartResponse {
-    pub turn: Turn,
-    pub review_thread_id: String,
-}
-
-#[derive(Debug, Clone, Serialize, Deserialize)]
-#[serde(rename_all = "camelCase")]
 pub struct TurnSteerResponse {
     pub turn_id: String,
 }
@@ -501,78 +494,6 @@ pub struct TokenUsageBreakdown {
     pub reasoning_output_tokens: u64,
 }
 
-// ── Model ─────────────────────────────────────────────────────────
-
-#[derive(Debug, Clone, Serialize, Deserialize)]
-#[serde(rename_all = "camelCase")]
-pub struct Model {
-    pub id: String,
-    pub model: String,
-    pub upgrade: Option<String>,
-    pub upgrade_info: Option<ModelUpgradeInfo>,
-    pub availability_nux: Option<ModelAvailabilityNux>,
-    pub display_name: String,
-    pub description: String,
-    #[serde(default)]
-    pub hidden: bool,
-    #[serde(default)]
-    pub supported_reasoning_efforts: Vec<ReasoningEffortOption>,
-    pub default_reasoning_effort: Option<ReasoningEffort>,
-    #[serde(default)]
-    pub input_modalities: Vec<InputModality>,
-    #[serde(default)]
-    pub supports_personality: bool,
-    #[serde(default)]
-    pub is_default: bool,
-}
-
-#[derive(Debug, Clone, Serialize, Deserialize)]
-#[serde(rename_all = "camelCase")]
-pub struct ModelUpgradeInfo {
-    pub model: String,
-    pub upgrade_copy: Option<String>,
-    pub model_link: Option<String>,
-    pub migration_markdown: Option<String>,
-}
-
-#[derive(Debug, Clone, Serialize, Deserialize)]
-#[serde(rename_all = "camelCase")]
-pub struct ModelAvailabilityNux {
-    pub message: String,
-}
-
-#[derive(Debug, Clone, Serialize, Deserialize)]
-#[serde(rename_all = "camelCase")]
-pub struct ReasoningEffortOption {
-    pub reasoning_effort: ReasoningEffort,
-    pub description: String,
-}
-
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
-#[serde(rename_all = "camelCase")]
-pub enum InputModality {
-    Text,
-    Image,
-}
-
-// ── Model list response ──────────────────────────────────────────
-
-#[derive(Debug, Clone, Serialize, Deserialize)]
-#[serde(rename_all = "camelCase")]
-pub struct ModelListResponse {
-    #[serde(default)]
-    pub data: Vec<Model>,
-    pub next_cursor: Option<String>,
-}
-
-#[derive(Debug, Clone, Default, Serialize, Deserialize)]
-#[serde(rename_all = "camelCase")]
-pub struct ModelListParams {
-    pub cursor: Option<String>,
-    pub limit: Option<u32>,
-    pub include_hidden: Option<bool>,
-}
-
 // ── List/Read responses ───────────────────────────────────────────
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -581,12 +502,6 @@ pub struct ThreadListResponse {
     #[serde(default)]
     pub data: Vec<ThreadInfo>,
     pub next_cursor: Option<String>,
-}
-
-#[derive(Debug, Clone, Serialize, Deserialize)]
-#[serde(rename_all = "camelCase")]
-pub struct ThreadReadResponse {
-    pub thread: ThreadInfo,
 }
 
 #[derive(Debug, Clone, Default, Serialize, Deserialize)]
@@ -600,84 +515,6 @@ pub struct ListThreadsParams {
     pub archived: Option<bool>,
     pub cwd: Option<String>,
     pub search_term: Option<String>,
-}
-
-// ── Exec command ──────────────────────────────────────────────────
-
-#[derive(Debug, Clone, Serialize, Deserialize)]
-#[serde(rename_all = "camelCase")]
-pub struct ExecCommandParams {
-    pub command: Vec<String>,
-    pub process_id: Option<String>,
-    pub tty: Option<bool>,
-    pub stream_stdin: Option<bool>,
-    pub stream_stdout_stderr: Option<bool>,
-    pub output_bytes_cap: Option<u64>,
-    pub disable_output_cap: Option<bool>,
-    pub disable_timeout: Option<bool>,
-    pub timeout_ms: Option<u64>,
-    pub cwd: Option<PathBuf>,
-    pub env: Option<std::collections::HashMap<String, Option<String>>>,
-    pub size: Option<CommandExecTerminalSize>,
-    pub sandbox_policy: Option<SandboxPolicy>,
-}
-
-#[derive(Debug, Clone, Serialize, Deserialize)]
-#[serde(rename_all = "camelCase")]
-pub struct CommandExecTerminalSize {
-    pub rows: u16,
-    pub cols: u16,
-}
-
-#[derive(Debug, Clone, Serialize, Deserialize)]
-#[serde(rename_all = "camelCase")]
-pub struct ExecCommandWriteParams {
-    pub process_id: String,
-    pub delta_base64: Option<String>,
-    pub close_stdin: Option<bool>,
-}
-
-#[derive(Debug, Clone, Serialize, Deserialize)]
-#[serde(rename_all = "camelCase")]
-pub struct ExecCommandResizeParams {
-    pub process_id: String,
-    pub size: CommandExecTerminalSize,
-}
-
-#[derive(Debug, Clone, Serialize, Deserialize)]
-#[serde(rename_all = "camelCase")]
-pub struct ExecCommandTerminateParams {
-    pub process_id: String,
-}
-
-#[derive(Debug, Clone, Serialize, Deserialize)]
-#[serde(rename_all = "camelCase")]
-pub struct ExecCommandResult {
-    pub exit_code: i32,
-    #[serde(default)]
-    pub stdout: String,
-    #[serde(default)]
-    pub stderr: String,
-}
-
-#[derive(Debug, Clone, Serialize, Deserialize)]
-#[serde(rename_all = "camelCase")]
-pub struct CommandExecOutputDelta {
-    pub process_id: String,
-    pub stream: OutputStream,
-    pub delta_base64: String,
-    #[serde(default)]
-    pub cap_reached: bool,
-}
-
-// ── Review ────────────────────────────────────────────────────────
-
-#[derive(Debug, Clone)]
-pub enum ReviewTarget {
-    UncommittedChanges,
-    BaseBranch { branch: String },
-    Commit { sha: String, title: Option<String> },
-    Custom { instructions: String },
 }
 
 // ── Hook info ─────────────────────────────────────────────────────
@@ -756,15 +593,6 @@ impl PlanStep {
 pub struct AccountReadParams {
     #[serde(skip_serializing_if = "Option::is_none")]
     pub refresh_token: Option<bool>,
-}
-
-#[derive(Debug, Clone, Default, Serialize, Deserialize)]
-#[serde(rename_all = "camelCase")]
-pub struct ConfigReadParams {
-    #[serde(skip_serializing_if = "Option::is_none")]
-    pub cwd: Option<PathBuf>,
-    #[serde(skip_serializing_if = "Option::is_none")]
-    pub include_layers: Option<bool>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]

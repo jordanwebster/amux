@@ -1,6 +1,6 @@
 #![cfg(unix)]
 
-use codex_sdk::{CodexConfig, ExecCommandParams, ListThreadsParams, connect_socket};
+use codex_sdk::{CodexConfig, ListThreadsParams, connect_socket};
 use futures_util::{SinkExt, StreamExt};
 use tokio::net::UnixListener;
 use tokio_tungstenite::{accept_async, tungstenite::Message};
@@ -143,20 +143,17 @@ async fn large_outbound_frame_survives_interleaved_inbound_frames() {
                 .unwrap();
         }
 
-        let Message::Text(exec) = websocket.next().await.unwrap().unwrap() else {
-            panic!("command/exec was not a text frame");
+        let Message::Text(rename) = websocket.next().await.unwrap().unwrap() else {
+            panic!("thread/name/set was not a text frame");
         };
-        let exec: serde_json::Value = serde_json::from_str(&exec).unwrap();
-        assert_eq!(exec["method"], "command/exec");
-        assert_eq!(exec["params"]["command"][1], expected_payload);
+        let rename: serde_json::Value = serde_json::from_str(&rename).unwrap();
+        assert_eq!(rename["method"], "thread/name/set");
+        assert_eq!(rename["params"]["name"], expected_payload);
         websocket
             .send(Message::Text(
-                serde_json::json!({
-                    "id": exec["id"],
-                    "result": {"exitCode": 0, "stdout": "ok", "stderr": ""}
-                })
-                .to_string()
-                .into(),
+                serde_json::json!({"id": rename["id"], "result": {}})
+                    .to_string()
+                    .into(),
             ))
             .await
             .unwrap();
@@ -165,25 +162,7 @@ async fn large_outbound_frame_survives_interleaved_inbound_frames() {
     let codex = connect_socket(&socket_path, CodexConfig::default())
         .await
         .unwrap();
-    let result = codex
-        .exec_command(ExecCommandParams {
-            command: vec!["echo".into(), payload],
-            process_id: None,
-            tty: None,
-            stream_stdin: None,
-            stream_stdout_stderr: None,
-            output_bytes_cap: None,
-            disable_output_cap: None,
-            disable_timeout: None,
-            timeout_ms: None,
-            cwd: None,
-            env: None,
-            size: None,
-            sandbox_policy: None,
-        })
-        .await
-        .unwrap();
-    assert_eq!(result.stdout, "ok");
+    codex.rename_thread("thread-1", &payload).await.unwrap();
     codex.close().await;
     server.await.unwrap();
 }

@@ -7,10 +7,8 @@ use crate::error::Error;
 #[cfg(test)]
 use crate::notification::ThreadEvent;
 use crate::thread_event_stream::ThreadEventStream;
-use crate::turn_stream::TurnStream;
 use crate::types::{
-    DynamicToolCallResponse, ReviewStartResponse, ReviewTarget, ThreadInfo, ThreadSessionInfo,
-    TurnStartResponse, TurnSteerResponse,
+    DynamicToolCallResponse, ThreadInfo, ThreadSessionInfo, TurnStartResponse, TurnSteerResponse,
 };
 
 // ── Thread ───────────────────────────────────────────────────────
@@ -29,41 +27,6 @@ pub(crate) struct ThreadInner {
     pub thread_id: String,
     pub session: ThreadSessionInfo,
     pub registration: Arc<ThreadRegistration>,
-}
-
-struct TurnSlot {
-    thread_inner: Arc<ThreadInner>,
-    rx: Option<ThreadEventReceiver>,
-}
-
-impl TurnSlot {
-    async fn acquire(thread_inner: Arc<ThreadInner>) -> Result<Self, Error> {
-        let rx = thread_inner
-            .registration
-            .take_receiver()
-            .await
-            .ok_or(Error::TurnActive)?;
-        Ok(Self {
-            thread_inner,
-            rx: Some(rx),
-        })
-    }
-
-    fn into_stream(mut self, initial_turn_id: String) -> TurnStream {
-        TurnStream::new(
-            self.rx.take().expect("turn slot missing receiver"),
-            self.thread_inner.clone(),
-            initial_turn_id,
-        )
-    }
-}
-
-impl Drop for TurnSlot {
-    fn drop(&mut self) {
-        if let Some(rx) = self.rx.take() {
-            restore_event_receiver(self.thread_inner.clone(), rx);
-        }
-    }
 }
 
 impl Thread {
@@ -113,18 +76,14 @@ impl Thread {
     // ── Turn management ──────────────────────────────────────────
 
     /// Start a turn with default config.
-    pub async fn turn(&self, input: impl Into<TurnInput>) -> Result<TurnStream, Error> {
-        self.turn_with(input, TurnConfig::default()).await
-    }
-
-    /// Start a turn without taking ownership of the thread event receiver.
     ///
-    /// This is intended for callers that continuously consume [`Self::events`].
+    /// The turn's events arrive on the thread's continuous [`Self::events`]
+    /// stream; nothing is returned but the new turn's ID.
     pub async fn start_turn(&self, input: impl Into<TurnInput>) -> Result<String, Error> {
         self.start_turn_with(input, TurnConfig::default()).await
     }
 
-    /// Start a turn with explicit config without creating a [`TurnStream`].
+    /// Start a turn with explicit config.
     pub async fn start_turn_with(
         &self,
         input: impl Into<TurnInput>,
@@ -141,28 +100,6 @@ impl Thread {
             .request("turn/start", serde_json::Value::Object(params))
             .await?;
         Ok(start.turn.id)
-    }
-
-    /// Start a turn with explicit config.
-    pub async fn turn_with(
-        &self,
-        input: impl Into<TurnInput>,
-        turn_config: TurnConfig,
-    ) -> Result<TurnStream, Error> {
-        let turn_slot = TurnSlot::acquire(self.inner.clone()).await?;
-
-        let input_value = config::turn_input_to_value(input.into());
-        let mut params = config::turn_config_to_params(&turn_config);
-        params.insert("threadId".into(), serde_json::json!(self.inner.thread_id));
-        params.insert("input".into(), input_value);
-
-        let start: TurnStartResponse = self
-            .inner
-            .server
-            .request("turn/start", serde_json::Value::Object(params))
-            .await?;
-
-        Ok(turn_slot.into_stream(start.turn.id))
     }
 
     /// Steer an active turn with additional input.
@@ -197,69 +134,9 @@ impl Thread {
             .await
     }
 
-    /// Start a review turn.
-    pub async fn review(&self, target: ReviewTarget) -> Result<TurnStream, Error> {
-        let turn_slot = TurnSlot::acquire(self.inner.clone()).await?;
-
-        let review: ReviewStartResponse = self
-            .inner
-            .server
-            .request(
-                "review/start",
-                serde_json::json!({
-                    "threadId": self.inner.thread_id,
-                    "target": review_target_to_wire(target),
-                }),
-            )
-            .await?;
-
-        if review.review_thread_id != self.inner.thread_id {
-            return Err(Error::Internal(anyhow::anyhow!(
-                "detached review is not yet supported by Thread::review"
-            )));
-        }
-
-        Ok(turn_slot.into_stream(review.turn.id))
-    }
-
-    /// Compact the thread's context.
-    ///
-    /// The app-server models compaction as an asynchronous turn-like flow, so
-    /// callers must continue consuming events until the compact turn completes.
-    pub async fn compact(&self) -> Result<TurnStream, Error> {
-        let turn_slot = TurnSlot::acquire(self.inner.clone()).await?;
-
-        self.inner
-            .server
-            .request_unit(
-                "thread/compact/start",
-                serde_json::json!({ "threadId": self.inner.thread_id }),
-            )
-            .await?;
-
-        Ok(turn_slot.into_stream(String::new()))
-    }
-
-    /// Roll back the last N turns.
-    pub async fn rollback(&self, num_turns: u32) -> Result<ThreadInfo, Error> {
-        let response: crate::types::ThreadReadResponse = self
-            .inner
-            .server
-            .request(
-                "thread/rollback",
-                serde_json::json!({
-                    "threadId": self.inner.thread_id,
-                    "numTurns": num_turns,
-                }),
-            )
-            .await?;
-        Ok(response.thread)
-    }
-
     // ── Manual approval response ─────────────────────────────────
 
     /// Respond to an approval request manually.
-    /// Only needed when no `ApprovalHandler` is configured on `CodexConfig`.
     pub async fn respond_approval(
         &self,
         request_id: RequestId,
@@ -292,21 +169,6 @@ impl Thread {
             .server
             .respond(request_id, serde_json::to_value(response)?)
             .await
-    }
-}
-
-fn review_target_to_wire(target: ReviewTarget) -> serde_json::Value {
-    match target {
-        ReviewTarget::UncommittedChanges => serde_json::json!({ "type": "uncommittedChanges" }),
-        ReviewTarget::BaseBranch { branch } => {
-            serde_json::json!({ "type": "baseBranch", "branch": branch })
-        }
-        ReviewTarget::Commit { sha, title } => {
-            serde_json::json!({ "type": "commit", "sha": sha, "title": title })
-        }
-        ReviewTarget::Custom { instructions } => {
-            serde_json::json!({ "type": "custom", "instructions": instructions })
-        }
     }
 }
 
@@ -346,7 +208,6 @@ mod tests {
             stdin_tx,
             pending_requests: Mutex::new(HashMap::new()),
             thread_channels: Mutex::new(HashMap::new()),
-            approval_handler: None,
             global_notif_tx,
             init_result: std::sync::OnceLock::new(),
             request_counter: AtomicU64::new(1),
@@ -391,45 +252,6 @@ mod tests {
             },
             crate::dispatch::ThreadRegistration::new(),
         )
-    }
-
-    #[tokio::test]
-    async fn failed_turn_start_restores_receiver() {
-        let thread = test_thread(test_server());
-
-        let err = thread.turn("hello").await.unwrap_err();
-        assert!(matches!(err, Error::TransportClosed));
-
-        let err = thread.turn("hello again").await.unwrap_err();
-        assert!(matches!(err, Error::TransportClosed));
-    }
-
-    #[tokio::test]
-    async fn failed_review_restores_receiver() {
-        let thread = test_thread(test_server());
-
-        let err = thread
-            .review(ReviewTarget::UncommittedChanges)
-            .await
-            .unwrap_err();
-        assert!(matches!(err, Error::TransportClosed));
-
-        let err = thread
-            .review(ReviewTarget::UncommittedChanges)
-            .await
-            .unwrap_err();
-        assert!(matches!(err, Error::TransportClosed));
-    }
-
-    #[tokio::test]
-    async fn failed_compact_restores_receiver() {
-        let thread = test_thread(test_server());
-
-        let err = thread.compact().await.unwrap_err();
-        assert!(matches!(err, Error::TransportClosed));
-
-        let err = thread.compact().await.unwrap_err();
-        assert!(matches!(err, Error::TransportClosed));
     }
 
     #[tokio::test]

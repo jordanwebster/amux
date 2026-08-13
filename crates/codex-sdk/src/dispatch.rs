@@ -11,7 +11,7 @@ use tokio::sync::mpsc::error::TrySendError;
 use tokio::sync::{Mutex, Notify, mpsc, oneshot};
 use tokio_util::sync::CancellationToken;
 
-use crate::approval::{ApprovalHandler, ApprovalRequest, RequestId};
+use crate::approval::{ApprovalRequest, RequestId};
 use crate::error::Error;
 use crate::init::InitializationResult;
 use crate::notification::{self, ServerNotification, ThreadEvent, TurnEvent};
@@ -27,7 +27,6 @@ pub(crate) struct ServerInner {
     pub stdin_tx: mpsc::Sender<Vec<u8>>,
     pub pending_requests: Mutex<HashMap<u64, oneshot::Sender<Result<serde_json::Value, RpcError>>>>,
     pub thread_channels: Mutex<HashMap<String, Weak<ThreadRegistration>>>,
-    pub approval_handler: Option<Arc<dyn ApprovalHandler>>,
     pub global_notif_tx: mpsc::Sender<ServerNotification>,
     pub init_result: OnceLock<InitializationResult>,
     pub request_counter: AtomicU64,
@@ -405,21 +404,6 @@ impl ServerInner {
         // `item/tool/requestUserInput` is deliberately not an approval: it always
         // needs a consumer, so it takes the generic correlated-request path below.
         if let Some(approval) = self.parse_approval_request(id.clone(), method, &params) {
-            if let Some(ref handler) = self.approval_handler {
-                let handler = Arc::clone(handler);
-                let stdin_tx = self.stdin_tx.clone();
-                tokio::spawn(async move {
-                    let response = handler.handle(approval).await;
-                    if let Ok(json) = serde_json::to_vec(&OutgoingResponse {
-                        id: id.clone(),
-                        result: response.to_wire_value(),
-                    }) {
-                        let _ = stdin_tx.send(json).await;
-                    }
-                });
-                return;
-            }
-
             let thread_id = approval.thread_id().to_owned();
             let turn_id = Some(approval.turn_id().to_owned());
             let event = TurnEvent::ApprovalRequired(approval);
@@ -675,12 +659,6 @@ impl ServerInner {
                     method: method.to_owned(),
                     params: params.clone(),
                 }),
-            "command/exec/outputDelta" => serde_json::from_value(params.clone())
-                .map(ServerNotification::CommandExecOutputDelta)
-                .unwrap_or_else(|_| ServerNotification::Unknown {
-                    method: method.to_owned(),
-                    params: params.clone(),
-                }),
             "warning" => ServerNotification::Warning {
                 message: params
                     .get("message")
@@ -734,16 +712,11 @@ fn parse_tool_call_request(
 
 #[cfg(test)]
 mod tests {
-    use std::future::Future;
-    use std::pin::Pin;
-    use std::sync::atomic::{AtomicBool, AtomicU64};
+    use std::sync::atomic::AtomicU64;
 
     use super::*;
-    use crate::approval::ApprovalResponse;
 
-    fn test_inner_with_handler(
-        approval_handler: Option<Arc<dyn ApprovalHandler>>,
-    ) -> (ServerInner, mpsc::Receiver<Vec<u8>>) {
+    fn test_inner() -> (ServerInner, mpsc::Receiver<Vec<u8>>) {
         let (stdin_tx, stdin_rx) = mpsc::channel(8);
         let (global_notif_tx, _global_notif_rx) = mpsc::channel(1);
         (
@@ -751,7 +724,6 @@ mod tests {
                 stdin_tx,
                 pending_requests: Mutex::new(HashMap::new()),
                 thread_channels: Mutex::new(HashMap::new()),
-                approval_handler,
                 global_notif_tx,
                 init_result: OnceLock::new(),
                 request_counter: AtomicU64::new(1),
@@ -760,10 +732,6 @@ mod tests {
             },
             stdin_rx,
         )
-    }
-
-    fn test_inner() -> (ServerInner, mpsc::Receiver<Vec<u8>>) {
-        test_inner_with_handler(None)
     }
 
     fn warning(turn_id: &str) -> ThreadEvent {
@@ -916,27 +884,11 @@ mod tests {
         assert_eq!(registration.state(), ThreadChannelState::Overflow);
     }
 
-    struct RecordingApprovalHandler {
-        called: Arc<AtomicBool>,
-    }
-
-    impl ApprovalHandler for RecordingApprovalHandler {
-        fn handle(
-            &self,
-            _request: ApprovalRequest,
-        ) -> Pin<Box<dyn Future<Output = ApprovalResponse> + Send + '_>> {
-            self.called.store(true, Ordering::Release);
-            Box::pin(async { ApprovalResponse::Accept })
-        }
-    }
-
+    /// `item/tool/requestUserInput` is deliberately not an approval: it must
+    /// reach a consumer as a correlated request, and the SDK never answers it.
     #[tokio::test]
-    async fn user_input_is_surfaced_even_with_approval_handler() {
-        let called = Arc::new(AtomicBool::new(false));
-        let (inner, mut stdin_rx) =
-            test_inner_with_handler(Some(Arc::new(RecordingApprovalHandler {
-                called: called.clone(),
-            })));
+    async fn user_input_is_surfaced_as_a_correlated_server_request() {
+        let (inner, mut stdin_rx) = test_inner();
         let registration = inner.register_thread("thread-1").await;
         let mut rx = registration.take_receiver().await.unwrap();
         let request = serde_json::json!({
@@ -966,7 +918,6 @@ mod tests {
                 ..
             }) if turn_id == "turn-1" && method == "item/tool/requestUserInput"
         ));
-        assert!(!called.load(Ordering::Acquire));
         assert!(matches!(
             stdin_rx.try_recv(),
             Err(mpsc::error::TryRecvError::Empty)

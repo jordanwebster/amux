@@ -10,10 +10,9 @@ pub mod server;
 pub mod thread;
 pub mod thread_event_stream;
 pub mod transport;
-pub mod turn_stream;
 pub mod types;
 
-pub use approval::{ApprovalHandler, ApprovalRequest, ApprovalResponse, AutoApprove, RequestId};
+pub use approval::{ApprovalRequest, ApprovalResponse, RequestId};
 pub use config::{
     ApprovalPolicy, ApprovalsReviewer, CodexConfig, CollaborationMode, CollaborationModeKind,
     CollaborationModeSettings, GranularApprovalPolicy, InputItem, NetworkAccess, Personality,
@@ -31,25 +30,12 @@ pub use notification::{ServerNotification, ThreadEvent, TurnEvent};
 pub use server::Codex;
 pub use thread::Thread;
 pub use thread_event_stream::ThreadEventStream;
-pub use turn_stream::TurnStream;
 pub use types::*;
 
 /// Spawn a codex app-server subprocess, perform the initialize handshake,
 /// and return a ready-to-use `Codex` handle.
 pub async fn connect(config: CodexConfig) -> Result<Codex, Error> {
     Codex::connect(config).await
-}
-
-/// One-shot convenience: start a thread, run one turn, return the completed turn.
-pub async fn prompt(
-    config: CodexConfig,
-    prompt: &str,
-    thread_config: ThreadConfig,
-) -> Result<Turn, Error> {
-    let codex = connect(config).await?;
-    let result = codex.prompt(prompt, thread_config).await;
-    codex.close().await;
-    result
 }
 
 #[cfg(test)]
@@ -61,7 +47,6 @@ mod tests {
         let config = CodexConfig::default();
         assert_eq!(config.client_name, "codex-rust-sdk");
         assert!(config.experimental_api);
-        assert!(config.approval_handler.is_none());
         assert!(config.codex_path.is_none());
     }
 
@@ -151,22 +136,6 @@ mod tests {
                     "developer_instructions": "Plan carefully"
                 }
             })
-        );
-    }
-
-    #[test]
-    fn config_read_params_match_current_protocol_shape() {
-        assert_eq!(
-            serde_json::to_value(ConfigReadParams::default()).unwrap(),
-            serde_json::json!({})
-        );
-        assert_eq!(
-            serde_json::to_value(ConfigReadParams {
-                cwd: Some("/tmp/project".into()),
-                include_layers: Some(true),
-            })
-            .unwrap(),
-            serde_json::json!({"cwd": "/tmp/project", "includeLayers": true})
         );
     }
 
