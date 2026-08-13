@@ -26,9 +26,6 @@ pub enum Error {
     #[error("thread event queue overflowed for thread {0}")]
     ThreadQueueOverflow(String),
 
-    #[error("thread not found: {0}")]
-    ThreadNotFound(String),
-
     #[error(transparent)]
     Json(#[from] serde_json::Error),
 

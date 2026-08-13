@@ -600,8 +600,6 @@ pub struct ListThreadsParams {
     pub archived: Option<bool>,
     pub cwd: Option<String>,
     pub search_term: Option<String>,
-    #[serde(skip)]
-    pub status: Option<String>,
 }
 
 // ── Exec command ──────────────────────────────────────────────────
@@ -680,9 +678,6 @@ pub enum ReviewTarget {
     BaseBranch { branch: String },
     Commit { sha: String, title: Option<String> },
     Custom { instructions: String },
-    // Legacy compatibility shims.
-    LastTurn,
-    Turn(String),
 }
 
 // ── Hook info ─────────────────────────────────────────────────────
@@ -752,32 +747,6 @@ impl PlanStep {
     pub fn is_completed(&self) -> bool {
         self.status == PlanStepStatus::Completed
     }
-}
-
-// ── Question (for user-input approvals) ───────────────────────────
-
-#[derive(Debug, Clone, Serialize, Deserialize)]
-#[serde(rename_all = "camelCase")]
-pub struct Question {
-    #[serde(default)]
-    pub id: String,
-    #[serde(default)]
-    pub header: String,
-    pub question: String,
-    #[serde(default)]
-    pub is_other: bool,
-    #[serde(default)]
-    pub is_secret: bool,
-    pub options: Option<Vec<QuestionOption>>,
-    #[serde(skip)]
-    pub multi_select: bool,
-}
-
-#[derive(Debug, Clone, Serialize, Deserialize)]
-#[serde(rename_all = "camelCase")]
-pub struct QuestionOption {
-    pub label: String,
-    pub description: Option<String>,
 }
 
 // ── Account ───────────────────────────────────────────────────────

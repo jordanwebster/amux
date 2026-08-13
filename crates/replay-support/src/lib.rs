@@ -1,9 +1,5 @@
-pub mod matcher;
-pub mod spec;
 pub mod transport;
 
-pub use matcher::match_value;
-pub use spec::{Postconditions, Setup, Spec, Step};
 pub use transport::{
     ReplayAdvance, ReplayClock, ReplayController, ReplayOptions, ReplayPeek, ReplayTiming,
     replay_transport, replay_transport_with_controller, replay_transport_with_options,

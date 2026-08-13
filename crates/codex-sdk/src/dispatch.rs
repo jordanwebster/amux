@@ -271,8 +271,11 @@ impl ServerInner {
         // 1. Response: has `id` + (`result` or `error`)
         if let Some(ref id_val) = raw.id {
             if raw.result.is_some() || raw.error.is_some() {
-                let id = id_val.as_u64().unwrap_or(0);
-                if let Some(tx) = self.pending_requests.lock().await.remove(&id) {
+                // Client request IDs are always the u64 counter; anything else
+                // cannot correlate with a pending request.
+                if let Some(id) = id_val.as_u64()
+                    && let Some(tx) = self.pending_requests.lock().await.remove(&id)
+                {
                     let result = if let Some(err) = raw.error {
                         Err(err)
                     } else {
@@ -301,38 +304,11 @@ impl ServerInner {
         }
     }
 
-    /// Handle a server-initiated request (approval).
+    /// Handle a server-initiated request.
     async fn handle_server_request(&self, id: RequestId, method: &str, params: serde_json::Value) {
-        if method == "item/tool/requestUserInput" {
-            let thread_id = params
-                .get("threadId")
-                .and_then(|value| value.as_str())
-                .unwrap_or_default()
-                .to_owned();
-            if !thread_id.is_empty()
-                && self
-                    .send_thread_event(
-                        &thread_id,
-                        ThreadEvent::Turn {
-                            turn_id: turn_id(&params),
-                            event: TurnEvent::ServerRequest {
-                                id: id.clone(),
-                                method: method.to_owned(),
-                                params,
-                            },
-                        },
-                    )
-                    .await
-            {
-                return;
-            }
-            self.respond_unhandled(id, method, -32000);
-            return;
-        }
-
-        let approval = self.parse_approval_request(id.clone(), method, &params);
-
-        if let Some(approval) = approval {
+        // `item/tool/requestUserInput` is deliberately not an approval: it always
+        // needs a consumer, so it takes the generic correlated-request path below.
+        if let Some(approval) = self.parse_approval_request(id.clone(), method, &params) {
             if let Some(ref handler) = self.approval_handler {
                 let handler = Arc::clone(handler);
                 let stdin_tx = self.stdin_tx.clone();
@@ -349,69 +325,68 @@ impl ServerInner {
             }
 
             let thread_id = approval.thread_id().to_owned();
-            if self
-                .send_thread_event(
-                    &thread_id,
-                    ThreadEvent::Turn {
-                        turn_id: Some(approval.turn_id().to_owned()),
-                        event: TurnEvent::ApprovalRequired(approval),
-                    },
-                )
-                .await
-            {
-                return;
-            }
-            self.respond_unhandled(id, method, -32000);
+            let turn_id = Some(approval.turn_id().to_owned());
+            let event = TurnEvent::ApprovalRequired(approval);
+            self.deliver_or_error(&thread_id, turn_id, event, id, method, -32000)
+                .await;
             return;
         }
 
         if method == "item/tool/call" {
-            let request = parse_tool_call_request(id.clone(), &params);
-            if let Some(request) = request {
-                let thread_id = request.thread_id.clone();
-                if self
-                    .send_thread_event(
-                        &thread_id,
-                        ThreadEvent::Turn {
-                            turn_id: Some(request.turn_id.clone()),
-                            event: TurnEvent::ToolCallRequired(request),
-                        },
-                    )
-                    .await
-                {
-                    return;
+            match parse_tool_call_request(id.clone(), &params) {
+                Some(request) => {
+                    let thread_id = request.thread_id.clone();
+                    let turn_id = Some(request.turn_id.clone());
+                    let event = TurnEvent::ToolCallRequired(request);
+                    self.deliver_or_error(&thread_id, turn_id, event, id, method, -32000)
+                        .await;
                 }
-                self.respond_unhandled(id, method, -32000);
-            } else {
-                self.respond_unhandled(id, method, -32602);
+                None => self.respond_unhandled(id, method, -32602),
             }
             return;
         }
 
+        // A user-input request the client cannot deliver is a handling failure;
+        // any other unmodeled server request is a genuine "method not found".
+        let code = if method == "item/tool/requestUserInput" {
+            -32000
+        } else {
+            -32601
+        };
         let thread_id = params
             .get("threadId")
             .and_then(|v| v.as_str())
-            .unwrap_or("")
+            .unwrap_or_default()
             .to_owned();
+        let turn_id = turn_id(&params);
+        let event = TurnEvent::ServerRequest {
+            id: id.clone(),
+            method: method.to_owned(),
+            params,
+        };
+        self.deliver_or_error(&thread_id, turn_id, event, id, method, code)
+            .await;
+    }
+
+    /// Route a server-initiated request to its thread consumer, or answer it
+    /// with an explicit JSON-RPC error when no consumer can take it.
+    async fn deliver_or_error(
+        &self,
+        thread_id: &str,
+        turn_id: Option<String>,
+        event: TurnEvent,
+        id: RequestId,
+        method: &str,
+        code: i64,
+    ) {
         if !thread_id.is_empty()
             && self
-                .send_thread_event(
-                    &thread_id,
-                    ThreadEvent::Turn {
-                        turn_id: turn_id(&params),
-                        event: TurnEvent::ServerRequest {
-                            id: id.clone(),
-                            method: method.to_owned(),
-                            params,
-                        },
-                    },
-                )
+                .send_thread_event(thread_id, ThreadEvent::Turn { turn_id, event })
                 .await
         {
             return;
         }
-
-        self.respond_unhandled(id, method, -32601);
+        self.respond_unhandled(id, method, code);
     }
 
     fn respond_unhandled(&self, id: RequestId, method: &str, code: i64) {

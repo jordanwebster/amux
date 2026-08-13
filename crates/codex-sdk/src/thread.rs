@@ -269,14 +269,6 @@ fn review_target_to_wire(target: ReviewTarget) -> serde_json::Value {
         ReviewTarget::Custom { instructions } => {
             serde_json::json!({ "type": "custom", "instructions": instructions })
         }
-        ReviewTarget::LastTurn => serde_json::json!({
-            "type": "custom",
-            "instructions": "Review the most recent turn in this thread."
-        }),
-        ReviewTarget::Turn(turn_id) => serde_json::json!({
-            "type": "custom",
-            "instructions": format!("Review the turn with id `{turn_id}`.")
-        }),
     }
 }
 
@@ -380,10 +372,16 @@ mod tests {
     async fn failed_review_restores_receiver() {
         let thread = test_thread(test_server());
 
-        let err = thread.review(ReviewTarget::LastTurn).await.unwrap_err();
+        let err = thread
+            .review(ReviewTarget::UncommittedChanges)
+            .await
+            .unwrap_err();
         assert!(matches!(err, Error::TransportClosed));
 
-        let err = thread.review(ReviewTarget::LastTurn).await.unwrap_err();
+        let err = thread
+            .review(ReviewTarget::UncommittedChanges)
+            .await
+            .unwrap_err();
         assert!(matches!(err, Error::TransportClosed));
     }
 

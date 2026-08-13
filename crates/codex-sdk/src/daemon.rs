@@ -148,12 +148,7 @@ async fn ensure_well_known(codex_home: &Path) -> Result<DaemonMode, Error> {
         return Ok(DaemonMode::Existing);
     }
 
-    tokio::fs::create_dir_all(
-        socket_path
-            .parent()
-            .ok_or_else(|| Error::Daemon("daemon socket has no parent directory".into()))?,
-    )
-    .await?;
+    // `resolve_socket_path` creates and canonicalizes the parent directory.
     let socket_path = resolve_socket_path(&socket_path).await?;
     if !prepare_spawn_socket(&socket_path).await? {
         return Ok(DaemonMode::Existing);

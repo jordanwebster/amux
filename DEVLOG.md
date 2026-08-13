@@ -38,6 +38,30 @@ One paragraph describing what was done.
 
 ---
 
+## 2026-08-13: P4 simplification — dead adopted surface and dispatch scar tissue
+
+Independent pass over the adopted crates after both remediation rounds.
+`ServerInner::handle_server_request` grew four near-identical
+route-to-thread-or-error blocks across the rounds; they collapse into one
+`deliver_or_error` helper, and the `item/tool/requestUserInput` pre-block is
+gone entirely — once user input stopped being modeled as an approval it was
+just the generic correlated-request path with a different error code. Response
+correlation no longer maps a non-numeric id to pending request 0. `ensure_well_known`
+no longer creates the socket parent twice (`resolve_socket_path` already does).
+Deleted dead adopted surface: `Question`/`QuestionOption` (unreferenced since
+user input became a raw correlated `ServerRequest`, and carrying a phantom
+`#[serde(skip)] multi_select`), `ListThreadsParams::status` (a `#[serde(skip)]`
+filter that never reached the wire), the two "legacy compatibility shim"
+`ReviewTarget` variants that synthesized English review instructions inside the
+SDK, and `replay-support`'s `spec`/`matcher` modules — a YAML scenario-DSL
+runner with claude-sdk vocabulary (`permission_mode`, `max_budget_usd`) that
+nothing in this workspace runs and that the guide explicitly declines to adopt.
+That drops `serde`/`serde_yaml` from `replay-support`. `Error::ThreadNotFound`
+is gone too — never constructed; unknown threads come back as RPC errors.
+Behavior unchanged; the
+P4 regression tests for turn filtering, overflow, string request ids, user-input
+surfacing, and shared registrations all still pass unmodified.
+
 ## 2026-08-13: P4 — in-tree Codex SDK and daemon transport
 
 Copied `codex-sdk` and `replay-support` from claude-sdk commit
