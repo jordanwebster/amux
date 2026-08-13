@@ -80,6 +80,8 @@ match structured input-result rows.
 - P7 adds the Codex layer as sibling enum arms and a new module; the kernel
   dispatch structure does not need another reshape.
 
+Follow-up (simplification): the phase left each Claude gate derived twice — `ClaudeLayer::{phase,send_gate,mode_cycle_gate}` took the kernel bits (`AgentPhase`, `StreamState`, `now`) that their only callers, the `claude` module's `Model`-level functions of the same names, had just extracted; the methods folded into those functions (`folded_phase` stays private), and the speculative `Model::layer` accessor (no callers) plus the `AgentLayer` re-export (P7 adds it when a renderer needs it) were dropped.
+
 ## 2026-08-13: Checkpoint #2 — one owner for the Codex disconnect invariant
 
 ### Summary

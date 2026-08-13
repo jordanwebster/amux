@@ -31,7 +31,7 @@ use serde::{Deserialize, Serialize};
 use uuid::Uuid;
 
 use crate::claude::encoding::AskAnswer;
-use crate::model::{AgentPhase, Attention, Model, StreamPhase, StreamState, Violation, Why};
+use crate::model::{AgentPhase, Attention, Model, StreamPhase, Violation, Why};
 use crate::msg::OpId;
 
 /// The native structured protocol owned by this layer.
@@ -1039,22 +1039,8 @@ impl ClaudeLayer {
         }
     }
 
-    /// The derived session phase (the E1 table), including the kernel's
-    /// subscription lifecycle. `now` enters via `Msg::Tick` and caps
-    /// inferred states.
-    pub fn phase(&self, stream: Option<&StreamState>, now: Option<DateTime<Utc>>) -> ChatPhase {
-        match stream.map(|stream| &stream.phase) {
-            Some(StreamPhase::Opening | StreamPhase::Replaying) => ChatPhase::Replaying,
-            Some(StreamPhase::Live)
-            | Some(StreamPhase::Closed {
-                reason:
-                    crate::msg::StreamCloseReason::AgentExited { .. }
-                    | crate::msg::StreamCloseReason::AgentDeleted,
-            }) => self.folded_phase(now),
-            _ => ChatPhase::Unknown,
-        }
-    }
-
+    /// The phase the fold alone can claim (the E1 table). The kernel's
+    /// subscription lifecycle wraps it in this module's `phase`.
     fn folded_phase(&self, now: Option<DateTime<Utc>>) -> ChatPhase {
         if self.exited {
             // Orderly process termination is a FACT that overrides
@@ -1127,47 +1113,6 @@ impl ClaudeLayer {
             ChatPhase::Idle {
                 tag: PhaseTag::Inferred,
             }
-        }
-    }
-
-    /// D2's single send decision, shared by reducer and renderer.
-    pub fn send_gate(
-        &self,
-        agent_phase: &AgentPhase,
-        stream: Option<&StreamState>,
-        now: Option<DateTime<Utc>>,
-    ) -> SendGate {
-        if matches!(agent_phase, AgentPhase::Exited { .. }) {
-            return SendGate::Exited;
-        }
-        if !self.pending_echoes().is_empty() {
-            return SendGate::SendInFlight;
-        }
-        match self.phase(stream, now) {
-            ChatPhase::Idle { .. } | ChatPhase::Errored => SendGate::Ready,
-            ChatPhase::Replaying => SendGate::Replaying,
-            ChatPhase::Working => SendGate::Working,
-            ChatPhase::NeedsYou { .. } => SendGate::NeedsYou,
-            ChatPhase::Unknown => SendGate::Unknown,
-        }
-    }
-
-    /// D4's permission-mode cycle gate. It is allowed exactly when the
-    /// injected Shift+Tab would reach Claude's composer.
-    pub fn mode_cycle_gate(
-        &self,
-        agent_phase: &AgentPhase,
-        stream: Option<&StreamState>,
-        now: Option<DateTime<Utc>>,
-    ) -> Option<&'static str> {
-        if matches!(agent_phase, AgentPhase::Exited { .. }) {
-            return Some("agent exited");
-        }
-        match self.phase(stream, now) {
-            ChatPhase::Idle { .. } | ChatPhase::Working | ChatPhase::Errored => None,
-            ChatPhase::Replaying => Some("mode cycle gated while replaying"),
-            ChatPhase::NeedsYou { .. } => Some("mode cycle gated while an ask is pending"),
-            ChatPhase::Unknown => Some("mode cycle gated — session state unknown"),
         }
     }
 
@@ -1333,16 +1278,33 @@ impl ClaudeLayer {
     }
 }
 
-/// Claude chat phase for one card. This small typed accessor keeps kernel
-/// lifecycle facts at the layer boundary without teaching `Model` a
-/// Claude-specific phase.
+/// The derived chat phase for one Claude card (E1), computed here once for
+/// every renderer: kernel subscription catch-up gates to Replaying, a dead
+/// transport degrades to Unknown, an exited agent keeps its layer's last
+/// honest state (the card's `phase` carries the exit itself), and the fold
+/// derives the rest — with `now` (entering via Ticks) capping the inferred
+/// states. This keeps kernel lifecycle facts at the layer boundary without
+/// teaching `Model` a Claude-specific phase.
 pub fn phase(model: &Model, agent: amux::AgentId) -> ChatPhase {
-    model.claude(agent).map_or(ChatPhase::Unknown, |layer| {
-        layer.phase(model.stream(agent), model.now())
-    })
+    let Some(layer) = model.claude(agent) else {
+        return ChatPhase::Unknown;
+    };
+    match model.stream(agent).map(|stream| &stream.phase) {
+        Some(StreamPhase::Opening | StreamPhase::Replaying) => ChatPhase::Replaying,
+        Some(StreamPhase::Live)
+        | Some(StreamPhase::Closed {
+            reason:
+                crate::msg::StreamCloseReason::AgentExited { .. }
+                | crate::msg::StreamCloseReason::AgentDeleted,
+        }) => layer.folded_phase(model.now()),
+        _ => ChatPhase::Unknown,
+    }
 }
 
-/// D2's shared renderer/reducer gate for one Claude card.
+/// The prompt-send gate (D2), derived here once: the reducer enforces it on
+/// dispatch and the composer footer states it — same decision, one
+/// derivation. The draft itself is renderer ViewState and is never touched
+/// by a gate.
 pub fn send_gate(model: &Model, agent: amux::AgentId) -> SendGate {
     let Some(card) = model.agent(agent) else {
         return SendGate::Unavailable;
@@ -1350,18 +1312,45 @@ pub fn send_gate(model: &Model, agent: amux::AgentId) -> SendGate {
     let Some(layer) = card.claude() else {
         return SendGate::Unavailable;
     };
-    layer.send_gate(&card.phase, model.stream(agent), model.now())
+    if matches!(card.phase, AgentPhase::Exited { .. }) {
+        return SendGate::Exited;
+    }
+    if !layer.pending_echoes().is_empty() {
+        // One optimistic echo in flight at a time: reconciliation is
+        // content-keyed, and claude queues raced sends anyway.
+        return SendGate::SendInFlight;
+    }
+    match phase(model, agent) {
+        // Errored allows sending: recovery may need a prompt, and the
+        // agent's own composer accepts one.
+        ChatPhase::Idle { .. } | ChatPhase::Errored => SendGate::Ready,
+        ChatPhase::Replaying => SendGate::Replaying,
+        ChatPhase::Working => SendGate::Working,
+        ChatPhase::NeedsYou { .. } => SendGate::NeedsYou,
+        ChatPhase::Unknown => SendGate::Unknown,
+    }
 }
 
-/// D4's permission-mode cycle gate for one Claude card.
+/// The permission-mode cycle gate (D4): allowed whenever the injected
+/// Shift+Tab would reach claude's composer. While an ask panel is up the
+/// same byte navigates the form instead — refused; degraded windows refuse
+/// honestly.
 pub fn mode_cycle_gate(model: &Model, agent: amux::AgentId) -> Option<&'static str> {
     let Some(card) = model.agent(agent) else {
         return Some("chat input unavailable for this agent");
     };
-    let Some(layer) = card.claude() else {
+    if card.claude().is_none() {
         return Some("chat input unavailable for this agent");
-    };
-    layer.mode_cycle_gate(&card.phase, model.stream(agent), model.now())
+    }
+    if matches!(card.phase, AgentPhase::Exited { .. }) {
+        return Some("agent exited");
+    }
+    match phase(model, agent) {
+        ChatPhase::Idle { .. } | ChatPhase::Working | ChatPhase::Errored => None,
+        ChatPhase::Replaying => Some("mode cycle gated while replaying"),
+        ChatPhase::NeedsYou { .. } => Some("mode cycle gated while an ask is pending"),
+        ChatPhase::Unknown => Some("mode cycle gated — session state unknown"),
+    }
 }
 
 /// The invariant classes must actually FIRE: a coherent layer is built

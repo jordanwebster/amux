@@ -429,10 +429,6 @@ impl Model {
         self.streams.get(&id)
     }
 
-    pub fn layer(&self, id: AgentId) -> Option<&AgentLayer> {
-        self.agents.get(&id).and_then(|card| card.layer.as_ref())
-    }
-
     /// The Claude chat layer for an agent (the chat view's read surface).
     pub fn claude(&self, id: AgentId) -> Option<&ClaudeLayer> {
         self.agents.get(&id).and_then(AgentCard::claude)

@@ -24,9 +24,9 @@ pub use amux::{Agent, AgentId, AgentType, Capabilities, HostEntry, HostId, HostT
 pub use claude::{ClaudeCommand, SendGate};
 pub use effect::{DumpReason, Effect, InputPayload};
 pub use model::{
-    AgentCard, AgentLayer, AgentPhase, Attention, Connection, FinishedOp, FleetItem, HostState,
-    Model, PendingOp, StreamPhase, StreamState, Violation, Why, agent_type_label,
-    display_name_fallback, format_relative_age,
+    AgentCard, AgentPhase, Attention, Connection, FinishedOp, FleetItem, HostState, Model,
+    PendingOp, StreamPhase, StreamState, Violation, Why, agent_type_label, display_name_fallback,
+    format_relative_age,
 };
 pub use msg::{
     Command, DisconnectReason, Ephemeral, FlowClass, Msg, OpError, OpId, OpOutcome, ServerMsg,
