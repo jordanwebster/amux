@@ -5,7 +5,9 @@
 //! the lifecycle states most likely to expose precedence drift.
 
 use amux_ui::codex::{CodexCommand, CodexDecision, CodexPhase, SendGate};
-use amux_ui::{Attention, Command, Model, Msg, StreamCloseReason, StreamMsg, Why};
+use amux_ui::{
+    Attention, Command, DisconnectReason, Model, Msg, StreamCloseReason, StreamMsg, Why,
+};
 use serde_json::json;
 
 use crate::harness::*;
@@ -142,6 +144,51 @@ fn named_states() -> Vec<(&'static str, Vec<Msg>)> {
             ]),
         ),
         ("answer in flight", answer_in_flight),
+        // Lifecycle churn no other chapter reaches. Registering these puts
+        // them under the differential spec's per-Msg invariant sweep
+        // (`wire_free::differential_fold_matches_live_state_after_every_msg`)
+        // as well as the agreement assertions below, for free and forever.
+        (
+            "reconnect epoch churn over a folded layer",
+            seq([
+                with_rows(approval_rows()),
+                vec![
+                    disconnected(DisconnectReason::TransportError {
+                        message: "connection reset".to_string(),
+                    }),
+                    connected("nova"),
+                    host_up(&a_host("nova")),
+                    agent_up(&a_codex_agent(AGENT, "nova")),
+                ],
+                synced(),
+            ]),
+        ),
+        (
+            "retryable close, reopen, replay again",
+            seq([
+                with_rows(active()),
+                vec![stream(
+                    AGENT,
+                    StreamMsg::Closed {
+                        reason: StreamCloseReason::TransportError {
+                            message: "connection reset".to_string(),
+                        },
+                    },
+                )],
+                vec![agent_up(&a_codex_agent(AGENT, "nova"))],
+                vec![stream(AGENT, StreamMsg::Opened { truncated: false })],
+                vec![batch(AGENT, 20, approval_rows())],
+                vec![stream(AGENT, StreamMsg::ReplayComplete)],
+            ]),
+        ),
+        (
+            "approval arrives mid-replay",
+            seq([
+                raw_base(false, false),
+                vec![batch(AGENT, 10, approval_rows())],
+                vec![stream(AGENT, StreamMsg::ReplayComplete)],
+            ]),
+        ),
     ]
 }
 

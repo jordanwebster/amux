@@ -1024,7 +1024,7 @@ fn fold_input_result(layer: &mut CodexLayer, seq: u64, row: &Value) {
         );
     } else if let Some(InFlightInput {
         op,
-        kind: InFlightKind::Steer { text, .. },
+        kind: InFlightKind::Steer { text },
         ..
     }) = matched
     {

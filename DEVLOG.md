@@ -4,6 +4,8 @@ This file tracks significant development work, decisions made, and current state
 
 ---
 
+2026-08-14 — P8 simplification: narrowed the Codex write gate through a `session_state` -> `LiveState` result so the compiler, not three `unreachable!` arms, keeps session-level refusal membership in one place; registered the reconnect/reopen/mid-replay lifecycles the spec suite never reached; deleted the never-read in-flight steer/interrupt turn ids. Gates green, goldens byte-identical.
+
 2026-08-14 — P8 review round 2: made all Codex write permissions project directly from the non-lossy `Situation` classification, restoring interrupt during an in-flight steer; red/green regressions, full workspace tests, 44/44 testnet specs, and byte-identical goldens pass.
 
 2026-08-13 — P8 review round 1: moved Codex account preflight onto the host's shared fallback-capable app-server connection and made prompt, steer, interrupt, answer, and footer affordances consume one authoritative `SendGate`; full gates pass with no golden changes.

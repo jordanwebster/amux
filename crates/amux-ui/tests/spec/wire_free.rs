@@ -16,6 +16,13 @@ use crate::harness::*;
 /// sequence, folding the serialized recording from scratch equals the live
 /// incrementally-updated Model. A property, not a snapshot — it proves
 /// purity, serde fidelity, and absence of hidden state in one sweep.
+///
+/// It is ALSO the suite's invariant sweep: it calls `check_invariants` after
+/// every Msg, so every registered sequence — present and future, across both
+/// agent layers — is a probe of every structural invariant, including the
+/// Codex projection-agreement one. Registering a sequence with the harness is
+/// therefore the cheapest way to put a new state under that control; nothing
+/// else in the suite needs to opt in.
 #[test]
 fn differential_fold_matches_live_state_after_every_msg() {
     let sequences = all_sequences();

@@ -434,13 +434,13 @@ pub struct InFlightInput {
 #[serde(tag = "kind", rename_all = "snake_case")]
 pub enum InFlightKind {
     Prompt,
+    /// The text is retained because the steer echo is rendered from it once
+    /// the send succeeds; the turn id is not, because `op` already correlates
+    /// the result and `CodexInput::Steer` already carries the id on the wire.
     Steer {
-        turn_id: String,
         text: String,
     },
-    Interrupt {
-        turn_id: String,
-    },
+    Interrupt,
     Answer {
         request_id: Value,
         decision: CodexDecision,
@@ -1069,15 +1069,31 @@ impl WritePermission {
     }
 }
 
+/// The situation states in which the session itself can still accept SOME
+/// write. `session_state` narrows into this, so which states are
+/// session-level refusals is stated once, in one function, and an action rule
+/// literally cannot see (or restate) that membership.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+enum LiveState {
+    AwaitingApproval,
+    BlockedUnsupported,
+    Responding,
+    Executing,
+    Working,
+    Finished,
+    Idle,
+}
+
 pub(super) fn write_permission(
     model: &Model,
     agent: amux::AgentId,
     action: WriteAction,
 ) -> WritePermission {
     let situation = situation(model, agent);
-    if let Some(message) = session_refusal(&situation.state) {
-        return WritePermission::Refused(message);
-    }
+    let live = match session_state(&situation.state) {
+        Err(message) => return WritePermission::Refused(message),
+        Ok(live) => live,
+    };
 
     match action {
         WriteAction::Interrupt if situation.active_turn => WritePermission::Allowed,
@@ -1085,81 +1101,65 @@ pub(super) fn write_permission(
             WritePermission::Refused("cannot interrupt without an active turn")
         }
         _ if situation.input_in_flight => WritePermission::Refused(REFUSAL_INPUT_IN_FLIGHT),
-        WriteAction::Prompt => match situation.state {
-            SituationState::Finished | SituationState::Idle => WritePermission::Allowed,
-            SituationState::AwaitingApproval { .. } | SituationState::BlockedUnsupported { .. } => {
+        WriteAction::Prompt => match live {
+            LiveState::Finished | LiveState::Idle => WritePermission::Allowed,
+            LiveState::AwaitingApproval | LiveState::BlockedUnsupported => {
                 WritePermission::Refused(REFUSAL_NEEDS_YOU)
             }
-            SituationState::Responding { .. }
-            | SituationState::Executing { .. }
-            | SituationState::Working => WritePermission::Refused(REFUSAL_ACTIVE),
-            SituationState::Unavailable
-            | SituationState::Exited
-            | SituationState::Closed
-            | SituationState::Unknown
-            | SituationState::ReadOnly
-            | SituationState::Replaying => unreachable!("refused above"),
+            LiveState::Responding | LiveState::Executing | LiveState::Working => {
+                WritePermission::Refused(REFUSAL_ACTIVE)
+            }
         },
-        WriteAction::Steer => match situation.state {
-            SituationState::Responding { .. }
-            | SituationState::Executing { .. }
-            | SituationState::Working
+        WriteAction::Steer => match live {
+            LiveState::Responding | LiveState::Executing | LiveState::Working
                 if situation.active_turn =>
             {
                 WritePermission::Allowed
             }
-            SituationState::AwaitingApproval { .. } | SituationState::BlockedUnsupported { .. } => {
+            LiveState::AwaitingApproval | LiveState::BlockedUnsupported => {
                 WritePermission::Refused(REFUSAL_NEEDS_YOU)
             }
-            SituationState::Unavailable
-            | SituationState::Exited
-            | SituationState::Closed
-            | SituationState::Unknown
-            | SituationState::ReadOnly
-            | SituationState::Replaying => unreachable!("refused above"),
-            SituationState::Responding { .. }
-            | SituationState::Executing { .. }
-            | SituationState::Working
-            | SituationState::Finished
-            | SituationState::Idle => {
-                WritePermission::Refused("cannot steer without an active turn")
-            }
+            LiveState::Responding
+            | LiveState::Executing
+            | LiveState::Working
+            | LiveState::Finished
+            | LiveState::Idle => WritePermission::Refused("cannot steer without an active turn"),
         },
-        WriteAction::Answer => match situation.state {
-            SituationState::AwaitingApproval { .. } => WritePermission::Allowed,
-            SituationState::Unavailable
-            | SituationState::Exited
-            | SituationState::Closed
-            | SituationState::Unknown
-            | SituationState::ReadOnly
-            | SituationState::Replaying => unreachable!("refused above"),
-            SituationState::BlockedUnsupported { .. }
-            | SituationState::Responding { .. }
-            | SituationState::Executing { .. }
-            | SituationState::Working
-            | SituationState::Finished
-            | SituationState::Idle => {
+        WriteAction::Answer => match live {
+            LiveState::AwaitingApproval => WritePermission::Allowed,
+            LiveState::BlockedUnsupported
+            | LiveState::Responding
+            | LiveState::Executing
+            | LiveState::Working
+            | LiveState::Finished
+            | LiveState::Idle => {
                 WritePermission::Refused("cannot answer without a pending Codex approval")
             }
         },
     }
 }
 
-fn session_refusal(state: &SituationState) -> Option<&'static str> {
+/// The single statement of which situations refuse every write because the
+/// *session* cannot accept one, versus the live states an action rule then
+/// judges. Returning the narrowed `LiveState` rather than an `Option<&str>` is
+/// what makes the compiler the enforcer: move a state across this boundary and
+/// every action rule stops compiling, instead of reaching a runtime panic in a
+/// UI reducer.
+fn session_state(state: &SituationState) -> Result<LiveState, &'static str> {
     match state {
-        SituationState::Unavailable => Some(REFUSAL_UNAVAILABLE),
-        SituationState::Exited => Some(REFUSAL_EXITED),
-        SituationState::Closed => Some(REFUSAL_CLOSED),
-        SituationState::Replaying => Some(REFUSAL_REPLAYING),
-        SituationState::ReadOnly => Some(REFUSAL_READ_ONLY),
-        SituationState::Unknown => Some(REFUSAL_UNKNOWN),
-        SituationState::AwaitingApproval { .. }
-        | SituationState::BlockedUnsupported { .. }
-        | SituationState::Responding { .. }
-        | SituationState::Executing { .. }
-        | SituationState::Working
-        | SituationState::Finished
-        | SituationState::Idle => None,
+        SituationState::Unavailable => Err(REFUSAL_UNAVAILABLE),
+        SituationState::Exited => Err(REFUSAL_EXITED),
+        SituationState::Closed => Err(REFUSAL_CLOSED),
+        SituationState::Replaying => Err(REFUSAL_REPLAYING),
+        SituationState::ReadOnly => Err(REFUSAL_READ_ONLY),
+        SituationState::Unknown => Err(REFUSAL_UNKNOWN),
+        SituationState::AwaitingApproval { .. } => Ok(LiveState::AwaitingApproval),
+        SituationState::BlockedUnsupported { .. } => Ok(LiveState::BlockedUnsupported),
+        SituationState::Responding { .. } => Ok(LiveState::Responding),
+        SituationState::Executing { .. } => Ok(LiveState::Executing),
+        SituationState::Working => Ok(LiveState::Working),
+        SituationState::Finished => Ok(LiveState::Finished),
+        SituationState::Idle => Ok(LiveState::Idle),
     }
 }
 

@@ -62,11 +62,8 @@ pub(crate) fn update_command(
                 seq,
                 command,
                 agent,
-                CodexInput::Steer {
-                    turn_id: turn_id.clone(),
-                    input,
-                },
-                InFlightKind::Steer { turn_id, text },
+                CodexInput::Steer { turn_id, input },
+                InFlightKind::Steer { text },
             )
         }
         CodexCommand::Answer {
@@ -99,10 +96,8 @@ pub(crate) fn update_command(
                 seq,
                 command,
                 agent,
-                CodexInput::Interrupt {
-                    turn_id: turn_id.clone(),
-                },
-                InFlightKind::Interrupt { turn_id },
+                CodexInput::Interrupt { turn_id },
+                InFlightKind::Interrupt,
             )
         }
     }
