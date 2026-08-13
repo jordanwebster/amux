@@ -56,24 +56,24 @@ async fn parses_added_thread_notifications_and_emitted_timestamp() {
 
     assert!(matches!(
         turn.next().await,
-        Some(TurnEvent::FileChangePatchUpdated { ref item_id, ref changes })
+        Ok(Some(TurnEvent::FileChangePatchUpdated { ref item_id, ref changes }))
             if item_id == "item-1" && changes.len() == 1
     ));
     assert!(matches!(
         turn.next().await,
-        Some(TurnEvent::ModelRerouted { ref to_model, .. }) if to_model == "model-b"
+        Ok(Some(TurnEvent::ModelRerouted { ref to_model, .. })) if to_model == "model-b"
     ));
     assert!(matches!(
         turn.next().await,
-        Some(TurnEvent::ThreadCompacted { ref turn_id }) if turn_id == "turn-1"
+        Ok(Some(TurnEvent::ThreadCompacted { ref turn_id })) if turn_id == "turn-1"
     ));
     assert!(matches!(
         turn.next().await,
-        Some(TurnEvent::Warning { ref message }) if message == "careful"
+        Ok(Some(TurnEvent::Warning { ref message })) if message == "careful"
     ));
     assert!(matches!(
         turn.next().await,
-        Some(TurnEvent::TurnCompleted { .. })
+        Ok(Some(TurnEvent::TurnCompleted { .. }))
     ));
     driver.await.expect("replay driver");
 }

@@ -13,7 +13,11 @@ use crate::types::{
 #[derive(Debug, Clone)]
 pub enum ThreadEvent {
     /// A turn-scoped event.
-    Turn(TurnEvent),
+    Turn {
+        /// The protocol turn ID carried by the notification or request.
+        turn_id: Option<String>,
+        event: TurnEvent,
+    },
 }
 
 // ── TurnEvent ────────────────────────────────────────────────────

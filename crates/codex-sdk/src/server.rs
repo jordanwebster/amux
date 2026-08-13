@@ -12,7 +12,7 @@ use crate::config::{self, CodexConfig, ThreadConfig, TurnInput};
 use crate::dispatch::ServerInner;
 use crate::error::Error;
 use crate::init::{ClientInfo, InitializationResult, InitializeCapabilities, InitializeParams};
-use crate::notification::{ServerNotification, ThreadEvent};
+use crate::notification::ServerNotification;
 use crate::thread::Thread;
 use crate::transport;
 use crate::types::{
@@ -41,6 +41,7 @@ impl Codex {
             transport::spawn_process(&config).map_err(|e| Error::Process(format!("{e:#}")))?;
 
         let cancel = CancellationToken::new();
+        let child_waiter = transport::spawn_child_waiter(child, cancel.clone());
         let (stdin_tx, stdin_rx) = mpsc::channel::<Vec<u8>>(64);
         let (global_notif_tx, global_notif_rx) = mpsc::channel::<ServerNotification>(64);
 
@@ -56,13 +57,13 @@ impl Codex {
             init_result: OnceLock::new(),
             request_counter: AtomicU64::new(1),
             cancel: cancel.clone(),
+            child_waiter: Mutex::new(Some(child_waiter)),
         });
 
         // Spawn background tasks
         transport::spawn_reader_task(stdout, inner.clone(), cancel.clone());
         transport::spawn_writer_task(stdin, stdin_rx, cancel.clone());
         transport::spawn_stderr_task(stderr, "codex app-server stdio");
-        transport::spawn_child_waiter(child, cancel);
 
         let codex = Self {
             inner,
@@ -77,12 +78,12 @@ impl Codex {
         {
             Ok(init) => init,
             Err(error) => {
-                codex.inner.cancel.cancel();
+                codex.inner.shutdown().await;
                 return Err(error);
             }
         };
         if let Err(error) = codex.inner.notify_no_params("initialized").await {
-            codex.inner.cancel.cancel();
+            codex.inner.shutdown().await;
             return Err(error);
         }
         let _ = codex.inner.init_result.set(init);
@@ -109,6 +110,7 @@ impl Codex {
             init_result: OnceLock::new(),
             request_counter: AtomicU64::new(1),
             cancel: cancel.clone(),
+            child_waiter: Mutex::new(None),
         });
 
         transport::spawn_reader_task(reader, inner.clone(), cancel.clone());
@@ -140,12 +142,12 @@ impl Codex {
         {
             Ok(init) => init,
             Err(error) => {
-                codex.inner.cancel.cancel();
+                codex.inner.shutdown().await;
                 return Err(error);
             }
         };
         if let Err(error) = codex.inner.notify_no_params("initialized").await {
-            codex.inner.cancel.cancel();
+            codex.inner.shutdown().await;
             return Err(error);
         }
         let _ = codex.inner.init_result.set(init);
@@ -265,7 +267,7 @@ impl Codex {
     ) -> Result<Turn, Error> {
         let thread = self.start_thread(thread_config).await?;
         let mut stream = thread.turn(input).await?;
-        while stream.next().await.is_some() {}
+        while stream.next().await?.is_some() {}
         stream
             .completed_turn()
             .cloned()
@@ -341,17 +343,14 @@ impl Codex {
 
     /// Shut down the codex app-server subprocess.
     pub async fn close(self) {
-        self.inner.cancel.cancel();
+        self.inner.shutdown().await;
     }
 
     // ── Internal ─────────────────────────────────────────────────
 
     async fn register_thread(&self, session: ThreadSessionInfo) -> Thread {
-        let (event_tx, event_rx) = mpsc::channel::<ThreadEvent>(256);
-        self.inner
-            .register_thread(&session.thread.id, event_tx)
-            .await;
-        Thread::new(self.inner.clone(), session, event_rx)
+        let registration = self.inner.register_thread(&session.thread.id).await;
+        Thread::new(self.inner.clone(), session, registration)
     }
 
     async fn request_thread<P: Serialize>(&self, method: &str, params: P) -> Result<Thread, Error> {
@@ -485,6 +484,70 @@ mod remediation_tests {
         .expect("writer task remained alive after initialize failed")
         .unwrap();
         assert_eq!(bytes, 0);
+    }
+
+    #[cfg(unix)]
+    async fn assert_subprocess_waiter_awaited(initialize_error: bool) {
+        use std::os::unix::fs::PermissionsExt;
+
+        let temp = tempfile::tempdir().unwrap();
+        let script_path = temp.path().join("fake-codex");
+        let marker_path = temp.path().join("stopped");
+        let response = if initialize_error {
+            serde_json::json!({
+                "id": 1,
+                "error": {"code": -32602, "message": "bad initialize", "data": null}
+            })
+        } else {
+            serde_json::json!({
+                "id": 1,
+                "result": {
+                    "userAgent": "fake",
+                    "codexHome": "/tmp",
+                    "platformFamily": "unix",
+                    "platformOs": "test"
+                }
+            })
+        };
+        let script = format!(
+            "#!/bin/sh\ntrap 'sleep 0.1; printf stopped > \"$MARKER\"; exit 0' TERM\nIFS= read -r request\nprintf '%s\\n' '{}'\nwhile :; do sleep 1; done\n",
+            response
+        );
+        std::fs::write(&script_path, script).unwrap();
+        let mut permissions = std::fs::metadata(&script_path).unwrap().permissions();
+        permissions.set_mode(0o755);
+        std::fs::set_permissions(&script_path, permissions).unwrap();
+
+        let mut config = CodexConfig {
+            codex_path: Some(script_path),
+            ..CodexConfig::default()
+        };
+        config.env = Some(std::collections::HashMap::from([(
+            "MARKER".into(),
+            marker_path.to_string_lossy().into_owned(),
+        )]));
+
+        let result = tokio::time::timeout(Duration::from_secs(5), Codex::connect(config))
+            .await
+            .expect("connect/shutdown timed out");
+        if initialize_error {
+            assert!(matches!(result, Err(Error::Rpc { code: -32602, .. })));
+        } else {
+            result.unwrap().close().await;
+        }
+        assert_eq!(std::fs::read_to_string(marker_path).unwrap(), "stopped");
+    }
+
+    #[cfg(unix)]
+    #[tokio::test]
+    async fn initialize_error_awaits_subprocess_waiter() {
+        assert_subprocess_waiter_awaited(true).await;
+    }
+
+    #[cfg(unix)]
+    #[tokio::test]
+    async fn close_awaits_subprocess_waiter() {
+        assert_subprocess_waiter_awaited(false).await;
     }
 }
 

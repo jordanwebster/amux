@@ -160,7 +160,7 @@ async fn reader_loop(
 
     // Drop all thread channel senders so TurnStreams see end-of-stream,
     // and resolve all pending requests so callers don't hang.
-    inner.thread_channels.lock().await.clear();
+    inner.close_thread_channels().await;
     let pending = std::mem::take(&mut *inner.pending_requests.lock().await);
     drop(pending);
 }

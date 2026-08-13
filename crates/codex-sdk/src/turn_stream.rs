@@ -3,6 +3,8 @@ use std::sync::Arc;
 
 use tokio::sync::mpsc;
 
+use crate::dispatch::ThreadChannelState;
+use crate::error::Error;
 use crate::notification::{ThreadEvent, TurnEvent};
 use crate::thread::ThreadInner;
 use crate::thread::restore_event_receiver;
@@ -54,39 +56,67 @@ impl TurnStream {
 
     /// Receive the next turn event.
     ///
-    /// Returns `None` when the turn is complete — either because a
+    /// Returns `Ok(None)` when the turn is complete — either because a
     /// `TurnCompleted` event was received (check [`completed_turn()`](Self::completed_turn))
-    /// or because the channel closed.
-    pub async fn next(&mut self) -> Option<TurnEvent> {
+    /// or because the channel closed. Returns an explicit error if dispatch
+    /// overflowed the bounded per-thread queue.
+    pub async fn next(&mut self) -> Result<Option<TurnEvent>, Error> {
         if self.done {
-            return None;
+            return Ok(None);
         }
-        let rx = self.rx.as_mut()?;
+        let registration = self.thread_inner.registration.clone();
+        let Some(rx) = self.rx.as_mut() else {
+            return Ok(None);
+        };
         loop {
-            match rx.recv().await {
-                Some(ThreadEvent::Turn(event)) => {
+            let state_changed = registration.state_changed().notified();
+            tokio::pin!(state_changed);
+            match registration.state() {
+                ThreadChannelState::Overflow => {
+                    self.done = true;
+                    return Err(Error::ThreadQueueOverflow(
+                        self.thread_inner.thread_id.clone(),
+                    ));
+                }
+                ThreadChannelState::Closed => {
+                    self.done = true;
+                    return Ok(None);
+                }
+                ThreadChannelState::Open => {}
+            }
+
+            let received = tokio::select! {
+                biased;
+                _ = &mut state_changed => continue,
+                event = rx.recv() => event,
+            };
+            match received {
+                Some(ThreadEvent::Turn { turn_id, event }) => {
                     // Compaction starts without a turn ID, so capture its first start event.
                     if self.turn_id.is_empty()
                         && let TurnEvent::TurnStarted { ref turn } = event
                     {
                         self.turn_id = turn.id.clone();
                     }
-                    // A dropped stream can leave its terminal event queued on the shared
-                    // thread receiver. Ignore it instead of ending the next turn's stream.
+                    // A dropped stream can leave any turn-scoped event queued on the shared
+                    // receiver. Ignore all events from other turns.
+                    if let Some(event_turn_id) = turn_id
+                        && !self.turn_id.is_empty()
+                        && event_turn_id != self.turn_id
+                    {
+                        continue;
+                    }
                     if let TurnEvent::TurnCompleted { ref turn } = event {
-                        if turn.id != self.turn_id {
-                            continue;
-                        }
                         self.completed_turn = Some(turn.clone());
                         self.done = true;
-                        return Some(event);
+                        return Ok(Some(event));
                     }
-                    return Some(event);
+                    return Ok(Some(event));
                 }
                 None => {
                     // Channel closed (EOF)
                     self.done = true;
-                    return None;
+                    return Ok(None);
                 }
             }
         }
@@ -136,7 +166,7 @@ mod tests {
         }
     }
 
-    fn thread_inner() -> Arc<ThreadInner> {
+    fn thread_inner() -> (Arc<ThreadInner>, Arc<crate::dispatch::ThreadRegistration>) {
         let (stdin_tx, _stdin_rx) = mpsc::channel(1);
         let (global_notif_tx, _global_notif_rx) = mpsc::channel::<ServerNotification>(1);
         let server = Arc::new(ServerInner {
@@ -148,8 +178,10 @@ mod tests {
             init_result: OnceLock::new(),
             request_counter: AtomicU64::new(1),
             cancel: CancellationToken::new(),
+            child_waiter: Mutex::new(None),
         });
-        Arc::new(ThreadInner {
+        let registration = crate::dispatch::ThreadRegistration::new();
+        let inner = Arc::new(ThreadInner {
             server,
             thread_id: "thread-1".into(),
             session: ThreadSessionInfo {
@@ -183,42 +215,81 @@ mod tests {
                 },
                 reasoning_effort: None,
             },
-            event_rx: Mutex::new(None),
-        })
+            registration: registration.clone(),
+        });
+        (inner, registration)
     }
 
     #[tokio::test]
     async fn ignores_completion_from_an_earlier_turn() {
-        let (tx, rx) = mpsc::channel(3);
-        tx.send(ThreadEvent::Turn(TurnEvent::TurnCompleted {
-            turn: turn("turn-old"),
-        }))
-        .await
-        .unwrap();
-        tx.send(ThreadEvent::Turn(TurnEvent::Warning {
-            message: "current turn is still running".into(),
-        }))
-        .await
-        .unwrap();
-        tx.send(ThreadEvent::Turn(TurnEvent::TurnCompleted {
-            turn: turn("turn-current"),
-        }))
-        .await
-        .unwrap();
-
-        let mut stream = TurnStream::new(rx, thread_inner(), "turn-current".into());
+        let (thread_inner, registration) = thread_inner();
+        assert!(registration.send(ThreadEvent::Turn {
+            turn_id: Some("turn-old".into()),
+            event: TurnEvent::AgentMessageDelta {
+                item_id: "old-item".into(),
+                delta: "stale".into(),
+            },
+        }));
+        assert!(registration.send(ThreadEvent::Turn {
+            turn_id: Some("turn-old".into()),
+            event: TurnEvent::TurnCompleted {
+                turn: turn("turn-old"),
+            },
+        }));
+        assert!(registration.send(ThreadEvent::Turn {
+            turn_id: Some("turn-current".into()),
+            event: TurnEvent::Warning {
+                message: "current turn is still running".into(),
+            },
+        }));
+        assert!(registration.send(ThreadEvent::Turn {
+            turn_id: Some("turn-current".into()),
+            event: TurnEvent::TurnCompleted {
+                turn: turn("turn-current"),
+            },
+        }));
+        let rx = registration.take_receiver().await.unwrap();
+        let mut stream = TurnStream::new(rx, thread_inner, "turn-current".into());
 
         assert!(matches!(
             stream.next().await,
-            Some(TurnEvent::Warning { .. })
+            Ok(Some(TurnEvent::Warning { .. }))
         ));
         assert!(matches!(
             stream.next().await,
-            Some(TurnEvent::TurnCompleted { ref turn }) if turn.id == "turn-current"
+            Ok(Some(TurnEvent::TurnCompleted { ref turn })) if turn.id == "turn-current"
         ));
         assert_eq!(
             stream.completed_turn().map(|turn| turn.id.as_str()),
             Some("turn-current")
         );
+    }
+
+    #[tokio::test]
+    async fn reports_thread_queue_overflow_instead_of_hanging() {
+        let (thread_inner, registration) = thread_inner();
+        for index in 0..256 {
+            assert!(registration.send(ThreadEvent::Turn {
+                turn_id: Some("turn-current".into()),
+                event: TurnEvent::AgentMessageDelta {
+                    item_id: format!("item-{index}"),
+                    delta: "queued".into(),
+                },
+            }));
+        }
+        assert!(!registration.send(ThreadEvent::Turn {
+            turn_id: Some("turn-current".into()),
+            event: TurnEvent::TurnCompleted {
+                turn: turn("turn-current"),
+            },
+        }));
+        let rx = registration.take_receiver().await.unwrap();
+        let mut stream = TurnStream::new(rx, thread_inner, "turn-current".into());
+
+        assert!(matches!(
+            stream.next().await,
+            Err(Error::ThreadQueueOverflow(ref thread_id)) if thread_id == "thread-1"
+        ));
+        assert!(matches!(stream.next().await, Ok(None)));
     }
 }

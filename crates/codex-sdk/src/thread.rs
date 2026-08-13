@@ -1,10 +1,10 @@
 use std::sync::Arc;
 
-use tokio::sync::{Mutex, mpsc};
+use tokio::sync::mpsc;
 
 use crate::approval::{ApprovalResponse, RequestId};
 use crate::config::{self, TurnConfig, TurnInput};
-use crate::dispatch::ServerInner;
+use crate::dispatch::{ServerInner, ThreadRegistration};
 use crate::error::Error;
 use crate::notification::ThreadEvent;
 use crate::turn_stream::TurnStream;
@@ -28,7 +28,7 @@ pub(crate) struct ThreadInner {
     pub server: Arc<ServerInner>,
     pub thread_id: String,
     pub session: ThreadSessionInfo,
-    pub event_rx: Mutex<Option<mpsc::Receiver<ThreadEvent>>>,
+    pub registration: Arc<ThreadRegistration>,
 }
 
 struct TurnSlot {
@@ -39,10 +39,9 @@ struct TurnSlot {
 impl TurnSlot {
     async fn acquire(thread_inner: Arc<ThreadInner>) -> Result<Self, Error> {
         let rx = thread_inner
-            .event_rx
-            .lock()
+            .registration
+            .take_receiver()
             .await
-            .take()
             .ok_or(Error::TurnActive)?;
         Ok(Self {
             thread_inner,
@@ -71,7 +70,7 @@ impl Thread {
     pub(crate) fn new(
         server: Arc<ServerInner>,
         session: ThreadSessionInfo,
-        event_rx: mpsc::Receiver<ThreadEvent>,
+        registration: Arc<ThreadRegistration>,
     ) -> Self {
         let thread_id = session.thread.id.clone();
         Self {
@@ -79,7 +78,7 @@ impl Thread {
                 server,
                 thread_id,
                 session,
-                event_rx: Mutex::new(Some(event_rx)),
+                registration,
             }),
         }
     }
@@ -258,16 +257,6 @@ impl Thread {
     }
 }
 
-impl Drop for ThreadInner {
-    fn drop(&mut self) {
-        let server = self.server.clone();
-        let thread_id = self.thread_id.clone();
-        tokio::spawn(async move {
-            server.unregister_thread(&thread_id).await;
-        });
-    }
-}
-
 fn review_target_to_wire(target: ReviewTarget) -> serde_json::Value {
     match target {
         ReviewTarget::UncommittedChanges => serde_json::json!({ "type": "uncommittedChanges" }),
@@ -295,14 +284,14 @@ pub(crate) fn restore_event_receiver(
     thread_inner: Arc<ThreadInner>,
     rx: mpsc::Receiver<ThreadEvent>,
 ) {
-    if let Ok(mut guard) = thread_inner.event_rx.try_lock() {
-        *guard = Some(rx);
-        return;
-    }
+    let rx = match thread_inner.registration.try_restore_receiver(rx) {
+        Ok(()) => return,
+        Err(rx) => rx,
+    };
 
     if let Ok(handle) = tokio::runtime::Handle::try_current() {
         handle.spawn(async move {
-            *thread_inner.event_rx.lock().await = Some(rx);
+            thread_inner.registration.restore_receiver(rx).await;
         });
     }
 }
@@ -312,6 +301,7 @@ mod tests {
     use std::collections::HashMap;
     use std::sync::atomic::AtomicU64;
 
+    use tokio::sync::Mutex;
     use tokio_util::sync::CancellationToken;
 
     use super::*;
@@ -333,11 +323,11 @@ mod tests {
             init_result: std::sync::OnceLock::new(),
             request_counter: AtomicU64::new(1),
             cancel: CancellationToken::new(),
+            child_waiter: Mutex::new(None),
         })
     }
 
     fn test_thread(server: Arc<ServerInner>) -> Thread {
-        let (_event_tx, event_rx) = mpsc::channel(1);
         Thread::new(
             server,
             ThreadSessionInfo {
@@ -371,7 +361,7 @@ mod tests {
                 },
                 reasoning_effort: None,
             },
-            event_rx,
+            crate::dispatch::ThreadRegistration::new(),
         )
     }
 

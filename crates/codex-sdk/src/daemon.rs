@@ -284,11 +284,23 @@ async fn prepare_spawn_socket(socket_path: &Path) -> Result<bool, Error> {
         SocketState::Ready => Ok(false),
         SocketState::Occupied(message) => Err(Error::Daemon(message)),
         SocketState::Stale => {
-            tokio::fs::remove_file(socket_path).await?;
+            remove_stale_socket(socket_path).await?;
             Ok(true)
         }
         SocketState::Missing => Ok(true),
     }
+}
+
+async fn remove_stale_socket(socket_path: &Path) -> Result<(), Error> {
+    let metadata = tokio::fs::symlink_metadata(socket_path).await?;
+    if !std::os::unix::fs::FileTypeExt::is_socket(&metadata.file_type()) {
+        return Err(Error::Daemon(format!(
+            "refusing to remove non-socket path {}",
+            socket_path.display()
+        )));
+    }
+    tokio::fs::remove_file(socket_path).await?;
+    Ok(())
 }
 
 async fn wait_until_ready(socket_path: &Path) -> Result<bool, Error> {
@@ -346,11 +358,12 @@ async fn probe_socket(socket_path: &Path) -> Result<SocketState, Error> {
 async fn websocket_bridge(
     mut websocket: WebSocketStream<UnixStream>,
     mut inbound: tokio::io::DuplexStream,
-    mut outbound: BufReader<tokio::io::DuplexStream>,
+    outbound: BufReader<tokio::io::DuplexStream>,
 ) {
-    let mut line = String::new();
+    // `Lines::next_line` retains partially read bytes when another select branch
+    // wins, unlike `AsyncBufReadExt::read_line`.
+    let mut outbound = outbound.lines();
     loop {
-        line.clear();
         tokio::select! {
             message = websocket.next() => match message {
                 Some(Ok(Message::Text(text))) => {
@@ -368,15 +381,43 @@ async fn websocket_bridge(
                 Some(Ok(Message::Close(_))) | Some(Err(_)) | None => break,
                 Some(Ok(_)) => {}
             },
-            read = outbound.read_line(&mut line) => match read {
-                Ok(0) | Err(_) => break,
-                Ok(_) => {
-                    let text = line.trim_end_matches(['\r', '\n']);
-                    if websocket.send(Message::Text(text.to_owned().into())).await.is_err() {
+            read = outbound.next_line() => match read {
+                Ok(None) | Err(_) => break,
+                Ok(Some(line)) => {
+                    if websocket.send(Message::Text(line.into())).await.is_err() {
                         break;
                     }
                 }
             }
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[tokio::test]
+    async fn stale_path_cleanup_refuses_regular_file() {
+        let temp = tempfile::tempdir().unwrap();
+        let path = temp.path().join("codex.sock");
+        tokio::fs::write(&path, b"do not delete").await.unwrap();
+
+        let error = remove_stale_socket(&path).await.unwrap_err();
+
+        assert!(matches!(error, Error::Daemon(message) if message.contains("non-socket")));
+        assert_eq!(tokio::fs::read(&path).await.unwrap(), b"do not delete");
+    }
+
+    #[tokio::test]
+    async fn stale_path_cleanup_unlinks_unix_socket() {
+        let temp = tempfile::tempdir().unwrap();
+        let path = temp.path().join("codex.sock");
+        let listener = tokio::net::UnixListener::bind(&path).unwrap();
+        drop(listener);
+
+        remove_stale_socket(&path).await.unwrap();
+
+        assert!(!path.exists());
     }
 }

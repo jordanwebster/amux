@@ -23,6 +23,9 @@ pub enum Error {
     #[error("turn already active")]
     TurnActive,
 
+    #[error("thread event queue overflowed for thread {0}")]
+    ThreadQueueOverflow(String),
+
     #[error("thread not found: {0}")]
     ThreadNotFound(String),
 

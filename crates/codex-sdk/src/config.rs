@@ -231,11 +231,15 @@ pub enum SandboxMode {
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
-#[serde(tag = "type", rename_all = "camelCase")]
+#[serde(
+    tag = "type",
+    rename_all = "camelCase",
+    rename_all_fields = "camelCase"
+)]
 pub enum SandboxPolicy {
     DangerFullAccess,
     ReadOnly {
-        #[serde(default)]
+        #[serde(default, skip_serializing_if = "ReadOnlyAccess::is_full_access")]
         access: ReadOnlyAccess,
         #[serde(default)]
         network_access: bool,
@@ -247,7 +251,7 @@ pub enum SandboxPolicy {
     WorkspaceWrite {
         #[serde(default)]
         writable_roots: Vec<PathBuf>,
-        #[serde(default)]
+        #[serde(default, skip_serializing_if = "ReadOnlyAccess::is_full_access")]
         read_only_access: ReadOnlyAccess,
         #[serde(default)]
         network_access: bool,
@@ -259,7 +263,11 @@ pub enum SandboxPolicy {
 }
 
 #[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize)]
-#[serde(tag = "type", rename_all = "camelCase")]
+#[serde(
+    tag = "type",
+    rename_all = "camelCase",
+    rename_all_fields = "camelCase"
+)]
 pub enum ReadOnlyAccess {
     Restricted {
         include_platform_defaults: bool,
@@ -267,6 +275,12 @@ pub enum ReadOnlyAccess {
     },
     #[default]
     FullAccess,
+}
+
+impl ReadOnlyAccess {
+    fn is_full_access(&self) -> bool {
+        matches!(self, Self::FullAccess)
+    }
 }
 
 #[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize)]
@@ -456,5 +470,36 @@ pub(crate) fn turn_input_to_value(input: TurnInput) -> serde_json::Value {
     match input {
         TurnInput::Text(s) => serde_json::json!([{"type": "text", "text": s}]),
         TurnInput::Items(items) => serde_json::to_value(&items).unwrap_or_default(),
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn sandbox_policy_round_trips_generated_0_147_schema_shape() {
+        let schema_shaped = serde_json::json!({
+            "type": "workspaceWrite",
+            "writableRoots": ["/workspace", "/tmp/output"],
+            "networkAccess": true,
+            "excludeTmpdirEnvVar": true,
+            "excludeSlashTmp": false
+        });
+
+        let policy: SandboxPolicy = serde_json::from_value(schema_shaped.clone()).unwrap();
+        assert_eq!(serde_json::to_value(policy).unwrap(), schema_shaped);
+    }
+
+    #[test]
+    fn restricted_read_only_access_uses_camel_case_fields() {
+        let schema_shaped = serde_json::json!({
+            "type": "restricted",
+            "includePlatformDefaults": true,
+            "readableRoots": ["/opt/shared"]
+        });
+
+        let access: ReadOnlyAccess = serde_json::from_value(schema_shaped.clone()).unwrap();
+        assert_eq!(serde_json::to_value(access).unwrap(), schema_shaped);
     }
 }

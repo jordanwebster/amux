@@ -4,7 +4,7 @@ use std::pin::Pin;
 
 use serde::{Deserialize, Serialize};
 
-use crate::types::{CommandAction, Question};
+use crate::types::CommandAction;
 
 /// A JSON-RPC request ID supplied by the app-server.
 #[derive(Debug, Clone, PartialEq, Eq, Hash, Serialize, Deserialize)]
@@ -56,13 +56,6 @@ pub enum ApprovalRequest {
         reason: Option<String>,
         grant_root: Option<PathBuf>,
     },
-    UserInput {
-        thread_id: String,
-        turn_id: String,
-        item_id: String,
-        request_id: RequestId,
-        questions: Vec<Question>,
-    },
     Permissions {
         thread_id: String,
         turn_id: String,
@@ -78,7 +71,6 @@ impl ApprovalRequest {
         match self {
             Self::CommandExecution { request_id, .. }
             | Self::FileChange { request_id, .. }
-            | Self::UserInput { request_id, .. }
             | Self::Permissions { request_id, .. } => request_id.clone(),
         }
     }
@@ -87,8 +79,15 @@ impl ApprovalRequest {
         match self {
             Self::CommandExecution { thread_id, .. }
             | Self::FileChange { thread_id, .. }
-            | Self::UserInput { thread_id, .. }
             | Self::Permissions { thread_id, .. } => thread_id,
+        }
+    }
+
+    pub(crate) fn turn_id(&self) -> &str {
+        match self {
+            Self::CommandExecution { turn_id, .. }
+            | Self::FileChange { turn_id, .. }
+            | Self::Permissions { turn_id, .. } => turn_id,
         }
     }
 }
