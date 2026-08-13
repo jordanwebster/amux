@@ -1,3 +1,5 @@
+use std::fmt::Display;
+use std::future::Future;
 use std::path::{Path, PathBuf};
 use std::sync::{Arc, Mutex as StdMutex};
 
@@ -89,6 +91,24 @@ fn daemon_mode_name(mode: &DaemonMode) -> &'static str {
         DaemonMode::Spawned(_) => "spawned-well-known",
         DaemonMode::Private(_) => "spawned-private",
         DaemonMode::PrivateExisting(_) => "existing-private",
+    }
+}
+
+async fn set_initial_thread_name<F, Fut, E>(
+    agent_id: Uuid,
+    thread_id: String,
+    desired_name: Option<String>,
+    rename: F,
+) where
+    F: FnOnce(String, String) -> Fut,
+    Fut: Future<Output = std::result::Result<(), E>>,
+    E: Display,
+{
+    let Some(name) = desired_name else {
+        return;
+    };
+    if let Err(error) = rename(thread_id.clone(), name).await {
+        tracing::warn!(%agent_id, %thread_id, %error, "failed to name Codex thread during startup");
     }
 }
 
@@ -214,13 +234,16 @@ impl CodexSession {
                     state.thread = Some(thread);
                     state.desired_name.clone()
                 };
-                if let Some(name) = desired_name.as_deref() {
-                    connection
-                        .client
-                        .rename_thread(&thread_id, name)
-                        .await
-                        .context("failed to name Codex thread")?;
-                }
+                let client = connection.client.clone();
+                set_initial_thread_name(
+                    agent_id,
+                    thread_id,
+                    desired_name,
+                    move |thread_id, name| async move {
+                        client.rename_thread(&thread_id, &name).await
+                    },
+                )
+                .await;
                 Ok::<(), anyhow::Error>(())
             };
 
@@ -378,6 +401,8 @@ impl AgentBackend for CodexSession {
 
 #[cfg(test)]
 mod tests {
+    use std::sync::atomic::{AtomicBool, Ordering};
+
     use super::*;
     use crate::agents::AgentType;
 
@@ -416,5 +441,26 @@ mod tests {
     fn suspend_is_nonfatal_and_reports_missing_thread_id() {
         let error = session().suspended_state().unwrap_err();
         assert!(error.to_string().contains("thread_id is not available"));
+    }
+
+    #[tokio::test]
+    async fn initial_name_failure_is_nonfatal() {
+        let attempted = Arc::new(AtomicBool::new(false));
+        let attempted_by_rename = attempted.clone();
+
+        set_initial_thread_name(
+            Uuid::from_u128(1),
+            "thread-1".to_string(),
+            Some("named".to_string()),
+            move |thread_id, name| async move {
+                attempted_by_rename.store(true, Ordering::SeqCst);
+                assert_eq!(thread_id, "thread-1");
+                assert_eq!(name, "named");
+                Err::<(), _>(anyhow!("thread/name/set rejected"))
+            },
+        )
+        .await;
+
+        assert!(attempted.load(Ordering::SeqCst));
     }
 }

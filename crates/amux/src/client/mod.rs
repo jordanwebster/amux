@@ -925,17 +925,26 @@ fn client_create_request_to_wire(
             approval_policy,
             sandbox_policy,
             resume_thread_id,
-        } => wire::client_create_agent_request::Agent::Codex(wire::CodexCreateConfig {
-            cwd: path_to_wire_string(
-                method::CLIENT_CREATE_NAME,
-                "ClientCreateAgentRequest.cwd",
-                &request.working_dir,
-            )?,
-            model,
-            approval_policy,
-            sandbox_policy,
-            resume_thread_id,
-        }),
+        } => {
+            if !request.args.is_empty() {
+                return Err(ClientError::Encode {
+                    method: method::CLIENT_CREATE_NAME,
+                    message: "Codex agents take no argv; CreateAgentRequest.args must be empty"
+                        .to_string(),
+                });
+            }
+            wire::client_create_agent_request::Agent::Codex(wire::CodexCreateConfig {
+                cwd: path_to_wire_string(
+                    method::CLIENT_CREATE_NAME,
+                    "ClientCreateAgentRequest.cwd",
+                    &request.working_dir,
+                )?,
+                model,
+                approval_policy,
+                sandbox_policy,
+                resume_thread_id,
+            })
+        }
         #[cfg(all(feature = "local-agents", any(debug_assertions, test)))]
         crate::agents::AgentType::TestAgent { command } => {
             wire::client_create_agent_request::Agent::TestAgent(wire::TestAgentCreateConfig {
@@ -1445,6 +1454,32 @@ mod tests {
         assert_eq!(config.approval_policy.as_deref(), Some("on-request"));
         assert_eq!(config.sandbox_policy.as_deref(), Some("workspace-write"));
         assert_eq!(config.resume_thread_id.as_deref(), Some("thread-7"));
+    }
+
+    #[test]
+    fn client_create_request_rejects_codex_args() {
+        let error = client_create_request_to_wire(CreateAgentRequest {
+            agent_id: Uuid::from_u128(7),
+            host_id: None,
+            name: Some("codex".into()),
+            agent_type: crate::agents::AgentType::Codex {
+                model: None,
+                approval_policy: None,
+                sandbox_policy: None,
+                resume_thread_id: None,
+            },
+            working_dir: "/tmp/work".into(),
+            terminal_size: None,
+            args: vec!["--model".into(), "gpt-5.6-sol".into()],
+        })
+        .unwrap_err();
+
+        assert!(error.to_string().contains("Codex agents take no argv"));
+        assert!(
+            error
+                .to_string()
+                .contains("CreateAgentRequest.args must be empty")
+        );
     }
 
     #[cfg(unix)]

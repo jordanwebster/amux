@@ -2,8 +2,8 @@
 
 pub mod io;
 
-#[cfg(feature = "local-agents")]
+#[cfg(all(feature = "local-agents", unix))]
 mod session;
 
-#[cfg(feature = "local-agents")]
+#[cfg(all(feature = "local-agents", unix))]
 pub(crate) use session::{CodexClient, CodexSession};

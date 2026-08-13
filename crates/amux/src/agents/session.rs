@@ -13,6 +13,7 @@
 //! [`super::record`] and stay compiled in every build.
 
 use std::path::Path;
+#[cfg(unix)]
 use std::sync::Arc;
 
 use anyhow::Result;
@@ -25,6 +26,7 @@ use uuid::Uuid;
 #[cfg(any(debug_assertions, test))]
 use super::TestAgentSession;
 use super::claude::ClaudeSession;
+#[cfg(unix)]
 use super::codex::{CodexClient, CodexSession};
 use super::{
     AgentRecord, ExternalHookBootstrap, HookError, HookOutcome, LocalAgentNameSource, PtyHandle,
@@ -115,11 +117,16 @@ pub(crate) type AgentSession = Box<dyn AgentBackend>;
 
 pub(crate) fn new_agent(
     req: &CreateAgentRequest,
-    codex_client: Arc<CodexClient>,
+    #[cfg(unix)] codex_client: Arc<CodexClient>,
 ) -> Result<AgentSession> {
     match &req.agent_type {
         AgentType::Claude => Ok(Box::new(ClaudeSession::new(req))),
+        #[cfg(unix)]
         AgentType::Codex { .. } => Ok(Box::new(CodexSession::new(req, codex_client))),
+        #[cfg(not(unix))]
+        AgentType::Codex { .. } => Err(anyhow::anyhow!(
+            "Codex agents are unavailable on this platform"
+        )),
         #[cfg(any(debug_assertions, test))]
         AgentType::TestAgent { command } => {
             Ok(Box::new(TestAgentSession::new(req, command.clone())))

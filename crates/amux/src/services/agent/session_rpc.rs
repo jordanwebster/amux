@@ -650,6 +650,7 @@ mod tests {
                     terminal_size: None,
                     args: Vec::new(),
                 },
+                #[cfg(unix)]
                 state.codex_client.clone(),
             )
             .unwrap();

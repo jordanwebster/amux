@@ -5,6 +5,7 @@ use serde::{Deserialize, Serialize};
 use uuid::Uuid;
 
 pub(crate) const AGENT_TYPE_CLAUDE: &str = "claude";
+#[cfg(all(feature = "local-agents", unix))]
 pub(crate) const AGENT_TYPE_CODEX: &str = "codex";
 
 #[cfg(all(feature = "local-agents", any(debug_assertions, test)))]

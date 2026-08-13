@@ -24,7 +24,7 @@ pub(crate) use buffer::{
     BroadcastRead, ByteReplayQuery, MultiplexByteBuffer, MultiplexByteReader,
     MultiplexStructuredBuffer, MultiplexStructuredReader, SequencedReplayQuery, StructuredOutput,
 };
-#[cfg(feature = "local-agents")]
+#[cfg(all(feature = "local-agents", unix))]
 pub(crate) use codex::CodexClient;
 pub use events::AgentEvent;
 pub(crate) use events::{agent_event_from_wire, agent_event_to_wire};
@@ -46,6 +46,7 @@ pub(crate) use test_agent::TestAgentSession;
 #[cfg(all(feature = "local-agents", any(test, feature = "testnet")))]
 pub(crate) use test_agent::io::{TEST_ECHO_COMMAND, TEST_ECHO_V1};
 pub(crate) use types::AGENT_TYPE_CLAUDE;
+#[cfg(all(feature = "local-agents", unix))]
 pub(crate) use types::AGENT_TYPE_CODEX;
 #[cfg(all(feature = "local-agents", any(debug_assertions, test)))]
 pub(crate) use types::AGENT_TYPE_TEST_AGENT;

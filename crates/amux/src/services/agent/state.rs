@@ -11,7 +11,9 @@ use std::sync::Arc;
 use tokio::sync::RwLock;
 use uuid::Uuid;
 
-use crate::agents::{AgentEvent, AgentRecord, AgentSession, CodexClient, SessionCloseReason};
+#[cfg(unix)]
+use crate::agents::CodexClient;
+use crate::agents::{AgentEvent, AgentRecord, AgentSession, SessionCloseReason};
 use crate::routing::EventSource;
 use crate::server::ShutdownReason;
 
@@ -22,6 +24,7 @@ pub(crate) struct AgentServiceState {
     pub(crate) local_agent_events: EventSource<AgentEvent>,
     pub(crate) local_session_close_events: EventSource<(Uuid, SessionCloseReason)>,
     pub(crate) local_shutdown_events: EventSource<ShutdownReason>,
+    #[cfg(unix)]
     pub(crate) codex_client: Arc<CodexClient>,
 }
 
@@ -36,6 +39,7 @@ impl AgentServiceState {
             local_agent_events: EventSource::default(),
             local_session_close_events: EventSource::default(),
             local_shutdown_events: EventSource::default(),
+            #[cfg(unix)]
             codex_client: Arc::new(CodexClient::new(
                 crate::config::default_socket_dir().join("codex.sock"),
             )),

@@ -53,6 +53,7 @@ agent host and asynchronously starts or resumes a persistent Codex thread.
   advertisement.
 - Changed the in-tree SDK's daemon/socket/raw-I/O connect APIs to require and
   honor `CodexConfig`; amux now identifies itself in `initialize`.
+- Review round 1 gated the Codex backend to Unix, made initial naming non-fatal, and rejected Codex argv.
 
 ### Decisions Made
 - Codex startup stays asynchronous behind synchronous `AgentBackend::start`, so
