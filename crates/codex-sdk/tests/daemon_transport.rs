@@ -1,6 +1,6 @@
 #![cfg(unix)]
 
-use codex_sdk::{ExecCommandParams, ListThreadsParams, connect_socket};
+use codex_sdk::{CodexConfig, ExecCommandParams, ListThreadsParams, connect_socket};
 use futures_util::{SinkExt, StreamExt};
 use tokio::net::UnixListener;
 use tokio_tungstenite::{accept_async, tungstenite::Message};
@@ -21,6 +21,12 @@ async fn websocket_over_uds_uses_one_json_message_per_text_frame() {
         };
         let initialize: serde_json::Value = serde_json::from_str(&initialize).unwrap();
         assert_eq!(initialize["method"], "initialize");
+        assert_eq!(initialize["params"]["clientInfo"]["name"], "amux-test");
+        assert_eq!(initialize["params"]["clientInfo"]["version"], "9.8.7");
+        assert_eq!(
+            initialize["params"]["capabilities"]["optOutNotificationMethods"],
+            serde_json::json!(["thread/status/changed"])
+        );
         websocket
             .send(Message::Text(
                 serde_json::json!({
@@ -64,7 +70,13 @@ async fn websocket_over_uds_uses_one_json_message_per_text_frame() {
             .unwrap();
     });
 
-    let codex = connect_socket(&socket_path).await.unwrap();
+    let config = CodexConfig {
+        client_name: "amux-test".into(),
+        client_version: "9.8.7".into(),
+        opt_out_notification_methods: vec!["thread/status/changed".into()],
+        ..CodexConfig::default()
+    };
+    let codex = connect_socket(&socket_path, config).await.unwrap();
     assert_eq!(
         codex.initialization_result().unwrap().user_agent,
         "test/0.147.0"
@@ -150,7 +162,9 @@ async fn large_outbound_frame_survives_interleaved_inbound_frames() {
             .unwrap();
     });
 
-    let codex = connect_socket(&socket_path).await.unwrap();
+    let codex = connect_socket(&socket_path, CodexConfig::default())
+        .await
+        .unwrap();
     let result = codex
         .exec_command(ExecCommandParams {
             command: vec!["echo".into(), payload],

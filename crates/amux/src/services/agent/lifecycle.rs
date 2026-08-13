@@ -134,8 +134,9 @@ pub(crate) async fn create_agent_record(
             return Err(CreateAgentError::AlreadyExists(a.clone()));
         }
 
-        let mut session =
-            new_agent(&req).map_err(|error| CreateAgentError::Start(error.to_string()))?;
+        let codex_client = state.codex_client.clone();
+        let mut session = new_agent(&req, codex_client)
+            .map_err(|error| CreateAgentError::Start(error.to_string()))?;
         let exit_handle = session.start().map_err(|error| {
             CreateAgentError::Start(format!("failed to start local agent {agent_id}: {error}"))
         })?;
@@ -609,15 +610,19 @@ mod tests {
 
         {
             let mut state = agent_state.write().await;
-            let session = new_agent(&CreateAgentRequest {
-                agent_id,
-                host_id: None,
-                name: Some("not-ready".to_string()),
-                agent_type: AgentType::Claude,
-                working_dir: std::env::temp_dir(),
-                terminal_size: None,
-                args: vec![],
-            })
+            let codex_client = state.codex_client.clone();
+            let session = new_agent(
+                &CreateAgentRequest {
+                    agent_id,
+                    host_id: None,
+                    name: Some("not-ready".to_string()),
+                    agent_type: AgentType::Claude,
+                    working_dir: std::env::temp_dir(),
+                    terminal_size: None,
+                    args: vec![],
+                },
+                codex_client,
+            )
             .unwrap();
             state
                 .insert_registered_local_agent(host_id, agent_id, session)

@@ -12,9 +12,9 @@ use tokio::time::{sleep, timeout};
 use tokio_tungstenite::{WebSocketStream, client_async, tungstenite::Message};
 use tokio_util::sync::CancellationToken;
 
-use crate::Codex;
 use crate::error::Error;
 use crate::transport;
+use crate::{Codex, CodexConfig};
 
 const SOCKET_RELATIVE_PATH: &str = "app-server-control/app-server-control.sock";
 const MAX_SOCKET_PATH_BYTES: usize = 103;
@@ -87,13 +87,13 @@ pub fn daemon_socket_path(codex_home: &Path) -> PathBuf {
 }
 
 /// Connect to the well-known daemon socket and perform the initialize handshake.
-pub async fn connect_daemon(codex_home: &Path) -> Result<Codex, Error> {
+pub async fn connect_daemon(codex_home: &Path, config: CodexConfig) -> Result<Codex, Error> {
     let codex_home = tokio::fs::canonicalize(codex_home).await?;
-    connect_socket(&daemon_socket_path(&codex_home)).await
+    connect_socket(&daemon_socket_path(&codex_home), config).await
 }
 
 /// Connect to an app-server using WebSocket text frames over a Unix socket.
-pub async fn connect_socket(socket_path: &Path) -> Result<Codex, Error> {
+pub async fn connect_socket(socket_path: &Path, config: CodexConfig) -> Result<Codex, Error> {
     let stream = UnixStream::connect(socket_path).await?;
     let (websocket, _) = client_async("ws://localhost/rpc", stream)
         .await
@@ -107,7 +107,7 @@ pub async fn connect_socket(socket_path: &Path) -> Result<Codex, Error> {
         BufReader::new(bridge_outbound),
     ));
 
-    Codex::from_io(BufReader::new(sdk_reader), sdk_writer).await
+    Codex::from_io(BufReader::new(sdk_reader), sdk_writer, config).await
 }
 
 /// Ensure a healthy server is listening on the well-known control socket.

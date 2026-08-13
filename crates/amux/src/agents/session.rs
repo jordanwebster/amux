@@ -13,6 +13,7 @@
 //! [`super::record`] and stay compiled in every build.
 
 use std::path::Path;
+use std::sync::Arc;
 
 use anyhow::Result;
 use async_trait::async_trait;
@@ -24,6 +25,7 @@ use uuid::Uuid;
 #[cfg(any(debug_assertions, test))]
 use super::TestAgentSession;
 use super::claude::ClaudeSession;
+use super::codex::{CodexClient, CodexSession};
 use super::{
     AgentRecord, ExternalHookBootstrap, HookError, HookOutcome, LocalAgentNameSource, PtyHandle,
     SessionEvent, StopPolicy, StructuredLogSource,
@@ -111,9 +113,13 @@ pub(crate) fn terminal_io_protocols(pty: Option<&PtyHandle>) -> Vec<String> {
 /// Unified agent session handle backed by dynamic trait dispatch.
 pub(crate) type AgentSession = Box<dyn AgentBackend>;
 
-pub(crate) fn new_agent(req: &CreateAgentRequest) -> Result<AgentSession> {
+pub(crate) fn new_agent(
+    req: &CreateAgentRequest,
+    codex_client: Arc<CodexClient>,
+) -> Result<AgentSession> {
     match &req.agent_type {
         AgentType::Claude => Ok(Box::new(ClaudeSession::new(req))),
+        AgentType::Codex { .. } => Ok(Box::new(CodexSession::new(req, codex_client))),
         #[cfg(any(debug_assertions, test))]
         AgentType::TestAgent { command } => {
             Ok(Box::new(TestAgentSession::new(req, command.clone())))

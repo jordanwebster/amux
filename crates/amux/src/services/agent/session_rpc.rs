@@ -11,6 +11,7 @@ use crate::agents::claude::io::{
     self as claude_io, ClaudePtyTranscriptV1Action, ClaudePtyTranscriptV1Output,
     ClaudePtyTranscriptV1ReplayQuery,
 };
+use crate::agents::codex::io::{self as codex_io, CodexSdkV1Output, CodexSdkV1ReplayQuery};
 use crate::agents::terminal_io::{self, TerminalV1Control, TerminalV1ReplayQuery};
 use crate::agents::{
     BroadcastRead, ByteReplayQuery, PtyHandle, SendInputRequest, SessionCloseReason,
@@ -49,8 +50,15 @@ enum SessionOutputReader {
     Raw(crate::agents::MultiplexByteReader),
     Structured {
         reader: crate::agents::MultiplexStructuredReader,
-        replay_cursor: Vec<u8>,
+        replay_cursor: Option<Vec<u8>>,
+        codec: StructuredCodec,
     },
+}
+
+#[derive(Clone, Copy)]
+enum StructuredCodec {
+    Claude,
+    Codex,
 }
 
 struct PreparedSessionSubscription {
@@ -74,10 +82,20 @@ async fn prepare_direct_session_subscription(
                 .map(|(reader, current_seq)| PreparedSessionSubscription {
                     output: SessionOutputReader::Structured {
                         reader,
-                        replay_cursor: encode_transcript_cursor(current_seq),
+                        replay_cursor: Some(encode_transcript_cursor(current_seq)),
+                        codec: StructuredCodec::Claude,
                     },
                 })
         }
+        codex_io::CODEX_SDK_V1 => prepare_codex_structured_session_subscription(request, host)
+            .await
+            .map(|reader| PreparedSessionSubscription {
+                output: SessionOutputReader::Structured {
+                    reader,
+                    replay_cursor: None,
+                    codec: StructuredCodec::Codex,
+                },
+            }),
         #[cfg(any(test, feature = "testnet"))]
         TEST_ECHO_V1 => {
             let reader = prepare_direct_test_echo_session_subscription(request, host).await?;
@@ -193,6 +211,45 @@ async fn prepare_direct_structured_session_subscription(
         .ok_or(ProtocolError::NoAgentFound)
 }
 
+async fn prepare_codex_structured_session_subscription(
+    request: &SubscribeSessionRequest,
+    host: &PtyAgentHost,
+) -> Result<crate::agents::MultiplexStructuredReader, ProtocolError> {
+    let args = codex_io::decode_codex_sdk_v1_args(request.args.as_deref())?;
+    let replay_query = match args.replay_query {
+        None => None,
+        Some(CodexSdkV1ReplayQuery::Tail { count }) => {
+            Some(crate::agents::SequencedReplayQuery::Tail { count })
+        }
+        Some(CodexSdkV1ReplayQuery::Since { seq }) => {
+            let seq = seq
+                .checked_add(1)
+                .ok_or_else(|| ProtocolError::InvalidArgument {
+                    message: "Codex SubscribeSession replay since cursor is out of range"
+                        .to_string(),
+                })?;
+            Some(crate::agents::SequencedReplayQuery::Since { seq })
+        }
+    };
+
+    let log_source = {
+        let state = host.state().read().await;
+        let session = state
+            .local_agents
+            .get(&request.agent_id)
+            .map(|context| &context.session)
+            .ok_or(ProtocolError::NoAgentFound)?;
+        ensure_agent_supports_protocol(session, request.agent_id, codex_io::CODEX_SDK_V1)?;
+        session.log_source().ok_or(ProtocolError::NoAgentFound)?
+    };
+
+    log_source
+        .subscribe_with_query(replay_query)
+        .await
+        .map(|(reader, _)| reader)
+        .ok_or(ProtocolError::NoAgentFound)
+}
+
 pub(super) async fn send_session_input(
     host: &PtyAgentHost,
     request: SendInputRequest,
@@ -209,6 +266,17 @@ pub(super) async fn send_session_input(
         }
         claude_io::PTY_TRANSCRIPT_V1 => {
             send_structured_session_input(host, request.agent_id, request.event).await
+        }
+        codex_io::CODEX_SDK_V1 => {
+            let SessionInputEvent::Input { payload, .. } = request.event else {
+                return Err(ProtocolError::Unimplemented {
+                    message: format!("`{}` control handling lands in P5b", codex_io::CODEX_SDK_V1),
+                });
+            };
+            let _input = codex_io::decode_codex_sdk_v1_input(&payload)?;
+            Err(ProtocolError::Unimplemented {
+                message: format!("`{}` input handling lands in P5b", codex_io::CODEX_SDK_V1),
+            })
         }
         #[cfg(any(test, feature = "testnet"))]
         TEST_ECHO_V1 => {
@@ -516,12 +584,13 @@ async fn read_session_output_event(
         SessionOutputReader::Structured {
             reader,
             replay_cursor,
+            codec,
         } => reader.read_event().await.map(|event| match event {
             BroadcastRead::ReplayItem(output) | BroadcastRead::LiveItem(output) => {
-                structured_output_event(output)
+                structured_output_event(output, *codec)
             }
             BroadcastRead::ReplayComplete => Ok(SubscribeSessionEvent::ReplayComplete {
-                cursor: Some(replay_cursor.clone()),
+                cursor: replay_cursor.clone(),
             }),
             BroadcastRead::Lagged => Err(ProtocolError::ResourceExhausted {
                 message: "session output subscriber queue closed".to_string(),
@@ -532,15 +601,24 @@ async fn read_session_output_event(
 
 fn structured_output_event(
     output: StructuredOutput,
+    codec: StructuredCodec,
 ) -> Result<SubscribeSessionEvent, ProtocolError> {
     let payload_json =
         serde_json::to_vec(&output.payload).map_err(|error| ProtocolError::ServerError {
             message: format!("failed to encode transcript SubscribeSession output: {error}"),
         })?;
-    let payload = claude_io::encode_pty_transcript_v1_output(ClaudePtyTranscriptV1Output {
-        seq_id: output.seq,
-        payload: payload_json,
-    });
+    let payload = match codec {
+        StructuredCodec::Claude => {
+            claude_io::encode_pty_transcript_v1_output(ClaudePtyTranscriptV1Output {
+                seq_id: output.seq,
+                payload: payload_json,
+            })
+        }
+        StructuredCodec::Codex => codex_io::encode_codex_sdk_v1_output(CodexSdkV1Output {
+            seq: output.seq,
+            payload: payload_json,
+        }),
+    };
     Ok(SubscribeSessionEvent::Output { payload })
 }
 
@@ -549,7 +627,61 @@ mod tests {
     use futures_util::StreamExt;
 
     use super::*;
-    use crate::agents::MultiplexByteBuffer;
+    use crate::agents::{AgentType, CreateAgentRequest, MultiplexByteBuffer, new_agent};
+
+    #[tokio::test]
+    async fn codex_subscription_opens_and_completes_empty_replay() {
+        let host = PtyAgentHost::new(Uuid::from_u128(1));
+        let agent_id = Uuid::from_u128(2);
+        {
+            let mut state = host.state().write().await;
+            let session = new_agent(
+                &CreateAgentRequest {
+                    agent_id,
+                    host_id: None,
+                    name: Some("codex".into()),
+                    agent_type: AgentType::Codex {
+                        model: None,
+                        approval_policy: None,
+                        sandbox_policy: None,
+                        resume_thread_id: None,
+                    },
+                    working_dir: std::env::temp_dir(),
+                    terminal_size: None,
+                    args: Vec::new(),
+                },
+                state.codex_client.clone(),
+            )
+            .unwrap();
+            state
+                .insert_registered_local_agent(host.host_id(), agent_id, session)
+                .unwrap();
+        }
+
+        let mut stream = subscribe_session_stream(
+            &host,
+            SubscribeSessionRequest {
+                agent_id,
+                io_protocol: codex_io::CODEX_SDK_V1.to_string(),
+                args: None,
+            },
+        )
+        .await
+        .unwrap();
+        let opened = stream.next().await.unwrap().unwrap();
+        assert!(matches!(
+            opened.event,
+            Some(crate::protocol::wire::subscribe_session_response::Event::Opened(_))
+        ));
+        let replay_complete = stream.next().await.unwrap().unwrap();
+        let Some(crate::protocol::wire::subscribe_session_response::Event::ReplayComplete(
+            replay_complete,
+        )) = replay_complete.event
+        else {
+            panic!("expected replay-complete marker");
+        };
+        assert!(replay_complete.cursor.is_none());
+    }
 
     #[tokio::test]
     async fn direct_session_stream_reports_resource_exhausted_when_reader_lags() {

@@ -13,6 +13,7 @@ syntax = "proto3";
 package amux.v1;
 
 import "amux/v1/claude.proto";
+import "amux/v1/codex.proto";
 import "amux/v1/test_agent.proto";
 
 // ---------------------------------------------------------------------------
@@ -389,6 +390,7 @@ message CreateAgentRequest {
 
   oneof agent {
     ClaudeCreateConfig claude = 10;
+    CodexCreateConfig codex = 11;
     // Dev/test only. Production servers MUST reject this with UNIMPLEMENTED.
     TestAgentCreateConfig test_agent = 100;
   }
@@ -556,6 +558,7 @@ message ClientCreateAgentRequest {
 
   oneof agent {
     ClaudeCreateConfig claude = 10;
+    CodexCreateConfig codex = 11;
     TestAgentCreateConfig test_agent = 100;
   }
 }

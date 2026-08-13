@@ -44,6 +44,13 @@ pub(crate) enum CreateAgentConfig {
         args: Vec<String>,
         terminal_size: Option<TerminalSize>,
     },
+    Codex {
+        cwd: PathBuf,
+        model: Option<String>,
+        approval_policy: Option<String>,
+        sandbox_policy: Option<String>,
+        resume_thread_id: Option<String>,
+    },
     TestAgent {
         command: String,
         working_dir: PathBuf,
@@ -209,6 +216,13 @@ pub(crate) fn create_agent_request_from_wire(
                     .transpose()?,
             }
         }
+        protocol_wire::create_agent_request::Agent::Codex(codex) => CreateAgentConfig::Codex {
+            cwd: PathBuf::from(codex.cwd),
+            model: codex.model,
+            approval_policy: codex.approval_policy,
+            sandbox_policy: codex.sandbox_policy,
+            resume_thread_id: codex.resume_thread_id,
+        },
         protocol_wire::create_agent_request::Agent::TestAgent(test_agent) => {
             CreateAgentConfig::TestAgent {
                 command: test_agent.command,
@@ -371,6 +385,42 @@ mod tests {
                 cols: 120
             }),
         );
+    }
+
+    #[test]
+    fn create_agent_request_decodes_codex_create_config() {
+        let agent_id = Uuid::new_v4();
+        let request = protocol_wire::CreateAgentRequest {
+            agent_id: uuid_to_bytes(agent_id),
+            name: Some("codex-dev".to_string()),
+            agent: Some(protocol_wire::create_agent_request::Agent::Codex(
+                protocol_wire::CodexCreateConfig {
+                    cwd: "/tmp/work".to_string(),
+                    model: Some("gpt-5.6-sol".to_string()),
+                    approval_policy: Some("on-request".to_string()),
+                    sandbox_policy: Some("workspace-write".to_string()),
+                    resume_thread_id: Some("thread-7".to_string()),
+                },
+            )),
+        };
+
+        let decoded = create_agent_request_from_wire(request).unwrap();
+        assert_eq!(decoded.agent_id, agent_id);
+        assert_eq!(decoded.name.as_deref(), Some("codex-dev"));
+        assert!(matches!(
+            decoded.agent,
+            CreateAgentConfig::Codex {
+                ref cwd,
+                ref model,
+                ref approval_policy,
+                ref sandbox_policy,
+                ref resume_thread_id,
+            } if cwd == Path::new("/tmp/work")
+                && model.as_deref() == Some("gpt-5.6-sol")
+                && approval_policy.as_deref() == Some("on-request")
+                && sandbox_policy.as_deref() == Some("workspace-write")
+                && resume_thread_id.as_deref() == Some("thread-7")
+        ));
     }
 
     #[test]

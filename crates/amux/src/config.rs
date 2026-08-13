@@ -35,7 +35,7 @@ fn default_cloud_url() -> String {
 /// - Linux: `$XDG_RUNTIME_DIR/amux/` (per-user tmpfs, e.g. `/run/user/1000/`)
 /// - Fallback: `/tmp/amux-<uid>/` (UID-embedded for isolation)
 #[cfg(unix)]
-fn default_socket_dir() -> PathBuf {
+pub(crate) fn default_socket_dir() -> PathBuf {
     if cfg!(target_os = "macos") {
         if let Ok(tmpdir) = std::env::var("TMPDIR") {
             return PathBuf::from(tmpdir).join("amux");

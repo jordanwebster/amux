@@ -8,7 +8,7 @@ pub(crate) use error::protocol_status;
 
 pub(crate) mod amux {
     pub(crate) mod v1 {
-        #![allow(dead_code)]
+        #![allow(dead_code, clippy::enum_variant_names)]
         include!(concat!(env!("OUT_DIR"), "/amux.v1.rs"));
     }
 }
@@ -72,6 +72,10 @@ mod tests {
             "PairingError",
             "PairingIdentity",
             "AgentUpdated",
+            "CodexCreateConfig",
+            "CodexSdkV1Args",
+            "CodexSdkV1Input",
+            "CodexSdkV1Output",
             "SessionClosed",
             "Reauth",
             "LinkClose",

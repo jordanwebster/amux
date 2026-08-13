@@ -49,6 +49,7 @@ chrono = { workspace = true }
 semver = { workspace = true }
 tracing = { workspace = true }
 bytes = { workspace = true }
+codex-sdk = { path = "../codex-sdk" }
 
 [target.'cfg(unix)'.dependencies]
 libc = { workspace = true }

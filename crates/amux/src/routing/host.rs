@@ -1,9 +1,9 @@
 use uuid::Uuid;
 
-#[cfg(feature = "local-agents")]
-use crate::agents::AGENT_TYPE_CLAUDE;
 #[cfg(all(feature = "local-agents", any(debug_assertions, test)))]
 use crate::agents::AGENT_TYPE_TEST_AGENT;
+#[cfg(feature = "local-agents")]
+use crate::agents::{AGENT_TYPE_CLAUDE, AGENT_TYPE_CODEX};
 use crate::routing::{Capabilities, Host, SupportedAgentType};
 
 pub(crate) const FEATURE_CLOUD_RELAY: &str = "amux.cloud_relay";
@@ -74,14 +74,22 @@ pub(crate) fn local_capabilities(is_cloud_server: bool) -> Capabilities {
                 agent_type: AGENT_TYPE_CLAUDE.to_string(),
             },
             SupportedAgentType {
+                agent_type: AGENT_TYPE_CODEX.to_string(),
+            },
+            SupportedAgentType {
                 agent_type: AGENT_TYPE_TEST_AGENT.to_string(),
             },
         ];
 
         #[cfg(not(any(debug_assertions, test)))]
-        let supported_agent_types = vec![SupportedAgentType {
-            agent_type: AGENT_TYPE_CLAUDE.to_string(),
-        }];
+        let supported_agent_types = vec![
+            SupportedAgentType {
+                agent_type: AGENT_TYPE_CLAUDE.to_string(),
+            },
+            SupportedAgentType {
+                agent_type: AGENT_TYPE_CODEX.to_string(),
+            },
+        ];
 
         Capabilities {
             features: Vec::new(),
@@ -144,6 +152,12 @@ mod tests {
                 .supported_agent_types
                 .iter()
                 .any(|agent| agent.agent_type == AGENT_TYPE_CLAUDE)
+        );
+        assert!(
+            host.capabilities
+                .supported_agent_types
+                .iter()
+                .any(|agent| agent.agent_type == AGENT_TYPE_CODEX)
         );
     }
 

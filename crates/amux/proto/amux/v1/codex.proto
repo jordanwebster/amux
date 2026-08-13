@@ -1,0 +1,66 @@
+syntax = "proto3";
+
+package amux.v1;
+
+// Codex-specific creation config and structured io_protocol payloads.
+//
+// These messages are intentionally independent from amux.proto. The core
+// protocol treats session args/input/control/output as opaque bytes; callers
+// serialize these inner messages only when they opt into the Codex protocol.
+
+message CodexCreateConfig {
+  string cwd = 1;
+  optional string model = 2;
+  optional string approval_policy = 3;
+  optional string sandbox_policy = 4;
+  optional string resume_thread_id = 5;
+}
+
+message CodexSdkV1Args {
+  optional CodexSdkV1ReplayQuery replay_query = 1;
+}
+
+message CodexSdkV1ReplayQuery {
+  oneof query {
+    uint64 since = 1;
+    uint64 tail_count = 2;
+  }
+}
+
+message CodexSdkV1Output {
+  uint64 seq = 1;
+  // One complete opaque JSON row from the Codex app-server event stream.
+  bytes payload = 2;
+}
+
+message CodexSdkV1Input {
+  oneof input {
+    CodexSdkV1UserTurn user_turn = 1;
+    CodexSdkV1Steer steer = 2;
+    CodexSdkV1Interrupt interrupt = 3;
+    CodexSdkV1ApprovalDecision approval_decision = 4;
+  }
+}
+
+message CodexSdkV1UserTurn {
+  // JSON-encoded Codex input items.
+  bytes input = 1;
+}
+
+message CodexSdkV1Steer {
+  string turn_id = 1;
+  // JSON-encoded Codex input items.
+  bytes input = 2;
+}
+
+message CodexSdkV1Interrupt {
+  string turn_id = 1;
+}
+
+message CodexSdkV1ApprovalDecision {
+  // JSON-encoded upstream RequestId (string or integer).
+  bytes request_id = 1;
+  string decision = 2;
+}
+
+message CodexSdkV1Control {}

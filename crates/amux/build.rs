@@ -20,6 +20,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
             &[
                 "proto/amux/v1/amux.proto",
                 "proto/amux/v1/claude.proto",
+                "proto/amux/v1/codex.proto",
                 "proto/amux/v1/test_agent.proto",
             ],
             &["proto"],
@@ -27,6 +28,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
 
     println!("cargo:rerun-if-changed=proto/amux/v1/amux.proto");
     println!("cargo:rerun-if-changed=proto/amux/v1/claude.proto");
+    println!("cargo:rerun-if-changed=proto/amux/v1/codex.proto");
     println!("cargo:rerun-if-changed=proto/amux/v1/test_agent.proto");
     Ok(())
 }

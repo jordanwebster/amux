@@ -3,7 +3,7 @@
 use std::path::PathBuf;
 use std::time::Duration;
 
-use codex_sdk::{DaemonMode, ListThreadsParams, connect_daemon, ensure_daemon};
+use codex_sdk::{CodexConfig, DaemonMode, ListThreadsParams, connect_daemon, ensure_daemon};
 
 #[tokio::test]
 async fn real_daemon_initialize_and_thread_list() {
@@ -26,7 +26,9 @@ async fn real_daemon_initialize_and_thread_list() {
         };
         eprintln!("ensure_daemon -> {mode_name}");
 
-        let codex = connect_daemon(&codex_home).await.expect("connect daemon");
+        let codex = connect_daemon(&codex_home, CodexConfig::default())
+            .await
+            .expect("connect daemon");
         eprintln!(
             "initialize -> {}",
             serde_json::to_string(codex.initialization_result().expect("initialize result"))
@@ -55,6 +57,19 @@ async fn real_daemon_initialize_and_thread_list() {
                 "nextCursor": threads.next_cursor,
             })
         );
+        if let Ok(expected_id) = std::env::var("CODEX_SDK_EXPECT_THREAD_ID") {
+            let thread = codex
+                .read_thread(&expected_id, false)
+                .await
+                .unwrap_or_else(|error| panic!("thread/read failed for `{expected_id}`: {error}"));
+            if let Ok(expected_name) = std::env::var("CODEX_SDK_EXPECT_THREAD_NAME") {
+                assert_eq!(thread.thread.name.as_deref(), Some(expected_name.as_str()));
+            }
+            eprintln!(
+                "thread/read named match -> {}",
+                serde_json::json!({"id": thread.thread.id, "name": thread.thread.name})
+            );
+        }
 
         codex.close().await;
         match mode {

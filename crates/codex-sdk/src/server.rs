@@ -96,6 +96,7 @@ impl Codex {
     pub async fn from_io(
         reader: impl AsyncBufRead + Unpin + Send + 'static,
         writer: impl AsyncWrite + Unpin + Send + 'static,
+        config: CodexConfig,
     ) -> Result<Self, Error> {
         let cancel = CancellationToken::new();
         let (stdin_tx, stdin_rx) = mpsc::channel::<Vec<u8>>(64);
@@ -105,7 +106,10 @@ impl Codex {
             stdin_tx,
             pending_requests: Mutex::new(std::collections::HashMap::new()),
             thread_channels: Mutex::new(std::collections::HashMap::new()),
-            approval_handler: None,
+            approval_handler: config
+                .approval_handler
+                .clone()
+                .map(|handler| handler as Arc<dyn ApprovalHandler>),
             global_notif_tx,
             init_result: OnceLock::new(),
             request_counter: AtomicU64::new(1),
@@ -121,23 +125,10 @@ impl Codex {
             global_notif_rx: Arc::new(Mutex::new(Some(global_notif_rx))),
         };
 
-        // Initialize handshake with default values
+        // Initialize handshake with the caller's identity and capabilities.
         let init: InitializationResult = match codex
             .inner
-            .request(
-                "initialize",
-                InitializeParams {
-                    client_info: ClientInfo {
-                        name: "codex-rust-sdk".into(),
-                        title: None,
-                        version: env!("CARGO_PKG_VERSION").into(),
-                    },
-                    capabilities: Some(InitializeCapabilities {
-                        experimental_api: true,
-                        opt_out_notification_methods: None,
-                    }),
-                },
-            )
+            .request("initialize", initialize_params(&config))
             .await
         {
             Ok(init) => init,
@@ -419,7 +410,11 @@ mod remediation_tests {
     #[tokio::test]
     async fn config_read_sends_object_params() {
         let (client_reader, client_writer, mut server_reader, mut server_writer) = test_io();
-        let connect = tokio::spawn(Codex::from_io(client_reader, client_writer));
+        let connect = tokio::spawn(Codex::from_io(
+            client_reader,
+            client_writer,
+            CodexConfig::default(),
+        ));
 
         let initialize = read_json_line(&mut server_reader).await;
         write_json_line(
@@ -459,7 +454,11 @@ mod remediation_tests {
     #[tokio::test]
     async fn initialize_error_cancels_io_tasks() {
         let (client_reader, client_writer, mut server_reader, mut server_writer) = test_io();
-        let connect = tokio::spawn(Codex::from_io(client_reader, client_writer));
+        let connect = tokio::spawn(Codex::from_io(
+            client_reader,
+            client_writer,
+            CodexConfig::default(),
+        ));
 
         let initialize = read_json_line(&mut server_reader).await;
         write_json_line(
@@ -587,9 +586,13 @@ mod tests {
             assert!(initialized.get("params").is_none());
         });
 
-        let codex = Codex::from_io(BufReader::new(client_read), client_write)
-            .await
-            .unwrap();
+        let codex = Codex::from_io(
+            BufReader::new(client_read),
+            client_write,
+            CodexConfig::default(),
+        )
+        .await
+        .unwrap();
         let init = codex.initialization_result().unwrap();
         assert_eq!(init.user_agent, "ua");
         assert_eq!(init.codex_home, std::path::Path::new("/tmp/codex"));

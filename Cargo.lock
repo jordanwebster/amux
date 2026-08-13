@@ -26,6 +26,7 @@ dependencies = [
  "async-trait",
  "bytes",
  "chrono",
+ "codex-sdk",
  "core-foundation",
  "curve25519-dalek",
  "fs2",

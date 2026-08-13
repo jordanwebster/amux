@@ -338,6 +338,26 @@ fn create_rpc_to_domain_request(
             terminal_size,
             args,
         }),
+        CreateAgentConfig::Codex {
+            cwd,
+            model,
+            approval_policy,
+            sandbox_policy,
+            resume_thread_id,
+        } => Ok(CreateAgentRequest {
+            agent_id,
+            host_id: None,
+            name: request.name,
+            agent_type: AgentType::Codex {
+                model,
+                approval_policy,
+                sandbox_policy,
+                resume_thread_id,
+            },
+            working_dir: cwd,
+            terminal_size: None,
+            args: Vec::new(),
+        }),
         #[cfg(any(debug_assertions, test))]
         CreateAgentConfig::TestAgent {
             command,

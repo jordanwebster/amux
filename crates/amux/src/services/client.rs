@@ -2007,6 +2007,7 @@ fn client_create_agent_type(
         .ok_or_else(|| tonic::Status::invalid_argument("ClientCreateAgentRequest missing agent"))?;
     Ok(match agent {
         wire::client_create_agent_request::Agent::Claude(_) => "claude",
+        wire::client_create_agent_request::Agent::Codex(_) => "codex",
         wire::client_create_agent_request::Agent::TestAgent(_) => "test-agent",
     })
 }
@@ -2026,6 +2027,13 @@ fn client_create_to_create_rpc_request(
                 .initial_terminal_size
                 .map(client_terminal_size_from_wire)
                 .transpose()?,
+        },
+        wire::client_create_agent_request::Agent::Codex(codex) => CreateAgentConfig::Codex {
+            cwd: codex.cwd.into(),
+            model: codex.model,
+            approval_policy: codex.approval_policy,
+            sandbox_policy: codex.sandbox_policy,
+            resume_thread_id: codex.resume_thread_id,
         },
         wire::client_create_agent_request::Agent::TestAgent(test_agent) => {
             CreateAgentConfig::TestAgent {
@@ -2054,6 +2062,9 @@ fn client_create_to_agent_create_request(
         agent: request.agent.map(|agent| match agent {
             wire::client_create_agent_request::Agent::Claude(config) => {
                 wire::create_agent_request::Agent::Claude(config)
+            }
+            wire::client_create_agent_request::Agent::Codex(config) => {
+                wire::create_agent_request::Agent::Codex(config)
             }
             wire::client_create_agent_request::Agent::TestAgent(config) => {
                 wire::create_agent_request::Agent::TestAgent(config)

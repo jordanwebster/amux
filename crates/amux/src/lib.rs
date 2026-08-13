@@ -87,6 +87,13 @@ pub mod claude_io {
     };
 }
 
+pub mod codex_io {
+    pub use crate::agents::codex::io::{
+        CODEX_SDK_V1, CodexSdkV1Args, CodexSdkV1Output, CodexSdkV1ReplayQuery,
+        decode_codex_sdk_v1_output, encode_codex_sdk_v1_args,
+    };
+}
+
 pub mod terminal_io {
     pub use crate::agents::terminal_io::{
         TERMINAL_V1, TerminalV1Args, TerminalV1ReplayQuery, encode_terminal_v1_args,

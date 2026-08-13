@@ -38,6 +38,41 @@ One paragraph describing what was done.
 
 ---
 
+## 2026-08-13: P5a — Codex protocol, session skeleton, and real thread create
+
+### Summary
+Added Codex as a third local agent backend. `amux new codex` now registers
+immediately, then lazily establishes one shared app-server connection per amux
+agent host and asynchronously starts or resumes a persistent Codex thread.
+
+### Changes
+- Added `codex.proto`, both create-oneof arms, and the public `codex_io` codec
+  surface for `codex_sdk_v1` replay args and opaque JSON-row output.
+- Added `CodexSession`, host-owned `CodexClient`, daemon-mode/thread-id debug
+  metadata, the empty structured replay stream, CLI parsing, and capability
+  advertisement.
+- Changed the in-tree SDK's daemon/socket/raw-I/O connect APIs to require and
+  honor `CodexConfig`; amux now identifies itself in `initialize`.
+
+### Decisions Made
+- Codex startup stays asynchronous behind synchronous `AgentBackend::start`, so
+  create never waits for app-server availability and no Codex await occurs under
+  the agent registry guard.
+- Codex advertises `codex_sdk_v1` and `terminal_v1` unconditionally; structured
+  ingest/input and lazy PTY creation remain P5b/P5c work.
+- P5a retention is 1000 rows. P5b must resize it deliberately for delta-heavy
+  traffic.
+
+### Verification
+- Full fmt, workspace clippy, workspace tests, and 44-test spec gate passed.
+- Live smoke created and named two real threads through one shared connection,
+  listed both amux agents, stopped the daemon cleanly, and verified persisted
+  thread/name state with `thread/read`.
+
+### Next Steps
+- P5b adds continuous event ingest, typed input, loss handling, reconnect, and a
+  larger deliberately chosen structured-row retention.
+
 ## 2026-08-13: P4 simplification — dead adopted surface and dispatch scar tissue
 
 Independent pass over the adopted crates after both remediation rounds.

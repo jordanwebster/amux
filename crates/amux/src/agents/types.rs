@@ -5,6 +5,7 @@ use serde::{Deserialize, Serialize};
 use uuid::Uuid;
 
 pub(crate) const AGENT_TYPE_CLAUDE: &str = "claude";
+pub(crate) const AGENT_TYPE_CODEX: &str = "codex";
 
 #[cfg(all(feature = "local-agents", any(debug_assertions, test)))]
 pub(crate) const AGENT_TYPE_TEST_AGENT: &str = "test-agent";
@@ -15,6 +16,17 @@ pub(crate) const AGENT_TYPE_TEST_AGENT: &str = "test-agent";
 pub enum AgentType {
     /// Claude Code agent.
     Claude,
+    /// Codex agent backed by an app-server thread.
+    Codex {
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        model: Option<String>,
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        approval_policy: Option<String>,
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        sandbox_policy: Option<String>,
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        resume_thread_id: Option<String>,
+    },
     /// Test agent for E2E tests.
     #[cfg(all(feature = "local-agents", any(debug_assertions, test)))]
     TestAgent { command: String },

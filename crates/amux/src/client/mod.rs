@@ -920,6 +920,22 @@ fn client_create_request_to_wire(
                 initial_terminal_size: request.terminal_size.map(terminal_size_to_wire),
             })
         }
+        crate::agents::AgentType::Codex {
+            model,
+            approval_policy,
+            sandbox_policy,
+            resume_thread_id,
+        } => wire::client_create_agent_request::Agent::Codex(wire::CodexCreateConfig {
+            cwd: path_to_wire_string(
+                method::CLIENT_CREATE_NAME,
+                "ClientCreateAgentRequest.cwd",
+                &request.working_dir,
+            )?,
+            model,
+            approval_policy,
+            sandbox_policy,
+            resume_thread_id,
+        }),
         #[cfg(all(feature = "local-agents", any(debug_assertions, test)))]
         crate::agents::AgentType::TestAgent { command } => {
             wire::client_create_agent_request::Agent::TestAgent(wire::TestAgentCreateConfig {
@@ -1402,6 +1418,34 @@ fn debug_format_to_wire(format: DebugFormat) -> i32 {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn client_create_request_encodes_codex_config() {
+        let request = client_create_request_to_wire(CreateAgentRequest {
+            agent_id: Uuid::from_u128(7),
+            host_id: None,
+            name: Some("codex".into()),
+            agent_type: crate::agents::AgentType::Codex {
+                model: Some("gpt-5.6-sol".into()),
+                approval_policy: Some("on-request".into()),
+                sandbox_policy: Some("workspace-write".into()),
+                resume_thread_id: Some("thread-7".into()),
+            },
+            working_dir: "/tmp/work".into(),
+            terminal_size: None,
+            args: Vec::new(),
+        })
+        .unwrap();
+
+        let Some(wire::client_create_agent_request::Agent::Codex(config)) = request.agent else {
+            panic!("expected Codex create config");
+        };
+        assert_eq!(config.cwd, "/tmp/work");
+        assert_eq!(config.model.as_deref(), Some("gpt-5.6-sol"));
+        assert_eq!(config.approval_policy.as_deref(), Some("on-request"));
+        assert_eq!(config.sandbox_policy.as_deref(), Some("workspace-write"));
+        assert_eq!(config.resume_thread_id.as_deref(), Some("thread-7"));
+    }
 
     #[cfg(unix)]
     #[test]

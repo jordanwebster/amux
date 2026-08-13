@@ -1,7 +1,7 @@
 use std::path::PathBuf;
 use std::time::Duration;
 
-use codex_sdk::{Codex, ListThreadsParams, ThreadConfig, TurnEvent};
+use codex_sdk::{Codex, CodexConfig, ListThreadsParams, ThreadConfig, TurnEvent};
 use replay_support::{ReplayAdvance, ReplayOptions, load_script, replay_transport_with_controller};
 
 async fn replay(name: &str) -> (Codex, tokio::task::JoinHandle<()>) {
@@ -18,10 +18,13 @@ async fn replay(name: &str) -> (Codex, tokio::task::JoinHandle<()>) {
             tokio::task::yield_now().await;
         }
     });
-    let codex = tokio::time::timeout(Duration::from_secs(2), Codex::from_io(reader, writer))
-        .await
-        .expect("initialize replay timed out")
-        .expect("initialize replay failed");
+    let codex = tokio::time::timeout(
+        Duration::from_secs(2),
+        Codex::from_io(reader, writer, CodexConfig::default()),
+    )
+    .await
+    .expect("initialize replay timed out")
+    .expect("initialize replay failed");
     (codex, driver)
 }
 

@@ -11,18 +11,18 @@ use std::sync::Arc;
 use tokio::sync::RwLock;
 use uuid::Uuid;
 
-use crate::agents::{AgentEvent, AgentRecord, AgentSession, SessionCloseReason};
+use crate::agents::{AgentEvent, AgentRecord, AgentSession, CodexClient, SessionCloseReason};
 use crate::routing::EventSource;
 use crate::server::ShutdownReason;
 
 pub(crate) type SharedAgentServiceState = Arc<RwLock<AgentServiceState>>;
 
-#[derive(Default)]
 pub(crate) struct AgentServiceState {
     pub(crate) local_agents: HashMap<Uuid, LocalAgentContext>,
     pub(crate) local_agent_events: EventSource<AgentEvent>,
     pub(crate) local_session_close_events: EventSource<(Uuid, SessionCloseReason)>,
     pub(crate) local_shutdown_events: EventSource<ShutdownReason>,
+    pub(crate) codex_client: Arc<CodexClient>,
 }
 
 pub(crate) struct LocalAgentContext {
@@ -31,7 +31,15 @@ pub(crate) struct LocalAgentContext {
 
 impl AgentServiceState {
     pub(crate) fn new() -> Self {
-        Self::default()
+        Self {
+            local_agents: HashMap::new(),
+            local_agent_events: EventSource::default(),
+            local_session_close_events: EventSource::default(),
+            local_shutdown_events: EventSource::default(),
+            codex_client: Arc::new(CodexClient::new(
+                crate::config::default_socket_dir().join("codex.sock"),
+            )),
+        }
     }
 
     /// Number of locally-hosted agents.

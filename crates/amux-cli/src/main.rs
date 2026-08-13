@@ -51,7 +51,7 @@ enum Commands {
 
     /// Create a new agent session
     New {
-        /// Agent type: claude or test-agent (test-agent only in dev builds)
+        /// Agent type: claude, codex, or test-agent (test-agent only in dev builds)
         agent_type: String,
 
         /// Session name (optional human-readable name)
@@ -312,10 +312,11 @@ async fn run_command(command: Commands, mut config: Config) -> Result<()> {
             let agent_type = parse_agent_type(&agent_type)?;
             ensure_initialized(&mut config).await?;
             check_update_required(&config);
-            match agent_type {
+            match &agent_type {
                 AgentType::Claude => {
                     plugin::ensure_plugin_installed().await;
                 }
+                AgentType::Codex { .. } => {}
                 #[cfg(any(debug_assertions, test))]
                 AgentType::TestAgent { .. } => {}
             };
@@ -791,6 +792,12 @@ fn parse_agent_type(s: &str) -> Result<AgentType> {
 
     match s.to_lowercase().as_str() {
         "claude" => Ok(AgentType::Claude),
+        "codex" => Ok(AgentType::Codex {
+            model: None,
+            approval_policy: None,
+            sandbox_policy: None,
+            resume_thread_id: None,
+        }),
         #[cfg(any(debug_assertions, test))]
         "test-agent" => Ok(AgentType::TestAgent {
             command: s.to_string(),
@@ -803,10 +810,10 @@ fn parse_agent_type(s: &str) -> Result<AgentType> {
             })
         }
         #[cfg(not(any(debug_assertions, test)))]
-        _ => Err(anyhow!("Unknown agent type: '{}'. Valid: claude", s)),
+        _ => Err(anyhow!("Unknown agent type: '{}'. Valid: claude, codex", s)),
         #[cfg(any(debug_assertions, test))]
         _ => Err(anyhow!(
-            "Unknown agent type: '{}'. Valid: claude, test-agent",
+            "Unknown agent type: '{}'. Valid: claude, codex, test-agent",
             s
         )),
     }
@@ -907,6 +914,19 @@ fn load_config(input_path: Option<PathBuf>) -> Result<Config> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn parses_codex_agent_type() {
+        assert!(matches!(
+            parse_agent_type("codex").unwrap(),
+            AgentType::Codex {
+                model: None,
+                approval_policy: None,
+                sandbox_policy: None,
+                resume_thread_id: None,
+            }
+        ));
+    }
 
     #[test]
     fn pair_connect_without_target_parses_as_interactive_request() {

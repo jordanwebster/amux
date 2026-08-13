@@ -59,6 +59,7 @@ pub async fn new_agent(
     args: Vec<String>,
     config: &Config,
 ) -> Result<()> {
+    let attach_after_create = !matches!(&agent_type, AgentType::Codex { .. });
     let rpc = get_client(config).await?;
     let terminal_size = get_terminal_size();
     let working_dir = std::env::current_dir()?;
@@ -79,6 +80,19 @@ pub async fn new_agent(
         })
         .await
         .map_err(|error| anyhow!("failed to create agent: {error}"))?;
+
+    if !attach_after_create {
+        println!(
+            "Created Codex agent {}{}.",
+            agent.id,
+            agent
+                .name
+                .as_deref()
+                .map(|name| format!(" ({name})"))
+                .unwrap_or_default()
+        );
+        return Ok(());
+    }
 
     let outcome = attach_terminal(
         &rpc,
