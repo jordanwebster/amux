@@ -713,6 +713,9 @@ impl CodexLayer {
         if self.stale || self.gap {
             return CodexPhase::Unknown;
         }
+        if self.read_only {
+            return CodexPhase::ReadOnly;
+        }
         if !self.live() {
             return CodexPhase::Replaying;
         }
@@ -725,9 +728,6 @@ impl CodexLayer {
             return CodexPhase::BlockedUnsupported {
                 item_id: item_id.clone(),
             };
-        }
-        if self.read_only {
-            return CodexPhase::ReadOnly;
         }
         if self.turn.active_id.is_some() {
             return match self.accumulators.active_items.back() {
@@ -762,7 +762,7 @@ impl CodexLayer {
         if self.exited || self.thread_closed {
             return Attention::Idle;
         }
-        if self.stale || self.gap || !self.live() && self.truncated_start {
+        if self.stale || self.gap || !self.live() {
             return Attention::Unknown;
         }
         if !self.asks.is_empty() {

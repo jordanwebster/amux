@@ -8,7 +8,7 @@ use amux_ui::codex::{
     CodexCommand, CodexDecision, CodexInput, CodexPhase, FeedEntryKind, InFlightKind, PromptPart,
     PromptSource, SendGate,
 };
-use amux_ui::{Command, Effect, InputPayload, Msg, OpOutcome, StreamMsg};
+use amux_ui::{Attention, Command, Effect, InputPayload, Msg, OpOutcome, StreamMsg};
 use serde_json::json;
 
 use crate::harness::*;
@@ -168,6 +168,52 @@ fn prompt_waits_for_ready_but_a_truncated_replay_can_use_its_idle_row() {
         send_input_count(&effects),
         1,
         "a truncated replay may have evicted the ready marker"
+    );
+}
+
+#[test]
+fn complete_replay_stays_non_idle_everywhere_until_the_ready_row_arrives() {
+    let model = fold(codex_base(AGENT));
+    let agent = agent_id(AGENT);
+    let card = model.agent(agent).expect("Codex fleet card");
+
+    assert_eq!(amux_ui::codex::phase(&model, agent), CodexPhase::Replaying);
+    assert_eq!(model.effective_attention(card), Attention::Unknown);
+    assert_eq!(
+        amux_ui::codex::send_gate(&model, agent),
+        SendGate::Replaying
+    );
+}
+
+#[test]
+fn initial_reconnect_failure_outranks_the_missing_ready_row() {
+    let msgs = seq([
+        codex_base(AGENT),
+        vec![batch(
+            AGENT,
+            10,
+            vec![json!({
+                "type":"amux.codex_reconnect_error",
+                "error":{"message":"initial attach failed"}
+            })],
+        )],
+        vec![command_msg(
+            8,
+            CodexCommand::Prompt {
+                agent: agent_id(AGENT),
+                text: "retry?".into(),
+            },
+        )],
+    ]);
+    let (model, effects) = fold_with_effects(msgs);
+    let agent = agent_id(AGENT);
+
+    assert_eq!(amux_ui::codex::phase(&model, agent), CodexPhase::ReadOnly);
+    assert_eq!(amux_ui::codex::send_gate(&model, agent), SendGate::ReadOnly);
+    assert_eq!(send_input_count(&effects), 0);
+    assert_eq!(
+        failure_message(&model, 8),
+        "Codex thread is read-only until reconnect succeeds"
     );
 }
 
