@@ -52,6 +52,24 @@ pub(crate) trait CodexInput: Send + Sync {
     async fn send(&self, input_id: Vec<u8>, input: super::codex::io::CodexSdkV1Input);
 }
 
+/// Host-owned resources shared by agent backends.
+#[derive(Clone)]
+pub(crate) struct AgentDeps {
+    #[cfg(unix)]
+    pub(crate) codex_client: Arc<CodexClient>,
+}
+
+impl AgentDeps {
+    pub(crate) fn new(codex_private_socket: std::path::PathBuf) -> Self {
+        #[cfg(not(unix))]
+        let _ = codex_private_socket;
+        Self {
+            #[cfg(unix)]
+            codex_client: Arc::new(CodexClient::new(codex_private_socket)),
+        }
+    }
+}
+
 /// Instance behavior implemented by every locally hosted agent backend.
 #[async_trait]
 pub(crate) trait AgentBackend: Send + Sync {
@@ -72,7 +90,7 @@ pub(crate) trait AgentBackend: Send + Sync {
     fn io_protocols(&self) -> Vec<String>;
 
     fn log_source(&self) -> Option<StructuredLogSource>;
-    fn pty_handle(&self) -> Option<&PtyHandle>;
+    fn pty_handle(&self) -> Result<Option<PtyHandle>>;
 
     fn structured_input(&self) -> Option<Box<dyn StructuredInput>> {
         None
@@ -128,14 +146,11 @@ pub(crate) fn terminal_io_protocols(pty: Option<&PtyHandle>) -> Vec<String> {
 /// Unified agent session handle backed by dynamic trait dispatch.
 pub(crate) type AgentSession = Box<dyn AgentBackend>;
 
-pub(crate) fn new_agent(
-    req: &CreateAgentRequest,
-    #[cfg(unix)] codex_client: Arc<CodexClient>,
-) -> Result<AgentSession> {
+pub(crate) fn new_agent(req: &CreateAgentRequest, deps: &AgentDeps) -> Result<AgentSession> {
     match &req.agent_type {
         AgentType::Claude => Ok(Box::new(ClaudeSession::new(req))),
         #[cfg(unix)]
-        AgentType::Codex { .. } => Ok(Box::new(CodexSession::new(req, codex_client))),
+        AgentType::Codex { .. } => Ok(Box::new(CodexSession::new(req, deps.codex_client.clone()))),
         #[cfg(not(unix))]
         AgentType::Codex { .. } => Err(anyhow::anyhow!(
             "Codex agents are unavailable on this platform"
@@ -147,7 +162,7 @@ pub(crate) fn new_agent(
     }
 }
 
-pub(crate) fn agent_from_suspended(suspended: SuspendedAgent) -> AgentSession {
+pub(crate) fn agent_from_suspended(suspended: SuspendedAgent, deps: &AgentDeps) -> AgentSession {
     match suspended {
         SuspendedAgent::Claude {
             agent_id,
@@ -172,6 +187,39 @@ pub(crate) fn agent_from_suspended(suspended: SuspendedAgent) -> AgentSession {
                 &req,
                 name_source.into(),
                 session_id,
+                created_at,
+            ))
+        }
+        #[cfg(unix)]
+        SuspendedAgent::Codex {
+            agent_id,
+            name,
+            working_dir,
+            model,
+            approval_policy,
+            sandbox_policy,
+            thread_id,
+            daemon_mode,
+            created_at,
+        } => {
+            let req = CreateAgentRequest {
+                agent_id,
+                host_id: None,
+                name,
+                agent_type: AgentType::Codex {
+                    model,
+                    approval_policy,
+                    sandbox_policy,
+                    resume_thread_id: Some(thread_id),
+                },
+                working_dir,
+                terminal_size: None,
+                args: Vec::new(),
+            };
+            Box::new(CodexSession::from_suspended(
+                &req,
+                deps.codex_client.clone(),
+                daemon_mode,
                 created_at,
             ))
         }
@@ -253,7 +301,8 @@ mod tests {
             created_at: Utc::now(),
         };
 
-        let session = agent_from_suspended(sa);
+        let deps = AgentDeps::new(std::env::temp_dir().join("amux-test-codex.sock"));
+        let session = agent_from_suspended(sa, &deps);
 
         assert_eq!(
             session.to_agent(Uuid::new_v4()).args,
@@ -263,6 +312,42 @@ mod tests {
                 "sonnet".to_string(),
             ]
         );
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn suspended_codex_into_session_preserves_resume_identity() {
+        let agent_id = Uuid::new_v4();
+        let created_at = Utc::now();
+        let suspended = SuspendedAgent::Codex {
+            agent_id,
+            name: Some("codex".into()),
+            working_dir: PathBuf::from("/tmp"),
+            model: Some("test-model".into()),
+            approval_policy: Some("on-request".into()),
+            sandbox_policy: Some("workspace-write".into()),
+            thread_id: "thread-resume".into(),
+            daemon_mode: "spawned-well-known".into(),
+            created_at,
+        };
+        let deps = AgentDeps::new(std::env::temp_dir().join("amux-test-codex.sock"));
+
+        let session = agent_from_suspended(suspended, &deps);
+        let restored = session.suspended_state().unwrap();
+
+        assert!(matches!(
+            restored,
+            SuspendedAgent::Codex {
+                agent_id: restored_id,
+                thread_id,
+                daemon_mode,
+                created_at: restored_at,
+                ..
+            } if restored_id == agent_id
+                && thread_id == "thread-resume"
+                && daemon_mode == "spawned-well-known"
+                && restored_at == created_at
+        ));
     }
 
     #[tokio::test]

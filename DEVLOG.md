@@ -38,6 +38,47 @@ One paragraph describing what was done.
 
 ---
 
+## 2026-08-13: P5c — Codex raw TUI, suspension, and lifecycle recovery
+
+### Summary
+Codex agents now expose a lazy, shared `terminal_v1` PTY running
+`codex resume` against the exact app-server socket used by structured ingest.
+Their persistent thread identity survives amux suspend/restart, and supervised
+app-server death is detected immediately and fed into the existing reconnect
+and `thread/resume` path.
+
+### Changes
+- The first raw subscription spawns one TUI per Codex agent; later subscribers
+  share its byte ring. A TUI that exits is forgotten and can be spawned again.
+- `SuspendedAgent::Codex` persists the thread, daemon mode, creation settings,
+  name, cwd, and creation time. Create and resume now share one `AgentDeps`
+  bundle containing host-owned backend resources.
+- Private fallback sockets live beside the configured amux socket and use a
+  short stable hash of the configured path, avoiding cross-server contention.
+- Supervised daemon exit proactively closes the SDK transport. Codex PTY stop
+  explicitly terminates the whole PTY process group so the Node shim and native
+  child cannot outlive the agent.
+
+### Decisions Made
+- Once spawned, a raw PTY remains alive with zero subscribers; Codex resume is
+  cheap, but retaining the live TUI makes detach/reattach immediate. It is
+  reaped only on TUI exit or agent stop.
+- A pre-thread-id Codex agent remains honestly non-suspendable. Raw spawn errors
+  are returned to the subscriber without withdrawing the structured session.
+- The existing initial terminal size is sufficient for the Codex TUI; the
+  pre-existing absence of later client-side resize messages remains unchanged.
+
+### Verification
+- Focused tests cover suspended-state serialization/reconstruction, configured
+  socket isolation, raw pre-ready failure, supervised-process exit signaling,
+  and PTY process-group termination.
+- Live `codex-cli 0.147.0` smoke: CLI-created agent, structured turns, two raw
+  subscribers receiving identical live byte streams, interactive raw driving
+  observed by structured rows, suspend/server restart/resume, lazy raw respawn,
+  and both existing and amux-supervised daemon kill/recovery.
+
+---
+
 ## 2026-08-13: P5b simplification — one attach path, one attached-state accessor
 
 Independent pass over P5b. The reconnect supervisor had three consecutive

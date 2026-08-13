@@ -134,12 +134,8 @@ pub(crate) async fn create_agent_record(
             return Err(CreateAgentError::AlreadyExists(a.clone()));
         }
 
-        let mut session = new_agent(
-            &req,
-            #[cfg(unix)]
-            state.codex_client.clone(),
-        )
-        .map_err(|error| CreateAgentError::Start(error.to_string()))?;
+        let mut session = new_agent(&req, &state.deps)
+            .map_err(|error| CreateAgentError::Start(error.to_string()))?;
         let exit_handle = session.start().map_err(|error| {
             CreateAgentError::Start(format!("failed to start local agent {agent_id}: {error}"))
         })?;
@@ -291,7 +287,10 @@ pub(crate) async fn resume_agents(
         let name = sa.name().map(String::from);
         tracing::info!(agent_id = %agent_id, name = ?name, "resuming agent");
 
-        let mut session = agent_from_suspended(sa);
+        let mut session = {
+            let state = agent_state.read().await;
+            agent_from_suspended(sa, &state.deps)
+        };
         match session.start() {
             Ok(exit_handle) => {
                 let info = session.to_agent(host_id);
@@ -559,12 +558,16 @@ mod tests {
     use tokio::sync::RwLock;
 
     use super::*;
-    use crate::agents::{AgentType, CreateAgentRequest, TEST_ECHO_COMMAND, TestAgentSession};
+    use crate::agents::{
+        AgentDeps, AgentType, CreateAgentRequest, TEST_ECHO_COMMAND, TestAgentSession,
+    };
     use crate::suspend::SuspendedAgent;
 
     #[tokio::test]
     async fn resume_registration_failure_does_not_replace_existing_agent_session() {
-        let agent_state = Arc::new(RwLock::new(AgentServiceState::new()));
+        let agent_state = Arc::new(RwLock::new(AgentServiceState::new(AgentDeps::new(
+            std::env::temp_dir().join("amux-test-codex.sock"),
+        ))));
         let (event_tx, _event_rx) = mpsc::channel(16);
         let host_id = Uuid::new_v4();
         let agent_id = Uuid::new_v4();
@@ -607,7 +610,9 @@ mod tests {
 
     #[tokio::test]
     async fn prepare_suspend_failure_leaves_local_agents_registered() {
-        let agent_state = Arc::new(RwLock::new(AgentServiceState::new()));
+        let agent_state = Arc::new(RwLock::new(AgentServiceState::new(AgentDeps::new(
+            std::env::temp_dir().join("amux-test-codex.sock"),
+        ))));
         let host_id = Uuid::new_v4();
         let agent_id = Uuid::new_v4();
 
@@ -623,8 +628,7 @@ mod tests {
                     terminal_size: None,
                     args: vec![],
                 },
-                #[cfg(unix)]
-                state.codex_client.clone(),
+                &state.deps,
             )
             .unwrap();
             state

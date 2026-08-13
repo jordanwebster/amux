@@ -39,6 +39,18 @@ pub(crate) enum SuspendedAgent {
         session_id: Uuid,
         created_at: DateTime<Utc>,
     },
+    #[cfg(unix)]
+    Codex {
+        agent_id: Uuid,
+        name: Option<String>,
+        working_dir: PathBuf,
+        model: Option<String>,
+        approval_policy: Option<String>,
+        sandbox_policy: Option<String>,
+        thread_id: String,
+        daemon_mode: String,
+        created_at: DateTime<Utc>,
+    },
     #[cfg(any(debug_assertions, test))]
     TestAgent {
         agent_id: Uuid,
@@ -54,6 +66,8 @@ impl SuspendedAgent {
     pub(crate) fn agent_id(&self) -> Uuid {
         match self {
             Self::Claude { agent_id, .. } => *agent_id,
+            #[cfg(unix)]
+            Self::Codex { agent_id, .. } => *agent_id,
             #[cfg(any(debug_assertions, test))]
             Self::TestAgent { agent_id, .. } => *agent_id,
         }
@@ -62,6 +76,8 @@ impl SuspendedAgent {
     pub(crate) fn name(&self) -> Option<&str> {
         match self {
             Self::Claude { name, .. } => name.as_deref(),
+            #[cfg(unix)]
+            Self::Codex { name, .. } => name.as_deref(),
             #[cfg(any(debug_assertions, test))]
             Self::TestAgent { name, .. } => name.as_deref(),
         }
@@ -154,6 +170,18 @@ mod tests {
                     }),
                     args: vec!["--dangerously-skip-permissions".to_string()],
                     session_id: Uuid::new_v4(),
+                    created_at: Utc::now(),
+                },
+                #[cfg(unix)]
+                SuspendedAgent::Codex {
+                    agent_id: Uuid::new_v4(),
+                    name: Some("test-codex".to_string()),
+                    working_dir: PathBuf::from("/home/user/project"),
+                    model: Some("test-model".to_string()),
+                    approval_policy: Some("on-request".to_string()),
+                    sandbox_policy: Some("workspace-write".to_string()),
+                    thread_id: "thread-1".to_string(),
+                    daemon_mode: "spawned-well-known".to_string(),
                     created_at: Utc::now(),
                 },
                 #[cfg(any(debug_assertions, test))]

@@ -42,6 +42,7 @@ pub struct DaemonProcess {
     process_group: i32,
     running: Arc<AtomicBool>,
     cancel: CancellationToken,
+    exited: CancellationToken,
     waiter: Option<tokio::task::JoinHandle<()>>,
 }
 
@@ -58,6 +59,11 @@ impl DaemonProcess {
     /// The resolved, non-symlink-parent socket path used by this process.
     pub fn socket_path(&self) -> &Path {
         &self.socket_path
+    }
+
+    /// Token cancelled as soon as the supervised process group exits.
+    pub fn exit_token(&self) -> CancellationToken {
+        self.exited.clone()
     }
 
     /// Terminate the process group and wait for it to exit.
@@ -230,18 +236,22 @@ fn supervise(mut child: Child, socket_path: PathBuf) -> DaemonProcess {
     let waiter_running = Arc::clone(&running);
     let cancel = CancellationToken::new();
     let waiter_cancel = cancel.clone();
+    let exited = CancellationToken::new();
+    let waiter_exited = exited.clone();
     let waiter = tokio::spawn(async move {
         tokio::select! {
             _ = waiter_cancel.cancelled() => transport::terminate_child_group(&mut child).await,
             _ = child.wait() => {},
         }
         waiter_running.store(false, Ordering::Release);
+        waiter_exited.cancel();
     });
     DaemonProcess {
         socket_path,
         process_group,
         running,
         cancel,
+        exited,
         waiter: Some(waiter),
     }
 }
@@ -414,5 +424,20 @@ mod tests {
         remove_stale_socket(&path).await.unwrap();
 
         assert!(!path.exists());
+    }
+
+    #[tokio::test]
+    async fn supervised_process_reports_exit_without_external_activity() {
+        let mut command = tokio::process::Command::new("sh");
+        command.args(["-c", "exit 0"]);
+        transport::configure_process_group(&mut command);
+        let child = command.spawn().unwrap();
+        let process = supervise(child, PathBuf::from("/tmp/unused-codex.sock"));
+        let exited = process.exit_token();
+
+        tokio::time::timeout(Duration::from_secs(2), exited.cancelled())
+            .await
+            .expect("supervisor should observe child exit");
+        assert!(!process.running.load(Ordering::Acquire));
     }
 }

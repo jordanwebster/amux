@@ -9,7 +9,7 @@ use chrono::{DateTime, Utc};
 use codex_sdk::{
     ApprovalResponse, Codex, CodexConfig, DaemonMode, DynamicToolCallResponse, Error as CodexError,
     InputItem, RequestId, Thread, ThreadConfig, ThreadEvent, TurnEvent, connect_daemon,
-    connect_socket, ensure_daemon_with_fallback,
+    connect_socket, daemon_socket_path, ensure_daemon_with_fallback,
 };
 use serde_json::{Value, json};
 use tokio::sync::{Mutex, watch};
@@ -19,7 +19,7 @@ use uuid::Uuid;
 use super::io::{self, CodexSdkV1Input};
 use crate::agents::{
     AGENT_TYPE_CODEX, AgentBackend, CodexInput, CreateAgentRequest, LocalAgentNameSource,
-    PtyHandle, StopPolicy, StructuredLogSource,
+    PtyHandle, StopPolicy, StructuredLogSource, spawn_pty_agent,
 };
 use crate::suspend::SuspendedAgent;
 
@@ -43,6 +43,7 @@ pub(crate) struct CodexClient {
 struct CodexConnection {
     client: Codex,
     mode: &'static str,
+    socket_path: PathBuf,
     _daemon: DaemonMode,
 }
 
@@ -52,6 +53,11 @@ impl CodexClient {
             private_socket,
             connection: Mutex::new(None),
         }
+    }
+
+    #[cfg(test)]
+    pub(crate) fn private_socket(&self) -> &Path {
+        &self.private_socket
     }
 
     async fn connection(&self) -> Result<Arc<CodexConnection>> {
@@ -77,6 +83,24 @@ impl CodexClient {
             record_io: capture_dir().map(|dir| dir.join("io.jsonl")),
             ..CodexConfig::default()
         };
+        let socket_path = match &daemon {
+            DaemonMode::Existing => {
+                let home = tokio::fs::canonicalize(&codex_home)
+                    .await
+                    .context("failed to resolve CODEX_HOME")?;
+                daemon_socket_path(&home)
+            }
+            DaemonMode::Spawned(process) | DaemonMode::Private(process) => {
+                process.socket_path().to_path_buf()
+            }
+            DaemonMode::PrivateExisting(socket_path) => socket_path.clone(),
+        };
+        let daemon_exit = match &daemon {
+            DaemonMode::Spawned(process) | DaemonMode::Private(process) => {
+                Some(process.exit_token())
+            }
+            DaemonMode::Existing | DaemonMode::PrivateExisting(_) => None,
+        };
         let client = match &daemon {
             DaemonMode::Existing | DaemonMode::Spawned(_) => {
                 connect_daemon(&codex_home, config).await
@@ -85,10 +109,18 @@ impl CodexClient {
             DaemonMode::PrivateExisting(socket_path) => connect_socket(socket_path, config).await,
         }
         .context("failed to connect to Codex app-server daemon")?;
+        if let Some(exited) = daemon_exit {
+            let watched_client = client.clone();
+            tokio::spawn(async move {
+                exited.cancelled().await;
+                watched_client.close().await;
+            });
+        }
 
         let connection = Arc::new(CodexConnection {
             client,
             mode,
+            socket_path,
             _daemon: daemon,
         });
         *slot = Some(connection.clone());
@@ -150,14 +182,20 @@ enum PendingReply {
 struct CodexLive {
     client: Codex,
     thread: Thread,
+    socket_path: PathBuf,
 }
 
 struct CodexAttached {
     thread_id: String,
-    daemon_mode: Option<&'static str>,
+    daemon_mode: Option<String>,
     live: Option<CodexLive>,
     active_turn_id: Option<String>,
     pending: HashMap<RequestId, PendingRequestKind>,
+}
+
+struct CodexPty {
+    handle: PtyHandle,
+    epoch: u64,
 }
 
 struct CodexRuntime {
@@ -165,6 +203,8 @@ struct CodexRuntime {
     attached: Option<CodexAttached>,
     startup_error: Option<String>,
     ingest_abort: Option<AbortHandle>,
+    pty: Option<CodexPty>,
+    next_pty_epoch: u64,
 }
 
 pub(crate) struct CodexSession {
@@ -223,9 +263,33 @@ impl CodexSession {
                 attached,
                 startup_error: None,
                 ingest_abort: None,
+                pty: None,
+                next_pty_epoch: 0,
             })),
             stop_tx,
             started: false,
+        }
+    }
+
+    pub(crate) fn from_suspended(
+        req: &CreateAgentRequest,
+        shared_client: Arc<CodexClient>,
+        daemon_mode: String,
+        created_at: DateTime<Utc>,
+    ) -> Self {
+        let session = Self::new(req, shared_client);
+        {
+            let mut runtime = session
+                .runtime
+                .lock()
+                .unwrap_or_else(|poison| poison.into_inner());
+            if let Some(attached) = runtime.attached.as_mut() {
+                attached.daemon_mode = Some(daemon_mode);
+            }
+        }
+        Self {
+            created_at,
+            ..session
         }
     }
 
@@ -306,6 +370,63 @@ impl CodexSession {
             log_source: self.log_source.clone(),
         }
     }
+
+    fn ensure_pty(&self) -> Result<PtyHandle> {
+        let (handle, exit_handle, epoch) = {
+            let mut runtime = self
+                .runtime
+                .lock()
+                .unwrap_or_else(|poison| poison.into_inner());
+            if let Some(pty) = runtime.pty.as_ref() {
+                return Ok(pty.handle.clone());
+            }
+            let attached = runtime.attached.as_ref().ok_or_else(|| {
+                anyhow!("Codex raw session is not ready: thread_id is not available yet")
+            })?;
+            let live = attached.live.as_ref().ok_or_else(|| {
+                anyhow!("Codex raw session is unavailable until reconnect succeeds")
+            })?;
+            std::os::unix::net::UnixStream::connect(&live.socket_path).with_context(|| {
+                format!(
+                    "Codex raw TUI app-server socket is unavailable: {}",
+                    live.socket_path.display()
+                )
+            })?;
+            let args = vec![
+                "resume".to_string(),
+                attached.thread_id.clone(),
+                "--remote".to_string(),
+                format!("unix://{}", live.socket_path.display()),
+            ];
+            let (handle, exit_handle) = spawn_pty_agent(
+                self.agent_id,
+                "codex",
+                &args,
+                &self.working_dir,
+                &[],
+                &[],
+                None,
+            )
+            .context("failed to spawn Codex raw TUI")?;
+            let epoch = runtime.next_pty_epoch;
+            runtime.next_pty_epoch = runtime.next_pty_epoch.wrapping_add(1);
+            runtime.pty = Some(CodexPty {
+                handle: handle.clone(),
+                epoch,
+            });
+            (handle, exit_handle, epoch)
+        };
+
+        let runtime = self.runtime.clone();
+        tokio::spawn(async move {
+            let _ = exit_handle.await;
+            let mut state = runtime.lock().unwrap_or_else(|poison| poison.into_inner());
+            if state.pty.as_ref().is_some_and(|pty| pty.epoch == epoch) {
+                state.pty = None;
+            }
+        });
+        Ok(handle)
+    }
 }
 
 async fn run_ingest_supervisor(
@@ -348,10 +469,11 @@ async fn run_ingest_supervisor(
             state.startup_error = None;
             state.attached = Some(CodexAttached {
                 thread_id: id.clone(),
-                daemon_mode: Some(connection.mode),
+                daemon_mode: Some(connection.mode.to_string()),
                 live: Some(CodexLive {
                     client: connection.client.clone(),
                     thread: thread.clone(),
+                    socket_path: connection.socket_path.clone(),
                 }),
                 active_turn_id: None,
                 pending: HashMap::new(),
@@ -788,6 +910,18 @@ impl AgentBackend for CodexSession {
         {
             abort.abort();
         }
+        let pty = self
+            .runtime
+            .lock()
+            .unwrap_or_else(|poison| poison.into_inner())
+            .pty
+            .take()
+            .map(|pty| pty.handle);
+        if let Some(pty) = pty
+            && let Err(error) = pty.terminate().await
+        {
+            tracing::warn!(agent_id = %self.agent_id, %error, "failed to terminate Codex raw TUI");
+        }
         let pending = mark_disconnected(&self.runtime);
         resolve_pending(&self.log_source, pending, "session_stopped").await;
         self.log_source.close().await;
@@ -808,8 +942,8 @@ impl AgentBackend for CodexSession {
         Some(self.log_source.clone())
     }
 
-    fn pty_handle(&self) -> Option<&PtyHandle> {
-        None
+    fn pty_handle(&self) -> Result<Option<PtyHandle>> {
+        self.ensure_pty().map(Some)
     }
 
     fn codex_input(&self) -> Option<Box<dyn CodexInput>> {
@@ -817,23 +951,42 @@ impl AgentBackend for CodexSession {
     }
 
     fn suspended_state(&self) -> Result<SuspendedAgent> {
-        let thread_id = self
-            .runtime
-            .lock()
-            .unwrap_or_else(|poison| poison.into_inner())
-            .attached
-            .as_ref()
-            .map(|attached| attached.thread_id.clone());
-        match thread_id {
-            Some(thread_id) => Err(anyhow!(
-                "cannot suspend Codex agent {} (thread {thread_id}): Codex suspend state lands in P5c",
-                self.agent_id
-            )),
-            None => Err(anyhow!(
+        let (thread_id, daemon_mode) = {
+            let runtime = self
+                .runtime
+                .lock()
+                .unwrap_or_else(|poison| poison.into_inner());
+            match runtime.attached.as_ref() {
+                Some(attached) => (
+                    Some(attached.thread_id.clone()),
+                    attached.daemon_mode.clone(),
+                ),
+                None => (None, None),
+            }
+        };
+        let Some(thread_id) = thread_id else {
+            return Err(anyhow!(
                 "cannot suspend Codex agent {}: thread_id is not available yet",
                 self.agent_id
-            )),
-        }
+            ));
+        };
+        let daemon_mode = daemon_mode.ok_or_else(|| {
+            anyhow!(
+                "cannot suspend Codex agent {}: daemon mode is not available yet",
+                self.agent_id
+            )
+        })?;
+        Ok(SuspendedAgent::Codex {
+            agent_id: self.agent_id,
+            name: self.name.clone(),
+            working_dir: self.working_dir.clone(),
+            model: self.model.clone(),
+            approval_policy: self.approval_policy.clone(),
+            sandbox_policy: self.sandbox_policy.clone(),
+            thread_id,
+            daemon_mode,
+            created_at: self.created_at,
+        })
     }
 
     fn debug_json(&self, _verbose: bool) -> serde_json::Result<Value> {
@@ -844,11 +997,11 @@ impl AgentBackend for CodexSession {
         Ok(json!({
             "kind": "codex",
             "thread_id": runtime.attached.as_ref().map(|attached| &attached.thread_id),
-            "daemon_mode": runtime.attached.as_ref().and_then(|attached| attached.daemon_mode),
+            "daemon_mode": runtime.attached.as_ref().and_then(|attached| attached.daemon_mode.as_deref()),
             "startup_error": runtime.startup_error,
             "has_event_ingest": runtime.ingest_abort.is_some(),
             "connected": runtime.attached.as_ref().is_some_and(|attached| attached.live.is_some()),
-            "has_pty": false,
+            "has_pty": runtime.pty.is_some(),
         }))
     }
 }
@@ -886,17 +1039,52 @@ mod tests {
     #[test]
     fn advertises_both_planes_before_pty_exists() {
         let session = session();
-        assert!(session.pty_handle().is_none());
+        assert!(session.runtime.lock().unwrap().pty.is_none());
         assert_eq!(
             session.io_protocols(),
             [io::CODEX_SDK_V1, crate::agents::terminal_io::TERMINAL_V1]
         );
     }
 
+    #[tokio::test]
+    async fn raw_spawn_failure_before_thread_ready_leaves_structured_plane_healthy() {
+        let session = session();
+
+        let error = session.pty_handle().err().unwrap();
+        assert!(error.to_string().contains("thread_id is not available"));
+        assert!(session.runtime.lock().unwrap().pty.is_none());
+        assert!(session.log_source().unwrap().subscribe().await.is_some());
+    }
+
     #[test]
     fn suspend_is_nonfatal_and_reports_missing_thread_id() {
         let error = session().suspended_state().unwrap_err();
         assert!(error.to_string().contains("thread_id is not available"));
+    }
+
+    #[test]
+    fn suspend_records_persistent_codex_identity() {
+        let session = session();
+        {
+            let mut runtime = session.runtime.lock().unwrap();
+            runtime.attached = Some(CodexAttached {
+                thread_id: "thread-persisted".into(),
+                daemon_mode: Some("spawned-private".into()),
+                live: None,
+                active_turn_id: None,
+                pending: HashMap::new(),
+            });
+        }
+
+        let suspended = session.suspended_state().unwrap();
+        assert!(matches!(
+            suspended,
+            SuspendedAgent::Codex {
+                thread_id,
+                daemon_mode,
+                ..
+            } if thread_id == "thread-persisted" && daemon_mode == "spawned-private"
+        ));
     }
 
     #[test]
@@ -923,7 +1111,7 @@ mod tests {
             desired_name: None,
             attached: Some(CodexAttached {
                 thread_id: "thread-1".into(),
-                daemon_mode: Some("test"),
+                daemon_mode: Some("test".into()),
                 live: None,
                 active_turn_id: Some("turn-1".into()),
                 pending: HashMap::from([
@@ -936,6 +1124,8 @@ mod tests {
             }),
             startup_error: None,
             ingest_abort: None,
+            pty: None,
+            next_pty_epoch: 0,
         }));
         resolve_pending(&source, mark_disconnected(&runtime), "connection_lost").await;
         let (mut reader, seq) = source.subscribe_with_query(None).await.unwrap();
@@ -958,13 +1148,15 @@ mod tests {
             desired_name: None,
             attached: Some(CodexAttached {
                 thread_id: "thread-1".into(),
-                daemon_mode: Some("test"),
+                daemon_mode: Some("test".into()),
                 live: None,
                 active_turn_id: None,
                 pending: HashMap::new(),
             }),
             startup_error: None,
             ingest_abort: None,
+            pty: None,
+            next_pty_epoch: 0,
         }));
         CodexInputTarget {
             runtime,
@@ -1087,16 +1279,19 @@ mod tests {
             desired_name: None,
             attached: Some(CodexAttached {
                 thread_id: "thread-1".into(),
-                daemon_mode: Some("test"),
+                daemon_mode: Some("test".into()),
                 live: Some(CodexLive {
                     client: client.clone(),
                     thread,
+                    socket_path: PathBuf::from("/tmp/test-codex.sock"),
                 }),
                 active_turn_id: None,
                 pending: HashMap::new(),
             }),
             startup_error: None,
             ingest_abort: None,
+            pty: None,
+            next_pty_epoch: 0,
         }));
         CodexInputTarget {
             runtime,
@@ -1135,10 +1330,11 @@ mod tests {
             .unwrap_or_else(|poison| poison.into_inner())
             .attached = Some(CodexAttached {
             thread_id: thread.id().into(),
-            daemon_mode: Some("replay"),
+            daemon_mode: Some("replay".into()),
             live: Some(CodexLive {
                 client: client.clone(),
                 thread: thread.clone(),
+                socket_path: PathBuf::from("/tmp/test-codex.sock"),
             }),
             active_turn_id: None,
             pending: HashMap::new(),
@@ -1202,6 +1398,8 @@ mod tests {
             attached: None,
             startup_error: None,
             ingest_abort: None,
+            pty: None,
+            next_pty_epoch: 0,
         }));
         attach_runtime(&runtime, &client, &thread);
         source.write(json!({"type": "amux.codex_ready"})).await;

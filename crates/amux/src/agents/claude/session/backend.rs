@@ -71,8 +71,8 @@ impl AgentBackend for ClaudeSession {
         ClaudeSession::log_source(self)
     }
 
-    fn pty_handle(&self) -> Option<&PtyHandle> {
-        self.pty.as_ref()
+    fn pty_handle(&self) -> Result<Option<PtyHandle>> {
+        Ok(self.pty.clone())
     }
 
     fn structured_input(&self) -> Option<Box<dyn StructuredInput>> {

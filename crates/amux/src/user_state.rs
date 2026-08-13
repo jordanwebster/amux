@@ -39,14 +39,17 @@ pub(crate) struct ServerState {
 /// is compiled in (cloud-vs-device is decided by runtime guards, not host
 /// presence), `None` for the embedded client. Spawns the host's session-event
 /// loop, so it must be called from within a tokio runtime.
-fn new_local_agent_host(host_id: Uuid) -> Option<Arc<dyn LocalAgentHost>> {
+fn new_local_agent_host(
+    host_id: Uuid,
+    socket_path: &std::path::Path,
+) -> Option<Arc<dyn LocalAgentHost>> {
     #[cfg(feature = "local-agents")]
     {
-        Some(PtyAgentHost::new(host_id))
+        Some(PtyAgentHost::new_with_socket_path(host_id, socket_path))
     }
     #[cfg(not(feature = "local-agents"))]
     {
-        let _ = host_id;
+        let _ = (host_id, socket_path);
         None
     }
 }
@@ -119,7 +122,8 @@ pub(crate) async fn ensure_local_agent_host(
     let mut guard = state.write().await;
     if guard.local_agent_host.is_none() {
         let host_id = guard.host_id;
-        guard.local_agent_host = new_local_agent_host(host_id);
+        let socket_path = guard.config.socket_path.clone();
+        guard.local_agent_host = new_local_agent_host(host_id, &socket_path);
     }
     guard.local_agent_host.clone()
 }

@@ -206,8 +206,8 @@ impl AgentBackend for TestAgentSession {
         TestAgentSession::log_source(self)
     }
 
-    fn pty_handle(&self) -> Option<&PtyHandle> {
-        self.pty.as_ref()
+    fn pty_handle(&self) -> Result<Option<PtyHandle>> {
+        Ok(self.pty.clone())
     }
 
     fn suspended_state(&self) -> Result<crate::suspend::SuspendedAgent> {

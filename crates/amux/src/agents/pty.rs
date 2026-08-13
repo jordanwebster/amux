@@ -20,6 +20,7 @@ pub(crate) struct PtyHandle {
     pty_master: Arc<Mutex<Option<Box<dyn MasterPty + Send>>>>,
     current_size: Arc<Mutex<(u16, u16)>>,
     buffer: Arc<MultiplexByteBuffer>,
+    child_process_id: Option<u32>,
 }
 
 impl PtyHandle {
@@ -40,6 +41,7 @@ impl PtyHandle {
             pty_master: Arc::new(Mutex::new(None)),
             current_size: Arc::new(Mutex::new((24, 80))),
             buffer,
+            child_process_id: None,
         }
     }
 
@@ -83,6 +85,26 @@ impl PtyHandle {
     pub(crate) async fn close(&self) {
         self.pty_master.lock().await.take();
         self.buffer.close().await;
+    }
+
+    /// Terminate the PTY child process group, then close its I/O.
+    #[cfg(unix)]
+    pub(crate) async fn terminate(&self) -> Result<()> {
+        if let Some(process_id) = self.child_process_id {
+            let process_id = i32::try_from(process_id).context("PTY process id exceeds i32")?;
+            // `forkpty` makes the child the process-group leader. A negative
+            // pid addresses the whole group, including CLI shims and their
+            // native children.
+            let result = unsafe { libc::kill(-process_id, libc::SIGTERM) };
+            if result != 0 {
+                let error = std::io::Error::last_os_error();
+                if error.raw_os_error() != Some(libc::ESRCH) {
+                    return Err(error).context("failed to terminate PTY process group");
+                }
+            }
+        }
+        self.close().await;
+        Ok(())
     }
 }
 
@@ -143,6 +165,7 @@ pub(crate) fn spawn_pty_agent(
         .slave
         .spawn_command(cmd)
         .with_context(|| format!("failed to spawn '{command}'"))?;
+    let child_process_id = child.process_id();
     // Close the slave pty handle in the parent so EOF propagates to the child on exit.
     drop(pair.slave);
 
@@ -214,6 +237,7 @@ pub(crate) fn spawn_pty_agent(
         pty_master: master,
         current_size,
         buffer,
+        child_process_id,
     };
 
     Ok((pty, exit_handle))
@@ -247,5 +271,27 @@ mod tests {
             cmd.get_env("ADDED_VAR").and_then(|v| v.to_str()),
             Some("added")
         );
+    }
+
+    #[cfg(unix)]
+    #[tokio::test]
+    async fn terminate_stops_the_pty_process_group() {
+        let args = vec!["-c".to_string(), "sleep 30".to_string()];
+        let (pty, exit) = spawn_pty_agent(
+            Uuid::from_u128(1),
+            "sh",
+            &args,
+            std::path::Path::new("/tmp"),
+            &[],
+            &[],
+            None,
+        )
+        .unwrap();
+
+        pty.terminate().await.unwrap();
+        tokio::time::timeout(std::time::Duration::from_secs(2), exit)
+            .await
+            .expect("PTY child should exit after process-group termination")
+            .unwrap();
     }
 }

@@ -24,8 +24,6 @@ pub(crate) use buffer::{
     BroadcastRead, ByteReplayQuery, MultiplexByteBuffer, MultiplexByteReader,
     MultiplexStructuredBuffer, MultiplexStructuredReader, SequencedReplayQuery, StructuredOutput,
 };
-#[cfg(all(feature = "local-agents", unix))]
-pub(crate) use codex::CodexClient;
 pub use events::AgentEvent;
 pub(crate) use events::{agent_event_from_wire, agent_event_to_wire};
 #[cfg(feature = "local-agents")]
@@ -39,8 +37,8 @@ pub(crate) use record::{AgentRecord, SessionEvent, StopPolicy};
 pub(crate) use session::CodexInput;
 #[cfg(feature = "local-agents")]
 pub(crate) use session::{
-    AgentBackend, AgentSession, StructuredInput, agent_from_suspended, bootstrap_external_hook,
-    new_agent, terminal_io_protocols,
+    AgentBackend, AgentDeps, AgentSession, StructuredInput, agent_from_suspended,
+    bootstrap_external_hook, new_agent, terminal_io_protocols,
 };
 pub use session_events::{SessionCloseReason, SubscribeSessionEvent};
 #[cfg(all(feature = "local-agents", any(debug_assertions, test)))]

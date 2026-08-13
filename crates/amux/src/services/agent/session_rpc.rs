@@ -187,7 +187,11 @@ async fn prepare_direct_structured_session_subscription(
         ensure_agent_supports_protocol(session, request.agent_id, claude_io::PTY_TRANSCRIPT_V1)?;
         (
             session.log_source().ok_or(ProtocolError::NoAgentFound)?,
-            session.pty_handle().cloned(),
+            session
+                .pty_handle()
+                .map_err(|error| ProtocolError::ServerError {
+                    message: error.to_string(),
+                })?,
         )
     };
 
@@ -376,7 +380,9 @@ async fn agent_pty(
     ensure_agent_supports_protocol(session, agent_id, io_protocol)?;
     session
         .pty_handle()
-        .cloned()
+        .map_err(|error| ProtocolError::ServerError {
+            message: error.to_string(),
+        })?
         .ok_or_else(|| ProtocolError::InvalidArgument {
             message: format!("agent {agent_id} does not support raw PTY sessions"),
         })
@@ -687,8 +693,7 @@ mod tests {
                     terminal_size: None,
                     args: Vec::new(),
                 },
-                #[cfg(unix)]
-                state.codex_client.clone(),
+                &state.deps,
             )
             .unwrap();
             state

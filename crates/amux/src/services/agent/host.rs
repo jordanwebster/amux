@@ -22,7 +22,7 @@ use super::{
     session_rpc,
 };
 use crate::agents::{
-    Agent, AgentEvent, AgentSession, AgentType, CreateAgentConfig, CreateAgentRequest,
+    Agent, AgentDeps, AgentEvent, AgentSession, AgentType, CreateAgentConfig, CreateAgentRequest,
     CreateAgentRpcRequest, ExternalHookBootstrap, HookOutcome, RenameAgentRequest,
     SendInputRequest, SessionCloseReason, SessionEvent, StopPolicy, SubscribeSessionRequest,
     bootstrap_external_hook,
@@ -42,8 +42,20 @@ impl PtyAgentHost {
     /// Build the host and spawn its session-event loop. Needs only `host_id`;
     /// cloud-vs-device is decided by runtime guards in `AgentServiceCtx`, not
     /// by host presence.
+    #[cfg(any(test, feature = "testnet"))]
     pub(crate) fn new(host_id: Uuid) -> Arc<Self> {
-        let state = Arc::new(RwLock::new(AgentServiceState::new()));
+        Self::new_with_socket_path(host_id, &crate::config::Config::default().socket_path)
+    }
+
+    /// Build a host whose private Codex fallback lives beside the configured
+    /// amux socket. The short filename preserves as much `SUN_LEN` headroom as
+    /// possible.
+    pub(crate) fn new_with_socket_path(
+        host_id: Uuid,
+        server_socket_path: &std::path::Path,
+    ) -> Arc<Self> {
+        let deps = AgentDeps::new(codex_private_socket_path(server_socket_path));
+        let state = Arc::new(RwLock::new(AgentServiceState::new(deps)));
         let (event_tx, event_rx) = mpsc::channel(256);
         spawn_session_event_loop(state.clone(), event_rx, host_id);
         Arc::new(Self {
@@ -64,6 +76,29 @@ impl PtyAgentHost {
     pub(crate) fn host_id(&self) -> Uuid {
         self.host_id
     }
+}
+
+fn codex_private_socket_path(server_socket_path: &std::path::Path) -> PathBuf {
+    let socket_dir = server_socket_path
+        .parent()
+        .unwrap_or_else(|| std::path::Path::new("."));
+    #[cfg(unix)]
+    {
+        use std::os::unix::ffi::OsStrExt;
+
+        // Stable FNV-1a keeps servers with different configured socket paths
+        // isolated without copying a potentially long filename into `sun_path`.
+        let hash = server_socket_path
+            .as_os_str()
+            .as_bytes()
+            .iter()
+            .fold(0xcbf29ce484222325_u64, |hash, byte| {
+                (hash ^ u64::from(*byte)).wrapping_mul(0x100000001b3)
+            });
+        socket_dir.join(format!("c{hash:016x}.sock"))
+    }
+    #[cfg(not(unix))]
+    socket_dir.join("cx.sock")
 }
 
 #[async_trait]
@@ -397,5 +432,33 @@ fn agent_event_sort_key(event: &AgentEvent) -> (String, u128) {
         }
         AgentEvent::AgentDown { agent_id } => (String::new(), agent_id.as_u128()),
         AgentEvent::SnapshotComplete => (String::new(), 0),
+    }
+}
+
+#[cfg(test)]
+mod socket_tests {
+    use super::*;
+
+    #[tokio::test]
+    async fn private_codex_socket_follows_configured_server_socket_dir() {
+        let first = PtyAgentHost::new_with_socket_path(
+            Uuid::from_u128(1),
+            std::path::Path::new("/var/run/custom-amux/control.sock"),
+        );
+        let second = PtyAgentHost::new_with_socket_path(
+            Uuid::from_u128(2),
+            std::path::Path::new("/var/run/custom-amux/other.sock"),
+        );
+        let first_state = first.state.read().await;
+        let second_state = second.state.read().await;
+        let first_socket = first_state.deps.codex_client.private_socket();
+        let second_socket = second_state.deps.codex_client.private_socket();
+        assert_eq!(
+            first_socket.parent(),
+            Some(std::path::Path::new("/var/run/custom-amux"))
+        );
+        assert_eq!(second_socket.parent(), first_socket.parent());
+        assert_ne!(first_socket, second_socket);
+        assert!(first_socket.file_name().unwrap().len() <= 22);
     }
 }
