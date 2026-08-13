@@ -274,7 +274,7 @@ impl CodexSession {
     pub(crate) fn from_suspended(
         req: &CreateAgentRequest,
         shared_client: Arc<CodexClient>,
-        daemon_mode: String,
+        daemon_mode: Option<String>,
         created_at: DateTime<Utc>,
     ) -> Self {
         let session = Self::new(req, shared_client);
@@ -284,7 +284,7 @@ impl CodexSession {
                 .lock()
                 .unwrap_or_else(|poison| poison.into_inner());
             if let Some(attached) = runtime.attached.as_mut() {
-                attached.daemon_mode = Some(daemon_mode);
+                attached.daemon_mode = daemon_mode;
             }
         }
         Self {
@@ -392,12 +392,13 @@ impl CodexSession {
                     live.socket_path.display()
                 )
             })?;
-            let args = vec![
-                "resume".to_string(),
-                attached.thread_id.clone(),
-                "--remote".to_string(),
-                format!("unix://{}", live.socket_path.display()),
-            ];
+            let args = raw_tui_args(
+                &attached.thread_id,
+                &live.socket_path,
+                self.model.as_deref(),
+                self.approval_policy.as_deref(),
+                self.sandbox_policy.as_deref(),
+            );
             let (handle, exit_handle) = spawn_pty_agent(
                 self.agent_id,
                 "codex",
@@ -427,6 +428,34 @@ impl CodexSession {
         });
         Ok(handle)
     }
+}
+
+fn raw_tui_args(
+    thread_id: &str,
+    socket_path: &Path,
+    model: Option<&str>,
+    approval_policy: Option<&str>,
+    sandbox_policy: Option<&str>,
+) -> Vec<String> {
+    let mut args = vec![
+        "resume".to_string(),
+        thread_id.to_string(),
+        "--remote".to_string(),
+        format!("unix://{}", socket_path.display()),
+    ];
+    if let Some(model) = model {
+        args.extend(["--model".to_string(), model.to_string()]);
+    }
+    if let Some(approval_policy) = approval_policy {
+        args.extend([
+            "--ask-for-approval".to_string(),
+            approval_policy.to_string(),
+        ]);
+    }
+    if let Some(sandbox_policy) = sandbox_policy {
+        args.extend(["--sandbox".to_string(), sandbox_policy.to_string()]);
+    }
+    args
 }
 
 async fn run_ingest_supervisor(
@@ -970,12 +999,6 @@ impl AgentBackend for CodexSession {
                 self.agent_id
             ));
         };
-        let daemon_mode = daemon_mode.ok_or_else(|| {
-            anyhow!(
-                "cannot suspend Codex agent {}: daemon mode is not available yet",
-                self.agent_id
-            )
-        })?;
         Ok(SuspendedAgent::Codex {
             agent_id: self.agent_id,
             name: self.name.clone(),
@@ -1083,8 +1106,66 @@ mod tests {
                 thread_id,
                 daemon_mode,
                 ..
-            } if thread_id == "thread-persisted" && daemon_mode == "spawned-private"
+            } if thread_id == "thread-persisted"
+                && daemon_mode.as_deref() == Some("spawned-private")
         ));
+    }
+
+    #[test]
+    fn suspend_records_explicit_resume_thread_before_daemon_attach() {
+        let req = CreateAgentRequest {
+            agent_id: Uuid::from_u128(2),
+            host_id: None,
+            name: Some("resume-pending".into()),
+            agent_type: AgentType::Codex {
+                model: Some("gpt-test".into()),
+                approval_policy: Some("never".into()),
+                sandbox_policy: Some("read-only".into()),
+                resume_thread_id: Some("thread-known".into()),
+            },
+            working_dir: PathBuf::from("/tmp"),
+            terminal_size: None,
+            args: Vec::new(),
+        };
+        let session = CodexSession::new(
+            &req,
+            Arc::new(CodexClient::new(PathBuf::from("/tmp/amux-codex.sock"))),
+        );
+
+        let suspended = session.suspended_state().unwrap();
+        assert!(matches!(
+            suspended,
+            SuspendedAgent::Codex {
+                thread_id,
+                daemon_mode: None,
+                ..
+            } if thread_id == "thread-known"
+        ));
+    }
+
+    #[test]
+    fn raw_tui_argv_forwards_all_stored_overrides() {
+        assert_eq!(
+            raw_tui_args(
+                "thread-123",
+                Path::new("/tmp/codex.sock"),
+                Some("gpt-test"),
+                Some("never"),
+                Some("read-only"),
+            ),
+            [
+                "resume",
+                "thread-123",
+                "--remote",
+                "unix:///tmp/codex.sock",
+                "--model",
+                "gpt-test",
+                "--ask-for-approval",
+                "never",
+                "--sandbox",
+                "read-only",
+            ]
+        );
     }
 
     #[test]

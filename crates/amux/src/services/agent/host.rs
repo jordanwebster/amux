@@ -86,6 +86,8 @@ fn codex_private_socket_path(server_socket_path: &std::path::Path) -> PathBuf {
     {
         use std::os::unix::ffi::OsStrExt;
 
+        const MAX_CODEX_SOCKET_PATH_BYTES: usize = 103;
+
         // Stable FNV-1a keeps servers with different configured socket paths
         // isolated without copying a potentially long filename into `sun_path`.
         let hash = server_socket_path
@@ -95,7 +97,16 @@ fn codex_private_socket_path(server_socket_path: &std::path::Path) -> PathBuf {
             .fold(0xcbf29ce484222325_u64, |hash, byte| {
                 (hash ^ u64::from(*byte)).wrapping_mul(0x100000001b3)
             });
-        socket_dir.join(format!("c{hash:016x}.sock"))
+        let file_name = format!("c{hash:016x}.sock");
+        let adjacent = socket_dir.join(&file_name);
+        if adjacent.as_os_str().as_bytes().len() <= MAX_CODEX_SOCKET_PATH_BYTES {
+            adjacent
+        } else {
+            // Move only the Codex runtime socket when the configured amux
+            // directory leaves too little room for codex-sdk's sun_path cap.
+            let uid = unsafe { libc::getuid() };
+            PathBuf::from(format!("/tmp/amux-{uid}")).join(file_name)
+        }
     }
     #[cfg(not(unix))]
     socket_dir.join("cx.sock")
@@ -435,9 +446,10 @@ fn agent_event_sort_key(event: &AgentEvent) -> (String, u128) {
     }
 }
 
-#[cfg(test)]
+#[cfg(all(test, unix))]
 mod socket_tests {
     use super::*;
+    use std::os::unix::ffi::OsStrExt;
 
     #[tokio::test]
     async fn private_codex_socket_follows_configured_server_socket_dir() {
@@ -460,5 +472,31 @@ mod socket_tests {
         assert_eq!(second_socket.parent(), first_socket.parent());
         assert_ne!(first_socket, second_socket);
         assert!(first_socket.file_name().unwrap().len() <= 22);
+    }
+
+    #[test]
+    fn private_codex_socket_uses_short_per_user_dir_for_long_configured_dir() {
+        let long_dir = std::path::Path::new("/tmp").join("x".repeat(110));
+        let server_socket = long_dir.join("control.sock");
+        let socket = codex_private_socket_path(&server_socket);
+        let uid = unsafe { libc::getuid() };
+
+        assert_eq!(
+            socket.parent(),
+            Some(std::path::Path::new(&format!("/tmp/amux-{uid}")))
+        );
+        assert!(socket.as_os_str().as_bytes().len() <= 103);
+
+        let hash = server_socket
+            .as_os_str()
+            .as_bytes()
+            .iter()
+            .fold(0xcbf29ce484222325_u64, |hash, byte| {
+                (hash ^ u64::from(*byte)).wrapping_mul(0x100000001b3)
+            });
+        assert_eq!(
+            socket.file_name(),
+            Some(std::ffi::OsStr::new(&format!("c{hash:016x}.sock")))
+        );
     }
 }

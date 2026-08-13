@@ -48,7 +48,8 @@ pub(crate) enum SuspendedAgent {
         approval_policy: Option<String>,
         sandbox_policy: Option<String>,
         thread_id: String,
-        daemon_mode: String,
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        daemon_mode: Option<String>,
         created_at: DateTime<Utc>,
     },
     #[cfg(any(debug_assertions, test))]
@@ -181,7 +182,7 @@ mod tests {
                     approval_policy: Some("on-request".to_string()),
                     sandbox_policy: Some("workspace-write".to_string()),
                     thread_id: "thread-1".to_string(),
-                    daemon_mode: "spawned-well-known".to_string(),
+                    daemon_mode: Some("spawned-well-known".to_string()),
                     created_at: Utc::now(),
                 },
                 #[cfg(any(debug_assertions, test))]
@@ -212,5 +213,39 @@ mod tests {
         assert!(suspended.exists());
         remove_suspended(&state_path).unwrap();
         assert!(!suspended.exists());
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn codex_daemon_mode_defaults_when_omitted() {
+        let state = SuspendedServerState {
+            agents: vec![SuspendedAgent::Codex {
+                agent_id: Uuid::new_v4(),
+                name: Some("pending-resume".to_string()),
+                working_dir: PathBuf::from("/tmp"),
+                model: None,
+                approval_policy: None,
+                sandbox_policy: None,
+                thread_id: "thread-known".to_string(),
+                daemon_mode: Some("existing".to_string()),
+                created_at: Utc::now(),
+            }],
+        };
+        let yaml = serde_yaml::to_string(&state)
+            .unwrap()
+            .lines()
+            .filter(|line| !line.trim_start().starts_with("daemon_mode:"))
+            .collect::<Vec<_>>()
+            .join("\n");
+
+        let loaded: SuspendedServerState = serde_yaml::from_str(&yaml).unwrap();
+        assert!(matches!(
+            &loaded.agents[0],
+            SuspendedAgent::Codex {
+                thread_id,
+                daemon_mode: None,
+                ..
+            } if thread_id == "thread-known"
+        ));
     }
 }

@@ -327,7 +327,7 @@ mod tests {
             approval_policy: Some("on-request".into()),
             sandbox_policy: Some("workspace-write".into()),
             thread_id: "thread-resume".into(),
-            daemon_mode: "spawned-well-known".into(),
+            daemon_mode: Some("spawned-well-known".into()),
             created_at,
         };
         let deps = AgentDeps::new(std::env::temp_dir().join("amux-test-codex.sock"));
@@ -345,7 +345,7 @@ mod tests {
                 ..
             } if restored_id == agent_id
                 && thread_id == "thread-resume"
-                && daemon_mode == "spawned-well-known"
+                && daemon_mode.as_deref() == Some("spawned-well-known")
                 && restored_at == created_at
         ));
     }

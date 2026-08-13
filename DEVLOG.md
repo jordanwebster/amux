@@ -58,6 +58,9 @@ and `thread/resume` path.
 - Supervised daemon exit proactively closes the SDK transport. Codex PTY stop
   explicitly terminates the whole PTY process group so the Node shim and native
   child cannot outlive the agent.
+- Review round 1 forwards stored Codex policy overrides to the raw TUI, permits
+  pre-attach resume identities to suspend, bounds fallback socket paths, and
+  keeps the socket regression tests Unix-only.
 
 ### Decisions Made
 - Once spawned, a raw PTY remains alive with zero subscribers; Codex resume is
