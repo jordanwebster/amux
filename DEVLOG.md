@@ -38,6 +38,8 @@ One paragraph describing what was done.
 
 ---
 
+2026-08-13 — P7 simplification pass: shared Codex work-entry/kind constructors, gate-sourced refusal text, and dropped the four dead pending-approval clears the row guard already owns; no behavior, spec count, or golden byte changed.
+
 2026-08-13 — P7 review round 2 made reconnect failure outrank pre-ready replay and aligned fleet attention with ready-bound Codex liveness; all required gates pass.
 
 2026-08-13 — P7 review round 1 fixed dynamic-tool decisions, ready-bound startup gating, sticky gap history loss, read-only turn writes, and row-keyed plan snapshots; all required gates pass.

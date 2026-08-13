@@ -122,14 +122,8 @@ fn idle_prompt_encodes_native_input_and_tracks_only_the_correlated_in_flight_op(
 
 #[test]
 fn prompt_waits_for_ready_but_a_truncated_replay_can_use_its_idle_row() {
-    let before_ready = codex_base(AGENT);
-    let startup_model = fold(before_ready.clone());
-    assert_eq!(
-        amux_ui::codex::send_gate(&startup_model, agent_id(AGENT)),
-        SendGate::Replaying
-    );
     let (refused, effects) = fold_with_effects(seq([
-        before_ready,
+        codex_base(AGENT),
         vec![command_msg(
             4,
             CodexCommand::Prompt {

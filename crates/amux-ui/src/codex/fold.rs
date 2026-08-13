@@ -128,7 +128,6 @@ fn fold_ready(layer: &mut CodexLayer, seq: u64) {
     layer.gap = false;
     layer.read_only = false;
     layer.accumulators = Accumulators::default();
-    layer.pending_approval_context = None;
     if repeated {
         push(layer, seq, FeedEntryKind::Boundary(BoundaryEntry::Ready));
     }
@@ -139,7 +138,6 @@ fn fold_gap(layer: &mut CodexLayer, seq: u64, row: &Value) {
     layer.gap = true;
     layer.history_loss = true;
     layer.accumulators = Accumulators::default();
-    layer.pending_approval_context = None;
     push(
         layer,
         seq,
@@ -176,7 +174,6 @@ fn fold_turn_started(layer: &mut CodexLayer, seq: u64, row: &Value) {
         return;
     };
     layer.accumulators = Accumulators::default();
-    layer.pending_approval_context = None;
     layer.turn.active_id = Some(turn_id);
     layer.turn.status = ThreadStatus::Active;
     layer.turn.last = None;
@@ -230,7 +227,6 @@ fn fold_turn_completed(layer: &mut CodexLayer, seq: u64, row: &Value) {
         layer.turn.status = ThreadStatus::Idle;
         layer.turn.last = Some(last);
         layer.accumulators = Accumulators::default();
-        layer.pending_approval_context = None;
     }
 }
 
@@ -366,23 +362,15 @@ fn fold_item(layer: &mut CodexLayer, seq: u64, row: &Value, finality: ItemFinali
             set_active(layer, &item_id, ActiveItemKind::Work, finality);
         }
         other => {
-            upsert_item(
-                layer,
-                seq,
+            let entry = work_entry(
                 &item_id,
-                FeedEntryKind::Work(WorkEntry {
-                    item_id: item_id.clone(),
-                    kind: WorkKind::Other {
-                        item_type: other.to_string(),
-                        raw: item.clone(),
-                    },
-                    state: work_state(item, finality),
-                    stdout_head: String::new(),
-                    stderr_head: String::new(),
-                    output_truncated: false,
-                }),
+                WorkKind::Other {
+                    item_type: other.to_string(),
+                    raw: item.clone(),
+                },
+                work_state(item, finality),
             );
-            set_active(layer, &item_id, ActiveItemKind::Work, finality);
+            upsert_work(layer, seq, &item_id, entry, finality);
         }
     }
 }
@@ -416,31 +404,12 @@ fn fold_command_item(
             .or_default();
         append_bounded(target, output, &mut aggregated_truncated);
     }
-    let mut entry = existing_work(layer, item_id).unwrap_or_else(|| empty_work(item_id));
-    entry.kind = WorkKind::Command {
-        command: str_or(item, "command", "").to_string(),
-        cwd: string(item, "cwd"),
-        exit_code: item
-            .get("exitCode")
-            .and_then(Value::as_i64)
-            .and_then(|code| i32::try_from(code).ok()),
-    };
+    let mut entry = work_so_far(layer, item_id);
+    entry.kind = command_kind(item);
     entry.state = work_state(item, finality);
-    entry.stdout_head = layer
-        .accumulators
-        .command_stdout
-        .get(item_id)
-        .cloned()
-        .unwrap_or_default();
-    entry.stderr_head = layer
-        .accumulators
-        .command_stderr
-        .get(item_id)
-        .cloned()
-        .unwrap_or_default();
+    attach_command_output(layer, item_id, &mut entry);
     entry.output_truncated |= aggregated_truncated;
-    upsert_item(layer, seq, item_id, FeedEntryKind::Work(entry));
-    set_active(layer, item_id, ActiveItemKind::Work, finality);
+    upsert_work(layer, seq, item_id, entry, finality);
 }
 
 fn fold_file_item(
@@ -450,23 +419,15 @@ fn fold_file_item(
     item_id: &str,
     finality: ItemFinality,
 ) {
-    let mut entry = existing_work(layer, item_id).unwrap_or_else(|| empty_work(item_id));
-    let (patch_head, patch_truncated) = match &entry.kind {
-        WorkKind::FileChange {
-            patch_head,
-            patch_truncated,
-            ..
-        } => (patch_head.clone(), *patch_truncated),
-        _ => (String::new(), false),
-    };
+    let mut entry = work_so_far(layer, item_id);
+    let (patch_head, patch_truncated) = existing_patch(&entry.kind);
     entry.kind = WorkKind::FileChange {
         changes: file_changes(item.get("changes")),
         patch_head,
         patch_truncated,
     };
     entry.state = work_state(item, finality);
-    upsert_item(layer, seq, item_id, FeedEntryKind::Work(entry));
-    set_active(layer, item_id, ActiveItemKind::Work, finality);
+    upsert_work(layer, seq, item_id, entry, finality);
 }
 
 fn fold_plan_item(
@@ -482,24 +443,16 @@ fn fold_plan_item(
         .map(str::to_owned)
         .or_else(|| plan_text(layer, item_id))
         .unwrap_or_default();
-    upsert_item(
-        layer,
-        seq,
+    let entry = work_entry(
         item_id,
-        FeedEntryKind::Work(WorkEntry {
-            item_id: item_id.to_string(),
-            kind: WorkKind::Plan {
-                text,
-                explanation: None,
-                steps: Vec::new(),
-            },
-            state: work_state(item, finality),
-            stdout_head: String::new(),
-            stderr_head: String::new(),
-            output_truncated: false,
-        }),
+        WorkKind::Plan {
+            text,
+            explanation: None,
+            steps: Vec::new(),
+        },
+        work_state(item, finality),
     );
-    set_active(layer, item_id, ActiveItemKind::Work, finality);
+    upsert_work(layer, seq, item_id, entry, finality);
 }
 
 fn fold_mcp_item(
@@ -509,26 +462,18 @@ fn fold_mcp_item(
     item_id: &str,
     finality: ItemFinality,
 ) {
-    upsert_item(
-        layer,
-        seq,
+    let entry = work_entry(
         item_id,
-        FeedEntryKind::Work(WorkEntry {
-            item_id: item_id.to_string(),
-            kind: WorkKind::McpTool {
-                server: str_or(item, "server", "").to_string(),
-                tool: str_or(item, "tool", "").to_string(),
-                arguments: item.get("arguments").cloned().unwrap_or(Value::Null),
-                result: item.get("result").filter(|v| !v.is_null()).cloned(),
-                error: item.get("error").filter(|v| !v.is_null()).cloned(),
-            },
-            state: work_state(item, finality),
-            stdout_head: String::new(),
-            stderr_head: String::new(),
-            output_truncated: false,
-        }),
+        WorkKind::McpTool {
+            server: str_or(item, "server", "").to_string(),
+            tool: str_or(item, "tool", "").to_string(),
+            arguments: item.get("arguments").cloned().unwrap_or(Value::Null),
+            result: item.get("result").filter(|v| !v.is_null()).cloned(),
+            error: item.get("error").filter(|v| !v.is_null()).cloned(),
+        },
+        work_state(item, finality),
     );
-    set_active(layer, item_id, ActiveItemKind::Work, finality);
+    upsert_work(layer, seq, item_id, entry, finality);
 }
 
 fn fold_dynamic_item(
@@ -538,25 +483,8 @@ fn fold_dynamic_item(
     item_id: &str,
     finality: ItemFinality,
 ) {
-    upsert_item(
-        layer,
-        seq,
-        item_id,
-        FeedEntryKind::Work(WorkEntry {
-            item_id: item_id.to_string(),
-            kind: WorkKind::DynamicTool {
-                tool: str_or(item, "tool", "").to_string(),
-                namespace: string(item, "namespace"),
-                arguments: item.get("arguments").cloned().unwrap_or(Value::Null),
-                success: item.get("success").and_then(Value::as_bool),
-            },
-            state: work_state(item, finality),
-            stdout_head: String::new(),
-            stderr_head: String::new(),
-            output_truncated: false,
-        }),
-    );
-    set_active(layer, item_id, ActiveItemKind::Work, finality);
+    let entry = work_entry(item_id, dynamic_tool_kind(item), work_state(item, finality));
+    upsert_work(layer, seq, item_id, entry, finality);
 }
 
 fn fold_web_item(
@@ -566,23 +494,15 @@ fn fold_web_item(
     item_id: &str,
     finality: ItemFinality,
 ) {
-    upsert_item(
-        layer,
-        seq,
+    let entry = work_entry(
         item_id,
-        FeedEntryKind::Work(WorkEntry {
-            item_id: item_id.to_string(),
-            kind: WorkKind::WebSearch {
-                query: str_or(item, "query", "").to_string(),
-                action: item.get("action").filter(|v| !v.is_null()).cloned(),
-            },
-            state: work_state(item, finality),
-            stdout_head: String::new(),
-            stderr_head: String::new(),
-            output_truncated: false,
-        }),
+        WorkKind::WebSearch {
+            query: str_or(item, "query", "").to_string(),
+            action: item.get("action").filter(|v| !v.is_null()).cloned(),
+        },
+        work_state(item, finality),
     );
-    set_active(layer, item_id, ActiveItemKind::Work, finality);
+    upsert_work(layer, seq, item_id, entry, finality);
 }
 
 fn fold_agent_delta(layer: &mut CodexLayer, seq: u64, row: &Value) {
@@ -734,23 +654,11 @@ fn fold_command_delta(layer: &mut CodexLayer, seq: u64, row: &Value) {
             .or_default()
     };
     append_bounded(target, str_or(row, "delta", ""), &mut truncated);
-    let mut entry = existing_work(layer, item_id).unwrap_or_else(|| empty_work(item_id));
-    entry.stdout_head = layer
-        .accumulators
-        .command_stdout
-        .get(item_id)
-        .cloned()
-        .unwrap_or_default();
-    entry.stderr_head = layer
-        .accumulators
-        .command_stderr
-        .get(item_id)
-        .cloned()
-        .unwrap_or_default();
+    let mut entry = work_so_far(layer, item_id);
+    attach_command_output(layer, item_id, &mut entry);
     entry.output_truncated |= truncated;
     entry.state = WorkState::Running;
-    upsert_item(layer, seq, item_id, FeedEntryKind::Work(entry));
-    set_active(layer, item_id, ActiveItemKind::Work, ItemFinality::Open);
+    upsert_work(layer, seq, item_id, entry, ItemFinality::Open);
 }
 
 fn fold_file_delta(layer: &mut CodexLayer, seq: u64, row: &Value) {
@@ -763,35 +671,26 @@ fn fold_file_delta(layer: &mut CodexLayer, seq: u64, row: &Value) {
         );
         return;
     };
-    let mut entry = existing_work(layer, item_id).unwrap_or_else(|| empty_work(item_id));
-    let mut kind = match entry.kind {
-        WorkKind::FileChange {
-            changes,
-            patch_head,
-            patch_truncated,
-        } => WorkKind::FileChange {
-            changes,
-            patch_head,
-            patch_truncated,
-        },
-        _ => WorkKind::FileChange {
+    let mut entry = work_so_far(layer, item_id);
+    // A delta only grows the patch preview; any change list already folded for
+    // this item survives.
+    if !matches!(entry.kind, WorkKind::FileChange { .. }) {
+        entry.kind = WorkKind::FileChange {
             changes: Vec::new(),
             patch_head: String::new(),
             patch_truncated: false,
-        },
-    };
+        };
+    }
     if let WorkKind::FileChange {
         patch_head,
         patch_truncated,
         ..
-    } = &mut kind
+    } = &mut entry.kind
     {
         append_bounded(patch_head, str_or(row, "delta", ""), patch_truncated);
     }
-    entry.kind = kind;
     entry.state = WorkState::Running;
-    upsert_item(layer, seq, item_id, FeedEntryKind::Work(entry));
-    set_active(layer, item_id, ActiveItemKind::Work, ItemFinality::Open);
+    upsert_work(layer, seq, item_id, entry, ItemFinality::Open);
 }
 
 fn fold_file_patch(layer: &mut CodexLayer, seq: u64, row: &Value) {
@@ -804,15 +703,8 @@ fn fold_file_patch(layer: &mut CodexLayer, seq: u64, row: &Value) {
         );
         return;
     };
-    let mut entry = existing_work(layer, item_id).unwrap_or_else(|| empty_work(item_id));
-    let (patch_head, patch_truncated) = match &entry.kind {
-        WorkKind::FileChange {
-            patch_head,
-            patch_truncated,
-            ..
-        } => (patch_head.clone(), *patch_truncated),
-        _ => (String::new(), false),
-    };
+    let mut entry = work_so_far(layer, item_id);
+    let (patch_head, patch_truncated) = existing_patch(&entry.kind);
     entry.kind = WorkKind::FileChange {
         changes: file_changes(row.get("changes")),
         patch_head,
@@ -829,24 +721,16 @@ fn fold_plan_delta(layer: &mut CodexLayer, seq: u64, row: &Value) {
     };
     let mut text = plan_text(layer, item_id).unwrap_or_default();
     text.push_str(str_or(row, "delta", ""));
-    upsert_item(
-        layer,
-        seq,
+    let entry = work_entry(
         item_id,
-        FeedEntryKind::Work(WorkEntry {
-            item_id: item_id.to_string(),
-            kind: WorkKind::Plan {
-                text,
-                explanation: None,
-                steps: Vec::new(),
-            },
-            state: WorkState::Running,
-            stdout_head: String::new(),
-            stderr_head: String::new(),
-            output_truncated: false,
-        }),
+        WorkKind::Plan {
+            text,
+            explanation: None,
+            steps: Vec::new(),
+        },
+        WorkState::Running,
     );
-    set_active(layer, item_id, ActiveItemKind::Work, ItemFinality::Open);
+    upsert_work(layer, seq, item_id, entry, ItemFinality::Open);
 }
 
 fn fold_plan_updated(layer: &mut CodexLayer, seq: u64, row: &Value) {
@@ -865,23 +749,16 @@ fn fold_plan_updated(layer: &mut CodexLayer, seq: u64, row: &Value) {
             status: str_or(step, "status", "pending").to_string(),
         })
         .collect();
-    upsert_item(
-        layer,
-        seq,
+    let entry = work_entry(
         &item_id,
-        FeedEntryKind::Work(WorkEntry {
-            item_id: item_id.clone(),
-            kind: WorkKind::Plan {
-                text: String::new(),
-                explanation: string(row, "explanation"),
-                steps,
-            },
-            state: WorkState::Running,
-            stdout_head: String::new(),
-            stderr_head: String::new(),
-            output_truncated: false,
-        }),
+        WorkKind::Plan {
+            text: String::new(),
+            explanation: string(row, "explanation"),
+            steps,
+        },
+        WorkState::Running,
     );
+    upsert_item(layer, seq, &item_id, FeedEntryKind::Work(entry));
 }
 
 fn fold_diff_updated(layer: &mut CodexLayer, seq: u64, row: &Value) {
@@ -899,23 +776,16 @@ fn fold_diff_updated(layer: &mut CodexLayer, seq: u64, row: &Value) {
         str_or(row, "diff", ""),
         &mut patch_truncated,
     );
-    upsert_item(
-        layer,
-        seq,
+    let entry = work_entry(
         &item_id,
-        FeedEntryKind::Work(WorkEntry {
-            item_id: item_id.clone(),
-            kind: WorkKind::FileChange {
-                changes: Vec::new(),
-                patch_head,
-                patch_truncated,
-            },
-            state: WorkState::Running,
-            stdout_head: String::new(),
-            stderr_head: String::new(),
-            output_truncated: false,
-        }),
+        WorkKind::FileChange {
+            changes: Vec::new(),
+            patch_head,
+            patch_truncated,
+        },
+        WorkState::Running,
     );
+    upsert_item(layer, seq, &item_id, FeedEntryKind::Work(entry));
 }
 
 fn fold_command_approval(layer: &mut CodexLayer, seq: u64, row: &Value) {
@@ -927,12 +797,8 @@ fn fold_command_approval(layer: &mut CodexLayer, seq: u64, row: &Value) {
         reason: string(row, "reason"),
     };
     layer.pending_approval_context = Some(context);
-    let mut entry = existing_work(layer, &item_id).unwrap_or_else(|| empty_work(&item_id));
-    entry.kind = WorkKind::Command {
-        command: str_or(row, "command", "").to_string(),
-        cwd: string(row, "cwd"),
-        exit_code: None,
-    };
+    let mut entry = work_so_far(layer, &item_id);
+    entry.kind = command_kind(row);
     entry.state = WorkState::Proposed;
     upsert_item(layer, seq, &item_id, FeedEntryKind::Work(entry));
 }
@@ -950,7 +816,7 @@ fn fold_file_approval(layer: &mut CodexLayer, seq: u64, row: &Value) {
         reason: string(row, "reason"),
         changes: changes.clone(),
     });
-    let mut entry = existing_work(layer, &item_id).unwrap_or_else(|| empty_work(&item_id));
+    let mut entry = work_so_far(layer, &item_id);
     entry.kind = WorkKind::FileChange {
         changes,
         patch_head: String::new(),
@@ -967,22 +833,15 @@ fn fold_permissions_approval(layer: &mut CodexLayer, seq: u64, row: &Value) {
         reason: string(row, "reason"),
         permissions: row.get("permissions").cloned().unwrap_or(Value::Null),
     });
-    upsert_item(
-        layer,
-        seq,
+    let entry = work_entry(
         &item_id,
-        FeedEntryKind::Work(WorkEntry {
-            item_id: item_id.clone(),
-            kind: WorkKind::Other {
-                item_type: "permissions".to_string(),
-                raw: row.clone(),
-            },
-            state: WorkState::Proposed,
-            stdout_head: String::new(),
-            stderr_head: String::new(),
-            output_truncated: false,
-        }),
+        WorkKind::Other {
+            item_type: "permissions".to_string(),
+            raw: row.clone(),
+        },
+        WorkState::Proposed,
     );
+    upsert_item(layer, seq, &item_id, FeedEntryKind::Work(entry));
 }
 
 fn fold_dynamic_tool_approval(layer: &mut CodexLayer, seq: u64, row: &Value) {
@@ -999,24 +858,8 @@ fn fold_dynamic_tool_approval(layer: &mut CodexLayer, seq: u64, row: &Value) {
         arguments: row.get("arguments").cloned().unwrap_or(Value::Null),
     };
     layer.pending_approval_context = Some(context);
-    upsert_item(
-        layer,
-        seq,
-        &item_id,
-        FeedEntryKind::Work(WorkEntry {
-            item_id: item_id.clone(),
-            kind: WorkKind::DynamicTool {
-                tool: str_or(row, "tool", "").to_string(),
-                namespace: string(row, "namespace"),
-                arguments: row.get("arguments").cloned().unwrap_or(Value::Null),
-                success: None,
-            },
-            state: WorkState::Proposed,
-            stdout_head: String::new(),
-            stderr_head: String::new(),
-            output_truncated: false,
-        }),
-    );
+    let entry = work_entry(&item_id, dynamic_tool_kind(row), WorkState::Proposed);
+    upsert_item(layer, seq, &item_id, FeedEntryKind::Work(entry));
 }
 
 fn fold_approval_required(layer: &mut CodexLayer, seq: u64, row: &Value) {
@@ -1130,21 +973,14 @@ fn fold_approval_resolved(layer: &mut CodexLayer, row: &Value) {
 
 fn fold_unsupported_user_input(layer: &mut CodexLayer, seq: u64, row: &Value) {
     let item_id = str_or(row, "itemId", "unsupported-user-input").to_string();
-    upsert_item(
-        layer,
-        seq,
+    let entry = work_entry(
         &item_id,
-        FeedEntryKind::Work(WorkEntry {
-            item_id: item_id.clone(),
-            kind: WorkKind::UnsupportedUserInput {
-                questions: row.get("questions").cloned().unwrap_or(Value::Null),
-            },
-            state: WorkState::BlockedUnsupported,
-            stdout_head: String::new(),
-            stderr_head: String::new(),
-            output_truncated: false,
-        }),
+        WorkKind::UnsupportedUserInput {
+            questions: row.get("questions").cloned().unwrap_or(Value::Null),
+        },
+        WorkState::BlockedUnsupported,
     );
+    upsert_item(layer, seq, &item_id, FeedEntryKind::Work(entry));
     if !layer.accumulators.unsupported.contains(&item_id) {
         layer.accumulators.unsupported.push_back(item_id);
     }
@@ -1260,18 +1096,82 @@ fn work_state(item: &Value, finality: ItemFinality) -> WorkState {
     }
 }
 
-fn empty_work(item_id: &str) -> WorkEntry {
+/// A work entry that has captured no command output yet.
+fn work_entry(item_id: &str, kind: WorkKind, state: WorkState) -> WorkEntry {
     WorkEntry {
         item_id: item_id.to_string(),
-        kind: WorkKind::Other {
-            item_type: "unknown".to_string(),
-            raw: Value::Null,
-        },
-        state: WorkState::Running,
+        kind,
+        state,
         stdout_head: String::new(),
         stderr_head: String::new(),
         output_truncated: false,
     }
+}
+
+/// The work entry already folded for this item, or a fresh placeholder the
+/// caller fills in.  A row may describe an item whose start was never seen.
+fn work_so_far(layer: &CodexLayer, item_id: &str) -> WorkEntry {
+    existing_work(layer, item_id).unwrap_or_else(|| {
+        work_entry(
+            item_id,
+            WorkKind::Other {
+                item_type: "unknown".to_string(),
+                raw: Value::Null,
+            },
+            WorkState::Running,
+        )
+    })
+}
+
+/// Command facts read identically from an item body and from a raw approval
+/// request row; the approval row simply carries no exit code.
+fn command_kind(value: &Value) -> WorkKind {
+    WorkKind::Command {
+        command: str_or(value, "command", "").to_string(),
+        cwd: string(value, "cwd"),
+        exit_code: value
+            .get("exitCode")
+            .and_then(Value::as_i64)
+            .and_then(|code| i32::try_from(code).ok()),
+    }
+}
+
+/// Dynamic tool facts, likewise shared by the item body and the raw
+/// `item/tool/call` request that precedes an approval.
+fn dynamic_tool_kind(value: &Value) -> WorkKind {
+    WorkKind::DynamicTool {
+        tool: str_or(value, "tool", "").to_string(),
+        namespace: string(value, "namespace"),
+        arguments: value.get("arguments").cloned().unwrap_or(Value::Null),
+        success: value.get("success").and_then(Value::as_bool),
+    }
+}
+
+/// The patch preview already captured for this item, if it is a file change.
+fn existing_patch(kind: &WorkKind) -> (String, bool) {
+    match kind {
+        WorkKind::FileChange {
+            patch_head,
+            patch_truncated,
+            ..
+        } => (patch_head.clone(), *patch_truncated),
+        _ => (String::new(), false),
+    }
+}
+
+fn attach_command_output(layer: &CodexLayer, item_id: &str, entry: &mut WorkEntry) {
+    entry.stdout_head = layer
+        .accumulators
+        .command_stdout
+        .get(item_id)
+        .cloned()
+        .unwrap_or_default();
+    entry.stderr_head = layer
+        .accumulators
+        .command_stderr
+        .get(item_id)
+        .cloned()
+        .unwrap_or_default();
 }
 
 fn prompt_parts(value: Option<&Value>) -> Vec<PromptPart> {
@@ -1402,6 +1302,20 @@ fn upsert_item(layer: &mut CodexLayer, seq: u64, item_id: &str, kind: FeedEntryK
     let id = push(layer, seq, kind);
     layer.item_entries.insert(item_id.to_string(), id);
     id
+}
+
+/// Upsert a work entry and record whether that item is still open.  Turn-level
+/// snapshots and proposed-but-unstarted work use `upsert_item` directly: they
+/// are not the item the agent is currently executing.
+fn upsert_work(
+    layer: &mut CodexLayer,
+    seq: u64,
+    item_id: &str,
+    entry: WorkEntry,
+    open: ItemFinality,
+) {
+    upsert_item(layer, seq, item_id, FeedEntryKind::Work(entry));
+    set_active(layer, item_id, ActiveItemKind::Work, open);
 }
 
 fn upsert_turn(layer: &mut CodexLayer, seq: u64, turn_id: &str, kind: FeedEntryKind) -> u64 {

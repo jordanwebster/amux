@@ -36,31 +36,13 @@ pub(crate) fn update_command(
         }
         CodexCommand::Steer { agent, text } => {
             if matches!(super::phase(model, agent), CodexPhase::ReadOnly) {
-                return refuse(
-                    model,
-                    op,
-                    seq,
-                    command,
-                    SendGate::ReadOnly.refusal().expect("refusal"),
-                );
+                return refuse_gate(model, op, seq, command, SendGate::ReadOnly);
             }
             let Some(layer) = model.codex(agent) else {
-                return refuse(
-                    model,
-                    op,
-                    seq,
-                    command,
-                    "Codex input unavailable for this agent",
-                );
+                return refuse_gate(model, op, seq, command, SendGate::Unavailable);
             };
             if layer.in_flight_inputs().next().is_some() {
-                return refuse(
-                    model,
-                    op,
-                    seq,
-                    command,
-                    SendGate::InputInFlight.refusal().expect("refusal"),
-                );
+                return refuse_gate(model, op, seq, command, SendGate::InputInFlight);
             }
             let Some(turn_id) = layer.active_turn_id().map(str::to_owned) else {
                 return refuse(
@@ -92,22 +74,10 @@ pub(crate) fn update_command(
         } => update_answer(model, op, seq, command, agent, request_id, decision),
         CodexCommand::Interrupt { agent } => {
             if matches!(super::phase(model, agent), CodexPhase::ReadOnly) {
-                return refuse(
-                    model,
-                    op,
-                    seq,
-                    command,
-                    SendGate::ReadOnly.refusal().expect("refusal"),
-                );
+                return refuse_gate(model, op, seq, command, SendGate::ReadOnly);
             }
             let Some(layer) = model.codex(agent) else {
-                return refuse(
-                    model,
-                    op,
-                    seq,
-                    command,
-                    "Codex input unavailable for this agent",
-                );
+                return refuse_gate(model, op, seq, command, SendGate::Unavailable);
             };
             let Some(turn_id) = layer.active_turn_id().map(str::to_owned) else {
                 return refuse(
@@ -144,13 +114,7 @@ fn update_answer(
     decision: CodexDecision,
 ) -> Vec<crate::Effect> {
     let Some(layer) = model.codex(agent) else {
-        return refuse(
-            model,
-            op,
-            seq,
-            command,
-            "Codex input unavailable for this agent",
-        );
+        return refuse_gate(model, op, seq, command, SendGate::Unavailable);
     };
     let Some(ask) = layer.asks().find(|ask| ask.request_id == request_id) else {
         return refuse(model, op, seq, command, "ask already resolved");
@@ -189,6 +153,19 @@ fn update_answer(
             decision,
         },
     )
+}
+
+/// Refuse with the gate's own words, so a refusal and the rendered gate can
+/// never state different reasons for the same fact.
+fn refuse_gate(
+    model: &mut Model,
+    op: OpId,
+    seq: u64,
+    command: Command,
+    gate: SendGate,
+) -> Vec<crate::Effect> {
+    let message = gate.refusal().expect("a non-ready gate states its refusal");
+    refuse(model, op, seq, command, message)
 }
 
 fn dispatch_codex_input(
