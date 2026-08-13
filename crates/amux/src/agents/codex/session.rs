@@ -474,7 +474,8 @@ async fn run_ingest_supervisor(
                 Ok(attached) => attached,
                 Err(error) => {
                     let message = error.to_string();
-                    set_runtime_error(&runtime, message.clone());
+                    let pending = mark_disconnected(&runtime, Some(message.clone()));
+                    resolve_pending(&log_source, pending, "connection_lost").await;
                     write_reconnect_error(&log_source, &message).await;
                     if wait_for_retry(&mut stop_rx, retry).await {
                         break;
@@ -527,7 +528,7 @@ async fn run_ingest_supervisor(
             }
         };
 
-        let pending = mark_disconnected(&runtime);
+        let pending = mark_disconnected(&runtime, None);
         resolve_pending(&log_source, pending, boundary.unwrap_or("session_stopped")).await;
         let Some(reason) = boundary else {
             break;
@@ -582,17 +583,20 @@ fn update_attached(runtime: &StdMutex<CodexRuntime>, update: impl FnOnce(&mut Co
     }
 }
 
-fn set_runtime_error(runtime: &Arc<StdMutex<CodexRuntime>>, message: String) {
+/// Drop the connection-local handles, optionally recording why, and hand back
+/// every ask that was pending on them.
+///
+/// The caller MUST resolve the returned request IDs: this is the only place
+/// obligations are released, so dropping them would leave asks that no client
+/// can ever see closed.
+fn mark_disconnected(
+    runtime: &Arc<StdMutex<CodexRuntime>>,
+    error: Option<String>,
+) -> Vec<RequestId> {
     let mut state = runtime.lock().unwrap_or_else(|poison| poison.into_inner());
-    state.startup_error = Some(message);
-    if let Some(attached) = state.attached.as_mut() {
-        attached.live = None;
-        attached.active_turn_id = None;
+    if let Some(error) = error {
+        state.startup_error = Some(error);
     }
-}
-
-fn mark_disconnected(runtime: &Arc<StdMutex<CodexRuntime>>) -> Vec<RequestId> {
-    let mut state = runtime.lock().unwrap_or_else(|poison| poison.into_inner());
     let Some(attached) = state.attached.as_mut() else {
         return Vec::new();
     };
@@ -943,7 +947,7 @@ impl AgentBackend for CodexSession {
         {
             tracing::warn!(agent_id = %self.agent_id, %error, "failed to terminate Codex raw TUI");
         }
-        let pending = mark_disconnected(&self.runtime);
+        let pending = mark_disconnected(&self.runtime, None);
         resolve_pending(&self.log_source, pending, "session_stopped").await;
         self.log_source.close().await;
     }
@@ -1194,7 +1198,12 @@ mod tests {
             pty: None,
             next_pty_epoch: 0,
         }));
-        resolve_pending(&source, mark_disconnected(&runtime), "connection_lost").await;
+        resolve_pending(
+            &source,
+            mark_disconnected(&runtime, None),
+            "connection_lost",
+        )
+        .await;
         let (mut reader, seq) = source.subscribe_with_query(None).await.unwrap();
         assert_eq!(seq, 2);
         let mut ids = Vec::new();

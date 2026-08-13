@@ -38,6 +38,35 @@ One paragraph describing what was done.
 
 ---
 
+## 2026-08-13: Checkpoint #2 — one owner for the Codex disconnect invariant
+
+### Summary
+`set_runtime_error` and `mark_disconnected` both dropped the connection-local
+Codex handles, but only one of them drained the pending approval table. That
+the attach-failure path was safe depended on knowing, non-locally, that
+`pending` is always empty there. Folded them into one function so the
+invariant is structural: dropping the live handles and handing back the
+obligations they owned is now a single indivisible act.
+
+### Changes
+- `crates/amux/src/agents/codex/session.rs`: `mark_disconnected(runtime,
+  error)` replaces both functions; every caller resolves the request IDs it
+  returns.
+
+### Decisions Made
+- The error message stays an `Option` parameter rather than an unconditional
+  assignment, so stopping a degraded session cannot silently clear a recorded
+  startup error.
+
+### Verification
+- `cargo fmt --all`; `timeout 600 cargo clippy --workspace --all-targets`
+  (only the two accepted tracked-listener warnings).
+- `timeout 600 cargo test --workspace` — pass; amux library 430/430.
+- `timeout 600 cargo test -p amux --features testnet --test spec` — 44/44.
+
+### Next Steps
+- P6, carrying the checkpoint-2 directives.
+
 ## 2026-08-13: Checkpoint #2 — delete unreached codex-sdk surface
 
 ### Summary
