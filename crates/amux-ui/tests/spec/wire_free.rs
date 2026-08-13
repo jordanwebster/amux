@@ -144,6 +144,34 @@ fn every_msg_variant_round_trips_through_serde() {
                 agent: agent_id("fix-auth-bug"),
             }),
         ),
+        command(
+            op(12),
+            amux_ui::Command::Codex(amux_ui::CodexCommand::Prompt {
+                agent: agent_id("fix-auth-bug"),
+                text: "inspect the failure".to_string(),
+            }),
+        ),
+        command(
+            op(13),
+            amux_ui::Command::Codex(amux_ui::CodexCommand::Steer {
+                agent: agent_id("fix-auth-bug"),
+                text: "also run tests".to_string(),
+            }),
+        ),
+        command(
+            op(14),
+            amux_ui::Command::Codex(amux_ui::CodexCommand::Answer {
+                agent: agent_id("fix-auth-bug"),
+                request_id: serde_json::json!("req-1"),
+                decision: amux_ui::CodexDecision::Decline,
+            }),
+        ),
+        command(
+            op(15),
+            amux_ui::Command::Codex(amux_ui::CodexCommand::Interrupt {
+                agent: agent_id("fix-auth-bug"),
+            }),
+        ),
         op_result(op(6), OpOutcome::InputSent),
         connected("nova"),
         disconnected(DisconnectReason::ServerShutdown {

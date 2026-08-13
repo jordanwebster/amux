@@ -12,6 +12,7 @@
 //! `recorder`) owns every resource.
 
 pub mod claude;
+pub mod codex;
 mod effect;
 mod model;
 mod msg;
@@ -22,6 +23,7 @@ mod update;
 // Kernel entity vocabulary re-exported so renderers depend on amux-ui alone.
 pub use amux::{Agent, AgentId, AgentType, Capabilities, HostEntry, HostId, HostTrustStatus};
 pub use claude::{ClaudeCommand, SendGate};
+pub use codex::{CodexCommand, CodexDecision, CodexInput};
 pub use effect::{DumpReason, Effect, InputPayload};
 pub use model::{
     AgentCard, AgentPhase, Attention, Connection, FinishedOp, FleetItem, HostState, Model,

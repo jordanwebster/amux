@@ -100,6 +100,8 @@ pub enum Command {
     /// Claude-native writes. Other agents add sibling typed command arms;
     /// their asymmetry is preserved rather than normalized.
     Claude(crate::claude::ClaudeCommand),
+    /// Codex-native writes.
+    Codex(crate::codex::CodexCommand),
 }
 
 /// Connection and inventory events. Entity events are idempotent upserts —

@@ -38,6 +38,55 @@ One paragraph describing what was done.
 
 ---
 
+## 2026-08-13: Add the typed Codex UI layer (P7)
+
+### Summary
+Implemented the native `codex_sdk_v1` reducer layer: protocol rows now fold
+into Codex-owned prompts, messages, reasoning, work, turns, boundaries,
+errors, obligations, phase, gates, and attention. A live 0.147 capture proved
+that `userMessage` start/completion rows arrive, so normal prompts are
+protocol-sourced. Successful steers use a typed correlated echo because the
+upstream protocol does not emit a steer `userMessage`.
+
+### Changes
+- Added `crates/amux-ui/src/codex/` with the native entry/command/input,
+  approval, phase, retention, and invariant vocabularies.
+- Registered Codex through the P6 enums and runtime protocol codec; no common
+  feed, phase, ask, or content shape was introduced.
+- Added three prose-spec chapters covering row folding, approval correlation,
+  unsupported questions, row-derived interrupts, input-result correlation,
+  and serde/differential replay.
+- Added the four honest Codex labels to the TUI's pure `command_verb` dispatch
+  under the orchestrator's fence amendment; no layout, screen, key, renderer,
+  or golden changed.
+
+### Decisions Made
+- Normal `Prompt` entries come only from upstream `userMessage` items. Steer
+  text is retained in-flight and becomes `PromptSource::SteerEcho` only after
+  its matching `amux.input_result` succeeds; failure leaves no false echo.
+- Gaps and re-sync markers reset turn accumulators but retain the layer's
+  explicitly observed active turn id, so interrupt never uses the backend's
+  empty-current sentinel.
+- Object-valued approval decisions remain wire-verbatim and visible but are
+  disabled in V1; the frozen backend accepts only four named decisions.
+
+### Verification
+
+- `cargo fmt --all` — pass.
+- `timeout 600 cargo clippy --workspace --all-targets` — pass with the two
+  accepted tracked-listener dead-code warnings.
+- `cargo test -p amux-ui --all-targets -- --test-threads=1` — 34 unit, one
+  runtime, and 138 spec tests pass.
+- `timeout 600 cargo test --workspace` — pass after warming host test-binary
+  startup; the complete untruncated workspace run also passed.
+- `timeout 600 cargo test -p amux --features testnet --test spec` — 44/44 pass.
+- TUI golden directory status is empty after the gate; byte-identical.
+
+### Next Steps
+
+- P8 can add Codex-specific rendering, layouts, and keys over this typed
+  layer; those surfaces remain intentionally absent from P7.
+
 ## 2026-08-13: Generalize the amux-ui kernel for typed agent layers
 
 ### Summary

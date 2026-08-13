@@ -7,6 +7,7 @@ use amux::AgentId;
 use serde::{Deserialize, Serialize};
 
 use crate::claude::encoding::KeyStep;
+use crate::codex::CodexInput;
 use crate::msg::{Command, OpId};
 
 /// Native input for one typed agent layer. Adding a layer adds an enum arm;
@@ -24,6 +25,9 @@ pub enum InputPayload {
         /// retry it mechanically with the seq the refusal reported;
         /// positional programs fail fast and resurface instead.
         retry_stale: bool,
+    },
+    Codex {
+        payload: CodexInput,
     },
 }
 

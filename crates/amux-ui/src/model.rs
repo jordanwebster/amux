@@ -14,6 +14,7 @@ use chrono::{DateTime, Utc};
 use serde::{Deserialize, Serialize};
 
 use crate::claude::{ClaudeLayer, ClaudeViolation};
+use crate::codex::{CodexLayer, CodexViolation};
 use crate::msg::{Command, DisconnectReason, OpId, OpOutcome, StreamCloseReason};
 
 /// How many finished ops the Model retains (retention is explicitly bounded;
@@ -74,80 +75,115 @@ pub enum Connection {
 #[serde(tag = "layer", content = "state", rename_all = "snake_case")]
 pub enum AgentLayer {
     Claude(ClaudeLayer),
+    Codex(CodexLayer),
 }
 
 impl AgentLayer {
     /// Select a layer only from protocols the agent advertised.
     pub(crate) fn from_protocols(protocols: &[String]) -> Option<Self> {
-        protocols
+        if protocols
             .iter()
             .any(|protocol| protocol == crate::claude::PROTOCOL)
-            .then(|| Self::Claude(ClaudeLayer::default()))
+        {
+            Some(Self::Claude(ClaudeLayer::default()))
+        } else if protocols
+            .iter()
+            .any(|protocol| protocol == crate::codex::PROTOCOL)
+        {
+            Some(Self::Codex(CodexLayer::default()))
+        } else {
+            None
+        }
     }
 
     pub(crate) fn protocol(&self) -> &'static str {
         match self {
             Self::Claude(_) => crate::claude::PROTOCOL,
+            Self::Codex(_) => crate::codex::PROTOCOL,
         }
     }
 
     pub fn claude(&self) -> Option<&ClaudeLayer> {
         match self {
             Self::Claude(layer) => Some(layer),
+            Self::Codex(_) => None,
         }
     }
 
     pub(crate) fn claude_mut(&mut self) -> Option<&mut ClaudeLayer> {
         match self {
             Self::Claude(layer) => Some(layer),
+            Self::Codex(_) => None,
+        }
+    }
+
+    pub fn codex(&self) -> Option<&CodexLayer> {
+        match self {
+            Self::Claude(_) => None,
+            Self::Codex(layer) => Some(layer),
+        }
+    }
+
+    pub(crate) fn codex_mut(&mut self) -> Option<&mut CodexLayer> {
+        match self {
+            Self::Claude(_) => None,
+            Self::Codex(layer) => Some(layer),
         }
     }
 
     pub(crate) fn begin_window(&mut self, truncated: bool) {
         match self {
             Self::Claude(layer) => layer.begin_window(truncated),
+            Self::Codex(layer) => layer.begin_window(truncated),
         }
     }
 
     pub(crate) fn observe(&mut self, seq: u64, at: DateTime<Utc>, payload: &serde_json::Value) {
         match self {
             Self::Claude(layer) => layer.observe(seq, at, payload),
+            Self::Codex(layer) => layer.observe(seq, at, payload),
         }
     }
 
     pub(crate) fn observe_replay_complete(&mut self) {
         match self {
             Self::Claude(layer) => layer.observe_replay_complete(),
+            Self::Codex(layer) => layer.observe_replay_complete(),
         }
     }
 
     pub(crate) fn observe_exit(&mut self) {
         match self {
             Self::Claude(layer) => layer.observe_exit(),
+            Self::Codex(layer) => layer.observe_exit(),
         }
     }
 
     pub(crate) fn invalidate(&mut self) {
         match self {
             Self::Claude(layer) => layer.invalidate(),
+            Self::Codex(layer) => layer.invalidate(),
         }
     }
 
     pub(crate) fn attention(&self) -> Attention {
         match self {
             Self::Claude(layer) => layer.attention(),
+            Self::Codex(layer) => layer.attention(),
         }
     }
 
     pub(crate) fn working_is_stale(&self, now: Option<DateTime<Utc>>) -> bool {
         match self {
             Self::Claude(layer) => layer.working_is_stale(now),
+            Self::Codex(layer) => layer.working_is_stale(now),
         }
     }
 
     pub(crate) fn check_invariants(&self, agent: AgentId, out: &mut Vec<Violation>) {
         match self {
             Self::Claude(layer) => layer.check_invariants(agent, out),
+            Self::Codex(layer) => layer.check_invariants(agent, out),
         }
     }
 }
@@ -178,6 +214,11 @@ impl AgentCard {
     /// stream has produced any.
     pub fn claude(&self) -> Option<&ClaudeLayer> {
         self.layer.as_ref().and_then(AgentLayer::claude)
+    }
+
+    /// The Codex chat layer's native view state, when available.
+    pub fn codex(&self) -> Option<&CodexLayer> {
+        self.layer.as_ref().and_then(AgentLayer::codex)
     }
 
     /// Display name fallback: user-assigned name, then provider label, then
@@ -434,6 +475,10 @@ impl Model {
         self.agents.get(&id).and_then(AgentCard::claude)
     }
 
+    pub fn codex(&self, id: AgentId) -> Option<&CodexLayer> {
+        self.agents.get(&id).and_then(AgentCard::codex)
+    }
+
     pub fn pending_ops(&self) -> impl Iterator<Item = &PendingOp> {
         self.pending_ops.values()
     }
@@ -543,7 +588,9 @@ impl Model {
 #[derive(Clone, Debug, PartialEq)]
 pub enum Violation {
     /// A `streams` key with no corresponding agent card.
-    StreamWithoutAgent { agent: AgentId },
+    StreamWithoutAgent {
+        agent: AgentId,
+    },
     /// An agent card stamped with an epoch the Model has not reached.
     CardEpochAhead {
         agent: AgentId,
@@ -569,7 +616,10 @@ pub enum Violation {
         model_epoch: u64,
     },
     /// `finished_ops` exceeded its explicit retention bound.
-    FinishedOpsOverflow { len: usize, cap: usize },
+    FinishedOpsOverflow {
+        len: usize,
+        cap: usize,
+    },
     /// A card's cached attention disagrees with the one derived from its
     /// own layer fold (E2: attention IS a projection of the layer).
     AttentionMismatch {
@@ -579,6 +629,7 @@ pub enum Violation {
     },
     /// A typed layer's own structural invariant failed.
     Claude(ClaudeViolation),
+    Codex(CodexViolation),
 }
 
 impl Violation {
@@ -594,6 +645,7 @@ impl Violation {
             Violation::FinishedOpsOverflow { .. } => "finished-ops-overflow",
             Violation::AttentionMismatch { .. } => "attention-mismatch",
             Violation::Claude(violation) => violation.kind(),
+            Violation::Codex(violation) => violation.kind(),
         }
     }
 }
@@ -652,6 +704,7 @@ impl std::fmt::Display for Violation {
                 "agent {agent} attention {card:?} disagrees with its layer's {derived:?}"
             ),
             Violation::Claude(violation) => violation.fmt(f),
+            Violation::Codex(violation) => violation.fmt(f),
         }
     }
 }

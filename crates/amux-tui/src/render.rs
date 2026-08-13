@@ -571,6 +571,10 @@ fn command_verb(command: &Command) -> &'static str {
         Command::Claude(amux_ui::ClaudeCommand::AnswerAsk { .. }) => "answer",
         Command::Claude(amux_ui::ClaudeCommand::Interrupt { .. }) => "interrupt",
         Command::Claude(amux_ui::ClaudeCommand::CyclePermissionMode { .. }) => "mode cycle",
+        Command::Codex(amux_ui::CodexCommand::Prompt { .. }) => "send",
+        Command::Codex(amux_ui::CodexCommand::Steer { .. }) => "steer",
+        Command::Codex(amux_ui::CodexCommand::Answer { .. }) => "answer",
+        Command::Codex(amux_ui::CodexCommand::Interrupt { .. }) => "interrupt",
     }
 }
 

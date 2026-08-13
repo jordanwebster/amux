@@ -6,6 +6,7 @@
 
 use amux::{Agent, AgentId, Capabilities, HostEntry, HostId, HostTrustStatus};
 use amux_ui::claude::ClaudeLayer;
+use amux_ui::codex::CodexLayer;
 use amux_ui::{
     Command, DisconnectReason, Effect, Model, Msg, OpId, OpOutcome, ServerMsg, StreamEntry,
     StreamMsg, update,
@@ -84,6 +85,22 @@ pub fn an_agent(name: &str, on: &str) -> Agent {
             "terminal_v1".to_string(),
             "claude_pty_transcript_v1".to_string(),
         ],
+        readonly: false,
+        args: Vec::new(),
+        created_at: t0(),
+    }
+}
+
+/// A Codex agent advertising its native structured protocol.
+pub fn a_codex_agent(name: &str, on: &str) -> Agent {
+    Agent {
+        id: agent_id(name),
+        host_id: host_id(on),
+        name: Some(name.to_string()),
+        command: "codex".to_string(),
+        working_dir: std::path::PathBuf::from("/work"),
+        agent_type: "codex".to_string(),
+        io_protocols: vec!["terminal_v1".to_string(), "codex_sdk_v1".to_string()],
         readonly: false,
         args: Vec::new(),
         created_at: t0(),
@@ -303,6 +320,34 @@ pub fn claude_layer<'m>(model: &'m Model, agent: &str) -> &'m ClaudeLayer {
     model.claude(agent_id(agent)).expect("claude layer folded")
 }
 
+/// Structural rows from the provenance-stamped P5b Codex capture fixture.
+pub fn codex_fixture_rows() -> Vec<serde_json::Value> {
+    include_str!("../../../amux/tests/fixtures/codex_backend/rows.jsonl")
+        .lines()
+        .filter(|line| !line.trim().is_empty())
+        .map(|line| serde_json::from_str(line).expect("Codex fixture row parses"))
+        .collect()
+}
+
+pub fn codex_base(agent: &str) -> Vec<Msg> {
+    seq([
+        vec![
+            connected("nova"),
+            host_up(&a_host("nova")),
+            agent_up(&a_codex_agent(agent, "nova")),
+        ],
+        synced(),
+        vec![
+            stream(agent, StreamMsg::Opened { truncated: false }),
+            stream(agent, StreamMsg::ReplayComplete),
+        ],
+    ])
+}
+
+pub fn codex_layer<'m>(model: &'m Model, agent: &str) -> &'m CodexLayer {
+    model.codex(agent_id(agent)).expect("Codex layer folded")
+}
+
 // --- Folding --------------------------------------------------------------
 
 /// Fold a sequence into a Model, discarding effects (replay semantics).
@@ -341,5 +386,8 @@ pub fn all_sequences() -> Vec<(&'static str, Vec<Msg>)> {
     sequences.extend(crate::asks::sequences());
     sequences.extend(crate::phase::sequences());
     sequences.extend(crate::write::sequences());
+    sequences.extend(crate::codex_feed::sequences());
+    sequences.extend(crate::codex_asks::sequences());
+    sequences.extend(crate::codex_write::sequences());
     sequences
 }

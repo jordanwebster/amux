@@ -17,7 +17,7 @@ use std::time::Duration;
 use amux::{
     AgentId, AgentIdentifier, Client, ClientError, CreateAgentRequest, HostId, ProtocolError,
     SendInputRequest, SessionCloseReason, SubscribeSessionEvent, SubscribeSessionRequest,
-    claude_io,
+    claude_io, codex_io,
 };
 use chrono::{DateTime, Utc};
 use futures_util::FutureExt;
@@ -26,6 +26,7 @@ use tokio::task::JoinHandle;
 use uuid::Uuid;
 
 use crate::claude::encoding::KeyStep;
+use crate::codex::CodexInput;
 use crate::effect::{DumpReason, Effect, InputPayload};
 use crate::model::Model;
 use crate::msg::{
@@ -442,6 +443,12 @@ async fn execute_rpc(client: &Client, command: Command) -> OpOutcome {
                 auth_required: false,
             },
         },
+        Command::Codex(_) => OpOutcome::Error {
+            error: OpError {
+                message: "input command routed to the RPC executor".to_string(),
+                auth_required: false,
+            },
+        },
     }
 }
 
@@ -471,6 +478,42 @@ async fn execute_send_input(
         } => {
             execute_claude_input(client, agent, input_id, expected_seq, program, retry_stale).await
         }
+        InputPayload::Codex { payload } => {
+            execute_codex_input(client, agent, input_id, payload).await
+        }
+    }
+}
+
+async fn execute_codex_input(
+    client: &Client,
+    agent: AgentId,
+    input_id: Vec<u8>,
+    input: CodexInput,
+) -> OpOutcome {
+    let input = match input {
+        CodexInput::UserTurn { input } => codex_io::CodexSdkV1Input::UserTurn { input },
+        CodexInput::Steer { turn_id, input } => codex_io::CodexSdkV1Input::Steer { turn_id, input },
+        CodexInput::Interrupt { turn_id } => codex_io::CodexSdkV1Input::Interrupt { turn_id },
+        CodexInput::ApprovalDecision {
+            request_id,
+            decision,
+        } => codex_io::CodexSdkV1Input::ApprovalDecision {
+            request_id,
+            decision,
+        },
+    };
+    let payload = codex_io::encode_codex_sdk_v1_input(input);
+    match client
+        .send_input(SendInputRequest {
+            agent: AgentIdentifier::Id(agent),
+            input_id,
+            io_protocol: crate::codex::PROTOCOL.to_string(),
+            payload: payload.into(),
+        })
+        .await
+    {
+        Ok(()) => OpOutcome::InputSent,
+        Err(error) => op_error_outcome(&error),
     }
 }
 
@@ -718,6 +761,9 @@ async fn pump_structured_stream(
                 }),
             })
         }
+        crate::codex::PROTOCOL => codex_io::encode_codex_sdk_v1_args(codex_io::CodexSdkV1Args {
+            replay_query: Some(codex_io::CodexSdkV1ReplayQuery::Tail { count: tail }),
+        }),
         protocol => {
             return Some(StreamCloseReason::InternalError {
                 detail: format!("unsupported structured protocol `{protocol}`"),
@@ -833,6 +879,22 @@ fn decode_structured_entry(
 ) -> Result<StreamEntry, StreamCloseReason> {
     let output = match protocol {
         crate::claude::PROTOCOL => claude_io::decode_pty_transcript_v1_output(payload),
+        crate::codex::PROTOCOL => {
+            let output = codex_io::decode_codex_sdk_v1_output(payload).map_err(|error| {
+                StreamCloseReason::InternalError {
+                    detail: error.to_string(),
+                }
+            })?;
+            let payload = serde_json::from_slice(&output.payload).map_err(|error| {
+                StreamCloseReason::InternalError {
+                    detail: format!("structured entry {} is not JSON: {error}", output.seq),
+                }
+            })?;
+            return Ok(StreamEntry {
+                seq: output.seq,
+                payload,
+            });
+        }
         protocol => {
             return Err(StreamCloseReason::InternalError {
                 detail: format!("unsupported structured protocol `{protocol}`"),

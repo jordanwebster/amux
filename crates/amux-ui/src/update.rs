@@ -121,6 +121,7 @@ fn update_command(model: &mut Model, op: OpId, command: Command) -> Vec<Effect> 
             vec![Effect::Rpc { op, command }]
         }
         Command::Claude(command) => crate::claude::update::update_command(model, op, seq, command),
+        Command::Codex(command) => crate::codex::update::update_command(model, op, seq, command),
     }
 }
 
@@ -191,6 +192,11 @@ fn update_op_result(model: &mut Model, op: OpId, outcome: OpOutcome) -> Vec<Effe
         && let Command::Claude(command) = &pending.command
     {
         crate::claude::update::update_failed_command(model, op, command, error)
+    }
+    if let OpOutcome::Error { error } = &outcome
+        && let Command::Codex(command) = &pending.command
+    {
+        crate::codex::update::update_failed_command(model, op, command, error)
     }
     // Entity payloads riding on the outcome resolve the op only —
     // subscriptions are the sole writer of entity state.
