@@ -6,8 +6,13 @@ use serde::{Deserialize, Serialize};
 
 use crate::types::{CommandAction, Question};
 
-/// Type alias for JSON-RPC request IDs (integer in this protocol).
-pub type RequestId = u64;
+/// A JSON-RPC request ID supplied by the app-server.
+#[derive(Debug, Clone, PartialEq, Eq, Hash, Serialize, Deserialize)]
+#[serde(untagged)]
+pub enum RequestId {
+    String(String),
+    Integer(i64),
+}
 
 // ── ApprovalHandler trait ─────────────────────────────────────────
 
@@ -74,7 +79,7 @@ impl ApprovalRequest {
             Self::CommandExecution { request_id, .. }
             | Self::FileChange { request_id, .. }
             | Self::UserInput { request_id, .. }
-            | Self::Permissions { request_id, .. } => *request_id,
+            | Self::Permissions { request_id, .. } => request_id.clone(),
         }
     }
 

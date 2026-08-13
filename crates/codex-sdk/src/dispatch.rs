@@ -167,7 +167,9 @@ impl ServerInner {
 
             // 2. Server-initiated request: has `id` + `method`
             if let Some(ref method) = raw.method {
-                let id = id_val.as_u64().unwrap_or(0);
+                let Ok(id) = serde_json::from_value::<RequestId>(id_val.clone()) else {
+                    return;
+                };
                 let params = raw.params.unwrap_or(serde_json::Value::Null);
                 self.handle_server_request(id, method, params).await;
                 return;
@@ -182,8 +184,8 @@ impl ServerInner {
     }
 
     /// Handle a server-initiated request (approval).
-    async fn handle_server_request(&self, id: u64, method: &str, params: serde_json::Value) {
-        let approval = self.parse_approval_request(id, method, &params);
+    async fn handle_server_request(&self, id: RequestId, method: &str, params: serde_json::Value) {
+        let approval = self.parse_approval_request(id.clone(), method, &params);
 
         if let Some(approval) = approval {
             if let Some(ref handler) = self.approval_handler {
@@ -192,7 +194,7 @@ impl ServerInner {
                 tokio::spawn(async move {
                     let response = handler.handle(approval).await;
                     if let Ok(json) = serde_json::to_vec(&OutgoingResponse {
-                        id,
+                        id: id.clone(),
                         result: response.to_wire_value(),
                     }) {
                         let _ = stdin_tx.send(json).await;
@@ -216,7 +218,7 @@ impl ServerInner {
         }
 
         if method == "item/tool/call" {
-            let request = parse_tool_call_request(id, &params);
+            let request = parse_tool_call_request(id.clone(), &params);
             if let Some(request) = request {
                 let thread_id = request.thread_id.clone();
                 if self
@@ -245,7 +247,7 @@ impl ServerInner {
                 .send_thread_event(
                     &thread_id,
                     ThreadEvent::Turn(TurnEvent::ServerRequest {
-                        id,
+                        id: id.clone(),
                         method: method.to_owned(),
                         params,
                     }),
@@ -258,7 +260,7 @@ impl ServerInner {
         self.respond_unhandled(id, method, -32601);
     }
 
-    fn respond_unhandled(&self, id: u64, method: &str, code: i64) {
+    fn respond_unhandled(&self, id: RequestId, method: &str, code: i64) {
         let response = OutgoingErrorResponse {
             id,
             error: RpcError {
@@ -279,7 +281,7 @@ impl ServerInner {
     /// Try to parse a server request into a typed ApprovalRequest.
     fn parse_approval_request(
         &self,
-        id: u64,
+        id: RequestId,
         method: &str,
         params: &serde_json::Value,
     ) -> Option<ApprovalRequest> {
@@ -460,7 +462,10 @@ impl ServerInner {
     }
 }
 
-fn parse_tool_call_request(id: u64, params: &serde_json::Value) -> Option<DynamicToolCallRequest> {
+fn parse_tool_call_request(
+    id: RequestId,
+    params: &serde_json::Value,
+) -> Option<DynamicToolCallRequest> {
     Some(DynamicToolCallRequest {
         request_id: id,
         thread_id: params.get("threadId")?.as_str()?.to_owned(),
@@ -527,10 +532,43 @@ mod tests {
         assert!(matches!(
             event,
             ThreadEvent::Turn(TurnEvent::ToolCallRequired(request))
-                if request.request_id == 41
+                if request.request_id == RequestId::Integer(41)
                     && request.call_id == "call-1"
                     && request.tool == "lookup"
         ));
+    }
+
+    #[tokio::test]
+    async fn string_request_id_is_preserved_in_response() {
+        let (inner, mut stdin_rx) = test_inner();
+        let (tx, mut rx) = mpsc::channel(1);
+        inner.register_thread("thread-1", tx).await;
+        let request = serde_json::json!({
+            "id": "approval-41",
+            "method": "item/tool/call",
+            "params": {
+                "threadId": "thread-1",
+                "turnId": "turn-1",
+                "callId": "call-1",
+                "tool": "lookup",
+                "arguments": {}
+            }
+        });
+
+        inner.dispatch_line(&request.to_string()).await;
+        let event = rx.recv().await.expect("tool call event");
+        let ThreadEvent::Turn(TurnEvent::ToolCallRequired(request)) = event else {
+            panic!("unexpected event")
+        };
+        assert_eq!(request.request_id, RequestId::String("approval-41".into()));
+
+        inner
+            .respond(request.request_id, serde_json::json!({"success": true}))
+            .await
+            .unwrap();
+        let response = stdin_rx.recv().await.expect("tool call response");
+        let response: serde_json::Value = serde_json::from_slice(&response).unwrap();
+        assert_eq!(response["id"], "approval-41");
     }
 
     #[tokio::test]

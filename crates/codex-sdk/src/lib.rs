@@ -112,6 +112,63 @@ mod tests {
     }
 
     #[test]
+    fn approval_policy_matches_current_protocol_variants() {
+        assert_eq!(
+            serde_json::to_value(ApprovalPolicy::Untrusted).unwrap(),
+            serde_json::json!("untrusted")
+        );
+        assert_eq!(
+            serde_json::to_value(ApprovalPolicy::OnRequest).unwrap(),
+            serde_json::json!("on-request")
+        );
+        assert_eq!(
+            serde_json::to_value(ApprovalPolicy::Never).unwrap(),
+            serde_json::json!("never")
+        );
+        assert!(serde_json::from_value::<ApprovalPolicy>(serde_json::json!("on-failure")).is_err());
+    }
+
+    #[test]
+    fn collaboration_mode_uses_snake_case_settings() {
+        let mode = CollaborationMode {
+            mode: CollaborationModeKind::Plan,
+            settings: CollaborationModeSettings {
+                model: "gpt-5.6".into(),
+                reasoning_effort: Some(ReasoningEffort::High),
+                developer_instructions: Some("Plan carefully".into()),
+            },
+        };
+
+        assert_eq!(
+            serde_json::to_value(mode).unwrap(),
+            serde_json::json!({
+                "mode": "plan",
+                "settings": {
+                    "model": "gpt-5.6",
+                    "reasoning_effort": "high",
+                    "developer_instructions": "Plan carefully"
+                }
+            })
+        );
+    }
+
+    #[test]
+    fn config_read_params_match_current_protocol_shape() {
+        assert_eq!(
+            serde_json::to_value(ConfigReadParams::default()).unwrap(),
+            serde_json::json!({})
+        );
+        assert_eq!(
+            serde_json::to_value(ConfigReadParams {
+                cwd: Some("/tmp/project".into()),
+                include_layers: Some(true),
+            })
+            .unwrap(),
+            serde_json::json!({"cwd": "/tmp/project", "includeLayers": true})
+        );
+    }
+
+    #[test]
     fn thread_item_unknown_variant_deserializes() {
         let json = r#"{"type":"futureItemType","id":"x"}"#;
         let item: ThreadItem = serde_json::from_str(json).unwrap();
@@ -236,6 +293,40 @@ mod tests {
     }
 
     #[test]
+    fn notification_parses_hook_summary_from_run() {
+        let params = serde_json::json!({
+            "threadId": "thread-1",
+            "turnId": "turn-1",
+            "run": {
+                "id": "hook-1",
+                "eventName": "preToolUse",
+                "handlerType": "command",
+                "executionMode": "sync",
+                "scope": "turn",
+                "sourcePath": "/tmp/hook.sh",
+                "startedAt": 10,
+                "completedAt": null,
+                "durationMs": null,
+                "displayOrder": 2,
+                "entries": [{"kind": "context", "text": "running"}],
+                "status": "running",
+                "statusMessage": null,
+                "source": "project"
+            }
+        });
+
+        let event = notification::parse_turn_event("hook/started", &params);
+        assert!(matches!(
+            event,
+            TurnEvent::HookStarted(ref run)
+                if run.id == "hook-1"
+                    && run.event_name == "preToolUse"
+                    && run.entries.len() == 1
+                    && run.status == "running"
+        ));
+    }
+
+    #[test]
     fn account_read_response_deserializes_current_shape() {
         let response: AccountReadResponse = serde_json::from_value(serde_json::json!({
             "account": {
@@ -281,7 +372,7 @@ mod tests {
             "serviceTier": null,
             "cwd": "/tmp",
             "approvalPolicy": "on-request",
-            "approvalsReviewer": "user",
+            "approvalsReviewer": "auto_review",
             "sandbox": {
                 "type": "readOnly",
                 "access": { "type": "fullAccess" }
@@ -296,6 +387,7 @@ mod tests {
                 ..
             }
         ));
+        assert_eq!(session.approvals_reviewer, ApprovalsReviewer::AutoReview);
     }
 
     #[test]

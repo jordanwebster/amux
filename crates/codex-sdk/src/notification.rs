@@ -1,6 +1,7 @@
 use serde::de::DeserializeOwned;
 use serde_json::Value;
 
+use crate::approval::RequestId;
 use crate::types::{
     AccountUpdate, CommandExecOutputDelta, DynamicToolCallRequest, FileChangeInfo, HookInfo,
     OutputStream, PlanStep, ThreadInfo, ThreadItem, ThreadStatus, ThreadTokenUsage, Turn,
@@ -115,11 +116,11 @@ pub enum TurnEvent {
     // Approvals (only when no ApprovalHandler is configured)
     ApprovalRequired(crate::approval::ApprovalRequest),
     ApprovalResolved {
-        request_id: u64,
+        request_id: RequestId,
     },
     ToolCallRequired(DynamicToolCallRequest),
     ServerRequest {
-        id: u64,
+        id: RequestId,
         method: String,
         params: Value,
     },
@@ -250,15 +251,15 @@ pub(crate) fn parse_turn_event(method: &str, params: &Value) -> TurnEvent {
         "warning" => TurnEvent::Warning {
             message: str_field(params, "message"),
         },
-        "hook/started" => parse_value(params)
+        "hook/started" => parse_param(params, "run")
             .map(TurnEvent::HookStarted)
             .unwrap_or_else(|| unknown_event(method, params)),
-        "hook/completed" => parse_value(params)
+        "hook/completed" => parse_param(params, "run")
             .map(TurnEvent::HookCompleted)
             .unwrap_or_else(|| unknown_event(method, params)),
-        "serverRequest/resolved" => TurnEvent::ApprovalResolved {
-            request_id: u64_field(params, "requestId"),
-        },
+        "serverRequest/resolved" => parse_param(params, "requestId")
+            .map(|request_id| TurnEvent::ApprovalResolved { request_id })
+            .unwrap_or_else(|| unknown_event(method, params)),
         "error" => {
             // Error details may be nested under an "error" sub-object
             let err_obj = params.get("error").unwrap_or(params);

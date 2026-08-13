@@ -153,8 +153,6 @@ impl InputItem {
 pub enum ApprovalPolicy {
     /// Require approval unless tool is trusted.
     Untrusted,
-    /// Require approval only on failure.
-    OnFailure,
     /// Require approval on request (default).
     OnRequest,
     /// Never require approval (full auto).
@@ -168,7 +166,9 @@ pub enum ApprovalPolicy {
 pub struct GranularApprovalPolicy {
     pub sandbox_approval: bool,
     pub rules: bool,
+    #[serde(default)]
     pub skill_approval: bool,
+    #[serde(default)]
     pub request_permissions: bool,
     pub mcp_elicitations: bool,
 }
@@ -180,7 +180,6 @@ impl Serialize for ApprovalPolicy {
     {
         match self {
             Self::Untrusted => serializer.serialize_str("untrusted"),
-            Self::OnFailure => serializer.serialize_str("on-failure"),
             Self::OnRequest => serializer.serialize_str("on-request"),
             Self::Never => serializer.serialize_str("never"),
             Self::Granular(granular) => {
@@ -209,12 +208,11 @@ impl<'de> Deserialize<'de> for ApprovalPolicy {
         match Repr::deserialize(deserializer)? {
             Repr::Named(value) => match value.as_str() {
                 "untrusted" => Ok(Self::Untrusted),
-                "on-failure" => Ok(Self::OnFailure),
                 "on-request" => Ok(Self::OnRequest),
                 "never" => Ok(Self::Never),
                 other => Err(serde::de::Error::unknown_variant(
                     other,
-                    &["untrusted", "on-failure", "on-request", "never", "granular"],
+                    &["untrusted", "on-request", "never", "granular"],
                 )),
             },
             Repr::Granular { granular } => Ok(Self::Granular(granular)),
@@ -283,6 +281,7 @@ pub enum NetworkAccess {
 #[serde(rename_all = "snake_case")]
 pub enum ApprovalsReviewer {
     User,
+    AutoReview,
     GuardianSubagent,
 }
 
@@ -322,7 +321,6 @@ pub struct CollaborationMode {
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
-#[serde(rename_all = "camelCase")]
 pub struct CollaborationModeSettings {
     pub model: String,
     pub reasoning_effort: Option<ReasoningEffort>,

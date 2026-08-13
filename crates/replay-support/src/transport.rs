@@ -24,13 +24,22 @@ struct ReadEntry {
     line: String,
 }
 
+#[derive(Debug, Clone)]
+struct WriteEntry {
+    us: u64,
+    line: String,
+}
+
 #[derive(Debug)]
 struct ReplayState {
-    expected_writes: Vec<String>,
+    expected_writes: Vec<WriteEntry>,
     read_groups: Vec<Vec<ReadEntry>>,
     validated_writes: usize,
     next_group_idx: usize,
     next_read_idx: usize,
+    replay_us: Option<u64>,
+    timing: ReplayTiming,
+    writer_closed: bool,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -51,6 +60,7 @@ pub enum ReplayPeek {
 pub struct ReplayController {
     state: Arc<Mutex<ReplayState>>,
     writer: Arc<tokio::sync::Mutex<DuplexStream>>,
+    progress: Arc<tokio::sync::Notify>,
 }
 
 #[derive(Debug, Default, Clone)]
@@ -77,8 +87,9 @@ pub fn replay_transport(
 /// Create a replay reader/writer pair with an explicit controller.
 pub fn replay_transport_with_controller(
     script: Vec<IoEvent>,
-    _options: ReplayOptions,
+    options: ReplayOptions,
 ) -> (BufReader<DuplexStream>, ReplayWriter, ReplayController) {
+    let replay_us = script.first().map(|event| event.us);
     let (expected_writes, read_groups) = split_script(script);
     let state = Arc::new(Mutex::new(ReplayState {
         expected_writes,
@@ -86,12 +97,17 @@ pub fn replay_transport_with_controller(
         validated_writes: 0,
         next_group_idx: 0,
         next_read_idx: 0,
+        replay_us,
+        timing: options.timing,
+        writer_closed: false,
     }));
     let (read_half, write_half) = tokio::io::duplex(1024 * 1024);
     let writer = Arc::new(tokio::sync::Mutex::new(write_half));
+    let progress = Arc::new(tokio::sync::Notify::new());
     let controller = ReplayController {
         state: Arc::clone(&state),
         writer,
+        progress: Arc::clone(&progress),
     };
 
     (
@@ -99,6 +115,7 @@ pub fn replay_transport_with_controller(
         ReplayWriter {
             state,
             line_buf: Vec::new(),
+            progress,
         },
         controller,
     )
@@ -112,11 +129,27 @@ pub fn replay_transport_with_options(
     impl AsyncBufRead + Unpin + Send + 'static,
     impl AsyncWrite + Unpin + Send + 'static,
 ) {
-    let (reader, writer, _controller) = replay_transport_with_controller(script, options);
+    let (reader, writer, controller) = replay_transport_with_controller(script, options);
+    tokio::spawn(drive_replay(controller));
     (reader, writer)
 }
 
-fn split_script(script: Vec<IoEvent>) -> (Vec<String>, Vec<Vec<ReadEntry>>) {
+async fn drive_replay(controller: ReplayController) {
+    loop {
+        let notified = controller.progress.notified();
+        match controller.peek_next() {
+            ReplayPeek::Ready { .. } => {
+                if matches!(controller.advance_one().await, ReplayAdvance::Exhausted) {
+                    return;
+                }
+            }
+            ReplayPeek::BlockedOnWrite => notified.await,
+            ReplayPeek::Exhausted => return,
+        }
+    }
+}
+
+fn split_script(script: Vec<IoEvent>) -> (Vec<WriteEntry>, Vec<Vec<ReadEntry>>) {
     let mut expected_writes = Vec::new();
     let mut read_groups: Vec<Vec<ReadEntry>> = Vec::new();
     let mut current_reads = Vec::new();
@@ -125,7 +158,10 @@ fn split_script(script: Vec<IoEvent>) -> (Vec<String>, Vec<Vec<ReadEntry>>) {
         match event.direction {
             IoDirection::Write => {
                 read_groups.push(std::mem::take(&mut current_reads));
-                expected_writes.push(event.line);
+                expected_writes.push(WriteEntry {
+                    us: event.us,
+                    line: event.line,
+                });
             }
             IoDirection::Read => {
                 current_reads.push(ReadEntry {
@@ -147,10 +183,21 @@ impl ReplayController {
     }
 
     pub async fn advance_one(&self) -> ReplayAdvance {
-        let entry = {
+        let (entry, delay) = {
             let mut state = self.state.lock().expect("replay state lock");
             match peek_next_locked(&state) {
-                ReplayPeek::Ready { .. } => take_next_locked(&mut state),
+                ReplayPeek::Ready { .. } => {
+                    let entry = take_next_locked(&mut state);
+                    let delay = entry.as_ref().map_or(Duration::ZERO, |entry| {
+                        let delay_us = entry.us.saturating_sub(state.replay_us.unwrap_or(entry.us));
+                        state.replay_us = Some(entry.us);
+                        match state.timing {
+                            ReplayTiming::Immediate => Duration::ZERO,
+                            ReplayTiming::Recorded => Duration::from_micros(delay_us),
+                        }
+                    });
+                    (entry, delay)
+                }
                 ReplayPeek::BlockedOnWrite => return ReplayAdvance::BlockedOnWrite,
                 ReplayPeek::Exhausted => return ReplayAdvance::Exhausted,
             }
@@ -159,6 +206,10 @@ impl ReplayController {
         let Some(entry) = entry else {
             return ReplayAdvance::Exhausted;
         };
+
+        if !delay.is_zero() {
+            tokio::time::sleep(delay).await;
+        }
 
         let mut writer = self.writer.lock().await;
         if writer.write_all(entry.line.as_bytes()).await.is_err() {
@@ -265,6 +316,7 @@ impl ReplayClock {
 pub struct ReplayWriter {
     state: Arc<Mutex<ReplayState>>,
     line_buf: Vec<u8>,
+    progress: Arc<tokio::sync::Notify>,
 }
 
 impl AsyncWrite for ReplayWriter {
@@ -296,9 +348,9 @@ impl AsyncWrite for ReplayWriter {
             }
 
             let write_idx = state.validated_writes;
-            let expected = &state.expected_writes[write_idx];
+            let expected = state.expected_writes[write_idx].clone();
             let actual_val = serde_json::from_str::<serde_json::Value>(&line);
-            let expected_val = serde_json::from_str::<serde_json::Value>(expected);
+            let expected_val = serde_json::from_str::<serde_json::Value>(&expected.line);
 
             match (actual_val, expected_val) {
                 (Ok(actual), Ok(expected)) => {
@@ -311,7 +363,7 @@ impl AsyncWrite for ReplayWriter {
                 _ => {
                     assert_eq!(
                         line.trim(),
-                        expected.trim(),
+                        expected.line.trim(),
                         "replay write mismatch at index {}",
                         write_idx
                     );
@@ -319,6 +371,9 @@ impl AsyncWrite for ReplayWriter {
             }
 
             state.validated_writes += 1;
+            state.replay_us = Some(expected.us);
+            drop(state);
+            this.progress.notify_one();
         }
 
         std::task::Poll::Ready(Ok(()))
@@ -332,6 +387,13 @@ impl AsyncWrite for ReplayWriter {
     }
 }
 
+impl Drop for ReplayWriter {
+    fn drop(&mut self) {
+        self.state.lock().expect("replay state lock").writer_closed = true;
+        self.progress.notify_one();
+    }
+}
+
 fn peek_next_locked(state: &ReplayState) -> ReplayPeek {
     let mut group_idx = state.next_group_idx;
     let mut read_idx = state.next_read_idx;
@@ -341,7 +403,11 @@ fn peek_next_locked(state: &ReplayState) -> ReplayPeek {
             return ReplayPeek::Exhausted;
         }
         if group_idx > state.validated_writes {
-            return ReplayPeek::BlockedOnWrite;
+            return if state.writer_closed {
+                ReplayPeek::Exhausted
+            } else {
+                ReplayPeek::BlockedOnWrite
+            };
         }
 
         let group = &state.read_groups[group_idx];
@@ -416,5 +482,72 @@ fn aggregate_status(controllers: &[ReplayController]) -> ReplayAdvance {
         ReplayAdvance::BlockedOnWrite
     } else {
         ReplayAdvance::Exhausted
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use tokio::io::{AsyncBufReadExt, AsyncWriteExt};
+
+    use super::*;
+
+    fn event(us: u64, direction: IoDirection, line: &str) -> IoEvent {
+        IoEvent {
+            us,
+            direction,
+            line: line.to_owned(),
+            transport_id: None,
+            session_id: None,
+        }
+    }
+
+    #[tokio::test]
+    async fn convenience_transport_keeps_controller_alive_and_drives_reads() {
+        let script = vec![
+            event(1, IoDirection::Read, "first"),
+            event(2, IoDirection::Write, "request"),
+            event(3, IoDirection::Read, "second"),
+        ];
+        let (mut reader, mut writer) = replay_transport(script);
+        let mut line = String::new();
+
+        tokio::time::timeout(Duration::from_secs(1), reader.read_line(&mut line))
+            .await
+            .expect("first replay read timed out")
+            .expect("first replay read failed");
+        assert_eq!(line, "first\n");
+
+        writer.write_all(b"request\n").await.unwrap();
+        writer.flush().await.unwrap();
+        line.clear();
+        tokio::time::timeout(Duration::from_secs(1), reader.read_line(&mut line))
+            .await
+            .expect("second replay read timed out")
+            .expect("second replay read failed");
+        assert_eq!(line, "second\n");
+    }
+
+    #[tokio::test]
+    async fn convenience_transport_applies_recorded_timing() {
+        let script = vec![
+            event(1_000, IoDirection::Read, "first"),
+            event(51_000, IoDirection::Read, "second"),
+        ];
+        let (mut reader, _writer) = replay_transport_with_options(
+            script,
+            ReplayOptions {
+                timing: ReplayTiming::Recorded,
+            },
+        );
+        let mut line = String::new();
+
+        reader.read_line(&mut line).await.unwrap();
+        assert_eq!(line, "first\n");
+        line.clear();
+        let started = tokio::time::Instant::now();
+        reader.read_line(&mut line).await.unwrap();
+
+        assert_eq!(line, "second\n");
+        assert!(started.elapsed() >= Duration::from_millis(25));
     }
 }

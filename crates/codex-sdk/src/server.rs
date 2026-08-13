@@ -16,10 +16,10 @@ use crate::notification::{ServerNotification, ThreadEvent};
 use crate::thread::Thread;
 use crate::transport;
 use crate::types::{
-    AccountReadParams, AccountReadResponse, ExecCommandParams, ExecCommandResizeParams,
-    ExecCommandResult, ExecCommandTerminateParams, ExecCommandWriteParams, ListThreadsParams,
-    Model, ModelListParams, ThreadInfo, ThreadListResponse, ThreadReadResponse, ThreadSessionInfo,
-    Turn,
+    AccountReadParams, AccountReadResponse, ConfigReadParams, ExecCommandParams,
+    ExecCommandResizeParams, ExecCommandResult, ExecCommandTerminateParams, ExecCommandWriteParams,
+    ListThreadsParams, Model, ModelListParams, ThreadInfo, ThreadListResponse, ThreadReadResponse,
+    ThreadSessionInfo, Turn,
 };
 
 // ── Codex ────────────────────────────────────────────────────────
@@ -70,11 +70,21 @@ impl Codex {
         };
 
         // Initialize handshake
-        let init: InitializationResult = codex
+        let init: InitializationResult = match codex
             .inner
             .request("initialize", initialize_params(&config))
-            .await?;
-        codex.inner.notify_no_params("initialized").await?;
+            .await
+        {
+            Ok(init) => init,
+            Err(error) => {
+                codex.inner.cancel.cancel();
+                return Err(error);
+            }
+        };
+        if let Err(error) = codex.inner.notify_no_params("initialized").await {
+            codex.inner.cancel.cancel();
+            return Err(error);
+        }
         let _ = codex.inner.init_result.set(init);
 
         Ok(codex)
@@ -110,7 +120,7 @@ impl Codex {
         };
 
         // Initialize handshake with default values
-        let init: InitializationResult = codex
+        let init: InitializationResult = match codex
             .inner
             .request(
                 "initialize",
@@ -126,8 +136,18 @@ impl Codex {
                     }),
                 },
             )
-            .await?;
-        codex.inner.notify_no_params("initialized").await?;
+            .await
+        {
+            Ok(init) => init,
+            Err(error) => {
+                codex.inner.cancel.cancel();
+                return Err(error);
+            }
+        };
+        if let Err(error) = codex.inner.notify_no_params("initialized").await {
+            codex.inner.cancel.cancel();
+            return Err(error);
+        }
         let _ = codex.inner.init_result.set(init);
 
         Ok(codex)
@@ -269,7 +289,7 @@ impl Codex {
     /// Read the server's active configuration.
     pub async fn read_config(&self) -> Result<serde_json::Value, Error> {
         self.inner
-            .request("config/read", serde_json::Value::Null)
+            .request("config/read", ConfigReadParams::default())
             .await
     }
 
@@ -355,6 +375,116 @@ fn initialize_params(config: &CodexConfig) -> InitializeParams {
                 Some(config.opt_out_notification_methods.clone())
             },
         }),
+    }
+}
+
+#[cfg(test)]
+mod remediation_tests {
+    use std::time::Duration;
+
+    use tokio::io::{AsyncBufReadExt, AsyncWriteExt, BufReader, DuplexStream};
+
+    use super::*;
+
+    fn test_io() -> (
+        BufReader<DuplexStream>,
+        DuplexStream,
+        BufReader<DuplexStream>,
+        DuplexStream,
+    ) {
+        let (client_reader, server_writer) = tokio::io::duplex(4096);
+        let (client_writer, server_reader) = tokio::io::duplex(4096);
+        (
+            BufReader::new(client_reader),
+            client_writer,
+            BufReader::new(server_reader),
+            server_writer,
+        )
+    }
+
+    async fn read_json_line(reader: &mut BufReader<DuplexStream>) -> serde_json::Value {
+        let mut line = String::new();
+        reader.read_line(&mut line).await.unwrap();
+        serde_json::from_str(&line).unwrap()
+    }
+
+    async fn write_json_line(writer: &mut DuplexStream, value: serde_json::Value) {
+        writer
+            .write_all(value.to_string().as_bytes())
+            .await
+            .unwrap();
+        writer.write_all(b"\n").await.unwrap();
+        writer.flush().await.unwrap();
+    }
+
+    #[tokio::test]
+    async fn config_read_sends_object_params() {
+        let (client_reader, client_writer, mut server_reader, mut server_writer) = test_io();
+        let connect = tokio::spawn(Codex::from_io(client_reader, client_writer));
+
+        let initialize = read_json_line(&mut server_reader).await;
+        write_json_line(
+            &mut server_writer,
+            serde_json::json!({
+                "id": initialize["id"],
+                "result": {
+                    "userAgent": "test",
+                    "codexHome": "/tmp",
+                    "platformFamily": "unix",
+                    "platformOs": "test"
+                }
+            }),
+        )
+        .await;
+        let codex = connect.await.unwrap().unwrap();
+        let initialized = read_json_line(&mut server_reader).await;
+        assert_eq!(initialized["method"], "initialized");
+
+        let read_config = tokio::spawn(async move {
+            let result = codex.read_config().await;
+            codex.close().await;
+            result
+        });
+        let request = read_json_line(&mut server_reader).await;
+        assert_eq!(request["method"], "config/read");
+        assert_eq!(request["params"], serde_json::json!({}));
+        write_json_line(
+            &mut server_writer,
+            serde_json::json!({"id": request["id"], "result": {"config": {}}}),
+        )
+        .await;
+
+        assert!(read_config.await.unwrap().is_ok());
+    }
+
+    #[tokio::test]
+    async fn initialize_error_cancels_io_tasks() {
+        let (client_reader, client_writer, mut server_reader, mut server_writer) = test_io();
+        let connect = tokio::spawn(Codex::from_io(client_reader, client_writer));
+
+        let initialize = read_json_line(&mut server_reader).await;
+        write_json_line(
+            &mut server_writer,
+            serde_json::json!({
+                "id": initialize["id"],
+                "error": {"code": -32602, "message": "bad initialize", "data": null}
+            }),
+        )
+        .await;
+
+        assert!(matches!(
+            connect.await.unwrap(),
+            Err(Error::Rpc { code: -32602, .. })
+        ));
+        let mut trailing = String::new();
+        let bytes = tokio::time::timeout(
+            Duration::from_secs(1),
+            server_reader.read_line(&mut trailing),
+        )
+        .await
+        .expect("writer task remained alive after initialize failed")
+        .unwrap();
+        assert_eq!(bytes, 0);
     }
 }
 

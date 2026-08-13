@@ -2,6 +2,7 @@ use std::path::PathBuf;
 
 use serde::{Deserialize, Serialize};
 
+use crate::approval::RequestId;
 use crate::config::{ApprovalPolicy, ApprovalsReviewer, InputItem, ReasoningEffort, SandboxPolicy};
 
 // ── Thread ────────────────────────────────────────────────────────
@@ -689,11 +690,34 @@ pub enum ReviewTarget {
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct HookInfo {
-    pub hook_name: Option<String>,
-    pub hook_id: Option<String>,
+    pub id: String,
+    pub event_name: String,
+    pub handler_type: String,
+    pub execution_mode: String,
+    pub scope: String,
+    pub source_path: PathBuf,
+    pub started_at: i64,
+    pub completed_at: Option<i64>,
+    pub duration_ms: Option<i64>,
+    pub display_order: i64,
+    #[serde(default)]
+    pub entries: Vec<HookOutputEntry>,
     #[serde(default)]
     pub status: String,
-    pub error: Option<String>,
+    pub status_message: Option<String>,
+    #[serde(default = "unknown_hook_source")]
+    pub source: String,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct HookOutputEntry {
+    pub kind: String,
+    pub text: String,
+}
+
+fn unknown_hook_source() -> String {
+    "unknown".to_owned()
 }
 
 // ── Output stream (for command output deltas) ─────────────────────
@@ -765,6 +789,15 @@ pub struct AccountReadParams {
     pub refresh_token: Option<bool>,
 }
 
+#[derive(Debug, Clone, Default, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct ConfigReadParams {
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub cwd: Option<PathBuf>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub include_layers: Option<bool>,
+}
+
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct AccountReadResponse {
@@ -795,7 +828,7 @@ pub enum Account {
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct DynamicToolCallRequest {
-    pub request_id: u64,
+    pub request_id: RequestId,
     pub thread_id: String,
     pub turn_id: String,
     pub call_id: String,

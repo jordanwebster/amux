@@ -61,6 +61,8 @@ surface. The real 0.147.0 probe passed in `Spawned` mode through initialize and
 `thread/list`; explicit shutdown left no spawned app-server process. Workspace
 clippy and the 44-test testnet spec gate pass; the full workspace test gate is
 green (with the two pre-existing test-only tracked-listener warnings).
+Review round 1 remediated all nine accepted lifecycle, protocol-shape, turn-stream,
+and replay-controller findings against a freshly generated codex-cli 0.147.0 schema.
 
 ## 2026-08-13: Checkpoint #1 — P1–P3 seam audit
 

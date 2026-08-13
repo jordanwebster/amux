@@ -53,13 +53,13 @@ pub(crate) struct OutgoingNotification {
 
 #[derive(Debug, Serialize)]
 pub(crate) struct OutgoingResponse {
-    pub id: u64,
+    pub id: crate::approval::RequestId,
     pub result: serde_json::Value,
 }
 
 #[derive(Debug, Serialize)]
 pub(crate) struct OutgoingErrorResponse {
-    pub id: u64,
+    pub id: crate::approval::RequestId,
     pub error: RpcError,
 }
 
