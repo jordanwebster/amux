@@ -9,6 +9,24 @@ use serde::{Deserialize, Serialize};
 use crate::claude::encoding::KeyStep;
 use crate::msg::{Command, OpId};
 
+/// Native input for one typed agent layer. Adding a layer adds an enum arm;
+/// payloads are never normalized across agents.
+#[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
+#[serde(tag = "input", rename_all = "snake_case")]
+pub enum InputPayload {
+    Claude {
+        /// The layer's stream cursor: the source refuses the write unless
+        /// the client has seen its newest row (`SequenceNumberMismatch`).
+        expected_seq: u64,
+        program: Vec<KeyStep>,
+        /// Reducer policy for a stale-seq refusal: an interrupt's meaning
+        /// does not depend on the session's position, so the shell may
+        /// retry it mechanically with the seq the refusal reported;
+        /// positional programs fail fast and resurface instead.
+        retry_stale: bool,
+    },
+}
+
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
 pub enum Effect {
     /// Dispatch the RPC for a command. The shell must always answer with a
@@ -17,27 +35,24 @@ pub enum Effect {
     Rpc { op: OpId, command: Command },
     /// Open the structured session stream for an agent, catching up over a
     /// bounded tail.
-    OpenStream { agent: AgentId, tail: u64 },
+    OpenStream {
+        agent: AgentId,
+        /// The native protocol advertised by the selected agent layer.
+        protocol: String,
+        tail: u64,
+    },
     /// Close a previously opened stream.
     CloseStream { agent: AgentId },
-    /// Inject a keystroke program into the agent's session PTY under the
-    /// seq guard (`docs/CHAT.md` C6): the shell maps the steps onto the
-    /// `claude_pty_transcript_v1` input actions and MUST answer with a
-    /// `Msg::OpResult` for `op`. Disconnected executions fail fast with an
-    /// error outcome — no offline queue.
+    /// Send one layer-native input and MUST answer with a `Msg::OpResult`
+    /// for `op`. Disconnected executions fail fast with an error outcome —
+    /// no offline queue.
     SendInput {
         op: OpId,
         agent: AgentId,
-        /// The layer's stream cursor: the source refuses the write unless
-        /// the client has seen its newest row (`SequenceNumberMismatch`).
-        expected_seq: u64,
-        program: Vec<KeyStep>,
-        /// Reducer policy for a stale-seq refusal: an interrupt's meaning
-        /// does not depend on the session's position, so the shell may
-        /// retry it mechanically with the seq the refusal reported;
-        /// positional programs (menu answers, prompts) fail fast and
-        /// resurface instead.
-        retry_stale: bool,
+        /// Correlates the server's `amux.input_result` row with this input.
+        /// Derived deterministically from `op`; retries preserve it.
+        input_id: Vec<u8>,
+        payload: InputPayload,
     },
     /// A reducer tripwire observed an impossible state: dump the recorder
     /// ring for diagnosis. The pure reducer never writes files — it requests.

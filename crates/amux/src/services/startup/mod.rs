@@ -2149,6 +2149,7 @@ mod tests {
         client
             .send_input(crate::SendInputRequest {
                 agent: crate::AgentIdentifier::Name("public-client".to_string()),
+                input_id: uuid::Uuid::new_v4().as_bytes().to_vec(),
                 io_protocol: TEST_ECHO_V1.to_string(),
                 payload: bytes::Bytes::from_static(b"hello"),
             })

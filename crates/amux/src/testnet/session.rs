@@ -202,6 +202,7 @@ impl EchoSession {
         self.client
             .send_input(SendInputRequest {
                 agent: self.agent_name.as_str().into(),
+                input_id: Uuid::new_v4().as_bytes().to_vec(),
                 io_protocol: TEST_ECHO_V1.to_string(),
                 payload: bytes::Bytes::copy_from_slice(input.as_bytes()),
             })

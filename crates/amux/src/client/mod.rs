@@ -480,7 +480,7 @@ impl Client {
                 io_protocol: request.io_protocol,
                 event: Some(wire::client_send_input_request::Event::Input(
                     wire::SessionInput {
-                        input_id: Uuid::new_v4().as_bytes().to_vec(),
+                        input_id: request.input_id,
                         payload: request.payload.to_vec(),
                     },
                 )),

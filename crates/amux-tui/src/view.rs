@@ -253,9 +253,10 @@ pub fn fuzzy_matches(filter: &str, candidate: &str) -> bool {
     true
 }
 
-/// Generated create name: `claude-N`, first N not taken by a current
-/// display name or pending create. Deterministic from the Model.
-pub fn next_agent_name(model: &Model) -> String {
+/// Generated create name per type (`claude-N`, `codex-N`, ...), first N
+/// not taken by a current display name or pending create. Deterministic
+/// from the Model.
+pub fn next_agent_name(model: &Model, agent_type: &amux_ui::AgentType) -> String {
     let taken: Vec<String> = model
         .fleet()
         .iter()
@@ -265,7 +266,7 @@ pub fn next_agent_name(model: &Model) -> String {
         })
         .collect();
     (1..)
-        .map(|n| format!("claude-{n}"))
+        .map(|n| format!("{}-{n}", amux_ui::agent_type_label(agent_type)))
         .find(|candidate| !taken.iter().any(|name| name == candidate))
         .expect("unbounded name space")
 }
@@ -357,5 +358,26 @@ mod quit_guard_tests {
         assert!(guard.expire(t(QuitGuard::WINDOW_SECS + 1)), "stale: disarm");
         assert!(!guard.is_armed());
         assert!(!guard.expire(t(10)), "already disarmed: no repaint owed");
+    }
+
+    #[test]
+    fn generated_names_are_scoped_to_the_agent_type() {
+        let model = Model::default();
+        assert_eq!(
+            next_agent_name(&model, &amux_ui::AgentType::Claude),
+            "claude-1"
+        );
+        assert_eq!(
+            next_agent_name(
+                &model,
+                &amux_ui::AgentType::Codex {
+                    model: None,
+                    approval_policy: None,
+                    sandbox_policy: None,
+                    resume_thread_id: None,
+                },
+            ),
+            "codex-1"
+        );
     }
 }

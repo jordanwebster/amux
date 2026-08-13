@@ -38,6 +38,48 @@ One paragraph describing what was done.
 
 ---
 
+## 2026-08-13: Generalize the amux-ui kernel for typed agent layers
+
+### Summary
+Removed Claude assumptions from the reducer kernel while preserving every
+Claude surface byte-for-byte. Agent state, commands, input payloads, gates,
+stream protocols, and invariant violations now dispatch through exhaustive
+typed enums; the public input API also exposes the correlation id needed to
+match structured input-result rows.
+
+### Changes
+- `amux-ui`: `AgentCard.layer: Option<AgentLayer>`, namespaced
+  `Command::Claude(ClaudeCommand)`, `InputPayload::Claude`, per-layer protocol
+  selection, and `Violation::Claude(ClaudeViolation)` with stable keys.
+- Moved Claude command reduction, phase/send/mode gates, optimistic failure
+  handling, and invariant vocabulary into `amux-ui::claude`.
+- `SendInputRequest.input_id` is required and forwarded verbatim; UI input uses
+  the operation UUID bytes, and Claude stale-sequence retries reuse that id.
+- TUI command call sites were mechanically namespaced; generated create names
+  now use the selected agent type (`claude-N`, `codex-N`).
+
+### Decisions Made
+- Protocol strings are owned by their typed layers. The kernel selects a layer
+  from advertised `io_protocols`; it does not infer one from `agent_type`.
+- `OpId` is the reducer-minted input correlation identity. This preserves pure
+  replay without adding another id to `Msg` and naturally survives retries.
+- No generic content or input representation was introduced: each new agent
+  adds exhaustive enum arms with its native model and payload.
+
+### Verification
+- `cargo fmt --all`; `timeout 600 cargo clippy --workspace --all-targets` — no
+  new warnings (the two existing tracked-listener test warnings remain).
+- Warm `timeout 600 cargo test --workspace` — pass. The first cold run reached
+  the final amux-ui spec binary with no failures before the known slow macOS
+  test-binary startup exhausted the wrapper.
+- `timeout 600 cargo test -p amux --features testnet --test spec` — 44/44.
+- amux-ui specs — 123/123, including serde and `wire_free`; amux-tui goldens —
+  54 chat + 21 fleet, with no golden-file changes.
+
+### Next Steps
+- P7 adds the Codex layer as sibling enum arms and a new module; the kernel
+  dispatch structure does not need another reshape.
+
 ## 2026-08-13: Checkpoint #2 — one owner for the Codex disconnect invariant
 
 ### Summary

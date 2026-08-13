@@ -5,12 +5,10 @@
 //! wire_free replay spec tests). The same reducer build folding the same
 //! checkpoint and ordered Msgs produces identical Models and Effects.
 
-use crate::claude::AskState;
-use crate::claude::encoding::{self, KeyStep};
-use crate::effect::{DumpReason, Effect};
+use crate::effect::{DumpReason, Effect, InputPayload};
 use crate::model::{
-    AgentCard, AgentPhase, Attention, Connection, FINISHED_OPS_RETAINED, FinishedOp, HostState,
-    Model, PendingOp, StreamPhase, StreamState,
+    AgentCard, AgentLayer, AgentPhase, Attention, Connection, FINISHED_OPS_RETAINED, FinishedOp,
+    HostState, Model, PendingOp, StreamPhase, StreamState,
 };
 use crate::msg::{Command, Msg, OpError, OpId, OpOutcome, ServerMsg, StreamCloseReason, StreamMsg};
 
@@ -22,10 +20,6 @@ pub const NOT_CONNECTED_ERROR: &str = "not connected — daemon unreachable";
 /// policy number lives. Generous on purpose; the honest-degrade rule covers
 /// whatever it misses.
 pub const REPLAY_TAIL: u64 = 1000;
-
-/// The structured stream the subscription policy watches. Advertised by the
-/// agent's `io_protocols` — the fact, not an assumption about its type.
-const STRUCTURED_PROTOCOL: &str = "claude_pty_transcript_v1";
 
 pub fn update(model: &mut Model, msg: Msg) -> Vec<Effect> {
     match msg {
@@ -75,14 +69,8 @@ fn ensure_stream(
     if card.agent.readonly && wanted == StreamWanted::InventoryPolicy {
         return None;
     }
-    if !card
-        .agent
-        .io_protocols
-        .iter()
-        .any(|protocol| protocol == STRUCTURED_PROTOCOL)
-    {
-        return None;
-    }
+    let layer = AgentLayer::from_protocols(&card.agent.io_protocols)?;
+    let protocol = layer.protocol().to_string();
     let reopen = match model.streams.get(&agent_id) {
         None => true,
         Some(state) => match &state.phase {
@@ -105,6 +93,7 @@ fn ensure_stream(
     );
     Some(Effect::OpenStream {
         agent: agent_id,
+        protocol,
         tail: REPLAY_TAIL,
     })
 }
@@ -131,17 +120,20 @@ fn update_command(model: &mut Model, op: OpId, command: Command) -> Vec<Effect> 
             );
             vec![Effect::Rpc { op, command }]
         }
-        Command::SendPrompt { .. } => update_send_prompt(model, op, seq, command),
-        Command::AnswerAsk { .. } => update_answer_ask(model, op, seq, command),
-        Command::Interrupt { .. } => update_interrupt(model, op, seq, command),
-        Command::CyclePermissionMode { .. } => update_cycle_mode(model, op, seq, command),
+        Command::Claude(command) => crate::claude::update::update_command(model, op, seq, command),
     }
 }
 
 /// A synchronous command refusal: the outcome is finished state
 /// immediately — no pending op, no effect, no spinner (the model states
 /// the failure; drafts and panels resurface from it).
-fn refuse(model: &mut Model, op: OpId, seq: u64, command: Command, message: &str) -> Vec<Effect> {
+pub(crate) fn refuse(
+    model: &mut Model,
+    op: OpId,
+    seq: u64,
+    command: Command,
+    message: &str,
+) -> Vec<Effect> {
     push_finished(
         model,
         FinishedOp {
@@ -159,183 +151,23 @@ fn refuse(model: &mut Model, op: OpId, seq: u64, command: Command, message: &str
     Vec::new()
 }
 
-/// One keystroke-injection dispatch: the program plus the reducer's
-/// stale-seq policy for it.
-struct InputDispatch {
-    agent: amux::AgentId,
-    program: Vec<KeyStep>,
-    retry_stale: bool,
-}
-
-/// Track the op and hand the shell one keystroke-injection effect, seq-
-/// guarded by the layer's cursor. The shell always answers with an
-/// `OpResult`; readonly and transport rejections come back that way — the
-/// server rejects, the model states it.
-fn dispatch_input(
+/// Track the op and hand the shell one native input effect. The operation
+/// UUID is also the protocol-visible correlation id, keeping replay pure.
+pub(crate) fn dispatch_input(
     model: &mut Model,
     op: OpId,
     seq: u64,
     command: Command,
-    dispatch: InputDispatch,
+    agent: amux::AgentId,
+    payload: InputPayload,
 ) -> Vec<Effect> {
-    let expected_seq = model
-        .claude(dispatch.agent)
-        .map_or(0, |layer| layer.cursor());
     model.pending_ops.insert(op, PendingOp { op, seq, command });
     vec![Effect::SendInput {
         op,
-        agent: dispatch.agent,
-        expected_seq,
-        program: dispatch.program,
-        retry_stale: dispatch.retry_stale,
-    }]
-}
-
-/// B1/D2: send is gated on phase (one derivation — the same gate the
-/// composer footer states); a dispatched send records the optimistic echo
-/// before the bytes leave.
-fn update_send_prompt(model: &mut Model, op: OpId, seq: u64, command: Command) -> Vec<Effect> {
-    let Command::SendPrompt { agent, ref text } = command else {
-        unreachable!("routed by update_command");
-    };
-    if let Some(refusal) = model.claude_send_gate(agent).refusal() {
-        return refuse(model, op, seq, command, refusal);
-    }
-    let text = encoding::normalize_prompt(text);
-    let program = match encoding::prompt_program(&text) {
-        Ok(program) => program,
-        Err(error) => return refuse(model, op, seq, command, &error.to_string()),
-    };
-    let now = model.now;
-    with_existing_claude_layer(model, agent, |layer| {
-        layer.note_prompt_sent(op, text, now);
-    });
-    dispatch_input(
-        model,
-        op,
-        seq,
-        command,
-        InputDispatch {
-            agent,
-            program,
-            retry_stale: false,
-        },
-    )
-}
-
-/// C5: the answer intent flips the ask to answered-optimistic (the
-/// retained answer is the pending-marker data) and becomes a keystroke
-/// program addressed by the ask's typed kind.
-fn update_answer_ask(model: &mut Model, op: OpId, seq: u64, command: Command) -> Vec<Effect> {
-    let Command::AnswerAsk {
         agent,
-        ask,
-        ref answer,
-    } = command
-    else {
-        unreachable!("routed by update_command");
-    };
-    let Some(layer) = model.claude(agent) else {
-        return refuse(
-            model,
-            op,
-            seq,
-            command,
-            "chat input unavailable for this agent",
-        );
-    };
-    let Some(entry) = layer.asks().find(|entry| entry.id == ask) else {
-        // Remote resolution wins over local intent: the ask is gone, the
-        // panel has already collapsed to the fact.
-        return refuse(model, op, seq, command, "ask already resolved");
-    };
-    // Claude's remote menu only ever displays the HEAD of the queue: a
-    // program addressed to a later ask would encode that ask's digits and
-    // apply them to the head's menu — answering the wrong request. The
-    // queue is the model's honesty about depth, not an addressing space.
-    if layer.ask_head().is_some_and(|head| head.id != ask) {
-        return refuse(
-            model,
-            op,
-            seq,
-            command,
-            "ask is queued behind the current menu — answer the head ask first",
-        );
-    }
-    if matches!(entry.state, AskState::AnsweredOptimistic { .. }) {
-        return refuse(
-            model,
-            op,
-            seq,
-            command,
-            "answer already in flight — awaiting confirmation",
-        );
-    }
-    let program = match encoding::answer_program(&entry.kind, answer) {
-        Ok(program) => program,
-        Err(error) => return refuse(model, op, seq, command, &error.to_string()),
-    };
-    let answer = answer.clone();
-    with_existing_claude_layer(model, agent, |layer| {
-        layer.note_ask_answered(ask, op, answer);
-    });
-    dispatch_input(
-        model,
-        op,
-        seq,
-        command,
-        InputDispatch {
-            agent,
-            program,
-            retry_stale: false,
-        },
-    )
-}
-
-/// D3: interrupt is allowed in every state — no phase gate, no ask gate.
-/// Its meaning does not depend on the session's position, so a stale-seq
-/// refusal is retried mechanically by the shell.
-fn update_interrupt(model: &mut Model, op: OpId, seq: u64, command: Command) -> Vec<Effect> {
-    let Command::Interrupt { agent } = command else {
-        unreachable!("routed by update_command");
-    };
-    if !model.agents.contains_key(&agent) {
-        return refuse(model, op, seq, command, "unknown agent");
-    }
-    dispatch_input(
-        model,
-        op,
-        seq,
-        command,
-        InputDispatch {
-            agent,
-            program: encoding::interrupt_program(),
-            retry_stale: true,
-        },
-    )
-}
-
-/// D4: the cycle injects Shift+Tab; the mode FACT returns via hook
-/// payloads (the cycle emits no transcript row — fixture-verified), so
-/// nothing is flipped optimistically.
-fn update_cycle_mode(model: &mut Model, op: OpId, seq: u64, command: Command) -> Vec<Effect> {
-    let Command::CyclePermissionMode { agent } = command else {
-        unreachable!("routed by update_command");
-    };
-    if let Some(refusal) = model.claude_mode_cycle_gate(agent) {
-        return refuse(model, op, seq, command, refusal);
-    }
-    dispatch_input(
-        model,
-        op,
-        seq,
-        command,
-        InputDispatch {
-            agent,
-            program: encoding::mode_cycle_program(),
-            retry_stale: false,
-        },
-    )
+        input_id: op.0.as_bytes().to_vec(),
+        payload,
+    }]
 }
 
 fn update_op_result(model: &mut Model, op: OpId, outcome: OpOutcome) -> Vec<Effect> {
@@ -355,22 +187,10 @@ fn update_op_result(model: &mut Model, op: OpId, outcome: OpOutcome) -> Vec<Effe
     // ask that resolved remotely in the meantime stays gone — the layer
     // mutators no-op on missing targets, so a late failure cannot
     // resurrect anything.
-    if let OpOutcome::Error { error } = &outcome {
-        match &pending.command {
-            Command::SendPrompt { agent, .. } => {
-                with_existing_claude_layer(model, *agent, |layer| {
-                    layer.note_prompt_send_failed(op);
-                });
-            }
-            Command::AnswerAsk { agent, ask, .. } => {
-                let message = error.message.clone();
-                let ask = *ask;
-                with_existing_claude_layer(model, *agent, |layer| {
-                    layer.note_ask_send_failed(ask, op, message);
-                });
-            }
-            _ => {}
-        }
+    if let OpOutcome::Error { error } = &outcome
+        && let Command::Claude(command) = &pending.command
+    {
+        crate::claude::update::update_failed_command(model, op, command, error)
     }
     // Entity payloads riding on the outcome resolve the op only —
     // subscriptions are the sole writer of entity state.
@@ -452,7 +272,7 @@ fn update_server(model: &mut Model, server: ServerMsg) -> Vec<Effect> {
                         provider_label: None,
                         attention: Attention::Unknown,
                         phase: AgentPhase::Running,
-                        claude: None,
+                        layer: None,
                         epoch,
                         agent,
                     };
@@ -516,13 +336,13 @@ fn update_stream(model: &mut Model, agent: amux::AgentId, event: StreamMsg) -> V
             // A fresh subscription replays the source tail from scratch, so
             // the chat layer folds from scratch too — its window carries
             // the same truncation fact (B9's honest boundary).
-            with_claude_layer(model, agent, |layer| layer.begin_window(truncated));
+            with_layer(model, agent, |layer| layer.begin_window(truncated));
         }
         StreamMsg::Batch { at, entries } => {
             if let Some(card) = model.agents.get_mut(&agent) {
                 card.last_activity = card.last_activity.max(at);
             }
-            with_claude_layer(model, agent, |layer| {
+            with_layer(model, agent, |layer| {
                 for entry in &entries {
                     layer.observe(entry.seq, at, &entry.payload);
                 }
@@ -537,7 +357,7 @@ fn update_stream(model: &mut Model, agent: amux::AgentId, event: StreamMsg) -> V
             // long-running session wrote past the bounded buffer), and a
             // window that never unlocks would suppress live prompts and
             // permission hooks forever.
-            with_claude_layer(model, agent, |layer| layer.observe_replay_complete());
+            with_layer(model, agent, AgentLayer::observe_replay_complete);
         }
         StreamMsg::Closed { reason } => {
             if reason == StreamCloseReason::AuthenticationRequired {
@@ -551,12 +371,12 @@ fn update_stream(model: &mut Model, agent: amux::AgentId, event: StreamMsg) -> V
                     }
                     // Nothing is left to need: obligations do not outlive
                     // the process that owned them.
-                    with_claude_layer(model, agent, |layer| layer.observe_exit());
+                    with_layer(model, agent, AgentLayer::observe_exit);
                 }
                 StreamCloseReason::AgentDeleted => {}
                 // The stream died underneath us: whatever the fold knew is
                 // stale. Degrade to Unknown, never to a wrong badge.
-                _ => with_claude_layer(model, agent, |layer| layer.invalidate()),
+                _ => with_layer(model, agent, AgentLayer::invalidate),
             }
             if let Some(stream) = model.streams.get_mut(&agent) {
                 stream.phase = StreamPhase::Closed { reason };
@@ -566,49 +386,17 @@ fn update_stream(model: &mut Model, agent: amux::AgentId, event: StreamMsg) -> V
     Vec::new()
 }
 
-/// Run a fold step on the agent's Claude chat layer (creating it on first
-/// evidence), gated on the advertised-protocol fact — the fold consumes
-/// `claude_pty_transcript_v1` rows, whatever the agent calls itself.
-/// The layer is always folded, chat open or not, and the kernel attention
-/// summary is derived from the SAME fold state afterwards (E2: one fold,
-/// not two) — so fleet attention behaves identically whether or not a chat
-/// is open (E3). Agents without the protocol have no layer and honestly
-/// stay `Unknown`.
-fn with_claude_layer(
-    model: &mut Model,
-    agent: amux::AgentId,
-    step: impl FnOnce(&mut crate::claude::ClaudeLayer),
-) {
+/// Run a fold step on the typed native layer selected from the agent's
+/// advertised protocols, creating it on first evidence. Attention is
+/// summarized from that same fold state afterwards.
+fn with_layer(model: &mut Model, agent: amux::AgentId, step: impl FnOnce(&mut AgentLayer)) {
     let Some(card) = model.agents.get_mut(&agent) else {
         return;
     };
-    if !card
-        .agent
-        .io_protocols
-        .iter()
-        .any(|protocol| protocol == STRUCTURED_PROTOCOL)
-    {
-        return;
-    }
-    let layer = card.claude.get_or_insert_with(Default::default);
-    step(layer);
-    card.attention = layer.attention();
-}
-
-/// Mutate an agent's EXISTING Claude layer (never creating one — op
-/// results for gone agents fold to nothing) and refresh the derived
-/// attention so card and layer stay one story.
-fn with_existing_claude_layer(
-    model: &mut Model,
-    agent: amux::AgentId,
-    step: impl FnOnce(&mut crate::claude::ClaudeLayer),
-) {
-    let Some(card) = model.agents.get_mut(&agent) else {
+    let Some(selected) = AgentLayer::from_protocols(&card.agent.io_protocols) else {
         return;
     };
-    let Some(layer) = card.claude.as_mut() else {
-        return;
-    };
+    let layer = card.layer.get_or_insert(selected);
     step(layer);
     card.attention = layer.attention();
 }

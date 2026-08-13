@@ -90,7 +90,10 @@ impl ChatLayout {
 pub(crate) fn layout(model: &Model, chat: &ChatView, viewport: (u16, u16)) -> ChatLayout {
     let width = viewport.0 as usize;
     let height = viewport.1 as usize;
-    let working = matches!(model.claude_phase(chat.agent), ChatPhase::Working);
+    let working = matches!(
+        amux_ui::claude::phase(model, chat.agent),
+        ChatPhase::Working
+    );
     let paused = matches!(chat.scroll, FeedScroll::Paused { .. });
     // Layout is theme-independent (tokens change styles, never cells —
     // test-locked), so the count renders with the default theme.
@@ -293,7 +296,10 @@ pub(crate) fn build_chat_lines(
         return frame;
     }
 
-    let working = matches!(model.claude_phase(chat.agent), ChatPhase::Working);
+    let working = matches!(
+        amux_ui::claude::phase(model, chat.agent),
+        ChatPhase::Working
+    );
     let paused = matches!(chat.scroll, FeedScroll::Paused { .. });
     let bottom = bottom_lines(model, chat, theme, width, height, working, paused);
     let layout = ChatLayout {
@@ -302,7 +308,7 @@ pub(crate) fn build_chat_lines(
         working,
         paused,
     };
-    let phase = model.claude_phase(chat.agent);
+    let phase = amux_ui::claude::phase(model, chat.agent);
     let feed_h = layout.feed_height();
 
     let mut lines: Vec<Line<'static>> = Vec::with_capacity(height);
@@ -722,7 +728,7 @@ fn footer_line(model: &Model, chat: &ChatView, theme: Theme, width: usize) -> Li
             hints.push_str(" · esc newest");
         }
         push_span(&mut line, TEXT_COL, help_hinted(chat, hints), theme.muted());
-    } else if let Some(refusal) = model.claude_send_gate(chat.agent).refusal() {
+    } else if let Some(refusal) = amux_ui::claude::send_gate(model, chat.agent).refusal() {
         let hint = if chat.composer.is_empty() {
             refusal.to_string()
         } else {

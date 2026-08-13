@@ -14,7 +14,7 @@ use serde_json::json;
 use crate::harness::*;
 
 fn phase_of(model: &amux_ui::Model) -> ChatPhase {
-    model.claude_phase(agent_id("fix-auth-bug"))
+    amux_ui::claude::phase(model, agent_id("fix-auth-bug"))
 }
 
 fn ready() -> serde_json::Value {

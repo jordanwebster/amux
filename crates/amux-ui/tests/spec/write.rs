@@ -20,7 +20,10 @@ use amux_ui::claude::AskState;
 use amux_ui::claude::encoding::{
     AskAnswer, KeyStep, PermissionAnswer, PlanAnswer, QuestionResponse,
 };
-use amux_ui::{Command, Effect, Msg, NOT_CONNECTED_ERROR, OpOutcome, SendGate, StreamMsg};
+use amux_ui::{
+    ClaudeCommand, Command, Effect, InputPayload, Msg, NOT_CONNECTED_ERROR, OpOutcome, SendGate,
+    StreamMsg,
+};
 use serde_json::json;
 
 use crate::harness::*;
@@ -34,21 +37,21 @@ fn agent() -> amux_ui::AgentId {
 fn send_prompt(op_n: u8, text: &str) -> Msg {
     command(
         op(op_n),
-        Command::SendPrompt {
+        Command::Claude(ClaudeCommand::SendPrompt {
             agent: agent(),
             text: text.to_string(),
-        },
+        }),
     )
 }
 
 fn answer_ask(op_n: u8, ask: u64, answer: AskAnswer) -> Msg {
     command(
         op(op_n),
-        Command::AnswerAsk {
+        Command::Claude(ClaudeCommand::AnswerAsk {
             agent: agent(),
             ask,
             answer,
-        },
+        }),
     )
 }
 
@@ -82,9 +85,12 @@ fn send_inputs(effects: &[Effect]) -> Vec<(u64, Vec<KeyStep>, bool)> {
         .filter_map(|effect| match effect {
             Effect::SendInput {
                 agent: effect_agent,
-                expected_seq,
-                program,
-                retry_stale,
+                payload:
+                    InputPayload::Claude {
+                        expected_seq,
+                        program,
+                        retry_stale,
+                    },
                 ..
             } => {
                 assert_eq!(*effect_agent, agent());
@@ -126,6 +132,16 @@ fn a_sent_prompt_becomes_a_pasted_program_and_a_pending_echo() {
     msgs.push(send_prompt(1, "fix the sync bug\r\nthen run the tests"));
     let (model, effects) = fold_with_effects(msgs);
 
+    let input_id = effects.iter().find_map(|effect| match effect {
+        Effect::SendInput { input_id, .. } => Some(input_id),
+        _ => None,
+    });
+    assert_eq!(
+        input_id.map(Vec::as_slice),
+        Some(op(1).0.as_bytes().as_slice()),
+        "the reducer exposes a deterministic protocol correlation id"
+    );
+
     let (expected_seq, program, retry_stale) = send_input_effect(&effects);
     assert_eq!(expected_seq, 36, "the layer's cursor is the seq guard");
     assert!(
@@ -146,7 +162,7 @@ fn a_sent_prompt_becomes_a_pasted_program_and_a_pending_echo() {
     assert_eq!(echoes[0].op, op(1));
     assert_eq!(echoes[0].text, "fix the sync bug\nthen run the tests");
     assert_eq!(
-        model.claude_send_gate(agent()),
+        amux_ui::claude::send_gate(&model, agent()),
         SendGate::SendInFlight,
         "one echo in flight gates the next send"
     );
@@ -187,7 +203,7 @@ fn the_transcript_row_reconciles_the_echo() {
     let model = fold(msgs);
     assert_eq!(the_layer(&model).pending_echoes().len(), 0, "reconciled");
     assert_eq!(
-        model.claude_send_gate(agent()),
+        amux_ui::claude::send_gate(&model, agent()),
         SendGate::Working,
         "the landed prompt opened the turn"
     );
@@ -208,7 +224,7 @@ fn a_failed_prompt_send_drops_the_echo_and_states_the_failure() {
         "input raced the session — seq moved"
     );
     assert_eq!(
-        model.claude_send_gate(agent()),
+        amux_ui::claude::send_gate(&model, agent()),
         SendGate::Ready,
         "the failed send releases the in-flight gate"
     );
@@ -228,7 +244,10 @@ fn send_is_gated_by_phase() {
         send_inputs(&effects).is_empty(),
         "a gated send leaves no effect"
     );
-    assert_eq!(model.claude_send_gate(agent()), SendGate::Working);
+    assert_eq!(
+        amux_ui::claude::send_gate(&model, agent()),
+        SendGate::Working
+    );
     assert_eq!(failure_message(&model, 1), "send gated while working");
 
     // Needs-you: the ask panel owns the keystroke channel (C1).
@@ -301,7 +320,7 @@ fn a_prompt_carrying_the_paste_terminator_is_refused() {
         failure_message(&model, 1).contains("control characters"),
         "the refusal states the class"
     );
-    assert_eq!(model.claude_send_gate(agent()), SendGate::Ready);
+    assert_eq!(amux_ui::claude::send_gate(&model, agent()), SendGate::Ready);
 }
 
 // --- ask answers (C5/C6) ----------------------------------------------------
@@ -552,7 +571,10 @@ fn question_and_plan_answers_encode_their_verified_programs() {
 #[test]
 fn interrupt_dispatches_from_any_state_and_the_rows_close_the_asks() {
     let mut msgs = chat_feed_prefix(AGENT, "permission", 8);
-    msgs.push(command(op(1), Command::Interrupt { agent: agent() }));
+    msgs.push(command(
+        op(1),
+        Command::Claude(ClaudeCommand::Interrupt { agent: agent() }),
+    ));
     let (model, effects) = fold_with_effects(msgs.clone());
     let (expected_seq, program, retry_stale) = send_input_effect(&effects);
     assert_eq!(expected_seq, 18);
@@ -594,7 +616,10 @@ fn a_readonly_rejection_is_surfaced_as_finished_op_state() {
         ],
         synced(),
     ]);
-    msgs.push(command(op(1), Command::Interrupt { agent: agent() }));
+    msgs.push(command(
+        op(1),
+        Command::Claude(ClaudeCommand::Interrupt { agent: agent() }),
+    ));
     let (_, effects) = fold_with_effects(msgs.clone());
     let (expected_seq, _, _) = send_input_effect(&effects);
     assert_eq!(expected_seq, 0, "no layer — the guard rides at zero");
@@ -618,7 +643,7 @@ fn the_mode_cycle_dispatches_csi_z_and_the_hook_payload_carries_the_fact() {
     let mut msgs = chat_feed_prefix(AGENT, "mode_cycle", 11);
     msgs.push(command(
         op(1),
-        Command::CyclePermissionMode { agent: agent() },
+        Command::Claude(ClaudeCommand::CyclePermissionMode { agent: agent() }),
     ));
     let (model, effects) = fold_with_effects(msgs.clone());
     let (_, program, retry_stale) = send_input_effect(&effects);
@@ -645,7 +670,7 @@ fn the_mode_cycle_dispatches_csi_z_and_the_hook_payload_carries_the_fact() {
     let mut gated = chat_feed_prefix(AGENT, "permission", 8);
     gated.push(command(
         op(2),
-        Command::CyclePermissionMode { agent: agent() },
+        Command::Claude(ClaudeCommand::CyclePermissionMode { agent: agent() }),
     ));
     let (model, effects) = fold_with_effects(gated);
     assert!(send_inputs(&effects).is_empty());
@@ -695,7 +720,7 @@ pub fn sequences() -> Vec<(&'static str, Vec<Msg>)> {
         let mut msgs = chat_feed_prefix(AGENT, "mode_cycle", 11);
         msgs.push(command(
             op(1),
-            Command::CyclePermissionMode { agent: agent() },
+            Command::Claude(ClaudeCommand::CyclePermissionMode { agent: agent() }),
         ));
         msgs.push(op_result(op(1), OpOutcome::InputSent));
         msgs.push(batch(AGENT, 30, chat_rows("mode_cycle")[11..17].to_vec()));

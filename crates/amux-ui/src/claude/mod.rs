@@ -20,6 +20,7 @@
 pub mod artifact;
 pub mod encoding;
 mod fold;
+pub(crate) mod update;
 
 pub use artifact::{AskArtifact, DiffArtifact, DiffHunk, DiffMagnitude, DiffNumbering};
 
@@ -30,8 +31,33 @@ use serde::{Deserialize, Serialize};
 use uuid::Uuid;
 
 use crate::claude::encoding::AskAnswer;
-use crate::model::{Attention, Violation, Why};
+use crate::model::{AgentPhase, Attention, Model, StreamPhase, StreamState, Violation, Why};
 use crate::msg::OpId;
+
+/// The native structured protocol owned by this layer.
+pub const PROTOCOL: &str = "claude_pty_transcript_v1";
+
+/// Claude-native client writes. This vocabulary stays deliberately
+/// asymmetric with every other agent layer.
+#[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
+#[serde(tag = "claude_command", rename_all = "snake_case")]
+pub enum ClaudeCommand {
+    SendPrompt {
+        agent: amux::AgentId,
+        text: String,
+    },
+    AnswerAsk {
+        agent: amux::AgentId,
+        ask: u64,
+        answer: AskAnswer,
+    },
+    Interrupt {
+        agent: amux::AgentId,
+    },
+    CyclePermissionMode {
+        agent: amux::AgentId,
+    },
+}
 
 /// Feed retention bound (B9): matches the source's bounded tail, so the fold
 /// never retains more than one window of history. Eviction is from the
@@ -566,6 +592,120 @@ pub enum ChatPhase {
     Unknown,
 }
 
+/// The prompt-send gate (D2): the draft stays renderer-local and editable;
+/// a refusal states why this layer cannot accept it now.
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum SendGate {
+    Ready,
+    Unavailable,
+    Exited,
+    Replaying,
+    Working,
+    NeedsYou,
+    Unknown,
+    SendInFlight,
+}
+
+impl SendGate {
+    pub fn refusal(&self) -> Option<&'static str> {
+        match self {
+            Self::Ready => None,
+            Self::Unavailable => Some("chat input unavailable for this agent"),
+            Self::Exited => Some("agent exited"),
+            Self::Replaying => Some("send gated while replaying"),
+            Self::Working => Some("send gated while working"),
+            Self::NeedsYou => Some("send gated — answer the pending ask"),
+            Self::Unknown => Some("send gated — session state unknown"),
+            Self::SendInFlight => Some("send gated — a prompt is in flight"),
+        }
+    }
+}
+
+/// Structural invariant classes owned by the Claude layer. The outer
+/// kernel violation is namespaced by layer; these keys remain stable for
+/// dump throttling.
+#[derive(Clone, Debug, PartialEq)]
+pub enum ClaudeViolation {
+    RetentionOverflow {
+        agent: amux::AgentId,
+        store: &'static str,
+        len: usize,
+        cap: usize,
+    },
+    FeedOrder {
+        agent: amux::AgentId,
+    },
+    IndexAhead {
+        agent: amux::AgentId,
+        index: &'static str,
+        entry: u64,
+        next: u64,
+    },
+    DedupeIncoherent {
+        agent: amux::AgentId,
+        rows: usize,
+        set: usize,
+    },
+    AskOrder {
+        agent: amux::AgentId,
+    },
+    EchoDuplicate {
+        agent: amux::AgentId,
+    },
+}
+
+impl ClaudeViolation {
+    pub(crate) fn kind(&self) -> &'static str {
+        match self {
+            Self::RetentionOverflow { .. } => "claude-retention-overflow",
+            Self::FeedOrder { .. } => "claude-feed-order",
+            Self::IndexAhead { .. } => "claude-index-ahead",
+            Self::DedupeIncoherent { .. } => "claude-dedupe-incoherent",
+            Self::AskOrder { .. } => "claude-ask-order",
+            Self::EchoDuplicate { .. } => "claude-echo-duplicate",
+        }
+    }
+}
+
+impl std::fmt::Display for ClaudeViolation {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            Self::RetentionOverflow {
+                agent,
+                store,
+                len,
+                cap,
+            } => write!(
+                f,
+                "agent {agent} claude {store} holds {len} entries over the bound of {cap}"
+            ),
+            Self::FeedOrder { agent } => {
+                write!(f, "agent {agent} claude feed id arithmetic is incoherent")
+            }
+            Self::IndexAhead {
+                agent,
+                index,
+                entry,
+                next,
+            } => write!(
+                f,
+                "agent {agent} claude {index} index references entry {entry} past next id {next}"
+            ),
+            Self::DedupeIncoherent { agent, rows, set } => write!(
+                f,
+                "agent {agent} claude dedupe queue ({rows}) and set ({set}) disagree"
+            ),
+            Self::AskOrder { agent } => {
+                write!(f, "agent {agent} claude ask id arithmetic is incoherent")
+            }
+            Self::EchoDuplicate { agent } => {
+                write!(f, "agent {agent} claude prompt echoes share an op id")
+            }
+        }
+    }
+}
+
 impl ChatPhase {
     /// The E1 fact-vs-inferred tag; `None` for Unknown (degradation has no
     /// epistemic claim to tag).
@@ -899,12 +1039,23 @@ impl ClaudeLayer {
         }
     }
 
-    /// The derived session phase (the E1 table), layer view. `now` enters
-    /// via `Msg::Tick` and caps inferred states: a stuck "working" degrades
-    /// to Unknown, an authority-fresh "idle" decays from FACT to INFERRED.
-    /// The Model wraps this with kernel subscription state
-    /// (`Model::claude_phase`).
-    pub fn phase(&self, now: Option<DateTime<Utc>>) -> ChatPhase {
+    /// The derived session phase (the E1 table), including the kernel's
+    /// subscription lifecycle. `now` enters via `Msg::Tick` and caps
+    /// inferred states.
+    pub fn phase(&self, stream: Option<&StreamState>, now: Option<DateTime<Utc>>) -> ChatPhase {
+        match stream.map(|stream| &stream.phase) {
+            Some(StreamPhase::Opening | StreamPhase::Replaying) => ChatPhase::Replaying,
+            Some(StreamPhase::Live)
+            | Some(StreamPhase::Closed {
+                reason:
+                    crate::msg::StreamCloseReason::AgentExited { .. }
+                    | crate::msg::StreamCloseReason::AgentDeleted,
+            }) => self.folded_phase(now),
+            _ => ChatPhase::Unknown,
+        }
+    }
+
+    fn folded_phase(&self, now: Option<DateTime<Utc>>) -> ChatPhase {
         if self.exited {
             // Orderly process termination is a FACT that overrides
             // truncation and staleness: nothing is running, nothing can
@@ -976,6 +1127,47 @@ impl ClaudeLayer {
             ChatPhase::Idle {
                 tag: PhaseTag::Inferred,
             }
+        }
+    }
+
+    /// D2's single send decision, shared by reducer and renderer.
+    pub fn send_gate(
+        &self,
+        agent_phase: &AgentPhase,
+        stream: Option<&StreamState>,
+        now: Option<DateTime<Utc>>,
+    ) -> SendGate {
+        if matches!(agent_phase, AgentPhase::Exited { .. }) {
+            return SendGate::Exited;
+        }
+        if !self.pending_echoes().is_empty() {
+            return SendGate::SendInFlight;
+        }
+        match self.phase(stream, now) {
+            ChatPhase::Idle { .. } | ChatPhase::Errored => SendGate::Ready,
+            ChatPhase::Replaying => SendGate::Replaying,
+            ChatPhase::Working => SendGate::Working,
+            ChatPhase::NeedsYou { .. } => SendGate::NeedsYou,
+            ChatPhase::Unknown => SendGate::Unknown,
+        }
+    }
+
+    /// D4's permission-mode cycle gate. It is allowed exactly when the
+    /// injected Shift+Tab would reach Claude's composer.
+    pub fn mode_cycle_gate(
+        &self,
+        agent_phase: &AgentPhase,
+        stream: Option<&StreamState>,
+        now: Option<DateTime<Utc>>,
+    ) -> Option<&'static str> {
+        if matches!(agent_phase, AgentPhase::Exited { .. }) {
+            return Some("agent exited");
+        }
+        match self.phase(stream, now) {
+            ChatPhase::Idle { .. } | ChatPhase::Working | ChatPhase::Errored => None,
+            ChatPhase::Replaying => Some("mode cycle gated while replaying"),
+            ChatPhase::NeedsYou { .. } => Some("mode cycle gated while an ask is pending"),
+            ChatPhase::Unknown => Some("mode cycle gated — session state unknown"),
         }
     }
 
@@ -1057,12 +1249,12 @@ impl ClaudeLayer {
             ("echoes", self.echoes.len(), ECHOES_RETAINED),
         ] {
             if len > cap {
-                out.push(Violation::ClaudeRetentionOverflow {
+                out.push(Violation::Claude(ClaudeViolation::RetentionOverflow {
                     agent,
                     store,
                     len,
                     cap,
-                });
+                }));
             }
         }
 
@@ -1079,15 +1271,15 @@ impl ClaudeLayer {
                 .back()
                 .is_none_or(|back| back.id + 1 == self.next_entry_id);
         if !coherent {
-            out.push(Violation::ClaudeFeedOrder { agent });
+            out.push(Violation::Claude(ClaudeViolation::FeedOrder { agent }));
         }
 
         if self.seen_rows.len() != self.seen_set.len() {
-            out.push(Violation::ClaudeDedupeIncoherent {
+            out.push(Violation::Claude(ClaudeViolation::DedupeIncoherent {
                 agent,
                 rows: self.seen_rows.len(),
                 set: self.seen_set.len(),
-            });
+            }));
         }
 
         // Ask arithmetic: ids are assigned monotonically and the queue is
@@ -1100,7 +1292,7 @@ impl ClaudeLayer {
             .all(|(a, b)| a.id < b.id)
             && self.asks.back().is_none_or(|ask| ask.id < self.next_ask_id);
         if !ask_ids_coherent {
-            out.push(Violation::ClaudeAskOrder { agent });
+            out.push(Violation::Claude(ClaudeViolation::AskOrder { agent }));
         }
 
         // Echo identity: each dispatched send mints one op, so two echoes
@@ -1111,7 +1303,7 @@ impl ClaudeLayer {
             .enumerate()
             .all(|(i, a)| self.echoes[i + 1..].iter().all(|b| a.op != b.op));
         if !echo_ops_distinct {
-            out.push(Violation::ClaudeEchoDuplicate { agent });
+            out.push(Violation::Claude(ClaudeViolation::EchoDuplicate { agent }));
         }
 
         let index_refs = self
@@ -1130,15 +1322,46 @@ impl ClaudeLayer {
             );
         for (index, entry) in index_refs {
             if entry >= self.next_entry_id {
-                out.push(Violation::ClaudeIndexAhead {
+                out.push(Violation::Claude(ClaudeViolation::IndexAhead {
                     agent,
                     index,
                     entry,
                     next: self.next_entry_id,
-                });
+                }));
             }
         }
     }
+}
+
+/// Claude chat phase for one card. This small typed accessor keeps kernel
+/// lifecycle facts at the layer boundary without teaching `Model` a
+/// Claude-specific phase.
+pub fn phase(model: &Model, agent: amux::AgentId) -> ChatPhase {
+    model.claude(agent).map_or(ChatPhase::Unknown, |layer| {
+        layer.phase(model.stream(agent), model.now())
+    })
+}
+
+/// D2's shared renderer/reducer gate for one Claude card.
+pub fn send_gate(model: &Model, agent: amux::AgentId) -> SendGate {
+    let Some(card) = model.agent(agent) else {
+        return SendGate::Unavailable;
+    };
+    let Some(layer) = card.claude() else {
+        return SendGate::Unavailable;
+    };
+    layer.send_gate(&card.phase, model.stream(agent), model.now())
+}
+
+/// D4's permission-mode cycle gate for one Claude card.
+pub fn mode_cycle_gate(model: &Model, agent: amux::AgentId) -> Option<&'static str> {
+    let Some(card) = model.agent(agent) else {
+        return Some("chat input unavailable for this agent");
+    };
+    let Some(layer) = card.claude() else {
+        return Some("chat input unavailable for this agent");
+    };
+    layer.mode_cycle_gate(&card.phase, model.stream(agent), model.now())
 }
 
 /// The invariant classes must actually FIRE: a coherent layer is built
@@ -1236,8 +1459,9 @@ mod tests {
             .agents
             .get_mut(&agent_id())
             .expect("agent card")
-            .claude
+            .layer
             .as_mut()
+            .and_then(crate::model::AgentLayer::claude_mut)
             .expect("claude layer")
     }
 

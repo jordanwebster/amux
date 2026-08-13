@@ -158,6 +158,9 @@ impl From<&str> for PeerIdentifier {
 #[derive(Clone, Debug)]
 pub struct SendInputRequest {
     pub agent: AgentIdentifier,
+    /// Caller-supplied correlation id, returned verbatim in the structured
+    /// stream's `amux.input_result` row.
+    pub input_id: Vec<u8>,
     pub io_protocol: String,
     pub payload: bytes::Bytes,
 }

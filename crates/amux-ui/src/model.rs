@@ -13,7 +13,7 @@ use amux::{Agent, AgentId, HostEntry, HostId};
 use chrono::{DateTime, Utc};
 use serde::{Deserialize, Serialize};
 
-use crate::claude::ClaudeLayer;
+use crate::claude::{ClaudeLayer, ClaudeViolation};
 use crate::msg::{Command, DisconnectReason, OpId, OpOutcome, StreamCloseReason};
 
 /// How many finished ops the Model retains (retention is explicitly bounded;
@@ -68,6 +68,90 @@ pub enum Connection {
     },
 }
 
+/// Typed per-agent state. Exhaustive dispatch is deliberate: a new agent
+/// adds an enum arm and keeps its native vocabulary intact.
+#[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
+#[serde(tag = "layer", content = "state", rename_all = "snake_case")]
+pub enum AgentLayer {
+    Claude(ClaudeLayer),
+}
+
+impl AgentLayer {
+    /// Select a layer only from protocols the agent advertised.
+    pub(crate) fn from_protocols(protocols: &[String]) -> Option<Self> {
+        protocols
+            .iter()
+            .any(|protocol| protocol == crate::claude::PROTOCOL)
+            .then(|| Self::Claude(ClaudeLayer::default()))
+    }
+
+    pub(crate) fn protocol(&self) -> &'static str {
+        match self {
+            Self::Claude(_) => crate::claude::PROTOCOL,
+        }
+    }
+
+    pub fn claude(&self) -> Option<&ClaudeLayer> {
+        match self {
+            Self::Claude(layer) => Some(layer),
+        }
+    }
+
+    pub(crate) fn claude_mut(&mut self) -> Option<&mut ClaudeLayer> {
+        match self {
+            Self::Claude(layer) => Some(layer),
+        }
+    }
+
+    pub(crate) fn begin_window(&mut self, truncated: bool) {
+        match self {
+            Self::Claude(layer) => layer.begin_window(truncated),
+        }
+    }
+
+    pub(crate) fn observe(&mut self, seq: u64, at: DateTime<Utc>, payload: &serde_json::Value) {
+        match self {
+            Self::Claude(layer) => layer.observe(seq, at, payload),
+        }
+    }
+
+    pub(crate) fn observe_replay_complete(&mut self) {
+        match self {
+            Self::Claude(layer) => layer.observe_replay_complete(),
+        }
+    }
+
+    pub(crate) fn observe_exit(&mut self) {
+        match self {
+            Self::Claude(layer) => layer.observe_exit(),
+        }
+    }
+
+    pub(crate) fn invalidate(&mut self) {
+        match self {
+            Self::Claude(layer) => layer.invalidate(),
+        }
+    }
+
+    pub(crate) fn attention(&self) -> Attention {
+        match self {
+            Self::Claude(layer) => layer.attention(),
+        }
+    }
+
+    pub(crate) fn working_is_stale(&self, now: Option<DateTime<Utc>>) -> bool {
+        match self {
+            Self::Claude(layer) => layer.working_is_stale(now),
+        }
+    }
+
+    pub(crate) fn check_invariants(&self, agent: AgentId, out: &mut Vec<Violation>) {
+        match self {
+            Self::Claude(layer) => layer.check_invariants(agent, out),
+        }
+    }
+}
+
 /// One agent in the fleet: wire facts plus UI-layer derived state.
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
 pub struct AgentCard {
@@ -81,12 +165,9 @@ pub struct AgentCard {
     /// the creation time.
     pub last_activity: DateTime<Utc>,
     pub phase: AgentPhase,
-    /// The typed Claude chat layer (`docs/CHAT.md` §The feed): feed facts
-    /// folded from the agent's native structured stream, and the ONE
-    /// interpretation `attention` derives from (E2). `None` until the
-    /// stream produces evidence; agents without the protocol never grow
-    /// one and honestly stay `Unknown`.
-    pub(crate) claude: Option<ClaudeLayer>,
+    /// Typed native layer state. `None` until the structured stream
+    /// produces evidence; unsupported agents honestly stay `Unknown`.
+    pub(crate) layer: Option<AgentLayer>,
     /// Epoch of the last upsert; entities from older epochs are pruned when
     /// a reconnect snapshot completes.
     pub(crate) epoch: u64,
@@ -96,7 +177,7 @@ impl AgentCard {
     /// The Claude chat layer's feed facts, when the agent's structured
     /// stream has produced any.
     pub fn claude(&self) -> Option<&ClaudeLayer> {
-        self.claude.as_ref()
+        self.layer.as_ref().and_then(AgentLayer::claude)
     }
 
     /// Display name fallback: user-assigned name, then provider label, then
@@ -219,42 +300,6 @@ pub enum StreamPhase {
     Closed {
         reason: StreamCloseReason,
     },
-}
-
-/// The prompt-send gate (D2): send is gated on phase; the draft is always
-/// editable (ViewState) and a refusal states the gate plainly.
-#[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
-#[serde(rename_all = "snake_case")]
-pub enum SendGate {
-    Ready,
-    /// No card/layer/stream to send through.
-    Unavailable,
-    /// The agent process exited.
-    Exited,
-    Replaying,
-    Working,
-    /// An ask panel owns the keystroke channel (C1).
-    NeedsYou,
-    Unknown,
-    /// An optimistic prompt echo is still awaiting its transcript row.
-    SendInFlight,
-}
-
-impl SendGate {
-    /// The gate stated plainly (D2's footer wording); `None` when sending
-    /// is allowed.
-    pub fn refusal(&self) -> Option<&'static str> {
-        match self {
-            SendGate::Ready => None,
-            SendGate::Unavailable => Some("chat input unavailable for this agent"),
-            SendGate::Exited => Some("agent exited"),
-            SendGate::Replaying => Some("send gated while replaying"),
-            SendGate::Working => Some("send gated while working"),
-            SendGate::NeedsYou => Some("send gated — answer the pending ask"),
-            SendGate::Unknown => Some("send gated — session state unknown"),
-            SendGate::SendInFlight => Some("send gated — a prompt is in flight"),
-        }
-    }
 }
 
 /// One row of the ranked fleet.
@@ -384,84 +429,13 @@ impl Model {
         self.streams.get(&id)
     }
 
+    pub fn layer(&self, id: AgentId) -> Option<&AgentLayer> {
+        self.agents.get(&id).and_then(|card| card.layer.as_ref())
+    }
+
     /// The Claude chat layer for an agent (the chat view's read surface).
     pub fn claude(&self, id: AgentId) -> Option<&ClaudeLayer> {
         self.agents.get(&id).and_then(AgentCard::claude)
-    }
-
-    /// The derived chat phase (`docs/CHAT.md` E1), computed here once for
-    /// every renderer: kernel subscription catch-up gates to Replaying, a
-    /// dead transport degrades to Unknown, an exited agent keeps its
-    /// layer's last honest state (the card's `phase` carries the exit
-    /// itself), and the layer derives the rest — with `now` (entering via
-    /// Ticks) capping the inferred states.
-    pub fn claude_phase(&self, id: AgentId) -> crate::claude::ChatPhase {
-        use crate::claude::ChatPhase;
-        let Some(layer) = self.claude(id) else {
-            return ChatPhase::Unknown;
-        };
-        match self.streams.get(&id).map(|stream| &stream.phase) {
-            Some(StreamPhase::Opening | StreamPhase::Replaying) => ChatPhase::Replaying,
-            Some(StreamPhase::Live)
-            | Some(StreamPhase::Closed {
-                reason: StreamCloseReason::AgentExited { .. } | StreamCloseReason::AgentDeleted,
-            }) => layer.phase(self.now),
-            _ => ChatPhase::Unknown,
-        }
-    }
-
-    /// The prompt-send gate (D2), derived here once: the reducer enforces
-    /// it on dispatch and the composer footer states it — same decision,
-    /// one derivation. The draft itself is renderer ViewState and is
-    /// never touched by a gate.
-    pub fn claude_send_gate(&self, id: AgentId) -> SendGate {
-        use crate::claude::ChatPhase;
-        let Some(card) = self.agents.get(&id) else {
-            return SendGate::Unavailable;
-        };
-        if matches!(card.phase, AgentPhase::Exited { .. }) {
-            return SendGate::Exited;
-        }
-        let Some(layer) = card.claude() else {
-            return SendGate::Unavailable;
-        };
-        if !layer.pending_echoes().is_empty() {
-            // One optimistic echo in flight at a time: reconciliation is
-            // content-keyed, and claude queues raced sends anyway.
-            return SendGate::SendInFlight;
-        }
-        match self.claude_phase(id) {
-            // Errored allows sending: recovery may need a prompt, and the
-            // agent's own composer accepts one.
-            ChatPhase::Idle { .. } | ChatPhase::Errored => SendGate::Ready,
-            ChatPhase::Replaying => SendGate::Replaying,
-            ChatPhase::Working => SendGate::Working,
-            ChatPhase::NeedsYou { .. } => SendGate::NeedsYou,
-            ChatPhase::Unknown => SendGate::Unknown,
-        }
-    }
-
-    /// The permission-mode cycle gate (D4): allowed whenever the injected
-    /// Shift+Tab would reach claude's composer. While an ask panel is up
-    /// the same byte navigates the form instead — refused; degraded
-    /// windows refuse honestly.
-    pub fn claude_mode_cycle_gate(&self, id: AgentId) -> Option<&'static str> {
-        use crate::claude::ChatPhase;
-        let Some(card) = self.agents.get(&id) else {
-            return Some("chat input unavailable for this agent");
-        };
-        if matches!(card.phase, AgentPhase::Exited { .. }) {
-            return Some("agent exited");
-        }
-        if card.claude().is_none() {
-            return Some("chat input unavailable for this agent");
-        }
-        match self.claude_phase(id) {
-            ChatPhase::Idle { .. } | ChatPhase::Working | ChatPhase::Errored => None,
-            ChatPhase::Replaying => Some("mode cycle gated while replaying"),
-            ChatPhase::NeedsYou { .. } => Some("mode cycle gated while an ask is pending"),
-            ChatPhase::Unknown => Some("mode cycle gated — session state unknown"),
-        }
     }
 
     pub fn pending_ops(&self) -> impl Iterator<Item = &PendingOp> {
@@ -503,7 +477,7 @@ impl Model {
         }
         if card.attention == Attention::Working
             && card
-                .claude
+                .layer
                 .as_ref()
                 .is_some_and(|layer| layer.working_is_stale(self.now))
         {
@@ -607,37 +581,8 @@ pub enum Violation {
         card: Attention,
         derived: Attention,
     },
-    /// A Claude-layer store exceeded its explicit retention bound.
-    ClaudeRetentionOverflow {
-        agent: AgentId,
-        store: &'static str,
-        len: usize,
-        cap: usize,
-    },
-    /// The Claude feed's id arithmetic broke: ids are assigned sequentially
-    /// and evicted only from the front, so evicted + retained must equal
-    /// the next id and the retained ids must be the contiguous tail.
-    ClaudeFeedOrder { agent: AgentId },
-    /// A Claude-layer index references an entry id the feed never assigned.
-    ClaudeIndexAhead {
-        agent: AgentId,
-        index: &'static str,
-        entry: u64,
-        next: u64,
-    },
-    /// The row-uuid dedupe queue and its lookup set disagree.
-    ClaudeDedupeIncoherent {
-        agent: AgentId,
-        rows: usize,
-        set: usize,
-    },
-    /// The ask queue's id arithmetic broke: ids are minted monotonically
-    /// and the queue appends at the back, so retained ids must be strictly
-    /// increasing and below the next id.
-    ClaudeAskOrder { agent: AgentId },
-    /// Two optimistic prompt echoes share an op id — one dispatch recorded
-    /// twice.
-    ClaudeEchoDuplicate { agent: AgentId },
+    /// A typed layer's own structural invariant failed.
+    Claude(ClaudeViolation),
 }
 
 impl Violation {
@@ -652,12 +597,7 @@ impl Violation {
             Violation::HostEpochStale { .. } => "host-epoch-stale",
             Violation::FinishedOpsOverflow { .. } => "finished-ops-overflow",
             Violation::AttentionMismatch { .. } => "attention-mismatch",
-            Violation::ClaudeRetentionOverflow { .. } => "claude-retention-overflow",
-            Violation::ClaudeFeedOrder { .. } => "claude-feed-order",
-            Violation::ClaudeIndexAhead { .. } => "claude-index-ahead",
-            Violation::ClaudeDedupeIncoherent { .. } => "claude-dedupe-incoherent",
-            Violation::ClaudeAskOrder { .. } => "claude-ask-order",
-            Violation::ClaudeEchoDuplicate { .. } => "claude-echo-duplicate",
+            Violation::Claude(violation) => violation.kind(),
         }
     }
 }
@@ -715,37 +655,7 @@ impl std::fmt::Display for Violation {
                 f,
                 "agent {agent} attention {card:?} disagrees with its layer's {derived:?}"
             ),
-            Violation::ClaudeRetentionOverflow {
-                agent,
-                store,
-                len,
-                cap,
-            } => write!(
-                f,
-                "agent {agent} claude {store} holds {len} entries over the bound of {cap}"
-            ),
-            Violation::ClaudeFeedOrder { agent } => {
-                write!(f, "agent {agent} claude feed id arithmetic is incoherent")
-            }
-            Violation::ClaudeIndexAhead {
-                agent,
-                index,
-                entry,
-                next,
-            } => write!(
-                f,
-                "agent {agent} claude {index} index references entry {entry} past next id {next}"
-            ),
-            Violation::ClaudeDedupeIncoherent { agent, rows, set } => write!(
-                f,
-                "agent {agent} claude dedupe queue ({rows}) and set ({set}) disagree"
-            ),
-            Violation::ClaudeAskOrder { agent } => {
-                write!(f, "agent {agent} claude ask id arithmetic is incoherent")
-            }
-            Violation::ClaudeEchoDuplicate { agent } => {
-                write!(f, "agent {agent} claude prompt echoes share an op id")
-            }
+            Violation::Claude(violation) => violation.fmt(f),
         }
     }
 }
@@ -786,7 +696,7 @@ impl Model {
                     model_epoch: self.epoch,
                 });
             }
-            if let Some(layer) = &card.claude {
+            if let Some(layer) = &card.layer {
                 if card.attention != layer.attention() {
                     violations.push(Violation::AttentionMismatch {
                         agent: *id,
@@ -830,6 +740,7 @@ impl Model {
 pub fn agent_type_label(agent_type: &amux::AgentType) -> &'static str {
     match agent_type {
         amux::AgentType::Claude => "claude",
+        amux::AgentType::Codex { .. } => "codex",
         #[allow(unreachable_patterns)]
         _ => "test-agent",
     }
@@ -898,7 +809,7 @@ mod tests {
             agent_type: "claude".to_string(),
             io_protocols: vec![
                 "terminal_v1".to_string(),
-                "claude_pty_transcript_v1".to_string(),
+                crate::claude::PROTOCOL.to_string(),
             ],
             readonly: false,
             args: Vec::new(),
@@ -932,7 +843,7 @@ mod tests {
             "fixture must start coherent: {violations:?}"
         );
         assert!(
-            model.agents[&agent_id()].claude.is_some(),
+            model.agents[&agent_id()].layer.is_some(),
             "fixture must carry a claude layer for the attention class"
         );
         model

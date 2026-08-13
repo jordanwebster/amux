@@ -26,7 +26,7 @@ use tokio::task::JoinHandle;
 use uuid::Uuid;
 
 use crate::claude::encoding::KeyStep;
-use crate::effect::{DumpReason, Effect};
+use crate::effect::{DumpReason, Effect, InputPayload};
 use crate::model::Model;
 use crate::msg::{
     Command, DisconnectReason, Msg, OpError, OpId, OpOutcome, ServerMsg, StreamCloseReason,
@@ -305,18 +305,14 @@ impl Runtime {
             Effect::SendInput {
                 op,
                 agent,
-                expected_seq,
-                program,
-                retry_stale,
+                input_id,
+                payload,
             } => {
                 let client = self.client.lock().expect("client mutex poisoned").clone();
                 let tx = self.msg_tx.clone();
                 tokio::spawn(async move {
                     let outcome = match client {
-                        Some(client) => {
-                            execute_send_input(&client, agent, expected_seq, program, retry_stale)
-                                .await
-                        }
+                        Some(client) => execute_send_input(&client, agent, input_id, payload).await,
                         None => OpOutcome::Error {
                             error: OpError {
                                 message: NOT_CONNECTED_ERROR.to_string(),
@@ -327,13 +323,17 @@ impl Runtime {
                     let _ = tx.send(Msg::OpResult { op, outcome }).await;
                 });
             }
-            Effect::OpenStream { agent, tail } => {
+            Effect::OpenStream {
+                agent,
+                protocol,
+                tail,
+            } => {
                 let client = self.client.lock().expect("client mutex poisoned").clone();
                 let tx = self.msg_tx.clone();
-                if let Some(stale) = self
-                    .streams
-                    .insert(agent, tokio::spawn(stream_task(client, agent, tail, tx)))
-                {
+                if let Some(stale) = self.streams.insert(
+                    agent,
+                    tokio::spawn(stream_task(client, agent, protocol, tail, tx)),
+                ) {
                     stale.abort();
                 }
             }
@@ -436,10 +436,7 @@ async fn execute_rpc(client: &Client, command: Command) -> OpOutcome {
         },
         // Input commands never ride Effect::Rpc — the reducer emits
         // Effect::SendInput for them (encoded program + seq guard).
-        Command::SendPrompt { .. }
-        | Command::AnswerAsk { .. }
-        | Command::Interrupt { .. }
-        | Command::CyclePermissionMode { .. } => OpOutcome::Error {
+        Command::Claude(_) => OpOutcome::Error {
             error: OpError {
                 message: "input command routed to the RPC executor".to_string(),
                 auth_required: false,
@@ -463,6 +460,24 @@ const STALE_INPUT_ERROR: &str = "input raced the session — it moved on before 
 async fn execute_send_input(
     client: &Client,
     agent: AgentId,
+    input_id: Vec<u8>,
+    payload: InputPayload,
+) -> OpOutcome {
+    match payload {
+        InputPayload::Claude {
+            expected_seq,
+            program,
+            retry_stale,
+        } => {
+            execute_claude_input(client, agent, input_id, expected_seq, program, retry_stale).await
+        }
+    }
+}
+
+async fn execute_claude_input(
+    client: &Client,
+    agent: AgentId,
+    input_id: Vec<u8>,
     expected_seq: u64,
     program: Vec<KeyStep>,
     retry_stale: bool,
@@ -487,7 +502,8 @@ async fn execute_send_input(
         match client
             .send_input(SendInputRequest {
                 agent: AgentIdentifier::Id(agent),
-                io_protocol: claude_io::PTY_TRANSCRIPT_V1.to_string(),
+                input_id: input_id.clone(),
+                io_protocol: crate::claude::PROTOCOL.to_string(),
                 payload: payload.into(),
             })
             .await
@@ -657,8 +673,14 @@ async fn send_msg(tx: &mpsc::Sender<Msg>, msg: Msg) -> Result<(), ()> {
 /// Subscribe an agent's structured stream and forward coalesced batches.
 /// Always terminates with a `Closed` Msg (unless the Runtime is gone), so
 /// the Model never holds a stream open that no task backs.
-async fn stream_task(client: Option<Client>, agent: AgentId, tail: u64, tx: mpsc::Sender<Msg>) {
-    if let Some(reason) = pump_structured_stream(client, agent, tail, &tx).await {
+async fn stream_task(
+    client: Option<Client>,
+    agent: AgentId,
+    protocol: String,
+    tail: u64,
+    tx: mpsc::Sender<Msg>,
+) {
+    if let Some(reason) = pump_structured_stream(client, agent, &protocol, tail, &tx).await {
         let _ = send_msg(
             &tx,
             Msg::Stream {
@@ -678,6 +700,7 @@ async fn stream_task(client: Option<Client>, agent: AgentId, tail: u64, tx: mpsc
 async fn pump_structured_stream(
     client: Option<Client>,
     agent: AgentId,
+    protocol: &str,
     tail: u64,
     tx: &mpsc::Sender<Msg>,
 ) -> Option<StreamCloseReason> {
@@ -686,14 +709,25 @@ async fn pump_structured_stream(
             message: NOT_CONNECTED_ERROR.to_string(),
         });
     };
-    let args = claude_io::encode_pty_transcript_v1_args(claude_io::ClaudePtyTranscriptV1Args {
-        terminal_size: None,
-        replay_query: Some(claude_io::ClaudePtyTranscriptV1ReplayQuery::Tail { count: tail }),
-    });
+    let args = match protocol {
+        crate::claude::PROTOCOL => {
+            claude_io::encode_pty_transcript_v1_args(claude_io::ClaudePtyTranscriptV1Args {
+                terminal_size: None,
+                replay_query: Some(claude_io::ClaudePtyTranscriptV1ReplayQuery::Tail {
+                    count: tail,
+                }),
+            })
+        }
+        protocol => {
+            return Some(StreamCloseReason::InternalError {
+                detail: format!("unsupported structured protocol `{protocol}`"),
+            });
+        }
+    };
     let mut session = match client
         .subscribe_session(SubscribeSessionRequest {
             agent: AgentIdentifier::Id(agent),
-            io_protocol: claude_io::PTY_TRANSCRIPT_V1.to_string(),
+            io_protocol: protocol.to_string(),
             args: args.map(Into::into),
         })
         .await
@@ -720,7 +754,7 @@ async fn pump_structured_stream(
             }
             Some(Ok(SubscribeSessionEvent::Opened)) => {}
             Some(Ok(SubscribeSessionEvent::Output { payload })) => {
-                match decode_structured_entry(&payload) {
+                match decode_structured_entry(protocol, &payload) {
                     Ok(entry) => batch.push(entry),
                     Err(reason) => {
                         flush_stream_batch(tx, agent, &mut sent_opened, &mut batch).await?;
@@ -793,11 +827,20 @@ async fn flush_stream_batch(
     Some(())
 }
 
-fn decode_structured_entry(payload: &[u8]) -> Result<StreamEntry, StreamCloseReason> {
-    let output = claude_io::decode_pty_transcript_v1_output(payload).map_err(|error| {
-        StreamCloseReason::InternalError {
-            detail: error.to_string(),
+fn decode_structured_entry(
+    protocol: &str,
+    payload: &[u8],
+) -> Result<StreamEntry, StreamCloseReason> {
+    let output = match protocol {
+        crate::claude::PROTOCOL => claude_io::decode_pty_transcript_v1_output(payload),
+        protocol => {
+            return Err(StreamCloseReason::InternalError {
+                detail: format!("unsupported structured protocol `{protocol}`"),
+            });
         }
+    }
+    .map_err(|error| StreamCloseReason::InternalError {
+        detail: error.to_string(),
     })?;
     let payload = serde_json::from_slice(&output.payload).map_err(|error| {
         StreamCloseReason::InternalError {

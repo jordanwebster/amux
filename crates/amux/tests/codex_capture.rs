@@ -255,6 +255,7 @@ async fn send(client: &amux::Client, agent_id: Uuid, input: CodexSdkV1Input) -> 
     client
         .send_input(SendInputRequest {
             agent: AgentIdentifier::Id(agent_id),
+            input_id: Uuid::new_v4().as_bytes().to_vec(),
             io_protocol: CODEX_SDK_V1.into(),
             payload: Bytes::from(encode_codex_sdk_v1_input(input)),
         })

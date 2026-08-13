@@ -183,7 +183,8 @@ async fn chrome_session(
                             }
                         }
                         Some(UiAction::Create { host }) => {
-                            let name = next_agent_name(runtime.model());
+                            let name =
+                                next_agent_name(runtime.model(), &config.default_agent_type);
                             runtime.dispatch(Command::CreateAgent {
                                 host,
                                 name,

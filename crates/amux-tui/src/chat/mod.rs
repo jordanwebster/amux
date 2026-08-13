@@ -136,13 +136,17 @@ impl ChatView {
     /// Command; the shell owns op identity).
     pub fn note_dispatched(&mut self, op: OpId, command: &Command) {
         match command {
-            Command::SendPrompt { agent, text } if *agent == self.agent => {
+            Command::Claude(amux_ui::ClaudeCommand::SendPrompt { agent, text })
+                if *agent == self.agent =>
+            {
                 self.pending_send = Some(PendingSend {
                     op,
                     text: text.clone(),
                 });
             }
-            Command::AnswerAsk { agent, ask, .. } if *agent == self.agent => {
+            Command::Claude(amux_ui::ClaudeCommand::AnswerAsk { agent, ask, .. })
+                if *agent == self.agent =>
+            {
                 self.pending_answer = Some(PendingAnswer { op, ask: *ask });
             }
             _ => {}
@@ -264,7 +268,10 @@ impl ChatView {
     /// The 1 Hz tick is needed only while something time-dependent is on
     /// screen (`docs/UI.md`): the working line's spinner and elapsed time.
     pub fn needs_tick(&self, model: &Model) -> bool {
-        matches!(model.claude_phase(self.agent), ChatPhase::Working)
+        matches!(
+            amux_ui::claude::phase(model, self.agent),
+            ChatPhase::Working
+        )
     }
 }
 

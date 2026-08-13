@@ -10,7 +10,7 @@
 
 use amux_ui::claude::AskState;
 use amux_ui::claude::encoding::{self, AskAnswer};
-use amux_ui::{Command, Model};
+use amux_ui::{ClaudeCommand, Command, Model};
 use chrono::{DateTime, Utc};
 use crossterm::event::{KeyCode, KeyEvent, KeyEventKind, KeyModifiers};
 
@@ -112,7 +112,9 @@ pub fn handle_chat_key(
         // send is gated. Never on Esc, never on Ctrl+C. The reducer
         // dispatches it ungated.
         KeyCode::Char('x') if ctrl => {
-            return Some(UiAction::Dispatch(Command::Interrupt { agent: chat.agent }));
+            return Some(UiAction::Dispatch(Command::Claude(
+                ClaudeCommand::Interrupt { agent: chat.agent },
+            )));
         }
         // The settled view-only Esc chain: never answers, never
         // interrupts.
@@ -215,10 +217,10 @@ fn composer_key(
         // renders in the footer from hook facts. Gated exactly where the
         // injected CSI Z would not reach claude's composer.
         KeyCode::BackTab => {
-            if model.claude_mode_cycle_gate(chat.agent).is_none() {
-                return Some(UiAction::Dispatch(Command::CyclePermissionMode {
-                    agent: chat.agent,
-                }));
+            if amux_ui::claude::mode_cycle_gate(model, chat.agent).is_none() {
+                return Some(UiAction::Dispatch(Command::Claude(
+                    ClaudeCommand::CyclePermissionMode { agent: chat.agent },
+                )));
             }
         }
         // Tab is reserved for the future queueing door (D2) — a no-op
@@ -299,15 +301,20 @@ fn send(chat: &mut ChatView, model: &Model) -> Option<UiAction> {
     if chat.composer.is_empty() {
         return None;
     }
-    if model.claude_send_gate(chat.agent).refusal().is_some() {
+    if amux_ui::claude::send_gate(model, chat.agent)
+        .refusal()
+        .is_some()
+    {
         return None;
     }
     let text = chat.composer.text();
     chat.composer.clear_for_send();
-    Some(UiAction::Dispatch(Command::SendPrompt {
-        agent: chat.agent,
-        text,
-    }))
+    Some(UiAction::Dispatch(Command::Claude(
+        ClaudeCommand::SendPrompt {
+            agent: chat.agent,
+            text,
+        },
+    )))
 }
 
 /// The deterministic view-only Esc chain (`docs/CHAT.md` §State
@@ -385,11 +392,11 @@ fn panel_key(
 }
 
 fn dispatch_answer(chat: &ChatView, ask: u64, answer: AskAnswer) -> UiAction {
-    UiAction::Dispatch(Command::AnswerAsk {
+    UiAction::Dispatch(Command::Claude(ClaudeCommand::AnswerAsk {
         agent: chat.agent,
         ask,
         answer,
-    })
+    }))
 }
 
 /// Keys while the fullscreen reader is open: the writable ask's action
@@ -774,10 +781,12 @@ mod tests {
         let action = handle_chat_key(&mut chat, &model, press(KeyCode::Enter), VIEWPORT, t(0));
         assert_eq!(
             action,
-            Some(UiAction::Dispatch(Command::SendPrompt {
-                agent: agent_id(),
-                text: "add retry".to_string(),
-            }))
+            Some(UiAction::Dispatch(Command::Claude(
+                ClaudeCommand::SendPrompt {
+                    agent: agent_id(),
+                    text: "add retry".to_string(),
+                }
+            )))
         );
         assert!(chat.composer.is_empty(), "the draft moved into the send");
     }
@@ -808,7 +817,9 @@ mod tests {
             let action = handle_chat_key(&mut chat, &model, ctrl('x'), VIEWPORT, t(0));
             assert_eq!(
                 action,
-                Some(UiAction::Dispatch(Command::Interrupt { agent: agent_id() }))
+                Some(UiAction::Dispatch(Command::Claude(
+                    ClaudeCommand::Interrupt { agent: agent_id() },
+                )))
             );
             assert_eq!(chat.composer.text(), "precious draft");
         }
@@ -878,9 +889,9 @@ mod tests {
         );
         assert_eq!(
             action,
-            Some(UiAction::Dispatch(Command::CyclePermissionMode {
-                agent: agent_id()
-            }))
+            Some(UiAction::Dispatch(Command::Claude(
+                ClaudeCommand::CyclePermissionMode { agent: agent_id() },
+            )))
         );
 
         // A pending ask owns the keystroke channel: CSI Z would navigate
@@ -1292,7 +1303,11 @@ mod tests {
 
     fn answer_of(action: Option<UiAction>) -> amux_ui::claude::encoding::AskAnswer {
         match action {
-            Some(UiAction::Dispatch(Command::AnswerAsk { agent, ask, answer })) => {
+            Some(UiAction::Dispatch(Command::Claude(ClaudeCommand::AnswerAsk {
+                agent,
+                ask,
+                answer,
+            }))) => {
                 assert_eq!(agent, agent_id());
                 assert_eq!(ask, 0, "the head ask");
                 answer
@@ -1397,13 +1412,17 @@ mod tests {
         let mut chat = open_chat(&model);
         assert_eq!(
             handle_chat_key(&mut chat, &model, ctrl('x'), VIEWPORT, t(0)),
-            Some(UiAction::Dispatch(Command::Interrupt { agent: agent_id() }))
+            Some(UiAction::Dispatch(Command::Claude(
+                ClaudeCommand::Interrupt { agent: agent_id() },
+            )))
         );
         handle_chat_key(&mut chat, &model, press(KeyCode::Char('3')), VIEWPORT, t(0));
         handle_chat_key(&mut chat, &model, press(KeyCode::Enter), VIEWPORT, t(0));
         assert_eq!(
             handle_chat_key(&mut chat, &model, ctrl('x'), VIEWPORT, t(0)),
-            Some(UiAction::Dispatch(Command::Interrupt { agent: agent_id() })),
+            Some(UiAction::Dispatch(Command::Claude(
+                ClaudeCommand::Interrupt { agent: agent_id() },
+            ))),
             "interrupt works in every focus state (D3)"
         );
     }

@@ -779,10 +779,10 @@ fn chat_echo_sending() {
     let mut msgs = idle_msgs();
     msgs.push(Msg::Command {
         op: op(1),
-        command: Command::SendPrompt {
+        command: Command::Claude(amux_ui::ClaudeCommand::SendPrompt {
             agent: agent_id(),
             text: "and please add jitter docs".to_string(),
-        },
+        }),
     });
     let rendered = render_frame(&fold(msgs), &chat_view(), 80, 22, IDLE_NOW);
     assert_golden("chat_echo_sending", &rendered);
@@ -793,10 +793,10 @@ fn chat_echo_sending() {
 #[test]
 fn chat_send_failure() {
     let mut msgs = idle_msgs();
-    let command = Command::SendPrompt {
+    let command = Command::Claude(amux_ui::ClaudeCommand::SendPrompt {
         agent: agent_id(),
         text: "and please add jitter docs".to_string(),
-    };
+    });
     msgs.push(Msg::Command {
         op: op(1),
         command: command.clone(),
@@ -1309,11 +1309,11 @@ fn chat_ask_pending() {
     let mut msgs = edit_ask_msgs();
     msgs.push(Msg::Command {
         op: op(2),
-        command: Command::AnswerAsk {
+        command: Command::Claude(amux_ui::ClaudeCommand::AnswerAsk {
             agent: agent_id(),
             ask: 0,
             answer: AskAnswer::Permission(PermissionAnswer::AllowOnce),
-        },
+        }),
     });
     let model = fold(msgs);
     let view = reconciled_view(&model);
@@ -1328,11 +1328,11 @@ fn chat_ask_send_failed() {
     let mut msgs = edit_ask_msgs();
     msgs.push(Msg::Command {
         op: op(2),
-        command: Command::AnswerAsk {
+        command: Command::Claude(amux_ui::ClaudeCommand::AnswerAsk {
             agent: agent_id(),
             ask: 0,
             answer: AskAnswer::Permission(PermissionAnswer::AllowOnce),
-        },
+        }),
     });
     msgs.push(Msg::OpResult {
         op: op(2),

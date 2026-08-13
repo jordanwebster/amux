@@ -2088,11 +2088,11 @@ async fn stale_seq(
         bail!("daemon seq did not advance: captured={captured_seq} current={advanced_seq}");
     }
 
-    let first = runtime.dispatch(Command::AnswerAsk {
+    let first = runtime.dispatch(Command::Claude(amux_ui::ClaudeCommand::AnswerAsk {
         agent,
         ask,
         answer: AskAnswer::Permission(PermissionAnswer::AllowOnce),
-    });
+    }));
     wait_runtime(&mut runtime, ASK_TIMEOUT, "stale answer outcome", |model| {
         model.finished_op(first).is_some()
     })
@@ -2139,11 +2139,11 @@ async fn stale_seq(
 
     // The retry is a fresh typed command using the folded notification's
     // cursor. It must be accepted and resolve the real permission menu.
-    let retry = runtime.dispatch(Command::AnswerAsk {
+    let retry = runtime.dispatch(Command::Claude(amux_ui::ClaudeCommand::AnswerAsk {
         agent,
         ask,
         answer: AskAnswer::Permission(PermissionAnswer::AllowOnce),
-    });
+    }));
     wait_runtime(&mut runtime, ASK_TIMEOUT, "fresh retry outcome", |model| {
         model.finished_op(retry).is_some()
     })
@@ -2377,6 +2377,7 @@ async fn external_readonly(daemon: &ScratchDaemon, scratch: &Scratch) -> Result<
         .client
         .send_input(SendInputRequest {
             agent: AgentIdentifier::Id(session_id),
+            input_id: Uuid::new_v4().as_bytes().to_vec(),
             io_protocol: PTY_TRANSCRIPT_V1.to_string(),
             payload: payload.into(),
         })

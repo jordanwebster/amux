@@ -867,6 +867,7 @@ impl CaptureSession {
                 ClaudePtyTranscriptV1Action::DelayMs(ms) => format!("delay {ms}ms"),
             })
             .collect();
+        let input_id = Uuid::new_v4().as_bytes().to_vec();
         for attempt in 0..5 {
             let expected_seq = self
                 .rows
@@ -883,6 +884,7 @@ impl CaptureSession {
                 .client
                 .send_input(SendInputRequest {
                     agent: self.agent_name.as_str().into(),
+                    input_id: input_id.clone(),
                     io_protocol: PTY_TRANSCRIPT_V1.to_string(),
                     payload: payload.into(),
                 })
@@ -914,6 +916,7 @@ impl CaptureSession {
         self.client
             .send_input(SendInputRequest {
                 agent: self.agent_name.as_str().into(),
+                input_id: Uuid::new_v4().as_bytes().to_vec(),
                 io_protocol: TERMINAL_V1.to_string(),
                 payload: payload.to_vec().into(),
             })

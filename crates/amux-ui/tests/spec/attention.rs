@@ -191,7 +191,7 @@ fn an_api_error_degrades_attention_to_unknown() {
     ]));
     assert_eq!(attention_of(&model, "fix-auth-bug"), Attention::Unknown);
     assert_eq!(
-        model.claude_phase(agent_id("fix-auth-bug")),
+        amux_ui::claude::phase(&model, agent_id("fix-auth-bug")),
         ChatPhase::Errored,
         "the chat states the error the badge cannot"
     );
@@ -254,7 +254,7 @@ fn fleet_attention_and_chat_phase_share_one_interpretation() {
                 Attention::NeedsYou { why: Why::Question } => Some(AskWhy::Question),
                 _ => None,
             };
-            let phase_needs = match model.claude_phase(agent_id("fix-auth-bug")) {
+            let phase_needs = match amux_ui::claude::phase(&model, agent_id("fix-auth-bug")) {
                 ChatPhase::NeedsYou { why, .. } => Some(why),
                 _ => None,
             };
@@ -288,7 +288,7 @@ fn subscription_policy_covers_local_agents_and_attached_remotes() {
     let opens: Vec<_> = effects
         .iter()
         .filter_map(|effect| match effect {
-            Effect::OpenStream { agent, tail } => Some((*agent, *tail)),
+            Effect::OpenStream { agent, tail, .. } => Some((*agent, *tail)),
             _ => None,
         })
         .collect();

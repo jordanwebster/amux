@@ -97,32 +97,9 @@ pub enum Command {
     DeleteAgent {
         agent: AgentId,
     },
-    /// Submit a prompt to a Claude chat (B1/D2). Gated on phase by the
-    /// reducer (`Model::claude_send_gate`); success renders the optimistic
-    /// echo until the transcript row reconciles it.
-    SendPrompt {
-        agent: AgentId,
-        text: String,
-    },
-    /// Answer the addressed ask (C5): the reducer encodes the typed answer
-    /// through the C6 module and flips the ask to answered-optimistic.
-    /// Only the HEAD of the queue may be answered — claude's remote menu
-    /// displays nothing else, so a non-head target refuses without bytes.
-    AnswerAsk {
-        agent: AgentId,
-        ask: u64,
-        answer: crate::claude::encoding::AskAnswer,
-    },
-    /// Interrupt the session (D3): allowed in every state; the transcript
-    /// records the interruption entry (B8).
-    Interrupt {
-        agent: AgentId,
-    },
-    /// Cycle the permission mode (D4, Shift+Tab). The mode fact returns
-    /// via hook payloads — the cycle itself emits no transcript row.
-    CyclePermissionMode {
-        agent: AgentId,
-    },
+    /// Claude-native writes. Other agents add sibling typed command arms;
+    /// their asymmetry is preserved rather than normalized.
+    Claude(crate::claude::ClaudeCommand),
 }
 
 /// Connection and inventory events. Entity events are idempotent upserts —

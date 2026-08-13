@@ -94,24 +94,24 @@ fn every_msg_variant_round_trips_through_serde() {
         command(op(3), delete_cmd("claude-4")),
         command(
             op(6),
-            amux_ui::Command::SendPrompt {
+            amux_ui::Command::Claude(amux_ui::ClaudeCommand::SendPrompt {
                 agent: agent_id("fix-auth-bug"),
                 text: "fix the sync bug\nthen test".to_string(),
-            },
+            }),
         ),
         command(
             op(7),
-            amux_ui::Command::AnswerAsk {
+            amux_ui::Command::Claude(amux_ui::ClaudeCommand::AnswerAsk {
                 agent: agent_id("fix-auth-bug"),
                 ask: 0,
                 answer: AskAnswer::Permission(PermissionAnswer::Deny {
                     feedback: Some("not that file".to_string()),
                 }),
-            },
+            }),
         ),
         command(
             op(8),
-            amux_ui::Command::AnswerAsk {
+            amux_ui::Command::Claude(amux_ui::ClaudeCommand::AnswerAsk {
                 agent: agent_id("fix-auth-bug"),
                 ask: 1,
                 answer: AskAnswer::Question {
@@ -120,29 +120,29 @@ fn every_msg_variant_round_trips_through_serde() {
                         other: Some("a torque wrench".to_string()),
                     }],
                 },
-            },
+            }),
         ),
         command(
             op(9),
-            amux_ui::Command::AnswerAsk {
+            amux_ui::Command::Claude(amux_ui::ClaudeCommand::AnswerAsk {
                 agent: agent_id("fix-auth-bug"),
                 ask: 2,
                 answer: AskAnswer::Plan(PlanAnswer::RequestChanges {
                     feedback: "document VALUE too".to_string(),
                 }),
-            },
+            }),
         ),
         command(
             op(10),
-            amux_ui::Command::Interrupt {
+            amux_ui::Command::Claude(amux_ui::ClaudeCommand::Interrupt {
                 agent: agent_id("fix-auth-bug"),
-            },
+            }),
         ),
         command(
             op(11),
-            amux_ui::Command::CyclePermissionMode {
+            amux_ui::Command::Claude(amux_ui::ClaudeCommand::CyclePermissionMode {
                 agent: agent_id("fix-auth-bug"),
-            },
+            }),
         ),
         op_result(op(6), OpOutcome::InputSent),
         connected("nova"),
