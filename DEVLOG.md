@@ -38,6 +38,8 @@ One paragraph describing what was done.
 
 ---
 
+2026-08-13 — P7 completion unified Codex phase/attention classification, closed-thread and read-only-answer gating, honest ask-overflow history loss, and a checked projection-agreement invariant; all required gates pass.
+
 2026-08-13 — P7 simplification pass: shared Codex work-entry/kind constructors, gate-sourced refusal text, and dropped the four dead pending-approval clears the row guard already owns; no behavior, spec count, or golden byte changed.
 
 2026-08-13 — P7 review round 2 made reconnect failure outrank pre-ready replay and aligned fleet attention with ready-bound Codex liveness; all required gates pass.

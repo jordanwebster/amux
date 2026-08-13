@@ -754,6 +754,14 @@ impl Model {
                     });
                 }
                 layer.check_invariants(*id, &mut violations);
+                if matches!(layer, AgentLayer::Codex(_)) {
+                    crate::codex::check_projection_invariant(
+                        self,
+                        *id,
+                        card.attention,
+                        &mut violations,
+                    );
+                }
             }
         }
 
@@ -981,6 +989,49 @@ mod tests {
                 .iter()
                 .any(|violation| matches!(violation, Violation::AttentionMismatch { .. })),
             "a cached attention that disagrees with its layer's derivation must be reported"
+        );
+    }
+
+    #[test]
+    fn detects_codex_projection_disagreement() {
+        let mut model = coherent_model();
+        let card = model.agents.get_mut(&agent_id()).unwrap();
+        card.agent.io_protocols = vec![
+            "terminal_v1".to_string(),
+            crate::codex::PROTOCOL.to_string(),
+        ];
+        card.layer = Some(AgentLayer::Codex(CodexLayer::default()));
+        for event in [
+            StreamMsg::Opened { truncated: false },
+            StreamMsg::Batch {
+                at: t0(),
+                entries: vec![crate::msg::StreamEntry {
+                    seq: 1,
+                    payload: serde_json::json!({"type":"amux.codex_ready"}),
+                }],
+            },
+            StreamMsg::ReplayComplete,
+        ] {
+            update(
+                &mut model,
+                Msg::Stream {
+                    agent: agent_id(),
+                    event,
+                },
+            );
+        }
+        assert!(model.check_invariants().is_empty(), "fixture is coherent");
+
+        // Corrupt only the kernel exit fact: layer attention remains its
+        // coherent Idle projection, but the write gate now refuses Exited.
+        model.agents.get_mut(&agent_id()).unwrap().phase =
+            AgentPhase::Exited { exit_code: Some(1) };
+        assert!(
+            model.check_invariants().iter().any(|violation| matches!(
+                violation,
+                Violation::Codex(CodexViolation::ProjectionDisagreement { .. })
+            )),
+            "an Idle attention beside an Exited gate must be reported"
         );
     }
 }

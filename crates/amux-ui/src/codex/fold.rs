@@ -127,6 +127,7 @@ fn fold_ready(layer: &mut CodexLayer, seq: u64) {
     layer.stale = false;
     layer.gap = false;
     layer.read_only = false;
+    layer.thread_closed = false;
     layer.accumulators = Accumulators::default();
     if repeated {
         push(layer, seq, FeedEntryKind::Boundary(BoundaryEntry::Ready));
@@ -926,7 +927,7 @@ fn fold_approval_required(layer: &mut CodexLayer, seq: u64, row: &Value) {
     });
     if layer.asks.len() > ASKS_RETAINED {
         layer.asks.pop_front();
-        layer.truncated_start = true;
+        layer.history_loss = true;
     }
     set_work_state(
         layer,
@@ -1377,4 +1378,57 @@ fn string(value: &Value, key: &str) -> Option<String> {
 
 fn str_or<'a>(value: &'a Value, key: &str, default: &'a str) -> &'a str {
     value.get(key).and_then(Value::as_str).unwrap_or(default)
+}
+
+#[cfg(test)]
+mod tests {
+    use serde_json::json;
+
+    use super::*;
+
+    #[test]
+    fn ask_ring_overflow_is_history_loss_not_a_truncated_replay_fact() {
+        let mut layer = CodexLayer {
+            ready_count: 1,
+            ..CodexLayer::default()
+        };
+        for request in 0..ASKS_RETAINED {
+            layer.asks.push_back(Ask {
+                seq: request as u64,
+                request_id: json!(request),
+                context: AskContext::Command {
+                    item_id: format!("item-{request}"),
+                    command: "true".to_string(),
+                    cwd: None,
+                    reason: None,
+                },
+                available_decisions: json!(["accept"]),
+                actions: vec![AskAction {
+                    wire: json!("accept"),
+                    decision: Some(CodexDecision::Accept),
+                }],
+            });
+        }
+        layer.pending_approval_context = Some(AskContext::Command {
+            item_id: "overflow-item".to_string(),
+            command: "true".to_string(),
+            cwd: None,
+            reason: None,
+        });
+
+        fold_approval_required(
+            &mut layer,
+            99,
+            &json!({
+                "type":"amux.codex_approval_required",
+                "request_id":"overflow",
+                "availableDecisions":["accept"]
+            }),
+        );
+
+        assert_eq!(layer.asks.len(), ASKS_RETAINED);
+        assert!(layer.history_loss);
+        assert!(!layer.truncated_start);
+        assert!(layer.live(), "overflow must not alter replay liveness");
+    }
 }

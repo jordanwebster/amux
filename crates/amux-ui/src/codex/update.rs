@@ -113,6 +113,9 @@ fn update_answer(
     request_id: Value,
     decision: CodexDecision,
 ) -> Vec<crate::Effect> {
+    if matches!(super::phase(model, agent), CodexPhase::ReadOnly) {
+        return refuse_gate(model, op, seq, command, SendGate::ReadOnly);
+    }
     let Some(layer) = model.codex(agent) else {
         return refuse_gate(model, op, seq, command, SendGate::Unavailable);
     };

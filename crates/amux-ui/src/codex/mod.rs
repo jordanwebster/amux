@@ -467,6 +467,7 @@ pub enum SendGate {
     Ready,
     Unavailable,
     Exited,
+    Closed,
     Replaying,
     ActiveTurn,
     NeedsYou,
@@ -481,6 +482,7 @@ impl SendGate {
             Self::Ready => None,
             Self::Unavailable => Some("Codex input unavailable for this agent"),
             Self::Exited => Some("agent exited"),
+            Self::Closed => Some("Codex thread is closed until it becomes ready again"),
             Self::Replaying => Some("send gated while replaying"),
             Self::ActiveTurn => Some("send gated — a Codex turn is active"),
             Self::NeedsYou => Some("send gated — resolve the blocking request"),
@@ -514,6 +516,12 @@ pub enum CodexViolation {
     DuplicateInput {
         agent: amux::AgentId,
     },
+    ProjectionDisagreement {
+        agent: amux::AgentId,
+        phase: CodexPhase,
+        attention: Attention,
+        send_gate: SendGate,
+    },
 }
 
 impl CodexViolation {
@@ -524,6 +532,7 @@ impl CodexViolation {
             Self::IndexAhead { .. } => "codex-index-ahead",
             Self::DuplicateAsk { .. } => "codex-duplicate-ask",
             Self::DuplicateInput { .. } => "codex-duplicate-input",
+            Self::ProjectionDisagreement { .. } => "codex-projection-disagreement",
         }
     }
 }
@@ -558,6 +567,16 @@ impl std::fmt::Display for CodexViolation {
             Self::DuplicateInput { agent } => {
                 write!(f, "agent {agent} codex inputs share an input id")
             }
+            Self::ProjectionDisagreement {
+                agent,
+                phase,
+                attention,
+                send_gate,
+            } => write!(
+                f,
+                "agent {agent} codex phase {phase:?}, attention {attention:?}, and send gate \
+                 {send_gate:?} disagree"
+            ),
         }
     }
 }
@@ -596,6 +615,69 @@ enum ActiveItemKind {
 struct ActiveItem {
     item_id: String,
     kind: ActiveItemKind,
+}
+
+/// One ordered interpretation of the layer's phase/attention facts. Public
+/// projections deliberately lose different details, so those details live
+/// here instead of being independently rediscovered by each projection.
+#[derive(Clone, Debug, PartialEq)]
+enum Situation {
+    Exited,
+    Closed,
+    Unknown,
+    ReadOnly,
+    Replaying,
+    AwaitingApproval { request_id: Value },
+    BlockedUnsupported { item_id: String },
+    Responding { item_id: String },
+    Executing { item_id: String },
+    Working,
+    Finished,
+    Idle,
+    InputInFlight { phase: CodexPhase },
+}
+
+impl Situation {
+    fn phase(&self) -> CodexPhase {
+        match self {
+            Self::Exited | Self::Closed | Self::Finished | Self::Idle => CodexPhase::Idle,
+            Self::Unknown => CodexPhase::Unknown,
+            Self::ReadOnly => CodexPhase::ReadOnly,
+            Self::Replaying => CodexPhase::Replaying,
+            Self::AwaitingApproval { request_id } => CodexPhase::AwaitingApproval {
+                request_id: request_id.clone(),
+            },
+            Self::BlockedUnsupported { item_id } => CodexPhase::BlockedUnsupported {
+                item_id: item_id.clone(),
+            },
+            Self::Responding { item_id } => CodexPhase::Responding {
+                item_id: item_id.clone(),
+            },
+            Self::Executing { item_id } => CodexPhase::Executing {
+                item_id: item_id.clone(),
+            },
+            Self::Working => CodexPhase::Thinking,
+            Self::InputInFlight { phase } => phase.clone(),
+        }
+    }
+
+    fn attention(&self) -> Attention {
+        match self {
+            Self::Exited | Self::Closed | Self::Unknown | Self::ReadOnly | Self::Replaying => {
+                Attention::Unknown
+            }
+            Self::AwaitingApproval { .. } => Attention::NeedsYou {
+                why: Why::Permission,
+            },
+            Self::BlockedUnsupported { .. } => Attention::NeedsYou { why: Why::Question },
+            Self::Responding { .. }
+            | Self::Executing { .. }
+            | Self::Working
+            | Self::InputInFlight { .. } => Attention::Working,
+            Self::Finished => Attention::NeedsYou { why: Why::Finished },
+            Self::Idle => Attention::Idle,
+        }
+    }
 }
 
 #[derive(Clone, Debug, Default, PartialEq, Serialize, Deserialize)]
@@ -706,82 +788,76 @@ impl CodexLayer {
         self.ready_count > 0 || self.truncated_start && self.replay_complete
     }
 
-    fn folded_phase(&self) -> CodexPhase {
-        if self.exited || self.thread_closed {
-            return CodexPhase::Idle;
+    fn situation(&self) -> Situation {
+        if self.exited {
+            return Situation::Exited;
+        }
+        if self.thread_closed {
+            return Situation::Closed;
         }
         if self.stale || self.gap {
-            return CodexPhase::Unknown;
+            return Situation::Unknown;
         }
         if self.read_only {
-            return CodexPhase::ReadOnly;
+            return Situation::ReadOnly;
         }
         if !self.live() {
-            return CodexPhase::Replaying;
+            return Situation::Replaying;
         }
-        if let Some(ask) = self.asks.front() {
-            return CodexPhase::AwaitingApproval {
+
+        let situation = if let Some(ask) = self.asks.front() {
+            Situation::AwaitingApproval {
                 request_id: ask.request_id.clone(),
-            };
-        }
-        if let Some(item_id) = self.accumulators.unsupported.front() {
-            return CodexPhase::BlockedUnsupported {
+            }
+        } else if let Some(item_id) = self.accumulators.unsupported.front() {
+            Situation::BlockedUnsupported {
                 item_id: item_id.clone(),
-            };
-        }
-        if self.turn.active_id.is_some() {
-            return match self.accumulators.active_items.back() {
+            }
+        } else if self.turn.active_id.is_some() {
+            match self.accumulators.active_items.back() {
                 Some(ActiveItem {
                     item_id,
                     kind: ActiveItemKind::Message,
-                }) => CodexPhase::Responding {
+                }) => Situation::Responding {
                     item_id: item_id.clone(),
                 },
                 Some(ActiveItem {
                     item_id,
                     kind: ActiveItemKind::Work,
-                }) => CodexPhase::Executing {
+                }) => Situation::Executing {
                     item_id: item_id.clone(),
                 },
-                _ => CodexPhase::Thinking,
-            };
-        }
-        if self.turn.status == ThreadStatus::Active {
-            CodexPhase::Thinking
+                _ => Situation::Working,
+            }
+        } else if self.turn.status == ThreadStatus::Active {
+            Situation::Working
         } else if self.truncated_start
             && self.turn.last.is_none()
             && self.turn.status == ThreadStatus::Unknown
         {
-            CodexPhase::Unknown
+            Situation::Unknown
         } else {
-            CodexPhase::Idle
+            match self.turn.last {
+                Some(LastTurn::Completed | LastTurn::Failed) => Situation::Finished,
+                Some(LastTurn::Interrupted) | None => Situation::Idle,
+            }
+        };
+
+        if self.inputs.is_empty() {
+            situation
+        } else {
+            Situation::InputInFlight {
+                phase: situation.phase(),
+            }
         }
     }
 
+    fn folded_phase(&self) -> CodexPhase {
+        self.situation().phase()
+    }
+
     pub fn attention(&self) -> Attention {
-        if self.exited || self.thread_closed {
-            return Attention::Idle;
-        }
-        if self.stale || self.gap || !self.live() {
-            return Attention::Unknown;
-        }
-        if !self.asks.is_empty() {
-            return Attention::NeedsYou {
-                why: Why::Permission,
-            };
-        }
-        if !self.accumulators.unsupported.is_empty() {
-            return Attention::NeedsYou { why: Why::Question };
-        }
-        if self.turn.active_id.is_some() || self.turn.status == ThreadStatus::Active {
-            return Attention::Working;
-        }
-        match self.turn.last {
-            Some(LastTurn::Completed | LastTurn::Failed) => {
-                Attention::NeedsYou { why: Why::Finished }
-            }
-            Some(LastTurn::Interrupted) | None => Attention::Idle,
-        }
+        self.situation().attention()
     }
 
     pub(crate) fn working_is_stale(&self, _now: Option<DateTime<Utc>>) -> bool {
@@ -895,10 +971,16 @@ pub fn send_gate(model: &Model, agent: amux::AgentId) -> SendGate {
     let Some(layer) = card.codex() else {
         return SendGate::Unavailable;
     };
+    let phase = phase(model, agent);
+    // `CodexPhase` intentionally has no closed variant. Refine its Idle
+    // projection with the recoverable closed fact before accepting a send.
+    if phase == CodexPhase::Idle && layer.thread_closed {
+        return SendGate::Closed;
+    }
     if !layer.inputs.is_empty() {
         return SendGate::InputInFlight;
     }
-    match phase(model, agent) {
+    match phase {
         CodexPhase::Idle => SendGate::Ready,
         CodexPhase::Replaying => SendGate::Replaying,
         CodexPhase::Thinking | CodexPhase::Responding { .. } | CodexPhase::Executing { .. } => {
@@ -909,6 +991,37 @@ pub fn send_gate(model: &Model, agent: amux::AgentId) -> SendGate {
         }
         CodexPhase::ReadOnly => SendGate::ReadOnly,
         CodexPhase::Unknown => SendGate::Unknown,
+    }
+}
+
+pub(crate) fn check_projection_invariant(
+    model: &Model,
+    agent: amux::AgentId,
+    attention: Attention,
+    out: &mut Vec<Violation>,
+) {
+    let phase = phase(model, agent);
+    let send_gate = send_gate(model, agent);
+    let phase_agrees = phase != CodexPhase::Unknown || attention == Attention::Unknown;
+    let attention_agrees = match attention {
+        Attention::Unknown => true,
+        Attention::Idle => send_gate == SendGate::Ready,
+        Attention::Working => matches!(
+            send_gate,
+            SendGate::Ready | SendGate::ActiveTurn | SendGate::InputInFlight
+        ),
+        Attention::NeedsYou {
+            why: Why::Permission | Why::Question,
+        } => send_gate == SendGate::NeedsYou,
+        Attention::NeedsYou { why: Why::Finished } => send_gate == SendGate::Ready,
+    };
+    if !phase_agrees || !attention_agrees {
+        out.push(Violation::Codex(CodexViolation::ProjectionDisagreement {
+            agent,
+            phase,
+            attention,
+            send_gate,
+        }));
     }
 }
 

@@ -389,5 +389,6 @@ pub fn all_sequences() -> Vec<(&'static str, Vec<Msg>)> {
     sequences.extend(crate::codex_feed::sequences());
     sequences.extend(crate::codex_asks::sequences());
     sequences.extend(crate::codex_write::sequences());
+    sequences.extend(crate::codex_agreement::sequences());
     sequences
 }

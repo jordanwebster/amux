@@ -358,14 +358,48 @@ fn read_only_reconnect_state_refuses_steer_and_interrupt_before_dispatch() {
 }
 
 #[test]
-fn answers_are_typed_and_serialize_opaque_request_ids() {
-    let rows = vec![
+fn read_only_reconnect_state_refuses_an_answer_before_dispatch() {
+    let mut rows = approval_rows_for_write();
+    rows.push(json!({"type":"amux.codex_reconnect_error",
+        "error":{"message":"writer unavailable"}}));
+    let msgs = seq([
+        codex_base(AGENT),
+        vec![batch(AGENT, 10, rows)],
+        vec![command_msg(
+            9,
+            CodexCommand::Answer {
+                agent: agent_id(AGENT),
+                request_id: json!("req-7"),
+                decision: CodexDecision::Accept,
+            },
+        )],
+    ]);
+    let (model, effects) = fold_with_effects(msgs);
+
+    assert_eq!(
+        model.agent(agent_id(AGENT)).unwrap().attention,
+        Attention::Unknown
+    );
+    assert_eq!(send_input_count(&effects), 0);
+    assert_eq!(
+        failure_message(&model, 9),
+        "Codex thread is read-only until reconnect succeeds"
+    );
+}
+
+fn approval_rows_for_write() -> Vec<serde_json::Value> {
+    vec![
         json!({"type":"amux.codex_ready"}),
         json!({"type":"turn/started","turn":{"id":"t","status":"inProgress"}}),
         json!({"type":"item/commandExecution/requestApproval","itemId":"e","command":"test"}),
         json!({"type":"amux.codex_approval_required","request_id":"req-7",
             "availableDecisions":["accept","cancel"]}),
-    ];
+    ]
+}
+
+#[test]
+fn answers_are_typed_and_serialize_opaque_request_ids() {
+    let rows = approval_rows_for_write();
     let mut msgs = seq([codex_base(AGENT), vec![batch(AGENT, 10, rows)]]);
     msgs.push(command_msg(
         3,
