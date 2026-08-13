@@ -7,9 +7,9 @@ use anyhow::{Context, Result, anyhow};
 use async_trait::async_trait;
 use chrono::{DateTime, Utc};
 use codex_sdk::{
-    ApprovalResponse, Codex, CodexConfig, DaemonMode, DynamicToolCallResponse, Error as CodexError,
-    InputItem, RequestId, Thread, ThreadConfig, ThreadEvent, TurnEvent, connect_daemon,
-    connect_socket, daemon_socket_path, ensure_daemon_with_fallback,
+    AccountReadParams, ApprovalResponse, Codex, CodexConfig, DaemonMode, DynamicToolCallResponse,
+    Error as CodexError, InputItem, RequestId, Thread, ThreadConfig, ThreadEvent, TurnEvent,
+    connect_daemon, connect_socket, daemon_socket_path, ensure_daemon_with_fallback,
 };
 use serde_json::{Value, json};
 use tokio::sync::{Mutex, watch};
@@ -56,6 +56,11 @@ impl CodexClient {
     }
 
     async fn connection(&self) -> Result<Arc<CodexConnection>> {
+        let codex_home = codex_home()?;
+        self.connection_with_codex_home(&codex_home).await
+    }
+
+    async fn connection_with_codex_home(&self, codex_home: &Path) -> Result<Arc<CodexConnection>> {
         let mut slot = self.connection.lock().await;
         if let Some(connection) = slot.as_ref()
             && !connection.client.is_closed()
@@ -66,8 +71,7 @@ impl CodexClient {
         // guard here also lets a supervised daemon be recreated.
         slot.take();
 
-        let codex_home = codex_home()?;
-        let daemon = ensure_daemon_with_fallback(&codex_home, &self.private_socket)
+        let daemon = ensure_daemon_with_fallback(codex_home, &self.private_socket)
             .await
             .context("failed to ensure Codex app-server daemon")?;
         let mode = daemon_mode_name(&daemon);
@@ -82,7 +86,7 @@ impl CodexClient {
         // daemon is observed through the transport alone.
         let (socket_path, daemon_exit) = match &daemon {
             DaemonMode::Existing => {
-                let home = tokio::fs::canonicalize(&codex_home)
+                let home = tokio::fs::canonicalize(codex_home)
                     .await
                     .context("failed to resolve CODEX_HOME")?;
                 (daemon_socket_path(&home), None)
@@ -95,7 +99,7 @@ impl CodexClient {
         };
         let client = match &daemon {
             DaemonMode::Existing | DaemonMode::Spawned(_) => {
-                connect_daemon(&codex_home, config).await
+                connect_daemon(codex_home, config).await
             }
             DaemonMode::Private(process) => connect_socket(process.socket_path(), config).await,
             DaemonMode::PrivateExisting(socket_path) => connect_socket(socket_path, config).await,
@@ -118,6 +122,23 @@ impl CodexClient {
         *slot = Some(connection.clone());
         Ok(connection)
     }
+
+    /// Check account readiness through the same cached, fallback-capable
+    /// connection that agent sessions use for threads and turns.
+    pub(crate) async fn ensure_authenticated(&self) -> Result<()> {
+        let codex_home = codex_home()?;
+        self.ensure_authenticated_with_codex_home(&codex_home).await
+    }
+
+    async fn ensure_authenticated_with_codex_home(&self, codex_home: &Path) -> Result<()> {
+        let connection = self.connection_with_codex_home(codex_home).await?;
+        let response = connection
+            .client
+            .read_account(AccountReadParams::default())
+            .await
+            .context("failed to read the Codex account")?;
+        require_account(response.account.is_some(), response.requires_openai_auth)
+    }
 }
 
 fn codex_home() -> Result<PathBuf> {
@@ -125,6 +146,16 @@ fn codex_home() -> Result<PathBuf> {
         .map(PathBuf::from)
         .or_else(|| std::env::var_os("HOME").map(|home| PathBuf::from(home).join(".codex")))
         .ok_or_else(|| anyhow!("CODEX_HOME or HOME is required for Codex agents"))
+}
+
+fn require_account(has_account: bool, requires_openai_auth: bool) -> Result<()> {
+    if has_account || !requires_openai_auth {
+        Ok(())
+    } else {
+        Err(anyhow!(
+            "Codex is not authenticated; run `codex login` and try again"
+        ))
+    }
 }
 
 fn daemon_mode_name(mode: &DaemonMode) -> &'static str {
@@ -1023,10 +1054,13 @@ impl AgentBackend for CodexSession {
 mod tests {
     use super::*;
     use crate::agents::AgentType;
+    use futures_util::{SinkExt, StreamExt};
     use replay_support::{
         ReplayAdvance, ReplayOptions, load_script, replay_transport_with_controller,
     };
     use tokio::io::{AsyncBufReadExt, AsyncWriteExt, BufReader, duplex, split};
+    use tokio::net::UnixListener;
+    use tokio_tungstenite::{accept_async, tungstenite::Message};
 
     fn session() -> CodexSession {
         let req = CreateAgentRequest {
@@ -1047,6 +1081,108 @@ mod tests {
             &req,
             Arc::new(CodexClient::new(PathBuf::from("/tmp/amux-codex.sock"))),
         )
+    }
+
+    #[tokio::test]
+    async fn authentication_preflight_uses_the_shared_private_fallback_connection() {
+        let temp = tempfile::tempdir_in("/tmp").unwrap();
+        let codex_home = temp.path().join("codex-home");
+        tokio::fs::create_dir_all(codex_home.join("app-server-control"))
+            .await
+            .unwrap();
+
+        // An unrelated listener occupies the well-known path. The backend's
+        // supported behavior is to use its private socket instead.
+        let well_known = UnixListener::bind(daemon_socket_path(&codex_home)).unwrap();
+        let occupied = tokio::spawn(async move {
+            let (stream, _) = well_known.accept().await.unwrap();
+            drop(stream);
+        });
+
+        let private_socket = temp.path().join("private.sock");
+        let private = UnixListener::bind(&private_socket).unwrap();
+        let app_server = tokio::spawn(async move {
+            // The fallback helper probes an existing private listener before
+            // the real client performs its initialize handshake.
+            let (probe, _) = private.accept().await.unwrap();
+            let mut probe = accept_async(probe).await.unwrap();
+            let _ = probe.next().await;
+
+            let (stream, _) = private.accept().await.unwrap();
+            let mut websocket = accept_async(stream).await.unwrap();
+            let Message::Text(initialize) = websocket.next().await.unwrap().unwrap() else {
+                panic!("initialize was not a text frame");
+            };
+            let initialize: Value = serde_json::from_str(&initialize).unwrap();
+            websocket
+                .send(Message::Text(
+                    json!({
+                        "id": initialize["id"],
+                        "result": {
+                            "userAgent": "test/0.147.0",
+                            "codexHome": "/tmp/test-codex-home",
+                            "platformFamily": "unix",
+                            "platformOs": "test"
+                        }
+                    })
+                    .to_string()
+                    .into(),
+                ))
+                .await
+                .unwrap();
+
+            let Message::Text(initialized) = websocket.next().await.unwrap().unwrap() else {
+                panic!("initialized was not a text frame");
+            };
+            assert_eq!(
+                serde_json::from_str::<Value>(&initialized).unwrap()["method"],
+                "initialized"
+            );
+
+            let Message::Text(account_read) = websocket.next().await.unwrap().unwrap() else {
+                panic!("account/read was not a text frame");
+            };
+            let account_read: Value = serde_json::from_str(&account_read).unwrap();
+            assert_eq!(account_read["method"], "account/read");
+            websocket
+                .send(Message::Text(
+                    json!({
+                        "id": account_read["id"],
+                        "result": {
+                            "account": null,
+                            "requiresOpenaiAuth": false
+                        }
+                    })
+                    .to_string()
+                    .into(),
+                ))
+                .await
+                .unwrap();
+        });
+
+        let client = CodexClient::new(private_socket.clone());
+        client
+            .ensure_authenticated_with_codex_home(&codex_home)
+            .await
+            .unwrap();
+        let connection = client.connection.lock().await;
+        let connection = connection.as_ref().expect("cached shared connection");
+        assert_eq!(connection.mode, "existing-private");
+        assert_eq!(
+            connection.socket_path,
+            private_socket.canonicalize().unwrap()
+        );
+
+        occupied.await.unwrap();
+        app_server.await.unwrap();
+    }
+
+    #[test]
+    fn unauthenticated_account_names_the_recovery_command() {
+        let error = require_account(false, true).unwrap_err().to_string();
+        assert!(error.contains("codex login"));
+        assert!(require_account(true, true).is_ok());
+        assert!(require_account(false, false).is_ok());
     }
 
     #[test]

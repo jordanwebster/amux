@@ -477,6 +477,22 @@ pub enum SendGate {
 }
 
 impl SendGate {
+    pub fn allows_prompt(self) -> bool {
+        self == Self::Ready
+    }
+
+    pub fn allows_steer(self) -> bool {
+        self == Self::ActiveTurn
+    }
+
+    pub fn allows_interrupt(self) -> bool {
+        matches!(self, Self::ActiveTurn | Self::NeedsYou)
+    }
+
+    pub fn allows_answer(self) -> bool {
+        self == Self::NeedsYou
+    }
+
     pub fn refusal(self) -> Option<&'static str> {
         match self {
             Self::Ready => None,
@@ -1058,6 +1074,36 @@ mod tests {
         let mut violations = Vec::new();
         layer.check_invariants(agent(), &mut violations);
         violations.iter().map(Violation::kind).collect()
+    }
+
+    #[test]
+    fn write_permissions_are_an_exhaustive_projection_of_the_send_gate() {
+        let gates = [
+            SendGate::Ready,
+            SendGate::Unavailable,
+            SendGate::Exited,
+            SendGate::Closed,
+            SendGate::Replaying,
+            SendGate::ActiveTurn,
+            SendGate::NeedsYou,
+            SendGate::ReadOnly,
+            SendGate::Unknown,
+            SendGate::InputInFlight,
+        ];
+        for gate in gates {
+            assert_eq!(gate.allows_prompt(), gate == SendGate::Ready, "{gate:?}");
+            assert_eq!(
+                gate.allows_steer(),
+                gate == SendGate::ActiveTurn,
+                "{gate:?}"
+            );
+            assert_eq!(
+                gate.allows_interrupt(),
+                matches!(gate, SendGate::ActiveTurn | SendGate::NeedsYou),
+                "{gate:?}"
+            );
+            assert_eq!(gate.allows_answer(), gate == SendGate::NeedsYou, "{gate:?}");
+        }
     }
 
     #[test]

@@ -601,19 +601,8 @@ fn footer_line(model: &Model, chat: &View, width: usize, theme: Theme) -> Line<'
                 "pgup/pgdn scroll · esc newest",
                 theme.muted(),
             );
-        } else if model
-            .codex(chat.agent)
-            .and_then(|layer| layer.active_turn_id())
-            .is_some()
-        {
-            let suffix = if model
-                .codex(chat.agent)
-                .is_some_and(|layer| layer.in_flight_inputs().next().is_some())
-            {
-                "Codex input in flight"
-            } else {
-                "enter steer · ctrl+j newline"
-            };
+        } else if amux_ui::codex::send_gate(model, chat.agent).allows_steer() {
+            let suffix = "enter steer · ctrl+j newline";
             push_span(&mut line, TEXT_COL, suffix, theme.muted());
         } else if let Some(refusal) = amux_ui::codex::send_gate(model, chat.agent).refusal() {
             let text = if chat.composer.is_empty() {

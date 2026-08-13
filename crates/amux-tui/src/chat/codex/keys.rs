@@ -71,9 +71,13 @@ pub(crate) fn handle_chat_key(
 
     let ctrl = key.modifiers.contains(KeyModifiers::CONTROL);
     if key.code == KeyCode::Char('x') && ctrl {
-        return Some(UiAction::Dispatch(Command::Codex(
-            CodexCommand::Interrupt { agent: chat.agent },
-        )));
+        return amux_ui::codex::send_gate(model, chat.agent)
+            .allows_interrupt()
+            .then_some({
+                UiAction::Dispatch(Command::Codex(CodexCommand::Interrupt {
+                    agent: chat.agent,
+                }))
+            });
     }
 
     if model
@@ -145,32 +149,19 @@ fn send(chat: &mut View, model: &Model) -> Option<UiAction> {
         return None;
     }
     let text = chat.composer.text();
-    let native = if model
-        .codex(chat.agent)
-        .and_then(|layer| layer.active_turn_id())
-        .is_some()
-    {
-        if model
-            .codex(chat.agent)
-            .is_some_and(|layer| layer.in_flight_inputs().next().is_some())
-        {
-            return None;
-        }
+    let gate = amux_ui::codex::send_gate(model, chat.agent);
+    let native = if gate.allows_steer() {
         CodexCommand::Steer {
             agent: chat.agent,
             text,
         }
-    } else {
-        if amux_ui::codex::send_gate(model, chat.agent)
-            .refusal()
-            .is_some()
-        {
-            return None;
-        }
+    } else if gate.allows_prompt() {
         CodexCommand::Prompt {
             agent: chat.agent,
             text,
         }
+    } else {
+        return None;
     };
     chat.composer.clear_for_send();
     Some(UiAction::Dispatch(Command::Codex(native)))
@@ -196,6 +187,9 @@ fn approval_key(
             chat.approval_cursor = (chat.approval_cursor + 1).min(count.saturating_sub(1));
         }
         KeyCode::Enter => {
+            if !amux_ui::codex::send_gate(model, chat.agent).allows_answer() {
+                return None;
+            }
             let action = ask.actions.get(chat.approval_cursor)?;
             let decision = action.decision?;
             return Some(UiAction::Dispatch(Command::Codex(CodexCommand::Answer {

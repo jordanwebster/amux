@@ -71,6 +71,7 @@ tempfile = { workspace = true }
 prost-types = { workspace = true }
 amux-ui = { workspace = true }
 replay-support = { path = "../replay-support" }
+tokio-tungstenite = { workspace = true }
 
 [[test]]
 name = "spec"

@@ -8,7 +8,9 @@ use amux_ui::codex::{
     CodexCommand, CodexDecision, CodexInput, CodexPhase, FeedEntryKind, InFlightKind, PromptPart,
     PromptSource, SendGate,
 };
-use amux_ui::{Attention, Command, Effect, InputPayload, Msg, OpOutcome, StreamMsg};
+use amux_ui::{
+    Attention, Command, Effect, InputPayload, Msg, OpOutcome, StreamCloseReason, StreamMsg,
+};
 use serde_json::json;
 
 use crate::harness::*;
@@ -285,7 +287,7 @@ fn successful_steer_result_promotes_the_correlated_text_to_an_honest_echo() {
 }
 
 #[test]
-fn steer_and_interrupt_always_carry_the_layers_observed_turn_id() {
+fn active_steer_and_interrupt_carry_the_authoritative_turn_id() {
     let base = seq([codex_base(AGENT), vec![batch(AGENT, 10, live_rows())]]);
     let mut steer = base.clone();
     steer.push(command_msg(
@@ -300,11 +302,6 @@ fn steer_and_interrupt_always_carry_the_layers_observed_turn_id() {
         CodexInput::Steer { turn_id, .. } if turn_id == "turn-live"));
 
     let mut interrupt = base;
-    interrupt.push(batch(
-        AGENT,
-        20,
-        vec![json!({"type":"amux.codex_gap","reason":"connection_lost"})],
-    ));
     interrupt.push(command_msg(
         2,
         CodexCommand::Interrupt {
@@ -314,6 +311,47 @@ fn steer_and_interrupt_always_carry_the_layers_observed_turn_id() {
     let (_, effects) = fold_with_effects(interrupt);
     assert!(matches!(send_effect(&effects).1,
         CodexInput::Interrupt { turn_id } if turn_id == "turn-live"));
+}
+
+#[test]
+fn stale_turn_id_cannot_bypass_the_authoritative_write_gate() {
+    let base = seq([
+        codex_base(AGENT),
+        vec![batch(AGENT, 10, live_rows())],
+        vec![batch(
+            AGENT,
+            20,
+            vec![json!({"type":"amux.codex_gap","reason":"connection_lost"})],
+        )],
+    ]);
+    assert_eq!(
+        amux_ui::codex::send_gate(&fold(base.clone()), agent_id(AGENT)),
+        SendGate::Unknown
+    );
+
+    for (op_n, command) in [
+        (
+            10,
+            CodexCommand::Steer {
+                agent: agent_id(AGENT),
+                text: "stale steer".into(),
+            },
+        ),
+        (
+            11,
+            CodexCommand::Interrupt {
+                agent: agent_id(AGENT),
+            },
+        ),
+    ] {
+        let (model, effects) =
+            fold_with_effects(seq([base.clone(), vec![command_msg(op_n, command)]]));
+        assert_eq!(send_input_count(&effects), 0);
+        assert_eq!(
+            failure_message(&model, op_n),
+            "send gated — Codex session state unknown"
+        );
+    }
 }
 
 #[test]
@@ -385,6 +423,37 @@ fn read_only_reconnect_state_refuses_an_answer_before_dispatch() {
         failure_message(&model, 9),
         "Codex thread is read-only until reconnect succeeds"
     );
+}
+
+#[test]
+fn replaying_state_refuses_a_stale_observed_answer_before_dispatch() {
+    let msgs = seq([
+        codex_base(AGENT),
+        vec![batch(AGENT, 10, approval_rows_for_write())],
+        vec![stream(
+            AGENT,
+            StreamMsg::Closed {
+                reason: StreamCloseReason::HostUnreachable,
+            },
+        )],
+        vec![stream(AGENT, StreamMsg::Opened { truncated: false })],
+        vec![command_msg(
+            12,
+            CodexCommand::Answer {
+                agent: agent_id(AGENT),
+                request_id: json!("req-7"),
+                decision: CodexDecision::Accept,
+            },
+        )],
+    ]);
+    let (model, effects) = fold_with_effects(msgs);
+
+    assert_eq!(
+        amux_ui::codex::send_gate(&model, agent_id(AGENT)),
+        SendGate::Replaying
+    );
+    assert_eq!(send_input_count(&effects), 0);
+    assert_eq!(failure_message(&model, 12), "send gated while replaying");
 }
 
 fn approval_rows_for_write() -> Vec<serde_json::Value> {

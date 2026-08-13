@@ -5,8 +5,8 @@ use amux_tui::view::{UiAction, ViewState};
 use amux_tui::{ChatView, FrameContext, Theme, render};
 use amux_ui::codex::{CodexCommand, CodexDecision};
 use amux_ui::{
-    Agent, AgentId, Command, HostEntry, HostId, Model, Msg, OpId, ServerMsg, StreamEntry,
-    StreamMsg, update,
+    Agent, AgentId, Command, HostEntry, HostId, Model, Msg, OpId, ServerMsg, StreamCloseReason,
+    StreamEntry, StreamMsg, update,
 };
 use chrono::{DateTime, Utc};
 use crossterm::event::{KeyCode, KeyEvent, KeyModifiers};
@@ -369,4 +369,63 @@ fn codex_send_steer_interrupt_and_approval_keys_dispatch_native_commands() {
             ..
         })))
     ));
+}
+
+#[test]
+fn codex_keys_follow_the_write_gate_and_preserve_a_refused_steer_draft() {
+    let live = model(live_rows());
+    let mut stale_rows = live_rows();
+    stale_rows.push(json!({"type":"amux.codex_gap","reason":"connection_lost"}));
+    let stale = model(stale_rows);
+    assert_eq!(
+        amux_ui::codex::send_gate(&stale, agent_id()),
+        amux_ui::codex::SendGate::Unknown
+    );
+
+    let mut chat = ChatView::open(&stale, agent_id(), 'a', false);
+    chat.composer_mut().insert_str("keep this steer");
+    assert_eq!(
+        press(&stale, &mut chat, KeyCode::Enter, KeyModifiers::NONE),
+        None
+    );
+    assert_eq!(
+        press(&stale, &mut chat, KeyCode::Char('x'), KeyModifiers::CONTROL),
+        None
+    );
+    assert!(matches!(
+        press(&live, &mut chat, KeyCode::Enter, KeyModifiers::NONE),
+        Some(UiAction::Dispatch(Command::Codex(CodexCommand::Steer { text, .. })))
+            if text == "keep this steer"
+    ));
+
+    let replaying_approval = model_with_extra(
+        approval_rows(),
+        vec![
+            Msg::Stream {
+                agent: agent_id(),
+                event: StreamMsg::Closed {
+                    reason: StreamCloseReason::HostUnreachable,
+                },
+            },
+            Msg::Stream {
+                agent: agent_id(),
+                event: StreamMsg::Opened { truncated: false },
+            },
+        ],
+    );
+    assert_eq!(
+        amux_ui::codex::send_gate(&replaying_approval, agent_id()),
+        amux_ui::codex::SendGate::Replaying
+    );
+    let mut approval_chat = ChatView::open(&replaying_approval, agent_id(), 'a', false);
+    approval_chat.reconcile(&replaying_approval);
+    assert_eq!(
+        press(
+            &replaying_approval,
+            &mut approval_chat,
+            KeyCode::Enter,
+            KeyModifiers::NONE
+        ),
+        None
+    );
 }

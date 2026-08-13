@@ -210,6 +210,21 @@ fn secure_codex_fallback_directory(path: &Path) -> io::Result<()> {
 impl LocalAgentHost for PtyAgentHost {
     async fn create(&self, request: CreateAgentRpcRequest) -> Result<Agent, ProtocolError> {
         let req = create_rpc_to_domain_request(request.agent_id, request)?;
+        if matches!(req.agent_type, AgentType::Codex { .. }) {
+            #[cfg(unix)]
+            {
+                let client = self.state().read().await.deps.codex_client.clone();
+                client.ensure_authenticated().await.map_err(|error| {
+                    ProtocolError::FailedPrecondition {
+                        message: error.to_string(),
+                    }
+                })?;
+            }
+            #[cfg(not(unix))]
+            return Err(ProtocolError::FailedPrecondition {
+                message: "Codex agents are supported only on Unix platforms".to_string(),
+            });
+        }
         create_agent_record(self.state(), self.event_tx(), req, self.host_id())
             .await
             .map(Into::into)

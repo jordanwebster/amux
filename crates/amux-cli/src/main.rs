@@ -1,6 +1,5 @@
 mod auth;
 mod client_common;
-mod codex_auth;
 mod hooks;
 mod init;
 mod plugin;
@@ -371,7 +370,7 @@ async fn run_command(command: Commands, mut config: Config) -> Result<()> {
                 AgentType::Claude => {
                     plugin::ensure_plugin_installed().await;
                 }
-                AgentType::Codex { .. } => codex_auth::ensure_authenticated().await?,
+                AgentType::Codex { .. } => {}
                 #[cfg(any(debug_assertions, test))]
                 AgentType::TestAgent { .. } => {}
             };
