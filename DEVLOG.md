@@ -4,6 +4,8 @@ This file tracks significant development work, decisions made, and current state
 
 ---
 
+2026-08-14 — P8 review round 2: made all Codex write permissions project directly from the non-lossy `Situation` classification, restoring interrupt during an in-flight steer; red/green regressions, full workspace tests, 44/44 testnet specs, and byte-identical goldens pass.
+
 2026-08-13 — P8 review round 1: moved Codex account preflight onto the host's shared fallback-capable app-server connection and made prompt, steer, interrupt, answer, and footer affordances consume one authoritative `SendGate`; full gates pass with no golden changes.
 
 2026-08-13 — P8 projection fix: Codex fleet attention now degrades to Unknown while the kernel stream is opening/replaying, with fresh and resumed Runtime sequences locking every fold; Claude projections and all goldens remain unchanged.

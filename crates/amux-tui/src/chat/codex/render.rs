@@ -601,7 +601,7 @@ fn footer_line(model: &Model, chat: &View, width: usize, theme: Theme) -> Line<'
                 "pgup/pgdn scroll · esc newest",
                 theme.muted(),
             );
-        } else if amux_ui::codex::send_gate(model, chat.agent).allows_steer() {
+        } else if amux_ui::codex::allows_steer(model, chat.agent) {
             let suffix = "enter steer · ctrl+j newline";
             push_span(&mut line, TEXT_COL, suffix, theme.muted());
         } else if let Some(refusal) = amux_ui::codex::send_gate(model, chat.agent).refusal() {

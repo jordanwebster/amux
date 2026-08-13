@@ -372,6 +372,36 @@ fn codex_send_steer_interrupt_and_approval_keys_dispatch_native_commands() {
 }
 
 #[test]
+fn ctrl_x_dispatches_while_a_steer_is_in_flight_on_an_active_turn() {
+    let in_flight = model_with_extra(
+        live_rows(),
+        vec![Msg::Command {
+            op: op(2),
+            command: Command::Codex(CodexCommand::Steer {
+                agent: agent_id(),
+                text: "keep going".to_string(),
+            }),
+        }],
+    );
+    assert_eq!(
+        amux_ui::codex::send_gate(&in_flight, agent_id()),
+        amux_ui::codex::SendGate::InputInFlight
+    );
+
+    let mut chat = ChatView::open(&in_flight, agent_id(), 'a', false);
+    assert!(matches!(
+        press(
+            &in_flight,
+            &mut chat,
+            KeyCode::Char('x'),
+            KeyModifiers::CONTROL
+        ),
+        Some(UiAction::Dispatch(Command::Codex(CodexCommand::Interrupt { agent })))
+            if agent == agent_id()
+    ));
+}
+
+#[test]
 fn codex_keys_follow_the_write_gate_and_preserve_a_refused_steer_draft() {
     let live = model(live_rows());
     let mut stale_rows = live_rows();
@@ -419,6 +449,15 @@ fn codex_keys_follow_the_write_gate_and_preserve_a_refused_steer_draft() {
     );
     let mut approval_chat = ChatView::open(&replaying_approval, agent_id(), 'a', false);
     approval_chat.reconcile(&replaying_approval);
+    assert_eq!(
+        press(
+            &replaying_approval,
+            &mut approval_chat,
+            KeyCode::Char('x'),
+            KeyModifiers::CONTROL
+        ),
+        None
+    );
     assert_eq!(
         press(
             &replaying_approval,

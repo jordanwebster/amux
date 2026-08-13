@@ -71,13 +71,11 @@ pub(crate) fn handle_chat_key(
 
     let ctrl = key.modifiers.contains(KeyModifiers::CONTROL);
     if key.code == KeyCode::Char('x') && ctrl {
-        return amux_ui::codex::send_gate(model, chat.agent)
-            .allows_interrupt()
-            .then_some({
-                UiAction::Dispatch(Command::Codex(CodexCommand::Interrupt {
-                    agent: chat.agent,
-                }))
-            });
+        return amux_ui::codex::allows_interrupt(model, chat.agent).then_some({
+            UiAction::Dispatch(Command::Codex(CodexCommand::Interrupt {
+                agent: chat.agent,
+            }))
+        });
     }
 
     if model
@@ -149,13 +147,12 @@ fn send(chat: &mut View, model: &Model) -> Option<UiAction> {
         return None;
     }
     let text = chat.composer.text();
-    let gate = amux_ui::codex::send_gate(model, chat.agent);
-    let native = if gate.allows_steer() {
+    let native = if amux_ui::codex::allows_steer(model, chat.agent) {
         CodexCommand::Steer {
             agent: chat.agent,
             text,
         }
-    } else if gate.allows_prompt() {
+    } else if amux_ui::codex::allows_prompt(model, chat.agent) {
         CodexCommand::Prompt {
             agent: chat.agent,
             text,
@@ -187,7 +184,7 @@ fn approval_key(
             chat.approval_cursor = (chat.approval_cursor + 1).min(count.saturating_sub(1));
         }
         KeyCode::Enter => {
-            if !amux_ui::codex::send_gate(model, chat.agent).allows_answer() {
+            if !amux_ui::codex::allows_answer(model, chat.agent) {
                 return None;
             }
             let action = ask.actions.get(chat.approval_cursor)?;

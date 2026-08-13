@@ -476,35 +476,29 @@ pub enum SendGate {
     InputInFlight,
 }
 
+const REFUSAL_UNAVAILABLE: &str = "Codex input unavailable for this agent";
+const REFUSAL_EXITED: &str = "agent exited";
+const REFUSAL_CLOSED: &str = "Codex thread is closed until it becomes ready again";
+const REFUSAL_REPLAYING: &str = "send gated while replaying";
+const REFUSAL_ACTIVE: &str = "send gated — a Codex turn is active";
+const REFUSAL_NEEDS_YOU: &str = "send gated — resolve the blocking request";
+const REFUSAL_READ_ONLY: &str = "Codex thread is read-only until reconnect succeeds";
+const REFUSAL_UNKNOWN: &str = "send gated — Codex session state unknown";
+const REFUSAL_INPUT_IN_FLIGHT: &str = "send gated — a Codex input is in flight";
+
 impl SendGate {
-    pub fn allows_prompt(self) -> bool {
-        self == Self::Ready
-    }
-
-    pub fn allows_steer(self) -> bool {
-        self == Self::ActiveTurn
-    }
-
-    pub fn allows_interrupt(self) -> bool {
-        matches!(self, Self::ActiveTurn | Self::NeedsYou)
-    }
-
-    pub fn allows_answer(self) -> bool {
-        self == Self::NeedsYou
-    }
-
     pub fn refusal(self) -> Option<&'static str> {
         match self {
             Self::Ready => None,
-            Self::Unavailable => Some("Codex input unavailable for this agent"),
-            Self::Exited => Some("agent exited"),
-            Self::Closed => Some("Codex thread is closed until it becomes ready again"),
-            Self::Replaying => Some("send gated while replaying"),
-            Self::ActiveTurn => Some("send gated — a Codex turn is active"),
-            Self::NeedsYou => Some("send gated — resolve the blocking request"),
-            Self::ReadOnly => Some("Codex thread is read-only until reconnect succeeds"),
-            Self::Unknown => Some("send gated — Codex session state unknown"),
-            Self::InputInFlight => Some("send gated — a Codex input is in flight"),
+            Self::Unavailable => Some(REFUSAL_UNAVAILABLE),
+            Self::Exited => Some(REFUSAL_EXITED),
+            Self::Closed => Some(REFUSAL_CLOSED),
+            Self::Replaying => Some(REFUSAL_REPLAYING),
+            Self::ActiveTurn => Some(REFUSAL_ACTIVE),
+            Self::NeedsYou => Some(REFUSAL_NEEDS_YOU),
+            Self::ReadOnly => Some(REFUSAL_READ_ONLY),
+            Self::Unknown => Some(REFUSAL_UNKNOWN),
+            Self::InputInFlight => Some(REFUSAL_INPUT_IN_FLIGHT),
         }
     }
 }
@@ -637,7 +631,15 @@ struct ActiveItem {
 /// projections deliberately lose different details, so those details live
 /// here instead of being independently rediscovered by each projection.
 #[derive(Clone, Debug, PartialEq)]
-enum Situation {
+struct Situation {
+    state: SituationState,
+    active_turn: bool,
+    input_in_flight: bool,
+}
+
+#[derive(Clone, Debug, PartialEq)]
+enum SituationState {
+    Unavailable,
     Exited,
     Closed,
     Unknown,
@@ -650,49 +652,66 @@ enum Situation {
     Working,
     Finished,
     Idle,
-    InputInFlight { phase: CodexPhase },
 }
 
 impl Situation {
+    fn unavailable() -> Self {
+        Self {
+            state: SituationState::Unavailable,
+            active_turn: false,
+            input_in_flight: false,
+        }
+    }
+
     fn phase(&self) -> CodexPhase {
-        match self {
-            Self::Exited | Self::Closed | Self::Finished | Self::Idle => CodexPhase::Idle,
-            Self::Unknown => CodexPhase::Unknown,
-            Self::ReadOnly => CodexPhase::ReadOnly,
-            Self::Replaying => CodexPhase::Replaying,
-            Self::AwaitingApproval { request_id } => CodexPhase::AwaitingApproval {
+        match &self.state {
+            SituationState::Unavailable | SituationState::Unknown => CodexPhase::Unknown,
+            SituationState::Exited
+            | SituationState::Closed
+            | SituationState::Finished
+            | SituationState::Idle => CodexPhase::Idle,
+            SituationState::ReadOnly => CodexPhase::ReadOnly,
+            SituationState::Replaying => CodexPhase::Replaying,
+            SituationState::AwaitingApproval { request_id } => CodexPhase::AwaitingApproval {
                 request_id: request_id.clone(),
             },
-            Self::BlockedUnsupported { item_id } => CodexPhase::BlockedUnsupported {
+            SituationState::BlockedUnsupported { item_id } => CodexPhase::BlockedUnsupported {
                 item_id: item_id.clone(),
             },
-            Self::Responding { item_id } => CodexPhase::Responding {
+            SituationState::Responding { item_id } => CodexPhase::Responding {
                 item_id: item_id.clone(),
             },
-            Self::Executing { item_id } => CodexPhase::Executing {
+            SituationState::Executing { item_id } => CodexPhase::Executing {
                 item_id: item_id.clone(),
             },
-            Self::Working => CodexPhase::Thinking,
-            Self::InputInFlight { phase } => phase.clone(),
+            SituationState::Working => CodexPhase::Thinking,
         }
     }
 
     fn attention(&self) -> Attention {
-        match self {
-            Self::Exited | Self::Closed | Self::Unknown | Self::ReadOnly | Self::Replaying => {
-                Attention::Unknown
-            }
-            Self::AwaitingApproval { .. } => Attention::NeedsYou {
+        match &self.state {
+            SituationState::Unavailable
+            | SituationState::Exited
+            | SituationState::Closed
+            | SituationState::Unknown
+            | SituationState::ReadOnly
+            | SituationState::Replaying => Attention::Unknown,
+            _ if self.input_in_flight => Attention::Working,
+            SituationState::AwaitingApproval { .. } => Attention::NeedsYou {
                 why: Why::Permission,
             },
-            Self::BlockedUnsupported { .. } => Attention::NeedsYou { why: Why::Question },
-            Self::Responding { .. }
-            | Self::Executing { .. }
-            | Self::Working
-            | Self::InputInFlight { .. } => Attention::Working,
-            Self::Finished => Attention::NeedsYou { why: Why::Finished },
-            Self::Idle => Attention::Idle,
+            SituationState::BlockedUnsupported { .. } => Attention::NeedsYou { why: Why::Question },
+            SituationState::Responding { .. }
+            | SituationState::Executing { .. }
+            | SituationState::Working => Attention::Working,
+            SituationState::Finished => Attention::NeedsYou { why: Why::Finished },
+            SituationState::Idle => Attention::Idle,
         }
+    }
+
+    fn with_state(mut self, state: SituationState) -> Self {
+        self.state = state;
+        self
     }
 }
 
@@ -805,28 +824,22 @@ impl CodexLayer {
     }
 
     fn situation(&self) -> Situation {
-        if self.exited {
-            return Situation::Exited;
-        }
-        if self.thread_closed {
-            return Situation::Closed;
-        }
-        if self.stale || self.gap {
-            return Situation::Unknown;
-        }
-        if self.read_only {
-            return Situation::ReadOnly;
-        }
-        if !self.live() {
-            return Situation::Replaying;
-        }
-
-        let situation = if let Some(ask) = self.asks.front() {
-            Situation::AwaitingApproval {
+        let state = if self.exited {
+            SituationState::Exited
+        } else if self.thread_closed {
+            SituationState::Closed
+        } else if self.stale || self.gap {
+            SituationState::Unknown
+        } else if self.read_only {
+            SituationState::ReadOnly
+        } else if !self.live() {
+            SituationState::Replaying
+        } else if let Some(ask) = self.asks.front() {
+            SituationState::AwaitingApproval {
                 request_id: ask.request_id.clone(),
             }
         } else if let Some(item_id) = self.accumulators.unsupported.front() {
-            Situation::BlockedUnsupported {
+            SituationState::BlockedUnsupported {
                 item_id: item_id.clone(),
             }
         } else if self.turn.active_id.is_some() {
@@ -834,42 +847,36 @@ impl CodexLayer {
                 Some(ActiveItem {
                     item_id,
                     kind: ActiveItemKind::Message,
-                }) => Situation::Responding {
+                }) => SituationState::Responding {
                     item_id: item_id.clone(),
                 },
                 Some(ActiveItem {
                     item_id,
                     kind: ActiveItemKind::Work,
-                }) => Situation::Executing {
+                }) => SituationState::Executing {
                     item_id: item_id.clone(),
                 },
-                _ => Situation::Working,
+                _ => SituationState::Working,
             }
         } else if self.turn.status == ThreadStatus::Active {
-            Situation::Working
+            SituationState::Working
         } else if self.truncated_start
             && self.turn.last.is_none()
             && self.turn.status == ThreadStatus::Unknown
         {
-            Situation::Unknown
+            SituationState::Unknown
         } else {
             match self.turn.last {
-                Some(LastTurn::Completed | LastTurn::Failed) => Situation::Finished,
-                Some(LastTurn::Interrupted) | None => Situation::Idle,
+                Some(LastTurn::Completed | LastTurn::Failed) => SituationState::Finished,
+                Some(LastTurn::Interrupted) | None => SituationState::Idle,
             }
         };
 
-        if self.inputs.is_empty() {
-            situation
-        } else {
-            Situation::InputInFlight {
-                phase: situation.phase(),
-            }
+        Situation {
+            state,
+            active_turn: self.turn.active_id.is_some(),
+            input_in_flight: !self.inputs.is_empty(),
         }
-    }
-
-    fn folded_phase(&self) -> CodexPhase {
-        self.situation().phase()
     }
 
     pub fn attention(&self) -> Attention {
@@ -978,54 +985,198 @@ pub(crate) fn projected_attention(
     }
 }
 
-/// Derived Codex phase, wrapped in kernel stream lifecycle facts.
-pub fn phase(model: &Model, agent: amux::AgentId) -> CodexPhase {
-    let Some(layer) = model.codex(agent) else {
-        return CodexPhase::Unknown;
+/// One authoritative classification wrapped in kernel stream lifecycle facts.
+/// Every public projection and write permission starts here.
+fn situation(model: &Model, agent: amux::AgentId) -> Situation {
+    let Some(card) = model.agent(agent) else {
+        return Situation::unavailable();
     };
+    let Some(layer) = card.codex() else {
+        return Situation::unavailable();
+    };
+    let situation = layer.situation();
+    if matches!(card.phase, AgentPhase::Exited { .. }) {
+        return situation.with_state(SituationState::Exited);
+    }
     match model.stream(agent).map(|stream| &stream.phase) {
-        Some(StreamPhase::Opening | StreamPhase::Replaying) => CodexPhase::Replaying,
+        Some(StreamPhase::Opening | StreamPhase::Replaying) => {
+            situation.with_state(SituationState::Replaying)
+        }
         Some(StreamPhase::Live)
         | Some(StreamPhase::Closed {
             reason:
                 crate::msg::StreamCloseReason::AgentExited { .. }
                 | crate::msg::StreamCloseReason::AgentDeleted,
-        }) => layer.folded_phase(),
-        _ => CodexPhase::Unknown,
+        }) => situation,
+        _ => situation.with_state(SituationState::Unknown),
     }
 }
 
+/// Derived Codex phase, wrapped in kernel stream lifecycle facts.
+pub fn phase(model: &Model, agent: amux::AgentId) -> CodexPhase {
+    situation(model, agent).phase()
+}
+
 pub fn send_gate(model: &Model, agent: amux::AgentId) -> SendGate {
-    let Some(card) = model.agent(agent) else {
-        return SendGate::Unavailable;
-    };
-    if matches!(card.phase, AgentPhase::Exited { .. }) {
-        return SendGate::Exited;
-    }
-    let Some(layer) = card.codex() else {
-        return SendGate::Unavailable;
-    };
-    let phase = phase(model, agent);
-    // `CodexPhase` intentionally has no closed variant. Refine its Idle
-    // projection with the recoverable closed fact before accepting a send.
-    if phase == CodexPhase::Idle && layer.thread_closed {
-        return SendGate::Closed;
-    }
-    if !layer.inputs.is_empty() {
+    let situation = situation(model, agent);
+    if situation.input_in_flight
+        && !matches!(
+            situation.state,
+            SituationState::Unavailable
+                | SituationState::Exited
+                | SituationState::Closed
+                | SituationState::Replaying
+                | SituationState::ReadOnly
+                | SituationState::Unknown
+        )
+    {
         return SendGate::InputInFlight;
     }
-    match phase {
-        CodexPhase::Idle => SendGate::Ready,
-        CodexPhase::Replaying => SendGate::Replaying,
-        CodexPhase::Thinking | CodexPhase::Responding { .. } | CodexPhase::Executing { .. } => {
-            SendGate::ActiveTurn
-        }
-        CodexPhase::AwaitingApproval { .. } | CodexPhase::BlockedUnsupported { .. } => {
+    match situation.state {
+        SituationState::Unavailable => SendGate::Unavailable,
+        SituationState::Exited => SendGate::Exited,
+        SituationState::Closed => SendGate::Closed,
+        SituationState::Replaying => SendGate::Replaying,
+        SituationState::Responding { .. }
+        | SituationState::Executing { .. }
+        | SituationState::Working => SendGate::ActiveTurn,
+        SituationState::AwaitingApproval { .. } | SituationState::BlockedUnsupported { .. } => {
             SendGate::NeedsYou
         }
-        CodexPhase::ReadOnly => SendGate::ReadOnly,
-        CodexPhase::Unknown => SendGate::Unknown,
+        SituationState::ReadOnly => SendGate::ReadOnly,
+        SituationState::Unknown => SendGate::Unknown,
+        SituationState::Finished | SituationState::Idle => SendGate::Ready,
     }
+}
+
+#[derive(Clone, Copy)]
+pub(super) enum WriteAction {
+    Prompt,
+    Steer,
+    Interrupt,
+    Answer,
+}
+
+#[derive(Clone, Copy)]
+pub(super) enum WritePermission {
+    Allowed,
+    Refused(&'static str),
+}
+
+impl WritePermission {
+    fn is_allowed(self) -> bool {
+        matches!(self, Self::Allowed)
+    }
+}
+
+pub(super) fn write_permission(
+    model: &Model,
+    agent: amux::AgentId,
+    action: WriteAction,
+) -> WritePermission {
+    let situation = situation(model, agent);
+    if let Some(message) = session_refusal(&situation.state) {
+        return WritePermission::Refused(message);
+    }
+
+    match action {
+        WriteAction::Interrupt if situation.active_turn => WritePermission::Allowed,
+        WriteAction::Interrupt => {
+            WritePermission::Refused("cannot interrupt without an active turn")
+        }
+        _ if situation.input_in_flight => WritePermission::Refused(REFUSAL_INPUT_IN_FLIGHT),
+        WriteAction::Prompt => match situation.state {
+            SituationState::Finished | SituationState::Idle => WritePermission::Allowed,
+            SituationState::AwaitingApproval { .. } | SituationState::BlockedUnsupported { .. } => {
+                WritePermission::Refused(REFUSAL_NEEDS_YOU)
+            }
+            SituationState::Responding { .. }
+            | SituationState::Executing { .. }
+            | SituationState::Working => WritePermission::Refused(REFUSAL_ACTIVE),
+            SituationState::Unavailable
+            | SituationState::Exited
+            | SituationState::Closed
+            | SituationState::Unknown
+            | SituationState::ReadOnly
+            | SituationState::Replaying => unreachable!("refused above"),
+        },
+        WriteAction::Steer => match situation.state {
+            SituationState::Responding { .. }
+            | SituationState::Executing { .. }
+            | SituationState::Working
+                if situation.active_turn =>
+            {
+                WritePermission::Allowed
+            }
+            SituationState::AwaitingApproval { .. } | SituationState::BlockedUnsupported { .. } => {
+                WritePermission::Refused(REFUSAL_NEEDS_YOU)
+            }
+            SituationState::Unavailable
+            | SituationState::Exited
+            | SituationState::Closed
+            | SituationState::Unknown
+            | SituationState::ReadOnly
+            | SituationState::Replaying => unreachable!("refused above"),
+            SituationState::Responding { .. }
+            | SituationState::Executing { .. }
+            | SituationState::Working
+            | SituationState::Finished
+            | SituationState::Idle => {
+                WritePermission::Refused("cannot steer without an active turn")
+            }
+        },
+        WriteAction::Answer => match situation.state {
+            SituationState::AwaitingApproval { .. } => WritePermission::Allowed,
+            SituationState::Unavailable
+            | SituationState::Exited
+            | SituationState::Closed
+            | SituationState::Unknown
+            | SituationState::ReadOnly
+            | SituationState::Replaying => unreachable!("refused above"),
+            SituationState::BlockedUnsupported { .. }
+            | SituationState::Responding { .. }
+            | SituationState::Executing { .. }
+            | SituationState::Working
+            | SituationState::Finished
+            | SituationState::Idle => {
+                WritePermission::Refused("cannot answer without a pending Codex approval")
+            }
+        },
+    }
+}
+
+fn session_refusal(state: &SituationState) -> Option<&'static str> {
+    match state {
+        SituationState::Unavailable => Some(REFUSAL_UNAVAILABLE),
+        SituationState::Exited => Some(REFUSAL_EXITED),
+        SituationState::Closed => Some(REFUSAL_CLOSED),
+        SituationState::Replaying => Some(REFUSAL_REPLAYING),
+        SituationState::ReadOnly => Some(REFUSAL_READ_ONLY),
+        SituationState::Unknown => Some(REFUSAL_UNKNOWN),
+        SituationState::AwaitingApproval { .. }
+        | SituationState::BlockedUnsupported { .. }
+        | SituationState::Responding { .. }
+        | SituationState::Executing { .. }
+        | SituationState::Working
+        | SituationState::Finished
+        | SituationState::Idle => None,
+    }
+}
+
+pub fn allows_prompt(model: &Model, agent: amux::AgentId) -> bool {
+    write_permission(model, agent, WriteAction::Prompt).is_allowed()
+}
+
+pub fn allows_steer(model: &Model, agent: amux::AgentId) -> bool {
+    write_permission(model, agent, WriteAction::Steer).is_allowed()
+}
+
+pub fn allows_interrupt(model: &Model, agent: amux::AgentId) -> bool {
+    write_permission(model, agent, WriteAction::Interrupt).is_allowed()
+}
+
+pub fn allows_answer(model: &Model, agent: amux::AgentId) -> bool {
+    write_permission(model, agent, WriteAction::Answer).is_allowed()
 }
 
 pub(crate) fn check_projection_invariant(
@@ -1074,36 +1225,6 @@ mod tests {
         let mut violations = Vec::new();
         layer.check_invariants(agent(), &mut violations);
         violations.iter().map(Violation::kind).collect()
-    }
-
-    #[test]
-    fn write_permissions_are_an_exhaustive_projection_of_the_send_gate() {
-        let gates = [
-            SendGate::Ready,
-            SendGate::Unavailable,
-            SendGate::Exited,
-            SendGate::Closed,
-            SendGate::Replaying,
-            SendGate::ActiveTurn,
-            SendGate::NeedsYou,
-            SendGate::ReadOnly,
-            SendGate::Unknown,
-            SendGate::InputInFlight,
-        ];
-        for gate in gates {
-            assert_eq!(gate.allows_prompt(), gate == SendGate::Ready, "{gate:?}");
-            assert_eq!(
-                gate.allows_steer(),
-                gate == SendGate::ActiveTurn,
-                "{gate:?}"
-            );
-            assert_eq!(
-                gate.allows_interrupt(),
-                matches!(gate, SendGate::ActiveTurn | SendGate::NeedsYou),
-                "{gate:?}"
-            );
-            assert_eq!(gate.allows_answer(), gate == SendGate::NeedsYou, "{gate:?}");
-        }
     }
 
     #[test]

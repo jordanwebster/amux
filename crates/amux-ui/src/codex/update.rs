@@ -3,7 +3,8 @@
 use serde_json::{Value, json};
 
 use super::{
-    CodexCommand, CodexDecision, CodexInput, CodexLayer, InFlightInput, InFlightKind, SendGate,
+    CodexCommand, CodexDecision, CodexInput, CodexLayer, InFlightInput, InFlightKind, WriteAction,
+    WritePermission,
 };
 use crate::effect::InputPayload;
 use crate::model::{AgentLayer, Model};
@@ -19,9 +20,10 @@ pub(crate) fn update_command(
     let command = Command::Codex(native.clone());
     match native {
         CodexCommand::Prompt { agent, text } => {
-            let gate = super::send_gate(model, agent);
-            if !gate.allows_prompt() {
-                return refuse_gate(model, op, seq, command, gate);
+            if let WritePermission::Refused(message) =
+                super::write_permission(model, agent, WriteAction::Prompt)
+            {
+                return refuse(model, op, seq, command, message);
             }
             let input = prompt_input(&text);
             dispatch_codex_input(
@@ -35,16 +37,10 @@ pub(crate) fn update_command(
             )
         }
         CodexCommand::Steer { agent, text } => {
-            let gate = super::send_gate(model, agent);
-            if !gate.allows_steer() {
-                return refuse_action_gate(
-                    model,
-                    op,
-                    seq,
-                    command,
-                    gate,
-                    "cannot steer without an active turn",
-                );
+            if let WritePermission::Refused(message) =
+                super::write_permission(model, agent, WriteAction::Steer)
+            {
+                return refuse(model, op, seq, command, message);
             }
             let Some(turn_id) = model
                 .codex(agent)
@@ -79,16 +75,10 @@ pub(crate) fn update_command(
             decision,
         } => update_answer(model, op, seq, command, agent, request_id, decision),
         CodexCommand::Interrupt { agent } => {
-            let gate = super::send_gate(model, agent);
-            if !gate.allows_interrupt() {
-                return refuse_action_gate(
-                    model,
-                    op,
-                    seq,
-                    command,
-                    gate,
-                    "cannot interrupt without an active turn",
-                );
+            if let WritePermission::Refused(message) =
+                super::write_permission(model, agent, WriteAction::Interrupt)
+            {
+                return refuse(model, op, seq, command, message);
             }
             let Some(turn_id) = model
                 .codex(agent)
@@ -128,19 +118,13 @@ fn update_answer(
     request_id: Value,
     decision: CodexDecision,
 ) -> Vec<crate::Effect> {
-    let gate = super::send_gate(model, agent);
-    if !gate.allows_answer() {
-        return refuse_action_gate(
-            model,
-            op,
-            seq,
-            command,
-            gate,
-            "cannot answer without a blocking Codex request",
-        );
+    if let WritePermission::Refused(message) =
+        super::write_permission(model, agent, WriteAction::Answer)
+    {
+        return refuse(model, op, seq, command, message);
     }
     let Some(layer) = model.codex(agent) else {
-        return refuse_gate(model, op, seq, command, SendGate::Unavailable);
+        return refuse(model, op, seq, command, super::REFUSAL_UNAVAILABLE);
     };
     let Some(ask) = layer.asks().find(|ask| ask.request_id == request_id) else {
         return refuse(model, op, seq, command, "ask already resolved");
@@ -179,33 +163,6 @@ fn update_answer(
             decision,
         },
     )
-}
-
-/// Refuse with the gate's own words, so a refusal and the rendered gate can
-/// never state different reasons for the same fact.
-fn refuse_gate(
-    model: &mut Model,
-    op: OpId,
-    seq: u64,
-    command: Command,
-    gate: SendGate,
-) -> Vec<crate::Effect> {
-    let message = gate.refusal().expect("a non-ready gate states its refusal");
-    refuse(model, op, seq, command, message)
-}
-
-fn refuse_action_gate(
-    model: &mut Model,
-    op: OpId,
-    seq: u64,
-    command: Command,
-    gate: SendGate,
-    ready_message: &'static str,
-) -> Vec<crate::Effect> {
-    match gate.refusal() {
-        Some(message) => refuse(model, op, seq, command, message),
-        None => refuse(model, op, seq, command, ready_message),
-    }
 }
 
 fn dispatch_codex_input(

@@ -314,6 +314,40 @@ fn active_steer_and_interrupt_carry_the_authoritative_turn_id() {
 }
 
 #[test]
+fn active_turn_stays_interruptible_while_a_steer_is_in_flight() {
+    let msgs = seq([
+        codex_base(AGENT),
+        vec![batch(AGENT, 10, live_rows())],
+        vec![command_msg(
+            3,
+            CodexCommand::Steer {
+                agent: agent_id(AGENT),
+                text: "keep going".into(),
+            },
+        )],
+        vec![command_msg(
+            4,
+            CodexCommand::Interrupt {
+                agent: agent_id(AGENT),
+            },
+        )],
+    ]);
+    let (model, effects) = fold_with_effects(msgs);
+
+    assert_eq!(send_input_count(&effects), 2);
+    assert_eq!(codex_layer(&model, AGENT).in_flight_inputs().count(), 2);
+    assert!(effects.iter().any(|effect| matches!(
+        effect,
+        Effect::SendInput {
+            payload: InputPayload::Codex {
+                payload: CodexInput::Interrupt { turn_id }
+            },
+            ..
+        } if turn_id == "turn-live"
+    )));
+}
+
+#[test]
 fn stale_turn_id_cannot_bypass_the_authoritative_write_gate() {
     let base = seq([
         codex_base(AGENT),
@@ -426,7 +460,7 @@ fn read_only_reconnect_state_refuses_an_answer_before_dispatch() {
 }
 
 #[test]
-fn replaying_state_refuses_a_stale_observed_answer_before_dispatch() {
+fn replaying_state_refuses_stale_observed_writes_before_dispatch() {
     let msgs = seq([
         codex_base(AGENT),
         vec![batch(AGENT, 10, approval_rows_for_write())],
@@ -437,6 +471,12 @@ fn replaying_state_refuses_a_stale_observed_answer_before_dispatch() {
             },
         )],
         vec![stream(AGENT, StreamMsg::Opened { truncated: false })],
+        vec![command_msg(
+            11,
+            CodexCommand::Interrupt {
+                agent: agent_id(AGENT),
+            },
+        )],
         vec![command_msg(
             12,
             CodexCommand::Answer {
@@ -453,6 +493,7 @@ fn replaying_state_refuses_a_stale_observed_answer_before_dispatch() {
         SendGate::Replaying
     );
     assert_eq!(send_input_count(&effects), 0);
+    assert_eq!(failure_message(&model, 11), "send gated while replaying");
     assert_eq!(failure_message(&model, 12), "send gated while replaying");
 }
 
