@@ -1,0 +1,10 @@
+[package]
+name = "replay-support"
+version = "0.1.0"
+edition.workspace = true
+
+[dependencies]
+serde.workspace = true
+serde_json.workspace = true
+serde_yaml.workspace = true
+tokio.workspace = true

@@ -38,6 +38,30 @@ One paragraph describing what was done.
 
 ---
 
+## 2026-08-13: P4 — in-tree Codex SDK and daemon transport
+
+Copied `codex-sdk` and `replay-support` from claude-sdk commit
+`f935f6233e143524f9965fb730c956e00fdff5c9` as first-class workspace crates.
+The SDK now matches the verified codex-cli 0.147.0 surface: initialize records
+`codexHome` and platform fields, `thread/list` consumes the `data` envelope,
+`account/read` is typed, the four added notification families are parsed, dead
+v1 approval aliases are gone, and `item/tool/call` is surfaced with correlated
+typed responses or an explicit JSON-RPC error. Child stderr is forwarded to
+tracing with a 16 KiB per-line cap. Per-thread delivery is non-blocking so the
+socket reader always drains independently of consumers.
+
+Added WebSocket-over-UDS transport plus the amended daemon lifecycle: real
+handshake probing, managed-daemon fall-through, supervised well-known server,
+stale-socket-only removal, resolved socket parents, conservative UDS path
+validation, optional private fallback, and process-group shutdown for the npm
+shim/native child tree. `tokio-tungstenite` handles framing and handshake;
+`tokio-util::CancellationToken` remains the shared shutdown primitive. Three
+provenance-stamped replay smokes and opt-in/local transport tests cover the new
+surface. The real 0.147.0 probe passed in `Spawned` mode through initialize and
+`thread/list`; explicit shutdown left no spawned app-server process. Workspace
+clippy and the 44-test testnet spec gate pass; the full workspace test gate is
+green (with the two pre-existing test-only tracked-listener warnings).
+
 ## 2026-08-13: Checkpoint #1 — P1–P3 seam audit
 
 Fable checkpoint between the refactor phases and the codex build-out.

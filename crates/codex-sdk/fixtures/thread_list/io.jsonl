@@ -1,0 +1,5 @@
+{"dir":"stdin","line":"{\"id\":1,\"method\":\"initialize\",\"params\":{\"capabilities\":{\"experimentalApi\":true},\"clientInfo\":{\"name\":\"codex-rust-sdk\",\"title\":null,\"version\":\"0.1.0\"}}}","us":1}
+{"dir":"stdout","line":"{\"id\":1,\"result\":{\"userAgent\":\"codex-rust-sdk/0.118.0\",\"codexHome\":\"/Users/test/.codex\",\"platformFamily\":\"unix\",\"platformOs\":\"macos\"}}","us":2}
+{"dir":"stdin","line":"{\"method\":\"initialized\"}","us":3}
+{"dir":"stdin","line":"{\"id\":2,\"method\":\"thread/list\",\"params\":{\"archived\":null,\"cursor\":null,\"cwd\":null,\"limit\":null,\"modelProviders\":null,\"searchTerm\":null,\"sortKey\":null,\"sourceKinds\":null}}","us":4}
+{"dir":"stdout","line":"{\"id\":2,\"result\":{\"data\":[{\"id\":\"thread-1\",\"preview\":\"hello\",\"ephemeral\":false,\"modelProvider\":\"openai\",\"createdAt\":1,\"updatedAt\":2,\"status\":{\"type\":\"notLoaded\"},\"path\":\"/Users/test/.codex/sessions/rollout.jsonl\",\"cwd\":\"/work\",\"cliVersion\":\"0.118.0\",\"source\":\"cli\",\"agentNickname\":null,\"agentRole\":null,\"gitInfo\":null,\"name\":null,\"turns\":[]}],\"nextCursor\":null}}","us":5}
