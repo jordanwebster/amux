@@ -1,5 +1,6 @@
-use std::collections::HashMap;
+use std::collections::{HashMap, VecDeque};
 use std::sync::Arc;
+use std::sync::Mutex as StdMutex;
 use std::sync::OnceLock;
 use std::sync::Weak;
 use std::sync::atomic::{AtomicU8, AtomicU64, Ordering};
@@ -48,34 +49,72 @@ pub(crate) enum ThreadChannelState {
 
 pub(crate) struct ThreadRegistration {
     tx: mpsc::Sender<ThreadEvent>,
-    event_rx: Mutex<Option<mpsc::Receiver<ThreadEvent>>>,
+    event_rx: Mutex<Option<ThreadEventReceiver>>,
+    route: StdMutex<ThreadEventRoute>,
     state: AtomicU8,
     state_changed: Notify,
 }
 
+enum ThreadEventRoute {
+    Live,
+    Staging(VecDeque<ThreadEvent>),
+}
+
+pub(crate) struct ThreadEventReceiver {
+    staged: VecDeque<ThreadEvent>,
+    live: mpsc::Receiver<ThreadEvent>,
+}
+
+impl ThreadEventReceiver {
+    pub(crate) fn try_recv(&mut self) -> Result<ThreadEvent, mpsc::error::TryRecvError> {
+        self.staged
+            .pop_front()
+            .map_or_else(|| self.live.try_recv(), Ok)
+    }
+
+    pub(crate) async fn recv(&mut self) -> Option<ThreadEvent> {
+        match self.staged.pop_front() {
+            Some(event) => Some(event),
+            None => self.live.recv().await,
+        }
+    }
+}
+
 impl ThreadRegistration {
     pub(crate) fn new() -> Arc<Self> {
+        Self::new_with_route(ThreadEventRoute::Live)
+    }
+
+    fn new_staging() -> Arc<Self> {
+        Self::new_with_route(ThreadEventRoute::Staging(VecDeque::new()))
+    }
+
+    fn new_with_route(route: ThreadEventRoute) -> Arc<Self> {
         let (tx, event_rx) = mpsc::channel(THREAD_CHANNEL_CAPACITY);
         Arc::new(Self {
             tx,
-            event_rx: Mutex::new(Some(event_rx)),
+            event_rx: Mutex::new(Some(ThreadEventReceiver {
+                staged: VecDeque::new(),
+                live: event_rx,
+            })),
+            route: StdMutex::new(route),
             state: AtomicU8::new(THREAD_CHANNEL_OPEN),
             state_changed: Notify::new(),
         })
     }
 
-    pub(crate) async fn take_receiver(&self) -> Option<mpsc::Receiver<ThreadEvent>> {
+    pub(crate) async fn take_receiver(&self) -> Option<ThreadEventReceiver> {
         self.event_rx.lock().await.take()
     }
 
-    pub(crate) async fn restore_receiver(&self, rx: mpsc::Receiver<ThreadEvent>) {
+    pub(crate) async fn restore_receiver(&self, rx: ThreadEventReceiver) {
         *self.event_rx.lock().await = Some(rx);
     }
 
     pub(crate) fn try_restore_receiver(
         &self,
-        rx: mpsc::Receiver<ThreadEvent>,
-    ) -> Result<(), mpsc::Receiver<ThreadEvent>> {
+        rx: ThreadEventReceiver,
+    ) -> Result<(), ThreadEventReceiver> {
         let Ok(mut receiver) = self.event_rx.try_lock() else {
             return Err(rx);
         };
@@ -99,6 +138,14 @@ impl ThreadRegistration {
         if self.state.load(Ordering::Acquire) != THREAD_CHANNEL_OPEN {
             return false;
         }
+        let mut route = self
+            .route
+            .lock()
+            .unwrap_or_else(|poison| poison.into_inner());
+        if let ThreadEventRoute::Staging(events) = &mut *route {
+            events.push_back(event);
+            return true;
+        }
         match self.tx.try_send(event) {
             Ok(()) => true,
             Err(TrySendError::Full(_)) => {
@@ -118,6 +165,25 @@ impl ThreadRegistration {
             }
             Err(TrySendError::Closed(_)) => false,
         }
+    }
+
+    pub(crate) async fn finish_staging(&self) {
+        let staged = {
+            let mut route = self
+                .route
+                .lock()
+                .unwrap_or_else(|poison| poison.into_inner());
+            match std::mem::replace(&mut *route, ThreadEventRoute::Live) {
+                ThreadEventRoute::Staging(events) => events,
+                ThreadEventRoute::Live => return,
+            }
+        };
+        self.event_rx
+            .lock()
+            .await
+            .as_mut()
+            .expect("resume staging receiver was taken before resume completed")
+            .staged = staged;
     }
 
     fn close(&self) {
@@ -242,9 +308,24 @@ impl ServerInner {
     ///
     /// Used by `thread/resume` to recover from overflow and connection-local
     /// terminal state. The old consumer is closed and wakes promptly.
+    #[cfg(test)]
     pub async fn reregister_thread(&self, thread_id: &str) -> Arc<ThreadRegistration> {
+        self.replace_thread_registration(thread_id, ThreadRegistration::new())
+            .await
+    }
+
+    /// Install an unbounded pre-response staging registration for `thread/resume`.
+    pub async fn reregister_thread_for_resume(&self, thread_id: &str) -> Arc<ThreadRegistration> {
+        self.replace_thread_registration(thread_id, ThreadRegistration::new_staging())
+            .await
+    }
+
+    async fn replace_thread_registration(
+        &self,
+        thread_id: &str,
+        registration: Arc<ThreadRegistration>,
+    ) -> Arc<ThreadRegistration> {
         let mut channels = self.thread_channels.lock().await;
-        let registration = ThreadRegistration::new();
         if let Some(old) = channels.insert(thread_id.to_owned(), Arc::downgrade(&registration))
             && let Some(old) = old.upgrade()
         {

@@ -60,6 +60,8 @@ its thread after transport loss or bounded-queue overflow.
 - Added the opt-in `codex_capture` rig and a provenance-stamped backend replay
   fixture covering pong, allow, deny, file approval, interrupt, and history
   resume.
+- Review round 1 stages unbounded history only while `thread/resume` is pending
+  and always forwards explicit interrupt IDs to the daemon.
 
 ### Decisions Made
 - User turns always call `turn/start`; steering is explicit and supplies the

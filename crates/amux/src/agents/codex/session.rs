@@ -631,28 +631,31 @@ impl CodexInputTarget {
                 Ok(())
             }
             CodexSdkV1Input::Interrupt { turn_id } => {
-                let (live, active) = {
+                let (live, interrupt_turn_id) = {
                     let state = self
                         .runtime
                         .lock()
                         .unwrap_or_else(|poison| poison.into_inner());
                     let Some(attached) = state.attached.as_ref() else {
-                        return Ok(());
+                        if turn_id.is_empty() {
+                            return Ok(());
+                        }
+                        return Err(anyhow!("Codex thread is not attached"));
                     };
-                    let Some(active) = attached.active_turn_id.clone() else {
-                        return Ok(());
+                    let interrupt_turn_id = if turn_id.is_empty() {
+                        let Some(active) = attached.active_turn_id.clone() else {
+                            return Ok(());
+                        };
+                        active
+                    } else {
+                        turn_id
                     };
                     let live = attached.live.clone().ok_or_else(|| {
                         anyhow!("Codex thread is read-only until reconnect succeeds")
                     })?;
-                    (live, active)
+                    (live, interrupt_turn_id)
                 };
-                if !turn_id.is_empty() && turn_id != active {
-                    return Err(anyhow!(
-                        "interrupt turn_id `{turn_id}` does not match active turn `{active}`"
-                    ));
-                }
-                live.thread.interrupt(&active).await?;
+                live.thread.interrupt(&interrupt_turn_id).await?;
                 Ok(())
             }
             CodexSdkV1Input::ApprovalDecision {
@@ -886,6 +889,7 @@ mod tests {
     use replay_support::{
         ReplayAdvance, ReplayOptions, load_script, replay_transport_with_controller,
     };
+    use tokio::io::{AsyncBufReadExt, AsyncWriteExt, BufReader, duplex, split};
 
     fn session() -> CodexSession {
         let req = CreateAgentRequest {
@@ -1014,6 +1018,134 @@ mod tests {
                 .unwrap()
                 .contains("unknown")
         );
+    }
+
+    #[tokio::test]
+    async fn explicit_interrupt_is_sent_when_active_turn_is_unknown() {
+        let (client_side, server_side) = duplex(16 * 1024);
+        let (client_read, client_write) = split(client_side);
+        let (server_read, mut server_write) = split(server_side);
+        let server = tokio::spawn(async move {
+            let mut reader = BufReader::new(server_read);
+            let mut line = String::new();
+
+            reader.read_line(&mut line).await.unwrap();
+            let initialize: Value = serde_json::from_str(line.trim()).unwrap();
+            server_write
+                .write_all(
+                    format!(
+                        "{}\n",
+                        json!({
+                            "id": initialize["id"],
+                            "result": {
+                                "userAgent": "test",
+                                "codexHome": "/tmp",
+                                "platformFamily": "unix",
+                                "platformOs": "test"
+                            }
+                        })
+                    )
+                    .as_bytes(),
+                )
+                .await
+                .unwrap();
+            line.clear();
+            reader.read_line(&mut line).await.unwrap();
+            assert_eq!(
+                serde_json::from_str::<Value>(line.trim()).unwrap()["method"],
+                "initialized"
+            );
+
+            line.clear();
+            reader.read_line(&mut line).await.unwrap();
+            let start: Value = serde_json::from_str(line.trim()).unwrap();
+            assert_eq!(start["method"], "thread/start");
+            server_write
+                .write_all(
+                    format!(
+                        "{}\n",
+                        json!({
+                            "id": start["id"],
+                            "result": {
+                                "thread": {
+                                    "id": "thread-1",
+                                    "path": null,
+                                    "agentNickname": null,
+                                    "agentRole": null,
+                                    "gitInfo": null,
+                                    "name": null
+                                },
+                                "model": "test",
+                                "modelProvider": "openai",
+                                "serviceTier": null,
+                                "cwd": "/tmp",
+                                "approvalPolicy": "on-request",
+                                "approvalsReviewer": "user",
+                                "sandbox": {"type": "readOnly", "networkAccess": false},
+                                "reasoningEffort": null
+                            }
+                        })
+                    )
+                    .as_bytes(),
+                )
+                .await
+                .unwrap();
+
+            line.clear();
+            reader.read_line(&mut line).await.unwrap();
+            let interrupt: Value = serde_json::from_str(line.trim()).unwrap();
+            assert_eq!(interrupt["method"], "turn/interrupt");
+            assert_eq!(interrupt["params"]["threadId"], "thread-1");
+            assert_eq!(interrupt["params"]["turnId"], "daemon-turn");
+            server_write
+                .write_all(format!("{}\n", json!({"id": interrupt["id"], "result": {}})).as_bytes())
+                .await
+                .unwrap();
+        });
+
+        let client = Codex::from_io(
+            BufReader::new(client_read),
+            client_write,
+            CodexConfig::default(),
+        )
+        .await
+        .unwrap();
+        let thread = client.start_thread(ThreadConfig::default()).await.unwrap();
+        let source = StructuredLogSource::new(4);
+        let runtime = Arc::new(StdMutex::new(CodexRuntime {
+            desired_name: None,
+            attached: Some(CodexAttached {
+                thread_id: "thread-1".into(),
+                daemon_mode: Some("test"),
+                live: Some(CodexLive {
+                    client: client.clone(),
+                    thread,
+                }),
+                active_turn_id: None,
+                pending: HashMap::new(),
+            }),
+            startup_error: None,
+            ingest_abort: None,
+        }));
+        CodexInputTarget {
+            runtime,
+            log_source: source.clone(),
+        }
+        .send(
+            b"explicit-interrupt".to_vec(),
+            CodexSdkV1Input::Interrupt {
+                turn_id: "daemon-turn".into(),
+            },
+        )
+        .await;
+
+        server.await.unwrap();
+        let (mut rows, count) = source.subscribe_with_query(None).await.unwrap();
+        assert_eq!(count, 1);
+        let row = rows.read().await.unwrap().payload;
+        assert_eq!(row["type"], "amux.input_result");
+        assert!(row.get("ok").is_some());
+        client.close().await;
     }
 
     async fn next_ingested(

@@ -1,9 +1,7 @@
 use std::fmt;
 use std::sync::Arc;
 
-use tokio::sync::mpsc;
-
-use crate::dispatch::ThreadChannelState;
+use crate::dispatch::{ThreadChannelState, ThreadEventReceiver};
 use crate::error::Error;
 use crate::notification::ThreadEvent;
 use crate::thread::{ThreadInner, restore_event_receiver};
@@ -11,7 +9,7 @@ use crate::thread::{ThreadInner, restore_event_receiver};
 /// Continuous receiver for every event routed to one Codex thread.
 #[must_use = "thread events must be consumed to avoid bounded-queue overflow"]
 pub struct ThreadEventStream {
-    rx: Option<mpsc::Receiver<ThreadEvent>>,
+    rx: Option<ThreadEventReceiver>,
     thread_inner: Arc<ThreadInner>,
     done: bool,
 }
@@ -26,7 +24,7 @@ impl fmt::Debug for ThreadEventStream {
 }
 
 impl ThreadEventStream {
-    pub(crate) fn new(rx: mpsc::Receiver<ThreadEvent>, thread_inner: Arc<ThreadInner>) -> Self {
+    pub(crate) fn new(rx: ThreadEventReceiver, thread_inner: Arc<ThreadInner>) -> Self {
         Self {
             rx: Some(rx),
             thread_inner,
@@ -50,11 +48,11 @@ impl ThreadEventStream {
         loop {
             match rx.try_recv() {
                 Ok(event) => return Ok(Some(event)),
-                Err(mpsc::error::TryRecvError::Disconnected) => {
+                Err(tokio::sync::mpsc::error::TryRecvError::Disconnected) => {
                     self.done = true;
                     return Ok(None);
                 }
-                Err(mpsc::error::TryRecvError::Empty) => {}
+                Err(tokio::sync::mpsc::error::TryRecvError::Empty) => {}
             }
 
             let state_changed = registration.state_changed().notified();

@@ -181,8 +181,9 @@ impl Codex {
         }
         // Install a fresh registration before the RPC. The app-server may emit
         // replay/history notifications before returning the response.
-        let registration = self.inner.reregister_thread(thread_id).await;
+        let registration = self.inner.reregister_thread_for_resume(thread_id).await;
         let session: ThreadSessionInfo = self.inner.request("thread/resume", params).await?;
+        registration.finish_staging().await;
         Ok(Thread::new(self.inner.clone(), session, registration))
     }
 
@@ -426,6 +427,27 @@ mod remediation_tests {
         writer.flush().await.unwrap();
     }
 
+    fn thread_session(thread_id: &str) -> serde_json::Value {
+        serde_json::json!({
+            "thread": {
+                "id": thread_id,
+                "path": null,
+                "agentNickname": null,
+                "agentRole": null,
+                "gitInfo": null,
+                "name": null
+            },
+            "model": "test",
+            "modelProvider": "openai",
+            "serviceTier": null,
+            "cwd": "/tmp",
+            "approvalPolicy": "on-request",
+            "approvalsReviewer": "user",
+            "sandbox": {"type": "readOnly", "networkAccess": false},
+            "reasoningEffort": null
+        })
+    }
+
     #[tokio::test]
     async fn config_read_sends_object_params() {
         let (client_reader, client_writer, mut server_reader, mut server_writer) = test_io();
@@ -502,6 +524,93 @@ mod remediation_tests {
         .expect("writer task remained alive after initialize failed")
         .unwrap();
         assert_eq!(bytes, 0);
+    }
+
+    #[tokio::test]
+    async fn resume_stages_more_than_channel_capacity_without_overflow_or_retry_loop() {
+        const REPLAY_EVENTS: usize = 300;
+
+        let (client_reader, client_writer, mut server_reader, mut server_writer) = test_io();
+        let connect = tokio::spawn(Codex::from_io(
+            client_reader,
+            client_writer,
+            CodexConfig::default(),
+        ));
+
+        let initialize = read_json_line(&mut server_reader).await;
+        write_json_line(
+            &mut server_writer,
+            serde_json::json!({
+                "id": initialize["id"],
+                "result": {
+                    "userAgent": "test",
+                    "codexHome": "/tmp",
+                    "platformFamily": "unix",
+                    "platformOs": "test"
+                }
+            }),
+        )
+        .await;
+        let codex = connect.await.unwrap().unwrap();
+        assert_eq!(
+            read_json_line(&mut server_reader).await["method"],
+            "initialized"
+        );
+
+        let resume_client = codex.clone();
+        let resume = tokio::spawn(async move {
+            resume_client
+                .resume_thread("thread-long", ThreadConfig::default())
+                .await
+        });
+        let request = read_json_line(&mut server_reader).await;
+        assert_eq!(request["method"], "thread/resume");
+
+        // Replay is deliberately sent before the response, when resume_thread's
+        // caller cannot yet take and drain the returned event stream.
+        for index in 0..REPLAY_EVENTS {
+            write_json_line(
+                &mut server_writer,
+                serde_json::json!({
+                    "method": "warning",
+                    "params": {
+                        "threadId": "thread-long",
+                        "turnId": "turn-old",
+                        "message": index.to_string()
+                    }
+                }),
+            )
+            .await;
+        }
+        write_json_line(
+            &mut server_writer,
+            serde_json::json!({"id": request["id"], "result": thread_session("thread-long")}),
+        )
+        .await;
+
+        let thread = tokio::time::timeout(Duration::from_secs(2), resume)
+            .await
+            .expect("resume deadlocked while replaying history")
+            .unwrap()
+            .unwrap();
+        let mut events = thread.events().await.unwrap();
+        for index in 0..REPLAY_EVENTS {
+            let event = events.next().await.unwrap().expect("staged replay event");
+            assert_eq!(event.params["message"], index.to_string());
+        }
+        assert_eq!(
+            thread.inner.registration.state(),
+            crate::dispatch::ThreadChannelState::Open,
+            "the single resume must not poison its registration and trigger another resume"
+        );
+        assert!(
+            tokio::time::timeout(Duration::from_millis(25), events.next())
+                .await
+                .is_err(),
+            "the replay ended cleanly without an immediate overflow error"
+        );
+
+        codex.close().await;
     }
 
     #[cfg(unix)]

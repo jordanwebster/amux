@@ -1,9 +1,7 @@
 use std::fmt;
 use std::sync::Arc;
 
-use tokio::sync::mpsc;
-
-use crate::dispatch::ThreadChannelState;
+use crate::dispatch::{ThreadChannelState, ThreadEventReceiver};
 use crate::error::Error;
 use crate::notification::{ThreadEvent, TurnEvent};
 use crate::thread::ThreadInner;
@@ -22,7 +20,7 @@ use crate::types::Turn;
 /// subsequent `turn()` calls can create a new `TurnStream`.
 #[must_use = "turn events must be consumed; drop the stream to release the turn"]
 pub struct TurnStream {
-    rx: Option<mpsc::Receiver<ThreadEvent>>,
+    rx: Option<ThreadEventReceiver>,
     thread_inner: Arc<ThreadInner>,
     turn_id: String,
     completed_turn: Option<Turn>,
@@ -41,7 +39,7 @@ impl fmt::Debug for TurnStream {
 
 impl TurnStream {
     pub(crate) fn new(
-        rx: mpsc::Receiver<ThreadEvent>,
+        rx: ThreadEventReceiver,
         thread_inner: Arc<ThreadInner>,
         initial_turn_id: String,
     ) -> Self {
@@ -78,11 +76,11 @@ impl TurnStream {
                     }
                     continue;
                 }
-                Err(mpsc::error::TryRecvError::Disconnected) => {
+                Err(tokio::sync::mpsc::error::TryRecvError::Disconnected) => {
                     self.done = true;
                     return Ok(None);
                 }
-                Err(mpsc::error::TryRecvError::Empty) => {}
+                Err(tokio::sync::mpsc::error::TryRecvError::Empty) => {}
             }
             match registration.state() {
                 ThreadChannelState::Overflow => {
@@ -169,7 +167,7 @@ mod tests {
     use std::sync::OnceLock;
     use std::sync::atomic::AtomicU64;
 
-    use tokio::sync::Mutex;
+    use tokio::sync::{Mutex, mpsc};
     use tokio_util::sync::CancellationToken;
 
     use super::*;

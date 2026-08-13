@@ -1,11 +1,10 @@
 use std::sync::Arc;
 
-use tokio::sync::mpsc;
-
 use crate::approval::{ApprovalResponse, RequestId};
 use crate::config::{self, TurnConfig, TurnInput};
-use crate::dispatch::{ServerInner, ThreadRegistration};
+use crate::dispatch::{ServerInner, ThreadEventReceiver, ThreadRegistration};
 use crate::error::Error;
+#[cfg(test)]
 use crate::notification::ThreadEvent;
 use crate::thread_event_stream::ThreadEventStream;
 use crate::turn_stream::TurnStream;
@@ -34,7 +33,7 @@ pub(crate) struct ThreadInner {
 
 struct TurnSlot {
     thread_inner: Arc<ThreadInner>,
-    rx: Option<mpsc::Receiver<ThreadEvent>>,
+    rx: Option<ThreadEventReceiver>,
 }
 
 impl TurnSlot {
@@ -311,10 +310,7 @@ fn review_target_to_wire(target: ReviewTarget) -> serde_json::Value {
     }
 }
 
-pub(crate) fn restore_event_receiver(
-    thread_inner: Arc<ThreadInner>,
-    rx: mpsc::Receiver<ThreadEvent>,
-) {
+pub(crate) fn restore_event_receiver(thread_inner: Arc<ThreadInner>, rx: ThreadEventReceiver) {
     let rx = match thread_inner.registration.try_restore_receiver(rx) {
         Ok(()) => return,
         Err(rx) => rx,
@@ -332,7 +328,7 @@ mod tests {
     use std::collections::HashMap;
     use std::sync::atomic::AtomicU64;
 
-    use tokio::sync::Mutex;
+    use tokio::sync::{Mutex, mpsc};
     use tokio_util::sync::CancellationToken;
 
     use super::*;
