@@ -38,6 +38,48 @@ One paragraph describing what was done.
 
 ---
 
+## 2026-08-13: P5a simplification — speculative proto surface and remediation scar tissue
+
+Independent pass over P5a after the review round. Deleted `CodexSdkV1Control`:
+an empty message with no codec, no Rust reference, and no phase briefed to use
+it — codex control has no use case in sight (steer/interrupt/approvals are all
+`CodexSdkV1Input`), so the `codex_sdk_v1` control branch of `send_session_input`
+now rejects control events the way Claude's does instead of promising P5b work
+that nothing needs. Collapsed the remediation's `set_initial_thread_name` — a
+generic higher-order function whose three type parameters existed only so a mock
+closure could be injected — into one non-generic `rename_thread` helper shared by
+startup and `set_local_name`; the two copies of "rename, warn, continue" are now
+one, and the reviewer's actual fix (publish the thread handles before naming,
+never propagate the naming error) is unchanged. Its unit test went with it: it
+asserted that a closure it supplied returned `Err`, and could not have caught a
+regression in the startup ordering it was written for.
+
+In `session_rpc`, `SessionOutputReader::Structured` carried both an
+`Option<Vec<u8>>` cursor and a `StructuredCodec` tag, so "Claude without a
+cursor" and "Codex with one" were expressible; the cursor now lives in
+`StructuredCodec::Claude { replay_cursor }`. Both unsupported-io_protocol errors
+list `codex_sdk_v1` now that it dispatches. `daemon_mode` is `&'static str` end
+to end instead of a `String` cloned per session, the start task's keepalive is
+`wait_for` rather than a hand-rolled borrow/changed loop, and `agents::codex` is
+`pub(crate)` like `agents::claude` (the codec surface is re-exported through
+`amux::codex_io`, which is the only public path). Net −36 lines; no behavior
+change beyond the two error spellings.
+
+Not changed, recorded for later: `CodexRuntime` still expresses impossible
+states (client/thread/thread_id/daemon_mode are set together and only the first
+two are cleared on stop) — the tighter nesting costs more than it saves until
+P5b adds the ingest handle and pending-approval table to the same cell.
+`amux-ui`'s `agent_type_label` still falls through to `"test-agent"`, so codex
+pending rows are mislabeled until P6 fixes it. The private-daemon fallback socket
+comes from `config::default_socket_dir()` rather than the running server's
+configured directory, so two differently-configured amux servers would contend
+for one `codex.sock`.
+
+### Verification
+- `cargo fmt --all`, `cargo clippy --workspace --all-targets` (only the two
+  pre-existing tracked-listener dead-code warnings), `cargo test --workspace`,
+  and `cargo test -p amux --features testnet --test spec` (44 tests) all green.
+
 ## 2026-08-13: P5a — Codex protocol, session skeleton, and real thread create
 
 ### Summary

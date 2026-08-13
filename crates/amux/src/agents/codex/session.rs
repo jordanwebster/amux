@@ -1,5 +1,3 @@
-use std::fmt::Display;
-use std::future::Future;
 use std::path::{Path, PathBuf};
 use std::sync::{Arc, Mutex as StdMutex};
 
@@ -30,7 +28,7 @@ pub(crate) struct CodexClient {
 
 struct CodexConnection {
     client: Codex,
-    mode: String,
+    mode: &'static str,
     _daemon: DaemonMode,
 }
 
@@ -52,7 +50,7 @@ impl CodexClient {
         let daemon = ensure_daemon_with_fallback(&codex_home, &self.private_socket)
             .await
             .context("failed to ensure Codex app-server daemon")?;
-        let mode = daemon_mode_name(&daemon).to_string();
+        let mode = daemon_mode_name(&daemon);
         let config = CodexConfig {
             client_name: "amux".to_string(),
             client_title: Some("amux".to_string()),
@@ -94,21 +92,11 @@ fn daemon_mode_name(mode: &DaemonMode) -> &'static str {
     }
 }
 
-async fn set_initial_thread_name<F, Fut, E>(
-    agent_id: Uuid,
-    thread_id: String,
-    desired_name: Option<String>,
-    rename: F,
-) where
-    F: FnOnce(String, String) -> Fut,
-    Fut: Future<Output = std::result::Result<(), E>>,
-    E: Display,
-{
-    let Some(name) = desired_name else {
-        return;
-    };
-    if let Err(error) = rename(thread_id.clone(), name).await {
-        tracing::warn!(%agent_id, %thread_id, %error, "failed to name Codex thread during startup");
+/// Naming is best-effort: a rejected `thread/name/set` leaves the thread usable,
+/// and the desired-name slot lets a later rename retry.
+async fn rename_thread(client: &Codex, agent_id: Uuid, thread_id: &str, name: &str) {
+    if let Err(error) = client.rename_thread(thread_id, name).await {
+        tracing::warn!(%agent_id, %thread_id, %error, "failed to rename Codex thread");
     }
 }
 
@@ -117,7 +105,7 @@ struct CodexRuntime {
     client: Option<Codex>,
     thread: Option<Thread>,
     thread_id: Option<String>,
-    daemon_mode: Option<String>,
+    daemon_mode: Option<&'static str>,
     startup_error: Option<String>,
     desired_name: Option<String>,
 }
@@ -229,21 +217,14 @@ impl CodexSession {
                 let desired_name = {
                     let mut state = runtime.lock().unwrap_or_else(|poison| poison.into_inner());
                     state.thread_id = Some(thread_id.clone());
-                    state.daemon_mode = Some(connection.mode.clone());
+                    state.daemon_mode = Some(connection.mode);
                     state.client = Some(connection.client.clone());
                     state.thread = Some(thread);
                     state.desired_name.clone()
                 };
-                let client = connection.client.clone();
-                set_initial_thread_name(
-                    agent_id,
-                    thread_id,
-                    desired_name,
-                    move |thread_id, name| async move {
-                        client.rename_thread(&thread_id, &name).await
-                    },
-                )
-                .await;
+                if let Some(name) = desired_name {
+                    rename_thread(&connection.client, agent_id, &thread_id, &name).await;
+                }
                 Ok::<(), anyhow::Error>(())
             };
 
@@ -259,7 +240,8 @@ impl CodexSession {
                 _ = stop_rx.changed() => return,
             }
 
-            while !*stop_rx.borrow() && stop_rx.changed().await.is_ok() {}
+            // Keep the session's exit handle pending until stop (or shutdown).
+            let _ = stop_rx.wait_for(|stopped| *stopped).await;
         }))
     }
 
@@ -272,10 +254,9 @@ impl CodexSession {
             runtime.client.clone().zip(runtime.thread_id.clone())
         };
         if let Some((client, thread_id)) = target {
+            let agent_id = self.agent_id;
             tokio::spawn(async move {
-                if let Err(error) = client.rename_thread(&thread_id, &name).await {
-                    tracing::warn!(%thread_id, %error, "failed to rename Codex thread");
-                }
+                rename_thread(&client, agent_id, &thread_id, &name).await;
             });
         }
     }
@@ -401,8 +382,6 @@ impl AgentBackend for CodexSession {
 
 #[cfg(test)]
 mod tests {
-    use std::sync::atomic::{AtomicBool, Ordering};
-
     use super::*;
     use crate::agents::AgentType;
 
@@ -441,26 +420,5 @@ mod tests {
     fn suspend_is_nonfatal_and_reports_missing_thread_id() {
         let error = session().suspended_state().unwrap_err();
         assert!(error.to_string().contains("thread_id is not available"));
-    }
-
-    #[tokio::test]
-    async fn initial_name_failure_is_nonfatal() {
-        let attempted = Arc::new(AtomicBool::new(false));
-        let attempted_by_rename = attempted.clone();
-
-        set_initial_thread_name(
-            Uuid::from_u128(1),
-            "thread-1".to_string(),
-            Some("named".to_string()),
-            move |thread_id, name| async move {
-                attempted_by_rename.store(true, Ordering::SeqCst);
-                assert_eq!(thread_id, "thread-1");
-                assert_eq!(name, "named");
-                Err::<(), _>(anyhow!("thread/name/set rejected"))
-            },
-        )
-        .await;
-
-        assert!(attempted.load(Ordering::SeqCst));
     }
 }

@@ -50,14 +50,14 @@ enum SessionOutputReader {
     Raw(crate::agents::MultiplexByteReader),
     Structured {
         reader: crate::agents::MultiplexStructuredReader,
-        replay_cursor: Option<Vec<u8>>,
         codec: StructuredCodec,
     },
 }
 
-#[derive(Clone, Copy)]
+/// Per-protocol structured output encoding, plus whatever the protocol reports
+/// as its replay-complete cursor.
 enum StructuredCodec {
-    Claude,
+    Claude { replay_cursor: Vec<u8> },
     Codex,
 }
 
@@ -82,8 +82,9 @@ async fn prepare_direct_session_subscription(
                 .map(|(reader, current_seq)| PreparedSessionSubscription {
                     output: SessionOutputReader::Structured {
                         reader,
-                        replay_cursor: Some(encode_transcript_cursor(current_seq)),
-                        codec: StructuredCodec::Claude,
+                        codec: StructuredCodec::Claude {
+                            replay_cursor: encode_transcript_cursor(current_seq),
+                        },
                     },
                 })
         }
@@ -92,7 +93,6 @@ async fn prepare_direct_session_subscription(
             .map(|reader| PreparedSessionSubscription {
                 output: SessionOutputReader::Structured {
                     reader,
-                    replay_cursor: None,
                     codec: StructuredCodec::Codex,
                 },
             }),
@@ -105,9 +105,10 @@ async fn prepare_direct_session_subscription(
         }
         other => Err(ProtocolError::InvalidArgument {
             message: format!(
-                "unsupported SubscribeSession io_protocol `{other}`; expected `{}` or `{}`",
+                "unsupported SubscribeSession io_protocol `{other}`; expected `{}`, `{}`, or `{}`",
                 terminal_io::TERMINAL_V1,
-                claude_io::PTY_TRANSCRIPT_V1
+                claude_io::PTY_TRANSCRIPT_V1,
+                codex_io::CODEX_SDK_V1
             ),
         }),
     }
@@ -269,8 +270,11 @@ pub(super) async fn send_session_input(
         }
         codex_io::CODEX_SDK_V1 => {
             let SessionInputEvent::Input { payload, .. } = request.event else {
-                return Err(ProtocolError::Unimplemented {
-                    message: format!("`{}` control handling lands in P5b", codex_io::CODEX_SDK_V1),
+                return Err(ProtocolError::InvalidArgument {
+                    message: format!(
+                        "`{}` does not accept SendInput control events",
+                        codex_io::CODEX_SDK_V1
+                    ),
                 });
             };
             let _input = codex_io::decode_codex_sdk_v1_input(&payload)?;
@@ -284,9 +288,10 @@ pub(super) async fn send_session_input(
         }
         other => Err(ProtocolError::InvalidArgument {
             message: format!(
-                "unsupported SendInput io_protocol `{other}`; expected `{}` or `{}`",
+                "unsupported SendInput io_protocol `{other}`; expected `{}`, `{}`, or `{}`",
                 terminal_io::TERMINAL_V1,
-                claude_io::PTY_TRANSCRIPT_V1
+                claude_io::PTY_TRANSCRIPT_V1,
+                codex_io::CODEX_SDK_V1
             ),
         }),
     }
@@ -581,34 +586,35 @@ async fn read_session_output_event(
                 message: "session output subscriber queue closed".to_string(),
             }),
         }),
-        SessionOutputReader::Structured {
-            reader,
-            replay_cursor,
-            codec,
-        } => reader.read_event().await.map(|event| match event {
-            BroadcastRead::ReplayItem(output) | BroadcastRead::LiveItem(output) => {
-                structured_output_event(output, *codec)
-            }
-            BroadcastRead::ReplayComplete => Ok(SubscribeSessionEvent::ReplayComplete {
-                cursor: replay_cursor.clone(),
-            }),
-            BroadcastRead::Lagged => Err(ProtocolError::ResourceExhausted {
-                message: "session output subscriber queue closed".to_string(),
-            }),
-        }),
+        SessionOutputReader::Structured { reader, codec } => {
+            reader.read_event().await.map(|event| match event {
+                BroadcastRead::ReplayItem(output) | BroadcastRead::LiveItem(output) => {
+                    structured_output_event(output, codec)
+                }
+                BroadcastRead::ReplayComplete => Ok(SubscribeSessionEvent::ReplayComplete {
+                    cursor: match codec {
+                        StructuredCodec::Claude { replay_cursor } => Some(replay_cursor.clone()),
+                        StructuredCodec::Codex => None,
+                    },
+                }),
+                BroadcastRead::Lagged => Err(ProtocolError::ResourceExhausted {
+                    message: "session output subscriber queue closed".to_string(),
+                }),
+            })
+        }
     }
 }
 
 fn structured_output_event(
     output: StructuredOutput,
-    codec: StructuredCodec,
+    codec: &StructuredCodec,
 ) -> Result<SubscribeSessionEvent, ProtocolError> {
     let payload_json =
         serde_json::to_vec(&output.payload).map_err(|error| ProtocolError::ServerError {
             message: format!("failed to encode transcript SubscribeSession output: {error}"),
         })?;
     let payload = match codec {
-        StructuredCodec::Claude => {
+        StructuredCodec::Claude { .. } => {
             claude_io::encode_pty_transcript_v1_output(ClaudePtyTranscriptV1Output {
                 seq_id: output.seq,
                 payload: payload_json,

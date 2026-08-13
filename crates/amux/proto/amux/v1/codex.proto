@@ -62,5 +62,3 @@ message CodexSdkV1ApprovalDecision {
   bytes request_id = 1;
   string decision = 2;
 }
-
-message CodexSdkV1Control {}

@@ -2,7 +2,7 @@
 
 mod buffer;
 pub(crate) mod claude;
-pub mod codex;
+pub(crate) mod codex;
 mod events;
 #[cfg(feature = "local-agents")]
 mod hook;

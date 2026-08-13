@@ -8,6 +8,8 @@ pub(crate) use error::protocol_status;
 
 pub(crate) mod amux {
     pub(crate) mod v1 {
+        // The generated `Agent` oneof gained a third variant (`Codex`), which
+        // trips `enum_variant_names` on prost's `TestAgent` variant name.
         #![allow(dead_code, clippy::enum_variant_names)]
         include!(concat!(env!("OUT_DIR"), "/amux.v1.rs"));
     }
