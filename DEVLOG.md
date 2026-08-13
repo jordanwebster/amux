@@ -38,6 +38,50 @@ One paragraph describing what was done.
 
 ---
 
+## 2026-08-13: P5b — Codex structured stream, input, reconnect, and capture
+
+### Summary
+Completed the `codex_sdk_v1` structured plane end to end. Each Codex session now
+continuously persists verbatim upstream method/params rows, accepts typed turn,
+steer, interrupt, and approval inputs with correlated result rows, and resumes
+its thread after transport loss or bounded-queue overflow.
+
+### Changes
+- The SDK exposes raw+typed `ThreadEvent`, a continuous `ThreadEventStream`,
+  receiver-independent `start_turn`, fresh pre-RPC resume registration, and
+  drain-before-overflow signaling. Optional raw wire recording tees both JSONL
+  directions.
+- `CodexRuntime` now nests attached/live state and owns ingest plus pending
+  request state. The host connection cache discards closed transports, while a
+  per-session supervisor retries resume with capped backoff and emits visible
+  ready/gap/reconnect-error boundaries.
+- Codex input has a dedicated backend-owned dispatch handle beside Claude's
+  sequenced input seam. The retained row ring is deliberately 8192 entries.
+- Added the opt-in `codex_capture` rig and a provenance-stamped backend replay
+  fixture covering pong, allow, deny, file approval, interrupt, and history
+  resume.
+
+### Decisions Made
+- User turns always call `turn/start`; steering is explicit and supplies the
+  caller's `expectedTurnId`. Interrupt with no active turn succeeds as a no-op.
+- Saturation is detected exactly by the SDK's poisoned registration. Buffered
+  rows drain first, then amux emits `amux.codex_gap` and `thread/resume`s into a
+  fresh registration. Sequence numbers never reset.
+- A writer-lock conflict is a degraded read-only-until-retry state: the session
+  stays registered, emits the upstream error, and retries resume.
+
+### Verification
+- Focused SDK (47 unit tests) and amux backend replay tests pass; clippy with
+  `-D warnings` passes for both changed crates.
+- Live `codex-cli 0.147.0` captures passed for PONG, command allow/deny,
+  file-change approval, interrupt, history resume (`HISTORY_OK`), and forced
+  SDK transport loss (`ready → gap → ready → RECONNECTED`).
+- The full workspace test gate passes, and the testnet spec passes all 44 tests.
+
+### Next Steps
+- P5c can attach the lazy terminal plane to the nested live runtime. P7 should
+  fold the opaque row vocabulary without changing backend tags.
+
 ## 2026-08-13: P5a simplification — speculative proto surface and remediation scar tissue
 
 Independent pass over P5a after the review round. Deleted `CodexSdkV1Control`:

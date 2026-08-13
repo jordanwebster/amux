@@ -5,6 +5,8 @@ use tokio::sync::mpsc;
 use uuid::Uuid;
 
 use super::PtyAgentHost;
+#[cfg(unix)]
+use crate::agents::CodexInput;
 #[cfg(any(test, feature = "testnet"))]
 use crate::agents::TEST_ECHO_V1;
 use crate::agents::claude::io::{
@@ -269,7 +271,7 @@ pub(super) async fn send_session_input(
             send_structured_session_input(host, request.agent_id, request.event).await
         }
         codex_io::CODEX_SDK_V1 => {
-            let SessionInputEvent::Input { payload, .. } = request.event else {
+            let SessionInputEvent::Input { input_id, payload } = request.event else {
                 return Err(ProtocolError::InvalidArgument {
                     message: format!(
                         "`{}` does not accept SendInput control events",
@@ -277,10 +279,20 @@ pub(super) async fn send_session_input(
                     ),
                 });
             };
-            let _input = codex_io::decode_codex_sdk_v1_input(&payload)?;
-            Err(ProtocolError::Unimplemented {
-                message: format!("`{}` input handling lands in P5b", codex_io::CODEX_SDK_V1),
-            })
+            let input = codex_io::decode_codex_sdk_v1_input(&payload)?;
+            #[cfg(unix)]
+            {
+                let target = codex_input_target(host, request.agent_id).await?;
+                target.send(input_id, input).await;
+                Ok(())
+            }
+            #[cfg(not(unix))]
+            {
+                let _ = (host, input_id, input);
+                Err(ProtocolError::ServerError {
+                    message: "Codex agents are unavailable on this platform".to_string(),
+                })
+            }
         }
         #[cfg(any(test, feature = "testnet"))]
         TEST_ECHO_V1 => {
@@ -386,6 +398,25 @@ async fn structured_input_target(
         .structured_input()
         .ok_or_else(|| ProtocolError::ServerError {
             message: "structured input not supported".to_string(),
+        })
+}
+
+#[cfg(unix)]
+async fn codex_input_target(
+    host: &PtyAgentHost,
+    agent_id: Uuid,
+) -> Result<Box<dyn CodexInput>, ProtocolError> {
+    let state = host.state().read().await;
+    let session = state
+        .local_agents
+        .get(&agent_id)
+        .map(|context| &context.session)
+        .ok_or(ProtocolError::NoAgentFound)?;
+    ensure_agent_supports_protocol(session, agent_id, codex_io::CODEX_SDK_V1)?;
+    session
+        .codex_input()
+        .ok_or_else(|| ProtocolError::ServerError {
+            message: "Codex input not supported".to_string(),
         })
 }
 

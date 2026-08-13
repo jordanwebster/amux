@@ -8,6 +8,7 @@ pub mod init;
 pub mod notification;
 pub mod server;
 pub mod thread;
+pub mod thread_event_stream;
 pub mod transport;
 pub mod turn_stream;
 pub mod types;
@@ -26,9 +27,10 @@ pub use daemon::{
 };
 pub use error::Error;
 pub use init::InitializationResult;
-pub use notification::{ServerNotification, TurnEvent};
+pub use notification::{ServerNotification, ThreadEvent, TurnEvent};
 pub use server::Codex;
 pub use thread::Thread;
+pub use thread_event_stream::ThreadEventStream;
 pub use turn_stream::TurnStream;
 pub use types::*;
 

@@ -44,6 +44,14 @@ pub(crate) trait StructuredInput: Send + Sync {
     -> std::result::Result<(), ProtocolError>;
 }
 
+/// Codex-owned structured input endpoint, separate from Claude's sequence-
+/// checked JSON seam.
+#[cfg(unix)]
+#[async_trait]
+pub(crate) trait CodexInput: Send + Sync {
+    async fn send(&self, input_id: Vec<u8>, input: super::codex::io::CodexSdkV1Input);
+}
+
 /// Instance behavior implemented by every locally hosted agent backend.
 #[async_trait]
 pub(crate) trait AgentBackend: Send + Sync {
@@ -67,6 +75,11 @@ pub(crate) trait AgentBackend: Send + Sync {
     fn pty_handle(&self) -> Option<&PtyHandle>;
 
     fn structured_input(&self) -> Option<Box<dyn StructuredInput>> {
+        None
+    }
+
+    #[cfg(unix)]
+    fn codex_input(&self) -> Option<Box<dyn CodexInput>> {
         None
     }
 

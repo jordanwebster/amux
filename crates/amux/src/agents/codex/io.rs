@@ -128,6 +128,32 @@ pub(crate) fn decode_codex_sdk_v1_input(payload: &[u8]) -> Result<CodexSdkV1Inpu
     }
 }
 
+pub fn encode_codex_sdk_v1_input(input: CodexSdkV1Input) -> Vec<u8> {
+    wire::CodexSdkV1Input {
+        input: Some(match input {
+            CodexSdkV1Input::UserTurn { input } => {
+                wire::codex_sdk_v1_input::Input::UserTurn(wire::CodexSdkV1UserTurn { input })
+            }
+            CodexSdkV1Input::Steer { turn_id, input } => {
+                wire::codex_sdk_v1_input::Input::Steer(wire::CodexSdkV1Steer { turn_id, input })
+            }
+            CodexSdkV1Input::Interrupt { turn_id } => {
+                wire::codex_sdk_v1_input::Input::Interrupt(wire::CodexSdkV1Interrupt { turn_id })
+            }
+            CodexSdkV1Input::ApprovalDecision {
+                request_id,
+                decision,
+            } => wire::codex_sdk_v1_input::Input::ApprovalDecision(
+                wire::CodexSdkV1ApprovalDecision {
+                    request_id,
+                    decision,
+                },
+            ),
+        }),
+    }
+    .encode_to_vec()
+}
+
 pub(crate) fn encode_codex_sdk_v1_output(output: CodexSdkV1Output) -> Vec<u8> {
     wire::CodexSdkV1Output {
         seq: output.seq,
@@ -192,5 +218,31 @@ mod tests {
                 decision: "accept".into(),
             }
         );
+    }
+
+    #[test]
+    fn input_roundtrip_preserves_all_variants() {
+        let inputs = [
+            CodexSdkV1Input::UserTurn {
+                input: br#"[{"type":"text","text":"PONG"}]"#.to_vec(),
+            },
+            CodexSdkV1Input::Steer {
+                turn_id: "turn-1".into(),
+                input: br#"[{"type":"text","text":"more"}]"#.to_vec(),
+            },
+            CodexSdkV1Input::Interrupt {
+                turn_id: "turn-1".into(),
+            },
+            CodexSdkV1Input::ApprovalDecision {
+                request_id: b"41".to_vec(),
+                decision: "decline".into(),
+            },
+        ];
+        for input in inputs {
+            assert_eq!(
+                decode_codex_sdk_v1_input(&encode_codex_sdk_v1_input(input.clone())).unwrap(),
+                input
+            );
+        }
     }
 }

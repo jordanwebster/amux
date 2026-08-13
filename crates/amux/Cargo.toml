@@ -70,6 +70,7 @@ windows-sys = { version = "0.61.2", features = [
 tempfile = { workspace = true }
 prost-types = { workspace = true }
 amux-ui = { workspace = true }
+replay-support = { path = "../replay-support" }
 
 [[test]]
 name = "spec"
@@ -81,6 +82,13 @@ required-features = ["testnet"]
 [[test]]
 name = "capture"
 path = "tests/capture/main.rs"
+harness = false
+
+# Opt-in real-Codex capture rig. One synthetic scenario per invocation; it
+# exits without work unless a scenario argument is supplied.
+[[test]]
+name = "codex_capture"
+path = "tests/codex_capture.rs"
 harness = false
 
 [build-dependencies]

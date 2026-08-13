@@ -238,6 +238,21 @@ impl ServerInner {
         registration
     }
 
+    /// Replace any existing registration with a fresh queue.
+    ///
+    /// Used by `thread/resume` to recover from overflow and connection-local
+    /// terminal state. The old consumer is closed and wakes promptly.
+    pub async fn reregister_thread(&self, thread_id: &str) -> Arc<ThreadRegistration> {
+        let mut channels = self.thread_channels.lock().await;
+        let registration = ThreadRegistration::new();
+        if let Some(old) = channels.insert(thread_id.to_owned(), Arc::downgrade(&registration))
+            && let Some(old) = old.upgrade()
+        {
+            old.close();
+        }
+        registration
+    }
+
     pub async fn close_thread_channels(&self) {
         let channels = std::mem::take(&mut *self.thread_channels.lock().await);
         for registration in channels.values().filter_map(Weak::upgrade) {
@@ -327,8 +342,18 @@ impl ServerInner {
             let thread_id = approval.thread_id().to_owned();
             let turn_id = Some(approval.turn_id().to_owned());
             let event = TurnEvent::ApprovalRequired(approval);
-            self.deliver_or_error(&thread_id, turn_id, event, id, method, -32000)
-                .await;
+            self.deliver_or_error(
+                &thread_id,
+                ThreadEvent {
+                    method: method.to_owned(),
+                    params: params.clone(),
+                    turn_id,
+                    event,
+                },
+                id,
+                -32000,
+            )
+            .await;
             return;
         }
 
@@ -338,8 +363,18 @@ impl ServerInner {
                     let thread_id = request.thread_id.clone();
                     let turn_id = Some(request.turn_id.clone());
                     let event = TurnEvent::ToolCallRequired(request);
-                    self.deliver_or_error(&thread_id, turn_id, event, id, method, -32000)
-                        .await;
+                    self.deliver_or_error(
+                        &thread_id,
+                        ThreadEvent {
+                            method: method.to_owned(),
+                            params: params.clone(),
+                            turn_id,
+                            event,
+                        },
+                        id,
+                        -32000,
+                    )
+                    .await;
                 }
                 None => self.respond_unhandled(id, method, -32602),
             }
@@ -362,10 +397,20 @@ impl ServerInner {
         let event = TurnEvent::ServerRequest {
             id: id.clone(),
             method: method.to_owned(),
-            params,
+            params: params.clone(),
         };
-        self.deliver_or_error(&thread_id, turn_id, event, id, method, code)
-            .await;
+        self.deliver_or_error(
+            &thread_id,
+            ThreadEvent {
+                method: method.to_owned(),
+                params,
+                turn_id,
+                event,
+            },
+            id,
+            code,
+        )
+        .await;
     }
 
     /// Route a server-initiated request to its thread consumer, or answer it
@@ -373,20 +418,15 @@ impl ServerInner {
     async fn deliver_or_error(
         &self,
         thread_id: &str,
-        turn_id: Option<String>,
-        event: TurnEvent,
+        event: ThreadEvent,
         id: RequestId,
-        method: &str,
         code: i64,
     ) {
-        if !thread_id.is_empty()
-            && self
-                .send_thread_event(thread_id, ThreadEvent::Turn { turn_id, event })
-                .await
-        {
+        let method = event.method.clone();
+        if !thread_id.is_empty() && self.send_thread_event(thread_id, event).await {
             return;
         }
-        self.respond_unhandled(id, method, code);
+        self.respond_unhandled(id, &method, code);
     }
 
     fn respond_unhandled(&self, id: RequestId, method: &str, code: i64) {
@@ -516,17 +556,11 @@ impl ServerInner {
 
     /// Handle a notification (no response needed). Route to thread or global.
     async fn handle_notification(&self, method: &str, params: &serde_json::Value) {
-        // Skip bespoke codex/event/* notifications — these are legacy duplicates
-        // of the v2 protocol events and use `conversationId` instead of `threadId`.
-        // Routing them to the global channel would fill it up and block the reader.
-        if method.starts_with("codex/event/") {
-            return;
-        }
-
         // Try to extract threadId and route to thread channel
         let thread_id = params
             .get("threadId")
             .and_then(|v| v.as_str())
+            .or_else(|| params.get("conversationId").and_then(|v| v.as_str()))
             .or_else(|| {
                 params
                     .get("thread")
@@ -540,7 +574,9 @@ impl ServerInner {
             let _ = self
                 .send_thread_event(
                     thread_id,
-                    ThreadEvent::Turn {
+                    ThreadEvent {
+                        method: method.to_owned(),
+                        params: params.clone(),
                         turn_id: turn_id(params),
                         event,
                     },
@@ -650,7 +686,9 @@ mod tests {
     }
 
     fn warning(turn_id: &str) -> ThreadEvent {
-        ThreadEvent::Turn {
+        ThreadEvent {
+            method: "warning".into(),
+            params: serde_json::json!({"threadId": "thread-1", "turnId": turn_id, "message": "fill"}),
             turn_id: Some(turn_id.to_owned()),
             event: TurnEvent::Warning {
                 message: "fill".into(),
@@ -683,9 +721,11 @@ mod tests {
         inner.dispatch_line(&tool_call_json("thread-1")).await;
 
         let event = rx.recv().await.expect("tool call event");
+        assert_eq!(event.method, "item/tool/call");
+        assert_eq!(event.params["arguments"]["key"], "value");
         assert!(matches!(
             event,
-            ThreadEvent::Turn {
+            ThreadEvent {
                 event: TurnEvent::ToolCallRequired(request),
                 ..
             }
@@ -714,7 +754,7 @@ mod tests {
 
         inner.dispatch_line(&request.to_string()).await;
         let event = rx.recv().await.expect("tool call event");
-        let ThreadEvent::Turn {
+        let ThreadEvent {
             event: TurnEvent::ToolCallRequired(request),
             ..
         } = event
@@ -839,9 +879,10 @@ mod tests {
 
         assert!(matches!(
             rx.recv().await,
-            Some(ThreadEvent::Turn {
+            Some(ThreadEvent {
                 turn_id: Some(turn_id),
                 event: TurnEvent::ServerRequest { id: RequestId::Integer(52), ref method, .. },
+                ..
             }) if turn_id == "turn-1" && method == "item/tool/requestUserInput"
         ));
         assert!(!called.load(Ordering::Acquire));
@@ -863,6 +904,47 @@ mod tests {
         assert!(Arc::ptr_eq(&second, &third));
         assert!(third.send(warning("turn-1")));
         let mut rx = second.take_receiver().await.unwrap();
-        assert!(matches!(rx.recv().await, Some(ThreadEvent::Turn { .. })));
+        assert!(matches!(rx.recv().await, Some(ThreadEvent { .. })));
+    }
+
+    #[tokio::test]
+    async fn reregister_replaces_overflowed_registration() {
+        let (inner, _stdin_rx) = test_inner();
+        let old = inner.register_thread("thread-1").await;
+        for _ in 0..THREAD_CHANNEL_CAPACITY {
+            assert!(old.send(warning("turn-1")));
+        }
+        assert!(!old.send(warning("turn-1")));
+        assert_eq!(old.state(), ThreadChannelState::Overflow);
+
+        let fresh = inner.reregister_thread("thread-1").await;
+        assert!(!Arc::ptr_eq(&old, &fresh));
+        assert_eq!(fresh.state(), ThreadChannelState::Open);
+        assert!(fresh.send(warning("turn-2")));
+        let mut rx = fresh.take_receiver().await.unwrap();
+        assert_eq!(rx.recv().await.unwrap().turn_id.as_deref(), Some("turn-2"));
+    }
+
+    #[tokio::test]
+    async fn legacy_thread_notification_reaches_raw_tap() {
+        let (inner, _stdin_rx) = test_inner();
+        let registration = inner.register_thread("thread-1").await;
+        let mut rx = registration.take_receiver().await.unwrap();
+        let params = serde_json::json!({
+            "conversationId": "thread-1",
+            "msg": {"type": "agent_message_delta", "delta": "raw"}
+        });
+        inner
+            .dispatch_line(
+                &serde_json::json!({
+                    "method": "codex/event/agent_message_delta",
+                    "params": params,
+                })
+                .to_string(),
+            )
+            .await;
+        let event = rx.recv().await.unwrap();
+        assert_eq!(event.method, "codex/event/agent_message_delta");
+        assert_eq!(event.params, params);
     }
 }

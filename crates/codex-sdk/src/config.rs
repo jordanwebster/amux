@@ -31,6 +31,9 @@ pub struct CodexConfig {
     pub env: Option<HashMap<String, String>>,
     /// `--config key=value` pairs passed to the codex CLI.
     pub config_overrides: Vec<(String, String)>,
+    /// Optional JSONL path that receives an exact timestamped tee of JSON-RPC
+    /// lines in both directions.
+    pub record_io: Option<PathBuf>,
 }
 
 // Manual Default because `Option<Arc<dyn ApprovalHandler>>` prevents derive.
@@ -47,6 +50,7 @@ impl Default for CodexConfig {
             approval_handler: None,
             env: None,
             config_overrides: Vec::new(),
+            record_io: None,
         }
     }
 }

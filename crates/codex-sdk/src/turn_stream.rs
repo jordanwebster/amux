@@ -65,12 +65,25 @@ impl TurnStream {
             return Ok(None);
         }
         let registration = self.thread_inner.registration.clone();
-        let Some(rx) = self.rx.as_mut() else {
+        if self.rx.is_none() {
             return Ok(None);
-        };
+        }
         loop {
             let state_changed = registration.state_changed().notified();
             tokio::pin!(state_changed);
+            match self.rx.as_mut().expect("receiver checked").try_recv() {
+                Ok(event) => {
+                    if let Some(event) = self.handle_event(event)? {
+                        return Ok(Some(event));
+                    }
+                    continue;
+                }
+                Err(mpsc::error::TryRecvError::Disconnected) => {
+                    self.done = true;
+                    return Ok(None);
+                }
+                Err(mpsc::error::TryRecvError::Empty) => {}
+            }
             match registration.state() {
                 ThreadChannelState::Overflow => {
                     self.done = true;
@@ -88,30 +101,14 @@ impl TurnStream {
             let received = tokio::select! {
                 biased;
                 _ = &mut state_changed => continue,
-                event = rx.recv() => event,
+                event = self.rx.as_mut().expect("receiver checked").recv() => event,
             };
             match received {
-                Some(ThreadEvent::Turn { turn_id, event }) => {
-                    // Compaction starts without a turn ID, so capture its first start event.
-                    if self.turn_id.is_empty()
-                        && let TurnEvent::TurnStarted { ref turn } = event
-                    {
-                        self.turn_id = turn.id.clone();
-                    }
-                    // A dropped stream can leave any turn-scoped event queued on the shared
-                    // receiver. Ignore all events from other turns.
-                    if let Some(event_turn_id) = turn_id
-                        && !self.turn_id.is_empty()
-                        && event_turn_id != self.turn_id
-                    {
-                        continue;
-                    }
-                    if let TurnEvent::TurnCompleted { ref turn } = event {
-                        self.completed_turn = Some(turn.clone());
-                        self.done = true;
+                Some(event) => {
+                    if let Some(event) = self.handle_event(event)? {
                         return Ok(Some(event));
                     }
-                    return Ok(Some(event));
+                    continue;
                 }
                 None => {
                     // Channel closed (EOF)
@@ -120,6 +117,30 @@ impl TurnStream {
                 }
             }
         }
+    }
+
+    fn handle_event(&mut self, raw: ThreadEvent) -> Result<Option<TurnEvent>, Error> {
+        let ThreadEvent { turn_id, event, .. } = raw;
+        // Compaction starts without a turn ID, so capture its first start event.
+        if self.turn_id.is_empty()
+            && let TurnEvent::TurnStarted { ref turn } = event
+        {
+            self.turn_id = turn.id.clone();
+        }
+        // A dropped stream can leave any turn-scoped event queued on the shared
+        // receiver. Ignore all events from other turns.
+        if let Some(event_turn_id) = turn_id
+            && !self.turn_id.is_empty()
+            && event_turn_id != self.turn_id
+        {
+            return Ok(None);
+        }
+        if let TurnEvent::TurnCompleted { ref turn } = event {
+            self.completed_turn = Some(turn.clone());
+            self.done = true;
+            return Ok(Some(event));
+        }
+        Ok(Some(event))
     }
 
     /// Returns the completed `Turn` if the turn finished with a `TurnCompleted` event.
@@ -163,6 +184,15 @@ mod tests {
             items: Vec::new(),
             status: TurnStatus::Completed,
             error: None,
+        }
+    }
+
+    fn raw(turn_id: &str, event: TurnEvent) -> ThreadEvent {
+        ThreadEvent {
+            method: "test/event".into(),
+            params: serde_json::json!({"threadId": "thread-1", "turnId": turn_id}),
+            turn_id: Some(turn_id.into()),
+            event,
         }
     }
 
@@ -223,31 +253,31 @@ mod tests {
     #[tokio::test]
     async fn ignores_completion_from_an_earlier_turn() {
         let (thread_inner, registration) = thread_inner();
-        assert!(registration.send(ThreadEvent::Turn {
-            turn_id: Some("turn-old".into()),
-            event: TurnEvent::AgentMessageDelta {
+        assert!(registration.send(raw(
+            "turn-old",
+            TurnEvent::AgentMessageDelta {
                 item_id: "old-item".into(),
                 delta: "stale".into(),
             },
-        }));
-        assert!(registration.send(ThreadEvent::Turn {
-            turn_id: Some("turn-old".into()),
-            event: TurnEvent::TurnCompleted {
+        )));
+        assert!(registration.send(raw(
+            "turn-old",
+            TurnEvent::TurnCompleted {
                 turn: turn("turn-old"),
             },
-        }));
-        assert!(registration.send(ThreadEvent::Turn {
-            turn_id: Some("turn-current".into()),
-            event: TurnEvent::Warning {
+        )));
+        assert!(registration.send(raw(
+            "turn-current",
+            TurnEvent::Warning {
                 message: "current turn is still running".into(),
             },
-        }));
-        assert!(registration.send(ThreadEvent::Turn {
-            turn_id: Some("turn-current".into()),
-            event: TurnEvent::TurnCompleted {
+        )));
+        assert!(registration.send(raw(
+            "turn-current",
+            TurnEvent::TurnCompleted {
                 turn: turn("turn-current"),
             },
-        }));
+        )));
         let rx = registration.take_receiver().await.unwrap();
         let mut stream = TurnStream::new(rx, thread_inner, "turn-current".into());
 
@@ -269,27 +299,32 @@ mod tests {
     async fn reports_thread_queue_overflow_instead_of_hanging() {
         let (thread_inner, registration) = thread_inner();
         for index in 0..256 {
-            assert!(registration.send(ThreadEvent::Turn {
-                turn_id: Some("turn-current".into()),
-                event: TurnEvent::AgentMessageDelta {
+            assert!(registration.send(raw(
+                "turn-current",
+                TurnEvent::AgentMessageDelta {
                     item_id: format!("item-{index}"),
                     delta: "queued".into(),
                 },
-            }));
+            )));
         }
-        assert!(!registration.send(ThreadEvent::Turn {
-            turn_id: Some("turn-current".into()),
-            event: TurnEvent::TurnCompleted {
+        assert!(!registration.send(raw(
+            "turn-current",
+            TurnEvent::TurnCompleted {
                 turn: turn("turn-current"),
             },
-        }));
+        )));
         let rx = registration.take_receiver().await.unwrap();
         let mut stream = TurnStream::new(rx, thread_inner, "turn-current".into());
 
-        assert!(matches!(
-            stream.next().await,
-            Err(Error::ThreadQueueOverflow(ref thread_id)) if thread_id == "thread-1"
-        ));
+        for _ in 0..256 {
+            assert!(matches!(
+                stream.next().await,
+                Ok(Some(TurnEvent::AgentMessageDelta { .. }))
+            ));
+        }
+        assert!(
+            matches!(stream.next().await, Err(Error::ThreadQueueOverflow(ref thread_id)) if thread_id == "thread-1")
+        );
         assert!(matches!(stream.next().await, Ok(None)));
     }
 }

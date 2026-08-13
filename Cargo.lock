@@ -42,6 +42,7 @@ dependencies = [
  "prost-types",
  "protoc-bin-vendored",
  "rcgen",
+ "replay-support",
  "reqwest 0.12.28",
  "ring",
  "rustls 0.23.36",

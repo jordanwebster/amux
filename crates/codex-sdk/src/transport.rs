@@ -1,4 +1,7 @@
 use std::sync::Arc;
+use std::sync::Mutex as StdMutex;
+use std::time::Instant;
+use std::{fs::File, io::Write as _};
 
 use anyhow::{Context, Result};
 use serde::{Deserialize, Serialize};
@@ -11,6 +14,40 @@ use tokio_util::sync::CancellationToken;
 
 use crate::config::CodexConfig;
 use crate::dispatch::ServerInner;
+
+#[derive(Clone)]
+pub(crate) struct WireRecorder {
+    started: Instant,
+    file: Arc<StdMutex<File>>,
+}
+
+impl WireRecorder {
+    pub(crate) fn new(path: &std::path::Path) -> std::io::Result<Self> {
+        if let Some(parent) = path.parent() {
+            std::fs::create_dir_all(parent)?;
+        }
+        let file = std::fs::OpenOptions::new()
+            .create(true)
+            .append(true)
+            .open(path)?;
+        Ok(Self {
+            started: Instant::now(),
+            file: Arc::new(StdMutex::new(file)),
+        })
+    }
+
+    fn record(&self, direction: &str, line: &str) {
+        let row = serde_json::json!({
+            "us": self.started.elapsed().as_micros() as u64,
+            "dir": direction,
+            "line": line,
+        });
+        if let Ok(mut file) = self.file.lock() {
+            let _ = writeln!(file, "{row}");
+            let _ = file.flush();
+        }
+    }
+}
 
 // ── JSON-RPC wire types ──────────────────────────────────────────
 
@@ -126,9 +163,10 @@ pub(crate) fn spawn_reader_task(
     reader: impl AsyncBufRead + Unpin + Send + 'static,
     inner: Arc<ServerInner>,
     cancel: CancellationToken,
+    recorder: Option<WireRecorder>,
 ) -> tokio::task::JoinHandle<()> {
     tokio::spawn(async move {
-        reader_loop(reader, inner, cancel).await;
+        reader_loop(reader, inner, cancel, recorder).await;
     })
 }
 
@@ -136,6 +174,7 @@ async fn reader_loop(
     mut reader: impl AsyncBufRead + Unpin,
     inner: Arc<ServerInner>,
     cancel: CancellationToken,
+    recorder: Option<WireRecorder>,
 ) {
     let mut line = String::new();
     loop {
@@ -150,6 +189,9 @@ async fn reader_loop(
                         if trimmed.is_empty() {
                             continue;
                         }
+                        if let Some(recorder) = &recorder {
+                            recorder.record("stdout", trimmed);
+                        }
                         inner.dispatch_line(trimmed).await;
                     }
                     Err(_) => break,
@@ -163,6 +205,7 @@ async fn reader_loop(
     inner.close_thread_channels().await;
     let pending = std::mem::take(&mut *inner.pending_requests.lock().await);
     drop(pending);
+    cancel.cancel();
 }
 
 /// Spawn the writer task that drains the write channel to stdin.
@@ -170,6 +213,7 @@ pub(crate) fn spawn_writer_task(
     mut stdin: impl AsyncWrite + Unpin + Send + 'static,
     mut rx: mpsc::Receiver<Vec<u8>>,
     cancel: CancellationToken,
+    recorder: Option<WireRecorder>,
 ) -> tokio::task::JoinHandle<()> {
     tokio::spawn(async move {
         loop {
@@ -178,6 +222,11 @@ pub(crate) fn spawn_writer_task(
                 msg = rx.recv() => {
                     match msg {
                         Some(data) => {
+                            if let Some(recorder) = &recorder
+                                && let Ok(line) = std::str::from_utf8(&data)
+                            {
+                                recorder.record("stdin", line);
+                            }
                             if stdin.write_all(&data).await.is_err() {
                                 break;
                             }

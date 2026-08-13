@@ -7,6 +7,7 @@ use crate::config::{self, TurnConfig, TurnInput};
 use crate::dispatch::{ServerInner, ThreadRegistration};
 use crate::error::Error;
 use crate::notification::ThreadEvent;
+use crate::thread_event_stream::ThreadEventStream;
 use crate::turn_stream::TurnStream;
 use crate::types::{
     DynamicToolCallResponse, ReviewStartResponse, ReviewTarget, ThreadInfo, ThreadSessionInfo,
@@ -98,11 +99,49 @@ impl Thread {
         &self.inner.session
     }
 
+    /// Take the continuous receiver for all notifications and server requests
+    /// routed to this thread. Only one event consumer may be active at a time.
+    pub async fn events(&self) -> Result<ThreadEventStream, Error> {
+        let rx = self
+            .inner
+            .registration
+            .take_receiver()
+            .await
+            .ok_or(Error::TurnActive)?;
+        Ok(ThreadEventStream::new(rx, self.inner.clone()))
+    }
+
     // ── Turn management ──────────────────────────────────────────
 
     /// Start a turn with default config.
     pub async fn turn(&self, input: impl Into<TurnInput>) -> Result<TurnStream, Error> {
         self.turn_with(input, TurnConfig::default()).await
+    }
+
+    /// Start a turn without taking ownership of the thread event receiver.
+    ///
+    /// This is intended for callers that continuously consume [`Self::events`].
+    pub async fn start_turn(&self, input: impl Into<TurnInput>) -> Result<String, Error> {
+        self.start_turn_with(input, TurnConfig::default()).await
+    }
+
+    /// Start a turn with explicit config without creating a [`TurnStream`].
+    pub async fn start_turn_with(
+        &self,
+        input: impl Into<TurnInput>,
+        turn_config: TurnConfig,
+    ) -> Result<String, Error> {
+        let input_value = config::turn_input_to_value(input.into());
+        let mut params = config::turn_config_to_params(&turn_config);
+        params.insert("threadId".into(), serde_json::json!(self.inner.thread_id));
+        params.insert("input".into(), input_value);
+
+        let start: TurnStartResponse = self
+            .inner
+            .server
+            .request("turn/start", serde_json::Value::Object(params))
+            .await?;
+        Ok(start.turn.id)
     }
 
     /// Start a turn with explicit config.
@@ -299,6 +338,7 @@ mod tests {
     use super::*;
     use crate::config::{ApprovalPolicy, ApprovalsReviewer, ReadOnlyAccess, SandboxPolicy};
     use crate::notification::ServerNotification;
+    use crate::notification::TurnEvent;
     use crate::types::{ThreadSessionInfo, ThreadStatus};
 
     fn test_server() -> Arc<ServerInner> {
@@ -394,5 +434,30 @@ mod tests {
 
         let err = thread.compact().await.unwrap_err();
         assert!(matches!(err, Error::TransportClosed));
+    }
+
+    #[tokio::test]
+    async fn continuous_events_span_multiple_turns() {
+        let thread = test_thread(test_server());
+        let registration = thread.inner.registration.clone();
+        let mut events = thread.events().await.unwrap();
+        for (method, turn_id) in [("turn/started", "turn-1"), ("turn/completed", "turn-2")] {
+            assert!(registration.send(ThreadEvent {
+                method: method.into(),
+                params: serde_json::json!({
+                    "threadId": "thread-1",
+                    "turnId": turn_id,
+                }),
+                turn_id: Some(turn_id.into()),
+                event: TurnEvent::Warning {
+                    message: method.into(),
+                },
+            }));
+        }
+        assert_eq!(events.next().await.unwrap().unwrap().method, "turn/started");
+        assert_eq!(
+            events.next().await.unwrap().unwrap().method,
+            "turn/completed"
+        );
     }
 }

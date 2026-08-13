@@ -41,6 +41,11 @@ impl Codex {
             transport::spawn_process(&config).map_err(|e| Error::Process(format!("{e:#}")))?;
 
         let cancel = CancellationToken::new();
+        let recorder = config
+            .record_io
+            .as_deref()
+            .map(transport::WireRecorder::new)
+            .transpose()?;
         let child_waiter = transport::spawn_child_waiter(child, cancel.clone());
         let (stdin_tx, stdin_rx) = mpsc::channel::<Vec<u8>>(64);
         let (global_notif_tx, global_notif_rx) = mpsc::channel::<ServerNotification>(64);
@@ -61,8 +66,8 @@ impl Codex {
         });
 
         // Spawn background tasks
-        transport::spawn_reader_task(stdout, inner.clone(), cancel.clone());
-        transport::spawn_writer_task(stdin, stdin_rx, cancel.clone());
+        transport::spawn_reader_task(stdout, inner.clone(), cancel.clone(), recorder.clone());
+        transport::spawn_writer_task(stdin, stdin_rx, cancel.clone(), recorder);
         transport::spawn_stderr_task(stderr, "codex app-server stdio");
 
         let codex = Self {
@@ -99,6 +104,11 @@ impl Codex {
         config: CodexConfig,
     ) -> Result<Self, Error> {
         let cancel = CancellationToken::new();
+        let recorder = config
+            .record_io
+            .as_deref()
+            .map(transport::WireRecorder::new)
+            .transpose()?;
         let (stdin_tx, stdin_rx) = mpsc::channel::<Vec<u8>>(64);
         let (global_notif_tx, global_notif_rx) = mpsc::channel::<ServerNotification>(64);
 
@@ -117,8 +127,8 @@ impl Codex {
             child_waiter: Mutex::new(None),
         });
 
-        transport::spawn_reader_task(reader, inner.clone(), cancel.clone());
-        transport::spawn_writer_task(writer, stdin_rx, cancel);
+        transport::spawn_reader_task(reader, inner.clone(), cancel.clone(), recorder.clone());
+        transport::spawn_writer_task(writer, stdin_rx, cancel, recorder);
 
         let codex = Self {
             inner,
@@ -169,7 +179,11 @@ impl Codex {
         if let serde_json::Value::Object(ref mut m) = params {
             m.insert("threadId".into(), serde_json::json!(thread_id));
         }
-        self.request_thread("thread/resume", params).await
+        // Install a fresh registration before the RPC. The app-server may emit
+        // replay/history notifications before returning the response.
+        let registration = self.inner.reregister_thread(thread_id).await;
+        let session: ThreadSessionInfo = self.inner.request("thread/resume", params).await?;
+        Ok(Thread::new(self.inner.clone(), session, registration))
     }
 
     /// Fork an existing thread.
@@ -335,6 +349,11 @@ impl Codex {
     /// Shut down the codex app-server subprocess.
     pub async fn close(self) {
         self.inner.shutdown().await;
+    }
+
+    /// Whether the underlying transport reader has terminated.
+    pub fn is_closed(&self) -> bool {
+        self.inner.cancel.is_cancelled()
     }
 
     // ── Internal ─────────────────────────────────────────────────
@@ -600,5 +619,50 @@ mod tests {
         assert_eq!(init.platform_os, "macos");
 
         server_task.await.unwrap();
+    }
+
+    #[tokio::test]
+    async fn record_io_tees_both_wire_directions() {
+        let temp = tempfile::tempdir().unwrap();
+        let path = temp.path().join("io.jsonl");
+        let (client_side, server_side) = duplex(4096);
+        let (client_read, client_write) = split(client_side);
+        let (server_read, mut server_write) = split(server_side);
+        let server_task = tokio::spawn(async move {
+            let mut reader = BufReader::new(server_read);
+            let mut line = String::new();
+            reader.read_line(&mut line).await.unwrap();
+            server_write
+                .write_all(br#"{"id":1,"result":{"userAgent":"ua","codexHome":"/tmp/codex","platformFamily":"unix","platformOs":"macos"}}
+"#)
+                .await
+                .unwrap();
+            server_write.flush().await.unwrap();
+            line.clear();
+            reader.read_line(&mut line).await.unwrap();
+        });
+        let codex = Codex::from_io(
+            BufReader::new(client_read),
+            client_write,
+            CodexConfig {
+                record_io: Some(path.clone()),
+                ..CodexConfig::default()
+            },
+        )
+        .await
+        .unwrap();
+        server_task.await.unwrap();
+        codex.close().await;
+
+        let rows: Vec<serde_json::Value> = std::fs::read_to_string(path)
+            .unwrap()
+            .lines()
+            .map(|line| serde_json::from_str(line).unwrap())
+            .collect();
+        assert_eq!(rows.len(), 3);
+        assert_eq!(rows[0]["dir"], "stdin");
+        assert_eq!(rows[1]["dir"], "stdout");
+        assert_eq!(rows[2]["dir"], "stdin");
+        assert!(rows.iter().all(|row| row["line"].is_string()));
     }
 }

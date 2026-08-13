@@ -11,13 +11,15 @@ use crate::types::{
 // Events routed to a specific thread's channel.
 
 #[derive(Debug, Clone)]
-pub enum ThreadEvent {
-    /// A turn-scoped event.
-    Turn {
-        /// The protocol turn ID carried by the notification or request.
-        turn_id: Option<String>,
-        event: TurnEvent,
-    },
+pub struct ThreadEvent {
+    /// The upstream JSON-RPC method, preserved verbatim.
+    pub method: String,
+    /// The upstream JSON-RPC params, preserved verbatim.
+    pub params: Value,
+    /// The protocol turn ID carried by the notification or request.
+    pub turn_id: Option<String>,
+    /// Best-effort typed interpretation for callers that need semantics.
+    pub event: TurnEvent,
 }
 
 // ── TurnEvent ────────────────────────────────────────────────────

@@ -1,6 +1,10 @@
 //! Agent-agnostic sequenced sink for structured log entries.
 
 use serde_json::Value;
+use std::fs::File;
+use std::io::Write as _;
+use std::path::Path;
+use std::sync::{Arc, Mutex};
 
 use crate::agents::{MultiplexStructuredBuffer, MultiplexStructuredReader, SequencedReplayQuery};
 
@@ -8,6 +12,7 @@ use crate::agents::{MultiplexStructuredBuffer, MultiplexStructuredReader, Sequen
 #[derive(Clone)]
 pub(crate) struct StructuredLogSource {
     buffer: MultiplexStructuredBuffer,
+    recording: Option<Arc<Mutex<File>>>,
 }
 
 impl StructuredLogSource {
@@ -15,7 +20,23 @@ impl StructuredLogSource {
     pub(crate) fn new(retention: usize) -> Self {
         Self {
             buffer: MultiplexStructuredBuffer::new(retention),
+            recording: None,
         }
+    }
+
+    /// Create a source that also writes every structured row as JSONL.
+    pub(crate) fn recording(retention: usize, path: &Path) -> std::io::Result<Self> {
+        if let Some(parent) = path.parent() {
+            std::fs::create_dir_all(parent)?;
+        }
+        let file = std::fs::OpenOptions::new()
+            .create(true)
+            .append(true)
+            .open(path)?;
+        Ok(Self {
+            buffer: MultiplexStructuredBuffer::new(retention),
+            recording: Some(Arc::new(Mutex::new(file))),
+        })
     }
 
     /// Subscribe to the structured log buffer immediately.
@@ -33,7 +54,13 @@ impl StructuredLogSource {
 
     /// Write a structured output entry.
     pub(crate) async fn write(&self, payload: Value) {
-        self.buffer.write(payload).await;
+        self.buffer.write(payload.clone()).await;
+        if let Some(recording) = &self.recording
+            && let Ok(mut file) = recording.lock()
+        {
+            let _ = writeln!(file, "{payload}");
+            let _ = file.flush();
+        }
     }
 
     /// Return the current sequence number.

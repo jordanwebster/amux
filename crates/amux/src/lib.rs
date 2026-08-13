@@ -89,8 +89,8 @@ pub mod claude_io {
 
 pub mod codex_io {
     pub use crate::agents::codex::io::{
-        CODEX_SDK_V1, CodexSdkV1Args, CodexSdkV1Output, CodexSdkV1ReplayQuery,
-        decode_codex_sdk_v1_output, encode_codex_sdk_v1_args,
+        CODEX_SDK_V1, CodexSdkV1Args, CodexSdkV1Input, CodexSdkV1Output, CodexSdkV1ReplayQuery,
+        decode_codex_sdk_v1_output, encode_codex_sdk_v1_args, encode_codex_sdk_v1_input,
     };
 }
 
