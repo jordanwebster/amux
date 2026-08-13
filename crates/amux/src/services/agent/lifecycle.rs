@@ -280,6 +280,7 @@ pub(crate) async fn resume_agents(
     let mut resumed = 0usize;
     let mut failed = 0usize;
     let mut failed_agents = Vec::new();
+    let deps = agent_state.read().await.deps.clone();
 
     for sa in suspended {
         let original = sa.clone();
@@ -287,10 +288,7 @@ pub(crate) async fn resume_agents(
         let name = sa.name().map(String::from);
         tracing::info!(agent_id = %agent_id, name = ?name, "resuming agent");
 
-        let mut session = {
-            let state = agent_state.read().await;
-            agent_from_suspended(sa, &state.deps)
-        };
+        let mut session = agent_from_suspended(sa, &deps);
         match session.start() {
             Ok(exit_handle) => {
                 let info = session.to_agent(host_id);

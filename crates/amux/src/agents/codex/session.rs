@@ -55,11 +55,6 @@ impl CodexClient {
         }
     }
 
-    #[cfg(test)]
-    pub(crate) fn private_socket(&self) -> &Path {
-        &self.private_socket
-    }
-
     async fn connection(&self) -> Result<Arc<CodexConnection>> {
         let mut slot = self.connection.lock().await;
         if let Some(connection) = slot.as_ref()
@@ -83,23 +78,20 @@ impl CodexClient {
             record_io: capture_dir().map(|dir| dir.join("io.jsonl")),
             ..CodexConfig::default()
         };
-        let socket_path = match &daemon {
+        // Only a supervised process can report its own exit; an existing
+        // daemon is observed through the transport alone.
+        let (socket_path, daemon_exit) = match &daemon {
             DaemonMode::Existing => {
                 let home = tokio::fs::canonicalize(&codex_home)
                     .await
                     .context("failed to resolve CODEX_HOME")?;
-                daemon_socket_path(&home)
+                (daemon_socket_path(&home), None)
             }
-            DaemonMode::Spawned(process) | DaemonMode::Private(process) => {
-                process.socket_path().to_path_buf()
-            }
-            DaemonMode::PrivateExisting(socket_path) => socket_path.clone(),
-        };
-        let daemon_exit = match &daemon {
-            DaemonMode::Spawned(process) | DaemonMode::Private(process) => {
-                Some(process.exit_token())
-            }
-            DaemonMode::Existing | DaemonMode::PrivateExisting(_) => None,
+            DaemonMode::Spawned(process) | DaemonMode::Private(process) => (
+                process.socket_path().to_path_buf(),
+                Some(process.exit_token()),
+            ),
+            DaemonMode::PrivateExisting(socket_path) => (socket_path.clone(), None),
         };
         let client = match &daemon {
             DaemonMode::Existing | DaemonMode::Spawned(_) => {
@@ -985,19 +977,13 @@ impl AgentBackend for CodexSession {
                 .runtime
                 .lock()
                 .unwrap_or_else(|poison| poison.into_inner());
-            match runtime.attached.as_ref() {
-                Some(attached) => (
-                    Some(attached.thread_id.clone()),
-                    attached.daemon_mode.clone(),
-                ),
-                None => (None, None),
-            }
-        };
-        let Some(thread_id) = thread_id else {
-            return Err(anyhow!(
-                "cannot suspend Codex agent {}: thread_id is not available yet",
-                self.agent_id
-            ));
+            let Some(attached) = runtime.attached.as_ref() else {
+                return Err(anyhow!(
+                    "cannot suspend Codex agent {}: thread_id is not available yet",
+                    self.agent_id
+                ));
+            };
+            (attached.thread_id.clone(), attached.daemon_mode.clone())
         };
         Ok(SuspendedAgent::Codex {
             agent_id: self.agent_id,

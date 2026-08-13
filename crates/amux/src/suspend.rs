@@ -227,16 +227,12 @@ mod tests {
                 approval_policy: None,
                 sandbox_policy: None,
                 thread_id: "thread-known".to_string(),
-                daemon_mode: Some("existing".to_string()),
+                daemon_mode: None,
                 created_at: Utc::now(),
             }],
         };
-        let yaml = serde_yaml::to_string(&state)
-            .unwrap()
-            .lines()
-            .filter(|line| !line.trim_start().starts_with("daemon_mode:"))
-            .collect::<Vec<_>>()
-            .join("\n");
+        let yaml = serde_yaml::to_string(&state).unwrap();
+        assert!(!yaml.contains("daemon_mode"));
 
         let loaded: SuspendedServerState = serde_yaml::from_str(&yaml).unwrap();
         assert!(matches!(

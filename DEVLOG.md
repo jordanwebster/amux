@@ -62,6 +62,10 @@ and `thread/resume` path.
   pre-attach resume identities to suspend, bounds fallback socket paths, and
   keeps the socket regression tests Unix-only.
 - Review round 2 secures the long-path `/tmp/amux-<euid>` fallback with `lstat` ownership checks and private permissions before Codex can use it.
+- Simplification pass: one `DaemonMode` match yields both the connection socket
+  and the exit token, `suspended_state` reads attached state once, resume clones
+  host deps once instead of per agent, and the private-socket and daemon-mode
+  tests assert against the functions that own the behavior.
 
 ### Decisions Made
 - Once spawned, a raw PTY remains alive with zero subscribers; Codex resume is

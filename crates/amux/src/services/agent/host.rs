@@ -40,17 +40,17 @@ pub(crate) struct PtyAgentHost {
 }
 
 impl PtyAgentHost {
-    /// Build the host and spawn its session-event loop. Needs only `host_id`;
-    /// cloud-vs-device is decided by runtime guards in `AgentServiceCtx`, not
-    /// by host presence.
+    /// Build a host against the default configured socket path.
     #[cfg(any(test, feature = "testnet"))]
     pub(crate) fn new(host_id: Uuid) -> Arc<Self> {
         Self::new_with_socket_path(host_id, &crate::config::Config::default().socket_path)
             .expect("default Codex private socket path should be usable")
     }
 
-    /// Build a host whose private Codex fallback lives beside the configured
-    /// amux socket. The short filename preserves as much `SUN_LEN` headroom as
+    /// Build the host and spawn its session-event loop. Cloud-vs-device is
+    /// decided by runtime guards in `AgentServiceCtx`, not by host presence.
+    /// The private Codex fallback socket lives beside the configured amux
+    /// socket; its short filename preserves as much `SUN_LEN` headroom as
     /// possible.
     pub(crate) fn new_with_socket_path(
         host_id: Uuid,
@@ -546,29 +546,17 @@ mod socket_tests {
     use std::os::unix::ffi::OsStrExt;
     use std::os::unix::fs::PermissionsExt;
 
-    #[tokio::test]
-    async fn private_codex_socket_follows_configured_server_socket_dir() {
-        let first = PtyAgentHost::new_with_socket_path(
-            Uuid::from_u128(1),
-            std::path::Path::new("/var/run/custom-amux/control.sock"),
-        )
-        .unwrap();
-        let second = PtyAgentHost::new_with_socket_path(
-            Uuid::from_u128(2),
-            std::path::Path::new("/var/run/custom-amux/other.sock"),
-        )
-        .unwrap();
-        let first_state = first.state.read().await;
-        let second_state = second.state.read().await;
-        let first_socket = first_state.deps.codex_client.private_socket();
-        let second_socket = second_state.deps.codex_client.private_socket();
-        assert_eq!(
-            first_socket.parent(),
-            Some(std::path::Path::new("/var/run/custom-amux"))
-        );
-        assert_eq!(second_socket.parent(), first_socket.parent());
-        assert_ne!(first_socket, second_socket);
-        assert!(first_socket.file_name().unwrap().len() <= 22);
+    #[test]
+    fn private_codex_socket_follows_configured_server_socket_dir() {
+        let first =
+            codex_private_socket_path(Path::new("/var/run/custom-amux/control.sock")).unwrap();
+        let second =
+            codex_private_socket_path(Path::new("/var/run/custom-amux/other.sock")).unwrap();
+
+        assert_eq!(first.parent(), Some(Path::new("/var/run/custom-amux")));
+        assert_eq!(second.parent(), first.parent());
+        assert_ne!(first, second);
+        assert!(first.file_name().unwrap().len() <= 22);
     }
 
     #[test]
