@@ -1,4 +1,4 @@
-//! The chat frame renderer: a pure function of (Model, ChatView,
+//! The chat frame renderer: a pure function of (Model, View,
 //! FrameContext), composing with the chrome's line helpers.
 //!
 //! Visual language fixed by `docs/CHAT.md` §Wireframes: user lines
@@ -17,8 +17,12 @@ use amux_ui::{AgentId, Model};
 use ratatui::style::Style;
 use ratatui::text::{Line, Span};
 
-use crate::chat::{ChatView, FeedScroll, entry_watermark, panel, reader};
-use crate::chat::{ask_ui, composer::Composer, markdown};
+use crate::chat::FeedScroll;
+use crate::chat::claude::ask_ui;
+use crate::chat::claude::{View, entry_watermark, panel, reader};
+use crate::chat::layout::{ChatLayout, bottom_max_rows};
+use crate::composer::Composer;
+use crate::markdown;
 use crate::render::{
     FrameContext, Theme, blank_line, finish_line, line_len, new_line, pad_to, push_span, str_width,
 };
@@ -46,48 +50,7 @@ const PLAN_PREVIEW_LINES: usize = 6;
 
 // --- layout -----------------------------------------------------------------
 
-/// The frame's rows outside the feed and the bottom block: top border,
-/// header, rule (3) above the feed; the bottom border (1) below
-/// everything. The bottom block — composer rows with their blanks and
-/// footer, or the docked ask panel, or the read-only block — divides the
-/// remainder with the feed, the feed giving way first.
-const FIXED_TOP: usize = 3;
-
-/// Rows between the feed and the bottom block: the reserved queue-preview
-/// row (occupied by the paused rule when scrolled back) plus the working
-/// line.
-fn extra_rows(working: bool, paused: bool) -> usize {
-    usize::from(working || paused) + usize::from(working)
-}
-
-/// The frame's row budget, shared between the renderer and the key
-/// handler so scroll paging and rendering agree on the feed viewport.
-pub(crate) struct ChatLayout {
-    pub height: usize,
-    pub bottom_rows: usize,
-    pub working: bool,
-    pub paused: bool,
-}
-
-impl ChatLayout {
-    fn feed_height_for(&self, paused: bool) -> usize {
-        self.height
-            .saturating_sub(FIXED_TOP + 1 + extra_rows(self.working, paused) + self.bottom_rows)
-    }
-
-    /// Feed viewport height for the current scroll state.
-    pub fn feed_height(&self) -> usize {
-        self.feed_height_for(self.paused)
-    }
-
-    /// Feed viewport height once scrolled back — the scroll keys target
-    /// the paused layout (the paused rule takes one row).
-    pub fn feed_height_when_paused(&self) -> usize {
-        self.feed_height_for(true)
-    }
-}
-
-pub(crate) fn layout(model: &Model, chat: &ChatView, viewport: (u16, u16)) -> ChatLayout {
+pub(crate) fn layout(model: &Model, chat: &View, viewport: (u16, u16)) -> ChatLayout {
     let width = viewport.0 as usize;
     let height = viewport.1 as usize;
     let working = matches!(
@@ -122,16 +85,14 @@ pub(crate) fn layout(model: &Model, chat: &ChatView, viewport: (u16, u16)) -> Ch
 /// viewports.
 fn bottom_lines(
     model: &Model,
-    chat: &ChatView,
+    chat: &View,
     theme: Theme,
     width: usize,
     height: usize,
     working: bool,
     paused: bool,
 ) -> Vec<Line<'static>> {
-    let max_rows = height
-        .saturating_sub(FIXED_TOP + 1 + extra_rows(working, paused))
-        .max(1);
+    let max_rows = bottom_max_rows(height, working, paused);
     let readonly = chat.read_only(model);
     let head = chat.ask_head(model);
 
@@ -189,7 +150,7 @@ fn bottom_lines(
 /// `? help` joins the footer hints exactly when `?` opens the overlay —
 /// composer focus, empty draft (with anything typed, `?` types; a hint
 /// would lie, P10).
-fn help_hinted(chat: &ChatView, hints: String) -> String {
+fn help_hinted(chat: &View, hints: String) -> String {
     if chat.composer.is_empty() {
         format!("{hints} · ? help")
     } else {
@@ -210,12 +171,7 @@ pub(crate) fn armed_quit_line(theme: Theme) -> Line<'static> {
 /// The read-only chat's bottom block (F1): the ask fact panel when one
 /// pends, the `⊘ read-only` statement where the composer would be, and
 /// the pager hints.
-fn readonly_bottom(
-    model: &Model,
-    chat: &ChatView,
-    theme: Theme,
-    width: usize,
-) -> Vec<Line<'static>> {
+fn readonly_bottom(model: &Model, chat: &View, theme: Theme, width: usize) -> Vec<Line<'static>> {
     let mut lines: Vec<Line<'static>> = Vec::new();
     if let Some(ask) = chat.ask_head(model) {
         let count = model
@@ -263,7 +219,7 @@ fn cont_width(width: usize) -> usize {
 }
 
 /// Total feed display rows at this width — the key handler's scroll bound.
-pub(crate) fn feed_line_count(model: &Model, chat: &ChatView, width: usize) -> usize {
+pub(crate) fn feed_line_count(model: &Model, chat: &View, width: usize) -> usize {
     feed_lines(model, chat.agent, Theme::default(), width).len()
 }
 
@@ -271,7 +227,7 @@ pub(crate) fn feed_line_count(model: &Model, chat: &ChatView, width: usize) -> u
 
 pub(crate) fn build_chat_lines(
     model: &Model,
-    chat: &ChatView,
+    chat: &View,
     ctx: &FrameContext,
 ) -> Vec<Line<'static>> {
     let width = ctx.viewport.0 as usize;
@@ -385,7 +341,7 @@ pub(crate) fn build_chat_lines(
 /// rows appear only when probed, ext rows are marked terminal-dependent.
 /// Fullscreen like the reader; any key closes. On short viewports the
 /// tail gives way and a `⋮` row states the cut honestly.
-fn help_frame(chat: &ChatView, theme: Theme, width: usize, height: usize) -> Vec<Line<'static>> {
+fn help_frame(chat: &View, theme: Theme, width: usize, height: usize) -> Vec<Line<'static>> {
     let sections =
         crate::bindings::chat_sections(&crate::bindings::Effective::new(chat.kitty, chat.leader));
     // One aligned action column across every section.
@@ -473,7 +429,7 @@ fn top_border(width: usize, theme: Theme) -> Line<'static> {
 
 fn header_line(
     model: &Model,
-    chat: &ChatView,
+    chat: &View,
     theme: Theme,
     phase: ChatPhase,
     width: usize,
@@ -559,7 +515,7 @@ fn loading_band(theme: Theme, width: usize, feed_h: usize) -> Vec<Line<'static>>
 /// the honesty indicator (scrolled-back frame), with the reading position.
 fn paused_rule(
     model: &Model,
-    chat: &ChatView,
+    chat: &View,
     theme: Theme,
     width: usize,
     feed_h: usize,
@@ -600,7 +556,7 @@ fn paused_rule(
 /// write affordance, absent not disabled (F1).
 fn working_line(
     model: &Model,
-    chat: &ChatView,
+    chat: &View,
     ctx: &FrameContext,
     width: usize,
     readonly: bool,
@@ -633,37 +589,11 @@ fn working_line(
 /// combining marks zero); cursor tracking stays char-indexed because the
 /// `▌` glyph is a real char in the display string.
 fn composer_display_rows(composer: &Composer, width: usize) -> (Vec<String>, usize) {
-    use unicode_segmentation::UnicodeSegmentation;
-    let width = width.max(1);
-    let display = composer.display_with_cursor();
-    let cursor_pos = composer.cursor();
-    let mut rows: Vec<String> = Vec::new();
-    let mut cursor_row = 0usize;
-    let mut chars_seen = 0usize;
-    for logical in display.split('\n') {
-        let mut row = String::new();
-        let mut row_cells = 0usize;
-        for grapheme in logical.graphemes(true) {
-            let cells = str_width(grapheme);
-            if row_cells + cells > width && !row.is_empty() {
-                rows.push(std::mem::take(&mut row));
-                row_cells = 0;
-            }
-            if cursor_pos >= chars_seen && cursor_pos < chars_seen + grapheme.chars().count() {
-                cursor_row = rows.len();
-            }
-            row.push_str(grapheme);
-            row_cells += cells;
-            chars_seen += grapheme.chars().count();
-        }
-        rows.push(row);
-        chars_seen += 1; // the newline
-    }
-    (rows, cursor_row)
+    composer.display_rows(width)
 }
 
 fn composer_lines(
-    chat: &ChatView,
+    chat: &View,
     theme: Theme,
     width: usize,
     visible_rows: usize,
@@ -708,7 +638,7 @@ fn composer_lines(
 /// One hint line, at most four items, derived purely from Model +
 /// ViewState (no stored footer mode); permission mode on the right (D4,
 /// hook-fact sourced).
-fn footer_line(model: &Model, chat: &ChatView, theme: Theme, width: usize) -> Line<'static> {
+fn footer_line(model: &Model, chat: &View, theme: Theme, width: usize) -> Line<'static> {
     let mut line = new_line();
     if chat.quit_guard.is_armed() {
         // The armed quit guard replaces the hints (warning color); the

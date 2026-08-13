@@ -10,8 +10,9 @@ use amux_ui::Model;
 use amux_ui::claude::{Ask, AskArtifact, AskKind, AskState, DiffArtifact, ToolInvocation};
 use ratatui::text::{Line, Span};
 
-use crate::chat::ask_ui::{AskStage, AskUi};
-use crate::chat::{ChatView, diff, markdown, panel};
+use crate::chat::claude::ask_ui::{AskStage, AskUi};
+use crate::chat::claude::{View, diff, panel};
+use crate::markdown;
 use crate::render::{Theme, blank_line, finish_line, new_line, push_right, push_span};
 
 /// Fullscreen reader ViewState: what is being read and where the viewport
@@ -64,7 +65,7 @@ struct Resolved<'m> {
 
 /// Resolve what the reader shows, or `None` when its source no longer
 /// exists (the frame then falls back to the chat).
-fn resolve<'m>(model: &'m Model, chat: &ChatView) -> Option<Resolved<'m>> {
+fn resolve<'m>(model: &'m Model, chat: &View) -> Option<Resolved<'m>> {
     let reader = chat.reader.as_ref()?;
     let layer = model.claude(chat.agent)?;
     match &reader.source {
@@ -171,7 +172,7 @@ fn body_lines<'m>(body: &Body<'m>, width: usize, theme: Theme) -> Vec<Line<'stat
 /// action row — read affordances only (F1).
 pub(crate) fn reader_frame(
     model: &Model,
-    chat: &ChatView,
+    chat: &View,
     theme: Theme,
     width: usize,
     height: usize,
@@ -230,7 +231,7 @@ pub(crate) fn reader_frame(
 /// by the scroll metrics so paging and rendering agree on the viewport.
 fn reader_tail(
     resolved: &Resolved<'_>,
-    chat: &ChatView,
+    chat: &View,
     readonly: bool,
     width: usize,
     theme: Theme,
@@ -315,7 +316,7 @@ fn reader_tail(
 /// immediately.
 pub(crate) fn scroll_metrics(
     model: &Model,
-    chat: &ChatView,
+    chat: &View,
     viewport: (u16, u16),
 ) -> Option<(usize, usize)> {
     let resolved = resolve(model, chat)?;
@@ -365,7 +366,7 @@ fn title_line(
 
 /// Whether ←/→ can step and to which plan index (resolved-plans reader
 /// only).
-pub(crate) fn plans_step(model: &Model, chat: &ChatView, delta: i64) -> Option<usize> {
+pub(crate) fn plans_step(model: &Model, chat: &View, delta: i64) -> Option<usize> {
     let layer = model.claude(chat.agent)?;
     let count = layer.accepted_plans().len();
     let ReaderSource::Plans { index } = &chat.reader.as_ref()?.source else {

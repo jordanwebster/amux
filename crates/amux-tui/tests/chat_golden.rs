@@ -451,7 +451,7 @@ const WORKING_NOW: &str = "2026-08-12T09:10:24Z";
 
 fn chat_view() -> ViewState {
     ViewState {
-        chat: Some(ChatView::open(agent_id(), 'a', false)),
+        chat: Some(ChatView::open_claude(agent_id(), 'a', false)),
         ..ViewState::default()
     }
 }
@@ -564,7 +564,7 @@ fn chat_idle() {
 fn chat_help_overlay() {
     let model = idle_model();
     let mut view = chat_view();
-    view.chat.as_mut().expect("chat open").help = true;
+    view.chat.as_mut().expect("chat open").set_help(true);
     let rendered = render_frame(&model, &view, 80, 46, IDLE_NOW);
     assert_golden("chat_help_overlay", &rendered);
 }
@@ -577,8 +577,8 @@ fn chat_help_overlay_kitty_short() {
     let mut view = chat_view();
     {
         let chat = view.chat.as_mut().expect("chat open");
-        chat.help = true;
-        chat.kitty = true;
+        chat.set_help(true);
+        chat.set_kitty(true);
     }
     let rendered = render_frame(&model, &view, 80, 24, IDLE_NOW);
     assert_golden("chat_help_overlay_kitty_short", &rendered);
@@ -595,7 +595,7 @@ fn chat_quit_armed() {
     view.chat
         .as_mut()
         .expect("chat open")
-        .quit_guard
+        .quit_guard_mut()
         .press(at(IDLE_NOW));
     let rendered = render_frame(&model, &view, 80, 20, IDLE_NOW);
     assert_golden("chat_quit_armed", &rendered);
@@ -610,7 +610,7 @@ fn chat_quit_armed_panel() {
     view.chat
         .as_mut()
         .expect("chat open")
-        .quit_guard
+        .quit_guard_mut()
         .press(at(WORKING_NOW));
     let rendered = render_frame(&model, &view, 80, 24, WORKING_NOW);
     assert_golden("chat_quit_armed_panel", &rendered);
@@ -632,7 +632,7 @@ fn chat_quit_armed_panel_narrow() {
     view.chat
         .as_mut()
         .expect("chat open")
-        .quit_guard
+        .quit_guard_mut()
         .press(at(WORKING_NOW));
     let rendered = render_frame(&model, &view, 60, 20, WORKING_NOW);
     assert!(rendered.contains("1. Allow once"));
@@ -653,7 +653,7 @@ fn chat_working() {
     view.chat
         .as_mut()
         .expect("chat open")
-        .composer
+        .composer_mut()
         .insert_str("and please document it");
     let rendered = render_frame(&working_model(), &view, 80, 20, WORKING_NOW);
     assert_golden("chat_working", &rendered);
@@ -683,11 +683,12 @@ fn chat_scrolled_back() {
     let mut view = chat_view();
     {
         let chat = view.chat.as_mut().expect("chat open");
-        chat.composer.insert_str("draft preserved while reading");
-        chat.scroll = amux_tui::chat::FeedScroll::Paused {
+        chat.composer_mut()
+            .insert_str("draft preserved while reading");
+        chat.set_scroll(amux_tui::chat::FeedScroll::Paused {
             top_line: 3,
             entry_watermark: amux_tui::chat::entry_watermark(&model, agent_id()).saturating_sub(3),
-        };
+        });
     }
     let rendered = render_frame(&model, &view, 80, 20, WORKING_NOW);
     assert_golden("chat_scrolled_back", &rendered);
@@ -730,10 +731,13 @@ fn chat_truncated_top() {
     ));
     let model = fold(msgs);
     let mut view = chat_view();
-    view.chat.as_mut().expect("chat open").scroll = amux_tui::chat::FeedScroll::Paused {
-        top_line: 0,
-        entry_watermark: amux_tui::chat::entry_watermark(&model, agent_id()),
-    };
+    view.chat
+        .as_mut()
+        .expect("chat open")
+        .set_scroll(amux_tui::chat::FeedScroll::Paused {
+            top_line: 0,
+            entry_watermark: amux_tui::chat::entry_watermark(&model, agent_id()),
+        });
     let rendered = render_frame(&model, &view, 80, 18, IDLE_NOW);
     assert_golden("chat_truncated_top", &rendered);
 }
@@ -1121,7 +1125,7 @@ fn chat_needs_you() {
     let mut view = chat_view();
     {
         let chat = view.chat.as_mut().expect("chat open");
-        chat.composer.insert_str("wait — use a u16");
+        chat.composer_mut().insert_str("wait — use a u16");
         chat.reconcile(&model);
     }
     let rendered = render_frame(&model, &view, 80, 22, WORKING_NOW);
@@ -1135,7 +1139,7 @@ fn chat_composer_multiline() {
     view.chat
         .as_mut()
         .expect("chat open")
-        .composer
+        .composer_mut()
         .insert_str("first line of the draft\nsecond line\nthird line");
     let rendered = render_frame(&idle_model(), &view, 80, 20, IDLE_NOW);
     assert_golden("chat_composer_multiline", &rendered);
@@ -1940,7 +1944,7 @@ fn chat_unicode_width() {
     view.chat
         .as_mut()
         .expect("chat open")
-        .composer
+        .composer_mut()
         .insert_str("繁体字と emoji 🚀 のドラフト");
     let buffer = render_buffer(&model, &view, 80, 22, Theme::Dark, IDLE_NOW);
     for y in 0..22u16 {
@@ -1978,7 +1982,7 @@ fn chat_frames_are_stable_across_runs() {
     view.chat
         .as_mut()
         .expect("chat open")
-        .composer
+        .composer_mut()
         .insert_str("draft");
     let first = render_frame(&model, &view, 80, 20, WORKING_NOW);
     let second = render_frame(&model, &view, 80, 20, WORKING_NOW);
@@ -1999,11 +2003,11 @@ fn chat_rendering_never_panics_at_any_viewport_size() {
     let mut view = chat_view();
     {
         let chat = view.chat.as_mut().expect("chat open");
-        chat.composer.insert_str("draft\nwith lines");
-        chat.scroll = amux_tui::chat::FeedScroll::Paused {
+        chat.composer_mut().insert_str("draft\nwith lines");
+        chat.set_scroll(amux_tui::chat::FeedScroll::Paused {
             top_line: 2,
             entry_watermark: 0,
-        };
+        });
     }
     // Panel, reader, and read-only states join the sweep: their bottom
     // blocks clamp (tail kept, body rows give way) so the footer and
@@ -2023,7 +2027,7 @@ fn chat_rendering_never_panics_at_any_viewport_size() {
     let mut docked_plan_view = reconciled_view(&plan);
     press(&mut docked_plan_view, &plan, KeyCode::Esc);
     let mut help_view = chat_view();
-    help_view.chat.as_mut().expect("chat open").help = true;
+    help_view.chat.as_mut().expect("chat open").set_help(true);
     let states: Vec<(&Model, ViewState, &str)> = vec![
         (&model, view.clone(), IDLE_NOW),
         (&working, view, WORKING_NOW),

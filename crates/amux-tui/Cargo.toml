@@ -15,6 +15,7 @@ futures-util = { workspace = true }
 chrono = { workspace = true }
 anyhow = { workspace = true }
 tracing = { workspace = true }
+serde_json = { workspace = true }
 # Display-cell measurement for wrapping and border math — the same
 # versions ratatui itself renders with, so the two never disagree.
 unicode-width = "0.2"
@@ -25,6 +26,5 @@ libc = { workspace = true }
 signal-hook = { workspace = true }
 
 [dev-dependencies]
-serde_json = { workspace = true }
 uuid = { workspace = true }
 vt100 = "0.15"

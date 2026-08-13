@@ -1,4 +1,4 @@
-//! Chat key handling: keys mutate ChatView and produce `UiAction`s; all
+//! Chat key handling: keys mutate View and produce `UiAction`s; all
 //! domain writes leave as Commands through the runtime (never bytes —
 //! encodings live in amux-ui's C6 module).
 //!
@@ -14,14 +14,16 @@ use amux_ui::{ClaudeCommand, Command, Model};
 use chrono::{DateTime, Utc};
 use crossterm::event::{KeyCode, KeyEvent, KeyEventKind, KeyModifiers};
 
-use crate::chat::ask_ui::{self, AskKeyOutcome, AskStage, AskUi};
-use crate::chat::composer::Composer;
-use crate::chat::reader::{self, ReaderSource, ReaderView};
-use crate::chat::{ChatView, FeedScroll, composer, entry_watermark, render};
+use crate::chat::FeedScroll;
+use crate::chat::claude::ask_ui::{self, AskKeyOutcome, AskStage, AskUi};
+use crate::chat::claude::reader::{self, ReaderSource, ReaderView};
+use crate::chat::claude::{View, entry_watermark, render};
+use crate::composer;
+use crate::composer::Composer;
 use crate::view::UiAction;
 
 pub fn handle_chat_key(
-    chat: &mut ChatView,
+    chat: &mut View,
     model: &Model,
     key: KeyEvent,
     viewport: (u16, u16),
@@ -147,7 +149,7 @@ pub fn handle_chat_key(
 /// The focused text field, if any — the surface the guarded Ctrl+C
 /// clears. This mirrors the focus derivation keys and paste routing use —
 /// the invisible composer behind a docked panel is never "focused".
-fn focused_field<'c>(chat: &'c mut ChatView, model: &Model) -> Option<&'c mut Composer> {
+fn focused_field<'c>(chat: &'c mut View, model: &Model) -> Option<&'c mut Composer> {
     // A read-only chat has no field anywhere (F1); the open help overlay
     // covers whatever field there was.
     if chat.read_only(model) || chat.help {
@@ -172,7 +174,7 @@ fn focused_field<'c>(chat: &'c mut ChatView, model: &Model) -> Option<&'c mut Co
 /// ([`composer::readline_key`] — the same machinery the panel text
 /// fields dispatch through).
 fn composer_key(
-    chat: &mut ChatView,
+    chat: &mut View,
     model: &Model,
     key: KeyEvent,
     viewport: (u16, u16),
@@ -260,8 +262,8 @@ fn composer_key(
 /// text stage takes it (newlines flattened to spaces — panel fields are
 /// one-line); a docked panel without a field, or an open reader, drops
 /// it rather than typing into the invisible composer; only the composer
-/// focus inserts (see [`crate::chat::composer::Composer::paste`]).
-pub fn handle_chat_paste(chat: &mut ChatView, model: &Model, text: &str) {
+/// focus inserts (see [`crate::composer::Composer::paste`]).
+pub fn handle_chat_paste(chat: &mut View, model: &Model, text: &str) {
     chat.send_failure = None;
     chat.ask_failure = None;
     // Paste is input like any other key: it disarms the quit guard.
@@ -297,7 +299,7 @@ pub fn handle_chat_paste(chat: &mut ChatView, model: &Model, text: &str) {
 
 /// Enter: send, gated on phase by the same derivation the footer states
 /// (D2) — while gated, Enter is a no-op and the draft is kept.
-fn send(chat: &mut ChatView, model: &Model) -> Option<UiAction> {
+fn send(chat: &mut View, model: &Model) -> Option<UiAction> {
     if chat.composer.is_empty() {
         return None;
     }
@@ -320,7 +322,7 @@ fn send(chat: &mut ChatView, model: &Model) -> Option<UiAction> {
 /// The deterministic view-only Esc chain (`docs/CHAT.md` §State
 /// transitions), checked in order — first hit wins. Esc never answers an
 /// ask and never interrupts.
-fn esc_chain(chat: &mut ChatView) {
+fn esc_chain(chat: &mut View) {
     // Stage 1: close the reader — an open text field inside it closes
     // first (the request-changes stage steps back to the action row with
     // its text kept), then the reader itself; a plan-review reader drops
@@ -355,7 +357,7 @@ fn esc_chain(chat: &mut ChatView) {
 /// SendFailed): the stage machine first, the feed's scroll keys as the
 /// fallback — the feed stays scrollable behind the docked panel.
 fn panel_key(
-    chat: &mut ChatView,
+    chat: &mut View,
     model: &Model,
     key: KeyEvent,
     viewport: (u16, u16),
@@ -391,7 +393,7 @@ fn panel_key(
     }
 }
 
-fn dispatch_answer(chat: &ChatView, ask: u64, answer: AskAnswer) -> UiAction {
+fn dispatch_answer(chat: &View, ask: u64, answer: AskAnswer) -> UiAction {
     UiAction::Dispatch(Command::Claude(ClaudeCommand::AnswerAsk {
         agent: chat.agent,
         ask,
@@ -403,7 +405,7 @@ fn dispatch_answer(chat: &ChatView, ask: u64, answer: AskAnswer) -> UiAction {
 /// row / feedback stage first, then pager motion (P7 — no text field
 /// means bare letters are safe; in the request-changes stage they type).
 fn reader_key(
-    chat: &mut ChatView,
+    chat: &mut View,
     model: &Model,
     key: KeyEvent,
     viewport: (u16, u16),
@@ -471,7 +473,7 @@ fn reader_key(
 }
 
 /// Pager motion over the reader body: ↑↓ j/k, PgUp/PgDn, Home/End g/G.
-fn reader_scroll(chat: &mut ChatView, model: &Model, key: &KeyEvent, viewport: (u16, u16)) -> bool {
+fn reader_scroll(chat: &mut View, model: &Model, key: &KeyEvent, viewport: (u16, u16)) -> bool {
     let Some((page, max_top)) = reader::scroll_metrics(model, chat, viewport) else {
         return false;
     };
@@ -491,7 +493,7 @@ fn reader_scroll(chat: &mut ChatView, model: &Model, key: &KeyEvent, viewport: (
 }
 
 /// The feed's scroll keys, shared by every docked focus state.
-fn scroll_keys(chat: &mut ChatView, model: &Model, key: &KeyEvent, viewport: (u16, u16)) -> bool {
+fn scroll_keys(chat: &mut View, model: &Model, key: &KeyEvent, viewport: (u16, u16)) -> bool {
     let ctrl = key.modifiers.contains(KeyModifiers::CONTROL);
     match key.code {
         KeyCode::PageUp => page_up(chat, model, viewport),
@@ -507,7 +509,7 @@ fn scroll_keys(chat: &mut ChatView, model: &Model, key: &KeyEvent, viewport: (u1
 /// safe — no text field exists here — and every write affordance is
 /// absent, not disabled: no interrupt, no answers, no composer.
 fn readonly_key(
-    chat: &mut ChatView,
+    chat: &mut View,
     model: &Model,
     key: KeyEvent,
     viewport: (u16, u16),
@@ -549,14 +551,14 @@ fn readonly_key(
 
 /// Scroll bounds under the paused layout (the paused rule takes a row, so
 /// paging targets that geometry).
-fn scroll_metrics(chat: &ChatView, model: &Model, viewport: (u16, u16)) -> (usize, usize) {
+fn scroll_metrics(chat: &View, model: &Model, viewport: (u16, u16)) -> (usize, usize) {
     let layout = render::layout(model, chat, viewport);
     let feed_h = layout.feed_height_when_paused().max(1);
     let page = feed_h.saturating_sub(1).max(1);
     (page, feed_h)
 }
 
-fn pause_at(chat: &mut ChatView, model: &Model, top_line: usize) {
+fn pause_at(chat: &mut View, model: &Model, top_line: usize) {
     let entry_watermark = match chat.scroll {
         // Re-anchoring while already paused keeps the original watermark:
         // "new entries" counts from when following stopped.
@@ -571,7 +573,7 @@ fn pause_at(chat: &mut ChatView, model: &Model, top_line: usize) {
     };
 }
 
-fn page_up(chat: &mut ChatView, model: &Model, viewport: (u16, u16)) {
+fn page_up(chat: &mut View, model: &Model, viewport: (u16, u16)) {
     let (page, feed_h) = scroll_metrics(chat, model, viewport);
     let total = render::feed_line_count(model, chat, viewport.0 as usize);
     match chat.scroll {
@@ -589,7 +591,7 @@ fn page_up(chat: &mut ChatView, model: &Model, viewport: (u16, u16)) {
     }
 }
 
-fn page_down(chat: &mut ChatView, model: &Model, viewport: (u16, u16)) {
+fn page_down(chat: &mut View, model: &Model, viewport: (u16, u16)) {
     let FeedScroll::Paused { top_line, .. } = chat.scroll else {
         return;
     };
@@ -608,7 +610,7 @@ fn page_down(chat: &mut ChatView, model: &Model, viewport: (u16, u16)) {
 
 /// Jump to the feed's oldest retained line (Ctrl+Home; `g`/Home in the
 /// read-only pager).
-fn jump_top(chat: &mut ChatView, model: &Model, viewport: (u16, u16)) {
+fn jump_top(chat: &mut View, model: &Model, viewport: (u16, u16)) {
     let (_, feed_h) = scroll_metrics(chat, model, viewport);
     let total = render::feed_line_count(model, chat, viewport.0 as usize);
     if total > feed_h {
@@ -617,7 +619,7 @@ fn jump_top(chat: &mut ChatView, model: &Model, viewport: (u16, u16)) {
 }
 
 /// One-line pager motion (read-only chats: ↑/k, ↓/j).
-fn line_up(chat: &mut ChatView, model: &Model, viewport: (u16, u16)) {
+fn line_up(chat: &mut View, model: &Model, viewport: (u16, u16)) {
     let (_, feed_h) = scroll_metrics(chat, model, viewport);
     let total = render::feed_line_count(model, chat, viewport.0 as usize);
     let max_top = total.saturating_sub(feed_h);
@@ -631,7 +633,7 @@ fn line_up(chat: &mut ChatView, model: &Model, viewport: (u16, u16)) {
     }
 }
 
-fn line_down(chat: &mut ChatView, model: &Model, viewport: (u16, u16)) {
+fn line_down(chat: &mut View, model: &Model, viewport: (u16, u16)) {
     let FeedScroll::Paused { top_line, .. } = chat.scroll else {
         return;
     };
@@ -766,8 +768,8 @@ mod tests {
         KeyEvent::new(KeyCode::Char(c), KeyModifiers::CONTROL)
     }
 
-    fn chat_with_draft(text: &str) -> ChatView {
-        let mut chat = ChatView::open(agent_id(), 'a', false);
+    fn chat_with_draft(text: &str) -> View {
+        let mut chat = View::open(agent_id(), 'a', false);
         chat.composer.insert_str(text);
         chat
     }
@@ -803,7 +805,7 @@ mod tests {
     #[test]
     fn enter_on_an_empty_draft_is_a_noop() {
         let model = idle_model();
-        let mut chat = ChatView::open(agent_id(), 'a', false);
+        let mut chat = View::open(agent_id(), 'a', false);
         assert_eq!(
             handle_chat_key(&mut chat, &model, press(KeyCode::Enter), VIEWPORT, t(0)),
             None
@@ -848,7 +850,7 @@ mod tests {
     #[test]
     fn ctrl_c_on_an_empty_draft_arms_then_a_second_press_quits() {
         let model = idle_model();
-        let mut chat = ChatView::open(agent_id(), 'a', false);
+        let mut chat = View::open(agent_id(), 'a', false);
         assert_eq!(
             handle_chat_key(&mut chat, &model, ctrl('c'), VIEWPORT, t(0)),
             None,
@@ -864,7 +866,7 @@ mod tests {
     #[test]
     fn any_other_key_disarms_and_a_stale_arm_rearms() {
         let model = idle_model();
-        let mut chat = ChatView::open(agent_id(), 'a', false);
+        let mut chat = View::open(agent_id(), 'a', false);
         handle_chat_key(&mut chat, &model, ctrl('c'), VIEWPORT, t(0));
         handle_chat_key(&mut chat, &model, press(KeyCode::End), VIEWPORT, t(1));
         assert!(!chat.quit_guard.is_armed(), "another key disarms");
@@ -879,7 +881,7 @@ mod tests {
 
     #[test]
     fn shift_tab_cycles_the_mode_only_when_the_injection_would_reach_claude() {
-        let mut chat = ChatView::open(agent_id(), 'a', false);
+        let mut chat = View::open(agent_id(), 'a', false);
         let action = handle_chat_key(
             &mut chat,
             &idle_model(),
@@ -918,7 +920,7 @@ mod tests {
     #[test]
     fn tab_is_reserved_and_question_mark_opens_help_or_types() {
         let model = idle_model();
-        let mut chat = ChatView::open(agent_id(), 'a', false);
+        let mut chat = View::open(agent_id(), 'a', false);
         assert_eq!(
             handle_chat_key(&mut chat, &model, press(KeyCode::Tab), VIEWPORT, t(0)),
             None
@@ -948,7 +950,7 @@ mod tests {
     #[test]
     fn the_help_overlay_yields_to_leader_and_quit_guard() {
         let model = idle_model();
-        let mut chat = ChatView::open(agent_id(), 'a', false);
+        let mut chat = View::open(agent_id(), 'a', false);
         handle_chat_key(&mut chat, &model, press(KeyCode::Char('?')), VIEWPORT, t(0));
         handle_chat_key(&mut chat, &model, ctrl('a'), VIEWPORT, t(0));
         assert_eq!(
@@ -956,7 +958,7 @@ mod tests {
             Some(UiAction::CloseChat),
             "leader chords work over the overlay"
         );
-        let mut chat = ChatView::open(agent_id(), 'a', false);
+        let mut chat = View::open(agent_id(), 'a', false);
         chat.composer.insert_str("draft");
         handle_chat_key(&mut chat, &model, ctrl('u'), VIEWPORT, t(0)); // empty the draft
         handle_chat_key(&mut chat, &model, press(KeyCode::Char('?')), VIEWPORT, t(0));
@@ -984,7 +986,7 @@ mod tests {
     #[test]
     fn pgup_pauses_with_a_watermark_and_pgdn_at_the_bottom_resumes() {
         let model = long_feed_model();
-        let mut chat = ChatView::open(agent_id(), 'a', false);
+        let mut chat = View::open(agent_id(), 'a', false);
         handle_chat_key(&mut chat, &model, press(KeyCode::PageUp), VIEWPORT, t(0));
         let FeedScroll::Paused {
             entry_watermark, ..
@@ -1012,7 +1014,7 @@ mod tests {
     #[test]
     fn pgup_with_a_short_feed_stays_following() {
         let model = idle_model();
-        let mut chat = ChatView::open(agent_id(), 'a', false);
+        let mut chat = View::open(agent_id(), 'a', false);
         handle_chat_key(&mut chat, &model, press(KeyCode::PageUp), VIEWPORT, t(0));
         assert_eq!(chat.scroll, FeedScroll::Following);
     }
@@ -1163,7 +1165,7 @@ mod tests {
     #[test]
     fn paste_inserts_literally_and_dismisses_a_stated_failure() {
         let model = idle_model();
-        let mut chat = ChatView::open(agent_id(), 'a', false);
+        let mut chat = View::open(agent_id(), 'a', false);
         chat.send_failure = Some("older failure".to_string());
         handle_chat_paste(&mut chat, &model, "one\n\ttwo");
         assert_eq!(chat.composer.text(), "one\n    two");
@@ -1176,7 +1178,7 @@ mod tests {
     #[test]
     fn paste_in_a_readonly_chat_retains_nothing() {
         let model = readonly_ask_model();
-        let mut chat = ChatView::open(agent_id(), 'a', false);
+        let mut chat = View::open(agent_id(), 'a', false);
         handle_chat_paste(&mut chat, &model, "secret scratch text");
         assert!(chat.composer.is_empty(), "no composer surface exists");
         assert!(
@@ -1193,7 +1195,7 @@ mod tests {
     #[test]
     fn paste_with_help_open_retains_nothing_and_leaves_help_open() {
         let model = idle_model();
-        let mut chat = ChatView::open(agent_id(), 'a', false);
+        let mut chat = View::open(agent_id(), 'a', false);
         chat.help = true;
         chat.quit_guard.press(t(0));
 
@@ -1211,7 +1213,7 @@ mod tests {
     #[test]
     fn paste_with_a_pending_ask_before_reconcile_retains_nothing() {
         let model = edit_ask_model();
-        let mut chat = ChatView::open(agent_id(), 'a', false); // deliberately not reconciled
+        let mut chat = View::open(agent_id(), 'a', false); // deliberately not reconciled
         handle_chat_paste(&mut chat, &model, "stray paste");
         assert!(chat.composer.is_empty(), "menu stage has no text field");
         let ui = chat.ask_ui.as_ref().expect("the paste synced the panel");
@@ -1295,8 +1297,8 @@ mod tests {
         model
     }
 
-    fn open_chat(model: &Model) -> ChatView {
-        let mut chat = ChatView::open(agent_id(), 'a', false);
+    fn open_chat(model: &Model) -> View {
+        let mut chat = View::open(agent_id(), 'a', false);
         chat.reconcile(model);
         chat
     }
@@ -1367,7 +1369,7 @@ mod tests {
         handle_chat_key(&mut chat, &model, press(KeyCode::Esc), VIEWPORT, t(0));
         assert!(matches!(
             chat.ask_ui.as_ref().expect("panel").stage,
-            crate::chat::ask_ui::AskStage::Menu { cursor: 2 }
+            crate::chat::claude::ask_ui::AskStage::Menu { cursor: 2 }
         ));
         handle_chat_key(&mut chat, &model, press(KeyCode::Enter), VIEWPORT, t(0));
         let answer = answer_of(handle_chat_key(
@@ -1514,7 +1516,7 @@ mod tests {
     #[test]
     fn an_unrecognized_leader_chord_consumes_the_key() {
         let model = idle_model();
-        let mut chat = ChatView::open(agent_id(), 'a', false);
+        let mut chat = View::open(agent_id(), 'a', false);
         handle_chat_key(&mut chat, &model, ctrl('a'), VIEWPORT, t(0));
         assert_eq!(
             handle_chat_key(&mut chat, &model, ctrl('x'), VIEWPORT, t(0)),
@@ -1535,7 +1537,7 @@ mod tests {
     #[test]
     fn a_configured_leader_moves_the_chord() {
         let model = idle_model();
-        let mut chat = ChatView::open(agent_id(), 'b', false);
+        let mut chat = View::open(agent_id(), 'b', false);
         handle_chat_key(&mut chat, &model, ctrl('b'), VIEWPORT, t(0));
         assert_eq!(
             handle_chat_key(&mut chat, &model, press(KeyCode::Char('s')), VIEWPORT, t(0)),
@@ -1927,7 +1929,7 @@ mod tests {
             theme: crate::render::Theme::Dark,
             now: t(60),
         };
-        let frame = crate::chat::build_chat_lines(&model, &chat, &ctx);
+        let frame = crate::chat::claude::build_chat_lines(&model, &chat, &ctx);
         let text: String = frame
             .iter()
             .flat_map(|line| line.spans.iter().map(|span| span.content.as_ref()))
@@ -2086,7 +2088,10 @@ mod tests {
         let ui = chat.ask_ui.as_ref().expect("second ask heads the queue");
         assert_eq!(ui.ask_id, 1, "fresh panel for the new head");
         assert!(
-            matches!(ui.stage, crate::chat::ask_ui::AskStage::Menu { cursor: 0 }),
+            matches!(
+                ui.stage,
+                crate::chat::claude::ask_ui::AskStage::Menu { cursor: 0 }
+            ),
             "the old ask's deny stage died with it"
         );
     }

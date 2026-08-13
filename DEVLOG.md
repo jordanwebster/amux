@@ -4,6 +4,22 @@ This file tracks significant development work, decisions made, and current state
 
 ---
 
+2026-08-13 — P8 completion: hand-drove the native Codex screen through prompt,
+streaming, command/cwd, steer, interrupt, help, scroll, and fleet return; raw
+creation now retries the bounded thread-id publication race and attaches with
+the captured terminal size.
+
+2026-08-13 — P8 create/attach chunk: Codex creation now preflights
+`account/read`, exposes typed model/approval/sandbox flags, honors the configured
+new-agent open mode, and shows those choices on the initial chat screen;
+`amux attach <codex>` enters structured chat while fleet raw attach remains
+available.
+
+2026-08-13 — P8 TUI chunk: split chat into native Claude/Codex screens, lifted
+the proven shared composer/markdown/layout pieces, kept Claude-only diff and
+reader semantics local, and added 14 two-theme Codex full-frame goldens across
+the seven required states without changing a Claude golden byte.
+
 ## How to Maintain This Log
 
 1. **Add new entries at the top** (reverse chronological order)

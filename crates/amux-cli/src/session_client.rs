@@ -52,14 +52,14 @@ fn get_terminal_size() -> TerminalSize {
         .unwrap_or_default()
 }
 
-/// Create a new agent and attach to it
+/// Create a new agent and open it in the configured default mode.
 pub async fn new_agent(
     name: Option<&str>,
     agent_type: AgentType,
     args: Vec<String>,
     config: &Config,
 ) -> Result<()> {
-    let attach_after_create = !matches!(&agent_type, AgentType::Codex { .. });
+    let codex_configuration = codex_configuration_label(&agent_type);
     let rpc = get_client(config).await?;
     let terminal_size = get_terminal_size();
     let working_dir = std::env::current_dir()?;
@@ -81,17 +81,72 @@ pub async fn new_agent(
         .await
         .map_err(|error| anyhow!("failed to create agent: {error}"))?;
 
-    if !attach_after_create {
-        println!(
-            "Created Codex agent {}{}.",
-            agent.id,
-            agent
-                .name
-                .as_deref()
-                .map(|name| format!(" ({name})"))
-                .unwrap_or_default()
-        );
+    match config.ui.default_open_mode {
+        amux::OpenMode::Chat => {
+            crate::ui::run_for_agent(config.clone(), agent.id, codex_configuration).await
+        }
+        amux::OpenMode::Raw => {
+            let identifier = AgentIdentifier::from(agent.id);
+            let outcome = if codex_configuration.is_some() {
+                attach_new_codex_terminal(
+                    &rpc,
+                    identifier,
+                    config.keybinds.leader.clone(),
+                    StdinHandback::ProcessExits,
+                )
+                .await?
+            } else {
+                attach_terminal(
+                    &rpc,
+                    identifier,
+                    config.keybinds.leader.clone(),
+                    StdinHandback::ProcessExits,
+                )
+                .await?
+            };
+            finish_cli_attach(outcome, &config.state_path)
+        }
+    }
+}
+
+fn codex_configuration_label(agent_type: &AgentType) -> Option<String> {
+    let AgentType::Codex {
+        model,
+        approval_policy,
+        sandbox_policy,
+        ..
+    } = agent_type
+    else {
+        return None;
+    };
+    Some(format!(
+        "model={} · approval={} · sandbox={}",
+        model.as_deref().unwrap_or("default"),
+        approval_policy.as_deref().unwrap_or("default"),
+        sandbox_policy.as_deref().unwrap_or("default")
+    ))
+}
+
+/// Attach to an existing agent
+pub async fn attach(target: Option<&str>, config: &Config) -> Result<()> {
+    let retry_command = target
+        .map(|target| format!("amux attach {target}"))
+        .unwrap_or_else(|| "amux attach".to_string());
+    let rpc = require_running_client(config, Some(&retry_command)).await?;
+
+    let agents = rpc.list_agents().await?;
+    let Some(agent) = resolve_attach_agent(&agents, target)? else {
+        eprintln!("No agents running. Use 'amux new' to create one.");
         return Ok(());
+    };
+
+    tracing::info!(agent = %agent.id, "attaching");
+
+    // Codex's primary attach surface is the native structured screen. Raw
+    // mode remains available from the fleet (Enter with the shipped raw
+    // default, `o` when chat is configured as the default).
+    if agent.agent_type == "codex" {
+        return crate::ui::run_for_agent(config.clone(), agent.id, None).await;
     }
 
     let outcome = attach_terminal(
@@ -104,36 +159,31 @@ pub async fn new_agent(
     finish_cli_attach(outcome, &config.state_path)
 }
 
-/// Attach to an existing agent
-pub async fn attach(target: Option<&str>, config: &Config) -> Result<()> {
-    let retry_command = target
-        .map(|target| format!("amux attach {target}"))
-        .unwrap_or_else(|| "amux attach".to_string());
-    let rpc = require_running_client(config, Some(&retry_command)).await?;
-
-    let agent = match target {
-        Some(identifier) => AgentIdentifier::from(identifier),
-        None => {
-            let agents = rpc.list_agents().await?;
-            if let Some(agent) = agents.first() {
-                AgentIdentifier::from(agent.id)
-            } else {
-                eprintln!("No agents running. Use 'amux new' to create one.");
-                return Ok(());
-            }
-        }
+fn resolve_attach_agent<'a>(
+    agents: &'a [amux::Agent],
+    target: Option<&str>,
+) -> Result<Option<&'a amux::Agent>> {
+    let Some(target) = target else {
+        return Ok(agents.first());
     };
-
-    tracing::info!(?agent, "attaching");
-
-    let outcome = attach_terminal(
-        &rpc,
-        agent,
-        config.keybinds.leader.clone(),
-        StdinHandback::ProcessExits,
-    )
-    .await?;
-    finish_cli_attach(outcome, &config.state_path)
+    if let Ok(id) = Uuid::parse_str(target) {
+        return agents
+            .iter()
+            .find(|agent| agent.id == id)
+            .map(Some)
+            .ok_or_else(|| anyhow!("agent not found: {target}"));
+    }
+    let matches: Vec<_> = agents
+        .iter()
+        .filter(|agent| agent.name.as_deref() == Some(target))
+        .collect();
+    match matches.as_slice() {
+        [] => Err(anyhow!("agent not found: {target}")),
+        [agent] => Ok(Some(*agent)),
+        _ => Err(anyhow!(
+            "agent name `{target}` is ambiguous; attach by id instead"
+        )),
+    }
 }
 
 /// Attach for the fleet TUI: run the passthrough on the real terminal and
@@ -272,7 +322,47 @@ async fn attach_terminal(
     handback: StdinHandback,
 ) -> Result<AttachOutcome> {
     let session = subscribe_raw(rpc, &agent, Some(get_terminal_size())).await?;
+    attach_subscribed(rpc, session, agent, leader, handback).await
+}
 
+/// A newly-created Codex backend learns its thread id asynchronously. Retry
+/// only that named readiness race; every other subscription error remains
+/// immediate and unchanged.
+async fn attach_new_codex_terminal(
+    rpc: &Client,
+    agent: AgentIdentifier,
+    leader: LeaderKey,
+    handback: StdinHandback,
+) -> Result<AttachOutcome> {
+    let terminal_size = get_terminal_size();
+    let deadline = tokio::time::Instant::now() + std::time::Duration::from_secs(15);
+    let session = loop {
+        match subscribe_raw(rpc, &agent, Some(terminal_size)).await {
+            Ok(session) => break session,
+            Err(error)
+                if codex_thread_not_ready(&error) && tokio::time::Instant::now() < deadline =>
+            {
+                tokio::time::sleep(std::time::Duration::from_millis(100)).await;
+            }
+            Err(error) => return Err(error),
+        }
+    };
+    attach_subscribed(rpc, session, agent, leader, handback).await
+}
+
+fn codex_thread_not_ready(error: &anyhow::Error) -> bool {
+    error
+        .to_string()
+        .contains("Codex raw session is not ready: thread_id is not available yet")
+}
+
+async fn attach_subscribed(
+    rpc: &Client,
+    session: amux::SessionStream,
+    agent: AgentIdentifier,
+    leader: LeaderKey,
+    handback: StdinHandback,
+) -> Result<AttachOutcome> {
     let raw_mode_guard = RawModeGuard::new()?;
     let stop_reading = Arc::new(AtomicBool::new(false));
     let (input_rx, reader) = spawn_stdin_reader(leader, stop_reading.clone());
@@ -562,6 +652,43 @@ mod attach {
             Some(super::StdinEvent::SwitchToFleet)
         ));
         assert!(super::chord_event(b'x').is_none());
+    }
+
+    #[test]
+    fn codex_configuration_label_is_explicit_about_defaults_and_overrides() {
+        let defaults = AgentType::Codex {
+            model: None,
+            approval_policy: None,
+            sandbox_policy: None,
+            resume_thread_id: None,
+        };
+        assert_eq!(
+            super::codex_configuration_label(&defaults).as_deref(),
+            Some("model=default · approval=default · sandbox=default")
+        );
+
+        let selected = AgentType::Codex {
+            model: Some("gpt-5.4".to_string()),
+            approval_policy: Some("never".to_string()),
+            sandbox_policy: Some("workspace-write".to_string()),
+            resume_thread_id: None,
+        };
+        assert_eq!(
+            super::codex_configuration_label(&selected).as_deref(),
+            Some("model=gpt-5.4 · approval=never · sandbox=workspace-write")
+        );
+        assert_eq!(super::codex_configuration_label(&AgentType::Claude), None);
+    }
+
+    #[test]
+    fn raw_create_retry_matches_only_the_codex_thread_readiness_race() {
+        let readiness = anyhow!(
+            "failed to subscribe to session: Codex raw session is not ready: thread_id is not available yet"
+        );
+        assert!(super::codex_thread_not_ready(&readiness));
+        assert!(!super::codex_thread_not_ready(&anyhow!(
+            "failed to subscribe to session: permission denied"
+        )));
     }
 
     use std::sync::Mutex as StdMutex;

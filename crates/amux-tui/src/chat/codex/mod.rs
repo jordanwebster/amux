@@ -1,0 +1,149 @@
+//! Codex-native chat view state. It consumes only `amux_ui::codex` facts;
+//! no Claude entry, ask, phase, or artifact type crosses this module.
+
+mod keys;
+mod render;
+
+pub(crate) use keys::{handle_chat_key, handle_chat_paste};
+pub(crate) use render::build_chat_lines;
+
+use amux_ui::codex::{CodexCommand, CodexPhase};
+use amux_ui::{AgentId, Command, Model, OpId, OpOutcome};
+use serde_json::Value;
+
+use crate::chat::FeedScroll;
+use crate::composer::Composer;
+use crate::view::QuitGuard;
+
+#[derive(Clone, Debug, PartialEq, Eq)]
+struct PendingSend {
+    op: OpId,
+    text: String,
+}
+
+#[derive(Clone, Debug, PartialEq)]
+struct PendingAnswer {
+    op: OpId,
+    request_id: Value,
+}
+
+#[derive(Clone, Debug)]
+pub(crate) struct View {
+    pub agent: AgentId,
+    pub composer: Composer,
+    pub scroll: FeedScroll,
+    pending_send: Option<PendingSend>,
+    pending_answer: Option<PendingAnswer>,
+    pub(crate) send_failure: Option<String>,
+    pub(crate) answer_failure: Option<String>,
+    pub(crate) approval_request: Option<Value>,
+    pub(crate) approval_cursor: usize,
+    pub quit_guard: QuitGuard,
+    pub leader: char,
+    pub pending_leader: bool,
+    pub kitty: bool,
+    pub help: bool,
+    /// Creation choices supplied by the CLI for the initial structured view.
+    pub(crate) configuration_label: Option<String>,
+}
+
+impl View {
+    pub(crate) fn open(agent: AgentId, leader: char, kitty: bool) -> Self {
+        Self {
+            agent,
+            composer: Composer::default(),
+            scroll: FeedScroll::Following,
+            pending_send: None,
+            pending_answer: None,
+            send_failure: None,
+            answer_failure: None,
+            approval_request: None,
+            approval_cursor: 0,
+            quit_guard: QuitGuard::default(),
+            leader,
+            pending_leader: false,
+            kitty,
+            help: false,
+            configuration_label: None,
+        }
+    }
+
+    pub(crate) fn read_only(&self, model: &Model) -> bool {
+        model
+            .agent(self.agent)
+            .is_some_and(|card| card.agent.readonly)
+    }
+
+    pub(crate) fn reconcile(&mut self, model: &Model) {
+        if let Some(pending) = &self.pending_send
+            && let Some(finished) = model.finished_op(pending.op)
+        {
+            if let OpOutcome::Error { error } = &finished.outcome {
+                self.send_failure = Some(error.message.clone());
+                if self.composer.is_empty() {
+                    self.composer.restore(&pending.text);
+                }
+            }
+            self.pending_send = None;
+        }
+        if let Some(pending) = &self.pending_answer
+            && let Some(finished) = model.finished_op(pending.op)
+        {
+            if let OpOutcome::Error { error } = &finished.outcome
+                && model
+                    .codex(self.agent)
+                    .and_then(|layer| layer.ask_head())
+                    .is_some_and(|ask| ask.request_id == pending.request_id)
+            {
+                self.answer_failure = Some(error.message.clone());
+            }
+            self.pending_answer = None;
+        }
+
+        let request = model
+            .codex(self.agent)
+            .and_then(|layer| layer.ask_head())
+            .map(|ask| ask.request_id.clone());
+        if request != self.approval_request {
+            self.approval_request = request;
+            self.approval_cursor = 0;
+            self.answer_failure = None;
+        }
+        if let Some(count) = model
+            .codex(self.agent)
+            .and_then(|layer| layer.ask_head())
+            .map(|ask| ask.actions.len())
+        {
+            self.approval_cursor = self.approval_cursor.min(count.saturating_sub(1));
+        }
+    }
+
+    pub(crate) fn note_dispatched(&mut self, op: OpId, command: &Command) {
+        match command {
+            Command::Codex(
+                CodexCommand::Prompt { agent, text } | CodexCommand::Steer { agent, text },
+            ) if *agent == self.agent => {
+                self.pending_send = Some(PendingSend {
+                    op,
+                    text: text.clone(),
+                });
+            }
+            Command::Codex(CodexCommand::Answer {
+                agent, request_id, ..
+            }) if *agent == self.agent => {
+                self.pending_answer = Some(PendingAnswer {
+                    op,
+                    request_id: request_id.clone(),
+                });
+            }
+            _ => {}
+        }
+    }
+
+    pub(crate) fn needs_tick(&self, model: &Model) -> bool {
+        matches!(
+            amux_ui::codex::phase(model, self.agent),
+            CodexPhase::Thinking | CodexPhase::Responding { .. } | CodexPhase::Executing { .. }
+        )
+    }
+}

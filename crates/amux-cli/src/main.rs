@@ -1,5 +1,6 @@
 mod auth;
 mod client_common;
+mod codex_auth;
 mod hooks;
 mod init;
 mod plugin;
@@ -57,6 +58,18 @@ enum Commands {
         /// Session name (optional human-readable name)
         #[arg(long)]
         name: Option<String>,
+
+        /// Codex model override (Codex agents only)
+        #[arg(long)]
+        model: Option<String>,
+
+        /// Codex approval policy (Codex agents only)
+        #[arg(long, value_enum)]
+        approval_policy: Option<CliCodexApprovalPolicy>,
+
+        /// Codex sandbox policy (Codex agents only)
+        #[arg(long, value_enum)]
+        sandbox_policy: Option<CliCodexSandboxPolicy>,
 
         /// Extra arguments passed to the agent (after --)
         #[arg(last = true)]
@@ -212,6 +225,40 @@ enum CliDebugFormat {
     Json,
 }
 
+#[derive(Copy, Clone, Debug, ValueEnum)]
+enum CliCodexApprovalPolicy {
+    Untrusted,
+    OnRequest,
+    Never,
+}
+
+impl CliCodexApprovalPolicy {
+    fn as_str(self) -> &'static str {
+        match self {
+            Self::Untrusted => "untrusted",
+            Self::OnRequest => "on-request",
+            Self::Never => "never",
+        }
+    }
+}
+
+#[derive(Copy, Clone, Debug, ValueEnum)]
+enum CliCodexSandboxPolicy {
+    DangerFullAccess,
+    WorkspaceWrite,
+    ReadOnly,
+}
+
+impl CliCodexSandboxPolicy {
+    fn as_str(self) -> &'static str {
+        match self {
+            Self::DangerFullAccess => "danger-full-access",
+            Self::WorkspaceWrite => "workspace-write",
+            Self::ReadOnly => "read-only",
+        }
+    }
+}
+
 impl From<CliDebugFormat> for DebugFormat {
     fn from(value: CliDebugFormat) -> Self {
         match value {
@@ -307,16 +354,24 @@ async fn run_command(command: Commands, mut config: Config) -> Result<()> {
         Commands::New {
             agent_type,
             name,
+            model,
+            approval_policy,
+            sandbox_policy,
             args,
         } => {
-            let agent_type = parse_agent_type(&agent_type)?;
+            let agent_type = configure_agent_type(
+                parse_agent_type(&agent_type)?,
+                model,
+                approval_policy,
+                sandbox_policy,
+            )?;
             ensure_initialized(&mut config).await?;
             check_update_required(&config);
             match &agent_type {
                 AgentType::Claude => {
                     plugin::ensure_plugin_installed().await;
                 }
-                AgentType::Codex { .. } => {}
+                AgentType::Codex { .. } => codex_auth::ensure_authenticated().await?,
                 #[cfg(any(debug_assertions, test))]
                 AgentType::TestAgent { .. } => {}
             };
@@ -819,6 +874,28 @@ fn parse_agent_type(s: &str) -> Result<AgentType> {
     }
 }
 
+fn configure_agent_type(
+    agent_type: AgentType,
+    model: Option<String>,
+    approval_policy: Option<CliCodexApprovalPolicy>,
+    sandbox_policy: Option<CliCodexSandboxPolicy>,
+) -> Result<AgentType> {
+    match agent_type {
+        AgentType::Codex {
+            resume_thread_id, ..
+        } => Ok(AgentType::Codex {
+            model,
+            approval_policy: approval_policy.map(|value| value.as_str().to_string()),
+            sandbox_policy: sandbox_policy.map(|value| value.as_str().to_string()),
+            resume_thread_id,
+        }),
+        _other if model.is_some() || approval_policy.is_some() || sandbox_policy.is_some() => Err(
+            anyhow!("--model, --approval-policy, and --sandbox-policy require agent type `codex`"),
+        ),
+        other => Ok(other),
+    }
+}
+
 fn init_tracing() -> WorkerGuard {
     let log_path = std::env::var("AMUX_LOG")
         .unwrap_or_else(|_| amux::default_log_path().display().to_string());
@@ -926,6 +1003,56 @@ mod tests {
                 resume_thread_id: None,
             }
         ));
+    }
+
+    #[test]
+    fn parses_and_applies_codex_creation_options() {
+        let cli = Cli::try_parse_from([
+            "amux",
+            "new",
+            "codex",
+            "--model",
+            "gpt-5.4",
+            "--approval-policy",
+            "on-request",
+            "--sandbox-policy",
+            "workspace-write",
+        ])
+        .unwrap();
+        let Some(Commands::New {
+            agent_type,
+            model,
+            approval_policy,
+            sandbox_policy,
+            ..
+        }) = cli.command
+        else {
+            panic!("expected new command");
+        };
+        let configured = configure_agent_type(
+            parse_agent_type(&agent_type).unwrap(),
+            model,
+            approval_policy,
+            sandbox_policy,
+        )
+        .unwrap();
+        assert!(matches!(
+            configured,
+            AgentType::Codex {
+                model: Some(ref model),
+                approval_policy: Some(ref approval),
+                sandbox_policy: Some(ref sandbox),
+                ..
+            } if model == "gpt-5.4" && approval == "on-request" && sandbox == "workspace-write"
+        ));
+    }
+
+    #[test]
+    fn codex_creation_options_reject_other_agents() {
+        let error =
+            configure_agent_type(AgentType::Claude, Some("gpt-5.4".to_string()), None, None)
+                .unwrap_err();
+        assert!(error.to_string().contains("require agent type `codex`"));
     }
 
     #[test]

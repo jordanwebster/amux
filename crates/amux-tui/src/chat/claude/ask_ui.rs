@@ -14,7 +14,7 @@ use amux_ui::claude::encoding::{AskAnswer, PermissionAnswer, PlanAnswer, Questio
 use amux_ui::claude::{Ask, AskKind, QuestionFact, ToolInvocation};
 use crossterm::event::{KeyCode, KeyEvent, KeyModifiers};
 
-use crate::chat::composer::{self, Composer};
+use crate::composer::{self, Composer};
 
 /// Panel state for one ask (keyed by `ask_id`: a new head gets a fresh
 /// panel; the old ask's typed state dies with its ask).

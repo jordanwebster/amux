@@ -13,7 +13,23 @@ use anyhow::Result;
 use crate::client_common::get_client;
 use crate::init::{self, InitContext};
 
-pub async fn run(mut config: Config) -> Result<()> {
+pub async fn run(config: Config) -> Result<()> {
+    run_inner(config, None, None).await
+}
+
+pub(crate) async fn run_for_agent(
+    config: Config,
+    agent: amux::AgentId,
+    codex_configuration: Option<String>,
+) -> Result<()> {
+    run_inner(config, Some(agent), codex_configuration).await
+}
+
+async fn run_inner(
+    mut config: Config,
+    initial_chat: Option<amux::AgentId>,
+    initial_chat_configuration: Option<String>,
+) -> Result<()> {
     if init::needs_init(&config) {
         init::run_init(&mut config, InitContext::implicit(), false).await?;
     }
@@ -59,6 +75,8 @@ pub async fn run(mut config: Config) -> Result<()> {
             amux::OpenMode::Chat => amux_tui::OpenMode::Chat,
         },
         default_agent_type: amux::AgentType::Claude,
+        initial_chat,
+        initial_chat_configuration,
     };
 
     let attach_config = config.clone();

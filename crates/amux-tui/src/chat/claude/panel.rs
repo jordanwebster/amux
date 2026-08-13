@@ -15,9 +15,10 @@ use amux_ui::claude::{
 use ratatui::style::Style;
 use ratatui::text::{Line, Span};
 
-use crate::chat::ask_ui::{self, AskStage, AskUi, QuestionDraft, QuestionUi};
-use crate::chat::composer::Composer;
-use crate::chat::{diff, markdown};
+use crate::chat::claude::ask_ui::{self, AskStage, AskUi, QuestionDraft, QuestionUi};
+use crate::chat::claude::diff;
+use crate::composer::Composer;
+use crate::markdown;
 use crate::render::{Theme, line_len, new_line, push_right, push_span, str_width};
 
 /// Column grid shared with the feed: glyphs at 2, text at 4.

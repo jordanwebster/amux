@@ -40,6 +40,11 @@ pub struct TuiConfig {
     pub default_open_mode: crate::view::OpenMode,
     /// Default agent type for `n` (no form in V1).
     pub default_agent_type: amux_ui::AgentType,
+    /// Agent to open directly once its inventory row arrives. Used by
+    /// `amux new` when the configured default mode is structured chat.
+    pub initial_chat: Option<AgentId>,
+    /// Creation-time model/approval/sandbox label for that initial chat.
+    pub initial_chat_configuration: Option<String>,
 }
 
 enum ChromeExit {
@@ -68,8 +73,18 @@ where
         default_open_mode: config.default_open_mode,
         ..ViewState::default()
     };
+    let mut initial_chat = config.initial_chat;
+    let mut initial_chat_configuration = config.initial_chat_configuration.clone();
     loop {
-        match chrome_session(runtime, &mut view, &config).await? {
+        match chrome_session(
+            runtime,
+            &mut view,
+            &config,
+            &mut initial_chat,
+            &mut initial_chat_configuration,
+        )
+        .await?
+        {
             ChromeExit::Quit | ChromeExit::RuntimeGone => return Ok(()),
             ChromeExit::Attach(agent) => {
                 // Terminal is restored (the chrome session's guard dropped
@@ -93,6 +108,8 @@ async fn chrome_session(
     runtime: &mut Runtime,
     view: &mut ViewState,
     config: &TuiConfig,
+    initial_chat: &mut Option<AgentId>,
+    initial_chat_configuration: &mut Option<String>,
 ) -> Result<ChromeExit> {
     let guard = TerminalGuard::enter()?;
     // The guard probed for the kitty keyboard protocol on the way in;
@@ -122,6 +139,16 @@ async fn chrome_session(
             alive = runtime.next() => {
                 if !alive {
                     break ChromeExit::RuntimeGone;
+                }
+                if let Some(agent) = *initial_chat
+                    && runtime.model().agent(agent).is_some()
+                {
+                    view.open_chat(runtime.model(), agent);
+                    if let Some(chat) = view.chat.as_mut() {
+                        chat.set_codex_configuration_label(initial_chat_configuration.take());
+                    }
+                    runtime.note_attached(agent);
+                    *initial_chat = None;
                 }
                 // Reconcile chat view state against the fresh fold: a
                 // finished send op may carry the failure fact that
@@ -163,7 +190,7 @@ async fn chrome_session(
                             // streams on UserAttached (Phase 5), so the
                             // read-only chat's feed lights up through the
                             // normal policy.
-                            view.open_chat(agent);
+                            view.open_chat(runtime.model(), agent);
                             runtime.note_attached(agent);
                             if let Some(chat) = view.chat.as_mut() {
                                 chat.reconcile(runtime.model());
@@ -244,7 +271,7 @@ async fn chrome_session(
                 // owes a repaint (the warning footer must vanish).
                 needed |= view.quit_guard.expire(now);
                 if let Some(chat) = view.chat.as_mut() {
-                    needed |= chat.quit_guard.expire(now);
+                    needed |= chat.expire_quit_guard(now);
                 }
                 if needed {
                     runtime.observe_now(now);

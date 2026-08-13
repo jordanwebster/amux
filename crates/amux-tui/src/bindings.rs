@@ -205,6 +205,73 @@ pub fn chat_sections(eff: &Effective) -> Vec<Section> {
     ]
 }
 
+/// Codex chat bindings. Chrome, composer, and pager conventions are shared;
+/// approval and steering rows name Codex-native actions instead of borrowing
+/// Claude's question/plan vocabulary.
+pub fn codex_chat_sections(eff: &Effective) -> Vec<Section> {
+    let chat = vec![
+        row("ctrl+x", "interrupt the active turn", Tier::Plain),
+        row("pgup/pgdn", "scroll the feed", Tier::Plain),
+        row("ctrl+home/end", "feed oldest / newest", Tier::Ext),
+        row(
+            "ctrl+c",
+            "clear draft; empty: press twice to quit",
+            Tier::Plain,
+        ),
+        row(
+            format!("{} s", eff.leader_label),
+            "back to fleet",
+            Tier::Plain,
+        ),
+        row(
+            format!("{} d", eff.leader_label),
+            "detach to shell",
+            Tier::Plain,
+        ),
+    ];
+    let mut composer = vec![
+        row("enter", "send or steer", Tier::Plain),
+        row("ctrl+j", "newline", Tier::Plain),
+    ];
+    if eff.kitty {
+        composer.push(row("shift+enter", "newline", Tier::Kitty));
+    }
+    composer.extend([
+        row("home/end · ctrl+b/f/p/n", "motion", Tier::Plain),
+        row("ctrl+←/→", "word motion", Tier::Ext),
+        row("ctrl+w/u/k", "kill word / line", Tier::Plain),
+        row("ctrl+d / ctrl+y", "delete forward / yank", Tier::Plain),
+        row("?", "this help (empty draft)", Tier::Plain),
+    ]);
+    let approvals = vec![
+        row("1-9 or ↑/↓", "select offered decision", Tier::Plain),
+        row("enter", "confirm enabled decision", Tier::Plain),
+        row("ctrl+x", "interrupt instead", Tier::Plain),
+    ];
+    let readonly = vec![
+        row("↑/↓ j/k pgup/pgdn g/G", "scroll", Tier::Plain),
+        row("q", "back to fleet", Tier::Plain),
+    ];
+    vec![
+        Section {
+            title: "codex chat",
+            bindings: chat,
+        },
+        Section {
+            title: "composer",
+            bindings: composer,
+        },
+        Section {
+            title: "approvals",
+            bindings: approvals,
+        },
+        Section {
+            title: "read-only chat",
+            bindings: readonly,
+        },
+    ]
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;

@@ -49,6 +49,40 @@ impl Composer {
         out
     }
 
+    /// Hard-wrapped display rows plus the row holding the cursor. This is
+    /// terminal layout shared by both native chat composers; editing remains
+    /// renderer-local and protocol-independent.
+    pub(crate) fn display_rows(&self, width: usize) -> (Vec<String>, usize) {
+        use unicode_segmentation::UnicodeSegmentation;
+
+        let width = width.max(1);
+        let display = self.display_with_cursor();
+        let cursor_pos = self.cursor();
+        let mut rows = Vec::new();
+        let mut cursor_row = 0usize;
+        let mut chars_seen = 0usize;
+        for logical in display.split('\n') {
+            let mut row = String::new();
+            let mut row_cells = 0usize;
+            for grapheme in logical.graphemes(true) {
+                let cells = crate::render::str_width(grapheme);
+                if row_cells + cells > width && !row.is_empty() {
+                    rows.push(std::mem::take(&mut row));
+                    row_cells = 0;
+                }
+                if cursor_pos >= chars_seen && cursor_pos < chars_seen + grapheme.chars().count() {
+                    cursor_row = rows.len();
+                }
+                row.push_str(grapheme);
+                row_cells += cells;
+                chars_seen += grapheme.chars().count();
+            }
+            rows.push(row);
+            chars_seen += 1;
+        }
+        (rows, cursor_row)
+    }
+
     /// Clear for a dispatched send. Not a kill: the sent text lives on as
     /// the optimistic echo (and is restored from the finished-op failure
     /// fact if the send fails), so it must not clobber the kill slot.

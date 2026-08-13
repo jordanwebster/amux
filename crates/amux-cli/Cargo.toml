@@ -34,6 +34,7 @@ qrcode = { workspace = true }
 
 [target.'cfg(unix)'.dependencies]
 libc = { workspace = true }
+codex-sdk = { path = "../codex-sdk" }
 
 [dev-dependencies]
 chrono = { workspace = true }

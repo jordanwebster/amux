@@ -9,7 +9,9 @@
 
 pub(crate) mod bindings;
 pub mod chat;
+pub mod composer;
 pub mod keys;
+pub(crate) mod markdown;
 pub mod render;
 pub mod run;
 pub mod terminal;
