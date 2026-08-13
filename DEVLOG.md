@@ -4,6 +4,8 @@ This file tracks significant development work, decisions made, and current state
 
 ---
 
+2026-08-13 — P8 projection fix: Codex fleet attention now degrades to Unknown while the kernel stream is opening/replaying, with fresh and resumed Runtime sequences locking every fold; Claude projections and all goldens remain unchanged.
+
 2026-08-13 — P8 completion: hand-drove the native Codex screen through prompt,
 streaming, command/cwd, steer, interrupt, help, scroll, and fleet return; raw
 creation now retries the bounded thread-id publication race and attaches with

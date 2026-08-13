@@ -166,10 +166,13 @@ impl AgentLayer {
         }
     }
 
-    pub(crate) fn attention(&self) -> Attention {
+    /// Derive cached fleet attention. Codex deliberately includes the kernel
+    /// stream phase because an Opening/Replaying fold is not authoritative;
+    /// Claude retains its existing layer-only projection.
+    pub(crate) fn attention(&self, stream_phase: Option<&StreamPhase>) -> Attention {
         match self {
             Self::Claude(layer) => layer.attention(),
-            Self::Codex(layer) => layer.attention(),
+            Self::Codex(layer) => crate::codex::projected_attention(layer, stream_phase),
         }
     }
 
@@ -620,8 +623,8 @@ pub enum Violation {
         len: usize,
         cap: usize,
     },
-    /// A card's cached attention disagrees with the one derived from its
-    /// own layer fold (E2: attention IS a projection of the layer).
+    /// A card's cached attention disagrees with its provider projection.
+    /// Codex includes the kernel stream phase; Claude is layer-only.
     AttentionMismatch {
         agent: AgentId,
         card: Attention,
@@ -746,11 +749,13 @@ impl Model {
                 });
             }
             if let Some(layer) = &card.layer {
-                if card.attention != layer.attention() {
+                let stream_phase = self.streams.get(id).map(|stream| &stream.phase);
+                let derived_attention = layer.attention(stream_phase);
+                if card.attention != derived_attention {
                     violations.push(Violation::AttentionMismatch {
                         agent: *id,
                         card: card.attention,
-                        derived: layer.attention(),
+                        derived: derived_attention,
                     });
                 }
                 layer.check_invariants(*id, &mut violations);

@@ -944,6 +944,24 @@ impl CodexLayer {
     }
 }
 
+/// Cache the Codex layer's attention under the kernel stream lifecycle.
+/// Opening and replaying deliberately outrank the folded layer: rows seen so
+/// far are only a prefix of the replay window, so their apparent resting or
+/// actionable state is not yet authoritative.
+pub(crate) fn projected_attention(
+    layer: &CodexLayer,
+    stream_phase: Option<&StreamPhase>,
+) -> Attention {
+    if matches!(
+        stream_phase,
+        Some(StreamPhase::Opening | StreamPhase::Replaying)
+    ) {
+        Attention::Unknown
+    } else {
+        layer.attention()
+    }
+}
+
 /// Derived Codex phase, wrapped in kernel stream lifecycle facts.
 pub fn phase(model: &Model, agent: amux::AgentId) -> CodexPhase {
     let Some(layer) = model.codex(agent) else {

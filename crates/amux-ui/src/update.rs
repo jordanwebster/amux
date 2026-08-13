@@ -91,6 +91,7 @@ fn ensure_stream(
             truncated: false,
         },
     );
+    refresh_attention(model, agent_id);
     Some(Effect::OpenStream {
         agent: agent_id,
         protocol,
@@ -387,6 +388,7 @@ fn update_stream(model: &mut Model, agent: amux::AgentId, event: StreamMsg) -> V
             if let Some(stream) = model.streams.get_mut(&agent) {
                 stream.phase = StreamPhase::Closed { reason };
             }
+            refresh_attention(model, agent);
         }
     }
     Vec::new()
@@ -394,17 +396,34 @@ fn update_stream(model: &mut Model, agent: amux::AgentId, event: StreamMsg) -> V
 
 /// Run a fold step on the typed native layer selected from the agent's
 /// advertised protocols, creating it on first evidence. Attention is
-/// summarized from that same fold state afterwards.
+/// summarized from that same fold state and the provider's kernel-level
+/// projection rule afterwards.
 fn with_layer(model: &mut Model, agent: amux::AgentId, step: impl FnOnce(&mut AgentLayer)) {
+    {
+        let Some(card) = model.agents.get_mut(&agent) else {
+            return;
+        };
+        let Some(selected) = AgentLayer::from_protocols(&card.agent.io_protocols) else {
+            return;
+        };
+        let layer = card.layer.get_or_insert(selected);
+        step(layer);
+    }
+    refresh_attention(model, agent);
+}
+
+/// Refresh the card cache after either its typed fold or stream phase moves.
+/// The `AgentLayer` dispatch intentionally preserves Claude's layer-only
+/// behavior while applying Codex's stream-aware replay rule.
+fn refresh_attention(model: &mut Model, agent: amux::AgentId) {
+    let stream_phase = model.streams.get(&agent).map(|stream| &stream.phase);
     let Some(card) = model.agents.get_mut(&agent) else {
         return;
     };
-    let Some(selected) = AgentLayer::from_protocols(&card.agent.io_protocols) else {
+    let Some(layer) = card.layer.as_ref() else {
         return;
     };
-    let layer = card.layer.get_or_insert(selected);
-    step(layer);
-    card.attention = layer.attention();
+    card.attention = layer.attention(stream_phase);
 }
 
 fn tripwire(detail: &str) -> Vec<Effect> {

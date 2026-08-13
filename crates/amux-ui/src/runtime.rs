@@ -940,6 +940,33 @@ fn stream_close_from_client_error(error: &ClientError) -> StreamCloseReason {
 mod tests {
     use super::*;
 
+    fn codex_agent(agent: AgentId, host: HostId) -> amux::Agent {
+        amux::Agent {
+            id: agent,
+            host_id: host,
+            name: Some("projection-test".to_string()),
+            command: "codex".to_string(),
+            working_dir: PathBuf::from("/work"),
+            agent_type: "codex".to_string(),
+            io_protocols: vec![
+                "terminal_v1".to_string(),
+                crate::codex::PROTOCOL.to_string(),
+            ],
+            readonly: false,
+            args: Vec::new(),
+            created_at: DateTime::from_timestamp(1_754_697_600, 0).expect("valid fixture time"),
+        }
+    }
+
+    fn process_and_assert_coherent(runtime: &mut Runtime, msg: Msg) {
+        runtime.process(msg);
+        let violations = runtime.model().check_invariants();
+        assert!(
+            violations.is_empty(),
+            "Runtime fold must stay coherent after every Msg: {violations:?}"
+        );
+    }
+
     /// A Runtime with no shell tasks: Msgs enter only through the direct
     /// fold surface (`dispatch`/`observe_now`), which is all the panic-dump
     /// path needs. No tokio runtime required.
@@ -997,6 +1024,166 @@ mod tests {
         assert!(
             contents.lines().count() > 1,
             "the recorded Msgs ride along in the dump"
+        );
+    }
+
+    #[tokio::test]
+    async fn codex_runtime_stays_coherent_from_upsert_through_replay_to_ready() {
+        let dir = tempfile::tempdir().expect("tempdir");
+        let mut runtime = a_runtime(dir.path().to_path_buf());
+        let agent = Uuid::from_u128(77);
+        let host = Uuid::from_u128(88);
+
+        process_and_assert_coherent(
+            &mut runtime,
+            Msg::Server(ServerMsg::Connected {
+                local_host_id: Some(host),
+            }),
+        );
+        process_and_assert_coherent(
+            &mut runtime,
+            Msg::Server(ServerMsg::AgentUpserted {
+                agent: codex_agent(agent, host),
+            }),
+        );
+        process_and_assert_coherent(
+            &mut runtime,
+            Msg::Stream {
+                agent,
+                event: StreamMsg::Opened { truncated: false },
+            },
+        );
+        process_and_assert_coherent(
+            &mut runtime,
+            Msg::Stream {
+                agent,
+                event: StreamMsg::Batch {
+                    at: DateTime::from_timestamp(1_754_697_601, 0).expect("valid fixture time"),
+                    entries: vec![StreamEntry {
+                        seq: 1,
+                        payload: serde_json::json!({"type":"amux.codex_ready"}),
+                    }],
+                },
+            },
+        );
+        assert_eq!(
+            runtime.model().agent(agent).unwrap().attention,
+            crate::Attention::Unknown
+        );
+        assert_eq!(
+            crate::codex::phase(runtime.model(), agent),
+            crate::codex::CodexPhase::Replaying
+        );
+        assert_eq!(
+            crate::codex::send_gate(runtime.model(), agent),
+            crate::codex::SendGate::Replaying
+        );
+
+        process_and_assert_coherent(
+            &mut runtime,
+            Msg::Stream {
+                agent,
+                event: StreamMsg::ReplayComplete,
+            },
+        );
+        assert_eq!(
+            runtime.model().agent(agent).unwrap().attention,
+            crate::Attention::Idle
+        );
+        assert_eq!(
+            crate::codex::phase(runtime.model(), agent),
+            crate::codex::CodexPhase::Idle
+        );
+        assert_eq!(
+            crate::codex::send_gate(runtime.model(), agent),
+            crate::codex::SendGate::Ready
+        );
+    }
+
+    #[tokio::test]
+    async fn resumed_codex_rows_stay_unknown_until_replay_completes() {
+        let dir = tempfile::tempdir().expect("tempdir");
+        let mut runtime = a_runtime(dir.path().to_path_buf());
+        let agent = Uuid::from_u128(177);
+        let host = Uuid::from_u128(188);
+
+        for msg in [
+            Msg::Server(ServerMsg::Connected {
+                local_host_id: Some(host),
+            }),
+            Msg::Server(ServerMsg::AgentUpserted {
+                agent: codex_agent(agent, host),
+            }),
+            Msg::Stream {
+                agent,
+                event: StreamMsg::Opened { truncated: false },
+            },
+            Msg::Stream {
+                agent,
+                event: StreamMsg::Batch {
+                    at: DateTime::from_timestamp(1_754_697_601, 0).expect("valid fixture time"),
+                    entries: vec![
+                        StreamEntry {
+                            seq: 1,
+                            payload: serde_json::json!({"type":"amux.codex_ready"}),
+                        },
+                        StreamEntry {
+                            seq: 2,
+                            payload: serde_json::json!({
+                                "type":"turn/started",
+                                "turn":{"id":"resumed-turn","status":"inProgress"}
+                            }),
+                        },
+                        StreamEntry {
+                            seq: 3,
+                            payload: serde_json::json!({
+                                "type":"turn/completed",
+                                "turn":{"id":"resumed-turn","status":"completed"}
+                            }),
+                        },
+                    ],
+                },
+            },
+        ] {
+            process_and_assert_coherent(&mut runtime, msg);
+        }
+
+        let layer = runtime.model().codex(agent).expect("folded Codex layer");
+        assert!(
+            layer.entry_count() > 0,
+            "resumed replay must carry folded rows"
+        );
+        assert_eq!(
+            layer.attention(),
+            crate::Attention::NeedsYou {
+                why: crate::Why::Finished
+            }
+        );
+        assert_eq!(
+            runtime.model().agent(agent).unwrap().attention,
+            crate::Attention::Unknown
+        );
+        assert_eq!(
+            crate::codex::send_gate(runtime.model(), agent),
+            crate::codex::SendGate::Replaying
+        );
+
+        process_and_assert_coherent(
+            &mut runtime,
+            Msg::Stream {
+                agent,
+                event: StreamMsg::ReplayComplete,
+            },
+        );
+        assert_eq!(
+            runtime.model().agent(agent).unwrap().attention,
+            crate::Attention::NeedsYou {
+                why: crate::Why::Finished
+            }
+        );
+        assert_eq!(
+            crate::codex::send_gate(runtime.model(), agent),
+            crate::codex::SendGate::Ready
         );
     }
 }

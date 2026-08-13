@@ -224,6 +224,7 @@ fn with_existing_layer(
     agent: amux::AgentId,
     step: impl FnOnce(&mut CodexLayer),
 ) {
+    let stream_phase = model.streams.get(&agent).map(|stream| &stream.phase);
     let Some(card) = model.agents.get_mut(&agent) else {
         return;
     };
@@ -231,5 +232,5 @@ fn with_existing_layer(
         return;
     };
     step(layer);
-    card.attention = layer.attention();
+    card.attention = super::projected_attention(layer, stream_phase);
 }
