@@ -38,6 +38,42 @@ One paragraph describing what was done.
 
 ---
 
+## 2026-08-13: P5b simplification — one attach path, one attached-state accessor
+
+Independent pass over P5b. The reconnect supervisor had three consecutive
+`match … { Err(error) => set error, write reconnect row, back off, bump retry,
+continue } }` arms — one each for connect, start/resume, and taking the event
+stream — so the retry policy was written three times and could drift. They are
+now one `attach_thread` helper returning the connection, thread, and stream, with
+a single error arm in the loop. The helper takes `&mut Option<String>` for the
+thread ID because that is the honest contract: it reads the ID to resume and
+writes back a newly started one before the stream is taken, so a failure after
+`thread/start` resumes that thread instead of orphaning it (the previous
+statement ordering did the same thing implicitly).
+
+Six sites open-coded `runtime.lock().unwrap_or_else(poison).attached.as_mut()`
+to touch one field; five of them wanted nothing back and are now
+`update_attached(runtime, |attached| …)`. `mark_disconnected`/`resolve_pending`
+passed `PendingRequestKind` through only to discard it at the loop head, so the
+drained pending table is now a plain `Vec<RequestId>`.
+
+Verified rather than trusted, no changes needed: no lock is held across an
+await on either the ingest or input path (`codex_input_target` drops the
+registry read guard before `send`); the row ring's `write` broadcasts with
+`try_send` and drops slow subscribers, so a subscriber can never stall the
+ingest; every decoded `CodexSdkV1Input` writes exactly one `amux.input_result`;
+the log source is created once per session and nothing calls `clear()`, so seqs
+survive gaps and reconnects. The overflow/close signaling in `ThreadEventStream`
+and `TurnStream` is also correct: `Notify::notified()` records the
+`notify_waiters` count at creation, so building the future before checking the
+channel state genuinely closes the wakeup race.
+
+Gate: `cargo fmt --all`, workspace clippy (only the two known tracked-listener
+dead-code warnings), `cargo test --workspace` (exit 0), and the 44-test testnet
+spec.
+
+---
+
 ## 2026-08-13: P5b — Codex structured stream, input, reconnect, and capture
 
 ### Summary

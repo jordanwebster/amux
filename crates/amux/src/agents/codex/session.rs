@@ -327,55 +327,21 @@ async fn run_ingest_supervisor(
             break;
         }
 
-        let connection = match shared_client.connection().await {
-            Ok(connection) => connection,
-            Err(error) => {
-                set_runtime_error(&runtime, error.to_string());
-                write_reconnect_error(&log_source, &error.to_string()).await;
-                if wait_for_retry(&mut stop_rx, retry).await {
-                    break;
+        let (connection, thread, mut events) =
+            match attach_thread(&shared_client, &thread_config, &mut thread_id).await {
+                Ok(attached) => attached,
+                Err(error) => {
+                    let message = error.to_string();
+                    set_runtime_error(&runtime, message.clone());
+                    write_reconnect_error(&log_source, &message).await;
+                    if wait_for_retry(&mut stop_rx, retry).await {
+                        break;
+                    }
+                    retry = (retry + 1).min(RECONNECT_BACKOFF.len() - 1);
+                    continue;
                 }
-                retry = (retry + 1).min(RECONNECT_BACKOFF.len() - 1);
-                continue;
-            }
-        };
-
-        let attach = match &thread_id {
-            Some(thread_id) => {
-                connection
-                    .client
-                    .resume_thread(thread_id, thread_config.clone())
-                    .await
-            }
-            None => connection.client.start_thread(thread_config.clone()).await,
-        };
-        let thread = match attach {
-            Ok(thread) => thread,
-            Err(error) => {
-                let message = error.to_string();
-                set_runtime_error(&runtime, message.clone());
-                write_reconnect_error(&log_source, &message).await;
-                if wait_for_retry(&mut stop_rx, retry).await {
-                    break;
-                }
-                retry = (retry + 1).min(RECONNECT_BACKOFF.len() - 1);
-                continue;
-            }
-        };
+            };
         let id = thread.id().to_string();
-        thread_id = Some(id.clone());
-        let mut events = match thread.events().await {
-            Ok(events) => events,
-            Err(error) => {
-                set_runtime_error(&runtime, error.to_string());
-                write_reconnect_error(&log_source, &error.to_string()).await;
-                if wait_for_retry(&mut stop_rx, retry).await {
-                    break;
-                }
-                retry = (retry + 1).min(RECONNECT_BACKOFF.len() - 1);
-                continue;
-            }
-        };
 
         let desired_name = {
             let mut state = runtime.lock().unwrap_or_else(|poison| poison.into_inner());
@@ -429,10 +395,47 @@ async fn run_ingest_supervisor(
     }
 }
 
+/// Connect, attach the persistent thread, and take its continuous event stream.
+///
+/// `thread_id` is both the thread to resume (absent means "start a new one")
+/// and the identity to remember: a started thread is recorded before the event
+/// stream is taken so a later attempt resumes it instead of orphaning it.
+async fn attach_thread(
+    shared_client: &CodexClient,
+    thread_config: &ThreadConfig,
+    thread_id: &mut Option<String>,
+) -> Result<(Arc<CodexConnection>, Thread, codex_sdk::ThreadEventStream)> {
+    let connection = shared_client.connection().await?;
+    let thread = match thread_id.as_deref() {
+        Some(thread_id) => {
+            connection
+                .client
+                .resume_thread(thread_id, thread_config.clone())
+                .await
+        }
+        None => connection.client.start_thread(thread_config.clone()).await,
+    }?;
+    *thread_id = Some(thread.id().to_string());
+    let events = thread.events().await?;
+    Ok((connection, thread, events))
+}
+
 async fn wait_for_retry(stop_rx: &mut watch::Receiver<bool>, retry: usize) -> bool {
     tokio::select! {
         _ = tokio::time::sleep(RECONNECT_BACKOFF[retry]) => false,
         _ = stop_rx.changed() => true,
+    }
+}
+
+/// Apply `update` to the attached thread state, if a thread is attached.
+fn update_attached(runtime: &StdMutex<CodexRuntime>, update: impl FnOnce(&mut CodexAttached)) {
+    if let Some(attached) = runtime
+        .lock()
+        .unwrap_or_else(|poison| poison.into_inner())
+        .attached
+        .as_mut()
+    {
+        update(attached);
     }
 }
 
@@ -445,16 +448,14 @@ fn set_runtime_error(runtime: &Arc<StdMutex<CodexRuntime>>, message: String) {
     }
 }
 
-fn mark_disconnected(
-    runtime: &Arc<StdMutex<CodexRuntime>>,
-) -> Vec<(RequestId, PendingRequestKind)> {
+fn mark_disconnected(runtime: &Arc<StdMutex<CodexRuntime>>) -> Vec<RequestId> {
     let mut state = runtime.lock().unwrap_or_else(|poison| poison.into_inner());
     let Some(attached) = state.attached.as_mut() else {
         return Vec::new();
     };
     attached.live = None;
     attached.active_turn_id = None;
-    attached.pending.drain().collect()
+    attached.pending.drain().map(|(id, _)| id).collect()
 }
 
 async fn write_reconnect_error(log_source: &StructuredLogSource, message: &str) {
@@ -466,12 +467,8 @@ async fn write_reconnect_error(log_source: &StructuredLogSource, message: &str) 
         .await;
 }
 
-async fn resolve_pending(
-    log_source: &StructuredLogSource,
-    pending: Vec<(RequestId, PendingRequestKind)>,
-    reason: &str,
-) {
-    for (request_id, _) in pending {
+async fn resolve_pending(log_source: &StructuredLogSource, pending: Vec<RequestId>, reason: &str) {
+    for request_id in pending {
         write_resolution(log_source, &request_id, reason).await;
     }
 }
@@ -493,25 +490,16 @@ async fn ingest_event(
     log_source.write(raw_row(&event)).await;
     match &event.event {
         TurnEvent::TurnStarted { turn } => {
-            if let Some(attached) = runtime
-                .lock()
-                .unwrap_or_else(|poison| poison.into_inner())
-                .attached
-                .as_mut()
-            {
+            update_attached(runtime, |attached| {
                 attached.active_turn_id = Some(turn.id.clone());
-            }
+            });
         }
         TurnEvent::TurnCompleted { turn } => {
-            if let Some(attached) = runtime
-                .lock()
-                .unwrap_or_else(|poison| poison.into_inner())
-                .attached
-                .as_mut()
-                && attached.active_turn_id.as_deref() == Some(&turn.id)
-            {
-                attached.active_turn_id = None;
-            }
+            update_attached(runtime, |attached| {
+                if attached.active_turn_id.as_deref() == Some(&turn.id) {
+                    attached.active_turn_id = None;
+                }
+            });
         }
         TurnEvent::ApprovalRequired(request) => {
             let request_id = request.request_id();
@@ -546,14 +534,9 @@ fn insert_pending(
     request_id: RequestId,
     kind: PendingRequestKind,
 ) {
-    if let Some(attached) = runtime
-        .lock()
-        .unwrap_or_else(|poison| poison.into_inner())
-        .attached
-        .as_mut()
-    {
+    update_attached(runtime, |attached| {
         attached.pending.insert(request_id, kind);
-    }
+    });
 }
 
 async fn write_approval_ask(
@@ -603,15 +586,9 @@ impl CodexInputTarget {
                     .context("Codex user_turn input must be JSON input items")?;
                 let live = self.live()?;
                 let turn_id = live.thread.start_turn(items).await?;
-                if let Some(attached) = self
-                    .runtime
-                    .lock()
-                    .unwrap_or_else(|poison| poison.into_inner())
-                    .attached
-                    .as_mut()
-                {
+                update_attached(&self.runtime, |attached| {
                     attached.active_turn_id = Some(turn_id);
-                }
+                });
                 Ok(())
             }
             CodexSdkV1Input::Steer { turn_id, input } => {
@@ -619,15 +596,9 @@ impl CodexInputTarget {
                     .context("Codex steer input must be JSON input items")?;
                 let live = self.live()?;
                 let active = live.thread.steer(&turn_id, items).await?;
-                if let Some(attached) = self
-                    .runtime
-                    .lock()
-                    .unwrap_or_else(|poison| poison.into_inner())
-                    .attached
-                    .as_mut()
-                {
+                update_attached(&self.runtime, |attached| {
                     attached.active_turn_id = Some(active);
-                }
+                });
                 Ok(())
             }
             CodexSdkV1Input::Interrupt { turn_id } => {
