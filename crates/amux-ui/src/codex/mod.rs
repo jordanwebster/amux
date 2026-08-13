@@ -340,8 +340,10 @@ pub struct Ask {
     pub context: AskContext,
     /// Exact wire value from `amux.codex_approval_required`.
     pub available_decisions: Value,
-    /// Same choices interpreted for V1. Unknown/object choices are retained
-    /// with `decision: None`, so a renderer displays them disabled.
+    /// Choices interpreted for V1. Usually these mirror the wire value;
+    /// dynamic tool calls are the explicit exception because upstream sends
+    /// `null` while the backend accepts the layer-supplied binary decisions.
+    /// Unknown/object wire choices remain visible with `decision: None`.
     pub actions: Vec<AskAction>,
 }
 
@@ -612,6 +614,7 @@ struct Accumulators {
 pub struct CodexLayer {
     truncated_start: bool,
     evicted: u64,
+    history_loss: bool,
     ready_count: u64,
     replay_complete: bool,
     stale: bool,
@@ -668,7 +671,7 @@ impl CodexLayer {
     }
 
     pub fn history_truncated(&self) -> bool {
-        self.truncated_start || self.evicted > 0 || self.gap
+        self.truncated_start || self.evicted > 0 || self.history_loss
     }
 
     pub fn evicted_entries(&self) -> u64 {
@@ -700,7 +703,7 @@ impl CodexLayer {
     }
 
     fn live(&self) -> bool {
-        self.ready_count > 0 || self.replay_complete
+        self.ready_count > 0 || self.truncated_start && self.replay_complete
     }
 
     fn folded_phase(&self) -> CodexPhase {
@@ -711,11 +714,7 @@ impl CodexLayer {
             return CodexPhase::Unknown;
         }
         if !self.live() {
-            return if self.truncated_start || !self.entries.is_empty() {
-                CodexPhase::Replaying
-            } else {
-                CodexPhase::Idle
-            };
+            return CodexPhase::Replaying;
         }
         if let Some(ask) = self.asks.front() {
             return CodexPhase::AwaitingApproval {
@@ -749,7 +748,10 @@ impl CodexLayer {
         }
         if self.turn.status == ThreadStatus::Active {
             CodexPhase::Thinking
-        } else if self.truncated_start && self.turn.last.is_none() {
+        } else if self.truncated_start
+            && self.turn.last.is_none()
+            && self.turn.status == ThreadStatus::Unknown
+        {
             CodexPhase::Unknown
         } else {
             CodexPhase::Idle

@@ -137,6 +137,7 @@ fn fold_ready(layer: &mut CodexLayer, seq: u64) {
 fn fold_gap(layer: &mut CodexLayer, seq: u64, row: &Value) {
     let reason = str_or(row, "reason", "unknown").to_string();
     layer.gap = true;
+    layer.history_loss = true;
     layer.accumulators = Accumulators::default();
     layer.pending_approval_context = None;
     push(
@@ -849,10 +850,11 @@ fn fold_plan_delta(layer: &mut CodexLayer, seq: u64, row: &Value) {
 }
 
 fn fold_plan_updated(layer: &mut CodexLayer, seq: u64, row: &Value) {
-    let item_id = format!(
-        "turn-plan:{}",
-        layer.turn.active_id.as_deref().unwrap_or("unknown")
-    );
+    let Some(turn_id) = row.get("turnId").and_then(Value::as_str) else {
+        push_unrecognized(layer, seq, "turn/plan/updated", Some("missing turnId"));
+        return;
+    };
+    let item_id = format!("turn-plan:{turn_id}");
     let steps = row
         .get("plan")
         .and_then(Value::as_array)
@@ -1047,16 +1049,30 @@ fn fold_approval_required(layer: &mut CodexLayer, seq: u64, row: &Value) {
         .get("availableDecisions")
         .cloned()
         .unwrap_or(Value::Null);
-    let actions = available
-        .as_array()
-        .into_iter()
-        .flatten()
-        .cloned()
-        .map(|wire| AskAction {
-            decision: wire.as_str().and_then(CodexDecision::from_wire),
-            wire,
-        })
-        .collect();
+    // `item/tool/call` is distinct from unsupported
+    // `item/tool/requestUserInput`: the former has a backend response path,
+    // but upstream supplies no availableDecisions. Preserve the null wire
+    // value and expose the backend's accepted binary choices in this layer.
+    let actions = if matches!(context, AskContext::DynamicTool { .. }) {
+        [CodexDecision::Accept, CodexDecision::Decline]
+            .into_iter()
+            .map(|decision| AskAction {
+                wire: Value::String(decision.wire_value().to_string()),
+                decision: Some(decision),
+            })
+            .collect()
+    } else {
+        available
+            .as_array()
+            .into_iter()
+            .flatten()
+            .cloned()
+            .map(|wire| AskAction {
+                decision: wire.as_str().and_then(CodexDecision::from_wire),
+                wire,
+            })
+            .collect()
+    };
     layer.asks.retain(|ask| ask.request_id != request_id);
     layer.asks.push_back(Ask {
         seq,

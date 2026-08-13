@@ -3,7 +3,8 @@
 use serde_json::{Value, json};
 
 use super::{
-    CodexCommand, CodexDecision, CodexInput, CodexLayer, InFlightInput, InFlightKind, SendGate,
+    CodexCommand, CodexDecision, CodexInput, CodexLayer, CodexPhase, InFlightInput, InFlightKind,
+    SendGate,
 };
 use crate::effect::InputPayload;
 use crate::model::{AgentLayer, Model};
@@ -34,6 +35,15 @@ pub(crate) fn update_command(
             )
         }
         CodexCommand::Steer { agent, text } => {
+            if matches!(super::phase(model, agent), CodexPhase::ReadOnly) {
+                return refuse(
+                    model,
+                    op,
+                    seq,
+                    command,
+                    SendGate::ReadOnly.refusal().expect("refusal"),
+                );
+            }
             let Some(layer) = model.codex(agent) else {
                 return refuse(
                     model,
@@ -81,6 +91,15 @@ pub(crate) fn update_command(
             decision,
         } => update_answer(model, op, seq, command, agent, request_id, decision),
         CodexCommand::Interrupt { agent } => {
+            if matches!(super::phase(model, agent), CodexPhase::ReadOnly) {
+                return refuse(
+                    model,
+                    op,
+                    seq,
+                    command,
+                    SendGate::ReadOnly.refusal().expect("refusal"),
+                );
+            }
             let Some(layer) = model.codex(agent) else {
                 return refuse(
                     model,

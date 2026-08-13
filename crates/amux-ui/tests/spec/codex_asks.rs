@@ -5,7 +5,9 @@
 //! Unsupported `requestUserInput` is visible and blocks the turn, but creates
 //! no answerable obligation in V1.
 
-use amux_ui::codex::{ApprovalResolution, AskContext, CodexPhase, FeedEntryKind, WorkState};
+use amux_ui::codex::{
+    ApprovalResolution, AskContext, CodexDecision, CodexPhase, FeedEntryKind, WorkState,
+};
 use amux_ui::{Attention, Why};
 use serde_json::{Value, json};
 
@@ -100,6 +102,35 @@ fn an_approval_without_immediately_preceding_context_is_not_rendered_as_an_ask()
     assert_eq!(layer.ask_count(), 0);
     assert!(layer.entries().any(|entry| matches!(&entry.kind,
         FeedEntryKind::Error(error) if error.message.contains("without its preceding request context"))));
+}
+
+#[test]
+fn dynamic_tool_calls_supply_the_backends_binary_actions_without_rewriting_wire_data() {
+    let model = model(vec![
+        json!({"type":"amux.codex_ready"}),
+        json!({"type":"turn/started","turn":{"id":"t","status":"inProgress"}}),
+        json!({"type":"item/tool/call","callId":"dynamic-1","tool":"deploy",
+            "namespace":"ops","arguments":{"target":"staging"}}),
+        json!({"type":"amux.codex_approval_required","request_id":"tool-request",
+            "availableDecisions":null}),
+    ]);
+    let ask = codex_layer(&model, AGENT).ask_head().expect("dynamic ask");
+    assert_eq!(
+        ask.available_decisions,
+        Value::Null,
+        "the upstream wire value remains verbatim"
+    );
+    assert_eq!(
+        ask.actions
+            .iter()
+            .map(|action| (action.wire.clone(), action.decision))
+            .collect::<Vec<_>>(),
+        vec![
+            (json!("accept"), Some(CodexDecision::Accept)),
+            (json!("decline"), Some(CodexDecision::Decline)),
+        ],
+        "the layer supplies exactly the binary decisions accepted by the backend"
+    );
 }
 
 #[test]

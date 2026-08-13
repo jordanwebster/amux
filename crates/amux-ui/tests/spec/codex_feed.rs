@@ -174,7 +174,7 @@ fn reasoning_plans_files_tools_usage_compaction_errors_and_unknowns_are_visible(
         json!({"type":"item/completed","item":{"id":"r","type":"reasoning",
             "content":["final thought"],"summary":["final summary"]}}),
         json!({"type":"item/plan/delta","itemId":"p","delta":"step one"}),
-        json!({"type":"turn/plan/updated","explanation":"because","plan":[
+        json!({"type":"turn/plan/updated","turnId":"t","explanation":"because","plan":[
             {"step":"test","status":"inProgress"}
         ]}),
         json!({"type":"item/fileChange/patchUpdated","itemId":"f","changes":[
@@ -253,6 +253,49 @@ fn gap_and_ready_reset_accumulators_but_preserve_the_observed_interrupt_id() {
             .entries()
             .any(|e| matches!(e.kind, FeedEntryKind::Boundary(BoundaryEntry::Ready)))
     );
+}
+
+#[test]
+fn a_gap_remains_a_sticky_history_loss_fact_after_ready_resynchronizes() {
+    let model = feed(vec![
+        json!({"type":"amux.codex_ready"}),
+        json!({"type":"amux.codex_gap","reason":"queue_overflow"}),
+        json!({"type":"amux.codex_ready"}),
+    ]);
+    let layer = codex_layer(&model, AGENT);
+    assert!(
+        layer.history_truncated(),
+        "ready clears transient uncertainty, not unrecoverable history loss"
+    );
+    assert!(matches!(
+        amux_ui::codex::phase(&model, agent_id(AGENT)),
+        CodexPhase::Idle
+    ));
+}
+
+#[test]
+fn turn_plan_snapshots_use_each_rows_turn_id_instead_of_the_active_turn() {
+    let model = feed(vec![
+        json!({"type":"amux.codex_ready"}),
+        json!({"type":"turn/started","turn":{"id":"old","status":"inProgress"}}),
+        json!({"type":"turn/started","turn":{"id":"new","status":"inProgress"}}),
+        json!({"type":"turn/plan/updated","turnId":"old","plan":[
+            {"step":"old step","status":"completed"}
+        ]}),
+        json!({"type":"turn/plan/updated","turnId":"new","plan":[
+            {"step":"new step","status":"inProgress"}
+        ]}),
+    ]);
+    let plans: Vec<_> = codex_layer(&model, AGENT)
+        .entries()
+        .filter_map(|entry| match &entry.kind {
+            FeedEntryKind::Work(work) if matches!(work.kind, WorkKind::Plan { .. }) => {
+                Some(work.item_id.as_str())
+            }
+            _ => None,
+        })
+        .collect();
+    assert_eq!(plans, vec!["turn-plan:old", "turn-plan:new"]);
 }
 
 #[test]

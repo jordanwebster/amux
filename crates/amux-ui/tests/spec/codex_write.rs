@@ -5,9 +5,10 @@
 //! The reducer-minted operation UUID is forwarded as the input correlation id.
 
 use amux_ui::codex::{
-    CodexCommand, CodexDecision, CodexInput, FeedEntryKind, InFlightKind, PromptPart, PromptSource,
+    CodexCommand, CodexDecision, CodexInput, CodexPhase, FeedEntryKind, InFlightKind, PromptPart,
+    PromptSource, SendGate,
 };
-use amux_ui::{Command, Effect, InputPayload, Msg, OpOutcome};
+use amux_ui::{Command, Effect, InputPayload, Msg, OpOutcome, StreamMsg};
 use serde_json::json;
 
 use crate::harness::*;
@@ -71,6 +72,20 @@ fn send_effect(effects: &[Effect]) -> (&[u8], &CodexInput) {
         .expect("Codex send effect")
 }
 
+fn failure_message(model: &amux_ui::Model, op_n: u8) -> String {
+    match &model.finished_op(op(op_n)).expect("op finished").outcome {
+        OpOutcome::Error { error } => error.message.clone(),
+        other => panic!("expected an error outcome, got {other:?}"),
+    }
+}
+
+fn send_input_count(effects: &[Effect]) -> usize {
+    effects
+        .iter()
+        .filter(|effect| matches!(effect, Effect::SendInput { .. }))
+        .count()
+}
+
 #[test]
 fn idle_prompt_encodes_native_input_and_tracks_only_the_correlated_in_flight_op() {
     let msgs = seq([
@@ -102,6 +117,57 @@ fn idle_prompt_encodes_native_input_and_tracks_only_the_correlated_in_flight_op(
             .entries()
             .any(|entry| matches!(entry.kind, amux_ui::codex::FeedEntryKind::Prompt(_))),
         "prompt entries come from protocol userMessage items, never a local echo"
+    );
+}
+
+#[test]
+fn prompt_waits_for_ready_but_a_truncated_replay_can_use_its_idle_row() {
+    let before_ready = codex_base(AGENT);
+    let startup_model = fold(before_ready.clone());
+    assert_eq!(
+        amux_ui::codex::send_gate(&startup_model, agent_id(AGENT)),
+        SendGate::Replaying
+    );
+    let (refused, effects) = fold_with_effects(seq([
+        before_ready,
+        vec![command_msg(
+            4,
+            CodexCommand::Prompt {
+                agent: agent_id(AGENT),
+                text: "too early".into(),
+            },
+        )],
+    ]));
+    assert_eq!(send_input_count(&effects), 0);
+    assert_eq!(failure_message(&refused, 4), "send gated while replaying");
+
+    let truncated = seq([
+        vec![
+            connected("nova"),
+            host_up(&a_host("nova")),
+            agent_up(&a_codex_agent(AGENT, "nova")),
+        ],
+        synced(),
+        vec![stream(AGENT, StreamMsg::Opened { truncated: true })],
+        vec![batch(
+            AGENT,
+            10,
+            vec![json!({"type":"thread/status/changed","status":{"type":"idle"}})],
+        )],
+        vec![stream(AGENT, StreamMsg::ReplayComplete)],
+        vec![command_msg(
+            5,
+            CodexCommand::Prompt {
+                agent: agent_id(AGENT),
+                text: "safe after truncated catch-up".into(),
+            },
+        )],
+    ]);
+    let (_, effects) = fold_with_effects(truncated);
+    assert_eq!(
+        send_input_count(&effects),
+        1,
+        "a truncated replay may have evicted the ready marker"
     );
 }
 
@@ -208,6 +274,47 @@ fn steer_and_interrupt_always_carry_the_layers_observed_turn_id() {
     let (_, effects) = fold_with_effects(interrupt);
     assert!(matches!(send_effect(&effects).1,
         CodexInput::Interrupt { turn_id } if turn_id == "turn-live"));
+}
+
+#[test]
+fn read_only_reconnect_state_refuses_steer_and_interrupt_before_dispatch() {
+    for (op_n, command) in [
+        (
+            6,
+            CodexCommand::Steer {
+                agent: agent_id(AGENT),
+                text: "more".into(),
+            },
+        ),
+        (
+            7,
+            CodexCommand::Interrupt {
+                agent: agent_id(AGENT),
+            },
+        ),
+    ] {
+        let rows = [
+            live_rows(),
+            vec![json!({"type":"amux.codex_reconnect_error",
+                "error":{"message":"writer unavailable"}})],
+        ]
+        .concat();
+        let msgs = seq([
+            codex_base(AGENT),
+            vec![batch(AGENT, 10, rows)],
+            vec![command_msg(op_n, command)],
+        ]);
+        let (model, effects) = fold_with_effects(msgs);
+        assert!(matches!(
+            amux_ui::codex::phase(&model, agent_id(AGENT)),
+            CodexPhase::ReadOnly
+        ));
+        assert_eq!(send_input_count(&effects), 0);
+        assert_eq!(
+            failure_message(&model, op_n),
+            "Codex thread is read-only until reconnect succeeds"
+        );
+    }
 }
 
 #[test]

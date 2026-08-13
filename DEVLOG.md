@@ -38,6 +38,8 @@ One paragraph describing what was done.
 
 ---
 
+2026-08-13 — P7 review round 1 fixed dynamic-tool decisions, ready-bound startup gating, sticky gap history loss, read-only turn writes, and row-keyed plan snapshots; all required gates pass.
+
 ## 2026-08-13: Add the typed Codex UI layer (P7)
 
 ### Summary
