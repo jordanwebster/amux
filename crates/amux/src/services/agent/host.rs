@@ -5,7 +5,8 @@
 //! core→runtime call as a [`LocalAgentHost`] method. The rest of the core
 //! holds an `Option<Arc<dyn LocalAgentHost>>` and never names these types.
 
-use std::path::PathBuf;
+use std::io;
+use std::path::{Path, PathBuf};
 use std::sync::Arc;
 
 use async_trait::async_trait;
@@ -45,6 +46,7 @@ impl PtyAgentHost {
     #[cfg(any(test, feature = "testnet"))]
     pub(crate) fn new(host_id: Uuid) -> Arc<Self> {
         Self::new_with_socket_path(host_id, &crate::config::Config::default().socket_path)
+            .expect("default Codex private socket path should be usable")
     }
 
     /// Build a host whose private Codex fallback lives beside the configured
@@ -52,17 +54,17 @@ impl PtyAgentHost {
     /// possible.
     pub(crate) fn new_with_socket_path(
         host_id: Uuid,
-        server_socket_path: &std::path::Path,
-    ) -> Arc<Self> {
-        let deps = AgentDeps::new(codex_private_socket_path(server_socket_path));
+        server_socket_path: &Path,
+    ) -> io::Result<Arc<Self>> {
+        let deps = AgentDeps::new(codex_private_socket_path(server_socket_path)?);
         let state = Arc::new(RwLock::new(AgentServiceState::new(deps)));
         let (event_tx, event_rx) = mpsc::channel(256);
         spawn_session_event_loop(state.clone(), event_rx, host_id);
-        Arc::new(Self {
+        Ok(Arc::new(Self {
             state,
             event_tx,
             host_id,
-        })
+        }))
     }
 
     pub(crate) fn state(&self) -> &SharedAgentServiceState {
@@ -78,38 +80,130 @@ impl PtyAgentHost {
     }
 }
 
-fn codex_private_socket_path(server_socket_path: &std::path::Path) -> PathBuf {
-    let socket_dir = server_socket_path
-        .parent()
-        .unwrap_or_else(|| std::path::Path::new("."));
+fn codex_private_socket_path(server_socket_path: &Path) -> io::Result<PathBuf> {
     #[cfg(unix)]
     {
-        use std::os::unix::ffi::OsStrExt;
-
-        const MAX_CODEX_SOCKET_PATH_BYTES: usize = 103;
-
-        // Stable FNV-1a keeps servers with different configured socket paths
-        // isolated without copying a potentially long filename into `sun_path`.
-        let hash = server_socket_path
-            .as_os_str()
-            .as_bytes()
-            .iter()
-            .fold(0xcbf29ce484222325_u64, |hash, byte| {
-                (hash ^ u64::from(*byte)).wrapping_mul(0x100000001b3)
-            });
-        let file_name = format!("c{hash:016x}.sock");
-        let adjacent = socket_dir.join(&file_name);
-        if adjacent.as_os_str().as_bytes().len() <= MAX_CODEX_SOCKET_PATH_BYTES {
-            adjacent
-        } else {
-            // Move only the Codex runtime socket when the configured amux
-            // directory leaves too little room for codex-sdk's sun_path cap.
-            let uid = unsafe { libc::getuid() };
-            PathBuf::from(format!("/tmp/amux-{uid}")).join(file_name)
-        }
+        let uid = unsafe { libc::geteuid() };
+        let fallback_dir = PathBuf::from(format!("/tmp/amux-{uid}"));
+        codex_private_socket_path_with_fallback(server_socket_path, &fallback_dir)
     }
     #[cfg(not(unix))]
-    socket_dir.join("cx.sock")
+    {
+        let socket_dir = server_socket_path
+            .parent()
+            .unwrap_or_else(|| Path::new("."));
+        Ok(socket_dir.join("cx.sock"))
+    }
+}
+
+#[cfg(unix)]
+fn codex_private_socket_path_with_fallback(
+    server_socket_path: &Path,
+    fallback_dir: &Path,
+) -> io::Result<PathBuf> {
+    use std::os::unix::ffi::OsStrExt;
+
+    const MAX_CODEX_SOCKET_PATH_BYTES: usize = 103;
+
+    let socket_dir = server_socket_path
+        .parent()
+        .unwrap_or_else(|| Path::new("."));
+
+    // Stable FNV-1a keeps servers with different configured socket paths
+    // isolated without copying a potentially long filename into `sun_path`.
+    let hash = server_socket_path
+        .as_os_str()
+        .as_bytes()
+        .iter()
+        .fold(0xcbf29ce484222325_u64, |hash, byte| {
+            (hash ^ u64::from(*byte)).wrapping_mul(0x100000001b3)
+        });
+    let file_name = format!("c{hash:016x}.sock");
+    let adjacent = socket_dir.join(&file_name);
+    if adjacent.as_os_str().as_bytes().len() <= MAX_CODEX_SOCKET_PATH_BYTES {
+        Ok(adjacent)
+    } else {
+        // Move only the Codex runtime socket when the configured amux
+        // directory leaves too little room for codex-sdk's sun_path cap.
+        secure_codex_fallback_directory(fallback_dir)?;
+        Ok(fallback_dir.join(file_name))
+    }
+}
+
+#[cfg(unix)]
+fn secure_codex_fallback_directory(path: &Path) -> io::Result<()> {
+    use std::fs::{DirBuilder, Permissions};
+    use std::os::unix::fs::{DirBuilderExt, MetadataExt, PermissionsExt};
+
+    let mut builder = DirBuilder::new();
+    builder.mode(0o700);
+    match builder.create(path) {
+        Ok(()) => {}
+        Err(error) if error.kind() == io::ErrorKind::AlreadyExists => {}
+        Err(error) => {
+            return Err(io::Error::new(
+                error.kind(),
+                format!(
+                    "failed to create secure Codex fallback directory {}: {error}",
+                    path.display()
+                ),
+            ));
+        }
+    }
+
+    let metadata = std::fs::symlink_metadata(path).map_err(|error| {
+        io::Error::new(
+            error.kind(),
+            format!(
+                "failed to inspect Codex fallback directory {}: {error}",
+                path.display()
+            ),
+        )
+    })?;
+    if metadata.file_type().is_symlink() {
+        return Err(io::Error::new(
+            io::ErrorKind::PermissionDenied,
+            format!(
+                "Codex fallback directory {} must not be a symlink",
+                path.display()
+            ),
+        ));
+    }
+    if !metadata.is_dir() {
+        return Err(io::Error::new(
+            io::ErrorKind::PermissionDenied,
+            format!(
+                "Codex fallback directory {} is not a directory",
+                path.display()
+            ),
+        ));
+    }
+
+    let effective_uid = unsafe { libc::geteuid() };
+    if metadata.uid() != effective_uid {
+        return Err(io::Error::new(
+            io::ErrorKind::PermissionDenied,
+            format!(
+                "Codex fallback directory {} is owned by uid {}, expected effective uid {effective_uid}",
+                path.display(),
+                metadata.uid()
+            ),
+        ));
+    }
+
+    if metadata.mode() & 0o777 != 0o700 {
+        std::fs::set_permissions(path, Permissions::from_mode(0o700)).map_err(|error| {
+            io::Error::new(
+                error.kind(),
+                format!(
+                    "failed to secure Codex fallback directory {} with mode 0700: {error}",
+                    path.display()
+                ),
+            )
+        })?;
+    }
+
+    Ok(())
 }
 
 #[async_trait]
@@ -450,17 +544,20 @@ fn agent_event_sort_key(event: &AgentEvent) -> (String, u128) {
 mod socket_tests {
     use super::*;
     use std::os::unix::ffi::OsStrExt;
+    use std::os::unix::fs::PermissionsExt;
 
     #[tokio::test]
     async fn private_codex_socket_follows_configured_server_socket_dir() {
         let first = PtyAgentHost::new_with_socket_path(
             Uuid::from_u128(1),
             std::path::Path::new("/var/run/custom-amux/control.sock"),
-        );
+        )
+        .unwrap();
         let second = PtyAgentHost::new_with_socket_path(
             Uuid::from_u128(2),
             std::path::Path::new("/var/run/custom-amux/other.sock"),
-        );
+        )
+        .unwrap();
         let first_state = first.state.read().await;
         let second_state = second.state.read().await;
         let first_socket = first_state.deps.codex_client.private_socket();
@@ -475,16 +572,15 @@ mod socket_tests {
     }
 
     #[test]
-    fn private_codex_socket_uses_short_per_user_dir_for_long_configured_dir() {
+    fn private_codex_socket_uses_short_fallback_dir_for_long_configured_dir() {
+        let temp = tempfile::tempdir().unwrap();
+        let fallback_dir = temp.path().join("codex-fallback");
         let long_dir = std::path::Path::new("/tmp").join("x".repeat(110));
         let server_socket = long_dir.join("control.sock");
-        let socket = codex_private_socket_path(&server_socket);
-        let uid = unsafe { libc::getuid() };
+        let socket =
+            codex_private_socket_path_with_fallback(&server_socket, &fallback_dir).unwrap();
 
-        assert_eq!(
-            socket.parent(),
-            Some(std::path::Path::new(&format!("/tmp/amux-{uid}")))
-        );
+        assert_eq!(socket.parent(), Some(fallback_dir.as_path()));
         assert!(socket.as_os_str().as_bytes().len() <= 103);
 
         let hash = server_socket
@@ -498,5 +594,49 @@ mod socket_tests {
             socket.file_name(),
             Some(std::ffi::OsStr::new(&format!("c{hash:016x}.sock")))
         );
+    }
+
+    #[test]
+    fn secure_fallback_directory_creates_private_directory() {
+        let temp = tempfile::tempdir().unwrap();
+        let fallback_dir = temp.path().join("fresh");
+
+        secure_codex_fallback_directory(&fallback_dir).unwrap();
+
+        let metadata = std::fs::symlink_metadata(&fallback_dir).unwrap();
+        assert!(metadata.is_dir());
+        assert_eq!(metadata.permissions().mode() & 0o777, 0o700);
+    }
+
+    #[test]
+    fn secure_fallback_directory_repairs_lax_permissions() {
+        let temp = tempfile::tempdir().unwrap();
+        let fallback_dir = temp.path().join("lax");
+        std::fs::create_dir(&fallback_dir).unwrap();
+        std::fs::set_permissions(&fallback_dir, std::fs::Permissions::from_mode(0o755)).unwrap();
+
+        secure_codex_fallback_directory(&fallback_dir).unwrap();
+
+        let metadata = std::fs::symlink_metadata(&fallback_dir).unwrap();
+        assert_eq!(metadata.permissions().mode() & 0o777, 0o700);
+    }
+
+    #[test]
+    fn secure_fallback_directory_rejects_symlink() {
+        let temp = tempfile::tempdir().unwrap();
+        let target = temp.path().join("target");
+        let fallback_dir = temp.path().join("link");
+        std::fs::create_dir(&target).unwrap();
+        std::os::unix::fs::symlink(&target, &fallback_dir).unwrap();
+
+        let error = secure_codex_fallback_directory(&fallback_dir).unwrap_err();
+
+        assert_eq!(error.kind(), io::ErrorKind::PermissionDenied);
+        assert!(
+            error
+                .to_string()
+                .contains(&fallback_dir.display().to_string())
+        );
+        assert!(error.to_string().contains("must not be a symlink"));
     }
 }

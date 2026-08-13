@@ -42,15 +42,16 @@ pub(crate) struct ServerState {
 fn new_local_agent_host(
     host_id: Uuid,
     socket_path: &std::path::Path,
-) -> Option<Arc<dyn LocalAgentHost>> {
+) -> std::io::Result<Option<Arc<dyn LocalAgentHost>>> {
     #[cfg(feature = "local-agents")]
     {
-        Some(PtyAgentHost::new_with_socket_path(host_id, socket_path))
+        PtyAgentHost::new_with_socket_path(host_id, socket_path)
+            .map(|host| Some(host as Arc<dyn LocalAgentHost>))
     }
     #[cfg(not(feature = "local-agents"))]
     {
         let _ = (host_id, socket_path);
-        None
+        Ok(None)
     }
 }
 
@@ -118,12 +119,12 @@ impl ServerState {
 /// session-event loop. Cloud relays never call this, so they keep `None`.
 pub(crate) async fn ensure_local_agent_host(
     state: &Arc<RwLock<ServerState>>,
-) -> Option<Arc<dyn LocalAgentHost>> {
+) -> std::io::Result<Option<Arc<dyn LocalAgentHost>>> {
     let mut guard = state.write().await;
     if guard.local_agent_host.is_none() {
         let host_id = guard.host_id;
         let socket_path = guard.config.socket_path.clone();
-        guard.local_agent_host = new_local_agent_host(host_id, &socket_path);
+        guard.local_agent_host = new_local_agent_host(host_id, &socket_path)?;
     }
-    guard.local_agent_host.clone()
+    Ok(guard.local_agent_host.clone())
 }

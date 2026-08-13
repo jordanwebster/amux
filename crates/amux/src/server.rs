@@ -375,7 +375,7 @@ impl Server {
             cloud_routing_task =
                 Some(service.serve_on_tls_tcp_listener(listener, acceptor, TLS_HANDSHAKE_TIMEOUT));
         } else {
-            let agent_host = ensure_local_agent_host(&self.state).await;
+            let agent_host = ensure_local_agent_host(&self.state).await?;
             let mut services = start_user_services(
                 self.state.clone(),
                 agent_host.clone(),
@@ -512,7 +512,7 @@ impl EmbeddedBuilder {
         )?;
 
         let tasks = Arc::new(Mutex::new(Vec::new()));
-        let agent_host = ensure_local_agent_host(&server.state).await;
+        let agent_host = ensure_local_agent_host(&server.state).await?;
         let started_services = start_user_services(
             server.state.clone(),
             agent_host.clone(),

@@ -61,6 +61,7 @@ and `thread/resume` path.
 - Review round 1 forwards stored Codex policy overrides to the raw TUI, permits
   pre-attach resume identities to suspend, bounds fallback socket paths, and
   keeps the socket regression tests Unix-only.
+- Review round 2 secures the long-path `/tmp/amux-<euid>` fallback with `lstat` ownership checks and private permissions before Codex can use it.
 
 ### Decisions Made
 - Once spawned, a raw PTY remains alive with zero subscribers; Codex resume is
