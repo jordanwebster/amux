@@ -4,6 +4,8 @@ This file tracks significant development work, decisions made, and current state
 
 ---
 
+2026-08-14 — P9 real-Codex E2E suite: replaced the ad-hoc capture rig with an inert-by-default, table-driven C.1–C.8 suite covering create/pong, approval allow and deny with world assertions, interrupt/reuse, suspend/resume continuity, real process-group recovery, raw/structured coexistence, and two-terminal fanout. Added parsed structural waiters with four offline fixture tests, isolated non-secret Codex setup, redacted version-stamped captures, and no product fault seam. All eight live legs passed against codex-cli 0.147.0 / gpt-5.6-sol; formatting, clippy, workspace, and 44/44 testnet spec gates pass.
+
 2026-08-14 — Checkpoint 3: deleted `CodexLayer::latest_token_usage`, which had exactly one occurrence in the tracked tree — its own definition. The underlying `latest_usage` field stays; it is read internally by the fold, which copies it onto `TurnEntry.token_usage`, and that is what the renderer displays. Same delete-rather-than-deprecate standard checkpoint 2 applied to the SDK surface.
 
 2026-08-14 — Checkpoint 3: closed the Claude half of the cross-altitude attention gap. `claude::projected_attention` now caches `Unknown` while the kernel stream is opening/replaying, so the fleet badge stops claiming "idle" for a whole replay window — including one holding unanswered permission asks — while `phase` and `send_gate` both say `Replaying`. Same fix Codex got in `41f5433`, on the arm left behind; probe found 45 such observations across already-registered sequences. Red/green spec test plus the replay-window-with-asks lifecycle registered. All 54 Claude goldens byte-identical.

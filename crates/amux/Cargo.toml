@@ -72,6 +72,7 @@ prost-types = { workspace = true }
 amux-ui = { workspace = true }
 replay-support = { path = "../replay-support" }
 tokio-tungstenite = { workspace = true }
+nix = { workspace = true }
 
 [[test]]
 name = "spec"
@@ -85,8 +86,8 @@ name = "capture"
 path = "tests/capture/main.rs"
 harness = false
 
-# Opt-in real-Codex capture rig. One synthetic scenario per invocation; it
-# exits without work unless a scenario argument is supplied.
+# Maintained opt-in real-Codex E2E suite. It exits without work unless a
+# scenario argument is supplied; see tests/codex_capture.rs.
 [[test]]
 name = "codex_capture"
 path = "tests/codex_capture.rs"

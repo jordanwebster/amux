@@ -35,6 +35,7 @@ dependencies = [
  "hyper-util",
  "jsonwebtoken",
  "libc",
+ "nix 0.30.1",
  "oauth2",
  "portable-pty",
  "prost",

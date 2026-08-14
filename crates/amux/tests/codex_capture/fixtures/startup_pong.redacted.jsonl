@@ -1,0 +1,9 @@
+{"type":"amux.codex_ready"}
+{"type":"mcpServer/startupStatus/updated","threadId":"[THREAD]","status":"starting"}
+{"status":"starting","type":"mcpServer/startupStatus/updated","threadId":"[THREAD]"}
+{"threadId":"[THREAD]","status":"ready","type":"mcpServer/startupStatus/updated"}
+{"type":"mcpServer/startupStatus/updated","status":"ready","threadId":"[THREAD]"}
+{"type":"thread/name/updated","threadId":"[THREAD]","name":"codex-cap-pong"}
+{"input_id":[1,2,3],"ok":{},"type":"amux.input_result"}
+{"type":"item/completed","threadId":"[THREAD]","item":{"id":"[ITEM]","type":"agentMessage","text":"PONG"}}
+{"threadId":"[THREAD]","turn":{"id":"[TURN]","status":"completed"},"type":"turn/completed"}
