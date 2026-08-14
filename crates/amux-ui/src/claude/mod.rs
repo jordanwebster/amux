@@ -1278,6 +1278,27 @@ impl ClaudeLayer {
     }
 }
 
+/// Cache the Claude layer's attention under the kernel stream lifecycle.
+/// Opening and replaying deliberately outrank the folded layer: rows seen so
+/// far are only a prefix of the replay window, so their apparent resting or
+/// actionable state is not yet authoritative. Without this the cached badge
+/// disagreed with `phase` and `send_gate`, which both already gate on the
+/// same two stream phases — the identical cross-altitude gap the Codex arm
+/// closed in `41f5433`.
+pub(crate) fn projected_attention(
+    layer: &ClaudeLayer,
+    stream_phase: Option<&StreamPhase>,
+) -> Attention {
+    if matches!(
+        stream_phase,
+        Some(StreamPhase::Opening | StreamPhase::Replaying)
+    ) {
+        Attention::Unknown
+    } else {
+        layer.attention()
+    }
+}
+
 /// The derived chat phase for one Claude card (E1), computed here once for
 /// every renderer: kernel subscription catch-up gates to Replaying, a dead
 /// transport degrades to Unknown, an exited agent keeps its layer's last

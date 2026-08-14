@@ -413,8 +413,8 @@ fn with_layer(model: &mut Model, agent: amux::AgentId, step: impl FnOnce(&mut Ag
 }
 
 /// Refresh the card cache after either its typed fold or stream phase moves.
-/// The `AgentLayer` dispatch intentionally preserves Claude's layer-only
-/// behavior while applying Codex's stream-aware replay rule.
+/// The `AgentLayer` dispatch applies the same stream-aware replay rule to
+/// both layers.
 fn refresh_attention(model: &mut Model, agent: amux::AgentId) {
     let stream_phase = model.streams.get(&agent).map(|stream| &stream.phase);
     let Some(card) = model.agents.get_mut(&agent) else {

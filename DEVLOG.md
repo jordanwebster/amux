@@ -4,6 +4,8 @@ This file tracks significant development work, decisions made, and current state
 
 ---
 
+2026-08-14 — Checkpoint 3: closed the Claude half of the cross-altitude attention gap. `claude::projected_attention` now caches `Unknown` while the kernel stream is opening/replaying, so the fleet badge stops claiming "idle" for a whole replay window — including one holding unanswered permission asks — while `phase` and `send_gate` both say `Replaying`. Same fix Codex got in `41f5433`, on the arm left behind; probe found 45 such observations across already-registered sequences. Red/green spec test plus the replay-window-with-asks lifecycle registered. All 54 Claude goldens byte-identical.
+
 2026-08-14 — P8 simplification: narrowed the Codex write gate through a `session_state` -> `LiveState` result so the compiler, not three `unreachable!` arms, keeps session-level refusal membership in one place; registered the reconnect/reopen/mid-replay lifecycles the spec suite never reached; deleted the never-read in-flight steer/interrupt turn ids. Gates green, goldens byte-identical.
 
 2026-08-14 — P8 review round 2: made all Codex write permissions project directly from the non-lossy `Situation` classification, restoring interrupt during an in-flight steer; red/green regressions, full workspace tests, 44/44 testnet specs, and byte-identical goldens pass.

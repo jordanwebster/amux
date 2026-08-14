@@ -362,10 +362,91 @@ fn attaching_to_a_readonly_agent_subscribes_its_stream() {
     );
 }
 
+/// A replay window is only a PREFIX of the truth, so the cached badge may
+/// not claim a resting or actionable state while it is open. `phase` and
+/// `send_gate` both already gate on `Opening | Replaying`; before the
+/// projection was applied to the Claude arm too, the cached attention
+/// derived from the layer alone and read `Idle` — the fleet said "idle"
+/// for the whole replay window, and kept saying it while folded permission
+/// asks piled up underneath. Degradation is to `Unknown`, never to a wrong
+/// badge.
+#[test]
+fn a_replaying_claude_card_never_claims_idle_or_needs_you() {
+    let opening = seq([
+        vec![
+            connected("nova"),
+            host_up(&a_host("nova")),
+            agent_up(&an_agent("fix-auth-bug", "nova")),
+        ],
+        synced(),
+        vec![stream(
+            "fix-auth-bug",
+            StreamMsg::Opened { truncated: false },
+        )],
+    ]);
+
+    // Nothing folded yet: the layer would honestly say Idle.
+    let model = fold(opening.clone());
+    assert_eq!(
+        amux_ui::claude::phase(&model, agent_id("fix-auth-bug")),
+        ChatPhase::Replaying
+    );
+    assert_eq!(attention_of(&model, "fix-auth-bug"), Attention::Unknown);
+
+    // Permission asks folded DURING replay must not surface as NeedsYou
+    // either — the window has not finished proving they are still open.
+    let with_asks = seq([
+        opening.clone(),
+        vec![batch(
+            "fix-auth-bug",
+            10,
+            chat_rows("permission")[..8].to_vec(),
+        )],
+    ]);
+    let model = fold(with_asks.clone());
+    assert_eq!(
+        amux_ui::claude::phase(&model, agent_id("fix-auth-bug")),
+        ChatPhase::Replaying
+    );
+    assert_eq!(attention_of(&model, "fix-auth-bug"), Attention::Unknown);
+
+    // ReplayComplete is the unlock: the same folded ask now surfaces.
+    let model = fold(seq([
+        with_asks,
+        vec![stream("fix-auth-bug", StreamMsg::ReplayComplete)],
+    ]));
+    assert_eq!(
+        attention_of(&model, "fix-auth-bug"),
+        Attention::NeedsYou {
+            why: Why::Permission
+        }
+    );
+}
+
 pub fn sequences() -> Vec<(&'static str, Vec<Msg>)> {
     let mut readonly = an_agent("captured-session", "nova");
     readonly.readonly = true;
     vec![
+        (
+            // Claude lifecycle churn no other chapter reaches: the replay
+            // window observed BEFORE its ReplayComplete, with asks folded
+            // inside it. Registering it puts every intermediate state under
+            // the per-Msg invariant sweep in `wire_free`.
+            "attention::replay_window_with_asks",
+            seq([
+                vec![
+                    connected("nova"),
+                    host_up(&a_host("nova")),
+                    agent_up(&an_agent("fix-auth-bug", "nova")),
+                ],
+                synced(),
+                vec![
+                    stream("fix-auth-bug", StreamMsg::Opened { truncated: false }),
+                    batch("fix-auth-bug", 10, chat_rows("permission")[..8].to_vec()),
+                    stream("fix-auth-bug", StreamMsg::ReplayComplete),
+                ],
+            ]),
+        ),
         (
             "attention::permission_pending",
             chat_feed_prefix("fix-auth-bug", "permission", 8),
