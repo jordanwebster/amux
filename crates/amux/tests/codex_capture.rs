@@ -14,7 +14,7 @@
 //! not rebuild; the harness refuses to start against a binary older than the
 //! workspace sources rather than reporting on code it never ran.
 //!
-//! `c-all` selects C.1-C.9. Each scenario has one row in [`SCENARIOS`], so
+//! `c-all` selects C.1-C.10. Each scenario has one row in [`SCENARIOS`], so
 //! its id, requirement, timeout, and runner stay together. Captures land in a
 //! scenario-named child of `AMUX_CODEX_CAPTURE_DIR` (or a timestamped default)
 //! and include backend rows, SDK IO, observed subscription rows, raw bytes
@@ -58,6 +58,7 @@ fn main() -> anyhow::Result<()> {
         RawCoexistence,
         RawFanout,
         RawUnnamed,
+        UnnamedReconnect,
     }
 
     #[derive(Clone, Copy)]
@@ -131,6 +132,12 @@ fn main() -> anyhow::Result<()> {
             "C.9 raw attach on an unnamed agent",
             300,
             Scenario::RawUnnamed,
+        ),
+        scenario(
+            "c10_unnamed_reconnect",
+            "C.10 zero-turn unnamed suspend/resume",
+            300,
+            Scenario::UnnamedReconnect,
         ),
     ];
 
@@ -508,6 +515,40 @@ fn main() -> anyhow::Result<()> {
         }))
     }
 
+    /// Eager materialization is also required by amux's structured reconnect
+    /// contract: its reconnect path issues `thread/resume`, even when the
+    /// original in-memory attachment worked and no turn ever created history.
+    async fn unnamed_reconnect(harness: &mut Harness, model: &str) -> Result<Value> {
+        let (agent, capture, _) = open_named(harness, None, model).await?;
+        drop(capture);
+        let summary = harness.client().suspend().await?;
+        if summary.suspended_count != 1 {
+            bail!(
+                "expected one zero-turn unnamed agent to suspend, got {}",
+                summary.suspended_count
+            );
+        }
+        harness.stop_for_suspend().await?;
+        harness.restart().await?;
+        let resume = harness.client().resume().await?;
+        if resume.resumed_count != 1 || resume.failed_count != 0 {
+            bail!("unnamed zero-turn resume summary was not 1/0: {resume:?}");
+        }
+        let mut reconnected = StructuredCapture::open(harness, agent).await?;
+        reconnected.wait_ready().await?;
+        harness.client().delete_agent(agent).await?;
+        Ok(json!({
+            "agent_named": false,
+            "turns_sent": 0,
+            "assertions": {
+                "suspended": true,
+                "resumed": true,
+                "structured_reconnected": true,
+                "same_agent": true
+            }
+        }))
+    }
+
     async fn raw_fanout(harness: &mut Harness, model: &str) -> Result<Value> {
         let (agent, mut capture, cursor) = open(harness, "c8-raw-fanout", model).await?;
         let mut first = subscribe_raw(harness, agent).await?;
@@ -576,6 +617,7 @@ fn main() -> anyhow::Result<()> {
             Scenario::RawCoexistence => raw_coexistence(harness, model).await,
             Scenario::RawFanout => raw_fanout(harness, model).await,
             Scenario::RawUnnamed => raw_unnamed(harness, model).await,
+            Scenario::UnnamedReconnect => unnamed_reconnect(harness, model).await,
         }
     }
 

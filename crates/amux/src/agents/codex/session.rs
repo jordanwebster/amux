@@ -187,14 +187,15 @@ fn codex_log_source() -> StructuredLogSource {
 
 /// Name a Codex thread, reporting failure rather than swallowing it.
 ///
-/// Naming is also the only way amux can materialize a thread. Codex 0.147
-/// starts threads in memory only: `thread/start` reports the rollout path it
-/// *will* use but writes nothing, and every operation that needs that rollout
-/// — `thread/resume`, which the raw TUI runs at bootstrap, and
-/// `thread/archive` — fails with `no rollout found for thread id` until
-/// something persists it. Upstream exposes no persist call; naming is the
-/// least invasive operation that persists as a side effect. See
-/// `docs/CODEX.md`.
+/// Naming is also how amux materializes a thread. Codex 0.147's
+/// `thread/start` creates a live thread and reports its prospective rollout
+/// path without materializing that rollout. Operations that need it —
+/// `thread/resume`, which the raw TUI and amux reconnect paths use, and
+/// `thread/archive` — fail with `no rollout found for thread id` until an
+/// unrelated mutation persists it. Upstream exposes no persist call. Naming
+/// is the least invasive universally applicable materializer; memory mode,
+/// Git metadata, injected history, and feature-gated goals also materialize
+/// but carry behavioral or applicability costs. See `docs/CODEX.md`.
 async fn set_thread_name(
     client: &Codex,
     agent_id: Uuid,
@@ -213,14 +214,14 @@ async fn set_thread_name(
 /// Thread name for an agent the user has not named, using the same short-id
 /// convention as the clients' display fallback. It is a bootstrap label, not
 /// an agent name: the agent stays unnamed, and naming it later overwrites this
-/// through [`CodexSession::schedule_remote_rename`].
+/// through the serialized name reconciler.
 fn bootstrap_thread_name(agent_id: Uuid) -> String {
     format!("amux-{}", &agent_id.simple().to_string()[..8])
 }
 
 /// The name every Codex thread is created with.
 ///
-/// Naming is what materializes a thread, so an unnamed agent must not skip it.
+/// Naming materializes a thread, so an unnamed agent must not skip it.
 /// An empty name is treated as absent: upstream rejects it outright, which
 /// would leave the thread unmaterialized.
 fn thread_name_for(desired_name: Option<&str>, agent_id: Uuid) -> String {
@@ -248,25 +249,13 @@ struct CodexLive {
     socket_path: PathBuf,
 }
 
-/// Whether this thread has a rollout on disk.
-///
-/// The structured plane works either way; the raw plane does not, because
-/// `codex resume` refuses a thread that has never been persisted. The two
-/// cases are kept apart from "no thread yet" (`CodexAttached` absent) on
-/// purpose: a thread that failed to materialize is not going to become ready
-/// by waiting, and the caller is told why.
-enum ThreadPersistence {
-    Materialized,
-    Failed(String),
-}
-
 struct CodexAttached {
     thread_id: String,
     daemon_mode: Option<String>,
     live: Option<CodexLive>,
     active_turn_id: Option<String>,
     pending: HashMap<RequestId, PendingRequestKind>,
-    persistence: ThreadPersistence,
+    applied_name_generation: Option<u64>,
 }
 
 struct CodexPty {
@@ -276,7 +265,10 @@ struct CodexPty {
 
 struct CodexRuntime {
     desired_name: Option<String>,
+    desired_name_generation: u64,
+    name_reconciler_running: bool,
     attached: Option<CodexAttached>,
+    resume_daemon_mode: Option<String>,
     startup_error: Option<String>,
     ingest_abort: Option<AbortHandle>,
     pty: Option<CodexPty>,
@@ -316,16 +308,6 @@ impl CodexSession {
             _ => unreachable!("CodexSession requires AgentType::Codex"),
         };
         let (stop_tx, _) = watch::channel(false);
-        // A thread we are resuming was materialized when it was first
-        // connected; the connect loop republishes this either way.
-        let attached = resume_thread_id.as_ref().map(|thread_id| CodexAttached {
-            thread_id: thread_id.clone(),
-            daemon_mode: None,
-            live: None,
-            active_turn_id: None,
-            pending: HashMap::new(),
-            persistence: ThreadPersistence::Materialized,
-        });
         Self {
             agent_id: req.agent_id,
             name: req.name.clone(),
@@ -339,7 +321,10 @@ impl CodexSession {
             shared_client,
             runtime: Arc::new(StdMutex::new(CodexRuntime {
                 desired_name: req.name.clone(),
-                attached,
+                desired_name_generation: 0,
+                name_reconciler_running: false,
+                attached: None,
+                resume_daemon_mode: None,
                 startup_error: None,
                 ingest_abort: None,
                 pty: None,
@@ -362,9 +347,7 @@ impl CodexSession {
                 .runtime
                 .lock()
                 .unwrap_or_else(|poison| poison.into_inner());
-            if let Some(attached) = runtime.attached.as_mut() {
-                attached.daemon_mode = daemon_mode;
-            }
+            runtime.resume_daemon_mode = daemon_mode;
         }
         Self {
             created_at,
@@ -422,39 +405,6 @@ impl CodexSession {
         Ok(handle)
     }
 
-    fn schedule_remote_rename(&self, name: String) {
-        let target = {
-            let runtime = self
-                .runtime
-                .lock()
-                .unwrap_or_else(|poison| poison.into_inner());
-            runtime.attached.as_ref().and_then(|attached| {
-                attached
-                    .live
-                    .as_ref()
-                    .map(|live| (live.client.clone(), attached.thread_id.clone()))
-            })
-        };
-        if let Some((client, thread_id)) = target {
-            let agent_id = self.agent_id;
-            let runtime = self.runtime.clone();
-            tokio::spawn(async move {
-                if set_thread_name(&client, agent_id, &thread_id, &name)
-                    .await
-                    .is_ok()
-                {
-                    // Naming is also what persists a thread, so a rename that
-                    // lands after a failed bootstrap makes the raw plane
-                    // usable.
-                    let mut state = runtime.lock().unwrap_or_else(|poison| poison.into_inner());
-                    if let Some(attached) = state.attached.as_mut() {
-                        attached.persistence = ThreadPersistence::Materialized;
-                    }
-                }
-            });
-        }
-    }
-
     fn input_target(&self) -> CodexInputTarget {
         CodexInputTarget {
             runtime: self.runtime.clone(),
@@ -475,14 +425,6 @@ impl CodexSession {
                 .attached
                 .as_ref()
                 .ok_or_else(|| anyhow!("{CODEX_RAW_THREAD_NOT_READY}"))?;
-            // Distinct from "not ready yet" on purpose: waiting will not fix
-            // this, so clients must not retry it.
-            if let ThreadPersistence::Failed(error) = &attached.persistence {
-                return Err(anyhow!(
-                    "Codex raw session is unavailable: the thread was never persisted, \
-                     so `codex resume` will refuse it ({error})"
-                ));
-            }
             let live = attached.live.as_ref().ok_or_else(|| {
                 anyhow!("Codex raw session is unavailable until reconnect succeeds")
             })?;
@@ -577,8 +519,8 @@ async fn run_ingest_supervisor(
             break;
         }
 
-        let (connection, thread, mut events) =
-            match attach_thread(&shared_client, &thread_config, &mut thread_id).await {
+        let (connection, mut thread, provenance) =
+            match attach_thread(&shared_client, &thread_config, thread_id.as_deref()).await {
                 Ok(attached) => attached,
                 Err(error) => {
                     let message = error.to_string();
@@ -592,24 +534,45 @@ async fn run_ingest_supervisor(
                     continue;
                 }
             };
+        let applied_name_generation = match provenance {
+            AttachmentProvenance::Started => {
+                let Some(materialized) = materialize_started_thread(
+                    &connection.client,
+                    agent_id,
+                    &thread_config,
+                    thread,
+                    &runtime,
+                    &log_source,
+                    &mut stop_rx,
+                )
+                .await
+                else {
+                    break;
+                };
+                thread = materialized.thread;
+                materialized.applied_name_generation
+            }
+            AttachmentProvenance::Resumed => None,
+        };
         let id = thread.id().to_string();
-
-        // Materialize the thread *before* publishing `attached`. `ensure_pty`
-        // gates the raw TUI on `attached` alone, so publishing first leaves a
-        // window in which a raw subscription spawns `codex resume` against a
-        // thread upstream has not persisted yet — the same failure as an
-        // unnamed agent, but intermittent.
-        let desired_name = runtime
-            .lock()
-            .unwrap_or_else(|poison| poison.into_inner())
-            .desired_name
-            .clone();
-        let thread_name = thread_name_for(desired_name.as_deref(), agent_id);
-        let persistence =
-            match set_thread_name(&connection.client, agent_id, &id, &thread_name).await {
-                Ok(()) => ThreadPersistence::Materialized,
-                Err(error) => ThreadPersistence::Failed(error),
-            };
+        // Only now is a freshly started id durable: either its naming RPC
+        // completed, or a successful resume authoritatively proved that an
+        // ambiguous response had materialized it.
+        thread_id = Some(id.clone());
+        let mut events = match thread.events().await {
+            Ok(events) => events,
+            Err(error) => {
+                let message = error.to_string();
+                let pending = mark_disconnected(&runtime, Some(message.clone()));
+                resolve_pending(&log_source, pending, "connection_lost").await;
+                write_reconnect_error(&log_source, &message).await;
+                if wait_for_retry(&mut stop_rx, retry).await {
+                    break;
+                }
+                retry = (retry + 1).min(RECONNECT_BACKOFF.len() - 1);
+                continue;
+            }
+        };
 
         {
             let mut state = runtime.lock().unwrap_or_else(|poison| poison.into_inner());
@@ -624,9 +587,10 @@ async fn run_ingest_supervisor(
                 }),
                 active_turn_id: None,
                 pending: HashMap::new(),
-                persistence,
+                applied_name_generation,
             });
         }
+        schedule_name_reconciliation(agent_id, &runtime, stop_rx.clone());
         log_source.write(json!({"type": "amux.codex_ready"})).await;
         if capture_drop_connection {
             capture_drop_connection = false;
@@ -661,29 +625,239 @@ async fn run_ingest_supervisor(
     }
 }
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum AttachmentProvenance {
+    Started,
+    Resumed,
+}
+
+struct MaterializedStart {
+    thread: Thread,
+    applied_name_generation: Option<u64>,
+}
+
+/// Keep a fresh thread private until its rollout exists. A failed naming
+/// response is ambiguous, so resume is the authority: success commits this
+/// same id; failure leaves the original in-memory thread available for retry.
+async fn materialize_started_thread(
+    client: &Codex,
+    agent_id: Uuid,
+    thread_config: &ThreadConfig,
+    thread: Thread,
+    runtime: &Arc<StdMutex<CodexRuntime>>,
+    log_source: &StructuredLogSource,
+    stop_rx: &mut watch::Receiver<bool>,
+) -> Option<MaterializedStart> {
+    let mut retry = 0_usize;
+    let mut registration_replaced = false;
+    loop {
+        let (desired_name, generation) = {
+            let state = runtime.lock().unwrap_or_else(|poison| poison.into_inner());
+            (state.desired_name.clone(), state.desired_name_generation)
+        };
+        let label = thread_name_for(desired_name.as_deref(), agent_id);
+        let naming = tokio::select! {
+            result = set_thread_name(client, agent_id, thread.id(), &label) => Some(result),
+            changed = stop_rx.changed() => {
+                let _ = changed;
+                None
+            }
+        }?;
+        match naming {
+            Ok(()) => {
+                if registration_replaced {
+                    let resumed = tokio::select! {
+                        result = client.resume_thread(thread.id(), thread_config.clone()) => Some(result),
+                        changed = stop_rx.changed() => {
+                            let _ = changed;
+                            None
+                        }
+                    }?;
+                    match resumed {
+                        Ok(thread) => {
+                            return Some(MaterializedStart {
+                                thread,
+                                applied_name_generation: Some(generation),
+                            });
+                        }
+                        Err(error) => {
+                            let message = format!(
+                                "fresh Codex thread was named but its event registration could \
+                                 not be restored with thread/resume: {error}"
+                            );
+                            runtime
+                                .lock()
+                                .unwrap_or_else(|poison| poison.into_inner())
+                                .startup_error = Some(message.clone());
+                            write_reconnect_error(log_source, &message).await;
+                        }
+                    }
+                } else {
+                    return Some(MaterializedStart {
+                        thread,
+                        applied_name_generation: Some(generation),
+                    });
+                }
+            }
+            Err(name_error) => {
+                // codex-sdk replaces the thread's event registration before
+                // issuing resume, even when that RPC fails. Once attempted,
+                // a later naming success must resume again to obtain the live
+                // registration that will be published.
+                registration_replaced = true;
+                let resume = tokio::select! {
+                    result = client.resume_thread(thread.id(), thread_config.clone()) => Some(result),
+                    changed = stop_rx.changed() => {
+                        let _ = changed;
+                        None
+                    }
+                }?;
+                match resume {
+                    Ok(resumed) => {
+                        return Some(MaterializedStart {
+                            thread: resumed,
+                            // Resume proves the rollout exists, but not which
+                            // desired-name generation won an ambiguous reply.
+                            applied_name_generation: None,
+                        });
+                    }
+                    Err(resume_error) => {
+                        let message = format!(
+                            "failed to materialize fresh Codex thread: {name_error}; \
+                             authoritative resume check failed: {resume_error}"
+                        );
+                        runtime
+                            .lock()
+                            .unwrap_or_else(|poison| poison.into_inner())
+                            .startup_error = Some(message.clone());
+                        write_reconnect_error(log_source, &message).await;
+                    }
+                }
+            }
+        }
+        if wait_for_retry(stop_rx, retry).await {
+            return None;
+        }
+        retry = (retry + 1).min(RECONNECT_BACKOFF.len() - 1);
+    }
+}
+
+fn schedule_name_reconciliation(
+    agent_id: Uuid,
+    runtime: &Arc<StdMutex<CodexRuntime>>,
+    stop_rx: watch::Receiver<bool>,
+) {
+    let should_start = {
+        let mut state = runtime.lock().unwrap_or_else(|poison| poison.into_inner());
+        let pending = state.attached.as_ref().is_some_and(|attached| {
+            attached.live.is_some()
+                && attached.applied_name_generation != Some(state.desired_name_generation)
+        });
+        if pending && !state.name_reconciler_running {
+            state.name_reconciler_running = true;
+            true
+        } else {
+            false
+        }
+    };
+    if should_start {
+        tokio::spawn(reconcile_thread_name(agent_id, runtime.clone(), stop_rx));
+    }
+}
+
+async fn reconcile_thread_name(
+    agent_id: Uuid,
+    runtime: Arc<StdMutex<CodexRuntime>>,
+    mut stop_rx: watch::Receiver<bool>,
+) {
+    let mut retry = 0_usize;
+    loop {
+        if *stop_rx.borrow() {
+            break;
+        }
+        let target = {
+            let mut state = runtime.lock().unwrap_or_else(|poison| poison.into_inner());
+            let generation = state.desired_name_generation;
+            let desired_name = state.desired_name.clone();
+            let Some(attached) = state.attached.as_ref() else {
+                state.name_reconciler_running = false;
+                return;
+            };
+            if attached.applied_name_generation == Some(generation) {
+                state.name_reconciler_running = false;
+                return;
+            }
+            let Some(live) = attached.live.as_ref() else {
+                state.name_reconciler_running = false;
+                return;
+            };
+            (
+                live.client.clone(),
+                attached.thread_id.clone(),
+                generation,
+                thread_name_for(desired_name.as_deref(), agent_id),
+            )
+        };
+        let (client, thread_id, generation, label) = target;
+        let result = tokio::select! {
+            result = set_thread_name(&client, agent_id, &thread_id, &label) => Some(result),
+            changed = stop_rx.changed() => {
+                let _ = changed;
+                None
+            }
+        };
+        let Some(result) = result else {
+            break;
+        };
+        if result.is_ok() {
+            let mut state = runtime.lock().unwrap_or_else(|poison| poison.into_inner());
+            if let Some(attached) = state.attached.as_mut()
+                && attached.thread_id == thread_id
+            {
+                attached.applied_name_generation = Some(generation);
+            }
+            retry = 0;
+            continue;
+        }
+        if wait_for_retry(&mut stop_rx, retry).await {
+            break;
+        }
+        retry = (retry + 1).min(RECONNECT_BACKOFF.len() - 1);
+    }
+    runtime
+        .lock()
+        .unwrap_or_else(|poison| poison.into_inner())
+        .name_reconciler_running = false;
+}
+
 /// Connect, attach the persistent thread, and take its continuous event stream.
 ///
-/// `thread_id` is both the thread to resume (absent means "start a new one")
-/// and the identity to remember: a started thread is recorded before the event
-/// stream is taken so a later attempt resumes it instead of orphaning it.
+/// The provenance is load-bearing: a resumed thread has an authoritative
+/// rollout already, while a started thread must remain private until naming
+/// materializes it.
 async fn attach_thread(
     shared_client: &CodexClient,
     thread_config: &ThreadConfig,
-    thread_id: &mut Option<String>,
-) -> Result<(Arc<CodexConnection>, Thread, codex_sdk::ThreadEventStream)> {
+    thread_id: Option<&str>,
+) -> Result<(Arc<CodexConnection>, Thread, AttachmentProvenance)> {
     let connection = shared_client.connection().await?;
-    let thread = match thread_id.as_deref() {
+    let (thread, provenance) = match thread_id {
         Some(thread_id) => {
-            connection
+            let thread = connection
                 .client
                 .resume_thread(thread_id, thread_config.clone())
-                .await
+                .await?;
+            (thread, AttachmentProvenance::Resumed)
         }
-        None => connection.client.start_thread(thread_config.clone()).await,
-    }?;
-    *thread_id = Some(thread.id().to_string());
-    let events = thread.events().await?;
-    Ok((connection, thread, events))
+        None => (
+            connection
+                .client
+                .start_thread(thread_config.clone())
+                .await?,
+            AttachmentProvenance::Started,
+        ),
+    };
+    Ok((connection, thread, provenance))
 }
 
 async fn wait_for_retry(stop_rx: &mut watch::Receiver<bool>, retry: usize) -> bool {
@@ -1008,13 +1182,15 @@ impl AgentBackend for CodexSession {
 
     fn set_local_name(&mut self, name: Option<String>, _source: LocalAgentNameSource) {
         self.name = name.clone();
-        self.runtime
-            .lock()
-            .unwrap_or_else(|poison| poison.into_inner())
-            .desired_name = name.clone();
-        if let Some(name) = name {
-            self.schedule_remote_rename(name);
+        {
+            let mut runtime = self
+                .runtime
+                .lock()
+                .unwrap_or_else(|poison| poison.into_inner());
+            runtime.desired_name = name;
+            runtime.desired_name_generation = runtime.desired_name_generation.wrapping_add(1);
         }
+        schedule_name_reconciliation(self.agent_id, &self.runtime, self.stop_tx.subscribe());
     }
 
     fn command(&self) -> &str {
@@ -1103,13 +1279,23 @@ impl AgentBackend for CodexSession {
                 .runtime
                 .lock()
                 .unwrap_or_else(|poison| poison.into_inner());
-            let Some(attached) = runtime.attached.as_ref() else {
+            let thread_id = runtime
+                .attached
+                .as_ref()
+                .map(|attached| attached.thread_id.clone())
+                .or_else(|| self.resume_thread_id.clone());
+            let Some(thread_id) = thread_id else {
                 return Err(anyhow!(
                     "cannot suspend Codex agent {}: thread_id is not available yet",
                     self.agent_id
                 ));
             };
-            (attached.thread_id.clone(), attached.daemon_mode.clone())
+            let daemon_mode = runtime
+                .attached
+                .as_ref()
+                .and_then(|attached| attached.daemon_mode.clone())
+                .or_else(|| runtime.resume_daemon_mode.clone());
+            (thread_id, daemon_mode)
         };
         Ok(SuspendedAgent::Codex {
             agent_id: self.agent_id,
@@ -1131,8 +1317,8 @@ impl AgentBackend for CodexSession {
             .unwrap_or_else(|poison| poison.into_inner());
         Ok(json!({
             "kind": "codex",
-            "thread_id": runtime.attached.as_ref().map(|attached| &attached.thread_id),
-            "daemon_mode": runtime.attached.as_ref().and_then(|attached| attached.daemon_mode.as_deref()),
+            "thread_id": runtime.attached.as_ref().map(|attached| &attached.thread_id).or(self.resume_thread_id.as_ref()),
+            "daemon_mode": runtime.attached.as_ref().and_then(|attached| attached.daemon_mode.as_deref()).or(runtime.resume_daemon_mode.as_deref()),
             "startup_error": runtime.startup_error,
             "has_event_ingest": runtime.ingest_abort.is_some(),
             "connected": runtime.attached.as_ref().is_some_and(|attached| attached.live.is_some()),
@@ -1149,7 +1335,9 @@ mod tests {
     use replay_support::{
         ReplayAdvance, ReplayOptions, load_script, replay_transport_with_controller,
     };
-    use tokio::io::{AsyncBufReadExt, AsyncWriteExt, BufReader, duplex, split};
+    use tokio::io::{
+        AsyncBufReadExt, AsyncWriteExt, BufReader, DuplexStream, ReadHalf, WriteHalf, duplex, split,
+    };
     use tokio::net::UnixListener;
     use tokio_tungstenite::{accept_async, tungstenite::Message};
 
@@ -1172,6 +1360,107 @@ mod tests {
             &req,
             Arc::new(CodexClient::new(PathBuf::from("/tmp/amux-codex.sock"))),
         )
+    }
+
+    type MockReader = BufReader<ReadHalf<DuplexStream>>;
+    type MockWriter = WriteHalf<DuplexStream>;
+
+    async fn mock_codex() -> (Codex, MockReader, MockWriter) {
+        let (client_side, server_side) = duplex(32 * 1024);
+        let (client_read, client_write) = split(client_side);
+        let (server_read, mut server_write) = split(server_side);
+        let server = tokio::spawn(async move {
+            let mut reader = BufReader::new(server_read);
+            let initialize = read_request(&mut reader).await;
+            write_response(
+                &mut server_write,
+                &initialize,
+                json!({
+                    "userAgent": "test/0.147.0",
+                    "codexHome": "/tmp/test-codex-home",
+                    "platformFamily": "unix",
+                    "platformOs": "test"
+                }),
+            )
+            .await;
+            assert_eq!(read_request(&mut reader).await["method"], "initialized");
+            (reader, server_write)
+        });
+        let client = Codex::from_io(
+            BufReader::new(client_read),
+            client_write,
+            CodexConfig::default(),
+        )
+        .await
+        .unwrap();
+        let (reader, writer) = server.await.unwrap();
+        (client, reader, writer)
+    }
+
+    async fn read_request(reader: &mut MockReader) -> Value {
+        let mut line = String::new();
+        reader.read_line(&mut line).await.unwrap();
+        assert!(!line.is_empty(), "mock Codex transport closed");
+        serde_json::from_str(line.trim()).unwrap()
+    }
+
+    async fn write_response(writer: &mut MockWriter, request: &Value, result: Value) {
+        writer
+            .write_all(format!("{}\n", json!({"id": request["id"], "result": result})).as_bytes())
+            .await
+            .unwrap();
+    }
+
+    async fn write_rpc_error(writer: &mut MockWriter, request: &Value, message: &str) {
+        writer
+            .write_all(
+                format!(
+                    "{}\n",
+                    json!({"id": request["id"], "error": {"code": -32600, "message": message}})
+                )
+                .as_bytes(),
+            )
+            .await
+            .unwrap();
+    }
+
+    fn thread_session(thread_id: &str, name: Option<&str>) -> Value {
+        json!({
+            "thread": {
+                "id": thread_id,
+                "path": null,
+                "agentNickname": null,
+                "agentRole": null,
+                "gitInfo": null,
+                "name": name
+            },
+            "model": "test",
+            "modelProvider": "openai",
+            "serviceTier": null,
+            "cwd": "/tmp",
+            "approvalPolicy": "on-request",
+            "approvalsReviewer": "user",
+            "sandbox": {"type": "readOnly", "networkAccess": false},
+            "reasoningEffort": null
+        })
+    }
+
+    async fn start_mock_thread(
+        client: &Codex,
+        reader: &mut MockReader,
+        writer: &mut MockWriter,
+    ) -> Thread {
+        let starting_client = client.clone();
+        let start = tokio::spawn(async move {
+            starting_client
+                .start_thread(ThreadConfig::default())
+                .await
+                .unwrap()
+        });
+        let request = read_request(reader).await;
+        assert_eq!(request["method"], "thread/start");
+        write_response(writer, &request, thread_session("thread-1", None)).await;
+        start.await.unwrap()
     }
 
     #[tokio::test]
@@ -1297,10 +1586,8 @@ mod tests {
     }
 
     #[test]
-    fn every_thread_is_named_because_naming_is_what_persists_it() {
+    fn thread_label_policy_uses_agent_name_or_stable_bootstrap_label() {
         let agent_id = Uuid::from_u128(0xfeed_face);
-        // An unnamed agent still gets a thread name; skipping it leaves the
-        // thread with no rollout, and `codex resume` then refuses it.
         assert_eq!(thread_name_for(None, agent_id), "amux-00000000");
         assert_eq!(thread_name_for(Some(""), agent_id), "amux-00000000");
         assert_eq!(thread_name_for(Some("morning"), agent_id), "morning");
@@ -1314,27 +1601,257 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn an_unpersisted_thread_refuses_raw_attach_and_is_not_retryable() {
+    async fn resumed_thread_stays_attached_when_name_reconciliation_fails() {
+        let (client, mut reader, mut writer) = mock_codex().await;
+        let thread = start_mock_thread(&client, &mut reader, &mut writer).await;
         let session = session();
         {
-            let mut runtime = session.runtime.lock().unwrap();
-            runtime.attached = Some(CodexAttached {
-                thread_id: "thread-unpersisted".into(),
-                daemon_mode: Some("spawned-private".into()),
-                live: None,
+            let mut state = session.runtime.lock().unwrap();
+            state.desired_name = Some("wanted".into());
+            state.desired_name_generation = 1;
+            state.attached = Some(CodexAttached {
+                thread_id: thread.id().into(),
+                daemon_mode: Some("test".into()),
+                live: Some(CodexLive {
+                    client: client.clone(),
+                    thread,
+                    socket_path: PathBuf::from("/tmp/missing-test-codex.sock"),
+                }),
                 active_turn_id: None,
                 pending: HashMap::new(),
-                persistence: ThreadPersistence::Failed("thread name must not be empty".into()),
+                applied_name_generation: None,
             });
         }
+        schedule_name_reconciliation(
+            session.agent_id,
+            &session.runtime,
+            session.stop_tx.subscribe(),
+        );
+        let rename = read_request(&mut reader).await;
+        assert_eq!(rename["method"], "thread/name/set");
+        write_rpc_error(&mut writer, &rename, "injected name failure").await;
+        tokio::task::yield_now().await;
 
-        let error = session.pty_handle().err().unwrap().to_string();
-        assert!(error.contains("never persisted"), "{error}");
-        assert!(error.contains("thread name must not be empty"), "{error}");
-        // Distinct from the transient case: clients retry on that message for
-        // 15s, and this one will never come good.
+        let state = session.runtime.lock().unwrap();
+        let attached = state.attached.as_ref().expect("resume stays published");
+        assert!(
+            attached.live.is_some(),
+            "name failure must not detach resume"
+        );
+        drop(state);
+        let error = match session.pty_handle() {
+            Ok(_) => panic!("missing mock socket must fail after reaching raw spawn path"),
+            Err(error) => error.to_string(),
+        };
         assert!(!error.contains(CODEX_RAW_THREAD_NOT_READY), "{error}");
-        assert!(session.log_source().unwrap().subscribe().await.is_some());
+        assert!(!error.contains("persist"), "{error}");
+        session.stop_tx.send(true).unwrap();
+        client.close().await;
+    }
+
+    #[tokio::test]
+    async fn rename_during_fresh_materialization_is_reconciled_after_publish() {
+        let (client, mut reader, mut writer) = mock_codex().await;
+        let thread = start_mock_thread(&client, &mut reader, &mut writer).await;
+        let runtime = Arc::new(StdMutex::new(CodexRuntime {
+            desired_name: Some("bootstrap-snapshot".into()),
+            desired_name_generation: 0,
+            name_reconciler_running: false,
+            attached: None,
+            resume_daemon_mode: None,
+            startup_error: None,
+            ingest_abort: None,
+            pty: None,
+            next_pty_epoch: 0,
+        }));
+        let source = StructuredLogSource::new(8);
+        let (stop_tx, mut stop_rx) = watch::channel(false);
+        let materialize_client = client.clone();
+        let materialize_runtime = runtime.clone();
+        let materialize_source = source.clone();
+        let materialize = tokio::spawn(async move {
+            materialize_started_thread(
+                &materialize_client,
+                Uuid::from_u128(1),
+                &ThreadConfig::default(),
+                thread,
+                &materialize_runtime,
+                &materialize_source,
+                &mut stop_rx,
+            )
+            .await
+            .unwrap()
+        });
+
+        let first = read_request(&mut reader).await;
+        assert_eq!(first["params"]["name"], "bootstrap-snapshot");
+        {
+            let mut state = runtime.lock().unwrap();
+            state.desired_name = Some("latest".into());
+            state.desired_name_generation = 1;
+        }
+        write_response(&mut writer, &first, json!({})).await;
+        let materialized = materialize.await.unwrap();
+        {
+            let mut state = runtime.lock().unwrap();
+            state.attached = Some(CodexAttached {
+                thread_id: materialized.thread.id().into(),
+                daemon_mode: Some("test".into()),
+                live: Some(CodexLive {
+                    client: client.clone(),
+                    thread: materialized.thread,
+                    socket_path: PathBuf::from("/tmp/test.sock"),
+                }),
+                active_turn_id: None,
+                pending: HashMap::new(),
+                applied_name_generation: materialized.applied_name_generation,
+            });
+        }
+        schedule_name_reconciliation(Uuid::from_u128(1), &runtime, stop_tx.subscribe());
+        let latest = read_request(&mut reader).await;
+        assert_eq!(latest["params"]["name"], "latest");
+        write_response(&mut writer, &latest, json!({})).await;
+        tokio::task::yield_now().await;
+        assert_eq!(
+            runtime
+                .lock()
+                .unwrap()
+                .attached
+                .as_ref()
+                .unwrap()
+                .applied_name_generation,
+            Some(1)
+        );
+        let _ = stop_tx.send(true);
+        client.close().await;
+    }
+
+    #[tokio::test]
+    async fn rapid_renames_are_serialized_and_clearing_restores_bootstrap_label() {
+        let (client, mut reader, mut writer) = mock_codex().await;
+        let thread = start_mock_thread(&client, &mut reader, &mut writer).await;
+        let runtime = Arc::new(StdMutex::new(CodexRuntime {
+            desired_name: Some("older".into()),
+            desired_name_generation: 1,
+            name_reconciler_running: false,
+            attached: Some(CodexAttached {
+                thread_id: thread.id().into(),
+                daemon_mode: Some("test".into()),
+                live: Some(CodexLive {
+                    client: client.clone(),
+                    thread,
+                    socket_path: PathBuf::from("/tmp/test.sock"),
+                }),
+                active_turn_id: None,
+                pending: HashMap::new(),
+                applied_name_generation: Some(0),
+            }),
+            resume_daemon_mode: None,
+            startup_error: None,
+            ingest_abort: None,
+            pty: None,
+            next_pty_epoch: 0,
+        }));
+        let (stop_tx, _) = watch::channel(false);
+        let agent_id = Uuid::from_u128(1);
+        schedule_name_reconciliation(agent_id, &runtime, stop_tx.subscribe());
+        let older = read_request(&mut reader).await;
+        assert_eq!(older["params"]["name"], "older");
+        {
+            let mut state = runtime.lock().unwrap();
+            state.desired_name = None;
+            state.desired_name_generation = 2;
+        }
+        schedule_name_reconciliation(agent_id, &runtime, stop_tx.subscribe());
+        assert!(
+            tokio::time::timeout(Duration::from_millis(30), read_request(&mut reader))
+                .await
+                .is_err(),
+            "a second rename must not be issued before the first completes"
+        );
+        write_response(&mut writer, &older, json!({})).await;
+        let newest = read_request(&mut reader).await;
+        assert_eq!(newest["params"]["name"], "amux-00000000");
+        write_response(&mut writer, &newest, json!({})).await;
+        tokio::task::yield_now().await;
+        assert_eq!(
+            runtime
+                .lock()
+                .unwrap()
+                .attached
+                .as_ref()
+                .unwrap()
+                .applied_name_generation,
+            Some(2)
+        );
+        let _ = stop_tx.send(true);
+        client.close().await;
+    }
+
+    #[tokio::test]
+    async fn fresh_materialization_failure_keeps_attachment_private_and_retries_same_thread() {
+        let (client, mut reader, mut writer) = mock_codex().await;
+        let thread = start_mock_thread(&client, &mut reader, &mut writer).await;
+        let runtime = Arc::new(StdMutex::new(CodexRuntime {
+            desired_name: None,
+            desired_name_generation: 0,
+            name_reconciler_running: false,
+            attached: None,
+            resume_daemon_mode: None,
+            startup_error: None,
+            ingest_abort: None,
+            pty: None,
+            next_pty_epoch: 0,
+        }));
+        let source = StructuredLogSource::new(8);
+        let (stop_tx, mut stop_rx) = watch::channel(false);
+        let materialize_client = client.clone();
+        let materialize_runtime = runtime.clone();
+        let materialize_source = source.clone();
+        let materialize = tokio::spawn(async move {
+            materialize_started_thread(
+                &materialize_client,
+                Uuid::from_u128(1),
+                &ThreadConfig::default(),
+                thread,
+                &materialize_runtime,
+                &materialize_source,
+                &mut stop_rx,
+            )
+            .await
+            .unwrap()
+        });
+        let first_name = read_request(&mut reader).await;
+        assert_eq!(first_name["method"], "thread/name/set");
+        write_rpc_error(&mut writer, &first_name, "injected materialization failure").await;
+        let resume = read_request(&mut reader).await;
+        assert_eq!(resume["method"], "thread/resume");
+        assert_eq!(resume["params"]["threadId"], "thread-1");
+        write_rpc_error(
+            &mut writer,
+            &resume,
+            "no rollout found for thread id thread-1",
+        )
+        .await;
+        assert!(runtime.lock().unwrap().attached.is_none());
+
+        let retry_name = read_request(&mut reader).await;
+        assert_eq!(retry_name["method"], "thread/name/set");
+        assert_eq!(retry_name["params"]["threadId"], "thread-1");
+        write_response(&mut writer, &retry_name, json!({})).await;
+        let registration_resume = read_request(&mut reader).await;
+        assert_eq!(registration_resume["method"], "thread/resume");
+        write_response(
+            &mut writer,
+            &registration_resume,
+            thread_session("thread-1", Some("amux-00000000")),
+        )
+        .await;
+        let materialized = materialize.await.unwrap();
+        assert_eq!(materialized.thread.id(), "thread-1");
+        assert!(runtime.lock().unwrap().attached.is_none());
+        let _ = stop_tx.send(true);
+        client.close().await;
     }
 
     #[test]
@@ -1354,7 +1871,7 @@ mod tests {
                 live: None,
                 active_turn_id: None,
                 pending: HashMap::new(),
-                persistence: ThreadPersistence::Materialized,
+                applied_name_generation: Some(0),
             });
         }
 
@@ -1449,6 +1966,8 @@ mod tests {
         let source = StructuredLogSource::new(16);
         let runtime = Arc::new(StdMutex::new(CodexRuntime {
             desired_name: None,
+            desired_name_generation: 0,
+            name_reconciler_running: false,
             attached: Some(CodexAttached {
                 thread_id: "thread-1".into(),
                 daemon_mode: Some("test".into()),
@@ -1461,8 +1980,9 @@ mod tests {
                         PendingRequestKind::ToolCall,
                     ),
                 ]),
-                persistence: ThreadPersistence::Materialized,
+                applied_name_generation: Some(0),
             }),
+            resume_daemon_mode: None,
             startup_error: None,
             ingest_abort: None,
             pty: None,
@@ -1492,14 +2012,17 @@ mod tests {
         let source = StructuredLogSource::new(16);
         let runtime = Arc::new(StdMutex::new(CodexRuntime {
             desired_name: None,
+            desired_name_generation: 0,
+            name_reconciler_running: false,
             attached: Some(CodexAttached {
                 thread_id: "thread-1".into(),
                 daemon_mode: Some("test".into()),
                 live: None,
                 active_turn_id: None,
                 pending: HashMap::new(),
-                persistence: ThreadPersistence::Materialized,
+                applied_name_generation: Some(0),
             }),
+            resume_daemon_mode: None,
             startup_error: None,
             ingest_abort: None,
             pty: None,
@@ -1624,6 +2147,8 @@ mod tests {
         let source = StructuredLogSource::new(4);
         let runtime = Arc::new(StdMutex::new(CodexRuntime {
             desired_name: None,
+            desired_name_generation: 0,
+            name_reconciler_running: false,
             attached: Some(CodexAttached {
                 thread_id: "thread-1".into(),
                 daemon_mode: Some("test".into()),
@@ -1634,8 +2159,9 @@ mod tests {
                 }),
                 active_turn_id: None,
                 pending: HashMap::new(),
-                persistence: ThreadPersistence::Materialized,
+                applied_name_generation: Some(0),
             }),
+            resume_daemon_mode: None,
             startup_error: None,
             ingest_abort: None,
             pty: None,
@@ -1686,7 +2212,7 @@ mod tests {
             }),
             active_turn_id: None,
             pending: HashMap::new(),
-            persistence: ThreadPersistence::Materialized,
+            applied_name_generation: Some(0),
         });
     }
 
@@ -1744,7 +2270,10 @@ mod tests {
         let source = StructuredLogSource::new(128);
         let runtime = Arc::new(StdMutex::new(CodexRuntime {
             desired_name: None,
+            desired_name_generation: 0,
+            name_reconciler_running: false,
             attached: None,
+            resume_daemon_mode: None,
             startup_error: None,
             ingest_abort: None,
             pty: None,
