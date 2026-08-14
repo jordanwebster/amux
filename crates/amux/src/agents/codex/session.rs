@@ -201,12 +201,12 @@ async fn set_thread_name(
     agent_id: Uuid,
     thread_id: &str,
     name: &str,
-) -> Result<(), String> {
+) -> Result<(), CodexError> {
     match client.rename_thread(thread_id, name).await {
         Ok(()) => Ok(()),
         Err(error) => {
             tracing::warn!(%agent_id, %thread_id, %error, "failed to name Codex thread");
-            Err(error.to_string())
+            Err(error)
         }
     }
 }
@@ -510,6 +510,7 @@ async fn run_ingest_supervisor(
     mut stop_rx: watch::Receiver<bool>,
 ) {
     let mut retry = 0_usize;
+    let mut ambiguous_started_thread_id = None;
     // Capture-rig fault injection: close only this SDK transport once. The
     // daemon and other processes remain untouched.
     let mut capture_drop_connection =
@@ -519,24 +520,31 @@ async fn run_ingest_supervisor(
             break;
         }
 
-        let (connection, mut thread, provenance) =
-            match attach_thread(&shared_client, &thread_config, thread_id.as_deref()).await {
-                Ok(attached) => attached,
-                Err(error) => {
-                    let message = error.to_string();
-                    let pending = mark_disconnected(&runtime, Some(message.clone()));
-                    resolve_pending(&log_source, pending, "connection_lost").await;
-                    write_reconnect_error(&log_source, &message).await;
-                    if wait_for_retry(&mut stop_rx, retry).await {
-                        break;
-                    }
-                    retry = (retry + 1).min(RECONNECT_BACKOFF.len() - 1);
-                    continue;
+        let (connection, mut thread, provenance) = match attach_thread(
+            &shared_client,
+            &thread_config,
+            thread_id.as_deref(),
+            ambiguous_started_thread_id.as_deref(),
+        )
+        .await
+        {
+            Ok(attached) => attached,
+            Err(error) => {
+                let message = error.to_string();
+                let pending = mark_disconnected(&runtime, Some(message.clone()));
+                resolve_pending(&log_source, pending, "connection_lost").await;
+                write_reconnect_error(&log_source, &message).await;
+                if wait_for_retry(&mut stop_rx, retry).await {
+                    break;
                 }
-            };
+                retry = (retry + 1).min(RECONNECT_BACKOFF.len() - 1);
+                continue;
+            }
+        };
+        ambiguous_started_thread_id = None;
         let applied_name_generation = match provenance {
             AttachmentProvenance::Started => {
-                let Some(materialized) = materialize_started_thread(
+                let materialized = materialize_started_thread(
                     &connection.client,
                     agent_id,
                     &thread_config,
@@ -545,12 +553,28 @@ async fn run_ingest_supervisor(
                     &log_source,
                     &mut stop_rx,
                 )
-                .await
-                else {
-                    break;
-                };
-                thread = materialized.thread;
-                materialized.applied_name_generation
+                .await;
+                match materialized {
+                    MaterializeStartOutcome::Ready(materialized) => {
+                        thread = materialized.thread;
+                        materialized.applied_name_generation
+                    }
+                    MaterializeStartOutcome::TransportLost {
+                        candidate_thread_id,
+                        message,
+                    } => {
+                        ambiguous_started_thread_id = Some(candidate_thread_id);
+                        let pending = mark_disconnected(&runtime, Some(message.clone()));
+                        resolve_pending(&log_source, pending, "connection_lost").await;
+                        write_reconnect_error(&log_source, &message).await;
+                        if wait_for_retry(&mut stop_rx, retry).await {
+                            break;
+                        }
+                        retry = (retry + 1).min(RECONNECT_BACKOFF.len() - 1);
+                        continue;
+                    }
+                    MaterializeStartOutcome::Stopped => break,
+                }
             }
             AttachmentProvenance::Resumed => None,
         };
@@ -636,9 +660,20 @@ struct MaterializedStart {
     applied_name_generation: Option<u64>,
 }
 
+enum MaterializeStartOutcome {
+    Ready(MaterializedStart),
+    TransportLost {
+        candidate_thread_id: String,
+        message: String,
+    },
+    Stopped,
+}
+
 /// Keep a fresh thread private until its rollout exists. A failed naming
 /// response is ambiguous, so resume is the authority: success commits this
-/// same id; failure leaves the original in-memory thread available for retry.
+/// same id; RPC failure leaves the original in-memory thread available for
+/// retry, while transport loss returns the candidate id to the reconnecting
+/// supervisor.
 async fn materialize_started_thread(
     client: &Codex,
     agent_id: Uuid,
@@ -647,7 +682,7 @@ async fn materialize_started_thread(
     runtime: &Arc<StdMutex<CodexRuntime>>,
     log_source: &StructuredLogSource,
     stop_rx: &mut watch::Receiver<bool>,
-) -> Option<MaterializedStart> {
+) -> MaterializeStartOutcome {
     let mut retry = 0_usize;
     let mut registration_replaced = false;
     loop {
@@ -662,7 +697,10 @@ async fn materialize_started_thread(
                 let _ = changed;
                 None
             }
-        }?;
+        };
+        let Some(naming) = naming else {
+            return MaterializeStartOutcome::Stopped;
+        };
         match naming {
             Ok(()) => {
                 if registration_replaced {
@@ -672,13 +710,25 @@ async fn materialize_started_thread(
                             let _ = changed;
                             None
                         }
-                    }?;
+                    };
+                    let Some(resumed) = resumed else {
+                        return MaterializeStartOutcome::Stopped;
+                    };
                     match resumed {
                         Ok(thread) => {
-                            return Some(MaterializedStart {
+                            return MaterializeStartOutcome::Ready(MaterializedStart {
                                 thread,
                                 applied_name_generation: Some(generation),
                             });
+                        }
+                        Err(CodexError::TransportClosed) => {
+                            return MaterializeStartOutcome::TransportLost {
+                                candidate_thread_id: thread.id().to_string(),
+                                message: format!(
+                                    "Codex transport closed while restoring fresh thread {} after naming",
+                                    thread.id()
+                                ),
+                            };
                         }
                         Err(error) => {
                             let message = format!(
@@ -693,11 +743,20 @@ async fn materialize_started_thread(
                         }
                     }
                 } else {
-                    return Some(MaterializedStart {
+                    return MaterializeStartOutcome::Ready(MaterializedStart {
                         thread,
                         applied_name_generation: Some(generation),
                     });
                 }
+            }
+            Err(CodexError::TransportClosed) => {
+                return MaterializeStartOutcome::TransportLost {
+                    candidate_thread_id: thread.id().to_string(),
+                    message: format!(
+                        "Codex transport closed while materializing fresh thread {}",
+                        thread.id()
+                    ),
+                };
             }
             Err(name_error) => {
                 // codex-sdk replaces the thread's event registration before
@@ -711,15 +770,27 @@ async fn materialize_started_thread(
                         let _ = changed;
                         None
                     }
-                }?;
+                };
+                let Some(resume) = resume else {
+                    return MaterializeStartOutcome::Stopped;
+                };
                 match resume {
                     Ok(resumed) => {
-                        return Some(MaterializedStart {
+                        return MaterializeStartOutcome::Ready(MaterializedStart {
                             thread: resumed,
                             // Resume proves the rollout exists, but not which
                             // desired-name generation won an ambiguous reply.
                             applied_name_generation: None,
                         });
+                    }
+                    Err(CodexError::TransportClosed) => {
+                        return MaterializeStartOutcome::TransportLost {
+                            candidate_thread_id: thread.id().to_string(),
+                            message: format!(
+                                "Codex transport closed while checking materialization of fresh thread {}",
+                                thread.id()
+                            ),
+                        };
                     }
                     Err(resume_error) => {
                         let message = format!(
@@ -736,7 +807,7 @@ async fn materialize_started_thread(
             }
         }
         if wait_for_retry(stop_rx, retry).await {
-            return None;
+            return MaterializeStartOutcome::Stopped;
         }
         retry = (retry + 1).min(RECONNECT_BACKOFF.len() - 1);
     }
@@ -839,6 +910,7 @@ async fn attach_thread(
     shared_client: &CodexClient,
     thread_config: &ThreadConfig,
     thread_id: Option<&str>,
+    ambiguous_started_thread_id: Option<&str>,
 ) -> Result<(Arc<CodexConnection>, Thread, AttachmentProvenance)> {
     let connection = shared_client.connection().await?;
     let (thread, provenance) = match thread_id {
@@ -849,15 +921,40 @@ async fn attach_thread(
                 .await?;
             (thread, AttachmentProvenance::Resumed)
         }
-        None => (
-            connection
+        None => match ambiguous_started_thread_id {
+            Some(candidate_id) => match connection
                 .client
-                .start_thread(thread_config.clone())
-                .await?,
-            AttachmentProvenance::Started,
-        ),
+                .resume_thread(candidate_id, thread_config.clone())
+                .await
+            {
+                Ok(thread) => (thread, AttachmentProvenance::Resumed),
+                Err(error) if is_missing_rollout(&error) => (
+                    connection
+                        .client
+                        .start_thread(thread_config.clone())
+                        .await?,
+                    AttachmentProvenance::Started,
+                ),
+                Err(error) => return Err(error.into()),
+            },
+            None => (
+                connection
+                    .client
+                    .start_thread(thread_config.clone())
+                    .await?,
+                AttachmentProvenance::Started,
+            ),
+        },
     };
     Ok((connection, thread, provenance))
+}
+
+fn is_missing_rollout(error: &CodexError) -> bool {
+    matches!(
+        error,
+        CodexError::Rpc { message, .. }
+            if message.starts_with("no rollout found for thread id")
+    )
 }
 
 async fn wait_for_retry(stop_rx: &mut watch::Receiver<bool>, retry: usize) -> bool {
@@ -1671,7 +1768,7 @@ mod tests {
         let materialize_runtime = runtime.clone();
         let materialize_source = source.clone();
         let materialize = tokio::spawn(async move {
-            materialize_started_thread(
+            match materialize_started_thread(
                 &materialize_client,
                 Uuid::from_u128(1),
                 &ThreadConfig::default(),
@@ -1681,7 +1778,10 @@ mod tests {
                 &mut stop_rx,
             )
             .await
-            .unwrap()
+            {
+                MaterializeStartOutcome::Ready(materialized) => materialized,
+                _ => panic!("materialization did not complete"),
+            }
         });
 
         let first = read_request(&mut reader).await;
@@ -1810,7 +1910,7 @@ mod tests {
         let materialize_runtime = runtime.clone();
         let materialize_source = source.clone();
         let materialize = tokio::spawn(async move {
-            materialize_started_thread(
+            match materialize_started_thread(
                 &materialize_client,
                 Uuid::from_u128(1),
                 &ThreadConfig::default(),
@@ -1820,7 +1920,10 @@ mod tests {
                 &mut stop_rx,
             )
             .await
-            .unwrap()
+            {
+                MaterializeStartOutcome::Ready(materialized) => materialized,
+                _ => panic!("materialization did not complete"),
+            }
         });
         let first_name = read_request(&mut reader).await;
         assert_eq!(first_name["method"], "thread/name/set");
@@ -1853,6 +1956,143 @@ mod tests {
         assert!(runtime.lock().unwrap().attached.is_none());
         let _ = stop_tx.send(true);
         client.close().await;
+    }
+
+    async fn install_test_connection(shared: &CodexClient, client: Codex, socket_path: &Path) {
+        *shared.connection.lock().await = Some(Arc::new(CodexConnection {
+            client,
+            mode: "test",
+            socket_path: socket_path.to_path_buf(),
+            _daemon: DaemonMode::PrivateExisting(socket_path.to_path_buf()),
+        }));
+    }
+
+    async fn bootstrap_naming_transport_loss_recovers(candidate_resumes: bool) {
+        let (initial_client, mut initial_reader, mut initial_writer) = mock_codex().await;
+        let (fresh_client, mut fresh_reader, mut fresh_writer) = mock_codex().await;
+        let shared = Arc::new(CodexClient::new(PathBuf::from("/tmp/test-codex.sock")));
+        install_test_connection(
+            &shared,
+            initial_client.clone(),
+            Path::new("/tmp/initial.sock"),
+        )
+        .await;
+        let runtime = Arc::new(StdMutex::new(CodexRuntime {
+            desired_name: None,
+            desired_name_generation: 0,
+            name_reconciler_running: false,
+            attached: None,
+            resume_daemon_mode: None,
+            startup_error: None,
+            ingest_abort: None,
+            pty: None,
+            next_pty_epoch: 0,
+        }));
+        let source = StructuredLogSource::new(16);
+        let (stop_tx, stop_rx) = watch::channel(false);
+        let supervisor = tokio::spawn(run_ingest_supervisor(
+            Uuid::from_u128(1),
+            shared.clone(),
+            runtime.clone(),
+            source,
+            ThreadConfig::default(),
+            None,
+            stop_rx,
+        ));
+
+        let start = read_request(&mut initial_reader).await;
+        assert_eq!(start["method"], "thread/start");
+        write_response(
+            &mut initial_writer,
+            &start,
+            thread_session("thread-candidate", None),
+        )
+        .await;
+        let naming = read_request(&mut initial_reader).await;
+        assert_eq!(naming["method"], "thread/name/set");
+        assert_eq!(naming["params"]["threadId"], "thread-candidate");
+        assert!(runtime.lock().unwrap().attached.is_none());
+
+        initial_client.clone().close().await;
+        install_test_connection(&shared, fresh_client.clone(), Path::new("/tmp/fresh.sock")).await;
+
+        let resume = tokio::time::timeout(Duration::from_secs(2), read_request(&mut fresh_reader))
+            .await
+            .expect("supervisor wedged instead of reconnecting");
+        assert_eq!(resume["method"], "thread/resume");
+        assert_eq!(resume["params"]["threadId"], "thread-candidate");
+        assert!(
+            runtime.lock().unwrap().attached.is_none(),
+            "ambiguous candidate published before authoritative resume"
+        );
+
+        let expected_id = if candidate_resumes {
+            write_response(
+                &mut fresh_writer,
+                &resume,
+                thread_session("thread-candidate", Some("amux-00000000")),
+            )
+            .await;
+            "thread-candidate"
+        } else {
+            write_rpc_error(
+                &mut fresh_writer,
+                &resume,
+                "no rollout found for thread id thread-candidate",
+            )
+            .await;
+            let replacement = read_request(&mut fresh_reader).await;
+            assert_eq!(replacement["method"], "thread/start");
+            write_response(
+                &mut fresh_writer,
+                &replacement,
+                thread_session("thread-replacement", None),
+            )
+            .await;
+            let replacement_name = read_request(&mut fresh_reader).await;
+            assert_eq!(replacement_name["method"], "thread/name/set");
+            assert_eq!(replacement_name["params"]["threadId"], "thread-replacement");
+            assert!(
+                runtime.lock().unwrap().attached.is_none(),
+                "replacement published before naming materialized it"
+            );
+            write_response(&mut fresh_writer, &replacement_name, json!({})).await;
+            "thread-replacement"
+        };
+
+        tokio::time::timeout(Duration::from_secs(2), async {
+            loop {
+                if runtime
+                    .lock()
+                    .unwrap()
+                    .attached
+                    .as_ref()
+                    .is_some_and(|attached| attached.thread_id == expected_id)
+                {
+                    break;
+                }
+                tokio::task::yield_now().await;
+            }
+        })
+        .await
+        .expect("agent did not publish the proven thread after reconnect");
+
+        stop_tx.send(true).unwrap();
+        tokio::time::timeout(Duration::from_secs(2), supervisor)
+            .await
+            .expect("supervisor did not stop")
+            .unwrap();
+        fresh_client.close().await;
+    }
+
+    #[tokio::test]
+    async fn naming_transport_loss_reconnects_and_publishes_resumable_candidate() {
+        bootstrap_naming_transport_loss_recovers(true).await;
+    }
+
+    #[tokio::test]
+    async fn naming_transport_loss_reconnects_and_replaces_missing_candidate() {
+        bootstrap_naming_transport_loss_recovers(false).await;
     }
 
     #[test]
