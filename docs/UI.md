@@ -1,10 +1,11 @@
 # The amux client layer
 
-Status: normative design, pre-implementation, revised after external review
-(see git history; review findings in the 2026-08 devlog entries). This
-document owns the client side of amux: the `amux-ui` state library, its
-renderers (the TUI first, desktop and mobile clients later), and the rules
-that keep per-agent knowledge in the right place. Companions:
+Status: normative, and implemented for two agents — Claude
+(`docs/CHAT.md`) and Codex (`docs/CODEX.md`) — revised after external
+review (see git history; review findings in the 2026-08 devlog entries).
+This document owns the client side of amux: the `amux-ui` state library,
+its renderers (the TUI first, desktop and mobile clients later), and the
+rules that keep per-agent knowledge in the right place. Companions:
 `docs/PROTOCOL.md` owns the wire, `docs/ARCHITECTURE.md` owns the system.
 The executable half of this document will be the amux-ui spec suite,
 mirroring `crates/amux/tests/spec/`; where prose and passing spec
@@ -134,9 +135,36 @@ agent type degrades to the `AgentCard` and can still attach to its raw
 terminal when the session advertises the agent-independent core protocol
 `terminal_v1`; every PTY-backed session currently advertises it.
 
+The registry as built: `AgentLayer` is an exhaustive enum over
+`Claude` and `Codex` (plus a dev-only test agent). Exhaustive `match`
+is the mechanism — adding a layer is a compile error at every site that
+must decide something, which is the point. `Model`'s fields are
+`pub(crate)`, so a renderer structurally cannot reach past the
+projections to the raw layer state.
+
+**One classification per layer, projected — not several derivations of
+one fact.** Within a layer, `phase`, `attention`, the send gate and the
+write permissions are all projections of a single private
+classification, and the kernel's stream lifecycle is folded in at that
+one point rather than at each projection. Two rules follow, both bought
+expensively:
+
+- The classification must be **lossless with respect to every question
+  asked of it**. Collapsing orthogonal facts (in Codex: "a turn is
+  active" and "an input is in flight") into one value means some
+  projection loses the fact it needed, and answers wrong with the full
+  confidence of a deliberate architecture.
+- Where two derivations must coexist, assert their **agreement** as an
+  invariant, not each one's correctness separately. `check_invariants`
+  runs after every Msg of every registered spec sequence, so agreement
+  is a CI property; a violation panics in debug and dumps in release.
+
 Where shared chrome needs cross-agent facts (badges, sort order),
 per-agent **summarizers** derive kernel vocabulary — a handful of fields.
-Summarize for chrome; never normalize content.
+Summarize for chrome; never normalize content. Summarizers are projections
+too: a cached badge that disagrees with the phase it is meant to summarize
+is a bug, and both layers now project cached attention under the kernel
+stream phase for exactly that reason.
 
 **Attention** ("this agent needs you") is the canonical summary: derived
 at observation time by a per-agent fold — stream entries in, attention

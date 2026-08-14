@@ -34,6 +34,21 @@ Around the daemon sit its clients and consumers:
   protocol actor for wire-conformance tests. `crates/e2e-runner` drives
   real compiled binaries end to end.
 
+A daemon also owns whatever its **agent backends** need, and those are
+not all the same shape. `AgentBackend` is a trait
+(`Box<dyn AgentBackend>`), and the two implemented backends differ at the
+process level, not just in protocol: a Claude agent is a **PTY the daemon
+owns and reads**, while a Codex agent is a **thread on a Codex
+app-server** the daemon connects to — one shared, supervised server
+process group for every Codex agent in the daemon, spawned on the
+well-known socket or on a private one when that is unusable. Agent
+identity therefore outlives the daemon: a Codex thread id survives
+restarts of both amux and the server, which is what makes suspend/resume
+work. A Codex agent additionally exposes its own raw PTY (`codex resume`)
+on the agent-independent `terminal_v1` plane, so the real Codex TUI and
+amux's native chat screen can be live on one agent at once.
+`docs/CODEX.md` owns the detail.
+
 A daemon owns two listeners. The **local Unix socket**
 (`Config.socket_path`, mode `600`) is always on and carries local
 clients. The **external TCP listener** (`tcp_port`) is off by default —
