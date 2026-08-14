@@ -815,10 +815,6 @@ impl CodexLayer {
         self.inputs.iter()
     }
 
-    pub fn latest_token_usage(&self) -> Option<&TokenUsage> {
-        self.latest_usage.as_ref()
-    }
-
     fn live(&self) -> bool {
         self.ready_count > 0 || self.truncated_start && self.replay_complete
     }
