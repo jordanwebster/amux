@@ -12,7 +12,7 @@
 //!
 //! The suite drives the prebuilt `target/debug/amux`, which this target does
 //! not rebuild; the harness refuses to start against a binary older than the
-//! workspace sources rather than reporting on code it never ran.
+//! prerequisites in Cargo's depfile rather than reporting on code it never ran.
 //!
 //! `c-all` selects C.1-C.10. Each scenario has one row in [`SCENARIOS`], so
 //! its id, requirement, timeout, and runner stay together. Captures land in a
@@ -22,6 +22,7 @@
 
 #[cfg(unix)]
 mod codex_capture {
+    pub mod depfile;
     pub mod harness;
     pub mod redact;
     pub mod structure;

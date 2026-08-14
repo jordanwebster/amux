@@ -1632,13 +1632,14 @@ mod tests {
         write_rpc_error(&mut writer, &rename, "injected name failure").await;
         tokio::task::yield_now().await;
 
-        let state = session.runtime.lock().unwrap();
-        let attached = state.attached.as_ref().expect("resume stays published");
-        assert!(
-            attached.live.is_some(),
-            "name failure must not detach resume"
-        );
-        drop(state);
+        {
+            let state = session.runtime.lock().unwrap();
+            let attached = state.attached.as_ref().expect("resume stays published");
+            assert!(
+                attached.live.is_some(),
+                "name failure must not detach resume"
+            );
+        }
         let error = match session.pty_handle() {
             Ok(_) => panic!("missing mock socket must fail after reaching raw spawn path"),
             Err(error) => error.to_string(),

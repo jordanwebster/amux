@@ -20,6 +20,7 @@ use serde_json::{Value, json};
 use tempfile::TempDir;
 use uuid::Uuid;
 
+use super::depfile::assert_binary_is_current;
 use super::structure::{self, Matcher, Row};
 
 pub const READY_TIMEOUT: Duration = Duration::from_secs(90);
@@ -238,12 +239,6 @@ impl Harness {
 
 async fn start_daemon(scratch: &Scratch) -> Result<ScratchDaemon> {
     let amux = target_debug_dir()?.join("amux");
-    if !amux.exists() {
-        bail!(
-            "amux binary missing at {}; run `cargo build -p amux-cli` first",
-            amux.display()
-        );
-    }
     assert_binary_is_current(&amux)?;
     let stdout = OpenOptions::new()
         .create(true)
@@ -307,54 +302,6 @@ async fn start_daemon(scratch: &Scratch) -> Result<ScratchDaemon> {
 /// binary reports on code that is not in the tree — it silently passes changes
 /// it never executed, and silently "passes" reverts too. The header says to
 /// build the CLI first; this makes it a control rather than an instruction.
-fn assert_binary_is_current(amux: &Path) -> Result<()> {
-    let built = std::fs::metadata(amux)
-        .and_then(|meta| meta.modified())
-        .with_context(|| format!("stat {}", amux.display()))?;
-    let crates = workspace_crates_dir()?;
-    let mut newest: Option<(PathBuf, std::time::SystemTime)> = None;
-    // Only `src/` — the daemon binary is built from crate sources, and test
-    // files (this one included) are not in its dependency graph, so comparing
-    // against them would demand rebuilds that change nothing.
-    let mut stack: Vec<PathBuf> = std::fs::read_dir(&crates)
-        .with_context(|| format!("read {}", crates.display()))?
-        .filter_map(|entry| entry.ok().map(|entry| entry.path().join("src")))
-        .filter(|src| src.is_dir())
-        .collect();
-    while let Some(dir) = stack.pop() {
-        for entry in std::fs::read_dir(&dir).with_context(|| format!("read {}", dir.display()))? {
-            let entry = entry?;
-            let path = entry.path();
-            if entry.file_type()?.is_dir() {
-                stack.push(path);
-            } else if path.extension().is_some_and(|ext| ext == "rs") {
-                let modified = entry.metadata()?.modified()?;
-                if newest.as_ref().is_none_or(|(_, best)| modified > *best) {
-                    newest = Some((path, modified));
-                }
-            }
-        }
-    }
-    if let Some((path, modified)) = newest
-        && modified > built
-    {
-        bail!(
-            "{} is older than {}; run `cargo build -p amux-cli` — the C suite drives the \
-             prebuilt binary and would otherwise report on code it never ran",
-            amux.display(),
-            path.display()
-        );
-    }
-    Ok(())
-}
-
-fn workspace_crates_dir() -> Result<PathBuf> {
-    Path::new(env!("CARGO_MANIFEST_DIR"))
-        .parent()
-        .map(Path::to_path_buf)
-        .ok_or_else(|| anyhow!("amux package lives below the workspace crates directory"))
-}
-
 fn target_debug_dir() -> Result<PathBuf> {
     let exe = std::env::current_exe().context("current_exe")?;
     exe.parent()

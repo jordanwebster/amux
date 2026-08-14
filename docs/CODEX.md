@@ -33,25 +33,38 @@ One app-server serves every codex agent in the daemon. Threads are the
 unit of identity: an agent *is* a thread id, which is why suspend and
 resume survive a restart of both amux and the server.
 
-### A started thread is not yet a real one
+### A started thread has no rollout yet
 
-`thread/start` creates a thread **in the app-server's memory only**. It
-reports the rollout path it *will* use and writes nothing there. Every
-operation that needs that rollout — `thread/resume`, which the raw TUI
-runs at bootstrap, and `thread/archive` — fails with `no rollout found
-for thread id` until something persists it.
+`thread/start` creates a live, non-ephemeral thread and reports the
+prospective rollout path, but does not materialize that rollout. (Starting
+the app-server can write other Codex-home state.) Operations that require
+the rollout — including `thread/resume`, which the raw TUI runs at
+bootstrap, and `thread/archive` — fail with `no rollout found for thread
+id` until an unrelated mutation persists it.
 
-Codex 0.147 exposes no persist call. Two operations materialize a thread
-as a side effect: `thread/name/set` and `thread/memoryMode/set`. amux
-uses naming, because a name is inert where a memory mode is a real
-setting we would be guessing at, and because the effect is visible to the
-user and reversible.
+Codex 0.147 exposes no persist call. Several side effects materialize a
+thread: naming, memory mode, Git metadata updates, injected history, and
+feature-gated goals all do; settings updates do not. Naming is the least
+invasive option that applies universally. Memory mode is experimental and
+behavioral, Git metadata is neither universal nor inert, injected items
+alter the transcript, and goals are feature-gated and can start work. A
+name is standard, visible, and replaceable, though 0.147 cannot restore it
+to `None`.
 
 So **every codex thread amux creates is named**, whether or not the agent
 is. The two names are separate: an unnamed agent gets the bootstrap label
 `amux-<first 8 hex of the agent id>` on its *thread*, and stays unnamed
 itself, showing the usual `name → provider label → short id` fallback in
-the clients. Naming the agent later overwrites the bootstrap label.
+the clients. Naming the agent later overwrites the bootstrap label;
+clearing the name restores it.
+
+The initial structured attachment can use the live in-memory thread, but
+that does not remove the need for eager materialization: amux's structured
+reconnect, suspend/resume, and daemon-recovery paths all issue
+`thread/resume`. Fresh attachments therefore materialize before publishing
+their durable thread id. A successful resume is already authoritative, so
+later naming failure remains retryable metadata work and never disables raw
+attach.
 
 This is a workaround for upstream behaviour that is arguably a defect — a
 server that hands you a thread and then refuses to resume it — and should
@@ -242,12 +255,13 @@ Three tiers, in increasing cost:
    waiters, driven offline from redacted rows captured off real failing
    runs. No codex process, no credentials, no network.
 3. **`crates/amux/tests/codex_capture.rs`** — the **C suite**: opt-in,
-   real codex, nine scenarios (C.1–C.9) covering create+pong, approval
+   real codex, ten scenarios (C.1–C.10) covering create+pong, approval
    allow and deny *with filesystem assertions*, interrupt and reuse,
    suspend/resume across a server restart, real process-group daemon
    recovery, raw+structured coexistence, two-subscriber byte fanout, and
    raw attach on an *unnamed* agent — the product default, and the one
-   parameter a hardcoded fixture hid for the whole of P9.
+   parameter a hardcoded fixture hid for the whole of P9 — plus unnamed
+   zero-turn suspend/resume.
 
 The C suite is inert in `cargo test --workspace` — with no scenario named
 it prints a skip note and exits 0 before creating a scratch directory,
@@ -257,9 +271,10 @@ and runner in one row so they cannot drift apart.
 It drives the prebuilt `target/debug/amux`, which `cargo test -p amux
 --test codex_capture` does not rebuild, so a stale binary would report on
 code that is not in the tree — passing changes it never executed, and
-"passing" reverts too. The harness refuses to start against a binary
-older than any workspace `src/` file rather than trusting the reminder to
-build first.
+"passing" reverts too. The harness reads Cargo's `target/debug/amux.d`
+depfile and refuses to start when the binary is older than one of its
+actual prerequisites. This covers Rust, proto, plugin, and generated
+inputs without inventing a second workspace dependency graph.
 
 ```sh
 cargo build -p amux-cli
