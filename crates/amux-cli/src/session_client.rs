@@ -350,10 +350,13 @@ async fn attach_new_codex_terminal(
     attach_subscribed(rpc, session, agent, leader, handback).await
 }
 
+/// Only the transient not-yet-published case is worth retrying. A thread that
+/// failed to materialize reports a different error, and waiting will not fix
+/// it, so this must not match it.
 fn codex_thread_not_ready(error: &anyhow::Error) -> bool {
     error
         .to_string()
-        .contains("Codex raw session is not ready: thread_id is not available yet")
+        .contains(amux::codex_io::CODEX_RAW_THREAD_NOT_READY)
 }
 
 async fn attach_subscribed(

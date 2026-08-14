@@ -202,14 +202,18 @@ impl Harness {
         wait
     }
 
-    pub async fn create_agent(&self, scenario: &str, model: &str) -> Result<Uuid> {
+    /// `scenario: None` creates an agent with no name — the product default
+    /// for `amux new codex`, and the case a hardcoded `Some(..)` here hid:
+    /// naming a thread is what persists it, so an unnamed agent exercised a
+    /// materially different path that nothing covered.
+    pub async fn create_agent(&self, scenario: Option<&str>, model: &str) -> Result<Uuid> {
         let agent_id = Uuid::new_v4();
         let agent = self
             .client()
             .create_agent(CreateAgentRequest {
                 agent_id,
                 host_id: None,
-                name: Some(format!("codex-c-{scenario}")),
+                name: scenario.map(|scenario| format!("codex-c-{scenario}")),
                 agent_type: AgentType::Codex {
                     model: Some(model.to_string()),
                     approval_policy: Some("on-request".into()),
@@ -240,6 +244,7 @@ async fn start_daemon(scratch: &Scratch) -> Result<ScratchDaemon> {
             amux.display()
         );
     }
+    assert_binary_is_current(&amux)?;
     let stdout = OpenOptions::new()
         .create(true)
         .append(true)
@@ -295,6 +300,59 @@ async fn start_daemon(scratch: &Scratch) -> Result<ScratchDaemon> {
             }
         }
     }
+}
+
+/// The suite drives the prebuilt `target/debug/amux`, which `cargo test -p amux
+/// --test codex_capture` does not rebuild. A scenario run against a stale
+/// binary reports on code that is not in the tree — it silently passes changes
+/// it never executed, and silently "passes" reverts too. The header says to
+/// build the CLI first; this makes it a control rather than an instruction.
+fn assert_binary_is_current(amux: &Path) -> Result<()> {
+    let built = std::fs::metadata(amux)
+        .and_then(|meta| meta.modified())
+        .with_context(|| format!("stat {}", amux.display()))?;
+    let crates = workspace_crates_dir()?;
+    let mut newest: Option<(PathBuf, std::time::SystemTime)> = None;
+    // Only `src/` — the daemon binary is built from crate sources, and test
+    // files (this one included) are not in its dependency graph, so comparing
+    // against them would demand rebuilds that change nothing.
+    let mut stack: Vec<PathBuf> = std::fs::read_dir(&crates)
+        .with_context(|| format!("read {}", crates.display()))?
+        .filter_map(|entry| entry.ok().map(|entry| entry.path().join("src")))
+        .filter(|src| src.is_dir())
+        .collect();
+    while let Some(dir) = stack.pop() {
+        for entry in std::fs::read_dir(&dir).with_context(|| format!("read {}", dir.display()))? {
+            let entry = entry?;
+            let path = entry.path();
+            if entry.file_type()?.is_dir() {
+                stack.push(path);
+            } else if path.extension().is_some_and(|ext| ext == "rs") {
+                let modified = entry.metadata()?.modified()?;
+                if newest.as_ref().is_none_or(|(_, best)| modified > *best) {
+                    newest = Some((path, modified));
+                }
+            }
+        }
+    }
+    if let Some((path, modified)) = newest
+        && modified > built
+    {
+        bail!(
+            "{} is older than {}; run `cargo build -p amux-cli` — the C suite drives the \
+             prebuilt binary and would otherwise report on code it never ran",
+            amux.display(),
+            path.display()
+        );
+    }
+    Ok(())
+}
+
+fn workspace_crates_dir() -> Result<PathBuf> {
+    Path::new(env!("CARGO_MANIFEST_DIR"))
+        .parent()
+        .map(Path::to_path_buf)
+        .ok_or_else(|| anyhow!("amux package lives below the workspace crates directory"))
 }
 
 fn target_debug_dir() -> Result<PathBuf> {

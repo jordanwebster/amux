@@ -10,7 +10,11 @@
 //!   cargo test -p amux --test codex_capture -- c1_pong
 //! ```
 //!
-//! `c-all` selects C.1-C.8. Each scenario has one row in [`SCENARIOS`], so
+//! The suite drives the prebuilt `target/debug/amux`, which this target does
+//! not rebuild; the harness refuses to start against a binary older than the
+//! workspace sources rather than reporting on code it never ran.
+//!
+//! `c-all` selects C.1-C.9. Each scenario has one row in [`SCENARIOS`], so
 //! its id, requirement, timeout, and runner stay together. Captures land in a
 //! scenario-named child of `AMUX_CODEX_CAPTURE_DIR` (or a timestamped default)
 //! and include backend rows, SDK IO, observed subscription rows, raw bytes
@@ -53,6 +57,7 @@ fn main() -> anyhow::Result<()> {
         DaemonRecovery,
         RawCoexistence,
         RawFanout,
+        RawUnnamed,
     }
 
     #[derive(Clone, Copy)]
@@ -121,6 +126,12 @@ fn main() -> anyhow::Result<()> {
             420,
             Scenario::RawFanout,
         ),
+        scenario(
+            "c9_raw_unnamed",
+            "C.9 raw attach on an unnamed agent",
+            300,
+            Scenario::RawUnnamed,
+        ),
     ];
 
     fn validate_scenarios() -> Result<()> {
@@ -186,6 +197,14 @@ fn main() -> anyhow::Result<()> {
     async fn open(
         harness: &Harness,
         scenario: &str,
+        model: &str,
+    ) -> Result<(uuid::Uuid, StructuredCapture, usize)> {
+        open_named(harness, Some(scenario), model).await
+    }
+
+    async fn open_named(
+        harness: &Harness,
+        scenario: Option<&str>,
         model: &str,
     ) -> Result<(uuid::Uuid, StructuredCapture, usize)> {
         let agent = harness.create_agent(scenario, model).await?;
@@ -472,6 +491,23 @@ fn main() -> anyhow::Result<()> {
         }))
     }
 
+    /// The product default: `amux new codex` with no `--name`. Raw attach goes
+    /// through `codex resume`, which refuses a thread that was never
+    /// persisted, and naming is what persists one — so an unnamed agent must
+    /// still reach a live raw screen. No turn is taken; this costs no quota.
+    async fn raw_unnamed(harness: &mut Harness, model: &str) -> Result<Value> {
+        let (agent, _capture, _) = open_named(harness, None, model).await?;
+        let mut raw = subscribe_raw(harness, agent).await?;
+        let raw_bytes = raw_until(&mut raw, RAW_TIMEOUT, b"\x1b").await?;
+        std::fs::write(harness.scratch.out.join("raw.log"), &raw_bytes)?;
+        harness.client().delete_agent(agent).await?;
+        Ok(json!({
+            "raw_bytes": raw_bytes.len(),
+            "agent_named": false,
+            "assertions": {"raw_ansi_screen_without_agent_name": true}
+        }))
+    }
+
     async fn raw_fanout(harness: &mut Harness, model: &str) -> Result<Value> {
         let (agent, mut capture, cursor) = open(harness, "c8-raw-fanout", model).await?;
         let mut first = subscribe_raw(harness, agent).await?;
@@ -539,6 +575,7 @@ fn main() -> anyhow::Result<()> {
             Scenario::DaemonRecovery => daemon_recovery(harness, model).await,
             Scenario::RawCoexistence => raw_coexistence(harness, model).await,
             Scenario::RawFanout => raw_fanout(harness, model).await,
+            Scenario::RawUnnamed => raw_unnamed(harness, model).await,
         }
     }
 

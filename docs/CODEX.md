@@ -33,6 +33,30 @@ One app-server serves every codex agent in the daemon. Threads are the
 unit of identity: an agent *is* a thread id, which is why suspend and
 resume survive a restart of both amux and the server.
 
+### A started thread is not yet a real one
+
+`thread/start` creates a thread **in the app-server's memory only**. It
+reports the rollout path it *will* use and writes nothing there. Every
+operation that needs that rollout — `thread/resume`, which the raw TUI
+runs at bootstrap, and `thread/archive` — fails with `no rollout found
+for thread id` until something persists it.
+
+Codex 0.147 exposes no persist call. Two operations materialize a thread
+as a side effect: `thread/name/set` and `thread/memoryMode/set`. amux
+uses naming, because a name is inert where a memory mode is a real
+setting we would be guessing at, and because the effect is visible to the
+user and reversible.
+
+So **every codex thread amux creates is named**, whether or not the agent
+is. The two names are separate: an unnamed agent gets the bootstrap label
+`amux-<first 8 hex of the agent id>` on its *thread*, and stays unnamed
+itself, showing the usual `name → provider label → short id` fallback in
+the clients. Naming the agent later overwrites the bootstrap label.
+
+This is a workaround for upstream behaviour that is arguably a defect — a
+server that hands you a thread and then refuses to resume it — and should
+be revisited if codex grows a real persist call.
+
 ## The two planes
 
 A codex agent exposes two independent subscription protocols. Both can
@@ -218,15 +242,24 @@ Three tiers, in increasing cost:
    waiters, driven offline from redacted rows captured off real failing
    runs. No codex process, no credentials, no network.
 3. **`crates/amux/tests/codex_capture.rs`** — the **C suite**: opt-in,
-   real codex, eight scenarios (C.1–C.8) covering create+pong, approval
+   real codex, nine scenarios (C.1–C.9) covering create+pong, approval
    allow and deny *with filesystem assertions*, interrupt and reuse,
    suspend/resume across a server restart, real process-group daemon
-   recovery, raw+structured coexistence, and two-subscriber byte fanout.
+   recovery, raw+structured coexistence, two-subscriber byte fanout, and
+   raw attach on an *unnamed* agent — the product default, and the one
+   parameter a hardcoded fixture hid for the whole of P9.
 
 The C suite is inert in `cargo test --workspace` — with no scenario named
 it prints a skip note and exits 0 before creating a scratch directory,
 server, process, or request. `SCENARIOS` binds id, requirement, timeout
 and runner in one row so they cannot drift apart.
+
+It drives the prebuilt `target/debug/amux`, which `cargo test -p amux
+--test codex_capture` does not rebuild, so a stale binary would report on
+code that is not in the tree — passing changes it never executed, and
+"passing" reverts too. The harness refuses to start against a binary
+older than any workspace `src/` file rather than trusting the reminder to
+build first.
 
 ```sh
 cargo build -p amux-cli

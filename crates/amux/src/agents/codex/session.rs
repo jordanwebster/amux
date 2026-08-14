@@ -16,6 +16,7 @@ use tokio::sync::{Mutex, watch};
 use tokio::task::AbortHandle;
 use uuid::Uuid;
 
+use super::CODEX_RAW_THREAD_NOT_READY;
 use super::io::{self, CodexSdkV1Input};
 use crate::agents::{
     AGENT_TYPE_CODEX, AgentBackend, CodexInput, CreateAgentRequest, LocalAgentNameSource,
@@ -184,10 +185,49 @@ fn codex_log_source() -> StructuredLogSource {
     }
 }
 
-async fn rename_thread(client: &Codex, agent_id: Uuid, thread_id: &str, name: &str) {
-    if let Err(error) = client.rename_thread(thread_id, name).await {
-        tracing::warn!(%agent_id, %thread_id, %error, "failed to rename Codex thread");
+/// Name a Codex thread, reporting failure rather than swallowing it.
+///
+/// Naming is also the only way amux can materialize a thread. Codex 0.147
+/// starts threads in memory only: `thread/start` reports the rollout path it
+/// *will* use but writes nothing, and every operation that needs that rollout
+/// — `thread/resume`, which the raw TUI runs at bootstrap, and
+/// `thread/archive` — fails with `no rollout found for thread id` until
+/// something persists it. Upstream exposes no persist call; naming is the
+/// least invasive operation that persists as a side effect. See
+/// `docs/CODEX.md`.
+async fn set_thread_name(
+    client: &Codex,
+    agent_id: Uuid,
+    thread_id: &str,
+    name: &str,
+) -> Result<(), String> {
+    match client.rename_thread(thread_id, name).await {
+        Ok(()) => Ok(()),
+        Err(error) => {
+            tracing::warn!(%agent_id, %thread_id, %error, "failed to name Codex thread");
+            Err(error.to_string())
+        }
     }
+}
+
+/// Thread name for an agent the user has not named, using the same short-id
+/// convention as the clients' display fallback. It is a bootstrap label, not
+/// an agent name: the agent stays unnamed, and naming it later overwrites this
+/// through [`CodexSession::schedule_remote_rename`].
+fn bootstrap_thread_name(agent_id: Uuid) -> String {
+    format!("amux-{}", &agent_id.simple().to_string()[..8])
+}
+
+/// The name every Codex thread is created with.
+///
+/// Naming is what materializes a thread, so an unnamed agent must not skip it.
+/// An empty name is treated as absent: upstream rejects it outright, which
+/// would leave the thread unmaterialized.
+fn thread_name_for(desired_name: Option<&str>, agent_id: Uuid) -> String {
+    desired_name
+        .filter(|name| !name.is_empty())
+        .map(str::to_string)
+        .unwrap_or_else(|| bootstrap_thread_name(agent_id))
 }
 
 #[derive(Debug, Clone, Copy)]
@@ -208,12 +248,25 @@ struct CodexLive {
     socket_path: PathBuf,
 }
 
+/// Whether this thread has a rollout on disk.
+///
+/// The structured plane works either way; the raw plane does not, because
+/// `codex resume` refuses a thread that has never been persisted. The two
+/// cases are kept apart from "no thread yet" (`CodexAttached` absent) on
+/// purpose: a thread that failed to materialize is not going to become ready
+/// by waiting, and the caller is told why.
+enum ThreadPersistence {
+    Materialized,
+    Failed(String),
+}
+
 struct CodexAttached {
     thread_id: String,
     daemon_mode: Option<String>,
     live: Option<CodexLive>,
     active_turn_id: Option<String>,
     pending: HashMap<RequestId, PendingRequestKind>,
+    persistence: ThreadPersistence,
 }
 
 struct CodexPty {
@@ -263,12 +316,15 @@ impl CodexSession {
             _ => unreachable!("CodexSession requires AgentType::Codex"),
         };
         let (stop_tx, _) = watch::channel(false);
+        // A thread we are resuming was materialized when it was first
+        // connected; the connect loop republishes this either way.
         let attached = resume_thread_id.as_ref().map(|thread_id| CodexAttached {
             thread_id: thread_id.clone(),
             daemon_mode: None,
             live: None,
             active_turn_id: None,
             pending: HashMap::new(),
+            persistence: ThreadPersistence::Materialized,
         });
         Self {
             agent_id: req.agent_id,
@@ -381,8 +437,20 @@ impl CodexSession {
         };
         if let Some((client, thread_id)) = target {
             let agent_id = self.agent_id;
+            let runtime = self.runtime.clone();
             tokio::spawn(async move {
-                rename_thread(&client, agent_id, &thread_id, &name).await;
+                if set_thread_name(&client, agent_id, &thread_id, &name)
+                    .await
+                    .is_ok()
+                {
+                    // Naming is also what persists a thread, so a rename that
+                    // lands after a failed bootstrap makes the raw plane
+                    // usable.
+                    let mut state = runtime.lock().unwrap_or_else(|poison| poison.into_inner());
+                    if let Some(attached) = state.attached.as_mut() {
+                        attached.persistence = ThreadPersistence::Materialized;
+                    }
+                }
             });
         }
     }
@@ -403,9 +471,18 @@ impl CodexSession {
             if let Some(pty) = runtime.pty.as_ref() {
                 return Ok(pty.handle.clone());
             }
-            let attached = runtime.attached.as_ref().ok_or_else(|| {
-                anyhow!("Codex raw session is not ready: thread_id is not available yet")
-            })?;
+            let attached = runtime
+                .attached
+                .as_ref()
+                .ok_or_else(|| anyhow!("{CODEX_RAW_THREAD_NOT_READY}"))?;
+            // Distinct from "not ready yet" on purpose: waiting will not fix
+            // this, so clients must not retry it.
+            if let ThreadPersistence::Failed(error) = &attached.persistence {
+                return Err(anyhow!(
+                    "Codex raw session is unavailable: the thread was never persisted, \
+                     so `codex resume` will refuse it ({error})"
+                ));
+            }
             let live = attached.live.as_ref().ok_or_else(|| {
                 anyhow!("Codex raw session is unavailable until reconnect succeeds")
             })?;
@@ -517,7 +594,24 @@ async fn run_ingest_supervisor(
             };
         let id = thread.id().to_string();
 
-        let desired_name = {
+        // Materialize the thread *before* publishing `attached`. `ensure_pty`
+        // gates the raw TUI on `attached` alone, so publishing first leaves a
+        // window in which a raw subscription spawns `codex resume` against a
+        // thread upstream has not persisted yet — the same failure as an
+        // unnamed agent, but intermittent.
+        let desired_name = runtime
+            .lock()
+            .unwrap_or_else(|poison| poison.into_inner())
+            .desired_name
+            .clone();
+        let thread_name = thread_name_for(desired_name.as_deref(), agent_id);
+        let persistence =
+            match set_thread_name(&connection.client, agent_id, &id, &thread_name).await {
+                Ok(()) => ThreadPersistence::Materialized,
+                Err(error) => ThreadPersistence::Failed(error),
+            };
+
+        {
             let mut state = runtime.lock().unwrap_or_else(|poison| poison.into_inner());
             state.startup_error = None;
             state.attached = Some(CodexAttached {
@@ -530,11 +624,8 @@ async fn run_ingest_supervisor(
                 }),
                 active_turn_id: None,
                 pending: HashMap::new(),
+                persistence,
             });
-            state.desired_name.clone()
-        };
-        if let Some(name) = desired_name {
-            rename_thread(&connection.client, agent_id, &id, &name).await;
         }
         log_source.write(json!({"type": "amux.codex_ready"})).await;
         if capture_drop_connection {
@@ -1206,6 +1297,47 @@ mod tests {
     }
 
     #[test]
+    fn every_thread_is_named_because_naming_is_what_persists_it() {
+        let agent_id = Uuid::from_u128(0xfeed_face);
+        // An unnamed agent still gets a thread name; skipping it leaves the
+        // thread with no rollout, and `codex resume` then refuses it.
+        assert_eq!(thread_name_for(None, agent_id), "amux-00000000");
+        assert_eq!(thread_name_for(Some(""), agent_id), "amux-00000000");
+        assert_eq!(thread_name_for(Some("morning"), agent_id), "morning");
+
+        // The bootstrap label uses the clients' short-id convention.
+        let id = Uuid::from_u128(0x0123_4567_89ab_cdef_0123_4567_89ab_cdef);
+        assert_eq!(
+            bootstrap_thread_name(id),
+            format!("amux-{}", &id.simple().to_string()[..8])
+        );
+    }
+
+    #[tokio::test]
+    async fn an_unpersisted_thread_refuses_raw_attach_and_is_not_retryable() {
+        let session = session();
+        {
+            let mut runtime = session.runtime.lock().unwrap();
+            runtime.attached = Some(CodexAttached {
+                thread_id: "thread-unpersisted".into(),
+                daemon_mode: Some("spawned-private".into()),
+                live: None,
+                active_turn_id: None,
+                pending: HashMap::new(),
+                persistence: ThreadPersistence::Failed("thread name must not be empty".into()),
+            });
+        }
+
+        let error = session.pty_handle().err().unwrap().to_string();
+        assert!(error.contains("never persisted"), "{error}");
+        assert!(error.contains("thread name must not be empty"), "{error}");
+        // Distinct from the transient case: clients retry on that message for
+        // 15s, and this one will never come good.
+        assert!(!error.contains(CODEX_RAW_THREAD_NOT_READY), "{error}");
+        assert!(session.log_source().unwrap().subscribe().await.is_some());
+    }
+
+    #[test]
     fn suspend_is_nonfatal_and_reports_missing_thread_id() {
         let error = session().suspended_state().unwrap_err();
         assert!(error.to_string().contains("thread_id is not available"));
@@ -1222,6 +1354,7 @@ mod tests {
                 live: None,
                 active_turn_id: None,
                 pending: HashMap::new(),
+                persistence: ThreadPersistence::Materialized,
             });
         }
 
@@ -1328,6 +1461,7 @@ mod tests {
                         PendingRequestKind::ToolCall,
                     ),
                 ]),
+                persistence: ThreadPersistence::Materialized,
             }),
             startup_error: None,
             ingest_abort: None,
@@ -1364,6 +1498,7 @@ mod tests {
                 live: None,
                 active_turn_id: None,
                 pending: HashMap::new(),
+                persistence: ThreadPersistence::Materialized,
             }),
             startup_error: None,
             ingest_abort: None,
@@ -1499,6 +1634,7 @@ mod tests {
                 }),
                 active_turn_id: None,
                 pending: HashMap::new(),
+                persistence: ThreadPersistence::Materialized,
             }),
             startup_error: None,
             ingest_abort: None,
@@ -1550,6 +1686,7 @@ mod tests {
             }),
             active_turn_id: None,
             pending: HashMap::new(),
+            persistence: ThreadPersistence::Materialized,
         });
     }
 
