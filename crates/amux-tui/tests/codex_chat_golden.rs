@@ -407,6 +407,82 @@ fn ctrl_x_dispatches_while_a_steer_is_in_flight_on_an_active_turn() {
 }
 
 #[test]
+fn working_line_advertises_only_the_actions_the_write_gate_allows() {
+    let in_flight = model_with_extra(
+        live_rows(),
+        vec![Msg::Command {
+            op: op(2),
+            command: Command::Codex(CodexCommand::Steer {
+                agent: agent_id(),
+                text: "keep going".to_string(),
+            }),
+        }],
+    );
+    assert!(!amux_ui::codex::allows_steer(&in_flight, agent_id()));
+    assert!(amux_ui::codex::allows_interrupt(&in_flight, agent_id()));
+
+    let text = buffer_text(&render_buffer(&in_flight, Theme::Dark, HEIGHT));
+    assert!(
+        text.contains("ctrl+x interrupt"),
+        "the safe escape hatch stays visible: {text}"
+    );
+    assert!(
+        !text.contains("enter steer"),
+        "the refused steer must not be advertised: {text}"
+    );
+}
+
+#[test]
+fn refusing_approval_gates_remove_selection_and_confirm_affordances() {
+    let close = Msg::Stream {
+        agent: agent_id(),
+        event: StreamMsg::Closed {
+            reason: StreamCloseReason::HostUnreachable,
+        },
+    };
+    let stale = model_with_extra(approval_rows(), vec![close.clone()]);
+    let reupsert = base()
+        .into_iter()
+        .find(|message| matches!(message, Msg::Server(ServerMsg::AgentUpserted { .. })))
+        .expect("base agent upsert");
+    let replaying = model_with_extra(approval_rows(), vec![close, reupsert]);
+
+    for (name, model) in [("stale", stale), ("replaying", replaying)] {
+        assert!(
+            model
+                .codex(agent_id())
+                .is_some_and(|layer| layer.ask_count() == 1)
+        );
+        assert!(
+            !amux_ui::codex::allows_answer(&model, agent_id()),
+            "{name} approval must be gated"
+        );
+        let text = buffer_text(&render_buffer(&model, Theme::Dark, HEIGHT));
+        assert!(
+            text.contains("approval — command"),
+            "ask remains visible: {text}"
+        );
+        assert!(
+            !text.contains("enter confirm"),
+            "{name} approval must not advertise a no-op: {text}"
+        );
+        assert!(
+            !text.contains("› 1."),
+            "{name} approval must not render a selection cursor: {text}"
+        );
+
+        let mut chat =
+            ChatView::open(&model, agent_id(), 'a', false).expect("known Codex protocol opens");
+        chat.reconcile(&model);
+        assert_eq!(
+            press(&model, &mut chat, KeyCode::Enter, KeyModifiers::NONE),
+            None,
+            "Enter remains a no-op for the {name} approval"
+        );
+    }
+}
+
+#[test]
 fn codex_keys_follow_the_write_gate_and_preserve_a_refused_steer_draft() {
     let live = model(live_rows());
     let mut stale_rows = live_rows();

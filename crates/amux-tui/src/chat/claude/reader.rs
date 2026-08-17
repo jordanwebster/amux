@@ -181,7 +181,7 @@ pub(crate) fn reader_frame(
     let resolved = resolve(model, chat)?;
     let body = body_lines(&resolved.body, width, theme);
     let total = body.len();
-    let tail = reader_tail(&resolved, chat, readonly, width, theme);
+    let tail = reader_tail(model, &resolved, chat, readonly, width, theme);
 
     // Frame rows: top, title, rule, body, rule, tail, bottom.
     let body_h = height.saturating_sub(5 + tail.len()).max(1);
@@ -230,6 +230,7 @@ pub(crate) fn reader_frame(
 /// stage, or the read hints — ONE derivation, consumed by the frame and
 /// by the scroll metrics so paging and rendering agree on the viewport.
 fn reader_tail(
+    model: &Model,
     resolved: &Resolved<'_>,
     chat: &View,
     readonly: bool,
@@ -237,9 +238,12 @@ fn reader_tail(
     theme: Theme,
 ) -> Vec<Line<'static>> {
     // The action row lives only while a writable ask is open.
-    let acting = resolved
-        .ask
-        .filter(|ask| !readonly && matches!(ask.state, AskState::Pending));
+    let acting = resolved.ask.filter(|ask| {
+        !readonly
+            && amux_ui::claude::allows_answer(model, chat.agent)
+            && matches!(ask.state, AskState::Pending)
+            && amux_ui::claude::encoding::menu_shape_refusal(&ask.kind).is_none()
+    });
 
     let mut tail: Vec<Line<'static>> = Vec::new();
     if let Some(ask) = acting {
@@ -324,7 +328,7 @@ pub(crate) fn scroll_metrics(
     let height = viewport.1 as usize;
     // Layout is theme-independent (tokens change styles, never cells).
     let readonly = chat.read_only(model);
-    let tail = reader_tail(&resolved, chat, readonly, width, Theme::default());
+    let tail = reader_tail(model, &resolved, chat, readonly, width, Theme::default());
     let total = body_lines(&resolved.body, width, Theme::default()).len();
     let body_h = height.saturating_sub(5 + tail.len()).max(1);
     Some((body_h, total.saturating_sub(body_h)))

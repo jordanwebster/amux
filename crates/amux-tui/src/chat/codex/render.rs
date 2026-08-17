@@ -126,7 +126,7 @@ pub(crate) fn build_chat_lines(
         FeedScroll::Following => {}
     }
     if working {
-        lines.push(working_line(&phase, chat.read_only(model), ctx, width));
+        lines.push(working_line(model, chat, &phase, ctx, width));
     }
     lines.extend(bottom);
     lines.push(crate::render::bottom_border(width));
@@ -232,8 +232,9 @@ fn loading_band(theme: Theme, width: usize, height: usize) -> Vec<Line<'static>>
 }
 
 fn working_line(
+    model: &Model,
+    chat: &View,
     phase: &CodexPhase,
-    readonly: bool,
     ctx: &FrameContext,
     width: usize,
 ) -> Line<'static> {
@@ -250,11 +251,22 @@ fn working_line(
         format!("{spinner} {label}"),
         ctx.theme.text(),
     );
-    if !readonly {
-        line.spans.push(Span::styled(
-            " · enter steer · ctrl+x interrupt",
-            ctx.theme.muted(),
-        ));
+    // C4 moves observation-only into the gates. Until then this outer
+    // suppression remains necessary so a read-only view advertises no writes.
+    if !chat.read_only(model) {
+        let mut hints = Vec::new();
+        if amux_ui::codex::allows_steer(model, chat.agent) {
+            hints.push("enter steer");
+        }
+        if amux_ui::codex::allows_interrupt(model, chat.agent) {
+            hints.push("ctrl+x interrupt");
+        }
+        if !hints.is_empty() {
+            line.spans.push(Span::styled(
+                format!(" · {}", hints.join(" · ")),
+                ctx.theme.muted(),
+            ));
+        }
     }
     finish_line(&mut line, width);
     line
@@ -374,31 +386,39 @@ fn approval_panel(
             theme.muted(),
         ));
     } else {
+        let allows_answer = amux_ui::codex::allows_answer(model, chat.agent);
         for (index, action) in ask.actions.iter().enumerate() {
             let mut line = new_line();
-            if index == chat.approval_cursor {
+            let supported = action.decision.is_some();
+            let selectable = allows_answer && supported;
+            if selectable && index == chat.approval_cursor {
                 push_span(&mut line, GLYPH_COL, "›", theme.text());
             }
-            let enabled = action.decision.is_some();
-            let style = if enabled { theme.text() } else { theme.muted() };
+            let style = if selectable {
+                theme.text()
+            } else {
+                theme.muted()
+            };
             push_span(&mut line, TEXT_COL, format!("{}.", index + 1), style);
             push_span(&mut line, TEXT_COL + 3, decision_label(&action.wire), style);
-            if !enabled {
+            if !supported {
                 line.spans
                     .push(Span::styled(" · unavailable in V1", theme.muted()));
             }
             lines.push(line);
         }
+        if allows_answer {
+            lines.push(new_line());
+            let mut hint = new_line();
+            push_span(
+                &mut hint,
+                TEXT_COL,
+                "↑↓/1-9 select · enter confirm · ctrl+x interrupt",
+                theme.muted(),
+            );
+            lines.push(hint);
+        }
     }
-    lines.push(new_line());
-    let mut hint = new_line();
-    push_span(
-        &mut hint,
-        TEXT_COL,
-        "↑↓/1-9 select · enter confirm · ctrl+x interrupt",
-        theme.muted(),
-    );
-    lines.push(hint);
     lines
 }
 

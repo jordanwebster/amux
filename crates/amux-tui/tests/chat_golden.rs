@@ -1275,8 +1275,7 @@ fn chat_ask_permission_fallback() {
 /// A permission menu shape no capture verified (two suggestions): the
 /// panel renders read-only-style with the typed refusal stated —
 /// consistent with the encoder, which would refuse the same shape (C2).
-#[test]
-fn chat_ask_permission_unverified() {
+fn unverified_edit_ask_msgs() -> Vec<Msg> {
     let mut msgs = working_msgs();
     msgs.push(batch(
         "2026-08-12T09:10:20Z",
@@ -1287,10 +1286,40 @@ fn chat_ask_permission_unverified() {
             2,
         )],
     ));
-    let model = fold(msgs);
+    msgs
+}
+
+#[test]
+fn chat_ask_permission_unverified() {
+    let model = fold(unverified_edit_ask_msgs());
     let view = reconciled_view(&model);
     let rendered = render_frame(&model, &view, 80, 20, WORKING_NOW);
     assert_golden("chat_ask_permission_unverified", &rendered);
+}
+
+#[test]
+fn unverified_menu_reader_is_readable_but_pager_only() {
+    let model = fold(unverified_edit_ask_msgs());
+    assert!(
+        amux_ui::claude::allows_answer(&model, agent_id()),
+        "session classification keeps the ask authoritative; encoding owns menu safety"
+    );
+    let mut view = reconciled_view(&model);
+    press(&mut view, &model, KeyCode::Char('f'));
+    let rendered = render_frame(&model, &view, 80, 20, WORKING_NOW);
+
+    assert!(
+        rendered.contains("sync/config.rs"),
+        "the artifact remains readable: {rendered}"
+    );
+    assert!(
+        rendered.contains("j/k scroll") && rendered.contains("q close"),
+        "the reader retains pager affordances: {rendered}"
+    );
+    assert!(
+        !rendered.contains("select") && !rendered.contains("enter confirm"),
+        "an unverified menu must expose no answer actions: {rendered}"
+    );
 }
 
 /// Deny opens the optional one-line feedback stage (C2): Enter with empty

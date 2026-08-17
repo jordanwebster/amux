@@ -726,6 +726,10 @@ impl ChatCondition {
             | ChatConditionState::Resting { .. } => None,
         }
     }
+
+    fn allows_answer(&self) -> bool {
+        matches!(self.state, ChatConditionState::AskPending { .. }) && !self.send_in_flight
+    }
 }
 
 /// Structural invariant classes owned by the Claude layer. The outer
@@ -1434,6 +1438,13 @@ pub fn send_gate(model: &Model, agent: amux::AgentId) -> SendGate {
 /// honestly.
 pub fn mode_cycle_gate(model: &Model, agent: amux::AgentId) -> Option<&'static str> {
     classify_model(model, agent, model.now()).mode_cycle_refusal()
+}
+
+/// Whether the final Claude condition exposes an authoritative ask that can
+/// accept an answer now. Menu-shape byte safety remains a separate typed
+/// encoding question; observation-only enforcement joins this query in C4.
+pub fn allows_answer(model: &Model, agent: amux::AgentId) -> bool {
+    classify_model(model, agent, model.now()).allows_answer()
 }
 
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
