@@ -9,7 +9,8 @@ mod ui;
 mod update;
 
 use std::fs::OpenOptions;
-use std::io::{Read, Write};
+use std::future::Future;
+use std::io::{IsTerminal, Read, Write};
 use std::net::SocketAddr;
 use std::path::PathBuf;
 use std::time::Duration;
@@ -79,6 +80,12 @@ enum Commands {
     Attach {
         /// Session name (default: first available)
         name: Option<String>,
+    },
+
+    /// Remove an agent session by exact name or UUID
+    Rm {
+        /// Exact agent name or UUID
+        target: String,
     },
 
     /// List all running agent sessions
@@ -283,7 +290,6 @@ async fn main() -> Result<()> {
         // the dispatch decides before the TUI ever starts). Without a real
         // terminal (scripts, pipes, e2e) it prints help instead, like any
         // bare CLI; explicit `amux ui` still errors honestly there.
-        use std::io::IsTerminal;
         if !(std::io::stdin().is_terminal() && std::io::stdout().is_terminal()) {
             Cli::command().print_help()?;
             return Ok(());
@@ -358,28 +364,38 @@ async fn run_command(command: Commands, mut config: Config) -> Result<()> {
             sandbox_policy,
             args,
         } => {
-            let agent_type = configure_agent_type(
-                parse_agent_type(&agent_type)?,
-                model,
-                approval_policy,
-                sandbox_policy,
-            )?;
-            ensure_initialized(&mut config).await?;
-            check_update_required(&config);
-            match &agent_type {
-                AgentType::Claude => {
-                    plugin::ensure_plugin_installed().await;
-                }
-                AgentType::Codex { .. } => {}
-                #[cfg(any(debug_assertions, test))]
-                AgentType::TestAgent { .. } => {}
-            };
-            session_client::new_agent(name.as_deref(), agent_type, args, &config).await?;
+            let open_mode = config.ui.default_open_mode;
+            run_new_agent_command(
+                open_mode,
+                std::io::stdin().is_terminal(),
+                std::io::stdout().is_terminal(),
+                move || async move {
+                    let agent_type = configure_agent_type(
+                        parse_agent_type(&agent_type)?,
+                        model,
+                        approval_policy,
+                        sandbox_policy,
+                    )?;
+                    ensure_initialized(&mut config).await?;
+                    check_update_required(&config);
+                    match &agent_type {
+                        AgentType::Claude => {
+                            plugin::ensure_plugin_installed().await;
+                        }
+                        AgentType::Codex { .. } => {}
+                        #[cfg(any(debug_assertions, test))]
+                        AgentType::TestAgent { .. } => {}
+                    };
+                    session_client::new_agent(name.as_deref(), agent_type, args, &config).await
+                },
+            )
+            .await?;
         }
         Commands::Attach { name } => {
             ensure_initialized(&mut config).await?;
             session_client::attach(name.as_deref(), &config).await?;
         }
+        Commands::Rm { target } => session_client::remove_agent(&target, &config).await?,
         Commands::List => session_client::list_agents(&config).await?,
         Commands::Server { command } => match command {
             ServerCommands::Start {
@@ -555,6 +571,30 @@ async fn run_command(command: Commands, mut config: Config) -> Result<()> {
     }
 
     Ok(())
+}
+
+async fn run_new_agent_command<Action, ActionFuture>(
+    open_mode: amux::OpenMode,
+    stdin_is_terminal: bool,
+    stdout_is_terminal: bool,
+    action: Action,
+) -> Result<()>
+where
+    Action: FnOnce() -> ActionFuture,
+    ActionFuture: Future<Output = Result<()>>,
+{
+    if new_agent_opens_interactively(open_mode) && !(stdin_is_terminal && stdout_is_terminal) {
+        return Err(anyhow!(
+            "`amux new` must run in an interactive terminal because it opens the new agent immediately"
+        ));
+    }
+    action().await
+}
+
+fn new_agent_opens_interactively(open_mode: amux::OpenMode) -> bool {
+    match open_mode {
+        amux::OpenMode::Chat | amux::OpenMode::Raw => true,
+    }
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -1044,6 +1084,54 @@ mod tests {
                 ..
             } if model == "gpt-5.4" && approval == "on-request" && sandbox == "workspace-write"
         ));
+    }
+
+    #[tokio::test]
+    async fn new_non_tty_preflight_never_invokes_creation() {
+        for open_mode in [amux::OpenMode::Chat, amux::OpenMode::Raw] {
+            for (stdin_is_terminal, stdout_is_terminal) in [(false, true), (true, false)] {
+                let create_calls = std::sync::Arc::new(std::sync::atomic::AtomicUsize::new(0));
+                let observed_calls = create_calls.clone();
+                let error = run_new_agent_command(
+                    open_mode,
+                    stdin_is_terminal,
+                    stdout_is_terminal,
+                    move || async move {
+                        observed_calls.fetch_add(1, std::sync::atomic::Ordering::SeqCst);
+                        Ok(())
+                    },
+                )
+                .await
+                .expect_err("a missing terminal must fail before creation");
+
+                assert_eq!(
+                    error.to_string(),
+                    "`amux new` must run in an interactive terminal because it opens the new agent immediately"
+                );
+                assert_eq!(
+                    create_calls.load(std::sync::atomic::Ordering::SeqCst),
+                    0,
+                    "creation action must not run for {open_mode:?}"
+                );
+            }
+        }
+    }
+
+    #[test]
+    fn parses_rm_with_one_positional_target_and_no_command_flags() {
+        let cli = Cli::try_parse_from(["amux", "rm", "exact-name"]).unwrap();
+        let Some(Commands::Rm { target }) = cli.command else {
+            panic!("expected rm command");
+        };
+        assert_eq!(target, "exact-name");
+
+        let extra = Cli::try_parse_from(["amux", "rm", "exact-name", "extra"])
+            .expect_err("rm accepts exactly one target");
+        assert_eq!(extra.kind(), clap::error::ErrorKind::UnknownArgument);
+
+        let flag = Cli::try_parse_from(["amux", "rm", "exact-name", "--force"])
+            .expect_err("rm has no confirmation flags");
+        assert_eq!(flag.kind(), clap::error::ErrorKind::UnknownArgument);
     }
 
     #[test]

@@ -1,4 +1,5 @@
 use std::collections::{HashMap, HashSet};
+use std::future::Future;
 use std::io::{self, Read, Write};
 use std::path::Path;
 use std::sync::Arc;
@@ -68,45 +69,84 @@ pub async fn new_agent(
 
     tracing::info!(agent_id = %agent_id, ?name, "creating agent");
 
-    let agent = rpc
-        .create_agent(CreateAgentRequest {
-            agent_id,
-            host_id: None,
-            name: name.map(|s| s.to_string()),
-            agent_type,
-            working_dir: working_dir.clone(),
-            terminal_size: Some(terminal_size),
-            args,
-        })
-        .await
-        .map_err(|error| anyhow!("failed to create agent: {error}"))?;
+    let create_rpc = rpc.clone();
+    create_and_open_agent(
+        name,
+        move || async move {
+            create_rpc
+                .create_agent(CreateAgentRequest {
+                    agent_id,
+                    host_id: None,
+                    name: name.map(str::to_string),
+                    agent_type,
+                    working_dir,
+                    terminal_size: Some(terminal_size),
+                    args,
+                })
+                .await
+                .map(|agent| agent.id)
+                .map_err(|error| anyhow!("failed to create agent: {error}"))
+        },
+        move |agent_id| async move {
+            match config.ui.default_open_mode {
+                amux::OpenMode::Chat => {
+                    crate::ui::run_for_agent(config.clone(), agent_id, codex_configuration).await
+                }
+                amux::OpenMode::Raw => {
+                    let identifier = AgentIdentifier::from(agent_id);
+                    let outcome = if codex_configuration.is_some() {
+                        attach_new_codex_terminal(
+                            &rpc,
+                            identifier,
+                            config.keybinds.leader.clone(),
+                            StdinHandback::ProcessExits,
+                        )
+                        .await?
+                    } else {
+                        attach_terminal(
+                            &rpc,
+                            identifier,
+                            config.keybinds.leader.clone(),
+                            StdinHandback::ProcessExits,
+                        )
+                        .await?
+                    };
+                    finish_cli_attach(outcome, &config.state_path)
+                }
+            }
+        },
+    )
+    .await
+}
 
-    match config.ui.default_open_mode {
-        amux::OpenMode::Chat => {
-            crate::ui::run_for_agent(config.clone(), agent.id, codex_configuration).await
-        }
-        amux::OpenMode::Raw => {
-            let identifier = AgentIdentifier::from(agent.id);
-            let outcome = if codex_configuration.is_some() {
-                attach_new_codex_terminal(
-                    &rpc,
-                    identifier,
-                    config.keybinds.leader.clone(),
-                    StdinHandback::ProcessExits,
-                )
-                .await?
-            } else {
-                attach_terminal(
-                    &rpc,
-                    identifier,
-                    config.keybinds.leader.clone(),
-                    StdinHandback::ProcessExits,
-                )
-                .await?
-            };
-            finish_cli_attach(outcome, &config.state_path)
-        }
-    }
+async fn create_and_open_agent<Create, CreateFuture, Open, OpenFuture>(
+    name: Option<&str>,
+    create: Create,
+    open: Open,
+) -> Result<()>
+where
+    Create: FnOnce() -> CreateFuture,
+    CreateFuture: Future<Output = Result<Uuid>>,
+    Open: FnOnce(Uuid) -> OpenFuture,
+    OpenFuture: Future<Output = Result<()>>,
+{
+    let agent_id = create().await?;
+    open(agent_id)
+        .await
+        .map_err(|error| created_agent_open_error(name, agent_id, error))
+}
+
+fn created_agent_open_error(
+    name: Option<&str>,
+    agent_id: Uuid,
+    error: anyhow::Error,
+) -> anyhow::Error {
+    let target = name
+        .map(str::to_string)
+        .unwrap_or_else(|| agent_id.to_string());
+    anyhow!(
+        "agent '{target}' was created and is running. Reattach with 'amux attach {target}', or remove it with 'amux rm {target}' (or 'd' in the fleet view).\n{error:#}"
+    )
 }
 
 fn codex_configuration_label(agent_type: &AgentType) -> Option<String> {
@@ -157,6 +197,56 @@ pub async fn attach(target: Option<&str>, config: &Config) -> Result<()> {
     )
     .await?;
     finish_cli_attach(outcome, &config.state_path)
+}
+
+/// Remove an agent by exact name or UUID without prompting.
+pub async fn remove_agent(target: &str, config: &Config) -> Result<()> {
+    let retry_command = format!("amux rm {target}");
+    let rpc = require_running_client(config, Some(&retry_command)).await?;
+    remove_agent_with_client(target, &rpc).await?;
+    println!("Deleted agent '{target}'.");
+    Ok(())
+}
+
+async fn remove_agent_with_client(target: &str, rpc: &Client) -> Result<()> {
+    let agents = rpc.list_agents().await?;
+    delete_exact_agent(&agents, target, move |agent_id| async move {
+        rpc.delete_agent(agent_id)
+            .await
+            .map_err(|error| anyhow!("failed to delete agent '{target}': {error}"))
+    })
+    .await
+}
+
+fn resolve_remove_agent<'a>(agents: &'a [amux::Agent], target: &str) -> Result<&'a amux::Agent> {
+    if let Ok(id) = Uuid::parse_str(target) {
+        return agents
+            .iter()
+            .find(|agent| agent.id == id)
+            .ok_or_else(|| anyhow!("agent not found: {target}"));
+    }
+    let matches: Vec<_> = agents
+        .iter()
+        .filter(|agent| agent.name.as_deref() == Some(target))
+        .collect();
+    match matches.as_slice() {
+        [] => Err(anyhow!("agent not found: {target}")),
+        [agent] => Ok(*agent),
+        _ => Err(anyhow!("agent name `{target}` is ambiguous")),
+    }
+}
+
+async fn delete_exact_agent<Delete, DeleteFuture>(
+    agents: &[amux::Agent],
+    target: &str,
+    delete: Delete,
+) -> Result<()>
+where
+    Delete: FnOnce(Uuid) -> DeleteFuture,
+    DeleteFuture: Future<Output = Result<()>>,
+{
+    let agent = resolve_remove_agent(agents, target)?;
+    delete(agent.id).await
 }
 
 fn resolve_attach_agent<'a>(
@@ -694,6 +784,52 @@ mod attach {
         )));
     }
 
+    #[tokio::test]
+    async fn post_create_open_failure_preserves_agent_and_underlying_error() {
+        let named_id = Uuid::from_u128(0x1234);
+        let create_calls = Arc::new(std::sync::atomic::AtomicUsize::new(0));
+        let open_calls = Arc::new(std::sync::atomic::AtomicUsize::new(0));
+        let observed_create_calls = create_calls.clone();
+        let observed_open_calls = open_calls.clone();
+        let error = super::create_and_open_agent(
+            Some("steady"),
+            move || async move {
+                observed_create_calls.fetch_add(1, Ordering::SeqCst);
+                Ok(named_id)
+            },
+            move |created_id| async move {
+                observed_open_calls.fetch_add(1, Ordering::SeqCst);
+                assert_eq!(created_id, named_id);
+                Err(anyhow!("terminal attach failed"))
+            },
+        )
+        .await
+        .expect_err("opening the successfully created agent must fail");
+
+        assert_eq!(create_calls.load(Ordering::SeqCst), 1);
+        assert_eq!(open_calls.load(Ordering::SeqCst), 1);
+        assert_eq!(
+            error.to_string(),
+            "agent 'steady' was created and is running. Reattach with 'amux attach steady', or remove it with 'amux rm steady' (or 'd' in the fleet view).\nterminal attach failed"
+        );
+
+        let unnamed_id = Uuid::from_u128(0x5678);
+        let error = super::create_and_open_agent(
+            None,
+            || async { Ok(unnamed_id) },
+            |_| async { Err(anyhow!("chat open failed")) },
+        )
+        .await
+        .expect_err("unnamed recovery must use the created UUID");
+        let target = unnamed_id.to_string();
+        assert_eq!(
+            error.to_string(),
+            format!(
+                "agent '{target}' was created and is running. Reattach with 'amux attach {target}', or remove it with 'amux rm {target}' (or 'd' in the fleet view).\nchat open failed"
+            )
+        );
+    }
+
     use std::sync::Mutex as StdMutex;
     use std::time::Duration;
 
@@ -756,6 +892,100 @@ mod attach {
             .await
             .expect("create test agent");
         agent.id
+    }
+
+    fn listed_agent(id: u128, name: &str) -> amux::Agent {
+        amux::Agent {
+            id: Uuid::from_u128(id),
+            host_id: Uuid::from_u128(99),
+            name: Some(name.to_string()),
+            command: "test-agent".to_string(),
+            working_dir: std::env::temp_dir(),
+            agent_type: "test-agent".to_string(),
+            io_protocols: Vec::new(),
+            readonly: false,
+            args: Vec::new(),
+            created_at: chrono::Utc::now(),
+        }
+    }
+
+    #[tokio::test]
+    async fn remove_agent_uses_exact_name_and_deletes_only_one_match() {
+        let agents = [listed_agent(1, "worker"), listed_agent(2, "worker-copy")];
+        let delete_calls = Arc::new(std::sync::Mutex::new(Vec::new()));
+        let observed_calls = delete_calls.clone();
+        let missing = super::delete_exact_agent(&agents, "work", move |agent_id| async move {
+            observed_calls.lock().unwrap().push(agent_id);
+            Ok(())
+        })
+        .await
+        .expect_err("substring matches must be refused");
+        assert_eq!(missing.to_string(), "agent not found: work");
+        assert!(delete_calls.lock().unwrap().is_empty());
+
+        let observed_calls = delete_calls.clone();
+        super::delete_exact_agent(&agents, "worker", move |agent_id| async move {
+            observed_calls.lock().unwrap().push(agent_id);
+            Ok(())
+        })
+        .await
+        .expect("delete exact match");
+        assert_eq!(*delete_calls.lock().unwrap(), vec![Uuid::from_u128(1)]);
+    }
+
+    #[tokio::test]
+    async fn remove_agent_uses_exact_uuid_and_deletes_only_that_id() {
+        let target_id = Uuid::from_u128(1);
+        let target = target_id.to_string();
+        let agents = [
+            listed_agent(1, "worker"),
+            listed_agent(2, &target),
+            listed_agent(3, "worker-copy"),
+        ];
+        let delete_calls = Arc::new(std::sync::Mutex::new(Vec::new()));
+        let observed_calls = delete_calls.clone();
+
+        super::delete_exact_agent(&agents, &target, move |agent_id| async move {
+            observed_calls.lock().unwrap().push(agent_id);
+            Ok(())
+        })
+        .await
+        .expect("delete exact UUID");
+
+        assert_eq!(*delete_calls.lock().unwrap(), vec![target_id]);
+    }
+
+    #[tokio::test]
+    async fn remove_agent_missing_uuid_never_invokes_deletion() {
+        let missing = Uuid::from_u128(4).to_string();
+        let agents = [listed_agent(1, &missing), listed_agent(2, "worker")];
+        let delete_calls = Arc::new(std::sync::atomic::AtomicUsize::new(0));
+        let observed_calls = delete_calls.clone();
+
+        let error = super::delete_exact_agent(&agents, &missing, move |_| async move {
+            observed_calls.fetch_add(1, Ordering::SeqCst);
+            Ok(())
+        })
+        .await
+        .expect_err("a missing UUID must not fall back to an exact-name match");
+
+        assert_eq!(error.to_string(), format!("agent not found: {missing}"));
+        assert_eq!(delete_calls.load(Ordering::SeqCst), 0);
+    }
+
+    #[tokio::test]
+    async fn remove_agent_refuses_duplicate_exact_names() {
+        let agents = [listed_agent(1, "duplicate"), listed_agent(2, "duplicate")];
+        let delete_calls = Arc::new(std::sync::atomic::AtomicUsize::new(0));
+        let observed_calls = delete_calls.clone();
+        let error = super::delete_exact_agent(&agents, "duplicate", move |_| async move {
+            observed_calls.fetch_add(1, Ordering::SeqCst);
+            Ok(())
+        })
+        .await
+        .expect_err("duplicate exact names must be ambiguous");
+        assert_eq!(error.to_string(), "agent name `duplicate` is ambiguous");
+        assert_eq!(delete_calls.load(Ordering::SeqCst), 0);
     }
 
     struct OpenAttach {
