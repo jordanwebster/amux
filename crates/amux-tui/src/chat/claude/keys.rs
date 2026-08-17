@@ -411,6 +411,7 @@ fn reader_key(
     viewport: (u16, u16),
 ) -> Option<UiAction> {
     if chat.ask_reader_open()
+        && amux_ui::claude::allows_answer(model, chat.agent)
         && let Some(head) = chat.ask_head(model)
         && matches!(head.state, AskState::Pending)
         && encoding::menu_shape_refusal(&head.kind).is_none()
@@ -1704,6 +1705,79 @@ mod tests {
             answer,
             amux_ui::claude::encoding::AskAnswer::Plan(PlanAnswer::ApproveManual)
         );
+    }
+
+    #[test]
+    fn retained_ask_reader_gates_actions_but_keeps_navigation_and_close() {
+        let plan = (1..=40)
+            .map(|line| format!("plan line {line}"))
+            .collect::<Vec<_>>()
+            .join("\n");
+        let mut model = working_model();
+        fold(
+            &mut model,
+            vec![rows(
+                3,
+                3,
+                vec![hook_row("ExitPlanMode", json!({"plan": plan}), 0)],
+            )],
+        );
+        let mut chat = open_chat(&model);
+        assert!(
+            chat.reader.is_some(),
+            "the actionable plan opens in the reader"
+        );
+        assert!(amux_ui::claude::allows_answer(&model, agent_id()));
+
+        // Establish non-default local answer state while the ask is still
+        // actionable. The retained view state must not drift after the
+        // stream gate closes.
+        handle_chat_key(&mut chat, &model, press(KeyCode::Char('2')), VIEWPORT, t(0));
+        let before = {
+            let ui = chat.ask_ui.as_ref().expect("reader answer state");
+            (
+                ui.stage.clone(),
+                ui.deny_feedback.text(),
+                ui.plan_feedback.text(),
+            )
+        };
+
+        fold(
+            &mut model,
+            vec![Msg::Stream {
+                agent: agent_id(),
+                event: StreamMsg::Closed {
+                    reason: amux_ui::StreamCloseReason::HostUnreachable,
+                },
+            }],
+        );
+        assert!(!amux_ui::claude::allows_answer(&model, agent_id()));
+
+        for code in [KeyCode::Char('3'), KeyCode::Enter] {
+            assert_eq!(
+                handle_chat_key(&mut chat, &model, press(code), VIEWPORT, t(0)),
+                None,
+                "a hidden reader action must not dispatch"
+            );
+            let ui = chat.ask_ui.as_ref().expect("retained answer state");
+            assert_eq!(
+                (
+                    ui.stage.clone(),
+                    ui.deny_feedback.text(),
+                    ui.plan_feedback.text(),
+                ),
+                before,
+                "cursor, stage, and feedback stay unchanged while answering is gated"
+            );
+        }
+
+        handle_chat_key(&mut chat, &model, press(KeyCode::End), VIEWPORT, t(0));
+        assert!(
+            chat.reader.as_ref().expect("reader remains open").scroll > 0,
+            "the retained artifact remains navigable"
+        );
+        handle_chat_key(&mut chat, &model, press(KeyCode::Char('q')), VIEWPORT, t(0));
+        assert!(chat.reader.is_none(), "q still closes the read surface");
     }
 
     /// Accepted plans reopen with Ctrl+T; ←/→ steps between them; q

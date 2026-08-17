@@ -446,6 +446,7 @@ fn refusing_approval_gates_remove_selection_and_confirm_affordances() {
         .find(|message| matches!(message, Msg::Server(ServerMsg::AgentUpserted { .. })))
         .expect("base agent upsert");
     let replaying = model_with_extra(approval_rows(), vec![close, reupsert]);
+    let actionable = model(approval_rows());
 
     for (name, model) in [("stale", stale), ("replaying", replaying)] {
         assert!(
@@ -478,6 +479,55 @@ fn refusing_approval_gates_remove_selection_and_confirm_affordances() {
             press(&model, &mut chat, KeyCode::Enter, KeyModifiers::NONE),
             None,
             "Enter remains a no-op for the {name} approval"
+        );
+
+        for key in [KeyCode::Char('3'), KeyCode::Down] {
+            let mut chat =
+                ChatView::open(&model, agent_id(), 'a', false).expect("known Codex protocol opens");
+            chat.reconcile(&model);
+            assert_eq!(
+                press(&model, &mut chat, key, KeyModifiers::NONE),
+                None,
+                "a gated {name} approval choice never dispatches"
+            );
+            assert!(
+                matches!(
+                    press(&actionable, &mut chat, KeyCode::Enter, KeyModifiers::NONE),
+                    Some(UiAction::Dispatch(Command::Codex(CodexCommand::Answer {
+                        decision: CodexDecision::Accept,
+                        ..
+                    })))
+                ),
+                "the gated {key:?} key must leave the original first choice selected"
+            );
+        }
+
+        let mut chat = ChatView::open(&actionable, agent_id(), 'a', false)
+            .expect("known Codex protocol opens");
+        chat.reconcile(&actionable);
+        assert_eq!(
+            press(
+                &actionable,
+                &mut chat,
+                KeyCode::Char('3'),
+                KeyModifiers::NONE
+            ),
+            None
+        );
+        assert_eq!(
+            press(&model, &mut chat, KeyCode::Up, KeyModifiers::NONE),
+            None,
+            "gated Up never dispatches"
+        );
+        assert!(
+            matches!(
+                press(&actionable, &mut chat, KeyCode::Enter, KeyModifiers::NONE),
+                Some(UiAction::Dispatch(Command::Codex(CodexCommand::Answer {
+                    decision: CodexDecision::Decline,
+                    ..
+                })))
+            ),
+            "gated Up must preserve the previously selected third choice"
         );
     }
 }

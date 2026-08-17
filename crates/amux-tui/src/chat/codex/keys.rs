@@ -172,19 +172,22 @@ fn approval_key(
 ) -> Option<UiAction> {
     let ask = model.codex(chat.agent)?.ask_head()?;
     let count = ask.actions.len();
+    let allows_answer = amux_ui::codex::allows_answer(model, chat.agent);
     match key.code {
-        KeyCode::Char(digit @ '1'..='9') => {
+        KeyCode::Char(digit @ '1'..='9') if allows_answer => {
             let index = digit as usize - '1' as usize;
             if index < count {
                 chat.approval_cursor = index;
             }
         }
-        KeyCode::Up => chat.approval_cursor = chat.approval_cursor.saturating_sub(1),
-        KeyCode::Down => {
+        KeyCode::Up if allows_answer => {
+            chat.approval_cursor = chat.approval_cursor.saturating_sub(1);
+        }
+        KeyCode::Down if allows_answer => {
             chat.approval_cursor = (chat.approval_cursor + 1).min(count.saturating_sub(1));
         }
         KeyCode::Enter => {
-            if !amux_ui::codex::allows_answer(model, chat.agent) {
+            if !allows_answer {
                 return None;
             }
             let action = ask.actions.get(chat.approval_cursor)?;
