@@ -1146,15 +1146,20 @@ impl ClaudeLayer {
     }
 
     /// The layer-only diagnostic projection assumes an admitted live stream.
-    /// Model/card consumers use [`cached_attention`], which supplies the real
+    /// Model/card consumers use cached attention, which supplies the real
     /// kernel lifecycle to the same classifier. Time remains absent here.
     pub fn attention(&self) -> Attention {
         classify(Some(self), Some(&StreamPhase::Live), None, None).attention()
     }
 
     /// The E1 staleness cap: the working inference is stale once no
-    /// delivery has been observed for [`WORKING_STALENESS_CAP_SECS`].
+    /// delivery has been observed for [`WORKING_STALENESS_CAP_SECS`]. A
+    /// pending prompt echo is newer local evidence whose reconciliation or
+    /// failed operation remains authoritative for ending the optimistic send.
     pub(crate) fn working_is_stale(&self, now: Option<DateTime<Utc>>) -> bool {
+        if !self.echoes.is_empty() {
+            return false;
+        }
         match (now, self.last_arrival) {
             (Some(now), Some(at)) => now - at > TimeDelta::seconds(WORKING_STALENESS_CAP_SECS),
             _ => false,

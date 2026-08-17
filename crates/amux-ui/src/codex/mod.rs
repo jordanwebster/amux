@@ -853,7 +853,7 @@ impl CodexLayer {
     }
 
     /// The layer-only diagnostic projection assumes an admitted live stream.
-    /// Model/card consumers use [`cached_attention`], which supplies the real
+    /// Model/card consumers use cached attention, which supplies the real
     /// kernel lifecycle to the same classifier.
     pub fn attention(&self) -> Attention {
         classify(Some(self), Some(&StreamPhase::Live), None).attention()

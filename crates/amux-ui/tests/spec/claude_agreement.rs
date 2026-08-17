@@ -55,6 +55,18 @@ fn new_permission_hook() -> serde_json::Value {
     })
 }
 
+fn reconciled_prompt(text: &str) -> serde_json::Value {
+    json!({
+        "type": "user",
+        "uuid": "cccccccc-0000-4000-8000-000000000100",
+        "sessionId": "9f635f35-5e8c-49a8-b035-8408c6981b11",
+        "timestamp": "2026-08-11T22:10:12.000Z",
+        "origin": {"kind": "human"},
+        "promptSource": "typed",
+        "message": {"role": "user", "content": text}
+    })
+}
+
 fn named_states() -> Vec<(&'static str, Vec<Msg>)> {
     let mut echo_at_rest = chat_feed(AGENT, "permission");
     echo_at_rest.push(send_prompt(40, "next task"));
@@ -269,5 +281,67 @@ fn claude_specific_exceptions_and_send_precedence_are_explicit() {
     assert_eq!(
         projections(&state("stale working turn")),
         Some((ChatPhase::Unknown, Attention::Unknown, SendGate::Unknown))
+    );
+}
+
+#[test]
+fn fresh_prompt_echo_outranks_old_transcript_age_until_it_resolves() {
+    let mut model = fold(seq([chat_feed(AGENT, "permission"), vec![tick(10 + 601)]]));
+
+    amux_ui::update(&mut model, send_prompt(41, "next task"));
+    assert_eq!(
+        projections(&model).map(|(_, attention, gate)| (attention, gate)),
+        Some((Attention::Working, SendGate::SendInFlight)),
+        "the unresolved local echo is fresher than the old idle transcript"
+    );
+
+    amux_ui::update(
+        &mut model,
+        batch(AGENT, 612, vec![reconciled_prompt("next task")]),
+    );
+    assert!(claude_layer(&model, AGENT).pending_echoes().is_empty());
+    assert_eq!(
+        projections(&model),
+        Some((ChatPhase::Working, Attention::Working, SendGate::Working))
+    );
+
+    amux_ui::update(&mut model, tick(612 + 601));
+    assert_eq!(
+        projections(&model),
+        Some((ChatPhase::Unknown, Attention::Unknown, SendGate::Unknown)),
+        "after reconciliation, ordinary transcript staleness applies again"
+    );
+
+    let mut failed = fold(seq([
+        chat_feed(AGENT, "permission"),
+        vec![tick(10 + 601), send_prompt(42, "retry task")],
+    ]));
+    assert_eq!(
+        projections(&failed).map(|(_, attention, gate)| (attention, gate)),
+        Some((Attention::Working, SendGate::SendInFlight))
+    );
+    amux_ui::update(&mut failed, op_failed(op(42), "send rejected"));
+    assert!(claude_layer(&failed, AGENT).pending_echoes().is_empty());
+    assert_eq!(
+        projections(&failed).map(|(_, attention, gate)| (attention, gate)),
+        Some((Attention::NeedsYou { why: Why::Finished }, SendGate::Ready)),
+        "failed-send removal restores the transcript's prior projection"
+    );
+}
+
+#[test]
+fn offline_host_still_outranks_a_fresh_prompt_echo() {
+    let mut offline_host = a_host("nova");
+    offline_host.online = false;
+    let model = fold(seq([
+        chat_feed(AGENT, "permission"),
+        vec![tick(10 + 601), send_prompt(43, "next task")],
+        vec![host_up(&offline_host)],
+    ]));
+
+    assert_eq!(
+        projections(&model).map(|(_, attention, gate)| (attention, gate)),
+        Some((Attention::Unknown, SendGate::SendInFlight)),
+        "offline-host degradation remains authoritative"
     );
 }
