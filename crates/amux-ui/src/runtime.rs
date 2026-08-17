@@ -270,6 +270,7 @@ impl Runtime {
             return;
         }
         self.model.note_invariant_violation();
+        lock_recorder(&self.recorder).note_invariant_violation();
         if std::env::var("AMUX_INVARIANT_FATAL").as_deref() == Ok("1") {
             let details: Vec<String> = violations.iter().map(ToString::to_string).collect();
             panic!("model invariants violated: {}", details.join("; "));
@@ -1049,6 +1050,11 @@ mod tests {
                     header.reason,
                     DumpReason::Tripwire { ref detail } if detail.starts_with("invariant:")
                 ));
+                let replayed = crate::recorder::replay(&dumps[0]).expect("replay invariant dump");
+                assert!(
+                    replayed.has_invariant_warning(),
+                    "replayed invariant dump must retain the sticky warning"
+                );
 
                 runtime.enforce_invariants();
                 assert_eq!(

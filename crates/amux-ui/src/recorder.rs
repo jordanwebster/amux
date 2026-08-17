@@ -87,6 +87,13 @@ impl Recorder {
         self.entries.is_empty()
     }
 
+    /// Mirror the shell's sticky invariant-warning fact into replay state.
+    /// This transition is monotonic and independent of Msg ordering, so the
+    /// checkpoint can carry it without crossing the pure reducer boundary.
+    pub fn note_invariant_violation(&mut self) {
+        self.checkpoint.note_invariant_violation();
+    }
+
     /// Write a self-contained replay bundle into `dir` and prune old dumps.
     /// `stamp` must be unique per dump (the shell derives it from wall time
     /// and pid; the recorder itself stays clock-free).
