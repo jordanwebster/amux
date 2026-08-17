@@ -197,10 +197,15 @@ fn assert_agreement(name: &str, step: usize, model: &Model) {
     if send_gate == SendGate::SendInFlight
         && !matches!(phase, ChatPhase::Unknown | ChatPhase::Errored)
     {
+        let card = model.agent(agent_id(AGENT)).expect("projected Claude card");
         assert_eq!(
-            attention,
+            card.attention,
             Attention::Working,
-            "{name} step {step}: a live send in flight outranks positive attention"
+            "{name} step {step}: a send in flight projects cached Working attention"
+        );
+        assert!(
+            matches!(attention, Attention::Working | Attention::Unknown),
+            "{name} step {step}: effective send attention is Working until dispatch evidence ages out, while offline degradation is also Unknown"
         );
     }
 }
@@ -285,7 +290,7 @@ fn claude_specific_exceptions_and_send_precedence_are_explicit() {
 }
 
 #[test]
-fn fresh_prompt_echo_outranks_old_transcript_age_until_it_resolves() {
+fn prompt_echo_ages_from_dispatch_while_its_send_gate_stays_closed() {
     let mut model = fold(seq([chat_feed(AGENT, "permission"), vec![tick(10 + 601)]]));
 
     amux_ui::update(&mut model, send_prompt(41, "next task"));
@@ -295,9 +300,16 @@ fn fresh_prompt_echo_outranks_old_transcript_age_until_it_resolves() {
         "the unresolved local echo is fresher than the old idle transcript"
     );
 
+    amux_ui::update(&mut model, tick(10 + 601 + 601));
+    assert_eq!(
+        projections(&model).map(|(_, attention, gate)| (attention, gate)),
+        Some((Attention::Unknown, SendGate::SendInFlight)),
+        "the unresolved echo's attention ages out without reopening unsafe input"
+    );
+
     amux_ui::update(
         &mut model,
-        batch(AGENT, 612, vec![reconciled_prompt("next task")]),
+        batch(AGENT, 10 + 601 + 602, vec![reconciled_prompt("next task")]),
     );
     assert!(claude_layer(&model, AGENT).pending_echoes().is_empty());
     assert_eq!(
@@ -305,7 +317,7 @@ fn fresh_prompt_echo_outranks_old_transcript_age_until_it_resolves() {
         Some((ChatPhase::Working, Attention::Working, SendGate::Working))
     );
 
-    amux_ui::update(&mut model, tick(612 + 601));
+    amux_ui::update(&mut model, tick(10 + 601 + 602 + 601));
     assert_eq!(
         projections(&model),
         Some((ChatPhase::Unknown, Attention::Unknown, SendGate::Unknown)),
@@ -326,6 +338,23 @@ fn fresh_prompt_echo_outranks_old_transcript_age_until_it_resolves() {
         projections(&failed).map(|(_, attention, gate)| (attention, gate)),
         Some((Attention::NeedsYou { why: Why::Finished }, SendGate::Ready)),
         "failed-send removal restores the transcript's prior projection"
+    );
+}
+
+#[test]
+fn echo_free_working_still_ages_from_transcript_delivery() {
+    let mut model = fold(chat_feed_prefix(AGENT, "permission", 6));
+
+    amux_ui::update(&mut model, tick(10 + 600));
+    assert_eq!(
+        projections(&model),
+        Some((ChatPhase::Working, Attention::Working, SendGate::Working))
+    );
+
+    amux_ui::update(&mut model, tick(10 + 601));
+    assert_eq!(
+        projections(&model),
+        Some((ChatPhase::Unknown, Attention::Unknown, SendGate::Unknown))
     );
 }
 

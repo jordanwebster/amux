@@ -1152,15 +1152,18 @@ impl ClaudeLayer {
         classify(Some(self), Some(&StreamPhase::Live), None, None).attention()
     }
 
-    /// The E1 staleness cap: the working inference is stale once no
-    /// delivery has been observed for [`WORKING_STALENESS_CAP_SECS`]. A
-    /// pending prompt echo is newer local evidence whose reconciliation or
-    /// failed operation remains authoritative for ending the optimistic send.
+    /// The E1 staleness cap: the working inference is stale once no dated
+    /// transcript delivery or pending prompt dispatch has been observed for
+    /// [`WORKING_STALENESS_CAP_SECS`]. Undated echoes remain send-gate facts,
+    /// but cannot replace dated evidence in this explicit-time projection.
     pub(crate) fn working_is_stale(&self, now: Option<DateTime<Utc>>) -> bool {
-        if !self.echoes.is_empty() {
-            return false;
-        }
-        match (now, self.last_arrival) {
+        let newest_evidence = self
+            .echoes
+            .iter()
+            .filter_map(|echo| echo.at)
+            .chain(self.last_arrival)
+            .max();
+        match (now, newest_evidence) {
             (Some(now), Some(at)) => now - at > TimeDelta::seconds(WORKING_STALENESS_CAP_SECS),
             _ => false,
         }
@@ -1708,6 +1711,36 @@ mod tests {
                 tag: PhaseTag::Inferred
             }
         );
+    }
+
+    #[test]
+    fn working_staleness_uses_the_newest_dated_echo_or_transcript_delivery() {
+        let at = |seconds| DateTime::from_timestamp(seconds, 0);
+        let echo = |op: u128, seconds: Option<i64>| PromptEcho {
+            op: OpId(Uuid::from_u128(op)),
+            text: format!("prompt {op}"),
+            at: seconds.and_then(at),
+        };
+        let mut layer = ClaudeLayer {
+            last_arrival: at(100),
+            echoes: vec![echo(1, Some(700)), echo(2, None), echo(3, Some(500))],
+            ..ClaudeLayer::default()
+        };
+
+        assert!(!layer.working_is_stale(None));
+        assert!(!layer.working_is_stale(at(1_300)));
+        assert!(layer.working_is_stale(at(1_301)));
+
+        layer.last_arrival = at(800);
+        assert!(!layer.working_is_stale(at(1_400)));
+        assert!(layer.working_is_stale(at(1_401)));
+
+        layer.last_arrival = at(100);
+        layer.echoes = vec![echo(4, None)];
+        assert!(layer.working_is_stale(at(701)));
+
+        layer.last_arrival = None;
+        assert!(!layer.working_is_stale(at(10_000)));
     }
 
     #[test]
