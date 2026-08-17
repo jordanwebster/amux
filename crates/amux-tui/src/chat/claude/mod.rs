@@ -25,7 +25,7 @@ pub(crate) use keys::{handle_chat_key, handle_chat_paste};
 pub(crate) use render::build_chat_lines;
 
 use amux_ui::claude::{Ask, AskState, ChatPhase};
-use amux_ui::{AgentId, Command, Model, OpId, OpOutcome};
+use amux_ui::{AgentId, Attention, Command, Model, OpId, OpOutcome};
 
 use crate::chat::FeedScroll;
 use crate::composer::Composer;
@@ -247,12 +247,20 @@ impl View {
     }
 
     /// The 1 Hz tick is needed only while something time-dependent is on
-    /// screen (`docs/UI.md`): the working line's spinner and elapsed time.
+    /// screen (`docs/UI.md`): the working line's spinner and elapsed time,
+    /// or a fresh optimistic echo aging toward its attention cap.
     pub fn needs_tick(&self, model: &Model) -> bool {
-        matches!(
+        let phase_is_working = matches!(
             amux_ui::claude::phase(model, self.agent),
             ChatPhase::Working
-        )
+        );
+        let fresh_echo_is_working = model
+            .claude(self.agent)
+            .is_some_and(|layer| !layer.pending_echoes().is_empty())
+            && model
+                .agent(self.agent)
+                .is_some_and(|card| model.effective_attention(card) == Attention::Working);
+        phase_is_working || fresh_echo_is_working
     }
 }
 

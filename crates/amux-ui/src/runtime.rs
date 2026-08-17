@@ -158,6 +158,7 @@ impl Runtime {
     /// Dispatch a command; the outcome returns as state (a finished op).
     pub fn dispatch(&mut self, command: Command) -> OpId {
         let op = OpId(Uuid::new_v4());
+        self.process(Msg::Tick { now: Utc::now() });
         self.process(Msg::Command { op, command });
         op
     }
@@ -950,6 +951,24 @@ mod tests {
         }
     }
 
+    fn claude_agent(agent: AgentId, host: HostId) -> amux::Agent {
+        amux::Agent {
+            id: agent,
+            host_id: host,
+            name: Some("dispatch-clock-test".to_string()),
+            command: "claude".to_string(),
+            working_dir: PathBuf::from("/work"),
+            agent_type: "claude".to_string(),
+            io_protocols: vec![
+                "terminal_v1".to_string(),
+                crate::claude::PROTOCOL.to_string(),
+            ],
+            readonly: false,
+            args: Vec::new(),
+            created_at: DateTime::from_timestamp(1_754_697_600, 0).expect("valid fixture time"),
+        }
+    }
+
     fn process_and_assert_coherent(runtime: &mut Runtime, msg: Msg) {
         runtime.process(msg);
         let violations = runtime.model().check_invariants();
@@ -1111,6 +1130,64 @@ mod tests {
             "coherent child failed:\nstdout:\n{}\nstderr:\n{}",
             String::from_utf8_lossy(&output.stdout),
             String::from_utf8_lossy(&output.stderr)
+        );
+    }
+
+    #[tokio::test]
+    async fn dispatch_stamps_fresh_observation_time_before_reducing_the_command() {
+        let dir = tempfile::tempdir().expect("tempdir");
+        let mut runtime = a_runtime(dir.path().to_path_buf());
+        let agent = Uuid::from_u128(57);
+        let host = Uuid::from_u128(58);
+        for msg in [
+            Msg::Server(ServerMsg::Connected {
+                local_host_id: Some(host),
+            }),
+            Msg::Server(ServerMsg::AgentUpserted {
+                agent: claude_agent(agent, host),
+            }),
+            Msg::Stream {
+                agent,
+                event: StreamMsg::Opened { truncated: false },
+            },
+            Msg::Stream {
+                agent,
+                event: StreamMsg::ReplayComplete,
+            },
+        ] {
+            update(&mut runtime.model, msg);
+        }
+        let old = DateTime::from_timestamp(1_754_697_600, 0).expect("valid fixture time");
+        runtime.observe_now(old);
+
+        let before = Utc::now();
+        let op = runtime.dispatch(Command::Claude(crate::claude::ClaudeCommand::SendPrompt {
+            agent,
+            text: "fresh dispatch".to_string(),
+        }));
+        let after = Utc::now();
+
+        let observed = runtime.model().now().expect("dispatch observes time");
+        assert!(
+            observed > old,
+            "dispatch replaces the stale observation time"
+        );
+        assert!(
+            (before..=after).contains(&observed),
+            "dispatch observation {observed} must be bounded by {before} and {after}"
+        );
+        let echo = runtime
+            .model()
+            .claude(agent)
+            .expect("Claude layer")
+            .pending_echoes()
+            .iter()
+            .find(|echo| echo.op == op)
+            .expect("dispatched prompt echo");
+        assert_eq!(
+            echo.at,
+            Some(observed),
+            "the command reducer sees the refreshed dispatch clock"
         );
     }
 

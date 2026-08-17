@@ -192,12 +192,32 @@ pub fn entry_watermark(model: &Model, agent: AgentId) -> u64 {
 
 #[cfg(test)]
 mod tests {
-    use amux_ui::{Agent, AgentId, Model, Msg, ServerMsg, update};
-    use chrono::DateTime;
+    use amux_ui::{
+        Agent, AgentId, Attention, ClaudeCommand, Command, HostEntry, HostTrustStatus, Model, Msg,
+        OpId, SendGate, ServerMsg, StreamEntry, StreamMsg, update,
+    };
+    use chrono::{DateTime, TimeDelta};
+    use serde_json::json;
     use uuid::Uuid;
 
     use super::{AgentChatView, ChatView, entry_watermark};
     use crate::view::{ViewState, visible_rows};
+
+    fn at(seconds: i64) -> DateTime<chrono::Utc> {
+        DateTime::from_timestamp(1_754_697_600 + seconds, 0).expect("fixture timestamp")
+    }
+
+    fn a_host(online: bool) -> HostEntry {
+        HostEntry {
+            id: Uuid::from_u128(42),
+            name: "protocol-host".to_string(),
+            online,
+            version: None,
+            capabilities: None,
+            trust_status: HostTrustStatus::Trusted,
+            last_dial_error: None,
+        }
+    }
 
     fn model_with_protocol(protocol: &str) -> (Model, AgentId) {
         let agent = Uuid::from_u128(41);
@@ -207,6 +227,7 @@ mod tests {
             Msg::Server(ServerMsg::Connected {
                 local_host_id: Some(host),
             }),
+            Msg::Server(ServerMsg::HostUpserted { host: a_host(true) }),
             Msg::Server(ServerMsg::AgentUpserted {
                 agent: Agent {
                     id: agent,
@@ -218,14 +239,38 @@ mod tests {
                     io_protocols: vec![protocol.to_string()],
                     readonly: false,
                     args: Vec::new(),
-                    created_at: DateTime::from_timestamp(1_754_697_600, 0)
-                        .expect("fixture timestamp"),
+                    created_at: at(0),
                 },
             }),
         ] {
             update(&mut model, msg);
         }
         (model, agent)
+    }
+
+    fn idle_claude_model() -> (Model, AgentId) {
+        let (mut model, agent) = model_with_protocol(amux_ui::claude::PROTOCOL);
+        for event in [
+            StreamMsg::Opened { truncated: false },
+            StreamMsg::ReplayComplete,
+        ] {
+            update(&mut model, Msg::Stream { agent, event });
+        }
+        (model, agent)
+    }
+
+    fn send_prompt(model: &mut Model, agent: AgentId, seconds: i64) {
+        update(model, Msg::Tick { now: at(seconds) });
+        update(
+            model,
+            Msg::Command {
+                op: OpId(Uuid::from_u128(90)),
+                command: Command::Claude(ClaudeCommand::SendPrompt {
+                    agent,
+                    text: "next task".to_string(),
+                }),
+            },
+        );
     }
 
     #[test]
@@ -255,5 +300,100 @@ mod tests {
         assert!(view.chat.is_none(), "the fleet remains the active view");
         assert_eq!(visible_rows(&model, &view).len(), 1, "card stays visible");
         assert_eq!(entry_watermark(&model, agent), 0);
+    }
+
+    #[test]
+    fn claude_chat_ticks_for_a_fresh_idle_echo_then_stops_when_it_ages_out() {
+        let (mut model, agent) = idle_claude_model();
+        send_prompt(&mut model, agent, 100);
+        let chat = ChatView::open(&model, agent, 'a', false).expect("Claude chat");
+
+        assert!(matches!(
+            amux_ui::claude::phase(&model, agent),
+            amux_ui::claude::ChatPhase::Idle { .. }
+        ));
+        assert_eq!(
+            model.effective_attention(model.agent(agent).expect("agent card")),
+            Attention::Working
+        );
+        assert!(
+            chat.needs_tick(&model),
+            "a fresh echo over an idle phase must keep advancing observation time"
+        );
+
+        update(
+            &mut model,
+            Msg::Tick {
+                now: at(100) + TimeDelta::seconds(601),
+            },
+        );
+        assert_eq!(
+            model.effective_attention(model.agent(agent).expect("agent card")),
+            Attention::Unknown
+        );
+        assert_eq!(
+            amux_ui::claude::send_gate(&model, agent),
+            SendGate::SendInFlight
+        );
+        assert!(
+            !chat.needs_tick(&model),
+            "an aged echo keeps the safety gate closed without repainting forever"
+        );
+    }
+
+    #[test]
+    fn claude_chat_keeps_ordinary_working_phase_ticking() {
+        let (mut model, agent) = idle_claude_model();
+        update(
+            &mut model,
+            Msg::Stream {
+                agent,
+                event: StreamMsg::Batch {
+                    at: at(10),
+                    entries: vec![StreamEntry {
+                        seq: 1,
+                        payload: json!({
+                            "type": "user",
+                            "uuid": "dddddddd-0000-4000-8000-000000000001",
+                            "sessionId": "22222222-2222-4222-8222-222222222222",
+                            "timestamp": "2026-08-11T22:00:00.000Z",
+                            "message": {"role": "user", "content": "do the thing"},
+                            "origin": {"kind": "human"},
+                            "promptSource": "typed"
+                        }),
+                    }],
+                },
+            },
+        );
+        let chat = ChatView::open(&model, agent, 'a', false).expect("Claude chat");
+
+        assert!(matches!(
+            amux_ui::claude::phase(&model, agent),
+            amux_ui::claude::ChatPhase::Working
+        ));
+        assert!(chat.needs_tick(&model));
+    }
+
+    #[test]
+    fn offline_pending_echo_does_not_keep_claude_chat_ticking() {
+        let (mut model, agent) = idle_claude_model();
+        send_prompt(&mut model, agent, 100);
+        update(
+            &mut model,
+            Msg::Server(ServerMsg::HostUpserted {
+                host: a_host(false),
+            }),
+        );
+        let chat = ChatView::open(&model, agent, 'a', false).expect("Claude chat");
+
+        assert_eq!(
+            model.effective_attention(model.agent(agent).expect("agent card")),
+            Attention::Unknown
+        );
+        assert_eq!(
+            amux_ui::claude::send_gate(&model, agent),
+            SendGate::SendInFlight
+        );
+        assert!(!chat.needs_tick(&model));
     }
 }
