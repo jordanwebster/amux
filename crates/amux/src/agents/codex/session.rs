@@ -20,7 +20,7 @@ use super::CODEX_RAW_THREAD_NOT_READY;
 use super::io::{self, CodexSdkV1Input};
 use crate::agents::{
     AGENT_TYPE_CODEX, AgentBackend, CodexInput, CreateAgentRequest, LocalAgentNameSource,
-    PtyHandle, StopPolicy, StructuredLogSource, spawn_pty_agent,
+    PtyHandle, RawPtyTarget, StopPolicy, StructuredLogSource, spawn_pty_agent,
 };
 use crate::suspend::SuspendedAgent;
 
@@ -276,6 +276,140 @@ pub(crate) struct CodexRawPtyLease {
     runtime: Arc<StdMutex<CodexRuntime>>,
 }
 
+#[derive(Clone, Debug, Eq, PartialEq)]
+struct CodexRawPtyPlan {
+    thread_id: String,
+    socket_path: PathBuf,
+    model: Option<String>,
+    approval_policy: Option<String>,
+    sandbox_policy: Option<String>,
+    working_dir: PathBuf,
+}
+
+impl CodexRawPtyPlan {
+    fn spawn(self, agent_id: Uuid) -> Result<(PtyHandle, tokio::task::JoinHandle<()>)> {
+        std::os::unix::net::UnixStream::connect(&self.socket_path).with_context(|| {
+            format!(
+                "Codex raw TUI app-server socket is unavailable: {}",
+                self.socket_path.display()
+            )
+        })?;
+        let args = raw_tui_args(
+            &self.thread_id,
+            &self.socket_path,
+            self.model.as_deref(),
+            self.approval_policy.as_deref(),
+            self.sandbox_policy.as_deref(),
+        );
+        spawn_pty_agent(agent_id, "codex", &args, &self.working_dir, &[], &[], None)
+            .context("failed to spawn Codex raw TUI")
+    }
+
+    fn is_current(&self, runtime: &CodexRuntime) -> bool {
+        runtime.attached.as_ref().is_some_and(|attached| {
+            attached.thread_id == self.thread_id
+                && attached
+                    .live
+                    .as_ref()
+                    .is_some_and(|live| live.socket_path == self.socket_path)
+        })
+    }
+}
+
+/// Owned Codex raw-PTY endpoint. Acquiring it never needs the host registry;
+/// the per-session preparation mutex preserves one-spawn fanout while the
+/// blocking connect/open/spawn runs without the Codex runtime mutex.
+#[derive(Clone)]
+pub(crate) struct CodexRawPtyTarget {
+    agent_id: Uuid,
+    model: Option<String>,
+    approval_policy: Option<String>,
+    sandbox_policy: Option<String>,
+    working_dir: PathBuf,
+    runtime: Arc<StdMutex<CodexRuntime>>,
+    preparation: Arc<Mutex<()>>,
+    stop_tx: watch::Sender<bool>,
+}
+
+impl CodexRawPtyTarget {
+    pub(crate) async fn acquire_lease(&self) -> Result<CodexRawPtyLease> {
+        let _preparation = self.preparation.lock().await;
+        let plan = {
+            let mut runtime = self
+                .runtime
+                .lock()
+                .unwrap_or_else(|poison| poison.into_inner());
+            if *self.stop_tx.borrow() {
+                return Err(anyhow!("Codex raw session stopped during preparation"));
+            }
+            if let Some(lease) = cached_raw_pty_lease(self.agent_id, &self.runtime, &mut runtime)? {
+                return Ok(lease);
+            }
+            let attached = runtime
+                .attached
+                .as_ref()
+                .ok_or_else(|| anyhow!("{CODEX_RAW_THREAD_NOT_READY}"))?;
+            let live = attached.live.as_ref().ok_or_else(|| {
+                anyhow!("Codex raw session is unavailable until reconnect succeeds")
+            })?;
+            CodexRawPtyPlan {
+                thread_id: attached.thread_id.clone(),
+                socket_path: live.socket_path.clone(),
+                model: self.model.clone(),
+                approval_policy: self.approval_policy.clone(),
+                sandbox_policy: self.sandbox_policy.clone(),
+                working_dir: self.working_dir.clone(),
+            }
+        };
+
+        // This synchronous section is intentionally outside both the host
+        // registry guard and `CodexRuntime` mutex. Keeping it in this future
+        // also makes cancellation wait until forkpty has either succeeded or
+        // failed, so a detached blocking task cannot leak an unpublished PTY.
+        let (handle, exit_handle) = plan.clone().spawn(self.agent_id)?;
+
+        let published = {
+            let mut runtime = self
+                .runtime
+                .lock()
+                .unwrap_or_else(|poison| poison.into_inner());
+            if *self.stop_tx.borrow() || runtime.pty.is_some() || !plan.is_current(&runtime) {
+                None
+            } else {
+                let epoch = runtime.next_pty_epoch;
+                runtime.next_pty_epoch = runtime.next_pty_epoch.wrapping_add(1);
+                runtime.pty = Some(CodexPty {
+                    handle: handle.clone(),
+                    epoch,
+                    subscribers: 1,
+                });
+                Some(epoch)
+            }
+        };
+
+        let Some(epoch) = published else {
+            retire_unpublished_raw_pty(self.agent_id, handle).await;
+            exit_handle.abort();
+            return Err(anyhow!(
+                "Codex raw session changed or stopped during preparation"
+            ));
+        };
+
+        let exit_runtime = self.runtime.clone();
+        tokio::spawn(async move {
+            let _ = exit_handle.await;
+            clear_cached_pty_epoch(&exit_runtime, epoch);
+        });
+
+        Ok(CodexRawPtyLease {
+            handle,
+            epoch,
+            agent_id: self.agent_id,
+            runtime: self.runtime.clone(),
+        })
+    }
+}
+
 impl CodexRawPtyLease {
     pub(crate) fn handle(&self) -> &PtyHandle {
         &self.handle
@@ -354,6 +488,7 @@ pub(crate) struct CodexSession {
     log_source: StructuredLogSource,
     shared_client: Arc<CodexClient>,
     runtime: Arc<StdMutex<CodexRuntime>>,
+    raw_pty_preparation: Arc<Mutex<()>>,
     stop_tx: watch::Sender<bool>,
     started: bool,
 }
@@ -397,6 +532,7 @@ impl CodexSession {
                 pty: None,
                 next_pty_epoch: 0,
             })),
+            raw_pty_preparation: Arc::new(Mutex::new(())),
             stop_tx,
             started: false,
         }
@@ -479,39 +615,17 @@ impl CodexSession {
         }
     }
 
-    fn acquire_raw_pty_lease(&self) -> Result<CodexRawPtyLease> {
-        acquire_raw_pty_lease(self.agent_id, &self.runtime, |runtime| {
-            let attached = runtime
-                .attached
-                .as_ref()
-                .ok_or_else(|| anyhow!("{CODEX_RAW_THREAD_NOT_READY}"))?;
-            let live = attached.live.as_ref().ok_or_else(|| {
-                anyhow!("Codex raw session is unavailable until reconnect succeeds")
-            })?;
-            std::os::unix::net::UnixStream::connect(&live.socket_path).with_context(|| {
-                format!(
-                    "Codex raw TUI app-server socket is unavailable: {}",
-                    live.socket_path.display()
-                )
-            })?;
-            let args = raw_tui_args(
-                &attached.thread_id,
-                &live.socket_path,
-                self.model.as_deref(),
-                self.approval_policy.as_deref(),
-                self.sandbox_policy.as_deref(),
-            );
-            spawn_pty_agent(
-                self.agent_id,
-                "codex",
-                &args,
-                &self.working_dir,
-                &[],
-                &[],
-                None,
-            )
-            .context("failed to spawn Codex raw TUI")
-        })
+    fn owned_raw_pty_target(&self) -> CodexRawPtyTarget {
+        CodexRawPtyTarget {
+            agent_id: self.agent_id,
+            model: self.model.clone(),
+            approval_policy: self.approval_policy.clone(),
+            sandbox_policy: self.sandbox_policy.clone(),
+            working_dir: self.working_dir.clone(),
+            runtime: self.runtime.clone(),
+            preparation: self.raw_pty_preparation.clone(),
+            stop_tx: self.stop_tx.clone(),
+        }
     }
 
     fn cached_pty(&self) -> Option<PtyHandle> {
@@ -524,27 +638,50 @@ impl CodexSession {
     }
 }
 
-fn acquire_raw_pty_lease(
+fn cached_raw_pty_lease(
+    agent_id: Uuid,
+    runtime: &Arc<StdMutex<CodexRuntime>>,
+    state: &mut CodexRuntime,
+) -> Result<Option<CodexRawPtyLease>> {
+    let Some(pty) = state.pty.as_ref() else {
+        return Ok(None);
+    };
+    let handle = pty.handle.clone();
+    let epoch = pty.epoch;
+    let subscribers = pty
+        .subscribers
+        .checked_add(1)
+        .ok_or_else(|| anyhow!("Codex raw PTY subscriber count overflow"))?;
+    state.pty.as_mut().expect("PTY still cached").subscribers = subscribers;
+    Ok(Some(CodexRawPtyLease {
+        handle,
+        epoch,
+        agent_id,
+        runtime: runtime.clone(),
+    }))
+}
+
+async fn retire_unpublished_raw_pty(agent_id: Uuid, handle: PtyHandle) {
+    if let Err(error) = handle.terminate_process_group() {
+        tracing::warn!(
+            %agent_id,
+            %error,
+            "failed to terminate unpublished Codex raw TUI process group"
+        );
+    }
+    handle.close().await;
+}
+
+#[cfg(test)]
+fn acquire_test_raw_pty_lease(
     agent_id: Uuid,
     runtime: &Arc<StdMutex<CodexRuntime>>,
     spawn: impl FnOnce(&CodexRuntime) -> Result<(PtyHandle, tokio::task::JoinHandle<()>)>,
 ) -> Result<CodexRawPtyLease> {
     let (handle, exit_handle, epoch) = {
         let mut state = runtime.lock().unwrap_or_else(|poison| poison.into_inner());
-        if let Some(pty) = state.pty.as_ref() {
-            let handle = pty.handle.clone();
-            let epoch = pty.epoch;
-            let subscribers = pty
-                .subscribers
-                .checked_add(1)
-                .ok_or_else(|| anyhow!("Codex raw PTY subscriber count overflow"))?;
-            state.pty.as_mut().expect("PTY still cached").subscribers = subscribers;
-            return Ok(CodexRawPtyLease {
-                handle,
-                epoch,
-                agent_id,
-                runtime: runtime.clone(),
-            });
+        if let Some(lease) = cached_raw_pty_lease(agent_id, runtime, &mut state)? {
+            return Ok(lease);
         }
         let (handle, exit_handle) = spawn(&state)?;
         let epoch = state.next_pty_epoch;
@@ -1426,7 +1563,7 @@ impl AgentBackend for CodexSession {
 
     async fn stop(&self, _policy: StopPolicy) {
         tracing::info!(agent_id = %self.agent_id, "stopping Codex session");
-        let _ = self.stop_tx.send(true);
+        self.stop_tx.send_replace(true);
         if let Some(abort) = self
             .runtime
             .lock()
@@ -1472,8 +1609,8 @@ impl AgentBackend for CodexSession {
         Ok(self.cached_pty())
     }
 
-    fn codex_raw_pty_lease(&self) -> Result<Option<CodexRawPtyLease>> {
-        self.acquire_raw_pty_lease().map(Some)
+    fn raw_pty_target(&self) -> Result<Option<RawPtyTarget>> {
+        Ok(Some(RawPtyTarget::Codex(self.owned_raw_pty_target())))
     }
 
     fn codex_input(&self) -> Option<Box<dyn CodexInput>> {
@@ -1794,11 +1931,11 @@ mod tests {
     async fn one_of_two_raw_leases_keeps_pty_alive_and_final_drop_retires_it() {
         let session = session();
         let mut aborts = Vec::new();
-        let first = acquire_raw_pty_lease(session.agent_id, &session.runtime, |_| {
+        let first = acquire_test_raw_pty_lease(session.agent_id, &session.runtime, |_| {
             Ok(test_pty_spawn(&mut aborts))
         })
         .unwrap();
-        let second = acquire_raw_pty_lease(session.agent_id, &session.runtime, |_| {
+        let second = acquire_test_raw_pty_lease(session.agent_id, &session.runtime, |_| {
             panic!("second subscriber must share the cached PTY")
         })
         .unwrap();
@@ -1832,7 +1969,7 @@ mod tests {
     async fn stale_raw_detach_and_exit_cannot_clear_a_newer_epoch() {
         let session = session();
         let mut aborts = Vec::new();
-        let old = acquire_raw_pty_lease(session.agent_id, &session.runtime, |_| {
+        let old = acquire_test_raw_pty_lease(session.agent_id, &session.runtime, |_| {
             Ok(test_pty_spawn(&mut aborts))
         })
         .unwrap();
@@ -1873,7 +2010,7 @@ mod tests {
         let session = session();
         let mut aborts = Vec::new();
         let mut spawns = 0;
-        let first = acquire_raw_pty_lease(session.agent_id, &session.runtime, |_| {
+        let first = acquire_test_raw_pty_lease(session.agent_id, &session.runtime, |_| {
             spawns += 1;
             Ok(test_pty_spawn(&mut aborts))
         })
@@ -1882,7 +2019,7 @@ mod tests {
         drop(first);
         assert!(session.runtime.lock().unwrap().pty.is_none());
 
-        let second = acquire_raw_pty_lease(session.agent_id, &session.runtime, |_| {
+        let second = acquire_test_raw_pty_lease(session.agent_id, &session.runtime, |_| {
             spawns += 1;
             Ok(test_pty_spawn(&mut aborts))
         })
@@ -1900,10 +2037,32 @@ mod tests {
     async fn raw_spawn_failure_before_thread_ready_leaves_structured_plane_healthy() {
         let session = session();
 
-        let error = session.acquire_raw_pty_lease().err().unwrap();
+        let error = tokio::time::timeout(
+            Duration::from_secs(1),
+            session.owned_raw_pty_target().acquire_lease(),
+        )
+        .await
+        .expect("raw PTY readiness check timed out")
+        .err()
+        .unwrap();
         assert!(error.to_string().contains("thread_id is not available"));
         assert!(session.runtime.lock().unwrap().pty.is_none());
         assert!(session.log_source().unwrap().subscribe().await.is_some());
+    }
+
+    #[tokio::test]
+    async fn raw_target_snapshot_cannot_prepare_after_its_session_stops() {
+        let session = session();
+        let target = session.owned_raw_pty_target();
+        session.stop_tx.send_replace(true);
+
+        let error = tokio::time::timeout(Duration::from_secs(1), target.acquire_lease())
+            .await
+            .expect("stopped raw target check timed out")
+            .err()
+            .expect("stopped raw target unexpectedly acquired a lease");
+        assert!(error.to_string().contains("stopped during preparation"));
+        assert!(session.runtime.lock().unwrap().pty.is_none());
     }
 
     #[test]
@@ -1961,7 +2120,13 @@ mod tests {
                 "name failure must not detach resume"
             );
         }
-        let error = match session.acquire_raw_pty_lease() {
+        let acquisition = tokio::time::timeout(
+            Duration::from_secs(1),
+            session.owned_raw_pty_target().acquire_lease(),
+        )
+        .await
+        .expect("raw PTY socket check timed out");
+        let error = match acquisition {
             Ok(_) => panic!("missing mock socket must fail after reaching raw spawn path"),
             Err(error) => error.to_string(),
         };

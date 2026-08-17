@@ -2,10 +2,11 @@
 //!
 //! [`AgentBackend`] is the instance behavior every locally hosted agent
 //! implements; [`AgentSession`] is the owned handle the runtime stores.
-//! [`StructuredInput`] is the optional owned input endpoint a backend hands out
-//! so callers can send once the session registry lock is released. The Claude
-//! and test-agent impls live beside their sessions; this module keeps only the
-//! factories and the shared [`terminal_io_protocols`] advertisement.
+//! [`StructuredInput`] and [`RawPtyTarget`] are owned endpoints a backend hands
+//! out so callers can do input or raw-PTY preparation once the session registry
+//! lock is released. The Claude and test-agent impls live beside their sessions;
+//! this module keeps only the factories and the shared
+//! [`terminal_io_protocols`] advertisement.
 //!
 //! This module constructs live agent sessions, so it is gated at its `mod`
 //! declaration behind the `local-agents` feature. The data types it produces
@@ -27,7 +28,7 @@ use uuid::Uuid;
 use super::TestAgentSession;
 use super::claude::ClaudeSession;
 #[cfg(unix)]
-use super::codex::{CodexClient, CodexRawPtyLease, CodexSession};
+use super::codex::{CodexClient, CodexRawPtyTarget, CodexSession};
 use super::{
     AgentRecord, ExternalHookBootstrap, HookError, HookOutcome, LocalAgentNameSource, PtyHandle,
     SessionEvent, StopPolicy, StructuredLogSource,
@@ -50,6 +51,13 @@ pub(crate) trait StructuredInput: Send + Sync {
 #[async_trait]
 pub(crate) trait CodexInput: Send + Sync {
     async fn send(&self, input_id: Vec<u8>, input: super::codex::io::CodexSdkV1Input);
+}
+
+/// An owned raw-PTY preparation target detached from the session registry.
+pub(crate) enum RawPtyTarget {
+    Existing(PtyHandle),
+    #[cfg(unix)]
+    Codex(CodexRawPtyTarget),
 }
 
 /// Host-owned resources shared by agent backends.
@@ -92,11 +100,11 @@ pub(crate) trait AgentBackend: Send + Sync {
     fn log_source(&self) -> Option<StructuredLogSource>;
     fn pty_handle(&self) -> Result<Option<PtyHandle>>;
 
-    /// Acquire the Codex-only raw PTY subscription lease. Other backends keep
-    /// their existing PTY lifetime and return `None`.
-    #[cfg(unix)]
-    fn codex_raw_pty_lease(&self) -> Result<Option<CodexRawPtyLease>> {
-        Ok(None)
+    /// Snapshot the smallest owned target needed to prepare a raw subscription.
+    /// The default covers backends whose PTY already exists for the session.
+    fn raw_pty_target(&self) -> Result<Option<RawPtyTarget>> {
+        self.pty_handle()
+            .map(|handle| handle.map(RawPtyTarget::Existing))
     }
 
     fn structured_input(&self) -> Option<Box<dyn StructuredInput>> {

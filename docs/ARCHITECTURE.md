@@ -49,6 +49,18 @@ on the agent-independent `terminal_v1` plane, so the real Codex TUI and
 amux's native chat screen can be live on one agent at once.
 `docs/CODEX.md` owns the detail.
 
+Raw subscription lookup is a two-phase boundary. While the local-agent
+registry is read-locked, the service validates the requested protocol and
+clones only an owned, agent-specific raw target. It releases that guard before
+any Codex socket connect, PTY open, or process spawn. The target is a snapshot:
+if lookup wins a race with deletion, it remains bound to that exact old session
+and can never redirect to a replacement registered under the same id. Codex
+also rechecks that the snapshotted session is not stopped and that its
+thread/socket endpoint is still current before publishing the prepared PTY;
+otherwise it terminates the unpublished process and refuses the subscription.
+A Codex-session preparation mutex preserves one-spawn fanout, while the Codex
+runtime mutex is held only to snapshot or publish cache state.
+
 A daemon owns two listeners. The **local Unix socket**
 (`Config.socket_path`, mode `600`) is always on and carries local
 clients. The **external TCP listener** (`tcp_port`) is off by default —

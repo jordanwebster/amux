@@ -1,5 +1,7 @@
 //! Session subscription and input RPCs, driven by [`PtyAgentHost`].
 
+use std::future::Future;
+
 use serde_json::json;
 use tokio::sync::mpsc;
 use uuid::Uuid;
@@ -14,7 +16,7 @@ use crate::agents::claude::io::{
 use crate::agents::codex::io::{self as codex_io, CodexSdkV1Output, CodexSdkV1ReplayQuery};
 use crate::agents::terminal_io::{self, TerminalV1Control, TerminalV1ReplayQuery};
 use crate::agents::{
-    BroadcastRead, ByteReplayQuery, PtyHandle, SendInputRequest, SessionCloseReason,
+    BroadcastRead, ByteReplayQuery, PtyHandle, RawPtyTarget, SendInputRequest, SessionCloseReason,
     SessionInputEvent, StructuredInput, StructuredOutput, SubscribeSessionEvent,
     SubscribeSessionRequest,
 };
@@ -189,41 +191,62 @@ async fn raw_pty_subscription(
     agent_id: Uuid,
     io_protocol: &str,
 ) -> Result<RawPtySubscription, ProtocolError> {
-    let state = host.state().read().await;
-    let session = state
-        .local_agents
-        .get(&agent_id)
-        .map(|context| &context.session)
-        .ok_or(ProtocolError::NoAgentFound)?;
-    ensure_agent_supports_protocol(session, agent_id, io_protocol)?;
+    raw_pty_subscription_with(host, agent_id, io_protocol, prepare_raw_pty_target).await
+}
 
-    #[cfg(unix)]
-    if let Some(lease) =
+async fn raw_pty_subscription_with<Prepare, Prepared>(
+    host: &PtyAgentHost,
+    agent_id: Uuid,
+    io_protocol: &str,
+    prepare: Prepare,
+) -> Result<RawPtySubscription, ProtocolError>
+where
+    Prepare: FnOnce(RawPtyTarget) -> Prepared,
+    Prepared: Future<Output = Result<RawPtySubscription, ProtocolError>>,
+{
+    let target = {
+        let state = host.state().read().await;
+        let session = state
+            .local_agents
+            .get(&agent_id)
+            .map(|context| &context.session)
+            .ok_or(ProtocolError::NoAgentFound)?;
+        ensure_agent_supports_protocol(session, agent_id, io_protocol)?;
         session
-            .codex_raw_pty_lease()
+            .raw_pty_target()
             .map_err(|error| ProtocolError::ServerError {
                 message: error.to_string(),
             })?
-    {
-        return Ok(RawPtySubscription {
-            pty: lease.handle().clone(),
-            codex_lease: Some(lease),
-        });
-    }
+            .ok_or_else(|| ProtocolError::InvalidArgument {
+                message: format!("agent {agent_id} does not support raw PTY sessions"),
+            })?
+    };
 
-    let pty = session
-        .pty_handle()
-        .map_err(|error| ProtocolError::ServerError {
-            message: error.to_string(),
-        })?
-        .ok_or_else(|| ProtocolError::InvalidArgument {
-            message: format!("agent {agent_id} does not support raw PTY sessions"),
-        })?;
-    Ok(RawPtySubscription {
-        pty,
+    prepare(target).await
+}
+
+async fn prepare_raw_pty_target(target: RawPtyTarget) -> Result<RawPtySubscription, ProtocolError> {
+    match target {
+        RawPtyTarget::Existing(pty) => Ok(RawPtySubscription {
+            pty,
+            #[cfg(unix)]
+            codex_lease: None,
+        }),
         #[cfg(unix)]
-        codex_lease: None,
-    })
+        RawPtyTarget::Codex(target) => {
+            let lease =
+                target
+                    .acquire_lease()
+                    .await
+                    .map_err(|error| ProtocolError::ServerError {
+                        message: error.to_string(),
+                    })?;
+            Ok(RawPtySubscription {
+                pty: lease.handle().clone(),
+                codex_lease: Some(lease),
+            })
+        }
+    }
 }
 
 async fn prepare_direct_structured_session_subscription(
@@ -738,6 +761,7 @@ fn structured_output_event(
 #[cfg(test)]
 mod tests {
     use futures_util::StreamExt;
+    use tokio::time::{Duration, timeout};
 
     use super::*;
     use crate::agents::{
@@ -836,6 +860,132 @@ mod tests {
         let mut reader = pty.subscribe_with_query(None).await.unwrap();
         pty.send_input(b"still-live".to_vec()).await.unwrap();
         assert_eq!(reader.read().await.unwrap(), b"still-live");
+    }
+
+    #[tokio::test]
+    async fn raw_preparation_does_not_hold_the_host_state_lock() {
+        let host = PtyAgentHost::new(Uuid::from_u128(1));
+        let agent_id = Uuid::from_u128(4);
+        {
+            let mut state = timeout(Duration::from_secs(1), host.state().write())
+                .await
+                .expect("initial host-state write timed out");
+            state
+                .insert_registered_local_agent(
+                    host.host_id(),
+                    agent_id,
+                    Box::new(TestAgentSession::echo_for_tests(agent_id, None)),
+                )
+                .unwrap();
+        }
+
+        let (entered_tx, entered_rx) = tokio::sync::oneshot::channel();
+        let (release_tx, release_rx) = tokio::sync::oneshot::channel();
+        let subscription_host = host.clone();
+        let subscription = tokio::spawn(async move {
+            timeout(
+                Duration::from_secs(2),
+                raw_pty_subscription_with(
+                    &subscription_host,
+                    agent_id,
+                    terminal_io::TERMINAL_V1,
+                    move |target| async move {
+                        entered_tx
+                            .send(())
+                            .expect("preparation observer dropped unexpectedly");
+                        timeout(Duration::from_secs(1), release_rx)
+                            .await
+                            .expect("raw preparation release timed out")
+                            .expect("raw preparation release sender dropped");
+                        timeout(Duration::from_secs(1), prepare_raw_pty_target(target))
+                            .await
+                            .expect("raw target preparation timed out")
+                    },
+                ),
+            )
+            .await
+            .expect("raw subscription preparation timed out")
+        });
+
+        timeout(Duration::from_secs(1), entered_rx)
+            .await
+            .expect("raw preparation did not reach the controlled seam")
+            .expect("raw preparation ended before reaching the controlled seam");
+
+        let writer_host = host.clone();
+        let (writer_acquired_tx, writer_acquired_rx) = tokio::sync::oneshot::channel();
+        let writer = tokio::spawn(async move {
+            let _state = timeout(Duration::from_secs(1), writer_host.state().write())
+                .await
+                .expect("host-state writer timed out");
+            writer_acquired_tx
+                .send(())
+                .expect("writer observer dropped unexpectedly");
+        });
+        timeout(Duration::from_secs(1), writer_acquired_rx)
+            .await
+            .expect("host-state writer was blocked by raw preparation")
+            .expect("host-state writer ended without acquiring the lock");
+
+        release_tx
+            .send(())
+            .expect("raw preparation ended before release");
+        timeout(Duration::from_secs(1), writer)
+            .await
+            .expect("host-state writer task timed out")
+            .expect("host-state writer task panicked");
+        let prepared = timeout(Duration::from_secs(1), subscription)
+            .await
+            .expect("raw subscription task timed out")
+            .expect("raw subscription task panicked")
+            .expect("raw subscription failed after release");
+        drop(prepared);
+    }
+
+    #[tokio::test]
+    async fn raw_target_snapshot_preserves_missing_agent_and_protocol_errors() {
+        let host = PtyAgentHost::new(Uuid::from_u128(1));
+        let agent_id = Uuid::from_u128(5);
+
+        let missing = timeout(
+            Duration::from_secs(1),
+            raw_pty_subscription(&host, agent_id, terminal_io::TERMINAL_V1),
+        )
+        .await
+        .expect("missing-agent lookup timed out");
+        let Err(missing) = missing else {
+            panic!("missing agent unexpectedly produced a raw subscription");
+        };
+        assert!(matches!(missing, ProtocolError::NoAgentFound));
+
+        {
+            let mut state = timeout(Duration::from_secs(1), host.state().write())
+                .await
+                .expect("host-state write timed out");
+            state
+                .insert_registered_local_agent(
+                    host.host_id(),
+                    agent_id,
+                    Box::new(TestAgentSession::echo_for_tests(agent_id, None)),
+                )
+                .unwrap();
+        }
+        let unsupported = timeout(
+            Duration::from_secs(1),
+            raw_pty_subscription(&host, agent_id, "not_advertised_v1"),
+        )
+        .await
+        .expect("protocol validation timed out");
+        let Err(unsupported) = unsupported else {
+            panic!("unsupported protocol unexpectedly produced a raw subscription");
+        };
+        assert!(matches!(
+            unsupported,
+            ProtocolError::InvalidArgument { message }
+                if message == format!(
+                    "agent {agent_id} does not support `not_advertised_v1` sessions"
+                )
+        ));
     }
 
     #[tokio::test]
