@@ -220,27 +220,10 @@ pub async fn attach(target: Option<&str>, config: &Config) -> Result<()> {
 
 /// Remove an agent by exact name or UUID without prompting.
 pub async fn remove_agent(target: &str, config: &Config) -> Result<()> {
-    let retry_command = remove_retry_command(target);
-    let rpc = require_running_client(config, Some(&retry_command)).await?;
+    let rpc = require_running_client(config, None).await?;
     remove_agent_with_client(target, &rpc).await?;
     println!("Deleted agent '{target}'.");
     Ok(())
-}
-
-fn remove_retry_command(target: &str) -> String {
-    format!("amux rm {}", shell_safe_argument(target))
-}
-
-fn shell_safe_argument(argument: &str) -> String {
-    if !argument.is_empty()
-        && argument
-            .chars()
-            .all(|c| c.is_ascii_alphanumeric() || matches!(c, '_' | '-' | '.' | '/'))
-    {
-        argument.to_string()
-    } else {
-        format!("'{}'", argument.replace('\'', "'\\''"))
-    }
 }
 
 async fn remove_agent_with_client(target: &str, rpc: &Client) -> Result<()> {
@@ -914,19 +897,6 @@ mod attach {
             )
         );
         assert!(!error.to_string().contains("is running"));
-    }
-
-    #[test]
-    fn remove_retry_command_quotes_each_target_as_one_shell_argument() {
-        assert_eq!(super::remove_retry_command("worker-1"), "amux rm worker-1");
-        assert_eq!(
-            super::remove_retry_command("team one"),
-            "amux rm 'team one'"
-        );
-        assert_eq!(
-            super::remove_retry_command("O'Brien"),
-            "amux rm 'O'\\''Brien'"
-        );
     }
 
     use std::sync::Mutex as StdMutex;
