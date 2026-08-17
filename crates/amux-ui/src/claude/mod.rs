@@ -761,12 +761,9 @@ pub enum ClaudeViolation {
     },
     ProjectionDisagreement {
         agent: amux::AgentId,
-        classification: String,
         phase: ChatPhase,
         attention: Attention,
         send_gate: SendGate,
-        send_in_flight: bool,
-        orderly_exit: bool,
         observer_readonly: bool,
         menu_shape_refusal: bool,
         host_offline: bool,
@@ -824,22 +821,18 @@ impl std::fmt::Display for ClaudeViolation {
             }
             Self::ProjectionDisagreement {
                 agent,
-                classification,
                 phase,
                 attention,
                 send_gate,
-                send_in_flight,
-                orderly_exit,
                 observer_readonly,
                 menu_shape_refusal,
                 host_offline,
                 working_stale,
             } => write!(
                 f,
-                "agent {agent} claude classification {classification}, phase {phase:?}, effective \
-                 attention {attention:?}, and send gate {send_gate:?} disagree \
-                 (send_in_flight={send_in_flight}, orderly_exit={orderly_exit}, \
-                 observer_readonly={observer_readonly}, menu_shape_refusal={menu_shape_refusal}, \
+                "agent {agent} claude phase {phase:?}, effective attention {attention:?}, and \
+                 send gate {send_gate:?} disagree (observer_readonly={observer_readonly}, \
+                 menu_shape_refusal={menu_shape_refusal}, \
                  host_offline={host_offline}, working_stale={working_stale})"
             ),
         }
@@ -1443,12 +1436,83 @@ pub fn mode_cycle_gate(model: &Model, agent: amux::AgentId) -> Option<&'static s
     classify_model(model, agent, model.now()).mode_cycle_refusal()
 }
 
-/// Assert agreement among Claude's one classification and its public
-/// projections. Claude's fleet projection has two intentional, one-way
-/// read-time degradations that Codex does not: an offline host and stale
-/// Working evidence become Unknown. Observation-only cards and unverified
-/// ask menus preserve visible phase/attention while separately withholding
-/// interaction, so neither is a projection disagreement.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+struct ProjectionExceptions {
+    host_offline: bool,
+    working_stale: bool,
+    observer_readonly: bool,
+    menu_shape_refusal: bool,
+}
+
+/// An independent relation over Claude's public projections. It deliberately
+/// does not call the classifier: if phase, cached/effective attention, or the
+/// send gate drifts independently, this matrix can disagree with them.
+fn projections_agree(
+    phase: &ChatPhase,
+    attention: Attention,
+    send_gate: SendGate,
+    exceptions: ProjectionExceptions,
+) -> bool {
+    let ProjectionExceptions {
+        host_offline,
+        working_stale,
+        // These facts affect whether this client may act, not what the
+        // Claude session is visibly doing. C4 will add the read-only gate;
+        // menu byte safety remains owned by `encoding`.
+        observer_readonly: _,
+        menu_shape_refusal: _,
+    } = exceptions;
+
+    match phase {
+        ChatPhase::Unknown => {
+            attention == Attention::Unknown
+                && matches!(send_gate, SendGate::Unknown | SendGate::SendInFlight)
+        }
+        ChatPhase::Replaying => {
+            attention == Attention::Unknown
+                && matches!(send_gate, SendGate::Replaying | SendGate::SendInFlight)
+        }
+        ChatPhase::Errored => {
+            attention == Attention::Unknown
+                && matches!(send_gate, SendGate::Ready | SendGate::SendInFlight)
+        }
+        ChatPhase::Working => match (attention, send_gate) {
+            (Attention::Working, SendGate::Working | SendGate::SendInFlight) => true,
+            (Attention::Unknown, SendGate::Working | SendGate::SendInFlight) => host_offline,
+            _ => false,
+        },
+        ChatPhase::Idle { .. } => match (attention, send_gate) {
+            (Attention::Idle, SendGate::Ready | SendGate::Exited)
+            | (Attention::NeedsYou { why: Why::Finished }, SendGate::Ready)
+            | (Attention::Working, SendGate::SendInFlight) => true,
+            (Attention::Unknown, SendGate::Ready | SendGate::Exited) => host_offline,
+            (Attention::Unknown, SendGate::SendInFlight) => host_offline || working_stale,
+            _ => false,
+        },
+        ChatPhase::NeedsYou { why, .. } => {
+            let matching_attention = match why {
+                AskWhy::Permission => Attention::NeedsYou {
+                    why: Why::Permission,
+                },
+                AskWhy::Question => Attention::NeedsYou { why: Why::Question },
+            };
+            match (attention, send_gate) {
+                (attention, SendGate::NeedsYou) if attention == matching_attention => true,
+                (Attention::Working, SendGate::SendInFlight) => true,
+                (Attention::Unknown, SendGate::NeedsYou) => host_offline,
+                (Attention::Unknown, SendGate::SendInFlight) => host_offline || working_stale,
+                _ => false,
+            }
+        }
+    }
+}
+
+/// Assert the independent public-projection relation for every Claude card.
+/// Effective attention has two intentional, one-way degradations that Codex
+/// does not: an offline host and stale optimistic-send evidence become
+/// Unknown. Observation-only cards and unverified ask menus preserve visible
+/// obligations while separately withholding interaction, so neither is a
+/// projection disagreement.
 pub(crate) fn check_projection_invariant(
     model: &Model,
     agent: amux::AgentId,
@@ -1457,47 +1521,30 @@ pub(crate) fn check_projection_invariant(
     let Some(card) = model.agent(agent) else {
         return;
     };
-    let condition = classify_model(model, agent, model.now());
     let phase = phase(model, agent);
     let attention = model.effective_attention(card);
     let send_gate = send_gate(model, agent);
     let host_offline = !model.host_online(card.agent.host_id);
-    let working_stale = condition.attention() == Attention::Working
+    let working_stale = card.attention == Attention::Working
         && card
             .claude()
             .is_some_and(|layer| layer.working_is_stale(model.now()));
-    let expected_attention = if host_offline || working_stale {
-        Attention::Unknown
-    } else {
-        condition.attention()
-    };
 
     let head = card.claude().and_then(ClaudeLayer::ask_head);
     let menu_shape_refusal =
         head.is_some_and(|ask| encoding::menu_shape_refusal(&ask.kind).is_some());
-    let head_agrees = match condition.state {
-        ChatConditionState::AskPending { id, why } => {
-            head.is_some_and(|ask| ask.id == id && ask.why() == why)
-        }
-        _ => true,
+    let exceptions = ProjectionExceptions {
+        host_offline,
+        working_stale,
+        observer_readonly: card.agent.readonly,
+        menu_shape_refusal,
     };
-
-    // These exact projections spell out Claude's asymmetric exceptions:
-    // orderly exit is Idle+Exited; an optimistic echo outranks live positive
-    // attention/gates but not Replaying/Unknown/Errored attention; and
-    // offline/stale degradation affects only effective attention.
-    let phase_agrees = phase == condition.phase();
-    let attention_agrees = attention == expected_attention;
-    let gate_agrees = send_gate == condition.send_gate();
-    if !phase_agrees || !attention_agrees || !gate_agrees || !head_agrees {
+    if !projections_agree(&phase, attention, send_gate, exceptions) {
         out.push(Violation::Claude(ClaudeViolation::ProjectionDisagreement {
             agent,
-            classification: format!("{:?}", condition.state),
             phase,
             attention,
             send_gate,
-            send_in_flight: condition.send_in_flight,
-            orderly_exit: matches!(condition.state, ChatConditionState::Exited),
             observer_readonly: card.agent.readonly,
             menu_shape_refusal,
             host_offline,
@@ -1710,14 +1757,407 @@ mod tests {
     }
 
     #[test]
-    fn detects_projection_disagreement() {
+    fn detects_projection_disagreement_without_an_attention_mismatch() {
         let mut model = a_model_with_a_folded_layer();
-        model
-            .agents
-            .get_mut(&agent_id())
-            .expect("agent card")
-            .attention = Attention::Idle;
-        assert!(fires(&model, "claude-projection-disagreement"));
+        assert_eq!(
+            model.agent(agent_id()).expect("agent card").attention,
+            Attention::Unknown,
+            "the opening replay keeps the cache coherent at Unknown"
+        );
+        model.agents.get_mut(&agent_id()).expect("agent card").phase =
+            AgentPhase::Exited { exit_code: Some(1) };
+
+        let violations = model.check_invariants();
+        assert!(
+            !violations
+                .iter()
+                .any(|violation| matches!(violation, Violation::AttentionMismatch { .. })),
+            "the cached attention still agrees with the stream-aware layer projection: \
+             {violations:?}"
+        );
+        assert!(
+            violations.iter().any(|violation| matches!(
+                violation,
+                Violation::Claude(ClaudeViolation::ProjectionDisagreement { .. })
+            )),
+            "Idle + effective Unknown + Exited is invalid on an online host: {violations:?}"
+        );
+    }
+
+    #[test]
+    fn projection_matrix_accepts_every_claude_relation_and_exception() {
+        let none = ProjectionExceptions::default();
+        let offline = ProjectionExceptions {
+            host_offline: true,
+            ..none
+        };
+        let stale_send = ProjectionExceptions {
+            working_stale: true,
+            ..none
+        };
+        let readonly = ProjectionExceptions {
+            observer_readonly: true,
+            ..none
+        };
+        let unverified_menu = ProjectionExceptions {
+            menu_shape_refusal: true,
+            ..none
+        };
+        let idle = ChatPhase::Idle {
+            tag: PhaseTag::Inferred,
+        };
+        let permission = ChatPhase::NeedsYou {
+            why: AskWhy::Permission,
+            tag: PhaseTag::Fact,
+        };
+        let question = ChatPhase::NeedsYou {
+            why: AskWhy::Question,
+            tag: PhaseTag::Fact,
+        };
+        let cases = [
+            (
+                "unknown",
+                ChatPhase::Unknown,
+                Attention::Unknown,
+                SendGate::Unknown,
+                none,
+            ),
+            (
+                "unknown with send",
+                ChatPhase::Unknown,
+                Attention::Unknown,
+                SendGate::SendInFlight,
+                none,
+            ),
+            (
+                "replaying",
+                ChatPhase::Replaying,
+                Attention::Unknown,
+                SendGate::Replaying,
+                none,
+            ),
+            (
+                "replaying with send",
+                ChatPhase::Replaying,
+                Attention::Unknown,
+                SendGate::SendInFlight,
+                none,
+            ),
+            (
+                "errored",
+                ChatPhase::Errored,
+                Attention::Unknown,
+                SendGate::Ready,
+                none,
+            ),
+            (
+                "errored with send",
+                ChatPhase::Errored,
+                Attention::Unknown,
+                SendGate::SendInFlight,
+                none,
+            ),
+            (
+                "working",
+                ChatPhase::Working,
+                Attention::Working,
+                SendGate::Working,
+                none,
+            ),
+            (
+                "working with send",
+                ChatPhase::Working,
+                Attention::Working,
+                SendGate::SendInFlight,
+                none,
+            ),
+            (
+                "offline working",
+                ChatPhase::Working,
+                Attention::Unknown,
+                SendGate::Working,
+                offline,
+            ),
+            (
+                "offline working with send",
+                ChatPhase::Working,
+                Attention::Unknown,
+                SendGate::SendInFlight,
+                offline,
+            ),
+            ("rest", idle, Attention::Idle, SendGate::Ready, none),
+            (
+                "orderly exit",
+                idle,
+                Attention::Idle,
+                SendGate::Exited,
+                none,
+            ),
+            (
+                "finished",
+                idle,
+                Attention::NeedsYou { why: Why::Finished },
+                SendGate::Ready,
+                none,
+            ),
+            (
+                "idle phase with fresh send",
+                idle,
+                Attention::Working,
+                SendGate::SendInFlight,
+                none,
+            ),
+            (
+                "offline rest",
+                idle,
+                Attention::Unknown,
+                SendGate::Ready,
+                offline,
+            ),
+            (
+                "offline exit",
+                idle,
+                Attention::Unknown,
+                SendGate::Exited,
+                offline,
+            ),
+            (
+                "aged idle send",
+                idle,
+                Attention::Unknown,
+                SendGate::SendInFlight,
+                stale_send,
+            ),
+            (
+                "permission ask",
+                permission,
+                Attention::NeedsYou {
+                    why: Why::Permission,
+                },
+                SendGate::NeedsYou,
+                none,
+            ),
+            (
+                "question ask",
+                question,
+                Attention::NeedsYou { why: Why::Question },
+                SendGate::NeedsYou,
+                none,
+            ),
+            (
+                "ask with fresh send",
+                permission,
+                Attention::Working,
+                SendGate::SendInFlight,
+                none,
+            ),
+            (
+                "offline ask",
+                permission,
+                Attention::Unknown,
+                SendGate::NeedsYou,
+                offline,
+            ),
+            (
+                "aged ask send",
+                question,
+                Attention::Unknown,
+                SendGate::SendInFlight,
+                stale_send,
+            ),
+            (
+                "readonly obligation stays visible",
+                permission,
+                Attention::NeedsYou {
+                    why: Why::Permission,
+                },
+                SendGate::NeedsYou,
+                readonly,
+            ),
+            (
+                "unverified menu stays visible",
+                permission,
+                Attention::NeedsYou {
+                    why: Why::Permission,
+                },
+                SendGate::NeedsYou,
+                unverified_menu,
+            ),
+        ];
+
+        for (name, phase, attention, gate, exceptions) in cases {
+            assert!(
+                projections_agree(&phase, attention, gate, exceptions),
+                "valid Claude projection rejected: {name}"
+            );
+        }
+    }
+
+    #[test]
+    fn projection_matrix_rejects_each_wrong_relation_without_classifier_help() {
+        let none = ProjectionExceptions::default();
+        let stale = ProjectionExceptions {
+            working_stale: true,
+            ..none
+        };
+        let idle = ChatPhase::Idle {
+            tag: PhaseTag::Inferred,
+        };
+        let ask = ChatPhase::NeedsYou {
+            why: AskWhy::Permission,
+            tag: PhaseTag::Fact,
+        };
+        let cases = [
+            (
+                "unknown positive attention",
+                ChatPhase::Unknown,
+                Attention::Idle,
+                SendGate::Unknown,
+                none,
+            ),
+            (
+                "unknown ready gate",
+                ChatPhase::Unknown,
+                Attention::Unknown,
+                SendGate::Ready,
+                none,
+            ),
+            (
+                "replay positive attention",
+                ChatPhase::Replaying,
+                Attention::Working,
+                SendGate::Replaying,
+                none,
+            ),
+            (
+                "replay unknown gate",
+                ChatPhase::Replaying,
+                Attention::Unknown,
+                SendGate::Unknown,
+                none,
+            ),
+            (
+                "error positive attention",
+                ChatPhase::Errored,
+                Attention::Idle,
+                SendGate::Ready,
+                none,
+            ),
+            (
+                "error unknown gate",
+                ChatPhase::Errored,
+                Attention::Unknown,
+                SendGate::Unknown,
+                none,
+            ),
+            (
+                "working unexplained unknown",
+                ChatPhase::Working,
+                Attention::Unknown,
+                SendGate::Working,
+                none,
+            ),
+            (
+                "working stale is not an exception",
+                ChatPhase::Working,
+                Attention::Unknown,
+                SendGate::Working,
+                stale,
+            ),
+            (
+                "working ready gate",
+                ChatPhase::Working,
+                Attention::Working,
+                SendGate::Ready,
+                none,
+            ),
+            (
+                "idle refusing gate",
+                idle,
+                Attention::Idle,
+                SendGate::NeedsYou,
+                none,
+            ),
+            (
+                "finished send gate",
+                idle,
+                Attention::NeedsYou { why: Why::Finished },
+                SendGate::SendInFlight,
+                none,
+            ),
+            (
+                "idle working without send",
+                idle,
+                Attention::Working,
+                SendGate::Ready,
+                none,
+            ),
+            (
+                "idle unexplained unknown",
+                idle,
+                Attention::Unknown,
+                SendGate::Ready,
+                none,
+            ),
+            (
+                "idle unknown send without age",
+                idle,
+                Attention::Unknown,
+                SendGate::SendInFlight,
+                none,
+            ),
+            (
+                "ask mismatched reason",
+                ask,
+                Attention::NeedsYou { why: Why::Question },
+                SendGate::NeedsYou,
+                none,
+            ),
+            (
+                "ask ready gate",
+                ask,
+                Attention::NeedsYou {
+                    why: Why::Permission,
+                },
+                SendGate::Ready,
+                none,
+            ),
+            (
+                "ask working without send",
+                ask,
+                Attention::Working,
+                SendGate::NeedsYou,
+                none,
+            ),
+            (
+                "ask unexplained unknown",
+                ask,
+                Attention::Unknown,
+                SendGate::NeedsYou,
+                none,
+            ),
+            (
+                "ask unknown send without age",
+                ask,
+                Attention::Unknown,
+                SendGate::SendInFlight,
+                none,
+            ),
+            (
+                "ask finished attention",
+                ask,
+                Attention::NeedsYou { why: Why::Finished },
+                SendGate::NeedsYou,
+                none,
+            ),
+        ];
+
+        for (name, phase, attention, gate, exceptions) in cases {
+            assert!(
+                !projections_agree(&phase, attention, gate, exceptions),
+                "invalid Claude projection accepted: {name}"
+            );
+        }
     }
 
     fn pending_question(id: u64) -> Ask {
