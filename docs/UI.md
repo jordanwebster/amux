@@ -157,7 +157,10 @@ expensively:
 - Where two derivations must coexist, assert their **agreement** as an
   invariant, not each one's correctness separately. `check_invariants`
   runs after every Msg of every registered spec sequence, so agreement
-  is a CI property; a violation panics in debug and dumps in release.
+  is a CI property. In every build, a violation logs at error level,
+  writes a once-per-kind recorder dump, leaves a persistent visible chrome
+  warning, and keeps running. `AMUX_INVARIANT_FATAL=1` is the sole fatal
+  opt-in; repository tests set it so accidental violations still fail CI.
 
 Where shared chrome needs cross-agent facts (badges, sort order),
 per-agent **summarizers** derive kernel vocabulary — a handful of fields.
@@ -267,8 +270,11 @@ Assertions draw a three-way line. Input violations — a Msg the protocol
 says cannot arrive — hit tripwires at the receiving reducer arm: refuse
 the write, request a dump. State coherence — the Model's structural
 index (ids, epochs, counts, phases), never content — is checked by
-`Model::check_invariants` at the fold seam in every build: panic in
-debug, dump once per violation kind in release, keep folding.
+`Model::check_invariants` at the fold seam in every build. The default in
+debug and release is loud but non-fatal: log at error level, attempt one
+recorder dump per violation kind, expose a sticky visible banner, and keep
+folding even if the dump fails. `AMUX_INVARIANT_FATAL=1` alone restores a
+panic in every build; test and CI harnesses opt into it.
 Renderer-vs-Model staleness is neither: a stale ViewState is tolerance
 territory, clamped at render, never asserted against.
 

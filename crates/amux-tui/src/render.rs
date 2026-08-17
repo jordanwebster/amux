@@ -41,6 +41,11 @@ const MIN_FRAME_WIDTH: usize = RIGHT_INFO_FROM_EDGE;
 /// widest normal left status, and `q quit` still fits the 68-col frame).
 const HINTS_COL: usize = 25;
 
+/// Persistent diagnostic chrome shown after the runtime observes structural
+/// Model incoherence. The Model supplies only the sticky fact; all native
+/// render paths format the same concise message here.
+pub(crate) const INVARIANT_WARNING: &str = "⚠ internal consistency error — see recorder dump/log";
+
 /// Rows of chrome that are not list rows: two borders, filter line, spacer,
 /// banner/spacer, status line.
 const CHROME_ROWS: usize = 6;
@@ -530,6 +535,9 @@ fn fleet_row_line(
 }
 
 fn banner_line(model: &Model, width: usize) -> Line<'static> {
+    if model.has_invariant_warning() {
+        return invariant_warning_line(width, Style::default().fg(Color::Yellow));
+    }
     let mut line = new_line();
     if model.cloud_auth_required() && model.is_connected() {
         push_span(
@@ -539,6 +547,13 @@ fn banner_line(model: &Model, width: usize) -> Line<'static> {
             Style::default().fg(Color::Yellow),
         );
     }
+    finish_line(&mut line, width);
+    line
+}
+
+pub(crate) fn invariant_warning_line(width: usize, style: Style) -> Line<'static> {
+    let mut line = new_line();
+    push_span(&mut line, MARKER_COL, INVARIANT_WARNING, style);
     finish_line(&mut line, width);
     line
 }
@@ -726,4 +741,59 @@ fn centered_lines(
         lines.push(line);
     }
     lines
+}
+
+#[cfg(test)]
+mod tests {
+    use amux_ui::Model;
+    use chrono::{DateTime, Utc};
+    use uuid::Uuid;
+
+    use super::{FrameContext, INVARIANT_WARNING, Theme, build_lines};
+    use crate::{ChatView, ViewState};
+
+    fn model_with_invariant_warning() -> Model {
+        // The runtime setter is deliberately crate-private: renderers get a
+        // read-only fact. Serde supplies a focused fixture without widening
+        // that production boundary.
+        let mut value = serde_json::to_value(Model::default()).expect("serialize Model fixture");
+        value["invariant_warning"] = serde_json::Value::Bool(true);
+        serde_json::from_value(value).expect("deserialize warning Model fixture")
+    }
+
+    fn context() -> FrameContext {
+        FrameContext {
+            viewport: (80, 24),
+            theme: Theme::Dark,
+            now: DateTime::<Utc>::from_timestamp(1_754_697_600, 0).expect("fixture time"),
+        }
+    }
+
+    fn frame_contains_warning(model: &Model, view: &ViewState) -> bool {
+        build_lines(model, view, &context()).iter().any(|line| {
+            line.spans
+                .iter()
+                .map(|span| span.content.as_ref())
+                .collect::<String>()
+                .contains(INVARIANT_WARNING)
+        })
+    }
+
+    #[test]
+    fn invariant_warning_is_visible_in_fleet_and_both_native_chats() {
+        let model = model_with_invariant_warning();
+        assert!(frame_contains_warning(&model, &ViewState::default()));
+
+        let claude = ViewState {
+            chat: Some(ChatView::open_claude(Uuid::from_u128(1), 'a', false)),
+            ..ViewState::default()
+        };
+        assert!(frame_contains_warning(&model, &claude));
+
+        let codex = ViewState {
+            chat: Some(ChatView::open_codex(Uuid::from_u128(2), 'a', false)),
+            ..ViewState::default()
+        };
+        assert!(frame_contains_warning(&model, &codex));
+    }
 }

@@ -104,7 +104,7 @@ pub struct Runtime {
     /// semantic stream state lives in the Model).
     streams: HashMap<AgentId, JoinHandle<()>>,
     dump_dir: Option<PathBuf>,
-    /// Violation kinds already dumped this session: release-mode invariant
+    /// Violation kinds already reported this session: invariant logs and
     /// dumps are throttled to once per kind so a persistent incoherence
     /// cannot fill the dump directory.
     reported_violations: HashSet<&'static str>,
@@ -261,25 +261,26 @@ impl Runtime {
     /// Model coherence at the fold seam (`docs/UI.md`, Testing): distinct
     /// from input tripwires, which refuse impossible inputs at the receiving
     /// reducer arm — this checks the folded state itself, in every build.
-    /// Debug builds panic (an incoherent Model is a reducer bug to fix);
-    /// release builds dump once per violation kind and keep folding — a
-    /// degraded fleet beats a dead client.
+    /// Every build reports and dumps once per violation kind, marks a sticky
+    /// renderer warning, and keeps folding. `AMUX_INVARIANT_FATAL=1` is the
+    /// sole opt-in to the fatal panic policy used by tests and CI.
     fn enforce_invariants(&mut self) {
         let violations = self.model.check_invariants();
         if violations.is_empty() {
             return;
         }
-        if cfg!(debug_assertions) {
+        self.model.note_invariant_violation();
+        if std::env::var("AMUX_INVARIANT_FATAL").as_deref() == Ok("1") {
             let details: Vec<String> = violations.iter().map(ToString::to_string).collect();
             panic!("model invariants violated: {}", details.join("; "));
         }
         for violation in violations {
             if self.reported_violations.insert(violation.kind()) {
-                tracing::warn!(%violation, "model invariant violated; dumping recorder ring");
+                tracing::error!(%violation, "model invariant violated; dumping recorder ring");
                 if let Err(error) = self.dump(DumpReason::Tripwire {
                     detail: format!("invariant: {violation}"),
                 }) {
-                    tracing::warn!(%violation, %error, "failed to write invariant dump");
+                    tracing::error!(%violation, %error, "failed to write invariant dump");
                 }
             }
         }
@@ -978,6 +979,133 @@ mod tests {
             dump_dir: Some(dump_dir),
             reported_violations: HashSet::new(),
         }
+    }
+
+    const INVARIANT_POLICY_CHILD: &str = "AMUX_INVARIANT_POLICY_CHILD";
+
+    fn corrupt_with_orphan_stream(runtime: &mut Runtime) {
+        runtime.model.streams.insert(
+            Uuid::from_u128(0xdead),
+            crate::model::StreamState {
+                phase: crate::model::StreamPhase::Live,
+                truncated: false,
+            },
+        );
+    }
+
+    fn dump_paths(dir: &std::path::Path) -> Vec<PathBuf> {
+        std::fs::read_dir(dir)
+            .expect("read dump directory")
+            .map(|entry| entry.expect("read dump entry").path())
+            .filter(|path| {
+                path.file_name()
+                    .and_then(|name| name.to_str())
+                    .is_some_and(|name| name.starts_with("ui-dump-") && name.ends_with(".jsonl"))
+            })
+            .collect()
+    }
+
+    fn run_invariant_policy_child(case: &str, fatal: Option<&str>) -> std::process::Output {
+        let mut command =
+            std::process::Command::new(std::env::current_exe().expect("current test executable"));
+        command
+            .arg("--exact")
+            .arg("runtime::tests::invariant_policy_child")
+            .arg("--nocapture")
+            .env(INVARIANT_POLICY_CHILD, case);
+        match fatal {
+            Some(value) => {
+                command.env("AMUX_INVARIANT_FATAL", value);
+            }
+            None => {
+                command.env_remove("AMUX_INVARIANT_FATAL");
+            }
+        }
+        command.output().expect("run invariant policy child")
+    }
+
+    /// Process-isolated because the fatal policy is controlled by a
+    /// process-global environment variable. The parent tests below select a
+    /// case on this otherwise inert helper.
+    #[test]
+    fn invariant_policy_child() {
+        let Ok(case) = std::env::var(INVARIANT_POLICY_CHILD) else {
+            return;
+        };
+        let dir = tempfile::tempdir().expect("tempdir");
+        let mut runtime = a_runtime(dir.path().to_path_buf());
+        match case.as_str() {
+            "nonfatal" => {
+                corrupt_with_orphan_stream(&mut runtime);
+                runtime.enforce_invariants();
+                assert!(runtime.model().has_invariant_warning());
+                let dumps = dump_paths(dir.path());
+                assert_eq!(dumps.len(), 1, "one dump for the new violation kind");
+                let contents = std::fs::read_to_string(&dumps[0]).expect("read invariant dump");
+                let header: crate::recorder::DumpHeader =
+                    serde_json::from_str(contents.lines().next().expect("invariant dump header"))
+                        .expect("parse invariant dump header");
+                assert!(matches!(
+                    header.reason,
+                    DumpReason::Tripwire { ref detail } if detail.starts_with("invariant:")
+                ));
+
+                runtime.enforce_invariants();
+                assert_eq!(
+                    dump_paths(dir.path()).len(),
+                    1,
+                    "persistent corruption stays throttled once per kind"
+                );
+            }
+            "fatal" => {
+                corrupt_with_orphan_stream(&mut runtime);
+                runtime.enforce_invariants();
+            }
+            "coherent" => {
+                runtime.enforce_invariants();
+                assert!(!runtime.model().has_invariant_warning());
+                assert!(dump_paths(dir.path()).is_empty());
+            }
+            other => panic!("unknown invariant policy child case: {other}"),
+        }
+    }
+
+    #[test]
+    fn invariant_policy_is_nonfatal_by_default_and_for_other_values() {
+        for fatal in [None, Some("0")] {
+            let output = run_invariant_policy_child("nonfatal", fatal);
+            assert!(
+                output.status.success(),
+                "non-fatal child failed (AMUX_INVARIANT_FATAL={fatal:?}):\nstdout:\n{}\nstderr:\n{}",
+                String::from_utf8_lossy(&output.stdout),
+                String::from_utf8_lossy(&output.stderr)
+            );
+        }
+    }
+
+    #[test]
+    fn invariant_policy_fatal_opt_in_panics_with_details() {
+        let output = run_invariant_policy_child("fatal", Some("1"));
+        assert!(
+            !output.status.success(),
+            "fatal child unexpectedly succeeded"
+        );
+        let stderr = String::from_utf8_lossy(&output.stderr);
+        assert!(
+            stderr.contains("model invariants violated: stream for"),
+            "fatal panic omitted violation details:\n{stderr}"
+        );
+    }
+
+    #[test]
+    fn invariant_policy_leaves_a_coherent_model_unmarked_and_undumped() {
+        let output = run_invariant_policy_child("coherent", Some("1"));
+        assert!(
+            output.status.success(),
+            "coherent child failed:\nstdout:\n{}\nstderr:\n{}",
+            String::from_utf8_lossy(&output.stdout),
+            String::from_utf8_lossy(&output.stderr)
+        );
     }
 
     /// The panic hook's dump path, exercised WITHOUT panicking: install,

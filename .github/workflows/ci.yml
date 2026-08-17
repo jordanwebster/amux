@@ -59,8 +59,12 @@ jobs:
       - uses: Swatinem/rust-cache@v2
       - name: Run tests
         run: cargo test --workspace --all-targets
+        env:
+          AMUX_INVARIANT_FATAL: "1"
       - name: Run spec tests
         run: cargo test -p amux --features testnet --test spec
+        env:
+          AMUX_INVARIANT_FATAL: "1"
 
   build:
     name: Build
@@ -92,6 +96,8 @@ jobs:
         run: cargo build --workspace
       - name: Run E2E tests
         run: cargo run -p e2e-runner -- run
+        env:
+          AMUX_INVARIANT_FATAL: "1"
 
   client-only:
     name: Client-only (embedded)
@@ -110,6 +116,8 @@ jobs:
         run: cargo build -p amux --no-default-features
       - name: Test amux lib (no default features)
         run: cargo test -p amux --lib --no-default-features
+        env:
+          AMUX_INVARIANT_FATAL: "1"
       - name: Clippy amux (no default features)
         run: cargo clippy -p amux --no-default-features -- -D warnings
 

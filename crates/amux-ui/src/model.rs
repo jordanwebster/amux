@@ -403,6 +403,10 @@ pub struct Model {
     /// Cloud auth expired or missing: render the degraded banner, keep local
     /// agents fully usable. Never a blocking screen.
     pub(crate) cloud_auth_required: bool,
+    /// The runtime observed structural incoherence this session. This is a
+    /// sticky renderer fact, not an invariant derivation: views may format
+    /// the warning but must never recompute the violation.
+    pub(crate) invariant_warning: bool,
     pub(crate) hosts: BTreeMap<HostId, HostState>,
     pub(crate) agents: BTreeMap<AgentId, AgentCard>,
     pub(crate) streams: BTreeMap<AgentId, StreamState>,
@@ -420,6 +424,7 @@ impl Default for Model {
             epoch: 0,
             local_host_id: None,
             cloud_auth_required: false,
+            invariant_warning: false,
             hosts: BTreeMap::new(),
             agents: BTreeMap::new(),
             streams: BTreeMap::new(),
@@ -458,6 +463,17 @@ impl Model {
 
     pub fn cloud_auth_required(&self) -> bool {
         self.cloud_auth_required
+    }
+
+    /// Whether the runtime has observed any Model invariant violation this
+    /// session. Sticky once set; renderers use this read-only fact for the
+    /// persistent diagnostic banner.
+    pub fn has_invariant_warning(&self) -> bool {
+        self.invariant_warning
+    }
+
+    pub(crate) fn note_invariant_violation(&mut self) {
+        self.invariant_warning = true;
     }
 
     pub fn local_host_id(&self) -> Option<HostId> {
@@ -748,8 +764,8 @@ impl std::fmt::Display for Violation {
 
 impl Model {
     /// Structural coherence of the folded state, checked by the shell at
-    /// the fold seam after every Msg (panic in debug, dump-once-per-kind in
-    /// release). Distinct from input tripwires, which refuse impossible
+    /// the fold seam after every Msg (loud and non-fatal by default,
+    /// dump-once-per-kind). Distinct from input tripwires, which refuse impossible
     /// *inputs* at the receiving reducer arm — this checks that the fold
     /// itself left the Model coherent.
     ///

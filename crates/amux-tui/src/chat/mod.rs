@@ -164,10 +164,17 @@ pub(crate) fn build_chat_lines(
     chat: &ChatView,
     ctx: &FrameContext,
 ) -> Vec<Line<'static>> {
-    match &chat.inner {
+    let mut lines = match &chat.inner {
         AgentChatView::Claude(view) => claude::build_chat_lines(model, view, ctx),
         AgentChatView::Codex(view) => codex::build_chat_lines(model, view, ctx),
+    };
+    // Every native frame reserves row 2 for a chrome rule. Replace that row
+    // with the sticky diagnostic banner without changing any row accounting;
+    // provider renderers consume the Model fact but never inspect invariants.
+    if model.has_invariant_warning() && lines.len() > 2 {
+        lines[2] = crate::render::invariant_warning_line(ctx.viewport.0 as usize, ctx.theme.warn());
     }
+    lines
 }
 
 pub fn entry_watermark(model: &Model, agent: AgentId) -> u64 {
