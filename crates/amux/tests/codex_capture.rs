@@ -572,7 +572,7 @@ fn main() -> anyhow::Result<()> {
     /// persisted, and naming is what persists one — so an unnamed agent must
     /// still reach a live raw screen. No turn is taken; this costs no quota.
     async fn raw_unnamed(harness: &mut Harness, model: &str) -> Result<Value> {
-        let (agent, capture, _) = open_named(harness, None, model).await?;
+        let (agent, mut capture, _) = open_named(harness, None, model).await?;
         let mut first_raw = subscribe_raw(harness, agent).await?;
         let first_raw_bytes = raw_until(&mut first_raw, RAW_TIMEOUT, b"\x1b").await?;
         let first_pgid = raw_pty_process_group(&harness.scratch.root)?;
@@ -585,7 +585,31 @@ fn main() -> anyhow::Result<()> {
             harness.scratch.out.join("raw.log"),
             [first_raw_bytes.as_slice(), second_raw_bytes.as_slice()].concat(),
         )?;
-        let structured_rows_after_reattach = capture.rows().len();
+        let structured_rows_before_probe = capture.rows().len();
+        let structured_probe_window = Duration::from_secs(1);
+        // This type is never emitted. `wait` therefore keeps polling the live
+        // stream until the outer bound, but still returns early on close/error.
+        let (structured_subscription_held_through_reattach, structured_probe_result) =
+            match tokio::time::timeout(
+                structured_probe_window,
+                capture.wait(
+                    structured_rows_before_probe,
+                    READY_TIMEOUT,
+                    "post-raw-reattach structured stream probe",
+                    Matcher::Type("amux.c9_structured_stream_probe"),
+                ),
+            )
+            .await
+            {
+                Err(_) => (true, "open_for_full_probe_window"),
+                Ok(Ok(_)) => (true, "structured_row_observed"),
+                Ok(Err(error)) => {
+                    return Err(error).context(
+                        "existing Codex structured subscription failed after raw reattach",
+                    );
+                }
+            };
+        let structured_rows_after_probe = capture.rows().len();
         harness.client().delete_agent(agent).await?;
         Ok(json!({
             "raw_bytes": first_raw_bytes.len() + second_raw_bytes.len(),
@@ -596,12 +620,17 @@ fn main() -> anyhow::Result<()> {
                 "raw_ansi_screen_without_agent_name": true,
                 "final_detach_tore_down_process_group": true,
                 "reattach_reached_second_raw_ansi_screen": true,
-                "structured_subscription_held_through_reattach": true
+                "structured_subscription_held_through_reattach": structured_subscription_held_through_reattach
             },
             "observed": {
                 "first_raw_bytes": first_raw_bytes.len(),
                 "second_raw_bytes": second_raw_bytes.len(),
-                "structured_rows_after_reattach": structured_rows_after_reattach
+                "structured_probe": {
+                    "window_ms": structured_probe_window.as_millis(),
+                    "result": structured_probe_result,
+                    "rows_before": structured_rows_before_probe,
+                    "rows_after": structured_rows_after_probe
+                }
             }
         }))
     }
