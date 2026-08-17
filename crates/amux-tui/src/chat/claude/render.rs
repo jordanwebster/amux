@@ -247,7 +247,7 @@ pub(crate) fn build_chat_lines(
     // The fullscreen reader replaces the whole frame while open (falling
     // back to the chat when its source no longer resolves).
     if chat.reader.is_some()
-        && let Some(frame) = reader::reader_frame(model, chat, theme, width, height, readonly)
+        && let Some(frame) = reader::reader_frame(model, chat, theme, width, height)
     {
         return frame;
     }

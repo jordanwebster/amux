@@ -155,16 +155,21 @@ fn focused_field<'c>(chat: &'c mut View, model: &Model) -> Option<&'c mut Compos
     if chat.read_only(model) || chat.help {
         return None;
     }
+    if chat.reader.is_some() {
+        if !reader::answer_actionable(model, chat) {
+            return None;
+        }
+        return chat.ask_ui.as_mut().and_then(AskUi::active_field);
+    }
     match chat.ask_head(model).map(|ask| &ask.state) {
         // An interactive ask head owns the surface: its open text stage
         // is the field; its menu stages have none.
         Some(AskState::Pending | AskState::SendFailed { .. }) => {
             chat.ask_ui.as_mut().and_then(AskUi::active_field)
         }
-        // The optimistic-pending marker has no field, and nor does the
-        // accepted-plans reader; otherwise the composer is focused.
+        // The optimistic-pending marker has no field; otherwise the
+        // composer is focused.
         Some(AskState::AnsweredOptimistic { .. }) => None,
-        None if chat.reader.is_some() => None,
         None => Some(&mut chat.composer),
     }
 }
@@ -281,8 +286,10 @@ pub fn handle_chat_paste(chat: &mut View, model: &Model, text: &str) {
     if chat.read_only(model) {
         return;
     }
-    if let Some(ui) = chat.ask_ui.as_mut() {
-        if let Some(field) = ui.active_field() {
+    if chat.reader.is_some() {
+        if reader::answer_actionable(model, chat)
+            && let Some(field) = chat.ask_ui.as_mut().and_then(AskUi::active_field)
+        {
             let one_line = text
                 .replace("\r\n", "\n")
                 .replace('\r', "\n")
@@ -291,7 +298,14 @@ pub fn handle_chat_paste(chat: &mut View, model: &Model, text: &str) {
         }
         return;
     }
-    if chat.reader.is_some() {
+    if let Some(ui) = chat.ask_ui.as_mut() {
+        if let Some(field) = ui.active_field() {
+            let one_line = text
+                .replace("\r\n", "\n")
+                .replace('\r', "\n")
+                .replace('\n', " ");
+            field.paste(&one_line);
+        }
         return;
     }
     chat.composer.paste(text);
@@ -410,11 +424,8 @@ fn reader_key(
     key: KeyEvent,
     viewport: (u16, u16),
 ) -> Option<UiAction> {
-    if chat.ask_reader_open()
-        && amux_ui::claude::allows_answer(model, chat.agent)
+    if reader::answer_actionable(model, chat)
         && let Some(head) = chat.ask_head(model)
-        && matches!(head.state, AskState::Pending)
-        && encoding::menu_shape_refusal(&head.kind).is_none()
     {
         let ask_id = head.id;
         let outcome = chat
@@ -1729,12 +1740,17 @@ mod tests {
         );
         assert!(amux_ui::claude::allows_answer(&model, agent_id()));
 
-        // Establish non-default local answer state while the ask is still
-        // actionable. The retained view state must not drift after the
+        // Enter request-changes and seed its focused field while the ask is
+        // actionable. Every focus path must freeze this state after the
         // stream gate closes.
-        handle_chat_key(&mut chat, &model, press(KeyCode::Char('2')), VIEWPORT, t(0));
+        handle_chat_key(&mut chat, &model, press(KeyCode::Char('3')), VIEWPORT, t(0));
+        handle_chat_key(&mut chat, &model, press(KeyCode::Enter), VIEWPORT, t(0));
+        for c in "seed feedback".chars() {
+            handle_chat_key(&mut chat, &model, press(KeyCode::Char(c)), VIEWPORT, t(0));
+        }
         let before = {
             let ui = chat.ask_ui.as_ref().expect("reader answer state");
+            assert_eq!(ui.stage, AskStage::PlanFeedback);
             (
                 ui.stage.clone(),
                 ui.deny_feedback.text(),
@@ -1753,7 +1769,13 @@ mod tests {
         );
         assert!(!amux_ui::claude::allows_answer(&model, agent_id()));
 
-        for code in [KeyCode::Char('3'), KeyCode::Enter] {
+        handle_chat_paste(&mut chat, &model, " pasted mutation");
+        assert_eq!(
+            handle_chat_key(&mut chat, &model, ctrl('c'), VIEWPORT, t(0)),
+            None,
+            "Ctrl+C must not clear a hidden reader field"
+        );
+        for code in [KeyCode::Char('x'), KeyCode::Char('3'), KeyCode::Enter] {
             assert_eq!(
                 handle_chat_key(&mut chat, &model, press(code), VIEWPORT, t(0)),
                 None,

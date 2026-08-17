@@ -168,20 +168,19 @@ fn body_lines<'m>(body: &Body<'m>, width: usize, theme: Theme) -> Vec<Line<'stat
 }
 
 /// The reader frame, replacing the whole chat frame while open; `None`
-/// when the reader's source no longer resolves. `readonly` suppresses the
-/// action row — read affordances only (F1).
+/// when the reader's source no longer resolves. Non-actionable readers
+/// suppress the action row and retain only read affordances.
 pub(crate) fn reader_frame(
     model: &Model,
     chat: &View,
     theme: Theme,
     width: usize,
     height: usize,
-    readonly: bool,
 ) -> Option<Vec<Line<'static>>> {
     let resolved = resolve(model, chat)?;
     let body = body_lines(&resolved.body, width, theme);
     let total = body.len();
-    let tail = reader_tail(model, &resolved, chat, readonly, width, theme);
+    let tail = reader_tail(model, &resolved, chat, width, theme);
 
     // Frame rows: top, title, rule, body, rule, tail, bottom.
     let body_h = height.saturating_sub(5 + tail.len()).max(1);
@@ -233,17 +232,13 @@ fn reader_tail(
     model: &Model,
     resolved: &Resolved<'_>,
     chat: &View,
-    readonly: bool,
     width: usize,
     theme: Theme,
 ) -> Vec<Line<'static>> {
     // The action row lives only while a writable ask is open.
-    let acting = resolved.ask.filter(|ask| {
-        !readonly
-            && amux_ui::claude::allows_answer(model, chat.agent)
-            && matches!(ask.state, AskState::Pending)
-            && amux_ui::claude::encoding::menu_shape_refusal(&ask.kind).is_none()
-    });
+    let acting = answer_actionable(model, chat)
+        .then_some(resolved.ask)
+        .flatten();
 
     let mut tail: Vec<Line<'static>> = Vec::new();
     if let Some(ask) = acting {
@@ -327,11 +322,25 @@ pub(crate) fn scroll_metrics(
     let width = viewport.0 as usize;
     let height = viewport.1 as usize;
     // Layout is theme-independent (tokens change styles, never cells).
-    let readonly = chat.read_only(model);
-    let tail = reader_tail(model, &resolved, chat, readonly, width, Theme::default());
+    let tail = reader_tail(model, &resolved, chat, width, Theme::default());
     let total = body_lines(&resolved.body, width, Theme::default()).len();
     let body_h = height.saturating_sub(5 + tail.len()).max(1);
     Some((body_h, total.saturating_sub(body_h)))
+}
+
+/// Whether the current reader owns a writable answer surface. This is the
+/// single TUI-side focus fact shared by rendering, keys, Ctrl+C, and paste
+/// until C4 moves observation-only into the classified gate itself.
+pub(crate) fn answer_actionable(model: &Model, chat: &View) -> bool {
+    if chat.read_only(model) || !amux_ui::claude::allows_answer(model, chat.agent) {
+        return false;
+    }
+    resolve(model, chat)
+        .and_then(|resolved| resolved.ask)
+        .is_some_and(|ask| {
+            matches!(ask.state, AskState::Pending)
+                && amux_ui::claude::encoding::menu_shape_refusal(&ask.kind).is_none()
+        })
 }
 
 fn hint(text: &str, theme: Theme) -> Vec<Line<'static>> {
