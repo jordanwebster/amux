@@ -71,14 +71,11 @@ fn named_states() -> Vec<(&'static str, Vec<Msg>)> {
     let mut echo_at_rest = chat_feed(AGENT, "permission");
     echo_at_rest.push(send_prompt(40, "next task"));
 
-    let mut echo_with_ask = echo_at_rest.clone();
-    echo_with_ask.push(batch(AGENT, 80, vec![new_permission_hook()]));
-
     let mut echo_with_error = echo_at_rest.clone();
     echo_with_error.push(batch(AGENT, 81, vec![api_error()]));
 
-    let mut offline_host = a_host("nova");
-    offline_host.online = false;
+    let mut readonly = an_agent(AGENT, "nova");
+    readonly.readonly = true;
 
     vec![
         ("fresh empty rest", chat_base(AGENT)),
@@ -98,6 +95,29 @@ fn named_states() -> Vec<(&'static str, Vec<Msg>)> {
         (
             "unverified question ask",
             chat_feed_prefix(AGENT, "question_other_single", 8),
+        ),
+        (
+            "unverified permission menu",
+            seq([
+                chat_base(AGENT),
+                vec![batch(AGENT, 82, vec![new_permission_hook()])],
+            ]),
+        ),
+        (
+            "readonly permission ask",
+            seq([
+                vec![
+                    connected("nova"),
+                    host_up(&a_host("nova")),
+                    agent_up(&readonly),
+                ],
+                synced(),
+                vec![
+                    stream(AGENT, StreamMsg::Opened { truncated: false }),
+                    stream(AGENT, StreamMsg::ReplayComplete),
+                    batch(AGENT, 10, chat_rows("permission")[..8].to_vec()),
+                ],
+            ]),
         ),
         ("working turn", chat_feed_prefix(AGENT, "permission", 6)),
         ("finished turn", chat_feed(AGENT, "permission")),
@@ -128,12 +148,7 @@ fn named_states() -> Vec<(&'static str, Vec<Msg>)> {
             ]),
         ),
         ("echo at rest", echo_at_rest),
-        ("echo coexisting with ask", echo_with_ask),
         ("echo coexisting with error", echo_with_error),
-        (
-            "offline finished turn",
-            seq([chat_feed(AGENT, "permission"), vec![host_up(&offline_host)]]),
-        ),
         (
             "stale working turn",
             seq([
@@ -144,14 +159,101 @@ fn named_states() -> Vec<(&'static str, Vec<Msg>)> {
     ]
 }
 
-pub fn sequences() -> Vec<(&'static str, Vec<Msg>)> {
+/// The seven Claude lifecycles checkpoint 3 found outside every registered
+/// chapter. Keeping them together makes the coverage claim auditable; both
+/// the agreement matrix below and `wire_free` inspect every intermediate Msg.
+fn remaining_lifecycles() -> Vec<(&'static str, Vec<Msg>)> {
+    let mut echo_with_ask = chat_feed(AGENT, "permission");
+    echo_with_ask.push(send_prompt(40, "next task"));
+    echo_with_ask.push(batch(AGENT, 80, vec![new_permission_hook()]));
+
+    let mut offline_host = a_host("nova");
+    offline_host.online = false;
+
+    let tools = chat_rows("tools");
+    let permission = chat_rows("permission");
+    vec![
+        (
+            "retryable close -> reopen -> replay",
+            seq([
+                chat_feed_prefix(AGENT, "permission", 6),
+                vec![stream(
+                    AGENT,
+                    StreamMsg::Closed {
+                        reason: StreamCloseReason::TransportError {
+                            message: "connection reset".to_string(),
+                        },
+                    },
+                )],
+                vec![agent_up(&an_agent(AGENT, "nova"))],
+                vec![stream(AGENT, StreamMsg::Opened { truncated: false })],
+                vec![batch(AGENT, 20, permission[..8].to_vec())],
+                vec![stream(AGENT, StreamMsg::ReplayComplete)],
+            ]),
+        ),
+        (
+            "exit then agent re-upsert",
+            seq([
+                chat_feed(AGENT, "interrupt"),
+                vec![stream(
+                    AGENT,
+                    StreamMsg::Closed {
+                        reason: StreamCloseReason::AgentExited { exit_code: Some(0) },
+                    },
+                )],
+                vec![agent_up(&an_agent(AGENT, "nova"))],
+            ]),
+        ),
+        (
+            "Closed AgentDeleted while card remains listed",
+            seq([
+                chat_feed(AGENT, "question_single"),
+                vec![stream(
+                    AGENT,
+                    StreamMsg::Closed {
+                        reason: StreamCloseReason::AgentDeleted,
+                    },
+                )],
+            ]),
+        ),
+        ("prompt echo in flight when an ask arrives", echo_with_ask),
+        (
+            "/clear relink during replay",
+            seq([
+                chat_feed(AGENT, "pong"),
+                vec![batch(AGENT, 20, tools[..2].to_vec())],
+                vec![batch(AGENT, 21, vec![tools[2].clone()])],
+            ]),
+        ),
+        (
+            "folded Claude layer on an offline host",
+            seq([chat_feed(AGENT, "permission"), vec![host_up(&offline_host)]]),
+        ),
+        (
+            "non-truncated ask mid-replay",
+            seq([
+                chat_feed(AGENT, "pong"),
+                // A new session id is the `/clear` relink fact. The first
+                // row opens a non-truncated layer replay while the kernel
+                // stream remains Live; the hook then carries an apparent
+                // ask whose resolving suffix is not authoritative yet.
+                vec![batch(AGENT, 20, vec![permission[0].clone()])],
+                vec![batch(AGENT, 21, vec![new_permission_hook()])],
+                vec![batch(AGENT, 22, vec![permission[2].clone()])],
+            ]),
+        ),
+    ]
+}
+
+fn agreement_cases() -> Vec<(&'static str, Vec<Msg>)> {
     named_states()
         .into_iter()
-        // C2 owns registration of the prompt-echo/ask lifecycle. C1 still
-        // exercises every intermediate projection below without claiming
-        // that reserved lifecycle-registration work.
-        .filter(|(name, _)| *name != "echo coexisting with ask")
+        .chain(remaining_lifecycles())
         .collect()
+}
+
+pub fn sequences() -> Vec<(&'static str, Vec<Msg>)> {
+    agreement_cases()
 }
 
 fn projections(model: &Model) -> Option<(ChatPhase, Attention, SendGate)> {
@@ -212,7 +314,7 @@ fn assert_agreement(name: &str, step: usize, model: &Model) {
 
 #[test]
 fn phase_attention_and_gates_agree_after_every_message() {
-    for (name, messages) in named_states() {
+    for (name, messages) in agreement_cases() {
         let mut model = Model::default();
         for (step, message) in messages.into_iter().enumerate() {
             amux_ui::update(&mut model, message);
@@ -225,7 +327,7 @@ fn phase_attention_and_gates_agree_after_every_message() {
 fn claude_specific_exceptions_and_send_precedence_are_explicit() {
     let state = |wanted| {
         fold(
-            named_states()
+            agreement_cases()
                 .into_iter()
                 .find(|(name, _)| *name == wanted)
                 .expect("named Claude state")
@@ -254,7 +356,7 @@ fn claude_specific_exceptions_and_send_precedence_are_explicit() {
         ))
     );
     assert_eq!(
-        projections(&state("echo coexisting with ask")),
+        projections(&state("prompt echo in flight when an ask arrives")),
         Some((
             ChatPhase::NeedsYou {
                 why: AskWhy::Permission,
@@ -273,7 +375,7 @@ fn claude_specific_exceptions_and_send_precedence_are_explicit() {
         ))
     );
 
-    let offline = state("offline finished turn");
+    let offline = state("folded Claude layer on an offline host");
     assert!(matches!(
         amux_ui::claude::phase(&offline, agent_id(AGENT)),
         ChatPhase::Idle { .. }
@@ -286,6 +388,45 @@ fn claude_specific_exceptions_and_send_precedence_are_explicit() {
     assert_eq!(
         projections(&state("stale working turn")),
         Some((ChatPhase::Unknown, Attention::Unknown, SendGate::Unknown))
+    );
+}
+
+#[test]
+fn a_non_truncated_replay_prefix_outranks_its_held_ask_until_ready() {
+    let mut lifecycle = remaining_lifecycles()
+        .into_iter()
+        .find(|(name, _)| *name == "non-truncated ask mid-replay")
+        .expect("registered lifecycle")
+        .1;
+    let ready = lifecycle.pop().expect("ready row");
+
+    let replaying = fold(lifecycle.clone());
+    assert_eq!(claude_layer(&replaying, AGENT).ask_count(), 1);
+    assert_eq!(
+        projections(&replaying),
+        Some((
+            ChatPhase::Replaying,
+            Attention::Unknown,
+            SendGate::Replaying
+        )),
+        "an apparent ask in a replay prefix is not actionable"
+    );
+
+    lifecycle.push(ready);
+    let authoritative = fold(lifecycle);
+    assert_eq!(
+        projections(&authoritative),
+        Some((
+            ChatPhase::NeedsYou {
+                why: AskWhy::Permission,
+                tag: PhaseTag::Fact,
+            },
+            Attention::NeedsYou {
+                why: Why::Permission,
+            },
+            SendGate::NeedsYou,
+        )),
+        "the same held ask surfaces only after the new window's ready fact"
     );
 }
 

@@ -807,13 +807,18 @@ impl Model {
                     });
                 }
                 layer.check_invariants(*id, &mut violations);
-                if matches!(layer, AgentLayer::Codex(_)) {
-                    crate::codex::check_projection_invariant(
-                        self,
-                        *id,
-                        card.attention,
-                        &mut violations,
-                    );
+                match layer {
+                    AgentLayer::Claude(_) => {
+                        crate::claude::check_projection_invariant(self, *id, &mut violations);
+                    }
+                    AgentLayer::Codex(_) => {
+                        crate::codex::check_projection_invariant(
+                            self,
+                            *id,
+                            card.attention,
+                            &mut violations,
+                        );
+                    }
                 }
             }
         }

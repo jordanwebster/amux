@@ -759,6 +759,19 @@ pub enum ClaudeViolation {
     EchoDuplicate {
         agent: amux::AgentId,
     },
+    ProjectionDisagreement {
+        agent: amux::AgentId,
+        classification: String,
+        phase: ChatPhase,
+        attention: Attention,
+        send_gate: SendGate,
+        send_in_flight: bool,
+        orderly_exit: bool,
+        observer_readonly: bool,
+        menu_shape_refusal: bool,
+        host_offline: bool,
+        working_stale: bool,
+    },
 }
 
 impl ClaudeViolation {
@@ -770,6 +783,7 @@ impl ClaudeViolation {
             Self::DedupeIncoherent { .. } => "claude-dedupe-incoherent",
             Self::AskOrder { .. } => "claude-ask-order",
             Self::EchoDuplicate { .. } => "claude-echo-duplicate",
+            Self::ProjectionDisagreement { .. } => "claude-projection-disagreement",
         }
     }
 }
@@ -808,6 +822,26 @@ impl std::fmt::Display for ClaudeViolation {
             Self::EchoDuplicate { agent } => {
                 write!(f, "agent {agent} claude prompt echoes share an op id")
             }
+            Self::ProjectionDisagreement {
+                agent,
+                classification,
+                phase,
+                attention,
+                send_gate,
+                send_in_flight,
+                orderly_exit,
+                observer_readonly,
+                menu_shape_refusal,
+                host_offline,
+                working_stale,
+            } => write!(
+                f,
+                "agent {agent} claude classification {classification}, phase {phase:?}, effective \
+                 attention {attention:?}, and send gate {send_gate:?} disagree \
+                 (send_in_flight={send_in_flight}, orderly_exit={orderly_exit}, \
+                 observer_readonly={observer_readonly}, menu_shape_refusal={menu_shape_refusal}, \
+                 host_offline={host_offline}, working_stale={working_stale})"
+            ),
         }
     }
 }
@@ -1409,6 +1443,69 @@ pub fn mode_cycle_gate(model: &Model, agent: amux::AgentId) -> Option<&'static s
     classify_model(model, agent, model.now()).mode_cycle_refusal()
 }
 
+/// Assert agreement among Claude's one classification and its public
+/// projections. Claude's fleet projection has two intentional, one-way
+/// read-time degradations that Codex does not: an offline host and stale
+/// Working evidence become Unknown. Observation-only cards and unverified
+/// ask menus preserve visible phase/attention while separately withholding
+/// interaction, so neither is a projection disagreement.
+pub(crate) fn check_projection_invariant(
+    model: &Model,
+    agent: amux::AgentId,
+    out: &mut Vec<Violation>,
+) {
+    let Some(card) = model.agent(agent) else {
+        return;
+    };
+    let condition = classify_model(model, agent, model.now());
+    let phase = phase(model, agent);
+    let attention = model.effective_attention(card);
+    let send_gate = send_gate(model, agent);
+    let host_offline = !model.host_online(card.agent.host_id);
+    let working_stale = condition.attention() == Attention::Working
+        && card
+            .claude()
+            .is_some_and(|layer| layer.working_is_stale(model.now()));
+    let expected_attention = if host_offline || working_stale {
+        Attention::Unknown
+    } else {
+        condition.attention()
+    };
+
+    let head = card.claude().and_then(ClaudeLayer::ask_head);
+    let menu_shape_refusal =
+        head.is_some_and(|ask| encoding::menu_shape_refusal(&ask.kind).is_some());
+    let head_agrees = match condition.state {
+        ChatConditionState::AskPending { id, why } => {
+            head.is_some_and(|ask| ask.id == id && ask.why() == why)
+        }
+        _ => true,
+    };
+
+    // These exact projections spell out Claude's asymmetric exceptions:
+    // orderly exit is Idle+Exited; an optimistic echo outranks live positive
+    // attention/gates but not Replaying/Unknown/Errored attention; and
+    // offline/stale degradation affects only effective attention.
+    let phase_agrees = phase == condition.phase();
+    let attention_agrees = attention == expected_attention;
+    let gate_agrees = send_gate == condition.send_gate();
+    if !phase_agrees || !attention_agrees || !gate_agrees || !head_agrees {
+        out.push(Violation::Claude(ClaudeViolation::ProjectionDisagreement {
+            agent,
+            classification: format!("{:?}", condition.state),
+            phase,
+            attention,
+            send_gate,
+            send_in_flight: condition.send_in_flight,
+            orderly_exit: matches!(condition.state, ChatConditionState::Exited),
+            observer_readonly: card.agent.readonly,
+            menu_shape_refusal,
+            host_offline,
+            working_stale,
+        }));
+    }
+}
+
 /// The invariant classes must actually FIRE: a coherent layer is built
 /// through public folds, then one structural field is corrupted per class.
 /// (The wire_free differential spec proves no public fold sequence ever
@@ -1610,6 +1707,17 @@ mod tests {
             hook_key: None,
         });
         assert!(fires(&model, "claude-ask-order"));
+    }
+
+    #[test]
+    fn detects_projection_disagreement() {
+        let mut model = a_model_with_a_folded_layer();
+        model
+            .agents
+            .get_mut(&agent_id())
+            .expect("agent card")
+            .attention = Attention::Idle;
+        assert!(fires(&model, "claude-projection-disagreement"));
     }
 
     fn pending_question(id: u64) -> Ask {
