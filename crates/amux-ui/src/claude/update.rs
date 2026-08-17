@@ -60,6 +60,9 @@ fn update_answer_ask(
     ask: u64,
     answer: super::encoding::AskAnswer,
 ) -> Vec<crate::Effect> {
+    if let Some(message) = super::answer_gate(model, agent) {
+        return refuse(model, op, seq, command, message);
+    }
     let Some(layer) = model.claude(agent) else {
         return refuse(
             model,
@@ -107,8 +110,8 @@ fn update_interrupt(
     command: Command,
     agent: amux::AgentId,
 ) -> Vec<crate::Effect> {
-    if model.agent(agent).is_none() {
-        return refuse(model, op, seq, command, "unknown agent");
+    if let Some(message) = super::interrupt_gate(model, agent) {
+        return refuse(model, op, seq, command, message);
     }
     dispatch_claude_input(
         model,

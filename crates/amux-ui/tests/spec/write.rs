@@ -527,6 +527,49 @@ fn misfitting_late_and_duplicate_answers_refuse_without_bytes() {
     assert_eq!(failure_message(&model, 4), "ask already resolved");
 }
 
+#[test]
+fn a_prompt_echo_refuses_a_later_ask_answer_with_truthful_wording() {
+    let mut source = chat_feed(AGENT, "permission");
+    source.push(send_prompt(40, "next task"));
+    source.push(batch(
+        AGENT,
+        80,
+        vec![json!({
+            "type": "hook.permission_request",
+            "hook_event_name": "PermissionRequest",
+            "prompt_id": "new-prompt-after-local-send",
+            "session_id": "9f635f35-5e8c-49a8-b035-8408c6981b11",
+            "tool_name": "Bash",
+            "tool_input": {"command": "echo new-request"},
+            "permission_mode": "default",
+            "permission_suggestions": []
+        })],
+    ));
+    let ask = the_layer(&fold(source.clone()))
+        .ask_head()
+        .expect("new ask coexists with the prompt echo")
+        .id;
+    source.push(allow_once(41, ask));
+
+    let (model, effects) = fold_with_effects(source);
+    assert_eq!(
+        send_inputs(&effects).len(),
+        1,
+        "only the original prompt dispatches"
+    );
+    assert_eq!(
+        failure_message(&model, 41),
+        "send gated — a prompt is in flight"
+    );
+    assert!(matches!(
+        the_layer(&model)
+            .ask_head()
+            .expect("ask remains pending")
+            .state,
+        AskState::Pending
+    ));
+}
+
 /// The question and plan-review programs ride the same dispatch: the
 /// single-select digit submits a single-question form (§18d), and the
 /// plan menu's manual approve is digit 2 — each fixture-grounded.
@@ -601,34 +644,66 @@ fn interrupt_dispatches_from_any_state_and_the_rows_close_the_asks() {
     assert_eq!(the_layer(&model).ask_count(), 0, "the rows closed the ask");
 }
 
-/// Readonly rejection is the server's to make and the model's to state
-/// (F1 groundwork): the dispatch still leaves, the server refuses, and
-/// the finished op carries the stated fact.
 #[test]
-fn a_readonly_rejection_is_surfaced_as_finished_op_state() {
-    let mut readonly_agent = an_agent(AGENT, "nova");
-    readonly_agent.readonly = true;
-    let mut msgs = seq([
-        vec![
-            connected("nova"),
-            host_up(&a_host("nova")),
-            agent_up(&readonly_agent),
-        ],
-        synced(),
-    ]);
-    msgs.push(command(
-        op(1),
-        Command::Claude(ClaudeCommand::Interrupt { agent: agent() }),
+fn observation_only_refuses_every_claude_action_before_local_mutation() {
+    let mut source = chat_feed_prefix(AGENT, "permission", 8);
+    for message in &mut source {
+        if let Msg::Server(amux_ui::ServerMsg::AgentUpserted { agent }) = message {
+            agent.readonly = true;
+        }
+    }
+    let before = fold(source.clone());
+    let before_layer = the_layer(&before).clone();
+    assert!(matches!(
+        before_layer.ask_head().expect("permission ask").state,
+        AskState::Pending
     ));
-    let (_, effects) = fold_with_effects(msgs.clone());
-    let (expected_seq, _, _) = send_input_effect(&effects);
-    assert_eq!(expected_seq, 0, "no layer — the guard rides at zero");
 
-    // The server's rejection (`session is readonly`) returns as the
-    // outcome; the model states it.
-    msgs.push(op_failed(op(1), "session is readonly"));
-    let model = fold(msgs);
-    assert_eq!(failure_message(&model, 1), "session is readonly");
+    let cases = [
+        (
+            20,
+            ClaudeCommand::SendPrompt {
+                agent: agent(),
+                text: "new work".to_string(),
+            },
+        ),
+        (
+            21,
+            ClaudeCommand::AnswerAsk {
+                agent: agent(),
+                ask: 0,
+                answer: AskAnswer::Permission(PermissionAnswer::AllowOnce),
+            },
+        ),
+        (22, ClaudeCommand::Interrupt { agent: agent() }),
+        (23, ClaudeCommand::CyclePermissionMode { agent: agent() }),
+    ];
+
+    for (op_n, native) in cases {
+        let (model, effects) = fold_with_effects(seq([
+            source.clone(),
+            vec![command(op(op_n), Command::Claude(native))],
+        ]));
+        assert!(send_inputs(&effects).is_empty());
+        assert_eq!(model.pending_ops().count(), 0);
+        assert_eq!(
+            failure_message(&model, op_n),
+            "agent is read-only — you are observing this session"
+        );
+        assert_eq!(the_layer(&model), &before_layer);
+        assert!(the_layer(&model).pending_echoes().is_empty());
+        assert!(matches!(
+            the_layer(&model)
+                .ask_head()
+                .expect("permission ask retained")
+                .state,
+            AskState::Pending
+        ));
+        assert_eq!(
+            amux_ui::claude::send_gate(&model, agent()),
+            SendGate::ReadOnly
+        );
+    }
 }
 
 // --- permission-mode cycle (D4) ---------------------------------------------

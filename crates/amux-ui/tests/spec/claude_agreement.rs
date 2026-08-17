@@ -67,6 +67,15 @@ fn reconciled_prompt(text: &str) -> serde_json::Value {
     })
 }
 
+fn observation_only(mut messages: Vec<Msg>) -> Vec<Msg> {
+    for message in &mut messages {
+        if let Msg::Server(amux_ui::ServerMsg::AgentUpserted { agent }) = message {
+            agent.readonly = true;
+        }
+    }
+    messages
+}
+
 fn named_states() -> Vec<(&'static str, Vec<Msg>)> {
     let mut echo_at_rest = chat_feed(AGENT, "permission");
     echo_at_rest.push(send_prompt(40, "next task"));
@@ -74,11 +83,12 @@ fn named_states() -> Vec<(&'static str, Vec<Msg>)> {
     let mut echo_with_error = echo_at_rest.clone();
     echo_with_error.push(batch(AGENT, 81, vec![api_error()]));
 
-    let mut readonly = an_agent(AGENT, "nova");
-    readonly.readonly = true;
-
     vec![
         ("fresh empty rest", chat_base(AGENT)),
+        (
+            "observation-only fresh empty rest",
+            observation_only(chat_base(AGENT)),
+        ),
         (
             "kernel replay",
             seq([
@@ -105,21 +115,13 @@ fn named_states() -> Vec<(&'static str, Vec<Msg>)> {
         ),
         (
             "readonly permission ask",
-            seq([
-                vec![
-                    connected("nova"),
-                    host_up(&a_host("nova")),
-                    agent_up(&readonly),
-                ],
-                synced(),
-                vec![
-                    stream(AGENT, StreamMsg::Opened { truncated: false }),
-                    stream(AGENT, StreamMsg::ReplayComplete),
-                    batch(AGENT, 10, chat_rows("permission")[..8].to_vec()),
-                ],
-            ]),
+            observation_only(chat_feed_prefix(AGENT, "permission", 8)),
         ),
         ("working turn", chat_feed_prefix(AGENT, "permission", 6)),
+        (
+            "observation-only working turn",
+            observation_only(chat_feed_prefix(AGENT, "permission", 6)),
+        ),
         ("finished turn", chat_feed(AGENT, "permission")),
         ("stop presignal", chat_feed(AGENT, "question_single")),
         ("interrupted turn", chat_feed(AGENT, "interrupt")),
@@ -146,6 +148,18 @@ fn named_states() -> Vec<(&'static str, Vec<Msg>)> {
                     },
                 )],
             ]),
+        ),
+        (
+            "observation-only exited",
+            observation_only(seq([
+                chat_feed(AGENT, "interrupt"),
+                vec![stream(
+                    AGENT,
+                    StreamMsg::Closed {
+                        reason: StreamCloseReason::AgentExited { exit_code: Some(0) },
+                    },
+                )],
+            ])),
         ),
         ("echo at rest", echo_at_rest),
         ("echo coexisting with error", echo_with_error),
@@ -279,20 +293,40 @@ fn assert_agreement(name: &str, step: usize, model: &Model) {
         phase != ChatPhase::Unknown || attention == Attention::Unknown,
         "{name} step {step}: Unknown phase must have Unknown effective attention"
     );
+    let observer_readonly = model
+        .agent(agent_id(AGENT))
+        .is_some_and(|card| card.agent.readonly);
     if phase == ChatPhase::Replaying {
         assert_eq!(attention, Attention::Unknown, "{name} step {step}");
-        assert_eq!(send_gate, SendGate::Replaying, "{name} step {step}");
+        assert_eq!(
+            send_gate,
+            if observer_readonly {
+                SendGate::ReadOnly
+            } else {
+                SendGate::Replaying
+            },
+            "{name} step {step}"
+        );
     }
     match attention {
         Attention::Idle => assert!(
-            matches!(send_gate, SendGate::Ready | SendGate::Exited),
+            matches!(
+                send_gate,
+                SendGate::Ready | SendGate::Exited | SendGate::ReadOnly
+            ),
             "{name} step {step}: Claude orderly exit is the deliberate Idle/refusal exception"
         ),
         Attention::NeedsYou {
             why: Why::Permission | Why::Question,
-        } => assert_eq!(send_gate, SendGate::NeedsYou, "{name} step {step}"),
+        } => assert!(
+            matches!(send_gate, SendGate::NeedsYou | SendGate::ReadOnly),
+            "{name} step {step}"
+        ),
         Attention::NeedsYou { why: Why::Finished } => {
-            assert_eq!(send_gate, SendGate::Ready, "{name} step {step}")
+            assert!(
+                matches!(send_gate, SendGate::Ready | SendGate::ReadOnly),
+                "{name} step {step}"
+            )
         }
         Attention::Working | Attention::Unknown => {}
     }
@@ -310,6 +344,64 @@ fn assert_agreement(name: &str, step: usize, model: &Model) {
             "{name} step {step}: effective send attention is Working until dispatch evidence ages out, while offline degradation is also Unknown"
         );
     }
+}
+
+#[test]
+fn observation_only_preserves_claude_projections_but_refuses_interaction() {
+    let pairs = [
+        ("fresh empty rest", "observation-only fresh empty rest"),
+        ("working turn", "observation-only working turn"),
+        ("permission ask", "readonly permission ask"),
+    ];
+    for (writable_name, observer_name) in pairs {
+        let state = |wanted| {
+            fold(
+                agreement_cases()
+                    .into_iter()
+                    .find(|(name, _)| *name == wanted)
+                    .expect("named Claude state")
+                    .1,
+            )
+        };
+        let writable = state(writable_name);
+        let observer = state(observer_name);
+        let agent = agent_id(AGENT);
+        let writable_projection = projections(&writable).expect("writable projection");
+        let observer_projection = projections(&observer).expect("observer projection");
+        assert_eq!(
+            (observer_projection.0, observer_projection.1),
+            (writable_projection.0, writable_projection.1),
+            "{observer_name} keeps the visible session projection"
+        );
+        assert_eq!(observer_projection.2, SendGate::ReadOnly);
+        assert!(!amux_ui::claude::allows_answer(&observer, agent));
+        assert!(!amux_ui::claude::allows_interrupt(&observer, agent));
+        assert_eq!(
+            amux_ui::claude::mode_cycle_gate(&observer, agent),
+            Some("agent is read-only — you are observing this session")
+        );
+        assert!(observer.check_invariants().is_empty());
+    }
+
+    let exited = fold(
+        agreement_cases()
+            .into_iter()
+            .find(|(name, _)| *name == "observation-only exited")
+            .expect("observer exited")
+            .1,
+    );
+    assert_eq!(
+        projections(&exited),
+        Some((
+            ChatPhase::Idle {
+                tag: PhaseTag::Fact
+            },
+            Attention::Idle,
+            SendGate::Exited
+        )),
+        "exited lifecycle outranks observer read-only"
+    );
+    assert!(exited.check_invariants().is_empty());
 }
 
 #[test]

@@ -600,6 +600,7 @@ pub enum SendGate {
     Ready,
     Unavailable,
     Exited,
+    ReadOnly,
     Replaying,
     Working,
     NeedsYou,
@@ -613,6 +614,7 @@ impl SendGate {
             Self::Ready => None,
             Self::Unavailable => Some("chat input unavailable for this agent"),
             Self::Exited => Some("agent exited"),
+            Self::ReadOnly => Some(OBSERVER_READ_ONLY_REFUSAL),
             Self::Replaying => Some("send gated while replaying"),
             Self::Working => Some("send gated while working"),
             Self::NeedsYou => Some("send gated — answer the pending ask"),
@@ -629,6 +631,7 @@ impl SendGate {
 struct ChatCondition {
     state: ChatConditionState,
     send_in_flight: bool,
+    observer_readonly: bool,
 }
 
 #[derive(Clone, Debug, PartialEq)]
@@ -650,6 +653,7 @@ impl ChatCondition {
         Self {
             state: ChatConditionState::Unavailable,
             send_in_flight: false,
+            observer_readonly: false,
         }
     }
 
@@ -698,6 +702,7 @@ impl ChatCondition {
         match self.state {
             ChatConditionState::Unavailable => SendGate::Unavailable,
             ChatConditionState::Exited => SendGate::Exited,
+            _ if self.observer_readonly => SendGate::ReadOnly,
             _ if self.send_in_flight => SendGate::SendInFlight,
             ChatConditionState::Replaying => SendGate::Replaying,
             ChatConditionState::Unknown => SendGate::Unknown,
@@ -714,6 +719,7 @@ impl ChatCondition {
         match self.state {
             ChatConditionState::Unavailable => Some("chat input unavailable for this agent"),
             ChatConditionState::Exited => Some("agent exited"),
+            _ if self.observer_readonly => Some(OBSERVER_READ_ONLY_REFUSAL),
             ChatConditionState::Replaying => Some("mode cycle gated while replaying"),
             ChatConditionState::Unknown => Some("mode cycle gated — session state unknown"),
             ChatConditionState::AskPending { .. } => {
@@ -728,9 +734,46 @@ impl ChatCondition {
     }
 
     fn allows_answer(&self) -> bool {
-        matches!(self.state, ChatConditionState::AskPending { .. }) && !self.send_in_flight
+        !self.observer_readonly
+            && matches!(self.state, ChatConditionState::AskPending { .. })
+            && !self.send_in_flight
+    }
+
+    fn answer_refusal(&self) -> Option<&'static str> {
+        match self.state {
+            ChatConditionState::Unavailable => Some("chat input unavailable for this agent"),
+            ChatConditionState::Exited => Some("agent exited"),
+            _ if self.observer_readonly => Some(OBSERVER_READ_ONLY_REFUSAL),
+            _ if self.send_in_flight => Some("send gated — a prompt is in flight"),
+            ChatConditionState::AskPending { .. } => None,
+            ChatConditionState::Replaying => Some("answer gated while replaying"),
+            ChatConditionState::Unknown => Some("answer gated — session state unknown"),
+            ChatConditionState::Errored
+            | ChatConditionState::TurnWorking
+            | ChatConditionState::TurnFinished { .. }
+            | ChatConditionState::TurnInterrupted { .. }
+            | ChatConditionState::Resting { .. } => None,
+        }
+    }
+
+    fn interrupt_refusal(&self) -> Option<&'static str> {
+        match self.state {
+            ChatConditionState::Unavailable => Some("unknown agent"),
+            _ if self.observer_readonly => Some(OBSERVER_READ_ONLY_REFUSAL),
+            ChatConditionState::Exited
+            | ChatConditionState::Replaying
+            | ChatConditionState::Unknown
+            | ChatConditionState::AskPending { .. }
+            | ChatConditionState::Errored
+            | ChatConditionState::TurnWorking
+            | ChatConditionState::TurnFinished { .. }
+            | ChatConditionState::TurnInterrupted { .. }
+            | ChatConditionState::Resting { .. } => None,
+        }
     }
 }
+
+const OBSERVER_READ_ONLY_REFUSAL: &str = "agent is read-only — you are observing this session";
 
 /// Structural invariant classes owned by the Claude layer. The outer
 /// kernel violation is namespaced by layer; these keys remain stable for
@@ -1180,7 +1223,7 @@ impl ClaudeLayer {
     /// Model/card consumers use cached attention, which supplies the real
     /// kernel lifecycle to the same classifier. Time remains absent here.
     pub fn attention(&self) -> Attention {
-        classify(Some(self), Some(&StreamPhase::Live), None, None).attention()
+        classify(Some(self), Some(&StreamPhase::Live), None, false, None).attention()
     }
 
     /// The E1 staleness cap: the working inference is stale once no dated
@@ -1303,7 +1346,7 @@ pub(crate) fn cached_attention(
     layer: &ClaudeLayer,
     stream_phase: Option<&StreamPhase>,
 ) -> Attention {
-    classify(Some(layer), stream_phase, None, None).attention()
+    classify(Some(layer), stream_phase, None, false, None).attention()
 }
 
 /// The one ordered Claude classification. This is the only Claude-layer code
@@ -1313,12 +1356,14 @@ fn classify(
     layer: Option<&ClaudeLayer>,
     stream_phase: Option<&StreamPhase>,
     agent_phase: Option<&AgentPhase>,
+    observer_readonly: bool,
     now: Option<DateTime<Utc>>,
 ) -> ChatCondition {
     if matches!(agent_phase, Some(AgentPhase::Exited { .. })) {
         return ChatCondition {
             state: ChatConditionState::Exited,
             send_in_flight: layer.is_some_and(|layer| !layer.echoes.is_empty()),
+            observer_readonly,
         };
     }
     let Some(layer) = layer else {
@@ -1327,6 +1372,7 @@ fn classify(
     let condition = ChatCondition {
         state: ChatConditionState::Unknown,
         send_in_flight: !layer.echoes.is_empty(),
+        observer_readonly,
     };
     match stream_phase {
         Some(StreamPhase::Opening | StreamPhase::Replaying) => {
@@ -1409,12 +1455,13 @@ fn classify_model(
     now: Option<DateTime<Utc>>,
 ) -> ChatCondition {
     let Some(card) = model.agent(agent) else {
-        return classify(None, None, None, now);
+        return classify(None, None, None, false, now);
     };
     classify(
         card.claude(),
         model.stream(agent).map(|stream| &stream.phase),
         Some(&card.phase),
+        card.agent.readonly,
         now,
     )
 }
@@ -1442,9 +1489,23 @@ pub fn mode_cycle_gate(model: &Model, agent: amux::AgentId) -> Option<&'static s
 
 /// Whether the final Claude condition exposes an authoritative ask that can
 /// accept an answer now. Menu-shape byte safety remains a separate typed
-/// encoding question; observation-only enforcement joins this query in C4.
+/// encoding question; observation-only policy is part of this session gate.
 pub fn allows_answer(model: &Model, agent: amux::AgentId) -> bool {
     classify_model(model, agent, model.now()).allows_answer()
+}
+
+pub fn allows_interrupt(model: &Model, agent: amux::AgentId) -> bool {
+    classify_model(model, agent, model.now())
+        .interrupt_refusal()
+        .is_none()
+}
+
+pub(super) fn answer_gate(model: &Model, agent: amux::AgentId) -> Option<&'static str> {
+    classify_model(model, agent, model.now()).answer_refusal()
+}
+
+pub(super) fn interrupt_gate(model: &Model, agent: amux::AgentId) -> Option<&'static str> {
+    classify_model(model, agent, model.now()).interrupt_refusal()
 }
 
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
@@ -1467,12 +1528,44 @@ fn projections_agree(
     let ProjectionExceptions {
         host_offline,
         working_stale,
-        // These facts affect whether this client may act, not what the
-        // Claude session is visibly doing. C4 will add the read-only gate;
-        // menu byte safety remains owned by `encoding`.
-        observer_readonly: _,
+        observer_readonly,
+        // Menu byte safety remains owned by `encoding` and does not change
+        // the public session projections.
         menu_shape_refusal: _,
     } = exceptions;
+
+    if observer_readonly && send_gate != SendGate::Exited {
+        if send_gate != SendGate::ReadOnly {
+            return false;
+        }
+        return match phase {
+            ChatPhase::Unknown | ChatPhase::Replaying | ChatPhase::Errored => {
+                attention == Attention::Unknown
+            }
+            ChatPhase::Working => {
+                attention == Attention::Working || (attention == Attention::Unknown && host_offline)
+            }
+            ChatPhase::Idle { .. } => match attention {
+                Attention::Idle | Attention::NeedsYou { why: Why::Finished } => true,
+                Attention::Working => true,
+                Attention::Unknown => host_offline || working_stale,
+                Attention::NeedsYou {
+                    why: Why::Permission | Why::Question,
+                } => false,
+            },
+            ChatPhase::NeedsYou { why, .. } => {
+                let matching_attention = match why {
+                    AskWhy::Permission => Attention::NeedsYou {
+                        why: Why::Permission,
+                    },
+                    AskWhy::Question => Attention::NeedsYou { why: Why::Question },
+                };
+                attention == matching_attention
+                    || attention == Attention::Working
+                    || (attention == Attention::Unknown && (host_offline || working_stale))
+            }
+        };
+    }
 
     match phase {
         ChatPhase::Unknown => {
@@ -1810,6 +1903,16 @@ mod tests {
             observer_readonly: true,
             ..none
         };
+        let readonly_offline = ProjectionExceptions {
+            observer_readonly: true,
+            host_offline: true,
+            ..none
+        };
+        let readonly_stale = ProjectionExceptions {
+            observer_readonly: true,
+            working_stale: true,
+            ..none
+        };
         let unverified_menu = ProjectionExceptions {
             menu_shape_refusal: true,
             ..none
@@ -1977,12 +2080,96 @@ mod tests {
                 stale_send,
             ),
             (
+                "readonly unknown",
+                ChatPhase::Unknown,
+                Attention::Unknown,
+                SendGate::ReadOnly,
+                readonly,
+            ),
+            (
+                "readonly replay",
+                ChatPhase::Replaying,
+                Attention::Unknown,
+                SendGate::ReadOnly,
+                readonly,
+            ),
+            (
+                "readonly error",
+                ChatPhase::Errored,
+                Attention::Unknown,
+                SendGate::ReadOnly,
+                readonly,
+            ),
+            (
+                "readonly working",
+                ChatPhase::Working,
+                Attention::Working,
+                SendGate::ReadOnly,
+                readonly,
+            ),
+            (
+                "offline readonly working",
+                ChatPhase::Working,
+                Attention::Unknown,
+                SendGate::ReadOnly,
+                readonly_offline,
+            ),
+            (
+                "readonly rest",
+                idle,
+                Attention::Idle,
+                SendGate::ReadOnly,
+                readonly,
+            ),
+            (
+                "readonly finished",
+                idle,
+                Attention::NeedsYou { why: Why::Finished },
+                SendGate::ReadOnly,
+                readonly,
+            ),
+            (
+                "readonly fresh send",
+                idle,
+                Attention::Working,
+                SendGate::ReadOnly,
+                readonly,
+            ),
+            (
+                "readonly aged send",
+                idle,
+                Attention::Unknown,
+                SendGate::ReadOnly,
+                readonly_stale,
+            ),
+            (
                 "readonly obligation stays visible",
                 permission,
                 Attention::NeedsYou {
                     why: Why::Permission,
                 },
-                SendGate::NeedsYou,
+                SendGate::ReadOnly,
+                readonly,
+            ),
+            (
+                "readonly ask with fresh send",
+                permission,
+                Attention::Working,
+                SendGate::ReadOnly,
+                readonly,
+            ),
+            (
+                "offline readonly ask",
+                permission,
+                Attention::Unknown,
+                SendGate::ReadOnly,
+                readonly_offline,
+            ),
+            (
+                "readonly exited precedence",
+                idle,
+                Attention::Idle,
+                SendGate::Exited,
                 readonly,
             ),
             (
@@ -2017,6 +2204,10 @@ mod tests {
         let ask = ChatPhase::NeedsYou {
             why: AskWhy::Permission,
             tag: PhaseTag::Fact,
+        };
+        let readonly = ProjectionExceptions {
+            observer_readonly: true,
+            ..none
         };
         let cases = [
             (
@@ -2161,6 +2352,29 @@ mod tests {
                 SendGate::NeedsYou,
                 none,
             ),
+            (
+                "readonly fact with writable gate",
+                ask,
+                Attention::NeedsYou {
+                    why: Why::Permission,
+                },
+                SendGate::NeedsYou,
+                readonly,
+            ),
+            (
+                "readonly gate without readonly fact",
+                idle,
+                Attention::Idle,
+                SendGate::ReadOnly,
+                none,
+            ),
+            (
+                "readonly wrong attention",
+                ChatPhase::Working,
+                Attention::Idle,
+                SendGate::ReadOnly,
+                readonly,
+            ),
         ];
 
         for (name, phase, attention, gate, exceptions) in cases {
@@ -2189,7 +2403,7 @@ mod tests {
     fn classifier_orders_the_three_not_live_outcomes() {
         let mut fresh = ClaudeLayer::default();
         assert_eq!(
-            classify(Some(&fresh), Some(&StreamPhase::Live), None, None).state,
+            classify(Some(&fresh), Some(&StreamPhase::Live), None, false, None).state,
             ChatConditionState::Resting {
                 tag: PhaseTag::Inferred
             }
@@ -2197,7 +2411,7 @@ mod tests {
 
         fresh.asks.push_back(pending_question(7));
         assert_eq!(
-            classify(Some(&fresh), Some(&StreamPhase::Live), None, None).state,
+            classify(Some(&fresh), Some(&StreamPhase::Live), None, false, None).state,
             ChatConditionState::AskPending {
                 id: 7,
                 why: AskWhy::Question
@@ -2206,14 +2420,14 @@ mod tests {
 
         fresh.transcript_rows_seen = true;
         assert_eq!(
-            classify(Some(&fresh), Some(&StreamPhase::Live), None, None).state,
+            classify(Some(&fresh), Some(&StreamPhase::Live), None, false, None).state,
             ChatConditionState::Replaying,
             "a rows-seen prefix outranks the held ask"
         );
         fresh.transcript_rows_seen = false;
         fresh.truncated_start = true;
         assert_eq!(
-            classify(Some(&fresh), Some(&StreamPhase::Live), None, None).state,
+            classify(Some(&fresh), Some(&StreamPhase::Live), None, false, None).state,
             ChatConditionState::Replaying,
             "a truncated prefix also outranks the held ask"
         );
@@ -2228,7 +2442,7 @@ mod tests {
         layer.turn.open = true;
         layer.turn.stop_presignal = true;
         assert_eq!(
-            classify(Some(&layer), Some(&StreamPhase::Live), None, None).state,
+            classify(Some(&layer), Some(&StreamPhase::Live), None, false, None).state,
             ChatConditionState::TurnFinished {
                 tag: PhaseTag::Inferred
             }
@@ -2243,6 +2457,7 @@ mod tests {
                 Some(&layer),
                 Some(&StreamPhase::Live),
                 None,
+                false,
                 DateTime::from_timestamp(20, 0)
             )
             .state,
@@ -2255,6 +2470,7 @@ mod tests {
                 Some(&layer),
                 Some(&StreamPhase::Live),
                 None,
+                false,
                 DateTime::from_timestamp(200, 0)
             )
             .state,
@@ -2265,7 +2481,7 @@ mod tests {
 
         layer.turn.closed_by = None;
         assert_eq!(
-            classify(Some(&layer), Some(&StreamPhase::Live), None, None).state,
+            classify(Some(&layer), Some(&StreamPhase::Live), None, false, None).state,
             ChatConditionState::Resting {
                 tag: PhaseTag::Inferred
             }
@@ -2314,7 +2530,8 @@ mod tests {
             assert_eq!(
                 ChatCondition {
                     state,
-                    send_in_flight: true
+                    send_in_flight: true,
+                    observer_readonly: false,
                 }
                 .attention(),
                 Attention::Unknown
@@ -2323,7 +2540,8 @@ mod tests {
         assert_eq!(
             ChatCondition {
                 state: ChatConditionState::Exited,
-                send_in_flight: true
+                send_in_flight: true,
+                observer_readonly: false,
             }
             .attention(),
             Attention::Idle
@@ -2347,7 +2565,8 @@ mod tests {
             assert_eq!(
                 ChatCondition {
                     state,
-                    send_in_flight: true
+                    send_in_flight: true,
+                    observer_readonly: false,
                 }
                 .attention(),
                 Attention::Working
@@ -2364,28 +2583,28 @@ mod tests {
             ..ClaudeLayer::default()
         };
         assert_eq!(
-            classify(Some(&layer), Some(&StreamPhase::Opening), None, None).attention(),
+            classify(Some(&layer), Some(&StreamPhase::Opening), None, false, None).attention(),
             Attention::Unknown
         );
         assert_eq!(
-            classify(Some(&layer), None, None, None).attention(),
+            classify(Some(&layer), None, None, false, None).attention(),
             Attention::Unknown
         );
         layer.exited = true;
         assert_eq!(
-            classify(Some(&layer), Some(&StreamPhase::Live), None, None).attention(),
+            classify(Some(&layer), Some(&StreamPhase::Live), None, false, None).attention(),
             Attention::Idle
         );
         layer.exited = false;
         layer.turn.error_live = true;
         assert_eq!(
-            classify(Some(&layer), Some(&StreamPhase::Live), None, None).attention(),
+            classify(Some(&layer), Some(&StreamPhase::Live), None, false, None).attention(),
             Attention::Unknown
         );
         layer.turn.error_live = false;
         layer.asks.push_back(pending_question(12));
         assert_eq!(
-            classify(Some(&layer), Some(&StreamPhase::Live), None, None).attention(),
+            classify(Some(&layer), Some(&StreamPhase::Live), None, false, None).attention(),
             Attention::Working
         );
     }
@@ -2433,7 +2652,7 @@ mod tests {
         ];
         for (stream, expected) in cases {
             assert_eq!(
-                classify(Some(&layer), stream.as_ref(), None, None).state,
+                classify(Some(&layer), stream.as_ref(), None, false, None).state,
                 expected
             );
         }

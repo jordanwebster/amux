@@ -28,6 +28,21 @@ fn live_rows() -> Vec<serde_json::Value> {
     ]
 }
 
+fn observation_only_base() -> Vec<Msg> {
+    let mut agent = a_codex_agent(AGENT, "nova");
+    agent.readonly = true;
+    seq([
+        vec![
+            connected("nova"),
+            host_up(&a_host("nova")),
+            agent_up(&agent),
+        ],
+        synced(),
+        vec![stream(AGENT, StreamMsg::Opened { truncated: false })],
+        vec![stream(AGENT, StreamMsg::ReplayComplete)],
+    ])
+}
+
 pub fn sequences() -> Vec<(&'static str, Vec<Msg>)> {
     vec![
         (
@@ -457,6 +472,71 @@ fn read_only_reconnect_state_refuses_an_answer_before_dispatch() {
         failure_message(&model, 9),
         "Codex thread is read-only until reconnect succeeds"
     );
+}
+
+#[test]
+fn observation_only_refuses_every_codex_action_before_local_mutation() {
+    let cases = [
+        (
+            20,
+            vec![json!({"type":"amux.codex_ready"})],
+            CodexCommand::Prompt {
+                agent: agent_id(AGENT),
+                text: "new work".into(),
+            },
+        ),
+        (
+            21,
+            live_rows(),
+            CodexCommand::Steer {
+                agent: agent_id(AGENT),
+                text: "more".into(),
+            },
+        ),
+        (
+            22,
+            live_rows(),
+            CodexCommand::Interrupt {
+                agent: agent_id(AGENT),
+            },
+        ),
+        (
+            23,
+            approval_rows_for_write(),
+            CodexCommand::Answer {
+                agent: agent_id(AGENT),
+                request_id: json!("req-7"),
+                decision: CodexDecision::Accept,
+            },
+        ),
+    ];
+
+    for (op_n, rows, native) in cases {
+        let source = seq([observation_only_base(), vec![batch(AGENT, 10, rows)]]);
+        let before = fold(source.clone());
+        let before_layer = codex_layer(&before, AGENT).clone();
+        let before_phase = amux_ui::codex::phase(&before, agent_id(AGENT));
+        let before_attention = before.agent(agent_id(AGENT)).unwrap().attention;
+
+        let (model, effects) = fold_with_effects(seq([source, vec![command_msg(op_n, native)]]));
+        assert_eq!(send_input_count(&effects), 0);
+        assert_eq!(model.pending_ops().count(), 0);
+        assert_eq!(
+            failure_message(&model, op_n),
+            "agent is read-only — you are observing this session"
+        );
+        assert_eq!(codex_layer(&model, AGENT), &before_layer);
+        assert_eq!(codex_layer(&model, AGENT).in_flight_inputs().count(), 0);
+        assert_eq!(amux_ui::codex::phase(&model, agent_id(AGENT)), before_phase);
+        assert_eq!(
+            model.agent(agent_id(AGENT)).unwrap().attention,
+            before_attention
+        );
+        assert_eq!(
+            amux_ui::codex::send_gate(&model, agent_id(AGENT)),
+            SendGate::ObserverReadOnly
+        );
+    }
 }
 
 #[test]

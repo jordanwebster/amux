@@ -329,10 +329,10 @@ pub(crate) fn scroll_metrics(
 }
 
 /// Whether the current reader owns a writable answer surface. This is the
-/// single TUI-side focus fact shared by rendering, keys, Ctrl+C, and paste
-/// until C4 moves observation-only into the classified gate itself.
+/// single TUI-side focus fact shared by rendering, keys, Ctrl+C, and paste;
+/// observation-only policy is already carried by the classified query.
 pub(crate) fn answer_actionable(model: &Model, chat: &View) -> bool {
-    if chat.read_only(model) || !amux_ui::claude::allows_answer(model, chat.agent) {
+    if !amux_ui::claude::allows_answer(model, chat.agent) {
         return false;
     }
     resolve(model, chat)

@@ -251,22 +251,18 @@ fn working_line(
         format!("{spinner} {label}"),
         ctx.theme.text(),
     );
-    // C4 moves observation-only into the gates. Until then this outer
-    // suppression remains necessary so a read-only view advertises no writes.
-    if !chat.read_only(model) {
-        let mut hints = Vec::new();
-        if amux_ui::codex::allows_steer(model, chat.agent) {
-            hints.push("enter steer");
-        }
-        if amux_ui::codex::allows_interrupt(model, chat.agent) {
-            hints.push("ctrl+x interrupt");
-        }
-        if !hints.is_empty() {
-            line.spans.push(Span::styled(
-                format!(" · {}", hints.join(" · ")),
-                ctx.theme.muted(),
-            ));
-        }
+    let mut hints = Vec::new();
+    if amux_ui::codex::allows_steer(model, chat.agent) {
+        hints.push("enter steer");
+    }
+    if amux_ui::codex::allows_interrupt(model, chat.agent) {
+        hints.push("ctrl+x interrupt");
+    }
+    if !hints.is_empty() {
+        line.spans.push(Span::styled(
+            format!(" · {}", hints.join(" · ")),
+            ctx.theme.muted(),
+        ));
     }
     finish_line(&mut line, width);
     line

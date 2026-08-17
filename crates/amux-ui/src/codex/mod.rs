@@ -471,6 +471,7 @@ pub enum SendGate {
     Replaying,
     ActiveTurn,
     NeedsYou,
+    ObserverReadOnly,
     ReadOnly,
     Unknown,
     InputInFlight,
@@ -482,6 +483,7 @@ const REFUSAL_CLOSED: &str = "Codex thread is closed until it becomes ready agai
 const REFUSAL_REPLAYING: &str = "send gated while replaying";
 const REFUSAL_ACTIVE: &str = "send gated — a Codex turn is active";
 const REFUSAL_NEEDS_YOU: &str = "send gated — resolve the blocking request";
+const REFUSAL_OBSERVER_READ_ONLY: &str = "agent is read-only — you are observing this session";
 const REFUSAL_READ_ONLY: &str = "Codex thread is read-only until reconnect succeeds";
 const REFUSAL_UNKNOWN: &str = "send gated — Codex session state unknown";
 const REFUSAL_INPUT_IN_FLIGHT: &str = "send gated — a Codex input is in flight";
@@ -496,6 +498,7 @@ impl SendGate {
             Self::Replaying => Some(REFUSAL_REPLAYING),
             Self::ActiveTurn => Some(REFUSAL_ACTIVE),
             Self::NeedsYou => Some(REFUSAL_NEEDS_YOU),
+            Self::ObserverReadOnly => Some(REFUSAL_OBSERVER_READ_ONLY),
             Self::ReadOnly => Some(REFUSAL_READ_ONLY),
             Self::Unknown => Some(REFUSAL_UNKNOWN),
             Self::InputInFlight => Some(REFUSAL_INPUT_IN_FLIGHT),
@@ -637,6 +640,7 @@ struct Situation {
     state: SituationState,
     active_turn: bool,
     input_in_flight: bool,
+    observer_readonly: bool,
 }
 
 #[derive(Clone, Debug, PartialEq)]
@@ -662,6 +666,7 @@ impl Situation {
             state: SituationState::Unavailable,
             active_turn: false,
             input_in_flight: false,
+            observer_readonly: false,
         }
     }
 
@@ -712,33 +717,35 @@ impl Situation {
     }
 
     fn send_gate(&self) -> SendGate {
-        if self.input_in_flight
-            && !matches!(
-                self.state,
-                SituationState::Unavailable
-                    | SituationState::Exited
-                    | SituationState::Closed
-                    | SituationState::Replaying
-                    | SituationState::ReadOnly
-                    | SituationState::Unknown
-            )
-        {
+        match self.state {
+            SituationState::Unavailable => return SendGate::Unavailable,
+            SituationState::Exited => return SendGate::Exited,
+            SituationState::Closed => return SendGate::Closed,
+            SituationState::Replaying => return SendGate::Replaying,
+            SituationState::ReadOnly => return SendGate::ReadOnly,
+            SituationState::Unknown => return SendGate::Unknown,
+            _ => {}
+        }
+        if self.observer_readonly {
+            return SendGate::ObserverReadOnly;
+        }
+        if self.input_in_flight {
             return SendGate::InputInFlight;
         }
         match self.state {
-            SituationState::Unavailable => SendGate::Unavailable,
-            SituationState::Exited => SendGate::Exited,
-            SituationState::Closed => SendGate::Closed,
-            SituationState::Replaying => SendGate::Replaying,
             SituationState::Responding { .. }
             | SituationState::Executing { .. }
             | SituationState::Working => SendGate::ActiveTurn,
             SituationState::AwaitingApproval { .. } | SituationState::BlockedUnsupported { .. } => {
                 SendGate::NeedsYou
             }
-            SituationState::ReadOnly => SendGate::ReadOnly,
-            SituationState::Unknown => SendGate::Unknown,
             SituationState::Finished | SituationState::Idle => SendGate::Ready,
+            SituationState::Unavailable
+            | SituationState::Exited
+            | SituationState::Closed
+            | SituationState::Replaying
+            | SituationState::ReadOnly
+            | SituationState::Unknown => unreachable!("lifecycle states returned above"),
         }
     }
 
@@ -856,7 +863,7 @@ impl CodexLayer {
     /// Model/card consumers use cached attention, which supplies the real
     /// kernel lifecycle to the same classifier.
     pub fn attention(&self) -> Attention {
-        classify(Some(self), Some(&StreamPhase::Live), None).attention()
+        classify(Some(self), Some(&StreamPhase::Live), None, false).attention()
     }
 
     pub(crate) fn working_is_stale(&self, _now: Option<DateTime<Utc>>) -> bool {
@@ -949,7 +956,7 @@ pub(crate) fn projected_attention(
     layer: &CodexLayer,
     stream_phase: Option<&StreamPhase>,
 ) -> Attention {
-    classify(Some(layer), stream_phase, None).attention()
+    classify(Some(layer), stream_phase, None, false).attention()
 }
 
 /// The one ordered Codex classification. This is the only Codex-layer code
@@ -959,6 +966,7 @@ fn classify(
     layer: Option<&CodexLayer>,
     stream_phase: Option<&StreamPhase>,
     agent_phase: Option<&AgentPhase>,
+    observer_readonly: bool,
 ) -> Situation {
     let Some(layer) = layer else {
         return Situation::unavailable();
@@ -967,6 +975,7 @@ fn classify(
         state: SituationState::Unknown,
         active_turn: layer.turn.active_id.is_some(),
         input_in_flight: !layer.inputs.is_empty(),
+        observer_readonly,
     };
     if matches!(agent_phase, Some(AgentPhase::Exited { .. })) {
         return situation.with_state(SituationState::Exited);
@@ -1036,12 +1045,13 @@ fn classify(
 
 fn classify_model(model: &Model, agent: amux::AgentId) -> Situation {
     let Some(card) = model.agent(agent) else {
-        return classify(None, None, None);
+        return classify(None, None, None, false);
     };
     classify(
         card.codex(),
         model.stream(agent).map(|stream| &stream.phase),
         Some(&card.phase),
+        card.agent.readonly,
     )
 }
 
@@ -1095,7 +1105,7 @@ pub(super) fn write_permission(
     action: WriteAction,
 ) -> WritePermission {
     let situation = classify_model(model, agent);
-    let live = match session_state(&situation.state) {
+    let live = match session_state(&situation) {
         Err(message) => return WritePermission::Refused(message),
         Ok(live) => live,
     };
@@ -1150,21 +1160,26 @@ pub(super) fn write_permission(
 /// what makes the compiler the enforcer: move a state across this boundary and
 /// every action rule stops compiling, instead of reaching a runtime panic in a
 /// UI reducer.
-fn session_state(state: &SituationState) -> Result<LiveState, &'static str> {
-    match state {
-        SituationState::Unavailable => Err(REFUSAL_UNAVAILABLE),
-        SituationState::Exited => Err(REFUSAL_EXITED),
-        SituationState::Closed => Err(REFUSAL_CLOSED),
-        SituationState::Replaying => Err(REFUSAL_REPLAYING),
-        SituationState::ReadOnly => Err(REFUSAL_READ_ONLY),
-        SituationState::Unknown => Err(REFUSAL_UNKNOWN),
-        SituationState::AwaitingApproval { .. } => Ok(LiveState::AwaitingApproval),
-        SituationState::BlockedUnsupported { .. } => Ok(LiveState::BlockedUnsupported),
-        SituationState::Responding { .. } => Ok(LiveState::Responding),
-        SituationState::Executing { .. } => Ok(LiveState::Executing),
-        SituationState::Working => Ok(LiveState::Working),
-        SituationState::Finished => Ok(LiveState::Finished),
-        SituationState::Idle => Ok(LiveState::Idle),
+fn session_state(situation: &Situation) -> Result<LiveState, &'static str> {
+    let live = match &situation.state {
+        SituationState::Unavailable => return Err(REFUSAL_UNAVAILABLE),
+        SituationState::Exited => return Err(REFUSAL_EXITED),
+        SituationState::Closed => return Err(REFUSAL_CLOSED),
+        SituationState::Replaying => return Err(REFUSAL_REPLAYING),
+        SituationState::ReadOnly => return Err(REFUSAL_READ_ONLY),
+        SituationState::Unknown => return Err(REFUSAL_UNKNOWN),
+        SituationState::AwaitingApproval { .. } => LiveState::AwaitingApproval,
+        SituationState::BlockedUnsupported { .. } => LiveState::BlockedUnsupported,
+        SituationState::Responding { .. } => LiveState::Responding,
+        SituationState::Executing { .. } => LiveState::Executing,
+        SituationState::Working => LiveState::Working,
+        SituationState::Finished => LiveState::Finished,
+        SituationState::Idle => LiveState::Idle,
+    };
+    if situation.observer_readonly {
+        Err(REFUSAL_OBSERVER_READ_ONLY)
+    } else {
+        Ok(live)
     }
 }
 
@@ -1194,17 +1209,22 @@ pub(crate) fn check_projection_invariant(
     let phase = situation.phase();
     let send_gate = situation.send_gate();
     let phase_agrees = phase != CodexPhase::Unknown || attention == Attention::Unknown;
-    let attention_agrees = match attention {
-        Attention::Unknown => true,
-        Attention::Idle => send_gate == SendGate::Ready,
-        Attention::Working => matches!(
-            send_gate,
-            SendGate::Ready | SendGate::ActiveTurn | SendGate::InputInFlight
-        ),
-        Attention::NeedsYou {
-            why: Why::Permission | Why::Question,
-        } => send_gate == SendGate::NeedsYou,
-        Attention::NeedsYou { why: Why::Finished } => send_gate == SendGate::Ready,
+    let attention_agrees = if situation.observer_readonly && send_gate == SendGate::ObserverReadOnly
+    {
+        true
+    } else {
+        match attention {
+            Attention::Unknown => true,
+            Attention::Idle => send_gate == SendGate::Ready,
+            Attention::Working => matches!(
+                send_gate,
+                SendGate::Ready | SendGate::ActiveTurn | SendGate::InputInFlight
+            ),
+            Attention::NeedsYou {
+                why: Why::Permission | Why::Question,
+            } => send_gate == SendGate::NeedsYou,
+            Attention::NeedsYou { why: Why::Finished } => send_gate == SendGate::Ready,
+        }
     };
     if !phase_agrees || !attention_agrees {
         out.push(Violation::Codex(CodexViolation::ProjectionDisagreement {
@@ -1321,7 +1341,7 @@ mod tests {
         ];
         for (stream, expected) in cases {
             assert_eq!(
-                classify(Some(&layer), stream.as_ref(), None).state,
+                classify(Some(&layer), stream.as_ref(), None, false).state,
                 expected
             );
         }
@@ -1330,6 +1350,7 @@ mod tests {
             Some(&layer),
             Some(&StreamPhase::Live),
             Some(&AgentPhase::Exited { exit_code: Some(1) }),
+            false,
         );
         assert_eq!(exited.state, SituationState::Exited);
         assert_eq!(exited.attention(), Attention::Unknown);
@@ -1342,7 +1363,7 @@ mod tests {
                 text: "keep going".to_string(),
             },
         });
-        let active_with_input = classify(Some(&layer), Some(&StreamPhase::Live), None);
+        let active_with_input = classify(Some(&layer), Some(&StreamPhase::Live), None, false);
         assert!(active_with_input.active_turn);
         assert!(active_with_input.input_in_flight);
         assert_eq!(active_with_input.attention(), Attention::Working);

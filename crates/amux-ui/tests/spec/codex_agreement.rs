@@ -34,6 +34,22 @@ fn with_rows(rows: Vec<serde_json::Value>) -> Vec<Msg> {
     seq([codex_base(AGENT), vec![batch(AGENT, 10, rows)]])
 }
 
+fn with_observer_rows(rows: Vec<serde_json::Value>) -> Vec<Msg> {
+    let mut agent = a_codex_agent(AGENT, "nova");
+    agent.readonly = true;
+    seq([
+        vec![
+            connected("nova"),
+            host_up(&a_host("nova")),
+            agent_up(&agent),
+        ],
+        synced(),
+        vec![stream(AGENT, StreamMsg::Opened { truncated: false })],
+        vec![stream(AGENT, StreamMsg::ReplayComplete)],
+        vec![batch(AGENT, 10, rows)],
+    ])
+}
+
 fn approval_rows() -> Vec<serde_json::Value> {
     vec![
         json!({"type":"amux.codex_ready"}),
@@ -90,6 +106,10 @@ fn named_states() -> Vec<(&'static str, Vec<Msg>)> {
             text: "keep going".to_string(),
         }),
     ));
+    let mut observer_input_in_flight = active_input_in_flight.clone();
+    let mut observer_agent = a_codex_agent(AGENT, "nova");
+    observer_agent.readonly = true;
+    observer_input_in_flight.push(agent_up(&observer_agent));
 
     vec![
         ("fresh/pre-ready", codex_base(AGENT)),
@@ -154,6 +174,16 @@ fn named_states() -> Vec<(&'static str, Vec<Msg>)> {
         ),
         ("answer in flight", answer_in_flight),
         ("active turn with input in flight", active_input_in_flight),
+        (
+            "observation-only active turn with input in flight",
+            observer_input_in_flight,
+        ),
+        ("observation-only idle", with_observer_rows(ready())),
+        ("observation-only active", with_observer_rows(active())),
+        (
+            "observation-only approval",
+            with_observer_rows(approval_rows()),
+        ),
         // Lifecycle churn no other chapter reaches. Registering these puts
         // them under the differential spec's per-Msg invariant sweep
         // (`wire_free::differential_fold_matches_live_state_after_every_msg`)
@@ -228,7 +258,8 @@ fn phase_attention_and_send_gate_stay_in_agreement_across_folded_states() {
             model.check_invariants()
         );
         assert!(
-            attention != Attention::Idle || send_gate == SendGate::Ready,
+            attention != Attention::Idle
+                || matches!(send_gate, SendGate::Ready | SendGate::ObserverReadOnly),
             "{name}: Idle must never accompany a refusing gate ({send_gate:?})"
         );
         assert!(
@@ -239,8 +270,11 @@ fn phase_attention_and_send_gate_stay_in_agreement_across_folded_states() {
                         Attention::NeedsYou {
                             why: Why::Permission | Why::Question
                         },
-                        SendGate::NeedsYou
-                    ) | (Attention::NeedsYou { why: Why::Finished }, SendGate::Ready)
+                        SendGate::NeedsYou | SendGate::ObserverReadOnly
+                    ) | (
+                        Attention::NeedsYou { why: Why::Finished },
+                        SendGate::Ready | SendGate::ObserverReadOnly
+                    )
                 ),
             "{name}: NeedsYou must identify an available answer/interrupt or a finished turn"
         );
@@ -312,4 +346,80 @@ fn active_turn_with_input_in_flight_keeps_only_interrupt_safe() {
     assert!(!amux_ui::codex::allows_steer(&model, agent));
     assert!(!amux_ui::codex::allows_answer(&model, agent));
     assert!(amux_ui::codex::allows_interrupt(&model, agent));
+}
+
+#[test]
+fn observation_only_preserves_codex_projections_but_refuses_every_action() {
+    let pairs = [
+        ("interrupted turn", "observation-only idle"),
+        ("active turn", "observation-only active"),
+        ("pending ask live", "observation-only approval"),
+    ];
+    for (writable_name, observer_name) in pairs {
+        let writable = fold(
+            named_states()
+                .into_iter()
+                .find(|(name, _)| *name == writable_name)
+                .expect("writable state")
+                .1,
+        );
+        let observer = fold(
+            named_states()
+                .into_iter()
+                .find(|(name, _)| *name == observer_name)
+                .expect("observer state")
+                .1,
+        );
+        let agent = agent_id(AGENT);
+        assert_eq!(
+            (projections(&observer).0, projections(&observer).1),
+            (projections(&writable).0, projections(&writable).1),
+            "{observer_name} keeps the visible session projection"
+        );
+        assert_eq!(
+            amux_ui::codex::send_gate(&observer, agent),
+            SendGate::ObserverReadOnly
+        );
+        assert!(!amux_ui::codex::allows_prompt(&observer, agent));
+        assert!(!amux_ui::codex::allows_steer(&observer, agent));
+        assert!(!amux_ui::codex::allows_interrupt(&observer, agent));
+        assert!(!amux_ui::codex::allows_answer(&observer, agent));
+        assert!(observer.check_invariants().is_empty());
+    }
+
+    let input_observer = fold(
+        named_states()
+            .into_iter()
+            .find(|(name, _)| *name == "observation-only active turn with input in flight")
+            .expect("observer in-flight state")
+            .1,
+    );
+    let agent = agent_id(AGENT);
+    assert_eq!(
+        projections(&input_observer),
+        (
+            CodexPhase::Thinking,
+            Attention::Working,
+            SendGate::ObserverReadOnly
+        )
+    );
+    assert!(!amux_ui::codex::allows_interrupt(&input_observer, agent));
+    assert!(input_observer.check_invariants().is_empty());
+}
+
+#[test]
+fn reconnect_readonly_remains_distinct_and_outranks_observer_policy() {
+    let mut rows = approval_rows();
+    rows.push(json!({"type":"amux.codex_reconnect_error",
+        "error":{"message":"writer unavailable"}}));
+    let model = fold(with_observer_rows(rows));
+    let agent = agent_id(AGENT);
+    assert_eq!(
+        projections(&model),
+        (CodexPhase::ReadOnly, Attention::Unknown, SendGate::ReadOnly)
+    );
+    assert_eq!(
+        amux_ui::codex::send_gate(&model, agent).refusal(),
+        Some("Codex thread is read-only until reconnect succeeds")
+    );
 }
