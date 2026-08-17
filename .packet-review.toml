@@ -1,0 +1,12 @@
+# See templates/packet-review.toml in the machinery repo for all keys.
+
+[backend]
+provider = "linear"
+
+[repository]
+name = "amux"
+known = ["amux", "amuxcloud", "packet-review"]
+theory_homes = ["crates/amux/tests/spec/", "docs/"]
+
+[contracts]
+owns = ["protocol", "connect-token"]
