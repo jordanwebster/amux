@@ -528,6 +528,7 @@ pub enum CodexViolation {
     },
     ProjectionDisagreement {
         agent: amux::AgentId,
+        classification: String,
         phase: CodexPhase,
         attention: Attention,
         send_gate: SendGate,
@@ -579,13 +580,14 @@ impl std::fmt::Display for CodexViolation {
             }
             Self::ProjectionDisagreement {
                 agent,
+                classification,
                 phase,
                 attention,
                 send_gate,
             } => write!(
                 f,
-                "agent {agent} codex phase {phase:?}, attention {attention:?}, and send gate \
-                 {send_gate:?} disagree"
+                "agent {agent} codex classification {classification}, phase {phase:?}, attention \
+                 {attention:?}, and send gate {send_gate:?} disagree"
             ),
         }
     }
@@ -709,6 +711,37 @@ impl Situation {
         }
     }
 
+    fn send_gate(&self) -> SendGate {
+        if self.input_in_flight
+            && !matches!(
+                self.state,
+                SituationState::Unavailable
+                    | SituationState::Exited
+                    | SituationState::Closed
+                    | SituationState::Replaying
+                    | SituationState::ReadOnly
+                    | SituationState::Unknown
+            )
+        {
+            return SendGate::InputInFlight;
+        }
+        match self.state {
+            SituationState::Unavailable => SendGate::Unavailable,
+            SituationState::Exited => SendGate::Exited,
+            SituationState::Closed => SendGate::Closed,
+            SituationState::Replaying => SendGate::Replaying,
+            SituationState::Responding { .. }
+            | SituationState::Executing { .. }
+            | SituationState::Working => SendGate::ActiveTurn,
+            SituationState::AwaitingApproval { .. } | SituationState::BlockedUnsupported { .. } => {
+                SendGate::NeedsYou
+            }
+            SituationState::ReadOnly => SendGate::ReadOnly,
+            SituationState::Unknown => SendGate::Unknown,
+            SituationState::Finished | SituationState::Idle => SendGate::Ready,
+        }
+    }
+
     fn with_state(mut self, state: SituationState) -> Self {
         self.state = state;
         self
@@ -819,64 +852,11 @@ impl CodexLayer {
         self.ready_count > 0 || self.truncated_start && self.replay_complete
     }
 
-    fn situation(&self) -> Situation {
-        let state = if self.exited {
-            SituationState::Exited
-        } else if self.thread_closed {
-            SituationState::Closed
-        } else if self.stale || self.gap {
-            SituationState::Unknown
-        } else if self.read_only {
-            SituationState::ReadOnly
-        } else if !self.live() {
-            SituationState::Replaying
-        } else if let Some(ask) = self.asks.front() {
-            SituationState::AwaitingApproval {
-                request_id: ask.request_id.clone(),
-            }
-        } else if let Some(item_id) = self.accumulators.unsupported.front() {
-            SituationState::BlockedUnsupported {
-                item_id: item_id.clone(),
-            }
-        } else if self.turn.active_id.is_some() {
-            match self.accumulators.active_items.back() {
-                Some(ActiveItem {
-                    item_id,
-                    kind: ActiveItemKind::Message,
-                }) => SituationState::Responding {
-                    item_id: item_id.clone(),
-                },
-                Some(ActiveItem {
-                    item_id,
-                    kind: ActiveItemKind::Work,
-                }) => SituationState::Executing {
-                    item_id: item_id.clone(),
-                },
-                _ => SituationState::Working,
-            }
-        } else if self.turn.status == ThreadStatus::Active {
-            SituationState::Working
-        } else if self.truncated_start
-            && self.turn.last.is_none()
-            && self.turn.status == ThreadStatus::Unknown
-        {
-            SituationState::Unknown
-        } else {
-            match self.turn.last {
-                Some(LastTurn::Completed | LastTurn::Failed) => SituationState::Finished,
-                Some(LastTurn::Interrupted) | None => SituationState::Idle,
-            }
-        };
-
-        Situation {
-            state,
-            active_turn: self.turn.active_id.is_some(),
-            input_in_flight: !self.inputs.is_empty(),
-        }
-    }
-
+    /// The layer-only diagnostic projection assumes an admitted live stream.
+    /// Model/card consumers use [`cached_attention`], which supplies the real
+    /// kernel lifecycle to the same classifier.
     pub fn attention(&self) -> Attention {
-        self.situation().attention()
+        classify(Some(self), Some(&StreamPhase::Live), None).attention()
     }
 
     pub(crate) fn working_is_stale(&self, _now: Option<DateTime<Utc>>) -> bool {
@@ -963,86 +943,115 @@ impl CodexLayer {
     }
 }
 
-/// Cache the Codex layer's attention under the kernel stream lifecycle.
-/// Opening and replaying deliberately outrank the folded layer: rows seen so
-/// far are only a prefix of the replay window, so their apparent resting or
-/// actionable state is not yet authoritative.
+/// Cache attention by projecting the same classification used by phase and
+/// every write gate.
 pub(crate) fn projected_attention(
     layer: &CodexLayer,
     stream_phase: Option<&StreamPhase>,
 ) -> Attention {
-    if matches!(
-        stream_phase,
-        Some(StreamPhase::Opening | StreamPhase::Replaying)
-    ) {
-        Attention::Unknown
-    } else {
-        layer.attention()
-    }
+    classify(Some(layer), stream_phase, None).attention()
 }
 
-/// One authoritative classification wrapped in kernel stream lifecycle facts.
-/// Every public projection and write permission starts here.
-fn situation(model: &Model, agent: amux::AgentId) -> Situation {
-    let Some(card) = model.agent(agent) else {
+/// The one ordered Codex classification. This is the only Codex-layer code
+/// that reads kernel `StreamPhase`; every projection consumes its lossless
+/// result.
+fn classify(
+    layer: Option<&CodexLayer>,
+    stream_phase: Option<&StreamPhase>,
+    agent_phase: Option<&AgentPhase>,
+) -> Situation {
+    let Some(layer) = layer else {
         return Situation::unavailable();
     };
-    let Some(layer) = card.codex() else {
-        return Situation::unavailable();
+    let situation = Situation {
+        state: SituationState::Unknown,
+        active_turn: layer.turn.active_id.is_some(),
+        input_in_flight: !layer.inputs.is_empty(),
     };
-    let situation = layer.situation();
-    if matches!(card.phase, AgentPhase::Exited { .. }) {
+    if matches!(agent_phase, Some(AgentPhase::Exited { .. })) {
         return situation.with_state(SituationState::Exited);
     }
-    match model.stream(agent).map(|stream| &stream.phase) {
+    match stream_phase {
         Some(StreamPhase::Opening | StreamPhase::Replaying) => {
-            situation.with_state(SituationState::Replaying)
+            return situation.with_state(SituationState::Replaying);
         }
         Some(StreamPhase::Live)
         | Some(StreamPhase::Closed {
             reason:
                 crate::msg::StreamCloseReason::AgentExited { .. }
                 | crate::msg::StreamCloseReason::AgentDeleted,
-        }) => situation,
-        _ => situation.with_state(SituationState::Unknown),
+        }) => {}
+        _ => return situation,
     }
+
+    let state = if layer.exited {
+        SituationState::Exited
+    } else if layer.thread_closed {
+        SituationState::Closed
+    } else if layer.stale || layer.gap {
+        SituationState::Unknown
+    } else if layer.read_only {
+        SituationState::ReadOnly
+    } else if !layer.live() {
+        SituationState::Replaying
+    } else if let Some(ask) = layer.asks.front() {
+        SituationState::AwaitingApproval {
+            request_id: ask.request_id.clone(),
+        }
+    } else if let Some(item_id) = layer.accumulators.unsupported.front() {
+        SituationState::BlockedUnsupported {
+            item_id: item_id.clone(),
+        }
+    } else if layer.turn.active_id.is_some() {
+        match layer.accumulators.active_items.back() {
+            Some(ActiveItem {
+                item_id,
+                kind: ActiveItemKind::Message,
+            }) => SituationState::Responding {
+                item_id: item_id.clone(),
+            },
+            Some(ActiveItem {
+                item_id,
+                kind: ActiveItemKind::Work,
+            }) => SituationState::Executing {
+                item_id: item_id.clone(),
+            },
+            _ => SituationState::Working,
+        }
+    } else if layer.turn.status == ThreadStatus::Active {
+        SituationState::Working
+    } else if layer.truncated_start
+        && layer.turn.last.is_none()
+        && layer.turn.status == ThreadStatus::Unknown
+    {
+        SituationState::Unknown
+    } else {
+        match layer.turn.last {
+            Some(LastTurn::Completed | LastTurn::Failed) => SituationState::Finished,
+            Some(LastTurn::Interrupted) | None => SituationState::Idle,
+        }
+    };
+    situation.with_state(state)
+}
+
+fn classify_model(model: &Model, agent: amux::AgentId) -> Situation {
+    let Some(card) = model.agent(agent) else {
+        return classify(None, None, None);
+    };
+    classify(
+        card.codex(),
+        model.stream(agent).map(|stream| &stream.phase),
+        Some(&card.phase),
+    )
 }
 
 /// Derived Codex phase, wrapped in kernel stream lifecycle facts.
 pub fn phase(model: &Model, agent: amux::AgentId) -> CodexPhase {
-    situation(model, agent).phase()
+    classify_model(model, agent).phase()
 }
 
 pub fn send_gate(model: &Model, agent: amux::AgentId) -> SendGate {
-    let situation = situation(model, agent);
-    if situation.input_in_flight
-        && !matches!(
-            situation.state,
-            SituationState::Unavailable
-                | SituationState::Exited
-                | SituationState::Closed
-                | SituationState::Replaying
-                | SituationState::ReadOnly
-                | SituationState::Unknown
-        )
-    {
-        return SendGate::InputInFlight;
-    }
-    match situation.state {
-        SituationState::Unavailable => SendGate::Unavailable,
-        SituationState::Exited => SendGate::Exited,
-        SituationState::Closed => SendGate::Closed,
-        SituationState::Replaying => SendGate::Replaying,
-        SituationState::Responding { .. }
-        | SituationState::Executing { .. }
-        | SituationState::Working => SendGate::ActiveTurn,
-        SituationState::AwaitingApproval { .. } | SituationState::BlockedUnsupported { .. } => {
-            SendGate::NeedsYou
-        }
-        SituationState::ReadOnly => SendGate::ReadOnly,
-        SituationState::Unknown => SendGate::Unknown,
-        SituationState::Finished | SituationState::Idle => SendGate::Ready,
-    }
+    classify_model(model, agent).send_gate()
 }
 
 #[derive(Clone, Copy)]
@@ -1085,7 +1094,7 @@ pub(super) fn write_permission(
     agent: amux::AgentId,
     action: WriteAction,
 ) -> WritePermission {
-    let situation = situation(model, agent);
+    let situation = classify_model(model, agent);
     let live = match session_state(&situation.state) {
         Err(message) => return WritePermission::Refused(message),
         Ok(live) => live,
@@ -1181,8 +1190,9 @@ pub(crate) fn check_projection_invariant(
     attention: Attention,
     out: &mut Vec<Violation>,
 ) {
-    let phase = phase(model, agent);
-    let send_gate = send_gate(model, agent);
+    let situation = classify_model(model, agent);
+    let phase = situation.phase();
+    let send_gate = situation.send_gate();
     let phase_agrees = phase != CodexPhase::Unknown || attention == Attention::Unknown;
     let attention_agrees = match attention {
         Attention::Unknown => true,
@@ -1199,6 +1209,7 @@ pub(crate) fn check_projection_invariant(
     if !phase_agrees || !attention_agrees {
         out.push(Violation::Codex(CodexViolation::ProjectionDisagreement {
             agent,
+            classification: format!("{:?}", situation.state),
             phase,
             attention,
             send_gate,
@@ -1274,5 +1285,67 @@ mod tests {
         let kinds = kinds(&layer);
         assert!(kinds.contains(&"codex-duplicate-ask"));
         assert!(kinds.contains(&"codex-duplicate-input"));
+    }
+
+    #[test]
+    fn classifier_covers_every_kernel_stream_branch_and_exit_attention() {
+        use crate::msg::StreamCloseReason;
+
+        let mut layer = CodexLayer {
+            ready_count: 1,
+            ..CodexLayer::default()
+        };
+        let cases = [
+            (Some(StreamPhase::Opening), SituationState::Replaying),
+            (Some(StreamPhase::Replaying), SituationState::Replaying),
+            (Some(StreamPhase::Live), SituationState::Idle),
+            (
+                Some(StreamPhase::Closed {
+                    reason: StreamCloseReason::AgentExited { exit_code: Some(0) },
+                }),
+                SituationState::Idle,
+            ),
+            (
+                Some(StreamPhase::Closed {
+                    reason: StreamCloseReason::AgentDeleted,
+                }),
+                SituationState::Idle,
+            ),
+            (
+                Some(StreamPhase::Closed {
+                    reason: StreamCloseReason::HostUnreachable,
+                }),
+                SituationState::Unknown,
+            ),
+            (None, SituationState::Unknown),
+        ];
+        for (stream, expected) in cases {
+            assert_eq!(
+                classify(Some(&layer), stream.as_ref(), None).state,
+                expected
+            );
+        }
+
+        let exited = classify(
+            Some(&layer),
+            Some(&StreamPhase::Live),
+            Some(&AgentPhase::Exited { exit_code: Some(1) }),
+        );
+        assert_eq!(exited.state, SituationState::Exited);
+        assert_eq!(exited.attention(), Attention::Unknown);
+
+        layer.turn.active_id = Some("turn-live".to_string());
+        layer.inputs.push_back(InFlightInput {
+            op: OpId(Uuid::from_u128(200)),
+            input_id: vec![2],
+            kind: InFlightKind::Steer {
+                text: "keep going".to_string(),
+            },
+        });
+        let active_with_input = classify(Some(&layer), Some(&StreamPhase::Live), None);
+        assert!(active_with_input.active_turn);
+        assert!(active_with_input.input_in_flight);
+        assert_eq!(active_with_input.attention(), Attention::Working);
+        assert_eq!(active_with_input.send_gate(), SendGate::InputInFlight);
     }
 }

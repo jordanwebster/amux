@@ -82,6 +82,15 @@ fn named_states() -> Vec<(&'static str, Vec<Msg>)> {
         }),
     ));
 
+    let mut active_input_in_flight = with_rows(active());
+    active_input_in_flight.push(command(
+        op(18),
+        Command::Codex(CodexCommand::Steer {
+            agent: agent_id(AGENT),
+            text: "keep going".to_string(),
+        }),
+    ));
+
     vec![
         ("fresh/pre-ready", codex_base(AGENT)),
         ("replaying", raw_base(false, false)),
@@ -144,6 +153,7 @@ fn named_states() -> Vec<(&'static str, Vec<Msg>)> {
             ]),
         ),
         ("answer in flight", answer_in_flight),
+        ("active turn with input in flight", active_input_in_flight),
         // Lifecycle churn no other chapter reaches. Registering these puts
         // them under the differential spec's per-Msg invariant sweep
         // (`wire_free::differential_fold_matches_live_state_after_every_msg`)
@@ -278,4 +288,28 @@ fn read_only_outranks_an_existing_ask_and_thread_closed_is_recoverable() {
         projections(&revived),
         (CodexPhase::Idle, Attention::Idle, SendGate::Ready)
     );
+}
+
+#[test]
+fn active_turn_with_input_in_flight_keeps_only_interrupt_safe() {
+    let model = fold(
+        named_states()
+            .into_iter()
+            .find(|(name, _)| *name == "active turn with input in flight")
+            .expect("state")
+            .1,
+    );
+    let agent = agent_id(AGENT);
+    assert_eq!(
+        projections(&model),
+        (
+            CodexPhase::Thinking,
+            Attention::Working,
+            SendGate::InputInFlight
+        )
+    );
+    assert!(!amux_ui::codex::allows_prompt(&model, agent));
+    assert!(!amux_ui::codex::allows_steer(&model, agent));
+    assert!(!amux_ui::codex::allows_answer(&model, agent));
+    assert!(amux_ui::codex::allows_interrupt(&model, agent));
 }

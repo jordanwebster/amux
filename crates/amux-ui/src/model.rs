@@ -192,14 +192,12 @@ impl AgentLayer {
         }
     }
 
-    /// Derive cached fleet attention. Both layers include the kernel stream
-    /// phase: an Opening/Replaying fold has seen only a prefix of the replay
-    /// window, so its apparent resting or actionable state is not yet
-    /// authoritative, and `phase`/`send_gate` already gate on exactly those
-    /// two stream phases in both layers.
+    /// Derive cached fleet attention from each layer's one stream-aware
+    /// classification. Cached Claude attention is deliberately time-free;
+    /// read-time degradation remains in [`Model::effective_attention`].
     pub(crate) fn attention(&self, stream_phase: Option<&StreamPhase>) -> Attention {
         match self {
-            Self::Claude(layer) => crate::claude::projected_attention(layer, stream_phase),
+            Self::Claude(layer) => crate::claude::cached_attention(layer, stream_phase),
             Self::Codex(layer) => crate::codex::projected_attention(layer, stream_phase),
         }
     }

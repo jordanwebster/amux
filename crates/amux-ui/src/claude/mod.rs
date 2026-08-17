@@ -622,6 +622,112 @@ impl SendGate {
     }
 }
 
+/// One lossless, Claude-native interpretation of transcript, turn, ask,
+/// optimistic-send, and kernel lifecycle facts. Public projections discard
+/// different details but never rediscover them.
+#[derive(Clone, Debug, PartialEq)]
+struct ChatCondition {
+    state: ChatConditionState,
+    send_in_flight: bool,
+}
+
+#[derive(Clone, Debug, PartialEq)]
+enum ChatConditionState {
+    Unavailable,
+    Exited,
+    Replaying,
+    Unknown,
+    AskPending { id: u64, why: AskWhy },
+    Errored,
+    TurnWorking,
+    TurnFinished { tag: PhaseTag },
+    TurnInterrupted { tag: PhaseTag },
+    Resting { tag: PhaseTag },
+}
+
+impl ChatCondition {
+    fn unavailable() -> Self {
+        Self {
+            state: ChatConditionState::Unavailable,
+            send_in_flight: false,
+        }
+    }
+
+    fn phase(&self) -> ChatPhase {
+        match self.state {
+            ChatConditionState::Unavailable | ChatConditionState::Unknown => ChatPhase::Unknown,
+            ChatConditionState::Exited => ChatPhase::Idle {
+                tag: PhaseTag::Fact,
+            },
+            ChatConditionState::Replaying => ChatPhase::Replaying,
+            ChatConditionState::AskPending { why, .. } => ChatPhase::NeedsYou {
+                why,
+                tag: PhaseTag::Fact,
+            },
+            ChatConditionState::Errored => ChatPhase::Errored,
+            ChatConditionState::TurnWorking => ChatPhase::Working,
+            ChatConditionState::TurnFinished { tag }
+            | ChatConditionState::TurnInterrupted { tag }
+            | ChatConditionState::Resting { tag } => ChatPhase::Idle { tag },
+        }
+    }
+
+    fn attention(&self) -> Attention {
+        match self.state {
+            ChatConditionState::Unavailable
+            | ChatConditionState::Replaying
+            | ChatConditionState::Unknown
+            | ChatConditionState::Errored => Attention::Unknown,
+            ChatConditionState::Exited => Attention::Idle,
+            _ if self.send_in_flight => Attention::Working,
+            ChatConditionState::AskPending { why, .. } => Attention::NeedsYou {
+                why: match why {
+                    AskWhy::Permission => Why::Permission,
+                    AskWhy::Question => Why::Question,
+                },
+            },
+            ChatConditionState::TurnWorking => Attention::Working,
+            ChatConditionState::TurnFinished { .. } => Attention::NeedsYou { why: Why::Finished },
+            ChatConditionState::TurnInterrupted { .. } | ChatConditionState::Resting { .. } => {
+                Attention::Idle
+            }
+        }
+    }
+
+    fn send_gate(&self) -> SendGate {
+        match self.state {
+            ChatConditionState::Unavailable => SendGate::Unavailable,
+            ChatConditionState::Exited => SendGate::Exited,
+            _ if self.send_in_flight => SendGate::SendInFlight,
+            ChatConditionState::Replaying => SendGate::Replaying,
+            ChatConditionState::Unknown => SendGate::Unknown,
+            ChatConditionState::AskPending { .. } => SendGate::NeedsYou,
+            ChatConditionState::TurnWorking => SendGate::Working,
+            ChatConditionState::Errored
+            | ChatConditionState::TurnFinished { .. }
+            | ChatConditionState::TurnInterrupted { .. }
+            | ChatConditionState::Resting { .. } => SendGate::Ready,
+        }
+    }
+
+    fn mode_cycle_refusal(&self) -> Option<&'static str> {
+        match self.state {
+            ChatConditionState::Unavailable => Some("chat input unavailable for this agent"),
+            ChatConditionState::Exited => Some("agent exited"),
+            ChatConditionState::Replaying => Some("mode cycle gated while replaying"),
+            ChatConditionState::Unknown => Some("mode cycle gated — session state unknown"),
+            ChatConditionState::AskPending { .. } => {
+                Some("mode cycle gated while an ask is pending")
+            }
+            ChatConditionState::Errored
+            | ChatConditionState::TurnWorking
+            | ChatConditionState::TurnFinished { .. }
+            | ChatConditionState::TurnInterrupted { .. }
+            | ChatConditionState::Resting { .. } => None,
+        }
+    }
+}
+
 /// Structural invariant classes owned by the Claude layer. The outer
 /// kernel violation is namespaced by layer; these keys remain stable for
 /// dump throttling.
@@ -1039,137 +1145,11 @@ impl ClaudeLayer {
         }
     }
 
-    /// The phase the fold alone can claim (the E1 table). The kernel's
-    /// subscription lifecycle wraps it in this module's `phase`.
-    fn folded_phase(&self, now: Option<DateTime<Utc>>) -> ChatPhase {
-        if self.exited {
-            // Orderly process termination is a FACT that overrides
-            // truncation and staleness: nothing is running, nothing can
-            // need you. The card's own `phase` carries the exit itself.
-            return ChatPhase::Idle {
-                tag: PhaseTag::Fact,
-            };
-        }
-        if self.stale {
-            return ChatPhase::Unknown;
-        }
-        if !self.live() {
-            // Mid-replay of an existing transcript is Replaying; a window
-            // with no transcript rows at all and no truncation is a fresh
-            // session whose file does not exist yet (B10) — an idle empty
-            // chat, inferred.
-            return if self.transcript_rows_seen || self.truncated_start {
-                ChatPhase::Replaying
-            } else {
-                ChatPhase::Idle {
-                    tag: PhaseTag::Inferred,
-                }
-            };
-        }
-        if let Some(ask) = self.asks.front() {
-            // The request FACT is newer than any resolving result (E1):
-            // resolution facts remove asks from the queue as they land.
-            return ChatPhase::NeedsYou {
-                why: ask.why(),
-                tag: PhaseTag::Fact,
-            };
-        }
-        if self.turn.error_live {
-            return ChatPhase::Errored;
-        }
-        if self.turn.open {
-            if self.turn.stop_presignal {
-                // Arrival-ordered pre-signal: the turn ended, the
-                // transcript tail has not caught up (INFERRED until the
-                // authority lands).
-                return ChatPhase::Idle {
-                    tag: PhaseTag::Inferred,
-                };
-            }
-            if self.working_is_stale(now) {
-                return ChatPhase::Unknown;
-            }
-            return ChatPhase::Working;
-        }
-        if self.turn.closed_by.is_some() {
-            let fresh = match (now, self.turn.closed_at) {
-                (Some(now), Some(at)) => now - at <= TimeDelta::seconds(IDLE_FACT_DECAY_SECS),
-                _ => true,
-            };
-            return ChatPhase::Idle {
-                tag: if fresh {
-                    PhaseTag::Fact
-                } else {
-                    PhaseTag::Inferred
-                },
-            };
-        }
-        // No evidence at all: over a truncated window that is Unknown —
-        // absence of evidence in a bounded history is not evidence of
-        // idleness.
-        if self.truncated_start {
-            ChatPhase::Unknown
-        } else {
-            ChatPhase::Idle {
-                tag: PhaseTag::Inferred,
-            }
-        }
-    }
-
-    /// Kernel attention derived from the SAME interpretation as the phase
-    /// (E2: one fold, not two). Time-free so the cached card value stays
-    /// coherent between Ticks; the read-time staleness degrade lives in
-    /// `Model::effective_attention`, keeping fleet and chat in agreement
-    /// (E3).
+    /// The layer-only diagnostic projection assumes an admitted live stream.
+    /// Model/card consumers use [`cached_attention`], which supplies the real
+    /// kernel lifecycle to the same classifier. Time remains absent here.
     pub fn attention(&self) -> Attention {
-        if self.exited {
-            // Definitive termination: nothing left to need.
-            return Attention::Idle;
-        }
-        if self.stale {
-            return Attention::Unknown;
-        }
-        if !self.live() {
-            return if self.transcript_rows_seen || self.truncated_start {
-                Attention::Unknown
-            } else {
-                Attention::Idle
-            };
-        }
-        if let Some(ask) = self.asks.front() {
-            return Attention::NeedsYou {
-                why: match ask.why() {
-                    AskWhy::Permission => Why::Permission,
-                    AskWhy::Question => Why::Question,
-                },
-            };
-        }
-        if self.turn.error_live {
-            // The kernel vocabulary cannot say "errored"; Unknown is the
-            // honest word — never a wrong badge (retries may already be
-            // running invisibly).
-            return Attention::Unknown;
-        }
-        if self.turn.open {
-            return if self.turn.stop_presignal {
-                Attention::NeedsYou { why: Why::Finished }
-            } else {
-                Attention::Working
-            };
-        }
-        match self.turn.closed_by {
-            // The turn finished and nothing came after: come look.
-            Some(TurnCloseSource::Authority) => Attention::NeedsYou { why: Why::Finished },
-            // The user closed it deliberately; nothing to come look at.
-            Some(TurnCloseSource::Interrupt) => Attention::Idle,
-            None => {
-                if self.truncated_start {
-                    Attention::Unknown
-                } else {
-                    Attention::Idle
-                }
-            }
-        }
+        classify(Some(self), Some(&StreamPhase::Live), None, None).attention()
     }
 
     /// The E1 staleness cap: the working inference is stale once no
@@ -1278,48 +1258,131 @@ impl ClaudeLayer {
     }
 }
 
-/// Cache the Claude layer's attention under the kernel stream lifecycle.
-/// Opening and replaying deliberately outrank the folded layer: rows seen so
-/// far are only a prefix of the replay window, so their apparent resting or
-/// actionable state is not yet authoritative. Without this the cached badge
-/// disagreed with `phase` and `send_gate`, which both already gate on the
-/// same two stream phases — the identical cross-altitude gap the Codex arm
-/// closed in `41f5433`.
-pub(crate) fn projected_attention(
+/// Cache attention by projecting the same time-free classification used by
+/// every observation-time phase and gate.
+pub(crate) fn cached_attention(
     layer: &ClaudeLayer,
     stream_phase: Option<&StreamPhase>,
 ) -> Attention {
-    if matches!(
-        stream_phase,
-        Some(StreamPhase::Opening | StreamPhase::Replaying)
-    ) {
-        Attention::Unknown
-    } else {
-        layer.attention()
-    }
+    classify(Some(layer), stream_phase, None, None).attention()
 }
 
-/// The derived chat phase for one Claude card (E1), computed here once for
-/// every renderer: kernel subscription catch-up gates to Replaying, a dead
-/// transport degrades to Unknown, an exited agent keeps its layer's last
-/// honest state (the card's `phase` carries the exit itself), and the fold
-/// derives the rest — with `now` (entering via Ticks) capping the inferred
-/// states. This keeps kernel lifecycle facts at the layer boundary without
-/// teaching `Model` a Claude-specific phase.
-pub fn phase(model: &Model, agent: amux::AgentId) -> ChatPhase {
-    let Some(layer) = model.claude(agent) else {
-        return ChatPhase::Unknown;
+/// The one ordered Claude classification. This is the only Claude-layer code
+/// that reads kernel `StreamPhase`; `now` is explicit so cached attention is
+/// time-free while observation-time phase and gates share the same fold.
+fn classify(
+    layer: Option<&ClaudeLayer>,
+    stream_phase: Option<&StreamPhase>,
+    agent_phase: Option<&AgentPhase>,
+    now: Option<DateTime<Utc>>,
+) -> ChatCondition {
+    if matches!(agent_phase, Some(AgentPhase::Exited { .. })) {
+        return ChatCondition {
+            state: ChatConditionState::Exited,
+            send_in_flight: layer.is_some_and(|layer| !layer.echoes.is_empty()),
+        };
+    }
+    let Some(layer) = layer else {
+        return ChatCondition::unavailable();
     };
-    match model.stream(agent).map(|stream| &stream.phase) {
-        Some(StreamPhase::Opening | StreamPhase::Replaying) => ChatPhase::Replaying,
+    let condition = ChatCondition {
+        state: ChatConditionState::Unknown,
+        send_in_flight: !layer.echoes.is_empty(),
+    };
+    match stream_phase {
+        Some(StreamPhase::Opening | StreamPhase::Replaying) => {
+            return condition.with_state(ChatConditionState::Replaying);
+        }
         Some(StreamPhase::Live)
         | Some(StreamPhase::Closed {
             reason:
                 crate::msg::StreamCloseReason::AgentExited { .. }
                 | crate::msg::StreamCloseReason::AgentDeleted,
-        }) => layer.folded_phase(model.now()),
-        _ => ChatPhase::Unknown,
+        }) => {}
+        _ => return condition,
     }
+
+    let state = if layer.exited {
+        ChatConditionState::Exited
+    } else if layer.stale {
+        ChatConditionState::Unknown
+    } else if !layer.live() && (layer.transcript_rows_seen || layer.truncated_start) {
+        // A replayed prefix may contain an ask whose resolution is still in
+        // the unseen suffix, so replay honesty outranks that apparent ask.
+        ChatConditionState::Replaying
+    } else if let Some(ask) = layer.asks.front() {
+        // In a truly fresh-empty pre-live window, a held ask came from the
+        // arrival-ordered hook and outranks only the positive resting claim.
+        ChatConditionState::AskPending {
+            id: ask.id,
+            why: ask.why(),
+        }
+    } else if !layer.live() {
+        ChatConditionState::Resting {
+            tag: PhaseTag::Inferred,
+        }
+    } else if layer.turn.error_live {
+        ChatConditionState::Errored
+    } else if layer.turn.open {
+        if layer.turn.stop_presignal {
+            ChatConditionState::TurnFinished {
+                tag: PhaseTag::Inferred,
+            }
+        } else if layer.working_is_stale(now) {
+            ChatConditionState::Unknown
+        } else {
+            ChatConditionState::TurnWorking
+        }
+    } else if let Some(closed_by) = layer.turn.closed_by {
+        let fresh = match (now, layer.turn.closed_at) {
+            (Some(now), Some(at)) => now - at <= TimeDelta::seconds(IDLE_FACT_DECAY_SECS),
+            _ => true,
+        };
+        let tag = if fresh {
+            PhaseTag::Fact
+        } else {
+            PhaseTag::Inferred
+        };
+        match closed_by {
+            TurnCloseSource::Authority => ChatConditionState::TurnFinished { tag },
+            TurnCloseSource::Interrupt => ChatConditionState::TurnInterrupted { tag },
+        }
+    } else if layer.truncated_start {
+        ChatConditionState::Unknown
+    } else {
+        ChatConditionState::Resting {
+            tag: PhaseTag::Inferred,
+        }
+    };
+    condition.with_state(state)
+}
+
+impl ChatCondition {
+    fn with_state(mut self, state: ChatConditionState) -> Self {
+        self.state = state;
+        self
+    }
+}
+
+fn classify_model(
+    model: &Model,
+    agent: amux::AgentId,
+    now: Option<DateTime<Utc>>,
+) -> ChatCondition {
+    let Some(card) = model.agent(agent) else {
+        return classify(None, None, None, now);
+    };
+    classify(
+        card.claude(),
+        model.stream(agent).map(|stream| &stream.phase),
+        Some(&card.phase),
+        now,
+    )
+}
+
+/// The derived chat phase for one Claude card (E1).
+pub fn phase(model: &Model, agent: amux::AgentId) -> ChatPhase {
+    classify_model(model, agent, model.now()).phase()
 }
 
 /// The prompt-send gate (D2), derived here once: the reducer enforces it on
@@ -1327,32 +1390,7 @@ pub fn phase(model: &Model, agent: amux::AgentId) -> ChatPhase {
 /// derivation. The draft itself is renderer ViewState and is never touched
 /// by a gate.
 pub fn send_gate(model: &Model, agent: amux::AgentId) -> SendGate {
-    let Some(card) = model.agent(agent) else {
-        return SendGate::Unavailable;
-    };
-    // Exit is checked before layer presence: an agent that exited before its
-    // structured stream produced any evidence is still EXITED, and saying so
-    // beats the vaguer unavailable refusal.
-    if matches!(card.phase, AgentPhase::Exited { .. }) {
-        return SendGate::Exited;
-    }
-    let Some(layer) = card.claude() else {
-        return SendGate::Unavailable;
-    };
-    if !layer.pending_echoes().is_empty() {
-        // One optimistic echo in flight at a time: reconciliation is
-        // content-keyed, and claude queues raced sends anyway.
-        return SendGate::SendInFlight;
-    }
-    match phase(model, agent) {
-        // Errored allows sending: recovery may need a prompt, and the
-        // agent's own composer accepts one.
-        ChatPhase::Idle { .. } | ChatPhase::Errored => SendGate::Ready,
-        ChatPhase::Replaying => SendGate::Replaying,
-        ChatPhase::Working => SendGate::Working,
-        ChatPhase::NeedsYou { .. } => SendGate::NeedsYou,
-        ChatPhase::Unknown => SendGate::Unknown,
-    }
+    classify_model(model, agent, model.now()).send_gate()
 }
 
 /// The permission-mode cycle gate (D4): allowed whenever the injected
@@ -1360,21 +1398,7 @@ pub fn send_gate(model: &Model, agent: amux::AgentId) -> SendGate {
 /// same byte navigates the form instead — refused; degraded windows refuse
 /// honestly.
 pub fn mode_cycle_gate(model: &Model, agent: amux::AgentId) -> Option<&'static str> {
-    let Some(card) = model.agent(agent) else {
-        return Some("chat input unavailable for this agent");
-    };
-    if matches!(card.phase, AgentPhase::Exited { .. }) {
-        return Some("agent exited");
-    }
-    if card.claude().is_none() {
-        return Some("chat input unavailable for this agent");
-    }
-    match phase(model, agent) {
-        ChatPhase::Idle { .. } | ChatPhase::Working | ChatPhase::Errored => None,
-        ChatPhase::Replaying => Some("mode cycle gated while replaying"),
-        ChatPhase::NeedsYou { .. } => Some("mode cycle gated while an ask is pending"),
-        ChatPhase::Unknown => Some("mode cycle gated — session state unknown"),
-    }
+    classify_model(model, agent, model.now()).mode_cycle_refusal()
 }
 
 /// The invariant classes must actually FIRE: a coherent layer is built
@@ -1578,5 +1602,243 @@ mod tests {
             hook_key: None,
         });
         assert!(fires(&model, "claude-ask-order"));
+    }
+
+    fn pending_question(id: u64) -> Ask {
+        Ask {
+            id,
+            seq: id,
+            tool_use_id: None,
+            kind: AskKind::Question {
+                questions: Vec::new(),
+            },
+            state: AskState::Pending,
+            artifact: None,
+            hook_key: None,
+        }
+    }
+
+    #[test]
+    fn classifier_orders_the_three_not_live_outcomes() {
+        let mut fresh = ClaudeLayer::default();
+        assert_eq!(
+            classify(Some(&fresh), Some(&StreamPhase::Live), None, None).state,
+            ChatConditionState::Resting {
+                tag: PhaseTag::Inferred
+            }
+        );
+
+        fresh.asks.push_back(pending_question(7));
+        assert_eq!(
+            classify(Some(&fresh), Some(&StreamPhase::Live), None, None).state,
+            ChatConditionState::AskPending {
+                id: 7,
+                why: AskWhy::Question
+            }
+        );
+
+        fresh.transcript_rows_seen = true;
+        assert_eq!(
+            classify(Some(&fresh), Some(&StreamPhase::Live), None, None).state,
+            ChatConditionState::Replaying,
+            "a rows-seen prefix outranks the held ask"
+        );
+        fresh.transcript_rows_seen = false;
+        fresh.truncated_start = true;
+        assert_eq!(
+            classify(Some(&fresh), Some(&StreamPhase::Live), None, None).state,
+            ChatConditionState::Replaying,
+            "a truncated prefix also outranks the held ask"
+        );
+    }
+
+    #[test]
+    fn classifier_preserves_turn_end_distinctions_and_explicit_time() {
+        let mut layer = ClaudeLayer {
+            replay_complete: true,
+            ..ClaudeLayer::default()
+        };
+        layer.turn.open = true;
+        layer.turn.stop_presignal = true;
+        assert_eq!(
+            classify(Some(&layer), Some(&StreamPhase::Live), None, None).state,
+            ChatConditionState::TurnFinished {
+                tag: PhaseTag::Inferred
+            }
+        );
+
+        layer.turn.open = false;
+        layer.turn.stop_presignal = false;
+        layer.turn.closed_by = Some(TurnCloseSource::Interrupt);
+        layer.turn.closed_at = DateTime::from_timestamp(10, 0);
+        assert_eq!(
+            classify(
+                Some(&layer),
+                Some(&StreamPhase::Live),
+                None,
+                DateTime::from_timestamp(20, 0)
+            )
+            .state,
+            ChatConditionState::TurnInterrupted {
+                tag: PhaseTag::Fact
+            }
+        );
+        assert_eq!(
+            classify(
+                Some(&layer),
+                Some(&StreamPhase::Live),
+                None,
+                DateTime::from_timestamp(200, 0)
+            )
+            .state,
+            ChatConditionState::TurnInterrupted {
+                tag: PhaseTag::Inferred
+            }
+        );
+
+        layer.turn.closed_by = None;
+        assert_eq!(
+            classify(Some(&layer), Some(&StreamPhase::Live), None, None).state,
+            ChatConditionState::Resting {
+                tag: PhaseTag::Inferred
+            }
+        );
+    }
+
+    #[test]
+    fn send_in_flight_attention_yields_only_to_higher_precedence_states() {
+        let high_states = [
+            ChatConditionState::Unavailable,
+            ChatConditionState::Replaying,
+            ChatConditionState::Unknown,
+            ChatConditionState::Errored,
+        ];
+        for state in high_states {
+            assert_eq!(
+                ChatCondition {
+                    state,
+                    send_in_flight: true
+                }
+                .attention(),
+                Attention::Unknown
+            );
+        }
+        assert_eq!(
+            ChatCondition {
+                state: ChatConditionState::Exited,
+                send_in_flight: true
+            }
+            .attention(),
+            Attention::Idle
+        );
+        for state in [
+            ChatConditionState::AskPending {
+                id: 9,
+                why: AskWhy::Permission,
+            },
+            ChatConditionState::TurnWorking,
+            ChatConditionState::TurnFinished {
+                tag: PhaseTag::Fact,
+            },
+            ChatConditionState::TurnInterrupted {
+                tag: PhaseTag::Fact,
+            },
+            ChatConditionState::Resting {
+                tag: PhaseTag::Inferred,
+            },
+        ] {
+            assert_eq!(
+                ChatCondition {
+                    state,
+                    send_in_flight: true
+                }
+                .attention(),
+                Attention::Working
+            );
+        }
+
+        let mut layer = ClaudeLayer {
+            replay_complete: true,
+            echoes: vec![PromptEcho {
+                op: OpId(Uuid::from_u128(88)),
+                text: "pending".to_string(),
+                at: None,
+            }],
+            ..ClaudeLayer::default()
+        };
+        assert_eq!(
+            classify(Some(&layer), Some(&StreamPhase::Opening), None, None).attention(),
+            Attention::Unknown
+        );
+        assert_eq!(
+            classify(Some(&layer), None, None, None).attention(),
+            Attention::Unknown
+        );
+        layer.exited = true;
+        assert_eq!(
+            classify(Some(&layer), Some(&StreamPhase::Live), None, None).attention(),
+            Attention::Idle
+        );
+        layer.exited = false;
+        layer.turn.error_live = true;
+        assert_eq!(
+            classify(Some(&layer), Some(&StreamPhase::Live), None, None).attention(),
+            Attention::Unknown
+        );
+        layer.turn.error_live = false;
+        layer.asks.push_back(pending_question(12));
+        assert_eq!(
+            classify(Some(&layer), Some(&StreamPhase::Live), None, None).attention(),
+            Attention::Working
+        );
+    }
+
+    #[test]
+    fn classifier_covers_every_kernel_stream_branch() {
+        use crate::msg::StreamCloseReason;
+
+        let layer = ClaudeLayer {
+            replay_complete: true,
+            ..ClaudeLayer::default()
+        };
+        let cases = [
+            (Some(StreamPhase::Opening), ChatConditionState::Replaying),
+            (Some(StreamPhase::Replaying), ChatConditionState::Replaying),
+            (
+                Some(StreamPhase::Live),
+                ChatConditionState::Resting {
+                    tag: PhaseTag::Inferred,
+                },
+            ),
+            (
+                Some(StreamPhase::Closed {
+                    reason: StreamCloseReason::AgentExited { exit_code: Some(0) },
+                }),
+                ChatConditionState::Resting {
+                    tag: PhaseTag::Inferred,
+                },
+            ),
+            (
+                Some(StreamPhase::Closed {
+                    reason: StreamCloseReason::AgentDeleted,
+                }),
+                ChatConditionState::Resting {
+                    tag: PhaseTag::Inferred,
+                },
+            ),
+            (
+                Some(StreamPhase::Closed {
+                    reason: StreamCloseReason::HostUnreachable,
+                }),
+                ChatConditionState::Unknown,
+            ),
+            (None, ChatConditionState::Unknown),
+        ];
+        for (stream, expected) in cases {
+            assert_eq!(
+                classify(Some(&layer), stream.as_ref(), None, None).state,
+                expected
+            );
+        }
     }
 }
