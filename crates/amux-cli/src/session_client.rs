@@ -70,6 +70,7 @@ pub async fn new_agent(
     tracing::info!(agent_id = %agent_id, ?name, "creating agent");
 
     let create_rpc = rpc.clone();
+    let verify_rpc = rpc.clone();
     create_and_open_agent(
         name,
         move || async move {
@@ -115,25 +116,43 @@ pub async fn new_agent(
                 }
             }
         },
+        move |agent_id| async move {
+            verify_rpc
+                .list_agents()
+                .await
+                .map(|agents| agents.iter().any(|agent| agent.id == agent_id))
+                .map_err(|error| anyhow!("failed to list agents: {error}"))
+        },
     )
     .await
 }
 
-async fn create_and_open_agent<Create, CreateFuture, Open, OpenFuture>(
+async fn create_and_open_agent<Create, CreateFuture, Open, OpenFuture, Verify, VerifyFuture>(
     name: Option<&str>,
     create: Create,
     open: Open,
+    verify: Verify,
 ) -> Result<()>
 where
     Create: FnOnce() -> CreateFuture,
     CreateFuture: Future<Output = Result<Uuid>>,
     Open: FnOnce(Uuid) -> OpenFuture,
     OpenFuture: Future<Output = Result<()>>,
+    Verify: FnOnce(Uuid) -> VerifyFuture,
+    VerifyFuture: Future<Output = Result<bool>>,
 {
     let agent_id = create().await?;
-    open(agent_id)
-        .await
-        .map_err(|error| created_agent_open_error(name, agent_id, error))
+    let Err(open_error) = open(agent_id).await else {
+        return Ok(());
+    };
+
+    match verify(agent_id).await {
+        Ok(true) => Err(created_agent_open_error(name, agent_id, open_error)),
+        Ok(false) => Err(open_error),
+        Err(verification_error) => Err(anyhow!(
+            "{open_error:#}\nCould not verify whether created agent {agent_id} is still present: {verification_error:#}"
+        )),
+    }
 }
 
 fn created_agent_open_error(
@@ -141,11 +160,11 @@ fn created_agent_open_error(
     agent_id: Uuid,
     error: anyhow::Error,
 ) -> anyhow::Error {
-    let target = name
+    let display = name
         .map(str::to_string)
         .unwrap_or_else(|| agent_id.to_string());
     anyhow!(
-        "agent '{target}' was created and is running. Reattach with 'amux attach {target}', or remove it with 'amux rm {target}' (or 'd' in the fleet view).\n{error:#}"
+        "agent '{display}' was created and is running. Reattach with 'amux attach {agent_id}', or remove it with 'amux rm {agent_id}' (or 'd' in the fleet view).\n{error:#}"
     )
 }
 
@@ -201,11 +220,27 @@ pub async fn attach(target: Option<&str>, config: &Config) -> Result<()> {
 
 /// Remove an agent by exact name or UUID without prompting.
 pub async fn remove_agent(target: &str, config: &Config) -> Result<()> {
-    let retry_command = format!("amux rm {target}");
+    let retry_command = remove_retry_command(target);
     let rpc = require_running_client(config, Some(&retry_command)).await?;
     remove_agent_with_client(target, &rpc).await?;
     println!("Deleted agent '{target}'.");
     Ok(())
+}
+
+fn remove_retry_command(target: &str) -> String {
+    format!("amux rm {}", shell_safe_argument(target))
+}
+
+fn shell_safe_argument(argument: &str) -> String {
+    if !argument.is_empty()
+        && argument
+            .chars()
+            .all(|c| c.is_ascii_alphanumeric() || matches!(c, '_' | '-' | '.' | '/'))
+    {
+        argument.to_string()
+    } else {
+        format!("'{}'", argument.replace('\'', "'\\''"))
+    }
 }
 
 async fn remove_agent_with_client(target: &str, rpc: &Client) -> Result<()> {
@@ -789,8 +824,10 @@ mod attach {
         let named_id = Uuid::from_u128(0x1234);
         let create_calls = Arc::new(std::sync::atomic::AtomicUsize::new(0));
         let open_calls = Arc::new(std::sync::atomic::AtomicUsize::new(0));
+        let verify_calls = Arc::new(std::sync::atomic::AtomicUsize::new(0));
         let observed_create_calls = create_calls.clone();
         let observed_open_calls = open_calls.clone();
+        let observed_verify_calls = verify_calls.clone();
         let error = super::create_and_open_agent(
             Some("steady"),
             move || async move {
@@ -802,15 +839,24 @@ mod attach {
                 assert_eq!(created_id, named_id);
                 Err(anyhow!("terminal attach failed"))
             },
+            move |created_id| async move {
+                observed_verify_calls.fetch_add(1, Ordering::SeqCst);
+                assert_eq!(created_id, named_id);
+                Ok(true)
+            },
         )
         .await
         .expect_err("opening the successfully created agent must fail");
 
         assert_eq!(create_calls.load(Ordering::SeqCst), 1);
         assert_eq!(open_calls.load(Ordering::SeqCst), 1);
+        assert_eq!(verify_calls.load(Ordering::SeqCst), 1);
+        let command_target = named_id.to_string();
         assert_eq!(
             error.to_string(),
-            "agent 'steady' was created and is running. Reattach with 'amux attach steady', or remove it with 'amux rm steady' (or 'd' in the fleet view).\nterminal attach failed"
+            format!(
+                "agent 'steady' was created and is running. Reattach with 'amux attach {command_target}', or remove it with 'amux rm {command_target}' (or 'd' in the fleet view).\nterminal attach failed"
+            )
         );
 
         let unnamed_id = Uuid::from_u128(0x5678);
@@ -818,6 +864,7 @@ mod attach {
             None,
             || async { Ok(unnamed_id) },
             |_| async { Err(anyhow!("chat open failed")) },
+            |_| async { Ok(true) },
         )
         .await
         .expect_err("unnamed recovery must use the created UUID");
@@ -827,6 +874,58 @@ mod attach {
             format!(
                 "agent '{target}' was created and is running. Reattach with 'amux attach {target}', or remove it with 'amux rm {target}' (or 'd' in the fleet view).\nchat open failed"
             )
+        );
+    }
+
+    #[tokio::test]
+    async fn post_create_open_failure_without_created_agent_returns_underlying_error() {
+        let agent_id = Uuid::from_u128(0x6789);
+        let error = super::create_and_open_agent(
+            Some("deleted-later"),
+            || async { Ok(agent_id) },
+            |_| async { Err(anyhow!("late UI draw failed")) },
+            |created_id| async move {
+                assert_eq!(created_id, agent_id);
+                Ok(false)
+            },
+        )
+        .await
+        .expect_err("an absent agent must not produce a running claim");
+
+        assert_eq!(error.to_string(), "late UI draw failed");
+    }
+
+    #[tokio::test]
+    async fn post_create_open_failure_with_failed_verification_is_uncertain() {
+        let agent_id = Uuid::from_u128(0x789a);
+        let error = super::create_and_open_agent(
+            Some("unknown-status"),
+            || async { Ok(agent_id) },
+            |_| async { Err(anyhow!("late UI event failed")) },
+            |_| async { Err(anyhow!("inventory unavailable")) },
+        )
+        .await
+        .expect_err("failed verification must retain the open error");
+
+        assert_eq!(
+            error.to_string(),
+            format!(
+                "late UI event failed\nCould not verify whether created agent {agent_id} is still present: inventory unavailable"
+            )
+        );
+        assert!(!error.to_string().contains("is running"));
+    }
+
+    #[test]
+    fn remove_retry_command_quotes_each_target_as_one_shell_argument() {
+        assert_eq!(super::remove_retry_command("worker-1"), "amux rm worker-1");
+        assert_eq!(
+            super::remove_retry_command("team one"),
+            "amux rm 'team one'"
+        );
+        assert_eq!(
+            super::remove_retry_command("O'Brien"),
+            "amux rm 'O'\\''Brien'"
         );
     }
 
