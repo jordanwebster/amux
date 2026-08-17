@@ -28,7 +28,7 @@ use uuid::Uuid;
 use crate::claude::encoding::KeyStep;
 use crate::codex::CodexInput;
 use crate::effect::{DumpReason, Effect, InputPayload};
-use crate::model::Model;
+use crate::model::{Model, StructuredProtocol};
 use crate::msg::{
     Command, DisconnectReason, Msg, OpError, OpId, OpOutcome, ServerMsg, StreamCloseReason,
     StreamEntry, StreamMsg,
@@ -719,11 +719,11 @@ async fn send_msg(tx: &mpsc::Sender<Msg>, msg: Msg) -> Result<(), ()> {
 async fn stream_task(
     client: Option<Client>,
     agent: AgentId,
-    protocol: String,
+    protocol: StructuredProtocol,
     tail: u64,
     tx: mpsc::Sender<Msg>,
 ) {
-    if let Some(reason) = pump_structured_stream(client, agent, &protocol, tail, &tx).await {
+    if let Some(reason) = pump_structured_stream(client, agent, protocol, tail, &tx).await {
         let _ = send_msg(
             &tx,
             Msg::Stream {
@@ -743,7 +743,7 @@ async fn stream_task(
 async fn pump_structured_stream(
     client: Option<Client>,
     agent: AgentId,
-    protocol: &str,
+    protocol: StructuredProtocol,
     tail: u64,
     tx: &mpsc::Sender<Msg>,
 ) -> Option<StreamCloseReason> {
@@ -753,7 +753,7 @@ async fn pump_structured_stream(
         });
     };
     let args = match protocol {
-        crate::claude::PROTOCOL => {
+        StructuredProtocol::Claude => {
             claude_io::encode_pty_transcript_v1_args(claude_io::ClaudePtyTranscriptV1Args {
                 terminal_size: None,
                 replay_query: Some(claude_io::ClaudePtyTranscriptV1ReplayQuery::Tail {
@@ -761,19 +761,14 @@ async fn pump_structured_stream(
                 }),
             })
         }
-        crate::codex::PROTOCOL => codex_io::encode_codex_sdk_v1_args(codex_io::CodexSdkV1Args {
+        StructuredProtocol::Codex => codex_io::encode_codex_sdk_v1_args(codex_io::CodexSdkV1Args {
             replay_query: Some(codex_io::CodexSdkV1ReplayQuery::Tail { count: tail }),
         }),
-        protocol => {
-            return Some(StreamCloseReason::InternalError {
-                detail: format!("unsupported structured protocol `{protocol}`"),
-            });
-        }
     };
     let mut session = match client
         .subscribe_session(SubscribeSessionRequest {
             agent: AgentIdentifier::Id(agent),
-            io_protocol: protocol.to_string(),
+            io_protocol: protocol.as_str().to_string(),
             args: args.map(Into::into),
         })
         .await
@@ -874,12 +869,12 @@ async fn flush_stream_batch(
 }
 
 fn decode_structured_entry(
-    protocol: &str,
+    protocol: StructuredProtocol,
     payload: &[u8],
 ) -> Result<StreamEntry, StreamCloseReason> {
     let output = match protocol {
-        crate::claude::PROTOCOL => claude_io::decode_pty_transcript_v1_output(payload),
-        crate::codex::PROTOCOL => {
+        StructuredProtocol::Claude => claude_io::decode_pty_transcript_v1_output(payload),
+        StructuredProtocol::Codex => {
             let output = codex_io::decode_codex_sdk_v1_output(payload).map_err(|error| {
                 StreamCloseReason::InternalError {
                     detail: error.to_string(),
@@ -893,11 +888,6 @@ fn decode_structured_entry(
             return Ok(StreamEntry {
                 seq: output.seq,
                 payload,
-            });
-        }
-        protocol => {
-            return Err(StreamCloseReason::InternalError {
-                detail: format!("unsupported structured protocol `{protocol}`"),
             });
         }
     }

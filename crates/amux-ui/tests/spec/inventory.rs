@@ -4,7 +4,7 @@
 //! Subscriptions are the sole writer of entity state. Deltas are upserts —
 //! "the state IS this" — so applying one twice is applying it once.
 
-use amux_ui::{Attention, Msg, OpOutcome, display_name_fallback};
+use amux_ui::{Attention, Effect, Msg, OpOutcome, StructuredProtocol, display_name_fallback};
 
 use crate::harness::*;
 
@@ -22,7 +22,7 @@ fn base() -> Vec<Msg> {
 fn unknown_type_sequence() -> Vec<Msg> {
     let mut exotic = an_agent("mystery", "nova");
     exotic.agent_type = "frobnicator-2000".to_string();
-    exotic.io_protocols = Vec::new();
+    exotic.io_protocols = vec!["fabricated_structured_v1".to_string()];
     seq([base(), vec![agent_up(&exotic)]])
 }
 
@@ -68,12 +68,36 @@ fn agent_upserts_are_idempotent() {
 /// renders, attention honestly reports Unknown, nothing panics.
 #[test]
 fn unknown_agent_type_still_renders_a_card() {
-    let model = fold(unknown_type_sequence());
+    let (model, effects) = fold_with_effects(unknown_type_sequence());
     let card = model.agent(agent_id("mystery")).expect("card exists");
     assert_eq!(card.agent.agent_type, "frobnicator-2000");
+    assert_eq!(card.structured_protocol(), None);
     assert_eq!(card.attention, Attention::Unknown);
     assert_eq!(card.display_name(), "mystery");
     assert_eq!(model.status_label_for(card), "–");
+    assert!(
+        !effects
+            .iter()
+            .any(|effect| matches!(effect, Effect::OpenStream { .. })),
+        "an unknown structured protocol must not open a native stream"
+    );
+}
+
+#[test]
+fn known_agents_open_streams_with_typed_protocols() {
+    for (agent, expected) in [
+        (an_agent("claude-agent", "nova"), StructuredProtocol::Claude),
+        (
+            a_codex_agent("codex-agent", "nova"),
+            StructuredProtocol::Codex,
+        ),
+    ] {
+        let (_, effects) = fold_with_effects(seq([base(), vec![agent_up(&agent)]]));
+        assert!(effects.iter().any(|effect| matches!(
+            effect,
+            Effect::OpenStream { protocol, .. } if *protocol == expected
+        )));
+    }
 }
 
 /// Display naming is a Model derivation, computed once for every renderer:

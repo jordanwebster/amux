@@ -8,6 +8,7 @@ use serde::{Deserialize, Serialize};
 
 use crate::claude::encoding::KeyStep;
 use crate::codex::CodexInput;
+use crate::model::StructuredProtocol;
 use crate::msg::{Command, OpId};
 
 /// Native input for one typed agent layer. Adding a layer adds an enum arm;
@@ -42,7 +43,7 @@ pub enum Effect {
     OpenStream {
         agent: AgentId,
         /// The native protocol advertised by the selected agent layer.
-        protocol: String,
+        protocol: StructuredProtocol,
         tail: u64,
     },
     /// Close a previously opened stream.

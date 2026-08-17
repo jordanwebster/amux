@@ -70,7 +70,7 @@ fn ensure_stream(
         return None;
     }
     let layer = AgentLayer::from_protocols(&card.agent.io_protocols)?;
-    let protocol = layer.protocol().to_string();
+    let protocol = layer.protocol();
     let reopen = match model.streams.get(&agent_id) {
         None => true,
         Some(state) => match &state.phase {

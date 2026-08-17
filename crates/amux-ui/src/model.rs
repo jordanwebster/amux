@@ -69,6 +69,41 @@ pub enum Connection {
     },
 }
 
+/// The structured protocols with native UI support. This enum is carried
+/// through stream dispatch so every known protocol boundary is exhaustive.
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
+pub enum StructuredProtocol {
+    #[serde(rename = "claude_pty_transcript_v1")]
+    Claude,
+    #[serde(rename = "codex_sdk_v1")]
+    Codex,
+}
+
+impl StructuredProtocol {
+    pub(crate) const fn as_str(self) -> &'static str {
+        match self {
+            Self::Claude => crate::claude::PROTOCOL,
+            Self::Codex => crate::codex::PROTOCOL,
+        }
+    }
+}
+
+fn select_structured_protocol(protocols: &[String]) -> Option<StructuredProtocol> {
+    if protocols
+        .iter()
+        .any(|protocol| protocol == crate::claude::PROTOCOL)
+    {
+        Some(StructuredProtocol::Claude)
+    } else if protocols
+        .iter()
+        .any(|protocol| protocol == crate::codex::PROTOCOL)
+    {
+        Some(StructuredProtocol::Codex)
+    } else {
+        None
+    }
+}
+
 /// Typed per-agent state. Exhaustive dispatch is deliberate: a new agent
 /// adds an enum arm and keeps its native vocabulary intact.
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
@@ -81,25 +116,16 @@ pub enum AgentLayer {
 impl AgentLayer {
     /// Select a layer only from protocols the agent advertised.
     pub(crate) fn from_protocols(protocols: &[String]) -> Option<Self> {
-        if protocols
-            .iter()
-            .any(|protocol| protocol == crate::claude::PROTOCOL)
-        {
-            Some(Self::Claude(ClaudeLayer::default()))
-        } else if protocols
-            .iter()
-            .any(|protocol| protocol == crate::codex::PROTOCOL)
-        {
-            Some(Self::Codex(CodexLayer::default()))
-        } else {
-            None
+        match select_structured_protocol(protocols)? {
+            StructuredProtocol::Claude => Some(Self::Claude(ClaudeLayer::default())),
+            StructuredProtocol::Codex => Some(Self::Codex(CodexLayer::default())),
         }
     }
 
-    pub(crate) fn protocol(&self) -> &'static str {
+    pub(crate) fn protocol(&self) -> StructuredProtocol {
         match self {
-            Self::Claude(_) => crate::claude::PROTOCOL,
-            Self::Codex(_) => crate::codex::PROTOCOL,
+            Self::Claude(_) => StructuredProtocol::Claude,
+            Self::Codex(_) => StructuredProtocol::Codex,
         }
     }
 
@@ -215,6 +241,12 @@ pub struct AgentCard {
 }
 
 impl AgentCard {
+    /// The native structured protocol selected from this agent's advertised
+    /// protocols, when it is one this UI knows how to render.
+    pub fn structured_protocol(&self) -> Option<StructuredProtocol> {
+        select_structured_protocol(&self.agent.io_protocols)
+    }
+
     /// The Claude chat layer's feed facts, when the agent's structured
     /// stream has produced any.
     pub fn claude(&self) -> Option<&ClaudeLayer> {

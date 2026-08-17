@@ -114,7 +114,8 @@ fn model_with_extra(rows: Vec<Value>, extra: Vec<Msg>) -> Model {
 }
 
 fn view(model: &Model) -> ViewState {
-    let mut chat = ChatView::open(model, agent_id(), 'a', false);
+    let mut chat =
+        ChatView::open(model, agent_id(), 'a', false).expect("known Codex protocol opens");
     chat.set_codex_configuration_label(Some(
         "model=gpt-5.4 · approval=on-request · sandbox=workspace-write".to_string(),
     ));
@@ -335,7 +336,8 @@ fn press(
 #[test]
 fn codex_send_steer_interrupt_and_approval_keys_dispatch_native_commands() {
     let idle = model(vec![ready()]);
-    let mut idle_chat = ChatView::open(&idle, agent_id(), 'a', false);
+    let mut idle_chat =
+        ChatView::open(&idle, agent_id(), 'a', false).expect("known Codex protocol opens");
     idle_chat.composer_mut().insert_str("hello");
     assert!(matches!(
         press(&idle, &mut idle_chat, KeyCode::Enter, KeyModifiers::NONE),
@@ -343,7 +345,8 @@ fn codex_send_steer_interrupt_and_approval_keys_dispatch_native_commands() {
     ));
 
     let live = model(live_rows());
-    let mut live_chat = ChatView::open(&live, agent_id(), 'a', false);
+    let mut live_chat =
+        ChatView::open(&live, agent_id(), 'a', false).expect("known Codex protocol opens");
     live_chat.composer_mut().insert_str("check tests");
     assert!(matches!(
         press(&live, &mut live_chat, KeyCode::Enter, KeyModifiers::NONE),
@@ -355,7 +358,8 @@ fn codex_send_steer_interrupt_and_approval_keys_dispatch_native_commands() {
     ));
 
     let approval = model(approval_rows());
-    let mut approval_chat = ChatView::open(&approval, agent_id(), 'a', false);
+    let mut approval_chat =
+        ChatView::open(&approval, agent_id(), 'a', false).expect("known Codex protocol opens");
     approval_chat.reconcile(&approval);
     assert!(matches!(
         press(
@@ -388,7 +392,8 @@ fn ctrl_x_dispatches_while_a_steer_is_in_flight_on_an_active_turn() {
         amux_ui::codex::SendGate::InputInFlight
     );
 
-    let mut chat = ChatView::open(&in_flight, agent_id(), 'a', false);
+    let mut chat =
+        ChatView::open(&in_flight, agent_id(), 'a', false).expect("known Codex protocol opens");
     assert!(matches!(
         press(
             &in_flight,
@@ -412,7 +417,8 @@ fn codex_keys_follow_the_write_gate_and_preserve_a_refused_steer_draft() {
         amux_ui::codex::SendGate::Unknown
     );
 
-    let mut chat = ChatView::open(&stale, agent_id(), 'a', false);
+    let mut chat =
+        ChatView::open(&stale, agent_id(), 'a', false).expect("known Codex protocol opens");
     chat.composer_mut().insert_str("keep this steer");
     assert_eq!(
         press(&stale, &mut chat, KeyCode::Enter, KeyModifiers::NONE),
@@ -447,7 +453,8 @@ fn codex_keys_follow_the_write_gate_and_preserve_a_refused_steer_draft() {
         amux_ui::codex::send_gate(&replaying_approval, agent_id()),
         amux_ui::codex::SendGate::Replaying
     );
-    let mut approval_chat = ChatView::open(&replaying_approval, agent_id(), 'a', false);
+    let mut approval_chat = ChatView::open(&replaying_approval, agent_id(), 'a', false)
+        .expect("known Codex protocol opens");
     approval_chat.reconcile(&replaying_approval);
     assert_eq!(
         press(

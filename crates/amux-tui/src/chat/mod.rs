@@ -8,7 +8,7 @@ mod layout;
 
 pub use claude::diff;
 
-use amux_ui::{AgentId, Command, Model, OpId};
+use amux_ui::{AgentId, Command, Model, OpId, StructuredProtocol};
 use chrono::{DateTime, Utc};
 use crossterm::event::KeyEvent;
 use ratatui::text::Line;
@@ -44,19 +44,17 @@ pub struct ChatView {
 }
 
 impl ChatView {
-    pub fn open(model: &Model, agent: AgentId, leader: char, kitty: bool) -> Self {
-        let is_codex = model.agent(agent).is_some_and(|card| {
-            card.agent
-                .io_protocols
-                .iter()
-                .any(|protocol| protocol == amux_ui::codex::PROTOCOL)
-        });
-        let inner = if is_codex {
-            AgentChatView::Codex(codex::View::open(agent, leader, kitty))
-        } else {
-            AgentChatView::Claude(claude::View::open(agent, leader, kitty))
+    pub fn open(model: &Model, agent: AgentId, leader: char, kitty: bool) -> Option<Self> {
+        let protocol = model.agent(agent)?.structured_protocol()?;
+        let inner = match protocol {
+            StructuredProtocol::Claude => {
+                AgentChatView::Claude(claude::View::open(agent, leader, kitty))
+            }
+            StructuredProtocol::Codex => {
+                AgentChatView::Codex(codex::View::open(agent, leader, kitty))
+            }
         };
-        Self { agent, inner }
+        Some(Self { agent, inner })
     }
 
     /// Deterministic constructors used by pure golden fixtures.
@@ -173,9 +171,82 @@ pub(crate) fn build_chat_lines(
 }
 
 pub fn entry_watermark(model: &Model, agent: AgentId) -> u64 {
-    if let Some(layer) = model.codex(agent) {
-        layer.evicted_entries() + layer.entry_count() as u64
-    } else {
-        claude::entry_watermark(model, agent)
+    match model
+        .agent(agent)
+        .and_then(amux_ui::AgentCard::structured_protocol)
+    {
+        Some(StructuredProtocol::Claude) => claude::entry_watermark(model, agent),
+        Some(StructuredProtocol::Codex) => model.codex(agent).map_or(0, |layer| {
+            layer.evicted_entries() + layer.entry_count() as u64
+        }),
+        None => 0,
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use amux_ui::{Agent, AgentId, Model, Msg, ServerMsg, update};
+    use chrono::DateTime;
+    use uuid::Uuid;
+
+    use super::{AgentChatView, ChatView, entry_watermark};
+    use crate::view::{ViewState, visible_rows};
+
+    fn model_with_protocol(protocol: &str) -> (Model, AgentId) {
+        let agent = Uuid::from_u128(41);
+        let host = Uuid::from_u128(42);
+        let mut model = Model::default();
+        for msg in [
+            Msg::Server(ServerMsg::Connected {
+                local_host_id: Some(host),
+            }),
+            Msg::Server(ServerMsg::AgentUpserted {
+                agent: Agent {
+                    id: agent,
+                    host_id: host,
+                    name: Some("protocol-test".to_string()),
+                    command: "test-agent".to_string(),
+                    working_dir: "/work".into(),
+                    agent_type: "test-agent".to_string(),
+                    io_protocols: vec![protocol.to_string()],
+                    readonly: false,
+                    args: Vec::new(),
+                    created_at: DateTime::from_timestamp(1_754_697_600, 0)
+                        .expect("fixture timestamp"),
+                },
+            }),
+        ] {
+            update(&mut model, msg);
+        }
+        (model, agent)
+    }
+
+    #[test]
+    fn known_protocols_dispatch_their_native_views() {
+        let (claude, claude_agent) = model_with_protocol(amux_ui::claude::PROTOCOL);
+        let claude =
+            ChatView::open(&claude, claude_agent, 'a', false).expect("known Claude protocol opens");
+        assert!(matches!(claude.inner, AgentChatView::Claude(_)));
+
+        let (codex, codex_agent) = model_with_protocol(amux_ui::codex::PROTOCOL);
+        let codex =
+            ChatView::open(&codex, codex_agent, 'a', false).expect("known Codex protocol opens");
+        assert!(matches!(codex.inner, AgentChatView::Codex(_)));
+    }
+
+    #[test]
+    fn fabricated_protocol_keeps_the_fleet_card_and_neutral_watermark() {
+        let (model, agent) = model_with_protocol("fabricated_structured_v1");
+        assert!(
+            model.agent(agent).is_some(),
+            "inventory card remains present"
+        );
+
+        let mut view = ViewState::default();
+        view.open_chat(&model, agent);
+
+        assert!(view.chat.is_none(), "the fleet remains the active view");
+        assert_eq!(visible_rows(&model, &view).len(), 1, "card stays visible");
+        assert_eq!(entry_watermark(&model, agent), 0);
     }
 }
