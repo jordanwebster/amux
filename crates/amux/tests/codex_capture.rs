@@ -37,7 +37,8 @@ fn main() {
 fn main() -> anyhow::Result<()> {
     use codex_capture::{harness, redact, structure};
     use std::path::{Path, PathBuf};
-    use std::time::Duration;
+    use std::process::Command;
+    use std::time::{Duration, Instant};
 
     use amux::codex_io::CodexSdkV1Input;
     use anyhow::{Context, Result, anyhow, bail};
@@ -499,20 +500,109 @@ fn main() -> anyhow::Result<()> {
         }))
     }
 
+    fn raw_pty_process_group(scratch: &Path) -> Result<i32> {
+        let scratch = scratch
+            .canonicalize()
+            .with_context(|| format!("canonicalize capture scratch root {}", scratch.display()))?;
+        let scratch = scratch.display().to_string();
+        let output = Command::new("ps")
+            .args(["-axo", "pid=,pgid=,command="])
+            .output()
+            .context("list processes for Codex raw PTY")?;
+        if !output.status.success() {
+            bail!("ps failed while locating the Codex raw PTY process group");
+        }
+        let mut groups = Vec::new();
+        for line in String::from_utf8_lossy(&output.stdout)
+            .lines()
+            .filter(|line| {
+                line.contains("codex resume")
+                    && line.contains("--remote")
+                    && line.contains("unix://")
+                    && line.contains(&scratch)
+                    && !line.contains("ps -axo")
+            })
+        {
+            let mut fields = line.split_whitespace();
+            let _pid: i32 = fields
+                .next()
+                .context("raw PTY ps row missing pid")?
+                .parse()?;
+            let pgid: i32 = fields
+                .next()
+                .context("raw PTY ps row missing pgid")?
+                .parse()?;
+            if !groups.contains(&pgid) {
+                groups.push(pgid);
+            }
+        }
+        match groups.as_slice() {
+            [pgid] if *pgid > 1 => Ok(*pgid),
+            [] => bail!("no raw Codex PTY process group found for isolated capture"),
+            _ => bail!("multiple raw Codex PTY process groups found: {groups:?}"),
+        }
+    }
+
+    async fn wait_for_process_group_exit(pgid: i32, timeout: Duration) -> Result<()> {
+        let deadline = Instant::now() + timeout;
+        loop {
+            let output = Command::new("ps")
+                .args(["-axo", "pgid="])
+                .output()
+                .context("list process groups while waiting for raw PTY teardown")?;
+            if !output.status.success() {
+                bail!("ps failed while waiting for raw PTY teardown");
+            }
+            let alive = String::from_utf8_lossy(&output.stdout)
+                .lines()
+                .filter_map(|line| line.trim().parse::<i32>().ok())
+                .any(|candidate| candidate == pgid);
+            if !alive {
+                return Ok(());
+            }
+            if Instant::now() >= deadline {
+                bail!("raw Codex PTY process group {pgid} survived final detach");
+            }
+            tokio::time::sleep(Duration::from_millis(50)).await;
+        }
+    }
+
     /// The product default: `amux new codex` with no `--name`. Raw attach goes
     /// through `codex resume`, which refuses a thread that was never
     /// persisted, and naming is what persists one — so an unnamed agent must
     /// still reach a live raw screen. No turn is taken; this costs no quota.
     async fn raw_unnamed(harness: &mut Harness, model: &str) -> Result<Value> {
-        let (agent, _capture, _) = open_named(harness, None, model).await?;
-        let mut raw = subscribe_raw(harness, agent).await?;
-        let raw_bytes = raw_until(&mut raw, RAW_TIMEOUT, b"\x1b").await?;
-        std::fs::write(harness.scratch.out.join("raw.log"), &raw_bytes)?;
+        let (agent, capture, _) = open_named(harness, None, model).await?;
+        let mut first_raw = subscribe_raw(harness, agent).await?;
+        let first_raw_bytes = raw_until(&mut first_raw, RAW_TIMEOUT, b"\x1b").await?;
+        let first_pgid = raw_pty_process_group(&harness.scratch.root)?;
+        drop(first_raw);
+        wait_for_process_group_exit(first_pgid, Duration::from_secs(10)).await?;
+
+        let mut second_raw = subscribe_raw(harness, agent).await?;
+        let second_raw_bytes = raw_until(&mut second_raw, RAW_TIMEOUT, b"\x1b").await?;
+        std::fs::write(
+            harness.scratch.out.join("raw.log"),
+            [first_raw_bytes.as_slice(), second_raw_bytes.as_slice()].concat(),
+        )?;
+        let structured_rows_after_reattach = capture.rows().len();
         harness.client().delete_agent(agent).await?;
         Ok(json!({
-            "raw_bytes": raw_bytes.len(),
+            "raw_bytes": first_raw_bytes.len() + second_raw_bytes.len(),
             "agent_named": false,
-            "assertions": {"raw_ansi_screen_without_agent_name": true}
+            "turns_sent": 0,
+            "zero_model_turns": true,
+            "assertions": {
+                "raw_ansi_screen_without_agent_name": true,
+                "final_detach_tore_down_process_group": true,
+                "reattach_reached_second_raw_ansi_screen": true,
+                "structured_subscription_held_through_reattach": true
+            },
+            "observed": {
+                "first_raw_bytes": first_raw_bytes.len(),
+                "second_raw_bytes": second_raw_bytes.len(),
+                "structured_rows_after_reattach": structured_rows_after_reattach
+            }
         }))
     }
 
@@ -651,7 +741,7 @@ fn main() -> anyhow::Result<()> {
             "model": model,
             "timeout_seconds": spec.timeout.as_secs(),
             "harness": format!("timeout 600 cargo test -p amux --test codex_capture -- {}", spec.id),
-            "synthetic_prompts": true,
+            "synthetic_prompts": !matches!(spec.runner, Scenario::RawUnnamed | Scenario::UnnamedReconnect),
             "isolated_codex_home": true,
             "notes": notes,
             "failure": failure,

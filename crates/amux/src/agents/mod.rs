@@ -24,6 +24,8 @@ pub(crate) use buffer::{
     BroadcastRead, ByteReplayQuery, MultiplexByteBuffer, MultiplexByteReader,
     MultiplexStructuredBuffer, MultiplexStructuredReader, SequencedReplayQuery, StructuredOutput,
 };
+#[cfg(all(feature = "local-agents", unix))]
+pub(crate) use codex::CodexRawPtyLease;
 pub use events::AgentEvent;
 pub(crate) use events::{agent_event_from_wire, agent_event_to_wire};
 #[cfg(feature = "local-agents")]

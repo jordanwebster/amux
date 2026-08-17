@@ -87,10 +87,14 @@ fallback or a degraded mode: it is the real codex TUI, and it answers
 things the structured plane deliberately cannot (see *Unanswerable
 obligations*).
 
-The raw PTY is spawned lazily on first `terminal_v1` subscription and
-**retained after the last detach**, so reattach is instant. That is a
-deliberate, recorded trade: a codex process pair stays parked per
-ever-attached agent. See *Known gaps*.
+The raw PTY is spawned lazily on the first `terminal_v1` subscription.
+Concurrent raw subscribers share that PTY and receive the same live bytes.
+Dropping the final raw subscription terminates its process group and retires
+the cached PTY; a later subscription starts a fresh `codex resume` for the
+same durable thread. Codex's own upstream replay restores the TUI history —
+amux does not retain detached PTY bytes or processes. The structured
+`codex_sdk_v1` attachment is independent and stays live across raw
+detach/reattach.
 
 ## Connecting: four modes, one fallback
 
@@ -260,8 +264,9 @@ Three tiers, in increasing cost:
    suspend/resume across a server restart, real process-group daemon
    recovery, raw+structured coexistence, two-subscriber byte fanout, and
    raw attach on an *unnamed* agent — the product default, and the one
-   parameter a hardcoded fixture hid for the whole of P9 — plus unnamed
-   zero-turn suspend/resume.
+   parameter a hardcoded fixture hid for the whole of P9 — including
+   final-detach teardown and fresh raw reattach, plus unnamed zero-turn
+   suspend/resume.
 
 The C suite is inert in `cargo test --workspace` — with no scenario named
 it prints a skip note and exits 0 before creating a scratch directory,
@@ -295,6 +300,23 @@ Two standing rules, both bought with pain elsewhere in this repo:
 Every capture records codex version, model, date and scenario id.
 Upstream drift is recorded and diffed, never guessed at.
 
+## Decisions
+
+### Raw PTY idle lifecycle
+
+The raw Codex PTY tears down on last detach. This is a measured policy, not a
+guess: on macOS, `ps` RSS for the detached zero-turn `codex resume` process
+pair was sampled five times, one second apart, after a five-second settle.
+The samples totalled 151,232, 151,184, 151,248, 151,248, and 151,248 KiB.
+Their median was **151,248 KiB (147.703125 MiB)**, above the signed
+**25,600 KiB** threshold. The measurement covered the raw PTY group leader
+and its direct child after the sole `terminal_v1` subscriber had detached;
+no model turn was sent.
+
+Therefore the last raw detach retires and terminates that PTY epoch. Reattach
+lazily runs a new `codex resume`, relying on the durable Codex thread and its
+upstream replay. Structured attachment retention is unaffected.
+
 ## Known gaps
 
 - **Post-resume feed.** After suspend→resume the structured feed is
@@ -309,7 +331,6 @@ Upstream drift is recorded and diffed, never guessed at.
   its label.
 - **Non-TTY create.** `amux new codex` without a TTY creates the agent,
   then exits with a raw errno.
-- **Retained raw PTYs.** Kept forever after last detach, unmeasured.
 - **`readonly` is enforced by views, not by the gates.** The write
   permissions do not consult it, so the gate is not yet the source of
   truth it claims to be. No user-visible effect today, because the views

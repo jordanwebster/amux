@@ -27,7 +27,7 @@ use uuid::Uuid;
 use super::TestAgentSession;
 use super::claude::ClaudeSession;
 #[cfg(unix)]
-use super::codex::{CodexClient, CodexSession};
+use super::codex::{CodexClient, CodexRawPtyLease, CodexSession};
 use super::{
     AgentRecord, ExternalHookBootstrap, HookError, HookOutcome, LocalAgentNameSource, PtyHandle,
     SessionEvent, StopPolicy, StructuredLogSource,
@@ -91,6 +91,13 @@ pub(crate) trait AgentBackend: Send + Sync {
 
     fn log_source(&self) -> Option<StructuredLogSource>;
     fn pty_handle(&self) -> Result<Option<PtyHandle>>;
+
+    /// Acquire the Codex-only raw PTY subscription lease. Other backends keep
+    /// their existing PTY lifetime and return `None`.
+    #[cfg(unix)]
+    fn codex_raw_pty_lease(&self) -> Result<Option<CodexRawPtyLease>> {
+        Ok(None)
+    }
 
     fn structured_input(&self) -> Option<Box<dyn StructuredInput>> {
         None

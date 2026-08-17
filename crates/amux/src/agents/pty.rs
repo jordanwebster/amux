@@ -89,7 +89,7 @@ impl PtyHandle {
 
     /// Terminate the PTY child process group, then close its I/O.
     #[cfg(unix)]
-    pub(crate) async fn terminate(&self) -> Result<()> {
+    pub(crate) fn terminate_process_group(&self) -> Result<()> {
         if let Some(process_id) = self.child_process_id {
             let process_id = i32::try_from(process_id).context("PTY process id exceeds i32")?;
             // `forkpty` makes the child the process-group leader. A negative
@@ -103,6 +103,13 @@ impl PtyHandle {
                 }
             }
         }
+        Ok(())
+    }
+
+    /// Terminate the PTY child process group, then close its I/O.
+    #[cfg(unix)]
+    pub(crate) async fn terminate(&self) -> Result<()> {
+        self.terminate_process_group()?;
         self.close().await;
         Ok(())
     }

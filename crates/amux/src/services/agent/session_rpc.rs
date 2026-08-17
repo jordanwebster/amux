@@ -5,8 +5,6 @@ use tokio::sync::mpsc;
 use uuid::Uuid;
 
 use super::PtyAgentHost;
-#[cfg(unix)]
-use crate::agents::CodexInput;
 #[cfg(any(test, feature = "testnet"))]
 use crate::agents::TEST_ECHO_V1;
 use crate::agents::claude::io::{
@@ -20,6 +18,8 @@ use crate::agents::{
     SessionInputEvent, StructuredInput, StructuredOutput, SubscribeSessionEvent,
     SubscribeSessionRequest,
 };
+#[cfg(unix)]
+use crate::agents::{CodexInput, CodexRawPtyLease};
 use crate::protocol::{ProtocolError, protocol_status};
 use crate::server::{SHUTDOWN_REASON_METADATA_KEY, ShutdownReason};
 
@@ -49,11 +49,23 @@ pub(super) async fn subscribe_session_stream(
 }
 
 enum SessionOutputReader {
-    Raw(crate::agents::MultiplexByteReader),
+    Raw(RawSessionOutputReader),
     Structured {
         reader: crate::agents::MultiplexStructuredReader,
         codec: StructuredCodec,
     },
+}
+
+struct RawSessionOutputReader {
+    reader: crate::agents::MultiplexByteReader,
+    #[cfg(unix)]
+    _codex_lease: Option<CodexRawPtyLease>,
+}
+
+struct RawPtySubscription {
+    pty: PtyHandle,
+    #[cfg(unix)]
+    codex_lease: Option<CodexRawPtyLease>,
 }
 
 /// Per-protocol structured output encoding, plus whatever the protocol reports
@@ -119,41 +131,99 @@ async fn prepare_direct_session_subscription(
 async fn prepare_direct_raw_session_subscription(
     request: &SubscribeSessionRequest,
     host: &PtyAgentHost,
-) -> Result<crate::agents::MultiplexByteReader, ProtocolError> {
+) -> Result<RawSessionOutputReader, ProtocolError> {
     let args = terminal_io::decode_terminal_v1_args(request.args.as_deref())?;
     let replay_query = args
         .replay_query
         .as_ref()
         .map(|TerminalV1ReplayQuery::TailBytes { count }| ByteReplayQuery::Tail { count: *count });
 
-    let pty = agent_pty(host, request.agent_id, terminal_io::TERMINAL_V1).await?;
+    let subscription =
+        raw_pty_subscription(host, request.agent_id, terminal_io::TERMINAL_V1).await?;
     if let Some(size) = args.terminal_size {
-        pty.resize(size)
+        subscription
+            .pty
+            .resize(size)
             .await
             .map_err(|error| ProtocolError::ServerError {
                 message: error.to_string(),
             })?;
     }
 
-    pty.subscribe_with_query(replay_query)
+    let reader = subscription
+        .pty
+        .subscribe_with_query(replay_query)
         .await
-        .ok_or(ProtocolError::NoAgentFound)
+        .ok_or(ProtocolError::NoAgentFound)?;
+    Ok(RawSessionOutputReader {
+        reader,
+        #[cfg(unix)]
+        _codex_lease: subscription.codex_lease,
+    })
 }
 
 #[cfg(any(test, feature = "testnet"))]
 async fn prepare_direct_test_echo_session_subscription(
     request: &SubscribeSessionRequest,
     host: &PtyAgentHost,
-) -> Result<crate::agents::MultiplexByteReader, ProtocolError> {
+) -> Result<RawSessionOutputReader, ProtocolError> {
     if request.args.is_some() {
         return Err(ProtocolError::InvalidArgument {
             message: format!("`{TEST_ECHO_V1}` does not accept args"),
         });
     }
     let pty = agent_pty(host, request.agent_id, TEST_ECHO_V1).await?;
-    pty.subscribe_with_query(None)
+    let reader = pty
+        .subscribe_with_query(None)
         .await
-        .ok_or(ProtocolError::NoAgentFound)
+        .ok_or(ProtocolError::NoAgentFound)?;
+    Ok(RawSessionOutputReader {
+        reader,
+        #[cfg(unix)]
+        _codex_lease: None,
+    })
+}
+
+async fn raw_pty_subscription(
+    host: &PtyAgentHost,
+    agent_id: Uuid,
+    io_protocol: &str,
+) -> Result<RawPtySubscription, ProtocolError> {
+    let state = host.state().read().await;
+    let session = state
+        .local_agents
+        .get(&agent_id)
+        .map(|context| &context.session)
+        .ok_or(ProtocolError::NoAgentFound)?;
+    ensure_agent_supports_protocol(session, agent_id, io_protocol)?;
+
+    #[cfg(unix)]
+    if let Some(lease) =
+        session
+            .codex_raw_pty_lease()
+            .map_err(|error| ProtocolError::ServerError {
+                message: error.to_string(),
+            })?
+    {
+        return Ok(RawPtySubscription {
+            pty: lease.handle().clone(),
+            codex_lease: Some(lease),
+        });
+    }
+
+    let pty = session
+        .pty_handle()
+        .map_err(|error| ProtocolError::ServerError {
+            message: error.to_string(),
+        })?
+        .ok_or_else(|| ProtocolError::InvalidArgument {
+            message: format!("agent {agent_id} does not support raw PTY sessions"),
+        })?;
+    Ok(RawPtySubscription {
+        pty,
+        #[cfg(unix)]
+        codex_lease: None,
+    })
 }
 
 async fn prepare_direct_structured_session_subscription(
@@ -612,7 +682,7 @@ async fn read_session_output_event(
     reader: &mut SessionOutputReader,
 ) -> Option<Result<SubscribeSessionEvent, ProtocolError>> {
     match reader {
-        SessionOutputReader::Raw(reader) => reader.read_event().await.map(|event| match event {
+        SessionOutputReader::Raw(raw) => raw.reader.read_event().await.map(|event| match event {
             BroadcastRead::ReplayItem(payload) | BroadcastRead::LiveItem(payload) => {
                 Ok(SubscribeSessionEvent::Output { payload })
             }
@@ -670,7 +740,9 @@ mod tests {
     use futures_util::StreamExt;
 
     use super::*;
-    use crate::agents::{AgentType, CreateAgentRequest, MultiplexByteBuffer, new_agent};
+    use crate::agents::{
+        AgentType, CreateAgentRequest, MultiplexByteBuffer, TestAgentSession, new_agent,
+    };
 
     #[tokio::test]
     async fn codex_subscription_opens_and_completes_empty_replay() {
@@ -727,6 +799,46 @@ mod tests {
     }
 
     #[tokio::test]
+    async fn dropping_non_codex_raw_subscription_keeps_pty_alive() {
+        let host = PtyAgentHost::new(Uuid::from_u128(1));
+        let agent_id = Uuid::from_u128(3);
+        {
+            let mut state = host.state().write().await;
+            state
+                .insert_registered_local_agent(
+                    host.host_id(),
+                    agent_id,
+                    Box::new(TestAgentSession::echo_for_tests(agent_id, None)),
+                )
+                .unwrap();
+        }
+
+        let stream = subscribe_session_stream(
+            &host,
+            SubscribeSessionRequest {
+                agent_id,
+                io_protocol: terminal_io::TERMINAL_V1.to_string(),
+                args: None,
+            },
+        )
+        .await
+        .unwrap();
+        drop(stream);
+
+        let pty = {
+            let state = host.state().read().await;
+            state.local_agents[&agent_id]
+                .session
+                .pty_handle()
+                .unwrap()
+                .unwrap()
+        };
+        let mut reader = pty.subscribe_with_query(None).await.unwrap();
+        pty.send_input(b"still-live".to_vec()).await.unwrap();
+        assert_eq!(reader.read().await.unwrap(), b"still-live");
+    }
+
+    #[tokio::test]
     async fn direct_session_stream_reports_resource_exhausted_when_reader_lags() {
         let agent_id = Uuid::from_u128(1);
         let buffer = MultiplexByteBuffer::new(1024);
@@ -735,7 +847,11 @@ mod tests {
         let (_shutdown_tx, shutdown_rx) = mpsc::channel(1);
         let mut stream = direct_session_response_stream(
             agent_id,
-            SessionOutputReader::Raw(reader),
+            SessionOutputReader::Raw(RawSessionOutputReader {
+                reader,
+                #[cfg(unix)]
+                _codex_lease: None,
+            }),
             close_rx,
             shutdown_rx,
         );
@@ -783,7 +899,11 @@ mod tests {
         let (shutdown_tx, shutdown_rx) = mpsc::channel(1);
         let mut stream = direct_session_response_stream(
             agent_id,
-            SessionOutputReader::Raw(reader),
+            SessionOutputReader::Raw(RawSessionOutputReader {
+                reader,
+                #[cfg(unix)]
+                _codex_lease: None,
+            }),
             close_rx,
             shutdown_rx,
         );

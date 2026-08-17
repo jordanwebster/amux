@@ -12,4 +12,4 @@ pub const CODEX_RAW_THREAD_NOT_READY: &str =
 mod session;
 
 #[cfg(all(feature = "local-agents", unix))]
-pub(crate) use session::{CodexClient, CodexSession};
+pub(crate) use session::{CodexClient, CodexRawPtyLease, CodexSession};
