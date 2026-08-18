@@ -1,9 +1,8 @@
 --- text ---
 ┌──────────────────────────────────────────────────────────────────────────────────────┐
-│ codex-retry · codex @ mbp                                           chat · needs you │
+│ codex-retry · codex @ mbp                                                chat · idle │
 │─ model=gpt-5.4 · approval=on-request · sandbox=workspace-write ──────────────────────│
-│ ⚠ $ cargo test --workspace · awaiting approval                                       │
-│   └ cwd /work/amux                                                                   │
+│ ✗ MCP servers · 1 starting · 1 ready · 1 failed · 1 cancelled                        │
 │                                                                                      │
 │                                                                                      │
 │                                                                                      │
@@ -20,25 +19,25 @@
 │                                                                                      │
 │                                                                                      │
 │                                                                                      │
-│──────────────────────────────────────────────────────────────────────────────────────│
-│ ⚠ approval — command                                                                 │
-│ $ cargo test --workspace                                                             │
-│   └ cwd /work/amux                                                                   │
-│   └ Run the repository test suite?                                                   │
 │                                                                                      │
-│ › 1. accept once                                                                     │
-│   2. accept and allow similar commands · unavailable in V1                           │
-│   3. decline                                                                         │
-│   4. cancel                                                                          │
 │                                                                                      │
-│   ↑↓/1-9 select · enter confirm · ctrl+x interrupt                                   │
+│                                                                                      │
+│                                                                                      │
+│                                                                                      │
+│                                                                                      │
+│                                                                                      │
+│                                                                                      │
+│                                                                                      │
+│                                                                                      │
+│ › Type a message▌                                                                    │
+│                                                                                      │
+│   enter send · ctrl+j newline · ? help                                               │
 └──────────────────────────────────────────────────────────────────────────────────────┘
 --- styles ---
-aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa
-d............aaaaaaaaaaaaaa...........................................aaaaaaayyyyyyyyy.d
-daaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaad
-d.y.BBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBB.......................................d
-d...a.aaaaaaaaaaaaaa...................................................................d
+dddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddd
+d............dddddddddddddd................................................ddddddddddd.d
+dddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddd
+d.r....................................................................................d
 d......................................................................................d
 d......................................................................................d
 d......................................................................................d
@@ -55,16 +54,17 @@ d...............................................................................
 d......................................................................................d
 d......................................................................................d
 d......................................................................................d
-daaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaad
-d.y....................................................................................d
-d.a.BBBBBBBBBBBBBBBBBBBBBB.............................................................d
-d...a.aaaaaaaaaaaaaa...................................................................d
-d...a.aaaaaaaaaaaaaaaaaaaaaaaaaaaaaa...................................................d
-d......................................................................................d
-d......................................................................................d
-d...aa.aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa...........................d
 d......................................................................................d
 d......................................................................................d
 d......................................................................................d
-d...aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa...................................d
+d......................................................................................d
+d......................................................................................d
+d......................................................................................d
+d......................................................................................d
+d......................................................................................d
+d......................................................................................d
+d......................................................................................d
+d...dddddddddddddd.....................................................................d
+d......................................................................................d
+d...dddddddddddddddddddddddddddddddddddd...............................................d
 dddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddd

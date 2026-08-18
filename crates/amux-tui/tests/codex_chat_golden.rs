@@ -242,8 +242,18 @@ fn approval_rows() -> Vec<Value> {
         ready(),
         json!({"type":"turn/started","turn":{"id":"turn-ask","status":"inProgress"}}),
         json!({"type":"item/started","item":{"id":"exec-ask","type":"commandExecution","command":"cargo test --workspace","cwd":"/work/amux","status":"inProgress"}}),
-        json!({"type":"item/commandExecution/requestApproval","itemId":"exec-ask","command":"cargo test --workspace","cwd":"/work/amux","reason":"Run the repository test suite?"}),
-        json!({"type":"amux.codex_approval_required","request_id":"approval-1","availableDecisions":["accept",{"acceptWithExecpolicyAmendment":{"rule":"cargo test"}},"decline","cancel"]}),
+        json!({"type":"item/commandExecution/requestApproval","itemId":"exec-ask","command":"cargo test --workspace","cwd":"/work/amux","reason":"Run the repository test suite?","proposedExecpolicyAmendment":["cargo","test"],"proposedNetworkPolicyAmendments":[{"host":"crates.io","action":"allow"}]}),
+        json!({"type":"amux.codex_approval_required","request_id":"approval-1","availableDecisions":["accept",{"acceptWithExecpolicyAmendment":{"execpolicy_amendment":["cargo","test"]}},"decline","cancel"]}),
+    ]
+}
+
+fn mcp_startup_rows() -> Vec<Value> {
+    vec![
+        ready(),
+        json!({"type":"mcpServer/startupStatus/updated","threadId":"thread-1","name":"node_repl","status":"ready","error":null,"failureReason":null}),
+        json!({"type":"mcpServer/startupStatus/updated","threadId":"thread-1","name":"codex_apps","status":"starting","error":null,"failureReason":null}),
+        json!({"type":"mcpServer/startupStatus/updated","threadId":"thread-1","name":"issues","status":"failed","error":"launch failed","failureReason":"process exited"}),
+        json!({"type":"mcpServer/startupStatus/updated","threadId":"thread-1","name":"legacy","status":"cancelled","error":null,"failureReason":null}),
     ]
 }
 
@@ -273,6 +283,11 @@ fn codex_idle_both_themes() {
 #[test]
 fn codex_approval_pending_both_themes() {
     assert_surface("approval_pending", &model(approval_rows()));
+}
+
+#[test]
+fn codex_mcp_startup_both_themes() {
+    assert_surface("mcp_startup", &model(mcp_startup_rows()));
 }
 
 #[test]
@@ -373,6 +388,84 @@ fn codex_send_steer_interrupt_and_approval_keys_dispatch_native_commands() {
             ..
         })))
     ));
+}
+
+#[test]
+fn object_approval_choices_stay_disabled_and_unknown_labels_are_safe() {
+    let approval = model(approval_rows());
+    let ask = approval
+        .codex(agent_id())
+        .and_then(|layer| layer.ask_head())
+        .expect("approval ask");
+    assert!(
+        ask.actions[1].decision.is_none(),
+        "human labels must not make object choices actionable"
+    );
+    let mut chat =
+        ChatView::open(&approval, agent_id(), 'a', false).expect("known Codex protocol opens");
+    chat.reconcile(&approval);
+    assert_eq!(
+        press(&approval, &mut chat, KeyCode::Char('2'), KeyModifiers::NONE),
+        None
+    );
+    assert_eq!(
+        press(&approval, &mut chat, KeyCode::Enter, KeyModifiers::NONE),
+        None,
+        "confirming the selected object choice remains a no-op"
+    );
+
+    let mut network_rows = approval_rows();
+    *network_rows.last_mut().expect("synthesized approval") = json!({
+        "type":"amux.codex_approval_required",
+        "request_id":"approval-network",
+        "availableDecisions":[
+            "accept",
+            {"applyNetworkPolicyAmendment":{
+                "network_policy_amendment":{"host":"crates.io","action":"allow"}
+            }},
+            "decline"
+        ]
+    });
+    let network = model(network_rows);
+    let network_text = buffer_text(&render_buffer(&network, Theme::Dark, HEIGHT));
+    assert!(network_text.contains("apply network policy change · allow crates.io"));
+    assert!(
+        network
+            .codex(agent_id())
+            .and_then(|layer| layer.ask_head())
+            .is_some_and(|ask| ask.actions[1].decision.is_none()),
+        "a human network label must not make its object choice actionable"
+    );
+
+    let mut unknown_rows = approval_rows();
+    *unknown_rows.last_mut().expect("synthesized approval") = json!({
+        "type":"amux.codex_approval_required",
+        "request_id":"approval-unknown",
+        "availableDecisions":[
+            "accept",
+            {"futurePolicy":{"nested":{"detail":"deploy {quoted} \"value\" with a deliberately very long explanation that must be clipped safely"},"attempt":7}},
+            "decline"
+        ]
+    });
+    let unknown = model(unknown_rows);
+    let text = buffer_text(&render_buffer(&unknown, Theme::Dark, HEIGHT));
+    let row = text
+        .lines()
+        .find(|line| line.contains("futurePolicy"))
+        .expect("unknown object label stays visible");
+    assert!(
+        !row.chars()
+            .any(|character| matches!(character, '{' | '}' | '"')),
+        "no raw JSON leaks: {row}"
+    );
+    assert!(row.contains('…'), "long scalar detail is bounded: {row}");
+    assert!(
+        unknown
+            .codex(agent_id())
+            .and_then(|layer| layer.ask_head())
+            .is_some_and(|ask| ask.actions[1].decision.is_none()),
+        "the unknown object remains disabled"
+    );
 }
 
 #[test]

@@ -112,7 +112,7 @@ pub struct FeedEntry {
     pub kind: FeedEntryKind,
 }
 
-/// Eight Codex-native entry kinds.  Work subtypes express Codex's broad item
+/// Nine Codex-native entry kinds.  Work subtypes express Codex's broad item
 /// vocabulary without leaking a generic cross-agent representation.
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
 #[serde(tag = "entry", rename_all = "snake_case")]
@@ -121,10 +121,32 @@ pub enum FeedEntryKind {
     Message(MessageEntry),
     Reasoning(ReasoningEntry),
     Work(WorkEntry),
+    McpStartup(McpStartupEntry),
     Turn(TurnEntry),
     Boundary(BoundaryEntry),
     Error(ErrorEntry),
     Unrecognized(UnrecognizedEntry),
+}
+
+#[derive(Clone, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
+pub struct McpStartupEntry {
+    pub servers: BTreeMap<String, McpServerStartup>,
+}
+
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+pub struct McpServerStartup {
+    pub status: McpStartupStatus,
+    pub error: Option<String>,
+    pub failure_reason: Option<String>,
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum McpStartupStatus {
+    Starting,
+    Ready,
+    Failed,
+    Cancelled,
 }
 
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
@@ -355,6 +377,8 @@ pub enum AskContext {
         command: String,
         cwd: Option<String>,
         reason: Option<String>,
+        proposed_execpolicy_amendment: Option<Vec<String>>,
+        proposed_network_policy_amendments: Vec<NetworkPolicyAmendment>,
     },
     FileChange {
         item_id: String,
@@ -372,6 +396,19 @@ pub enum AskContext {
         namespace: Option<String>,
         arguments: Value,
     },
+}
+
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+pub struct NetworkPolicyAmendment {
+    pub host: String,
+    pub action: NetworkPolicyAction,
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub enum NetworkPolicyAction {
+    Allow,
+    Deny,
 }
 
 impl AskContext {
@@ -1292,6 +1329,8 @@ mod tests {
                     command: "true".to_string(),
                     cwd: None,
                     reason: None,
+                    proposed_execpolicy_amendment: None,
+                    proposed_network_policy_amendments: Vec::new(),
                 },
                 available_decisions: json!([]),
                 actions: Vec::new(),

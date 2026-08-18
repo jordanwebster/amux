@@ -6,8 +6,8 @@
 //! is a quiet attach marker, while later ready rows are visible re-syncs.
 
 use amux_ui::codex::{
-    BoundaryEntry, CodexPhase, FeedEntryKind, ItemFinality, MessagePhase, TurnStatus, WorkKind,
-    WorkOutcome, WorkState,
+    BoundaryEntry, CodexPhase, FeedEntryKind, ItemFinality, McpStartupStatus, MessagePhase,
+    TurnStatus, WorkKind, WorkOutcome, WorkState,
 };
 use serde_json::json;
 
@@ -219,6 +219,72 @@ fn reasoning_plans_files_tools_usage_compaction_errors_and_unknowns_are_visible(
         entries.iter().any(
             |e| matches!(&e.kind, FeedEntryKind::Unrecognized(u) if u.method == "future/method")
         )
+    );
+}
+
+#[test]
+fn mcp_startup_updates_one_typed_entry_in_place_and_keeps_drift_visible() {
+    let model = feed(vec![
+        json!({"type":"amux.codex_ready"}),
+        json!({"type":"mcpServer/startupStatus/updated","threadId":"thread-1",
+            "name":"node_repl","status":"starting","error":null,"failureReason":null}),
+        json!({"type":"mcpServer/startupStatus/updated","threadId":"thread-1",
+            "name":"codex_apps","status":"starting","error":null,"failureReason":null}),
+        json!({"type":"mcpServer/startupStatus/updated","threadId":"thread-1",
+            "name":"node_repl","status":"cancelled","error":null,"failureReason":null}),
+        json!({"type":"mcpServer/startupStatus/updated","threadId":"thread-1",
+            "name":"node_repl","status":"ready","error":null,"failureReason":null}),
+        json!({"type":"mcpServer/startupStatus/updated","threadId":"thread-1",
+            "name":"codex_apps","status":"failed","error":"launch failed",
+            "failureReason":"process exited"}),
+        json!({"type":"mcpServer/startupStatus/updated","threadId":"thread-1",
+            "name":"future","status":"warming","error":null,"failureReason":null}),
+        json!({"type":"mcpServer/startupStatus/updated","threadId":"thread-1",
+            "status":"ready","error":null,"failureReason":null}),
+        json!({"type":"mcpServer/startupStatus/updated","threadId":"thread-1",
+            "name":"malformed","status":"ready","error":{"message":"wrong shape"},
+            "failureReason":null}),
+    ]);
+    let entries: Vec<_> = codex_layer(&model, AGENT).entries().collect();
+    let startup_entries: Vec<_> = entries
+        .iter()
+        .filter_map(|entry| match &entry.kind {
+            FeedEntryKind::McpStartup(startup) => Some((*entry, startup)),
+            _ => None,
+        })
+        .collect();
+    assert_eq!(startup_entries.len(), 1, "all servers share one feed row");
+    let (entry, startup) = startup_entries[0];
+    assert_eq!(entry.id, 0, "the first visible row keeps its identity");
+    assert_eq!(
+        entry.seq, 12,
+        "later updates preserve the creating sequence"
+    );
+    assert_eq!(startup.servers.len(), 2);
+    assert_eq!(
+        startup.servers["node_repl"].status,
+        McpStartupStatus::Ready,
+        "the captured cancelled-to-ready transition settles to ready"
+    );
+    assert_eq!(
+        startup.servers["codex_apps"].status,
+        McpStartupStatus::Failed
+    );
+    assert_eq!(
+        startup.servers["codex_apps"].error.as_deref(),
+        Some("launch failed")
+    );
+    assert_eq!(
+        startup.servers["codex_apps"].failure_reason.as_deref(),
+        Some("process exited")
+    );
+    assert_eq!(
+        entries
+            .iter()
+            .filter(|entry| matches!(entry.kind, FeedEntryKind::Unrecognized(_)))
+            .count(),
+        3,
+        "unknown statuses and malformed rows remain visible drift"
     );
 }
 

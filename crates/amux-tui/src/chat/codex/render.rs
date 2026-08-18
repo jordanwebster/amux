@@ -4,7 +4,8 @@
 
 use amux_ui::codex::{
     ApprovalResolution, Ask, AskContext, BoundaryEntry, CodexPhase, ErrorSeverity, FeedEntry,
-    FeedEntryKind, ItemFinality, MessagePhase, PromptPart, PromptSource, TokenUsage, TurnStatus,
+    FeedEntryKind, ItemFinality, McpStartupEntry, McpStartupStatus, MessagePhase,
+    NetworkPolicyAction, NetworkPolicyAmendment, PromptPart, PromptSource, TokenUsage, TurnStatus,
     WorkEntry, WorkKind, WorkOutcome, WorkState,
 };
 use amux_ui::{AgentId, Model};
@@ -17,8 +18,8 @@ use crate::chat::layout::{ChatLayout, bottom_max_rows};
 use crate::chat::{FeedScroll, entry_watermark};
 use crate::markdown;
 use crate::render::{
-    FrameContext, Theme, blank_line, finish_line, line_len, new_line, pad_to, push_right,
-    push_span, str_width,
+    FrameContext, Theme, blank_line, clip_to_width, finish_line, line_len, new_line, pad_to,
+    push_right, push_span, str_width,
 };
 use crate::view::QuitGuard;
 
@@ -27,6 +28,9 @@ const TEXT_COL: usize = 4;
 const CONT_COL: usize = 6;
 const MIN_WIDTH: usize = 24;
 const MIN_HEIGHT: usize = 10;
+const DECISION_LABEL_MAX: usize = 52;
+const DECISION_KIND_MAX: usize = 22;
+const DECISION_DETAIL_MAX: usize = DECISION_LABEL_MAX - DECISION_KIND_MAX - 3;
 const SPINNER: [&str; 4] = ["◐", "◓", "◑", "◒"];
 
 pub(crate) fn layout(model: &Model, chat: &View, viewport: (u16, u16)) -> ChatLayout {
@@ -396,7 +400,12 @@ fn approval_panel(
                 theme.muted()
             };
             push_span(&mut line, TEXT_COL, format!("{}.", index + 1), style);
-            push_span(&mut line, TEXT_COL + 3, decision_label(&action.wire), style);
+            push_span(
+                &mut line,
+                TEXT_COL + 3,
+                decision_label(&ask.context, &action.wire),
+                style,
+            );
             if !supported {
                 line.spans
                     .push(Span::styled(" · unavailable in V1", theme.muted()));
@@ -724,6 +733,7 @@ fn entry_lines(entry: &FeedEntry, width: usize, theme: Theme) -> Vec<Line<'stati
             lines
         }
         FeedEntryKind::Work(work) => work_lines(work, width, theme),
+        FeedEntryKind::McpStartup(startup) => mcp_startup_lines(startup, width, theme),
         FeedEntryKind::Turn(turn) => {
             let status = match &turn.status {
                 TurnStatus::Completed => "completed".to_string(),
@@ -772,6 +782,34 @@ fn entry_lines(entry: &FeedEntry, width: usize, theme: Theme) -> Vec<Line<'stati
             theme,
         )],
     }
+}
+
+fn mcp_startup_lines(startup: &McpStartupEntry, width: usize, theme: Theme) -> Vec<Line<'static>> {
+    let count = |status| {
+        startup
+            .servers
+            .values()
+            .filter(|server| server.status == status)
+            .count()
+    };
+    let starting = count(McpStartupStatus::Starting);
+    let ready = count(McpStartupStatus::Ready);
+    let failed = count(McpStartupStatus::Failed);
+    let cancelled = count(McpStartupStatus::Cancelled);
+    let mut text = format!("MCP servers · {starting} starting · {ready} ready · {failed} failed");
+    if cancelled > 0 {
+        text.push_str(&format!(" · {cancelled} cancelled"));
+    }
+    let (glyph, style) = if failed > 0 {
+        ("✗", theme.error())
+    } else if starting > 0 {
+        ("◌", theme.muted())
+    } else if cancelled > 0 {
+        ("⚠", theme.warn())
+    } else {
+        ("✓", theme.ok())
+    };
+    glyph_text(glyph, &text, width, style, theme.text())
 }
 
 fn work_lines(work: &WorkEntry, width: usize, theme: Theme) -> Vec<Line<'static>> {
@@ -1053,15 +1091,153 @@ fn json_text(value: &Value) -> String {
     serde_json::to_string(value).unwrap_or_else(|_| "<invalid json>".to_string())
 }
 
-fn decision_label(value: &Value) -> String {
+fn decision_label(context: &AskContext, value: &Value) -> String {
     match value.as_str() {
         Some("accept") => "accept once".to_string(),
         Some("acceptForSession") => "accept for session".to_string(),
         Some("decline") => "decline".to_string(),
         Some("cancel") => "cancel".to_string(),
         Some(other) => other.to_string(),
-        None => json_text(value),
+        None => object_decision_label(context, value),
     }
+}
+
+fn object_decision_label(context: &AskContext, value: &Value) -> String {
+    let Some(object) = value.as_object() else {
+        return bounded_decision_label(&scalar_detail(value));
+    };
+    let Some((kind, body)) = object.iter().next() else {
+        return "unavailable choice".to_string();
+    };
+    if object.len() == 1 {
+        match (kind.as_str(), context) {
+            (
+                "acceptWithExecpolicyAmendment",
+                AskContext::Command {
+                    proposed_execpolicy_amendment: Some(proposed),
+                    ..
+                },
+            ) if wire_execpolicy_amendment(body).as_ref() == Some(proposed) => {
+                return "accept and allow similar commands".to_string();
+            }
+            (
+                "applyNetworkPolicyAmendment",
+                AskContext::Command {
+                    proposed_network_policy_amendments,
+                    ..
+                },
+            ) => {
+                if let Some(amendment) = wire_network_policy_amendment(body)
+                    && proposed_network_policy_amendments.contains(&amendment)
+                {
+                    let action = match amendment.action {
+                        NetworkPolicyAction::Allow => "allow",
+                        NetworkPolicyAction::Deny => "deny",
+                    };
+                    return bounded_decision_label(&format!(
+                        "apply network policy change · {action} {}",
+                        sanitize_label_text(&amendment.host)
+                    ));
+                }
+                return bounded_decision_label(&sanitize_label_text(kind));
+            }
+            ("acceptWithExecpolicyAmendment", _) => {
+                return bounded_decision_label(&sanitize_label_text(kind));
+            }
+            _ => {}
+        }
+    }
+
+    let kind = bounded_label_segment(&sanitize_label_text(kind), DECISION_KIND_MAX);
+    let detail = bounded_label_segment(&scalar_detail(body), DECISION_DETAIL_MAX);
+    let label = if detail.is_empty() {
+        kind
+    } else {
+        format!("{kind} · {detail}")
+    };
+    bounded_decision_label(&label)
+}
+
+fn wire_execpolicy_amendment(value: &Value) -> Option<Vec<String>> {
+    value
+        .get("execpolicy_amendment")?
+        .as_array()?
+        .iter()
+        .map(Value::as_str)
+        .map(|value| value.map(str::to_owned))
+        .collect()
+}
+
+fn wire_network_policy_amendment(value: &Value) -> Option<NetworkPolicyAmendment> {
+    let amendment = value.get("network_policy_amendment")?;
+    let host = amendment.get("host")?.as_str()?.to_string();
+    let action = match amendment.get("action")?.as_str()? {
+        "allow" => NetworkPolicyAction::Allow,
+        "deny" => NetworkPolicyAction::Deny,
+        _ => return None,
+    };
+    Some(NetworkPolicyAmendment { host, action })
+}
+
+fn scalar_detail(value: &Value) -> String {
+    fn collect(value: &Value, scalars: &mut Vec<String>) {
+        match value {
+            Value::Null => {}
+            Value::Bool(value) => scalars.push(value.to_string()),
+            Value::Number(value) => scalars.push(value.to_string()),
+            Value::String(value) => {
+                let value = sanitize_label_text(value);
+                if !value.is_empty() {
+                    scalars.push(value);
+                }
+            }
+            Value::Array(values) => {
+                for value in values {
+                    collect(value, scalars);
+                }
+            }
+            Value::Object(values) => {
+                for value in values.values() {
+                    collect(value, scalars);
+                }
+            }
+        }
+    }
+
+    let mut scalars = Vec::new();
+    collect(value, &mut scalars);
+    sanitize_label_text(&scalars.join(" · "))
+}
+
+fn sanitize_label_text(value: &str) -> String {
+    value
+        .chars()
+        .map(|character| match character {
+            '{' | '}' | '"' => ' ',
+            character if character.is_control() => ' ',
+            character => character,
+        })
+        .collect::<String>()
+        .split_whitespace()
+        .collect::<Vec<_>>()
+        .join(" ")
+}
+
+fn bounded_decision_label(label: &str) -> String {
+    if str_width(label) <= DECISION_LABEL_MAX {
+        return label.to_string();
+    }
+    format!(
+        "{}…",
+        clip_to_width(label, DECISION_LABEL_MAX.saturating_sub(1))
+    )
+}
+
+fn bounded_label_segment(label: &str, max: usize) -> String {
+    if str_width(label) <= max {
+        return label.to_string();
+    }
+    format!("{}…", clip_to_width(label, max.saturating_sub(1)))
 }
 
 fn text_width(width: usize) -> usize {
@@ -1219,4 +1395,108 @@ fn help_frame(chat: &View, theme: Theme, width: usize, height: usize) -> Vec<Lin
     lines.truncate(height.saturating_sub(1));
     lines.push(crate::render::bottom_border(width));
     lines
+}
+
+#[cfg(test)]
+mod tests {
+    use std::collections::BTreeMap;
+
+    use amux_ui::codex::McpServerStartup;
+    use serde_json::json;
+
+    use super::*;
+
+    fn command_context() -> AskContext {
+        AskContext::Command {
+            item_id: "exec-1".to_string(),
+            command: "cargo test".to_string(),
+            cwd: Some("/work".to_string()),
+            reason: Some("run tests?".to_string()),
+            proposed_execpolicy_amendment: Some(vec!["cargo".to_string(), "test".to_string()]),
+            proposed_network_policy_amendments: vec![NetworkPolicyAmendment {
+                host: "crates.io".to_string(),
+                action: NetworkPolicyAction::Allow,
+            }],
+        }
+    }
+
+    #[test]
+    fn object_decision_labels_use_typed_proposals_and_bound_unknown_scalars() {
+        let context = command_context();
+        assert_eq!(
+            decision_label(
+                &context,
+                &json!({"acceptWithExecpolicyAmendment":{
+                    "execpolicy_amendment":["cargo","test"]
+                }})
+            ),
+            "accept and allow similar commands"
+        );
+        assert_eq!(
+            decision_label(
+                &context,
+                &json!({"applyNetworkPolicyAmendment":{
+                    "network_policy_amendment":{"host":"crates.io","action":"allow"}
+                }})
+            ),
+            "apply network policy change · allow crates.io"
+        );
+        assert_eq!(
+            decision_label(
+                &context,
+                &json!({"acceptWithExecpolicyAmendment":{
+                    "execpolicy_amendment":["mismatched"]
+                }})
+            ),
+            "acceptWithExecpolicyAmendment",
+            "a known wire kind is not trusted without its typed proposal"
+        );
+
+        let fallback = decision_label(
+            &context,
+            &json!({"future{Policy}":{"nested":{
+                "detail":"deploy {quoted} \"value\" with a deliberately very long scalar explanation"
+            },"attempt":7}}),
+        );
+        assert!(fallback.starts_with("future Policy · "));
+        assert!(fallback.contains("deploy quoted value"));
+        assert!(fallback.ends_with('…'));
+        assert!(str_width(&fallback) <= DECISION_LABEL_MAX);
+        assert!(
+            !fallback
+                .chars()
+                .any(|character| matches!(character, '{' | '}' | '"'))
+        );
+    }
+
+    #[test]
+    fn cancelled_mcp_startup_never_renders_as_success() {
+        let server = |status| McpServerStartup {
+            status,
+            error: None,
+            failure_reason: None,
+        };
+        for (name, servers) in [
+            (
+                "cancelled only",
+                BTreeMap::from([("legacy".to_string(), server(McpStartupStatus::Cancelled))]),
+            ),
+            (
+                "ready and cancelled",
+                BTreeMap::from([
+                    ("ready".to_string(), server(McpStartupStatus::Ready)),
+                    ("legacy".to_string(), server(McpStartupStatus::Cancelled)),
+                ]),
+            ),
+        ] {
+            let lines = mcp_startup_lines(&McpStartupEntry { servers }, 88, Theme::Dark);
+            let rendered = lines[0]
+                .spans
+                .iter()
+                .map(|span| span.content.as_ref())
+                .collect::<String>();
+            assert!(rendered.contains('⚠'), "{name}: {rendered}");
+            assert!(!rendered.contains('✓'), "{name}: {rendered}");
+        }
+    }
 }

@@ -56,6 +56,7 @@ pub(super) fn observe(layer: &mut CodexLayer, seq: u64, _arrived: DateTime<Utc>,
         "turn/plan/updated" => fold_plan_updated(layer, seq, row),
         "turn/diff/updated" => fold_diff_updated(layer, seq, row),
         "thread/tokenUsage/updated" => layer.latest_usage = Some(token_usage(row)),
+        "mcpServer/startupStatus/updated" => fold_mcp_startup(layer, seq, row),
 
         // Approval context rows. They also upsert the proposed work item.
         "item/commandExecution/requestApproval" => fold_command_approval(layer, seq, row),
@@ -119,6 +120,92 @@ pub(super) fn observe(layer: &mut CodexLayer, seq: u64, _arrived: DateTime<Utc>,
         // visibly through the same mandatory default.
         _ => push_unrecognized(layer, seq, method, None),
     }
+}
+
+fn fold_mcp_startup(layer: &mut CodexLayer, seq: u64, row: &Value) {
+    let Some(name) = row
+        .get("name")
+        .and_then(Value::as_str)
+        .filter(|name| !name.is_empty())
+    else {
+        push_unrecognized(
+            layer,
+            seq,
+            "mcpServer/startupStatus/updated",
+            Some("missing MCP server name"),
+        );
+        return;
+    };
+    let status = match row.get("status").and_then(Value::as_str) {
+        Some("starting") => McpStartupStatus::Starting,
+        Some("ready") => McpStartupStatus::Ready,
+        Some("failed") => McpStartupStatus::Failed,
+        Some("cancelled") => McpStartupStatus::Cancelled,
+        Some(_) => {
+            push_unrecognized(
+                layer,
+                seq,
+                "mcpServer/startupStatus/updated",
+                Some("unknown MCP startup status"),
+            );
+            return;
+        }
+        None => {
+            push_unrecognized(
+                layer,
+                seq,
+                "mcpServer/startupStatus/updated",
+                Some("missing MCP startup status"),
+            );
+            return;
+        }
+    };
+    let optional_string = |key| match row.get(key) {
+        None | Some(Value::Null) => Some(None),
+        Some(Value::String(value)) => Some(Some(value.clone())),
+        Some(_) => None,
+    };
+    let Some(error) = optional_string("error") else {
+        push_unrecognized(
+            layer,
+            seq,
+            "mcpServer/startupStatus/updated",
+            Some("invalid MCP startup error"),
+        );
+        return;
+    };
+    let Some(failure_reason) = optional_string("failureReason") else {
+        push_unrecognized(
+            layer,
+            seq,
+            "mcpServer/startupStatus/updated",
+            Some("invalid MCP startup failure reason"),
+        );
+        return;
+    };
+    let server = McpServerStartup {
+        status,
+        error,
+        failure_reason,
+    };
+
+    if let Some(entry) = layer
+        .entries
+        .iter_mut()
+        .find(|entry| matches!(&entry.kind, FeedEntryKind::McpStartup(_)))
+        && let FeedEntryKind::McpStartup(startup) = &mut entry.kind
+    {
+        startup.servers.insert(name.to_string(), server);
+        return;
+    }
+
+    push(
+        layer,
+        seq,
+        FeedEntryKind::McpStartup(McpStartupEntry {
+            servers: BTreeMap::from([(name.to_string(), server)]),
+        }),
+    );
 }
 
 fn fold_ready(layer: &mut CodexLayer, seq: u64) {
@@ -791,11 +878,38 @@ fn fold_diff_updated(layer: &mut CodexLayer, seq: u64, row: &Value) {
 
 fn fold_command_approval(layer: &mut CodexLayer, seq: u64, row: &Value) {
     let item_id = str_or(row, "itemId", "unknown-command").to_string();
+    let proposed_execpolicy_amendment = row
+        .get("proposedExecpolicyAmendment")
+        .and_then(Value::as_array)
+        .and_then(|values| {
+            values
+                .iter()
+                .map(Value::as_str)
+                .map(|value| value.map(str::to_owned))
+                .collect::<Option<Vec<_>>>()
+        });
+    let proposed_network_policy_amendments = row
+        .get("proposedNetworkPolicyAmendments")
+        .and_then(Value::as_array)
+        .into_iter()
+        .flatten()
+        .filter_map(|amendment| {
+            let host = amendment.get("host")?.as_str()?.to_string();
+            let action = match amendment.get("action")?.as_str()? {
+                "allow" => NetworkPolicyAction::Allow,
+                "deny" => NetworkPolicyAction::Deny,
+                _ => return None,
+            };
+            Some(NetworkPolicyAmendment { host, action })
+        })
+        .collect();
     let context = AskContext::Command {
         item_id: item_id.clone(),
         command: str_or(row, "command", "").to_string(),
         cwd: string(row, "cwd"),
         reason: string(row, "reason"),
+        proposed_execpolicy_amendment,
+        proposed_network_policy_amendments,
     };
     layer.pending_approval_context = Some(context);
     let mut entry = work_so_far(layer, &item_id);
@@ -1401,6 +1515,8 @@ mod tests {
                     command: "true".to_string(),
                     cwd: None,
                     reason: None,
+                    proposed_execpolicy_amendment: None,
+                    proposed_network_policy_amendments: Vec::new(),
                 },
                 available_decisions: json!(["accept"]),
                 actions: vec![AskAction {
@@ -1414,6 +1530,8 @@ mod tests {
             command: "true".to_string(),
             cwd: None,
             reason: None,
+            proposed_execpolicy_amendment: None,
+            proposed_network_policy_amendments: Vec::new(),
         });
 
         fold_approval_required(
