@@ -764,10 +764,11 @@ mod tests {
     use tokio::time::{Duration, timeout};
 
     use super::*;
-    use crate::agents::{
-        AgentType, CreateAgentRequest, MultiplexByteBuffer, TestAgentSession, new_agent,
-    };
+    #[cfg(unix)]
+    use crate::agents::{AgentType, CreateAgentRequest, new_agent};
+    use crate::agents::{MultiplexByteBuffer, TestAgentSession};
 
+    #[cfg(unix)]
     #[tokio::test]
     async fn codex_subscription_opens_and_completes_empty_replay() {
         let host = PtyAgentHost::new(Uuid::from_u128(1));
