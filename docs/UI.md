@@ -7,9 +7,10 @@ This document owns the client side of amux: the `amux-ui` state library,
 its renderers (the TUI first, desktop and mobile clients later), and the
 rules that keep per-agent knowledge in the right place. Companions:
 `docs/PROTOCOL.md` owns the wire, `docs/ARCHITECTURE.md` owns the system.
-The executable half of this document will be the amux-ui spec suite,
-mirroring `crates/amux/tests/spec/`; where prose and passing spec
-disagree, the spec wins.
+The executable half of this document is the amux-ui spec suite in
+`crates/amux-ui/tests/spec/` plus the native-chat golden suites in
+`crates/amux-tui/tests/`; where prose and passing spec disagree, the spec
+wins.
 
 Crate shape: `amux-cli` → { `amux-tui`, `amux` }; `amux-tui` → `amux-ui` →
 `amux`. One shipped binary — `amux-tui` is a library the CLI invokes (bare
@@ -133,7 +134,11 @@ papered over. There is no generic intermediate representation of agent
 content and there are no capability flags. A client that does not know an
 agent type degrades to the `AgentCard` and can still attach to its raw
 terminal when the session advertises the agent-independent core protocol
-`terminal_v1`; every PTY-backed session currently advertises it.
+`terminal_v1`; every PTY-backed session currently advertises it. This is an
+enforced typed boundary, not a renderer convention: structured-protocol
+selection is exhaustive for Claude and Codex, while an unknown or missing
+structured protocol opens no native chat, leaves the fleet card active, and
+uses a neutral watermark. It never falls through to Claude.
 
 The registry as built: `AgentLayer` is an exhaustive enum over
 `Claude` and `Codex` (plus a dev-only test agent). Exhaustive `match`
@@ -146,8 +151,11 @@ projections to the raw layer state.
 one fact.** Within a layer, `phase`, `attention`, the send gate and the
 write permissions are all projections of a single private
 classification, and the kernel's stream lifecycle is folded in at that
-one point rather than at each projection. Two rules follow, both bought
-expensively:
+one point rather than at each projection. Claude's `ChatCondition` and
+Codex's `Situation` are independently exhaustive; there is no cross-layer
+trait or shared state vocabulary. Cached attention, observation-time phase and
+effective attention, gate queries, and reducer enforcement all consume those
+classifications. Two rules follow, both bought expensively:
 
 - The classification must be **lossless with respect to every question
   asked of it**. Collapsing orthogonal facts (in Codex: "a turn is
@@ -155,19 +163,40 @@ expensively:
   projection loses the fact it needed, and answers wrong with the full
   confidence of a deliberate architecture.
 - Where two derivations must coexist, assert their **agreement** as an
-  invariant, not each one's correctness separately. `check_invariants`
-  runs after every Msg of every registered spec sequence, so agreement
-  is a CI property. In every build, a violation logs at error level,
-  writes a once-per-kind recorder dump, leaves a persistent visible chrome
-  warning, and keeps running. `AMUX_INVARIANT_FATAL=1` is the sole fatal
-  opt-in; repository tests set it so accidental violations still fail CI.
+  invariant, not each one's correctness separately. Codex's check relates its
+  classified public phase and send gate to cached `AgentCard` attention;
+  Claude's independently encoded tuple matrix relates its public phase,
+  observation-time effective attention, and send gate. The generic cache
+  agreement invariant separately checks each layer's derived attention against
+  the card.
+  `check_invariants` runs after every Msg of every registered spec sequence,
+  so agreement is a CI property. In every build, a violation logs at error
+  level, attempts a once-per-kind recorder dump, leaves a persistent visible
+  chrome warning, and keeps running. `AMUX_INVARIANT_FATAL=1` is the sole fatal
+  opt-in. CI test/E2E steps and required close-out test invocations set it; a
+  bare local test inherits the nonfatal runtime default, while the differential
+  spec directly asserts invariant emptiness after every registered Msg.
+
+Observation-only `Agent.readonly` is orthogonal to the observed session:
+phase and attention continue to say what the agent is doing, while every write
+refuses locally with `agent is read-only — you are observing this session`.
+Codex's app-server reconnect `ReadOnly` remains a distinct lifecycle state.
+Codex also keeps “active turn” and “input in flight” separate so a writable
+turn retains its interrupt escape hatch. Claude keeps typed menu-shape byte
+safety separate from session actionability. Reducers check the gate before
+emitting bytes or optimistic state, and render hints, ordinary keys,
+focused-field/Ctrl+C access, and paste mutation consume the same actionability
+queries rather than raw layer flags.
 
 Where shared chrome needs cross-agent facts (badges, sort order),
 per-agent **summarizers** derive kernel vocabulary — a handful of fields.
 Summarize for chrome; never normalize content. Summarizers are projections
 too: a cached badge that disagrees with the phase it is meant to summarize
 is a bug, and both layers now project cached attention under the kernel
-stream phase for exactly that reason.
+stream phase for exactly that reason. Claude's independent agreement matrix
+also names its intentional degradations: an offline host, stale ordinary work,
+or an aged unresolved send may make effective attention `Unknown` while a safe
+gate remains more specific where the condition supports one.
 
 **Attention** ("this agent needs you") is the canonical summary: derived
 at observation time by a per-agent fold — stream entries in, attention
@@ -208,14 +237,19 @@ into the Model or the agent layer. Presentation frameworks may differ;
 derivations must not. Two clients computing the same derivation
 independently is how projection drift starts.
 
-## Chrome-first TUI
+## Chrome and native chats
 
-`amux attach` remains raw byte passthrough to the agent's own TUI; the
-amux TUI is the *chrome* around it: fleet, attention, create/rename/
-delete, host state. Attach from the chrome suspends the TUI (leave the
-alternate screen, restore termios), runs the existing passthrough
-in-process, and resumes the chrome on detach; late attach renders via
-buffer replay (best-effort — the history is a bounded byte tail).
+The amux TUI owns fleet chrome — attention, create/rename/delete, host state —
+and native structured chats for Claude and Codex. Each known layer renders its
+own typed feed, composer, obligations, and action hints from the Model. The
+configured `chat`/`raw` default chooses an agent's normal entry mode; both
+remain available when the agent advertises them.
+
+Raw attach is byte passthrough to the agent's own TUI. Entering it from chrome
+or a native chat suspends amux's TUI (leave the alternate screen, restore
+termios), runs the passthrough in-process, and resumes the screen on detach;
+late attach renders via buffer replay (best-effort — the history is a bounded
+byte tail).
 
 The chrome draws on the alternate screen and **never writes to terminal
 scrollback**. This is load-bearing: emitted scrollback is immutable state
@@ -235,14 +269,13 @@ composes the two. This is also what keeps terminal emulation out of the
 chrome permanently. The leader key is configurable (default `ctrl-a`) so
 nesting works.
 
-A first-party chat UI is a later milestone, built per-agent on typed
-structured input/output protocols rather than terminal bytes: semantic
-messages are compact over the network, replayable, permit local echo, and
-stay resize-independent — a property that holds only if nothing on that
-path renders into scrollback (a constraint, not an expectation). On
-Windows the chrome must build and run (crossterm); byte passthrough is
-untested pending e2e-driver support there, and the structured chat path
-is the eventual guaranteed Windows client experience.
+The native chats use per-agent typed structured input/output protocols rather
+than terminal bytes. Semantic messages are compact over the network,
+replayable, permit deliberate local echo where the layer requires it, and stay
+resize-independent. They follow the same no-scrollback constraint as chrome.
+On Windows the chrome must build and run (crossterm); byte passthrough is
+untested pending e2e-driver support there, and the structured chat path is the
+guaranteed Windows client direction.
 
 ## Testing
 
@@ -274,7 +307,10 @@ index (ids, epochs, counts, phases), never content — is checked by
 debug and release is loud but non-fatal: log at error level, attempt one
 recorder dump per violation kind, expose a sticky visible banner, and keep
 folding even if the dump fails. `AMUX_INVARIANT_FATAL=1` alone restores a
-panic in every build; test and CI harnesses opt into it.
+panic in every build. CI test/E2E steps and the required repository close-out
+test invocations opt into it; an arbitrary bare local test does not. The
+registered-sequence differential spec also asserts invariant emptiness after
+every Msg without relying on runtime panic policy.
 Renderer-vs-Model staleness is neither: a stale ViewState is tolerance
 territory, clamped at render, never asserted against.
 

@@ -147,11 +147,23 @@ from one that vanished because the connection died, and the UI says so.
 Bare `amux.codex_ready` remains the shape for fresh attachment and later
 same-process reconnects. `resumed:true` does not report a gap: earlier feed
 rows are not re-rendered, while the persisted Codex thread keeps its context.
+The marker is one-shot. The first successful ready-producing attachment
+consumes it regardless of provenance and includes it only when that attachment
+resumed the initially persisted id; an ambiguous recovery settled as a fresh
+thread cannot mark a later reconnect. `CodexLayer` renders the marked boundary
+at the top of the feed as
+`resumed · earlier history not re-rendered · context intact`.
 
 **Unrecognized rows render honestly as unrecognized.** They are never
-dropped and never guessed at. Upstream drift is data: a new
-`mcpServer/startupStatus/updated` row appears as an unrecognized row, is
-captured, and is diffed — it does not break a fold.
+dropped and never guessed at. The one startup family promoted into typed
+state is `mcpServer/startupStatus/updated`: an exact row with a nonempty
+server name and `starting`, `ready`, `failed`, or `cancelled` updates one
+retained aggregate in place by name, preserving the entry's original id and
+creating sequence. `error` and `failureReason` may be absent, null, or strings.
+The renderer shows one compact count line instead of one row per server.
+Malformed rows, missing or non-string names, invalid diagnostic fields, and
+future status spellings remain unrecognized. Upstream drift is still data: it
+is captured and diffed, and never breaks the fold.
 
 ## The client layer
 
@@ -172,6 +184,7 @@ struct Situation {
                              // Replaying | AwaitingApproval | ... | Idle
     active_turn: bool,       // orthogonal facts, deliberately NOT folded
     input_in_flight: bool,   // into `state`
+    observer_readonly: bool, // inventory policy, not observed session phase
 }
 ```
 
@@ -192,17 +205,23 @@ the full confidence of a deliberate architecture.
 
 ### Rules that hold
 
-Locked by `codex_agreement` (a 16-state chapter) and by a checked
-projection invariant that panics in debug and dumps in release:
+Locked by `codex_agreement` and by a checked projection invariant over the
+public phase, cached `AgentCard` attention, and send gate. Observation-time
+offline and staleness degradation remains owned by `Model::effective_attention`:
 
 - `phase == Unknown` implies `attention == Unknown`.
-- read-only outranks a pending ask in attention (→ `Unknown`).
+- app-server reconnect read-only outranks a pending ask in attention
+  (→ `Unknown`).
 - `thread/closed` refuses sends but stays recoverable.
 - while the stream is `Opening` or `Replaying`, attention is `Unknown` —
   rows seen so far are a prefix, not a conclusion.
 
-The invariant is checked after every Msg of every registered spec
-sequence (`wire_free.rs`), so it is a CI control, not only a runtime one.
+The invariant is checked after every Msg of every registered spec sequence
+(`wire_free.rs`), so it is a CI control, not only a runtime one. In ordinary
+runtime operation, a violation logs at error level, attempts one recorder dump
+per violation kind, sets a sticky warning visible in fleet and both native
+chats, and keeps folding even if the dump fails. Exact
+`AMUX_INVARIANT_FATAL=1` restores a panic in every build.
 
 ### Writes
 
@@ -216,10 +235,21 @@ Four actions, one derivation — `write_permission(model, agent, action)`:
 | answer | an approval is pending |
 
 Session-level refusals (unavailable, exited, closed, replaying,
-read-only, unknown) are subtracted *before* an action rule runs, in the
-type: `session_state()` returns `Result<LiveState, &'static str>`, so a
-per-action rule cannot see a state it has no business ruling on. Views
-ask this API; they do not re-derive preconditions from raw layer fields.
+app-server read-only, unknown) are subtracted *before* an action rule runs, in
+the type: `session_state()` returns `Result<LiveState, &'static str>`, so a
+per-action rule cannot see a state it has no business ruling on. Codex's
+app-server reconnect `ReadOnly` is a lifecycle fact: it projects
+`CodexPhase::ReadOnly`, `Attention::Unknown`, and `SendGate::ReadOnly` with its
+reconnect-specific refusal. Inventory `Agent.readonly` is different,
+orthogonal observation policy. It preserves the session's visible phase and
+attention, but after lifecycle refusals yields `SendGate::ObserverReadOnly`
+and `agent is read-only — you are observing this session`.
+
+Reducers consult the same permission before emitting input or optimistic
+state. Views and key handlers ask the classified action queries; they do not
+re-derive preconditions from raw layer fields. A writable active turn remains
+interruptible while an input is in flight, but an observation-only one does
+not.
 
 ## Prompts, steers and echoes
 
@@ -231,12 +261,19 @@ success. Nothing appears in the feed that the server did not confirm.
 
 ## Approvals, and unanswerable obligations
 
-Command and patch approvals are answerable: the decision set is
-wire-verbatim and the answer goes back over the same connection.
+Command and patch approvals are answerable: each retained action keeps its
+wire value and the answer goes back over the same connection. Known object
+choices receive human labels only when they agree with typed facts from the
+correlated request: exec-policy amendments become “accept and allow similar
+commands”, and network-policy amendments become
+“apply network policy change · {allow|deny} {bounded host}”. Unknown objects
+show only a bounded, control-sanitized kind and scalar detail, never raw
+serialized JSON; object choices remain unavailable in structured V1.
+
 Dynamic tool-call asks are also answerable — the backend maps
-`accept`/`acceptForSession` to success and `decline`/`cancel` to failure
-— but the wire carries no decision list for them, so the *layer* supplies
-`accept`/`decline` while the wire field keeps its verbatim null.
+`accept`/`acceptForSession` to success and `decline`/`cancel` to failure — but
+upstream sends no decision list for them, so the layer supplies the supported
+`accept`/`decline` actions rather than retaining a duplicate raw array.
 
 `item/tool/requestUserInput` is the one known **unanswerable**
 obligation. Answering it needs free-form content the frozen input shape
@@ -251,6 +288,9 @@ answers it properly, in band. This is a deliberate, recorded limit.
 both remain available per agent. Chat mode is the native amux screen —
 composer, feed, approvals, `Ctrl+X` to interrupt. Raw mode is
 `codex resume` on a PTY, byte-identical for every subscriber.
+Because both current creation modes open interactively, `amux new codex`
+requires TTY stdin and stdout and refuses before creating anything when either
+is absent.
 
 ## Testing
 
@@ -265,12 +305,21 @@ Three tiers, in increasing cost:
 3. **`crates/amux/tests/codex_capture.rs`** — the **C suite**: opt-in,
    real codex, ten scenarios (C.1–C.10) covering create+pong, approval
    allow and deny *with filesystem assertions*, interrupt and reuse,
-   suspend/resume across a server restart, real process-group daemon
-   recovery, raw+structured coexistence, two-subscriber byte fanout, and
+   suspend/resume across a server restart (including the first post-restart
+   `resumed:true`, stable thread identity, and remembered context), real
+   process-group daemon recovery, raw+structured coexistence, two-subscriber
+   byte fanout, and
    raw attach on an *unnamed* agent — the product default, and the one
    parameter a hardcoded fixture hid for the whole of P9 — including
    final-detach teardown and fresh raw reattach, plus unnamed zero-turn
    suspend/resume.
+
+C.9 proves its independently checked process facts: final-detach process-group
+exit, a newly created raw process on reattach, and survival of the original
+structured stream. Its screen-content oracle did **not** establish that the
+resumed raw Codex composer is usable. The owner-authorized VT100 attempt was
+inconclusive and no further oracle is part of this close-out, so C.9 must not be
+cited as a composer witness.
 
 The C suite is inert in `cargo test --workspace` — with no scenario named
 it prints a skip note and exits 0 before creating a scratch directory,
@@ -321,19 +370,71 @@ Therefore the last raw detach retires and terminates that PTY epoch. Reattach
 lazily runs a new `codex resume`, relying on the durable Codex thread and its
 upstream replay. Structured attachment retention is unaffected.
 
-## Known gaps
+### Invariant failure policy
 
-- **Startup noise.** `mcpServer/startupStatus/updated` rows are the
-  entire first screen of a new codex chat, rendered as unrecognized. A
-  suppression-or-typing policy is undecided.
-- **Approval labels.** One approval choice renders its raw wire JSON as
-  its label.
-- **Non-TTY create.** `amux new codex` without a TTY creates the agent,
-  then exits with a raw errno.
-- **`readonly` is enforced by views, not by the gates.** The write
-  permissions do not consult it, so the gate is not yet the source of
-  truth it claims to be. No user-visible effect today, because the views
-  do block.
+Invariant violations are loud but nonfatal by default in every build: log at
+error level, attempt one bounded recorder dump per violation kind, set the
+sticky visible warning, and continue. Exact `AMUX_INVARIANT_FATAL=1` restores
+the panic. The panic found a real projection defect during a hand-drive and
+remains valuable for CI and deliberate verification; it is not an acceptable
+default for an ordinary first-run client.
 
-`notes/codex-impl/INVESTIGATIONS.md` carries the full standing list with
-evidence.
+CI test and E2E steps and the required close-out test invocations opt into
+fatal mode. A bare local `cargo test` intentionally inherits the nonfatal
+runtime default, while the differential spec independently asserts invariant
+emptiness after every registered Msg.
+
+### Retained Model state (D9)
+
+Dump provenance is not enough to keep an otherwise unread field unless its
+opposite-layer twin is retained on the same basis. Applying that rule across
+Claude and Codex deleted six serialization-only, asymmetric fields:
+`FileChange.diff`, `TokenUsage.cached_input_tokens`,
+`codex::Ask.available_decisions`, `claude::PromptEntry.at`,
+`claude::MessageEntry.at`, and `AcceptedPlan.plan_file_path`. The private Model
+dump shape changed intentionally; amux is unreleased and promises no dump
+compatibility.
+
+`PromptEcho.at` remains because it is no longer dump-only provenance. Claude's
+staleness classifier reads the dispatch timestamp so a fresh optimistic send
+outranks an old transcript, while an unresolved send can still age to
+`Unknown`. Codex has authoritative turn lifecycle rows and needs no artificial
+timestamp twin.
+
+### MCP startup aggregation (D10)
+
+The typed option fit inside the focused scope, so startup rows are aggregated
+rather than suppressed. Exact `starting`, `ready`, `failed`, and `cancelled`
+updates share one entry keyed by server name and update it without changing the
+entry id or creating sequence. Its compact line is
+`MCP servers · N starting · N ready · N failed[ · N cancelled]`. Failure
+selects the error glyph/style; otherwise starting selects neutral,
+cancellation selects warning, and only an all-ready/no-cancelled set selects
+success. Malformed and future rows remain unrecognized.
+
+## Parked / future work
+
+- External live-thread sync (P10) and adopting externally-started
+  threads (`amux attach` external pickup). Optional from day one;
+  blocked culturally on the upstream co-presence RFC (openai/codex
+  #21551) anyway.
+- Transcript capture by tailing `~/.codex/sessions/**`.
+- Windows support (codex agents are unix-only; the daemon-side refusal
+  already exists).
+- Tracking the co-presence RFC for live SDK mirroring.
+- The typed-command generalization ("dispatching a write without
+  passing the gate is not expressible"). Right instinct, real design
+  project, not this workstream. This is the named astronaut item.
+- **Transactional agent creation** ("failed `amux new` leaves nothing").
+  Parked deliberately: a real leave-nothing guarantee cannot be
+  client-driven (the client can die mid-attach), so it implies a
+  daemon-side provisional-agent lifecycle — the largest hidden design
+  item on the original list. Post-create failures are client-side events
+  happening to a *healthy* agent (auth is preflighted daemon-side in
+  `PtyAgentHost::create` before anything commits), and auto-destroying a
+  healthy agent contradicts "agents outlive terminals". Batch B ships
+  the cheap 90% instead. Record this reasoning so it is not re-litigated.
+- `SUN_LEN` symlink pre-check edge (INVESTIGATIONS Tier 2 item 7) — the
+  SDK fails loudly; accepted as honesty-of-error-message residual.
+- `Model::claude(id)` / `AgentCard::claude()` naming tidy and the
+  `AgentDeps` non-unix collapse (Tier 3) — real, harmless, not close-out.
