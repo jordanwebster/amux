@@ -16,28 +16,8 @@ broken freely. Simplify decisions accordingly.
 
 ## Handoff
 
+Every substantive chunk of work ends with a handoff; use the `handoff` skill from the start.
+
 Machinery: `/Users/jlw/source/skills` (authoritative rules in its `docs/SPEC.md`).
 
 Repo config: `.handoff.toml`
-
-These are standing agent obligations. This AGENTS.md section instructs the task
-agent; the packet verifier and audit independently attack the resulting claims
-and evidence.
-
-- Write intended claims at scaffold, before gathering evidence.
-- Apply all four evidence standards: altitude matches the claim; boundary
-  evidence crosses the named production path; observation, comparison, and
-  oracle acceptance remain separate; hygiene excludes secrets, tokens, and
-  private paths and declares nondeterminism and redactions.
-- A user-observable claim's evidence must include a human-inspectable
-  observation at the claim's altitude, with its replay command, or the claim is
-  declared unwitnessed with the residual risk; internal claims carry no witness
-  field.
-- Treat evidence work required by a claim as presumptively in scope. Surface a
-  material expansion of cost, architecture, repository shape, or review
-  latency before building it. If Jordan is unavailable, degrade honestly:
-  mark affected claims inconclusive and file the prerequisite. Necessary work
-  is in; merely noticed work is filed as a braindump.
-- Journal friction as it happens.
-- Make granular commits and never squash a task branch.
-- Assemble the packet at task end.

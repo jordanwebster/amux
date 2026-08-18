@@ -4,6 +4,8 @@ This file tracks significant development work, decisions made, and current state
 
 ---
 
+2026-08-18 — **The rev10 Handoff machinery is built and this repo's footprint shrank to the one-line trigger.** Codex rebuilt the `~/source/skills` repo in five components: bundled handoff scripts (single staleness rule, sticky audit selection), the reviewer and audit contracts, the `handoff` and `tasks` skills, and the selective installer. The AGENTS.md obligations blob is replaced by the standing trigger — every substantive chunk of work ends with a handoff — with all discipline living in the globally installed skill.
+
 2026-08-18 — **The review machinery was renamed Packet Review → Handoff.** The machinery now lives in the generic `~/source/skills` repo (Handoff is its founding resident), the consumer config is `.handoff.toml`, and the AGENTS.md machinery section points at the new path. The spec was rewritten as rev10 (proofs, four-section front page, `handoff` + `tasks` skills), amended after an external Codex review (independent-check status line, convergence rule, sticky audit selection, merge-ready default endpoint), and awaits the rebuild; this repo's obligations section will shrink to the one-line trigger when the rebuilt skills land.
 
 2026-08-18 — **Local working notes are no longer versioned.** Removed the remaining tracked `notes/codex-impl/CLOSED.md` from the Git index while preserving it locally; the existing `notes/` ignore rule now covers the entire notes tree consistently.
