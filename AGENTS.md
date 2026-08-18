@@ -16,7 +16,7 @@ broken freely. Simplify decisions accordingly.
 
 ## Handoff
 
-Machinery: `/Users/jlw/source/handoff` (authoritative rules in its `docs/SPEC.md`).
+Machinery: `/Users/jlw/source/skills` (authoritative rules in its `docs/SPEC.md`).
 
 Repo config: `.handoff.toml`
 
