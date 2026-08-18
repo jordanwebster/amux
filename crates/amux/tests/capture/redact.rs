@@ -61,6 +61,29 @@ fn slugify(path: &str) -> String {
     path.replace(['/', '.'], "-")
 }
 
+/// Forms a path can take inside transcript text, including JSON strings on
+/// Windows where each path separator is escaped as `\\\\`.
+fn encoded_path_forms(path: &str) -> Vec<String> {
+    let mut forms = vec![
+        path.to_string(),
+        path.replace('/', "\\/"),
+        path.replace('\\', "\\\\"),
+        path.replace('\\', "\\\\").replace('/', "\\/"),
+    ];
+    forms.sort();
+    forms.dedup();
+    forms.sort_by_key(|form| std::cmp::Reverse(form.len()));
+    forms
+}
+
+fn replace_path_forms(text: &str, path: &str, replacement: &str) -> String {
+    encoded_path_forms(path)
+        .into_iter()
+        .fold(text.to_string(), |text, form| {
+            text.replace(&form, replacement)
+        })
+}
+
 /// Replace whole-word occurrences of `needle` (bounded by non-alphanumeric,
 /// non-`_`/`-` characters) with `replacement`. Avoids clobbering the token
 /// when it is a substring of a longer identifier.
@@ -106,22 +129,18 @@ pub fn redact(raw: &str, scratch_root: &Path) -> Result<String> {
     let scratch = scratch_root.display().to_string();
     let scratch_private = format!("/private{scratch}");
     // Longest first so the `/private` form never leaves a `/private` stub.
-    out = out.replace(&scratch_private, "[SCRATCH]");
-    out = out.replace(&scratch, "[SCRATCH]");
-    // JSON-escaped variants (paths inside string values keep plain slashes on
-    // macOS, but be thorough about backslash-escaped forms).
-    out = out.replace(&scratch_private.replace('/', "\\/"), "[SCRATCH]");
-    out = out.replace(&scratch.replace('/', "\\/"), "[SCRATCH]");
+    out = replace_path_forms(&out, &scratch_private, "[SCRATCH]");
+    out = replace_path_forms(&out, &scratch, "[SCRATCH]");
     // The dash-slugified project-dir form claude uses in `~/.claude/projects`.
-    out = out.replace(&slugify(&scratch_private), "[SCRATCH-SLUG]");
-    out = out.replace(&slugify(&scratch), "[SCRATCH-SLUG]");
+    out = replace_path_forms(&out, &slugify(&scratch_private), "[SCRATCH-SLUG]");
+    out = replace_path_forms(&out, &slugify(&scratch), "[SCRATCH-SLUG]");
 
     if let Ok(home) = std::env::var("HOME") {
         let home_private = format!("/private{home}");
-        out = out.replace(&home_private, "[HOME]");
-        out = out.replace(&home, "[HOME]");
-        out = out.replace(&slugify(&home_private), "[HOME-SLUG]");
-        out = out.replace(&slugify(&home), "[HOME-SLUG]");
+        out = replace_path_forms(&out, &home_private, "[HOME]");
+        out = replace_path_forms(&out, &home, "[HOME]");
+        out = replace_path_forms(&out, &slugify(&home_private), "[HOME-SLUG]");
+        out = replace_path_forms(&out, &slugify(&home), "[HOME-SLUG]");
     }
     // Whole-word: the username as a standalone token (e.g. the owner column
     // of an `ls -l` that a Bash tool_result captured), not as a substring of
@@ -208,13 +227,17 @@ fn verify(redacted: &str, scratch_root: &Path) -> Result<()> {
     }
 
     let scratch = scratch_root.display().to_string();
-    for form in [scratch.clone(), slugify(&scratch)] {
-        if redacted.contains(&form) {
-            violations.push(format!("scratch path form '{form}' still present"));
+    for path in [scratch.clone(), slugify(&scratch)] {
+        for form in encoded_path_forms(&path) {
+            if redacted.contains(&form) {
+                violations.push(format!("scratch path form '{form}' still present"));
+            }
         }
     }
     if let Ok(home) = std::env::var("HOME")
-        && redacted.contains(&home)
+        && encoded_path_forms(&home)
+            .iter()
+            .any(|form| redacted.contains(form))
     {
         violations.push(format!("home dir '{home}' still present"));
     }

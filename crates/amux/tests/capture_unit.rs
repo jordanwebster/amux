@@ -196,6 +196,18 @@ fn redaction_and_graduation_fail_loud_then_copy_only_verified_candidates() {
     );
     let redacted = redact::redact(&raw, &scratch).unwrap();
     assert!(redacted.contains("[SCRATCH]"));
+
+    let windows_scratch = std::path::Path::new(r"C:\amux-capture\scratch");
+    let windows_raw = serde_json::json!({
+        "type": "user",
+        "cwd": windows_scratch.display().to_string(),
+        "message": { "content": "safe" }
+    })
+    .to_string();
+    let windows_redacted = redact::redact(&windows_raw, windows_scratch).unwrap();
+    assert!(windows_redacted.contains("[SCRATCH]"));
+    assert!(!windows_redacted.contains(r"C:\\amux-capture\\scratch"));
+
     fs::write(run.join("sample.redacted.jsonl"), redacted).unwrap();
     fs::write(
         run.join("sample.meta.json"),
