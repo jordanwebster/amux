@@ -328,6 +328,7 @@ pub struct TokenUsage {
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(tag = "boundary", rename_all = "snake_case")]
 pub enum BoundaryEntry {
+    Resumed,
     Ready,
     Gap { reason: String },
     Compacted { turn_id: Option<String> },

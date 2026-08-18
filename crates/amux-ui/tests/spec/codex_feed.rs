@@ -2,8 +2,9 @@
 //!
 //! Codex is a continuous row stream, not a task-per-turn actor. Turn state is
 //! derived only from `turn/started` and matching `turn/completed` rows;
-//! item rows upsert by item id even outside a live turn. The first ready row
-//! is a quiet attach marker, while later ready rows are visible re-syncs.
+//! item rows upsert by item id even outside a live turn. A fresh first ready
+//! row is quiet, an initial persisted resume is explicit, and later bare ready
+//! rows are visible re-syncs.
 
 use amux_ui::codex::{
     BoundaryEntry, CodexPhase, FeedEntryKind, ItemFinality, McpStartupStatus, MessagePhase,
@@ -319,6 +320,36 @@ fn gap_and_ready_reset_accumulators_but_preserve_the_observed_interrupt_id() {
             .entries()
             .any(|e| matches!(e.kind, FeedEntryKind::Boundary(BoundaryEntry::Ready)))
     );
+}
+
+#[test]
+fn ready_boundaries_distinguish_initial_resume_fresh_attach_and_reconnect() {
+    let resumed = feed(vec![json!({"type":"amux.codex_ready","resumed":true})]);
+    let resumed_entries: Vec<_> = codex_layer(&resumed, AGENT).entries().collect();
+    assert_eq!(resumed_entries.len(), 1);
+    assert!(matches!(
+        resumed_entries[0].kind,
+        FeedEntryKind::Boundary(BoundaryEntry::Resumed)
+    ));
+    assert!(!codex_layer(&resumed, AGENT).history_truncated());
+
+    let fresh = feed(vec![json!({"type":"amux.codex_ready"})]);
+    assert_eq!(
+        codex_layer(&fresh, AGENT).entries().count(),
+        0,
+        "ordinary first ready remains a quiet attach"
+    );
+
+    let reconnected = feed(vec![
+        json!({"type":"amux.codex_ready"}),
+        json!({"type":"amux.codex_ready"}),
+    ]);
+    let reconnect_entries: Vec<_> = codex_layer(&reconnected, AGENT).entries().collect();
+    assert_eq!(reconnect_entries.len(), 1);
+    assert!(matches!(
+        reconnect_entries[0].kind,
+        FeedEntryKind::Boundary(BoundaryEntry::Ready)
+    ));
 }
 
 #[test]

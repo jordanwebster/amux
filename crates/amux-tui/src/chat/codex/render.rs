@@ -749,6 +749,9 @@ fn entry_lines(entry: &FeedEntry, width: usize, theme: Theme) -> Vec<Line<'stati
         }
         FeedEntryKind::Boundary(boundary) => {
             let title = match boundary {
+                BoundaryEntry::Resumed => {
+                    "─ resumed · earlier history not re-rendered · context intact ".to_string()
+                }
                 BoundaryEntry::Ready => "─ Codex re-synchronized ".to_string(),
                 BoundaryEntry::Gap { reason } => format!("─ stream gap · {reason} "),
                 BoundaryEntry::Compacted { turn_id } => turn_id

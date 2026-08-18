@@ -421,7 +421,17 @@ fn main() -> anyhow::Result<()> {
         }
 
         let mut resumed = StructuredCapture::open(harness, agent).await?;
-        let cursor = resumed.wait_ready().await?;
+        let (cursor, ready) = resumed
+            .wait(
+                0,
+                READY_TIMEOUT,
+                "resumed amux.codex_ready",
+                Matcher::Type("amux.codex_ready"),
+            )
+            .await?;
+        if ready.json.get("resumed").and_then(Value::as_bool) != Some(true) {
+            bail!("post-restart ready row did not carry resumed=true");
+        }
         let rows_before_history_prompt = resumed.rows().len();
         let (_, second_completed) = prompt_to_completion(
             &mut resumed,
@@ -440,7 +450,7 @@ fn main() -> anyhow::Result<()> {
         Ok(json!({
             "thread_id": thread_before,
             "observed": {"structured_rows_before_history_prompt": rows_before_history_prompt, "prior_feed_replayed": false},
-            "assertions": {"fresh_ready": true, "history_token": token, "same_agent": true, "same_thread": true}
+            "assertions": {"resumed_ready": true, "history_token": token, "same_agent": true, "same_thread": true}
         }))
     }
 

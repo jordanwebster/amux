@@ -333,6 +333,14 @@ fn codex_empty_new_session_both_themes() {
     assert_surface("empty", &model(vec![ready()]));
 }
 
+#[test]
+fn codex_resumed_both_themes() {
+    assert_surface(
+        "resumed",
+        &model(vec![json!({"type":"amux.codex_ready","resumed":true})]),
+    );
+}
+
 fn press(
     model: &Model,
     chat: &mut ChatView,

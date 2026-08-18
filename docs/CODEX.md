@@ -131,7 +131,7 @@ protocol change.
 
 | row | means |
 |---|---|
-| `amux.codex_ready` | the session is connected and its stream is authoritative |
+| `amux.codex_ready{resumed?:true}` | the session is connected and its stream is authoritative; `resumed:true` marks only the first successful attachment from an initially persisted thread id |
 | `amux.codex_gap{reason}` | continuity was lost; what follows is not contiguous |
 | `amux.codex_reconnect_error{error}` | a recovery attempt failed |
 | `amux.codex_approval_required{request_id, availableDecisions}` | an approval is outstanding — `availableDecisions` is wire-verbatim |
@@ -143,6 +143,10 @@ protocol change.
 `queue_overflow`, `event_stream_error`, `session_stopped`. An approval
 that vanishes because another client answered it is a different fact
 from one that vanished because the connection died, and the UI says so.
+
+Bare `amux.codex_ready` remains the shape for fresh attachment and later
+same-process reconnects. `resumed:true` does not report a gap: earlier feed
+rows are not re-rendered, while the persisted Codex thread keeps its context.
 
 **Unrecognized rows render honestly as unrecognized.** They are never
 dropped and never guessed at. Upstream drift is data: a new
@@ -319,11 +323,6 @@ upstream replay. Structured attachment retention is unaffected.
 
 ## Known gaps
 
-- **Post-resume feed.** After suspend→resume the structured feed is
-  empty with no truncation or reset marker, though the thread retains
-  full context (a resumed agent recalls tokens from before the restart).
-  Continuity lives in the codex thread, not in replayed amux rows. C.5
-  asserts it by *content*, not by row count.
 - **Startup noise.** `mcpServer/startupStatus/updated` rows are the
   entire first screen of a new codex chat, rendered as unrecognized. A
   suppression-or-typing policy is undecided.

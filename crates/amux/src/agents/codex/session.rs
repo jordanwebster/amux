@@ -752,6 +752,7 @@ async fn run_ingest_supervisor(
     mut thread_id: Option<String>,
     mut stop_rx: watch::Receiver<bool>,
 ) {
+    let mut initial_persisted_resume_pending = thread_id.is_some();
     let mut retry = 0_usize;
     let mut ambiguous_started_thread_id = None;
     // Capture-rig fault injection: close only this SDK transport once. The
@@ -858,7 +859,9 @@ async fn run_ingest_supervisor(
             });
         }
         schedule_name_reconciliation(agent_id, &runtime, stop_rx.clone());
-        log_source.write(json!({"type": "amux.codex_ready"})).await;
+        let resumed =
+            take_initial_resumed_marker(&mut initial_persisted_resume_pending, provenance);
+        log_source.write(ready_row(resumed)).await;
         if capture_drop_connection {
             capture_drop_connection = false;
             connection.client.clone().close().await;
@@ -896,6 +899,23 @@ async fn run_ingest_supervisor(
 enum AttachmentProvenance {
     Started,
     Resumed,
+}
+
+fn take_initial_resumed_marker(
+    initial_persisted_resume_pending: &mut bool,
+    provenance: AttachmentProvenance,
+) -> bool {
+    let resumed = *initial_persisted_resume_pending && provenance == AttachmentProvenance::Resumed;
+    *initial_persisted_resume_pending = false;
+    resumed
+}
+
+fn ready_row(resumed: bool) -> Value {
+    if resumed {
+        json!({"type": "amux.codex_ready", "resumed": true})
+    } else {
+        json!({"type": "amux.codex_ready"})
+    }
 }
 
 struct MaterializedStart {
@@ -1708,6 +1728,48 @@ mod tests {
 
     type MockReader = BufReader<ReadHalf<DuplexStream>>;
     type MockWriter = WriteHalf<DuplexStream>;
+
+    #[test]
+    fn ready_rows_preserve_the_frozen_method_and_optional_resumed_fact() {
+        assert_eq!(ready_row(false), json!({"type": "amux.codex_ready"}));
+        assert_eq!(
+            ready_row(true),
+            json!({"type": "amux.codex_ready", "resumed": true})
+        );
+    }
+
+    #[test]
+    fn initial_persisted_resume_marker_is_one_shot_and_not_inferred() {
+        let mut initial_persisted = true;
+        assert!(take_initial_resumed_marker(
+            &mut initial_persisted,
+            AttachmentProvenance::Resumed
+        ));
+        assert!(!take_initial_resumed_marker(
+            &mut initial_persisted,
+            AttachmentProvenance::Resumed
+        ));
+
+        let mut fresh = false;
+        assert!(!take_initial_resumed_marker(
+            &mut fresh,
+            AttachmentProvenance::Started
+        ));
+        assert!(!take_initial_resumed_marker(
+            &mut fresh,
+            AttachmentProvenance::Resumed
+        ));
+
+        let mut missing_persisted_thread = true;
+        assert!(!take_initial_resumed_marker(
+            &mut missing_persisted_thread,
+            AttachmentProvenance::Started
+        ));
+        assert!(!take_initial_resumed_marker(
+            &mut missing_persisted_thread,
+            AttachmentProvenance::Resumed
+        ));
+    }
 
     async fn mock_codex() -> (Codex, MockReader, MockWriter) {
         let (client_side, server_side) = duplex(32 * 1024);

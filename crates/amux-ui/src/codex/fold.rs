@@ -27,7 +27,7 @@ pub(super) fn observe(layer: &mut CodexLayer, seq: u64, _arrived: DateTime<Utc>,
 
     match method {
         // Six frozen synthesized rows.
-        "amux.codex_ready" => fold_ready(layer, seq),
+        "amux.codex_ready" => fold_ready(layer, seq, row),
         "amux.codex_gap" => fold_gap(layer, seq, row),
         "amux.codex_reconnect_error" => fold_reconnect_error(layer, seq, row),
         "amux.codex_approval_required" => fold_approval_required(layer, seq, row),
@@ -208,7 +208,8 @@ fn fold_mcp_startup(layer: &mut CodexLayer, seq: u64, row: &Value) {
     );
 }
 
-fn fold_ready(layer: &mut CodexLayer, seq: u64) {
+fn fold_ready(layer: &mut CodexLayer, seq: u64, row: &Value) {
+    let resumed = row.get("resumed").and_then(Value::as_bool) == Some(true);
     let repeated = layer.ready_count > 0;
     layer.ready_count += 1;
     layer.stale = false;
@@ -216,7 +217,9 @@ fn fold_ready(layer: &mut CodexLayer, seq: u64) {
     layer.read_only = false;
     layer.thread_closed = false;
     layer.accumulators = Accumulators::default();
-    if repeated {
+    if resumed {
+        push(layer, seq, FeedEntryKind::Boundary(BoundaryEntry::Resumed));
+    } else if repeated {
         push(layer, seq, FeedEntryKind::Boundary(BoundaryEntry::Ready));
     }
 }
