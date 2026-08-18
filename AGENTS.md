@@ -14,11 +14,11 @@ broken freely. Simplify decisions accordingly.
 - This file holds rules about how agents operate. Documentation about the
   source belongs in `docs/` and component READMEs, not here.
 
-## Packet Review
+## Handoff
 
-Machinery: `/Users/jlw/source/packet-review` (authoritative rules in its `docs/SPEC.md`).
+Machinery: `/Users/jlw/source/handoff` (authoritative rules in its `docs/SPEC.md`).
 
-Repo config: `.packet-review.toml`
+Repo config: `.handoff.toml`
 
 These are standing agent obligations. This AGENTS.md section instructs the task
 agent; the packet verifier and audit independently attack the resulting claims

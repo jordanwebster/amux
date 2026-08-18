@@ -1,11 +1,11 @@
-# See templates/packet-review.toml in the machinery repo for all keys.
+# See templates/handoff.toml in the machinery repo for all keys.
 
 [backend]
 provider = "linear"
 
 [repository]
 name = "amux"
-known = ["amux", "amuxcloud", "packet-review"]
+known = ["amux", "amuxcloud", "handoff"]
 theory_homes = ["crates/amux/tests/spec/", "docs/"]
 
 [contracts]
