@@ -6,9 +6,10 @@
 //! row is quiet, an initial persisted resume is explicit, and later bare ready
 //! rows are visible re-syncs.
 
+use amux_ui::Attention;
 use amux_ui::codex::{
     BoundaryEntry, CodexPhase, FeedEntryKind, ItemFinality, McpStartupStatus, MessagePhase,
-    TurnStatus, WorkKind, WorkOutcome, WorkState,
+    SendGate, TurnStatus, WorkKind, WorkOutcome, WorkState,
 };
 use serde_json::json;
 
@@ -221,6 +222,36 @@ fn reasoning_plans_files_tools_usage_compaction_errors_and_unknowns_are_visible(
             |e| matches!(&e.kind, FeedEntryKind::Unrecognized(u) if u.method == "future/method")
         )
     );
+}
+
+#[test]
+fn a_patch_update_alone_marks_the_file_item_as_active_work() {
+    let model = feed(vec![
+        json!({"type":"amux.codex_ready"}),
+        json!({"type":"turn/started","turn":{"id":"t","status":"inProgress"}}),
+        json!({"type":"item/fileChange/patchUpdated","itemId":"file-1","changes":[
+            {"path":"/work/a.rs","kind":{"type":"modify"},"diff":"+x"}
+        ]}),
+    ]);
+
+    assert_eq!(
+        amux_ui::codex::phase(&model, agent_id(AGENT)),
+        CodexPhase::Executing {
+            item_id: "file-1".to_string(),
+        },
+        "patchUpdated is an open work row even before an outputDelta arrives"
+    );
+    assert_eq!(
+        model.agent(agent_id(AGENT)).unwrap().attention,
+        Attention::Working,
+        "the active-work detail does not change attention"
+    );
+    assert_eq!(
+        amux_ui::codex::send_gate(&model, agent_id(AGENT)),
+        SendGate::ActiveTurn,
+        "the active-work detail does not change write permission"
+    );
+    assert!(model.check_invariants().is_empty());
 }
 
 #[test]

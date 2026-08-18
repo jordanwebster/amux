@@ -67,8 +67,9 @@ fn raw_and_synthesized_rows_form_one_answerable_obligation() {
     let layer = codex_layer(&model, AGENT);
     let ask = layer.ask_head().expect("ask");
     assert_eq!(ask.request_id, json!(7), "integer ids remain opaque JSON");
-    assert_eq!(ask.available_decisions.as_array().unwrap().len(), 3);
     assert_eq!(ask.actions.len(), 3);
+    assert_eq!(ask.actions[0].wire, json!("accept"));
+    assert_eq!(ask.actions[2].wire, json!("cancel"));
     assert!(ask.actions[0].decision.is_some());
     assert!(
         ask.actions[1].decision.is_none(),
@@ -105,7 +106,7 @@ fn an_approval_without_immediately_preceding_context_is_not_rendered_as_an_ask()
 }
 
 #[test]
-fn dynamic_tool_calls_supply_the_backends_binary_actions_without_rewriting_wire_data() {
+fn dynamic_tool_calls_supply_the_backends_binary_actions() {
     let model = model(vec![
         json!({"type":"amux.codex_ready"}),
         json!({"type":"turn/started","turn":{"id":"t","status":"inProgress"}}),
@@ -115,11 +116,6 @@ fn dynamic_tool_calls_supply_the_backends_binary_actions_without_rewriting_wire_
             "availableDecisions":null}),
     ]);
     let ask = codex_layer(&model, AGENT).ask_head().expect("dynamic ask");
-    assert_eq!(
-        ask.available_decisions,
-        Value::Null,
-        "the upstream wire value remains verbatim"
-    );
     assert_eq!(
         ask.actions
             .iter()

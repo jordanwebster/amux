@@ -802,7 +802,7 @@ fn fold_file_patch(layer: &mut CodexLayer, seq: u64, row: &Value) {
         patch_truncated,
     };
     entry.state = WorkState::Running;
-    upsert_item(layer, seq, item_id, FeedEntryKind::Work(entry));
+    upsert_work(layer, seq, item_id, entry, ItemFinality::Open);
 }
 
 fn fold_plan_delta(layer: &mut CodexLayer, seq: u64, row: &Value) {
@@ -1039,7 +1039,6 @@ fn fold_approval_required(layer: &mut CodexLayer, seq: u64, row: &Value) {
         seq,
         request_id: request_id.clone(),
         context: context.clone(),
-        available_decisions: available,
         actions,
     });
     if layer.asks.len() > ASKS_RETAINED {
@@ -1190,7 +1189,6 @@ fn token_usage(row: &Value) -> TokenUsage {
     let usage = row.pointer("/tokenUsage/total").unwrap_or(&Value::Null);
     TokenUsage {
         input_tokens: usage.get("inputTokens").and_then(Value::as_u64),
-        cached_input_tokens: usage.get("cachedInputTokens").and_then(Value::as_u64),
         output_tokens: usage.get("outputTokens").and_then(Value::as_u64),
         reasoning_output_tokens: usage.get("reasoningOutputTokens").and_then(Value::as_u64),
         total_tokens: usage.get("totalTokens").and_then(Value::as_u64),
@@ -1327,7 +1325,6 @@ fn file_changes(value: Option<&Value>) -> Vec<FileChange> {
                 .and_then(Value::as_str)
                 .map(str::to_owned)
                 .or_else(|| string(change, "status")),
-            diff: string(change, "diff"),
         })
         .collect()
 }
@@ -1521,7 +1518,6 @@ mod tests {
                     proposed_execpolicy_amendment: None,
                     proposed_network_policy_amendments: Vec::new(),
                 },
-                available_decisions: json!(["accept"]),
                 actions: vec![AskAction {
                     wire: json!("accept"),
                     decision: Some(CodexDecision::Accept),

@@ -156,7 +156,6 @@ pub struct PromptEntry {
     pub source: PromptSource,
     /// Groups the turn's rows; Phase 3's optimistic-echo reconciliation key.
     pub prompt_id: Option<String>,
-    pub at: Option<DateTime<Utc>>,
 }
 
 /// How the prompt reached the session, from the row's own discriminators
@@ -187,8 +186,6 @@ pub struct MessageEntry {
     /// Markdown source segments, one per `text` block, in file order.
     pub segments: Vec<String>,
     pub finality: MessageFinality,
-    /// Timestamp of the first block row.
-    pub at: Option<DateTime<Utc>>,
 }
 
 /// "Streaming" is not a state (B2): a message is Open only until a closing
@@ -437,7 +434,6 @@ pub struct SessionFacts {
 pub struct AcceptedPlan {
     pub tool_use_id: String,
     pub plan: String,
-    pub plan_file_path: Option<String>,
 }
 
 /// An agent-initiated blocking request (`docs/CHAT.md` §Asks) — the
@@ -555,8 +551,9 @@ pub struct PromptEcho {
     pub op: OpId,
     /// The normalized prompt text — the reconciliation key.
     pub text: String,
-    /// The Model's observed time at dispatch (`Model::now`), the display
-    /// base; `None` before any Tick.
+    /// The Model's observed time at dispatch (`Model::now`). This is active
+    /// staleness evidence: a fresh optimistic send outranks an old transcript
+    /// arrival, while an unresolved send can still age to `Unknown`.
     pub at: Option<DateTime<Utc>>,
 }
 

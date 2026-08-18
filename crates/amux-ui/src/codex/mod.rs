@@ -270,7 +270,6 @@ pub enum WorkKind {
 pub struct FileChange {
     pub path: String,
     pub status: Option<String>,
-    pub diff: Option<String>,
 }
 
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
@@ -318,7 +317,6 @@ pub enum TurnStatus {
 #[derive(Clone, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
 pub struct TokenUsage {
     pub input_tokens: Option<u64>,
-    pub cached_input_tokens: Option<u64>,
     pub output_tokens: Option<u64>,
     pub reasoning_output_tokens: Option<u64>,
     pub total_tokens: Option<u64>,
@@ -361,8 +359,6 @@ pub struct Ask {
     pub seq: u64,
     pub request_id: Value,
     pub context: AskContext,
-    /// Exact wire value from `amux.codex_approval_required`.
-    pub available_decisions: Value,
     /// Choices interpreted for V1. Usually these mirror the wire value;
     /// dynamic tool calls are the explicit exception because upstream sends
     /// `null` while the backend accepts the layer-supplied binary decisions.
@@ -1333,7 +1329,6 @@ mod tests {
                     proposed_execpolicy_amendment: None,
                     proposed_network_policy_amendments: Vec::new(),
                 },
-                available_decisions: json!([]),
                 actions: Vec::new(),
             });
             layer.inputs.push_back(InFlightInput {

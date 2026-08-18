@@ -531,7 +531,6 @@ fn fold_user_text(layer: &mut ClaudeLayer, seq: u64, row: &Value, text: &str) {
             text: text.to_string(),
             source,
             prompt_id: string_of(row, "promptId"),
-            at,
         }),
     );
     if turn_start {
@@ -863,7 +862,6 @@ fn retain_plan(layer: &mut ClaudeLayer, tool_use_id: &str, row: &Value) {
     layer.plans.push(AcceptedPlan {
         tool_use_id: tool_use_id.to_string(),
         plan,
-        plan_file_path: sidecar.and_then(|sidecar| string_of(sidecar, "filePath")),
     });
     if layer.plans.len() > PLANS_RETAINED {
         layer.plans.remove(0);
@@ -945,7 +943,7 @@ fn fold_assistant(layer: &mut ClaudeLayer, seq: u64, row: &Value) {
         match str_of(block, "type") {
             Some("text") => {
                 let text = str_of(block, "text").unwrap_or_default().to_string();
-                append_message_text(layer, seq, &message_id, text, at);
+                append_message_text(layer, seq, &message_id, text);
             }
             kind @ (Some("thinking") | Some("redacted_thinking")) => {
                 let redacted = kind == Some("redacted_thinking");
@@ -1000,13 +998,7 @@ fn fold_assistant(layer: &mut ClaudeLayer, seq: u64, row: &Value) {
     touch_row_chain(layer, row);
 }
 
-fn append_message_text(
-    layer: &mut ClaudeLayer,
-    seq: u64,
-    message_id: &str,
-    text: String,
-    at: Option<DateTime<Utc>>,
-) {
+fn append_message_text(layer: &mut ClaudeLayer, seq: u64, message_id: &str, text: String) {
     let existing = layer
         .messages
         .iter()
@@ -1025,7 +1017,6 @@ fn append_message_text(
             message_id: message_id.to_string(),
             segments: vec![text],
             finality: MessageFinality::Open,
-            at,
         }),
     );
     if let Some(slot) = layer.messages.iter_mut().find(|slot| slot.id == message_id) {
