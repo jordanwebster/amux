@@ -26,6 +26,22 @@ fn parses_make_prerequisites_including_continuations_and_non_rust_inputs() {
 }
 
 #[test]
+fn parses_windows_drive_paths_without_treating_separators_as_make_escapes() {
+    let depfile = concat!(
+        "C:\\target\\debug\\amux.exe: C:\\work\\src\\main.rs ",
+        "C:\\work\\plugin\\ files\\plugin.json\r\n"
+    );
+    let prerequisites = parse_depfile_prerequisites(depfile).unwrap();
+    assert_eq!(
+        prerequisites,
+        [
+            Path::new(r"C:\work\src\main.rs"),
+            Path::new(r"C:\work\plugin files\plugin.json"),
+        ]
+    );
+}
+
+#[test]
 fn rejects_when_a_real_depfile_dependency_is_newer_than_the_binary() {
     let temp = tempfile::tempdir().unwrap();
     let binary = temp.path().join("amux");

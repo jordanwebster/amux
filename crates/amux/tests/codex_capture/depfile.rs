@@ -45,18 +45,12 @@ pub(crate) fn assert_binary_is_current_from_depfile(amux: &Path, depfile: &Path)
 }
 
 pub(crate) fn parse_depfile_prerequisites(contents: &str) -> Result<Vec<PathBuf>> {
-    let mut continued = String::with_capacity(contents.len());
-    let mut chars = contents.chars().peekable();
-    while let Some(character) = chars.next() {
-        if character == '\\' && chars.peek() == Some(&'\n') {
-            chars.next();
-            continued.push(' ');
-        } else {
-            continued.push(character);
-        }
-    }
+    let continued = contents.replace("\\\r\n", " ").replace("\\\n", " ");
     let Some(colon) = continued.char_indices().find_map(|(index, character)| {
-        (character == ':' && !is_escaped(&continued, index)).then_some(index)
+        (character == ':'
+            && !is_escaped(&continued, index)
+            && !is_windows_drive_colon(&continued, index))
+        .then_some(index)
     }) else {
         bail!("invalid amux depfile: expected `<target>: <prerequisites>`");
     };
@@ -65,6 +59,15 @@ pub(crate) fn parse_depfile_prerequisites(contents: &str) -> Result<Vec<PathBuf>
         bail!("invalid amux depfile: rule has no prerequisites");
     }
     Ok(dependencies.into_iter().map(PathBuf::from).collect())
+}
+
+fn is_windows_drive_colon(value: &str, byte_index: usize) -> bool {
+    byte_index == 1
+        && value.as_bytes()[0].is_ascii_alphabetic()
+        && value
+            .as_bytes()
+            .get(byte_index + 1)
+            .is_some_and(|byte| matches!(byte, b'\\' | b'/'))
 }
 
 fn is_escaped(value: &str, byte_index: usize) -> bool {
@@ -80,13 +83,15 @@ fn is_escaped(value: &str, byte_index: usize) -> bool {
 fn parse_make_words(value: &str) -> Vec<String> {
     let mut words = Vec::new();
     let mut word = String::new();
-    let mut escaped = false;
-    for character in value.chars() {
-        if escaped {
-            word.push(character);
-            escaped = false;
-        } else if character == '\\' {
-            escaped = true;
+    let mut characters = value.chars().peekable();
+    while let Some(character) = characters.next() {
+        if character == '\\' {
+            match characters.peek().copied() {
+                Some(next) if next.is_whitespace() || matches!(next, '\\' | '#' | ':' | '$') => {
+                    word.push(characters.next().expect("peeked make escape"));
+                }
+                _ => word.push('\\'),
+            }
         } else if character.is_whitespace() {
             if !word.is_empty() {
                 words.push(std::mem::take(&mut word));
@@ -94,9 +99,6 @@ fn parse_make_words(value: &str) -> Vec<String> {
         } else {
             word.push(character);
         }
-    }
-    if escaped {
-        word.push('\\');
     }
     if !word.is_empty() {
         words.push(word);
