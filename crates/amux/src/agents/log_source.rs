@@ -1,10 +1,11 @@
 //! Agent-agnostic sequenced sink for structured log entries.
 
-use serde_json::Value;
 use std::fs::File;
 use std::io::Write as _;
 use std::path::Path;
 use std::sync::{Arc, Mutex};
+
+use serde_json::Value;
 
 use crate::agents::{MultiplexStructuredBuffer, MultiplexStructuredReader, SequencedReplayQuery};
 

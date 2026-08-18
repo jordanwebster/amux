@@ -22,10 +22,9 @@ pub mod encoding;
 mod fold;
 pub(crate) mod update;
 
-pub use artifact::{AskArtifact, DiffArtifact, DiffHunk, DiffMagnitude, DiffNumbering};
-
 use std::collections::{BTreeSet, VecDeque};
 
+pub use artifact::{AskArtifact, DiffArtifact, DiffHunk, DiffMagnitude, DiffNumbering};
 use chrono::{DateTime, TimeDelta, Utc};
 use serde::{Deserialize, Serialize};
 use uuid::Uuid;

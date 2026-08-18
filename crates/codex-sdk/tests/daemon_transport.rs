@@ -3,7 +3,8 @@
 use codex_sdk::{CodexConfig, ListThreadsParams, connect_socket};
 use futures_util::{SinkExt, StreamExt};
 use tokio::net::UnixListener;
-use tokio_tungstenite::{accept_async, tungstenite::Message};
+use tokio_tungstenite::accept_async;
+use tokio_tungstenite::tungstenite::Message;
 
 #[tokio::test]
 async fn websocket_over_uds_uses_one_json_message_per_text_frame() {

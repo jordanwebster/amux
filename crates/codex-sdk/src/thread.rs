@@ -195,8 +195,7 @@ mod tests {
 
     use super::*;
     use crate::config::{ApprovalPolicy, ApprovalsReviewer, ReadOnlyAccess, SandboxPolicy};
-    use crate::notification::ServerNotification;
-    use crate::notification::TurnEvent;
+    use crate::notification::{ServerNotification, TurnEvent};
     use crate::types::{ThreadSessionInfo, ThreadStatus};
 
     fn test_server() -> Arc<ServerInner> {

@@ -267,7 +267,7 @@ fn fixture_dir() -> PathBuf {
 }
 
 fn semantics_markdown() -> &'static str {
-    include_str!("../../../../notes/chat-v1/transcript-semantics.md")
+    include_str!("../../../../docs/CLAUDE_TRANSCRIPT.md")
 }
 
 fn run_tooling(args: &[String]) -> Result<()> {

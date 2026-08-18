@@ -289,11 +289,11 @@ fn paused_rule(
     left.push_str(" · pgdn resume ");
     let total = feed_line_count(model, chat.agent, width);
     let max_top = total.saturating_sub(feed_h);
-    let percent = if max_top == 0 {
-        100
-    } else {
-        top_line.min(max_top) * 100 / max_top
-    };
+    let percent = top_line
+        .min(max_top)
+        .saturating_mul(100)
+        .checked_div(max_top)
+        .unwrap_or(100);
     let right = format!(" {percent}% ────");
     let fill = width
         .saturating_sub(2)

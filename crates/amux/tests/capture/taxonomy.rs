@@ -1,7 +1,7 @@
 //! Claude transcript taxonomy snapshots and version-drift reporting.
 //!
 //! Drift is evidence, not a test failure. The expected category inventory is
-//! read from `notes/chat-v1/transcript-semantics.md`; the committed redacted
+//! read from `docs/CLAUDE_TRANSCRIPT.md`; the committed redacted
 //! fixtures provide the last-observed structural key sets. A live run can add,
 //! remove, or reshape categories without making the H suite red. The report is
 //! the input to the spec-first drift protocol.

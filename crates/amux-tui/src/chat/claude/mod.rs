@@ -21,17 +21,15 @@ mod panel;
 mod reader;
 mod render;
 
-pub(crate) use keys::{handle_chat_key, handle_chat_paste};
-pub(crate) use render::build_chat_lines;
-
 use amux_ui::claude::{Ask, AskState, ChatPhase};
 use amux_ui::{AgentId, Attention, Command, Model, OpId, OpOutcome};
+use ask_ui::AskUi;
+pub(crate) use keys::{handle_chat_key, handle_chat_paste};
+use reader::{ReaderSource, ReaderView};
+pub(crate) use render::build_chat_lines;
 
 use crate::chat::FeedScroll;
 use crate::composer::Composer;
-use ask_ui::AskUi;
-use reader::{ReaderSource, ReaderView};
-
 use crate::view::QuitGuard;
 
 /// A dispatched prompt send being watched for its outcome (C5): the

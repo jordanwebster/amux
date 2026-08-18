@@ -19,6 +19,7 @@ Commands:
   ui      Open the fleet TUI (the default when run with no command)
   new     Create a new agent session
   attach  Attach to an existing agent session
+  rm      Remove an agent session by exact name or UUID
   list    List all running agent sessions
   server  Manage the amux server lifecycle
   init    Initialize amux (cloud mode, authentication)

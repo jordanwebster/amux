@@ -9,12 +9,12 @@ use tokio::io::{AsyncBufReadExt, AsyncWriteExt, BufReader};
 use tokio::net::UnixStream;
 use tokio::process::Child;
 use tokio::time::{sleep, timeout};
-use tokio_tungstenite::{WebSocketStream, client_async, tungstenite::Message};
+use tokio_tungstenite::tungstenite::Message;
+use tokio_tungstenite::{WebSocketStream, client_async};
 use tokio_util::sync::CancellationToken;
 
 use crate::error::Error;
-use crate::transport;
-use crate::{Codex, CodexConfig};
+use crate::{Codex, CodexConfig, transport};
 
 const SOCKET_RELATIVE_PATH: &str = "app-server-control/app-server-control.sock";
 const MAX_SOCKET_PATH_BYTES: usize = 103;

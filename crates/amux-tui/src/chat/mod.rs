@@ -6,10 +6,9 @@ pub(crate) mod claude;
 mod codex;
 mod layout;
 
-pub use claude::diff;
-
 use amux_ui::{AgentId, Command, Model, OpId, StructuredProtocol};
 use chrono::{DateTime, Utc};
+pub use claude::diff;
 use crossterm::event::KeyEvent;
 use ratatui::text::Line;
 

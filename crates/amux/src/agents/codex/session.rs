@@ -1693,8 +1693,6 @@ impl AgentBackend for CodexSession {
 
 #[cfg(test)]
 mod tests {
-    use super::*;
-    use crate::agents::AgentType;
     use futures_util::{SinkExt, StreamExt};
     use replay_support::{
         ReplayAdvance, ReplayOptions, load_script, replay_transport_with_controller,
@@ -1703,7 +1701,11 @@ mod tests {
         AsyncBufReadExt, AsyncWriteExt, BufReader, DuplexStream, ReadHalf, WriteHalf, duplex, split,
     };
     use tokio::net::UnixListener;
-    use tokio_tungstenite::{accept_async, tungstenite::Message};
+    use tokio_tungstenite::accept_async;
+    use tokio_tungstenite::tungstenite::Message;
+
+    use super::*;
+    use crate::agents::AgentType;
 
     fn session() -> CodexSession {
         let req = CreateAgentRequest {

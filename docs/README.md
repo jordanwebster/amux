@@ -16,6 +16,8 @@ subject; when two overlap, the owner named here wins.
 - `CODEX.md` — the OpenAI Codex integration: process ownership, the two
   planes a codex agent exposes, the structured row vocabulary, and the
   client-side layer that folds it.
+- `CLAUDE_TRANSCRIPT.md` — the grounded Claude Code transcript taxonomy
+  consumed by the capture drift tooling and its committed fixtures.
 - `../crates/amux/tests/spec/` — the executable spec. The suite reads as
   documentation and locks the protocol's guarantees; run it with
   `timeout 600 cargo test -p amux --features testnet --test spec`.

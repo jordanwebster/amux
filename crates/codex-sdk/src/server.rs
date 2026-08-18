@@ -1,6 +1,5 @@
-use std::sync::Arc;
-use std::sync::OnceLock;
 use std::sync::atomic::AtomicU64;
+use std::sync::{Arc, OnceLock};
 
 use tokio::io::{AsyncBufRead, AsyncWrite};
 use tokio::sync::{Mutex, mpsc};

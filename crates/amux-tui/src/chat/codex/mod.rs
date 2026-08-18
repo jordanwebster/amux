@@ -4,11 +4,10 @@
 mod keys;
 mod render;
 
-pub(crate) use keys::{handle_chat_key, handle_chat_paste};
-pub(crate) use render::build_chat_lines;
-
 use amux_ui::codex::{CodexCommand, CodexPhase};
 use amux_ui::{AgentId, Command, Model, OpId, OpOutcome};
+pub(crate) use keys::{handle_chat_key, handle_chat_paste};
+pub(crate) use render::build_chat_lines;
 use serde_json::Value;
 
 use crate::chat::FeedScroll;

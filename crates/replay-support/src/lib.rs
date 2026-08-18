@@ -1,11 +1,11 @@
 pub mod transport;
 
+use std::path::Path;
+
 pub use transport::{
     ReplayAdvance, ReplayClock, ReplayController, ReplayOptions, ReplayPeek, ReplayTiming,
     replay_transport, replay_transport_with_controller, replay_transport_with_options,
 };
-
-use std::path::Path;
 
 /// A single IO event from a recorded session.
 #[derive(Debug, Clone, PartialEq, Eq)]

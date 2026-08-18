@@ -33,8 +33,7 @@ use super::{
     AgentRecord, ExternalHookBootstrap, HookError, HookOutcome, LocalAgentNameSource, PtyHandle,
     SessionEvent, StopPolicy, StructuredLogSource,
 };
-use crate::agents::terminal_io;
-use crate::agents::{AgentType, CreateAgentRequest};
+use crate::agents::{AgentType, CreateAgentRequest, terminal_io};
 use crate::protocol::ProtocolError;
 use crate::suspend::SuspendedAgent;
 

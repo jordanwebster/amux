@@ -139,7 +139,7 @@ fn relative_capture_paths_resolve_from_the_workspace() {
 
 #[test]
 fn markdown_inventory_routes_row_and_nested_taxonomies() {
-    let markdown = include_str!("../../../notes/chat-v1/transcript-semantics.md");
+    let markdown = include_str!("../../../docs/CLAUDE_TRANSCRIPT.md");
     let categories = taxonomy::markdown_categories(markdown);
     for expected in [
         "row/assistant",

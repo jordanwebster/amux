@@ -35,13 +35,13 @@ fn main() {
 
 #[cfg(unix)]
 fn main() -> anyhow::Result<()> {
-    use codex_capture::{harness, redact, structure};
     use std::path::{Path, PathBuf};
     use std::process::Command;
     use std::time::{Duration, Instant};
 
     use amux::codex_io::CodexSdkV1Input;
     use anyhow::{Context, Result, anyhow, bail};
+    use codex_capture::{harness, redact, structure};
     use harness::{
         Harness, RAW_TIMEOUT, READY_TIMEOUT, StructuredCapture, TURN_TIMEOUT,
         app_server_process_group, drain_raw, raw_until, subscribe_raw, terminate_process_group,

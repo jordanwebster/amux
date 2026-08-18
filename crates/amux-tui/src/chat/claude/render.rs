@@ -18,8 +18,7 @@ use ratatui::style::Style;
 use ratatui::text::{Line, Span};
 
 use crate::chat::FeedScroll;
-use crate::chat::claude::ask_ui;
-use crate::chat::claude::{View, entry_watermark, panel, reader};
+use crate::chat::claude::{View, ask_ui, entry_watermark, panel, reader};
 use crate::chat::layout::{ChatLayout, bottom_max_rows};
 use crate::composer::Composer;
 use crate::markdown;
@@ -531,11 +530,11 @@ fn paused_rule(
     left.push_str(" · pgdn to resume ");
     let total = feed_line_count(model, chat, width);
     let max_top = total.saturating_sub(feed_h);
-    let percent = if max_top == 0 {
-        100
-    } else {
-        top_line.min(max_top) * 100 / max_top
-    };
+    let percent = top_line
+        .min(max_top)
+        .saturating_mul(100)
+        .checked_div(max_top)
+        .unwrap_or(100);
     let right = format!(" {percent}% ────");
     let interior = width.saturating_sub(2);
     let fill = interior.saturating_sub(left.chars().count() + right.chars().count());

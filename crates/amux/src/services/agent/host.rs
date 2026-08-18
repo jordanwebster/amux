@@ -557,9 +557,10 @@ fn agent_event_sort_key(event: &AgentEvent) -> (String, u128) {
 
 #[cfg(all(test, unix))]
 mod socket_tests {
-    use super::*;
     use std::os::unix::ffi::OsStrExt;
     use std::os::unix::fs::PermissionsExt;
+
+    use super::*;
 
     #[test]
     fn private_codex_socket_follows_configured_server_socket_dir() {

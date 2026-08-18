@@ -4,7 +4,9 @@ Redacted, provenance-stamped captures of the `claude_pty_transcript_v1`
 structured stream, produced by the Phase 0 capture harness
 (`crates/amux/tests/capture/`) driving a **real** `claude` through a real,
 isolated amux daemon. These are the seed of the CHAT.md §H suite and the
-Tier-1 input for Phase 1's Claude-layer fold.
+Tier-1 input for Phase 1's Claude-layer fold. The tracked
+[transcript semantics](../../../../../docs/CLAUDE_TRANSCRIPT.md) document is
+the taxonomy authority consumed by the capture tooling.
 
 ## What each scenario is
 

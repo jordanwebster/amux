@@ -1,7 +1,7 @@
-use std::sync::Arc;
-use std::sync::Mutex as StdMutex;
+use std::fs::File;
+use std::io::Write as _;
+use std::sync::{Arc, Mutex as StdMutex};
 use std::time::Instant;
-use std::{fs::File, io::Write as _};
 
 use anyhow::{Context, Result};
 use serde::{Deserialize, Serialize};
@@ -323,9 +323,10 @@ pub(crate) fn configure_process_group(command: &mut tokio::process::Command) {
 pub(crate) async fn terminate_child_group(child: &mut Child) {
     #[cfg(unix)]
     {
+        use std::time::Duration;
+
         use nix::sys::signal::{Signal, killpg};
         use nix::unistd::Pid;
-        use std::time::Duration;
 
         if let Some(id) = child.id() {
             let group = Pid::from_raw(id as i32);
