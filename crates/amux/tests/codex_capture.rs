@@ -37,6 +37,7 @@ fn main() {
 fn main() -> anyhow::Result<()> {
     use std::path::{Path, PathBuf};
     use std::process::Command;
+    use std::collections::HashMap;
     use std::time::{Duration, Instant};
 
     use amux::codex_io::CodexSdkV1Input;
@@ -47,6 +48,8 @@ fn main() -> anyhow::Result<()> {
         app_server_process_group, drain_raw, raw_until, subscribe_raw, terminate_process_group,
     };
     use serde_json::{Value, json};
+    use codex_sdk::{CodexConfig, ThreadConfig, DynamicToolCallResponse, connect};
+    use codex_sdk::notification::TurnEvent;
     use structure::Matcher;
 
     #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -61,6 +64,7 @@ fn main() -> anyhow::Result<()> {
         RawFanout,
         RawUnnamed,
         UnnamedReconnect,
+        DynamicTools,
     }
 
     #[derive(Clone, Copy)]
@@ -140,6 +144,12 @@ fn main() -> anyhow::Result<()> {
             "C.10 zero-turn unnamed suspend/resume",
             300,
             Scenario::UnnamedReconnect,
+        ),
+        scenario(
+            "c11_dynamic_tools",
+            "C.11 dynamic tools under experimental API",
+            360,
+            Scenario::DynamicTools,
         ),
     ];
 
@@ -238,6 +248,90 @@ fn main() -> anyhow::Result<()> {
         Ok(json!({
             "assertions": {"ready": true, "agent_text": "C1_PONG", "turn_status": "completed"},
             "thread_id": thread,
+        }))
+    }
+
+    async fn dynamic_tools(harness: &mut Harness, model: &str) -> Result<Value> {
+        let mut env = HashMap::new();
+        env.insert(
+            "CODEX_HOME".to_string(),
+            harness.scratch.codex_home.display().to_string(),
+        );
+        let mut extra = HashMap::new();
+        extra.insert(
+            "dynamicTools".to_string(),
+            json!([{
+                "name": "send",
+                "description": "Send a short message to another agent.",
+                "inputSchema": {
+                    "type": "object",
+                    "properties": {
+                        "to": {"type": "string"},
+                        "text": {"type": "string"}
+                    },
+                    "required": ["to", "text"]
+                }
+            }]),
+        );
+        let codex = connect(CodexConfig {
+            cwd: Some(harness.scratch.project.clone()),
+            env: Some(env),
+            record_io: Some(harness.scratch.out.join("io.jsonl")),
+            ..CodexConfig::default()
+        })
+        .await
+        .context("connect direct Codex app-server for dynamic-tools capture")?;
+        let thread = codex
+            .start_thread(ThreadConfig {
+                model: Some(model.to_string()),
+                cwd: Some(harness.scratch.project.display().to_string()),
+                extra,
+                ..ThreadConfig::default()
+            })
+            .await
+            .context("thread/start with dynamicTools")?;
+        let mut events = thread.events().await.context("take dynamic-tools event stream")?;
+        let turn_id = thread
+            .start_turn("Call the send tool exactly once with to=probe and text=C11_SENT. Do not use any other tool.")
+            .await
+            .context("start dynamic-tools turn")?;
+        let deadline = Instant::now() + TURN_TIMEOUT;
+        let mut call = None;
+        let mut completed = false;
+        while Instant::now() < deadline {
+            let remaining = deadline.saturating_duration_since(Instant::now());
+            let event = tokio::time::timeout(remaining, events.next())
+                .await
+                .context("wait for dynamic-tools event")??
+                .context("dynamic-tools event stream closed")?;
+            if let TurnEvent::ToolCallRequired(request) = event.event {
+                if request.tool == "send" {
+                    call = Some(request.arguments.clone());
+                    thread
+                        .respond_tool_call(
+                            request.request_id,
+                            DynamicToolCallResponse {
+                                content_items: vec![json!({"type": "input_text", "text": "sent"})],
+                                success: true,
+                            },
+                        )
+                        .await
+                        .context("respond to dynamic send tool call")?;
+                }
+            }
+            if event.method == "turn/completed" && event.turn_id.as_deref() == Some(&turn_id) {
+                completed = true;
+                break;
+            }
+        }
+        codex.close().await;
+        let call = call.context("model did not request the dynamic send tool")?;
+        if !completed {
+            bail!("dynamic-tools turn did not complete after the tool response");
+        }
+        Ok(json!({
+            "assertions": {"dynamic_send_called": true, "turn_completed": true},
+            "arguments": call,
         }))
     }
 
@@ -748,6 +842,7 @@ fn main() -> anyhow::Result<()> {
             Scenario::RawFanout => raw_fanout(harness, model).await,
             Scenario::RawUnnamed => raw_unnamed(harness, model).await,
             Scenario::UnnamedReconnect => unnamed_reconnect(harness, model).await,
+            Scenario::DynamicTools => dynamic_tools(harness, model).await,
         }
     }
 
