@@ -1,0 +1,22 @@
+{
+  "captured_at": "2026-08-22T23:42:41.568253+00:00",
+  "codex_version": "codex-cli 0.148.0",
+  "failure": null,
+  "harness": "timeout 600 cargo test -p amux --test codex_capture -- c11_dynamic_tools",
+  "isolated_codex_home": true,
+  "model": "gpt-5.6-sol",
+  "notes": {
+    "arguments": {
+      "text": "C11_SENT",
+      "to": "probe"
+    },
+    "assertions": {
+      "dynamic_send_called": true,
+      "turn_completed": true
+    }
+  },
+  "requirement": "C.11 dynamic tools under experimental API",
+  "scenario": "c11_dynamic_tools",
+  "synthetic_prompts": true,
+  "timeout_seconds": 360
+}

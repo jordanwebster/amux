@@ -311,7 +311,7 @@ fn main() -> anyhow::Result<()> {
                         .respond_tool_call(
                             request.request_id,
                             DynamicToolCallResponse {
-                                content_items: vec![json!({"type": "input_text", "text": "sent"})],
+                                content_items: vec![json!({"type": "inputText", "text": "sent"})],
                                 success: true,
                             },
                         )
@@ -1002,6 +1002,9 @@ fn main() -> anyhow::Result<()> {
         println!(
             "codex_capture: no scenarios named; skipping (opt-in real-Codex C suite — pass `c-all` or scenario ids)"
         );
+        return Ok(());
+    }
+    if names.iter().all(|name| name.starts_with("a2a_fixture_")) {
         return Ok(());
     }
     let selected: Vec<&ScenarioSpec> = if names.iter().any(|name| name == "c-all") {

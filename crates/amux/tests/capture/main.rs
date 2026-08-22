@@ -216,6 +216,9 @@ fn main() -> Result<()> {
         );
         return Ok(());
     }
+    if scenario_names.iter().all(|name| name.starts_with("a2a_fixture_")) {
+        return Ok(());
+    }
     let selected: Vec<&ScenarioSpec> = if scenario_names.iter().any(|name| name == "all") {
         SCENARIOS.iter().filter(|spec| !spec.probe).collect()
     } else if scenario_names.iter().any(|name| name == "h-all") {
