@@ -4,8 +4,8 @@ use serde::{Deserialize, Serialize};
 use uuid::Uuid;
 
 use super::amux::v1::{
-    AmbiguousAgentName, Error, ErrorDetail, ProtocolVersionMismatch, SequenceNumberMismatch,
-    UpdateRequired,
+    AmbiguousAgentName, Error, ErrorCode, ErrorDetail, ProtocolVersionMismatch,
+    SequenceNumberMismatch, UpdateRequired,
 };
 
 /// Errors carried over generated service and routing protocol boundaries.
@@ -101,7 +101,9 @@ pub(crate) fn encode_protocol_error(error: &ProtocolError) -> Error {
         }
         ProtocolError::ServerError { message } => simple_error(13, message.clone()),
         ProtocolError::InvalidCredentials => simple_error(6, error.to_string()),
-        ProtocolError::PaymentRequired => simple_error(14, error.to_string()),
+        ProtocolError::PaymentRequired => {
+            simple_error(ErrorCode::PaymentRequired as i32, error.to_string())
+        }
         ProtocolError::ResourceExhausted { message } => simple_error(9, message.clone()),
         ProtocolError::ProtocolMismatch {
             supported_versions,
@@ -199,7 +201,7 @@ pub(crate) fn decode_protocol_error(error: Error) -> ProtocolError {
         13 => ProtocolError::ServerError {
             message: error.message,
         },
-        14 => ProtocolError::PaymentRequired,
+        code if code == ErrorCode::PaymentRequired as i32 => ProtocolError::PaymentRequired,
         _ => ProtocolError::ServerError {
             message: error.message,
         },
@@ -257,6 +259,15 @@ pub(crate) fn protocol_status(error: ProtocolError) -> tonic::Status {
             details,
         ),
     }
+}
+
+pub(crate) fn protocol_error_from_status_details(status: &tonic::Status) -> Option<ProtocolError> {
+    if status.details().is_empty() {
+        return None;
+    }
+    Error::decode(status.details())
+        .ok()
+        .map(decode_protocol_error)
 }
 
 fn protocol_status_with_details(
@@ -366,7 +377,7 @@ mod tests {
         let error = ProtocolError::PaymentRequired;
 
         let encoded = encode_protocol_error(&error);
-        assert_eq!(encoded.code, 14);
+        assert_eq!(encoded.code, ErrorCode::PaymentRequired as i32);
         assert!(encoded.details.is_empty());
         assert_eq!(decode_protocol_error(encoded), error);
     }

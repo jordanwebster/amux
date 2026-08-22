@@ -5,6 +5,8 @@
 //! fleet opens. Expired cloud auth never blocks here: the TUI opens
 //! instantly and renders the degraded banner from Model state.
 
+use std::sync::Arc;
+
 use amux::Config;
 use amux_tui::{TuiConfig, run_fleet};
 use amux_ui::{ConnectFailure, Connector, Runtime, RuntimeOptions};
@@ -12,6 +14,7 @@ use anyhow::Result;
 
 use crate::client_common::get_client;
 use crate::init::{self, InitContext};
+use crate::update::MarkerFileReporter;
 
 pub async fn run(config: Config) -> Result<()> {
     run_inner(config, None, None).await
@@ -37,6 +40,7 @@ async fn run_inner(
     // The local host id comes from the stored device identity — the wire
     // does not mark the local host (see docs/UI.md, subscription policy).
     let local_host_id = amux::setup::local_host_id();
+    let subscription_reporter = MarkerFileReporter::from_state_path(&config.state_path);
 
     let connector: Connector = {
         let config = config.clone();
@@ -58,6 +62,9 @@ async fn run_inner(
         RuntimeOptions {
             local_host_id,
             dump_dir: Some(amux::default_data_dir().join("ui-dumps")),
+            subscription_status_provider: Some(Arc::new(move || {
+                subscription_reporter.subscription_required()
+            })),
             ..RuntimeOptions::default()
         },
     );

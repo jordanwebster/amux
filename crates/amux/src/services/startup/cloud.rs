@@ -6,7 +6,6 @@
 use std::sync::Arc;
 use std::time::{Duration, SystemTime};
 
-use prost::Message as ProstMessage;
 use tokio::sync::{RwLock, oneshot};
 use tokio::task::JoinHandle;
 use tracing::Instrument;
@@ -17,11 +16,12 @@ use crate::auth::cloud::{
     CloudError, CloudRoutingConnectionDetails, fetch_routing_connection_details,
 };
 use crate::config::Config;
-use crate::protocol::{ProtocolError, protocol_status, wire};
+use crate::protocol::{ProtocolError, protocol_error_from_status_details, protocol_status};
 use crate::routing::{
     Host, LinkConnectorAuth, LinkConnectorCtx, LinkConnectorToken, LinkConnectorTokenRefresher,
     spawn_connector_to_channel_with_auth_and_establishment,
 };
+use crate::subscription::SubscriptionReporter;
 use crate::transport::tls_channel;
 use crate::update::{UpdateReporter, UpdateStatus};
 use crate::user_state::ServerState;
@@ -33,6 +33,8 @@ const RELATIVE_JITTER_RATIO: f64 = 0.25;
 const ABSOLUTE_JITTER_MAX: Duration = Duration::from_secs(5);
 const BACKOFF_RESET_AFTER_ESTABLISHED: Duration = Duration::from_secs(30);
 const CLOUD_ROUTING_ESTABLISHMENT_TIMEOUT: Duration = Duration::from_secs(10);
+/// Entitlement can change while the daemon is idle, so it probes periodically without churning.
+const SUBSCRIPTION_RECHECK_INTERVAL: Duration = Duration::from_secs(120);
 
 pub(crate) fn establish_cloud_connection(
     config: Config,
@@ -43,6 +45,7 @@ pub(crate) fn establish_cloud_connection(
     tokio::spawn(
         async move {
             if !setup::cloud_enabled(&config) {
+                report_subscription_required(&state, false).await;
                 tracing::info!("cloud mode not enabled");
                 return;
             }
@@ -67,10 +70,20 @@ pub(crate) fn establish_cloud_connection(
                         return;
                     }
                     Err(CloudConnectionError::SubscriptionRequired) => {
+                        report_subscription_required(&state, true).await;
                         tracing::warn!(
                             "cloud subscription required — manage at amux.sh/account; local agents remain available"
                         );
-                        return;
+                        if !setup::cloud_enabled(&config) {
+                            tracing::info!("cloud mode disabled, stopping reconnection");
+                            return;
+                        }
+                        tracing::info!(
+                            retry_delay = ?SUBSCRIPTION_RECHECK_INTERVAL,
+                            "waiting to re-check cloud subscription"
+                        );
+                        tokio::time::sleep(SUBSCRIPTION_RECHECK_INTERVAL).await;
+                        continue;
                     }
                     Err(CloudConnectionError::Retriable { msg, reset_backoff }) => {
                         if reset_backoff {
@@ -137,7 +150,10 @@ async fn run_cloud_connection(
     };
 
     let details = match fetch_routing_connection_details(config, credentials.as_ref()).await {
-        Ok(details) => details,
+        Ok(details) => {
+            report_subscription_required(&state, false).await;
+            details
+        }
         Err(error) => {
             if matches!(error, CloudError::NotAuthenticated | CloudError::Auth(_)) {
                 audit::auth_jwt_failure("cloud routing credentials were rejected");
@@ -248,9 +264,6 @@ async fn cloud_connection_error_from_status(
     if payment_required_from_status(&status) {
         return CloudConnectionError::SubscriptionRequired;
     }
-    if status.code() == tonic::Code::PermissionDenied {
-        return CloudConnectionError::NonRetriable(status.to_string());
-    }
     CloudConnectionError::Retriable {
         msg: status.to_string(),
         reset_backoff: should_reset_backoff_after_connection(connection_uptime),
@@ -258,12 +271,7 @@ async fn cloud_connection_error_from_status(
 }
 
 fn payment_required_from_status(status: &tonic::Status) -> bool {
-    if status.details().is_empty() {
-        return false;
-    }
-    wire::Error::decode(status.details())
-        .ok()
-        .is_some_and(|error| wire::decode_protocol_error(error) == ProtocolError::PaymentRequired)
+    protocol_error_from_status_details(status) == Some(ProtocolError::PaymentRequired)
 }
 
 fn is_update_required_status(status: &tonic::Status) -> bool {
@@ -272,11 +280,7 @@ fn is_update_required_status(status: &tonic::Status) -> bool {
 }
 
 fn update_required_from_status(status: &tonic::Status) -> Option<String> {
-    if status.details().is_empty() {
-        return None;
-    }
-    let error = wire::Error::decode(status.details()).ok()?;
-    match wire::decode_protocol_error(error) {
+    match protocol_error_from_status_details(status)? {
         ProtocolError::UpdateRequired {
             minimum_version, ..
         } => Some(minimum_version),
@@ -344,6 +348,18 @@ async fn report_update_status(state: &Arc<RwLock<ServerState>>, status: UpdateSt
     }
 }
 
+async fn report_subscription_required(state: &Arc<RwLock<ServerState>>, required: bool) {
+    if let Some(reporter) = subscription_reporter(state).await {
+        reporter.report_subscription_required(required);
+    }
+}
+
+async fn subscription_reporter(
+    state: &Arc<RwLock<ServerState>>,
+) -> Option<Arc<dyn SubscriptionReporter>> {
+    state.read().await.subscription_reporter.clone()
+}
+
 async fn update_reporter(state: &Arc<RwLock<ServerState>>) -> Option<Arc<dyn UpdateReporter>> {
     state.read().await.update_reporter.clone()
 }
@@ -392,13 +408,15 @@ mod tests {
 
     use super::{
         ABSOLUTE_JITTER_MAX, BACKOFF_RESET_AFTER_ESTABLISHED, INITIAL_BACKOFF, MAX_BACKOFF,
-        await_cloud_establishment, cloud_connection_error_from_fetch,
-        cloud_connection_error_from_status, cloud_token_refresh_status,
-        jittered_backoff_with_samples, next_backoff, payment_required_from_status,
-        report_update_status, should_reset_backoff_after_connection,
+        SUBSCRIPTION_RECHECK_INTERVAL, await_cloud_establishment,
+        cloud_connection_error_from_fetch, cloud_connection_error_from_status,
+        cloud_token_refresh_status, jittered_backoff_with_samples, next_backoff,
+        payment_required_from_status, report_subscription_required, report_update_status,
+        should_reset_backoff_after_connection,
     };
     use crate::config::Config;
     use crate::protocol::{ProtocolError, protocol_status};
+    use crate::subscription::SubscriptionReporter;
     use crate::update::{UpdateReporter, UpdateStatus};
     use crate::user_state::ServerState;
 
@@ -410,6 +428,17 @@ mod tests {
     impl UpdateReporter for CapturingUpdateReporter {
         fn report(&self, status: UpdateStatus) {
             self.statuses.lock().unwrap().push(status);
+        }
+    }
+
+    #[derive(Default)]
+    struct CapturingSubscriptionReporter {
+        required: Mutex<Vec<bool>>,
+    }
+
+    impl SubscriptionReporter for CapturingSubscriptionReporter {
+        fn report_subscription_required(&self, required: bool) {
+            self.required.lock().unwrap().push(required);
         }
     }
 
@@ -439,6 +468,30 @@ mod tests {
 
         assert_eq!(status.code(), tonic::Code::PermissionDenied);
         assert!(payment_required_from_status(&status));
+    }
+
+    #[test]
+    fn subscription_recheck_uses_fixed_calm_interval() {
+        assert_eq!(SUBSCRIPTION_RECHECK_INTERVAL, Duration::from_secs(120));
+    }
+
+    #[tokio::test]
+    async fn subscription_status_reports_required_then_healthy() {
+        let (shutdown_tx, _shutdown_rx) = mpsc::channel(1);
+        let reporter = Arc::new(CapturingSubscriptionReporter::default());
+        let state = Arc::new(RwLock::new(ServerState::new(
+            Config::default(),
+            Uuid::new_v4(),
+            shutdown_tx,
+            None,
+            None,
+        )));
+        state.write().await.subscription_reporter = Some(reporter.clone());
+
+        report_subscription_required(&state, true).await;
+        report_subscription_required(&state, false).await;
+
+        assert_eq!(*reporter.required.lock().unwrap(), [true, false]);
     }
 
     #[tokio::test]
@@ -510,7 +563,7 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn payment_required_status_stops_retrying_with_dedicated_state() {
+    async fn payment_required_status_uses_dedicated_recheck_state() {
         let (shutdown_tx, _shutdown_rx) = mpsc::channel(1);
         let state = Arc::new(RwLock::new(ServerState::new(
             Config::default(),
@@ -530,7 +583,7 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn unexpected_permission_denied_status_stops_retrying() {
+    async fn bare_permission_denied_status_remains_retriable() {
         let (shutdown_tx, _shutdown_rx) = mpsc::channel(1);
         let state = Arc::new(RwLock::new(ServerState::new(
             Config::default(),
@@ -545,7 +598,7 @@ mod tests {
 
         assert!(matches!(
             error,
-            super::CloudConnectionError::NonRetriable(_)
+            super::CloudConnectionError::Retriable { .. }
         ));
     }
 

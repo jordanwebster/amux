@@ -34,6 +34,7 @@ mod services;
 pub mod setup;
 mod sleep_inhibitor;
 mod state;
+mod subscription;
 mod suspend;
 #[cfg(feature = "testnet")]
 #[doc(hidden)]
@@ -75,6 +76,7 @@ pub use routing::{Capabilities, Host, HostEntry, HostEvent, HostTrustStatus, Sup
 pub use server::{
     DaemonBuilder, EmbeddedBuilder, Server, ServerBuilder, ServerError, ShutdownReason,
 };
+pub use subscription::SubscriptionReporter;
 pub use transport::TransportError;
 pub use update::{UpdateInfo, UpdateReporter, UpdateStatus};
 

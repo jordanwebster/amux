@@ -19,7 +19,9 @@ use tokio::task::JoinHandle;
 use tonic::transport::Channel;
 use uuid::Uuid;
 
-use crate::protocol::{PROTOCOL_VERSION, ProtocolError, protocol_status, wire};
+use crate::protocol::{
+    PROTOCOL_VERSION, ProtocolError, protocol_error_from_status_details, protocol_status, wire,
+};
 use crate::routing::{
     ConnectHandshake, ConnectHandshakeEvent, Host, LinkCloseRequest, LinkId, LinkRegistry,
     LinkRole, RouteUpdateOutcome, RoutingCore, host_from_wire, host_to_wire,
@@ -759,7 +761,9 @@ async fn run_established_connect(
                     continue;
                 };
                 if let Err(status) = connector_auth.send_refresh(&out_tx).await {
-                    audit::auth_jwt_failure(&status);
+                    if should_audit_auth_refresh_failure(&status) {
+                        audit::auth_jwt_failure(&status);
+                    }
                     let _ = try_send_outbound(&out_tx, protocol_error_link_close(status.to_string()));
                     close_status = Some(status);
                     break;
@@ -793,6 +797,10 @@ async fn run_established_connect(
         Some(status) => Err(status),
         None => Ok(()),
     }
+}
+
+fn should_audit_auth_refresh_failure(status: &tonic::Status) -> bool {
+    protocol_error_from_status_details(status) != Some(ProtocolError::PaymentRequired)
 }
 
 async fn accept_peer_hello(
@@ -1206,6 +1214,17 @@ mod tests {
     use crate::HostId;
     use crate::connection::ConnectionManager;
     use crate::routing::{Capabilities, Route, SupportedAgentType};
+
+    #[test]
+    fn payment_required_refresh_is_not_an_auth_audit_failure() {
+        let payment_required = protocol_status(ProtocolError::PaymentRequired);
+        let invalid_credentials = protocol_status(ProtocolError::InvalidCredentials);
+        let bare_permission_denied = tonic::Status::permission_denied("trust replaced");
+
+        assert!(!should_audit_auth_refresh_failure(&payment_required));
+        assert!(should_audit_auth_refresh_failure(&invalid_credentials));
+        assert!(should_audit_auth_refresh_failure(&bare_permission_denied));
+    }
 
     fn host(id: u128, name: &str) -> Host {
         Host {

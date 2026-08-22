@@ -4,7 +4,7 @@ mod error;
 pub const PROTOCOL_VERSION: u32 = 1;
 
 pub use error::ProtocolError;
-pub(crate) use error::protocol_status;
+pub(crate) use error::{protocol_error_from_status_details, protocol_status};
 
 pub(crate) mod amux {
     pub(crate) mod v1 {

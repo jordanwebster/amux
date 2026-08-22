@@ -435,7 +435,7 @@ fn fleet_cloud_subscription_banner() {
         dismissed_error_seq: u64::MAX,
         ..view_default()
     };
-    let rendered = render_frame(&model, &view, 74, 11);
+    let rendered = render_frame(&model, &view, 68, 11);
     assert_golden("fleet_cloud_subscription_banner", &rendered);
 }
 

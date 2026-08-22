@@ -4,7 +4,7 @@
 //! synchronized marker separating catch-up from live. Cloud-auth expiry is a
 //! degraded state, never a dead app.
 
-use amux_ui::{Connection, DisconnectReason, Effect, Msg, StreamMsg};
+use amux_ui::{Connection, DisconnectReason, Effect, Msg, ServerMsg, StreamMsg};
 
 use crate::harness::*;
 
@@ -91,6 +91,25 @@ fn payment_error_surfaces_subscription_required_without_auth_required() {
         "subscription state must not kill the app"
     );
     assert!(model.agent(agent_id("local-agent")).is_some());
+}
+
+#[test]
+fn subscription_status_clears_when_cloud_recovers_or_daemon_reconnects() {
+    let required = Msg::Server(ServerMsg::CloudSubscriptionStatus { required: true });
+    let healthy = Msg::Server(ServerMsg::CloudSubscriptionStatus { required: false });
+
+    let model = fold(vec![connected("nova"), required.clone(), healthy]);
+    assert!(!model.cloud_subscription_required());
+
+    let model = fold(vec![
+        connected("nova"),
+        required,
+        disconnected(DisconnectReason::TransportError {
+            message: "connection reset".to_string(),
+        }),
+        connected("nova"),
+    ]);
+    assert!(!model.cloud_subscription_required());
 }
 
 fn reconnect_stream_prune_sequence() -> Vec<Msg> {

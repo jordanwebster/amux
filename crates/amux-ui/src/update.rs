@@ -232,6 +232,10 @@ fn update_server(model: &mut Model, server: ServerMsg) -> Vec<Effect> {
             model.cloud_subscription_required = false;
             Vec::new()
         }
+        ServerMsg::CloudSubscriptionStatus { required } => {
+            model.cloud_subscription_required = required;
+            Vec::new()
+        }
         ServerMsg::Disconnected { reason } => {
             model.connection = Connection::Disconnected { reason };
             Vec::new()

@@ -48,6 +48,7 @@ const DRAIN_BUDGET: usize = 256;
 
 const RECONNECT_BACKOFF_INITIAL: Duration = Duration::from_millis(250);
 const RECONNECT_BACKOFF_MAX: Duration = Duration::from_secs(4);
+const SUBSCRIPTION_STATUS_POLL_INTERVAL: Duration = Duration::from_secs(1);
 
 /// Structured entries coalesced into one `Msg::Stream(Batch)` — the recorded
 /// Msg is the batch, so replay is independent of arrival timing.
@@ -69,6 +70,9 @@ pub type ConnectFuture = Pin<Box<dyn Future<Output = Result<Client, ConnectFailu
 /// after every disconnect.
 pub type Connector = Box<dyn FnMut() -> ConnectFuture + Send>;
 
+/// Reads the daemon's durable subscription-required state.
+pub type SubscriptionStatusProvider = Arc<dyn Fn() -> bool + Send + Sync>;
+
 pub struct RuntimeOptions {
     /// The daemon's own host id (read from the local device identity);
     /// enters the Model via `ServerMsg::Connected`.
@@ -76,6 +80,8 @@ pub struct RuntimeOptions {
     /// Where recorder dumps land. `None` disables dumping.
     pub dump_dir: Option<PathBuf>,
     pub recorder_capacity: usize,
+    /// Provider polled while connected so marker transitions enter the reducer.
+    pub subscription_status_provider: Option<SubscriptionStatusProvider>,
 }
 
 impl Default for RuntimeOptions {
@@ -84,6 +90,7 @@ impl Default for RuntimeOptions {
             local_host_id: None,
             dump_dir: None,
             recorder_capacity: DEFAULT_RECORDER_CAPACITY,
+            subscription_status_provider: None,
         }
     }
 }
@@ -123,11 +130,13 @@ impl Runtime {
         let (msg_tx, msg_rx) = mpsc::channel(MSG_CHANNEL_CAPACITY);
         let client = Arc::new(StdMutex::new(None));
 
+        let subscription_status_provider = options.subscription_status_provider;
         let connection_task = tokio::spawn(connection_task(
             connector,
             msg_tx.clone(),
             client.clone(),
             options.local_host_id,
+            subscription_status_provider.clone(),
         ));
 
         Self {
@@ -629,6 +638,7 @@ async fn connection_task(
     tx: mpsc::Sender<Msg>,
     shared_client: Arc<StdMutex<Option<Client>>>,
     local_host_id: Option<HostId>,
+    subscription_status_provider: Option<SubscriptionStatusProvider>,
 ) {
     let mut backoff = RECONNECT_BACKOFF_INITIAL;
     loop {
@@ -657,7 +667,13 @@ async fn connection_task(
         };
 
         *shared_client.lock().expect("client mutex poisoned") = Some(client.clone());
-        let session_end = pump_inventory(&client, &tx, local_host_id).await;
+        let session_end = pump_inventory(
+            &client,
+            &tx,
+            local_host_id,
+            subscription_status_provider.as_ref(),
+        )
+        .await;
         *shared_client.lock().expect("client mutex poisoned") = None;
 
         let Some(reason) = session_end else {
@@ -682,6 +698,7 @@ async fn pump_inventory(
     client: &Client,
     tx: &mpsc::Sender<Msg>,
     local_host_id: Option<HostId>,
+    subscription_status_provider: Option<&SubscriptionStatusProvider>,
 ) -> Option<DisconnectReason> {
     let mut hosts_stream = match client.subscribe_hosts().await {
         Ok(stream) => stream,
@@ -697,6 +714,22 @@ async fn pump_inventory(
         .is_err()
     {
         return None;
+    }
+    let mut subscription_required = subscription_status_provider.map(|provider| provider());
+    if let Some(required) = subscription_required
+        && send_msg(
+            tx,
+            Msg::Server(ServerMsg::CloudSubscriptionStatus { required }),
+        )
+        .await
+        .is_err()
+    {
+        return None;
+    }
+    let mut subscription_poll = subscription_status_provider
+        .map(|_| tokio::time::interval(SUBSCRIPTION_STATUS_POLL_INTERVAL));
+    if let Some(poll) = subscription_poll.as_mut() {
+        poll.tick().await;
     }
 
     loop {
@@ -718,10 +751,24 @@ async fn pump_inventory(
                 Ok(amux::AgentEvent::SnapshotComplete) => ServerMsg::AgentsSynchronized,
                 Err(error) => return Some(disconnect_reason(&error)),
             },
+            _ = maybe_interval_tick(&mut subscription_poll), if subscription_poll.is_some() => {
+                let required = subscription_status_provider.expect("poll requires provider")();
+                if subscription_required == Some(required) {
+                    continue;
+                }
+                subscription_required = Some(required);
+                ServerMsg::CloudSubscriptionStatus { required }
+            },
         };
         if send_msg(tx, Msg::Server(event)).await.is_err() {
             return None;
         }
+    }
+}
+
+async fn maybe_interval_tick(interval: &mut Option<tokio::time::Interval>) {
+    if let Some(interval) = interval {
+        interval.tick().await;
     }
 }
 

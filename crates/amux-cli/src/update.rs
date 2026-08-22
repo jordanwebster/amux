@@ -3,7 +3,7 @@ use std::collections::HashMap;
 use std::os::unix::fs::PermissionsExt;
 use std::path::{Path, PathBuf};
 
-use amux::{Config, UpdateInfo, UpdateReporter, UpdateStatus};
+use amux::{Config, SubscriptionReporter, UpdateInfo, UpdateReporter, UpdateStatus};
 use anyhow::{Context, Result, bail};
 use semver::Version;
 use serde::Deserialize;
@@ -57,6 +57,10 @@ impl MarkerFileReporter {
         }
     }
 
+    pub(crate) fn subscription_required(&self) -> bool {
+        self.subscription_required_marker_path().is_file()
+    }
+
     pub(crate) fn is_update_dismissed(&self, minimum_version: &str) -> bool {
         match std::fs::read_to_string(self.update_dismissed_marker_path()) {
             Ok(contents) => contents.trim() == minimum_version,
@@ -80,9 +84,14 @@ impl MarkerFileReporter {
         let _ = std::fs::remove_file(self.update_dismissed_marker_path());
     }
 
+    pub(crate) fn clear_subscription_required(&self) {
+        let _ = std::fs::remove_file(self.subscription_required_marker_path());
+    }
+
     pub(crate) fn clear_all(&self) {
         self.clear_update_marker();
         self.clear_update_required();
+        self.clear_subscription_required();
     }
 
     pub(crate) fn update_marker_path(&self) -> PathBuf {
@@ -95,6 +104,10 @@ impl MarkerFileReporter {
 
     fn update_dismissed_marker_path(&self) -> PathBuf {
         self.state_dir.join("update-dismissed")
+    }
+
+    fn subscription_required_marker_path(&self) -> PathBuf {
+        self.state_dir.join("subscription-required")
     }
 
     fn write_update_marker(&self, info: &UpdateInfo) {
@@ -110,6 +123,12 @@ impl MarkerFileReporter {
             format!("{minimum_version}\n"),
         ) {
             tracing::warn!(error = %e, "failed to write update-required marker");
+        }
+    }
+
+    fn write_subscription_required(&self) {
+        if let Err(e) = std::fs::write(self.subscription_required_marker_path(), b"required\n") {
+            tracing::warn!(error = %e, "failed to write subscription-required marker");
         }
     }
 }
@@ -133,6 +152,16 @@ impl UpdateReporter for MarkerFileReporter {
                 self.write_update_required(&minimum_version);
             }
             UpdateStatus::Required(None) => self.clear_update_required(),
+        }
+    }
+}
+
+impl SubscriptionReporter for MarkerFileReporter {
+    fn report_subscription_required(&self, required: bool) {
+        if required {
+            self.write_subscription_required();
+        } else {
+            self.clear_subscription_required();
         }
     }
 }
@@ -208,6 +237,18 @@ mod tests {
             Some("0.4.0")
         );
         assert_eq!(reporter.read_update_required().as_deref(), Some("0.4.0"));
+    }
+
+    #[test]
+    fn subscription_marker_round_trips_and_clears() {
+        let temp = tempfile::tempdir().unwrap();
+        let reporter = MarkerFileReporter::from_state_path(&temp.path().join("state.yaml"));
+
+        reporter.report_subscription_required(true);
+        assert!(reporter.subscription_required());
+
+        reporter.report_subscription_required(false);
+        assert!(!reporter.subscription_required());
     }
 }
 

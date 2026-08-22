@@ -76,7 +76,10 @@ pub async fn start_server(config: &Config, options: StartOptions) -> Result<()> 
 }
 
 pub(crate) async fn run_server_foreground(config: Config, cloud: bool) -> Result<()> {
-    let update_reporter = Arc::new(MarkerFileReporter::from_state_path(&config.state_path));
+    let state_reporter = Arc::new(MarkerFileReporter::from_state_path(&config.state_path));
+    if !amux::setup::cloud_enabled(&config) {
+        state_reporter.clear_subscription_required();
+    }
     let credentials = if cloud {
         None
     } else {
@@ -87,7 +90,8 @@ pub(crate) async fn run_server_foreground(config: Config, cloud: bool) -> Result
     };
     let builder = Server::builder()
         .config(config)
-        .update_reporter(update_reporter);
+        .update_reporter(state_reporter.clone())
+        .subscription_reporter(state_reporter);
     match credentials {
         Some(credentials) => builder.credentials(credentials).run().await?,
         None => builder.as_cloud_relay().run().await?,

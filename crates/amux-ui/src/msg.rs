@@ -117,6 +117,10 @@ pub enum ServerMsg {
         /// the shell (the wire does not mark the local host).
         local_host_id: Option<HostId>,
     },
+    /// Subscription state observed from the daemon's durable status marker.
+    CloudSubscriptionStatus {
+        required: bool,
+    },
     Disconnected {
         reason: DisconnectReason,
     },

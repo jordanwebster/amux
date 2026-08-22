@@ -138,7 +138,10 @@ fn cloud_error_from_response(status: reqwest::StatusCode, body: &str) -> CloudEr
     }
 
     let detail = format!("API returned {status}: {body}");
-    if status.is_client_error() {
+    if status.is_client_error()
+        && status != reqwest::StatusCode::REQUEST_TIMEOUT
+        && status != reqwest::StatusCode::TOO_MANY_REQUESTS
+    {
         CloudError::Rejected(detail)
     } else {
         CloudError::Connection(detail)
@@ -187,14 +190,25 @@ mod tests {
             CloudError::Connection(_)
         ));
 
-        let error =
-            cloud_error_from_response(reqwest::StatusCode::FORBIDDEN, r#"{"error":"forbidden"}"#);
-        match error {
-            CloudError::Rejected(message) => {
-                assert!(message.contains("403 Forbidden"));
-                assert!(message.contains(r#"{"error":"forbidden"}"#));
+        for status in [
+            reqwest::StatusCode::REQUEST_TIMEOUT,
+            reqwest::StatusCode::TOO_MANY_REQUESTS,
+        ] {
+            assert!(matches!(
+                cloud_error_from_response(status, "try again"),
+                CloudError::Connection(_)
+            ));
+        }
+
+        for body in ["", "not json", r#"{"error":"forbidden"}"#] {
+            let error = cloud_error_from_response(reqwest::StatusCode::FORBIDDEN, body);
+            match error {
+                CloudError::Rejected(message) => {
+                    assert!(message.contains("403 Forbidden"));
+                    assert!(message.contains(body));
+                }
+                other => panic!("unexpected 403 classification for {body:?}: {other:?}"),
             }
-            other => panic!("unexpected 403 classification: {other:?}"),
         }
     }
 

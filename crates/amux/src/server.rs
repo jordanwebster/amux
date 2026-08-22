@@ -27,6 +27,7 @@ use crate::services::{
     CloudLinkService, DeviceRuntimeSecurity, LocalAgentHost, StartedUserServices,
     establish_cloud_connection, start_user_services,
 };
+use crate::subscription::SubscriptionReporter;
 use crate::transport::{TransportError, create_tls_acceptor};
 use crate::trust::TrustStore;
 use crate::tunnel::TunnelPool;
@@ -45,6 +46,7 @@ type BuilderParts = (
     Option<Arc<dyn CredentialProvider>>,
     bool,
     Option<Arc<dyn UpdateReporter>>,
+    Option<Arc<dyn SubscriptionReporter>>,
 );
 
 enum PendingShutdownReply {
@@ -163,6 +165,7 @@ enum ServerMode {
 pub struct ServerBuilder {
     config: Option<Config>,
     credentials: Option<Arc<dyn CredentialProvider>>,
+    subscription_reporter: Option<Arc<dyn SubscriptionReporter>>,
     update_reporter: Option<Arc<dyn UpdateReporter>>,
     as_cloud_relay: bool,
 }
@@ -221,6 +224,7 @@ impl Server {
         ServerBuilder {
             config: None,
             credentials: None,
+            subscription_reporter: None,
             update_reporter: None,
             as_cloud_relay: false,
         }
@@ -469,6 +473,11 @@ impl ServerBuilder {
         self
     }
 
+    pub fn subscription_reporter(mut self, reporter: Arc<dyn SubscriptionReporter>) -> Self {
+        self.subscription_reporter = Some(reporter);
+        self
+    }
+
     pub fn as_cloud_relay(mut self) -> Self {
         self.as_cloud_relay = true;
         self
@@ -483,20 +492,23 @@ impl ServerBuilder {
     }
 
     pub async fn run(self) -> Result<()> {
-        let (config, credentials, as_cloud_relay, update_reporter) = self.into_parts()?;
+        let (config, credentials, as_cloud_relay, update_reporter, subscription_reporter) =
+            self.into_parts()?;
         let mut server = Server::with_config_and_credentials(
             config,
             credentials,
             update_reporter,
             as_cloud_relay,
         )?;
+        server.state.write().await.subscription_reporter = subscription_reporter;
         server.run().await
     }
 }
 
 impl EmbeddedBuilder {
     pub async fn open(self) -> Result<Client> {
-        let (config, credentials, as_cloud_relay, update_reporter) = self.inner.into_parts()?;
+        let (config, credentials, as_cloud_relay, update_reporter, subscription_reporter) =
+            self.inner.into_parts()?;
         if as_cloud_relay {
             return Err(ServerError::Config(ConfigError::Invalid(
                 "embedded cloud relays are not supported; run a daemon cloud relay instead"
@@ -510,6 +522,7 @@ impl EmbeddedBuilder {
             update_reporter,
             as_cloud_relay,
         )?;
+        server.state.write().await.subscription_reporter = subscription_reporter;
 
         let tasks = Arc::new(Mutex::new(Vec::new()));
         let agent_host = ensure_local_agent_host(&server.state).await?;
@@ -609,6 +622,7 @@ impl ServerBuilder {
             self.credentials,
             self.as_cloud_relay,
             self.update_reporter,
+            self.subscription_reporter,
         ))
     }
 }

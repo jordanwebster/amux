@@ -7,7 +7,6 @@ use std::task::{Context, Poll};
 use bytes::Bytes;
 use chrono::{DateTime, Utc};
 use futures_util::Stream;
-use prost::Message as ProstMessage;
 use thiserror::Error;
 use tokio::sync::Mutex as AsyncMutex;
 use tonic::transport::Channel;
@@ -18,7 +17,7 @@ use crate::agents::{
 };
 use crate::debug::DebugFormat;
 use crate::pairing::ssh::SshPairingPeer;
-use crate::protocol::{ProtocolError, wire};
+use crate::protocol::{ProtocolError, protocol_error_from_status_details, wire};
 use crate::routing::{HostEntry, HostEvent, HostTrustStatus, capabilities_from_wire};
 use crate::server::{SHUTDOWN_REASON_METADATA_KEY, ShutdownReason};
 use crate::transport::TransportError;
@@ -1372,15 +1371,6 @@ fn shutdown_reason_from_status_metadata(status: &tonic::Status) -> Option<Shutdo
         .get(SHUTDOWN_REASON_METADATA_KEY)
         .and_then(|value| value.to_str().ok())
         .and_then(ShutdownReason::from_wire_value)
-}
-
-fn protocol_error_from_status_details(status: &tonic::Status) -> Option<ProtocolError> {
-    if status.details().is_empty() {
-        return None;
-    }
-    wire::Error::decode(status.details())
-        .ok()
-        .map(wire::decode_protocol_error)
 }
 
 fn hook_target_from_payload(payload: &[u8]) -> Result<(Uuid, bool), ClientError> {

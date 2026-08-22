@@ -546,7 +546,7 @@ fn banner_line(model: &Model, width: usize) -> Line<'static> {
         push_span(
             &mut line,
             MARKER_COL,
-            "⚠ cloud: subscription required — amux.sh/account · local agents fine",
+            "⚠ subscription required · amux.sh/account · local agents fine",
             Style::default().fg(Color::Yellow),
         );
     } else if model.cloud_auth_required() && model.is_connected() {
