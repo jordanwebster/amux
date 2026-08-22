@@ -17,7 +17,7 @@ use crate::auth::cloud::{
     CloudError, CloudRoutingConnectionDetails, fetch_routing_connection_details,
 };
 use crate::config::Config;
-use crate::protocol::{ProtocolError, wire};
+use crate::protocol::{ProtocolError, protocol_status, wire};
 use crate::routing::{
     Host, LinkConnectorAuth, LinkConnectorCtx, LinkConnectorToken, LinkConnectorTokenRefresher,
     spawn_connector_to_channel_with_auth_and_establishment,
@@ -245,16 +245,25 @@ async fn cloud_connection_error_from_status(
             "Invalid credentials — run 'amux init' to re-authenticate".to_string(),
         );
     }
+    if payment_required_from_status(&status) {
+        return CloudConnectionError::SubscriptionRequired;
+    }
     if status.code() == tonic::Code::PermissionDenied {
-        if status.message() == ProtocolError::PaymentRequired.to_string() {
-            return CloudConnectionError::SubscriptionRequired;
-        }
         return CloudConnectionError::NonRetriable(status.to_string());
     }
     CloudConnectionError::Retriable {
         msg: status.to_string(),
         reset_backoff: should_reset_backoff_after_connection(connection_uptime),
     }
+}
+
+fn payment_required_from_status(status: &tonic::Status) -> bool {
+    if status.details().is_empty() {
+        return false;
+    }
+    wire::Error::decode(status.details())
+        .ok()
+        .is_some_and(|error| wire::decode_protocol_error(error) == ProtocolError::PaymentRequired)
 }
 
 fn is_update_required_status(status: &tonic::Status) -> bool {
@@ -297,22 +306,24 @@ struct CloudLinkTokenRefresher {
     current_port: u16,
 }
 
+fn cloud_token_refresh_status(error: CloudError) -> tonic::Status {
+    match error {
+        CloudError::NotAuthenticated | CloudError::Auth(_) => {
+            tonic::Status::unauthenticated("invalid cloud credentials")
+        }
+        CloudError::PaymentRequired => protocol_status(ProtocolError::PaymentRequired),
+        CloudError::Rejected(message) => tonic::Status::permission_denied(message),
+        CloudError::CloudDisabled => tonic::Status::failed_precondition("cloud disabled"),
+        CloudError::Connection(message) => tonic::Status::unavailable(message),
+    }
+}
+
 #[tonic::async_trait]
 impl LinkConnectorTokenRefresher for CloudLinkTokenRefresher {
     async fn refresh_routing_token(&self) -> Result<LinkConnectorToken, tonic::Status> {
         let details = fetch_routing_connection_details(&self.config, self.credentials.as_ref())
             .await
-            .map_err(|error| match error {
-                CloudError::NotAuthenticated | CloudError::Auth(_) => {
-                    tonic::Status::unauthenticated("invalid cloud credentials")
-                }
-                CloudError::PaymentRequired => {
-                    tonic::Status::permission_denied(ProtocolError::PaymentRequired.to_string())
-                }
-                CloudError::Rejected(message) => tonic::Status::permission_denied(message),
-                CloudError::CloudDisabled => tonic::Status::failed_precondition("cloud disabled"),
-                CloudError::Connection(message) => tonic::Status::unavailable(message),
-            })?;
+            .map_err(cloud_token_refresh_status)?;
 
         if details.host != self.current_host || details.port != self.current_port {
             return Err(tonic::Status::unavailable(
@@ -382,7 +393,8 @@ mod tests {
     use super::{
         ABSOLUTE_JITTER_MAX, BACKOFF_RESET_AFTER_ESTABLISHED, INITIAL_BACKOFF, MAX_BACKOFF,
         await_cloud_establishment, cloud_connection_error_from_fetch,
-        cloud_connection_error_from_status, jittered_backoff_with_samples, next_backoff,
+        cloud_connection_error_from_status, cloud_token_refresh_status,
+        jittered_backoff_with_samples, next_backoff, payment_required_from_status,
         report_update_status, should_reset_backoff_after_connection,
     };
     use crate::config::Config;
@@ -419,6 +431,14 @@ mod tests {
             )),
             super::CloudConnectionError::Retriable { .. }
         ));
+    }
+
+    #[test]
+    fn token_refresh_preserves_distinct_payment_required_protocol_error() {
+        let status = cloud_token_refresh_status(crate::auth::cloud::CloudError::PaymentRequired);
+
+        assert_eq!(status.code(), tonic::Code::PermissionDenied);
+        assert!(payment_required_from_status(&status));
     }
 
     #[tokio::test]
@@ -499,7 +519,7 @@ mod tests {
             None,
             None,
         )));
-        let status = tonic::Status::permission_denied(ProtocolError::PaymentRequired.to_string());
+        let status = protocol_status(ProtocolError::PaymentRequired);
 
         let error = cloud_connection_error_from_status(&state, status, Duration::ZERO).await;
 

@@ -101,7 +101,7 @@ pub(crate) fn encode_protocol_error(error: &ProtocolError) -> Error {
         }
         ProtocolError::ServerError { message } => simple_error(13, message.clone()),
         ProtocolError::InvalidCredentials => simple_error(6, error.to_string()),
-        ProtocolError::PaymentRequired => simple_error(5, error.to_string()),
+        ProtocolError::PaymentRequired => simple_error(14, error.to_string()),
         ProtocolError::ResourceExhausted { message } => simple_error(9, message.clone()),
         ProtocolError::ProtocolMismatch {
             supported_versions,
@@ -180,9 +180,6 @@ pub(crate) fn decode_protocol_error(error: Error) -> ProtocolError {
         4 => ProtocolError::AlreadyExists {
             message: error.message,
         },
-        5 if error.message == ProtocolError::PaymentRequired.to_string() => {
-            ProtocolError::PaymentRequired
-        }
         5 => ProtocolError::PermissionDenied {
             message: error.message,
         },
@@ -202,6 +199,7 @@ pub(crate) fn decode_protocol_error(error: Error) -> ProtocolError {
         13 => ProtocolError::ServerError {
             message: error.message,
         },
+        14 => ProtocolError::PaymentRequired,
         _ => ProtocolError::ServerError {
             message: error.message,
         },
@@ -368,7 +366,7 @@ mod tests {
         let error = ProtocolError::PaymentRequired;
 
         let encoded = encode_protocol_error(&error);
-        assert_eq!(encoded.code, 5);
+        assert_eq!(encoded.code, 14);
         assert!(encoded.details.is_empty());
         assert_eq!(decode_protocol_error(encoded), error);
     }

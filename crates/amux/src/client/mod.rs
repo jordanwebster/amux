@@ -1356,9 +1356,6 @@ fn status_to_client_error(status: tonic::Status) -> ClientError {
         tonic::Code::Cancelled => ProtocolError::Cancelled { message },
         tonic::Code::InvalidArgument => ProtocolError::InvalidArgument { message },
         tonic::Code::AlreadyExists => ProtocolError::AlreadyExists { message },
-        tonic::Code::PermissionDenied if message == ProtocolError::PaymentRequired.to_string() => {
-            ProtocolError::PaymentRequired
-        }
         tonic::Code::PermissionDenied => ProtocolError::PermissionDenied { message },
         tonic::Code::FailedPrecondition => ProtocolError::FailedPrecondition { message },
         tonic::Code::Unavailable => ProtocolError::Unreachable { message },

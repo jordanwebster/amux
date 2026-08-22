@@ -108,6 +108,7 @@ enum ErrorCode {
   ERROR_CODE_UNAVAILABLE = 11;
   ERROR_CODE_UNREACHABLE = 12;
   ERROR_CODE_INTERNAL = 13;
+  ERROR_CODE_PAYMENT_REQUIRED = 14;
 }
 
 // ---------------------------------------------------------------------------
