@@ -7,11 +7,12 @@ description = "Agent multiplexer - library for building amux clients and servers
 [features]
 default = ["local-agents"]
 # Local agent hosting: PTY-backed Claude/test-agent process spawning (pulls
-# `portable-pty`, a native dependency). Default-on for the desktop daemon;
+# `portable-pty`, a native dependency) and the Codex app-server client
+# (`codex-sdk`, which brings its WebSocket stack). Default-on for the desktop daemon;
 # embedded mobile clients build with `default-features = false`. The daemonish
 # behaviors (direct reachability, self-update poll) are NOT gated here — they
 # are a runtime builder/config choice, independent of this feature.
-local-agents = ["dep:portable-pty"]
+local-agents = ["dep:portable-pty", "dep:codex-sdk"]
 # Compiles the in-process spec-test harness (`amux::testnet`) into the
 # library. Test-only; never enable in production builds.
 testnet = ["dep:tempfile", "local-agents"]
@@ -26,6 +27,7 @@ serde_json = { workspace = true }
 serde_yaml = { workspace = true }
 prost = { workspace = true }
 tonic = { workspace = true }
+tonic-prost = { workspace = true }
 tower = { workspace = true }
 hyper-util = { workspace = true }
 thiserror = { workspace = true }
@@ -51,7 +53,7 @@ tracing = { workspace = true }
 bytes = { workspace = true }
 
 [target.'cfg(unix)'.dependencies]
-codex-sdk = { path = "../codex-sdk" }
+codex-sdk = { path = "../codex-sdk", optional = true }
 libc = { workspace = true }
 
 [target.'cfg(target_os = "macos")'.dependencies]
@@ -95,5 +97,5 @@ harness = false
 
 [build-dependencies]
 prost-build = { workspace = true }
-tonic-build = { workspace = true }
+tonic-prost-build = { workspace = true }
 protoc-bin-vendored = { workspace = true }

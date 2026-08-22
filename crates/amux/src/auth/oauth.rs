@@ -1,11 +1,9 @@
 use std::time::SystemTime;
 
 use oauth2::basic::{BasicClient, BasicErrorResponseType};
-use oauth2::devicecode::StandardDeviceAuthorizationResponse;
-use oauth2::reqwest::async_http_client;
 use oauth2::{
     AuthUrl, ClientId, DeviceAuthorizationUrl, RefreshToken, RequestTokenError, Scope,
-    TokenResponse, TokenUrl,
+    StandardDeviceAuthorizationResponse, TokenResponse, TokenUrl,
 };
 use thiserror::Error;
 
@@ -23,6 +21,15 @@ pub enum OAuthError {
     NoRefreshToken,
 }
 
+/// The HTTP client handed to oauth2. Redirects are refused: following one
+/// would forward the bearer credentials to whatever host the redirect names.
+fn http_client() -> Result<reqwest::Client, OAuthError> {
+    reqwest::ClientBuilder::new()
+        .redirect(reqwest::redirect::Policy::none())
+        .build()
+        .map_err(|e| OAuthError::Config(e.to_string()))
+}
+
 /// Run the OAuth 2.0 device authorization flow.
 pub async fn run_device_flow(cloud_url: &str) -> Result<String, OAuthError> {
     let auth_url = AuthUrl::new(format!("{cloud_url}/connect/authorize"))
@@ -33,23 +40,18 @@ pub async fn run_device_flow(cloud_url: &str) -> Result<String, OAuthError> {
         DeviceAuthorizationUrl::new(format!("{cloud_url}/connect/deviceauthorization"))
             .map_err(|e| OAuthError::Config(e.to_string()))?;
 
-    let client = BasicClient::new(
-        ClientId::new("cli".to_string()),
-        None,
-        auth_url,
-        Some(token_url),
-    )
-    .set_device_authorization_url(device_auth_url);
+    let client = BasicClient::new(ClientId::new("cli".to_string()))
+        .set_auth_uri(auth_url)
+        .set_token_uri(token_url)
+        .set_device_authorization_url(device_auth_url);
+    let http = http_client()?;
 
-    let device_auth_request = client
+    let details: StandardDeviceAuthorizationResponse = client
         .exchange_device_code()
-        .map_err(|e| OAuthError::Config(e.to_string()))?;
-
-    let details: StandardDeviceAuthorizationResponse = device_auth_request
         .add_scope(Scope::new("openid".to_string()))
         .add_scope(Scope::new("offline_access".to_string()))
         .add_scope(Scope::new("api".to_string()))
-        .request_async(async_http_client)
+        .request_async(&http)
         .await
         .map_err(|e| OAuthError::Request(e.to_string()))?;
 
@@ -64,7 +66,7 @@ pub async fn run_device_flow(cloud_url: &str) -> Result<String, OAuthError> {
 
     let token_response = client
         .exchange_device_access_token(&details)
-        .request_async(async_http_client, tokio::time::sleep, None)
+        .request_async(&http, tokio::time::sleep, None)
         .await
         .map_err(|e| OAuthError::Request(e.to_string()))?;
 
@@ -84,16 +86,14 @@ pub async fn refresh_access_token(
     let auth_url = AuthUrl::new(format!("{cloud_url}/connect/authorize"))
         .map_err(|e| OAuthError::Config(e.to_string()))?;
 
-    let client = BasicClient::new(
-        ClientId::new("cli".to_string()),
-        None,
-        auth_url,
-        Some(token_url),
-    );
+    let client = BasicClient::new(ClientId::new("cli".to_string()))
+        .set_auth_uri(auth_url)
+        .set_token_uri(token_url);
+    let http = http_client()?;
 
     let token_response = client
         .exchange_refresh_token(&RefreshToken::new(refresh_token.to_string()))
-        .request_async(async_http_client)
+        .request_async(&http)
         .await
         .map_err(|e| match &e {
             RequestTokenError::ServerResponse(resp) => match resp.error() {

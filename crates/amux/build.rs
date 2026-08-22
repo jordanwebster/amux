@@ -10,7 +10,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
 
     let out_dir = PathBuf::from(std::env::var("OUT_DIR")?);
     let descriptor_path = out_dir.join("amux.v1.bin");
-    tonic_build::configure()
+    tonic_prost_build::configure()
         // Keep generated clients, but omit tonic's transport convenience
         // constructors. Otherwise `RoutingService.Connect` collides with the
         // inherent `RoutingServiceClient::connect(endpoint)` constructor.
