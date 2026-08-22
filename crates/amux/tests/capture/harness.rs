@@ -778,6 +778,7 @@ impl CaptureSession {
     pub async fn prepare_for_first_prompt(&mut self, timeout: Duration) -> Result<()> {
         let deadline = Instant::now() + timeout;
         let mut trust_answered = false;
+        let mut imports_answered = false;
         loop {
             // The TUI positions words with cursor-move escapes, so multi-word
             // matches never fire; single words survive intact.
@@ -793,6 +794,23 @@ impl CaptureSession {
                 )
                 .await?;
                 trust_answered = true;
+                tokio::time::sleep(Duration::from_millis(500)).await;
+                continue;
+            }
+            // Claude 2.1.240 follows the workspace-trust prompt with this
+            // import confirmation when the project has an AGENTS.md outside
+            // the scenario directory. The capture project is created under
+            // this checked-out tree, so accepting this known local file is
+            // part of reaching the otherwise identical first prompt.
+            let seen_import_prompt = screen.contains("external") && screen.contains("imports");
+            if !imports_answered && seen_import_prompt && !composer_up {
+                tokio::time::sleep(Duration::from_millis(800)).await;
+                self.send_keys(
+                    "external instructions dialog: Enter (allow checked-out AGENTS.md)",
+                    vec![ClaudePtyTranscriptV1Action::Write(b"\r".to_vec())],
+                )
+                .await?;
+                imports_answered = true;
                 tokio::time::sleep(Duration::from_millis(500)).await;
                 continue;
             }
