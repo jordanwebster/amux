@@ -48,6 +48,7 @@ async fn run_inner(
                 get_client(&config).await.map_err(|error| ConnectFailure {
                     message: format!("{error:#}"),
                     auth_required: false,
+                    subscription_required: false,
                 })
             })
         })

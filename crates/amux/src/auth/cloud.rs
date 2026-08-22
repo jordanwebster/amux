@@ -20,6 +20,15 @@ pub(crate) enum CloudError {
     Connection(String),
     #[error("Authentication failed: {0}")]
     Auth(String),
+    #[error("Cloud subscription required")]
+    PaymentRequired,
+    #[error("Cloud request rejected: {0}")]
+    Rejected(String),
+}
+
+#[derive(Debug, Deserialize)]
+struct ApiErrorResponse {
+    error: String,
 }
 
 /// Response from the cloud `/api/connect` endpoint.
@@ -100,23 +109,40 @@ async fn fetch_connection(
         .await
         .map_err(|error| CloudError::Connection(error.to_string()))?;
 
-    if response.status() == reqwest::StatusCode::UNAUTHORIZED {
+    let status = response.status();
+    if status.is_success() {
+        return response
+            .json()
+            .await
+            .map_err(|error| CloudError::Connection(error.to_string()));
+    }
+
+    let body = response.text().await.unwrap_or_default();
+    let error = cloud_error_from_response(status, &body);
+    if matches!(error, CloudError::Auth(_)) {
         credentials.invalidate(access_token);
-        return Err(CloudError::Auth("invalid credentials".to_string()));
+    }
+    Err(error)
+}
+
+fn cloud_error_from_response(status: reqwest::StatusCode, body: &str) -> CloudError {
+    if status == reqwest::StatusCode::UNAUTHORIZED {
+        return CloudError::Auth("invalid credentials".to_string());
     }
 
-    if !response.status().is_success() {
-        let status = response.status();
-        let body = response.text().await.unwrap_or_default();
-        return Err(CloudError::Connection(format!(
-            "API returned {status}: {body}"
-        )));
+    if status == reqwest::StatusCode::FORBIDDEN
+        && serde_json::from_str::<ApiErrorResponse>(body)
+            .is_ok_and(|response| response.error == "payment_required")
+    {
+        return CloudError::PaymentRequired;
     }
 
-    response
-        .json()
-        .await
-        .map_err(|error| CloudError::Connection(error.to_string()))
+    let detail = format!("API returned {status}: {body}");
+    if status.is_client_error() {
+        CloudError::Rejected(detail)
+    } else {
+        CloudError::Connection(detail)
+    }
 }
 
 fn cloud_error_from_auth(error: AuthError) -> CloudError {
@@ -128,7 +154,72 @@ fn cloud_error_from_auth(error: AuthError) -> CloudError {
 
 #[cfg(test)]
 mod tests {
+    use std::time::SystemTime;
+
     use super::*;
+
+    struct TestCredentials;
+
+    #[async_trait::async_trait]
+    impl CredentialProvider for TestCredentials {
+        async fn access_token(&self) -> Result<AccessToken, AuthError> {
+            unreachable!("fetch_connection receives its access token directly")
+        }
+
+        fn invalidate(&self, _token: &AccessToken) {}
+    }
+
+    #[test]
+    fn connect_response_classification_distinguishes_terminal_failures() {
+        assert!(matches!(
+            cloud_error_from_response(
+                reqwest::StatusCode::FORBIDDEN,
+                r#"{"error":"payment_required"}"#,
+            ),
+            CloudError::PaymentRequired
+        ));
+        assert!(matches!(
+            cloud_error_from_response(reqwest::StatusCode::UNAUTHORIZED, ""),
+            CloudError::Auth(_)
+        ));
+        assert!(matches!(
+            cloud_error_from_response(reqwest::StatusCode::INTERNAL_SERVER_ERROR, "try again",),
+            CloudError::Connection(_)
+        ));
+
+        let error =
+            cloud_error_from_response(reqwest::StatusCode::FORBIDDEN, r#"{"error":"forbidden"}"#);
+        match error {
+            CloudError::Rejected(message) => {
+                assert!(message.contains("403 Forbidden"));
+                assert!(message.contains(r#"{"error":"forbidden"}"#));
+            }
+            other => panic!("unexpected 403 classification: {other:?}"),
+        }
+    }
+
+    #[tokio::test]
+    async fn network_failures_remain_retriable_connection_errors() {
+        let listener = tokio::net::TcpListener::bind(("127.0.0.1", 0))
+            .await
+            .unwrap();
+        let address = listener.local_addr().unwrap();
+        drop(listener);
+        let access_token = AccessToken {
+            bearer: "test".to_string(),
+            expires_at: Some(SystemTime::now()),
+        };
+
+        let error = fetch_connection(
+            &format!("http://{address}"),
+            &TestCredentials,
+            &access_token,
+        )
+        .await
+        .unwrap_err();
+
+        assert!(matches!(error, CloudError::Connection(_)));
+    }
 
     #[test]
     fn provider_errors_remain_retriable_cloud_connection_errors() {

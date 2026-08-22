@@ -188,6 +188,7 @@ fn every_msg_variant_round_trips_through_serde() {
             message: "connection reset".to_string(),
         }),
         disconnected(DisconnectReason::AuthenticationRequired),
+        disconnected(DisconnectReason::SubscriptionRequired),
         disconnected(DisconnectReason::ApplicationShutdown),
         host_up(&a_host("nova")),
         host_up(&an_offline_host("hetzner")),
@@ -213,6 +214,7 @@ fn every_msg_variant_round_trips_through_serde() {
         op_result(op(3), OpOutcome::AgentDeleted),
         op_failed(op(4), "boom"),
         op_failed_auth(op(5)),
+        op_failed_subscription(op(16)),
         stream("fix-auth-bug", StreamMsg::Opened { truncated: true }),
         stream(
             "fix-auth-bug",
@@ -241,6 +243,7 @@ fn every_msg_variant_round_trips_through_serde() {
             message: "reset".to_string(),
         },
         StreamCloseReason::AuthenticationRequired,
+        StreamCloseReason::SubscriptionRequired,
         StreamCloseReason::ClientClosed,
     ] {
         variants.push(stream("fix-auth-bug", StreamMsg::Closed { reason }));

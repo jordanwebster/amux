@@ -45,6 +45,9 @@ pub enum ProtocolError {
     /// Invalid or missing authentication credentials.
     #[error("Invalid or missing credentials")]
     InvalidCredentials,
+    /// Cloud access requires an active subscription.
+    #[error("Cloud subscription required")]
+    PaymentRequired,
     /// The receiver was unable to allocate a required protocol resource.
     #[error("{message}")]
     ResourceExhausted { message: String },
@@ -98,6 +101,7 @@ pub(crate) fn encode_protocol_error(error: &ProtocolError) -> Error {
         }
         ProtocolError::ServerError { message } => simple_error(13, message.clone()),
         ProtocolError::InvalidCredentials => simple_error(6, error.to_string()),
+        ProtocolError::PaymentRequired => simple_error(5, error.to_string()),
         ProtocolError::ResourceExhausted { message } => simple_error(9, message.clone()),
         ProtocolError::ProtocolMismatch {
             supported_versions,
@@ -176,6 +180,9 @@ pub(crate) fn decode_protocol_error(error: Error) -> ProtocolError {
         4 => ProtocolError::AlreadyExists {
             message: error.message,
         },
+        5 if error.message == ProtocolError::PaymentRequired.to_string() => {
+            ProtocolError::PaymentRequired
+        }
         5 => ProtocolError::PermissionDenied {
             message: error.message,
         },
@@ -237,6 +244,9 @@ pub(crate) fn protocol_status(error: ProtocolError) -> tonic::Status {
         }
         ProtocolError::InvalidCredentials => {
             protocol_status_with_details(tonic::Code::Unauthenticated, error.to_string(), details)
+        }
+        ProtocolError::PaymentRequired => {
+            protocol_status_with_details(tonic::Code::PermissionDenied, error.to_string(), details)
         }
         ProtocolError::ResourceExhausted { message } => {
             protocol_status_with_details(tonic::Code::ResourceExhausted, message, details)
@@ -346,6 +356,16 @@ mod tests {
         let error = ProtocolError::PermissionDenied {
             message: "wrong scope".to_string(),
         };
+
+        let encoded = encode_protocol_error(&error);
+        assert_eq!(encoded.code, 5);
+        assert!(encoded.details.is_empty());
+        assert_eq!(decode_protocol_error(encoded), error);
+    }
+
+    #[test]
+    fn payment_required_is_distinct_from_other_permission_denials() {
+        let error = ProtocolError::PaymentRequired;
 
         let encoded = encode_protocol_error(&error);
         assert_eq!(encoded.code, 5);

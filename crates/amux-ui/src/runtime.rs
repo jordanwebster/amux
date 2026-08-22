@@ -58,6 +58,7 @@ const MAX_STREAM_BATCH: usize = 256;
 pub struct ConnectFailure {
     pub message: String,
     pub auth_required: bool,
+    pub subscription_required: bool,
 }
 
 /// Future returned by a [`Connector`].
@@ -300,6 +301,7 @@ impl Runtime {
                             error: OpError {
                                 message: NOT_CONNECTED_ERROR.to_string(),
                                 auth_required: false,
+                                subscription_required: false,
                             },
                         },
                     };
@@ -321,6 +323,7 @@ impl Runtime {
                             error: OpError {
                                 message: NOT_CONNECTED_ERROR.to_string(),
                                 auth_required: false,
+                                subscription_required: false,
                             },
                         },
                     };
@@ -444,12 +447,14 @@ async fn execute_rpc(client: &Client, command: Command) -> OpOutcome {
             error: OpError {
                 message: "input command routed to the RPC executor".to_string(),
                 auth_required: false,
+                subscription_required: false,
             },
         },
         Command::Codex(_) => OpOutcome::Error {
             error: OpError {
                 message: "input command routed to the RPC executor".to_string(),
                 auth_required: false,
+                subscription_required: false,
             },
         },
     }
@@ -570,6 +575,7 @@ async fn execute_claude_input(
                     error: OpError {
                         message: format!("{STALE_INPUT_ERROR} ({error})"),
                         auth_required: false,
+                        subscription_required: false,
                     },
                 };
             }
@@ -583,6 +589,7 @@ fn op_error_outcome(error: &ClientError) -> OpOutcome {
         error: OpError {
             message: error.to_string(),
             auth_required: is_auth_error(error),
+            subscription_required: is_subscription_error(error),
         },
     }
 }
@@ -594,6 +601,10 @@ fn is_auth_error(error: &ClientError) -> bool {
     )
 }
 
+fn is_subscription_error(error: &ClientError) -> bool {
+    matches!(error, ClientError::Protocol(ProtocolError::PaymentRequired))
+}
+
 /// Map a client error to the disconnect vocabulary.
 /// `ProtocolError::InvalidCredentials` surfaces as authentication-required —
 /// the degraded state, never a dead app.
@@ -603,6 +614,7 @@ fn disconnect_reason(error: &ClientError) -> DisconnectReason {
             detail: reason.to_string(),
         },
         error if is_auth_error(error) => DisconnectReason::AuthenticationRequired,
+        error if is_subscription_error(error) => DisconnectReason::SubscriptionRequired,
         error => DisconnectReason::TransportError {
             message: error.to_string(),
         },
@@ -625,6 +637,8 @@ async fn connection_task(
             Err(failure) => {
                 let reason = if failure.auth_required {
                     DisconnectReason::AuthenticationRequired
+                } else if failure.subscription_required {
+                    DisconnectReason::SubscriptionRequired
                 } else {
                     DisconnectReason::TransportError {
                         message: failure.message,
@@ -922,6 +936,8 @@ fn stream_close_from_session(reason: SessionCloseReason) -> StreamCloseReason {
 fn stream_close_from_client_error(error: &ClientError) -> StreamCloseReason {
     if is_auth_error(error) {
         StreamCloseReason::AuthenticationRequired
+    } else if is_subscription_error(error) {
+        StreamCloseReason::SubscriptionRequired
     } else {
         StreamCloseReason::TransportError {
             message: error.to_string(),
@@ -932,6 +948,22 @@ fn stream_close_from_client_error(error: &ClientError) -> StreamCloseReason {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn payment_required_maps_to_subscription_state_only() {
+        let error = ClientError::Protocol(ProtocolError::PaymentRequired);
+
+        assert!(is_subscription_error(&error));
+        assert!(!is_auth_error(&error));
+        assert_eq!(
+            disconnect_reason(&error),
+            DisconnectReason::SubscriptionRequired
+        );
+        assert_eq!(
+            stream_close_from_client_error(&error),
+            StreamCloseReason::SubscriptionRequired
+        );
+    }
 
     fn codex_agent(agent: AgentId, host: HostId) -> amux::Agent {
         amux::Agent {

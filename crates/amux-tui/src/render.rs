@@ -248,6 +248,9 @@ fn screen_state(model: &Model, view: &ViewState, rows: &[VisibleRow<'_>]) -> Scr
                 DisconnectReason::AuthenticationRequired => {
                     "✗ authentication required — run `amux init`".to_string()
                 }
+                DisconnectReason::SubscriptionRequired => {
+                    "✗ subscription required — amux.sh/account".to_string()
+                }
                 DisconnectReason::ServerShutdown { detail } => {
                     format!("✗ daemon shut down: {detail}")
                 }
@@ -539,7 +542,14 @@ fn banner_line(model: &Model, width: usize) -> Line<'static> {
         return invariant_warning_line(width, Style::default().fg(Color::Yellow));
     }
     let mut line = new_line();
-    if model.cloud_auth_required() && model.is_connected() {
+    if model.cloud_subscription_required() && model.is_connected() {
+        push_span(
+            &mut line,
+            MARKER_COL,
+            "⚠ cloud: subscription required — amux.sh/account · local agents fine",
+            Style::default().fg(Color::Yellow),
+        );
+    } else if model.cloud_auth_required() && model.is_connected() {
         push_span(
             &mut line,
             MARKER_COL,

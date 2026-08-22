@@ -394,6 +394,7 @@ fn fleet_cloud_auth_banner() {
             error: amux_ui::OpError {
                 message: "Invalid or missing credentials".to_string(),
                 auth_required: true,
+                subscription_required: false,
             },
         },
     });
@@ -405,6 +406,37 @@ fn fleet_cloud_auth_banner() {
     };
     let rendered = render_frame(&model, &view, 68, 11);
     assert_golden("fleet_cloud_auth_banner", &rendered);
+}
+
+/// A missing cloud subscription is a degraded banner over the working local
+/// fleet, with account recovery guidance.
+#[test]
+fn fleet_cloud_subscription_banner() {
+    let mut msgs = fleet_msgs();
+    msgs.push(Msg::Command {
+        op: op(1),
+        command: Command::RenameAgent {
+            agent: agent_id("migration-plan"),
+            name: "plan".to_string(),
+        },
+    });
+    msgs.push(Msg::OpResult {
+        op: op(1),
+        outcome: amux_ui::OpOutcome::Error {
+            error: amux_ui::OpError {
+                message: "Cloud subscription required".to_string(),
+                auth_required: false,
+                subscription_required: true,
+            },
+        },
+    });
+    let model = fold(msgs);
+    let view = ViewState {
+        dismissed_error_seq: u64::MAX,
+        ..view_default()
+    };
+    let rendered = render_frame(&model, &view, 74, 11);
+    assert_golden("fleet_cloud_subscription_banner", &rendered);
 }
 
 #[test]

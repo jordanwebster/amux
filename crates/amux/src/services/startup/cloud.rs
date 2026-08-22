@@ -66,6 +66,12 @@ pub(crate) fn establish_cloud_connection(
                         tracing::error!(error = %msg, "cloud non-retriable error, stopping");
                         return;
                     }
+                    Err(CloudConnectionError::SubscriptionRequired) => {
+                        tracing::warn!(
+                            "cloud subscription required — manage at amux.sh/account; local agents remain available"
+                        );
+                        return;
+                    }
                     Err(CloudConnectionError::Retriable { msg, reset_backoff }) => {
                         if reset_backoff {
                             backoff = INITIAL_BACKOFF;
@@ -93,8 +99,27 @@ pub(crate) fn establish_cloud_connection(
 enum CloudConnectionError {
     /// Error that should trigger reconnection (connection lost, host changed)
     Retriable { msg: String, reset_backoff: bool },
-    /// Error that should stop reconnection attempts (auth failure)
+    /// Error that should stop reconnection attempts.
     NonRetriable(String),
+    /// Cloud access is unavailable until the user activates a subscription.
+    SubscriptionRequired,
+}
+
+fn cloud_connection_error_from_fetch(error: CloudError) -> CloudConnectionError {
+    match error {
+        CloudError::NotAuthenticated | CloudError::Auth(_) => CloudConnectionError::NonRetriable(
+            "Authentication failed — run 'amux init' to re-authenticate".to_string(),
+        ),
+        CloudError::PaymentRequired => CloudConnectionError::SubscriptionRequired,
+        CloudError::CloudDisabled => {
+            CloudConnectionError::NonRetriable("Cloud mode disabled".to_string())
+        }
+        error @ CloudError::Rejected(_) => CloudConnectionError::NonRetriable(error.to_string()),
+        error @ CloudError::Connection(_) => CloudConnectionError::Retriable {
+            msg: format!("Connection failed: {error}"),
+            reset_backoff: false,
+        },
+    }
 }
 
 async fn run_cloud_connection(
@@ -113,22 +138,11 @@ async fn run_cloud_connection(
 
     let details = match fetch_routing_connection_details(config, credentials.as_ref()).await {
         Ok(details) => details,
-        Err(CloudError::NotAuthenticated) | Err(CloudError::Auth(_)) => {
-            audit::auth_jwt_failure("cloud routing credentials were rejected");
-            return Err(CloudConnectionError::NonRetriable(
-                "Authentication failed — run 'amux init' to re-authenticate".to_string(),
-            ));
-        }
-        Err(CloudError::CloudDisabled) => {
-            return Err(CloudConnectionError::NonRetriable(
-                "Cloud mode disabled".to_string(),
-            ));
-        }
         Err(error) => {
-            return Err(CloudConnectionError::Retriable {
-                msg: format!("Connection failed: {error}"),
-                reset_backoff: false,
-            });
+            if matches!(error, CloudError::NotAuthenticated | CloudError::Auth(_)) {
+                audit::auth_jwt_failure("cloud routing credentials were rejected");
+            }
+            return Err(cloud_connection_error_from_fetch(error));
         }
     };
 
@@ -231,6 +245,12 @@ async fn cloud_connection_error_from_status(
             "Invalid credentials — run 'amux init' to re-authenticate".to_string(),
         );
     }
+    if status.code() == tonic::Code::PermissionDenied {
+        if status.message() == ProtocolError::PaymentRequired.to_string() {
+            return CloudConnectionError::SubscriptionRequired;
+        }
+        return CloudConnectionError::NonRetriable(status.to_string());
+    }
     CloudConnectionError::Retriable {
         msg: status.to_string(),
         reset_backoff: should_reset_backoff_after_connection(connection_uptime),
@@ -286,8 +306,12 @@ impl LinkConnectorTokenRefresher for CloudLinkTokenRefresher {
                 CloudError::NotAuthenticated | CloudError::Auth(_) => {
                     tonic::Status::unauthenticated("invalid cloud credentials")
                 }
+                CloudError::PaymentRequired => {
+                    tonic::Status::permission_denied(ProtocolError::PaymentRequired.to_string())
+                }
+                CloudError::Rejected(message) => tonic::Status::permission_denied(message),
                 CloudError::CloudDisabled => tonic::Status::failed_precondition("cloud disabled"),
-                other => tonic::Status::unavailable(other.to_string()),
+                CloudError::Connection(message) => tonic::Status::unavailable(message),
             })?;
 
         if details.host != self.current_host || details.port != self.current_port {
@@ -357,9 +381,9 @@ mod tests {
 
     use super::{
         ABSOLUTE_JITTER_MAX, BACKOFF_RESET_AFTER_ESTABLISHED, INITIAL_BACKOFF, MAX_BACKOFF,
-        await_cloud_establishment, cloud_connection_error_from_status,
-        jittered_backoff_with_samples, next_backoff, report_update_status,
-        should_reset_backoff_after_connection,
+        await_cloud_establishment, cloud_connection_error_from_fetch,
+        cloud_connection_error_from_status, jittered_backoff_with_samples, next_backoff,
+        report_update_status, should_reset_backoff_after_connection,
     };
     use crate::config::Config;
     use crate::protocol::{ProtocolError, protocol_status};
@@ -375,6 +399,26 @@ mod tests {
         fn report(&self, status: UpdateStatus) {
             self.statuses.lock().unwrap().push(status);
         }
+    }
+
+    #[test]
+    fn fetch_error_classification_controls_retries() {
+        assert!(matches!(
+            cloud_connection_error_from_fetch(crate::auth::cloud::CloudError::PaymentRequired),
+            super::CloudConnectionError::SubscriptionRequired
+        ));
+        assert!(matches!(
+            cloud_connection_error_from_fetch(crate::auth::cloud::CloudError::Rejected(
+                "403 Forbidden".to_string()
+            )),
+            super::CloudConnectionError::NonRetriable(_)
+        ));
+        assert!(matches!(
+            cloud_connection_error_from_fetch(crate::auth::cloud::CloudError::Connection(
+                "temporary".to_string()
+            )),
+            super::CloudConnectionError::Retriable { .. }
+        ));
     }
 
     #[tokio::test]
@@ -431,6 +475,9 @@ mod tests {
             super::CloudConnectionError::Retriable { .. } => {
                 panic!("update-required status must stop reconnecting")
             }
+            super::CloudConnectionError::SubscriptionRequired => {
+                panic!("update-required status must not become subscription-required")
+            }
         }
         let statuses = reporter.statuses.lock().unwrap();
         assert_eq!(statuses.len(), 1);
@@ -440,6 +487,46 @@ mod tests {
             }
             other => panic!("unexpected update status: {other:?}"),
         }
+    }
+
+    #[tokio::test]
+    async fn payment_required_status_stops_retrying_with_dedicated_state() {
+        let (shutdown_tx, _shutdown_rx) = mpsc::channel(1);
+        let state = Arc::new(RwLock::new(ServerState::new(
+            Config::default(),
+            Uuid::new_v4(),
+            shutdown_tx,
+            None,
+            None,
+        )));
+        let status = tonic::Status::permission_denied(ProtocolError::PaymentRequired.to_string());
+
+        let error = cloud_connection_error_from_status(&state, status, Duration::ZERO).await;
+
+        assert!(matches!(
+            error,
+            super::CloudConnectionError::SubscriptionRequired
+        ));
+    }
+
+    #[tokio::test]
+    async fn unexpected_permission_denied_status_stops_retrying() {
+        let (shutdown_tx, _shutdown_rx) = mpsc::channel(1);
+        let state = Arc::new(RwLock::new(ServerState::new(
+            Config::default(),
+            Uuid::new_v4(),
+            shutdown_tx,
+            None,
+            None,
+        )));
+        let status = tonic::Status::permission_denied("cloud request rejected");
+
+        let error = cloud_connection_error_from_status(&state, status, Duration::ZERO).await;
+
+        assert!(matches!(
+            error,
+            super::CloudConnectionError::NonRetriable(_)
+        ));
     }
 
     #[tokio::test]
@@ -470,6 +557,9 @@ mod tests {
             }
             super::CloudConnectionError::NonRetriable(message) => {
                 panic!("timeout must be retriable, got non-retriable: {message}");
+            }
+            super::CloudConnectionError::SubscriptionRequired => {
+                panic!("timeout must not become subscription-required")
             }
         }
     }

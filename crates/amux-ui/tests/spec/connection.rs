@@ -1,4 +1,4 @@
-//! Chapter 1 — Connection: epochs, snapshots, and auth expiry.
+//! Chapter 1 — Connection: epochs, snapshots, auth expiry, and subscription state.
 //!
 //! Reconnect replaces state by snapshot under a new epoch, with an explicit
 //! synchronized marker separating catch-up from live. Cloud-auth expiry is a
@@ -24,6 +24,18 @@ fn auth_disconnect_sequence() -> Vec<Msg> {
     seq([
         degraded_auth_sequence(),
         vec![disconnected(DisconnectReason::AuthenticationRequired)],
+    ])
+}
+
+fn degraded_subscription_sequence() -> Vec<Msg> {
+    seq([
+        vec![connected("nova"), host_up(&a_host("nova"))],
+        synced(),
+        vec![
+            agent_up(&an_agent("local-agent", "nova")),
+            command(op(1), rename_cmd("local-agent", "still-local")),
+            op_failed_subscription(op(1)),
+        ],
     ])
 }
 
@@ -66,6 +78,19 @@ fn auth_expiry_surfaces_authentication_required() {
             reason: DisconnectReason::AuthenticationRequired
         }
     );
+}
+
+#[test]
+fn payment_error_surfaces_subscription_required_without_auth_required() {
+    let model = fold(degraded_subscription_sequence());
+
+    assert!(model.cloud_subscription_required());
+    assert!(!model.cloud_auth_required());
+    assert!(
+        model.is_connected(),
+        "subscription state must not kill the app"
+    );
+    assert!(model.agent(agent_id("local-agent")).is_some());
 }
 
 fn reconnect_stream_prune_sequence() -> Vec<Msg> {

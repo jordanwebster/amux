@@ -811,6 +811,7 @@ fn chat_send_failure() {
             error: amux_ui::OpError {
                 message: "input raced the session — it moved on before the keys landed".to_string(),
                 auth_required: false,
+                subscription_required: false,
             },
         },
     });
@@ -1373,6 +1374,7 @@ fn chat_ask_send_failed() {
             error: amux_ui::OpError {
                 message: "input raced the session — it moved on before the keys landed".to_string(),
                 auth_required: false,
+                subscription_required: false,
             },
         },
     });

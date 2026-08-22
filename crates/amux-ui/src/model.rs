@@ -401,6 +401,9 @@ pub struct Model {
     /// Cloud auth expired or missing: render the degraded banner, keep local
     /// agents fully usable. Never a blocking screen.
     pub(crate) cloud_auth_required: bool,
+    /// Cloud subscription missing: render the degraded banner while local
+    /// agents remain fully usable.
+    pub(crate) cloud_subscription_required: bool,
     /// The runtime observed structural incoherence this session. This is a
     /// sticky renderer fact, not an invariant derivation: views may format
     /// the warning but must never recompute the violation.
@@ -422,6 +425,7 @@ impl Default for Model {
             epoch: 0,
             local_host_id: None,
             cloud_auth_required: false,
+            cloud_subscription_required: false,
             invariant_warning: false,
             hosts: BTreeMap::new(),
             agents: BTreeMap::new(),
@@ -461,6 +465,10 @@ impl Model {
 
     pub fn cloud_auth_required(&self) -> bool {
         self.cloud_auth_required
+    }
+
+    pub fn cloud_subscription_required(&self) -> bool {
+        self.cloud_subscription_required
     }
 
     /// Whether the runtime has observed any Model invariant violation this

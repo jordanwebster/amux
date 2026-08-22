@@ -146,6 +146,7 @@ pub(crate) fn refuse(
                 error: OpError {
                     message: message.to_string(),
                     auth_required: false,
+                    subscription_required: false,
                 },
             },
         },
@@ -182,6 +183,11 @@ fn update_op_result(model: &mut Model, op: OpId, outcome: OpOutcome) -> Vec<Effe
         && error.auth_required
     {
         model.cloud_auth_required = true;
+    }
+    if let OpOutcome::Error { error } = &outcome
+        && error.subscription_required
+    {
+        model.cloud_subscription_required = true;
     }
     // A failed input send resurfaces its optimistic state with the failure
     // stated (C5): the echo leaves (the draft resurfaces from ViewState;
@@ -223,6 +229,7 @@ fn update_server(model: &mut Model, server: ServerMsg) -> Vec<Effect> {
             };
             model.local_host_id = local_host_id.or(model.local_host_id);
             model.cloud_auth_required = false;
+            model.cloud_subscription_required = false;
             Vec::new()
         }
         ServerMsg::Disconnected { reason } => {
@@ -369,6 +376,9 @@ fn update_stream(model: &mut Model, agent: amux::AgentId, event: StreamMsg) -> V
         StreamMsg::Closed { reason } => {
             if reason == StreamCloseReason::AuthenticationRequired {
                 model.cloud_auth_required = true;
+            }
+            if reason == StreamCloseReason::SubscriptionRequired {
+                model.cloud_subscription_required = true;
             }
             match &reason {
                 StreamCloseReason::AgentExited { exit_code } => {

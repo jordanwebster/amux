@@ -1107,6 +1107,7 @@ mod tests {
                     error: amux_ui::OpError {
                         message: "input raced the session".to_string(),
                         auth_required: false,
+                        subscription_required: false,
                     },
                 },
             }],
@@ -1141,6 +1142,7 @@ mod tests {
                     error: amux_ui::OpError {
                         message: "transport lost".to_string(),
                         auth_required: false,
+                        subscription_required: false,
                     },
                 },
             }],

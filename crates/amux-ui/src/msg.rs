@@ -151,6 +151,8 @@ pub enum DisconnectReason {
     /// Mapped from `ProtocolError::InvalidCredentials` /
     /// `AuthError::Unauthenticated`.
     AuthenticationRequired,
+    /// Mapped from `ProtocolError::PaymentRequired`.
+    SubscriptionRequired,
     ApplicationShutdown,
 }
 
@@ -190,6 +192,8 @@ pub struct OpError {
     /// (`ProtocolError::InvalidCredentials`): the fleet degrades to the
     /// cloud-auth banner instead of a dead screen.
     pub auth_required: bool,
+    /// True when cloud access requires an active subscription.
+    pub subscription_required: bool,
 }
 
 /// Per-agent session-stream lifecycle and content.
@@ -236,6 +240,7 @@ pub enum StreamCloseReason {
         message: String,
     },
     AuthenticationRequired,
+    SubscriptionRequired,
     /// Closed by the shell executing `Effect::CloseStream`.
     ClientClosed,
 }
