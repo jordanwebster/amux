@@ -1,0 +1,21 @@
+{
+  "captured_at": "2026-08-22T23:55:57.666098+00:00",
+  "codex_version": "codex-cli 0.148.0",
+  "failure": null,
+  "harness": "timeout 600 cargo test -p amux --test codex_capture -- c12_inject_idle",
+  "isolated_codex_home": true,
+  "model": "gpt-5.6-sol",
+  "notes": {
+    "assertions": {
+      "empty_turn_completed": true,
+      "inject_accepted": true,
+      "injected_item_seen": true
+    },
+    "thread_id": "01a02be6-ff33-7021-8cb5-364c18110187",
+    "turn_id": "01a02be7-02ad-7653-a372-20e9abef2d57"
+  },
+  "requirement": "C.12 inject items on an idle thread then start an empty turn",
+  "scenario": "c12_inject_idle",
+  "synthetic_prompts": true,
+  "timeout_seconds": 360
+}

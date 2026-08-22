@@ -4,6 +4,8 @@ This file tracks significant development work, decisions made, and current state
 
 ---
 
+2026-08-23 — **Codex A2A carrier captures now pin idle injection, busy injection, and completion ordering.** The isolated C.12–C.14 harness uses a direct experimental app-server client to record `thread/inject_items` without expanding the production SDK surface. On Codex 0.148.0, an idle injected user message is consumed by a subsequent empty-input turn; a message injected after `turn/started` queues into that same turn after its first assistant response; and two completed assistant messages arrive commentary then final before `turn/completed`, whose summary retains the final message. Redacted IO and provenance metas plus structural fixture waiters preserve those observations for offline replay.
+
 2026-08-23 — **Claude capture startup now accepts the local-instructions import confirmation.** The isolated capture harness recognizes the follow-up prompt emitted by Claude Code 2.1.240 after trusting a fresh scenario directory, records the input in its keystroke provenance, and continues to the composer without conflating the confirmation with transcript evidence.
 
 2026-08-23 — **The Codex capture suite now exercises experimental dynamic tools.** C.11 launches an isolated direct app-server connection, passes `dynamicTools` at thread creation, requires the model to call `send`, answers the tool request with structured content, and records the full JSON-RPC exchange for fixture graduation.

@@ -14,7 +14,7 @@
 //! not rebuild; the harness refuses to start against a binary older than the
 //! prerequisites in Cargo's depfile rather than reporting on code it never ran.
 //!
-//! `c-all` selects C.1-C.10. Each scenario has one row in [`SCENARIOS`], so
+//! `c-all` selects C.1-C.14. Each scenario has one row in [`SCENARIOS`], so
 //! its id, requirement, timeout, and runner stay together. Captures land in a
 //! scenario-named child of `AMUX_CODEX_CAPTURE_DIR` (or a timestamped default)
 //! and include backend rows, SDK IO, observed subscription rows, raw bytes
@@ -35,22 +35,25 @@ fn main() {
 
 #[cfg(unix)]
 fn main() -> anyhow::Result<()> {
+    use std::collections::HashMap;
+    use std::fs::{File, OpenOptions};
+    use std::io::Write as _;
     use std::path::{Path, PathBuf};
     use std::process::Command;
-    use std::collections::HashMap;
     use std::time::{Duration, Instant};
 
     use amux::codex_io::CodexSdkV1Input;
     use anyhow::{Context, Result, anyhow, bail};
     use codex_capture::{harness, redact, structure};
+    use codex_sdk::notification::TurnEvent;
+    use codex_sdk::{CodexConfig, DynamicToolCallResponse, ThreadConfig, connect};
     use harness::{
         Harness, RAW_TIMEOUT, READY_TIMEOUT, StructuredCapture, TURN_TIMEOUT,
         app_server_process_group, drain_raw, raw_until, subscribe_raw, terminate_process_group,
     };
     use serde_json::{Value, json};
-    use codex_sdk::{CodexConfig, ThreadConfig, DynamicToolCallResponse, connect};
-    use codex_sdk::notification::TurnEvent;
     use structure::Matcher;
+    use tokio::io::{AsyncBufReadExt, AsyncWriteExt, BufReader};
 
     #[derive(Clone, Copy, Debug, PartialEq, Eq)]
     enum Scenario {
@@ -65,6 +68,9 @@ fn main() -> anyhow::Result<()> {
         RawUnnamed,
         UnnamedReconnect,
         DynamicTools,
+        InjectIdle,
+        InjectBusy,
+        LastMessage,
     }
 
     #[derive(Clone, Copy)]
@@ -151,6 +157,24 @@ fn main() -> anyhow::Result<()> {
             360,
             Scenario::DynamicTools,
         ),
+        scenario(
+            "c12_inject_idle",
+            "C.12 inject items on an idle thread then start an empty turn",
+            360,
+            Scenario::InjectIdle,
+        ),
+        scenario(
+            "c13_inject_busy",
+            "C.13 inject items during a running turn",
+            360,
+            Scenario::InjectBusy,
+        ),
+        scenario(
+            "c14_last_message",
+            "C.14 two assistant messages before turn completion",
+            360,
+            Scenario::LastMessage,
+        ),
     ];
 
     fn validate_scenarios() -> Result<()> {
@@ -232,6 +256,367 @@ fn main() -> anyhow::Result<()> {
         Ok((agent, capture, cursor))
     }
 
+    /// Minimal direct app-server client used only by substrate probes for
+    /// experimental RPCs that have not earned a production SDK surface yet.
+    struct DirectAppServer {
+        child: tokio::process::Child,
+        stdin: tokio::process::ChildStdin,
+        stdout: BufReader<tokio::process::ChildStdout>,
+        io: File,
+        started: Instant,
+        next_id: u64,
+        seen: Vec<Value>,
+    }
+
+    impl DirectAppServer {
+        async fn open(harness: &Harness) -> Result<Self> {
+            let mut command = tokio::process::Command::new("codex");
+            command
+                .args(["app-server", "--listen", "stdio://"])
+                .current_dir(&harness.scratch.project)
+                .env("CODEX_HOME", &harness.scratch.codex_home)
+                .stdin(std::process::Stdio::piped())
+                .stdout(std::process::Stdio::piped())
+                .stderr(std::process::Stdio::null());
+            let mut child = command
+                .spawn()
+                .context("spawn direct Codex app-server for inject-items capture")?;
+            let stdin = child.stdin.take().context("take direct app-server stdin")?;
+            let stdout = child
+                .stdout
+                .take()
+                .context("take direct app-server stdout")?;
+            let io = OpenOptions::new()
+                .create(true)
+                .append(true)
+                .open(harness.scratch.out.join("io.jsonl"))?;
+            let mut server = Self {
+                child,
+                stdin,
+                stdout: BufReader::new(stdout),
+                io,
+                started: Instant::now(),
+                next_id: 1,
+                seen: Vec::new(),
+            };
+            server
+                .request(
+                    "initialize",
+                    json!({
+                        "clientInfo": {"name": "amux-a2a-capture", "version": "0.1.0"},
+                        "capabilities": {"experimentalApi": true}
+                    }),
+                )
+                .await
+                .context("initialize direct app-server capture")?;
+            server.notify("initialized", None).await?;
+            Ok(server)
+        }
+
+        fn record(&mut self, direction: &str, line: &str) -> Result<()> {
+            writeln!(
+                self.io,
+                "{}",
+                json!({
+                    "us": self.started.elapsed().as_micros() as u64,
+                    "dir": direction,
+                    "line": line,
+                })
+            )?;
+            self.io.flush()?;
+            Ok(())
+        }
+
+        async fn send(&mut self, value: Value) -> Result<()> {
+            let line = serde_json::to_string(&value)?;
+            self.record("stdin", &line)?;
+            self.stdin.write_all(line.as_bytes()).await?;
+            self.stdin.write_all(b"\n").await?;
+            self.stdin.flush().await?;
+            Ok(())
+        }
+
+        async fn next(&mut self) -> Result<Value> {
+            let mut line = String::new();
+            let read = self.stdout.read_line(&mut line).await?;
+            if read == 0 {
+                bail!("direct Codex app-server closed stdout")
+            }
+            let line = line.trim();
+            self.record("stdout", line)?;
+            let value: Value =
+                serde_json::from_str(line).context("parse direct app-server JSON-RPC line")?;
+            self.seen.push(value.clone());
+            Ok(value)
+        }
+
+        async fn request(&mut self, method: &str, params: Value) -> Result<Value> {
+            let id = self.next_id;
+            self.next_id += 1;
+            self.send(json!({"id": id, "method": method, "params": params}))
+                .await?;
+            loop {
+                let message = self.next().await?;
+                if message.get("id") == Some(&Value::from(id)) {
+                    if let Some(error) = message.get("error") {
+                        bail!("{method} failed: {error}");
+                    }
+                    return message
+                        .get("result")
+                        .cloned()
+                        .context("direct app-server response omitted result");
+                }
+            }
+        }
+
+        async fn notify(&mut self, method: &str, params: Option<Value>) -> Result<()> {
+            let mut value = json!({"method": method});
+            if let Some(params) = params {
+                value["params"] = params;
+            }
+            self.send(value).await
+        }
+
+        async fn wait_for(
+            &mut self,
+            timeout: Duration,
+            what: &str,
+            predicate: impl Fn(&Value) -> bool,
+        ) -> Result<Value> {
+            let deadline = Instant::now() + timeout;
+            loop {
+                let remaining = deadline.saturating_duration_since(Instant::now());
+                if remaining.is_zero() {
+                    bail!("timed out waiting for {what}");
+                }
+                let message = tokio::time::timeout(remaining, self.next())
+                    .await
+                    .with_context(|| format!("timed out waiting for {what}"))??;
+                if predicate(&message) {
+                    return Ok(message);
+                }
+            }
+        }
+
+        async fn close(&mut self) {
+            let _ = self.child.kill().await;
+            let _ = self.child.wait().await;
+        }
+    }
+
+    async fn direct_thread(
+        server: &mut DirectAppServer,
+        harness: &Harness,
+        model: &str,
+    ) -> Result<String> {
+        let started = server
+            .request(
+                "thread/start",
+                json!({"cwd": harness.scratch.project, "model": model}),
+            )
+            .await?;
+        started
+            .pointer("/thread/id")
+            .and_then(Value::as_str)
+            .map(str::to_owned)
+            .context("thread/start response omitted thread id")
+    }
+
+    fn injected_item(text: &str) -> Value {
+        json!({
+            "type": "message",
+            "role": "user",
+            "content": [{"type": "input_text", "text": text}]
+        })
+    }
+
+    fn is_turn_started(message: &Value, thread_id: &str) -> bool {
+        message.get("method").and_then(Value::as_str) == Some("turn/started")
+            && message.pointer("/params/threadId").and_then(Value::as_str) == Some(thread_id)
+    }
+
+    fn is_completed_turn(message: &Value, thread_id: &str, turn_id: &str) -> bool {
+        message.get("method").and_then(Value::as_str) == Some("turn/completed")
+            && message.pointer("/params/threadId").and_then(Value::as_str) == Some(thread_id)
+            && message.pointer("/params/turn/id").and_then(Value::as_str) == Some(turn_id)
+            && message
+                .pointer("/params/turn/status")
+                .and_then(Value::as_str)
+                == Some("completed")
+    }
+
+    fn completed_agent_messages<'a>(server: &'a DirectAppServer, turn_id: &str) -> Vec<&'a Value> {
+        server
+            .seen
+            .iter()
+            .filter(|message| {
+                message.get("method").and_then(Value::as_str) == Some("item/completed")
+                    && message.pointer("/params/turnId").and_then(Value::as_str) == Some(turn_id)
+                    && message.pointer("/params/item/type").and_then(Value::as_str)
+                        == Some("agentMessage")
+            })
+            .collect()
+    }
+
+    async fn inject_idle(harness: &mut Harness, model: &str) -> Result<Value> {
+        let mut server = DirectAppServer::open(harness).await?;
+        let result = async {
+            let thread_id = direct_thread(&mut server, harness, model).await?;
+            server
+                .request(
+                    "thread/inject_items",
+                    json!({
+                        "threadId": thread_id,
+                        "items": [injected_item("C12_INJECT_IDLE")]
+                    }),
+                )
+                .await
+                .context("inject an item into an idle thread")?;
+            let started = server
+                .request("turn/start", json!({"threadId": thread_id, "input": []}))
+                .await
+                .context("start an empty-input turn after idle injection")?;
+            let turn_id = started
+                .pointer("/turn/id")
+                .and_then(Value::as_str)
+                .context("empty-input turn/start omitted turn id")?
+                .to_owned();
+            server
+                .wait_for(
+                    TURN_TIMEOUT,
+                    "empty-input injected turn completion",
+                    |message| is_completed_turn(message, &thread_id, &turn_id),
+                )
+                .await?;
+            let messages = completed_agent_messages(&server, &turn_id);
+            if !messages.iter().any(|message| {
+                message.pointer("/params/item/text").and_then(Value::as_str)
+                    .is_some_and(|text| text.contains("C12_INJECT_IDLE"))
+            }) {
+                bail!("empty-input turn did not expose the injected item to the model");
+            }
+            Ok(json!({
+                "assertions": {"inject_accepted": true, "empty_turn_completed": true, "injected_item_seen": true},
+                "thread_id": thread_id,
+                "turn_id": turn_id,
+            }))
+        }
+        .await;
+        server.close().await;
+        result
+    }
+
+    async fn inject_busy(harness: &mut Harness, model: &str) -> Result<Value> {
+        let mut server = DirectAppServer::open(harness).await?;
+        let result = async {
+            let thread_id = direct_thread(&mut server, harness, model).await?;
+            let started = server
+                .request(
+                    "turn/start",
+                    json!({
+                        "threadId": thread_id,
+                        "input": [{"type": "text", "text": "Think carefully for a moment, then reply exactly C13_INITIAL."}]
+                    }),
+                )
+                .await?;
+            let turn_id = started
+                .pointer("/turn/id")
+                .and_then(Value::as_str)
+                .context("busy turn/start omitted turn id")?
+                .to_owned();
+            server
+                .wait_for(TURN_TIMEOUT, "busy turn start", |message| {
+                    is_turn_started(message, &thread_id)
+                })
+                .await?;
+            server
+                .request(
+                    "thread/inject_items",
+                    json!({
+                        "threadId": thread_id,
+                        "items": [injected_item("C13_INJECT_BUSY")]
+                    }),
+                )
+                .await
+                .context("inject an item into a running turn")?;
+            server
+                .wait_for(TURN_TIMEOUT, "busy injected turn completion", |message| {
+                    is_completed_turn(message, &thread_id, &turn_id)
+                })
+                .await?;
+            let messages = completed_agent_messages(&server, &turn_id);
+            let texts: Vec<_> = messages
+                .iter()
+                .filter_map(|message| message.pointer("/params/item/text").and_then(Value::as_str))
+                .collect();
+            if texts != ["C13_INITIAL", "C13_INJECT_BUSY"] {
+                bail!("busy injected turn did not queue the injected message: {texts:?}");
+            }
+            Ok(json!({
+                "assertions": {"inject_accepted": true, "busy_turn_completed": true, "injected_item_queued": true},
+                "thread_id": thread_id,
+                "turn_id": turn_id,
+            }))
+        }
+        .await;
+        server.close().await;
+        result
+    }
+
+    async fn last_message(harness: &mut Harness, model: &str) -> Result<Value> {
+        let mut server = DirectAppServer::open(harness).await?;
+        let result = async {
+            let thread_id = direct_thread(&mut server, harness, model).await?;
+            let started = server
+                .request(
+                    "turn/start",
+                    json!({
+                        "threadId": thread_id,
+                        "input": [{"type": "text", "text": "Send two separate assistant messages in this turn: first exactly C14_FIRST in commentary, then exactly C14_SECOND as the final answer."}]
+                    }),
+                )
+                .await?;
+            let turn_id = started
+                .pointer("/turn/id")
+                .and_then(Value::as_str)
+                .context("two-message turn/start omitted turn id")?
+                .to_owned();
+            let completed = server
+                .wait_for(TURN_TIMEOUT, "two-message turn completion", |message| {
+                    is_completed_turn(message, &thread_id, &turn_id)
+                })
+                .await?;
+            let messages = completed_agent_messages(&server, &turn_id);
+            let texts: Vec<_> = messages
+                .iter()
+                .filter_map(|message| message.pointer("/params/item/text").and_then(Value::as_str))
+                .collect();
+            if texts != ["C14_FIRST", "C14_SECOND"] {
+                bail!("two-message turn did not preserve assistant-message order: {texts:?}");
+            }
+            if messages[0]
+                .pointer("/params/item/phase")
+                .and_then(Value::as_str)
+                != Some("commentary")
+                || messages[1]
+                    .pointer("/params/item/phase")
+                    .and_then(Value::as_str)
+                    != Some("final_answer")
+            {
+                bail!("two-message turn did not preserve commentary then final phases");
+            }
+            Ok(json!({
+                "assertions": {"turn_completed": true, "two_messages_before_completion": true, "last_message_is_final": true},
+                "thread_id": thread_id,
+                "turn_id": turn_id,
+                "completion": completed,
+            }))
+        }
+        .await;
+        server.close().await;
+        result
+    }
+
     async fn pong(harness: &mut Harness, model: &str) -> Result<Value> {
         let (agent, mut capture, cursor) = open(harness, "c1-pong", model).await?;
         let (_, completed) = prompt_to_completion(
@@ -290,7 +675,10 @@ fn main() -> anyhow::Result<()> {
             })
             .await
             .context("thread/start with dynamicTools")?;
-        let mut events = thread.events().await.context("take dynamic-tools event stream")?;
+        let mut events = thread
+            .events()
+            .await
+            .context("take dynamic-tools event stream")?;
         let turn_id = thread
             .start_turn("Call the send tool exactly once with to=probe and text=C11_SENT. Do not use any other tool.")
             .await
@@ -843,6 +1231,9 @@ fn main() -> anyhow::Result<()> {
             Scenario::RawUnnamed => raw_unnamed(harness, model).await,
             Scenario::UnnamedReconnect => unnamed_reconnect(harness, model).await,
             Scenario::DynamicTools => dynamic_tools(harness, model).await,
+            Scenario::InjectIdle => inject_idle(harness, model).await,
+            Scenario::InjectBusy => inject_busy(harness, model).await,
+            Scenario::LastMessage => last_message(harness, model).await,
         }
     }
 

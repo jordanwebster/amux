@@ -1,0 +1,46 @@
+{
+  "captured_at": "2026-08-22T23:55:25.823470+00:00",
+  "codex_version": "codex-cli 0.148.0",
+  "failure": null,
+  "harness": "timeout 600 cargo test -p amux --test codex_capture -- c14_last_message",
+  "isolated_codex_home": true,
+  "model": "gpt-5.6-sol",
+  "notes": {
+    "assertions": {
+      "last_message_is_final": true,
+      "turn_completed": true,
+      "two_messages_before_completion": true
+    },
+    "completion": {
+      "emittedAtMs": 1787442925506,
+      "method": "turn/completed",
+      "params": {
+        "threadId": "01a02be6-805b-7b32-be17-ce306d00b7c4",
+        "turn": {
+          "completedAt": 1787442925,
+          "durationMs": 3917,
+          "error": null,
+          "id": "01a02be6-8071-70f3-b3af-46fe076066af",
+          "items": [
+            {
+              "id": "msg_088f08f0570b2e36016a8a36ed37ec87d29e807b59ce2b56bc",
+              "memoryCitation": null,
+              "phase": "final_answer",
+              "text": "C14_SECOND",
+              "type": "agentMessage"
+            }
+          ],
+          "itemsView": "summary",
+          "startedAt": 1787442921,
+          "status": "completed"
+        }
+      }
+    },
+    "thread_id": "01a02be6-805b-7b32-be17-ce306d00b7c4",
+    "turn_id": "01a02be6-8071-70f3-b3af-46fe076066af"
+  },
+  "requirement": "C.14 two assistant messages before turn completion",
+  "scenario": "c14_last_message",
+  "synthetic_prompts": true,
+  "timeout_seconds": 360
+}
