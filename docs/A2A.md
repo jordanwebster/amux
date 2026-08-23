@@ -111,15 +111,20 @@ when their hooks expose live messaging credentials.
 
 For an agent sender with a ready socket, amux posts Claude's native
 `<cross-session-message>` wrapper. The body begins with an amux header carrying
-the envelope id, kind, sender kind, and optional context, then returns to the
-sender without waiting for transcript confirmation. The session checks in the
-background for an id-bearing peer user row or `queued_command` attachment over
-the next five seconds. Before any socket delivery has been confirmed, a miss
-makes the session PTY-only and resends the same envelope through the fallback.
-After a confirmation, one miss resends only that envelope and keeps the socket;
-two consecutive misses make the session PTY-only. A confirmation resets the
-miss count. The resend retains the envelope id so the recipient can recognize a
-duplicate.
+the envelope id, kind, sender kind, and optional context. The send then waits,
+up to five seconds, for a transcript row carrying that envelope id: the
+`queue-operation` `enqueue` row Claude writes as it takes the message off the
+socket, or the later peer user row or `queued_command` attachment. The enqueue
+row appears within milliseconds whether the recipient is idle or mid-turn, so a
+healthy delivery confirms immediately and the sender is told the message
+arrived rather than that it was merely posted. The later rows are written only
+when the queued message enters a turn, which for a busy recipient is whenever
+its current turn ends; accepting the enqueue row is what keeps a long turn from
+looking like a lost message.
+
+Exhausting the window means the socket took the bytes and the session never
+queued them — a wedged recipient rather than a busy one. The message is then
+delivered by the fallback and the session stops using its socket.
 
 The fallback is a bracketed PTY paste of the generic `<amux>` tag followed by
 Enter. It is also used for human messages, older Claude versions, and sessions

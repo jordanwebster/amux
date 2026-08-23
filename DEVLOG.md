@@ -4872,3 +4872,17 @@ running an older `claude` by hand in another terminal would have stripped
 `--messaging-socket-path` from every managed session spawned afterwards. Readonly
 sessions now observe into a private cache that nothing reads; only sessions the
 daemon itself launched describe the binary the daemon launches.
+
+2026-08-23 — **Confirmed Claude socket delivery on the enqueue row, inline
+again.** Delivery waited for the peer user row, which Claude writes only when a
+queued message enters a turn — so any recipient busy for longer than the
+five-second window looked like a failed delivery and was sent a duplicate
+paste. The `queue-operation` `enqueue` row carries the posted text verbatim and
+is written the moment Claude accepts the socket message, idle or mid-turn, so
+it now confirms delivery and the window is reached only by a recipient that
+never queued the message at all. With a confirmation that is prompt in every
+healthy case, the send waits for it again rather than confirming in the
+background: `send` reports what happened instead of what was attempted, and a
+spawn whose first prompt cannot be delivered fails and rolls back its child
+again. The background confirmation task, its graded miss policy, and the
+shutdown drain that existed to cancel it are all gone.

@@ -323,8 +323,18 @@ message content contains the original `<cross-session-message …>` plus
 Claude's peer-safety context. In the 2.1.240 capture this path emitted no
 `queued_command` attachment, whether delivered idle or busy. Therefore
 `queued_command` is evidence for queued PTY input in this version, not a
-general socket-delivery confirmation; the peer-origin user row is the socket
-confirmation present in the transcript.
+general socket-delivery confirmation.
+
+The two socket rows are written at very different moments, which decides which
+one can confirm a delivery. The `enqueue` row is written as Claude takes the
+message off the socket and echoes the posted text verbatim in `content`; the
+peer-origin user row is written only when the queued message enters a turn. In
+the 2.1.240 capture the idle delivery enqueued at `00:11:22.041` and surfaced
+its user row 19 ms later, while the mid-turn delivery enqueued at
+`00:11:32.481` and surfaced its user row at `00:11:33.940` — after the
+assistant's reply ended the turn it had interrupted. A recipient busy for
+longer would delay that row for as long as its turn runs, so the `enqueue` row
+is the only row that attributes a delivery promptly in both states.
 
 ---
 

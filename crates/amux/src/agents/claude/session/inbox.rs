@@ -1,5 +1,5 @@
+use std::sync::Arc;
 use std::sync::atomic::{AtomicBool, Ordering};
-use std::sync::{Arc, Mutex as StdMutex};
 use std::time::Duration;
 
 use async_trait::async_trait;
@@ -10,7 +10,6 @@ use serde_json::json;
 use tokio::io::AsyncWriteExt;
 #[cfg(unix)]
 use tokio::net::UnixStream;
-use tokio::task::JoinSet;
 use uuid::Uuid;
 
 use super::core::{ClaudeMessagingCredentials, ClaudeSession};
@@ -23,48 +22,6 @@ use crate::envelope::{Envelope, format_cross_session};
 
 const SOCKET_CONFIRMATION_TIMEOUT: Duration = Duration::from_secs(5);
 
-#[derive(Default)]
-pub(super) struct SocketDeliveryState {
-    confirmation: StdMutex<SocketConfirmationState>,
-}
-
-#[derive(Default)]
-struct SocketConfirmationState {
-    has_confirmed: bool,
-    consecutive_misses: u8,
-}
-
-impl SocketDeliveryState {
-    fn confirmed(&self) {
-        let mut state = self
-            .confirmation
-            .lock()
-            .unwrap_or_else(|poison| poison.into_inner());
-        state.has_confirmed = true;
-        state.consecutive_misses = 0;
-    }
-
-    fn missed(&self) -> bool {
-        let mut state = self
-            .confirmation
-            .lock()
-            .unwrap_or_else(|poison| poison.into_inner());
-        if !state.has_confirmed {
-            return true;
-        }
-        state.consecutive_misses = state.consecutive_misses.saturating_add(1);
-        state.consecutive_misses >= 2
-    }
-
-    #[cfg(test)]
-    fn has_confirmed(&self) -> bool {
-        self.confirmation
-            .lock()
-            .unwrap_or_else(|poison| poison.into_inner())
-            .has_confirmed
-    }
-}
-
 #[derive(Clone)]
 pub(super) struct ClaudeDeliveryTarget {
     readonly: bool,
@@ -72,9 +29,6 @@ pub(super) struct ClaudeDeliveryTarget {
     log_source: Option<StructuredLogSource>,
     messaging_credentials: Option<ClaudeMessagingCredentials>,
     pty_only: Arc<AtomicBool>,
-    socket_delivery_state: Arc<SocketDeliveryState>,
-    confirmation_tasks: Arc<tokio::sync::Mutex<JoinSet<()>>>,
-    confirmations_stopped: Arc<AtomicBool>,
     ready: Arc<AtomicBool>,
 }
 
@@ -86,9 +40,6 @@ impl ClaudeDeliveryTarget {
             log_source: session.log_source(),
             messaging_credentials: session.messaging_credentials.clone(),
             pty_only: session.pty_only_delivery.clone(),
-            socket_delivery_state: session.socket_delivery_state.clone(),
-            confirmation_tasks: session.socket_confirmation_tasks.clone(),
-            confirmations_stopped: session.socket_confirmations_stopped.clone(),
             ready: session.delivery_ready.clone(),
         }
     }
@@ -160,40 +111,6 @@ impl ClaudeDeliveryTarget {
         .await
         .unwrap_or(false)
     }
-
-    async fn spawn_confirmation(
-        &self,
-        rows: crate::agents::MultiplexStructuredReader,
-        envelope: Envelope,
-    ) {
-        let target = self.clone();
-        let mut tasks = self.confirmation_tasks.lock().await;
-        if self.confirmations_stopped.load(Ordering::Acquire) {
-            return;
-        }
-        while tasks.try_join_next().is_some() {}
-        tasks.spawn(async move {
-            if Self::confirmation_received(rows, envelope.id).await {
-                target.socket_delivery_state.confirmed();
-                return;
-            }
-
-            tracing::info!(
-                envelope_id = %envelope.id,
-                "Claude inbox delivery was not confirmed; resending by PTY"
-            );
-            if target.socket_delivery_state.missed() {
-                target.pty_only.store(true, Ordering::Release);
-            }
-            if let Err(error) = target.deliver_pty(&envelope).await {
-                tracing::warn!(
-                    envelope_id = %envelope.id,
-                    %error,
-                    "Claude inbox delivery PTY resend failed"
-                );
-            }
-        });
-    }
 }
 
 #[async_trait]
@@ -240,8 +157,13 @@ impl AgentDeliveryTarget for ClaudeDeliveryTarget {
         #[cfg(unix)]
         match self.post_socket(&content).await {
             Ok(rows) => {
-                self.spawn_confirmation(rows, envelope.clone()).await;
-                return Ok(Delivery::Socket);
+                if Self::confirmation_received(rows, envelope.id).await {
+                    return Ok(Delivery::Socket);
+                }
+                tracing::warn!(
+                    envelope_id = %envelope.id,
+                    "Claude did not accept an inbox delivery; using PTY for this session"
+                );
             }
             Err(error) => tracing::warn!(
                 envelope_id = %envelope.id,
@@ -261,8 +183,24 @@ impl AgentDeliveryTarget for ClaudeDeliveryTarget {
     }
 }
 
+/// Decide whether a transcript row proves Claude accepted `envelope_id`.
+///
+/// The `queue-operation` `enqueue` row is the earliest and most reliable
+/// evidence: Claude writes it as soon as it takes the message off the socket,
+/// echoing the posted text verbatim, whether it is idle or in the middle of a
+/// turn. The rows that follow — the peer user row, or a `queued_command`
+/// attachment — are only written when the queued message actually enters a
+/// turn, which for a busy session means whenever the current turn happens to
+/// end. Waiting for those would report a perfectly delivered message as lost
+/// on any turn longer than the confirmation window.
 fn row_confirms_delivery(row: &Value, envelope_id: Uuid) -> bool {
     let id = envelope_id.to_string();
+    let enqueued = row.get("type").and_then(Value::as_str) == Some("queue-operation")
+        && row.get("operation").and_then(Value::as_str) == Some("enqueue")
+        && row
+            .get("content")
+            .and_then(Value::as_str)
+            .is_some_and(|content| content.contains(&id));
     let peer_user = row.get("type").and_then(Value::as_str) == Some("user")
         && row.pointer("/origin/kind").and_then(Value::as_str) == Some("peer")
         && row
@@ -275,7 +213,7 @@ fn row_confirms_delivery(row: &Value, envelope_id: Uuid) -> bool {
             .pointer("/attachment/prompt")
             .and_then(Value::as_str)
             .is_some_and(|prompt| prompt.contains(&id));
-    peer_user || queued_command
+    enqueued || peer_user || queued_command
 }
 
 #[cfg(all(test, unix))]
@@ -289,7 +227,7 @@ mod tests {
     use tokio::net::UnixListener;
 
     use super::*;
-    use crate::agents::{AgentBackend, AgentParent, AgentType, CreateAgentRequest, StopPolicy};
+    use crate::agents::{AgentBackend, AgentParent, AgentType, CreateAgentRequest};
     use crate::envelope::{AgentSender, EnvelopeKind, Sender};
 
     fn test_envelope(recipient_id: Uuid, text: &str) -> Envelope {
@@ -372,22 +310,12 @@ mod tests {
         (auth, message)
     }
 
-    async fn wait_for_confirmation(session: &ClaudeSession) {
-        tokio::time::timeout(Duration::from_secs(1), async {
-            while !session.socket_delivery_state.has_confirmed() {
-                tokio::task::yield_now().await;
-            }
-        })
-        .await
-        .expect("socket delivery was not confirmed");
-    }
-
     async fn expire_confirmation_window() {
         tokio::time::advance(SOCKET_CONFIRMATION_TIMEOUT + Duration::from_millis(1)).await;
         tokio::task::yield_now().await;
     }
 
-    async fn assert_pty_resend(
+    async fn assert_pty_paste(
         pty_output: &mut crate::agents::MultiplexByteReader,
         envelope: &Envelope,
     ) {
@@ -398,14 +326,55 @@ mod tests {
         assert_eq!(pty_output.read().await.unwrap(), b"\r");
     }
 
+    /// Claude writes the `enqueue` row the moment it accepts a socket message,
+    /// even mid-turn, so a send is confirmed without waiting for the recipient's
+    /// current turn to end. Nothing here advances the clock by hand; a delivery
+    /// that waited for any later row would idle until the paused clock
+    /// auto-advanced past the window, and report a fallback paste instead.
     #[tokio::test(start_paused = true)]
-    async fn first_socket_confirmation_keeps_the_socket() {
+    async fn a2a_socket_carrier_confirms_the_enqueue_row_mid_turn() {
         let dir = tempdir().unwrap();
         let socket_path = dir.path().join("claude.sock");
         let listener = Arc::new(UnixListener::bind(&socket_path).unwrap());
         let (session, source) = session(socket_path);
         let envelope = test_envelope(session.agent_id, "hello over the inbox");
         let expected_content = format_cross_session(&envelope, "prompting").unwrap();
+        let enqueued_content = expected_content.clone();
+        let server = tokio::spawn(async move {
+            let posted = read_socket_post(listener).await;
+            source
+                .write(json!({
+                    "type": "queue-operation",
+                    "operation": "enqueue",
+                    "content": enqueued_content,
+                }))
+                .await;
+            posted
+        });
+
+        assert_eq!(session.deliver(&envelope).await.unwrap(), Delivery::Socket);
+        let (auth, message) = server.await.unwrap();
+        assert!(!session.pty_only_delivery.load(Ordering::Acquire));
+        assert_eq!(auth, json!({"type": "auth", "token": "socket-token"}));
+        assert_eq!(
+            message,
+            json!({
+                "type": "user",
+                "message": {"role": "user", "content": expected_content},
+            })
+        );
+    }
+
+    /// An idle session also surfaces the message as a peer user row a moment
+    /// later. Both shapes confirm, so delivery does not depend on which one the
+    /// installed Claude writes first.
+    #[tokio::test(start_paused = true)]
+    async fn a2a_socket_carrier_confirms_a_peer_user_row() {
+        let dir = tempdir().unwrap();
+        let socket_path = dir.path().join("claude.sock");
+        let listener = Arc::new(UnixListener::bind(&socket_path).unwrap());
+        let (session, source) = session(socket_path);
+        let envelope = test_envelope(session.agent_id, "hello over the inbox");
         let envelope_id = envelope.id;
         let server = tokio::spawn(async move {
             let posted = read_socket_post(listener).await;
@@ -421,22 +390,21 @@ mod tests {
         });
 
         assert_eq!(session.deliver(&envelope).await.unwrap(), Delivery::Socket);
-        let (auth, message) = server.await.unwrap();
-        wait_for_confirmation(&session).await;
+        server.await.unwrap();
         assert!(!session.pty_only_delivery.load(Ordering::Acquire));
-        assert_eq!(auth, json!({"type": "auth", "token": "socket-token"}));
-        assert_eq!(
-            message,
-            json!({
-                "type": "user",
-                "message": {"role": "user", "content": expected_content},
-            })
-        );
     }
 
     #[test]
     fn a2a_socket_carrier_accepts_only_attributable_confirmation_rows() {
         let id = Uuid::new_v4();
+        assert!(row_confirms_delivery(
+            &json!({
+                "type": "queue-operation",
+                "operation": "enqueue",
+                "content": format!("<cross-session-message>[amux id={id}]"),
+            }),
+            id,
+        ));
         assert!(row_confirms_delivery(
             &json!({
                 "type": "user",
@@ -452,8 +420,18 @@ mod tests {
             }),
             id,
         ));
+        // Somebody else's message entering the queue is not ours.
         assert!(!row_confirms_delivery(
-            &json!({"type": "queue-operation", "content": id.to_string()}),
+            &json!({
+                "type": "queue-operation",
+                "operation": "enqueue",
+                "content": format!("[amux id={}]", Uuid::new_v4()),
+            }),
+            id,
+        ));
+        // Leaving the queue carries no content to attribute.
+        assert!(!row_confirms_delivery(
+            &json!({"type": "queue-operation", "operation": "dequeue"}),
             id,
         ));
         assert!(!row_confirms_delivery(
@@ -466,8 +444,11 @@ mod tests {
         ));
     }
 
+    /// A socket that accepts the bytes but never enqueues them means the
+    /// recipient is wedged, not busy. The send falls back to a paste and the
+    /// session stops using the socket.
     #[tokio::test(start_paused = true)]
-    async fn first_socket_miss_resends_by_pty_and_disables_the_socket() {
+    async fn a2a_socket_carrier_timeout_falls_back_to_pty_and_disables_the_socket() {
         let dir = tempdir().unwrap();
         let socket_path = dir.path().join("claude.sock");
         let listener = Arc::new(UnixListener::bind(&socket_path).unwrap());
@@ -481,8 +462,12 @@ mod tests {
             .unwrap();
         let envelope = test_envelope(session.agent_id, "fallback body");
         let server = tokio::spawn(read_socket_post(listener));
+        let delivery = tokio::spawn({
+            let target = ClaudeDeliveryTarget::new(&session);
+            let envelope = envelope.clone();
+            async move { target.deliver(&envelope).await }
+        });
 
-        assert_eq!(session.deliver(&envelope).await.unwrap(), Delivery::Socket);
         let (auth, message) = server.await.unwrap();
         assert_eq!(auth["token"], "socket-token");
         assert!(
@@ -492,130 +477,13 @@ mod tests {
                 .contains(&envelope.id.to_string())
         );
         expire_confirmation_window().await;
-        assert_pty_resend(&mut pty_output, &envelope).await;
+
+        assert_eq!(delivery.await.unwrap().unwrap(), Delivery::Pty);
+        assert_pty_paste(&mut pty_output, &envelope).await;
         assert!(session.pty_only_delivery.load(Ordering::Acquire));
 
         let second = test_envelope(session.agent_id, "stays on PTY");
         assert_eq!(session.deliver(&second).await.unwrap(), Delivery::Pty);
-        assert_pty_resend(&mut pty_output, &second).await;
-    }
-
-    #[tokio::test(start_paused = true)]
-    async fn one_socket_miss_after_a_confirmation_resends_without_disabling_the_socket() {
-        let dir = tempdir().unwrap();
-        let socket_path = dir.path().join("claude.sock");
-        let listener = Arc::new(UnixListener::bind(&socket_path).unwrap());
-        let (session, source) = session(socket_path);
-        let mut pty_output = session
-            .pty
-            .as_ref()
-            .unwrap()
-            .subscribe_with_query(None)
-            .await
-            .unwrap();
-
-        let confirmed = test_envelope(session.agent_id, "confirmed first");
-        let server = tokio::spawn(read_socket_post(listener.clone()));
-        assert_eq!(session.deliver(&confirmed).await.unwrap(), Delivery::Socket);
-        server.await.unwrap();
-        source
-            .write(json!({
-                "type": "user",
-                "origin": {"kind": "peer"},
-                "message": {"content": confirmed.id.to_string()},
-            }))
-            .await;
-        wait_for_confirmation(&session).await;
-
-        let missed = test_envelope(session.agent_id, "missed once");
-        let server = tokio::spawn(read_socket_post(listener));
-        assert_eq!(session.deliver(&missed).await.unwrap(), Delivery::Socket);
-        server.await.unwrap();
-        expire_confirmation_window().await;
-        assert_pty_resend(&mut pty_output, &missed).await;
-        assert!(!session.pty_only_delivery.load(Ordering::Acquire));
-    }
-
-    #[tokio::test(start_paused = true)]
-    async fn two_consecutive_socket_misses_after_a_confirmation_disable_the_socket() {
-        let dir = tempdir().unwrap();
-        let socket_path = dir.path().join("claude.sock");
-        let listener = Arc::new(UnixListener::bind(&socket_path).unwrap());
-        let (session, source) = session(socket_path);
-        let mut pty_output = session
-            .pty
-            .as_ref()
-            .unwrap()
-            .subscribe_with_query(None)
-            .await
-            .unwrap();
-
-        let confirmed = test_envelope(session.agent_id, "confirmed first");
-        let server = tokio::spawn(read_socket_post(listener.clone()));
-        assert_eq!(session.deliver(&confirmed).await.unwrap(), Delivery::Socket);
-        server.await.unwrap();
-        source
-            .write(json!({
-                "type": "attachment",
-                "attachment": {
-                    "type": "queued_command",
-                    "prompt": confirmed.id.to_string(),
-                },
-            }))
-            .await;
-        wait_for_confirmation(&session).await;
-
-        let first_miss = test_envelope(session.agent_id, "first miss");
-        let server = tokio::spawn(read_socket_post(listener.clone()));
-        assert_eq!(
-            session.deliver(&first_miss).await.unwrap(),
-            Delivery::Socket
-        );
-        server.await.unwrap();
-        expire_confirmation_window().await;
-        assert_pty_resend(&mut pty_output, &first_miss).await;
-        assert!(!session.pty_only_delivery.load(Ordering::Acquire));
-
-        let second_miss = test_envelope(session.agent_id, "second miss");
-        let server = tokio::spawn(read_socket_post(listener));
-        assert_eq!(
-            session.deliver(&second_miss).await.unwrap(),
-            Delivery::Socket
-        );
-        server.await.unwrap();
-        expire_confirmation_window().await;
-        assert_pty_resend(&mut pty_output, &second_miss).await;
-        assert!(session.pty_only_delivery.load(Ordering::Acquire));
-    }
-
-    #[tokio::test(start_paused = true)]
-    async fn socket_delivery_returns_well_before_the_confirmation_window() {
-        let dir = tempdir().unwrap();
-        let socket_path = dir.path().join("claude.sock");
-        let listener = Arc::new(UnixListener::bind(&socket_path).unwrap());
-        let (session, _source) = session(socket_path);
-        let envelope = test_envelope(session.agent_id, "do not wait for confirmation");
-        let server = tokio::spawn(read_socket_post(listener));
-        let started = tokio::time::Instant::now();
-
-        assert_eq!(session.deliver(&envelope).await.unwrap(), Delivery::Socket);
-        assert!(started.elapsed() < Duration::from_millis(100));
-        server.await.unwrap();
-    }
-
-    #[tokio::test(start_paused = true)]
-    async fn session_stop_prevents_late_confirmation_work() {
-        let dir = tempdir().unwrap();
-        let socket_path = dir.path().join("claude.sock");
-        let (session, source) = session(socket_path);
-        let target = ClaudeDeliveryTarget::new(&session);
-        let (rows, _) = source.subscribe_with_query(None).await.unwrap();
-
-        session.stop(StopPolicy::Interrupt).await;
-        target
-            .spawn_confirmation(rows, test_envelope(session.agent_id, "too late"))
-            .await;
-
-        assert!(session.socket_confirmation_tasks.lock().await.is_empty());
+        assert_pty_paste(&mut pty_output, &second).await;
     }
 }
