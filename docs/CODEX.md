@@ -6,7 +6,8 @@ vocabulary on the structured plane, and the client-side layer that folds
 it. Companions: `docs/PROTOCOL.md` owns the wire, `docs/ARCHITECTURE.md`
 owns the system, `docs/UI.md` owns the client layer's doctrine, and
 `docs/CHAT.md` owns the Claude chat surface this one deliberately does
-not imitate.
+not imitate. `docs/A2A.md` owns the shared agent-message envelope, tools,
+and family lifecycle.
 
 The executable half of this document is `crates/amux-ui/tests/spec/`
 (`codex_feed`, `codex_asks`, `codex_write`, `codex_agreement`) plus the
@@ -138,6 +139,15 @@ protocol change.
 | `amux.codex_approval_resolved{request_id, reason}` | it is no longer outstanding, and why |
 | `amux.input_result{input_id, ok\|error{message}}` | the fate of one submitted input |
 | `amux.codex_message{id, kind, from, from_id?, context?, text, delivery}` | a daemon-authored agent message accepted by the Codex carrier; `delivery` is `inject_queued`, `inject_started`, or fallback `turn_started` |
+
+Agent delivery uses `thread/inject_items`. An idle thread then receives an
+empty-input `turn/start`; a busy thread keeps its active turn and queues the
+injected message. If injection fails, amux starts a visible turn with the same
+tagged text. The synthesized row above is the recipient-side record because
+the native Codex transcript does not expose injected items. Managed threads
+also receive the shared `agents`, `send`, `spawn`, `stop`, and `status`
+definitions as dynamic tools; calls execute through the owning agent's daemon
+identity and are answered as dynamic-tool results.
 
 `amux.codex_approval_resolved.reason` is one of `answered`,
 `response_failed`, `answered_elsewhere`, `connection_lost`,

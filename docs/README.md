@@ -9,6 +9,8 @@ subject; when two overlap, the owner named here wins.
   and the design rationale.
 - `ARCHITECTURE.md` — the system: processes, the two-server model, the
   dispatcher, trust storage, service surfaces, internal layering.
+- `A2A.md` — agent-to-agent messaging and families: envelopes, provider
+  carriers, model-facing tools, parent/child lifecycle, and client behavior.
 - `UI.md` — the client layer: the amux-ui reducer core, the
   kernel/per-agent-layer split, edge contracts, and the TUI.
 - `CHAT.md` — the chat TUI view; companion to `UI.md`, which owns the

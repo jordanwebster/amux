@@ -121,6 +121,13 @@ paired peer; relaying is something every node can do.
 `TunnelData` · `TunnelClose` · `LinkClose` · `Reauth` ·
 `PairingService.Pair` (stream). `PROTOCOL_VERSION = 1`.
 
+Agent-to-agent messaging does not add a link frame or change
+`PROTOCOL_VERSION`. `ClientService.SendMessage` resolves a human or live local
+agent as the sender; remote recipients are forwarded as daemon-authored
+envelopes through `AgentService.SendMessage` inside the same authenticated
+tunnels as every other peer call. Parent edges, work status, create/delete
+lifecycle, and provider carriers are specified in [`A2A.md`](./A2A.md).
+
 ## What this protocol deliberately does not have
 
 Route lists, link names, prepend-on-forward, split-horizon, hop caps, route

@@ -16,6 +16,10 @@ committed fixtures via H); every derived state keeps that survey's
 fact-vs-inferred discipline. Requirement IDs (A1…H) are cited in
 parentheses so review can trace them.
 
+Agent-to-agent envelopes and parent/child lifecycle are specified in
+`docs/A2A.md`; this document owns how their recipient rows and family actions
+appear in the chat.
+
 ## Vocabulary
 
 - **Chat** — the structured conversation view over a Claude session,
@@ -178,6 +182,13 @@ truncation recovery must fold to the identical Model.
   row carries no agent-id key, so the fold cannot correlate the prose
   to a specific child (Phase 1, observed). Child transcript files are
   not tailed in V1; nested timelines are deferred.
+- **Agent messages.** A Claude user row whose content is an amux `<amux>` tag
+  or a native `<cross-session-message from="amux:…">` folds to an inbound
+  agent-message entry rather than a human prompt. An ordinary message renders
+  its full body, a `completed` envelope wears a finished mark and closes to its
+  first line until `<leader> m` opens completion bodies, and `exited` is a
+  one-line notice. `mcp__amux__send` remains an outbound tool entry showing
+  its target and a summary. These rows raise no attention by themselves.
 - **Status entries** (B8). API errors are FACT
   (`isApiErrorMessage:true` rows) and render as an error entry. Retry
   progress is written nowhere in the transcript — "retrying 3/10" is

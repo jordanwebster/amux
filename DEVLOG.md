@@ -4,6 +4,15 @@ This file tracks significant development work, decisions made, and current state
 
 ---
 
+2026-08-23 — **Documented agent messaging as one end-to-end contract.**
+The documentation map now points to one owner for the message envelope,
+model-facing tools, Claude and Codex carriers, parent/child lifecycle, routing
+and failure behavior, family presentation, and command-line views. The wire,
+architecture, provider-row, client-model, and chat documents each name only
+their part of that contract and link back to the owner, so the trust boundary
+and recipient-owned provenance are stated consistently without duplicating a
+second design.
+
 2026-08-23 — **The family keys are listed where they work, and nowhere else.**
 The binding table now takes the screen's own facts: each family chord appears
 in a chat's `?` overlay only while it would do something — somewhere in the

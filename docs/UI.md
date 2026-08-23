@@ -7,6 +7,7 @@ This document owns the client side of amux: the `amux-ui` state library,
 its renderers (the TUI first, desktop and mobile clients later), and the
 rules that keep per-agent knowledge in the right place. Companions:
 `docs/PROTOCOL.md` owns the wire, `docs/ARCHITECTURE.md` owns the system.
+`docs/A2A.md` owns the message and parent/child lifecycle the client projects.
 The executable half of this document is the amux-ui spec suite in
 `crates/amux-ui/tests/spec/` plus the native-chat golden suites in
 `crates/amux-tui/tests/`; where prose and passing spec disagree, the spec
@@ -123,7 +124,15 @@ The kernel models what the protocol itself models, agent-agnostically:
 fleet inventory (`AgentCard`), hosts and presence, session lifecycle,
 connection and auth state (including "authentication required" — login
 itself is CLI-owned via `amux init`; the UI layer only renders the
-state), and pending operations.
+state), pending operations, parent edges, and timestamped work status.
+
+The Model derives families rather than storing another relationship view. A
+family is ranked by its highest effective attention and shown as one parent
+row until renderer-local expansion reveals the descendants. Likewise,
+`family_needs(parent)` reads each descendant's current layer and returns the
+children that need the human; answering the child anywhere clears the result
+by re-derivation. No family attention or parent-chat notification rides the
+peer wire.
 
 Agent identity is typed, never normalized away. Each agent type gets its
 own layer: a typed child model consuming that agent's *native* protocol,
@@ -273,6 +282,10 @@ The native chats use per-agent typed structured input/output protocols rather
 than terminal bytes. Semantic messages are compact over the network,
 replayable, permit deliberate local echo where the layer requires it, and stay
 resize-independent. They follow the same no-scrollback constraint as chrome.
+Agent-message provenance is still folded by the recipient's own layer: Claude
+parses its delivered user row and Codex parses `amux.codex_message`. The shared
+kernel owns only presentation facts common to both envelope kinds; it does not
+invent a generic message feed.
 On Windows the chrome must build and run (crossterm); byte passthrough is
 untested pending e2e-driver support there, and the structured chat path is the
 guaranteed Windows client direction.

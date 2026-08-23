@@ -20,11 +20,12 @@ JWT-gated `LinkService` — it structurally has nothing else to serve.
 Around the daemon sit its clients and consumers:
 
 - **CLI** (`crates/amux-cli`): every user-facing command talks
-  `ClientService` over the daemon's local Unix socket. Two hidden
-  subcommands are protocol plumbing rather than user surface: `amux relay`
-  bridges its stdin/stdout to the local socket (the receiving end of an
-  SSH link), and `amux pair-recv` runs the responder side of an SSH
-  pairing identity exchange.
+  `ClientService` over the daemon's local Unix socket. Hidden subcommands
+  are protocol plumbing rather than user surface: `amux relay` bridges its
+  stdin/stdout to the local socket (the receiving end of an SSH link),
+  `amux pair-recv` runs the responder side of an SSH pairing identity
+  exchange, and `amux mcp claude` serves the agent tools over stdio MCP.
+  [`A2A.md`](./A2A.md) owns that tool contract.
 - **UI runtime** (`crates/amux-ui`): a reactive client library over the
   same `ClientService` surface, for embedding in apps.
 - **Test harnesses**: the `testnet` feature compiles an in-process harness
@@ -169,8 +170,9 @@ timed out after 10 seconds (`resource_limits.rs`, `dispatcher.rs`).
 | `PairingService.Pair` | Pairing Server | Anonymous-TLS callers during an open pairing window |
 
 `ClientService` is the client API: host and agent inventory and
-subscriptions, agent CRUD, session attach/input, hooks, debug,
-shutdown/suspend/resume, and the pairing/trust administration RPCs.
+subscriptions, agent CRUD, message delivery and work status, session
+attach/input, hooks, debug, shutdown/suspend/resume, and the pairing/trust
+administration RPCs.
 Pairing is the trust boundary — a paired peer has full runtime authority,
 including disruptive operations — with exactly one carve-out:
 **trust mutation and pairing administration are local-only**.
@@ -190,9 +192,11 @@ recent failed dial, cleared when a route comes up); nothing probes, so
 "unknown" is simply `!online` with no recorded error.
 
 `AgentService` is what tunnels exist for: a peer lists another daemon's
-agents, attaches to a session, and round-trips terminal I/O end to end —
-through the cloud relay if that is the only shared path, with the relay
-seeing ciphertext.
+agents, creates or deletes them, delivers daemon-authored message envelopes,
+updates work status, attaches to a session, and round-trips terminal I/O end
+to end — through the cloud relay if that is the only shared path, with the
+relay seeing ciphertext. Parent edges and the provider-specific carriers are
+described in [`A2A.md`](./A2A.md).
 
 ## The cloud deployment
 

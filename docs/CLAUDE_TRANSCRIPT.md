@@ -4,6 +4,10 @@ Status: from-first-principles spec of the transcript JSONL rows a chat
 client receives through amux's `claude_pty_transcript_v1` stream. Grounds
 requirements B2, B3, B7, C5, E1. Written 2026-08-11.
 
+The provider-neutral message envelope, delivery fallback, and family
+lifecycle are owned by [`A2A.md`](./A2A.md). This document owns only the
+Claude rows those carriers produce.
+
 Evidence base:
 
 - 13 main session files + 30+ subagent files under `~/.claude/projects/`
