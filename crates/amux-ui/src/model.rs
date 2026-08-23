@@ -822,8 +822,8 @@ impl Model {
         Some(at.agent.id)
     }
 
-    /// Which of an agent's descendants are asking for the human, in the
-    /// order the family ranks them.
+    /// Which of an agent's descendants are asking for the human, loudest
+    /// first.
     ///
     /// Composed, never synthesized: no record is written into the parent's
     /// stream and no state is stored anywhere, so a child's ask reaches
@@ -832,10 +832,20 @@ impl Model {
     /// child's own view, or on another device, empties this list on the
     /// next fold with nothing to clear.
     ///
+    /// The order is over the flattened family, not over its branches: a
+    /// consumer that shows one need and counts the rest — the parent's
+    /// chat banner does exactly that — must be handed the most urgent one
+    /// wherever in the subtree it sits. Tree order alone would hand it the
+    /// first need encountered, which is only the loudest by luck: a
+    /// grandchild blocked on permission hides under whichever branch the
+    /// tree happens to walk later, and the banner would name a finished
+    /// sibling while a permission went unanswered.
+    ///
     /// The parent's own asks are absent: those belong to its own chat,
     /// which is already showing them.
     pub fn family_needs(&self, parent: AgentId) -> Vec<FamilyNeed<'_>> {
-        self.family_of(parent)
+        let mut needs: Vec<FamilyNeed<'_>> = self
+            .family_of(parent)
             .into_iter()
             .filter_map(|member| match self.effective_attention(member.card) {
                 // Read-time policy applies here too: a child on an offline
@@ -848,7 +858,12 @@ impl Model {
                 }),
                 _ => None,
             })
-            .collect()
+            .collect();
+        // Stable, so urgency is the only thing this reorders: two needs of
+        // the same kind keep the order the family gave them — nearest
+        // branch first, siblings in the fleet's own rank.
+        needs.sort_by_key(|need| attention_severity(Attention::NeedsYou { why: need.why }));
+        needs
     }
 
     /// Direct-child edges of the current inventory, plus the agents no

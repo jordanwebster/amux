@@ -666,6 +666,78 @@ fn a2a_banner_carries_a_grandchild_up_the_family() {
     );
 }
 
+/// The one named need is the loudest one, not the nearest. Here the
+/// finished child is the first the family tree reaches and the blocked
+/// grandchild hides two generations down behind a working branch, so a
+/// banner that took whatever came first would spend its single row on the
+/// agent that can wait and withhold the chord from the one that cannot.
+fn buried_permission_model() -> Model {
+    let mut msgs = family_msgs();
+    // The nearer ask is answered, leaving the finished sibling in front of
+    // the working branch the grandchild sits under.
+    msgs.push(batch(
+        RUNNER,
+        NOW - 12,
+        vec![json!({
+            "type": "amux.codex_approval_resolved",
+            "request_id": "approval-1",
+            "reason": "answered",
+        })],
+    ));
+    msgs.push(batch(
+        HUNTER,
+        NOW - 10,
+        vec![
+            json!({"type":"turn/started","turn":{"id":"turn-h","status":"inProgress"}}),
+            json!({"type":"item/commandExecution/requestApproval","itemId":"exec-h","command":"rm -rf target","cwd":"/work","proposedNetworkPolicyAmendments":[]}),
+            json!({"type":"amux.codex_approval_required","request_id":"approval-h","availableDecisions":["accept","decline"]}),
+        ],
+    ));
+    fold(msgs)
+}
+
+#[test]
+fn a2a_banner_names_the_loudest_need_not_the_nearest() {
+    let model = buried_permission_model();
+    let banner = banner_of(&model, &chat_on(&model, LEAD)).expect("two are asking");
+    assert!(
+        banner.starts_with("⚠ flake-hunter needs permission: rm -rf target"),
+        "the blocked grandchild takes the row from the finished child: {banner}"
+    );
+    assert!(
+        banner.contains("· +1 more"),
+        "and the quieter need is counted, not named: {banner}"
+    );
+    assert!(
+        banner.ends_with("· C-a a answer"),
+        "the chord follows the need it can answer: {banner}"
+    );
+}
+
+/// The panel the chord docks is the same need the banner named — one
+/// derivation feeds both, so the row never advertises an answer for an
+/// agent other than the one that appears.
+#[test]
+fn a2a_banner_and_the_docked_panel_name_the_same_agent() {
+    let model = buried_permission_model();
+    let frame = frame_of(&model, &docked(&model, LEAD));
+    assert!(
+        frame.contains("answering flake-hunter"),
+        "the docked ask belongs to the agent the banner named:\n{frame}"
+    );
+}
+
+#[test]
+fn a2a_banner_buried_permission() {
+    let model = buried_permission_model();
+    assert_surface(
+        "a2a_banner_buried_permission",
+        &model,
+        &chat_on(&model, LEAD),
+        HEIGHT,
+    );
+}
+
 /// The banner is a derivation, not a record: answering the ask in the
 /// child's own chat empties it on the next frame, with nothing to clear
 /// in the parent.

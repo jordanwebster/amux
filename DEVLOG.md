@@ -73,6 +73,16 @@ deletion remains unscoped. Daemon coverage refuses siblings, top-level agents,
 and unknown targets before proving a direct child can still be stopped.
 
 ---
+2026-08-23 — **A parent's banner names the loudest need, not the nearest.**
+`family_needs` handed back its descendants in tree order, and the parent's
+chat banner shows the first one and counts the rest — so a grandchild blocked
+on permission behind a working branch lost the row to a sibling that had
+merely finished, and the answer chord went with it. The fleet badge was right
+the whole time, which made the disagreement worse: the row said `!` and the
+banner offered nothing to answer. The list is now ranked over the whole
+subtree by how loudly each need asks, with equally loud needs keeping the
+order the family gave them, so the one need a banner has room for is the one
+a person should see first.
 
 2026-08-23 — **Operator acceptance script for agent-to-agent messaging.**
 `e2e-tests/a2a_acceptance.sh` walks a human through the one proof that needs

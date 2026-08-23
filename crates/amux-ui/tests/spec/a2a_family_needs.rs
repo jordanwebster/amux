@@ -96,6 +96,35 @@ fn grandchild_sequence() -> Vec<Msg> {
     ])
 }
 
+/// A family whose loudest ask is furthest from the top and hidden behind
+/// the quietest branch: `reviewer` finished, so it leads its siblings,
+/// while `builder` is idle and only its child `intern` is blocked on
+/// permission. Walking the tree meets the finished reviewer first; the
+/// person needs the permission first.
+fn buried_permission_sequence() -> Vec<Msg> {
+    seq([
+        base(),
+        vec![
+            agent_up(&an_agent("lead", "nova")),
+            agent_up(&child_of(an_agent("reviewer", "nova"), "lead", "nova")),
+            agent_up(&child_of(an_agent("builder", "nova"), "lead", "nova")),
+            agent_up(&child_of(
+                a_codex_agent("intern", "nova"),
+                "builder",
+                "nova",
+            )),
+        ],
+        opened("reviewer"),
+        opened("builder"),
+        opened("intern"),
+        vec![
+            batch("reviewer", 10, chat_rows("permission")),
+            batch("builder", 20, chat_rows("interrupt")),
+            batch("intern", 30, codex_approval_rows()),
+        ],
+    ])
+}
+
 /// A parent with one child, both blocked: the parent on a permission of
 /// its own, the child on a question.
 fn both_asking_sequence() -> Vec<Msg> {
@@ -146,7 +175,7 @@ fn needs(model: &Model, parent: &str) -> Vec<(String, usize, Why)> {
 }
 
 /// The parent is told which of its family is asking, and for what. The
-/// list is ranked as the family is ranked, so the loudest ask leads.
+/// list is ranked by how loudly each one is asking, so the loudest leads.
 #[test]
 fn a2a_family_needs_names_every_asking_child() {
     let model = fold(asking_family_sequence());
@@ -157,6 +186,42 @@ fn a2a_family_needs_names_every_asking_child() {
             ("tester".to_string(), 1, Why::Question),
         ],
         "permission outranks question, as it does in the fleet"
+    );
+}
+
+/// Loudness is the order, and it is measured over the whole family rather
+/// than branch by branch. A permission two generations down outranks a
+/// sibling that merely finished, however the tree happens to be walked —
+/// otherwise the one consumer that shows a single need and counts the
+/// rest would name the finished agent and leave the blocked one waiting.
+#[test]
+fn a2a_family_needs_puts_the_loudest_first_wherever_it_sits() {
+    let model = fold(buried_permission_sequence());
+    assert_eq!(
+        model.effective_attention(model.agent(agent_id("builder")).expect("card")),
+        Attention::Idle,
+        "the branch hiding the permission is the quietest one on the fleet"
+    );
+    assert_eq!(
+        model
+            .family_of(agent_id("lead"))
+            .into_iter()
+            .map(|member| member.card.display_name())
+            .collect::<Vec<_>>(),
+        vec![
+            "reviewer".to_string(),
+            "builder".to_string(),
+            "intern".to_string()
+        ],
+        "the family itself still reads as a tree: parents before their children"
+    );
+    assert_eq!(
+        needs(&model, "lead"),
+        vec![
+            ("intern".to_string(), 2, Why::Permission),
+            ("reviewer".to_string(), 1, Why::Finished),
+        ],
+        "but what needs a person is ranked by how much it needs one"
     );
 }
 
@@ -305,6 +370,7 @@ pub fn sequences() -> Vec<(&'static str, Vec<Msg>)> {
         ("a2a_family_needs::asking", asking_family_sequence()),
         ("a2a_family_needs::answered", answered_sequence()),
         ("a2a_family_needs::grandchild", grandchild_sequence()),
+        ("a2a_family_needs::buried", buried_permission_sequence()),
         ("a2a_family_needs::both", both_asking_sequence()),
         ("a2a_family_needs::offline", offline_child_sequence()),
     ]

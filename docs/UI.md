@@ -130,9 +130,12 @@ The Model derives families rather than storing another relationship view. A
 family is ranked by its highest effective attention and shown as one parent
 row until renderer-local expansion reveals the descendants. Likewise,
 `family_needs(parent)` reads each descendant's current layer and returns the
-children that need the human; answering the child anywhere clears the result
-by re-derivation. No family attention or parent-chat notification rides the
-peer wire.
+children that need the human, ranked over the whole subtree by how loudly
+each one asks — permission, then question, then finished — so a consumer
+that shows one need and counts the rest is handed the most urgent one at
+whatever depth it sits; equally loud needs keep the family's own order.
+Answering the child anywhere clears the result by re-derivation. No family
+attention or parent-chat notification rides the peer wire.
 
 Agent identity is typed, never normalized away. Each agent type gets its
 own layer: a typed child model consuming that agent's *native* protocol,
