@@ -176,6 +176,53 @@ pub(crate) fn build_chat_lines(
     lines
 }
 
+/// The next agent to show while cycling through a family (U3): the one
+/// after this chat's agent in family order, wrapping past the last back
+/// to the top row — so `into the children and back` is one repeated key
+/// rather than two.
+///
+/// Members the chrome cannot open are skipped rather than shown: a chat
+/// needs a structured protocol this build renders and a host that answers,
+/// and dropping the human onto a frame that can say nothing would be a
+/// worse answer than staying put. When nothing else in the family
+/// qualifies, the key does nothing at all.
+pub(crate) fn next_in_family(model: &Model, agent: AgentId) -> Option<AgentId> {
+    let root = model.family_root(agent)?;
+    let line: Vec<AgentId> = std::iter::once(root)
+        .chain(
+            model
+                .family_of(root)
+                .into_iter()
+                .map(|member| member.card.agent.id),
+        )
+        .collect();
+    let at = line.iter().position(|id| *id == agent)?;
+    line.iter()
+        .cycle()
+        .skip(at + 1)
+        .take(line.len() - 1)
+        .copied()
+        .find(|id| openable(model, *id))
+}
+
+fn openable(model: &Model, agent: AgentId) -> bool {
+    model.agent(agent).is_some_and(|card| {
+        card.structured_protocol().is_some() && model.host_online(card.agent.host_id)
+    })
+}
+
+/// The header's family marker (U3): how many agents this one has spawned,
+/// at any depth, and empty when it has spawned none. It is also the
+/// discoverable half of `<leader> n` — the count says there is somewhere
+/// to cycle to.
+pub(crate) fn subagent_marker(model: &Model, agent: AgentId) -> String {
+    match model.family_of(agent).len() {
+        0 => String::new(),
+        1 => " · ⋯ 1 subagent".to_string(),
+        n => format!(" · ⋯ {n} subagents"),
+    }
+}
+
 pub fn entry_watermark(model: &Model, agent: AgentId) -> u64 {
     match model
         .agent(agent)

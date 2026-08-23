@@ -169,6 +169,10 @@ fn header_line(
             format!(" · {} @ {host}", card.agent.agent_type),
             theme.muted(),
         ));
+        line.spans.push(Span::styled(
+            crate::chat::subagent_marker(model, chat.agent),
+            theme.muted(),
+        ));
     }
     let (mut word, style) = phase_word(phase, theme);
     let readonly = chat.read_only(model);

@@ -4576,3 +4576,15 @@ left over and stamped with how long ago it said so — and left plainly empty
 for an agent that has said nothing. That column is the first to collapse on
 a narrow terminal, ahead of the status word: it elaborates where every other
 column answers.
+2026-08-23 — **Named a family in the chat header, and gave it a key.** A
+parent's chat now says `⋯ N subagents` beside its name — the whole subtree,
+because that is what is out of sight — and says nothing at all when it
+started nobody. `<leader> n` walks the family in the order the fleet ranks
+it and wraps past the last member back to the top, so one repeated key goes
+into the children and comes back out, from a child as readily as from the
+parent. It joins the two chords that already leave a chat, which is why it
+works from a read-only chat and from under an open panel and never leaks a
+keystroke into a draft. Members this build cannot open — an unrenderable
+protocol, a host that is not answering — are stepped over rather than
+shown, because a frame that can say nothing is a worse answer than staying
+put.

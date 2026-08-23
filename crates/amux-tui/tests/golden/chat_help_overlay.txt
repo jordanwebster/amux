@@ -10,6 +10,7 @@
 │     ctrl+c                    clear field; empty: press twice to quit        │
 │     C-a s                     back to fleet                                  │
 │     C-a d                     detach to shell                                │
+│     C-a n                     next agent in this family                      │
 │                                                                              │
 │ composer                                                                     │
 │     enter                     send                                           │
@@ -40,7 +41,6 @@
 │     ↑/↓ j/k pgup/pgdn g/G     scroll                                         │
 │     f                         read the diff / plan                           │
 │     q                         back to fleet                                  │
-│                                                                              │
 │──────────────────────────────────────────────────────────────────────────────│
 │   any key to close                                                           │
 └──────────────────────────────────────────────────────────────────────────────┘

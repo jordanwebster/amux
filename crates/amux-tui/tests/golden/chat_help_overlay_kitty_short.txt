@@ -10,6 +10,7 @@
 │     ctrl+c                    clear field; empty: press twice to quit        │
 │     C-a s                     back to fleet                                  │
 │     C-a d                     detach to shell                                │
+│     C-a n                     next agent in this family                      │
 │                                                                              │
 │ composer                                                                     │
 │     enter                     send                                           │
@@ -17,7 +18,6 @@
 │     shift+enter               newline · kitty                                │
 │     shift+tab                 cycle permission mode                          │
 │     home/end · ctrl+b/f/p/n   motion                                         │
-│     ctrl+←/→                  word motion · terminal-dependent               │
 │ ⋮ more — a taller terminal shows the full list                               │
 │──────────────────────────────────────────────────────────────────────────────│
 │   any key to close                                                           │

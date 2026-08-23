@@ -55,6 +55,13 @@ pub fn handle_chat_key(
         return match key.code {
             KeyCode::Char('s') => Some(UiAction::CloseChat),
             KeyCode::Char('d') => Some(UiAction::Quit),
+            // `<leader> n`: the next agent in this family (U3). Family
+            // navigation is chrome navigation, so it lives with the other
+            // two — which also means it works from a read-only chat, from
+            // under an open panel, and never leaks into a draft.
+            KeyCode::Char('n') => {
+                crate::chat::next_in_family(model, chat.agent).map(UiAction::OpenChat)
+            }
             _ => None,
         };
     }

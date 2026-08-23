@@ -17,9 +17,9 @@ use amux_ui::{AgentId, AgentMessagePresentation, Model};
 use ratatui::style::Style;
 use ratatui::text::{Line, Span};
 
-use crate::chat::FeedScroll;
 use crate::chat::claude::{View, ask_ui, entry_watermark, panel, reader};
 use crate::chat::layout::{ChatLayout, bottom_max_rows};
+use crate::chat::{FeedScroll, subagent_marker};
 use crate::composer::Composer;
 use crate::markdown;
 use crate::render::{
@@ -443,6 +443,10 @@ fn header_line(
         push_span(&mut line, GLYPH_COL, card.display_name(), theme.text());
         line.spans.push(Span::styled(
             format!(" · {} @ {host}", card.agent.agent_type),
+            theme.muted(),
+        ));
+        line.spans.push(Span::styled(
+            subagent_marker(model, chat.agent),
             theme.muted(),
         ));
     }

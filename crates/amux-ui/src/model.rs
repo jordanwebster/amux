@@ -803,6 +803,25 @@ impl Model {
         self.descendants(&topology, agent, 1, &mut placed)
     }
 
+    /// The agent heading the family this one belongs to — itself when no
+    /// parent in this inventory claims it, and `None` when the inventory
+    /// does not hold the agent at all.
+    ///
+    /// The walk stops at an edge naming an agent we cannot see, exactly
+    /// as [`Model::fleet`] does, so a family we only half know still has
+    /// a top row to hang from and a looping edge still terminates.
+    pub fn family_root(&self, agent: AgentId) -> Option<AgentId> {
+        let mut seen = std::collections::BTreeSet::new();
+        let mut at = self.agents.get(&agent)?;
+        while seen.insert(at.agent.id) {
+            let Some(parent) = at.parent().and_then(|edge| self.agents.get(&edge.agent_id)) else {
+                break;
+            };
+            at = parent;
+        }
+        Some(at.agent.id)
+    }
+
     /// Which of an agent's descendants are asking for the human, in the
     /// order the family ranks them.
     ///

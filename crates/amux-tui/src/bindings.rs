@@ -146,6 +146,11 @@ pub fn chat_sections(eff: &Effective) -> Vec<Section> {
             "detach to shell",
             Tier::Plain,
         ),
+        row(
+            format!("{} n", eff.leader_label),
+            "next agent in this family",
+            Tier::Plain,
+        ),
     ];
     let mut composer = vec![
         row("enter", "send", Tier::Plain),
