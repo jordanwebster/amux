@@ -15,6 +15,7 @@ compile_error!(
     "iOS builds must disable the `local-agents` feature; depend on amux with `default-features = false`."
 );
 
+pub mod agent_tools;
 mod agents;
 mod audit;
 mod auth;

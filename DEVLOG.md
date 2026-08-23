@@ -4,6 +4,15 @@ This file tracks significant development work, decisions made, and current state
 
 ---
 
+2026-08-23 — **Codex threads execute the shared amux agent tools in-process.**
+Every managed thread registers the same five schemas and model-facing
+descriptions as the Claude MCP server. Dynamic tool calls are parsed through
+that shared contract, authenticated with the owning agent ID, routed through
+ClientService for fleet, message, create, delete, and status handling, and
+answered automatically with Codex input-text content. A scripted app-server
+transport proves registration, authenticated request mapping, and the returned
+content shape.
+
 2026-08-23 — **Codex child turns report their final assistant message to the
 parent.** Codex event ingestion retains the latest completed agent-message text
 for each active turn. When that turn completes, child sessions publish the text

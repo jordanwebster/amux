@@ -15,10 +15,11 @@ use tokio::sync::{RwLock, mpsc, oneshot};
 use tonic::transport::Channel;
 use uuid::Uuid;
 
+use crate::agent_tools::{AgentSpawnKind, AgentToolRequest};
 use crate::agents::{
-    Agent, AgentEvent, CreateAgentConfig, CreateAgentRpcRequest, SendInputRequest,
-    SessionInputEvent, SetAgentStatusRequest, SubscribeSessionEvent, SubscribeSessionRequest,
-    TerminalSize,
+    Agent, AgentEvent, AgentToolExecutor, CreateAgentConfig, CreateAgentRpcRequest,
+    SendInputRequest, SessionInputEvent, SetAgentStatusRequest, SubscribeSessionEvent,
+    SubscribeSessionRequest, TerminalSize,
 };
 use crate::connection::ConnectionManager;
 use crate::debug::DebugFormat;
@@ -650,6 +651,155 @@ impl ClientService {
             tracing::error!("ClientService local agent event subscription ended");
         })
     }
+}
+
+#[async_trait::async_trait]
+impl AgentToolExecutor for ClientService {
+    async fn execute(
+        &self,
+        caller: Uuid,
+        request: AgentToolRequest,
+    ) -> anyhow::Result<serde_json::Value> {
+        let caller_agent = self
+            .resolve_agent(AgentRef::Id(caller))
+            .await
+            .map_err(|error| anyhow::anyhow!(error.to_string()))?;
+        if !self.is_local_host(caller_agent.host_id) {
+            return Err(anyhow::anyhow!("agent tool caller is not hosted locally"));
+        }
+
+        match request {
+            AgentToolRequest::Agents => self.agent_tool_fleet(caller).await,
+            AgentToolRequest::Send { to, text, context } => {
+                let response = <Self as wire::client_service_server::ClientService>::send_message(
+                    self,
+                    tonic::Request::new(wire::ClientSendMessageRequest {
+                        to: Some(crate::client::agent_ref(crate::AgentIdentifier::from(to))),
+                        text,
+                        context: context.map(|id| id.as_bytes().to_vec()),
+                        from_agent_id: Some(caller.as_bytes().to_vec()),
+                    }),
+                )
+                .await
+                .map_err(tool_status)?
+                .into_inner();
+                let id = Uuid::from_slice(&response.envelope_id)
+                    .map_err(|error| anyhow::anyhow!("invalid envelope id: {error}"))?;
+                Ok(serde_json::json!({ "id": id }))
+            }
+            AgentToolRequest::Spawn {
+                kind,
+                prompt,
+                name,
+                cwd,
+            } => {
+                let request = crate::CreateAgentRequest {
+                    agent_id: Uuid::new_v4(),
+                    host_id: None,
+                    name,
+                    agent_type: match kind {
+                        AgentSpawnKind::Claude => crate::AgentType::Claude,
+                        AgentSpawnKind::Codex => crate::AgentType::Codex {
+                            model: None,
+                            approval_policy: None,
+                            sandbox_policy: None,
+                            resume_thread_id: None,
+                        },
+                    },
+                    working_dir: cwd.unwrap_or_else(|| caller_agent.working_dir.clone()),
+                    terminal_size: None,
+                    args: Vec::new(),
+                    parent: Some(crate::AgentParent {
+                        agent_id: caller,
+                        host_id: caller_agent.host_id,
+                    }),
+                    initial_prompt: Some(prompt),
+                };
+                let request = crate::client::client_create_request_to_wire(request)
+                    .map_err(|error| anyhow::anyhow!(error.to_string()))?;
+                let response = <Self as wire::client_service_server::ClientService>::create_agent(
+                    self,
+                    tonic::Request::new(request),
+                )
+                .await
+                .map_err(tool_status)?
+                .into_inner();
+                let agent = response
+                    .agent
+                    .ok_or_else(|| anyhow::anyhow!("CreateAgent returned no agent"))?;
+                let id = Uuid::from_slice(&agent.agent_id)
+                    .map_err(|error| anyhow::anyhow!("invalid created agent id: {error}"))?;
+                Ok(serde_json::json!({
+                    "name": agent.name.unwrap_or_else(|| id.to_string()),
+                    "id": id,
+                }))
+            }
+            AgentToolRequest::Stop { name } => {
+                <Self as wire::client_service_server::ClientService>::delete_agent(
+                    self,
+                    tonic::Request::new(wire::ClientDeleteAgentRequest {
+                        agent: Some(crate::client::agent_ref(crate::AgentIdentifier::from(name))),
+                    }),
+                )
+                .await
+                .map_err(tool_status)?;
+                Ok(serde_json::json!({}))
+            }
+            AgentToolRequest::Status { working_on } => {
+                <Self as wire::client_service_server::ClientService>::set_agent_status(
+                    self,
+                    tonic::Request::new(wire::ClientSetAgentStatusRequest {
+                        agent: Some(crate::client::agent_ref(crate::AgentIdentifier::Id(caller))),
+                        working_on,
+                    }),
+                )
+                .await
+                .map_err(tool_status)?;
+                Ok(serde_json::json!({}))
+            }
+        }
+    }
+}
+
+impl ClientService {
+    async fn agent_tool_fleet(&self, caller: Uuid) -> anyhow::Result<serde_json::Value> {
+        let agents = self.list_agents().await;
+        let hosts = self
+            .host_entries_for_online_hosts(self.hosts_snapshot().await, true)
+            .await;
+        let hosts: HashMap<_, _> = hosts.into_iter().map(|host| (host.id, host)).collect();
+        let names: HashMap<_, _> = agents
+            .iter()
+            .map(|agent| (agent.id, agent_tool_display_name(agent)))
+            .collect();
+        Ok(serde_json::Value::Array(
+            agents
+                .iter()
+                .map(|agent| {
+                    let host = hosts.get(&agent.host_id);
+                    serde_json::json!({
+                        "name": agent_tool_display_name(agent),
+                        "kind": agent.agent_type,
+                        "host": host.map(|host| host.name.clone()).unwrap_or_else(|| agent.host_id.to_string()),
+                        "alive": host.is_some_and(|host| host.online),
+                        "working_on": agent.working_on.as_ref().map(|work| work.text.clone()),
+                        "parent": agent.parent.map(|parent| {
+                            names.get(&parent.agent_id).cloned().unwrap_or_else(|| parent.agent_id.to_string())
+                        }),
+                        "you": caller == agent.id,
+                    })
+                })
+                .collect(),
+        ))
+    }
+}
+
+fn agent_tool_display_name(agent: &Agent) -> String {
+    agent.name.clone().unwrap_or_else(|| agent.id.to_string())
+}
+
+fn tool_status(status: tonic::Status) -> anyhow::Error {
+    anyhow::anyhow!("{}: {}", status.code(), status.message())
 }
 
 #[tonic::async_trait]

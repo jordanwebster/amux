@@ -14,8 +14,7 @@
 //! [`super::record`] and stay compiled in every build.
 
 use std::path::Path;
-#[cfg(unix)]
-use std::sync::Arc;
+use std::sync::{Arc, RwLock as StdRwLock};
 
 use anyhow::Result;
 use async_trait::async_trait;
@@ -33,6 +32,7 @@ use super::{
     AgentRecord, ExternalHookBootstrap, HookEnvironment, HookError, HookOutcome,
     LocalAgentNameSource, PtyHandle, SessionEvent, StopPolicy, StructuredLogSource,
 };
+use crate::agent_tools::AgentToolRequest;
 use crate::agents::{AgentParent, AgentType, CreateAgentRequest, terminal_io};
 use crate::envelope::Envelope;
 use crate::protocol::ProtocolError;
@@ -99,6 +99,39 @@ pub(crate) trait CodexInput: Send + Sync {
     async fn send(&self, input_id: Vec<u8>, input: super::codex::io::CodexSdkV1Input);
 }
 
+/// In-process route from a model-facing tool call to ClientService.
+#[async_trait]
+pub(crate) trait AgentToolExecutor: Send + Sync {
+    async fn execute(&self, caller: Uuid, request: AgentToolRequest) -> Result<Value>;
+}
+
+/// Late-bound executor shared by sessions created before ClientService starts.
+#[derive(Clone, Default)]
+pub(crate) struct AgentToolRouter {
+    executor: Arc<StdRwLock<Option<Arc<dyn AgentToolExecutor>>>>,
+}
+
+impl AgentToolRouter {
+    pub(crate) fn bind(&self, executor: Arc<dyn AgentToolExecutor>) {
+        *self
+            .executor
+            .write()
+            .unwrap_or_else(|poison| poison.into_inner()) = Some(executor);
+    }
+
+    pub(crate) async fn execute(&self, caller: Uuid, request: AgentToolRequest) -> Result<Value> {
+        let executor = self
+            .executor
+            .read()
+            .unwrap_or_else(|poison| poison.into_inner())
+            .clone()
+            .ok_or_else(|| {
+                anyhow::anyhow!("agent tools are unavailable until startup completes")
+            })?;
+        executor.execute(caller, request).await
+    }
+}
+
 /// An owned raw-PTY preparation target detached from the session registry.
 pub(crate) enum RawPtyTarget {
     Existing(PtyHandle),
@@ -112,6 +145,7 @@ pub(crate) struct AgentDeps {
     pub(crate) runtime_dir: std::path::PathBuf,
     #[cfg(unix)]
     pub(crate) codex_client: Arc<CodexClient>,
+    pub(crate) agent_tools: AgentToolRouter,
 }
 
 impl AgentDeps {
@@ -125,6 +159,7 @@ impl AgentDeps {
             runtime_dir,
             #[cfg(unix)]
             codex_client: Arc::new(CodexClient::new(codex_private_socket)),
+            agent_tools: AgentToolRouter::default(),
         }
     }
 }
@@ -242,7 +277,11 @@ pub(crate) fn new_agent(req: &CreateAgentRequest, deps: &AgentDeps) -> Result<Ag
     match &req.agent_type {
         AgentType::Claude => Ok(Box::new(ClaudeSession::new(req, deps.runtime_dir.clone()))),
         #[cfg(unix)]
-        AgentType::Codex { .. } => Ok(Box::new(CodexSession::new(req, deps.codex_client.clone()))),
+        AgentType::Codex { .. } => Ok(Box::new(CodexSession::new(
+            req,
+            deps.codex_client.clone(),
+            deps.agent_tools.clone(),
+        ))),
         #[cfg(not(unix))]
         AgentType::Codex { .. } => Err(anyhow::anyhow!(
             "Codex agents are unavailable on this platform"
@@ -320,6 +359,7 @@ pub(crate) fn agent_from_suspended(suspended: SuspendedAgent, deps: &AgentDeps) 
             Box::new(CodexSession::from_suspended(
                 &req,
                 deps.codex_client.clone(),
+                deps.agent_tools.clone(),
                 daemon_mode,
                 created_at,
             ))

@@ -25,10 +25,11 @@ use super::{
 #[cfg(feature = "testnet")]
 use crate::agents::claude::ClaudeSession;
 use crate::agents::{
-    Agent, AgentDeps, AgentEvent, AgentSession, AgentType, CreateAgentConfig, CreateAgentRequest,
-    CreateAgentRpcRequest, DeliveryError, ExternalHookBootstrap, HookEnvironment, HookOutcome,
-    RenameAgentRequest, SendInputRequest, SessionCloseReason, SessionEvent, SetAgentStatusRequest,
-    StopPolicy, SubscribeSessionRequest, bootstrap_external_hook,
+    Agent, AgentDeps, AgentEvent, AgentSession, AgentToolExecutor, AgentType, CreateAgentConfig,
+    CreateAgentRequest, CreateAgentRpcRequest, DeliveryError, ExternalHookBootstrap,
+    HookEnvironment, HookOutcome, RenameAgentRequest, SendInputRequest, SessionCloseReason,
+    SessionEvent, SetAgentStatusRequest, StopPolicy, SubscribeSessionRequest,
+    bootstrap_external_hook,
 };
 use crate::envelope::{Envelope, EnvelopeKind};
 use crate::protocol::{ProtocolError, wire};
@@ -259,6 +260,11 @@ fn secure_codex_fallback_directory(path: &Path) -> io::Result<()> {
 
 #[async_trait]
 impl LocalAgentHost for PtyAgentHost {
+    async fn bind_agent_tool_executor(&self, executor: Arc<dyn AgentToolExecutor>) {
+        let router = self.state().read().await.deps.agent_tools.clone();
+        router.bind(executor);
+    }
+
     async fn create(&self, request: CreateAgentRpcRequest) -> Result<Agent, ProtocolError> {
         let req = create_rpc_to_domain_request(request.agent_id, request)?;
         if matches!(req.agent_type, AgentType::Codex { .. }) {

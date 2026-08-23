@@ -953,7 +953,7 @@ impl Client {
     }
 }
 
-fn client_create_request_to_wire(
+pub(crate) fn client_create_request_to_wire(
     request: CreateAgentRequest,
 ) -> Result<wire::ClientCreateAgentRequest, ClientError> {
     let agent = match request.agent_type {
@@ -1040,7 +1040,7 @@ fn path_to_wire_string(
         })
 }
 
-fn agent_ref(identifier: AgentIdentifier) -> wire::AgentRef {
+pub(crate) fn agent_ref(identifier: AgentIdentifier) -> wire::AgentRef {
     let identifier = match identifier {
         AgentIdentifier::Id(agent_id) => {
             wire::agent_ref::Identifier::AgentId(agent_id.as_bytes().to_vec())

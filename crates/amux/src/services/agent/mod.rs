@@ -20,8 +20,8 @@ use tokio::sync::mpsc;
 use uuid::Uuid;
 
 use crate::agents::{
-    Agent, AgentEvent, AgentRecord, CreateAgentRpcRequest, HookEnvironment, RenameAgentRequest,
-    SendInputRequest, SetAgentStatusRequest, SubscribeSessionRequest,
+    Agent, AgentEvent, AgentRecord, AgentToolExecutor, CreateAgentRpcRequest, HookEnvironment,
+    RenameAgentRequest, SendInputRequest, SetAgentStatusRequest, SubscribeSessionRequest,
 };
 use crate::envelope::Envelope;
 use crate::protocol::{ProtocolError, protocol_status, wire};
@@ -46,6 +46,7 @@ pub(crate) type ResponseStream<T> =
 /// only implementor is [`PtyAgentHost`], compiled with `local-agents`.
 #[async_trait]
 pub(crate) trait LocalAgentHost: Send + Sync {
+    async fn bind_agent_tool_executor(&self, executor: Arc<dyn AgentToolExecutor>);
     async fn create(&self, request: CreateAgentRpcRequest) -> Result<Agent, ProtocolError>;
     async fn rename(&self, request: RenameAgentRequest) -> Result<Agent, ProtocolError>;
     async fn delete(&self, agent_id: Uuid) -> Result<(), ProtocolError>;

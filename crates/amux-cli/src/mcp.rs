@@ -1,16 +1,21 @@
 use std::collections::HashMap;
 use std::ffi::OsString;
 use std::io::{BufRead, Write};
+#[cfg(test)]
 use std::path::PathBuf;
 use std::sync::Arc;
 
+use amux::agent_tools::{
+    AgentSpawnKind as SpawnKind, AgentToolRequest as ToolRequest, definitions as tool_definitions,
+    parse_call as parse_tool_call,
+};
 use amux::{
     Agent, AgentIdentifier, AgentParent, AgentType, Client, Config, CreateAgentRequest,
     SendMessageRequest, SetAgentStatusRequest,
 };
 use anyhow::{Context, Result, anyhow};
 use async_trait::async_trait;
-use serde::{Deserialize, Serialize};
+use serde::Deserialize;
 use serde_json::{Value, json};
 use uuid::Uuid;
 
@@ -18,73 +23,6 @@ use crate::client_common::require_running_client;
 
 const JSONRPC_VERSION: &str = "2.0";
 const DEFAULT_PROTOCOL_VERSION: &str = "2024-11-05";
-
-const AGENTS_DESCRIPTION: &str = "List the amux fleet, including agent kinds, hosts, liveness, current work, parents, and which agent is you.";
-const SEND_DESCRIPTION: &str = "Send a text message to another amux agent by name. When a message comes from an `amux:` address, reply only with this tool, using the agent name from that address; Claude's native SendMessage cannot route that address. Use amux for cross-kind communication, such as Claude to Codex, and keep native Claude messaging for same-kind work.";
-const SPAWN_DESCRIPTION: &str = "Create a Claude or Codex child agent with an initial prompt. Use amux spawn for cross-kind delegation and keep Claude's native Agent tool for same-kind work. When cwd is omitted, the child inherits your working directory; it also inherits your permission mode or approval and sandbox policy.";
-const STOP_DESCRIPTION: &str = "Stop one of your amux child agents by name.";
-const STATUS_DESCRIPTION: &str = "Set or clear your current amux work status so agents and humans can find the right collaborator.";
-
-#[derive(Clone, Debug, PartialEq, Eq)]
-enum ToolRequest {
-    Agents,
-    Send {
-        to: String,
-        text: String,
-        context: Option<Uuid>,
-    },
-    Spawn {
-        kind: SpawnKind,
-        prompt: String,
-        name: Option<String>,
-        cwd: Option<PathBuf>,
-    },
-    Stop {
-        name: String,
-    },
-    Status {
-        working_on: Option<String>,
-    },
-}
-
-#[derive(Clone, Copy, Debug, Deserialize, PartialEq, Eq)]
-#[serde(rename_all = "lowercase")]
-enum SpawnKind {
-    Claude,
-    Codex,
-}
-
-#[derive(Debug, Deserialize)]
-#[serde(deny_unknown_fields)]
-struct SendArguments {
-    to: String,
-    text: String,
-    #[serde(default)]
-    context: Option<Uuid>,
-}
-
-#[derive(Debug, Deserialize)]
-#[serde(deny_unknown_fields)]
-struct SpawnArguments {
-    kind: SpawnKind,
-    prompt: String,
-    #[serde(default)]
-    name: Option<String>,
-    #[serde(default)]
-    cwd: Option<PathBuf>,
-}
-
-#[derive(Debug, Deserialize)]
-#[serde(deny_unknown_fields)]
-struct StopArguments {
-    name: String,
-}
-
-#[derive(Debug, Deserialize)]
-#[serde(deny_unknown_fields)]
-struct StatusArguments {
-    working_on: Option<String>,
-}
 
 #[derive(Debug, Deserialize)]
 struct ToolCallParams {
@@ -101,14 +39,6 @@ struct RpcRequest {
     method: String,
     #[serde(default = "empty_object")]
     params: Value,
-}
-
-#[derive(Debug, Serialize)]
-#[serde(rename_all = "camelCase")]
-struct ToolDefinition {
-    name: &'static str,
-    description: &'static str,
-    input_schema: Value,
 }
 
 #[async_trait]
@@ -243,58 +173,7 @@ fn rpc_error(id: Value, code: i64, message: String) -> Value {
 fn map_tool_call(params: Value) -> Result<ToolRequest> {
     let call: ToolCallParams =
         serde_json::from_value(params).context("tools/call params must name a tool")?;
-    match call.name.as_str() {
-        "agents" => {
-            ensure_empty_arguments(&call.arguments)?;
-            Ok(ToolRequest::Agents)
-        }
-        "send" => {
-            let args: SendArguments = parse_arguments(call.arguments)?;
-            Ok(ToolRequest::Send {
-                to: args.to,
-                text: args.text,
-                context: args.context,
-            })
-        }
-        "spawn" => {
-            let args: SpawnArguments = parse_arguments(call.arguments)?;
-            Ok(ToolRequest::Spawn {
-                kind: args.kind,
-                prompt: args.prompt,
-                name: args.name,
-                cwd: args.cwd,
-            })
-        }
-        "stop" => {
-            let args: StopArguments = parse_arguments(call.arguments)?;
-            Ok(ToolRequest::Stop { name: args.name })
-        }
-        "status" => {
-            if call.arguments.get("working_on").is_none() {
-                return Err(anyhow!("status requires working_on (a string or null)"));
-            }
-            let args: StatusArguments = parse_arguments(call.arguments)?;
-            Ok(ToolRequest::Status {
-                working_on: args.working_on,
-            })
-        }
-        name => Err(anyhow!("unknown tool: {name}")),
-    }
-}
-
-fn parse_arguments<T>(arguments: Value) -> Result<T>
-where
-    T: for<'de> Deserialize<'de>,
-{
-    serde_json::from_value(arguments).context("invalid tool arguments")
-}
-
-fn ensure_empty_arguments(arguments: &Value) -> Result<()> {
-    match arguments.as_object() {
-        Some(arguments) if arguments.is_empty() => Ok(()),
-        Some(_) => Err(anyhow!("agents takes no arguments")),
-        None => Err(anyhow!("tool arguments must be an object")),
-    }
+    parse_tool_call(&call.name, call.arguments)
 }
 
 fn empty_object() -> Value {
@@ -347,63 +226,6 @@ fn status_request(
     Ok(SetAgentStatusRequest {
         agent: AgentIdentifier::Id(agent_id),
         working_on,
-    })
-}
-
-fn tool_definitions() -> Vec<ToolDefinition> {
-    vec![
-        ToolDefinition {
-            name: "agents",
-            description: AGENTS_DESCRIPTION,
-            input_schema: object_schema(json!({}), &[]),
-        },
-        ToolDefinition {
-            name: "send",
-            description: SEND_DESCRIPTION,
-            input_schema: object_schema(
-                json!({
-                    "to": { "type": "string" },
-                    "text": { "type": "string" },
-                    "context": { "type": "string", "format": "uuid" }
-                }),
-                &["to", "text"],
-            ),
-        },
-        ToolDefinition {
-            name: "spawn",
-            description: SPAWN_DESCRIPTION,
-            input_schema: object_schema(
-                json!({
-                    "kind": { "type": "string", "enum": ["claude", "codex"] },
-                    "prompt": { "type": "string" },
-                    "name": { "type": "string" },
-                    "cwd": { "type": "string" }
-                }),
-                &["kind", "prompt"],
-            ),
-        },
-        ToolDefinition {
-            name: "stop",
-            description: STOP_DESCRIPTION,
-            input_schema: object_schema(json!({ "name": { "type": "string" } }), &["name"]),
-        },
-        ToolDefinition {
-            name: "status",
-            description: STATUS_DESCRIPTION,
-            input_schema: object_schema(
-                json!({ "working_on": { "type": ["string", "null"] } }),
-                &["working_on"],
-            ),
-        },
-    ]
-}
-
-fn object_schema(properties: Value, required: &[&str]) -> Value {
-    json!({
-        "type": "object",
-        "properties": properties,
-        "required": required,
-        "additionalProperties": false
     })
 }
 

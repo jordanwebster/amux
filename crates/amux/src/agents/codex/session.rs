@@ -7,9 +7,10 @@ use anyhow::{Context, Result, anyhow};
 use async_trait::async_trait;
 use chrono::{DateTime, Utc};
 use codex_sdk::{
-    AccountReadParams, ApprovalResponse, Codex, CodexConfig, DaemonMode, DynamicToolCallResponse,
-    Error as CodexError, InputItem, RequestId, Thread, ThreadConfig, ThreadEvent, ThreadItem,
-    TurnEvent, connect_daemon, connect_socket, daemon_socket_path, ensure_daemon_with_fallback,
+    AccountReadParams, ApprovalResponse, Codex, CodexConfig, DaemonMode, DynamicToolCallRequest,
+    DynamicToolCallResponse, Error as CodexError, FunctionDynamicToolSpec, InputItem, RequestId,
+    Thread, ThreadConfig, ThreadEvent, ThreadItem, TurnEvent, connect_daemon, connect_socket,
+    daemon_socket_path, ensure_daemon_with_fallback,
 };
 use serde_json::{Value, json};
 use tokio::sync::{Mutex, watch};
@@ -18,8 +19,9 @@ use uuid::Uuid;
 
 use super::CODEX_RAW_THREAD_NOT_READY;
 use super::io::{self, CodexSdkV1Input};
+use crate::agent_tools;
 use crate::agents::{
-    AGENT_TYPE_CODEX, AgentBackend, AgentParent, CodexInput, CreateAgentRequest,
+    AGENT_TYPE_CODEX, AgentBackend, AgentParent, AgentToolRouter, CodexInput, CreateAgentRequest,
     LocalAgentNameSource, PtyHandle, RawPtyTarget, SessionEvent, StopPolicy, StructuredLogSource,
     spawn_pty_agent,
 };
@@ -270,6 +272,13 @@ struct CodexIngestOptions {
     thread_config: ThreadConfig,
     thread_id: Option<String>,
     completion_sink: Option<CodexCompletionSink>,
+    tool_sink: CodexToolSink,
+}
+
+#[derive(Clone)]
+struct CodexToolSink {
+    agent_id: Uuid,
+    router: AgentToolRouter,
 }
 
 struct CodexPty {
@@ -502,6 +511,7 @@ pub(crate) struct CodexSession {
     created_at: DateTime<Utc>,
     log_source: StructuredLogSource,
     shared_client: Arc<CodexClient>,
+    agent_tools: AgentToolRouter,
     runtime: Arc<StdMutex<CodexRuntime>>,
     raw_pty_preparation: Arc<Mutex<()>>,
     stop_tx: watch::Sender<bool>,
@@ -509,7 +519,11 @@ pub(crate) struct CodexSession {
 }
 
 impl CodexSession {
-    pub(crate) fn new(req: &CreateAgentRequest, shared_client: Arc<CodexClient>) -> Self {
+    pub(crate) fn new(
+        req: &CreateAgentRequest,
+        shared_client: Arc<CodexClient>,
+        agent_tools: AgentToolRouter,
+    ) -> Self {
         let (model, approval_policy, sandbox_policy, resume_thread_id) = match &req.agent_type {
             crate::agents::AgentType::Codex {
                 model,
@@ -537,6 +551,7 @@ impl CodexSession {
             created_at: Utc::now(),
             log_source: codex_log_source(),
             shared_client,
+            agent_tools,
             runtime: Arc::new(StdMutex::new(CodexRuntime {
                 desired_name: req.name.clone(),
                 desired_name_generation: 0,
@@ -557,10 +572,11 @@ impl CodexSession {
     pub(crate) fn from_suspended(
         req: &CreateAgentRequest,
         shared_client: Arc<CodexClient>,
+        agent_tools: AgentToolRouter,
         daemon_mode: Option<String>,
         created_at: DateTime<Utc>,
     ) -> Self {
-        let session = Self::new(req, shared_client);
+        let session = Self::new(req, shared_client, agent_tools);
         {
             let mut runtime = session
                 .runtime
@@ -597,6 +613,17 @@ impl CodexSession {
             model: self.model.clone(),
             approval_policy,
             sandbox,
+            dynamic_tools: Some(
+                agent_tools::definitions()
+                    .into_iter()
+                    .map(|tool| FunctionDynamicToolSpec {
+                        name: tool.name.to_string(),
+                        description: tool.description.to_string(),
+                        input_schema: tool.input_schema,
+                        defer_loading: None,
+                    })
+                    .collect(),
+            ),
             ..ThreadConfig::default()
         })
     }
@@ -622,6 +649,10 @@ impl CodexSession {
                 thread_config,
                 thread_id: resume_thread_id,
                 completion_sink,
+                tool_sink: CodexToolSink {
+                    agent_id,
+                    router: self.agent_tools.clone(),
+                },
             },
             stop_rx,
         ));
@@ -789,6 +820,7 @@ async fn run_ingest_supervisor(
         thread_config,
         mut thread_id,
         completion_sink,
+        tool_sink,
     } = options;
     let mut initial_persisted_resume_pending = thread_id.is_some();
     let mut retry = 0_usize;
@@ -919,6 +951,7 @@ async fn run_ingest_supervisor(
                         &runtime,
                         &log_source,
                         completion_sink.as_ref(),
+                        Some(&tool_sink),
                         event,
                     ).await,
                     Ok(None) => break Some("connection_lost"),
@@ -1334,6 +1367,7 @@ async fn ingest_event(
     runtime: &Arc<StdMutex<CodexRuntime>>,
     log_source: &StructuredLogSource,
     completion_sink: Option<&CodexCompletionSink>,
+    tool_sink: Option<&CodexToolSink>,
     event: ThreadEvent,
 ) {
     log_source.write(raw_row(&event)).await;
@@ -1380,12 +1414,16 @@ async fn ingest_event(
             write_approval_ask(log_source, &event, &request_id).await;
         }
         TurnEvent::ToolCallRequired(request) => {
-            insert_pending(
-                runtime,
-                request.request_id.clone(),
-                PendingRequestKind::ToolCall,
-            );
-            write_approval_ask(log_source, &event, &request.request_id).await;
+            if let Some(tool_sink) = tool_sink {
+                execute_dynamic_tool(runtime, tool_sink, request).await;
+            } else {
+                insert_pending(
+                    runtime,
+                    request.request_id.clone(),
+                    PendingRequestKind::ToolCall,
+                );
+                write_approval_ask(log_source, &event, &request.request_id).await;
+            }
         }
         TurnEvent::ApprovalResolved { request_id } => {
             let removed = runtime
@@ -1399,6 +1437,59 @@ async fn ingest_event(
             }
         }
         _ => {}
+    }
+}
+
+async fn execute_dynamic_tool(
+    runtime: &Arc<StdMutex<CodexRuntime>>,
+    sink: &CodexToolSink,
+    request: &DynamicToolCallRequest,
+) {
+    let live = {
+        let state = runtime.lock().unwrap_or_else(|poison| poison.into_inner());
+        state.attached.as_ref().and_then(|attached| {
+            (attached.thread_id == request.thread_id)
+                .then(|| attached.live.clone())
+                .flatten()
+        })
+    };
+    let Some(live) = live else {
+        tracing::warn!(
+            agent_id = %sink.agent_id,
+            thread_id = %request.thread_id,
+            tool = %request.tool,
+            "cannot answer Codex tool call for a detached thread"
+        );
+        return;
+    };
+
+    let result = match agent_tools::parse_call(&request.tool, request.arguments.clone()) {
+        Ok(request) => sink.router.execute(sink.agent_id, request).await,
+        Err(error) => Err(error),
+    };
+    let (success, text) = match result {
+        Ok(output) => (
+            true,
+            serde_json::to_string(&output).expect("JSON values always serialize"),
+        ),
+        Err(error) => (false, format!("{error:#}")),
+    };
+    let response = DynamicToolCallResponse {
+        content_items: vec![json!({"type": "inputText", "text": text})],
+        success,
+    };
+    if let Err(error) = live
+        .thread
+        .respond_tool_call(request.request_id.clone(), response)
+        .await
+    {
+        tracing::warn!(
+            agent_id = %sink.agent_id,
+            thread_id = %request.thread_id,
+            tool = %request.tool,
+            %error,
+            "failed to answer Codex tool call"
+        );
     }
 }
 
@@ -1784,7 +1875,24 @@ mod tests {
     use tokio_tungstenite::tungstenite::Message;
 
     use super::*;
-    use crate::agents::AgentType;
+    use crate::agent_tools::AgentToolRequest;
+    use crate::agents::{AgentToolExecutor, AgentType};
+
+    #[derive(Default)]
+    struct RecordingToolExecutor {
+        calls: StdMutex<Vec<(Uuid, AgentToolRequest)>>,
+    }
+
+    #[async_trait]
+    impl AgentToolExecutor for RecordingToolExecutor {
+        async fn execute(&self, caller: Uuid, request: AgentToolRequest) -> Result<Value> {
+            self.calls
+                .lock()
+                .unwrap_or_else(|poison| poison.into_inner())
+                .push((caller, request));
+            Ok(json!({"id": Uuid::from_u128(90)}))
+        }
+    }
 
     fn session() -> CodexSession {
         let req = CreateAgentRequest {
@@ -1806,6 +1914,7 @@ mod tests {
         CodexSession::new(
             &req,
             Arc::new(CodexClient::new(PathBuf::from("/tmp/amux-codex.sock"))),
+            AgentToolRouter::default(),
         )
     }
 
@@ -1950,6 +2059,98 @@ mod tests {
         assert_eq!(request["method"], "thread/start");
         write_response(writer, &request, thread_session("thread-1", None)).await;
         start.await.unwrap()
+    }
+
+    #[tokio::test]
+    async fn a2a_codex_tool_call_registers_executes_and_answers() {
+        let (client, mut reader, mut writer) = mock_codex().await;
+        let session = session();
+        let executor = Arc::new(RecordingToolExecutor::default());
+        session.agent_tools.bind(executor.clone());
+
+        let starting_client = client.clone();
+        let config = session.thread_config().unwrap();
+        let start =
+            tokio::spawn(async move { starting_client.start_thread(config).await.unwrap() });
+        let request = read_request(&mut reader).await;
+        assert_eq!(request["method"], "thread/start");
+        let tools = request["params"]["dynamicTools"].as_array().unwrap();
+        assert_eq!(
+            tools
+                .iter()
+                .map(|tool| tool["name"].as_str().unwrap())
+                .collect::<Vec<_>>(),
+            ["agents", "send", "spawn", "stop", "status"]
+        );
+        write_response(&mut writer, &request, thread_session("thread-1", None)).await;
+        let thread = start.await.unwrap();
+        let mut events = thread.events().await.unwrap();
+        attach_runtime(&session.runtime, &client, &thread);
+
+        writer
+            .write_all(
+                format!(
+                    "{}\n",
+                    json!({
+                        "method": "item/tool/call",
+                        "id": 77,
+                        "params": {
+                            "threadId": "thread-1",
+                            "turnId": "turn-1",
+                            "callId": "call-1",
+                            "namespace": null,
+                            "tool": "send",
+                            "arguments": {"to": "peer", "text": "hello"}
+                        }
+                    })
+                )
+                .as_bytes(),
+            )
+            .await
+            .unwrap();
+        let event = events.next().await.unwrap().unwrap();
+        let sink = CodexToolSink {
+            agent_id: session.agent_id,
+            router: session.agent_tools.clone(),
+        };
+        ingest_event(
+            &session.runtime,
+            &session.log_source,
+            None,
+            Some(&sink),
+            event,
+        )
+        .await;
+
+        let response = read_request(&mut reader).await;
+        assert_eq!(response["id"], 77);
+        assert_eq!(response["result"]["success"], true);
+        assert_eq!(response["result"]["contentItems"][0]["type"], "inputText");
+        assert_eq!(
+            serde_json::from_str::<Value>(
+                response["result"]["contentItems"][0]["text"]
+                    .as_str()
+                    .unwrap()
+            )
+            .unwrap(),
+            json!({"id": Uuid::from_u128(90)})
+        );
+        assert_eq!(
+            executor
+                .calls
+                .lock()
+                .unwrap_or_else(|poison| poison.into_inner())
+                .as_slice(),
+            [(
+                session.agent_id,
+                AgentToolRequest::Send {
+                    to: "peer".into(),
+                    text: "hello".into(),
+                    context: None,
+                }
+            )]
+        );
+        client.close().await;
     }
 
     #[tokio::test]
@@ -2536,6 +2737,10 @@ mod tests {
                 thread_config: ThreadConfig::default(),
                 thread_id: None,
                 completion_sink: None,
+                tool_sink: CodexToolSink {
+                    agent_id: Uuid::from_u128(1),
+                    router: AgentToolRouter::default(),
+                },
             },
             stop_rx,
         ));
@@ -2690,6 +2895,7 @@ mod tests {
         let session = CodexSession::new(
             &req,
             Arc::new(CodexClient::new(PathBuf::from("/tmp/amux-codex.sock"))),
+            AgentToolRouter::default(),
         );
 
         let suspended = session.suspended_state().unwrap();
@@ -2981,7 +3187,7 @@ mod tests {
         source: &StructuredLogSource,
     ) -> ThreadEvent {
         let event = events.next().await.unwrap().expect("fixture event");
-        ingest_event(runtime, source, None, event.clone()).await;
+        ingest_event(runtime, source, None, None, event.clone()).await;
         event
     }
 
@@ -3077,7 +3283,14 @@ mod tests {
             loop {
                 let event = events.next().await.expect("thread event").expect("event");
                 let turn_completed = matches!(&event.event, TurnEvent::TurnCompleted { .. });
-                ingest_event(&session.runtime, &source, Some(&completion_sink), event).await;
+                ingest_event(
+                    &session.runtime,
+                    &source,
+                    Some(&completion_sink),
+                    None,
+                    event,
+                )
+                .await;
                 if turn_completed {
                     break;
                 }
