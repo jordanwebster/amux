@@ -4,6 +4,13 @@ This file tracks significant development work, decisions made, and current state
 
 ---
 
+2026-08-23 — **Claude MCP calls carry the owning amux agent identity.** The
+stdio server reads `AMUX_AGENT_ID` once at startup, authenticates sends with
+that UUID, targets status changes to it, marks the matching fleet row as the
+caller, and resolves its host before recording it as a spawned child's parent.
+Malformed and stale identities fail explicitly instead of degrading to human or
+orphaned operations.
+
 2026-08-23 — **Claude can discover amux agent operations over stdio MCP.** The
 CLI has a hidden `mcp claude` plumbing command that negotiates JSON-RPC over
 newline-delimited stdio, advertises the `agents`, `send`, `spawn`, `stop`, and

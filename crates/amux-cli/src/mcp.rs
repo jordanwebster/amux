@@ -1,11 +1,12 @@
 use std::collections::HashMap;
+use std::ffi::OsString;
 use std::io::{BufRead, Write};
 use std::path::PathBuf;
 use std::sync::Arc;
 
 use amux::{
-    Agent, AgentIdentifier, AgentType, Client, Config, CreateAgentRequest, SendMessageRequest,
-    SetAgentStatusRequest,
+    Agent, AgentIdentifier, AgentParent, AgentType, Client, Config, CreateAgentRequest,
+    SendMessageRequest, SetAgentStatusRequest,
 };
 use anyhow::{Context, Result, anyhow};
 use async_trait::async_trait;
@@ -124,7 +125,7 @@ pub(super) async fn serve_claude(config: &Config) -> Result<()> {
     let client = require_running_client(config, None).await?;
     let backend = Arc::new(ClientBackend {
         client,
-        caller: None,
+        caller: caller_from_env(std::env::var_os("AMUX_AGENT_ID"))?,
     });
     let stdin = std::io::stdin();
     let stdout = std::io::stdout();
@@ -300,6 +301,55 @@ fn empty_object() -> Value {
     json!({})
 }
 
+fn caller_from_env(value: Option<OsString>) -> Result<Option<Uuid>> {
+    let Some(value) = value else {
+        return Ok(None);
+    };
+    let value = value
+        .into_string()
+        .map_err(|_| anyhow!("AMUX_AGENT_ID is not valid UTF-8"))?;
+    Uuid::parse_str(&value)
+        .map(Some)
+        .context("AMUX_AGENT_ID is not a valid UUID")
+}
+
+fn caller_parent(
+    caller: Option<Uuid>,
+    host_for_agent: impl FnOnce(Uuid) -> Option<Uuid>,
+) -> Result<Option<AgentParent>> {
+    let Some(agent_id) = caller else {
+        return Ok(None);
+    };
+    let host_id = host_for_agent(agent_id)
+        .ok_or_else(|| anyhow!("amux agent identity is not present in the fleet"))?;
+    Ok(Some(AgentParent { agent_id, host_id }))
+}
+
+fn send_request(
+    caller: Option<Uuid>,
+    to: String,
+    text: String,
+    context: Option<Uuid>,
+) -> SendMessageRequest {
+    SendMessageRequest {
+        to: AgentIdentifier::from(to),
+        text,
+        context,
+        from_agent_id: caller,
+    }
+}
+
+fn status_request(
+    caller: Option<Uuid>,
+    working_on: Option<String>,
+) -> Result<SetAgentStatusRequest> {
+    let agent_id = caller.ok_or_else(|| anyhow!("amux agent identity is unavailable"))?;
+    Ok(SetAgentStatusRequest {
+        agent: AgentIdentifier::Id(agent_id),
+        working_on,
+    })
+}
+
 fn tool_definitions() -> Vec<ToolDefinition> {
     vec![
         ToolDefinition {
@@ -365,12 +415,7 @@ impl ToolBackend for ClientBackend {
             ToolRequest::Send { to, text, context } => {
                 let id = self
                     .client
-                    .send_message(SendMessageRequest {
-                        to: AgentIdentifier::from(to),
-                        text,
-                        context,
-                        from_agent_id: self.caller,
-                    })
+                    .send_message(send_request(self.caller, to, text, context))
                     .await?;
                 Ok(json!({ "id": id }))
             }
@@ -385,6 +430,17 @@ impl ToolBackend for ClientBackend {
                     None => std::env::current_dir()
                         .context("failed to determine the child working directory")?,
                 };
+                let fleet = if self.caller.is_some() {
+                    self.client.list_agents().await?
+                } else {
+                    Vec::new()
+                };
+                let parent = caller_parent(self.caller, |caller| {
+                    fleet
+                        .iter()
+                        .find(|agent| agent.id == caller)
+                        .map(|agent| agent.host_id)
+                })?;
                 let agent = self
                     .client
                     .create_agent(CreateAgentRequest {
@@ -403,7 +459,7 @@ impl ToolBackend for ClientBackend {
                         working_dir,
                         terminal_size: None,
                         args: Vec::new(),
-                        parent: None,
+                        parent,
                         initial_prompt: Some(prompt),
                     })
                     .await?;
@@ -417,14 +473,8 @@ impl ToolBackend for ClientBackend {
                 Ok(json!({}))
             }
             ToolRequest::Status { working_on } => {
-                let caller = self
-                    .caller
-                    .ok_or_else(|| anyhow!("amux agent identity is unavailable"))?;
                 self.client
-                    .set_agent_status(SetAgentStatusRequest {
-                        agent: AgentIdentifier::Id(caller),
-                        working_on,
-                    })
+                    .set_agent_status(status_request(self.caller, working_on)?)
                     .await?;
                 Ok(json!({}))
             }
@@ -593,5 +643,44 @@ mod tests {
                     .is_some()
                 && response["result"]["isError"] == false
         }));
+    }
+
+    #[test]
+    fn a2a_mcp_identity_authenticates_send_spawn_and_status() {
+        let caller = Uuid::from_u128(101);
+        let host = Uuid::from_u128(102);
+        let context = Uuid::from_u128(103);
+
+        assert_eq!(caller_from_env(None).unwrap(), None);
+        assert_eq!(
+            caller_from_env(Some(OsString::from(caller.to_string()))).unwrap(),
+            Some(caller)
+        );
+        assert!(caller_from_env(Some(OsString::from("not-a-uuid"))).is_err());
+
+        let send = send_request(
+            Some(caller),
+            "reviewer".to_string(),
+            "please inspect".to_string(),
+            Some(context),
+        );
+        assert_eq!(send.from_agent_id, Some(caller));
+        assert_eq!(send.context, Some(context));
+
+        assert_eq!(
+            caller_parent(Some(caller), |agent_id| (agent_id == caller)
+                .then_some(host))
+            .unwrap(),
+            Some(AgentParent {
+                agent_id: caller,
+                host_id: host,
+            })
+        );
+        assert!(caller_parent(Some(caller), |_| None).is_err());
+
+        let status = status_request(Some(caller), Some("reviewing".to_string())).unwrap();
+        assert_eq!(status.agent, AgentIdentifier::Id(caller));
+        assert_eq!(status.working_on.as_deref(), Some("reviewing"));
+        assert!(status_request(None, None).is_err());
     }
 }
