@@ -73,6 +73,15 @@ deletion remains unscoped. Daemon coverage refuses siblings, top-level agents,
 and unknown targets before proving a direct child can still be stopped.
 
 ---
+2026-08-23 — **Measuring a chat no longer panics at a viewport too small
+to draw.** The scroll keys ask a chat's layout how tall its bottom block is,
+and that question is asked before anything decides the frame is too small to
+draw — so the too-small notice never guarded it. With a child's ask docked,
+the guest panel's rule and the shared line-closing helper both did plain
+`width - 1`, which is an arithmetic panic at width zero: a client taken down
+by a terminal somebody dragged shut. Both saturate now, and the docked panel
+is measured across the widths no frame would ever be drawn at.
+
 2026-08-23 — **The fleet's status cell keeps to its column.**
 Every other cell on a fleet row is clipped to the width it was given; the
 status word was pushed out whole because the words it was designed around

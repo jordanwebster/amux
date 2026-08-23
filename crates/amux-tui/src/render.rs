@@ -407,12 +407,18 @@ pub(crate) fn push_right(line: &mut Line<'static>, text: String, width: usize, s
     }
 }
 
+/// Close a line at `width`: pad to the last column and set the right
+/// border there. The arithmetic saturates because a width is not always a
+/// width a frame could be drawn at — a chat's `layout` measures its bottom
+/// block at whatever viewport it was handed, before the too-small notice
+/// takes over — and a measurement must not be able to bring the process
+/// down.
 pub(crate) fn finish_line(line: &mut Line<'static>, width: usize) {
-    pad_to(line, width - 1);
+    let budget = width.saturating_sub(1);
+    pad_to(line, budget);
     // Drop overflow defensively, by display cells: goldens keep us honest
     // about fit, and the right border must land in the last column even
     // when wide graphemes are in play.
-    let budget = width - 1;
     let mut used = 0usize;
     for span in line.spans.iter_mut() {
         let span_width = str_width(&span.content);
@@ -425,7 +431,7 @@ pub(crate) fn finish_line(line: &mut Line<'static>, width: usize) {
     line.spans.retain(|span| !span.content.is_empty());
     // A clipped wide grapheme can leave a one-cell gap; re-pad so the
     // border never drifts out of the last column.
-    pad_to(line, width - 1);
+    pad_to(line, budget);
     line.spans.push(Span::styled("│", dim()));
 }
 

@@ -1608,3 +1608,26 @@ fn a2a_bindings_withhold_the_answer_chord_behind_the_parents_own_ask() {
         "the runner's own approval owns the bottom block:\n{overlay}"
     );
 }
+
+/// A viewport too small to draw is still a viewport a key press arrives
+/// at, and the scroll keys ask the chat's layout how tall its bottom block
+/// is before anything decides the frame is too small to draw. The docked
+/// guest's rule is measured on that path, so its width arithmetic has to
+/// survive widths no frame would ever use — a measurement that panics
+/// takes the whole client down over a terminal somebody dragged shut.
+#[test]
+fn a2a_inline_answer_survives_a_viewport_too_small_to_draw() {
+    for (parent, model) in [(LEAD, family_model()), (RUNNER, claude_child_asking())] {
+        for width in [0u16, 1, 2, 3, 12] {
+            let mut view = docked(&model, parent);
+            let chat = view.chat.as_mut().expect("an open chat");
+            amux_tui::chat::handle_chat_key(
+                chat,
+                &model,
+                press(KeyCode::PageUp, KeyModifiers::NONE),
+                (width, 0),
+                at(NOW),
+            );
+        }
+    }
+}

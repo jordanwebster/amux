@@ -220,11 +220,16 @@ pub(crate) fn panel_lines(
 }
 
 /// `─ answering test-runner ────────────────── esc back ─`
+///
+/// Saturating, because the width is not always a width a frame could be
+/// drawn at: `layout` asks the bottom block how many rows it wants at
+/// whatever viewport it was handed, and that question is asked before the
+/// too-small notice takes over.
 fn attribution_rule(name: &str, width: usize, theme: Theme) -> Line<'static> {
     let mut line = new_line();
     let right = " esc back ─";
     let mut text = format!("─ answering {name} ");
-    while 1 + str_width(&text) + str_width(right) < width - 1 {
+    while 1 + str_width(&text) + str_width(right) < width.saturating_sub(1) {
         text.push('─');
     }
     text.push_str(right);
