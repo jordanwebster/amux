@@ -224,6 +224,7 @@ mod tests {
                 initial_prompt: None,
             },
             PathBuf::from("/runtime"),
+            None,
         );
         session.pty = Some(PtyHandle::test_echo());
         let source = StructuredLogSource::new(32);

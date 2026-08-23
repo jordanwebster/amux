@@ -189,6 +189,7 @@ pub(crate) enum RawPtyTarget {
 #[derive(Clone)]
 pub(crate) struct AgentDeps {
     pub(crate) runtime_dir: std::path::PathBuf,
+    pub(crate) claude_version: Option<String>,
     #[cfg(unix)]
     pub(crate) codex_client: Arc<CodexClient>,
     pub(crate) agent_tools: AgentToolRouter,
@@ -203,6 +204,9 @@ impl AgentDeps {
         let _ = codex_private_socket;
         Self {
             runtime_dir,
+            // AgentDeps is built before AgentServiceState is placed behind its
+            // registry lock, so this process probe cannot stall registry work.
+            claude_version: super::claude::installed_claude_version(),
             #[cfg(unix)]
             codex_client: Arc::new(CodexClient::new(codex_private_socket)),
             agent_tools: AgentToolRouter::default(),
@@ -325,7 +329,11 @@ pub(crate) type AgentSession = Box<dyn AgentBackend>;
 
 pub(crate) fn new_agent(req: &CreateAgentRequest, deps: &AgentDeps) -> Result<AgentSession> {
     match &req.agent_type {
-        AgentType::Claude => Ok(Box::new(ClaudeSession::new(req, deps.runtime_dir.clone()))),
+        AgentType::Claude => Ok(Box::new(ClaudeSession::new(
+            req,
+            deps.runtime_dir.clone(),
+            deps.claude_version.clone(),
+        ))),
         #[cfg(unix)]
         AgentType::Codex { .. } => Ok(Box::new(CodexSession::new(
             req,
@@ -374,6 +382,7 @@ pub(crate) fn agent_from_suspended(suspended: SuspendedAgent, deps: &AgentDeps) 
                 session_id,
                 created_at,
                 deps.runtime_dir.clone(),
+                deps.claude_version.clone(),
             ))
         }
         #[cfg(unix)]
@@ -574,7 +583,7 @@ mod tests {
             parent: None,
             initial_prompt: None,
         };
-        let mut session = ClaudeSession::new(&req, std::env::temp_dir());
+        let mut session = ClaudeSession::new(&req, std::env::temp_dir(), None);
         session.session_id = Some(Uuid::new_v4());
 
         let suspended = session.suspended_state().unwrap();

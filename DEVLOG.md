@@ -4,6 +4,14 @@ This file tracks significant development work, decisions made, and current state
 
 ---
 
+2026-08-23 — **Claude version discovery no longer holds the agent registry.**
+Daemon dependency initialization probes `claude --version` once per process
+before the registry exists. Each Claude session receives that cached result,
+so record creation and process startup perform no synchronous version command
+while holding the registry write lock.
+
+---
+
 2026-08-23 — **Claude PTY messages survive control characters safely.**
 The bracketed-paste carrier now replaces tabs with spaces and drops every
 other control character except newline before encoding. Escape and NUL bytes

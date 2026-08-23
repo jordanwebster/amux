@@ -169,6 +169,7 @@ mod tests {
                 initial_prompt: None,
             },
             PathBuf::from("/runtime"),
+            None,
         );
         session.pty = Some(pty);
         let envelope = Envelope {

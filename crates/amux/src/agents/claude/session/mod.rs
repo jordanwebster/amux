@@ -19,7 +19,7 @@ mod inbox;
 mod input;
 mod name_sniffer;
 
-pub(crate) use core::ClaudeSession;
+pub(crate) use core::{ClaudeSession, installed_claude_version};
 
 #[cfg(test)]
 use input::PtyInput;
