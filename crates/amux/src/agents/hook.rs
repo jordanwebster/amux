@@ -1,6 +1,10 @@
+use std::collections::HashMap;
+
 use thiserror::Error;
 
 use crate::protocol::ProtocolError;
+
+pub(crate) type HookEnvironment = HashMap<String, String>;
 
 pub(crate) enum ExternalHookBootstrap {
     Noop,

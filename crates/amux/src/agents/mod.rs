@@ -29,7 +29,7 @@ pub(crate) use codex::CodexRawPtyLease;
 pub use events::AgentEvent;
 pub(crate) use events::{agent_event_from_wire, agent_event_to_wire};
 #[cfg(feature = "local-agents")]
-pub(crate) use hook::{ExternalHookBootstrap, HookError, HookOutcome};
+pub(crate) use hook::{ExternalHookBootstrap, HookEnvironment, HookError, HookOutcome};
 pub(crate) use log_source::StructuredLogSource;
 pub(crate) use naming::LocalAgentNameSource;
 #[cfg(feature = "local-agents")]

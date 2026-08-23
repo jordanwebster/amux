@@ -1,3 +1,4 @@
+use std::collections::HashMap;
 use std::net::SocketAddr;
 use std::pin::Pin;
 use std::sync::Arc;
@@ -921,7 +922,11 @@ impl Client {
         Ok(response.dump)
     }
 
-    pub async fn handle_hook(&self, payload: Bytes) -> Result<(), ClientError> {
+    pub async fn handle_hook(
+        &self,
+        payload: Bytes,
+        env: HashMap<String, String>,
+    ) -> Result<(), ClientError> {
         self.ensure_open()?;
         let (agent_id, external) = hook_target_from_payload(&payload)?;
         self.inner
@@ -931,6 +936,7 @@ impl Client {
                 agent_id: agent_id.as_bytes().to_vec(),
                 payload: payload.to_vec(),
                 external,
+                env,
             })
             .await
             .map_err(status_to_client_error)?;

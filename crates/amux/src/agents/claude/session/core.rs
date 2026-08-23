@@ -22,6 +22,11 @@ use crate::debug::DebugView;
 const STRUCTURED_LOG_RETENTION: usize = 1000;
 const CLAUDE_MESSAGING_SOCKET_MIN_VERSION: semver::Version = semver::Version::new(2, 1, 224);
 
+pub(super) struct ClaudeMessagingCredentials {
+    pub(super) socket_path: PathBuf,
+    pub(super) token: String,
+}
+
 /// Inherited environment variables scrubbed before spawning Claude Code.
 ///
 /// Claude Code stamps every subprocess it spawns with a child-session marker
@@ -84,6 +89,7 @@ pub(crate) struct ClaudeSession {
     /// Extra arguments passed to the claude command
     pub(in crate::agents) args: Vec<String>,
     pub(super) runtime_dir: PathBuf,
+    pub(super) messaging_credentials: Option<ClaudeMessagingCredentials>,
     pub(super) parent: Option<AgentParent>,
     pub(super) name_source: LocalAgentNameSource,
     pub(super) name_sniffer_abort: Option<AbortHandle>,
@@ -110,6 +116,7 @@ impl ClaudeSession {
             readonly: false,
             args: req.args.clone(),
             runtime_dir,
+            messaging_credentials: None,
             parent: req.parent,
             name_source: if req.name.is_some() {
                 LocalAgentNameSource::Amux
@@ -141,6 +148,7 @@ impl ClaudeSession {
             readonly: false,
             args: sanitize_resume_args(req.args.clone()),
             runtime_dir,
+            messaging_credentials: None,
             parent: req.parent,
             name_source,
             name_sniffer_abort: None,
@@ -166,6 +174,7 @@ impl ClaudeSession {
             readonly: true,
             args: vec![],
             runtime_dir: std::env::temp_dir(),
+            messaging_credentials: None,
             parent: None,
             name_source: LocalAgentNameSource::Unset,
             name_sniffer_abort: None,
@@ -370,6 +379,15 @@ impl Serialize for DebugView<'_, ClaudeSession> {
         }
         map.serialize_entry("readonly", &session.readonly)?;
         map.serialize_entry("has_pty", &session.pty.is_some())?;
+        map.serialize_entry(
+            "has_messaging_credentials",
+            &session
+                .messaging_credentials
+                .as_ref()
+                .is_some_and(|credentials| {
+                    !credentials.socket_path.as_os_str().is_empty() && !credentials.token.is_empty()
+                }),
+        )?;
         if let Some(ingest) = &session.transcript_ingest {
             map.serialize_entry("transcript", &DebugView::new(ingest, self.verbose))?;
         }

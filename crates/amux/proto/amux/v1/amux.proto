@@ -670,6 +670,7 @@ message HandleHookRequest {
   bytes agent_id = 1;
   bytes payload = 2;
   bool external = 3;
+  map<string, string> env = 4;
 }
 
 message HandleHookResponse {}

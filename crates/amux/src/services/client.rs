@@ -1249,7 +1249,7 @@ impl wire::client_service_server::ClientService for ClientService {
     ) -> TonicResult<wire::HandleHookResponse> {
         let request = request.into_inner();
         let agent_id = uuid_from_bytes("HandleHookRequest.agent_id", &request.agent_id)?;
-        self.handle_local_hook(agent_id, request.payload, request.external)
+        self.handle_local_hook(agent_id, request.payload, request.env, request.external)
             .await
             .map_err(protocol_status)?;
         Ok(tonic::Response::new(wire::HandleHookResponse {}))
@@ -1872,10 +1872,11 @@ impl ClientService {
         &self,
         agent_id: Uuid,
         payload: Vec<u8>,
+        env: HashMap<String, String>,
         external: bool,
     ) -> Result<(), ProtocolError> {
         match self.local_agents.host() {
-            Some(host) => host.handle_hook(agent_id, payload, external).await,
+            Some(host) => host.handle_hook(agent_id, payload, env, external).await,
             None => Err(ProtocolError::FailedPrecondition {
                 message: "local agent support is disabled".to_string(),
             }),
@@ -5429,6 +5430,7 @@ mod tests {
                     agent_id: Uuid::from_u128(999).as_bytes().to_vec(),
                     payload: Vec::new(),
                     external: false,
+                    env: HashMap::new(),
                 }),
             )
             .await

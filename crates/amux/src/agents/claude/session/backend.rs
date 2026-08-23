@@ -10,9 +10,9 @@ use super::ClaudeSession;
 use super::input::{paste_program, send_pty_program};
 use crate::agents::claude::io;
 use crate::agents::{
-    AGENT_TYPE_CLAUDE, AgentBackend, AgentParent, Delivery, DeliveryError, HookError, HookOutcome,
-    LocalAgentNameSource, PtyHandle, SessionEvent, StopPolicy, StructuredInput,
-    StructuredLogSource, terminal_io_protocols,
+    AGENT_TYPE_CLAUDE, AgentBackend, AgentParent, Delivery, DeliveryError, HookEnvironment,
+    HookError, HookOutcome, LocalAgentNameSource, PtyHandle, SessionEvent, StopPolicy,
+    StructuredInput, StructuredLogSource, terminal_io_protocols,
 };
 use crate::debug::DebugView;
 use crate::suspend::SuspendedAgent;
@@ -104,8 +104,9 @@ impl AgentBackend for ClaudeSession {
     async fn handle_hook_payload(
         &mut self,
         payload: &[u8],
+        env: &HookEnvironment,
     ) -> std::result::Result<HookOutcome, HookError> {
-        ClaudeSession::handle_hook_payload(self, payload).await
+        ClaudeSession::handle_hook_payload(self, payload, env).await
     }
 
     fn maybe_start_name_sniffer(&mut self, event_tx: &mpsc::Sender<SessionEvent>) {

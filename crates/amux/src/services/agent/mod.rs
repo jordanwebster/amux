@@ -20,8 +20,8 @@ use tokio::sync::mpsc;
 use uuid::Uuid;
 
 use crate::agents::{
-    Agent, AgentEvent, AgentRecord, CreateAgentRpcRequest, RenameAgentRequest, SendInputRequest,
-    SetAgentStatusRequest, SubscribeSessionRequest,
+    Agent, AgentEvent, AgentRecord, CreateAgentRpcRequest, HookEnvironment, RenameAgentRequest,
+    SendInputRequest, SetAgentStatusRequest, SubscribeSessionRequest,
 };
 use crate::envelope::Envelope;
 use crate::protocol::{ProtocolError, protocol_status, wire};
@@ -65,6 +65,7 @@ pub(crate) trait LocalAgentHost: Send + Sync {
         &self,
         agent_id: Uuid,
         payload: Vec<u8>,
+        env: HookEnvironment,
         external: bool,
     ) -> Result<(), ProtocolError>;
     async fn resume(&self, state_path: PathBuf) -> Result<(u64, u64), ProtocolError>;

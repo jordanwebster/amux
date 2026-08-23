@@ -26,9 +26,9 @@ use super::{
 use crate::agents::claude::ClaudeSession;
 use crate::agents::{
     Agent, AgentDeps, AgentEvent, AgentSession, AgentType, CreateAgentConfig, CreateAgentRequest,
-    CreateAgentRpcRequest, DeliveryError, ExternalHookBootstrap, HookOutcome, RenameAgentRequest,
-    SendInputRequest, SessionCloseReason, SessionEvent, SetAgentStatusRequest, StopPolicy,
-    SubscribeSessionRequest, bootstrap_external_hook,
+    CreateAgentRpcRequest, DeliveryError, ExternalHookBootstrap, HookEnvironment, HookOutcome,
+    RenameAgentRequest, SendInputRequest, SessionCloseReason, SessionEvent, SetAgentStatusRequest,
+    StopPolicy, SubscribeSessionRequest, bootstrap_external_hook,
 };
 use crate::envelope::{AgentSender, Envelope, EnvelopeKind, Sender};
 use crate::protocol::{ProtocolError, wire};
@@ -120,7 +120,14 @@ impl PtyAgentHost {
         agent_id: Uuid,
         payload: Vec<u8>,
     ) -> Result<(), ProtocolError> {
-        <Self as LocalAgentHost>::handle_hook(self, agent_id, payload, false).await
+        <Self as LocalAgentHost>::handle_hook(
+            self,
+            agent_id,
+            payload,
+            HookEnvironment::new(),
+            false,
+        )
+        .await
     }
 }
 
@@ -407,6 +414,7 @@ impl LocalAgentHost for PtyAgentHost {
         &self,
         agent_id: Uuid,
         payload: Vec<u8>,
+        env: HookEnvironment,
         external: bool,
     ) -> Result<(), ProtocolError> {
         tracing::debug!(%agent_id, external, "received Claude hook event");
@@ -415,7 +423,7 @@ impl LocalAgentHost for PtyAgentHost {
         let result = {
             let mut state = self.state().write().await;
             if let Some(session) = state.agent_session_mut(&agent_id) {
-                match session.handle_hook_payload(&payload).await {
+                match session.handle_hook_payload(&payload, &env).await {
                     Ok(HookOutcome::Noop | HookOutcome::KeepSession) => Ok(()),
                     Ok(HookOutcome::Completed { text }) => {
                         if let Some(envelope) =
@@ -435,7 +443,7 @@ impl LocalAgentHost for PtyAgentHost {
                 tracing::warn!(%agent_id, "hook target not found");
                 Err(ProtocolError::NoAgentFound)
             } else {
-                match bootstrap_external_hook(agent_id, &payload).await {
+                match bootstrap_external_hook(agent_id, &payload, &env).await {
                     Ok(ExternalHookBootstrap::Noop) => Ok(()),
                     Ok(ExternalHookBootstrap::Register(session)) => {
                         match state.insert_registered_local_agent(self.host_id(), agent_id, session)

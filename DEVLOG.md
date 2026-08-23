@@ -4387,3 +4387,10 @@ busy-input shapes: PTY delivery yields a human-origin `queued_command`
 attachment, while socket delivery yields a peer-origin meta user row and no
 such attachment. This keeps later carrier confirmation logic grounded in the
 captured schema instead of assuming both paths share one row shape.
+2026-08-23 — **Forwarded Claude inbox credentials through every hook.** The
+hook CLI now copies only Claude Code's messaging socket and token variables
+into the hook RPC. Managed and externally discovered Claude sessions retain a
+complete credential pair on first observation and refresh it on every later
+hook, including duplicate deliveries, so token or socket rotation cannot leave
+the daemon using stale readiness state. Captured Stop-hook coverage pins the
+wire-to-session behavior without exposing the token through debug output.

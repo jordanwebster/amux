@@ -30,8 +30,8 @@ use super::claude::ClaudeSession;
 #[cfg(unix)]
 use super::codex::{CodexClient, CodexRawPtyTarget, CodexSession};
 use super::{
-    AgentRecord, ExternalHookBootstrap, HookError, HookOutcome, LocalAgentNameSource, PtyHandle,
-    SessionEvent, StopPolicy, StructuredLogSource,
+    AgentRecord, ExternalHookBootstrap, HookEnvironment, HookError, HookOutcome,
+    LocalAgentNameSource, PtyHandle, SessionEvent, StopPolicy, StructuredLogSource,
 };
 use crate::agents::{AgentParent, AgentType, CreateAgentRequest, terminal_io};
 use crate::envelope::Envelope;
@@ -157,6 +157,7 @@ pub(crate) trait AgentBackend: Send + Sync {
     async fn handle_hook_payload(
         &mut self,
         _payload: &[u8],
+        _env: &HookEnvironment,
     ) -> std::result::Result<HookOutcome, HookError> {
         Err(HookError::UnsupportedAgentType)
     }
@@ -319,8 +320,9 @@ pub(crate) fn agent_from_suspended(suspended: SuspendedAgent, deps: &AgentDeps) 
 pub(crate) async fn bootstrap_external_hook(
     agent_id: Uuid,
     payload: &[u8],
+    env: &HookEnvironment,
 ) -> std::result::Result<ExternalHookBootstrap, HookError> {
-    ClaudeSession::bootstrap_external_hook(agent_id, payload)
+    ClaudeSession::bootstrap_external_hook(agent_id, payload, env)
         .await
         .map(|session| match session {
             Some(session) => ExternalHookBootstrap::Register(Box::new(session)),

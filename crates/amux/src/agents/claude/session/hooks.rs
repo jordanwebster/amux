@@ -4,9 +4,12 @@ use std::time::Duration;
 use serde_json::{Value, json};
 use uuid::Uuid;
 
-use super::core::ClaudeSession;
+use super::core::{ClaudeMessagingCredentials, ClaudeSession};
 use crate::agents::claude::hooks::{ClaudeHookKind, ParsedClaudeHook};
-use crate::agents::{HookError, HookOutcome};
+use crate::agents::{HookEnvironment, HookError, HookOutcome};
+
+const MESSAGING_SOCKET_ENV: &str = "CLAUDE_CODE_MESSAGING_SOCKET";
+const MESSAGING_TOKEN_ENV: &str = "CLAUDE_CODE_MESSAGING_TOKEN";
 
 /// Hook delivery is at-least-once by construction: any number of scopes —
 /// user settings.json, project settings, the amux plugin — may register
@@ -55,14 +58,34 @@ impl ClaudeSession {
         }
     }
 
+    fn sync_messaging_credentials(&mut self, env: &HookEnvironment) {
+        let Some((socket_path, token)) = env
+            .get(MESSAGING_SOCKET_ENV)
+            .filter(|value| !value.is_empty())
+            .zip(
+                env.get(MESSAGING_TOKEN_ENV)
+                    .filter(|value| !value.is_empty()),
+            )
+        else {
+            return;
+        };
+
+        self.messaging_credentials = Some(ClaudeMessagingCredentials {
+            socket_path: PathBuf::from(socket_path),
+            token: token.clone(),
+        });
+    }
+
     pub(crate) async fn handle_hook_payload(
         &mut self,
         payload: &[u8],
+        env: &HookEnvironment,
     ) -> std::result::Result<HookOutcome, HookError> {
         let hook =
             ParsedClaudeHook::parse_payload(payload).map_err(|e| HookError::InvalidPayload {
                 message: e.to_string(),
             })?;
+        self.sync_messaging_credentials(env);
         let is_unknown = hook.is_unknown();
         let is_session_end = hook.is_session_end();
         let completion = hook.last_assistant_message().map(str::to_string);
@@ -83,6 +106,7 @@ impl ClaudeSession {
     pub(crate) async fn bootstrap_external_hook(
         agent_id: Uuid,
         payload: &[u8],
+        env: &HookEnvironment,
     ) -> std::result::Result<Option<Self>, HookError> {
         let hook =
             ParsedClaudeHook::parse_payload(payload).map_err(|e| HookError::InvalidPayload {
@@ -109,6 +133,7 @@ impl ClaudeSession {
         }
 
         let mut session = Self::new_readonly(agent_id, PathBuf::from(cwd));
+        session.sync_messaging_credentials(env);
         session.handle_hook(hook).await;
         Ok(Some(session))
     }
@@ -188,6 +213,15 @@ impl ClaudeSession {
 mod tests {
     use super::*;
 
+    fn stop_fixture_payload() -> Vec<u8> {
+        let row = include_str!("../../../../tests/fixtures/a2a/stop_payload.jsonl")
+            .lines()
+            .map(|line| serde_json::from_str::<Value>(line).expect("fixture row is JSON"))
+            .find(|row| row.get("type").and_then(Value::as_str) == Some("hook.stop"))
+            .expect("fixture contains the captured Stop hook");
+        serde_json::to_vec(&row).expect("fixture hook serializes")
+    }
+
     fn permission_payload(command: &str) -> Vec<u8> {
         serde_json::to_vec(&json!({
             "hook_event_name": "PermissionRequest",
@@ -213,17 +247,17 @@ mod tests {
         let log = session.log_source().expect("readonly session tails");
 
         session
-            .handle_hook_payload(&permission_payload("echo one"))
+            .handle_hook_payload(&permission_payload("echo one"), &HookEnvironment::new())
             .await
             .expect("hook accepted");
         session
-            .handle_hook_payload(&permission_payload("echo one"))
+            .handle_hook_payload(&permission_payload("echo one"), &HookEnvironment::new())
             .await
             .expect("hook accepted");
         assert_eq!(log.current_seq().await, 1, "a double delivery is one fact");
 
         session
-            .handle_hook_payload(&permission_payload("echo two"))
+            .handle_hook_payload(&permission_payload("echo two"), &HookEnvironment::new())
             .await
             .expect("hook accepted");
         assert_eq!(
@@ -234,7 +268,7 @@ mod tests {
 
         tokio::time::advance(HOOK_DEDUPE_WINDOW + Duration::from_millis(1)).await;
         session
-            .handle_hook_payload(&permission_payload("echo two"))
+            .handle_hook_payload(&permission_payload("echo two"), &HookEnvironment::new())
             .await
             .expect("hook accepted");
         assert_eq!(
@@ -242,5 +276,63 @@ mod tests {
             3,
             "an identical event outside the window is a new fact"
         );
+    }
+
+    #[tokio::test]
+    async fn a2a_hook_env_forward_stores_and_refreshes_messaging_credentials() {
+        let payload = stop_fixture_payload();
+        let mut session =
+            ClaudeSession::new_readonly(Uuid::from_u128(1), PathBuf::from("/nonexistent"));
+        let mut first = HookEnvironment::from([
+            (
+                MESSAGING_SOCKET_ENV.to_string(),
+                "/runtime/first.sock".to_string(),
+            ),
+            (MESSAGING_TOKEN_ENV.to_string(), "first-token".to_string()),
+        ]);
+
+        session
+            .handle_hook_payload(&payload, &first)
+            .await
+            .expect("captured hook accepted");
+        let credentials = session
+            .messaging_credentials
+            .as_ref()
+            .expect("credentials stored on first hook");
+        assert_eq!(
+            credentials.socket_path,
+            PathBuf::from("/runtime/first.sock")
+        );
+        assert_eq!(credentials.token, "first-token");
+
+        first.insert(
+            MESSAGING_SOCKET_ENV.to_string(),
+            "/runtime/rotated.sock".to_string(),
+        );
+        first.insert(MESSAGING_TOKEN_ENV.to_string(), "rotated-token".to_string());
+        session
+            .handle_hook_payload(&payload, &first)
+            .await
+            .expect("duplicate captured hook accepted");
+        let credentials = session
+            .messaging_credentials
+            .as_ref()
+            .expect("credentials remain available");
+        assert_eq!(
+            credentials.socket_path,
+            PathBuf::from("/runtime/rotated.sock")
+        );
+        assert_eq!(credentials.token, "rotated-token");
+
+        let debug = serde_json::to_string(&crate::debug::DebugView::new(&session, false))
+            .expect("session debug view serializes");
+        assert_eq!(
+            serde_json::from_str::<Value>(&debug)
+                .expect("debug view is JSON")
+                .get("has_messaging_credentials")
+                .and_then(Value::as_bool),
+            Some(true)
+        );
+        assert!(!debug.contains("rotated-token"));
     }
 }
