@@ -4379,3 +4379,11 @@ outbound bridge dispatches both through the same local or peer message carrier
 as ordinary agent sends. Whole-daemon specifications use an echo parent and a
 process-free scripted Claude session to prove local and direct-TCP delivery of
 both lifecycle signals.
+2026-08-23 — **Pinned Claude carrier rows at the transcript-ingest seam.** The
+graduated socket and PTY captures now replay through the daemon's opaque
+transcript ingest with every row preserved and only the documented readiness
+marker appended. The transcript reference records Claude 2.1.240's distinct
+busy-input shapes: PTY delivery yields a human-origin `queued_command`
+attachment, while socket delivery yields a peer-origin meta user row and no
+such attachment. This keeps later carrier confirmation logic grounded in the
+captured schema instead of assuming both paths share one row shape.

@@ -291,7 +291,7 @@ the observed monotonicity inversions). Observed `attachment.type`:
 | `edited_text_file` | 30 | `filename`, `snippet` |
 | `read_truncation_notice` | 18 | `banner`, `toolUseID` |
 | `agent_listing_delta` | 15 | `addedLines`, `addedTypes`, `isInitial`, `removedTypes`, `showConcurrencyNote` |
-| `queued_command` | 6 | `commandMode`, `prompt`, `timestamp` — a queued message being delivered into the turn |
+| `queued_command` | 6 | `commandMode`, `origin`, `prompt`, `source_uuid`, `timestamp` — a queued message being delivered into the turn |
 | `auto_mode` | 6 | `autoModeConsentFlow` |
 | `file` | 5 | `content`, `displayPath`, `filename` |
 | `date_change` | 5 | `newDate` |
@@ -301,6 +301,26 @@ the observed monotonicity inversions). Observed `attachment.type`:
 Chat treatment: not feed content; fold into phase/meta where useful
 (`async_hook_response` of `hookEvent:"Stop"` confirms amux's own hook
 round-trip on the *next* turn; `queued_command` confirms queue delivery).
+
+### `queued_command` and peer-delivery shapes (Claude 2.1.240)
+
+The graduated carrier captures add two version-specific facts. A PTY paste
+received while Claude is busy produces `queue-operation` `enqueue`/`remove`,
+then this attachment when the queued input enters the turn:
+
+```json
+{"type":"attachment","attachment":{"type":"queued_command","commandMode":"prompt","origin":{"kind":"human"},"prompt":"<amux …>…</amux>","source_uuid":"…","timestamp":"…"}}
+```
+
+Socket delivery uses a different peer shape: `queue-operation`
+`enqueue`/`dequeue`, followed by an `isMeta:true` user row whose
+`origin` is `{kind:"peer", name, from, fromMode, body, selfSent}` and whose
+message content contains the original `<cross-session-message …>` plus
+Claude's peer-safety context. In the 2.1.240 capture this path emitted no
+`queued_command` attachment, whether delivered idle or busy. Therefore
+`queued_command` is evidence for queued PTY input in this version, not a
+general socket-delivery confirmation; the peer-origin user row is the socket
+confirmation present in the transcript.
 
 ---
 

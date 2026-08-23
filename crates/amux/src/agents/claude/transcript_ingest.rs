@@ -120,6 +120,59 @@ mod tests {
         TranscriptIngest::new(StructuredLogSource::new(1000))
     }
 
+    async fn assert_fixture_passes_through_ingest(name: &str, fixture: &str) {
+        let dir = tempdir().unwrap();
+        let transcript_path = dir.path().join(format!("{name}.jsonl"));
+        tokio::fs::write(&transcript_path, fixture).await.unwrap();
+        let expected: Vec<serde_json::Value> = fixture
+            .lines()
+            .filter(|line| !line.trim().is_empty())
+            .map(|line| serde_json::from_str(line).expect("fixture row is JSON"))
+            .collect();
+        let ingest = new_ingest();
+
+        ingest.link_transcript(transcript_path).await;
+        let expected_seq = u64::try_from(expected.len() + 1).unwrap();
+        tokio::time::timeout(std::time::Duration::from_secs(2), async {
+            loop {
+                if ingest.log_source().current_seq().await == expected_seq {
+                    break;
+                }
+                tokio::time::sleep(std::time::Duration::from_millis(10)).await;
+            }
+        })
+        .await
+        .unwrap_or_else(|_| panic!("{name} did not finish replaying"));
+
+        let (mut reader, seq) = ingest
+            .log_source()
+            .subscribe_with_query(None)
+            .await
+            .unwrap();
+        assert_eq!(seq, expected_seq);
+        for expected_row in expected {
+            let actual = reader.read().await.expect("fixture row retained").payload;
+            assert_eq!(actual, expected_row, "{name} row was reclassified");
+        }
+        let marker = reader.read().await.expect("ingest readiness marker");
+        assert_eq!(marker.payload, json!({"type": "amux.transcript_ready"}));
+        ingest.close().await;
+    }
+
+    #[tokio::test]
+    async fn a2a_fixture_fold_preserves_socket_and_pty_carrier_rows() {
+        assert_fixture_passes_through_ingest(
+            "socket-delivery",
+            include_str!("../../../tests/fixtures/a2a/socket_delivery.jsonl"),
+        )
+        .await;
+        assert_fixture_passes_through_ingest(
+            "pty-delivery",
+            include_str!("../../../tests/fixtures/a2a/pty_delivery.jsonl"),
+        )
+        .await;
+    }
+
     #[tokio::test]
     async fn subscribe_immediately_returns_empty_snapshot_before_transcript_exists() {
         let dir = tempdir().unwrap();
