@@ -29,6 +29,7 @@ use super::TestAgentSession;
 use super::claude::{ClaudeSession, ClaudeVersionCache};
 #[cfg(unix)]
 use super::codex::{CodexClient, CodexRawPtyTarget, CodexSession};
+use super::types::{AgentToolExecutor, SpawnInheritance};
 use super::{
     AgentRecord, ExternalHookBootstrap, HookEnvironment, HookError, HookOutcome,
     LocalAgentNameSource, PtyHandle, SessionEvent, StopPolicy, StructuredLogSource,
@@ -47,14 +48,6 @@ pub(crate) enum Delivery {
     InjectQueued,
     InjectStarted,
     TurnStarted,
-}
-
-/// The provider-specific launch policy a same-kind child inherits.
-#[derive(Clone, Debug, Default, PartialEq, Eq)]
-pub(crate) struct SpawnInheritance {
-    pub(crate) claude_permission_args: Vec<String>,
-    pub(crate) codex_approval_policy: Option<String>,
-    pub(crate) codex_sandbox_policy: Option<String>,
 }
 
 impl Delivery {
@@ -143,12 +136,6 @@ pub(crate) trait StructuredInput: Send + Sync {
 #[async_trait]
 pub(crate) trait CodexInput: Send + Sync {
     async fn send(&self, input_id: Vec<u8>, input: super::codex::io::CodexSdkV1Input);
-}
-
-/// In-process route from a model-facing tool call to ClientService.
-#[async_trait]
-pub(crate) trait AgentToolExecutor: Send + Sync {
-    async fn execute(&self, caller: Uuid, request: AgentToolRequest) -> Result<Value>;
 }
 
 /// Late-bound executor shared by sessions created before ClientService starts.

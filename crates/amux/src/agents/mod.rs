@@ -29,7 +29,7 @@ pub(crate) use codex::CodexRawPtyLease;
 pub use events::AgentEvent;
 pub(crate) use events::{agent_event_from_wire, agent_event_to_wire};
 #[cfg(feature = "local-agents")]
-pub(crate) use hook::{ExternalHookBootstrap, HookEnvironment, HookError, HookOutcome};
+pub(crate) use hook::{ExternalHookBootstrap, HookError, HookOutcome};
 pub(crate) use log_source::StructuredLogSource;
 pub(crate) use naming::LocalAgentNameSource;
 #[cfg(feature = "local-agents")]
@@ -39,9 +39,9 @@ pub(crate) use record::{AgentRecord, SessionEvent, StopPolicy};
 pub(crate) use session::CodexInput;
 #[cfg(feature = "local-agents")]
 pub(crate) use session::{
-    AgentBackend, AgentDeliveryTarget, AgentDeps, AgentSession, AgentToolExecutor, AgentToolRouter,
-    Delivery, DeliveryError, DeliveryLiveness, RawPtyTarget, SpawnInheritance, StructuredInput,
-    agent_from_suspended, bootstrap_external_hook, new_agent, terminal_io_protocols,
+    AgentBackend, AgentDeliveryTarget, AgentDeps, AgentSession, AgentToolRouter, Delivery,
+    DeliveryError, DeliveryLiveness, RawPtyTarget, StructuredInput, agent_from_suspended,
+    bootstrap_external_hook, new_agent, terminal_io_protocols,
 };
 pub use session_events::{SessionCloseReason, SubscribeSessionEvent};
 #[cfg(all(feature = "local-agents", any(debug_assertions, test)))]
@@ -52,11 +52,11 @@ pub(crate) use test_agent::io::{
 };
 #[cfg(all(feature = "local-agents", any(test, feature = "testnet")))]
 pub(crate) use test_agent::io::{TEST_ECHO_COMMAND, TEST_ECHO_V1};
-pub(crate) use types::AGENT_TYPE_CLAUDE;
 #[cfg(all(feature = "local-agents", unix))]
 pub(crate) use types::AGENT_TYPE_CODEX;
 #[cfg(all(feature = "local-agents", any(debug_assertions, test)))]
 pub(crate) use types::AGENT_TYPE_TEST_AGENT;
+pub(crate) use types::{AGENT_TYPE_CLAUDE, AgentToolExecutor, HookEnvironment, SpawnInheritance};
 pub use types::{
     Agent, AgentParent, AgentType, CreateAgentRequest, RenameAgentRequest, TerminalSize, WorkingOn,
 };
