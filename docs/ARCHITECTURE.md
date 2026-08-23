@@ -72,8 +72,8 @@ JWT) and re-dials the direct reachabilities recorded in its trust store.
 ## Identity and the trust store
 
 Each device generates, on first run, an Ed25519 keypair and a random
-128-bit `host_id`, persisted in the data directory
-(`$XDG_DATA_HOME/amux`, falling back to `~/.local/share/amux`):
+128-bit `host_id`, persisted in the data directory (`Config.data_dir`;
+default `$XDG_DATA_HOME/amux`, falling back to `~/.local/share/amux`):
 
 - `device.key` — the private key, PKCS#8 v1 DER, mode `600`. It never
   leaves the device.

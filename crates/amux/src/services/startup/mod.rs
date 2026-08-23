@@ -344,7 +344,7 @@ where
 
 impl<S, B> Service<http::Request<B>> for LinkAuthInterceptor<S>
 where
-    S: Service<http::Request<B>, Response = http::Response<tonic::body::BoxBody>>
+    S: Service<http::Request<B>, Response = http::Response<tonic::body::Body>>
         + Clone
         + Send
         + 'static,
@@ -352,7 +352,7 @@ where
     S::Error: Send + 'static,
     B: Send + 'static,
 {
-    type Response = http::Response<tonic::body::BoxBody>;
+    type Response = http::Response<tonic::body::Body>;
     type Error = S::Error;
     type Future = Pin<Box<dyn Future<Output = Result<Self::Response, Self::Error>> + Send>>;
 

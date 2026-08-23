@@ -22,7 +22,6 @@ use rustls::{
     DistinguishedName as TlsDistinguishedName, Error as TlsError, ServerConfig, SignatureScheme,
 };
 
-use crate::paths::default_data_dir;
 use crate::trust::{SharedTrustStore, TrustStore};
 use crate::{HostId, audit, dispatcher};
 
@@ -347,15 +346,10 @@ pub(crate) struct DeviceFiles {
     pub(crate) trust_store: TrustStore,
 }
 
-pub(crate) fn default_device_files_ready() -> bool {
-    let data_dir = default_data_dir();
-    data_dir_mode_ready(&data_dir)
-        && load_device_identity_in(&data_dir).is_ok()
-        && TrustStore::load_in(&data_dir).is_ok()
-}
-
-pub(crate) fn ensure_default_device_files() -> Result<DeviceIdentity, IdentityError> {
-    ensure_device_files_in(&default_data_dir())
+pub(crate) fn device_files_ready_in(data_dir: &Path) -> bool {
+    data_dir_mode_ready(data_dir)
+        && load_device_identity_in(data_dir).is_ok()
+        && TrustStore::load_in(data_dir).is_ok()
 }
 
 pub(crate) fn ensure_device_files_in(data_dir: &Path) -> Result<DeviceIdentity, IdentityError> {

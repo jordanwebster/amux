@@ -119,7 +119,7 @@ fn has_refresh_token(config: &Config) -> bool {
 
 /// True iff at least one init step would run given the current state.
 pub fn needs_init(config: &Config) -> bool {
-    needs_init_inner(config, setup::device_identity_ready())
+    needs_init_inner(config, setup::device_identity_ready(config))
 }
 
 fn needs_init_inner(config: &Config, identity_ready: bool) -> bool {
@@ -150,10 +150,10 @@ pub async fn run_init(config: &mut Config, ctx: InitContext, reset: bool) -> Res
         match next_step(
             config,
             has_refresh_token(config),
-            setup::device_identity_ready(),
+            setup::device_identity_ready(config),
             &ctx,
         ) {
-            InitStep::EnsureDeviceIdentity => setup::ensure_device_identity()?,
+            InitStep::EnsureDeviceIdentity => setup::ensure_device_identity(config)?,
             InitStep::PromptCloudMode => prompt_cloud_mode(config)?,
             InitStep::Authenticate => authenticate(config).await?,
             InitStep::PromptIdleSleep => prompt_idle_sleep(config)?,

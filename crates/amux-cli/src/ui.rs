@@ -39,7 +39,7 @@ async fn run_inner(
 
     // The local host id comes from the stored device identity — the wire
     // does not mark the local host (see docs/UI.md, subscription policy).
-    let local_host_id = amux::setup::local_host_id();
+    let local_host_id = amux::setup::local_host_id(&config);
     let subscription_reporter = MarkerFileReporter::from_state_path(&config.state_path);
 
     let connector: Connector = {
@@ -61,7 +61,7 @@ async fn run_inner(
         connector,
         RuntimeOptions {
             local_host_id,
-            dump_dir: Some(amux::default_data_dir().join("ui-dumps")),
+            dump_dir: Some(config.data_dir.join("ui-dumps")),
             subscription_status_provider: Some(Arc::new(move || {
                 subscription_reporter.subscription_required()
             })),

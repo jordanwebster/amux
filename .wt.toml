@@ -1,0 +1,50 @@
+# wt coordination. Each checkout — the main one included — runs its own amux instance:
+# socket, state, identity and log under `.wt/amux/`, found through
+# AMUX_CONFIG, with the checkout's own build first on PATH.
+
+bin = ["target/debug"]
+
+[env]
+AMUX_CONFIG = "$WT_ROOT/.wt/amux/config.yaml"
+AMUX_LOG = "$WT_ROOT/.wt/amux/amux.log"
+AMUX_INVARIANT_FATAL = "1"
+
+[files.".wt/amux/config.yaml"]
+marker = "#"
+content = """
+host_name: $WT_NAME_SHORT
+socket_path: $WT_ROOT/.wt/amux/amux.sock
+state_path: $WT_ROOT/.wt/amux/state/state.yaml
+data_dir: $WT_ROOT/.wt/amux/data
+enable_cloud_mode: false
+prevent_idle_sleep: false
+claude:
+  manage_plugin: false
+"""
+
+# The workspace's default-members is amux-cli only; CI covers the whole
+# workspace, so these do too.
+[task.build]
+run = "cargo build --workspace"
+
+[task.test]
+run = "timeout 900 cargo test --workspace --all-targets"
+
+[task.lint]
+run = "cargo clippy --workspace --all-targets --features amux/testnet -- -D warnings"
+
+[task.spec]
+run = "timeout 900 cargo test -p amux --features testnet --test spec"
+
+[task.e2e]
+run = "timeout 900 cargo run -p e2e-runner -- run"
+needs = ["build"]
+
+# This checkout's daemon. A resource: `wt remove` stops it.
+[task.daemon]
+tied_to = "tree"
+name = "$WT_NAME_SHORT"
+needs = ["build"]
+exists = "amux list >/dev/null 2>&1"
+run = "amux server start"
+destroy = "amux server stop"
