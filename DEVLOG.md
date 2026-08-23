@@ -4,6 +4,8 @@ This file tracks significant development work, decisions made, and current state
 
 ---
 
+2026-08-23 — **Claude 2.1.240 PTY delivery is captured for idle and busy turns.** A bracketed-paste `<amux …>` envelope lands byte-for-byte in an idle user row. During a Bash-backed active turn, Claude first records an enqueue operation and then a `queued_command` attachment carrying the same envelope, proving the fallback carrier is queued rather than dropped.
+
 2026-08-23 — **Claude 2.1.240 socket captures now have a self-contained live harness.** Each disposable capture project installs the repository hook manifest, avoiding stale globally installed hook commands, and records the ephemeral messaging socket/token only long enough to authenticate the probe. The socket carrier capture proves idle and busy delivery through the native peer user rows, with an enqueue `queue-operation` preceding each row. It also extends redaction for late-arriving MCP instruction attachments, so private local tool configuration cannot enter the fixture corpus.
 
 2026-08-23 — **Codex A2A carrier captures now pin idle injection, busy injection, and completion ordering.** The isolated C.12–C.14 harness uses a direct experimental app-server client to record `thread/inject_items` without expanding the production SDK surface. On Codex 0.148.0, an idle injected user message is consumed by a subsequent empty-input turn; a message injected after `turn/started` queues into that same turn after its first assistant response; and two completed assistant messages arrive commentary then final before `turn/completed`, whose summary retains the final message. Redacted IO and provenance metas plus structural fixture waiters preserve those observations for offline replay.

@@ -77,6 +77,7 @@ enum Scenario {
     PermissionMultiProbe,
     QuestionChatProbe,
     A2aSocketDelivery,
+    A2aPtyDelivery,
 }
 
 #[derive(Clone, Copy)]
@@ -205,6 +206,12 @@ const SCENARIOS: &[ScenarioSpec] = &[
         "a2a_socket_delivery",
         "a2a/socket-delivery",
         Scenario::A2aSocketDelivery,
+        false,
+    ),
+    scenario(
+        "a2a_pty_delivery",
+        "a2a/pty-delivery",
+        Scenario::A2aPtyDelivery,
         false,
     ),
 ];
@@ -511,6 +518,7 @@ async fn run_scenario(
         Scenario::PermissionMultiProbe => permission_multi_probe(daemon, scratch, model).await,
         Scenario::QuestionChatProbe => question_chat_probe(daemon, scratch, model).await,
         Scenario::A2aSocketDelivery => a2a_socket_delivery(daemon, scratch, model).await,
+        Scenario::A2aPtyDelivery => a2a_pty_delivery(daemon, scratch, model).await,
     }
     .with_context(|| format!("{name} structural assertion"))
 }
@@ -798,6 +806,103 @@ async fn a2a_socket_delivery(
             "idle_native_row": native_idle,
             "busy_native_row": native_busy,
         }
+    }))
+}
+
+/// The fallback carrier pastes the amux tag verbatim. During a running turn,
+/// Claude records the later row as a queued prompt rather than losing it.
+async fn a2a_pty_delivery(
+    daemon: &ScratchDaemon,
+    scratch: &Scratch,
+    model: &str,
+) -> Result<serde_json::Value> {
+    let (mut session, index) = open(
+        daemon,
+        scratch,
+        "a2a_pty_delivery",
+        &["--dangerously-skip-permissions"],
+        model,
+        "Reply exactly READY and nothing else.",
+    )
+    .await?;
+    let index = wait_for_turn_duration(&session, index).await?;
+    let idle_marker = "A2A_PTY_IDLE_21240";
+    let idle_envelope = format!("<amux from=\"probe/host\" id=\"idle\">{idle_marker}</amux>");
+    session
+        .send_keys(
+            "idle A2A bracketed-paste envelope",
+            vec![
+                Act::Write(bracketed_paste(&idle_envelope)),
+                Act::DelayMs(200),
+                Act::Write(b"\r".to_vec()),
+            ],
+        )
+        .await?;
+    let idle = session
+        .wait_for_row(index, TURN_TIMEOUT, "idle PTY user row", |row| {
+            row.row_type() == "user" && row.json.to_string().contains(idle_marker)
+        })
+        .await?;
+    let idle_end = wait_for_turn_duration(&session, idle).await?;
+
+    session
+        .send_prompt("Use the Bash tool to run exactly: sleep 3. Then reply exactly BUSY_DONE.")
+        .await?;
+    let busy_turn = session
+        .wait_for_row(idle_end, TURN_TIMEOUT, "Bash tool while busy", |row| {
+            row.is_tool_use("Bash")
+        })
+        .await?;
+    let busy_marker = "A2A_PTY_BUSY_21240";
+    let busy_envelope = format!("<amux from=\"probe/host\" id=\"busy\">{busy_marker}</amux>");
+    session
+        .send_keys(
+            "busy A2A bracketed-paste envelope",
+            vec![
+                Act::Write(bracketed_paste(&busy_envelope)),
+                Act::DelayMs(200),
+                Act::Write(b"\r".to_vec()),
+            ],
+        )
+        .await?;
+    let busy = session
+        .wait_for_row(busy_turn, TURN_TIMEOUT, "busy PTY queued command", |row| {
+            row.row_type() == "attachment"
+                && row
+                    .json
+                    .pointer("/attachment/type")
+                    .and_then(serde_json::Value::as_str)
+                    == Some("queued_command")
+                && row.json.to_string().contains(busy_marker)
+        })
+        .await?;
+    wait_for_turn_duration(&session, busy).await?;
+
+    let rows = session.snapshot().await;
+    let idle_verbatim = rows.iter().any(|row| {
+        row.row_type() == "user"
+            && row
+                .json
+                .pointer("/message/content")
+                .and_then(serde_json::Value::as_str)
+                == Some(idle_envelope.as_str())
+    });
+    let busy_queued = rows.iter().any(|row| {
+        row.row_type() == "attachment"
+            && row
+                .json
+                .pointer("/attachment/type")
+                .and_then(serde_json::Value::as_str)
+                == Some("queued_command")
+            && row.json.to_string().contains(busy_marker)
+    });
+    if !idle_verbatim || !busy_queued {
+        bail!("PTY transcript rows: idle_verbatim={idle_verbatim} busy_queued={busy_queued}");
+    }
+    let keys = session.close().await?;
+    Ok(serde_json::json!({
+        "keys": keys,
+        "assertions": { "idle_verbatim": idle_verbatim, "busy_queued": busy_queued }
     }))
 }
 

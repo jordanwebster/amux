@@ -1,6 +1,7 @@
 use serde_json::Value;
 
 const SOCKET_DELIVERY: &str = include_str!("fixtures/a2a/socket_delivery.jsonl");
+const PTY_DELIVERY: &str = include_str!("fixtures/a2a/pty_delivery.jsonl");
 
 fn captured_io() -> Vec<Value> {
     include_str!("fixtures/codex_backend/a2a_tools.io.jsonl")
@@ -233,4 +234,36 @@ fn a2a_fixture_socket_delivery() {
             "socket queue must precede its native row for {marker}"
         );
     }
+}
+
+#[test]
+fn a2a_fixture_pty_delivery() {
+    let rows: Vec<Value> = PTY_DELIVERY
+        .lines()
+        .map(|line| serde_json::from_str(line).expect("PTY capture row is JSON"))
+        .collect();
+    let idle = "<amux from=\"probe/host\" id=\"idle\">A2A_PTY_IDLE_21240</amux>";
+    assert!(rows.iter().any(|row| {
+        row.get("type").and_then(Value::as_str) == Some("user")
+            && row.pointer("/message/content").and_then(Value::as_str) == Some(idle)
+            && row.get("promptSource").and_then(Value::as_str) == Some("typed")
+    }));
+    let busy_queue = rows.iter().position(|row| {
+        row.get("type").and_then(Value::as_str) == Some("queue-operation")
+            && row.get("operation").and_then(Value::as_str) == Some("enqueue")
+            && row
+                .get("content")
+                .and_then(Value::as_str)
+                .is_some_and(|content| content.contains("A2A_PTY_BUSY_21240"))
+    });
+    let busy_attachment = rows.iter().position(|row| {
+        row.pointer("/attachment/type").and_then(Value::as_str) == Some("queued_command")
+            && row
+                .pointer("/attachment/prompt")
+                .and_then(Value::as_str)
+                .is_some_and(|prompt| prompt.contains("A2A_PTY_BUSY_21240"))
+    });
+    assert!(busy_queue.is_some());
+    assert!(busy_attachment.is_some());
+    assert!(busy_queue < busy_attachment);
 }

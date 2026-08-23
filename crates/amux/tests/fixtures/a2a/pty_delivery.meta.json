@@ -1,0 +1,70 @@
+{
+  "captured_at": "2026-08-23T00:15:36.697478+00:00",
+  "claude_version": "2.1.240 (Claude Code)",
+  "failure": null,
+  "graduated_at": "2026-08-23T00:15:40.052290+00:00",
+  "graduated_from": "redacted capture run",
+  "harness": "cargo test -p amux --test capture -- a2a_pty_delivery",
+  "model": "haiku",
+  "notes": {
+    "assertions": {
+      "busy_queued": true,
+      "idle_verbatim": true
+    },
+    "keys": [
+      {
+        "actions": [
+          "write \"\\r\""
+        ],
+        "note": "workspace trust dialog: Enter (preselected 'Yes, I trust this folder')",
+        "seq_retries": 0
+      },
+      {
+        "actions": [
+          "write \"\\r\""
+        ],
+        "note": "external instructions dialog: Enter (allow checked-out AGENTS.md)",
+        "seq_retries": 0
+      },
+      {
+        "actions": [
+          "write \"Reply exactly READY and nothing else.\"",
+          "delay 300ms",
+          "write \"\\r\""
+        ],
+        "note": "prompt: Reply exactly READY and nothing else.",
+        "seq_retries": 0
+      },
+      {
+        "actions": [
+          "write \"\\u{1b}[200~<amux from=\\\"probe/host\\\" id=\\\"idle\\\">A2A_PTY_IDLE_21240</amux>\\u{1b}[201~\"",
+          "delay 200ms",
+          "write \"\\r\""
+        ],
+        "note": "idle A2A bracketed-paste envelope",
+        "seq_retries": 0
+      },
+      {
+        "actions": [
+          "write \"Use the Bash tool to run exactly: sleep 3. Then reply exactly BUSY_DONE.\"",
+          "delay 300ms",
+          "write \"\\r\""
+        ],
+        "note": "prompt: Use the Bash tool to run exactly: sleep 3. Then reply exactly BUSY_DONE.",
+        "seq_retries": 0
+      },
+      {
+        "actions": [
+          "write \"\\u{1b}[200~<amux from=\\\"probe/host\\\" id=\\\"busy\\\">A2A_PTY_BUSY_21240</amux>\\u{1b}[201~\"",
+          "delay 200ms",
+          "write \"\\r\""
+        ],
+        "note": "busy A2A bracketed-paste envelope",
+        "seq_retries": 0
+      }
+    ]
+  },
+  "poisoned_daemon_env": true,
+  "requirement": "a2a/pty-delivery",
+  "scenario": "a2a_pty_delivery"
+}
