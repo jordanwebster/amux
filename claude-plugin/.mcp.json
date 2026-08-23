@@ -1,0 +1,8 @@
+{
+  "mcpServers": {
+    "amux": {
+      "command": "amux",
+      "args": ["mcp", "claude"]
+    }
+  }
+}

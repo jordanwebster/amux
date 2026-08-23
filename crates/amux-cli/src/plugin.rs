@@ -22,6 +22,10 @@ const BUNDLED_HOOKS_MANIFEST: &str = include_str!(concat!(
     env!("CARGO_MANIFEST_DIR"),
     "/../../claude-plugin/hooks/hooks.json"
 ));
+const BUNDLED_MCP_MANIFEST: &str = include_str!(concat!(
+    env!("CARGO_MANIFEST_DIR"),
+    "/../../claude-plugin/.mcp.json"
+));
 
 const BUNDLED_FILES: &[BundledFile] = &[
     BundledFile {
@@ -35,6 +39,10 @@ const BUNDLED_FILES: &[BundledFile] = &[
     BundledFile {
         relative_path: "claude-plugin/hooks/hooks.json",
         contents: BUNDLED_HOOKS_MANIFEST,
+    },
+    BundledFile {
+        relative_path: "claude-plugin/.mcp.json",
+        contents: BUNDLED_MCP_MANIFEST,
     },
 ];
 
@@ -358,7 +366,7 @@ mod tests {
 
     #[test]
     fn bundled_manifest_has_version() {
-        assert_eq!(bundled_plugin_version().unwrap(), "1.0.0");
+        assert_eq!(bundled_plugin_version().unwrap(), "1.1.0");
     }
 
     #[test]
@@ -387,7 +395,7 @@ mod tests {
         .unwrap();
         plugin.materialize_bundle().unwrap();
 
-        assert_eq!(plugin.materialized_version.as_deref(), Some("1.0.0"));
+        assert_eq!(plugin.materialized_version.as_deref(), Some("1.1.0"));
         assert_eq!(
             fs::read_to_string(paths.resolve(".claude-plugin/marketplace.json")).unwrap(),
             BUNDLED_MARKETPLACE_MANIFEST
@@ -395,6 +403,10 @@ mod tests {
         assert_eq!(
             fs::read_to_string(paths.resolve("claude-plugin/hooks/hooks.json")).unwrap(),
             BUNDLED_HOOKS_MANIFEST
+        );
+        assert_eq!(
+            fs::read_to_string(paths.resolve("claude-plugin/.mcp.json")).unwrap(),
+            BUNDLED_MCP_MANIFEST
         );
     }
 
@@ -410,11 +422,11 @@ mod tests {
 
         let plugin = ClaudePlugin::from_paths(
             paths,
-            Some("1.0.0".to_string()),
+            Some("1.1.0".to_string()),
             Some(temp.path().join("elsewhere")),
         )
         .unwrap();
-        assert!(!plugin.is_current("1.0.0"));
+        assert!(!plugin.is_current("1.1.0"));
     }
 
     #[test]
@@ -429,12 +441,12 @@ mod tests {
 
         let plugin = ClaudePlugin::from_paths(
             paths,
-            Some("1.0.0".to_string()),
+            Some("1.1.0".to_string()),
             Some(temp.path().join("claude-marketplace")),
         )
         .unwrap();
 
-        assert!(plugin.needs_materialization("1.0.0"));
+        assert!(plugin.needs_materialization("1.1.0"));
     }
 
     #[test]
@@ -446,12 +458,30 @@ mod tests {
 
         let mut plugin = ClaudePlugin::from_paths(
             paths.clone(),
-            Some("1.0.0".to_string()),
+            Some("1.1.0".to_string()),
             Some(temp.path().join("old-marketplace")),
         )
         .unwrap();
         plugin.materialize_bundle().unwrap();
 
-        assert_eq!(plugin.required_action("1.0.0"), Some(PluginAction::Rebind));
+        assert_eq!(plugin.required_action("1.1.0"), Some(PluginAction::Rebind));
+    }
+
+    #[test]
+    fn mcp_bundle_version_reapplies_an_existing_plugin() {
+        let temp = TempDir::new().unwrap();
+        let paths = ClaudePluginPaths {
+            root_dir: temp.path().join("claude-marketplace"),
+        };
+        let mut plugin = ClaudePlugin::from_paths(
+            paths.clone(),
+            Some("1.0.0".to_string()),
+            Some(paths.root_dir.clone()),
+        )
+        .unwrap();
+
+        plugin.materialize_bundle().unwrap();
+
+        assert_eq!(plugin.required_action("1.1.0"), Some(PluginAction::Update));
     }
 }

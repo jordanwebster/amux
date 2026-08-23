@@ -4,6 +4,13 @@ This file tracks significant development work, decisions made, and current state
 
 ---
 
+2026-08-23 — **Every spawned Claude session receives the amux MCP tools.**
+Claude argv now registers the running amux executable as an inline stdio MCP
+server and pre-allows its tool namespace, while filtering caller-supplied
+overrides of both managed flags. The bundled Claude plugin also publishes the
+same server for discovery; its version bump makes `amux new claude` materialize
+and reapply the expanded bundle for existing installations.
+
 2026-08-23 — **Claude MCP calls carry the owning amux agent identity.** The
 stdio server reads `AMUX_AGENT_ID` once at startup, authenticates sends with
 that UUID, targets status changes to it, marks the matching fleet row as the
