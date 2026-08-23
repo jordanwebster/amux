@@ -16,8 +16,8 @@ broken freely. Simplify decisions accordingly.
 
 ## Handoff
 
-Every substantive chunk of work ends with a handoff; use the `handoff` skill from the start.
+Large or consequential work ends with a handoff; use the `handoff` skill
+from the start. Small self-contained fixes end with a passing test and a
+clear commit message — no handoff.
 
 Machinery: `/Users/jlw/source/skills` (authoritative rules in its `docs/SPEC.md`).
-
-Repo config: `.handoff.toml`
