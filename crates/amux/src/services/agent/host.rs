@@ -28,7 +28,7 @@ use crate::agents::{
     Agent, AgentDeps, AgentEvent, AgentSession, AgentToolExecutor, AgentType, CreateAgentConfig,
     CreateAgentRequest, CreateAgentRpcRequest, DeliveryError, ExternalHookBootstrap,
     HookEnvironment, HookOutcome, RenameAgentRequest, SendInputRequest, SessionCloseReason,
-    SessionEvent, SetAgentStatusRequest, StopPolicy, SubscribeSessionRequest,
+    SessionEvent, SetAgentStatusRequest, SpawnInheritance, StopPolicy, SubscribeSessionRequest,
     bootstrap_external_hook,
 };
 use crate::envelope::{Envelope, EnvelopeKind};
@@ -286,6 +286,16 @@ impl LocalAgentHost for PtyAgentHost {
             .await
             .map(Into::into)
             .map_err(create_error_to_protocol)
+    }
+
+    async fn spawn_inheritance(&self, agent_id: Uuid) -> Result<SpawnInheritance, ProtocolError> {
+        self.state()
+            .read()
+            .await
+            .local_agents
+            .get(&agent_id)
+            .map(|context| context.session.spawn_inheritance())
+            .ok_or(ProtocolError::NoAgentFound)
     }
 
     async fn rename(&self, request: RenameAgentRequest) -> Result<Agent, ProtocolError> {

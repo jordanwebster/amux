@@ -48,6 +48,14 @@ pub(crate) enum Delivery {
     TurnStarted,
 }
 
+/// The provider-specific launch policy a same-kind child inherits.
+#[derive(Clone, Debug, Default, PartialEq, Eq)]
+pub(crate) struct SpawnInheritance {
+    pub(crate) claude_permission_args: Vec<String>,
+    pub(crate) codex_approval_policy: Option<String>,
+    pub(crate) codex_sandbox_policy: Option<String>,
+}
+
 impl Delivery {
     pub(crate) const fn carrier(self) -> &'static str {
         match self {
@@ -187,6 +195,10 @@ pub(crate) trait AgentBackend: Send + Sync {
     ) -> Result<tokio::task::JoinHandle<()>>;
     async fn stop(&self, policy: StopPolicy);
     fn agent_type(&self) -> &'static str;
+
+    fn spawn_inheritance(&self) -> SpawnInheritance {
+        SpawnInheritance::default()
+    }
 
     fn parent(&self) -> Option<AgentParent> {
         None

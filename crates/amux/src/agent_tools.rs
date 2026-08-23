@@ -42,6 +42,27 @@ pub enum AgentSpawnKind {
     Codex,
 }
 
+/// Retains only Claude launch arguments that determine the child's permission
+/// posture. Unrelated parent arguments must never leak into a new session.
+pub fn claude_permission_args(args: &[String]) -> Vec<String> {
+    let mut inherited = Vec::new();
+    let mut index = 0;
+    while index < args.len() {
+        let arg = &args[index];
+        if arg == "--permission-mode" {
+            if let Some(value) = args.get(index + 1) {
+                inherited.extend([arg.clone(), value.clone()]);
+                index += 2;
+                continue;
+            }
+        } else if arg.starts_with("--permission-mode=") || arg == "--dangerously-skip-permissions" {
+            inherited.push(arg.clone());
+        }
+        index += 1;
+    }
+    inherited
+}
+
 #[derive(Clone, Debug, Serialize)]
 #[serde(rename_all = "camelCase")]
 pub struct AgentToolDefinition {
@@ -192,4 +213,21 @@ fn object_schema(properties: Value, required: &[&str]) -> Value {
         "required": required,
         "additionalProperties": false
     })
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn a2a_spawn_inherit_filters_claude_permission_arguments() {
+        let args = vec![
+            "--model".to_string(),
+            "sonnet".to_string(),
+            "--permission-mode".to_string(),
+            "plan".to_string(),
+            "--verbose".to_string(),
+        ];
+        assert_eq!(claude_permission_args(&args), ["--permission-mode", "plan"]);
+    }
 }

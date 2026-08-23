@@ -40,7 +40,7 @@ pub(crate) use session::CodexInput;
 #[cfg(feature = "local-agents")]
 pub(crate) use session::{
     AgentBackend, AgentDeliveryTarget, AgentDeps, AgentSession, AgentToolExecutor, AgentToolRouter,
-    Delivery, DeliveryError, RawPtyTarget, StructuredInput, agent_from_suspended,
+    Delivery, DeliveryError, RawPtyTarget, SpawnInheritance, StructuredInput, agent_from_suspended,
     bootstrap_external_hook, new_agent, terminal_io_protocols,
 };
 pub use session_events::{SessionCloseReason, SubscribeSessionEvent};

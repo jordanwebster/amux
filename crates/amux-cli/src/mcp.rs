@@ -5,8 +5,8 @@ use std::path::PathBuf;
 use std::sync::Arc;
 
 use amux::agent_tools::{
-    AgentSpawnKind as SpawnKind, AgentToolRequest as ToolRequest, definitions as tool_definitions,
-    parse_call as parse_tool_call,
+    AgentSpawnKind as SpawnKind, AgentToolRequest as ToolRequest, claude_permission_args,
+    definitions as tool_definitions, parse_call as parse_tool_call,
 };
 use amux::{
     Agent, AgentIdentifier, AgentParent, AgentType, Client, Config, CreateAgentRequest,
@@ -261,24 +261,31 @@ impl ToolBackend for ClientBackend {
                         .find(|agent| agent.id == caller)
                         .map(|agent| agent.host_id)
                 })?;
+                let caller_args = caller_agent
+                    .map(|agent| agent.args.as_slice())
+                    .unwrap_or(&[]);
+                let (agent_type, args) = match kind {
+                    SpawnKind::Claude => (AgentType::Claude, claude_permission_args(caller_args)),
+                    SpawnKind::Codex => (
+                        AgentType::Codex {
+                            model: None,
+                            approval_policy: None,
+                            sandbox_policy: None,
+                            resume_thread_id: None,
+                        },
+                        Vec::new(),
+                    ),
+                };
                 let agent = self
                     .client
                     .create_agent(CreateAgentRequest {
                         agent_id: Uuid::new_v4(),
                         host_id: None,
                         name,
-                        agent_type: match kind {
-                            SpawnKind::Claude => AgentType::Claude,
-                            SpawnKind::Codex => AgentType::Codex {
-                                model: None,
-                                approval_policy: None,
-                                sandbox_policy: None,
-                                resume_thread_id: None,
-                            },
-                        },
+                        agent_type,
                         working_dir,
                         terminal_size: None,
-                        args: Vec::new(),
+                        args,
                         parent,
                         initial_prompt: Some(prompt),
                     })

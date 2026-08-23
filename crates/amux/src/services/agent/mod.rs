@@ -21,7 +21,8 @@ use uuid::Uuid;
 
 use crate::agents::{
     Agent, AgentEvent, AgentRecord, AgentToolExecutor, CreateAgentRpcRequest, HookEnvironment,
-    RenameAgentRequest, SendInputRequest, SetAgentStatusRequest, SubscribeSessionRequest,
+    RenameAgentRequest, SendInputRequest, SetAgentStatusRequest, SpawnInheritance,
+    SubscribeSessionRequest,
 };
 use crate::envelope::Envelope;
 use crate::protocol::{ProtocolError, protocol_status, wire};
@@ -48,6 +49,7 @@ pub(crate) type ResponseStream<T> =
 pub(crate) trait LocalAgentHost: Send + Sync {
     async fn bind_agent_tool_executor(&self, executor: Arc<dyn AgentToolExecutor>);
     async fn create(&self, request: CreateAgentRpcRequest) -> Result<Agent, ProtocolError>;
+    async fn spawn_inheritance(&self, agent_id: Uuid) -> Result<SpawnInheritance, ProtocolError>;
     async fn rename(&self, request: RenameAgentRequest) -> Result<Agent, ProtocolError>;
     async fn delete(&self, agent_id: Uuid) -> Result<(), ProtocolError>;
     async fn send_message(&self, envelope: Envelope) -> Result<(), ProtocolError>;
@@ -179,6 +181,13 @@ impl AgentServiceCtx {
             return Err(no_supported_agent_types());
         }
         self.require_host()?.create(request).await
+    }
+
+    pub(crate) async fn spawn_inheritance(
+        &self,
+        agent_id: Uuid,
+    ) -> Result<SpawnInheritance, ProtocolError> {
+        self.require_host()?.spawn_inheritance(agent_id).await
     }
 
     pub(crate) async fn rename(&self, request: RenameAgentRequest) -> Result<Agent, ProtocolError> {

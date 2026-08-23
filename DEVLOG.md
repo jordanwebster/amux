@@ -4,6 +4,11 @@ This file tracks significant development work, decisions made, and current state
 
 ---
 
+2026-08-23 — **Child sessions inherit provider permission policy.**
+Claude children retain only the parent's permission-mode launch arguments,
+while Codex children inherit the parent's structured approval and sandbox
+policies. Explicit working-directory overrides remain independent of policy.
+
 2026-08-23 — **Child startup uses the authenticated message path.**
 Creating a child records its parent relationship, keeps the inherited working
 directory, and delivers the initial task through the child's normal carrier

@@ -18,8 +18,8 @@ use uuid::Uuid;
 use crate::agent_tools::{AgentSpawnKind, AgentToolRequest};
 use crate::agents::{
     Agent, AgentEvent, AgentToolExecutor, CreateAgentConfig, CreateAgentRpcRequest,
-    SendInputRequest, SessionInputEvent, SetAgentStatusRequest, SubscribeSessionEvent,
-    SubscribeSessionRequest, TerminalSize,
+    SendInputRequest, SessionInputEvent, SetAgentStatusRequest, SpawnInheritance,
+    SubscribeSessionEvent, SubscribeSessionRequest, TerminalSize,
 };
 use crate::connection::ConnectionManager;
 use crate::debug::DebugFormat;
@@ -693,28 +693,13 @@ impl AgentToolExecutor for ClientService {
                 name,
                 cwd,
             } => {
-                let request = crate::CreateAgentRequest {
-                    agent_id: Uuid::new_v4(),
-                    host_id: None,
-                    name,
-                    agent_type: match kind {
-                        AgentSpawnKind::Claude => crate::AgentType::Claude,
-                        AgentSpawnKind::Codex => crate::AgentType::Codex {
-                            model: None,
-                            approval_policy: None,
-                            sandbox_policy: None,
-                            resume_thread_id: None,
-                        },
-                    },
-                    working_dir: cwd.unwrap_or_else(|| caller_agent.working_dir.clone()),
-                    terminal_size: None,
-                    args: Vec::new(),
-                    parent: Some(crate::AgentParent {
-                        agent_id: caller,
-                        host_id: caller_agent.host_id,
-                    }),
-                    initial_prompt: Some(prompt),
-                };
+                let inheritance = self
+                    .local_agent_service()
+                    .spawn_inheritance(caller)
+                    .await
+                    .map_err(|error| anyhow::anyhow!(error.to_string()))?;
+                let request =
+                    build_spawn_request(&caller_agent, inheritance, kind, prompt, name, cwd);
                 let request = crate::client::client_create_request_to_wire(request)
                     .map_err(|error| anyhow::anyhow!(error.to_string()))?;
                 let response = <Self as wire::client_service_server::ClientService>::create_agent(
@@ -758,6 +743,42 @@ impl AgentToolExecutor for ClientService {
                 Ok(serde_json::json!({}))
             }
         }
+    }
+}
+
+fn build_spawn_request(
+    caller: &Agent,
+    inheritance: SpawnInheritance,
+    kind: AgentSpawnKind,
+    prompt: String,
+    name: Option<String>,
+    cwd: Option<PathBuf>,
+) -> crate::CreateAgentRequest {
+    let (agent_type, args) = match kind {
+        AgentSpawnKind::Claude => (crate::AgentType::Claude, inheritance.claude_permission_args),
+        AgentSpawnKind::Codex => (
+            crate::AgentType::Codex {
+                model: None,
+                approval_policy: inheritance.codex_approval_policy,
+                sandbox_policy: inheritance.codex_sandbox_policy,
+                resume_thread_id: None,
+            },
+            Vec::new(),
+        ),
+    };
+    crate::CreateAgentRequest {
+        agent_id: Uuid::new_v4(),
+        host_id: None,
+        name,
+        agent_type,
+        working_dir: cwd.unwrap_or_else(|| caller.working_dir.clone()),
+        terminal_size: None,
+        args,
+        parent: Some(crate::AgentParent {
+            agent_id: caller.id,
+            host_id: caller.host_id,
+        }),
+        initial_prompt: Some(prompt),
     }
 }
 
@@ -2748,6 +2769,58 @@ mod tests {
             parent: None,
             working_on: None,
         }
+    }
+
+    #[test]
+    fn a2a_spawn_inherit_claude_permission_mode() {
+        let mut caller = agent(1, 2, "parent");
+        caller.agent_type = AGENT_TYPE_CLAUDE.to_string();
+        caller.working_dir = PathBuf::from("/parent/work");
+        let request = build_spawn_request(
+            &caller,
+            SpawnInheritance {
+                claude_permission_args: vec!["--permission-mode".to_string(), "plan".to_string()],
+                ..SpawnInheritance::default()
+            },
+            AgentSpawnKind::Claude,
+            "review this".to_string(),
+            Some("child".to_string()),
+            None,
+        );
+
+        assert!(matches!(request.agent_type, crate::AgentType::Claude));
+        assert_eq!(request.args, ["--permission-mode", "plan"]);
+        assert_eq!(request.working_dir, PathBuf::from("/parent/work"));
+        assert_eq!(request.parent.unwrap().agent_id, caller.id);
+    }
+
+    #[test]
+    fn a2a_spawn_inherit_codex_approval_and_sandbox() {
+        let mut caller = agent(3, 4, "parent");
+        caller.agent_type = crate::agents::AGENT_TYPE_CODEX.to_string();
+        let request = build_spawn_request(
+            &caller,
+            SpawnInheritance {
+                codex_approval_policy: Some("on-request".to_string()),
+                codex_sandbox_policy: Some("workspace-write".to_string()),
+                ..SpawnInheritance::default()
+            },
+            AgentSpawnKind::Codex,
+            "run checks".to_string(),
+            None,
+            Some(PathBuf::from("/override")),
+        );
+
+        assert!(matches!(
+            request.agent_type,
+            crate::AgentType::Codex {
+                approval_policy: Some(ref approval),
+                sandbox_policy: Some(ref sandbox),
+                ..
+            } if approval == "on-request" && sandbox == "workspace-write"
+        ));
+        assert_eq!(request.working_dir, PathBuf::from("/override"));
+        assert!(request.args.is_empty());
     }
 
     #[test]

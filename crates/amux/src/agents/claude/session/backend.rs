@@ -11,8 +11,8 @@ use super::inbox::ClaudeDeliveryTarget;
 use crate::agents::claude::io;
 use crate::agents::{
     AGENT_TYPE_CLAUDE, AgentBackend, AgentDeliveryTarget, AgentParent, HookEnvironment, HookError,
-    HookOutcome, LocalAgentNameSource, PtyHandle, SessionEvent, StopPolicy, StructuredInput,
-    StructuredLogSource, terminal_io_protocols,
+    HookOutcome, LocalAgentNameSource, PtyHandle, SessionEvent, SpawnInheritance, StopPolicy,
+    StructuredInput, StructuredLogSource, terminal_io_protocols,
 };
 use crate::debug::DebugView;
 use crate::suspend::SuspendedAgent;
@@ -64,6 +64,13 @@ impl AgentBackend for ClaudeSession {
 
     fn agent_type(&self) -> &'static str {
         AGENT_TYPE_CLAUDE
+    }
+
+    fn spawn_inheritance(&self) -> SpawnInheritance {
+        SpawnInheritance {
+            claude_permission_args: crate::agent_tools::claude_permission_args(&self.args),
+            ..SpawnInheritance::default()
+        }
     }
 
     fn parent(&self) -> Option<AgentParent> {

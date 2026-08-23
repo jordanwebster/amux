@@ -23,7 +23,7 @@ use crate::agent_tools;
 use crate::agents::{
     AGENT_TYPE_CODEX, AgentBackend, AgentDeliveryTarget, AgentParent, AgentToolRouter, CodexInput,
     CreateAgentRequest, Delivery, DeliveryError, LocalAgentNameSource, PtyHandle, RawPtyTarget,
-    SessionEvent, StopPolicy, StructuredLogSource, spawn_pty_agent,
+    SessionEvent, SpawnInheritance, StopPolicy, StructuredLogSource, spawn_pty_agent,
 };
 use crate::envelope::{Envelope, Sender};
 use crate::suspend::SuspendedAgent;
@@ -1867,6 +1867,14 @@ impl AgentBackend for CodexSession {
 
     fn agent_type(&self) -> &'static str {
         AGENT_TYPE_CODEX
+    }
+
+    fn spawn_inheritance(&self) -> SpawnInheritance {
+        SpawnInheritance {
+            codex_approval_policy: self.approval_policy.clone(),
+            codex_sandbox_policy: self.sandbox_policy.clone(),
+            ..SpawnInheritance::default()
+        }
     }
 
     fn parent(&self) -> Option<AgentParent> {
