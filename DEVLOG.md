@@ -4886,3 +4886,20 @@ background: `send` reports what happened instead of what was attempted, and a
 spawn whose first prompt cannot be delivered fails and rolls back its child
 again. The background confirmation task, its graded miss policy, and the
 shutdown drain that existed to cancel it are all gone.
+
+2026-08-23 — **Let a client-only build name the local-agent seam** (`9d817bd`).
+The core holds an absent local agent host in builds that host no agents, so the
+seam trait's own signatures have to name `AgentToolExecutor`, `SpawnInheritance`
+and `HookEnvironment` even there. All three were defined inside modules gated on
+`local-agents`, which left the client-only build, its tests and clippy, and the
+three iOS target checks failing to compile on this branch for most of its life —
+none of them is in the verification command this work was held to. They now live
+with the rest of the agent vocabulary, ungated.
+
+2026-08-23 — **Stopped a vanishing transcript from retiring a socket.** A
+confirmation wait ended either because the window expired or because the
+transcript stream ended — a closing session, or a subscriber that fell behind —
+and both outcomes latched the session to pasting for good. Only the expired
+window now does; a stream that ends falls back for that one message and leaves
+the carrier alone. Starting a Claude process also clears the latch, so a
+decision made about one process does not outlive it.

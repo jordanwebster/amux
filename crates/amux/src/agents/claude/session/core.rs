@@ -288,6 +288,11 @@ impl ClaudeSession {
             self.delivery_ready.clone(),
             self.claude_version_cache.clone(),
         );
+        // The carrier decision belongs to a process, not to the record: a
+        // session demoted to pasting because one Claude never took its socket
+        // messages should not keep pasting at the next one.
+        self.pty_only_delivery
+            .store(false, std::sync::atomic::Ordering::Release);
         let exit_ingest = transcript_ingest.clone();
         self.pty = Some(pty);
         self.transcript_ingest = Some(transcript_ingest);

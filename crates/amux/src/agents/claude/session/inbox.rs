@@ -99,18 +99,32 @@ impl ClaudeDeliveryTarget {
     async fn confirmation_received(
         mut rows: crate::agents::MultiplexStructuredReader,
         envelope_id: Uuid,
-    ) -> bool {
+    ) -> Confirmation {
         tokio::time::timeout(SOCKET_CONFIRMATION_TIMEOUT, async {
             while let Some(row) = rows.read().await {
                 if row_confirms_delivery(&row.payload, envelope_id) {
-                    return true;
+                    return Confirmation::Confirmed;
                 }
             }
-            false
+            Confirmation::TranscriptEnded
         })
         .await
-        .unwrap_or(false)
+        .unwrap_or(Confirmation::Unconfirmed)
     }
+}
+
+/// Why a socket delivery stopped waiting for its confirmation.
+#[derive(Debug, PartialEq, Eq)]
+enum Confirmation {
+    /// A transcript row attributable to this post was observed.
+    Confirmed,
+    /// The window expired with the message never queued: the session took the
+    /// bytes and did nothing with them, so its socket is not worth using again.
+    Unconfirmed,
+    /// The transcript stream ended — the session is shutting down, or its
+    /// subscriber fell behind. That says nothing about the socket, so this
+    /// message falls back without condemning the carrier.
+    TranscriptEnded,
 }
 
 #[async_trait]
@@ -156,15 +170,21 @@ impl AgentDeliveryTarget for ClaudeDeliveryTarget {
 
         #[cfg(unix)]
         match self.post_socket(&content).await {
-            Ok(rows) => {
-                if Self::confirmation_received(rows, envelope.id).await {
-                    return Ok(Delivery::Socket);
+            Ok(rows) => match Self::confirmation_received(rows, envelope.id).await {
+                Confirmation::Confirmed => return Ok(Delivery::Socket),
+                Confirmation::TranscriptEnded => {
+                    tracing::warn!(
+                        envelope_id = %envelope.id,
+                        "Claude transcript ended while awaiting an inbox delivery; \
+                         using PTY for this message"
+                    );
+                    return self.deliver_pty(envelope).await;
                 }
-                tracing::warn!(
+                Confirmation::Unconfirmed => tracing::warn!(
                     envelope_id = %envelope.id,
                     "Claude did not accept an inbox delivery; using PTY for this session"
-                );
-            }
+                ),
+            },
             Err(error) => tracing::warn!(
                 envelope_id = %envelope.id,
                 %error,
@@ -485,5 +505,39 @@ mod tests {
         let second = test_envelope(session.agent_id, "stays on PTY");
         assert_eq!(session.deliver(&second).await.unwrap(), Delivery::Pty);
         assert_pty_paste(&mut pty_output, &second).await;
+    }
+
+    /// A transcript stream that ends mid-wait means the session is going away
+    /// or its subscriber fell behind — neither of which is evidence about the
+    /// socket. The message still falls back to a paste, but the carrier is not
+    /// condemned, because the latch that would do so is never cleared while a
+    /// process runs.
+    #[tokio::test(start_paused = true)]
+    async fn a2a_socket_carrier_keeps_the_socket_when_the_transcript_ends() {
+        let dir = tempdir().unwrap();
+        let socket_path = dir.path().join("claude.sock");
+        let listener = Arc::new(UnixListener::bind(&socket_path).unwrap());
+        let (session, source) = session(socket_path);
+        let mut pty_output = session
+            .pty
+            .as_ref()
+            .unwrap()
+            .subscribe_with_query(None)
+            .await
+            .unwrap();
+        let envelope = test_envelope(session.agent_id, "transcript closes underneath");
+        let server = tokio::spawn(async move {
+            let posted = read_socket_post(listener).await;
+            source.close().await;
+            posted
+        });
+
+        assert_eq!(session.deliver(&envelope).await.unwrap(), Delivery::Pty);
+        server.await.unwrap();
+        assert_pty_paste(&mut pty_output, &envelope).await;
+        assert!(
+            !session.pty_only_delivery.load(Ordering::Acquire),
+            "a closed transcript must not retire the socket"
+        );
     }
 }

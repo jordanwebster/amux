@@ -124,7 +124,12 @@ looking like a lost message.
 
 Exhausting the window means the socket took the bytes and the session never
 queued them — a wedged recipient rather than a busy one. The message is then
-delivered by the fallback and the session stops using its socket.
+delivered by the fallback and the session stops using its socket until its next
+process start. A wait that ends because the transcript stream ended instead
+falls back for that message only: a session on its way out says nothing about
+whether its socket works. Against a wedged recipient the two waits compose, so
+a spawn's first prompt can cost the readiness timeout and then the confirmation
+window before it pastes.
 
 The fallback is a bracketed PTY paste of the generic `<amux>` tag followed by
 Enter. It is also used for human messages, older Claude versions, and sessions
