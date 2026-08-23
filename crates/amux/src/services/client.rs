@@ -720,24 +720,11 @@ impl AgentToolExecutor for ClientService {
                 }))
             }
             AgentToolRequest::Stop { name } => {
-                let child = self
-                    .resolve_agent(AgentRef::Name(name.clone()))
-                    .await
-                    .map_err(|error| anyhow::anyhow!(error.to_string()))?;
-                if child.parent
-                    != Some(AgentParent {
-                        agent_id: caller_agent.id,
-                        host_id: caller_agent.host_id,
-                    })
-                {
-                    return Err(anyhow::anyhow!(
-                        "agent '{name}' is not a child of the calling agent"
-                    ));
-                }
                 <Self as wire::client_service_server::ClientService>::delete_agent(
                     self,
                     tonic::Request::new(wire::ClientDeleteAgentRequest {
                         agent: Some(crate::client::agent_ref(crate::AgentIdentifier::from(name))),
+                        caller_agent_id: Some(caller.as_bytes().to_vec()),
                     }),
                 )
                 .await
@@ -1054,6 +1041,10 @@ impl wire::client_service_server::ClientService for ClientService {
     ) -> TonicResult<wire::DeleteAgentResponse> {
         let caller = audit_caller(&request);
         let request = request.into_inner();
+        let caller_agent_id = optional_uuid_from_bytes(
+            "ClientDeleteAgentRequest.caller_agent_id",
+            request.caller_agent_id.as_deref(),
+        )?;
         let agent = self
             .resolve_agent(client_agent_ref(
                 "ClientDeleteAgentRequest.agent",
@@ -1061,6 +1052,26 @@ impl wire::client_service_server::ClientService for ClientService {
             )?)
             .await
             .map_err(protocol_status)?;
+        if let Some(caller_agent_id) = caller_agent_id {
+            let caller_agent = self
+                .resolve_agent(AgentRef::Id(caller_agent_id))
+                .await
+                .map_err(protocol_status)?;
+            if !self.is_local_host(caller_agent.host_id) {
+                return Err(protocol_status(ProtocolError::NoAgentFound));
+            }
+            if agent.parent
+                != Some(AgentParent {
+                    agent_id: caller_agent.id,
+                    host_id: caller_agent.host_id,
+                })
+            {
+                let name = agent.name.as_deref().unwrap_or("unnamed agent");
+                return Err(protocol_status(ProtocolError::FailedPrecondition {
+                    message: format!("agent '{name}' is not a child of the calling agent"),
+                }));
+            }
+        }
         audit::client_service_disruptive_call("ClientService.DeleteAgent", &caller, Some(agent.id));
         let descendants = descendant_agents_postorder(&self.list_agents().await, agent.id);
         let mut removed_children = Vec::new();
@@ -4579,6 +4590,7 @@ mod tests {
             &service,
             tonic::Request::new(wire::ClientDeleteAgentRequest {
                 agent: Some(agent_ref_name("renamed")),
+                caller_agent_id: None,
             }),
         )
         .await
@@ -4588,6 +4600,68 @@ mod tests {
             Some(AgentEvent::AgentDown { agent_id: down_id }) if down_id == agent_id
         ));
         assert!(service.list_agents().await.is_empty());
+    }
+
+    #[tokio::test]
+    async fn agent_authenticated_delete_is_limited_to_the_callers_direct_children() {
+        let service = client_service_for_tests();
+        let host_id = Uuid::from_u128(1);
+        let caller_id = Uuid::from_u128(140);
+        let child_id = Uuid::from_u128(141);
+        let sibling_id = Uuid::from_u128(142);
+
+        for (id, name) in [(caller_id, "caller"), (sibling_id, "sibling")] {
+            <ClientService as wire::client_service_server::ClientService>::create_agent(
+                &service,
+                tonic::Request::new(test_agent_create_request(id, name, None)),
+            )
+            .await
+            .unwrap();
+        }
+        let mut child = test_agent_create_request(child_id, "child", None);
+        child.parent = Some(wire::AgentParent {
+            agent_id: caller_id.as_bytes().to_vec(),
+            host_id: host_id.as_bytes().to_vec(),
+        });
+        <ClientService as wire::client_service_server::ClientService>::create_agent(
+            &service,
+            tonic::Request::new(child),
+        )
+        .await
+        .unwrap();
+
+        for (target, expected_code) in [
+            (agent_ref_name("sibling"), tonic::Code::FailedPrecondition),
+            (agent_ref_name("caller"), tonic::Code::FailedPrecondition),
+            (agent_ref_name("missing"), tonic::Code::NotFound),
+        ] {
+            let error =
+                <ClientService as wire::client_service_server::ClientService>::delete_agent(
+                    &service,
+                    tonic::Request::new(wire::ClientDeleteAgentRequest {
+                        agent: Some(target),
+                        caller_agent_id: Some(caller_id.as_bytes().to_vec()),
+                    }),
+                )
+                .await
+                .unwrap_err();
+            assert_eq!(error.code(), expected_code);
+        }
+
+        <ClientService as wire::client_service_server::ClientService>::delete_agent(
+            &service,
+            tonic::Request::new(wire::ClientDeleteAgentRequest {
+                agent: Some(agent_ref_name("child")),
+                caller_agent_id: Some(caller_id.as_bytes().to_vec()),
+            }),
+        )
+        .await
+        .unwrap();
+
+        let remaining = service.list_agents().await;
+        assert!(remaining.iter().any(|agent| agent.id == caller_id));
+        assert!(remaining.iter().any(|agent| agent.id == sibling_id));
+        assert!(!remaining.iter().any(|agent| agent.id == child_id));
     }
 
     #[tokio::test]
@@ -4643,6 +4717,7 @@ mod tests {
             &service,
             tonic::Request::new(wire::ClientDeleteAgentRequest {
                 agent: Some(agent_ref_id(agent_id)),
+                caller_agent_id: None,
             }),
         )
         .await
@@ -4753,6 +4828,7 @@ mod tests {
             service,
             tonic::Request::new(wire::ClientDeleteAgentRequest {
                 agent: Some(agent_ref_id(agent_id)),
+                caller_agent_id: None,
             }),
         )
         .await

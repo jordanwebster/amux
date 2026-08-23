@@ -68,11 +68,13 @@ session ends, the parent instead receives an `exited` envelope with an empty
 body. Completion leaves the child alive and idle so a later message can start
 another turn.
 
-Stopping is lineage-scoped: an agent may stop its direct child, while human
-deletion remains an administrative action. Deleting a parent cascades through
-all descendants, including agents on paired hosts. Reachable descendants are
-removed deepest-first. Descendants on an unreachable owning host are reported
-as still running rather than silently forgotten. The command-line `rm`
+Stopping is lineage-scoped at the daemon boundary: an agent may stop its
+direct child whether the request came from Claude's MCP server or Codex's
+dynamic tool, while human deletion remains an administrative action. Deleting
+a parent cascades through all descendants, including agents on paired hosts.
+Reachable descendants are removed deepest-first. Descendants on an unreachable
+owning host are reported as still running rather than silently forgotten. The
+command-line `rm`
 refuses a family with a non-empty work claim unless `--force` is supplied.
 
 ## Delivery carriers

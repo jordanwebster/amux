@@ -189,6 +189,7 @@ impl Daemon {
                         parent.id.as_bytes().to_vec(),
                     )),
                 }),
+                caller_agent_id: None,
             })
             .await
             .expect("cascade delete succeeds")
@@ -438,6 +439,7 @@ impl Daemon {
                         parent.id.as_bytes().to_vec(),
                     )),
                 }),
+                caller_agent_id: None,
             })
             .await
             .expect("local parent deletion succeeds despite route loss")

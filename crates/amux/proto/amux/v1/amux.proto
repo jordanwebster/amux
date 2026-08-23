@@ -637,6 +637,7 @@ message ClientRenameAgentRequest {
 
 message ClientDeleteAgentRequest {
   AgentRef agent = 1;
+  optional bytes caller_agent_id = 2;
 }
 
 message ClientSendMessageRequest {

@@ -228,6 +228,11 @@ fn status_request(
     })
 }
 
+fn stop_request(caller: Option<Uuid>, name: String) -> Result<(AgentIdentifier, Uuid)> {
+    let caller = caller.ok_or_else(|| anyhow!("amux agent identity is unavailable"))?;
+    Ok((AgentIdentifier::from(name), caller))
+}
+
 #[async_trait]
 impl ToolBackend for ClientBackend {
     async fn call(&self, request: ToolRequest) -> Result<Value> {
@@ -296,7 +301,8 @@ impl ToolBackend for ClientBackend {
                 }))
             }
             ToolRequest::Stop { name } => {
-                self.client.delete_agent(name).await?;
+                let (target, caller) = stop_request(self.caller, name)?;
+                self.client.delete_child_agent(target, caller).await?;
                 Ok(json!({}))
             }
             ToolRequest::Status { working_on } => {
@@ -495,7 +501,7 @@ mod tests {
     }
 
     #[test]
-    fn a2a_mcp_identity_authenticates_send_spawn_and_status() {
+    fn a2a_mcp_identity_authenticates_send_spawn_stop_and_status() {
         let caller = Uuid::from_u128(101);
         let host = Uuid::from_u128(102);
         let context = Uuid::from_u128(103);
@@ -526,6 +532,12 @@ mod tests {
             })
         );
         assert!(caller_parent(Some(caller), |_| None).is_err());
+
+        assert_eq!(
+            stop_request(Some(caller), "child".to_string()).unwrap(),
+            (AgentIdentifier::Name("child".to_string()), caller)
+        );
+        assert!(stop_request(None, "child".to_string()).is_err());
 
         let status = status_request(Some(caller), Some("reviewing".to_string())).unwrap();
         assert_eq!(status.agent, AgentIdentifier::Id(caller));

@@ -447,9 +447,29 @@ impl Client {
         self.delete_agent_with_summary(identifier).await.map(|_| ())
     }
 
+    /// Delete a direct child on behalf of an authenticated agent.
+    pub async fn delete_child_agent(
+        &self,
+        identifier: impl Into<AgentIdentifier>,
+        caller_agent_id: Uuid,
+    ) -> Result<(), ClientError> {
+        self.delete_agent_with_summary_for_caller(identifier, Some(caller_agent_id))
+            .await
+            .map(|_| ())
+    }
+
     pub async fn delete_agent_with_summary(
         &self,
         identifier: impl Into<AgentIdentifier>,
+    ) -> Result<DeleteAgentSummary, ClientError> {
+        self.delete_agent_with_summary_for_caller(identifier, None)
+            .await
+    }
+
+    async fn delete_agent_with_summary_for_caller(
+        &self,
+        identifier: impl Into<AgentIdentifier>,
+        caller_agent_id: Option<Uuid>,
     ) -> Result<DeleteAgentSummary, ClientError> {
         self.ensure_open()?;
         let identifier = identifier.into();
@@ -459,6 +479,7 @@ impl Client {
             .await
             .delete_agent(wire::ClientDeleteAgentRequest {
                 agent: Some(agent_ref(identifier)),
+                caller_agent_id: caller_agent_id.map(|id| id.as_bytes().to_vec()),
             })
             .await
             .map_err(status_to_client_error)?

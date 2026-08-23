@@ -4,6 +4,15 @@ This file tracks significant development work, decisions made, and current state
 
 ---
 
+2026-08-23 — **Every model-facing stop is enforced at the daemon boundary.**
+Claude MCP now carries its authenticated agent id into deletion, and
+`ClientService` accepts that delete only when the target records the caller as
+its direct parent. Codex uses the same checked request; human administrative
+deletion remains unscoped. Daemon coverage refuses siblings, top-level agents,
+and unknown targets before proving a direct child can still be stopped.
+
+---
+
 2026-08-23 — **Operator acceptance script for agent-to-agent messaging.**
 `e2e-tests/a2a_acceptance.sh` walks a human through the one proof that needs
 both real harnesses under their own login: start a Claude parent, ask it to
