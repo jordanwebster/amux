@@ -81,6 +81,7 @@ pub struct ParsedEnvelope {
     pub context: Option<Uuid>,
     pub from: String,
     pub from_id: Option<Uuid>,
+    pub from_kind: Option<String>,
     pub kind: EnvelopeKind,
     pub text: String,
 }
@@ -105,12 +106,13 @@ pub enum ParseError {
 
 /// Format the generic carrier used for PTY paste and Codex injection.
 pub fn format(envelope: &Envelope) -> String {
-    let (from, from_id) = match &envelope.from {
+    let (from, from_id, from_kind) = match &envelope.from {
         Sender::Agent(agent) => (
             format!("{}/{}", agent.name, agent.host_id),
             Some(agent.agent_id),
+            Some(agent.kind.as_str()),
         ),
-        Sender::Human => ("human".to_string(), None),
+        Sender::Human => ("human".to_string(), None, None),
     };
     let mut opening = format!(
         "<amux id=\"{}\" kind=\"{}\" from=\"{}\"",
@@ -120,6 +122,9 @@ pub fn format(envelope: &Envelope) -> String {
     );
     if let Some(from_id) = from_id {
         opening.push_str(&format!(" from-id=\"{from_id}\""));
+    }
+    if let Some(from_kind) = from_kind {
+        opening.push_str(&format!(" from-kind=\"{}\"", escape(from_kind)));
     }
     if let Some(context) = envelope.context {
         opening.push_str(&format!(" context=\"{context}\""));
@@ -139,6 +144,7 @@ pub fn format_cross_session(envelope: &Envelope, from_mode: &str) -> Result<Stri
     };
     let from = format!("amux:{}/{}", agent.name, agent.host_id);
     let mut header = format!("[amux id={} kind={}", envelope.id, envelope.kind);
+    header.push_str(&format!(" from-kind={}", escape(&agent.kind)));
     if let Some(context) = envelope.context {
         header.push_str(&format!(" context={context}"));
     }
@@ -187,6 +193,7 @@ fn parse_amux(input: &str) -> Result<ParsedEnvelope, ParseError> {
         context: optional_uuid_attribute(&attributes, "context")?,
         from: required_attribute(&attributes, "from")?.to_string(),
         from_id: optional_uuid_attribute(&attributes, "from-id")?,
+        from_kind: attributes.get("from-kind").cloned(),
         kind: required_attribute(&attributes, "kind")?.parse()?,
         text: unescape(body)?,
     })
@@ -213,6 +220,7 @@ fn parse_cross_session(input: &str) -> Result<ParsedEnvelope, ParseError> {
         context: optional_uuid_attribute(&fields, "context")?,
         from,
         from_id: None,
+        from_kind: fields.get("from-kind").cloned(),
         kind: required_attribute(&fields, "kind")?.parse()?,
         text: unescape(body)?,
     })
@@ -383,6 +391,7 @@ mod tests {
             let encoded = format(&envelope(body.clone()));
             let parsed = parse(&encoded).unwrap();
             assert_eq!(parsed.text, body);
+            assert_eq!(parsed.from_kind.as_deref(), Some("codex"));
         }
     }
 

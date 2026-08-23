@@ -26,3 +26,16 @@ async fn a2a_human_send_echoed() {
     host.human_message_is_echoed("recipient", "hello from the human")
         .await;
 }
+
+/// A client supplies only a local agent id. The daemon resolves every
+/// provenance field from its live registry before the recipient sees it.
+#[tokio::test]
+async fn a2a_daemon_authored_from() {
+    let net = TestNet::builder().daemon("host").start().await;
+    let [host] = net.daemons(["host"]);
+
+    let sender = host.spawn_echo_agent("sender").await;
+    let recipient = host.spawn_echo_agent("recipient").await;
+    host.agent_message_is_echoed(&host, &sender, &recipient, "hello from an agent")
+        .await;
+}

@@ -16,7 +16,8 @@ use crate::agents::{TEST_ECHO_COMMAND, TEST_ECHO_V1};
 use crate::client::{Client, ClientError};
 use crate::protocol::ProtocolError;
 use crate::{
-    AgentType, CreateAgentRequest, SendInputRequest, SendMessageRequest, SubscribeSessionEvent,
+    Agent, AgentType, CreateAgentRequest, SendInputRequest, SendMessageRequest,
+    SubscribeSessionEvent,
 };
 
 /// Asserts a routed local-admin RPC was rejected with permission-denied.
@@ -33,7 +34,7 @@ impl Daemon {
     /// local-admin `ClientService`, exactly as the CLI would. The agent
     /// echoes session input back as output. Returns once the agent is in the
     /// daemon's own inventory.
-    pub async fn spawn_echo_agent(&self, name: &str) {
+    pub async fn spawn_echo_agent(&self, name: &str) -> Agent {
         let agent = self
             .admin_client()
             .await
@@ -58,6 +59,7 @@ impl Daemon {
                 )
             });
         assert_eq!(agent.name.as_deref(), Some(name));
+        agent
     }
 
     /// Asserts that the daemon rejects an agent-authored message when the
@@ -94,7 +96,7 @@ impl Daemon {
     /// generic envelope unchanged.
     pub async fn human_message_is_echoed(&self, recipient: &str, text: &str) {
         let client = self.admin_client().await;
-        let mut stream = client
+        let stream = client
             .subscribe_session(crate::SubscribeSessionRequest {
                 agent: recipient.into(),
                 io_protocol: TEST_ECHO_V1.to_string(),
@@ -122,39 +124,7 @@ impl Daemon {
                 )
             });
 
-        let deadline = tokio::time::Instant::now() + DEFAULT_TIMEOUT;
-        let closing = b"</amux>";
-        let mut seen = Vec::new();
-        let encoded = loop {
-            let remaining = deadline.saturating_duration_since(tokio::time::Instant::now());
-            let event = match tokio::time::timeout(remaining, stream.recv()).await {
-                Ok(Ok(event)) => event,
-                Ok(Err(error)) => panic!(
-                    "echo stream for '{recipient}' ended before the message arrived: {error}"
-                ),
-                Err(_) => panic!(
-                    "'{recipient}' did not echo a human message within {DEFAULT_TIMEOUT:?} (saw {:?})",
-                    String::from_utf8_lossy(&seen)
-                ),
-            };
-            match event {
-                SubscribeSessionEvent::Output { payload } => {
-                    seen.extend_from_slice(&payload);
-                    if let Some(start) =
-                        seen.windows(closing.len()).position(|part| part == closing)
-                    {
-                        let end = start + closing.len();
-                        break std::str::from_utf8(&seen[..end])
-                            .expect("the formatted message envelope is UTF-8")
-                            .to_string();
-                    }
-                }
-                SubscribeSessionEvent::Closed { reason } => {
-                    panic!("echo stream for '{recipient}' closed before delivery: {reason:?}")
-                }
-                SubscribeSessionEvent::Opened | SubscribeSessionEvent::ReplayComplete { .. } => {}
-            }
-        };
+        let encoded = echoed_envelope(stream, recipient, "a human message").await;
 
         assert!(
             encoded.starts_with("<amux "),
@@ -169,6 +139,85 @@ impl Daemon {
         assert_eq!(parsed.id, envelope_id);
         assert_eq!(parsed.from, "human");
         assert_eq!(parsed.from_id, None);
+        assert_eq!(parsed.from_kind, None);
+        assert_eq!(parsed.kind, crate::envelope::EnvelopeKind::Message);
+        assert_eq!(parsed.text, text);
+    }
+
+    /// Sends on behalf of a live agent owned by this daemon and asserts the
+    /// recipient's transcript carries only the identity the daemon resolved.
+    pub async fn agent_message_is_echoed(
+        &self,
+        recipient_owner: &Daemon,
+        sender: &Agent,
+        recipient: &Agent,
+        text: &str,
+    ) {
+        assert_eq!(sender.host_id, self.host_id());
+        assert_eq!(recipient.host_id, recipient_owner.host_id());
+
+        let recipient_name = recipient
+            .name
+            .as_deref()
+            .expect("the echo recipient should have a name");
+        let client = recipient_owner.admin_client().await;
+        let stream = client
+            .subscribe_session(crate::SubscribeSessionRequest {
+                agent: recipient.id.into(),
+                io_protocol: TEST_ECHO_V1.to_string(),
+                args: None,
+            })
+            .await
+            .unwrap_or_else(|error| {
+                panic!(
+                    "'{}' failed to subscribe to echo agent '{recipient_name}': {error}",
+                    recipient_owner.name()
+                )
+            });
+        let envelope_id = self
+            .admin_client()
+            .await
+            .send_message(SendMessageRequest {
+                to: recipient.id.into(),
+                text: text.to_string(),
+                context: None,
+                from_agent_id: Some(sender.id),
+            })
+            .await
+            .unwrap_or_else(|error| {
+                panic!(
+                    "'{}' failed to send from agent '{}' to '{recipient_name}': {error}",
+                    self.name(),
+                    sender.name.as_deref().unwrap_or("<unnamed>")
+                )
+            });
+
+        let encoded = echoed_envelope(stream, recipient_name, "an agent message").await;
+        let sender_name = sender
+            .name
+            .as_deref()
+            .expect("the echo sender should have a name");
+        assert!(
+            encoded.contains(&format!("from=\"{sender_name}/{}\"", sender.host_id)),
+            "the echoed tag carries the daemon-resolved name and host"
+        );
+        assert!(
+            encoded.contains(&format!("from-id=\"{}\"", sender.id)),
+            "the echoed tag carries the daemon-resolved agent id"
+        );
+        assert!(
+            encoded.contains(&format!("from-kind=\"{}\"", sender.agent_type)),
+            "the echoed tag carries the daemon-resolved agent kind"
+        );
+        let parsed = crate::envelope::parse(&encoded)
+            .unwrap_or_else(|error| panic!("echoed envelope did not parse: {error}"));
+        assert_eq!(parsed.id, envelope_id);
+        assert_eq!(parsed.from, format!("{sender_name}/{}", sender.host_id));
+        assert_eq!(parsed.from_id, Some(sender.id));
+        assert_eq!(
+            parsed.from_kind.as_deref(),
+            Some(sender.agent_type.as_str())
+        );
         assert_eq!(parsed.kind, crate::envelope::EnvelopeKind::Message);
         assert_eq!(parsed.text, text);
     }
@@ -300,6 +349,53 @@ impl Daemon {
                 )
             });
         Client::from_client_service_channel(channel, None)
+    }
+}
+
+async fn echoed_envelope(
+    mut stream: crate::SessionStream,
+    recipient: &str,
+    description: &str,
+) -> String {
+    let deadline = tokio::time::Instant::now() + DEFAULT_TIMEOUT;
+    let opening = b"<amux ";
+    let closing = b"</amux>";
+    let mut seen = Vec::new();
+    loop {
+        let remaining = deadline.saturating_duration_since(tokio::time::Instant::now());
+        let event = match tokio::time::timeout(remaining, stream.recv()).await {
+            Ok(Ok(event)) => event,
+            Ok(Err(error)) => {
+                panic!("echo stream for '{recipient}' ended before {description} arrived: {error}")
+            }
+            Err(_) => panic!(
+                "'{recipient}' did not echo {description} within {DEFAULT_TIMEOUT:?} (saw {:?})",
+                String::from_utf8_lossy(&seen)
+            ),
+        };
+        match event {
+            SubscribeSessionEvent::Output { payload } => {
+                seen.extend_from_slice(&payload);
+                let Some(start) = seen.windows(opening.len()).position(|part| part == opening)
+                else {
+                    continue;
+                };
+                let Some(relative_end) = seen[start..]
+                    .windows(closing.len())
+                    .position(|part| part == closing)
+                else {
+                    continue;
+                };
+                let end = start + relative_end + closing.len();
+                return std::str::from_utf8(&seen[start..end])
+                    .expect("the formatted message envelope is UTF-8")
+                    .to_string();
+            }
+            SubscribeSessionEvent::Closed { reason } => {
+                panic!("echo stream for '{recipient}' closed before delivery: {reason:?}")
+            }
+            SubscribeSessionEvent::Opened | SubscribeSessionEvent::ReplayComplete { .. } => {}
+        }
     }
 }
 

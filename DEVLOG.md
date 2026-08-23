@@ -4,6 +4,12 @@ This file tracks significant development work, decisions made, and current state
 
 ---
 
+2026-08-23 — **Agent-authored messages retain daemon-resolved provenance.** The
+generic transcript tag now carries the sender's agent kind alongside its id,
+name, and host, and the shared parser exposes that field for downstream native
+chat folds. A whole-daemon echo specification proves a client-supplied local
+agent id is expanded from the live registry before delivery.
+
 2026-08-23 — **Human agent messages now reach local backends as authenticated transcript text.** Every agent backend has a message-delivery seam with an explicit carrier result. The test-agent backend formats the daemon-authored envelope and writes it to its PTY, while unsupported production carriers retain a typed unimplemented result until their native delivery paths land. A whole-daemon spec sends through `ClientService` and proves the echo agent's own output contains the matching envelope id, human provenance, and body.
 
 2026-08-23 — **The public client can create child agents, send authenticated messages, and publish agent status.** `CreateAgentRequest` now carries the optional parent edge and initial prompt through the client wire boundary. `Client::send_message` accepts a recipient, text, optional context, and optional local sender identity and returns the daemon-issued envelope ID; `Client::set_agent_status` sets or clears `working_on`. Existing callers state their standalone-agent defaults explicitly, and the UI crate continues to compile through its kernel `Agent` re-export.
