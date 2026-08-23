@@ -14,7 +14,7 @@
 //! not rebuild; the harness refuses to start against a binary older than the
 //! prerequisites in Cargo's depfile rather than reporting on code it never ran.
 //!
-//! `c-all` selects C.1-C.14. Each scenario has one row in [`SCENARIOS`], so
+//! `c-all` selects C.1-C.15. Each scenario has one row in [`SCENARIOS`], so
 //! its id, requirement, timeout, and runner stay together. Captures land in a
 //! scenario-named child of `AMUX_CODEX_CAPTURE_DIR` (or a timestamped default)
 //! and include backend rows, SDK IO, observed subscription rows, raw bytes
@@ -71,6 +71,7 @@ fn main() -> anyhow::Result<()> {
         InjectIdle,
         InjectBusy,
         LastMessage,
+        Roundtrip,
     }
 
     #[derive(Clone, Copy)]
@@ -174,6 +175,12 @@ fn main() -> anyhow::Result<()> {
             "C.14 two assistant messages before turn completion",
             360,
             Scenario::LastMessage,
+        ),
+        scenario(
+            "c15_roundtrip",
+            "C.15 cross-kind child completion round trip",
+            600,
+            Scenario::Roundtrip,
         ),
     ];
 
@@ -633,6 +640,66 @@ fn main() -> anyhow::Result<()> {
         Ok(json!({
             "assertions": {"ready": true, "agent_text": "C1_PONG", "turn_status": "completed"},
             "thread_id": thread,
+        }))
+    }
+
+    async fn roundtrip(harness: &mut Harness, model: &str) -> Result<Value> {
+        let child_marker = "A2A_C15_CHILD_DONE";
+        let parent_marker = "A2A_C15_PARENT_RECEIVED";
+        let (parent, mut capture, cursor) = open(harness, "c15-roundtrip", model).await?;
+        let prompt = format!(
+            "Call the spawn tool exactly once with kind=claude and prompt=\"Reply with exactly {child_marker} and nothing else.\" After its completion arrives, reply with exactly {parent_marker} and nothing else."
+        );
+        let input_id = capture.send_prompt(&prompt).await?;
+        let (cursor, _) = capture
+            .wait(
+                cursor,
+                READY_TIMEOUT,
+                "roundtrip prompt accepted",
+                Matcher::InputOk(input_id),
+            )
+            .await?;
+        let (cursor, _) = capture
+            .wait(
+                cursor,
+                Duration::from_secs(480),
+                "Claude child completion delivered to Codex parent",
+                Matcher::AgentMessageContains {
+                    kind: "completed",
+                    text: child_marker.to_string(),
+                },
+            )
+            .await?;
+        capture
+            .wait(
+                cursor,
+                TURN_TIMEOUT,
+                "Codex parent acknowledges child completion",
+                Matcher::AgentTextContains(parent_marker.to_string()),
+            )
+            .await?;
+
+        let child = harness
+            .client()
+            .list_agents()
+            .await?
+            .into_iter()
+            .find(|agent| agent.parent.is_some_and(|edge| edge.agent_id == parent))
+            .context("spawned Claude child missing from family inventory")?;
+        if child.agent_type != "claude" {
+            bail!("spawned child was {}, expected claude", child.agent_type);
+        }
+        let child_id = child.id;
+        harness.client().delete_agent(parent).await?;
+        Ok(json!({
+            "parent_id": parent,
+            "child_id": child_id,
+            "assertions": {
+                "spawn_tool": true,
+                "cross_kind_child": "claude",
+                "completion_delivered": child_marker,
+                "parent_acknowledged": parent_marker,
+            }
         }))
     }
 
@@ -1234,6 +1301,7 @@ fn main() -> anyhow::Result<()> {
             Scenario::InjectIdle => inject_idle(harness, model).await,
             Scenario::InjectBusy => inject_busy(harness, model).await,
             Scenario::LastMessage => last_message(harness, model).await,
+            Scenario::Roundtrip => roundtrip(harness, model).await,
         }
     }
 

@@ -47,6 +47,7 @@ pub enum Matcher {
     TurnStarted,
     TurnCompleted(&'static str),
     AgentTextContains(String),
+    AgentMessageContains { kind: &'static str, text: String },
     CommandCompleted(&'static str),
 }
 
@@ -77,6 +78,15 @@ impl Matcher {
             Self::AgentTextContains(expected) => row
                 .completed_agent_text()
                 .is_some_and(|text| text.contains(expected)),
+            Self::AgentMessageContains { kind, text } => {
+                row.row_type() == Some("amux.codex_message")
+                    && row.json.get("kind").and_then(Value::as_str) == Some(*kind)
+                    && row
+                        .json
+                        .get("text")
+                        .and_then(Value::as_str)
+                        .is_some_and(|body| body.contains(text.as_str()))
+            }
             Self::CommandCompleted(status) => {
                 row.row_type() == Some("item/completed")
                     && row.json.pointer("/item/type").and_then(Value::as_str)

@@ -81,6 +81,7 @@ enum Scenario {
     A2aStopPayload,
     A2aMcpTools,
     A2aSessionRegistry,
+    A2aRoundtrip,
 }
 
 #[derive(Clone, Copy)]
@@ -234,6 +235,12 @@ const SCENARIOS: &[ScenarioSpec] = &[
         "a2a/session-registry",
         Scenario::A2aSessionRegistry,
         false,
+    ),
+    scenario(
+        "a2a_roundtrip",
+        "H.10 cross-kind child completion round trip",
+        Scenario::A2aRoundtrip,
+        true,
     ),
 ];
 
@@ -544,6 +551,7 @@ async fn run_scenario(
         Scenario::A2aStopPayload => a2a_stop_payload(daemon, scratch, model).await,
         Scenario::A2aMcpTools => a2a_mcp_tools(daemon, scratch, model).await,
         Scenario::A2aSessionRegistry => a2a_session_registry(daemon, scratch, model).await,
+        Scenario::A2aRoundtrip => a2a_roundtrip(daemon, scratch, model).await,
     }
     .with_context(|| format!("{name} structural assertion"))
 }
@@ -1225,6 +1233,75 @@ async fn a2a_session_registry(
             "registry_file_found": registry_file_found,
         },
         "registry": registry,
+    }))
+}
+
+/// H.10 — a Claude parent uses the shipped amux tool to start a Codex child,
+/// then receives the child's automatic completion through the normal carrier.
+async fn a2a_roundtrip(
+    daemon: &ScratchDaemon,
+    scratch: &Scratch,
+    model: &str,
+) -> Result<serde_json::Value> {
+    let child_marker = "A2A_H10_CHILD_DONE";
+    let parent_marker = "A2A_H10_PARENT_RECEIVED";
+    let prompt = format!(
+        "Call mcp__amux__spawn exactly once with kind=codex and prompt=\"Reply with exactly {child_marker} and nothing else.\" After its completion arrives, reply with exactly {parent_marker} and nothing else."
+    );
+    let (session, index) = open(daemon, scratch, "a2a_roundtrip", &[], model, &prompt).await?;
+    let spawn_cursor = session
+        .wait_for_row(index, TURN_TIMEOUT, "amux spawn tool call", |row| {
+            row.is_tool_use("mcp__amux__spawn")
+        })
+        .await?;
+    let completion_cursor = session
+        .wait_for_row(
+            spawn_cursor,
+            TURN_TIMEOUT,
+            "Codex child completion delivered to Claude parent",
+            |row| {
+                row.row_type() == "user"
+                    && row.json.to_string().contains("completed")
+                    && row.json.to_string().contains(child_marker)
+            },
+        )
+        .await?;
+    session
+        .wait_for_row(
+            completion_cursor,
+            TURN_TIMEOUT,
+            "Claude parent acknowledges child completion",
+            |row| row.row_type() == "assistant" && row.json.to_string().contains(parent_marker),
+        )
+        .await?;
+
+    let parent_id = session.agent_id();
+    let child = daemon
+        .client
+        .list_agents()
+        .await?
+        .into_iter()
+        .find(|agent| {
+            agent
+                .parent
+                .is_some_and(|parent| parent.agent_id == parent_id)
+        })
+        .context("spawned Codex child missing from family inventory")?;
+    if child.agent_type != "codex" {
+        bail!("spawned child was {}, expected codex", child.agent_type);
+    }
+    let child_id = child.id;
+    let keys = session.close().await?;
+    Ok(serde_json::json!({
+        "keys": keys,
+        "parent_id": parent_id,
+        "child_id": child_id,
+        "assertions": {
+            "spawn_tool": true,
+            "cross_kind_child": "codex",
+            "completion_delivered": child_marker,
+            "parent_acknowledged": parent_marker,
+        }
     }))
 }
 

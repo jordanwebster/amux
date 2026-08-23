@@ -4664,3 +4664,12 @@ daemon removed and visibly marks those that had a work claim, while unreachable
 children are named as still running. The interactive fleet keeps its existing
 confirmation-only behavior because the person there is already reading the
 full cascade before choosing.
+
+2026-08-23 — **Kept the cross-kind round trip reproducible in both live
+harnesses.** The opt-in Claude suite now has an H.10 scenario in which a
+Claude parent uses amux's shipped `spawn` tool to start a Codex child, observes
+the child's automatic completion, and acknowledges it. The Codex suite's new
+C.15 scenario exercises the mirror image with a Claude child and structurally
+matches the synthesized completion row before accepting the parent's reply.
+Both scenarios verify the parent edge in live inventory and remain inert unless
+their scenario name, or the suite-wide selector, is explicitly requested.
