@@ -10,8 +10,8 @@
 //! gates, counts — the code below formats and never decides.
 
 use amux_ui::claude::{
-    ChatPhase, FeedEntry, FeedEntryKind, InterruptionKind, PromptEcho, SuccessFacts, ToolEntry,
-    ToolInvocation, ToolOutcome, TurnDuration,
+    AgentMessageKind, ChatPhase, FeedEntry, FeedEntryKind, InterruptionKind, PromptEcho,
+    SuccessFacts, ToolEntry, ToolInvocation, ToolOutcome, TurnDuration,
 };
 use amux_ui::{AgentId, Model};
 use ratatui::style::Style;
@@ -858,6 +858,24 @@ fn entry_block(entry: &FeedEntry, theme: Theme, width: usize, plan_hint: bool) -
             tool: false,
         },
         FeedEntryKind::Tool(tool) => tool_block(tool, theme, width, plan_hint),
+        // U4: one directional glyph, the sender, then the body. A
+        // completion wears the finished mark instead of the arrow.
+        FeedEntryKind::AgentMessage(message) => {
+            let (glyph, glyph_style) = match message.kind {
+                AgentMessageKind::Completed => ("✔", theme.ok()),
+                _ => ("←", theme.emphasis()),
+            };
+            let mut rows = markdown::plain_rows(&message.from, text_width(width), theme.muted());
+            rows.extend(markdown::plain_rows(
+                &message.text,
+                text_width(width),
+                theme.text(),
+            ));
+            Block {
+                lines: glyph_block(glyph, glyph_style, rows),
+                tool: false,
+            }
+        }
         FeedEntryKind::TaskNotification(notification) => Block {
             lines: glyph_block(
                 "✔",

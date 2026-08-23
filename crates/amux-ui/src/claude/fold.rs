@@ -17,13 +17,13 @@ use uuid::Uuid;
 
 use super::artifact::{self, AskArtifact};
 use super::{
-    ASKS_RETAINED, AcceptedPlan, ApiErrorEntry, Ask, AskKind, AskState, ClaudeLayer,
-    CompactSummaryEntry, CompactionEntry, FEED_RETAINED, FeedEntry, FeedEntryKind,
+    ASKS_RETAINED, AcceptedPlan, AgentMessageEntry, ApiErrorEntry, Ask, AskKind, AskState,
+    ClaudeLayer, CompactSummaryEntry, CompactionEntry, FEED_RETAINED, FeedEntry, FeedEntryKind,
     InterruptionEntry, InterruptionKind, MESSAGES_RETAINED, MessageEntry, MessageFinality,
     MessageSlot, OPEN_TOOLS_RETAINED, OUTPUT_HEAD_MAX, OpenTool, PLANS_RETAINED, PromptEntry,
     PromptSource, QuestionAnswer, QuestionFact, QuestionOption, SEEN_ROWS_RETAINED, SlotState,
     SuccessFacts, SuggestionFact, TaskNotificationEntry, ThinkingEntry, ToolEntry, ToolInvocation,
-    ToolOutcome, TurnCloseSource, TurnDuration, TurnEntry, UnrecognizedEntry,
+    ToolOutcome, TurnCloseSource, TurnDuration, TurnEntry, UnrecognizedEntry, envelope,
 };
 
 // --- tolerant readers -------------------------------------------------------
@@ -377,6 +377,16 @@ fn fold_permission_request(layer: &mut ClaudeLayer, seq: u64, row: &Value) {
 // --- user rows --------------------------------------------------------------
 
 fn fold_user(layer: &mut ClaudeLayer, seq: u64, arrived: DateTime<Utc>, row: &Value) {
+    // A message from another amux agent arrives INSIDE the recipient's own
+    // text, by either carrier — so it is read before the meta filter (the
+    // inbox carrier's row is meta) and before the prompt path (the paste
+    // carrier's row wears human discriminators it did not earn).
+    if let Some(text) = row.pointer("/message/content").and_then(Value::as_str)
+        && let Some(message) = envelope::read(text)
+    {
+        fold_agent_message(layer, seq, row, message);
+        return;
+    }
     // Injected meta rows (caveats, hook feedback) are the session's own
     // bookkeeping in EITHER content form (§5) — filtered on the top-level
     // discriminator before any interrupt/tool/closure handling, so a meta
@@ -431,6 +441,40 @@ fn fold_user(layer: &mut ClaudeLayer, seq: u64, arrived: DateTime<Utc>, row: &Va
             );
         }
     }
+}
+
+/// An inbound agent message. It renders as itself, never as a prompt: the
+/// human did not say this, and a row that claimed otherwise would let a
+/// peer borrow their voice. The turn bookkeeping still follows the row's
+/// own discriminators — when the harness treated the delivery as the start
+/// of a turn, the recipient IS working, and saying otherwise would leave a
+/// wrong badge on the fleet.
+fn fold_agent_message(
+    layer: &mut ClaudeLayer,
+    seq: u64,
+    row: &Value,
+    message: envelope::InboundMessage,
+) {
+    let starts_turn = row.pointer("/origin/kind").and_then(Value::as_str) == Some("human")
+        || matches!(
+            str_of(row, "promptSource"),
+            Some("typed" | "queued" | "suggestion_accepted")
+        );
+    push(
+        layer,
+        seq,
+        FeedEntryKind::AgentMessage(AgentMessageEntry {
+            id: message.id,
+            context: message.context,
+            from: message.from,
+            kind: message.kind,
+            text: message.text,
+        }),
+    );
+    if starts_turn {
+        begin_turn(layer, timestamp_of(row));
+    }
+    touch_row_chain(layer, row);
 }
 
 fn fold_user_text(layer: &mut ClaudeLayer, seq: u64, row: &Value, text: &str) {
@@ -534,19 +578,23 @@ fn fold_user_text(layer: &mut ClaudeLayer, seq: u64, row: &Value, text: &str) {
         }),
     );
     if turn_start {
-        // Turn start (§14 FACT): reset the turn-scoped signals.
-        layer.turn.prompt_at = at;
-        layer.turn.stop_presignal = false;
-        layer.turn.inferred_turn_entry = None;
-        layer.turn.open = true;
-        layer.turn.closed_by = None;
-        layer.turn.closed_at = None;
-        layer.turn.error_live = false;
-        // A new human turn implies nothing was blocking: any ask still
-        // queued is stale (its closing rows fell outside the window).
-        layer.asks.clear();
+        begin_turn(layer, at);
     }
     touch_row_chain(layer, row);
+}
+
+/// Turn start (§14 FACT): reset the turn-scoped signals.
+fn begin_turn(layer: &mut ClaudeLayer, at: Option<DateTime<Utc>>) {
+    layer.turn.prompt_at = at;
+    layer.turn.stop_presignal = false;
+    layer.turn.inferred_turn_entry = None;
+    layer.turn.open = true;
+    layer.turn.closed_by = None;
+    layer.turn.closed_at = None;
+    layer.turn.error_live = false;
+    // A new turn implies nothing was blocking: any ask still queued is
+    // stale (its closing rows fell outside the window).
+    layer.asks.clear();
 }
 
 fn fold_interrupt(

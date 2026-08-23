@@ -53,3 +53,5 @@ mod codex_agreement; // Chapter 17 — Codex phase/attention/gate agreement
 mod claude_agreement; // Chapter 18 — Claude classification/projection agreement
 
 mod a2a_fleet; // Chapter 19 — Families: parent edges folded into fleet rows
+
+mod a2a_claude_inbound; // Chapter 20 — Claude inbound: a message from another agent

@@ -27,6 +27,7 @@ fn kind_words(model: &amux_ui::Model, agent: &str) -> Vec<&'static str> {
             FeedEntryKind::CompactSummary(_) => "compact-summary",
             FeedEntryKind::Tool(_) => "tool",
             FeedEntryKind::TaskNotification(_) => "task-notification",
+            FeedEntryKind::AgentMessage(_) => "agent-message",
             FeedEntryKind::Interruption(_) => "interruption",
             FeedEntryKind::ApiError(_) => "api-error",
             FeedEntryKind::Unrecognized(_) => "unrecognized",

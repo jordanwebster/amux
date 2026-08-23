@@ -4513,3 +4513,16 @@ host makes the family Unknown rather than idle. Edges that name an agent this
 inventory cannot see leave the child a row of its own, and edges that loop
 strand nobody — each agent still gets a row and the Model reports the broken
 topology. The chrome keeps drawing its flat list until the family chrome lands.
+2026-08-23 — **Read inbound agent messages out of the recipient's own rows.**
+The Claude layer now recognizes a message another agent sent it in either
+carrier — the generic tag the bracketed paste delivers, and Claude's native
+cross-session envelope with amux's header line that the inbox socket posts —
+and folds it to its own feed entry carrying the envelope id, context, sender
+and kind. The row never becomes a prompt: the paste carrier arrives wearing
+the human discriminators only a terminal can produce, and rendering it as
+something the human said would let a peer borrow their voice. Turn
+bookkeeping still follows the row's own discriminators, so a recipient the
+harness set working is not reported idle. The reader is deliberately lenient
+about everything but the sender address, and its agreement with the daemon's
+formatter is asserted over both carriers rather than assumed. Claude peer
+messages that amux did not send, and humans quoting a tag, are left alone.

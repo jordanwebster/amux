@@ -303,6 +303,24 @@ pub fn chat_rows(fixture: &str) -> Vec<serde_json::Value> {
         .collect()
 }
 
+/// Rows of a graduated a2a carrier capture: a redacted, provenance-stamped
+/// recording of a real Claude 2.1.240 receiving an agent message over each
+/// carrier (`crates/amux/tests/fixtures/a2a/`).
+pub fn a2a_rows(fixture: &str) -> Vec<serde_json::Value> {
+    let raw = match fixture {
+        "socket_delivery" => {
+            include_str!("../../../amux/tests/fixtures/a2a/socket_delivery.jsonl")
+        }
+        "pty_delivery" => include_str!("../../../amux/tests/fixtures/a2a/pty_delivery.jsonl"),
+        "mcp_tools" => include_str!("../../../amux/tests/fixtures/a2a/mcp_tools.jsonl"),
+        other => panic!("unknown a2a fixture {other}"),
+    };
+    raw.lines()
+        .filter(|line| !line.trim().is_empty())
+        .map(|line| serde_json::from_str(line).expect("fixture row parses"))
+        .collect()
+}
+
 /// A local claude agent with a live structured stream (complete window):
 /// the base every feed chapter folds fixture batches onto.
 pub fn chat_base(agent: &str) -> Vec<Msg> {
@@ -411,5 +429,6 @@ pub fn all_sequences() -> Vec<(&'static str, Vec<Msg>)> {
     sequences.extend(crate::codex_agreement::sequences());
     sequences.extend(crate::claude_agreement::sequences());
     sequences.extend(crate::a2a_fleet::sequences());
+    sequences.extend(crate::a2a_claude_inbound::sequences());
     sequences
 }

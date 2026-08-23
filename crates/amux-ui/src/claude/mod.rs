@@ -19,6 +19,7 @@
 
 pub mod artifact;
 pub mod encoding;
+mod envelope;
 mod fold;
 pub(crate) mod update;
 
@@ -140,6 +141,9 @@ pub enum FeedEntryKind {
     /// A background-subagent completion notice (B7, FACT it finished;
     /// content is prose).
     TaskNotification(TaskNotificationEntry),
+    /// A message another amux agent sent to this one, read out of the
+    /// recipient's own row (no synthetic provenance exists anywhere).
+    AgentMessage(AgentMessageEntry),
     /// Interruption artifact (B8, FACT rows).
     Interruption(InterruptionEntry),
     /// `isApiErrorMessage:true` row (B8, FACT).
@@ -147,6 +151,55 @@ pub enum FeedEntryKind {
     /// A row shape this build does not know. Retained and rendered
     /// explicitly, never silently dropped (G1).
     Unrecognized(UnrecognizedEntry),
+}
+
+/// A message delivered by amux, as the recipient's transcript recorded it.
+/// Every field but the text is what the carrier stated: absent fields stay
+/// absent rather than being guessed at.
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+pub struct AgentMessageEntry {
+    /// The envelope id, verbatim. Kept as the carrier wrote it rather than
+    /// re-typed: the only thing the client does with it is match it
+    /// against another envelope's `context`, and a carrier that wrote
+    /// something unparseable is better shown than dropped.
+    pub id: Option<String>,
+    /// The envelope this one answers or continues.
+    pub context: Option<String>,
+    /// Who sent it: `name/host`, or `human`.
+    pub from: String,
+    pub kind: AgentMessageKind,
+    pub text: String,
+}
+
+/// Why an agent message was sent, as its carrier stated it.
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(tag = "message_kind", rename_all = "snake_case")]
+pub enum AgentMessageKind {
+    Message,
+    /// The sender finished a turn.
+    Completed,
+    /// The sender's session ended.
+    Exited,
+    /// A kind this build does not know.
+    Other {
+        label: String,
+    },
+    /// The carrier stated none.
+    Unstated,
+}
+
+impl AgentMessageKind {
+    pub(crate) fn read(label: Option<&str>) -> Self {
+        match label {
+            Some("message") => Self::Message,
+            Some("completed") => Self::Completed,
+            Some("exited") => Self::Exited,
+            Some(other) => Self::Other {
+                label: other.to_string(),
+            },
+            None => Self::Unstated,
+        }
+    }
 }
 
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
