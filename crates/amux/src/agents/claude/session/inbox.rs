@@ -20,7 +20,15 @@ use crate::agents::{
 };
 use crate::envelope::{Envelope, format_cross_session};
 
-const SOCKET_CONFIRMATION_TIMEOUT: Duration = Duration::from_secs(5);
+/// How long a socket delivery waits to see its message land.
+///
+/// This bounds "the recipient never took the message", not "the recipient is
+/// busy": the row it waits for is written when Claude accepts the message off
+/// the socket, which the captured sessions show happening within milliseconds
+/// whether the recipient is idle or mid-turn. No ordinary turn can reach this,
+/// so it only has to be long enough to cover scheduling noise on a loaded
+/// machine.
+const SOCKET_CONFIRMATION_TIMEOUT: Duration = Duration::from_secs(2);
 
 #[derive(Clone)]
 pub(super) struct ClaudeDeliveryTarget {

@@ -112,7 +112,7 @@ when their hooks expose live messaging credentials.
 For an agent sender with a ready socket, amux posts Claude's native
 `<cross-session-message>` wrapper. The body begins with an amux header carrying
 the envelope id, kind, sender kind, and optional context. The send then waits,
-up to five seconds, for a transcript row carrying that envelope id: the
+up to two seconds, for a transcript row carrying that envelope id: the
 `queue-operation` `enqueue` row Claude writes as it takes the message off the
 socket, or the later peer user row or `queued_command` attachment. The enqueue
 row appears within milliseconds whether the recipient is idle or mid-turn, so a

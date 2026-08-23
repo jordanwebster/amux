@@ -4903,3 +4903,12 @@ and both outcomes latched the session to pasting for good. Only the expired
 window now does; a stream that ends falls back for that one message and leaves
 the carrier alone. Starting a Claude process also clears the latch, so a
 decision made about one process does not outlive it.
+
+2026-08-23 — **Cut the socket confirmation window to two seconds.** Confirming
+on the row Claude writes when it accepts a message, rather than on the row it
+writes when that message enters a turn, changed what the window bounds: no
+ordinary turn can reach it any more, only a recipient that took the bytes and
+queued nothing. Five seconds was sized for the old meaning. Two is enough to
+cover scheduling noise, and it halves the worst case a wedged recipient can
+impose on a sender — or on a spawn, which pays this window after its readiness
+wait.
