@@ -509,7 +509,8 @@ fn create_rpc_to_domain_request(
     agent_id: Uuid,
     request: CreateAgentRpcRequest,
 ) -> Result<CreateAgentRequest, ProtocolError> {
-    let _ = (&request.parent, &request.initial_prompt);
+    let parent = request.parent;
+    let initial_prompt = request.initial_prompt;
     match request.agent {
         CreateAgentConfig::ClaudePty {
             working_dir,
@@ -523,6 +524,8 @@ fn create_rpc_to_domain_request(
             working_dir,
             terminal_size,
             args,
+            parent,
+            initial_prompt,
         }),
         CreateAgentConfig::Codex {
             cwd,
@@ -543,6 +546,8 @@ fn create_rpc_to_domain_request(
             working_dir: cwd,
             terminal_size: None,
             args: Vec::new(),
+            parent,
+            initial_prompt,
         }),
         #[cfg(any(debug_assertions, test))]
         CreateAgentConfig::TestAgent {
@@ -557,6 +562,8 @@ fn create_rpc_to_domain_request(
             working_dir,
             terminal_size,
             args: Vec::new(),
+            parent,
+            initial_prompt,
         }),
         #[cfg(not(any(debug_assertions, test)))]
         CreateAgentConfig::TestAgent {

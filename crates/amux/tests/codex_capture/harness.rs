@@ -227,6 +227,8 @@ impl Harness {
                     cols: 140,
                 }),
                 args: Vec::new(),
+                parent: None,
+                initial_prompt: None,
             })
             .await
             .context("create real Codex agent")?;

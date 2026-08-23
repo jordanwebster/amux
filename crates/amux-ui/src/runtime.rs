@@ -436,6 +436,8 @@ async fn execute_rpc(client: &Client, command: Command) -> OpOutcome {
                 working_dir,
                 terminal_size: None,
                 args: Vec::new(),
+                parent: None,
+                initial_prompt: None,
             };
             match client.create_agent(request).await {
                 Ok(agent) => OpOutcome::AgentCreated { agent },

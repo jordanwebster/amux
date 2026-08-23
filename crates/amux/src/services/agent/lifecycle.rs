@@ -627,6 +627,8 @@ mod tests {
                     working_dir: std::env::temp_dir(),
                     terminal_size: None,
                     args: vec![],
+                    parent: None,
+                    initial_prompt: None,
                 },
                 &state.deps,
             )

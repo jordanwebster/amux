@@ -670,6 +670,8 @@ impl CaptureSession {
                     cols: 140,
                 }),
                 args,
+                parent: None,
+                initial_prompt: None,
             })
             .await
             .context("create claude agent")?;

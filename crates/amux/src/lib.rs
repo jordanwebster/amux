@@ -171,6 +171,20 @@ pub struct SendInputRequest {
 }
 
 #[derive(Clone, Debug)]
+pub struct SendMessageRequest {
+    pub to: AgentIdentifier,
+    pub text: String,
+    pub context: Option<AgentId>,
+    pub from_agent_id: Option<AgentId>,
+}
+
+#[derive(Clone, Debug)]
+pub struct SetAgentStatusRequest {
+    pub agent: AgentIdentifier,
+    pub working_on: Option<String>,
+}
+
+#[derive(Clone, Debug)]
 pub struct SubscribeSessionRequest {
     pub agent: AgentIdentifier,
     pub io_protocol: String,

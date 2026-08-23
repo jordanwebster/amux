@@ -200,6 +200,8 @@ pub(crate) fn agent_from_suspended(suspended: SuspendedAgent, deps: &AgentDeps) 
                 working_dir,
                 terminal_size,
                 args,
+                parent: None,
+                initial_prompt: None,
             };
             Box::new(ClaudeSession::from_suspended(
                 &req,
@@ -235,6 +237,8 @@ pub(crate) fn agent_from_suspended(suspended: SuspendedAgent, deps: &AgentDeps) 
                 working_dir,
                 terminal_size: None,
                 args: Vec::new(),
+                parent: None,
+                initial_prompt: None,
             };
             Box::new(CodexSession::from_suspended(
                 &req,
@@ -264,6 +268,8 @@ pub(crate) fn agent_from_suspended(suspended: SuspendedAgent, deps: &AgentDeps) 
                 working_dir,
                 terminal_size,
                 args: vec![],
+                parent: None,
+                initial_prompt: None,
             };
             Box::new(TestAgentSession::from_suspended(&req, command, created_at))
         }
@@ -391,6 +397,8 @@ mod tests {
                 "--fork-session".to_string(),
                 "--dangerously-skip-permissions".to_string(),
             ],
+            parent: None,
+            initial_prompt: None,
         };
         let mut session = ClaudeSession::new(&req);
         session.session_id = Some(Uuid::new_v4());

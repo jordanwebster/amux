@@ -166,6 +166,8 @@ async fn embedded_shutdown_stops_agents_and_closes_server_tasks() {
             working_dir: std::env::temp_dir(),
             terminal_size: None,
             args: Vec::new(),
+            parent: None,
+            initial_prompt: None,
         })
         .await
         .unwrap();
@@ -210,6 +212,8 @@ async fn embedded_suspend_stops_agents_and_closes_server_tasks() {
             working_dir: std::env::temp_dir(),
             terminal_size: None,
             args: Vec::new(),
+            parent: None,
+            initial_prompt: None,
         })
         .await
         .unwrap();

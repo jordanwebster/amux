@@ -1723,6 +1723,8 @@ mod tests {
             working_dir: PathBuf::from("/tmp"),
             terminal_size: None,
             args: Vec::new(),
+            parent: None,
+            initial_prompt: None,
         };
         CodexSession::new(
             &req,
@@ -2598,6 +2600,8 @@ mod tests {
             working_dir: PathBuf::from("/tmp"),
             terminal_size: None,
             args: Vec::new(),
+            parent: None,
+            initial_prompt: None,
         };
         let session = CodexSession::new(
             &req,

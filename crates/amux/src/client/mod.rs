@@ -21,7 +21,10 @@ use crate::protocol::{ProtocolError, protocol_error_from_status_details, wire};
 use crate::routing::{HostEntry, HostEvent, HostTrustStatus, capabilities_from_wire};
 use crate::server::{SHUTDOWN_REASON_METADATA_KEY, ShutdownReason};
 use crate::transport::TransportError;
-use crate::{AgentIdentifier, PeerIdentifier, SendInputRequest, SubscribeSessionRequest};
+use crate::{
+    AgentIdentifier, PeerIdentifier, SendInputRequest, SendMessageRequest, SetAgentStatusRequest,
+    SubscribeSessionRequest,
+};
 
 const PAIRING_PUBKEY_LEN: usize = 32;
 const MAX_PAIRING_NAME_BYTES: usize = 256;
@@ -35,6 +38,7 @@ mod method {
     pub(super) const CLIENT_SUBSCRIBE_AGENTS_NAME: &str = "/amux.v1.ClientService/SubscribeAgents";
     pub(super) const CLIENT_CREATE_NAME: &str = "/amux.v1.ClientService/CreateAgent";
     pub(super) const CLIENT_RENAME_NAME: &str = "/amux.v1.ClientService/RenameAgent";
+    pub(super) const CLIENT_SEND_MESSAGE_NAME: &str = "/amux.v1.ClientService/SendMessage";
     pub(super) const CLIENT_SUBSCRIBE_SESSION_NAME: &str =
         "/amux.v1.ClientService/SubscribeSession";
     pub(super) const CLIENT_HANDLE_HOOK_NAME: &str = "/amux.v1.ClientService/HandleHook";
@@ -483,6 +487,45 @@ impl Client {
                         payload: request.payload.to_vec(),
                     },
                 )),
+            })
+            .await
+            .map_err(status_to_client_error)?;
+        Ok(())
+    }
+
+    pub async fn send_message(&self, request: SendMessageRequest) -> Result<Uuid, ClientError> {
+        self.ensure_open()?;
+        let response = self
+            .inner
+            .lock()
+            .await
+            .send_message(wire::ClientSendMessageRequest {
+                to: Some(agent_ref(request.to)),
+                text: request.text,
+                context: request.context.map(|id| id.as_bytes().to_vec()),
+                from_agent_id: request.from_agent_id.map(|id| id.as_bytes().to_vec()),
+            })
+            .await
+            .map_err(status_to_client_error)?
+            .into_inner();
+        uuid_from_wire_bytes(
+            method::CLIENT_SEND_MESSAGE_NAME,
+            "SendMessageResponse.envelope_id",
+            response.envelope_id,
+        )
+    }
+
+    pub async fn set_agent_status(
+        &self,
+        request: SetAgentStatusRequest,
+    ) -> Result<(), ClientError> {
+        self.ensure_open()?;
+        self.inner
+            .lock()
+            .await
+            .set_agent_status(wire::ClientSetAgentStatusRequest {
+                agent: Some(agent_ref(request.agent)),
+                working_on: request.working_on,
             })
             .await
             .map_err(status_to_client_error)?;
@@ -962,8 +1005,11 @@ fn client_create_request_to_wire(
         agent_id: request.agent_id.as_bytes().to_vec(),
         name: request.name,
         host_id: request.host_id.map(|host_id| host_id.as_bytes().to_vec()),
-        parent: None,
-        initial_prompt: None,
+        parent: request.parent.map(|parent| wire::AgentParent {
+            agent_id: parent.agent_id.as_bytes().to_vec(),
+            host_id: parent.host_id.as_bytes().to_vec(),
+        }),
+        initial_prompt: request.initial_prompt,
         agent: Some(agent),
     })
 }
@@ -1435,6 +1481,11 @@ mod tests {
             working_dir: "/tmp/work".into(),
             terminal_size: None,
             args: Vec::new(),
+            parent: Some(crate::AgentParent {
+                agent_id: Uuid::from_u128(8),
+                host_id: Uuid::from_u128(9),
+            }),
+            initial_prompt: Some("inspect the protocol".into()),
         })
         .unwrap();
 
@@ -1446,6 +1497,17 @@ mod tests {
         assert_eq!(config.approval_policy.as_deref(), Some("on-request"));
         assert_eq!(config.sandbox_policy.as_deref(), Some("workspace-write"));
         assert_eq!(config.resume_thread_id.as_deref(), Some("thread-7"));
+        assert_eq!(
+            request.parent,
+            Some(wire::AgentParent {
+                agent_id: Uuid::from_u128(8).as_bytes().to_vec(),
+                host_id: Uuid::from_u128(9).as_bytes().to_vec(),
+            })
+        );
+        assert_eq!(
+            request.initial_prompt.as_deref(),
+            Some("inspect the protocol")
+        );
     }
 
     #[test]
@@ -1463,6 +1525,8 @@ mod tests {
             working_dir: "/tmp/work".into(),
             terminal_size: None,
             args: vec!["--model".into(), "gpt-5.6-sol".into()],
+            parent: None,
+            initial_prompt: None,
         })
         .unwrap_err();
 
@@ -1488,6 +1552,8 @@ mod tests {
             working_dir: OsString::from_vec(vec![0xff]).into(),
             terminal_size: None,
             args: Vec::new(),
+            parent: None,
+            initial_prompt: None,
         })
         .unwrap_err();
 

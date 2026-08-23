@@ -61,6 +61,10 @@ pub struct CreateAgentRequest {
     /// Extra arguments passed to the agent command.
     #[serde(default)]
     pub args: Vec<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub parent: Option<AgentParent>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub initial_prompt: Option<String>,
 }
 
 /// Request to rename an existing agent.

@@ -83,6 +83,8 @@ pub async fn new_agent(
                     working_dir,
                     terminal_size: Some(terminal_size),
                     args,
+                    parent: None,
+                    initial_prompt: None,
                 })
                 .await
                 .map(|agent| agent.id)
@@ -957,6 +959,8 @@ mod attach {
                 working_dir: std::env::temp_dir(),
                 terminal_size: None,
                 args: Vec::new(),
+                parent: None,
+                initial_prompt: None,
             })
             .await
             .expect("create test agent");

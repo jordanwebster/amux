@@ -4,6 +4,8 @@ This file tracks significant development work, decisions made, and current state
 
 ---
 
+2026-08-23 — **The public client can create child agents, send authenticated messages, and publish agent status.** `CreateAgentRequest` now carries the optional parent edge and initial prompt through the client wire boundary. `Client::send_message` accepts a recipient, text, optional context, and optional local sender identity and returns the daemon-issued envelope ID; `Client::set_agent_status` sets or clears `working_on`. Existing callers state their standalone-agent defaults explicitly, and the UI crate continues to compile through its kernel `Agent` re-export.
+
 2026-08-23 — **Workspace fixtures now construct the expanded agent inventory shape explicitly.** CLI, reducer, and terminal golden helpers state that their existing standalone agents have no parent and no current-work description, keeping all-target workspace verification aligned with the new optional inventory fields.
 
 2026-08-23 — **Agent messages now have one authenticated envelope and transcript-safe text form.** The protocol defines agent and human senders plus message, completion, and exit kinds. The public `amux::envelope` module formats the generic injected tag and Claude's native cross-session wrapper, parses both into the same provenance view, and escapes XML-significant body and attribute characters. Generated arbitrary Unicode bodies round-trip, while an attempted closing tag remains inert text.

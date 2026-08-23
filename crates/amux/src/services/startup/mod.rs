@@ -2078,6 +2078,8 @@ mod tests {
                 working_dir: std::env::temp_dir(),
                 terminal_size: None,
                 args: Vec::new(),
+                parent: None,
+                initial_prompt: None,
             })
             .await
             .unwrap();
