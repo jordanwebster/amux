@@ -962,6 +962,8 @@ fn client_create_request_to_wire(
         agent_id: request.agent_id.as_bytes().to_vec(),
         name: request.name,
         host_id: request.host_id.map(|host_id| host_id.as_bytes().to_vec()),
+        parent: None,
+        initial_prompt: None,
         agent: Some(agent),
     })
 }

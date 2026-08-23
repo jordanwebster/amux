@@ -25,9 +25,10 @@ use super::{
 use crate::agents::{
     Agent, AgentDeps, AgentEvent, AgentSession, AgentType, CreateAgentConfig, CreateAgentRequest,
     CreateAgentRpcRequest, ExternalHookBootstrap, HookOutcome, RenameAgentRequest,
-    SendInputRequest, SessionCloseReason, SessionEvent, StopPolicy, SubscribeSessionRequest,
-    bootstrap_external_hook,
+    SendInputRequest, SessionCloseReason, SessionEvent, SetAgentStatusRequest, StopPolicy,
+    SubscribeSessionRequest, bootstrap_external_hook,
 };
+use crate::envelope::Envelope;
 use crate::protocol::{ProtocolError, wire};
 use crate::server::ShutdownReason;
 use crate::suspend;
@@ -259,6 +260,35 @@ impl LocalAgentHost for PtyAgentHost {
         }
     }
 
+    async fn send_message(&self, envelope: Envelope) -> Result<(), ProtocolError> {
+        if !self
+            .state()
+            .read()
+            .await
+            .contains_agent_id(&envelope.to.agent_id)
+        {
+            return Err(ProtocolError::NoAgentFound);
+        }
+        Err(ProtocolError::Unimplemented {
+            message: "agent message delivery is not implemented".to_string(),
+        })
+    }
+
+    async fn set_agent_status(&self, request: SetAgentStatusRequest) -> Result<(), ProtocolError> {
+        if !self
+            .state()
+            .read()
+            .await
+            .contains_agent_id(&request.agent_id)
+        {
+            return Err(ProtocolError::NoAgentFound);
+        }
+        let _ = request.working_on;
+        Err(ProtocolError::Unimplemented {
+            message: "agent status updates are not implemented".to_string(),
+        })
+    }
+
     async fn send_input(&self, request: SendInputRequest) -> Result<(), ProtocolError> {
         session_rpc::send_session_input(self, request).await
     }
@@ -479,6 +509,7 @@ fn create_rpc_to_domain_request(
     agent_id: Uuid,
     request: CreateAgentRpcRequest,
 ) -> Result<CreateAgentRequest, ProtocolError> {
+    let _ = (&request.parent, &request.initial_prompt);
     match request.agent {
         CreateAgentConfig::ClaudePty {
             working_dir,

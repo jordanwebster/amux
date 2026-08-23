@@ -989,6 +989,8 @@ mod tests {
             .create(CreateAgentRpcRequest {
                 agent_id,
                 name: Some("echo".to_string()),
+                parent: None,
+                initial_prompt: None,
                 agent: CreateAgentConfig::TestAgent {
                     command: TEST_ECHO_COMMAND.to_string(),
                     working_dir: PathBuf::from("/tmp"),
@@ -1102,6 +1104,8 @@ mod tests {
             agent_id: agent_id.as_bytes().to_vec(),
             name: Some(name.to_string()),
             host_id: None,
+            parent: None,
+            initial_prompt: None,
             agent: Some(wire::client_create_agent_request::Agent::TestAgent(
                 wire::TestAgentCreateConfig {
                     command: TEST_ECHO_COMMAND.to_string(),

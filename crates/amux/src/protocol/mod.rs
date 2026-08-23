@@ -127,6 +127,8 @@ mod tests {
                 "DeleteAgent",
                 "RenameAgent",
                 "SendInput",
+                "SendMessage",
+                "SetAgentStatus",
                 "SubscribeAgentEvents",
                 "SubscribeSession",
             ]))
@@ -150,6 +152,8 @@ mod tests {
                 "RenameAgent",
                 "Resume",
                 "SendInput",
+                "SendMessage",
+                "SetAgentStatus",
                 "Shutdown",
                 "StartPairing",
                 "SubscribeAgents",

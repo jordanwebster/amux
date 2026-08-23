@@ -57,9 +57,11 @@ pub use types::{
 };
 pub(crate) use wire::{
     CreateAgentConfig, CreateAgentRpcRequest, SendInputRequest, SessionInputEvent,
-    SubscribeSessionRequest, agent_from_wire, agent_to_wire, create_agent_request_from_wire,
-    delete_agent_id_from_wire, rename_agent_request_from_wire, send_input_request_from_wire,
-    session_output_event_to_wire, subscribe_session_request_from_wire,
+    SetAgentStatusRequest, SubscribeSessionRequest, agent_from_wire, agent_parent_from_wire,
+    agent_to_wire, create_agent_request_from_wire, delete_agent_id_from_wire, envelope_from_wire,
+    envelope_to_wire, rename_agent_request_from_wire, send_input_request_from_wire,
+    session_output_event_to_wire, set_agent_status_request_from_wire,
+    subscribe_session_request_from_wire,
 };
 #[cfg(test)]
 pub(crate) use wire::{decode_session_output_event_payload, encode_session_output_event_payload};

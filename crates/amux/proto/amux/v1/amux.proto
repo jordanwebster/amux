@@ -408,6 +408,8 @@ service AgentService {
   rpc CreateAgent(CreateAgentRequest) returns (CreateAgentResponse);
   rpc RenameAgent(RenameAgentRequest) returns (RenameAgentResponse);
   rpc DeleteAgent(DeleteAgentRequest) returns (DeleteAgentResponse);
+  rpc SendMessage(Envelope) returns (SendMessageResponse);
+  rpc SetAgentStatus(SetAgentStatusRequest) returns (SetAgentStatusResponse);
 
   // Subscribe to an agent's session output. The session payload schema is
   // io_protocol-defined and opaque to AgentService.
@@ -432,6 +434,8 @@ message SubscribeAgentEventsResponse {
 message CreateAgentRequest {
   bytes agent_id = 1;
   optional string name = 2;
+  optional AgentParent parent = 3;
+  optional string initial_prompt = 4;
 
   oneof agent {
     ClaudeCreateConfig claude = 10;
@@ -457,7 +461,21 @@ message DeleteAgentRequest {
   bytes agent_id = 1;
 }
 
-message DeleteAgentResponse {}
+message DeleteAgentResponse {
+  repeated Agent removed_children = 1;
+  repeated Agent unreachable_children = 2;
+}
+
+message SendMessageResponse {
+  bytes envelope_id = 1;
+}
+
+message SetAgentStatusRequest {
+  bytes agent_id = 1;
+  optional string working_on = 2;
+}
+
+message SetAgentStatusResponse {}
 
 // ---------------------------------------------------------------------------
 // Sessions
@@ -543,6 +561,8 @@ service ClientService {
   rpc CreateAgent(ClientCreateAgentRequest) returns (CreateAgentResponse);
   rpc RenameAgent(ClientRenameAgentRequest) returns (RenameAgentResponse);
   rpc DeleteAgent(ClientDeleteAgentRequest) returns (DeleteAgentResponse);
+  rpc SendMessage(ClientSendMessageRequest) returns (SendMessageResponse);
+  rpc SetAgentStatus(ClientSetAgentStatusRequest) returns (SetAgentStatusResponse);
 
   rpc SubscribeSession(ClientSubscribeSessionRequest) returns (stream SubscribeSessionResponse);
   rpc SendInput(ClientSendInputRequest) returns (SendInputResponse);
@@ -600,6 +620,8 @@ message ClientCreateAgentRequest {
   bytes agent_id = 1;
   optional string name = 2;
   optional bytes host_id = 3;
+  optional AgentParent parent = 4;
+  optional string initial_prompt = 5;
 
   oneof agent {
     ClaudeCreateConfig claude = 10;
@@ -615,6 +637,18 @@ message ClientRenameAgentRequest {
 
 message ClientDeleteAgentRequest {
   AgentRef agent = 1;
+}
+
+message ClientSendMessageRequest {
+  AgentRef to = 1;
+  string text = 2;
+  optional bytes context = 3;
+  optional bytes from_agent_id = 4;
+}
+
+message ClientSetAgentStatusRequest {
+  AgentRef agent = 1;
+  optional string working_on = 2;
 }
 
 message ClientSubscribeSessionRequest {

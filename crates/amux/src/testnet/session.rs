@@ -56,6 +56,35 @@ impl Daemon {
         assert_eq!(agent.name.as_deref(), Some(name));
     }
 
+    /// Asserts that the daemon rejects an agent-authored message when the
+    /// claimed sender is not one of its live local agents. Sender identity is
+    /// resolved before delivery, so the unavailable carrier implementation
+    /// cannot mask this authority check.
+    pub async fn refuses_unknown_message_sender(&self, recipient: &str) {
+        let guard = self.inner.runtime.lock().await;
+        let runtime = guard
+            .as_ref()
+            .unwrap_or_else(|| panic!("daemon '{}' is not running", self.name()));
+        let (channel, _accept_task) = runtime.services.open_in_process_client_channel();
+        drop(guard);
+        let mut client =
+            crate::protocol::wire::client_service_client::ClientServiceClient::new(channel);
+        let error = client
+            .send_message(crate::protocol::wire::ClientSendMessageRequest {
+                to: Some(crate::protocol::wire::AgentRef {
+                    identifier: Some(crate::protocol::wire::agent_ref::Identifier::Name(
+                        recipient.to_string(),
+                    )),
+                }),
+                text: "must not be delivered".to_string(),
+                context: None,
+                from_agent_id: Some(Uuid::new_v4().as_bytes().to_vec()),
+            })
+            .await
+            .expect_err("an unknown sender must be refused");
+        assert_eq!(error.code(), tonic::Code::NotFound);
+    }
+
     /// Assertion: `agent_name` (eventually) appears in the inventory `other`
     /// serves to this daemon over the route — a real routed
     /// `ClientService.ListAgents`.

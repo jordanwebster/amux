@@ -8,6 +8,7 @@ use uuid::Uuid;
 
 use super::{Agent, AgentParent, SessionCloseReason, SubscribeSessionEvent, WorkingOn};
 use crate::agents::{RenameAgentRequest, TerminalSize};
+use crate::envelope::{AgentSender, Envelope, EnvelopeKind, Sender};
 use crate::protocol::wire::{self as protocol_wire, pb};
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -34,7 +35,15 @@ pub(crate) struct SendInputRequest {
 pub(crate) struct CreateAgentRpcRequest {
     pub(crate) agent_id: Uuid,
     pub(crate) name: Option<String>,
+    pub(crate) parent: Option<AgentParent>,
+    pub(crate) initial_prompt: Option<String>,
     pub(crate) agent: CreateAgentConfig,
+}
+
+#[derive(Debug, Clone)]
+pub(crate) struct SetAgentStatusRequest {
+    pub(crate) agent_id: Uuid,
+    pub(crate) working_on: Option<String>,
 }
 
 #[derive(Debug, Clone)]
@@ -238,7 +247,86 @@ pub(crate) fn create_agent_request_from_wire(
     Ok(CreateAgentRpcRequest {
         agent_id,
         name: request.name,
+        parent: request.parent.map(agent_parent_from_wire).transpose()?,
+        initial_prompt: request.initial_prompt,
         agent,
+    })
+}
+
+pub(crate) fn envelope_from_wire(
+    envelope: protocol_wire::Envelope,
+) -> Result<Envelope, protocol_wire::DecodeError> {
+    let from = envelope
+        .from
+        .and_then(|sender| sender.value)
+        .ok_or_else(|| protocol_wire::DecodeError::Invalid("Envelope missing from".into()))?;
+    let from = match from {
+        protocol_wire::sender::Value::Agent(agent) => Sender::Agent(AgentSender {
+            agent_id: required_uuid_from_bytes("from.agent_id", agent.agent_id)?,
+            host_id: required_uuid_from_bytes("from.host_id", agent.host_id)?,
+            name: agent.name,
+            kind: agent.kind,
+        }),
+        protocol_wire::sender::Value::Human(_) => Sender::Human,
+    };
+    let kind = match protocol_wire::EnvelopeKind::try_from(envelope.kind) {
+        Ok(protocol_wire::EnvelopeKind::Message) => EnvelopeKind::Message,
+        Ok(protocol_wire::EnvelopeKind::Completed) => EnvelopeKind::Completed,
+        Ok(protocol_wire::EnvelopeKind::Exited) => EnvelopeKind::Exited,
+        Ok(protocol_wire::EnvelopeKind::Unspecified) | Err(_) => {
+            return Err(protocol_wire::DecodeError::Invalid(
+                "Envelope kind must be specified".into(),
+            ));
+        }
+    };
+    Ok(Envelope {
+        id: required_uuid_from_bytes("id", envelope.id)?,
+        context: envelope
+            .context
+            .map(|context| required_uuid_from_bytes("context", context))
+            .transpose()?,
+        from,
+        to: envelope
+            .to
+            .map(agent_parent_from_wire)
+            .transpose()?
+            .ok_or_else(|| protocol_wire::DecodeError::Invalid("Envelope missing to".into()))?,
+        kind,
+        text: envelope.text,
+    })
+}
+
+pub(crate) fn envelope_to_wire(envelope: &Envelope) -> protocol_wire::Envelope {
+    let value = match &envelope.from {
+        Sender::Agent(agent) => protocol_wire::sender::Value::Agent(protocol_wire::AgentSender {
+            agent_id: uuid_to_bytes(agent.agent_id),
+            host_id: uuid_to_bytes(agent.host_id),
+            name: agent.name.clone(),
+            kind: agent.kind.clone(),
+        }),
+        Sender::Human => protocol_wire::sender::Value::Human(protocol_wire::Human {}),
+    };
+    let kind = match envelope.kind {
+        EnvelopeKind::Message => protocol_wire::EnvelopeKind::Message,
+        EnvelopeKind::Completed => protocol_wire::EnvelopeKind::Completed,
+        EnvelopeKind::Exited => protocol_wire::EnvelopeKind::Exited,
+    };
+    protocol_wire::Envelope {
+        id: uuid_to_bytes(envelope.id),
+        context: envelope.context.map(uuid_to_bytes),
+        from: Some(protocol_wire::Sender { value: Some(value) }),
+        to: Some(agent_parent_to_wire(envelope.to)),
+        kind: kind as i32,
+        text: envelope.text.clone(),
+    }
+}
+
+pub(crate) fn set_agent_status_request_from_wire(
+    request: protocol_wire::SetAgentStatusRequest,
+) -> Result<SetAgentStatusRequest, protocol_wire::DecodeError> {
+    Ok(SetAgentStatusRequest {
+        agent_id: required_uuid_from_bytes("agent_id", request.agent_id)?,
+        working_on: request.working_on,
     })
 }
 
@@ -429,9 +517,15 @@ mod tests {
     #[test]
     fn create_agent_request_decodes_claude_create_config() {
         let agent_id = Uuid::new_v4();
+        let parent = AgentParent {
+            agent_id: Uuid::new_v4(),
+            host_id: Uuid::new_v4(),
+        };
         let request = protocol_wire::CreateAgentRequest {
             agent_id: uuid_to_bytes(agent_id),
             name: Some("dev".to_string()),
+            parent: Some(agent_parent_to_wire(parent)),
+            initial_prompt: Some("start here".to_string()),
             agent: Some(protocol_wire::create_agent_request::Agent::Claude(
                 protocol_wire::ClaudeCreateConfig {
                     working_dir: "/tmp/work".to_string(),
@@ -447,6 +541,8 @@ mod tests {
         let decoded = create_agent_request_from_wire(request).unwrap();
         assert_eq!(decoded.agent_id, agent_id);
         assert_eq!(decoded.name.as_deref(), Some("dev"));
+        assert_eq!(decoded.parent, Some(parent));
+        assert_eq!(decoded.initial_prompt.as_deref(), Some("start here"));
         let CreateAgentConfig::ClaudePty {
             working_dir,
             args,
@@ -472,6 +568,8 @@ mod tests {
         let request = protocol_wire::CreateAgentRequest {
             agent_id: uuid_to_bytes(agent_id),
             name: Some("codex-dev".to_string()),
+            parent: None,
+            initial_prompt: None,
             agent: Some(protocol_wire::create_agent_request::Agent::Codex(
                 protocol_wire::CodexCreateConfig {
                     cwd: "/tmp/work".to_string(),
@@ -507,6 +605,8 @@ mod tests {
         let request = protocol_wire::CreateAgentRequest {
             agent_id: Vec::new(),
             name: None,
+            parent: None,
+            initial_prompt: None,
             agent: Some(protocol_wire::create_agent_request::Agent::Claude(
                 protocol_wire::ClaudeCreateConfig {
                     working_dir: "/tmp/work".to_string(),
@@ -525,6 +625,8 @@ mod tests {
         let request = protocol_wire::CreateAgentRequest {
             agent_id: uuid_to_bytes(Uuid::new_v4()),
             name: None,
+            parent: None,
+            initial_prompt: None,
             agent: Some(protocol_wire::create_agent_request::Agent::TestAgent(
                 protocol_wire::TestAgentCreateConfig {
                     command: "/tmp/test-agent".to_string(),
@@ -622,6 +724,43 @@ mod tests {
             err.to_string().contains("agent_id must be 16 bytes"),
             "unexpected error: {err}"
         );
+    }
+
+    #[test]
+    fn message_envelope_roundtrips_through_wire() {
+        let envelope = Envelope {
+            id: Uuid::new_v4(),
+            context: Some(Uuid::new_v4()),
+            from: Sender::Agent(AgentSender {
+                agent_id: Uuid::new_v4(),
+                host_id: Uuid::new_v4(),
+                name: "sender".to_string(),
+                kind: "codex".to_string(),
+            }),
+            to: AgentParent {
+                agent_id: Uuid::new_v4(),
+                host_id: Uuid::new_v4(),
+            },
+            kind: EnvelopeKind::Completed,
+            text: "done".to_string(),
+        };
+
+        let decoded = envelope_from_wire(envelope_to_wire(&envelope)).unwrap();
+
+        assert_eq!(decoded, envelope);
+    }
+
+    #[test]
+    fn status_request_decodes_optional_work() {
+        let agent_id = Uuid::new_v4();
+        let decoded = set_agent_status_request_from_wire(protocol_wire::SetAgentStatusRequest {
+            agent_id: uuid_to_bytes(agent_id),
+            working_on: Some("checking protocol".to_string()),
+        })
+        .unwrap();
+
+        assert_eq!(decoded.agent_id, agent_id);
+        assert_eq!(decoded.working_on.as_deref(), Some("checking protocol"));
     }
 
     #[test]

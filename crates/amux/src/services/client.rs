@@ -17,7 +17,8 @@ use uuid::Uuid;
 
 use crate::agents::{
     Agent, AgentEvent, CreateAgentConfig, CreateAgentRpcRequest, SendInputRequest,
-    SessionInputEvent, SubscribeSessionEvent, SubscribeSessionRequest, TerminalSize,
+    SessionInputEvent, SetAgentStatusRequest, SubscribeSessionEvent, SubscribeSessionRequest,
+    TerminalSize,
 };
 use crate::connection::ConnectionManager;
 use crate::debug::DebugFormat;
@@ -39,7 +40,7 @@ use crate::transport::{BoxedGrpcAuth, BoxedGrpcConnectInfo};
 use crate::trust::{Reachability, SharedTrustStore, TrustEntry, TrustStore};
 use crate::tunnel::TunnelPoolError;
 use crate::user_state::{ServerState, ShutdownRequest};
-use crate::{HostId, audit};
+use crate::{AgentParent, HostId, audit, envelope};
 
 type TonicResult<T> = Result<tonic::Response<T>, tonic::Status>;
 type ResponseStream<T> = Pin<Box<dyn Stream<Item = Result<T, tonic::Status>> + Send + 'static>>;
@@ -819,7 +820,103 @@ impl wire::client_service_server::ClientService for ClientService {
         ctx.delete(agent.id).await.map_err(protocol_status)?;
         self.apply_agent_event(AgentEvent::AgentDown { agent_id: agent.id })
             .await;
-        Ok(tonic::Response::new(wire::DeleteAgentResponse {}))
+        Ok(tonic::Response::new(wire::DeleteAgentResponse {
+            removed_children: Vec::new(),
+            unreachable_children: Vec::new(),
+        }))
+    }
+
+    async fn send_message(
+        &self,
+        request: tonic::Request<wire::ClientSendMessageRequest>,
+    ) -> TonicResult<wire::SendMessageResponse> {
+        let request = request.into_inner();
+        let to = self
+            .resolve_agent(client_agent_ref("ClientSendMessageRequest.to", request.to)?)
+            .await
+            .map_err(protocol_status)?;
+        let context = optional_uuid_from_bytes(
+            "ClientSendMessageRequest.context",
+            request.context.as_deref(),
+        )?;
+        let from = match optional_uuid_from_bytes(
+            "ClientSendMessageRequest.from_agent_id",
+            request.from_agent_id.as_deref(),
+        )? {
+            Some(agent_id) => {
+                let agent = self
+                    .resolve_agent(AgentRef::Id(agent_id))
+                    .await
+                    .map_err(protocol_status)?;
+                if !self.is_local_host(agent.host_id) {
+                    return Err(protocol_status(ProtocolError::NoAgentFound));
+                }
+                envelope::Sender::Agent(envelope::AgentSender {
+                    agent_id: agent.id,
+                    host_id: agent.host_id,
+                    name: agent.name.unwrap_or_else(|| agent.id.to_string()),
+                    kind: agent.agent_type,
+                })
+            }
+            None => envelope::Sender::Human,
+        };
+        let envelope = envelope::Envelope {
+            id: Uuid::new_v4(),
+            context,
+            from,
+            to: AgentParent {
+                agent_id: to.id,
+                host_id: to.host_id,
+            },
+            kind: envelope::EnvelopeKind::Message,
+            text: request.text,
+        };
+        if !self.is_local_host(to.host_id) {
+            return self.remote_send_message(to.host_id, envelope).await;
+        }
+
+        let envelope_id = envelope.id;
+        self.local_agent_service()
+            .send_message(envelope)
+            .await
+            .map_err(protocol_status)?;
+        Ok(tonic::Response::new(wire::SendMessageResponse {
+            envelope_id: envelope_id.as_bytes().to_vec(),
+        }))
+    }
+
+    async fn set_agent_status(
+        &self,
+        request: tonic::Request<wire::ClientSetAgentStatusRequest>,
+    ) -> TonicResult<wire::SetAgentStatusResponse> {
+        let request = request.into_inner();
+        let agent = self
+            .resolve_agent(client_agent_ref(
+                "ClientSetAgentStatusRequest.agent",
+                request.agent,
+            )?)
+            .await
+            .map_err(protocol_status)?;
+        if !self.is_local_host(agent.host_id) {
+            return self
+                .remote_set_agent_status(
+                    agent.host_id,
+                    wire::SetAgentStatusRequest {
+                        agent_id: agent.id.as_bytes().to_vec(),
+                        working_on: request.working_on,
+                    },
+                )
+                .await;
+        }
+
+        self.local_agent_service()
+            .set_agent_status(SetAgentStatusRequest {
+                agent_id: agent.id,
+                working_on: request.working_on,
+            })
+            .await
+            .map_err(protocol_status)?;
+        Ok(tonic::Response::new(wire::SetAgentStatusResponse {}))
     }
 
     type SubscribeSessionStream = ResponseStream<wire::SubscribeSessionResponse>;
@@ -1841,6 +1938,33 @@ impl ClientService {
         Ok(tonic::Response::new(response))
     }
 
+    async fn remote_send_message(
+        &self,
+        host_id: Uuid,
+        envelope: envelope::Envelope,
+    ) -> TonicResult<wire::SendMessageResponse> {
+        let mut client = self
+            .remote_agent_client("ClientService.SendMessage", host_id)
+            .await?;
+        let response = client
+            .send_message(crate::agents::envelope_to_wire(&envelope))
+            .await?
+            .into_inner();
+        Ok(tonic::Response::new(response))
+    }
+
+    async fn remote_set_agent_status(
+        &self,
+        host_id: Uuid,
+        request: wire::SetAgentStatusRequest,
+    ) -> TonicResult<wire::SetAgentStatusResponse> {
+        let mut client = self
+            .remote_agent_client("ClientService.SetAgentStatus", host_id)
+            .await?;
+        let response = client.set_agent_status(request).await?.into_inner();
+        Ok(tonic::Response::new(response))
+    }
+
     async fn remote_subscribe_session(
         &self,
         host_id: Uuid,
@@ -2049,6 +2173,12 @@ fn client_create_to_create_rpc_request(
     Ok(CreateAgentRpcRequest {
         agent_id,
         name: request.name,
+        parent: request
+            .parent
+            .map(crate::agents::agent_parent_from_wire)
+            .transpose()
+            .map_err(decode_remote_status)?,
+        initial_prompt: request.initial_prompt,
         agent,
     })
 }
@@ -2059,6 +2189,8 @@ fn client_create_to_agent_create_request(
     wire::CreateAgentRequest {
         agent_id: request.agent_id,
         name: request.name,
+        parent: request.parent,
+        initial_prompt: request.initial_prompt,
         agent: request.agent.map(|agent| match agent {
             wire::client_create_agent_request::Agent::Claude(config) => {
                 wire::create_agent_request::Agent::Claude(config)
@@ -2739,6 +2871,8 @@ mod tests {
             agent_id: agent_id.as_bytes().to_vec(),
             name: Some(name.to_string()),
             host_id: host_id.map(|host_id| host_id.as_bytes().to_vec()),
+            parent: None,
+            initial_prompt: None,
             agent: Some(wire::client_create_agent_request::Agent::TestAgent(
                 wire::TestAgentCreateConfig {
                     command: TEST_ECHO_COMMAND.to_string(),
@@ -2753,6 +2887,8 @@ mod tests {
         wire::CreateAgentRequest {
             agent_id: agent_id.as_bytes().to_vec(),
             name: Some(name.to_string()),
+            parent: None,
+            initial_prompt: None,
             agent: Some(wire::create_agent_request::Agent::TestAgent(
                 wire::TestAgentCreateConfig {
                     command: TEST_ECHO_COMMAND.to_string(),
@@ -3268,6 +3404,8 @@ mod tests {
         ctx.create(crate::agents::CreateAgentRpcRequest {
             agent_id,
             name: Some("attached".to_string()),
+            parent: None,
+            initial_prompt: None,
             agent: crate::agents::CreateAgentConfig::TestAgent {
                 command: TEST_ECHO_COMMAND.to_string(),
                 working_dir: std::env::temp_dir(),

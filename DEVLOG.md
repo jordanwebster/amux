@@ -4322,3 +4322,12 @@ Claude-project search roots. No durable Claude registry file or
 `peerProtocol` field was found in that live corpus, so the graduated metadata
 records both facts as `false`/`null`; the test-local gate parser consumes that
 captured version string and requires the socket-capable minimum.
+2026-08-23 — **Opened the authenticated messaging service boundary.** Both
+client and peer services now expose message delivery and current-work updates,
+with strict wire decoding and local target resolution ahead of intentionally
+unimplemented backend behavior. Create requests carry parent and initial-prompt
+metadata, delete responses reserve explicit removed/unreachable child lists,
+and client-authored agent provenance is accepted only for a live local sender.
+The whole-daemon specification proves an unknown sender UUID is refused before
+delivery, while wire tests cover envelope, relationship, prompt, and status
+round trips.

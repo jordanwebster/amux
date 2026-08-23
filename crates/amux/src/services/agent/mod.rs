@@ -21,8 +21,9 @@ use uuid::Uuid;
 
 use crate::agents::{
     Agent, AgentEvent, AgentRecord, CreateAgentRpcRequest, RenameAgentRequest, SendInputRequest,
-    SubscribeSessionRequest,
+    SetAgentStatusRequest, SubscribeSessionRequest,
 };
+use crate::envelope::Envelope;
 use crate::protocol::{ProtocolError, protocol_status, wire};
 use crate::server::ShutdownReason;
 #[cfg(test)]
@@ -48,6 +49,8 @@ pub(crate) trait LocalAgentHost: Send + Sync {
     async fn create(&self, request: CreateAgentRpcRequest) -> Result<Agent, ProtocolError>;
     async fn rename(&self, request: RenameAgentRequest) -> Result<Agent, ProtocolError>;
     async fn delete(&self, agent_id: Uuid) -> Result<(), ProtocolError>;
+    async fn send_message(&self, envelope: Envelope) -> Result<(), ProtocolError>;
+    async fn set_agent_status(&self, request: SetAgentStatusRequest) -> Result<(), ProtocolError>;
     async fn send_input(&self, request: SendInputRequest) -> Result<(), ProtocolError>;
     async fn subscribe_session(
         &self,
@@ -180,6 +183,17 @@ impl AgentServiceCtx {
         }
     }
 
+    pub(crate) async fn send_message(&self, envelope: Envelope) -> Result<(), ProtocolError> {
+        self.require_host()?.send_message(envelope).await
+    }
+
+    pub(crate) async fn set_agent_status(
+        &self,
+        request: SetAgentStatusRequest,
+    ) -> Result<(), ProtocolError> {
+        self.require_host()?.set_agent_status(request).await
+    }
+
     pub(crate) async fn send_input(&self, request: SendInputRequest) -> Result<(), ProtocolError> {
         self.require_host()?.send_input(request).await
     }
@@ -260,7 +274,41 @@ impl wire::agent_service_server::AgentService for AgentServiceCtx {
     ) -> TonicResult<wire::DeleteAgentResponse> {
         let agent_id = decode_delete_request(request.into_inner())?;
         self.delete(agent_id).await.map_err(protocol_status)?;
-        Ok(tonic::Response::new(wire::DeleteAgentResponse {}))
+        Ok(tonic::Response::new(wire::DeleteAgentResponse {
+            removed_children: Vec::new(),
+            unreachable_children: Vec::new(),
+        }))
+    }
+
+    async fn send_message(
+        &self,
+        request: tonic::Request<wire::Envelope>,
+    ) -> TonicResult<wire::SendMessageResponse> {
+        let envelope =
+            crate::agents::envelope_from_wire(request.into_inner()).map_err(decode_status)?;
+        if envelope.to.host_id != self.host_id() {
+            return Err(tonic::Status::not_found(format!(
+                "SendMessage target host {} is not local",
+                envelope.to.host_id
+            )));
+        }
+        let envelope_id = envelope.id;
+        self.send_message(envelope).await.map_err(protocol_status)?;
+        Ok(tonic::Response::new(wire::SendMessageResponse {
+            envelope_id: envelope_id.as_bytes().to_vec(),
+        }))
+    }
+
+    async fn set_agent_status(
+        &self,
+        request: tonic::Request<wire::SetAgentStatusRequest>,
+    ) -> TonicResult<wire::SetAgentStatusResponse> {
+        let request = crate::agents::set_agent_status_request_from_wire(request.into_inner())
+            .map_err(decode_status)?;
+        self.set_agent_status(request)
+            .await
+            .map_err(protocol_status)?;
+        Ok(tonic::Response::new(wire::SetAgentStatusResponse {}))
     }
 
     type SubscribeSessionStream = ResponseStream<wire::SubscribeSessionResponse>;
@@ -416,6 +464,8 @@ mod tests {
         ctx.create(CreateAgentRpcRequest {
             agent_id,
             name: Some("echo".to_string()),
+            parent: None,
+            initial_prompt: None,
             agent: CreateAgentConfig::TestAgent {
                 command: TEST_ECHO_COMMAND.to_string(),
                 working_dir: std::env::temp_dir(),
@@ -561,6 +611,8 @@ mod tests {
             .create(CreateAgentRpcRequest {
                 agent_id: first_id,
                 name: Some("alpha".to_string()),
+                parent: None,
+                initial_prompt: None,
                 agent: CreateAgentConfig::TestAgent {
                     command: TEST_ECHO_COMMAND.to_string(),
                     working_dir: std::env::temp_dir(),
@@ -602,6 +654,8 @@ mod tests {
             .create(CreateAgentRpcRequest {
                 agent_id: second_id,
                 name: Some("gamma".to_string()),
+                parent: None,
+                initial_prompt: None,
                 agent: CreateAgentConfig::TestAgent {
                     command: TEST_ECHO_COMMAND.to_string(),
                     working_dir: std::env::temp_dir(),
