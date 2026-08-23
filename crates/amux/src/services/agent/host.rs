@@ -8,7 +8,6 @@
 use std::io;
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
-use std::time::Duration;
 
 use async_trait::async_trait;
 use tokio::sync::{RwLock, mpsc};
@@ -337,31 +336,27 @@ impl LocalAgentHost for PtyAgentHost {
                 .map(|context| context.session.delivery_target())
                 .ok_or(ProtocolError::NoAgentFound)?
         };
+        deliver_message(delivery_target, &envelope).await
+    }
+
+    async fn send_message_waiting(
+        &self,
+        envelope: Envelope,
+        timeout: std::time::Duration,
+    ) -> Result<(), ProtocolError> {
+        let delivery_target = {
+            let state = self.state().read().await;
+            state
+                .local_agents
+                .get(&envelope.to.agent_id)
+                .map(|context| context.session.delivery_target())
+                .ok_or(ProtocolError::NoAgentFound)?
+        };
         delivery_target
-            .wait_until_live(Duration::from_secs(30))
+            .wait_until_live(timeout)
             .await
             .map_err(delivery_error_to_protocol)?;
-        match delivery_target.deliver(&envelope).await {
-            Ok(delivery) => {
-                tracing::info!(
-                    envelope_id = %envelope.id,
-                    recipient_agent_id = %envelope.to.agent_id,
-                    carrier = delivery.carrier(),
-                    "agent message delivered"
-                );
-                Ok(())
-            }
-            Err(error) => {
-                tracing::info!(
-                    envelope_id = %envelope.id,
-                    recipient_agent_id = %envelope.to.agent_id,
-                    carrier = "none",
-                    error = %error,
-                    "agent message delivery failed"
-                );
-                Err(delivery_error_to_protocol(error))
-            }
-        }
+        deliver_message(delivery_target, &envelope).await
     }
 
     async fn set_agent_status(&self, request: SetAgentStatusRequest) -> Result<(), ProtocolError> {
@@ -566,6 +561,33 @@ impl LocalAgentHost for PtyAgentHost {
                 .then_with(|| a.record.id.as_u128().cmp(&b.record.id.as_u128()))
         });
         agents
+    }
+}
+
+async fn deliver_message(
+    delivery_target: Box<dyn crate::agents::AgentDeliveryTarget>,
+    envelope: &Envelope,
+) -> Result<(), ProtocolError> {
+    match delivery_target.deliver(envelope).await {
+        Ok(delivery) => {
+            tracing::info!(
+                envelope_id = %envelope.id,
+                recipient_agent_id = %envelope.to.agent_id,
+                carrier = delivery.carrier(),
+                "agent message delivered"
+            );
+            Ok(())
+        }
+        Err(error) => {
+            tracing::info!(
+                envelope_id = %envelope.id,
+                recipient_agent_id = %envelope.to.agent_id,
+                carrier = "none",
+                error = %error,
+                "agent message delivery failed"
+            );
+            Err(delivery_error_to_protocol(error))
+        }
     }
 }
 

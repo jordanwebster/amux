@@ -26,6 +26,7 @@ pub(crate) enum PtyInput {
 /// escape byte cannot end the paste and turn the remainder into live terminal
 /// input while the rest of the message remains deliverable.
 pub(super) fn paste_program(text: &str) -> Vec<PtyInput> {
+    let text = text.replace("\r\n", "\n").replace('\r', "\n");
     let text: String = text
         .chars()
         .filter_map(|character| match character {
@@ -173,7 +174,9 @@ mod tests {
         assert_eq!(
             paste_program("<amux from=\"human\">\r\nhello\r</amux>"),
             vec![
-                PtyInput::Bytes(b"\x1b[200~<amux from=\"human\">\nhello</amux>\x1b[201~".to_vec()),
+                PtyInput::Bytes(
+                    b"\x1b[200~<amux from=\"human\">\nhello\n</amux>\x1b[201~".to_vec(),
+                ),
                 PtyInput::Delay(400),
                 PtyInput::Bytes(b"\r".to_vec()),
             ]

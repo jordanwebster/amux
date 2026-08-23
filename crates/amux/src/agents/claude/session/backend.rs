@@ -172,6 +172,9 @@ mod tests {
             None,
         );
         session.pty = Some(pty);
+        session
+            .delivery_ready
+            .store(true, std::sync::atomic::Ordering::Release);
         let envelope = Envelope {
             id: Uuid::new_v4(),
             context: None,

@@ -1,6 +1,6 @@
 use std::path::PathBuf;
 use std::process::Command;
-use std::sync::atomic::AtomicBool;
+use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::{Arc, OnceLock};
 use std::time::Duration;
 
@@ -98,6 +98,7 @@ pub(crate) struct ClaudeSession {
     pub(super) claude_version: Option<String>,
     pub(super) messaging_credentials: Option<ClaudeMessagingCredentials>,
     pub(super) pty_only_delivery: Arc<AtomicBool>,
+    pub(super) delivery_ready: Arc<AtomicBool>,
     pub(super) parent: Option<AgentParent>,
     pub(super) name_source: LocalAgentNameSource,
     pub(super) name_sniffer_abort: Option<AbortHandle>,
@@ -131,6 +132,7 @@ impl ClaudeSession {
             claude_version,
             messaging_credentials: None,
             pty_only_delivery: Arc::new(AtomicBool::new(false)),
+            delivery_ready: Arc::new(AtomicBool::new(false)),
             parent: req.parent,
             name_source: if req.name.is_some() {
                 LocalAgentNameSource::Amux
@@ -166,6 +168,7 @@ impl ClaudeSession {
             claude_version,
             messaging_credentials: None,
             pty_only_delivery: Arc::new(AtomicBool::new(false)),
+            delivery_ready: Arc::new(AtomicBool::new(false)),
             parent: req.parent,
             name_source,
             name_sniffer_abort: None,
@@ -194,6 +197,7 @@ impl ClaudeSession {
             claude_version: None,
             messaging_credentials: None,
             pty_only_delivery: Arc::new(AtomicBool::new(false)),
+            delivery_ready: Arc::new(AtomicBool::new(false)),
             parent: None,
             name_source: LocalAgentNameSource::Unset,
             name_sniffer_abort: None,
@@ -209,6 +213,7 @@ impl ClaudeSession {
         session.transcript_ingest = Some(TranscriptIngest::new(StructuredLogSource::new(
             STRUCTURED_LOG_RETENTION,
         )));
+        session.delivery_ready.store(true, Ordering::Release);
         session
     }
 

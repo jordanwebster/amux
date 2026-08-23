@@ -53,6 +53,11 @@ pub(crate) trait LocalAgentHost: Send + Sync {
     async fn rename(&self, request: RenameAgentRequest) -> Result<Agent, ProtocolError>;
     async fn delete(&self, agent_id: Uuid) -> Result<(), ProtocolError>;
     async fn send_message(&self, envelope: Envelope) -> Result<(), ProtocolError>;
+    async fn send_message_waiting(
+        &self,
+        envelope: Envelope,
+        timeout: std::time::Duration,
+    ) -> Result<(), ProtocolError>;
     async fn set_agent_status(&self, request: SetAgentStatusRequest) -> Result<(), ProtocolError>;
     async fn send_input(&self, request: SendInputRequest) -> Result<(), ProtocolError>;
     async fn subscribe_session(
@@ -205,6 +210,16 @@ impl AgentServiceCtx {
         self.require_host()?.send_message(envelope).await
     }
 
+    pub(crate) async fn send_message_waiting(
+        &self,
+        envelope: Envelope,
+        timeout: std::time::Duration,
+    ) -> Result<(), ProtocolError> {
+        self.require_host()?
+            .send_message_waiting(envelope, timeout)
+            .await
+    }
+
     pub(crate) async fn set_agent_status(
         &self,
         request: SetAgentStatusRequest,
@@ -302,6 +317,9 @@ impl wire::agent_service_server::AgentService for AgentServiceCtx {
         &self,
         request: tonic::Request<wire::Envelope>,
     ) -> TonicResult<wire::SendMessageResponse> {
+        let wait_for_readiness = request
+            .metadata()
+            .contains_key(INITIAL_PROMPT_WAIT_METADATA);
         let envelope =
             crate::agents::envelope_from_wire(request.into_inner()).map_err(decode_status)?;
         if envelope.to.host_id != self.host_id() {
@@ -311,7 +329,13 @@ impl wire::agent_service_server::AgentService for AgentServiceCtx {
             )));
         }
         let envelope_id = envelope.id;
-        self.send_message(envelope).await.map_err(protocol_status)?;
+        if wait_for_readiness {
+            self.send_message_waiting(envelope, INITIAL_PROMPT_READINESS_TIMEOUT)
+                .await
+        } else {
+            self.send_message(envelope).await
+        }
+        .map_err(protocol_status)?;
         Ok(tonic::Response::new(wire::SendMessageResponse {
             envelope_id: envelope_id.as_bytes().to_vec(),
         }))
@@ -352,6 +376,10 @@ impl wire::agent_service_server::AgentService for AgentServiceCtx {
         Ok(tonic::Response::new(wire::SendInputResponse {}))
     }
 }
+
+pub(crate) const INITIAL_PROMPT_READINESS_TIMEOUT: std::time::Duration =
+    std::time::Duration::from_secs(30);
+pub(crate) const INITIAL_PROMPT_WAIT_METADATA: &str = "x-amux-wait-for-agent-ready";
 
 fn decode_create_request(
     request: wire::CreateAgentRequest,

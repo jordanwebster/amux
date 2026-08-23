@@ -4,6 +4,18 @@ This file tracks significant development work, decisions made, and current state
 
 ---
 
+2026-08-23 — **Kept readiness waits on the first spawned prompt.** The
+30-second liveness wait now travels only with spawn's initial delivery,
+including across a remote agent-service hop; ordinary sends and lifecycle
+envelopes fail immediately when a recipient is not ready. Claude delivery
+targets share a startup signal set by the managed session's `SessionStart`
+hook, so a target captured before startup can observe the transition instead
+of polling a frozen snapshot. Failed first-prompt rollback is recorded in the
+audit stream, and PTY normalization continues to preserve carriage-return line
+breaks while filtering unsafe controls.
+
+---
+
 2026-08-23 — **Claude MCP initialization names the server's protocol.**
 The stdio server now returns the MCP revision it implements instead of
 echoing whatever revision the client requested, so initialization accurately

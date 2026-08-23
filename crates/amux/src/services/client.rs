@@ -32,7 +32,9 @@ use crate::routing::{
 };
 use crate::server::{SHUTDOWN_REASON_METADATA_KEY, ShutdownReason};
 use crate::services::ReachabilityLinkConnector;
-use crate::services::agent::AgentServiceCtx;
+use crate::services::agent::{
+    AgentServiceCtx, INITIAL_PROMPT_READINESS_TIMEOUT, INITIAL_PROMPT_WAIT_METADATA,
+};
 use crate::services::pairing::{
     LocalPairingIdentity, PeerTrustCommitContext, PeerTrustUpdate, SharedTrustCommitLock,
     commit_peer_trust, pair_initiator,
@@ -282,7 +284,7 @@ impl ClientService {
         Ok(tokio::spawn(async move {
             while let Some(envelope) = rx.recv().await {
                 let envelope_id = envelope.id;
-                if let Err(error) = service.deliver_envelope(envelope).await {
+                if let Err(error) = service.deliver_envelope(envelope, false).await {
                     tracing::info!(
                         %envelope_id,
                         carrier = "none",
@@ -920,6 +922,7 @@ impl wire::client_service_server::ClientService for ClientService {
         &self,
         request: tonic::Request<wire::ClientCreateAgentRequest>,
     ) -> TonicResult<wire::CreateAgentResponse> {
+        let caller = audit_caller(&request);
         let request = request.into_inner();
         let parent = request
             .parent
@@ -975,24 +978,32 @@ impl wire::client_service_server::ClientService for ClientService {
                 "CreateAgentResponse.agent",
             )?;
             let delivery = self
-                .deliver_envelope(envelope::Envelope {
-                    id: Uuid::new_v4(),
-                    context: None,
-                    from: envelope::Sender::Agent(envelope::AgentSender {
-                        agent_id: parent.id,
-                        host_id: parent.host_id,
-                        name: parent.name.unwrap_or_else(|| parent.id.to_string()),
-                        kind: parent.agent_type,
-                    }),
-                    to: AgentParent {
-                        agent_id: child.id,
-                        host_id: child.host_id,
+                .deliver_envelope(
+                    envelope::Envelope {
+                        id: Uuid::new_v4(),
+                        context: None,
+                        from: envelope::Sender::Agent(envelope::AgentSender {
+                            agent_id: parent.id,
+                            host_id: parent.host_id,
+                            name: parent.name.unwrap_or_else(|| parent.id.to_string()),
+                            kind: parent.agent_type,
+                        }),
+                        to: AgentParent {
+                            agent_id: child.id,
+                            host_id: child.host_id,
+                        },
+                        kind: envelope::EnvelopeKind::Message,
+                        text,
                     },
-                    kind: envelope::EnvelopeKind::Message,
-                    text,
-                })
+                    true,
+                )
                 .await;
             if let Err(delivery_error) = delivery {
+                audit::client_service_disruptive_call(
+                    "ClientService.CreateAgentRollback",
+                    &caller,
+                    Some(child.id),
+                );
                 if let Err(cleanup_error) = self.delete_resolved_agent(&child).await {
                     return Err(tonic::Status::new(
                         delivery_error.code(),
@@ -1160,7 +1171,7 @@ impl wire::client_service_server::ClientService for ClientService {
             kind: envelope::EnvelopeKind::Message,
             text: request.text,
         };
-        self.deliver_envelope(envelope).await
+        self.deliver_envelope(envelope, false).await
     }
 
     async fn set_agent_status(
@@ -1985,18 +1996,23 @@ impl ClientService {
     async fn deliver_envelope(
         &self,
         envelope: envelope::Envelope,
+        wait_for_readiness: bool,
     ) -> TonicResult<wire::SendMessageResponse> {
         if !self.is_local_host(envelope.to.host_id) {
             return self
-                .remote_send_message(envelope.to.host_id, envelope)
+                .remote_send_message(envelope.to.host_id, envelope, wait_for_readiness)
                 .await;
         }
 
         let envelope_id = envelope.id;
-        self.local_agent_service()
-            .send_message(envelope)
-            .await
-            .map_err(protocol_status)?;
+        if wait_for_readiness {
+            self.local_agent_service()
+                .send_message_waiting(envelope, INITIAL_PROMPT_READINESS_TIMEOUT)
+                .await
+        } else {
+            self.local_agent_service().send_message(envelope).await
+        }
+        .map_err(protocol_status)?;
         Ok(tonic::Response::new(wire::SendMessageResponse {
             envelope_id: envelope_id.as_bytes().to_vec(),
         }))
@@ -2263,6 +2279,7 @@ impl ClientService {
         &self,
         host_id: Uuid,
         envelope: envelope::Envelope,
+        wait_for_readiness: bool,
     ) -> TonicResult<wire::SendMessageResponse> {
         let envelope_id = envelope.id;
         let agent_authored = matches!(&envelope.from, envelope::Sender::Agent(_));
@@ -2270,8 +2287,15 @@ impl ClientService {
             let mut client = self
                 .remote_agent_client("ClientService.SendMessage", host_id)
                 .await?;
+            let mut request = tonic::Request::new(crate::agents::envelope_to_wire(&envelope));
+            if wait_for_readiness {
+                request.metadata_mut().insert(
+                    INITIAL_PROMPT_WAIT_METADATA,
+                    tonic::metadata::MetadataValue::from_static("true"),
+                );
+            }
             client
-                .send_message(crate::agents::envelope_to_wire(&envelope))
+                .send_message(request)
                 .await
                 .map(|response| response.into_inner())
         }
@@ -4718,6 +4742,7 @@ mod tests {
         let delayed_id = Uuid::from_u128(151);
         let unavailable_id = Uuid::from_u128(152);
         let failed_delivery_id = Uuid::from_u128(153);
+        let ordinary_unavailable_id = Uuid::from_u128(154);
 
         <ClientService as wire::client_service_server::ClientService>::create_agent(
             &service,
@@ -4739,6 +4764,35 @@ mod tests {
         .await
         .expect("spawn should wait for a delivery target that becomes live");
         assert!(started.elapsed() >= Duration::from_millis(150));
+
+        let mut unavailable =
+            test_agent_create_request(ordinary_unavailable_id, "ordinary-unavailable", None);
+        let Some(wire::client_create_agent_request::Agent::TestAgent(config)) =
+            &mut unavailable.agent
+        else {
+            unreachable!("test agent helper always builds a test agent")
+        };
+        config.command = TEST_UNAVAILABLE_DELIVERY_COMMAND.to_string();
+        <ClientService as wire::client_service_server::ClientService>::create_agent(
+            &service,
+            tonic::Request::new(unavailable),
+        )
+        .await
+        .unwrap();
+        let started = tokio::time::Instant::now();
+        let error = <ClientService as wire::client_service_server::ClientService>::send_message(
+            &service,
+            tonic::Request::new(wire::ClientSendMessageRequest {
+                to: Some(agent_ref_id(ordinary_unavailable_id)),
+                text: "fail without waiting".to_string(),
+                context: None,
+                from_agent_id: Some(parent_id.as_bytes().to_vec()),
+            }),
+        )
+        .await
+        .expect_err("ordinary send must not wait for recipient readiness");
+        assert_eq!(error.code(), tonic::Code::FailedPrecondition);
+        assert_eq!(started.elapsed(), Duration::ZERO);
 
         let error = <ClientService as wire::client_service_server::ClientService>::create_agent(
             &service,
@@ -4771,6 +4825,11 @@ mod tests {
         let agents = service.list_agents().await;
         assert!(agents.iter().any(|agent| agent.id == parent_id));
         assert!(agents.iter().any(|agent| agent.id == delayed_id));
+        assert!(
+            agents
+                .iter()
+                .any(|agent| agent.id == ordinary_unavailable_id)
+        );
         assert!(!agents.iter().any(|agent| agent.id == unavailable_id));
         assert!(!agents.iter().any(|agent| agent.id == failed_delivery_id));
     }

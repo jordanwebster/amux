@@ -56,7 +56,10 @@ available.
 `spawn` creates the child record with the authenticated caller as its parent,
 starts the backend, waits up to 30 seconds for its delivery target to become
 live, then sends the initial prompt through the same message carrier used
-later. The prompt therefore arrives with parent provenance instead of
+later. For managed Claude sessions, the `SessionStart` hook marks that
+transition; Codex uses its shared thread-attachment state. The readiness wait
+is scoped to this initial delivery, so an ordinary send to an unavailable
+session fails immediately. The prompt arrives with parent provenance instead of
 masquerading as human input. If readiness or delivery fails, spawn removes the
 new child and reports failure rather than leaving an orphan. With no explicit
 `cwd`, the child inherits the parent's working directory. Claude children
@@ -70,9 +73,10 @@ session ends, the parent instead receives an `exited` envelope with an empty
 body. Completion leaves the child alive and idle so a later message can start
 another turn.
 
-Stopping is lineage-scoped at the daemon boundary: an agent may stop its
-direct child whether the request came from Claude's MCP server or Codex's
-dynamic tool, while human deletion remains an administrative action. Deleting
+Model-facing stopping is lineage-scoped in `ClientService`: Claude's MCP
+server and Codex's dynamic tool attach the calling agent id, and the daemon
+accepts the delete only when the target is that caller's direct child. Human
+deletion remains an unscoped administrative action. Deleting
 a parent cascades through all descendants, including agents on paired hosts.
 Reachable descendants are removed deepest-first. Descendants on an unreachable
 owning host are reported as still running rather than silently forgotten. The
@@ -105,8 +109,9 @@ message through the fallback.
 The fallback is a bracketed PTY paste of the generic `<amux>` tag followed by
 Enter. It is also used for human messages, older Claude versions, and sessions
 without socket credentials. Before the paste is built, tabs become spaces and
-other control characters except newline are dropped; the remaining message is
-still delivered. Claude queues input received during a running turn.
+carriage-return line endings become newlines; other control characters except
+newline are dropped. The remaining message is still delivered. Claude queues
+input received during a running turn.
 
 ### Codex
 

@@ -28,6 +28,7 @@ pub(super) struct ClaudeDeliveryTarget {
     log_source: Option<StructuredLogSource>,
     messaging_credentials: Option<ClaudeMessagingCredentials>,
     pty_only: Arc<AtomicBool>,
+    ready: Arc<AtomicBool>,
 }
 
 impl ClaudeDeliveryTarget {
@@ -38,6 +39,7 @@ impl ClaudeDeliveryTarget {
             log_source: session.log_source(),
             messaging_credentials: session.messaging_credentials.clone(),
             pty_only: session.pty_only_delivery.clone(),
+            ready: session.delivery_ready.clone(),
         }
     }
 
@@ -108,6 +110,11 @@ impl AgentDeliveryTarget for ClaudeDeliveryTarget {
                 "session is readonly and cannot receive messages".to_string(),
             ));
         }
+        if !self.ready.load(Ordering::Acquire) {
+            return Ok(DeliveryLiveness::Pending(
+                "Claude session has not completed startup".to_string(),
+            ));
+        }
         if self.pty.is_some() || (self.messaging_credentials.is_some() && self.log_source.is_some())
         {
             Ok(DeliveryLiveness::Live)
@@ -119,10 +126,11 @@ impl AgentDeliveryTarget for ClaudeDeliveryTarget {
     }
 
     async fn deliver(&self, envelope: &Envelope) -> std::result::Result<Delivery, DeliveryError> {
-        if self.readonly {
-            return Err(DeliveryError::FailedPrecondition(
-                "session is readonly and cannot receive messages".to_string(),
-            ));
+        match self.liveness()? {
+            DeliveryLiveness::Live => {}
+            DeliveryLiveness::Pending(reason) => {
+                return Err(DeliveryError::FailedPrecondition(reason));
+            }
         }
         if self.pty_only.load(Ordering::Acquire) {
             return self.deliver_pty(envelope).await;
@@ -234,7 +242,28 @@ mod tests {
             socket_path,
             token: "socket-token".to_string(),
         });
+        session.delivery_ready.store(true, Ordering::Release);
         (session, source)
+    }
+
+    #[tokio::test(start_paused = true)]
+    async fn a2a_claude_delivery_target_observes_session_start_readiness() {
+        let dir = tempdir().unwrap();
+        let (session, _) = session(dir.path().join("claude.sock"));
+        session.delivery_ready.store(false, Ordering::Release);
+        let target = ClaudeDeliveryTarget::new(&session);
+        let ready = session.delivery_ready.clone();
+        tokio::spawn(async move {
+            tokio::time::sleep(Duration::from_millis(150)).await;
+            ready.store(true, Ordering::Release);
+        });
+
+        let started = tokio::time::Instant::now();
+        target
+            .wait_until_live(Duration::from_secs(1))
+            .await
+            .unwrap();
+        assert!(started.elapsed() >= Duration::from_millis(150));
     }
 
     async fn read_socket_post(listener: UnixListener) -> (Value, Value) {

@@ -1,4 +1,5 @@
 use std::path::PathBuf;
+use std::sync::atomic::Ordering;
 use std::time::Duration;
 
 use serde_json::{Value, json};
@@ -88,6 +89,9 @@ impl ClaudeSession {
         self.sync_messaging_credentials(env);
         let is_unknown = hook.is_unknown();
         let is_session_end = hook.is_session_end();
+        if hook.kind == ClaudeHookKind::SessionStart && !self.readonly {
+            self.delivery_ready.store(true, Ordering::Release);
+        }
         let completion = hook.last_assistant_message().map(str::to_string);
         if is_unknown {
             tracing::warn!(agent_id = %self.agent_id, "received unknown Claude hook variant");

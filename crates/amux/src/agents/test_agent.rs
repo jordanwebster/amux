@@ -74,7 +74,7 @@ impl AgentDeliveryTarget for TestAgentDeliveryTarget {
         envelope: &crate::envelope::Envelope,
     ) -> std::result::Result<Delivery, DeliveryError> {
         if !self.ready.load(Ordering::Acquire) {
-            return Err(DeliveryError::Failed(
+            return Err(DeliveryError::FailedPrecondition(
                 "test agent delivery target is not ready".to_string(),
             ));
         }
