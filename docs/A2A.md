@@ -102,10 +102,15 @@ when their hooks expose live messaging credentials.
 
 For an agent sender with a ready socket, amux posts Claude's native
 `<cross-session-message>` wrapper. The body begins with an amux header carrying
-the envelope id, kind, sender kind, and optional context. Delivery is confirmed
-within five seconds by an id-bearing peer user row or `queued_command`
-attachment. A missed confirmation makes the session PTY-only and resends that
-message through the fallback.
+the envelope id, kind, sender kind, and optional context, then returns to the
+sender without waiting for transcript confirmation. The session checks in the
+background for an id-bearing peer user row or `queued_command` attachment over
+the next five seconds. Before any socket delivery has been confirmed, a miss
+makes the session PTY-only and resends the same envelope through the fallback.
+After a confirmation, one miss resends only that envelope and keeps the socket;
+two consecutive misses make the session PTY-only. A confirmation resets the
+miss count. The resend retains the envelope id so the recipient can recognize a
+duplicate.
 
 The fallback is a bracketed PTY paste of the generic `<amux>` tag followed by
 Enter. It is also used for human messages, older Claude versions, and sessions

@@ -1,5 +1,5 @@
-use std::sync::Arc;
 use std::sync::atomic::{AtomicBool, Ordering};
+use std::sync::{Arc, Mutex as StdMutex};
 use std::time::Duration;
 
 use async_trait::async_trait;
@@ -10,6 +10,7 @@ use serde_json::json;
 use tokio::io::AsyncWriteExt;
 #[cfg(unix)]
 use tokio::net::UnixStream;
+use tokio::task::JoinSet;
 use uuid::Uuid;
 
 use super::core::{ClaudeMessagingCredentials, ClaudeSession};
@@ -22,12 +23,57 @@ use crate::envelope::{Envelope, format_cross_session};
 
 const SOCKET_CONFIRMATION_TIMEOUT: Duration = Duration::from_secs(5);
 
+#[derive(Default)]
+pub(super) struct SocketDeliveryState {
+    confirmation: StdMutex<SocketConfirmationState>,
+}
+
+#[derive(Default)]
+struct SocketConfirmationState {
+    has_confirmed: bool,
+    consecutive_misses: u8,
+}
+
+impl SocketDeliveryState {
+    fn confirmed(&self) {
+        let mut state = self
+            .confirmation
+            .lock()
+            .unwrap_or_else(|poison| poison.into_inner());
+        state.has_confirmed = true;
+        state.consecutive_misses = 0;
+    }
+
+    fn missed(&self) -> bool {
+        let mut state = self
+            .confirmation
+            .lock()
+            .unwrap_or_else(|poison| poison.into_inner());
+        if !state.has_confirmed {
+            return true;
+        }
+        state.consecutive_misses = state.consecutive_misses.saturating_add(1);
+        state.consecutive_misses >= 2
+    }
+
+    #[cfg(test)]
+    fn has_confirmed(&self) -> bool {
+        self.confirmation
+            .lock()
+            .unwrap_or_else(|poison| poison.into_inner())
+            .has_confirmed
+    }
+}
+
+#[derive(Clone)]
 pub(super) struct ClaudeDeliveryTarget {
     readonly: bool,
     pty: Option<PtyHandle>,
     log_source: Option<StructuredLogSource>,
     messaging_credentials: Option<ClaudeMessagingCredentials>,
     pty_only: Arc<AtomicBool>,
+    socket_delivery_state: Arc<SocketDeliveryState>,
+    confirmation_tasks: Arc<tokio::sync::Mutex<JoinSet<()>>>,
     ready: Arc<AtomicBool>,
 }
 
@@ -39,6 +85,8 @@ impl ClaudeDeliveryTarget {
             log_source: session.log_source(),
             messaging_credentials: session.messaging_credentials.clone(),
             pty_only: session.pty_only_delivery.clone(),
+            socket_delivery_state: session.socket_delivery_state.clone(),
+            confirmation_tasks: session.socket_confirmation_tasks.clone(),
             ready: session.delivery_ready.clone(),
         }
     }
@@ -59,7 +107,10 @@ impl ClaudeDeliveryTarget {
     }
 
     #[cfg(unix)]
-    async fn try_socket(&self, envelope: &Envelope, content: &str) -> anyhow::Result<bool> {
+    async fn post_socket(
+        &self,
+        content: &str,
+    ) -> anyhow::Result<crate::agents::MultiplexStructuredReader> {
         let credentials = self
             .messaging_credentials
             .as_ref()
@@ -70,7 +121,7 @@ impl ClaudeDeliveryTarget {
             .expect("socket delivery requires a structured log source");
 
         let next_seq = log_source.current_seq().await.saturating_add(1);
-        let Some((mut rows, _)) = log_source
+        let Some((rows, _)) = log_source
             .subscribe_with_query(Some(SequencedReplayQuery::Since { seq: next_seq }))
             .await
         else {
@@ -89,16 +140,54 @@ impl ClaudeDeliveryTarget {
         stream.write_all(b"\n").await?;
         stream.shutdown().await?;
 
-        Ok(tokio::time::timeout(SOCKET_CONFIRMATION_TIMEOUT, async {
+        Ok(rows)
+    }
+
+    async fn confirmation_received(
+        mut rows: crate::agents::MultiplexStructuredReader,
+        envelope_id: Uuid,
+    ) -> bool {
+        tokio::time::timeout(SOCKET_CONFIRMATION_TIMEOUT, async {
             while let Some(row) = rows.read().await {
-                if row_confirms_delivery(&row.payload, envelope.id) {
+                if row_confirms_delivery(&row.payload, envelope_id) {
                     return true;
                 }
             }
             false
         })
         .await
-        .unwrap_or(false))
+        .unwrap_or(false)
+    }
+
+    async fn spawn_confirmation(
+        &self,
+        rows: crate::agents::MultiplexStructuredReader,
+        envelope: Envelope,
+    ) {
+        let target = self.clone();
+        let mut tasks = self.confirmation_tasks.lock().await;
+        while tasks.try_join_next().is_some() {}
+        tasks.spawn(async move {
+            if Self::confirmation_received(rows, envelope.id).await {
+                target.socket_delivery_state.confirmed();
+                return;
+            }
+
+            tracing::info!(
+                envelope_id = %envelope.id,
+                "Claude inbox delivery was not confirmed; resending by PTY"
+            );
+            if target.socket_delivery_state.missed() {
+                target.pty_only.store(true, Ordering::Release);
+            }
+            if let Err(error) = target.deliver_pty(&envelope).await {
+                tracing::warn!(
+                    envelope_id = %envelope.id,
+                    %error,
+                    "Claude inbox delivery PTY resend failed"
+                );
+            }
+        });
     }
 }
 
@@ -144,12 +233,11 @@ impl AgentDeliveryTarget for ClaudeDeliveryTarget {
         }
 
         #[cfg(unix)]
-        match self.try_socket(envelope, &content).await {
-            Ok(true) => return Ok(Delivery::Socket),
-            Ok(false) => tracing::warn!(
-                envelope_id = %envelope.id,
-                "Claude inbox delivery was not confirmed; using PTY for this session"
-            ),
+        match self.post_socket(&content).await {
+            Ok(rows) => {
+                self.spawn_confirmation(rows, envelope.clone()).await;
+                return Ok(Delivery::Socket);
+            }
             Err(error) => tracing::warn!(
                 envelope_id = %envelope.id,
                 %error,
@@ -188,6 +276,7 @@ fn row_confirms_delivery(row: &Value, envelope_id: Uuid) -> bool {
 #[cfg(all(test, unix))]
 mod tests {
     use std::path::PathBuf;
+    use std::sync::Arc;
 
     use serde_json::json;
     use tempfile::tempdir;
@@ -266,7 +355,7 @@ mod tests {
         assert!(started.elapsed() >= Duration::from_millis(150));
     }
 
-    async fn read_socket_post(listener: UnixListener) -> (Value, Value) {
+    async fn read_socket_post(listener: Arc<UnixListener>) -> (Value, Value) {
         let (stream, _) = listener.accept().await.unwrap();
         let mut lines = BufReader::new(stream).lines();
         let auth = serde_json::from_str(&lines.next_line().await.unwrap().unwrap()).unwrap();
@@ -274,11 +363,37 @@ mod tests {
         (auth, message)
     }
 
+    async fn wait_for_confirmation(session: &ClaudeSession) {
+        tokio::time::timeout(Duration::from_secs(1), async {
+            while !session.socket_delivery_state.has_confirmed() {
+                tokio::task::yield_now().await;
+            }
+        })
+        .await
+        .expect("socket delivery was not confirmed");
+    }
+
+    async fn expire_confirmation_window() {
+        tokio::time::advance(SOCKET_CONFIRMATION_TIMEOUT + Duration::from_millis(1)).await;
+        tokio::task::yield_now().await;
+    }
+
+    async fn assert_pty_resend(
+        pty_output: &mut crate::agents::MultiplexByteReader,
+        envelope: &Envelope,
+    ) {
+        assert_eq!(
+            pty_output.read().await.unwrap(),
+            format!("\x1b[200~{}\x1b[201~", crate::envelope::format(envelope)).into_bytes()
+        );
+        assert_eq!(pty_output.read().await.unwrap(), b"\r");
+    }
+
     #[tokio::test(start_paused = true)]
-    async fn a2a_socket_carrier_confirms_peer_user_row() {
+    async fn first_socket_confirmation_keeps_the_socket() {
         let dir = tempdir().unwrap();
         let socket_path = dir.path().join("claude.sock");
-        let listener = UnixListener::bind(&socket_path).unwrap();
+        let listener = Arc::new(UnixListener::bind(&socket_path).unwrap());
         let (session, source) = session(socket_path);
         let envelope = test_envelope(session.agent_id, "hello over the inbox");
         let expected_content = format_cross_session(&envelope, "prompting").unwrap();
@@ -297,8 +412,9 @@ mod tests {
         });
 
         assert_eq!(session.deliver(&envelope).await.unwrap(), Delivery::Socket);
-        assert!(!session.pty_only_delivery.load(Ordering::Acquire));
         let (auth, message) = server.await.unwrap();
+        wait_for_confirmation(&session).await;
+        assert!(!session.pty_only_delivery.load(Ordering::Acquire));
         assert_eq!(auth, json!({"type": "auth", "token": "socket-token"}));
         assert_eq!(
             message,
@@ -342,10 +458,10 @@ mod tests {
     }
 
     #[tokio::test(start_paused = true)]
-    async fn a2a_socket_carrier_timeout_marks_pty_only_and_resends() {
+    async fn first_socket_miss_resends_by_pty_and_disables_the_socket() {
         let dir = tempdir().unwrap();
         let socket_path = dir.path().join("claude.sock");
-        let listener = UnixListener::bind(&socket_path).unwrap();
+        let listener = Arc::new(UnixListener::bind(&socket_path).unwrap());
         let (session, _source) = session(socket_path);
         let mut pty_output = session
             .pty
@@ -356,11 +472,8 @@ mod tests {
             .unwrap();
         let envelope = test_envelope(session.agent_id, "fallback body");
         let server = tokio::spawn(read_socket_post(listener));
-        let started = tokio::time::Instant::now();
 
-        assert_eq!(session.deliver(&envelope).await.unwrap(), Delivery::Pty);
-        assert!(tokio::time::Instant::now() - started >= SOCKET_CONFIRMATION_TIMEOUT);
-        assert!(session.pty_only_delivery.load(Ordering::Acquire));
+        assert_eq!(session.deliver(&envelope).await.unwrap(), Delivery::Socket);
         let (auth, message) = server.await.unwrap();
         assert_eq!(auth["token"], "socket-token");
         assert!(
@@ -369,18 +482,115 @@ mod tests {
                 .unwrap()
                 .contains(&envelope.id.to_string())
         );
-        assert_eq!(
-            pty_output.read().await.unwrap(),
-            format!("\x1b[200~{}\x1b[201~", crate::envelope::format(&envelope)).into_bytes()
-        );
-        assert_eq!(pty_output.read().await.unwrap(), b"\r");
+        expire_confirmation_window().await;
+        assert_pty_resend(&mut pty_output, &envelope).await;
+        assert!(session.pty_only_delivery.load(Ordering::Acquire));
 
         let second = test_envelope(session.agent_id, "stays on PTY");
         assert_eq!(session.deliver(&second).await.unwrap(), Delivery::Pty);
+        assert_pty_resend(&mut pty_output, &second).await;
+    }
+
+    #[tokio::test(start_paused = true)]
+    async fn one_socket_miss_after_a_confirmation_resends_without_disabling_the_socket() {
+        let dir = tempdir().unwrap();
+        let socket_path = dir.path().join("claude.sock");
+        let listener = Arc::new(UnixListener::bind(&socket_path).unwrap());
+        let (session, source) = session(socket_path);
+        let mut pty_output = session
+            .pty
+            .as_ref()
+            .unwrap()
+            .subscribe_with_query(None)
+            .await
+            .unwrap();
+
+        let confirmed = test_envelope(session.agent_id, "confirmed first");
+        let server = tokio::spawn(read_socket_post(listener.clone()));
+        assert_eq!(session.deliver(&confirmed).await.unwrap(), Delivery::Socket);
+        server.await.unwrap();
+        source
+            .write(json!({
+                "type": "user",
+                "origin": {"kind": "peer"},
+                "message": {"content": confirmed.id.to_string()},
+            }))
+            .await;
+        wait_for_confirmation(&session).await;
+
+        let missed = test_envelope(session.agent_id, "missed once");
+        let server = tokio::spawn(read_socket_post(listener));
+        assert_eq!(session.deliver(&missed).await.unwrap(), Delivery::Socket);
+        server.await.unwrap();
+        expire_confirmation_window().await;
+        assert_pty_resend(&mut pty_output, &missed).await;
+        assert!(!session.pty_only_delivery.load(Ordering::Acquire));
+    }
+
+    #[tokio::test(start_paused = true)]
+    async fn two_consecutive_socket_misses_after_a_confirmation_disable_the_socket() {
+        let dir = tempdir().unwrap();
+        let socket_path = dir.path().join("claude.sock");
+        let listener = Arc::new(UnixListener::bind(&socket_path).unwrap());
+        let (session, source) = session(socket_path);
+        let mut pty_output = session
+            .pty
+            .as_ref()
+            .unwrap()
+            .subscribe_with_query(None)
+            .await
+            .unwrap();
+
+        let confirmed = test_envelope(session.agent_id, "confirmed first");
+        let server = tokio::spawn(read_socket_post(listener.clone()));
+        assert_eq!(session.deliver(&confirmed).await.unwrap(), Delivery::Socket);
+        server.await.unwrap();
+        source
+            .write(json!({
+                "type": "attachment",
+                "attachment": {
+                    "type": "queued_command",
+                    "prompt": confirmed.id.to_string(),
+                },
+            }))
+            .await;
+        wait_for_confirmation(&session).await;
+
+        let first_miss = test_envelope(session.agent_id, "first miss");
+        let server = tokio::spawn(read_socket_post(listener.clone()));
         assert_eq!(
-            pty_output.read().await.unwrap(),
-            format!("\x1b[200~{}\x1b[201~", crate::envelope::format(&second)).into_bytes()
+            session.deliver(&first_miss).await.unwrap(),
+            Delivery::Socket
         );
-        assert_eq!(pty_output.read().await.unwrap(), b"\r");
+        server.await.unwrap();
+        expire_confirmation_window().await;
+        assert_pty_resend(&mut pty_output, &first_miss).await;
+        assert!(!session.pty_only_delivery.load(Ordering::Acquire));
+
+        let second_miss = test_envelope(session.agent_id, "second miss");
+        let server = tokio::spawn(read_socket_post(listener));
+        assert_eq!(
+            session.deliver(&second_miss).await.unwrap(),
+            Delivery::Socket
+        );
+        server.await.unwrap();
+        expire_confirmation_window().await;
+        assert_pty_resend(&mut pty_output, &second_miss).await;
+        assert!(session.pty_only_delivery.load(Ordering::Acquire));
+    }
+
+    #[tokio::test(start_paused = true)]
+    async fn socket_delivery_returns_well_before_the_confirmation_window() {
+        let dir = tempdir().unwrap();
+        let socket_path = dir.path().join("claude.sock");
+        let listener = Arc::new(UnixListener::bind(&socket_path).unwrap());
+        let (session, _source) = session(socket_path);
+        let envelope = test_envelope(session.agent_id, "do not wait for confirmation");
+        let server = tokio::spawn(read_socket_post(listener));
+        let started = tokio::time::Instant::now();
+
+        assert_eq!(session.deliver(&envelope).await.unwrap(), Delivery::Socket);
+        assert!(started.elapsed() < Duration::from_millis(100));
+        server.await.unwrap();
     }
 }

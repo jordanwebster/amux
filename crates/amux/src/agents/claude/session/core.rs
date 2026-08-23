@@ -9,9 +9,10 @@ use chrono::{DateTime, Utc};
 use serde::ser::SerializeMap;
 use serde::{Serialize, Serializer};
 use tokio::sync::mpsc;
-use tokio::task::AbortHandle;
+use tokio::task::{AbortHandle, JoinSet};
 use uuid::Uuid;
 
+use super::inbox::SocketDeliveryState;
 use super::input::sanitize_resume_args;
 use super::name_sniffer::spawn_name_sniffer;
 use crate::agents::claude::transcript_ingest::TranscriptIngest;
@@ -97,6 +98,8 @@ pub(crate) struct ClaudeSession {
     pub(super) claude_version: Option<String>,
     pub(super) messaging_credentials: Option<ClaudeMessagingCredentials>,
     pub(super) pty_only_delivery: Arc<AtomicBool>,
+    pub(super) socket_delivery_state: Arc<SocketDeliveryState>,
+    pub(super) socket_confirmation_tasks: Arc<tokio::sync::Mutex<JoinSet<()>>>,
     pub(super) delivery_ready: Arc<AtomicBool>,
     pub(super) parent: Option<AgentParent>,
     pub(super) name_source: LocalAgentNameSource,
@@ -131,6 +134,8 @@ impl ClaudeSession {
             claude_version,
             messaging_credentials: None,
             pty_only_delivery: Arc::new(AtomicBool::new(false)),
+            socket_delivery_state: Arc::new(SocketDeliveryState::default()),
+            socket_confirmation_tasks: Arc::new(tokio::sync::Mutex::new(JoinSet::new())),
             delivery_ready: Arc::new(AtomicBool::new(false)),
             parent: req.parent,
             name_source: if req.name.is_some() {
@@ -167,6 +172,8 @@ impl ClaudeSession {
             claude_version,
             messaging_credentials: None,
             pty_only_delivery: Arc::new(AtomicBool::new(false)),
+            socket_delivery_state: Arc::new(SocketDeliveryState::default()),
+            socket_confirmation_tasks: Arc::new(tokio::sync::Mutex::new(JoinSet::new())),
             delivery_ready: Arc::new(AtomicBool::new(false)),
             parent: req.parent,
             name_source,
@@ -196,6 +203,8 @@ impl ClaudeSession {
             claude_version: None,
             messaging_credentials: None,
             pty_only_delivery: Arc::new(AtomicBool::new(false)),
+            socket_delivery_state: Arc::new(SocketDeliveryState::default()),
+            socket_confirmation_tasks: Arc::new(tokio::sync::Mutex::new(JoinSet::new())),
             delivery_ready: Arc::new(AtomicBool::new(false)),
             parent: None,
             name_source: LocalAgentNameSource::Unset,
@@ -348,6 +357,11 @@ impl ClaudeSession {
         tracing::info!(agent_id = %self.agent_id, "shutting down claude session");
         if let Some(abort) = &self.name_sniffer_abort {
             abort.abort();
+        }
+        {
+            let mut tasks = self.socket_confirmation_tasks.lock().await;
+            tasks.abort_all();
+            while tasks.join_next().await.is_some() {}
         }
         match policy {
             StopPolicy::Interrupt => {

@@ -4842,3 +4842,11 @@ the CLI tests that exercise it. The Codex round-trip scenario uses the shared
 row-type matcher and validates completion fields immediately afterward, so the
 same structure module remains warning-free when compiled by its offline waiter
 tests, where live-only matchers are intentionally never constructed.
+
+2026-08-23 — **Moved Claude inbox confirmation behind the send result.** A
+successful socket post now returns immediately while the session watches its
+transcript for five seconds in the background. A session that has never seen a
+socket message arrive still falls back permanently on its first miss; after a
+successful delivery, one miss resends only that envelope through the PTY and a
+second consecutive miss retires the socket. Every resend preserves the envelope
+id, and stopping the session cancels its outstanding confirmation work.
