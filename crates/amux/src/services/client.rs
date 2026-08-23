@@ -899,29 +899,79 @@ impl wire::client_service_server::ClientService for ClientService {
         request: tonic::Request<wire::ClientCreateAgentRequest>,
     ) -> TonicResult<wire::CreateAgentResponse> {
         let request = request.into_inner();
+        let parent = request
+            .parent
+            .clone()
+            .map(crate::agents::agent_parent_from_wire)
+            .transpose()
+            .map_err(decode_remote_status)?;
+        let initial_prompt = request.initial_prompt.clone();
+        let parent_agent = match parent {
+            Some(parent) => {
+                let agent = self
+                    .resolve_agent(AgentRef::Id(parent.agent_id))
+                    .await
+                    .map_err(protocol_status)?;
+                if agent.host_id != parent.host_id || !self.is_local_host(agent.host_id) {
+                    return Err(protocol_status(ProtocolError::NoAgentFound));
+                }
+                Some(agent)
+            }
+            None if initial_prompt.is_some() => {
+                return Err(tonic::Status::invalid_argument(
+                    "initial_prompt requires a parent agent",
+                ));
+            }
+            None => None,
+        };
         let requested_agent_type = client_create_agent_type(&request)?;
-        if let Some(host_id) =
+        let response = if let Some(host_id) =
             optional_uuid_from_bytes("CreateAgentRequest.host_id", request.host_id.as_deref())?
             && !self.is_local_host(host_id)
         {
             self.ensure_remote_create_target(host_id, requested_agent_type)
                 .await?;
-            return self
-                .remote_create_agent(host_id, client_create_to_agent_create_request(request))
-                .await;
+            self.remote_create_agent(host_id, client_create_to_agent_create_request(request))
+                .await?
+        } else {
+            let ctx = self.local_agent_service();
+            ensure_local_create_target(&ctx, &request)?;
+
+            let agent = ctx
+                .create(client_create_to_create_rpc_request(request)?)
+                .await
+                .map_err(protocol_status)?;
+            self.upsert_agent(agent.clone(), AgentChangeKind::Up).await;
+            tonic::Response::new(wire::CreateAgentResponse {
+                agent: Some(agent_to_wire(&agent).map_err(encode_status)?),
+            })
+        };
+
+        if let (Some(parent), Some(text)) = (parent_agent, initial_prompt) {
+            let child = agent_from_remote_response(
+                response.get_ref().agent.clone(),
+                "CreateAgentResponse.agent",
+            )?;
+            self.deliver_envelope(envelope::Envelope {
+                id: Uuid::new_v4(),
+                context: None,
+                from: envelope::Sender::Agent(envelope::AgentSender {
+                    agent_id: parent.id,
+                    host_id: parent.host_id,
+                    name: parent.name.unwrap_or_else(|| parent.id.to_string()),
+                    kind: parent.agent_type,
+                }),
+                to: AgentParent {
+                    agent_id: child.id,
+                    host_id: child.host_id,
+                },
+                kind: envelope::EnvelopeKind::Message,
+                text,
+            })
+            .await?;
         }
 
-        let ctx = self.local_agent_service();
-        ensure_local_create_target(&ctx, &request)?;
-
-        let agent = ctx
-            .create(client_create_to_create_rpc_request(request)?)
-            .await
-            .map_err(protocol_status)?;
-        self.upsert_agent(agent.clone(), AgentChangeKind::Up).await;
-        Ok(tonic::Response::new(wire::CreateAgentResponse {
-            agent: Some(agent_to_wire(&agent).map_err(encode_status)?),
-        }))
+        Ok(response)
     }
 
     async fn rename_agent(

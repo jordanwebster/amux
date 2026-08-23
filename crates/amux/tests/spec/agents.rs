@@ -130,3 +130,16 @@ async fn a2a_claude_completion_remote() {
         .claude_completion_reaches_parent(&parent_host, &parent, "finished remotely")
         .await;
 }
+
+/// Creating a child records its family edge, preserves the parent's working
+/// directory default, and injects the initial task through the normal message
+/// carrier only after the echo backend can receive it.
+#[tokio::test]
+async fn a2a_spawn_initial_prompt() {
+    let net = TestNet::builder().daemon("host").start().await;
+    let [host] = net.daemons(["host"]);
+
+    let parent = host.spawn_echo_agent("parent").await;
+    host.spawn_echo_child_with_prompt(&parent, "child", "inspect the lifecycle")
+        .await;
+}

@@ -4,6 +4,12 @@ This file tracks significant development work, decisions made, and current state
 
 ---
 
+2026-08-23 — **Child startup uses the authenticated message path.**
+Creating a child records its parent relationship, keeps the inherited working
+directory, and delivers the initial task through the child's normal carrier
+after the backend has started. The envelope author is resolved from the live
+parent rather than trusted from the create request.
+
 2026-08-23 — **The Codex structured row vocabulary includes agent messages.**
 The closed taxonomy now names the daemon-synthesized message row and its
 authenticated provenance, envelope context, body, and carrier fields. The

@@ -14,8 +14,8 @@ use uuid::Uuid;
 
 use super::{PtyHandle, spawn_pty_agent};
 use crate::agents::{
-    AGENT_TYPE_TEST_AGENT, AgentBackend, AgentDeliveryTarget, CreateAgentRequest, Delivery,
-    DeliveryError, LocalAgentNameSource, SessionEvent, StopPolicy, StructuredLogSource,
+    AGENT_TYPE_TEST_AGENT, AgentBackend, AgentDeliveryTarget, AgentParent, CreateAgentRequest,
+    Delivery, DeliveryError, LocalAgentNameSource, SessionEvent, StopPolicy, StructuredLogSource,
     TerminalSize, terminal_io_protocols,
 };
 #[cfg(test)]
@@ -35,6 +35,7 @@ pub(crate) struct TestAgentSession {
     pub(super) name: Option<String>,
     pub(super) command: String,
     pub(super) working_dir: PathBuf,
+    pub(super) parent: Option<AgentParent>,
     pub(super) pty: Option<PtyHandle>,
     log_source: Option<StructuredLogSource>,
 
@@ -73,6 +74,7 @@ impl TestAgentSession {
             name: req.name.clone(),
             command: cmd,
             working_dir: req.working_dir.clone(),
+            parent: req.parent,
             pty: None,
             log_source: None,
             terminal_size: req.terminal_size,
@@ -87,6 +89,7 @@ impl TestAgentSession {
             name,
             command: "test-echo".to_string(),
             working_dir: std::env::temp_dir(),
+            parent: None,
             pty: Some(PtyHandle::test_echo()),
             log_source: None,
             terminal_size: None,
@@ -104,6 +107,7 @@ impl TestAgentSession {
             name: req.name.clone(),
             command: cmd,
             working_dir: req.working_dir.clone(),
+            parent: req.parent,
             pty: None,
             log_source: None,
             terminal_size: req.terminal_size,
@@ -214,6 +218,10 @@ impl AgentBackend for TestAgentSession {
         AGENT_TYPE_TEST_AGENT
     }
 
+    fn parent(&self) -> Option<AgentParent> {
+        self.parent
+    }
+
     fn io_protocols(&self) -> Vec<String> {
         #[cfg(any(test, feature = "testnet"))]
         {
@@ -249,7 +257,7 @@ impl AgentBackend for TestAgentSession {
             working_dir: self.working_dir.clone(),
             terminal_size: self.terminal_size,
             created_at: self.created_at,
-            parent: None,
+            parent: self.parent,
             working_on: None,
         })
     }
@@ -281,6 +289,7 @@ mod tests {
             name: None,
             command: "test-agent".to_string(),
             working_dir: std::env::temp_dir(),
+            parent: None,
             pty: None,
             log_source: Some(StructuredLogSource::new(STRUCTURED_LOG_RETENTION)),
             terminal_size: None,

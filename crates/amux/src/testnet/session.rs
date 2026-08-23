@@ -62,6 +62,63 @@ impl Daemon {
         agent
     }
 
+    /// Spawns an echo child and proves its first input is an authenticated
+    /// message from the parent after the child backend is available.
+    pub async fn spawn_echo_child_with_prompt(
+        &self,
+        parent: &Agent,
+        name: &str,
+        prompt: &str,
+    ) -> Agent {
+        assert_eq!(parent.host_id, self.host_id());
+        let child = self
+            .admin_client()
+            .await
+            .create_agent(CreateAgentRequest {
+                agent_id: Uuid::new_v4(),
+                host_id: None,
+                name: Some(name.to_string()),
+                agent_type: AgentType::TestAgent {
+                    command: TEST_ECHO_COMMAND.to_string(),
+                },
+                working_dir: parent.working_dir.clone(),
+                terminal_size: None,
+                args: Vec::new(),
+                parent: Some(AgentParent {
+                    agent_id: parent.id,
+                    host_id: parent.host_id,
+                }),
+                initial_prompt: Some(prompt.to_string()),
+            })
+            .await
+            .unwrap_or_else(|error| panic!("spawn echo child '{name}': {error}"));
+
+        assert_eq!(child.parent.map(|edge| edge.agent_id), Some(parent.id));
+        assert_eq!(child.working_dir, parent.working_dir);
+
+        let mut stream = self
+            .admin_client()
+            .await
+            .subscribe_session(crate::SubscribeSessionRequest {
+                agent: child.id.into(),
+                io_protocol: TEST_ECHO_V1.to_string(),
+                args: None,
+            })
+            .await
+            .unwrap_or_else(|error| panic!("subscribe to echo child '{name}': {error}"));
+        let encoded = echoed_envelope(&mut stream, name, "an initial child prompt").await;
+        let parsed = crate::envelope::parse(&encoded)
+            .unwrap_or_else(|error| panic!("initial child prompt did not parse: {error}"));
+        assert_eq!(parsed.from_id, Some(parent.id));
+        assert_eq!(
+            parsed.from_kind.as_deref(),
+            Some(parent.agent_type.as_str())
+        );
+        assert_eq!(parsed.kind, crate::envelope::EnvelopeKind::Message);
+        assert_eq!(parsed.text, prompt);
+        child
+    }
+
     /// Registers a process-free Claude child, delivers a scripted Stop hook,
     /// and observes the resulting lifecycle messages in the parent's own echo
     /// stream. `parent_owner` may be this daemon or a paired remote daemon.

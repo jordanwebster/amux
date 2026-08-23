@@ -1,7 +1,6 @@
 use std::collections::HashMap;
 use std::ffi::OsString;
 use std::io::{BufRead, Write};
-#[cfg(test)]
 use std::path::PathBuf;
 use std::sync::Arc;
 
@@ -247,16 +246,15 @@ impl ToolBackend for ClientBackend {
                 name,
                 cwd,
             } => {
-                let working_dir = match cwd {
-                    Some(cwd) => cwd,
-                    None => std::env::current_dir()
-                        .context("failed to determine the child working directory")?,
-                };
                 let fleet = if self.caller.is_some() {
                     self.client.list_agents().await?
                 } else {
                     Vec::new()
                 };
+                let caller_agent = self
+                    .caller
+                    .and_then(|caller| fleet.iter().find(|agent| agent.id == caller));
+                let working_dir = spawn_working_dir(cwd, caller_agent)?;
                 let parent = caller_parent(self.caller, |caller| {
                     fleet
                         .iter()
@@ -302,6 +300,14 @@ impl ToolBackend for ClientBackend {
             }
         }
     }
+}
+
+fn spawn_working_dir(cwd: Option<PathBuf>, caller: Option<&Agent>) -> Result<PathBuf> {
+    cwd.or_else(|| caller.map(|agent| agent.working_dir.clone()))
+        .map(Ok)
+        .unwrap_or_else(|| {
+            std::env::current_dir().context("failed to determine the child working directory")
+        })
 }
 
 impl ClientBackend {
@@ -518,5 +524,32 @@ mod tests {
         assert_eq!(status.agent, AgentIdentifier::Id(caller));
         assert_eq!(status.working_on.as_deref(), Some("reviewing"));
         assert!(status_request(None, None).is_err());
+    }
+
+    #[test]
+    fn child_working_directory_defaults_to_the_calling_agent() {
+        let caller = Agent {
+            id: Uuid::from_u128(201),
+            host_id: Uuid::from_u128(202),
+            name: Some("parent".to_string()),
+            command: "claude".to_string(),
+            working_dir: PathBuf::from("/parent/work"),
+            agent_type: "claude".to_string(),
+            io_protocols: Vec::new(),
+            readonly: false,
+            args: Vec::new(),
+            created_at: chrono::Utc::now(),
+            parent: None,
+            working_on: None,
+        };
+
+        assert_eq!(
+            spawn_working_dir(None, Some(&caller)).unwrap(),
+            PathBuf::from("/parent/work")
+        );
+        assert_eq!(
+            spawn_working_dir(Some(PathBuf::from("/override")), Some(&caller)).unwrap(),
+            PathBuf::from("/override")
+        );
     }
 }
