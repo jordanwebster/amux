@@ -4,6 +4,11 @@ This file tracks significant development work, decisions made, and current state
 
 ---
 
+2026-08-23 — **Deleting an agent cascades through its family.**
+The client daemon walks mirrored parent relationships deepest-first, removes
+reachable local and remote descendants, and reports children whose owning host
+cannot be reached without silently dropping their records.
+
 2026-08-23 — **Child sessions inherit provider permission policy.**
 Claude children retain only the parent's permission-mode launch arguments,
 while Codex children inherit the parent's structured approval and sandbox

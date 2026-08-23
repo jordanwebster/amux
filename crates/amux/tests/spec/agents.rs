@@ -143,3 +143,53 @@ async fn a2a_spawn_initial_prompt() {
     host.spawn_echo_child_with_prompt(&parent, "child", "inspect the lifecycle")
         .await;
 }
+
+/// A parent deletion walks local and remote descendants deepest-first. The
+/// returned result names every removed child, including a grandchild owned by
+/// the paired daemon.
+#[tokio::test]
+async fn a2a_cascade_delete() {
+    let net = TestNet::builder()
+        .daemon("parent-host")
+        .daemon("child-host")
+        .paired("parent-host", "child-host", Via::Tcp)
+        .start()
+        .await;
+    let [parent_host, child_host] = net.daemons(["parent-host", "child-host"]);
+
+    let parent = parent_host.spawn_echo_agent("parent").await;
+    let local_child = parent_host
+        .spawn_echo_child_on(&parent_host, &parent, "local-child")
+        .await;
+    let remote_child = parent_host
+        .spawn_echo_child_on(&child_host, &parent, "remote-child")
+        .await;
+    let grandchild = child_host
+        .spawn_echo_child_on(&child_host, &remote_child, "grandchild")
+        .await;
+
+    parent_host
+        .cascade_delete_family(&parent, &[&local_child, &remote_child, &grandchild])
+        .await;
+}
+
+/// Route loss leaves a remote child in place and names it in the cascade
+/// result while the reachable parent is still removed.
+#[tokio::test]
+async fn a2a_cascade_delete_reports_unreachable_children() {
+    let net = TestNet::builder()
+        .daemon("parent-host")
+        .daemon("child-host")
+        .paired("parent-host", "child-host", Via::Tcp)
+        .start()
+        .await;
+    let [parent_host, child_host] = net.daemons(["parent-host", "child-host"]);
+
+    let parent = parent_host.spawn_echo_agent("parent").await;
+    let child = parent_host
+        .spawn_echo_child_on(&child_host, &parent, "remote-child")
+        .await;
+    parent_host
+        .cascade_delete_reports_unreachable(&parent, &child_host, &child)
+        .await;
+}

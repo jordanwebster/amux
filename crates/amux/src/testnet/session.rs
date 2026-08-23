@@ -119,6 +119,149 @@ impl Daemon {
         child
     }
 
+    /// Spawns an echo child on `owner` while preserving a parent local to the
+    /// calling daemon. This exercises the same remote create route used by a
+    /// model-facing spawn.
+    pub async fn spawn_echo_child_on(&self, owner: &Daemon, parent: &Agent, name: &str) -> Agent {
+        assert_eq!(parent.host_id, self.host_id());
+        self.admin_client()
+            .await
+            .create_agent(CreateAgentRequest {
+                agent_id: Uuid::new_v4(),
+                host_id: (owner.host_id() != self.host_id()).then_some(owner.host_id()),
+                name: Some(name.to_string()),
+                agent_type: AgentType::TestAgent {
+                    command: TEST_ECHO_COMMAND.to_string(),
+                },
+                working_dir: parent.working_dir.clone(),
+                terminal_size: None,
+                args: Vec::new(),
+                parent: Some(AgentParent {
+                    agent_id: parent.id,
+                    host_id: parent.host_id,
+                }),
+                initial_prompt: None,
+            })
+            .await
+            .unwrap_or_else(|error| {
+                panic!("spawn echo child '{name}' on '{}': {error}", owner.name())
+            })
+    }
+
+    /// Deletes a family through the raw client RPC so the cascade result can
+    /// be asserted before higher-level clients choose how to present it.
+    pub async fn cascade_delete_family(&self, parent: &Agent, expected_children: &[&Agent]) {
+        let expected_ids: std::collections::HashSet<_> =
+            expected_children.iter().map(|agent| agent.id).collect();
+        eventually(
+            "deleting daemon mirrors the complete family",
+            async || {
+                let Some(parts) = self.try_parts().await else {
+                    return false;
+                };
+                let ids: std::collections::HashSet<_> = parts
+                    .client
+                    .list_agents()
+                    .await
+                    .into_iter()
+                    .map(|agent| agent.id)
+                    .collect();
+                ids.contains(&parent.id) && expected_ids.is_subset(&ids)
+            },
+            self.failure_dump(),
+        )
+        .await;
+
+        let guard = self.inner.runtime.lock().await;
+        let runtime = guard
+            .as_ref()
+            .unwrap_or_else(|| panic!("daemon '{}' is not running", self.name()));
+        let (channel, _accept_task) = runtime.services.open_in_process_client_channel();
+        drop(guard);
+        let mut client =
+            crate::protocol::wire::client_service_client::ClientServiceClient::new(channel);
+        let response = client
+            .delete_agent(crate::protocol::wire::ClientDeleteAgentRequest {
+                agent: Some(crate::protocol::wire::AgentRef {
+                    identifier: Some(crate::protocol::wire::agent_ref::Identifier::AgentId(
+                        parent.id.as_bytes().to_vec(),
+                    )),
+                }),
+            })
+            .await
+            .expect("cascade delete succeeds")
+            .into_inner();
+        let removed_ids: std::collections::HashSet<_> = response
+            .removed_children
+            .into_iter()
+            .map(|agent| {
+                crate::agents::agent_from_wire(agent)
+                    .expect("removed child decodes")
+                    .id
+            })
+            .collect();
+        assert_eq!(removed_ids, expected_ids);
+        assert!(response.unreachable_children.is_empty());
+    }
+
+    /// A family deletion still removes its local root when a mirrored remote
+    /// child cannot be reached, and reports that child as an orphan candidate.
+    pub async fn cascade_delete_reports_unreachable(
+        &self,
+        parent: &Agent,
+        child_owner: &Daemon,
+        child: &Agent,
+    ) {
+        child_owner.stop().await;
+        let parts = self
+            .try_parts()
+            .await
+            .unwrap_or_else(|| panic!("daemon '{}' is not running", self.name()));
+        parts
+            .client
+            .apply_agent_event(crate::agents::AgentEvent::AgentUp {
+                agent: child.clone(),
+            })
+            .await;
+
+        let guard = self.inner.runtime.lock().await;
+        let runtime = guard
+            .as_ref()
+            .unwrap_or_else(|| panic!("daemon '{}' is not running", self.name()));
+        let (channel, _accept_task) = runtime.services.open_in_process_client_channel();
+        drop(guard);
+        let mut client =
+            crate::protocol::wire::client_service_client::ClientServiceClient::new(channel);
+        let response = client
+            .delete_agent(crate::protocol::wire::ClientDeleteAgentRequest {
+                agent: Some(crate::protocol::wire::AgentRef {
+                    identifier: Some(crate::protocol::wire::agent_ref::Identifier::AgentId(
+                        parent.id.as_bytes().to_vec(),
+                    )),
+                }),
+            })
+            .await
+            .expect("local parent deletion succeeds despite route loss")
+            .into_inner();
+
+        assert!(response.removed_children.is_empty());
+        let unreachable = response
+            .unreachable_children
+            .into_iter()
+            .map(|agent| crate::agents::agent_from_wire(agent).expect("unreachable child decodes"))
+            .collect::<Vec<_>>();
+        assert_eq!(unreachable.len(), 1);
+        assert_eq!(unreachable[0].id, child.id);
+        assert!(
+            !parts
+                .client
+                .list_agents()
+                .await
+                .iter()
+                .any(|agent| agent.id == parent.id)
+        );
+    }
+
     /// Registers a process-free Claude child, delivers a scripted Stop hook,
     /// and observes the resulting lifecycle messages in the parent's own echo
     /// stream. `parent_owner` may be this daemon or a paired remote daemon.

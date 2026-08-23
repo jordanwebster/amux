@@ -1048,23 +1048,30 @@ impl wire::client_service_server::ClientService for ClientService {
             .await
             .map_err(protocol_status)?;
         audit::client_service_disruptive_call("ClientService.DeleteAgent", &caller, Some(agent.id));
-        let agent_request = wire::DeleteAgentRequest {
-            agent_id: agent.id.as_bytes().to_vec(),
-        };
-        if !self.is_local_host(agent.host_id) {
-            return self
-                .remote_delete_agent(agent.host_id, agent_request, agent.id)
-                .await;
+        let descendants = descendant_agents_postorder(&self.list_agents().await, agent.id);
+        let mut removed_children = Vec::new();
+        let mut unreachable_children = Vec::new();
+        for child in descendants {
+            match self.delete_resolved_agent(&child).await {
+                Ok(()) => removed_children.push(child),
+                Err(status) if status.code() == tonic::Code::Unavailable => {
+                    unreachable_children.push(child);
+                }
+                Err(status) => return Err(status),
+            }
         }
-
-        let ctx = self.local_agent_service();
-
-        ctx.delete(agent.id).await.map_err(protocol_status)?;
-        self.apply_agent_event(AgentEvent::AgentDown { agent_id: agent.id })
-            .await;
+        self.delete_resolved_agent(&agent).await?;
         Ok(tonic::Response::new(wire::DeleteAgentResponse {
-            removed_children: Vec::new(),
-            unreachable_children: Vec::new(),
+            removed_children: removed_children
+                .iter()
+                .map(agent_to_wire)
+                .collect::<Result<_, _>>()
+                .map_err(encode_status)?,
+            unreachable_children: unreachable_children
+                .iter()
+                .map(agent_to_wire)
+                .collect::<Result<_, _>>()
+                .map_err(encode_status)?,
         }))
     }
 
@@ -1913,6 +1920,28 @@ fn has_shutdown_reason_metadata(status: &tonic::Status) -> bool {
 }
 
 impl ClientService {
+    async fn delete_resolved_agent(&self, agent: &Agent) -> Result<(), tonic::Status> {
+        if !self.is_local_host(agent.host_id) {
+            self.remote_delete_agent(
+                agent.host_id,
+                wire::DeleteAgentRequest {
+                    agent_id: agent.id.as_bytes().to_vec(),
+                },
+                agent.id,
+            )
+            .await?;
+            return Ok(());
+        }
+
+        self.local_agent_service()
+            .delete(agent.id)
+            .await
+            .map_err(protocol_status)?;
+        self.apply_agent_event(AgentEvent::AgentDown { agent_id: agent.id })
+            .await;
+        Ok(())
+    }
+
     async fn deliver_envelope(
         &self,
         envelope: envelope::Envelope,
@@ -2340,6 +2369,31 @@ impl ClientService {
     async fn has_host(&self, host_id: Uuid) -> bool {
         self.state.read().await.hosts_model.contains_key(&host_id)
     }
+}
+
+fn descendant_agents_postorder(agents: &[Agent], root: Uuid) -> Vec<Agent> {
+    fn visit(
+        agents: &[Agent],
+        parent: Uuid,
+        visited: &mut HashSet<Uuid>,
+        descendants: &mut Vec<Agent>,
+    ) {
+        for child in agents
+            .iter()
+            .filter(|agent| agent.parent.is_some_and(|edge| edge.agent_id == parent))
+        {
+            if !visited.insert(child.id) {
+                continue;
+            }
+            visit(agents, child.id, visited, descendants);
+            descendants.push(child.clone());
+        }
+    }
+
+    let mut visited = HashSet::from([root]);
+    let mut descendants = Vec::new();
+    visit(agents, root, &mut visited, &mut descendants);
+    descendants
 }
 
 fn client_agent_ref(
