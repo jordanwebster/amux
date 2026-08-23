@@ -4,6 +4,13 @@ This file tracks significant development work, decisions made, and current state
 
 ---
 
+2026-08-23 — **Codex dynamic-tool approval asks are retired.** amux answers
+managed dynamic tool calls itself through the owning agent's daemon identity,
+so these calls no longer surface as approval asks. The reserved client-side
+rendering remains in place for its separate follow-up.
+
+---
+
 2026-08-23 — **Claude version discovery follows each process start.** The
 daemon now probes `claude --version` while preparing every new or resumed
 Claude process, before taking the agent registry write lock. Upgrades and

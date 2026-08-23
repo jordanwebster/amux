@@ -281,10 +281,10 @@ commands”, and network-policy amendments become
 show only a bounded, control-sanitized kind and scalar detail, never raw
 serialized JSON; object choices remain unavailable in structured V1.
 
-Dynamic tool-call asks are also answerable — the backend maps
-`accept`/`acceptForSession` to success and `decline`/`cancel` to failure — but
-upstream sends no decision list for them, so the layer supplies the supported
-`accept`/`decline` actions rather than retaining a duplicate raw array.
+Dynamic tool calls are answered by amux itself through the owning agent's
+daemon identity. They no longer become approval asks, so the structured
+client's dynamic-tool approval rendering is retired; its reserved path remains
+in place for a separate client-side follow-up.
 
 `item/tool/requestUserInput` is the one known **unanswerable**
 obligation. Answering it needs free-form content the frozen input shape
