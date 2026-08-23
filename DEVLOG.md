@@ -4864,3 +4864,11 @@ shutdown now marks the background-confirmation owner closed before aborting and
 joining its tasks. A delivery target captured just before removal can therefore
 neither leave a new five-second waiter behind nor attempt a late PTY resend
 after shutdown has drained the session's work.
+
+2026-08-23 — **Kept externally started Claude sessions out of the version
+cache.** A readonly session discovered through hooks tails a transcript like
+any other, and its rows were refreshing the daemon-wide Claude version. A user
+running an older `claude` by hand in another terminal would have stripped
+`--messaging-socket-path` from every managed session spawned afterwards. Readonly
+sessions now observe into a private cache that nothing reads; only sessions the
+daemon itself launched describe the binary the daemon launches.

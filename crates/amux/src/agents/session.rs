@@ -461,9 +461,8 @@ pub(crate) async fn bootstrap_external_hook(
     agent_id: Uuid,
     payload: &[u8],
     env: &HookEnvironment,
-    claude_version_cache: ClaudeVersionCache,
 ) -> std::result::Result<ExternalHookBootstrap, HookError> {
-    ClaudeSession::bootstrap_external_hook(agent_id, payload, env, claude_version_cache)
+    ClaudeSession::bootstrap_external_hook(agent_id, payload, env)
         .await
         .map(|session| match session {
             Some(session) => ExternalHookBootstrap::Register(Box::new(session)),

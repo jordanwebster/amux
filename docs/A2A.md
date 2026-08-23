@@ -96,8 +96,12 @@ versions at or above 2.1.224 also receive a per-agent
 `--messaging-socket-path`. The daemon discovers the installed version once with
 an asynchronous `claude --version` probe bounded to ten seconds. A failed or
 timed-out probe leaves socket delivery disabled. Later process starts read the
-cached result without another probe; any transcript row reporting a different
-`version` refreshes the daemon cache for subsequent sessions. Hook calls
+cached result without another probe; any transcript row from a session the
+daemon started that reports a different `version` refreshes the cache for
+subsequent sessions — including filling in a version the probe could not
+determine, which re-enables socket delivery from the next session on.
+Externally started sessions never feed the cache: the binary a user ran by
+hand says nothing about the one the daemon launches. Hook calls
 forward only `CLAUDE_CODE_MESSAGING_SOCKET` and
 `CLAUDE_CODE_MESSAGING_TOKEN`, allowing the session to refresh the credentials
 without exposing the rest of its environment. Externally started sessions

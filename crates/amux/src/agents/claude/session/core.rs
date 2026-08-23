@@ -188,11 +188,13 @@ impl ClaudeSession {
 
     /// Create a readonly session for an externally-started Claude process.
     /// Has transcript ingest but no PTY.
-    pub(in crate::agents) fn new_readonly(
-        agent_id: Uuid,
-        working_dir: PathBuf,
-        claude_version_cache: ClaudeVersionCache,
-    ) -> Self {
+    ///
+    /// The daemon's version cache describes the `claude` binary the daemon
+    /// itself launches; an externally started process may be any build the
+    /// user ran by hand, so its transcript must not rewrite that cache. This
+    /// session therefore observes into a private cache that nothing reads.
+    pub(in crate::agents) fn new_readonly(agent_id: Uuid, working_dir: PathBuf) -> Self {
+        let claude_version_cache = ClaudeVersionCache::default();
         Self {
             agent_id,
             name: None,
@@ -696,5 +698,39 @@ mod tests {
     #[test]
     fn scrub_list_contains_the_child_session_marker() {
         assert!(CLAUDE_CHILD_SESSION_ENV_SCRUB.contains(&"CLAUDE_CODE_CHILD_SESSION"));
+    }
+
+    #[tokio::test]
+    async fn readonly_session_transcript_never_feeds_the_daemon_version_cache() {
+        let daemon_cache = ClaudeVersionCache::default();
+        daemon_cache.observe_transcript_row(&serde_json::json!({"version": "2.1.224"}));
+
+        let dir = tempfile::tempdir().unwrap();
+        let transcript = dir.path().join("transcript.jsonl");
+        tokio::fs::write(
+            &transcript,
+            "{\"type\":\"user\",\"version\":\"2.1.200\",\"message\":{\"content\":\"hi\"}}\n",
+        )
+        .await
+        .unwrap();
+
+        let session = ClaudeSession::new_readonly(Uuid::from_u128(7), dir.path().to_path_buf());
+        let ingest = session.transcript_ingest.as_ref().unwrap();
+        ingest.link_transcript(transcript).await;
+        let source = ingest.log_source().clone();
+        tokio::time::timeout(std::time::Duration::from_secs(2), async {
+            while source.current_seq().await < 1 {
+                tokio::time::sleep(std::time::Duration::from_millis(10)).await;
+            }
+        })
+        .await
+        .unwrap();
+
+        assert_eq!(
+            session.claude_version_cache.current().as_deref(),
+            Some("2.1.200"),
+            "the row was observed, into the session's private cache"
+        );
+        assert_eq!(daemon_cache.current().as_deref(), Some("2.1.224"));
     }
 }
