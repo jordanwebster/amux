@@ -104,8 +104,9 @@ message through the fallback.
 
 The fallback is a bracketed PTY paste of the generic `<amux>` tag followed by
 Enter. It is also used for human messages, older Claude versions, and sessions
-without socket credentials. Control bytes are refused before any PTY write.
-Claude queues input received during a running turn.
+without socket credentials. Before the paste is built, tabs become spaces and
+other control characters except newline are dropped; the remaining message is
+still delivered. Claude queues input received during a running turn.
 
 ### Codex
 

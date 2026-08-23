@@ -4,6 +4,14 @@ This file tracks significant development work, decisions made, and current state
 
 ---
 
+2026-08-23 — **Claude PTY messages survive control characters safely.**
+The bracketed-paste carrier now replaces tabs with spaces and drops every
+other control character except newline before encoding. Escape and NUL bytes
+therefore cannot become terminal input, while the rest of the envelope is
+delivered instead of rejecting the whole message.
+
+---
+
 2026-08-23 — **Spawned Claude sessions do not inherit messaging secrets.**
 The child environment scrub now removes the Claude messaging token alongside
 the socket path, preventing a daemon launched from Claude from forwarding its

@@ -49,8 +49,7 @@ impl ClaudeDeliveryTarget {
             .pty
             .as_ref()
             .ok_or_else(|| DeliveryError::Failed("Claude PTY is unavailable".to_string()))?;
-        let program = paste_program(&crate::envelope::format(envelope))
-            .map_err(|error| DeliveryError::Failed(error.to_string()))?;
+        let program = paste_program(&crate::envelope::format(envelope));
         send_pty_program(pty, &program)
             .await
             .map_err(|error| DeliveryError::Failed(error.to_string()))?;

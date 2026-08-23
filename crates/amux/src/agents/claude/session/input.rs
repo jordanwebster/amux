@@ -20,34 +20,31 @@ pub(crate) enum PtyInput {
     Delay(u32),
 }
 
-#[derive(Debug, thiserror::Error, PartialEq, Eq)]
-pub(super) enum PasteProgramError {
-    #[error("pasted agent messages must not contain control characters other than newlines")]
-    ControlCharacter,
-}
-
 /// Encode text as the same bracketed-paste submission used by the structured
-/// Claude composer: paste block, a short render delay, then Enter. Rejecting
-/// control characters keeps an embedded escape byte from ending the paste and
-/// turning the remainder into live terminal input.
-pub(super) fn paste_program(text: &str) -> Result<Vec<PtyInput>, PasteProgramError> {
-    let text = text.replace("\r\n", "\n").replace('\r', "\n");
-    if text
+/// Claude composer: paste block, a short render delay, then Enter. Tabs become
+/// spaces and other controls are dropped before encoding, so an embedded
+/// escape byte cannot end the paste and turn the remainder into live terminal
+/// input while the rest of the message remains deliverable.
+pub(super) fn paste_program(text: &str) -> Vec<PtyInput> {
+    let text: String = text
         .chars()
-        .any(|character| character.is_control() && character != '\n')
-    {
-        return Err(PasteProgramError::ControlCharacter);
-    }
+        .filter_map(|character| match character {
+            '\n' => Some('\n'),
+            '\t' => Some(' '),
+            character if character.is_control() => None,
+            character => Some(character),
+        })
+        .collect();
 
     let mut paste = Vec::with_capacity(PASTE_BEGIN.len() + text.len() + PASTE_END.len());
     paste.extend_from_slice(PASTE_BEGIN);
     paste.extend_from_slice(text.as_bytes());
     paste.extend_from_slice(PASTE_END);
-    Ok(vec![
+    vec![
         PtyInput::Bytes(paste),
         PtyInput::Delay(AFTER_PASTE_MS),
         PtyInput::Bytes(ENTER.to_vec()),
-    ])
+    ]
 }
 
 pub(super) async fn send_pty_program(pty: &PtyHandle, actions: &[PtyInput]) -> anyhow::Result<()> {
@@ -174,11 +171,9 @@ mod tests {
     #[test]
     fn a2a_pty_carrier_encodes_paste_block_delay_and_enter() {
         assert_eq!(
-            paste_program("<amux from=\"human\">\r\nhello\r</amux>").unwrap(),
+            paste_program("<amux from=\"human\">\r\nhello\r</amux>"),
             vec![
-                PtyInput::Bytes(
-                    b"\x1b[200~<amux from=\"human\">\nhello\n</amux>\x1b[201~".to_vec()
-                ),
+                PtyInput::Bytes(b"\x1b[200~<amux from=\"human\">\nhello</amux>\x1b[201~".to_vec()),
                 PtyInput::Delay(400),
                 PtyInput::Bytes(b"\r".to_vec()),
             ]
@@ -186,12 +181,14 @@ mod tests {
     }
 
     #[test]
-    fn a2a_pty_carrier_refuses_control_bytes() {
-        for text in ["tab\there", "escape\x1b[201~rest", "nul\0rest"] {
-            assert_eq!(
-                paste_program(text),
-                Err(PasteProgramError::ControlCharacter)
-            );
-        }
+    fn a2a_pty_carrier_normalizes_control_characters_without_losing_the_message() {
+        assert_eq!(
+            paste_program("tab\there\nescape\x1b[201~rest\0"),
+            vec![
+                PtyInput::Bytes(b"\x1b[200~tab here\nescape[201~rest\x1b[201~".to_vec()),
+                PtyInput::Delay(400),
+                PtyInput::Bytes(b"\r".to_vec()),
+            ]
+        );
     }
 }
