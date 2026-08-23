@@ -23,6 +23,8 @@ mod config;
 mod connection;
 mod debug;
 mod dispatcher;
+#[path = "agents/envelope.rs"]
+pub mod envelope;
 mod identity;
 mod pairing;
 mod paths;
