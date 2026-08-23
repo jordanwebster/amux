@@ -741,6 +741,15 @@ fleet, `<leader> d` detach to the shell. A pending ask survives
 leaving; the fleet row shows needs-you and reopening the chat re-docks
 its panel.
 
+Moving between the agents of one family is the same kind of act, so it
+is the same kind of chord: `<leader> n` opens the next agent in this
+agent's family and wraps past the last one back to the top, which makes
+one repeated key both the way in and the way out. The header states how
+many agents are down there (`⋯ 3 subagents`) and says nothing when there
+are none. `<leader> m` opens and closes the completions children have
+sent — a chat-wide state rather than a per-row affordance, because the
+feed has no cursor to point at one row with.
+
 ## Keybindings
 
 Bindings are derived, not accumulated: `notes/chat-v1/keybindings.md`
@@ -798,6 +807,8 @@ excepted, as today.
 | ? | composer, empty | help overlay (full key list); types `?` otherwise | plain |
 | Ctrl+A (leader) | anywhere | chrome leader, configurable; chat never shadows it | plain |
 | Ctrl+A s / Ctrl+A d | chat | back to fleet / detach to shell (as in raw attach) | plain |
+| Ctrl+A n | chat, agent in a family | next agent in this family, wrapping past the last back to the top | plain |
+| Ctrl+A m | chat | open / close the completions a child sent | plain |
 
 Deliberately unbound, each an act of restraint: **Ctrl+G** (the emacs
 abort reflex must never fire agent actions — no-op), **Ctrl+R**
