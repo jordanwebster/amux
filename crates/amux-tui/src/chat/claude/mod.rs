@@ -14,10 +14,10 @@
 //! and the `?` overlay are Phase 6 — [`crate::view::ViewState::open_chat`]
 //! is the seam Phase 6's fleet binding will invoke.
 
-mod ask_ui;
+pub(crate) mod ask_ui;
 pub mod diff;
 mod keys;
-mod panel;
+pub(crate) mod panel;
 mod reader;
 mod render;
 
@@ -29,6 +29,7 @@ use reader::{ReaderSource, ReaderView};
 pub(crate) use render::build_chat_lines;
 
 use crate::chat::FeedScroll;
+use crate::chat::inline::InlineAsk;
 use crate::composer::Composer;
 use crate::view::QuitGuard;
 
@@ -87,6 +88,10 @@ pub struct View {
     /// opens every report it receives stops being readable at the exact
     /// moment several children finish at once.
     pub reports_open: bool,
+    /// A child's ask docked where the composer would be (`<leader> a`,
+    /// U2). The child's layer owns the panel and the answer; this chat
+    /// owns only the decision to show it.
+    pub(crate) inline_ask: Option<InlineAsk>,
 }
 
 impl View {
@@ -107,6 +112,7 @@ impl View {
             kitty,
             help: false,
             reports_open: false,
+            inline_ask: None,
         }
     }
 
@@ -184,6 +190,7 @@ impl View {
             self.pending_answer = None;
         }
         self.sync_ask(model);
+        crate::chat::inline::reconcile(model, self.agent, &mut self.inline_ask);
     }
 
     /// Sync panel and reader to the Model's ask head. Idempotent; also

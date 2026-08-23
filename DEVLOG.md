@@ -4,6 +4,18 @@ This file tracks significant development work, decisions made, and current state
 
 ---
 
+2026-08-23 — **A child's ask can be answered from its parent's chat.**
+The banner naming a waiting child now leads somewhere: one chord docks that
+child's own ask panel where the parent's composer sits, drawn by the child's
+layer under the child's id, and confirming it dispatches that layer's own
+command addressed to the child. Nothing is copied out of the child, so this is
+a second place to reach the one answer path rather than a second way to
+answer: the child's own chat is unchanged, and an ask resolved anywhere takes
+the panel away by the same re-derivation that takes the banner. Only one ask
+is ever on screen — an agent's own obligations hold the bottom block — and
+while a guest is docked, Enter and Ctrl+X belong to the agent whose ask it is,
+so the rows that used to claim them fall silent.
+
 2026-08-23 — **A completion reads as a completion in every chat.**
 What a delivered message makes of itself on screen now follows from its
 envelope kind, decided once in the client kernel: an ordinary message is a

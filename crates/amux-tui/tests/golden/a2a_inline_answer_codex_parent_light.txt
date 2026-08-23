@@ -1,12 +1,10 @@
 --- text ---
 ┌──────────────────────────────────────────────────────────────────────────────────────┐
-│ refactor-tunnels · claude @ mbp · ⋯ 3 subagents                          chat · idle │
-│ ⚠ test-runner needs permission: cargo test --workspace · +1 more · C-a a answer      │
+│ test-runner · codex @ mbp · ⋯ 2 subagents                            chat · thinking │
+│ ⚠ write-the-docs needs permission: git push --force origin a2a                       │
 │──────────────────────────────────────────────────────────────────────────────────────│
-│ › split the tunnel supervisor                                                        │
-│                                                                                      │
-│   Starting with the reconnect path.                                                  │
-│                                                                                      │
+│ ▸ $ cargo test --workspace · running                                                 │
+│   └ cwd /work                                                                        │
 │                                                                                      │
 │                                                                                      │
 │                                                                                      │
@@ -15,21 +13,25 @@
 │                                                                                      │
 │                                                                                      │
 │                                                                                      │
+│ ◐ thinking                                                                           │
+│─ answering write-the-docs ──────────────────────────────────────────────── esc back ─│
+│ ⚠ permission — Bash                                                                  │
 │                                                                                      │
+│   $ git push --force origin a2a                                                      │
 │                                                                                      │
+│ › 1. Allow once                                                                      │
+│   2. Always allow access to /work from this project                                  │
+│   3. Deny — tell the agent why (optional)                                            │
 │                                                                                      │
-│                                                                                      │
-│                                                                                      │
-│                                                                                      │
-│ › Type a message▌                                                                    │
-│                                                                                      │
-│   enter send · ctrl+j newline · ? help                                               │
+│   1-3/↑↓ select · enter confirm · esc back (never answers)                           │
 └──────────────────────────────────────────────────────────────────────────────────────┘
 --- styles ---
 aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa
-d.................aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa..........................aaaaaaaaaaa.d
-d.y.yyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyy......d
+d............aaaaaaaaaaaaaaaaaaaaaaaaaaaaaa............................aaaaaaa.........d
+d.y.yyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyy.......................d
 daaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaad
+d...BBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBB.................................................d
+d...a.aaaaaaaaa........................................................................d
 d......................................................................................d
 d......................................................................................d
 d......................................................................................d
@@ -39,16 +41,14 @@ d...............................................................................
 d......................................................................................d
 d......................................................................................d
 d......................................................................................d
+daaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaad
+d.y....................................................................................d
+d......................................................................................d
+d...a.BBBBBBBBBBBBBBBBBBBBBBBBBBB......................................................d
 d......................................................................................d
 d......................................................................................d
 d......................................................................................d
 d......................................................................................d
 d......................................................................................d
-d......................................................................................d
-d......................................................................................d
-d......................................................................................d
-d......................................................................................d
-d...aaaaaaaaaaaaaa.....................................................................d
-d......................................................................................d
-d...aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa...............................................d
+d...aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa...........................d
 dddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddd

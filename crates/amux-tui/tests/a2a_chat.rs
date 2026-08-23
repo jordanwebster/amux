@@ -657,8 +657,12 @@ fn a2a_banner_carries_a_grandchild_up_the_family() {
     let from_the_top = banner_of(&model, &chat_on(&model, LEAD)).expect("three are asking");
     assert!(
         from_the_top.starts_with("⚠ test-runner needs permission")
-            && from_the_top.ends_with("· +2 more"),
+            && from_the_top.contains("· +2 more"),
         "the loudest is named and the rest are counted: {from_the_top}"
+    );
+    assert!(
+        from_the_top.ends_with("· C-a a answer"),
+        "and the row ends with the way to answer it (U2): {from_the_top}"
     );
 }
 
@@ -1023,5 +1027,402 @@ fn a2a_message_rows_name_the_sender_and_only_a_foreign_host() {
     assert!(
         frame.contains("ghost/00000000-0000-0000-0000-0000000000ff"),
         "an address nobody can resolve is still where it came from:\n{frame}"
+    );
+}
+
+// --- inline answering (U2) ------------------------------------------------
+
+/// A Claude child that wants to run something, so a Codex parent has a
+/// Claude ask to host and the pair is covered both ways round.
+fn claude_child_asking() -> Model {
+    let mut msgs = family_msgs();
+    msgs.push(batch(SCRIBE, NOW - 15, vec![answerable_permission_row()]));
+    // Re-parent the scribe under the Codex runner so a Codex chat is the
+    // one hosting a Claude child's panel.
+    msgs.push(agent_up(&an_agent(
+        SCRIBE,
+        "claude",
+        CLAUDE_PROTOCOL,
+        Some(RUNNER),
+    )));
+    // …and answer the runner's own approval, so its bottom block is free
+    // to host a guest.
+    msgs.push(batch(
+        RUNNER,
+        NOW - 12,
+        vec![json!({
+            "type": "amux.codex_approval_resolved",
+            "request_id": "approval-1",
+            "reason": "answered",
+        })],
+    ));
+    fold(msgs)
+}
+
+/// A Claude permission ask in the verified one-suggestion shape, so the
+/// panel offers its three actions rather than the C2 refusal.
+fn answerable_permission_row() -> Value {
+    json!({
+        "type": "hook.permission_request",
+        "tool_name": "Bash",
+        "tool_input": {"command": "git push --force origin a2a"},
+        "permission_mode": "default",
+        "permission_suggestions": [{
+            "type": "addDirectories",
+            "destination": "session",
+            "directories": ["/work"],
+        }],
+    })
+}
+
+/// Dock the ask the banner names.
+fn docked(model: &Model, name: &str) -> ViewState {
+    let mut view = chat_on(model, name);
+    leader(&mut view, model, 'a');
+    view
+}
+
+/// The panel in the parent's chat is the child's own, drawn by the child's
+/// layer: the Codex approval title, the command it is blocked on, and the
+/// decisions that layer offers — none of which the parent's chat knows
+/// how to write.
+#[test]
+fn a2a_inline_answer_hosts_the_childs_own_panel() {
+    let model = family_model();
+    let frame = frame_of(&model, &docked(&model, LEAD));
+    assert!(
+        frame.contains("answering test-runner"),
+        "the boundary says whose ask this is:\n{frame}"
+    );
+    assert!(
+        frame.contains("approval — command") && frame.contains("cargo test --workspace"),
+        "the Codex layer's own panel:\n{frame}"
+    );
+    assert!(
+        frame.contains("esc back"),
+        "and the way out of it:\n{frame}"
+    );
+}
+
+/// The parent's own composer is what the guest replaces — one panel, one
+/// cursor, and no second place to type.
+#[test]
+fn a2a_inline_answer_replaces_the_parents_composer() {
+    let model = family_model();
+    let before = frame_of(&model, &chat_on(&model, LEAD));
+    assert!(
+        before.contains("enter send"),
+        "the composer footer:\n{before}"
+    );
+    let after = frame_of(&model, &docked(&model, LEAD));
+    assert!(
+        !after.contains("enter send"),
+        "the composer is covered while a guest is docked:\n{after}"
+    );
+    assert_eq!(
+        before.lines().count(),
+        after.lines().count(),
+        "and the frame is the same height"
+    );
+}
+
+/// Confirming dispatches the CHILD's own command, addressed to the child.
+/// Nothing about the act says it happened in somebody else's chat.
+#[test]
+fn a2a_inline_answer_dispatches_the_childs_own_command() {
+    let model = family_model();
+    let mut view = docked(&model, LEAD);
+    let chat = view.chat.as_mut().expect("an open chat");
+    let action = amux_tui::chat::handle_chat_key(
+        chat,
+        &model,
+        press(KeyCode::Enter, KeyModifiers::NONE),
+        (WIDTH, HEIGHT),
+        at(NOW),
+    );
+    match action {
+        Some(UiAction::Dispatch(amux_ui::Command::Codex(amux_ui::CodexCommand::Answer {
+            agent,
+            ..
+        }))) => assert_eq!(agent, agent_id(RUNNER), "the child is the addressee"),
+        other => panic!("expected the child's own Answer, got {other:?}"),
+    }
+}
+
+/// The same act from the child's own chat produces the identical command
+/// — there is one answer path, and the parent's chat is a second place to
+/// reach it rather than a second way to do it.
+#[test]
+fn a2a_inline_answer_matches_answering_from_the_childs_own_view() {
+    let model = family_model();
+
+    let mut inline = docked(&model, LEAD);
+    let chat = inline.chat.as_mut().expect("an open chat");
+    let from_the_parent = amux_tui::chat::handle_chat_key(
+        chat,
+        &model,
+        press(KeyCode::Enter, KeyModifiers::NONE),
+        (WIDTH, HEIGHT),
+        at(NOW),
+    );
+
+    let mut own = chat_on(&model, RUNNER);
+    let chat = own.chat.as_mut().expect("an open chat");
+    let from_the_child = amux_tui::chat::handle_chat_key(
+        chat,
+        &model,
+        press(KeyCode::Enter, KeyModifiers::NONE),
+        (WIDTH, HEIGHT),
+        at(NOW),
+    );
+
+    assert_eq!(from_the_parent, from_the_child);
+}
+
+/// Answering from the child's own view is untouched by any of this: the
+/// child's frame is the same whether or not its parent has its ask
+/// docked, because nothing was moved out of the child's layer.
+#[test]
+fn a2a_inline_answer_leaves_the_childs_own_view_unchanged() {
+    let model = family_model();
+    let alone = frame_of(&model, &chat_on(&model, RUNNER));
+    let _hosted = docked(&model, LEAD);
+    let while_hosted = frame_of(&model, &chat_on(&model, RUNNER));
+    assert_eq!(alone, while_hosted);
+    assert!(
+        while_hosted.contains("approval — command"),
+        "the child still shows its own ask:\n{while_hosted}"
+    );
+}
+
+/// A Codex parent hosting a Claude child: the panel is the Claude layer's
+/// — its permission actions, in its words — and confirming dispatches the
+/// Claude command for the Claude child.
+#[test]
+fn a2a_inline_answer_works_the_other_way_round() {
+    let model = claude_child_asking();
+    let frame = frame_of(&model, &docked(&model, RUNNER));
+    assert!(
+        frame.contains("answering write-the-docs"),
+        "the boundary names the Claude child:\n{frame}"
+    );
+    assert!(
+        frame.contains("Allow once") && frame.contains("git push --force origin a2a"),
+        "the Claude layer's own panel:\n{frame}"
+    );
+
+    let mut view = docked(&model, RUNNER);
+    let chat = view.chat.as_mut().expect("an open chat");
+    let action = amux_tui::chat::handle_chat_key(
+        chat,
+        &model,
+        press(KeyCode::Enter, KeyModifiers::NONE),
+        (WIDTH, HEIGHT),
+        at(NOW),
+    );
+    match action {
+        Some(UiAction::Dispatch(amux_ui::Command::Claude(amux_ui::ClaudeCommand::AnswerAsk {
+            agent,
+            ..
+        }))) => assert_eq!(agent, agent_id(SCRIBE), "the child is the addressee"),
+        other => panic!("expected the child's own AnswerAsk, got {other:?}"),
+    }
+}
+
+/// The panel is a derivation like the banner above it: an ask answered in
+/// the child's own chat, or on another device, takes it away on the next
+/// fold with nothing to dismiss.
+#[test]
+fn a2a_inline_answer_clears_when_the_ask_is_answered_anywhere() {
+    let mut msgs = family_msgs();
+    let model = fold(msgs.clone());
+    let mut view = docked(&model, LEAD);
+    assert!(frame_of(&model, &view).contains("answering test-runner"));
+
+    msgs.push(batch(
+        RUNNER,
+        NOW - 5,
+        vec![json!({
+            "type": "amux.codex_approval_resolved",
+            "request_id": "approval-1",
+            "reason": "answered",
+        })],
+    ));
+    let answered = fold(msgs);
+    view.chat
+        .as_mut()
+        .expect("an open chat")
+        .reconcile(&answered);
+    let frame = frame_of(&answered, &view);
+    assert!(
+        !frame.contains("answering test-runner"),
+        "the guest left with the ask:\n{frame}"
+    );
+    assert!(
+        frame.contains("enter send"),
+        "and the parent's composer came back:\n{frame}"
+    );
+}
+
+/// Esc sends the guest back. Answering a child is something the human
+/// opted into; leaving it is one key, and the parent's own chat returns
+/// exactly as it was.
+#[test]
+fn a2a_inline_answer_esc_returns_the_parents_composer() {
+    let model = family_model();
+    let before = frame_of(&model, &chat_on(&model, LEAD));
+    let mut view = docked(&model, LEAD);
+    let chat = view.chat.as_mut().expect("an open chat");
+    amux_tui::chat::handle_chat_key(
+        chat,
+        &model,
+        press(KeyCode::Esc, KeyModifiers::NONE),
+        (WIDTH, HEIGHT),
+        at(NOW),
+    );
+    assert_eq!(frame_of(&model, &view), before);
+}
+
+/// An agent's own obligations come before its children's: while this chat
+/// has an ask of its own, the bottom block is taken, the banner withholds
+/// the chord, and pressing it does nothing.
+#[test]
+fn a2a_inline_answer_yields_to_the_parents_own_ask() {
+    let mut msgs = family_msgs();
+    msgs.push(batch(SCRIBE, NOW - 15, vec![answerable_permission_row()]));
+    msgs.push(agent_up(&an_agent(
+        SCRIBE,
+        "claude",
+        CLAUDE_PROTOCOL,
+        Some(RUNNER),
+    )));
+    // The runner keeps its own pending approval from the fixture.
+    let model = fold(msgs);
+
+    let banner = banner_of(&model, &chat_on(&model, RUNNER)).expect("its child is asking");
+    assert!(
+        !banner.contains("answer"),
+        "the chord is not advertised where it would do nothing: {banner}"
+    );
+    let frame = frame_of(&model, &docked(&model, RUNNER));
+    assert!(
+        !frame.contains("answering write-the-docs"),
+        "and pressing it changes nothing:\n{frame}"
+    );
+    assert!(
+        frame.contains("approval — command"),
+        "this agent's own ask still holds the panel:\n{frame}"
+    );
+}
+
+/// A child that needs a person but has nothing to answer — one that
+/// finished — gets no chord either: the hint tracks what the key would
+/// actually do (P10).
+#[test]
+fn a2a_inline_answer_is_not_offered_for_a_child_with_nothing_to_answer() {
+    let mut msgs = family_msgs();
+    msgs.push(batch(
+        RUNNER,
+        NOW - 5,
+        vec![json!({
+            "type": "amux.codex_approval_resolved",
+            "request_id": "approval-1",
+            "reason": "answered",
+        })],
+    ));
+    let model = fold(msgs);
+    let banner = banner_of(&model, &chat_on(&model, LEAD)).expect("a finished child remains");
+    assert!(banner.contains("write-the-docs finished"), "{banner}");
+    assert!(
+        !banner.contains("answer"),
+        "nothing to answer, nothing to offer: {banner}"
+    );
+}
+
+/// Ctrl+X interrupts the agent whose ask is on screen — the child while
+/// its panel is docked here, the parent again once it is dismissed.
+#[test]
+fn a2a_inline_answer_points_the_interrupt_at_the_agent_on_screen() {
+    let model = family_model();
+    let mut view = docked(&model, LEAD);
+    let chat = view.chat.as_mut().expect("an open chat");
+    let while_docked = amux_tui::chat::handle_chat_key(
+        chat,
+        &model,
+        press(KeyCode::Char('x'), KeyModifiers::CONTROL),
+        (WIDTH, HEIGHT),
+        at(NOW),
+    );
+    assert_eq!(
+        while_docked,
+        Some(UiAction::Dispatch(amux_ui::Command::Codex(
+            amux_ui::CodexCommand::Interrupt {
+                agent: agent_id(RUNNER)
+            }
+        )))
+    );
+
+    let mut view = chat_on(&model, LEAD);
+    let chat = view.chat.as_mut().expect("an open chat");
+    let plain = amux_tui::chat::handle_chat_key(
+        chat,
+        &model,
+        press(KeyCode::Char('x'), KeyModifiers::CONTROL),
+        (WIDTH, HEIGHT),
+        at(NOW),
+    );
+    assert_eq!(
+        plain,
+        Some(UiAction::Dispatch(amux_ui::Command::Claude(
+            amux_ui::ClaudeCommand::Interrupt {
+                agent: agent_id(LEAD)
+            }
+        )))
+    );
+}
+
+/// Typing behind a docked guest never reaches the parent's draft: the
+/// panel has no open field here, so the paste is dropped rather than
+/// landing invisibly in a message to the wrong agent.
+#[test]
+fn a2a_inline_answer_keeps_typing_out_of_the_parents_draft() {
+    let model = family_model();
+    let mut view = docked(&model, LEAD);
+    let chat = view.chat.as_mut().expect("an open chat");
+    amux_tui::chat::handle_chat_paste(chat, &model, "not for the lead");
+    let chat = view.chat.as_mut().expect("an open chat");
+    amux_tui::chat::handle_chat_key(
+        chat,
+        &model,
+        press(KeyCode::Esc, KeyModifiers::NONE),
+        (WIDTH, HEIGHT),
+        at(NOW),
+    );
+    let frame = frame_of(&model, &view);
+    assert!(
+        !frame.contains("not for the lead"),
+        "the parent's composer is untouched:\n{frame}"
+    );
+}
+
+#[test]
+fn a2a_inline_answer_in_a_claude_parents_chat() {
+    let model = family_model();
+    assert_surface(
+        "a2a_inline_answer_claude_parent",
+        &model,
+        &docked(&model, LEAD),
+        HEIGHT,
+    );
+}
+
+#[test]
+fn a2a_inline_answer_in_a_codex_parents_chat() {
+    let model = claude_child_asking();
+    assert_surface(
+        "a2a_inline_answer_codex_parent",
+        &model,
+        &docked(&model, RUNNER),
+        HEIGHT,
     );
 }

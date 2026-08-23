@@ -750,6 +750,19 @@ are none. `<leader> m` opens and closes the completions children have
 sent — a chat-wide state rather than a per-row affordance, because the
 feed has no cursor to point at one row with.
 
+A child waiting on a person can be answered without leaving: `<leader>
+a` docks the ask the banner names where the composer sits, drawn by the
+child's own layer with the child's id, and confirming it dispatches that
+layer's own command addressed to the child. It is the same act as
+answering in the child's chat — one path, no copied state — so an ask
+answered anywhere takes the panel away by re-derivation, exactly as it
+takes the banner. Esc sends the guest back. Only one ask is on screen at
+a time: while this agent has an ask of its own, that one holds the
+bottom block and the banner withholds the chord. While a guest is
+docked, Enter and Ctrl+X belong to it — Ctrl+X interrupts the agent
+whose ask is on screen — so the activity and composer rows stop naming
+them.
+
 ## Keybindings
 
 Bindings are derived, not accumulated: `notes/chat-v1/keybindings.md`

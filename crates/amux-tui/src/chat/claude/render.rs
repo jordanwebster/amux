@@ -100,6 +100,12 @@ fn bottom_lines(
 
     let mut lines: Vec<Line<'static>> = if readonly {
         readonly_bottom(model, chat, theme, width)
+    } else if let Some(inline) = chat.inline_ask.as_ref().filter(|_| head.is_none()) {
+        // U2: a child's ask docks where the composer is, exactly as this
+        // chat's own ask would. This chat's own ask comes first — and
+        // reconcile drops a guest the moment one arrives, so the filter
+        // is a belt on top of that brace, never a state that persists.
+        crate::chat::inline::panel_lines(model, inline, width, theme, chat.quit_guard.is_armed())
     } else if let Some(ask) = head {
         let count = model
             .claude(chat.agent)
@@ -287,8 +293,12 @@ pub(crate) fn build_chat_lines(
     lines.push(header_line(model, chat, theme, phase, width, readonly));
     // U1: a child's ask reaches its parent directly under the header,
     // above the conversation it is interrupting.
-    if let Some(text) = &banner {
-        lines.push(family_banner_line(text, width, theme));
+    if let Some(banner) = &banner {
+        lines.push(family_banner_line(
+            &banner.row(banner_answerable(model, chat, banner), chat.leader),
+            width,
+            theme,
+        ));
     }
 
     // The feed viewport: everything before `transcript_ready` is replay —
@@ -492,6 +502,12 @@ fn header_line(
     line
 }
 
+/// Whether this banner's chord would do anything from here: the child
+/// has a panel to dock, and it is not already docked.
+fn banner_answerable(model: &Model, chat: &View, banner: &crate::chat::FamilyBanner) -> bool {
+    chat.inline_ask.is_none() && crate::chat::inline::can_open(model, chat.agent, banner.child)
+}
+
 /// The child-ask banner (U1): one warning row naming who is waiting and
 /// for what. It is derived per frame from the child's own card, so it
 /// leaves the moment the ask is answered — anywhere.
@@ -608,7 +624,11 @@ fn working_line(
         label.push_str(&format!(" · {}", fmt_secs(secs)));
     }
     push_span(&mut line, GLYPH_COL, label, theme.text());
-    if !readonly {
+    // A docked child ask owns Ctrl+X while it is on screen — it
+    // interrupts the agent whose ask that is — so the working line stops
+    // claiming it here: a hint that would do something else than it says
+    // is worse than no hint (P10).
+    if !readonly && chat.inline_ask.is_none() {
         line.spans
             .push(Span::styled(" · ctrl+x interrupt", theme.muted()));
     }

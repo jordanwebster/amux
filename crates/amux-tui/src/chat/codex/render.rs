@@ -2,13 +2,13 @@
 //! only from `amux_ui::codex::phase`; feed blocks format the layer's typed
 //! entries without reconstructing a second semantic model.
 
-use amux_ui::Model;
 use amux_ui::codex::{
     ApprovalResolution, Ask, AskContext, BoundaryEntry, CodexPhase, ErrorSeverity, FeedEntry,
     FeedEntryKind, ItemFinality, McpStartupEntry, McpStartupStatus, MessagePhase,
     NetworkPolicyAction, NetworkPolicyAmendment, PromptPart, PromptSource, TokenUsage, TurnStatus,
     WorkEntry, WorkKind, WorkOutcome, WorkState,
 };
+use amux_ui::{AgentId, Model};
 use ratatui::style::Style;
 use ratatui::text::{Line, Span};
 use serde_json::Value;
@@ -105,8 +105,12 @@ pub(crate) fn build_chat_lines(
     lines.push(header_line(model, chat, &phase, width, theme));
     // U1: a child's ask reaches its parent directly under the header,
     // above the conversation it is interrupting.
-    if let Some(text) = &banner {
-        lines.push(family_banner_line(text, width, theme));
+    if let Some(banner) = &banner {
+        lines.push(family_banner_line(
+            &banner.row(banner_answerable(model, chat, banner), chat.leader),
+            width,
+            theme,
+        ));
     }
 
     let loading = matches!(phase, CodexPhase::Replaying);
@@ -216,6 +220,12 @@ fn header_line(
     line
 }
 
+/// Whether this banner's chord would do anything from here: the child
+/// has a panel to dock, and it is not already docked.
+fn banner_answerable(model: &Model, chat: &View, banner: &crate::chat::FamilyBanner) -> bool {
+    chat.inline_ask.is_none() && crate::chat::inline::can_open(model, chat.agent, banner.child)
+}
+
 /// The child-ask banner (U1): one warning row naming who is waiting and
 /// for what, derived per frame so it leaves when the ask is answered
 /// anywhere.
@@ -294,11 +304,17 @@ fn working_line(
         ctx.theme.text(),
     );
     let mut hints = Vec::new();
-    if amux_ui::codex::allows_steer(model, chat.agent) {
-        hints.push("enter steer");
-    }
-    if amux_ui::codex::allows_interrupt(model, chat.agent) {
-        hints.push("ctrl+x interrupt");
+    // A docked child ask owns Enter and Ctrl+X while it is on screen, so
+    // the activity line stops naming them: a hint that would do
+    // something else than it says is worse than no hint (P10). The
+    // panel's own rows say what those keys do instead.
+    if chat.inline_ask.is_none() {
+        if amux_ui::codex::allows_steer(model, chat.agent) {
+            hints.push("enter steer");
+        }
+        if amux_ui::codex::allows_interrupt(model, chat.agent) {
+            hints.push("ctrl+x interrupt");
+        }
     }
     if !hints.is_empty() {
         line.spans.push(Span::styled(
@@ -354,8 +370,24 @@ fn bottom_lines(
     let max_rows = rows.bottom_max();
     let mut lines = if chat.read_only(model) {
         readonly_bottom(theme)
+    } else if let Some(inline) = &chat.inline_ask {
+        // U2: a child's ask docks where the composer is, exactly as this
+        // chat's own ask would. The parent's own ask is checked first,
+        // below, and reconcile drops a guest the moment one arrives —
+        // one panel, one cursor, one place to look.
+        crate::chat::inline::panel_lines(model, inline, width, theme, chat.quit_guard.is_armed())
     } else if let Some(ask) = model.codex(chat.agent).and_then(|layer| layer.ask_head()) {
-        approval_panel(model, chat, ask, width, theme)
+        approval_panel(
+            model,
+            ApprovalView {
+                agent: chat.agent,
+                cursor: chat.approval_cursor,
+                failure: chat.answer_failure.as_deref(),
+            },
+            ask,
+            width,
+            theme,
+        )
     } else if matches!(
         amux_ui::codex::phase(model, chat.agent),
         CodexPhase::BlockedUnsupported { .. }
@@ -378,15 +410,26 @@ fn bottom_lines(
     lines
 }
 
-fn approval_panel(
+/// Whose approval this is and how the reader is holding it — the whole
+/// of what the panel needed from a `View`. Named separately so the same
+/// rows can be drawn for an agent whose chat is not the one on screen
+/// (U2: a child's ask, docked in its parent's chat).
+#[derive(Clone, Copy)]
+pub(crate) struct ApprovalView<'a> {
+    pub(crate) agent: AgentId,
+    pub(crate) cursor: usize,
+    pub(crate) failure: Option<&'a str>,
+}
+
+pub(crate) fn approval_panel(
     model: &Model,
-    chat: &View,
+    view: ApprovalView<'_>,
     ask: &Ask,
     width: usize,
     theme: Theme,
 ) -> Vec<Line<'static>> {
     let count = model
-        .codex(chat.agent)
+        .codex(view.agent)
         .map(|layer| layer.ask_count())
         .unwrap_or(1);
     let mut lines = vec![panel_rule(width, theme)];
@@ -403,11 +446,11 @@ fn approval_panel(
     }
     lines.push(header);
     lines.extend(context_lines(&ask.context, width, theme));
-    if let Some(message) = &chat.answer_failure {
+    if let Some(message) = view.failure {
         lines.extend(glyph_text("✗", message, width, theme.error(), theme.text()));
     }
     lines.push(new_line());
-    let answer_in_flight = model.codex(chat.agent).is_some_and(|layer| {
+    let answer_in_flight = model.codex(view.agent).is_some_and(|layer| {
         layer.in_flight_inputs().any(|input| {
             matches!(&input.kind, amux_ui::codex::InFlightKind::Answer { request_id, .. }
                 if *request_id == ask.request_id)
@@ -422,12 +465,12 @@ fn approval_panel(
             theme.muted(),
         ));
     } else {
-        let allows_answer = amux_ui::codex::allows_answer(model, chat.agent);
+        let allows_answer = amux_ui::codex::allows_answer(model, view.agent);
         for (index, action) in ask.actions.iter().enumerate() {
             let mut line = new_line();
             let supported = action.decision.is_some();
             let selectable = allows_answer && supported;
-            if selectable && index == chat.approval_cursor {
+            if selectable && index == view.cursor {
                 push_span(&mut line, GLYPH_COL, "›", theme.text());
             }
             let style = if selectable {

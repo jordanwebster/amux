@@ -4,6 +4,7 @@
 
 pub(crate) mod claude;
 mod codex;
+pub(crate) mod inline;
 mod layout;
 
 use amux_ui::{
@@ -309,7 +310,7 @@ pub(crate) fn sender_marker(model: &Model, agent: AgentId, from: &str) -> String
 /// loudest need is named; the rest are counted, because a chat that
 /// spends four rows on other agents' business is no longer this agent's
 /// chat.
-pub(crate) fn family_banner(model: &Model, agent: AgentId) -> Option<String> {
+pub(crate) fn family_banner(model: &Model, agent: AgentId) -> Option<FamilyBanner> {
     let needs = model.family_needs(agent);
     let first = needs.first()?;
     let name = first.card.display_name();
@@ -323,7 +324,32 @@ pub(crate) fn family_banner(model: &Model, agent: AgentId) -> Option<String> {
     if needs.len() > 1 {
         text.push_str(&format!(" · +{} more", needs.len() - 1));
     }
-    Some(text)
+    Some(FamilyBanner {
+        child: first.agent(),
+        text,
+    })
+}
+
+/// The banner, before it is words: the need it names and the child that
+/// raised it. The parent's chat needs both — the words for the row, the
+/// child for the panel the row leads to (U2).
+pub(crate) struct FamilyBanner {
+    /// The child the loudest need belongs to: the one `<leader> a` docks.
+    pub(crate) child: AgentId,
+    text: String,
+}
+
+impl FamilyBanner {
+    /// The row as it reads. The chord that docks the child's own panel
+    /// here is named only when it would open one — a finished child
+    /// wants a person, not an answer, and a parent whose own ask holds
+    /// the bottom block has nowhere to put a guest (P10).
+    pub(crate) fn row(&self, answerable: bool, leader: char) -> String {
+        match answerable {
+            true => format!("{} · C-{leader} a answer", self.text),
+            false => self.text.clone(),
+        }
+    }
 }
 
 /// The child's layer decides what its own ask looks like; the parent's

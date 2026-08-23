@@ -4,6 +4,7 @@ use chrono::{DateTime, Utc};
 use crossterm::event::{KeyCode, KeyEvent, KeyEventKind, KeyModifiers};
 
 use super::{View, render};
+use crate::chat::inline::{InlineAsk, InlineOutcome};
 use crate::chat::{FeedScroll, entry_watermark};
 use crate::composer;
 use crate::view::UiAction;
@@ -43,6 +44,14 @@ pub(crate) fn handle_chat_key(
                 chat.reports_open = !chat.reports_open;
                 None
             }
+            // `<leader> a`: dock the ask the banner names, or send it
+            // back (U2). A leader chord because it is the same act in
+            // both chats and must never reach a draft or a panel; the
+            // banner names it, and only while it would open something.
+            KeyCode::Char('a') => {
+                toggle_inline_ask(chat, model);
+                None
+            }
             _ => None,
         };
     }
@@ -58,6 +67,7 @@ pub(crate) fn handle_chat_key(
     if key.code == KeyCode::Char('c') && key.modifiers.contains(KeyModifiers::CONTROL) {
         let composer_focused = !chat.help
             && !chat.read_only(model)
+            && chat.inline_ask.is_none()
             && model
                 .codex(chat.agent)
                 .is_none_or(|layer| layer.ask_head().is_none())
@@ -82,6 +92,13 @@ pub(crate) fn handle_chat_key(
 
     if chat.read_only(model) {
         return readonly_key(chat, model, key, viewport);
+    }
+
+    // A docked child ask owns the composer area and its keys, exactly as
+    // this chat's own ask would — including Ctrl+X, which interrupts the
+    // agent whose ask is on screen.
+    if chat.inline_ask.is_some() {
+        return inline_key(chat, model, key, viewport);
     }
 
     let ctrl = key.modifiers.contains(KeyModifiers::CONTROL);
@@ -141,6 +158,17 @@ pub(crate) fn handle_chat_paste(chat: &mut View, model: &Model, text: &str) {
     chat.answer_failure = None;
     chat.quit_guard.disarm();
     chat.reconcile(model);
+    // A docked child ask covers the composer: its open field takes the
+    // paste, and it drops when there is none. Nothing typed behind a
+    // guest panel reaches this agent's draft.
+    if let Some(inline) = chat.inline_ask.as_mut() {
+        let one_line = text
+            .replace("\r\n", "\n")
+            .replace('\r', "\n")
+            .replace('\n', " ");
+        crate::chat::inline::handle_paste(inline, &one_line);
+        return;
+    }
     if chat.help
         || chat.read_only(model)
         || model
@@ -155,6 +183,48 @@ pub(crate) fn handle_chat_paste(chat: &mut View, model: &Model, text: &str) {
         return;
     }
     chat.composer.paste(text);
+}
+
+/// `<leader> a`: dock the ask the banner names, or send it back (U2).
+/// Nothing happens when the banner names a child with no panel to dock —
+/// a finished child needs a person, not an answer — which is exactly the
+/// condition the banner withholds the chord under.
+fn toggle_inline_ask(chat: &mut View, model: &Model) {
+    if chat.inline_ask.take().is_some() {
+        return;
+    }
+    let Some(banner) = crate::chat::family_banner(model, chat.agent) else {
+        return;
+    };
+    if !crate::chat::inline::can_open(model, chat.agent, banner.child) {
+        return;
+    }
+    chat.inline_ask = InlineAsk::open(model, banner.child);
+}
+
+/// Keys while a child's ask is docked here: the child's layer's own
+/// panel first, this chat's feed scrolling as the fallback — the
+/// conversation stays readable behind a guest exactly as behind an ask
+/// of this agent's own.
+fn inline_key(
+    chat: &mut View,
+    model: &Model,
+    key: KeyEvent,
+    viewport: (u16, u16),
+) -> Option<UiAction> {
+    let inline = chat.inline_ask.as_mut()?;
+    match crate::chat::inline::handle_key(model, inline, &key) {
+        InlineOutcome::Dispatch(command) => Some(UiAction::Dispatch(command)),
+        InlineOutcome::Close => {
+            chat.inline_ask = None;
+            None
+        }
+        InlineOutcome::Handled => None,
+        InlineOutcome::NotHandled => {
+            scroll_keys(chat, model, &key, viewport);
+            None
+        }
+    }
 }
 
 fn send(chat: &mut View, model: &Model) -> Option<UiAction> {

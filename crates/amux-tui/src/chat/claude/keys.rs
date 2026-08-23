@@ -18,6 +18,7 @@ use crate::chat::FeedScroll;
 use crate::chat::claude::ask_ui::{self, AskKeyOutcome, AskStage, AskUi};
 use crate::chat::claude::reader::{self, ReaderSource, ReaderView};
 use crate::chat::claude::{View, entry_watermark, render};
+use crate::chat::inline::{InlineAsk, InlineOutcome};
 use crate::composer;
 use crate::composer::Composer;
 use crate::view::UiAction;
@@ -68,6 +69,14 @@ pub fn handle_chat_key(
             // does the same thing everywhere is teachable in one line.
             KeyCode::Char('m') => {
                 chat.reports_open = !chat.reports_open;
+                None
+            }
+            // `<leader> a`: dock the ask the banner names, or send it
+            // back (U2). A leader chord because it is the same act in
+            // both chats and must never reach a draft or a panel; the
+            // banner names it, and only while it would open something.
+            KeyCode::Char('a') => {
+                toggle_inline_ask(chat, model);
                 None
             }
             _ => None,
@@ -128,18 +137,26 @@ pub fn handle_chat_key(
         // focus state — open ask panels and readers included, even while
         // send is gated. Never on Esc, never on Ctrl+C. The reducer
         // dispatches it ungated.
-        KeyCode::Char('x') if ctrl => {
+        KeyCode::Char('x') if ctrl && chat.inline_ask.is_none() => {
             return Some(UiAction::Dispatch(Command::Claude(
                 ClaudeCommand::Interrupt { agent: chat.agent },
             )));
         }
         // The settled view-only Esc chain: never answers, never
-        // interrupts.
-        KeyCode::Esc => {
+        // interrupts. A docked guest panel owns Esc first — it is the
+        // way back out of somebody else's ask.
+        KeyCode::Esc if chat.inline_ask.is_none() => {
             esc_chain(chat);
             return None;
         }
         _ => {}
+    }
+
+    // A docked child ask owns the composer area and its keys, exactly as
+    // this chat's own ask would (C1) — including Ctrl+X, which
+    // interrupts the agent whose ask is on screen.
+    if chat.inline_ask.is_some() {
+        return inline_key(chat, model, key, viewport);
     }
 
     // The fullscreen reader owns keys while open.
@@ -165,27 +182,53 @@ pub fn handle_chat_key(
 /// clears. This mirrors the focus derivation keys and paste routing use —
 /// the invisible composer behind a docked panel is never "focused".
 fn focused_field<'c>(chat: &'c mut View, model: &Model) -> Option<&'c mut Composer> {
+    match focus(chat, model) {
+        Focus::Nothing => None,
+        Focus::Ask => chat.ask_ui.as_mut().and_then(AskUi::active_field),
+        Focus::Inline => chat.inline_ask.as_mut().and_then(InlineAsk::active_field),
+        Focus::Composer => Some(&mut chat.composer),
+    }
+}
+
+/// Which surface owns the keyboard right now. Derived from the Model and
+/// the view together, and separately from taking the field, so the two
+/// callers that need the answer — the guarded Ctrl+C and paste routing —
+/// cannot drift apart.
+enum Focus {
+    Nothing,
+    /// This agent's own ask, docked or under the reader.
+    Ask,
+    /// A child's ask, docked here.
+    Inline,
+    Composer,
+}
+
+fn focus(chat: &View, model: &Model) -> Focus {
     // A read-only chat has no field anywhere (F1); the open help overlay
     // covers whatever field there was.
     if chat.read_only(model) || chat.help {
-        return None;
+        return Focus::Nothing;
     }
     if chat.reader.is_some() {
-        if !reader::answer_actionable(model, chat) {
-            return None;
-        }
-        return chat.ask_ui.as_mut().and_then(AskUi::active_field);
+        return match reader::answer_actionable(model, chat) {
+            true => Focus::Ask,
+            false => Focus::Nothing,
+        };
+    }
+    // A docked child ask covers the composer, so the field it has open
+    // is the focused one — the guarded Ctrl+C clears a half-typed denial
+    // to a child the same way it clears one to this agent.
+    if chat.inline_ask.is_some() {
+        return Focus::Inline;
     }
     match chat.ask_head(model).map(|ask| &ask.state) {
         // An interactive ask head owns the surface: its open text stage
         // is the field; its menu stages have none.
-        Some(AskState::Pending | AskState::SendFailed { .. }) => {
-            chat.ask_ui.as_mut().and_then(AskUi::active_field)
-        }
+        Some(AskState::Pending | AskState::SendFailed { .. }) => Focus::Ask,
         // The optimistic-pending marker has no field; otherwise the
         // composer is focused.
-        Some(AskState::AnsweredOptimistic { .. }) => None,
-        None => Some(&mut chat.composer),
+        Some(AskState::AnsweredOptimistic { .. }) => Focus::Nothing,
+        None => Focus::Composer,
     }
 }
 
@@ -323,7 +366,60 @@ pub fn handle_chat_paste(chat: &mut View, model: &Model, text: &str) {
         }
         return;
     }
+    // A docked child ask covers the composer: its open field takes the
+    // paste, and it drops when there is none. Nothing typed behind a
+    // guest panel reaches this agent's draft.
+    if let Some(inline) = chat.inline_ask.as_mut() {
+        let one_line = text
+            .replace("\r\n", "\n")
+            .replace('\r', "\n")
+            .replace('\n', " ");
+        crate::chat::inline::handle_paste(inline, &one_line);
+        return;
+    }
     chat.composer.paste(text);
+}
+
+/// `<leader> a`: dock the ask the banner names, or send it back (U2).
+/// Nothing happens when the banner names a child with no panel to dock —
+/// a finished child needs a person, not an answer — which is exactly the
+/// condition the banner withholds the chord under.
+fn toggle_inline_ask(chat: &mut View, model: &Model) {
+    if chat.inline_ask.take().is_some() {
+        return;
+    }
+    let Some(banner) = crate::chat::family_banner(model, chat.agent) else {
+        return;
+    };
+    if !crate::chat::inline::can_open(model, chat.agent, banner.child) {
+        return;
+    }
+    chat.inline_ask = InlineAsk::open(model, banner.child);
+}
+
+/// Keys while a child's ask is docked here: the child's layer's own
+/// panel first, this chat's feed scrolling as the fallback — the
+/// conversation stays readable behind a guest exactly as behind an ask
+/// of this agent's own.
+fn inline_key(
+    chat: &mut View,
+    model: &Model,
+    key: KeyEvent,
+    viewport: (u16, u16),
+) -> Option<UiAction> {
+    let inline = chat.inline_ask.as_mut()?;
+    match crate::chat::inline::handle_key(model, inline, &key) {
+        InlineOutcome::Dispatch(command) => Some(UiAction::Dispatch(command)),
+        InlineOutcome::Close => {
+            chat.inline_ask = None;
+            None
+        }
+        InlineOutcome::Handled => None,
+        InlineOutcome::NotHandled => {
+            scroll_keys(chat, model, &key, viewport);
+            None
+        }
+    }
 }
 
 /// Enter: send, gated on phase by the same derivation the footer states

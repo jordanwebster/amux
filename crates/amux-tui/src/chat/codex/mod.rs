@@ -2,7 +2,7 @@
 //! no Claude entry, ask, phase, or artifact type crosses this module.
 
 mod keys;
-mod render;
+pub(crate) mod render;
 
 use amux_ui::codex::{AskContext, CodexCommand, CodexPhase};
 use amux_ui::{AgentId, Command, Model, OpId, OpOutcome};
@@ -11,6 +11,7 @@ pub(crate) use render::build_chat_lines;
 use serde_json::Value;
 
 use crate::chat::FeedScroll;
+use crate::chat::inline::InlineAsk;
 use crate::composer::Composer;
 use crate::view::QuitGuard;
 
@@ -49,6 +50,10 @@ pub(crate) struct View {
     /// opens every report it receives stops being readable at the exact
     /// moment several children finish at once.
     pub reports_open: bool,
+    /// A child's ask docked where the composer would be (`<leader> a`,
+    /// U2). The child's layer owns the panel and the answer; this chat
+    /// owns only the decision to show it.
+    pub(crate) inline_ask: Option<InlineAsk>,
 }
 
 impl View {
@@ -70,6 +75,7 @@ impl View {
             help: false,
             configuration_label: None,
             reports_open: false,
+            inline_ask: None,
         }
     }
 
@@ -121,6 +127,7 @@ impl View {
         {
             self.approval_cursor = self.approval_cursor.min(count.saturating_sub(1));
         }
+        crate::chat::inline::reconcile(model, self.agent, &mut self.inline_ask);
     }
 
     pub(crate) fn note_dispatched(&mut self, op: OpId, command: &Command) {

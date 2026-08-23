@@ -1,7 +1,7 @@
 --- text ---
 ┌──────────────────────────────────────────────────────────────────────────────────────┐
 │ refactor-tunnels · claude @ mbp · ⋯ 3 subagents                          chat · idle │
-│ ⚠ test-runner needs permission: cargo test --workspace · +1 more · C-a a answer      │
+│ ⚠ test-runner needs permission: cargo test --workspace · +1 more                     │
 │──────────────────────────────────────────────────────────────────────────────────────│
 │ › split the tunnel supervisor                                                        │
 │                                                                                      │
@@ -14,22 +14,22 @@
 │                                                                                      │
 │                                                                                      │
 │                                                                                      │
+│─ answering test-runner ─────────────────────────────────────────────────── esc back ─│
+│ ⚠ approval — command                                                                 │
+│ $ cargo test --workspace                                                             │
+│   └ cwd /work                                                                        │
+│   └ Run the repository test suite?                                                   │
 │                                                                                      │
+│ › 1. accept once                                                                     │
+│   2. decline                                                                         │
 │                                                                                      │
-│                                                                                      │
-│                                                                                      │
-│                                                                                      │
-│                                                                                      │
-│                                                                                      │
-│ › Type a message▌                                                                    │
-│                                                                                      │
-│   enter send · ctrl+j newline · ? help                                               │
+│   ↑↓/1-9 select · enter confirm · ctrl+x interrupt                                   │
 └──────────────────────────────────────────────────────────────────────────────────────┘
 --- styles ---
-aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa
-d.................aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa..........................aaaaaaaaaaa.d
-d.y.yyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyy......d
-daaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaad
+dddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddd
+d.................ddddddddddddddddddddddddddddddd..........................ddddddddddd.d
+d.y.yyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyy.....................d
+dddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddd
 d......................................................................................d
 d......................................................................................d
 d......................................................................................d
@@ -41,14 +41,14 @@ d...............................................................................
 d......................................................................................d
 d......................................................................................d
 d......................................................................................d
+dddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddd
+d.y....................................................................................d
+d.d.cccccccccccccccccccccc.............................................................d
+d...d.ddddddddd........................................................................d
+d...d.dddddddddddddddddddddddddddddd...................................................d
 d......................................................................................d
 d......................................................................................d
 d......................................................................................d
 d......................................................................................d
-d......................................................................................d
-d......................................................................................d
-d......................................................................................d
-d...aaaaaaaaaaaaaa.....................................................................d
-d......................................................................................d
-d...aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa...............................................d
+d...dddddddddddddddddddddddddddddddddddddddddddddddd...................................d
 dddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddd

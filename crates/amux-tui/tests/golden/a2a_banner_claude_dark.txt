@@ -1,7 +1,7 @@
 --- text ---
 ┌──────────────────────────────────────────────────────────────────────────────────────┐
 │ refactor-tunnels · claude @ mbp · ⋯ 3 subagents                          chat · idle │
-│ ⚠ test-runner needs permission: cargo test --workspace · +1 more                     │
+│ ⚠ test-runner needs permission: cargo test --workspace · +1 more · C-a a answer      │
 │──────────────────────────────────────────────────────────────────────────────────────│
 │ › split the tunnel supervisor                                                        │
 │                                                                                      │
@@ -28,7 +28,7 @@
 --- styles ---
 dddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddd
 d.................ddddddddddddddddddddddddddddddd..........................ddddddddddd.d
-d.y.yyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyy.....................d
+d.y.yyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyy......d
 dddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddd
 d......................................................................................d
 d......................................................................................d
