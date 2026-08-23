@@ -1,0 +1,43 @@
+{
+  "captured_at": "2026-08-23T00:16:58.819385+00:00",
+  "claude_version": "2.1.240 (Claude Code)",
+  "failure": null,
+  "graduated_at": "2026-08-23T00:17:01.965994+00:00",
+  "graduated_from": "redacted capture run",
+  "harness": "cargo test -p amux --test capture -- a2a_stop_payload",
+  "model": "haiku",
+  "notes": {
+    "assertions": {
+      "last_assistant_message": true,
+      "turn_end_after_stop": false
+    },
+    "keys": [
+      {
+        "actions": [
+          "write \"\\r\""
+        ],
+        "note": "workspace trust dialog: Enter (preselected 'Yes, I trust this folder')",
+        "seq_retries": 0
+      },
+      {
+        "actions": [
+          "write \"\\r\""
+        ],
+        "note": "external instructions dialog: Enter (allow checked-out AGENTS.md)",
+        "seq_retries": 0
+      },
+      {
+        "actions": [
+          "write \"Reply exactly STOP_PAYLOAD_21240 and nothing else.\"",
+          "delay 300ms",
+          "write \"\\r\""
+        ],
+        "note": "prompt: Reply exactly STOP_PAYLOAD_21240 and nothing else.",
+        "seq_retries": 0
+      }
+    ]
+  },
+  "poisoned_daemon_env": true,
+  "requirement": "a2a/stop-payload",
+  "scenario": "a2a_stop_payload"
+}

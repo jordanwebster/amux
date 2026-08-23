@@ -4,6 +4,8 @@ This file tracks significant development work, decisions made, and current state
 
 ---
 
+2026-08-23 — **Claude Stop hooks now have a current-version completion fixture.** The isolated 2.1.240 capture records `hook.stop` with the exact `last_assistant_message` from a completed turn, giving the completion path a redacted, structurally checked offline witness.
+
 2026-08-23 — **Claude 2.1.240 PTY delivery is captured for idle and busy turns.** A bracketed-paste `<amux …>` envelope lands byte-for-byte in an idle user row. During a Bash-backed active turn, Claude first records an enqueue operation and then a `queued_command` attachment carrying the same envelope, proving the fallback carrier is queued rather than dropped.
 
 2026-08-23 — **Claude 2.1.240 socket captures now have a self-contained live harness.** Each disposable capture project installs the repository hook manifest, avoiding stale globally installed hook commands, and records the ephemeral messaging socket/token only long enough to authenticate the probe. The socket carrier capture proves idle and busy delivery through the native peer user rows, with an enqueue `queue-operation` preceding each row. It also extends redaction for late-arriving MCP instruction attachments, so private local tool configuration cannot enter the fixture corpus.

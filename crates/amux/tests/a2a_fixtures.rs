@@ -2,6 +2,7 @@ use serde_json::Value;
 
 const SOCKET_DELIVERY: &str = include_str!("fixtures/a2a/socket_delivery.jsonl");
 const PTY_DELIVERY: &str = include_str!("fixtures/a2a/pty_delivery.jsonl");
+const STOP_PAYLOAD: &str = include_str!("fixtures/a2a/stop_payload.jsonl");
 
 fn captured_io() -> Vec<Value> {
     include_str!("fixtures/codex_backend/a2a_tools.io.jsonl")
@@ -266,4 +267,18 @@ fn a2a_fixture_pty_delivery() {
     assert!(busy_queue.is_some());
     assert!(busy_attachment.is_some());
     assert!(busy_queue < busy_attachment);
+}
+
+#[test]
+fn a2a_fixture_stop_payload() {
+    let rows: Vec<Value> = STOP_PAYLOAD
+        .lines()
+        .map(|line| serde_json::from_str(line).expect("Stop capture row is JSON"))
+        .collect();
+    let stop = rows.iter().position(|row| {
+        row.get("type").and_then(Value::as_str) == Some("hook.stop")
+            && row.get("last_assistant_message").and_then(Value::as_str)
+                == Some("STOP_PAYLOAD_21240")
+    });
+    assert!(stop.is_some());
 }

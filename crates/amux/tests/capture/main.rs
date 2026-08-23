@@ -78,6 +78,7 @@ enum Scenario {
     QuestionChatProbe,
     A2aSocketDelivery,
     A2aPtyDelivery,
+    A2aStopPayload,
 }
 
 #[derive(Clone, Copy)]
@@ -212,6 +213,12 @@ const SCENARIOS: &[ScenarioSpec] = &[
         "a2a_pty_delivery",
         "a2a/pty-delivery",
         Scenario::A2aPtyDelivery,
+        false,
+    ),
+    scenario(
+        "a2a_stop_payload",
+        "a2a/stop-payload",
+        Scenario::A2aStopPayload,
         false,
     ),
 ];
@@ -519,6 +526,7 @@ async fn run_scenario(
         Scenario::QuestionChatProbe => question_chat_probe(daemon, scratch, model).await,
         Scenario::A2aSocketDelivery => a2a_socket_delivery(daemon, scratch, model).await,
         Scenario::A2aPtyDelivery => a2a_pty_delivery(daemon, scratch, model).await,
+        Scenario::A2aStopPayload => a2a_stop_payload(daemon, scratch, model).await,
     }
     .with_context(|| format!("{name} structural assertion"))
 }
@@ -903,6 +911,41 @@ async fn a2a_pty_delivery(
     Ok(serde_json::json!({
         "keys": keys,
         "assertions": { "idle_verbatim": idle_verbatim, "busy_queued": busy_queued }
+    }))
+}
+
+/// Stop is the completion authority for a Claude child, so the capture pins
+/// the exact final-message payload received by the daemon.
+async fn a2a_stop_payload(
+    daemon: &ScratchDaemon,
+    scratch: &Scratch,
+    model: &str,
+) -> Result<serde_json::Value> {
+    let (session, index) = open(
+        daemon,
+        scratch,
+        "a2a_stop_payload",
+        &[],
+        model,
+        "Reply exactly STOP_PAYLOAD_21240 and nothing else.",
+    )
+    .await?;
+    let stop = session
+        .wait_for_row(index, TURN_TIMEOUT, "Stop hook with final message", |row| {
+            row.row_type() == "hook.stop"
+                && row
+                    .json
+                    .get("last_assistant_message")
+                    .and_then(serde_json::Value::as_str)
+                    == Some("STOP_PAYLOAD_21240")
+        })
+        .await?;
+    let rows = session.snapshot().await;
+    let has_turn_end = rows.iter().skip(stop).any(harness::Row::is_turn_duration);
+    let keys = session.close().await?;
+    Ok(serde_json::json!({
+        "keys": keys,
+        "assertions": { "last_assistant_message": true, "turn_end_after_stop": has_turn_end }
     }))
 }
 
