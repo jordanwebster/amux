@@ -95,6 +95,26 @@ impl SuspendedAgent {
             Self::TestAgent { name, .. } => name.as_deref(),
         }
     }
+
+    pub(crate) fn working_on(&self) -> Option<&WorkingOn> {
+        match self {
+            Self::Claude { working_on, .. } => working_on.as_ref(),
+            #[cfg(unix)]
+            Self::Codex { working_on, .. } => working_on.as_ref(),
+            #[cfg(any(debug_assertions, test))]
+            Self::TestAgent { working_on, .. } => working_on.as_ref(),
+        }
+    }
+
+    pub(crate) fn set_working_on(&mut self, value: Option<WorkingOn>) {
+        match self {
+            Self::Claude { working_on, .. } => *working_on = value,
+            #[cfg(unix)]
+            Self::Codex { working_on, .. } => *working_on = value,
+            #[cfg(any(debug_assertions, test))]
+            Self::TestAgent { working_on, .. } => *working_on = value,
+        }
+    }
 }
 
 /// Save suspended server state to `<state_dir>/suspended.yaml` (sibling of state.yaml).

@@ -209,3 +209,15 @@ async fn a2a_stop_child() {
     host.parent_alone_stops_child(&parent, &child, &unrelated)
         .await;
 }
+
+/// Child work is named from the bounded first prompt line, explicit status
+/// changes carry a fresh timestamp through fleet events, and completion
+/// clears the status without deleting the idle child.
+#[tokio::test]
+async fn a2a_working_on() {
+    let net = TestNet::builder().daemon("host").start().await;
+    let [host] = net.daemons(["host"]);
+
+    let parent = host.spawn_echo_agent("parent").await;
+    host.working_on_lifecycle(&parent).await;
+}

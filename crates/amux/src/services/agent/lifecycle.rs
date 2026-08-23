@@ -8,7 +8,7 @@ use uuid::Uuid;
 use super::{AgentServiceState, SharedAgentServiceState};
 use crate::agents::{
     AgentEvent, AgentRecord, AgentSession, AgentType, LocalAgentNameSource, RenameAgentRequest,
-    SessionEvent, StopPolicy, agent_from_suspended, new_agent,
+    SessionEvent, StopPolicy, WorkingOn, agent_from_suspended, new_agent,
 };
 use crate::envelope::{AgentSender, Envelope, EnvelopeKind, Sender};
 use crate::suspend::{SuspendedAgent, SuspendedServerState};
@@ -40,6 +40,7 @@ async fn handle_session_event(
             let envelope = state.local_agents.get(&agent_id).and_then(|context| {
                 parent_envelope(&context.session, host_id, EnvelopeKind::Completed, text)
             });
+            clear_working_on(&mut state, host_id, agent_id);
             if let Some(envelope) = envelope {
                 state.outbound_envelopes.emit(envelope);
             }
@@ -159,6 +160,14 @@ pub(crate) async fn create_agent_record(
     let args = req.args.clone();
     let agent_id = req.agent_id;
     let req_name = req.name.clone();
+    let working_on = req
+        .parent
+        .and_then(|_| req.initial_prompt.as_deref())
+        .and_then(spawn_task_name)
+        .map(|text| WorkingOn {
+            text,
+            updated_at: chrono::Utc::now(),
+        });
 
     let (agent_count, info) = {
         let mut state = agent_state.write().await;
@@ -184,9 +193,13 @@ pub(crate) async fn create_agent_record(
         let exit_handle = session.start(event_tx).map_err(|error| {
             CreateAgentError::Start(format!("failed to start local agent {agent_id}: {error}"))
         })?;
-        let info = session.to_agent(host_id);
         let announce = state
-            .register_local_agent_context(host_id, agent_id, session)
+            .register_local_agent_context_with_status(
+                host_id,
+                agent_id,
+                session,
+                working_on.clone(),
+            )
             .map_err(|error| {
                 CreateAgentError::Register(format!(
                     "failed to register local agent {agent_id}: {error}"
@@ -204,6 +217,10 @@ pub(crate) async fn create_agent_record(
         });
 
         state.local_agent_events.emit(announce);
+
+        let info = state
+            .local_agent_info(host_id, &agent_id)
+            .expect("newly registered agent remains present");
 
         (state.local_agents.len(), info)
     }; // write lock dropped here
@@ -224,6 +241,26 @@ pub(crate) async fn create_agent_record(
         "agent created"
     );
     Ok(info)
+}
+
+fn spawn_task_name(prompt: &str) -> Option<String> {
+    let task = prompt.lines().next().unwrap_or_default();
+    if task.is_empty() {
+        None
+    } else {
+        Some(task.chars().take(80).collect())
+    }
+}
+
+pub(crate) fn clear_working_on(state: &mut AgentServiceState, host_id: Uuid, agent_id: Uuid) {
+    let Some(context) = state.local_agents.get_mut(&agent_id) else {
+        return;
+    };
+    if context.working_on.take().is_none() {
+        return;
+    }
+    let updated = context.record(host_id);
+    state.local_agent_events.emit(updated.agent_updated_event());
 }
 
 /// Remove an agent from local state and broadcast withdrawal.
@@ -277,7 +314,10 @@ pub(crate) async fn prepare_server_suspend(
     let state = agent_state.read().await;
     for (id, context) in &state.local_agents {
         match context.session.suspended_state() {
-            Ok(sa) => suspended.push(sa),
+            Ok(mut sa) => {
+                sa.set_working_on(context.working_on.clone());
+                suspended.push(sa);
+            }
             Err(e) => {
                 tracing::error!(agent_id = %id, error = %e, "failed to prepare suspended agent state");
                 errors.push(format!("agent {id}: {e}"));
@@ -329,6 +369,7 @@ pub(crate) async fn resume_agents(
 
     for sa in suspended {
         let original = sa.clone();
+        let working_on = sa.working_on().cloned();
         let agent_id = sa.agent_id();
         let name = sa.name().map(String::from);
         tracing::info!(agent_id = %agent_id, name = ?name, "resuming agent");
@@ -346,21 +387,23 @@ pub(crate) async fn resume_agents(
                         if state.name_taken_by_other(name, agent_id) {
                             Err(format!("Agent already exists: {name}"))
                         } else {
-                            state.register_local_agent_context(
+                            state.register_local_agent_context_with_status(
                                 host_id,
                                 agent_id,
                                 session
                                     .take()
                                     .expect("resumed session should still be available"),
+                                working_on.clone(),
                             )
                         }
                     } else {
-                        state.register_local_agent_context(
+                        state.register_local_agent_context_with_status(
                             host_id,
                             agent_id,
                             session
                                 .take()
                                 .expect("resumed session should still be available"),
+                            working_on.clone(),
                         )
                     };
 

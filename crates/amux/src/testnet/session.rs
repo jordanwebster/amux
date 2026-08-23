@@ -254,6 +254,99 @@ impl Daemon {
         assert!(agents.iter().any(|agent| agent.id == unrelated.id));
     }
 
+    /// Proves automatic and explicit work status through both fleet snapshots
+    /// and live updates, then completes the child and observes the clear.
+    pub async fn working_on_lifecycle(&self, parent: &Agent) {
+        let first_line = "0123456789".repeat(9);
+        let prompt = format!("{first_line}\nmore detail that is not part of the task name");
+        let child = self
+            .spawn_echo_child_with_prompt(parent, "working-child", &prompt)
+            .await;
+        let auto = child
+            .working_on
+            .as_ref()
+            .expect("a spawned child has an automatic work status");
+        assert_eq!(auto.text, first_line.chars().take(80).collect::<String>());
+
+        let client = self.admin_client().await;
+        let mut events = self
+            .admin_client()
+            .await
+            .subscribe_agents()
+            .await
+            .expect("subscribe to fleet events");
+        loop {
+            if matches!(
+                tokio::time::timeout(DEFAULT_TIMEOUT, events.recv())
+                    .await
+                    .expect("fleet snapshot completes"),
+                Ok(crate::agents::AgentEvent::SnapshotComplete)
+            ) {
+                break;
+            }
+        }
+
+        client
+            .set_agent_status(crate::SetAgentStatusRequest {
+                agent: child.id.into(),
+                working_on: Some("reviewing the result".to_string()),
+            })
+            .await
+            .expect("set child work status");
+        let explicit = loop {
+            let event = tokio::time::timeout(DEFAULT_TIMEOUT, events.recv())
+                .await
+                .expect("status update reaches the fleet stream")
+                .expect("fleet stream remains open");
+            if let crate::agents::AgentEvent::AgentUpdated { agent } = event
+                && agent.id == child.id
+            {
+                break agent.working_on.expect("status update carries working_on");
+            }
+        };
+        assert_eq!(explicit.text, "reviewing the result");
+        assert!(explicit.updated_at >= auto.updated_at);
+
+        let parts = self
+            .try_parts()
+            .await
+            .unwrap_or_else(|| panic!("daemon '{}' is not running", self.name()));
+        parts
+            .agent_host
+            .event_tx()
+            .send(crate::agents::SessionEvent::Completed {
+                agent_id: child.id,
+                text: "done".to_string(),
+            })
+            .await
+            .expect("session event loop remains open");
+
+        loop {
+            let event = tokio::time::timeout(DEFAULT_TIMEOUT, events.recv())
+                .await
+                .expect("completion clear reaches the fleet stream")
+                .expect("fleet stream remains open");
+            if let crate::agents::AgentEvent::AgentUpdated { agent } = event
+                && agent.id == child.id
+            {
+                assert!(agent.working_on.is_none());
+                break;
+            }
+        }
+        let listed = client
+            .list_agents()
+            .await
+            .expect("list agents after completion");
+        assert!(
+            listed
+                .iter()
+                .find(|agent| agent.id == child.id)
+                .expect("completed child remains in the fleet")
+                .working_on
+                .is_none()
+        );
+    }
+
     /// A family deletion still removes its local root when a mirrored remote
     /// child cannot be reached, and reports that child as an orphan candidate.
     pub async fn cascade_delete_reports_unreachable(

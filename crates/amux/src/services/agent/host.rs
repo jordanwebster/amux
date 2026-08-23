@@ -14,9 +14,10 @@ use tokio::sync::{RwLock, mpsc};
 use uuid::Uuid;
 
 use super::lifecycle::{
-    CreateAgentError, RenameAgentError, commit_server_suspend, create_agent_record,
-    delete_local_agent, parent_envelope, prepare_server_suspend, rename_local_agent_record,
-    resume_agents, shutdown_server, spawn_session_event_loop, withdraw_agent,
+    CreateAgentError, RenameAgentError, clear_working_on, commit_server_suspend,
+    create_agent_record, delete_local_agent, parent_envelope, prepare_server_suspend,
+    rename_local_agent_record, resume_agents, shutdown_server, spawn_session_event_loop,
+    withdraw_agent,
 };
 use super::{
     AgentServiceState, DebugAgent, LocalAgentHost, ResponseStream, SharedAgentServiceState,
@@ -359,18 +360,18 @@ impl LocalAgentHost for PtyAgentHost {
     }
 
     async fn set_agent_status(&self, request: SetAgentStatusRequest) -> Result<(), ProtocolError> {
-        if !self
-            .state()
-            .read()
-            .await
-            .contains_agent_id(&request.agent_id)
-        {
-            return Err(ProtocolError::NoAgentFound);
-        }
-        let _ = request.working_on;
-        Err(ProtocolError::Unimplemented {
-            message: "agent status updates are not implemented".to_string(),
-        })
+        let mut state = self.state().write().await;
+        let context = state
+            .local_agents
+            .get_mut(&request.agent_id)
+            .ok_or(ProtocolError::NoAgentFound)?;
+        context.working_on = request.working_on.map(|text| crate::agents::WorkingOn {
+            text,
+            updated_at: chrono::Utc::now(),
+        });
+        let updated = context.record(self.host_id());
+        state.local_agent_events.emit(updated.agent_updated_event());
+        Ok(())
     }
 
     async fn send_input(&self, request: SendInputRequest) -> Result<(), ProtocolError> {
@@ -389,7 +390,7 @@ impl LocalAgentHost for PtyAgentHost {
         let mut snapshot: Vec<_> = state
             .local_agents
             .values()
-            .map(|context| context.session.to_agent(self.host_id()).agent_event())
+            .map(|context| context.record(self.host_id()).agent_event())
             .collect();
         snapshot.sort_unstable_by_key(agent_event_sort_key);
         let rx = state.local_agent_events.subscribe_drop_on_overflow();
@@ -420,9 +421,10 @@ impl LocalAgentHost for PtyAgentHost {
                 match session.handle_hook_payload(&payload, &env).await {
                     Ok(HookOutcome::Noop | HookOutcome::KeepSession) => Ok(()),
                     Ok(HookOutcome::Completed { text }) => {
-                        if let Some(envelope) =
-                            parent_envelope(session, self.host_id, EnvelopeKind::Completed, text)
-                        {
+                        let envelope =
+                            parent_envelope(session, self.host_id, EnvelopeKind::Completed, text);
+                        clear_working_on(&mut state, self.host_id, agent_id);
+                        if let Some(envelope) = envelope {
                             state.outbound_envelopes.emit(envelope);
                         }
                         Ok(())
@@ -544,7 +546,7 @@ impl LocalAgentHost for PtyAgentHost {
             .local_agents
             .values()
             .map(|context| DebugAgent {
-                record: context.session.to_agent(host_id),
+                record: context.record(host_id),
                 session: verbose
                     .then(|| context.session.debug_json(verbose).ok())
                     .flatten(),

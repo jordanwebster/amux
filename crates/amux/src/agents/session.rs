@@ -390,7 +390,7 @@ pub(crate) fn agent_from_suspended(suspended: SuspendedAgent, deps: &AgentDeps) 
             working_dir,
             terminal_size,
             created_at,
-            parent: _,
+            parent,
             working_on: _,
         } => {
             let req = CreateAgentRequest {
@@ -403,7 +403,7 @@ pub(crate) fn agent_from_suspended(suspended: SuspendedAgent, deps: &AgentDeps) 
                 working_dir,
                 terminal_size,
                 args: vec![],
-                parent: None,
+                parent,
                 initial_prompt: None,
             };
             Box::new(TestAgentSession::from_suspended(&req, command, created_at))

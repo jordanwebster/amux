@@ -11,7 +11,9 @@ use std::sync::Arc;
 use tokio::sync::RwLock;
 use uuid::Uuid;
 
-use crate::agents::{AgentDeps, AgentEvent, AgentRecord, AgentSession, SessionCloseReason};
+use crate::agents::{
+    AgentDeps, AgentEvent, AgentRecord, AgentSession, SessionCloseReason, WorkingOn,
+};
 use crate::envelope::Envelope;
 use crate::routing::EventSource;
 use crate::server::ShutdownReason;
@@ -29,6 +31,15 @@ pub(crate) struct AgentServiceState {
 
 pub(crate) struct LocalAgentContext {
     pub(crate) session: AgentSession,
+    pub(crate) working_on: Option<WorkingOn>,
+}
+
+impl LocalAgentContext {
+    pub(crate) fn record(&self, host_id: Uuid) -> AgentRecord {
+        let mut record = self.session.to_agent(host_id);
+        record.working_on.clone_from(&self.working_on);
+        record
+    }
 }
 
 impl AgentServiceState {
@@ -57,7 +68,7 @@ impl AgentServiceState {
     pub(crate) fn local_agent_info(&self, host_id: Uuid, agent_id: &Uuid) -> Option<AgentRecord> {
         self.local_agents
             .get(agent_id)
-            .map(|context| context.session.to_agent(host_id))
+            .map(|context| context.record(host_id))
     }
 
     pub(crate) fn insert_registered_local_agent(
@@ -75,6 +86,16 @@ impl AgentServiceState {
         agent_id: Uuid,
         session: AgentSession,
     ) -> Result<AgentEvent, String> {
+        self.register_local_agent_context_with_status(host_id, agent_id, session, None)
+    }
+
+    pub(crate) fn register_local_agent_context_with_status(
+        &mut self,
+        host_id: Uuid,
+        agent_id: Uuid,
+        session: AgentSession,
+        working_on: Option<WorkingOn>,
+    ) -> Result<AgentEvent, String> {
         if self.contains_agent_id(&agent_id) {
             return Err(format!("Agent already exists: {agent_id}"));
         }
@@ -84,9 +105,16 @@ impl AgentServiceState {
             return Err(format!("Agent already exists: {name}"));
         }
 
-        let event = session.to_agent(host_id).agent_event();
-        self.local_agents
-            .insert(agent_id, LocalAgentContext { session });
+        let mut record = session.to_agent(host_id);
+        record.working_on.clone_from(&working_on);
+        let event = record.agent_event();
+        self.local_agents.insert(
+            agent_id,
+            LocalAgentContext {
+                session,
+                working_on,
+            },
+        );
         Ok(event)
     }
 
