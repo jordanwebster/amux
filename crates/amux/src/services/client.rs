@@ -2794,20 +2794,21 @@ mod tests {
 
     use chrono::{TimeZone, Utc};
     use futures_util::StreamExt as _;
+    use serde_json::json;
     use tempfile::TempDir;
     use tokio::task::JoinHandle;
 
     use super::*;
     use crate::agents::{
-        AGENT_TYPE_CLAUDE, TEST_DELAYED_DELIVERY_COMMAND, TEST_ECHO_COMMAND, TEST_ECHO_V1,
-        TEST_FAILED_DELIVERY_COMMAND, TEST_UNAVAILABLE_DELIVERY_COMMAND,
+        AGENT_TYPE_CLAUDE, HookEnvironment, TEST_DELAYED_DELIVERY_COMMAND, TEST_ECHO_COMMAND,
+        TEST_ECHO_V1, TEST_FAILED_DELIVERY_COMMAND, TEST_UNAVAILABLE_DELIVERY_COMMAND,
     };
     use crate::config::Config;
     use crate::identity::DeviceIdentity;
     use crate::routing::{
         Capabilities, LinkCloseRequest, LinkId, LinkRole, RoutingCore, SupportedAgentType,
     };
-    use crate::services::agent::{PtyAgentHost, spawn_agent_tonic_server};
+    use crate::services::agent::{LocalAgentHost, PtyAgentHost, spawn_agent_tonic_server};
     use crate::trust::{TrustEntry, TrustStore};
     use crate::tunnel::TunnelPool;
     use crate::user_state::{ServerState, ShutdownRequest};
@@ -2981,8 +2982,13 @@ mod tests {
     }
 
     fn client_service_with_local_services() -> ClientService {
+        client_service_with_local_host().0
+    }
+
+    fn client_service_with_local_host() -> (ClientService, Arc<PtyAgentHost>) {
         let host_id = Uuid::from_u128(1);
-        let agent_service = AgentServiceCtx::new(Some(PtyAgentHost::new(host_id)), host_id, false);
+        let host = PtyAgentHost::new(host_id);
+        let agent_service = AgentServiceCtx::new(Some(host.clone()), host_id, false);
         let (shutdown_tx, _shutdown_rx) = mpsc::channel::<ShutdownRequest>(1);
         let server_state = Arc::new(RwLock::new(ServerState::new(
             Config::default(),
@@ -2992,7 +2998,10 @@ mod tests {
             None,
         )));
         let (routing, tunnels) = test_routing_and_tunnels(host_id);
-        client_service_from_parts(agent_service, server_state, routing, tunnels)
+        (
+            client_service_from_parts(agent_service, server_state, routing, tunnels),
+            host,
+        )
     }
 
     fn client_service_with_admin_shutdown_rx() -> (ClientService, mpsc::Receiver<ShutdownRequest>) {
@@ -4764,6 +4773,66 @@ mod tests {
         assert!(agents.iter().any(|agent| agent.id == delayed_id));
         assert!(!agents.iter().any(|agent| agent.id == unavailable_id));
         assert!(!agents.iter().any(|agent| agent.id == failed_delivery_id));
+    }
+
+    #[tokio::test]
+    async fn send_message_refuses_an_external_readonly_claude_session() {
+        let (service, host) = client_service_with_local_host();
+        let sender_id = Uuid::from_u128(160);
+        let readonly_id = Uuid::from_u128(161);
+
+        <ClientService as wire::client_service_server::ClientService>::create_agent(
+            &service,
+            tonic::Request::new(test_agent_create_request(sender_id, "sender", None)),
+        )
+        .await
+        .unwrap();
+
+        let payload = serde_json::to_vec(&json!({
+            "hook_event_name": "SessionStart",
+            "session_id": Uuid::from_u128(162),
+            "transcript_path": "/tmp/amux-readonly-transcript.jsonl",
+            "cwd": "/tmp"
+        }))
+        .unwrap();
+        let env = HookEnvironment::from([
+            (
+                "CLAUDE_CODE_MESSAGING_SOCKET".to_string(),
+                "/tmp/external-claude.sock".to_string(),
+            ),
+            (
+                "CLAUDE_CODE_MESSAGING_TOKEN".to_string(),
+                "external-token".to_string(),
+            ),
+        ]);
+        host.handle_hook(readonly_id, payload, env, true)
+            .await
+            .unwrap();
+        let readonly = host
+            .state()
+            .read()
+            .await
+            .local_agent_info(Uuid::from_u128(1), &readonly_id)
+            .expect("external hook registered a readonly session");
+        assert!(readonly.readonly);
+        service.apply_agent_event(agent_up(readonly.into())).await;
+
+        let error = <ClientService as wire::client_service_server::ClientService>::send_message(
+            &service,
+            tonic::Request::new(wire::ClientSendMessageRequest {
+                to: Some(agent_ref_id(readonly_id)),
+                text: "do not deliver".to_string(),
+                context: None,
+                from_agent_id: Some(sender_id.as_bytes().to_vec()),
+            }),
+        )
+        .await
+        .expect_err("readonly external sessions must reject agent messages");
+        assert_eq!(error.code(), tonic::Code::FailedPrecondition);
+        assert_eq!(
+            error.message(),
+            "session is readonly and cannot receive messages"
+        );
     }
 
     #[tokio::test]

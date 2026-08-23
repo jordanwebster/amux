@@ -4,6 +4,14 @@ This file tracks significant development work, decisions made, and current state
 
 ---
 
+2026-08-23 — **External Claude sessions remain observation-only.**
+Claude delivery targets retain the session's readonly state and reject agent
+messages with `FailedPrecondition` before considering socket credentials or a
+PTY. A daemon-level test bootstraps an external hook with messaging credentials
+and proves an agent-authored send receives the clear readonly error.
+
+---
+
 2026-08-23 — **Spawn delivers the first prompt or removes the child.**
 Message targets expose backend liveness, and delivery waits for up to 30
 seconds before sending. This covers Codex's interval between record creation

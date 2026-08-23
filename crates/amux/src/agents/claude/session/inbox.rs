@@ -23,6 +23,7 @@ use crate::envelope::{Envelope, format_cross_session};
 const SOCKET_CONFIRMATION_TIMEOUT: Duration = Duration::from_secs(5);
 
 pub(super) struct ClaudeDeliveryTarget {
+    readonly: bool,
     pty: Option<PtyHandle>,
     log_source: Option<StructuredLogSource>,
     messaging_credentials: Option<ClaudeMessagingCredentials>,
@@ -32,6 +33,7 @@ pub(super) struct ClaudeDeliveryTarget {
 impl ClaudeDeliveryTarget {
     pub(super) fn new(session: &ClaudeSession) -> Self {
         Self {
+            readonly: session.readonly,
             pty: session.pty.clone(),
             log_source: session.log_source(),
             messaging_credentials: session.messaging_credentials.clone(),
@@ -102,6 +104,11 @@ impl ClaudeDeliveryTarget {
 #[async_trait]
 impl AgentDeliveryTarget for ClaudeDeliveryTarget {
     fn liveness(&self) -> std::result::Result<DeliveryLiveness, DeliveryError> {
+        if self.readonly {
+            return Err(DeliveryError::FailedPrecondition(
+                "session is readonly and cannot receive messages".to_string(),
+            ));
+        }
         if self.pty.is_some() || (self.messaging_credentials.is_some() && self.log_source.is_some())
         {
             Ok(DeliveryLiveness::Live)
@@ -113,6 +120,11 @@ impl AgentDeliveryTarget for ClaudeDeliveryTarget {
     }
 
     async fn deliver(&self, envelope: &Envelope) -> std::result::Result<Delivery, DeliveryError> {
+        if self.readonly {
+            return Err(DeliveryError::FailedPrecondition(
+                "session is readonly and cannot receive messages".to_string(),
+            ));
+        }
         if self.pty_only.load(Ordering::Acquire) {
             return self.deliver_pty(envelope).await;
         }

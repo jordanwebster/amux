@@ -91,7 +91,9 @@ versions at or above 2.1.224 also receive a per-agent
 `--messaging-socket-path`. Hook calls forward only
 `CLAUDE_CODE_MESSAGING_SOCKET` and `CLAUDE_CODE_MESSAGING_TOKEN`, allowing the
 session to refresh the credentials without exposing the rest of its
-environment.
+environment. Externally started sessions discovered through hooks remain
+transcript-only and readonly: they are never message delivery targets, even
+when their hooks expose live messaging credentials.
 
 For an agent sender with a ready socket, amux posts Claude's native
 `<cross-session-message>` wrapper. The body begins with an amux header carrying
