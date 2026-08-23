@@ -18,8 +18,8 @@ use ratatui::style::Style;
 use ratatui::text::{Line, Span};
 
 use crate::chat::claude::{View, ask_ui, entry_watermark, panel, reader};
-use crate::chat::layout::{ChatLayout, bottom_max_rows};
-use crate::chat::{FeedScroll, subagent_marker};
+use crate::chat::layout::{ChatLayout, FrameRows};
+use crate::chat::{FeedScroll, family_banner, subagent_marker};
 use crate::composer::Composer;
 use crate::markdown;
 use crate::render::{
@@ -57,6 +57,7 @@ pub(crate) fn layout(model: &Model, chat: &View, viewport: (u16, u16)) -> ChatLa
         ChatPhase::Working
     );
     let paused = matches!(chat.scroll, FeedScroll::Paused { .. });
+    let banner = family_banner(model, chat.agent).is_some();
     // Layout is theme-independent (tokens change styles, never cells —
     // test-locked), so the count renders with the default theme.
     let bottom = bottom_lines(
@@ -64,15 +65,19 @@ pub(crate) fn layout(model: &Model, chat: &View, viewport: (u16, u16)) -> ChatLa
         chat,
         Theme::default(),
         width,
-        height,
-        working,
-        paused,
+        FrameRows {
+            height,
+            working,
+            paused,
+            banner,
+        },
     );
     ChatLayout {
         height,
         bottom_rows: bottom.len(),
         working,
         paused,
+        banner,
     }
 }
 
@@ -87,11 +92,9 @@ fn bottom_lines(
     chat: &View,
     theme: Theme,
     width: usize,
-    height: usize,
-    working: bool,
-    paused: bool,
+    rows: FrameRows,
 ) -> Vec<Line<'static>> {
-    let max_rows = bottom_max_rows(height, working, paused);
+    let max_rows = rows.bottom_max();
     let readonly = chat.read_only(model);
     let head = chat.ask_head(model);
 
@@ -256,12 +259,25 @@ pub(crate) fn build_chat_lines(
         ChatPhase::Working
     );
     let paused = matches!(chat.scroll, FeedScroll::Paused { .. });
-    let bottom = bottom_lines(model, chat, theme, width, height, working, paused);
+    let banner = family_banner(model, chat.agent);
+    let bottom = bottom_lines(
+        model,
+        chat,
+        theme,
+        width,
+        FrameRows {
+            height,
+            working,
+            paused,
+            banner: banner.is_some(),
+        },
+    );
     let layout = ChatLayout {
         height,
         bottom_rows: bottom.len(),
         working,
         paused,
+        banner: banner.is_some(),
     };
     let phase = amux_ui::claude::phase(model, chat.agent);
     let feed_h = layout.feed_height();
@@ -269,6 +285,11 @@ pub(crate) fn build_chat_lines(
     let mut lines: Vec<Line<'static>> = Vec::with_capacity(height);
     lines.push(top_border(width, theme));
     lines.push(header_line(model, chat, theme, phase, width, readonly));
+    // U1: a child's ask reaches its parent directly under the header,
+    // above the conversation it is interrupting.
+    if let Some(text) = &banner {
+        lines.push(family_banner_line(text, width, theme));
+    }
 
     // The feed viewport: everything before `transcript_ready` is replay —
     // the loading band is visually distinct from an empty chat (B10).
@@ -467,6 +488,17 @@ fn header_line(
     let col = (width.saturating_sub(2 + right_len)).max(line_len(&line) + 1);
     push_span(&mut line, col, left, theme.muted());
     line.spans.push(Span::styled(word, style));
+    finish_line(&mut line, width);
+    line
+}
+
+/// The child-ask banner (U1): one warning row naming who is waiting and
+/// for what. It is derived per frame from the child's own card, so it
+/// leaves the moment the ask is answered — anywhere.
+fn family_banner_line(text: &str, width: usize, theme: Theme) -> Line<'static> {
+    let mut line = new_line();
+    push_span(&mut line, GLYPH_COL, "⚠", theme.warn());
+    push_span(&mut line, TEXT_COL, text.to_string(), theme.warn());
     finish_line(&mut line, width);
     line
 }

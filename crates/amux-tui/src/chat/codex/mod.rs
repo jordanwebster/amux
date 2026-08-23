@@ -4,7 +4,7 @@
 mod keys;
 mod render;
 
-use amux_ui::codex::{CodexCommand, CodexPhase};
+use amux_ui::codex::{AskContext, CodexCommand, CodexPhase};
 use amux_ui::{AgentId, Command, Model, OpId, OpOutcome};
 pub(crate) use keys::{handle_chat_key, handle_chat_paste};
 pub(crate) use render::build_chat_lines;
@@ -145,4 +145,36 @@ impl View {
             CodexPhase::Thinking | CodexPhase::Responding { .. } | CodexPhase::Executing { .. }
         )
     }
+}
+
+/// The one line a Codex ask reduces to when it is reported in somebody
+/// else's chat (U1). Each context says the act it is blocked on in this
+/// layer's own vocabulary: a command names itself, a file change names
+/// the first file and counts the rest, a dynamic tool names the tool the
+/// way its own row does.
+pub(crate) fn ask_detail(model: &Model, agent: AgentId) -> Option<String> {
+    let ask = model.codex(agent)?.ask_head()?;
+    Some(match &ask.context {
+        AskContext::Command { command, .. } => {
+            let mut lines = command.lines();
+            let head = lines.next().unwrap_or_default().trim().to_string();
+            if lines.any(|line| !line.trim().is_empty()) {
+                format!("{head} …")
+            } else {
+                head
+            }
+        }
+        AskContext::FileChange { changes, .. } => match changes.split_first() {
+            Some((first, [])) => first.path.clone(),
+            Some((first, rest)) => format!("{} · +{} more", first.path, rest.len()),
+            None => "a file change".to_string(),
+        },
+        AskContext::Permissions { .. } => "a permission change".to_string(),
+        AskContext::DynamicTool {
+            tool, namespace, ..
+        } => match namespace {
+            Some(namespace) => format!("{namespace}/{tool}"),
+            None => tool.clone(),
+        },
+    })
 }

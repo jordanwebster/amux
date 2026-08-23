@@ -6,7 +6,7 @@ pub(crate) mod claude;
 mod codex;
 mod layout;
 
-use amux_ui::{AgentId, Command, Model, OpId, StructuredProtocol};
+use amux_ui::{AgentId, Command, FamilyNeed, Model, OpId, StructuredProtocol, Why};
 use chrono::{DateTime, Utc};
 pub use claude::diff;
 use crossterm::event::KeyEvent;
@@ -167,13 +167,55 @@ pub(crate) fn build_chat_lines(
         AgentChatView::Claude(view) => claude::build_chat_lines(model, view, ctx),
         AgentChatView::Codex(view) => codex::build_chat_lines(model, view, ctx),
     };
-    // Every native frame reserves row 2 for a chrome rule. Replace that row
-    // with the sticky diagnostic banner without changing any row accounting;
-    // provider renderers consume the Model fact but never inspect invariants.
-    if model.has_invariant_warning() && lines.len() > 2 {
-        lines[2] = crate::render::invariant_warning_line(ctx.viewport.0 as usize, ctx.theme.warn());
+    // Every native frame reserves a row for a chrome rule under the
+    // header — the row after the child-ask banner when there is one.
+    // Replace THAT row with the sticky diagnostic banner, without
+    // changing any row accounting and without covering a child who is
+    // waiting on a person; provider renderers consume the Model fact but
+    // never inspect invariants.
+    let rule = 2 + usize::from(family_banner(model, chat.agent).is_some());
+    if model.has_invariant_warning() && lines.len() > rule {
+        lines[rule] =
+            crate::render::invariant_warning_line(ctx.viewport.0 as usize, ctx.theme.warn());
     }
     lines
+}
+
+/// The banner a child raises in its parent's chat (U1): who is waiting,
+/// what for, and — from the child's own layer — the one line that says
+/// which act is blocked.
+///
+/// Composed, never synthesized. Nothing is written into the parent's
+/// stream and nothing is stored, so the banner is a fact about right now:
+/// answering the ask anywhere, in the child's own chat or on another
+/// device, empties it on the next frame with nothing to clear. Only the
+/// loudest need is named; the rest are counted, because a chat that
+/// spends four rows on other agents' business is no longer this agent's
+/// chat.
+pub(crate) fn family_banner(model: &Model, agent: AgentId) -> Option<String> {
+    let needs = model.family_needs(agent);
+    let first = needs.first()?;
+    let name = first.card.display_name();
+    let mut text = match (first.why, ask_detail(model, first)) {
+        (Why::Permission, Some(detail)) => format!("{name} needs permission: {detail}"),
+        (Why::Permission, None) => format!("{name} needs permission"),
+        (Why::Question, Some(detail)) => format!("{name} has a question: {detail}"),
+        (Why::Question, None) => format!("{name} has a question"),
+        (Why::Finished, _) => format!("{name} finished"),
+    };
+    if needs.len() > 1 {
+        text.push_str(&format!(" · +{} more", needs.len() - 1));
+    }
+    Some(text)
+}
+
+/// The child's layer decides what its own ask looks like; the parent's
+/// chat only decides that it is shown at all.
+fn ask_detail(model: &Model, need: &FamilyNeed<'_>) -> Option<String> {
+    match need.layer()? {
+        StructuredProtocol::Claude => claude::ask_detail(model, need.agent()),
+        StructuredProtocol::Codex => codex::ask_detail(model, need.agent()),
+    }
 }
 
 /// The next agent to show while cycling through a family (U3): the one

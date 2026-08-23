@@ -487,3 +487,170 @@ fn a2a_header_marker_key_is_inert_outside_a_family() {
     assert!(leader(&mut view, &model, 'n').is_none());
     assert!(view.chat.is_some(), "the chat stays open");
 }
+
+// --- the child-ask banner (U1) -------------------------------------------
+
+/// The banner's row is the one under the header — read it there rather
+/// than by searching for the glyph, which an ask panel also wears.
+fn banner_of(model: &Model, view: &ViewState) -> Option<String> {
+    let frame = buffer_text(&render_buffer(model, view, Theme::Dark, HEIGHT));
+    let row = frame.lines().nth(2)?.trim_matches(['│', ' ']).to_string();
+    row.starts_with('⚠').then_some(row)
+}
+
+/// The parent's chat says which child is waiting and for what — the act
+/// itself, in the child's own layer's words, not a generic "needs you".
+#[test]
+fn a2a_banner_names_the_child_and_the_act_it_is_blocked_on() {
+    let model = family_model();
+    let banner = banner_of(&model, &chat_on(&model, LEAD)).expect("a child is asking");
+    assert!(
+        banner.contains("test-runner needs permission: cargo test --workspace"),
+        "{banner}"
+    );
+}
+
+/// A grandchild's ask reaches the top of the family: the banner is about
+/// everyone below this agent, not just the agents it started itself.
+#[test]
+fn a2a_banner_carries_a_grandchild_up_the_family() {
+    let mut msgs = family_msgs();
+    msgs.push(batch(
+        HUNTER,
+        NOW - 10,
+        vec![
+            json!({"type":"turn/started","turn":{"id":"turn-h","status":"inProgress"}}),
+            json!({"type":"item/commandExecution/requestApproval","itemId":"exec-h","command":"rm -rf target","cwd":"/work","proposedNetworkPolicyAmendments":[]}),
+            json!({"type":"amux.codex_approval_required","request_id":"approval-h","availableDecisions":["accept","decline"]}),
+        ],
+    ));
+    let model = fold(msgs);
+
+    let from_the_middle = banner_of(&model, &chat_on(&model, RUNNER)).expect("its own child asks");
+    assert!(
+        from_the_middle.contains("flake-hunter"),
+        "{from_the_middle}"
+    );
+
+    let from_the_top = banner_of(&model, &chat_on(&model, LEAD)).expect("three are asking");
+    assert!(
+        from_the_top.starts_with("⚠ test-runner needs permission")
+            && from_the_top.ends_with("· +2 more"),
+        "the loudest is named and the rest are counted: {from_the_top}"
+    );
+}
+
+/// The banner is a derivation, not a record: answering the ask in the
+/// child's own chat empties it on the next frame, with nothing to clear
+/// in the parent.
+#[test]
+fn a2a_banner_clears_by_re_derivation_when_the_ask_is_answered() {
+    let mut msgs = family_msgs();
+    let model = fold(msgs.clone());
+    assert!(banner_of(&model, &chat_on(&model, LEAD)).is_some());
+
+    msgs.push(batch(
+        RUNNER,
+        NOW - 5,
+        vec![json!({
+            "type": "amux.codex_approval_resolved",
+            "request_id": "approval-1",
+            "reason": "answered",
+        })],
+    ));
+    let answered = fold(msgs);
+    let after = banner_of(&answered, &chat_on(&answered, LEAD)).expect("a finished child remains");
+    assert!(
+        !after.contains("test-runner"),
+        "the answered ask left the parent's chat with nothing to clear: {after}"
+    );
+    assert!(
+        after.contains("write-the-docs finished") && !after.contains("more"),
+        "what is left is exactly what is still true: {after}"
+    );
+}
+
+/// With nobody below waiting, there is no row at all — the banner is not
+/// a slot the chat reserves.
+#[test]
+fn a2a_banner_is_absent_when_no_child_is_waiting() {
+    let mut msgs = vec![
+        Msg::Server(ServerMsg::Connected {
+            local_host_id: Some(host_id()),
+        }),
+        Msg::Server(ServerMsg::HostUpserted { host: a_host() }),
+        agent_up(&an_agent(LEAD, "claude", CLAUDE_PROTOCOL, None)),
+        agent_up(&an_agent(HUNTER, "codex", CODEX_PROTOCOL, Some(LEAD))),
+        Msg::Server(ServerMsg::HostsSynchronized),
+        Msg::Server(ServerMsg::AgentsSynchronized),
+    ];
+    msgs.extend(opened(LEAD));
+    msgs.push(batch(LEAD, NOW - 60, vec![claude_ready()]));
+    msgs.extend(opened(HUNTER));
+    msgs.push(batch(HUNTER, NOW - 20, vec![codex_ready()]));
+    let model = fold(msgs);
+    assert_eq!(banner_of(&model, &chat_on(&model, LEAD)), None);
+}
+
+/// A parent's own ask is its own business: the banner reports the family
+/// below, and the chat is already showing what this agent is waiting on.
+#[test]
+fn a2a_banner_is_silent_about_the_agent_whose_chat_it_is() {
+    let model = family_model();
+    assert_eq!(
+        banner_of(&model, &chat_on(&model, RUNNER)),
+        None,
+        "the runner's own approval panel is the surface for its own ask"
+    );
+}
+
+/// The banner costs the feed a row rather than floating over it: the
+/// frame is the same height, and nothing it was showing is covered.
+#[test]
+fn a2a_banner_takes_a_row_from_the_feed_and_covers_nothing() {
+    let model = family_model();
+    let view = chat_on(&model, LEAD);
+    let frame = buffer_text(&render_buffer(&model, &view, Theme::Dark, HEIGHT));
+    assert_eq!(frame.lines().count(), HEIGHT as usize);
+    assert!(
+        frame.contains("split the tunnel supervisor"),
+        "the conversation below it is intact:\n{frame}"
+    );
+}
+
+#[test]
+fn a2a_banner_in_a_claude_parents_chat() {
+    let model = family_model();
+    assert_surface("a2a_banner_claude", &model, &chat_on(&model, LEAD), HEIGHT);
+}
+
+/// The same banner in a Codex parent's chat: the words come from the
+/// child's layer, the row from the parent's.
+#[test]
+fn a2a_banner_in_a_codex_parents_chat() {
+    let mut msgs = family_msgs();
+    msgs.push(batch(
+        SCRIBE,
+        NOW - 15,
+        vec![json!({
+            "type": "hook.permission_request",
+            "tool_name": "Bash",
+            "tool_input": {"command": "git push --force origin a2a"},
+        })],
+    ));
+    // Re-parent the scribe under the Codex runner so a Codex chat is the
+    // one reporting a Claude child's ask.
+    msgs.push(agent_up(&an_agent(
+        SCRIBE,
+        "claude",
+        CLAUDE_PROTOCOL,
+        Some(RUNNER),
+    )));
+    let model = fold(msgs);
+    let banner = banner_of(&model, &chat_on(&model, RUNNER)).expect("its child is asking");
+    assert!(
+        banner.contains("write-the-docs needs permission: git push --force origin a2a"),
+        "{banner}"
+    );
+    assert_surface("a2a_banner_codex", &model, &chat_on(&model, RUNNER), HEIGHT);
+}

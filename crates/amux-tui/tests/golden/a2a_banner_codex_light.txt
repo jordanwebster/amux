@@ -1,12 +1,10 @@
 --- text ---
 ┌──────────────────────────────────────────────────────────────────────────────────────┐
-│ refactor-tunnels · claude @ mbp · ⋯ 3 subagents                          chat · idle │
-│ ⚠ test-runner needs permission: cargo test --workspace · +1 more                     │
+│ test-runner · codex @ mbp · ⋯ 2 subagents                           chat · needs you │
+│ ⚠ write-the-docs needs permission: git push --force origin a2a                       │
 │──────────────────────────────────────────────────────────────────────────────────────│
-│ › split the tunnel supervisor                                                        │
-│                                                                                      │
-│   Starting with the reconnect path.                                                  │
-│                                                                                      │
+│ ⚠ $ cargo test --workspace · awaiting approval                                       │
+│   └ cwd /work                                                                        │
 │                                                                                      │
 │                                                                                      │
 │                                                                                      │
@@ -16,20 +14,24 @@
 │                                                                                      │
 │                                                                                      │
 │                                                                                      │
+│──────────────────────────────────────────────────────────────────────────────────────│
+│ ⚠ approval — command                                                                 │
+│ $ cargo test --workspace                                                             │
+│   └ cwd /work                                                                        │
+│   └ Run the repository test suite?                                                   │
 │                                                                                      │
+│ › 1. accept once                                                                     │
+│   2. decline                                                                         │
 │                                                                                      │
-│                                                                                      │
-│                                                                                      │
-│                                                                                      │
-│ › Type a message▌                                                                    │
-│                                                                                      │
-│   enter send · ctrl+j newline · ? help                                               │
+│   ↑↓/1-9 select · enter confirm · ctrl+x interrupt                                   │
 └──────────────────────────────────────────────────────────────────────────────────────┘
 --- styles ---
 aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa
-d.................aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa..........................aaaaaaaaaaa.d
-d.y.yyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyy.....................d
+d............aaaaaaaaaaaaaaaaaaaaaaaaaaaaaa...........................aaaaaaayyyyyyyyy.d
+d.y.yyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyy.......................d
 daaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaad
+d.y.BBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBB.......................................d
+d...a.aaaaaaaaa........................................................................d
 d......................................................................................d
 d......................................................................................d
 d......................................................................................d
@@ -39,16 +41,14 @@ d...............................................................................
 d......................................................................................d
 d......................................................................................d
 d......................................................................................d
+daaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaad
+d.y....................................................................................d
+d.a.BBBBBBBBBBBBBBBBBBBBBB.............................................................d
+d...a.aaaaaaaaa........................................................................d
+d...a.aaaaaaaaaaaaaaaaaaaaaaaaaaaaaa...................................................d
 d......................................................................................d
 d......................................................................................d
 d......................................................................................d
 d......................................................................................d
-d......................................................................................d
-d......................................................................................d
-d......................................................................................d
-d......................................................................................d
-d......................................................................................d
-d...aaaaaaaaaaaaaa.....................................................................d
-d......................................................................................d
-d...aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa...............................................d
+d...aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa...................................d
 dddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddd

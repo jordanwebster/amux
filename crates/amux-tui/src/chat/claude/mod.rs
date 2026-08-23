@@ -21,7 +21,7 @@ mod panel;
 mod reader;
 mod render;
 
-use amux_ui::claude::{Ask, AskState, ChatPhase};
+use amux_ui::claude::{Ask, AskKind, AskState, ChatPhase, ToolInvocation};
 use amux_ui::{AgentId, Attention, Command, Model, OpId, OpOutcome};
 use ask_ui::AskUi;
 pub(crate) use keys::{handle_chat_key, handle_chat_paste};
@@ -270,4 +270,41 @@ pub fn entry_watermark(model: &Model, agent: AgentId) -> u64 {
         .claude(agent)
         .map(|layer| layer.evicted_entries() + layer.entry_count() as u64)
         .unwrap_or(0)
+}
+
+/// The one line a Claude ask reduces to when it is being reported in
+/// somebody else's chat (U1): the act that is blocked, in this layer's
+/// own words. A command says what would run, a question says what is
+/// being asked, and everything else falls back to the identity the
+/// panel's own header states — so a banner and the panel never name the
+/// same ask two different ways.
+pub(crate) fn ask_detail(model: &Model, agent: AgentId) -> Option<String> {
+    let ask = model.claude(agent)?.ask_head()?;
+    Some(match &ask.kind {
+        AskKind::Permission {
+            invocation:
+                ToolInvocation::Bash {
+                    command: Some(command),
+                    ..
+                },
+            ..
+        } => head_line(command),
+        AskKind::Question { questions } => questions
+            .first()
+            .and_then(|question| question.question.as_deref().or(question.header.as_deref()))
+            .map(head_line)
+            .unwrap_or_else(|| "a question".to_string()),
+        _ => panel::ask_identity(ask),
+    })
+}
+
+/// The first line, marked when there were more.
+fn head_line(text: &str) -> String {
+    let mut lines = text.lines();
+    let head = lines.next().unwrap_or_default().trim().to_string();
+    if lines.any(|line| !line.trim().is_empty()) {
+        format!("{head} …")
+    } else {
+        head
+    }
 }

@@ -14,8 +14,8 @@ use ratatui::text::{Line, Span};
 use serde_json::Value;
 
 use super::View;
-use crate::chat::layout::{ChatLayout, bottom_max_rows};
-use crate::chat::{FeedScroll, entry_watermark};
+use crate::chat::layout::{ChatLayout, FrameRows};
+use crate::chat::{FeedScroll, entry_watermark, family_banner};
 use crate::markdown;
 use crate::render::{
     FrameContext, Theme, blank_line, clip_to_width, finish_line, line_len, new_line, pad_to,
@@ -38,6 +38,7 @@ pub(crate) fn layout(model: &Model, chat: &View, viewport: (u16, u16)) -> ChatLa
     let height = viewport.1 as usize;
     let working = active_phase(&amux_ui::codex::phase(model, chat.agent));
     let paused = matches!(chat.scroll, FeedScroll::Paused { .. });
+    let banner = family_banner(model, chat.agent).is_some();
     ChatLayout {
         height,
         bottom_rows: bottom_lines(
@@ -45,13 +46,17 @@ pub(crate) fn layout(model: &Model, chat: &View, viewport: (u16, u16)) -> ChatLa
             chat,
             Theme::default(),
             width,
-            height,
-            working,
-            paused,
+            FrameRows {
+                height,
+                working,
+                paused,
+                banner,
+            },
         )
         .len(),
         working,
         paused,
+        banner,
     }
 }
 
@@ -73,18 +78,36 @@ pub(crate) fn build_chat_lines(
     let phase = amux_ui::codex::phase(model, chat.agent);
     let working = active_phase(&phase);
     let paused = matches!(chat.scroll, FeedScroll::Paused { .. });
-    let bottom = bottom_lines(model, chat, theme, width, height, working, paused);
+    let banner = family_banner(model, chat.agent);
+    let bottom = bottom_lines(
+        model,
+        chat,
+        theme,
+        width,
+        FrameRows {
+            height,
+            working,
+            paused,
+            banner: banner.is_some(),
+        },
+    );
     let layout = ChatLayout {
         height,
         bottom_rows: bottom.len(),
         working,
         paused,
+        banner: banner.is_some(),
     };
     let feed_h = layout.feed_height();
 
     let mut lines = Vec::with_capacity(height);
     lines.push(top_border(width, theme));
     lines.push(header_line(model, chat, &phase, width, theme));
+    // U1: a child's ask reaches its parent directly under the header,
+    // above the conversation it is interrupting.
+    if let Some(text) = &banner {
+        lines.push(family_banner_line(text, width, theme));
+    }
 
     let loading = matches!(phase, CodexPhase::Replaying);
     let (window, at_top) = if loading {
@@ -189,6 +212,17 @@ fn header_line(
         .max(line_len(&line) + 1);
     push_span(&mut line, col, left, theme.muted());
     line.spans.push(Span::styled(word, style));
+    finish_line(&mut line, width);
+    line
+}
+
+/// The child-ask banner (U1): one warning row naming who is waiting and
+/// for what, derived per frame so it leaves when the ask is answered
+/// anywhere.
+fn family_banner_line(text: &str, width: usize, theme: Theme) -> Line<'static> {
+    let mut line = new_line();
+    push_span(&mut line, GLYPH_COL, "⚠", theme.warn());
+    push_span(&mut line, TEXT_COL, text.to_string(), theme.warn());
     finish_line(&mut line, width);
     line
 }
@@ -315,11 +349,9 @@ fn bottom_lines(
     chat: &View,
     theme: Theme,
     width: usize,
-    height: usize,
-    working: bool,
-    paused: bool,
+    rows: FrameRows,
 ) -> Vec<Line<'static>> {
-    let max_rows = bottom_max_rows(height, working, paused);
+    let max_rows = rows.bottom_max();
     let mut lines = if chat.read_only(model) {
         readonly_bottom(theme)
     } else if let Some(ask) = model.codex(chat.agent).and_then(|layer| layer.ask_head()) {

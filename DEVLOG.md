@@ -4588,3 +4588,18 @@ keystroke into a draft. Members this build cannot open — an unrenderable
 protocol, a host that is not answering — are stepped over rather than
 shown, because a frame that can say nothing is a worse answer than staying
 put.
+2026-08-23 — **Raised a child's ask in its parent's chat.** A parent's chat
+now carries one warning row under its header naming which agent below it is
+waiting and for what — the act itself, spoken by the child's own layer: the
+command a Codex child wants to run, the tool a Claude child wants to use,
+the question it is asking. The parent's chat decides where the ask is drawn;
+the child's layer decides what it says. Nothing is written into the parent's
+stream and nothing is stored, so answering the ask anywhere — in the child's
+own chat, on another device — empties the row on the next frame with nothing
+to clear, and a second child's ask appearing does not disturb the first. Only
+the loudest is named and the rest are counted, because a chat that spends
+four rows on other agents' business has stopped being this agent's chat. The
+row costs the feed a line rather than floating over it: covering a message to
+announce an ask trades one thing the human needs to read for another. The
+sticky diagnostic banner moved with the chrome rule it replaces, so a
+consistency warning can no longer hide a child who is waiting on a person.
