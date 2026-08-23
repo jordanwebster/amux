@@ -1685,6 +1685,8 @@ mod tests {
             readonly: false,
             args: Vec::new(),
             created_at: chrono::DateTime::from_timestamp(1_754_697_600, 0).expect("epoch"),
+            parent: None,
+            working_on: None,
         };
         let host = amux::HostEntry {
             id: Uuid::from_u128(1),

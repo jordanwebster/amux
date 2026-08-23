@@ -937,6 +937,8 @@ mod tests {
             readonly: false,
             args: Vec::new(),
             created_at: t0(),
+            parent: None,
+            working_on: None,
         }
     }
 

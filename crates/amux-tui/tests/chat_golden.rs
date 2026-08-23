@@ -70,6 +70,8 @@ fn base_msgs_readonly(readonly: bool) -> Vec<Msg> {
         readonly,
         args: Vec::new(),
         created_at: at("2026-08-12T08:00:00Z"),
+        parent: None,
+        working_on: None,
     };
     let host = HostEntry {
         id: host_id(),

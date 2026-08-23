@@ -408,6 +408,8 @@ mod tests {
             readonly,
             args: Vec::new(),
             created_at: chrono::DateTime::from_timestamp(1_755_000_000, 0).expect("epoch"),
+            parent: None,
+            working_on: None,
         };
         for msg in [
             Msg::Server(ServerMsg::Connected {

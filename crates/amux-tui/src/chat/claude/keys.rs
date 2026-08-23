@@ -697,6 +697,8 @@ mod tests {
             readonly: false,
             args: Vec::new(),
             created_at: t(0),
+            parent: None,
+            working_on: None,
         };
         let host = amux_ui::HostEntry {
             id: Uuid::from_u128(1),

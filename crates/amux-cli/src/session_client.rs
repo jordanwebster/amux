@@ -975,6 +975,8 @@ mod attach {
             readonly: false,
             args: Vec::new(),
             created_at: chrono::Utc::now(),
+            parent: None,
+            working_on: None,
         }
     }
 
@@ -1302,6 +1304,8 @@ mod attach {
             readonly: false,
             args: Vec::new(),
             created_at: chrono::Utc::now(),
+            parent: None,
+            working_on: None,
         };
         let mut model = Model::default();
         for msg in [

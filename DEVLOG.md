@@ -4,6 +4,8 @@ This file tracks significant development work, decisions made, and current state
 
 ---
 
+2026-08-23 — **Workspace fixtures now construct the expanded agent inventory shape explicitly.** CLI, reducer, and terminal golden helpers state that their existing standalone agents have no parent and no current-work description, keeping all-target workspace verification aligned with the new optional inventory fields.
+
 2026-08-23 — **Agent messages now have one authenticated envelope and transcript-safe text form.** The protocol defines agent and human senders plus message, completion, and exit kinds. The public `amux::envelope` module formats the generic injected tag and Claude's native cross-session wrapper, parses both into the same provenance view, and escapes XML-significant body and attribute characters. Generated arbitrary Unicode bodies round-trip, while an attempted closing tag remains inert text.
 
 2026-08-23 — **Agent inventory records can express family lineage and current work.** The agent protocol, runtime record, public DTO, wire codecs, and suspended-session representation now carry an optional parent host/agent pair and an optional timestamped `working_on` description. Round-trip coverage pins UUID and timestamp validation across the record-to-wire path and persistence preserves both fields. The opt-in real-harness binaries recognize non-scenario A2A unit-test filters, allowing the offline ledger checks to sweep all test targets without accidentally launching or rejecting a live capture.
