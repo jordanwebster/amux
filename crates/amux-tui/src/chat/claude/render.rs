@@ -249,7 +249,7 @@ pub(crate) fn build_chat_lines(
     // The `?` overlay replaces the whole frame while open (any key
     // closes it).
     if chat.help {
-        return help_frame(chat, theme, width, height);
+        return help_frame(model, chat, theme, width, height);
     }
 
     // The fullscreen reader replaces the whole frame while open (falling
@@ -371,9 +371,17 @@ pub(crate) fn build_chat_lines(
 /// rows appear only when probed, ext rows are marked terminal-dependent.
 /// Fullscreen like the reader; any key closes. On short viewports the
 /// tail gives way and a `⋮` row states the cut honestly.
-fn help_frame(chat: &View, theme: Theme, width: usize, height: usize) -> Vec<Line<'static>> {
-    let sections =
-        crate::bindings::chat_sections(&crate::bindings::Effective::new(chat.kitty, chat.leader));
+fn help_frame(
+    model: &Model,
+    chat: &View,
+    theme: Theme,
+    width: usize,
+    height: usize,
+) -> Vec<Line<'static>> {
+    let sections = crate::bindings::chat_sections(
+        &crate::bindings::Effective::new(chat.kitty, chat.leader),
+        crate::chat::family_keys(model, chat.agent),
+    );
     // One aligned action column across every section.
     let key_col = TEXT_COL
         + 2

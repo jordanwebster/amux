@@ -4,6 +4,16 @@ This file tracks significant development work, decisions made, and current state
 
 ---
 
+2026-08-23 — **The family keys are listed where they work, and nowhere else.**
+The binding table now takes the screen's own facts: each family chord appears
+in a chat's `?` overlay only while it would do something — somewhere in the
+family to go, a completion with a body behind it, a child's ask this chat
+could host — and `z` appears in the fleet's overlay and hint row only with a
+family on the fleet. Two omissions surfaced doing it: the Codex overlay had
+never named the two chords its chat already answered, and the fleet's hint row
+had never named the fold key. A hint row too narrow for the optional chord
+drops that chord rather than the whole row.
+
 2026-08-23 — **A delete confirmation names the cascade.**
 Deleting an agent that started others takes its whole subtree, and a family
 is one row on screen, so the confirmation now lists every agent that would go

@@ -8,8 +8,8 @@ pub(crate) mod inline;
 mod layout;
 
 use amux_ui::{
-    AgentId, AgentMessagePresentation, Command, FamilyNeed, Model, OpId, StructuredProtocol, Why,
-    message_digest,
+    AgentId, AgentMessageKind, AgentMessagePresentation, Command, FamilyNeed, Model, OpId,
+    StructuredProtocol, Why, message_digest,
 };
 use chrono::{DateTime, Utc};
 pub use claude::diff;
@@ -394,6 +394,51 @@ fn openable(model: &Model, agent: AgentId) -> bool {
     model.agent(agent).is_some_and(|card| {
         card.structured_protocol().is_some() && model.host_online(card.agent.host_id)
     })
+}
+
+/// Which of the family chords would do something in this chat right now
+/// — the input the `?` overlay derives its family rows from, so the
+/// overlay can never name a chord that is inert here (P10).
+pub(crate) fn family_keys(model: &Model, agent: AgentId) -> crate::bindings::FamilyKeys {
+    crate::bindings::FamilyKeys {
+        cycle: next_in_family(model, agent).is_some(),
+        reports: has_closable_completion(model, agent),
+        answer: family_banner(model, agent)
+            .is_some_and(|banner| inline::can_open(model, agent, banner.child)),
+    }
+}
+
+/// Whether any completion in this chat has a body behind its first line
+/// — the exact condition under which `<leader> m` changes what is on
+/// screen. A completion that said one thing is already showing all of
+/// it, and a chat of those has nothing to open.
+fn has_closable_completion(model: &Model, agent: AgentId) -> bool {
+    let closable = |kind: &AgentMessageKind, text: &str| {
+        kind.presentation() == AgentMessagePresentation::Finished
+            && message_digest(text).hidden_lines > 0
+    };
+    match model
+        .agent(agent)
+        .and_then(amux_ui::AgentCard::structured_protocol)
+    {
+        Some(StructuredProtocol::Claude) => model.claude(agent).is_some_and(|layer| {
+            layer.entries().any(|entry| match &entry.kind {
+                amux_ui::claude::FeedEntryKind::AgentMessage(message) => {
+                    closable(&message.kind, &message.text)
+                }
+                _ => false,
+            })
+        }),
+        Some(StructuredProtocol::Codex) => model.codex(agent).is_some_and(|layer| {
+            layer.entries().any(|entry| match &entry.kind {
+                amux_ui::codex::FeedEntryKind::AgentMessage(message) => {
+                    closable(&message.kind, &message.text)
+                }
+                _ => false,
+            })
+        }),
+        None => false,
+    }
 }
 
 /// The header's family marker (U3): how many agents this one has spawned,

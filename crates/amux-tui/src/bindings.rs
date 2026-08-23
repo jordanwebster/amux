@@ -59,6 +59,46 @@ impl Effective {
     }
 }
 
+/// The screen facts the family chords depend on. Each of the three
+/// exists only where it would do something: `<leader> n` needs somewhere
+/// else in the family to go, `<leader> m` needs a completion with a body
+/// behind it, `<leader> a` needs a child's ask this chat could host.
+/// Hints never advertise a dead key (P10), and an overlay is a hint.
+#[derive(Clone, Copy, Debug, Default)]
+pub struct FamilyKeys {
+    pub cycle: bool,
+    pub reports: bool,
+    pub answer: bool,
+}
+
+/// The family chords, identical in both native chats because they are
+/// the same act in both — written once so they cannot drift apart.
+fn family_rows(eff: &Effective, family: FamilyKeys) -> Vec<Binding> {
+    let mut rows = Vec::new();
+    if family.cycle {
+        rows.push(row(
+            format!("{} n", eff.leader_label),
+            "next agent in this family",
+            Tier::Plain,
+        ));
+    }
+    if family.reports {
+        rows.push(row(
+            format!("{} m", eff.leader_label),
+            "open / close completions",
+            Tier::Plain,
+        ));
+    }
+    if family.answer {
+        rows.push(row(
+            format!("{} a", eff.leader_label),
+            "answer the waiting child here",
+            Tier::Plain,
+        ));
+    }
+    rows
+}
+
 fn row(keys: impl Into<String>, action: impl Into<String>, tier: Tier) -> Binding {
     Binding {
         keys: keys.into(),
@@ -76,7 +116,11 @@ fn mode_name(mode: OpenMode) -> &'static str {
 
 /// The fleet's effective bindings (kitty rows already filtered); the
 /// entry rows name the effective modes from the A1 default.
-pub fn fleet_sections(eff: &Effective, default_open_mode: OpenMode) -> Vec<Section> {
+pub fn fleet_sections(
+    eff: &Effective,
+    default_open_mode: OpenMode,
+    families: bool,
+) -> Vec<Section> {
     let default = mode_name(default_open_mode);
     let other = mode_name(default_open_mode.other());
     let mut fleet = vec![
@@ -91,7 +135,12 @@ pub fn fleet_sections(eff: &Effective, default_open_mode: OpenMode) -> Vec<Secti
     fleet.extend([
         row("o", format!("open in {other}"), Tier::Plain),
         row("n", "new agent", Tier::Plain),
-        row("z", "open/shut a family", Tier::Plain),
+    ]);
+    // Nothing on this fleet has children, so nothing folds.
+    if families {
+        fleet.push(row("z", "open/shut a family", Tier::Plain));
+    }
+    fleet.extend([
         row("r", "rename selected", Tier::Plain),
         row("d", "delete selected", Tier::Plain),
         row("C-g", "debug dump", Tier::Plain),
@@ -124,8 +173,8 @@ pub fn fleet_sections(eff: &Effective, default_open_mode: OpenMode) -> Vec<Secti
 
 /// The chat's effective bindings, grouped by focus context (the full key
 /// list the `?` overlay renders; kitty rows already filtered).
-pub fn chat_sections(eff: &Effective) -> Vec<Section> {
-    let chat = vec![
+pub fn chat_sections(eff: &Effective, family: FamilyKeys) -> Vec<Section> {
+    let mut chat = vec![
         row("ctrl+x", "interrupt the agent", Tier::Plain),
         row("esc", "back one stage (never answers)", Tier::Plain),
         row("pgup/pgdn", "scroll the feed", Tier::Plain),
@@ -146,17 +195,8 @@ pub fn chat_sections(eff: &Effective) -> Vec<Section> {
             "detach to shell",
             Tier::Plain,
         ),
-        row(
-            format!("{} n", eff.leader_label),
-            "next agent in this family",
-            Tier::Plain,
-        ),
-        row(
-            format!("{} m", eff.leader_label),
-            "open / close completions",
-            Tier::Plain,
-        ),
     ];
+    chat.extend(family_rows(eff, family));
     let mut composer = vec![
         row("enter", "send", Tier::Plain),
         row("ctrl+j", "newline", Tier::Plain),
@@ -219,8 +259,8 @@ pub fn chat_sections(eff: &Effective) -> Vec<Section> {
 /// Codex chat bindings. Chrome, composer, and pager conventions are shared;
 /// approval and steering rows name Codex-native actions instead of borrowing
 /// Claude's question/plan vocabulary.
-pub fn codex_chat_sections(eff: &Effective) -> Vec<Section> {
-    let chat = vec![
+pub fn codex_chat_sections(eff: &Effective, family: FamilyKeys) -> Vec<Section> {
+    let mut chat = vec![
         row("ctrl+x", "interrupt the active turn", Tier::Plain),
         row("pgup/pgdn", "scroll the feed", Tier::Plain),
         row("ctrl+home/end", "feed oldest / newest", Tier::Ext),
@@ -240,6 +280,7 @@ pub fn codex_chat_sections(eff: &Effective) -> Vec<Section> {
             Tier::Plain,
         ),
     ];
+    chat.extend(family_rows(eff, family));
     let mut composer = vec![
         row("enter", "send or steer", Tier::Plain),
         row("ctrl+j", "newline", Tier::Plain),
@@ -287,6 +328,15 @@ pub fn codex_chat_sections(eff: &Effective) -> Vec<Section> {
 mod tests {
     use super::*;
 
+    /// Every family chord live, so the tests below see the whole table.
+    fn all_family() -> FamilyKeys {
+        FamilyKeys {
+            cycle: true,
+            reports: true,
+            answer: true,
+        }
+    }
+
     fn eff(kitty: bool) -> Effective {
         Effective {
             kitty,
@@ -300,8 +350,8 @@ mod tests {
     #[test]
     fn kitty_rows_are_hidden_without_the_probe_and_shown_with_it() {
         for sections in [
-            fleet_sections(&eff(false), OpenMode::RawAttach),
-            chat_sections(&eff(false)),
+            fleet_sections(&eff(false), OpenMode::RawAttach, true),
+            chat_sections(&eff(false), all_family()),
         ] {
             assert!(
                 sections
@@ -311,14 +361,14 @@ mod tests {
                 "no kitty rows without the probe"
             );
         }
-        let fleet = fleet_sections(&eff(true), OpenMode::RawAttach);
+        let fleet = fleet_sections(&eff(true), OpenMode::RawAttach, true);
         assert!(
             fleet
                 .iter()
                 .flat_map(|section| &section.bindings)
                 .any(|binding| binding.keys == "ctrl+enter" && binding.tier == Tier::Kitty)
         );
-        let chat = chat_sections(&eff(true));
+        let chat = chat_sections(&eff(true), all_family());
         assert!(
             chat.iter()
                 .flat_map(|section| &section.bindings)
@@ -330,7 +380,7 @@ mod tests {
     /// name the other mode — the table derives, never hardcodes (A1).
     #[test]
     fn entry_rows_name_the_effective_modes() {
-        let sections = fleet_sections(&eff(true), OpenMode::Chat);
+        let sections = fleet_sections(&eff(true), OpenMode::Chat, true);
         let fleet = &sections[0].bindings;
         let enter = fleet.iter().find(|b| b.keys == "enter").expect("enter row");
         assert_eq!(enter.action, "open in chat");
@@ -341,17 +391,123 @@ mod tests {
     /// The configured leader substitutes into every chord row (P10).
     #[test]
     fn the_leader_label_substitutes_into_chords() {
-        let sections = chat_sections(&eff(false));
+        let sections = chat_sections(&eff(false), all_family());
         let chat = &sections[0].bindings;
         assert!(chat.iter().any(|b| b.keys == "C-b s"));
         assert!(chat.iter().any(|b| b.keys == "C-b d"));
+    }
+
+    /// The family chords are listed exactly where they would do
+    /// something. A chat with no family below it, no completion to open
+    /// and no child waiting has none of the three rows; the same table
+    /// with all three facts true has all three.
+    #[test]
+    fn a2a_bindings_list_a_family_chord_only_where_it_works() {
+        for sections in [
+            chat_sections(&eff(false), FamilyKeys::default()),
+            codex_chat_sections(&eff(false), FamilyKeys::default()),
+        ] {
+            let keys: Vec<&str> = sections
+                .iter()
+                .flat_map(|section| &section.bindings)
+                .map(|binding| binding.keys.as_str())
+                .collect();
+            for chord in ["C-b n", "C-b m", "C-b a"] {
+                assert!(!keys.contains(&chord), "{chord} is inert here: {keys:?}");
+            }
+        }
+        for sections in [
+            chat_sections(&eff(false), all_family()),
+            codex_chat_sections(&eff(false), all_family()),
+        ] {
+            let keys: Vec<&str> = sections
+                .iter()
+                .flat_map(|section| &section.bindings)
+                .map(|binding| binding.keys.as_str())
+                .collect();
+            for chord in ["C-b n", "C-b m", "C-b a"] {
+                assert!(keys.contains(&chord), "{chord} works here: {keys:?}");
+            }
+        }
+    }
+
+    /// One chord at a time: each fact turns on its own row and nobody
+    /// else's, so a chat that can only cycle does not offer to answer.
+    #[test]
+    fn a2a_bindings_gate_each_family_chord_on_its_own_fact() {
+        let cases = [
+            (
+                FamilyKeys {
+                    cycle: true,
+                    ..FamilyKeys::default()
+                },
+                "C-b n",
+            ),
+            (
+                FamilyKeys {
+                    reports: true,
+                    ..FamilyKeys::default()
+                },
+                "C-b m",
+            ),
+            (
+                FamilyKeys {
+                    answer: true,
+                    ..FamilyKeys::default()
+                },
+                "C-b a",
+            ),
+        ];
+        for (family, expected) in cases {
+            let sections = chat_sections(&eff(false), family);
+            let chords: Vec<&str> = sections
+                .iter()
+                .flat_map(|section| &section.bindings)
+                .map(|binding| binding.keys.as_str())
+                .filter(|keys| keys.starts_with("C-b ") && *keys != "C-b s" && *keys != "C-b d")
+                .collect();
+            assert_eq!(chords, vec![expected]);
+        }
+    }
+
+    /// The two chats are the same chrome, so they name the same chords in
+    /// the same words — the Codex overlay used to be missing them
+    /// outright, which taught the human that its chat had no family keys.
+    #[test]
+    fn a2a_bindings_read_the_same_in_both_chats() {
+        let family_rows = |sections: Vec<Section>| -> Vec<(String, String)> {
+            sections
+                .iter()
+                .flat_map(|section| &section.bindings)
+                .filter(|binding| ["C-b n", "C-b m", "C-b a"].contains(&binding.keys.as_str()))
+                .map(|binding| (binding.keys.clone(), binding.action.clone()))
+                .collect()
+        };
+        assert_eq!(
+            family_rows(chat_sections(&eff(false), all_family())),
+            family_rows(codex_chat_sections(&eff(false), all_family())),
+        );
+    }
+
+    /// `z` is a fleet key, and a fleet with nobody's children in it has
+    /// nothing to fold.
+    #[test]
+    fn a2a_bindings_list_the_fold_key_only_with_a_family_on_screen() {
+        let has = |families: bool| {
+            fleet_sections(&eff(false), OpenMode::RawAttach, families)
+                .iter()
+                .flat_map(|section| &section.bindings)
+                .any(|binding| binding.keys == "z")
+        };
+        assert!(has(true));
+        assert!(!has(false));
     }
 
     /// Ext-tier rows exist regardless of the probe (standard CSI), and
     /// carry the tier so the overlay can mark them terminal-dependent.
     #[test]
     fn ext_rows_carry_their_tier() {
-        let sections = chat_sections(&eff(false));
+        let sections = chat_sections(&eff(false), all_family());
         let ext: Vec<_> = sections
             .iter()
             .flat_map(|section| &section.bindings)

@@ -1426,3 +1426,113 @@ fn a2a_inline_answer_in_a_codex_parents_chat() {
         HEIGHT,
     );
 }
+
+// --- the family keys, listed only where they work -------------------------
+
+fn help_overlay(model: &Model, name: &str) -> String {
+    let mut view = chat_on(model, name);
+    view.chat.as_mut().expect("an open chat").set_help(true);
+    buffer_text(&render_buffer(model, &view, Theme::Dark, 46))
+}
+
+/// A parent with children below it, a completion to open and a child
+/// waiting: all three family chords are in its overlay.
+#[test]
+fn a2a_bindings_list_every_live_family_chord() {
+    let overlay = help_overlay(&conversation_model(), LEAD);
+    for action in [
+        "next agent in this family",
+        "open / close completions",
+        "answer the waiting child here",
+    ] {
+        assert!(overlay.contains(action), "{action}:\n{overlay}");
+    }
+}
+
+/// A Codex chat has the same chords and now says so: its overlay used to
+/// name none of them, which taught the human that its chat had no family
+/// keys at all.
+#[test]
+fn a2a_bindings_reach_the_codex_overlay_too() {
+    let overlay = help_overlay(&claude_child_asking(), RUNNER);
+    assert!(overlay.contains("codex chat"), "{overlay}");
+    for action in ["next agent in this family", "answer the waiting child here"] {
+        assert!(overlay.contains(action), "{action}:\n{overlay}");
+    }
+}
+
+/// An agent alone: no family to cycle, no completion to open, nobody to
+/// answer — and no rows saying otherwise.
+#[test]
+fn a2a_bindings_omit_the_family_chords_from_a_solitary_chat() {
+    let mut msgs = vec![
+        Msg::Server(ServerMsg::Connected {
+            local_host_id: Some(host_id()),
+        }),
+        Msg::Server(ServerMsg::HostUpserted { host: a_host() }),
+        agent_up(&an_agent(LEAD, "claude", CLAUDE_PROTOCOL, None)),
+        Msg::Server(ServerMsg::HostsSynchronized),
+        Msg::Server(ServerMsg::AgentsSynchronized),
+    ];
+    msgs.extend(opened(LEAD));
+    msgs.push(batch(LEAD, NOW - 60, vec![claude_ready()]));
+    let overlay = help_overlay(&fold(msgs), LEAD);
+    for action in [
+        "next agent in this family",
+        "open / close completions",
+        "answer the waiting child here",
+    ] {
+        assert!(!overlay.contains(action), "{action} is inert:\n{overlay}");
+    }
+    assert!(
+        overlay.contains("back to fleet"),
+        "the chords that always work are still there:\n{overlay}"
+    );
+}
+
+/// The answer chord tracks the same fact the banner does: a child that
+/// finished wants a person, not an answer, so neither offers the key.
+#[test]
+fn a2a_bindings_offer_the_answer_chord_only_with_an_ask_to_dock() {
+    let mut msgs = family_msgs();
+    msgs.push(batch(
+        RUNNER,
+        NOW - 5,
+        vec![json!({
+            "type": "amux.codex_approval_resolved",
+            "request_id": "approval-1",
+            "reason": "answered",
+        })],
+    ));
+    let model = fold(msgs);
+    let overlay = help_overlay(&model, LEAD);
+    assert!(
+        overlay.contains("next agent in this family"),
+        "the family is still there:\n{overlay}"
+    );
+    assert!(
+        !overlay.contains("answer the waiting child here"),
+        "but there is nothing left to answer:\n{overlay}"
+    );
+}
+
+/// A parent whose own ask holds the bottom block has nowhere to host a
+/// guest, so the chord is out of the overlay for the same reason it is
+/// out of the banner.
+#[test]
+fn a2a_bindings_withhold_the_answer_chord_behind_the_parents_own_ask() {
+    let mut msgs = family_msgs();
+    msgs.push(batch(SCRIBE, NOW - 15, vec![answerable_permission_row()]));
+    msgs.push(agent_up(&an_agent(
+        SCRIBE,
+        "claude",
+        CLAUDE_PROTOCOL,
+        Some(RUNNER),
+    )));
+    let model = fold(msgs);
+    let overlay = help_overlay(&model, RUNNER);
+    assert!(
+        !overlay.contains("answer the waiting child here"),
+        "the runner's own approval owns the bottom block:\n{overlay}"
+    );
+}

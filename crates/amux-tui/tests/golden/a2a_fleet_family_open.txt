@@ -10,5 +10,5 @@
 │   ✓ nightly-refactor      codex    hetzner    3m    finished                 │
 │     docs-cleanup          claude   nova       1h    idle                     │
 │                                                                              │
-│ ● connected · 3 hosts  n new  r rename  d delete  q quit  ? help             │
+│ ● connected · 3 hosts  n new  r rename  d delete  z fold  q quit  ? help     │
 └──────────────────────────────────────────────────────────────────────────────┘

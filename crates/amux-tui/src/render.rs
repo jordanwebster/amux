@@ -219,7 +219,7 @@ fn build_fleet_lines(model: &Model, view: &ViewState, ctx: &FrameContext) -> Vec
             }
             list
         }
-        ScreenState::Help => help_lines(view, width),
+        ScreenState::Help => help_lines(model, view, width),
         ScreenState::ConfirmDelete { agent } => {
             confirm_delete_lines(model, ctx, agent, width, capacity)
         }
@@ -754,7 +754,18 @@ fn status_line(model: &Model, view: &ViewState, width: usize) -> Line<'static> {
     push_span(&mut line, BADGE_COL, summary, plain());
 
     let hints = match &view.mode {
-        Mode::Normal => "n new  r rename  d delete  q quit  ? help",
+        // `z` joins the row only where something folds, and only when
+        // the row still fits: a hint that names a dead key is a lie, and
+        // a hint block that vanishes wholesale to make room for one more
+        // is a worse trade than leaving that one to the `?` overlay.
+        Mode::Normal => {
+            let plain = "n new  r rename  d delete  q quit  ? help";
+            let with_fold = "n new  r rename  d delete  z fold  q quit  ? help";
+            match has_families(model) && fits(with_fold, width) {
+                true => with_fold,
+                false => plain,
+            }
+        }
         // "open", not "attach": Enter opens the settings-default mode
         // (A1), which may be the chat — the hint stays truthful either
         // way.
@@ -763,21 +774,38 @@ fn status_line(model: &Model, view: &ViewState, width: usize) -> Line<'static> {
         Mode::ConfirmDelete { .. } => "",
         Mode::Help => "any key to close",
     };
-    if !hints.is_empty() && HINTS_COL + hints.chars().count() <= width - 2 {
+    if !hints.is_empty() && fits(hints, width) {
         push_span(&mut line, HINTS_COL, hints, dim());
     }
     finish_line(&mut line, width);
     line
 }
 
+/// Whether a hint block fits the status line beside the connection
+/// summary.
+fn fits(hints: &str, width: usize) -> bool {
+    HINTS_COL + hints.chars().count() <= width.saturating_sub(2)
+}
+
+/// Whether anything on this fleet has children — the fact `z` exists on:
+/// with no family on screen the fold key does nothing anywhere, so the
+/// overlay does not name it (P10).
+fn has_families(model: &Model) -> bool {
+    model
+        .fleet()
+        .iter()
+        .any(|item| matches!(item, amux_ui::FleetItem::Family { .. }))
+}
+
 /// The fleet help overlay, derived from the one binding table — kitty
 /// rows appear only when the probe succeeded, the configured leader
 /// substitutes into chords, and the entry rows name the effective modes
 /// (P10: hints tell the truth).
-fn help_lines(view: &ViewState, _width: usize) -> Vec<Line<'static>> {
+fn help_lines(model: &Model, view: &ViewState, _width: usize) -> Vec<Line<'static>> {
     let sections = crate::bindings::fleet_sections(
         &crate::bindings::Effective::new(view.kitty, view.leader),
         view.default_open_mode,
+        has_families(model),
     );
     let mut lines = Vec::new();
     for (index, section) in sections.iter().enumerate() {

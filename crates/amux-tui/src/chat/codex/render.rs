@@ -72,7 +72,7 @@ pub(crate) fn build_chat_lines(
     }
     let theme = ctx.theme;
     if chat.help {
-        return help_frame(chat, theme, width, height);
+        return help_frame(model, chat, theme, width, height);
     }
 
     let phase = amux_ui::codex::phase(model, chat.agent);
@@ -1476,11 +1476,17 @@ fn feed_rule(title: &str, width: usize, theme: Theme) -> Line<'static> {
     line
 }
 
-fn help_frame(chat: &View, theme: Theme, width: usize, height: usize) -> Vec<Line<'static>> {
-    let sections = crate::bindings::codex_chat_sections(&crate::bindings::Effective::new(
-        chat.kitty,
-        chat.leader,
-    ));
+fn help_frame(
+    model: &Model,
+    chat: &View,
+    theme: Theme,
+    width: usize,
+    height: usize,
+) -> Vec<Line<'static>> {
+    let sections = crate::bindings::codex_chat_sections(
+        &crate::bindings::Effective::new(chat.kitty, chat.leader),
+        crate::chat::family_keys(model, chat.agent),
+    );
     let key_col = TEXT_COL
         + 2
         + sections

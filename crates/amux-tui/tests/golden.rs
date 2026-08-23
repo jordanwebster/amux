@@ -1042,3 +1042,55 @@ fn a2a_delete_confirm_styles() {
     let styles = buffer_styles(&render_buffer(&model, &view, 80, 14, Theme::Dark));
     assert_golden("a2a_delete_confirm_styles", &styles);
 }
+
+// --- hints tell the truth about the family keys ---------------------------
+
+/// The fold key joins the status-line hints where something folds, and
+/// stays out of them where nothing does.
+#[test]
+fn a2a_bindings_hint_the_fold_key_only_with_a_family_on_screen() {
+    let with_family = render_frame(&family_model(), &view_default(), 80, 14);
+    assert!(
+        with_family.contains("z fold"),
+        "the hint row names it:\n{with_family}"
+    );
+
+    let flat = render_frame(&fold(fleet_msgs()), &view_default(), 80, 14);
+    assert!(
+        flat.contains("n new") && !flat.contains("z fold"),
+        "nothing folds here, so nothing says it does:\n{flat}"
+    );
+}
+
+/// A narrow terminal keeps the hints it always had rather than losing the
+/// whole row to make space for one more: the `?` overlay is where the
+/// full list lives.
+#[test]
+fn a2a_bindings_keep_the_hint_row_when_the_fold_key_will_not_fit() {
+    let narrow = render_frame(&family_model(), &view_default(), 68, 14);
+    assert!(
+        narrow.contains("n new") && narrow.contains("? help"),
+        "the row survives:\n{narrow}"
+    );
+    assert!(
+        !narrow.contains("z fold"),
+        "without pretending it fits:\n{narrow}"
+    );
+}
+
+/// The fleet's `?` overlay follows the same rule as its hint row.
+#[test]
+fn a2a_bindings_fleet_overlay_lists_the_fold_key_only_with_a_family() {
+    let helped = ViewState {
+        mode: Mode::Help,
+        ..view_default()
+    };
+    let with_family = render_frame(&family_model(), &helped, 80, 24);
+    assert!(with_family.contains("open/shut a family"), "{with_family}");
+
+    let flat = render_frame(&fold(fleet_msgs()), &helped, 80, 24);
+    assert!(
+        !flat.contains("open/shut a family"),
+        "no family, no row:\n{flat}"
+    );
+}

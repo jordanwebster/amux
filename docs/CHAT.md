@@ -779,6 +779,14 @@ glyphs). One named binding table feeds dispatch, the footer hints, the
 `?` overlay, and any future palette; hints never advertise dead keys
 and substitute the configured leader.
 
+That rule reaches the overlay, not just the hint rows: a key whose
+effect depends on what is on screen is listed only while it has one.
+The three family chords each track their own fact — `<leader> n` needs
+somewhere else in this family to go, `<leader> m` a completion with a
+body behind its first line, `<leader> a` a child's ask this chat could
+host — and the fleet's `z` needs a family on the fleet. A hint row that
+cannot fit an optional chord drops that chord rather than the row.
+
 **Ctrl+C** is the guarded abandon key, one rule chrome-wide (fleet
 included — the chrome's single-press quit gains the guard): with a
 focused non-empty text field it clears that field, as a kill (Ctrl+Y
