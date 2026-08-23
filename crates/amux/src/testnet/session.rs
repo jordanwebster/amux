@@ -156,6 +156,29 @@ impl Daemon {
         assert_eq!(sender.host_id, self.host_id());
         assert_eq!(recipient.host_id, recipient_owner.host_id());
 
+        let assertion = format!(
+            "'{}' mirrors recipient {} from '{}'",
+            self.name(),
+            recipient.id,
+            recipient_owner.name()
+        );
+        eventually(
+            &assertion,
+            async || {
+                let Some(parts) = self.try_parts().await else {
+                    return false;
+                };
+                parts
+                    .client
+                    .list_agents()
+                    .await
+                    .iter()
+                    .any(|agent| agent.id == recipient.id)
+            },
+            self.failure_dump(),
+        )
+        .await;
+
         let recipient_name = recipient
             .name
             .as_deref()

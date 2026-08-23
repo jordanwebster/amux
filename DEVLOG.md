@@ -4,6 +4,13 @@ This file tracks significant development work, decisions made, and current state
 
 ---
 
+2026-08-23 — **Agent messages route across paired devices.** The whole-daemon
+specification now sends from a local live agent to a remote echo agent over
+both a direct TCP pairing and two cloud-only device links. In each topology,
+the sender daemon resolves the mirrored recipient, forwards the authenticated
+envelope through the peer service, and the owning daemon delivers it through
+the recipient's local backend.
+
 2026-08-23 — **Agent-authored messages retain daemon-resolved provenance.** The
 generic transcript tag now carries the sender's agent kind alongside its id,
 name, and host, and the shared parser exposes that field for downstream native
