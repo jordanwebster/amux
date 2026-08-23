@@ -80,3 +80,23 @@ async fn a2a_cross_device_through_cloud() {
         .agent_message_is_echoed(&phone, &sender, &recipient, "hello through cloud")
         .await;
 }
+
+/// A human needs immediate feedback when a selected remote host cannot be
+/// reached. Agent sends remain fire-and-forget: the daemon accepts the
+/// envelope id and drops the message because no recipient carrier can run.
+#[tokio::test]
+async fn a2a_unreachable_recipient() {
+    let net = TestNet::builder()
+        .daemon("laptop")
+        .daemon("desktop")
+        .paired("laptop", "desktop", Via::Tcp)
+        .start()
+        .await;
+    let [laptop, desktop] = net.daemons(["laptop", "desktop"]);
+
+    let sender = laptop.spawn_echo_agent("sender").await;
+    let recipient = desktop.spawn_echo_agent("recipient").await;
+    laptop
+        .unreachable_recipient_message_policy(&desktop, &sender, &recipient)
+        .await;
+}

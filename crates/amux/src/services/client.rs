@@ -1943,14 +1943,50 @@ impl ClientService {
         host_id: Uuid,
         envelope: envelope::Envelope,
     ) -> TonicResult<wire::SendMessageResponse> {
-        let mut client = self
-            .remote_agent_client("ClientService.SendMessage", host_id)
-            .await?;
-        let response = client
-            .send_message(crate::agents::envelope_to_wire(&envelope))
-            .await?
-            .into_inner();
-        Ok(tonic::Response::new(response))
+        let envelope_id = envelope.id;
+        let agent_authored = matches!(&envelope.from, envelope::Sender::Agent(_));
+        let result = async {
+            let mut client = self
+                .remote_agent_client("ClientService.SendMessage", host_id)
+                .await?;
+            client
+                .send_message(crate::agents::envelope_to_wire(&envelope))
+                .await
+                .map(|response| response.into_inner())
+        }
+        .await;
+
+        match result {
+            Ok(response) => Ok(tonic::Response::new(response)),
+            Err(status) if status.code() == tonic::Code::Unavailable => {
+                tracing::info!(
+                    %envelope_id,
+                    recipient_host_id = %host_id,
+                    carrier = "none",
+                    dropped = agent_authored,
+                    error = %status,
+                    "agent message recipient host unavailable"
+                );
+                if agent_authored {
+                    Ok(tonic::Response::new(wire::SendMessageResponse {
+                        envelope_id: envelope_id.as_bytes().to_vec(),
+                    }))
+                } else {
+                    Err(status)
+                }
+            }
+            Err(status) => {
+                tracing::info!(
+                    %envelope_id,
+                    recipient_host_id = %host_id,
+                    carrier = "none",
+                    dropped = false,
+                    error = %status,
+                    "agent message remote delivery failed"
+                );
+                Err(status)
+            }
+        }
     }
 
     async fn remote_set_agent_status(

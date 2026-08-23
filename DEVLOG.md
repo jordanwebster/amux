@@ -4348,3 +4348,11 @@ and client-authored agent provenance is accepted only for a live local sender.
 The whole-daemon specification proves an unknown sender UUID is refused before
 delivery, while wire tests cover envelope, relationship, prompt, and status
 round trips.
+2026-08-23 — **Made remote agent messaging honestly fire-and-forget.** Local
+delivery now records the envelope id and accepted backend carrier at info, and
+records failed carrier attempts with the same correlation fields. When a
+selected remote host becomes unreachable, a human send still receives an
+Unavailable response; a live local agent send is logged and dropped while
+returning its daemon-issued envelope id. The whole-daemon specification
+reproduces the route-loss window from a last-known remote agent observation and
+locks in both caller outcomes.

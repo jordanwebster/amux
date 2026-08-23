@@ -267,11 +267,27 @@ impl LocalAgentHost for PtyAgentHost {
             .get(&envelope.to.agent_id)
             .map(|context| &context.session)
             .ok_or(ProtocolError::NoAgentFound)?;
-        session
-            .deliver(&envelope)
-            .await
-            .map(|_| ())
-            .map_err(delivery_error_to_protocol)
+        match session.deliver(&envelope).await {
+            Ok(delivery) => {
+                tracing::info!(
+                    envelope_id = %envelope.id,
+                    recipient_agent_id = %envelope.to.agent_id,
+                    carrier = delivery.carrier(),
+                    "agent message delivered"
+                );
+                Ok(())
+            }
+            Err(error) => {
+                tracing::info!(
+                    envelope_id = %envelope.id,
+                    recipient_agent_id = %envelope.to.agent_id,
+                    carrier = "none",
+                    error = %error,
+                    "agent message delivery failed"
+                );
+                Err(delivery_error_to_protocol(error))
+            }
+        }
     }
 
     async fn set_agent_status(&self, request: SetAgentStatusRequest) -> Result<(), ProtocolError> {

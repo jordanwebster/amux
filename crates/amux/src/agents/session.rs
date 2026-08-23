@@ -44,6 +44,14 @@ pub(crate) enum Delivery {
     Pty,
 }
 
+impl Delivery {
+    pub(crate) const fn carrier(self) -> &'static str {
+        match self {
+            Self::Pty => "pty",
+        }
+    }
+}
+
 /// A backend could not accept an agent message.
 #[derive(Debug, thiserror::Error)]
 pub(crate) enum DeliveryError {

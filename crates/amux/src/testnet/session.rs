@@ -245,6 +245,73 @@ impl Daemon {
         assert_eq!(parsed.text, text);
     }
 
+    /// Takes a recipient host offline after its agent was observed, then
+    /// restores that last inventory observation to reproduce a route loss
+    /// between target selection and remote dispatch. Human callers see the
+    /// failed delivery; live local agents retain fire-and-forget semantics.
+    pub async fn unreachable_recipient_message_policy(
+        &self,
+        recipient_owner: &Daemon,
+        sender: &Agent,
+        recipient: &Agent,
+    ) {
+        assert_eq!(sender.host_id, self.host_id());
+        assert_eq!(recipient.host_id, recipient_owner.host_id());
+
+        recipient_owner.stop().await;
+        let parts = self
+            .try_parts()
+            .await
+            .unwrap_or_else(|| panic!("daemon '{}' is not running", self.name()));
+        parts
+            .client
+            .apply_agent_event(crate::agents::AgentEvent::AgentUp {
+                agent: recipient.clone(),
+            })
+            .await;
+
+        let guard = self.inner.runtime.lock().await;
+        let runtime = guard
+            .as_ref()
+            .unwrap_or_else(|| panic!("daemon '{}' is not running", self.name()));
+        let (channel, _accept_task) = runtime.services.open_in_process_client_channel();
+        drop(guard);
+        let mut client =
+            crate::protocol::wire::client_service_client::ClientServiceClient::new(channel);
+
+        let human_error = client
+            .send_message(crate::protocol::wire::ClientSendMessageRequest {
+                to: Some(crate::protocol::wire::AgentRef {
+                    identifier: Some(crate::protocol::wire::agent_ref::Identifier::AgentId(
+                        recipient.id.as_bytes().to_vec(),
+                    )),
+                }),
+                text: "unreachable human message".to_string(),
+                context: None,
+                from_agent_id: None,
+            })
+            .await
+            .expect_err("a human sender must observe an unreachable recipient host");
+        assert_eq!(human_error.code(), tonic::Code::Unavailable);
+
+        let response = client
+            .send_message(crate::protocol::wire::ClientSendMessageRequest {
+                to: Some(crate::protocol::wire::AgentRef {
+                    identifier: Some(crate::protocol::wire::agent_ref::Identifier::AgentId(
+                        recipient.id.as_bytes().to_vec(),
+                    )),
+                }),
+                text: "unreachable agent message".to_string(),
+                context: None,
+                from_agent_id: Some(sender.id.as_bytes().to_vec()),
+            })
+            .await
+            .expect("an agent sender drops an unreachable fire-and-forget message")
+            .into_inner();
+        Uuid::from_slice(&response.envelope_id)
+            .expect("the dropped response retains a valid envelope id");
+    }
+
     /// Assertion: `agent_name` (eventually) appears in the inventory `other`
     /// serves to this daemon over the route — a real routed
     /// `ClientService.ListAgents`.
