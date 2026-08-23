@@ -1671,6 +1671,8 @@ impl AgentBackend for CodexSession {
             thread_id,
             daemon_mode,
             created_at: self.created_at,
+            parent: None,
+            working_on: None,
         })
     }
 

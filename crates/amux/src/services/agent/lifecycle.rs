@@ -588,6 +588,8 @@ mod tests {
             working_dir: std::env::temp_dir(),
             terminal_size: None,
             created_at: Utc::now(),
+            parent: None,
+            working_on: None,
         };
 
         let result = resume_agents(&agent_state, &event_tx, vec![suspended], host_id).await;

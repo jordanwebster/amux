@@ -111,6 +111,8 @@ impl AgentBackend for ClaudeSession {
             created_at: self.created_at,
             args: self.args.clone(),
             session_id,
+            parent: None,
+            working_on: None,
         })
     }
 

@@ -70,6 +70,20 @@ pub struct RenameAgentRequest {
     pub name: String,
 }
 
+/// The owning agent and host for a child agent.
+#[derive(Serialize, Deserialize, Debug, Clone, Copy, PartialEq, Eq)]
+pub struct AgentParent {
+    pub agent_id: Uuid,
+    pub host_id: Uuid,
+}
+
+/// A concise description of an agent's current task and when it changed.
+#[derive(Serialize, Deserialize, Debug, Clone, PartialEq, Eq)]
+pub struct WorkingOn {
+    pub text: String,
+    pub updated_at: DateTime<Utc>,
+}
+
 /// Client-visible agent DTO used by service responses and inventory streams.
 #[derive(Serialize, Deserialize, Debug, Clone, PartialEq, Eq)]
 pub struct Agent {
@@ -84,4 +98,8 @@ pub struct Agent {
     pub readonly: bool,
     pub args: Vec<String>,
     pub created_at: DateTime<Utc>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub parent: Option<AgentParent>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub working_on: Option<WorkingOn>,
 }

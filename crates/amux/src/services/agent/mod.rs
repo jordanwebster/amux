@@ -407,6 +407,8 @@ mod tests {
             readonly: false,
             args: Vec::new(),
             created_at: Utc::now(),
+            parent: None,
+            working_on: None,
         }
     }
 

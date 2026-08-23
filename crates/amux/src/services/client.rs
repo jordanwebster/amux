@@ -2346,6 +2346,8 @@ mod tests {
             readonly: false,
             args: Vec::new(),
             created_at: Utc.timestamp_millis_opt(0).single().unwrap(),
+            parent: None,
+            working_on: None,
         }
     }
 
@@ -5312,6 +5314,8 @@ mod tests {
             working_dir: std::env::temp_dir(),
             terminal_size: None,
             created_at: Utc::now(),
+            parent: None,
+            working_on: None,
         };
         crate::suspend::save_suspended(
             &state_path,

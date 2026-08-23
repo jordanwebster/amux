@@ -52,7 +52,9 @@ pub(crate) use types::AGENT_TYPE_CLAUDE;
 pub(crate) use types::AGENT_TYPE_CODEX;
 #[cfg(all(feature = "local-agents", any(debug_assertions, test)))]
 pub(crate) use types::AGENT_TYPE_TEST_AGENT;
-pub use types::{Agent, AgentType, CreateAgentRequest, RenameAgentRequest, TerminalSize};
+pub use types::{
+    Agent, AgentParent, AgentType, CreateAgentRequest, RenameAgentRequest, TerminalSize, WorkingOn,
+};
 pub(crate) use wire::{
     CreateAgentConfig, CreateAgentRpcRequest, SendInputRequest, SessionInputEvent,
     SubscribeSessionRequest, agent_from_wire, agent_to_wire, create_agent_request_from_wire,

@@ -218,6 +218,8 @@ impl AgentBackend for TestAgentSession {
             working_dir: self.working_dir.clone(),
             terminal_size: self.terminal_size,
             created_at: self.created_at,
+            parent: None,
+            working_on: None,
         })
     }
 

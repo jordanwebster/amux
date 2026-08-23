@@ -2095,6 +2095,8 @@ mod tests {
                     readonly: false,
                     args: Vec::new(),
                     created_at: chrono::Utc::now(),
+                    parent: None,
+                    working_on: None,
                 },
             })
             .await;
@@ -2247,6 +2249,8 @@ mod tests {
                     readonly: false,
                     args: Vec::new(),
                     created_at: chrono::Utc::now(),
+                    parent: None,
+                    working_on: None,
                 },
             })
             .await;

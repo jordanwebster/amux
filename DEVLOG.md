@@ -4,6 +4,8 @@ This file tracks significant development work, decisions made, and current state
 
 ---
 
+2026-08-23 — **Agent inventory records can express family lineage and current work.** The agent protocol, runtime record, public DTO, wire codecs, and suspended-session representation now carry an optional parent host/agent pair and an optional timestamped `working_on` description. Round-trip coverage pins UUID and timestamp validation across the record-to-wire path and persistence preserves both fields. The opt-in real-harness binaries recognize non-scenario A2A unit-test filters, allowing the offline ledger checks to sweep all test targets without accidentally launching or rejecting a live capture.
+
 2026-08-23 — **The A2A capture suite is clean under the workspace lint oracle.** The capture-only graduation helper explicitly tolerates being unused by integration-test targets that include its module without invoking promotion, and the dynamic-tool event matcher follows the workspace's current Clippy requirement without changing capture behavior.
 
 2026-08-23 — **Claude Stop hooks now have a current-version completion fixture.** The isolated 2.1.240 capture records `hook.stop` with the exact `last_assistant_message` from a completed turn, giving the completion path a redacted, structurally checked offline witness.

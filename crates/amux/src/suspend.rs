@@ -8,7 +8,7 @@ use chrono::{DateTime, Utc};
 use serde::{Deserialize, Serialize};
 use uuid::Uuid;
 
-use crate::agents::TerminalSize;
+use crate::agents::{AgentParent, TerminalSize, WorkingOn};
 
 /// All suspended agent sessions, serialized to disk across server restarts.
 #[derive(Serialize, Deserialize, Debug, Clone)]
@@ -38,6 +38,10 @@ pub(crate) enum SuspendedAgent {
         args: Vec<String>,
         session_id: Uuid,
         created_at: DateTime<Utc>,
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        parent: Option<AgentParent>,
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        working_on: Option<WorkingOn>,
     },
     #[cfg(unix)]
     Codex {
@@ -51,6 +55,10 @@ pub(crate) enum SuspendedAgent {
         #[serde(default, skip_serializing_if = "Option::is_none")]
         daemon_mode: Option<String>,
         created_at: DateTime<Utc>,
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        parent: Option<AgentParent>,
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        working_on: Option<WorkingOn>,
     },
     #[cfg(any(debug_assertions, test))]
     TestAgent {
@@ -60,6 +68,10 @@ pub(crate) enum SuspendedAgent {
         working_dir: PathBuf,
         terminal_size: Option<TerminalSize>,
         created_at: DateTime<Utc>,
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        parent: Option<AgentParent>,
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        working_on: Option<WorkingOn>,
     },
 }
 
@@ -172,6 +184,14 @@ mod tests {
                     args: vec!["--dangerously-skip-permissions".to_string()],
                     session_id: Uuid::new_v4(),
                     created_at: Utc::now(),
+                    parent: Some(AgentParent {
+                        agent_id: Uuid::new_v4(),
+                        host_id: Uuid::new_v4(),
+                    }),
+                    working_on: Some(WorkingOn {
+                        text: "reviewing protocol".to_string(),
+                        updated_at: Utc::now(),
+                    }),
                 },
                 #[cfg(unix)]
                 SuspendedAgent::Codex {
@@ -184,6 +204,8 @@ mod tests {
                     thread_id: "thread-1".to_string(),
                     daemon_mode: Some("spawned-well-known".to_string()),
                     created_at: Utc::now(),
+                    parent: None,
+                    working_on: None,
                 },
                 #[cfg(any(debug_assertions, test))]
                 SuspendedAgent::TestAgent {
@@ -193,6 +215,8 @@ mod tests {
                     working_dir: PathBuf::from("/tmp"),
                     terminal_size: None,
                     created_at: Utc::now(),
+                    parent: None,
+                    working_on: None,
                 },
             ],
         };
@@ -206,7 +230,15 @@ mod tests {
         assert_eq!(loaded.agents.len(), state.agents.len());
         assert!(matches!(
             &loaded.agents[0],
-            SuspendedAgent::Claude { name, .. } if name.as_deref() == Some("test-claude")
+            SuspendedAgent::Claude {
+                name,
+                parent: Some(parent),
+                working_on: Some(working_on),
+                ..
+            } if name.as_deref() == Some("test-claude")
+                && parent.agent_id != Uuid::nil()
+                && parent.host_id != Uuid::nil()
+                && working_on.text == "reviewing protocol"
         ));
 
         let suspended = suspended_path(&state_path);
@@ -229,6 +261,8 @@ mod tests {
                 thread_id: "thread-known".to_string(),
                 daemon_mode: None,
                 created_at: Utc::now(),
+                parent: None,
+                working_on: None,
             }],
         };
         let yaml = serde_yaml::to_string(&state).unwrap();

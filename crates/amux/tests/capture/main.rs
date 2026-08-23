@@ -253,9 +253,10 @@ fn main() -> Result<()> {
         );
         return Ok(());
     }
-    if scenario_names
-        .iter()
-        .all(|name| name.starts_with("a2a_fixture_") || name == "a2a_version_gate_parser")
+    if scenario_names.iter().all(|name| name.starts_with("a2a_"))
+        && scenario_names
+            .iter()
+            .all(|name| SCENARIOS.iter().all(|scenario| scenario.name != name))
     {
         return Ok(());
     }

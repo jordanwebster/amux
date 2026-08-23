@@ -6,7 +6,7 @@ use prost::Message as ProstMessage;
 use protocol_wire::DeleteAgentRequest;
 use uuid::Uuid;
 
-use super::{Agent, SessionCloseReason, SubscribeSessionEvent};
+use super::{Agent, AgentParent, SessionCloseReason, SubscribeSessionEvent, WorkingOn};
 use crate::agents::{RenameAgentRequest, TerminalSize};
 use crate::protocol::wire::{self as protocol_wire, pb};
 
@@ -276,6 +276,8 @@ pub(crate) fn agent_to_wire(
         readonly: agent.readonly,
         args: agent.args.clone(),
         created_at_unix_ms: agent.created_at.timestamp_millis(),
+        parent: agent.parent.map(agent_parent_to_wire),
+        working_on: agent.working_on.as_ref().map(working_on_to_wire),
     })
 }
 
@@ -286,6 +288,9 @@ pub(crate) fn agent_from_wire(
         .timestamp_millis_opt(agent.created_at_unix_ms)
         .single()
         .ok_or_else(|| protocol_wire::DecodeError::Invalid("invalid agent created_at".into()))?;
+
+    let parent = agent.parent.map(agent_parent_from_wire).transpose()?;
+    let working_on = agent.working_on.map(working_on_from_wire).transpose()?;
 
     Ok(Agent {
         id: required_uuid_from_bytes("agent_id", agent.agent_id)?,
@@ -298,6 +303,46 @@ pub(crate) fn agent_from_wire(
         readonly: agent.readonly,
         args: agent.args,
         created_at,
+        parent,
+        working_on,
+    })
+}
+
+pub(crate) fn agent_parent_to_wire(parent: AgentParent) -> protocol_wire::AgentParent {
+    protocol_wire::AgentParent {
+        agent_id: uuid_to_bytes(parent.agent_id),
+        host_id: uuid_to_bytes(parent.host_id),
+    }
+}
+
+pub(crate) fn agent_parent_from_wire(
+    parent: protocol_wire::AgentParent,
+) -> Result<AgentParent, protocol_wire::DecodeError> {
+    Ok(AgentParent {
+        agent_id: required_uuid_from_bytes("parent.agent_id", parent.agent_id)?,
+        host_id: required_uuid_from_bytes("parent.host_id", parent.host_id)?,
+    })
+}
+
+fn working_on_to_wire(working_on: &WorkingOn) -> protocol_wire::WorkingOn {
+    protocol_wire::WorkingOn {
+        text: working_on.text.clone(),
+        updated_at_unix_ms: working_on.updated_at.timestamp_millis(),
+    }
+}
+
+fn working_on_from_wire(
+    working_on: protocol_wire::WorkingOn,
+) -> Result<WorkingOn, protocol_wire::DecodeError> {
+    let updated_at = Utc
+        .timestamp_millis_opt(working_on.updated_at_unix_ms)
+        .single()
+        .ok_or_else(|| {
+            protocol_wire::DecodeError::Invalid("invalid working_on.updated_at".into())
+        })?;
+    Ok(WorkingOn {
+        text: working_on.text,
+        updated_at,
     })
 }
 
@@ -346,6 +391,40 @@ fn required_uuid_from_bytes(
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn a2a_record_roundtrip() {
+        let parent = AgentParent {
+            agent_id: Uuid::new_v4(),
+            host_id: Uuid::new_v4(),
+        };
+        let updated_at = Utc.timestamp_millis_opt(1_777_777_777_777).unwrap();
+        let record = crate::agents::AgentRecord {
+            id: Uuid::new_v4(),
+            host_id: Uuid::new_v4(),
+            name: Some("child".to_string()),
+            command: "codex".to_string(),
+            working_dir: PathBuf::from("/tmp/work"),
+            agent_type: "codex".to_string(),
+            io_protocols: vec!["codex_sdk_v1".to_string()],
+            readonly: false,
+            args: vec!["--model".to_string(), "gpt-5.6".to_string()],
+            created_at: Utc.timestamp_millis_opt(1_700_000_000_000).unwrap(),
+            parent: Some(parent),
+            working_on: Some(WorkingOn {
+                text: "implement the record".to_string(),
+                updated_at,
+            }),
+        };
+
+        let dto = Agent::from(record);
+        let wire = agent_to_wire(&dto).unwrap();
+        let decoded = agent_from_wire(wire).unwrap();
+
+        assert_eq!(decoded, dto);
+        assert_eq!(decoded.parent, Some(parent));
+        assert_eq!(decoded.working_on.unwrap().updated_at, updated_at);
+    }
 
     #[test]
     fn create_agent_request_decodes_claude_create_config() {
@@ -489,6 +568,8 @@ mod tests {
             readonly: false,
             args: Vec::new(),
             created_at: Utc::now(),
+            parent: None,
+            working_on: None,
         };
 
         let err = agent_to_wire(&agent).unwrap_err();

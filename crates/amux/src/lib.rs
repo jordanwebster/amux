@@ -48,8 +48,8 @@ mod user_state;
 pub const VERSION: &str = env!("CARGO_PKG_VERSION");
 
 pub use agents::{
-    Agent, AgentEvent, AgentType, CreateAgentRequest, SessionCloseReason, SubscribeSessionEvent,
-    TerminalSize,
+    Agent, AgentEvent, AgentParent, AgentType, CreateAgentRequest, SessionCloseReason,
+    SubscribeSessionEvent, TerminalSize, WorkingOn,
 };
 pub use auth::oauth::{OAuthError, refresh_access_token, run_device_flow};
 pub use auth::{AccessToken, AuthError, CredentialProvider};

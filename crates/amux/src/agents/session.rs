@@ -140,6 +140,8 @@ pub(crate) trait AgentBackend: Send + Sync {
             readonly: self.readonly(),
             args: self.args().to_vec(),
             created_at: self.created_at(),
+            parent: None,
+            working_on: None,
         }
     }
 
@@ -187,6 +189,8 @@ pub(crate) fn agent_from_suspended(suspended: SuspendedAgent, deps: &AgentDeps) 
             args,
             session_id,
             created_at,
+            parent: _,
+            working_on: _,
         } => {
             let req = CreateAgentRequest {
                 agent_id,
@@ -215,6 +219,8 @@ pub(crate) fn agent_from_suspended(suspended: SuspendedAgent, deps: &AgentDeps) 
             thread_id,
             daemon_mode,
             created_at,
+            parent: _,
+            working_on: _,
         } => {
             let req = CreateAgentRequest {
                 agent_id,
@@ -245,6 +251,8 @@ pub(crate) fn agent_from_suspended(suspended: SuspendedAgent, deps: &AgentDeps) 
             working_dir,
             terminal_size,
             created_at,
+            parent: _,
+            working_on: _,
         } => {
             let req = CreateAgentRequest {
                 agent_id,
@@ -313,6 +321,8 @@ mod tests {
             ],
             session_id: Uuid::new_v4(),
             created_at: Utc::now(),
+            parent: None,
+            working_on: None,
         };
 
         let deps = AgentDeps::new(std::env::temp_dir().join("amux-test-codex.sock"));
@@ -343,6 +353,8 @@ mod tests {
             thread_id: "thread-resume".into(),
             daemon_mode: Some("spawned-well-known".into()),
             created_at,
+            parent: None,
+            working_on: None,
         };
         let deps = AgentDeps::new(std::env::temp_dir().join("amux-test-codex.sock"));
 
