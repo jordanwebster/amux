@@ -11,7 +11,8 @@ timestamp when the daemon restarts, and resumed inventory republishes both.
 2026-08-23 — **Agent work status follows the task lifecycle.**
 Child creation derives a bounded task label from the initial prompt, explicit
 status changes publish timestamped fleet updates, and turn completion clears
-the status while leaving the child available for later messages.
+the status while leaving the child available for later messages. Runtime
+metadata remains independent of provider-specific session implementations.
 
 2026-08-23 — **Agent stop is scoped to direct children.**
 The model-facing stop tool now verifies the authenticated caller owns the

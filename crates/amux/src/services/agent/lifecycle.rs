@@ -162,7 +162,7 @@ pub(crate) async fn create_agent_record(
     let req_name = req.name.clone();
     let working_on = req
         .parent
-        .and_then(|_| req.initial_prompt.as_deref())
+        .and(req.initial_prompt.as_deref())
         .and_then(spawn_task_name)
         .map(|text| WorkingOn {
             text,
