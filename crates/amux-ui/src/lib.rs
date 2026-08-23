@@ -21,14 +21,17 @@ mod runtime;
 mod update;
 
 // Kernel entity vocabulary re-exported so renderers depend on amux-ui alone.
-pub use amux::{Agent, AgentId, AgentType, Capabilities, HostEntry, HostId, HostTrustStatus};
+pub use amux::{
+    Agent, AgentId, AgentParent, AgentType, Capabilities, HostEntry, HostId, HostTrustStatus,
+    WorkingOn,
+};
 pub use claude::{ClaudeCommand, SendGate};
 pub use codex::{CodexCommand, CodexDecision, CodexInput};
 pub use effect::{DumpReason, Effect, InputPayload};
 pub use model::{
-    AgentCard, AgentPhase, Attention, Connection, FinishedOp, FleetItem, HostState, Model,
-    PendingOp, StreamPhase, StreamState, StructuredProtocol, Violation, Why, agent_type_label,
-    display_name_fallback, format_relative_age,
+    AgentCard, AgentPhase, Attention, Connection, FamilyMember, FinishedOp, FleetItem, HostState,
+    Model, PendingOp, StreamPhase, StreamState, StructuredProtocol, Violation, Why,
+    agent_type_label, display_name_fallback, format_relative_age,
 };
 pub use msg::{
     Command, DisconnectReason, Ephemeral, FlowClass, Msg, OpError, OpId, OpOutcome, ServerMsg,

@@ -9,7 +9,7 @@
 
 use std::collections::BTreeMap;
 
-use amux::{Agent, AgentId, HostEntry, HostId};
+use amux::{Agent, AgentId, AgentParent, HostEntry, HostId, WorkingOn};
 use chrono::{DateTime, Utc};
 use serde::{Deserialize, Serialize};
 
@@ -256,6 +256,18 @@ impl AgentCard {
         self.layer.as_ref().and_then(AgentLayer::codex)
     }
 
+    /// The agent that spawned this one, when it has one. A wire fact: the
+    /// owning daemon records the edge, so a card knows its parent even when
+    /// the parent lives on another host and is not in this inventory.
+    pub fn parent(&self) -> Option<AgentParent> {
+        self.agent.parent
+    }
+
+    /// What this agent says it is working on, and when it last said so.
+    pub fn working_on(&self) -> Option<&WorkingOn> {
+        self.agent.working_on.as_ref()
+    }
+
     /// Display name fallback: user-assigned name, then provider label, then
     /// short id.
     pub fn display_name(&self) -> String {
@@ -306,6 +318,26 @@ fn attention_rank(attention: Attention) -> u8 {
         Attention::NeedsYou { why: Why::Question } => 1,
         Attention::NeedsYou { why: Why::Finished } => 2,
         _ => 3,
+    }
+}
+
+/// How loudly one attention speaks for a whole family, most urgent first.
+/// Finer than `attention_rank`, which only has to order rows: a collapsed
+/// family shows ONE badge for several agents, so the summary needs to
+/// separate the three values the row order lumps together. `Unknown`
+/// outranks `Idle` deliberately — a family holding a member we cannot see
+/// is not a family we may call idle (summaries are honest about
+/// incompleteness; degradation is to `Unknown`, never to a wrong badge).
+fn attention_severity(attention: Attention) -> u8 {
+    match attention {
+        Attention::NeedsYou {
+            why: Why::Permission,
+        } => 0,
+        Attention::NeedsYou { why: Why::Question } => 1,
+        Attention::NeedsYou { why: Why::Finished } => 2,
+        Attention::Working => 3,
+        Attention::Unknown => 4,
+        Attention::Idle => 5,
     }
 }
 
@@ -378,10 +410,35 @@ pub enum StreamPhase {
     },
 }
 
+/// One agent below a family's top row, with the generations between them
+/// so a renderer can indent without walking parent edges itself.
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub struct FamilyMember<'a> {
+    pub card: &'a AgentCard,
+    /// 1 for a direct child, 2 for a grandchild, and so on.
+    pub depth: usize,
+}
+
 /// One row of the ranked fleet.
 #[derive(Clone, Debug, PartialEq)]
 pub enum FleetItem<'a> {
     Agent(&'a AgentCard),
+    /// An agent that spawned others. The family occupies ONE row and is
+    /// ranked as one thing; `children` travels with it so a renderer that
+    /// expands the row has the descendants already ranked, and one that
+    /// leaves it collapsed shows only the count and the summary badge.
+    Family {
+        parent: &'a AgentCard,
+        /// Every descendant, depth-first in family rank order.
+        children: Vec<FamilyMember<'a>>,
+        /// How many agents the collapsed row is standing in for — the
+        /// whole subtree, not just the direct children, because that is
+        /// what stays hidden while the row is collapsed.
+        child_count: usize,
+        /// The loudest effective attention anywhere in the family,
+        /// including the parent's own.
+        highest_attention: Attention,
+    },
     /// An optimistic row for an in-flight create.
     PendingCreate {
         op: OpId,
@@ -389,6 +446,14 @@ pub enum FleetItem<'a> {
         agent_type: &'a amux::AgentType,
         host: Option<HostId>,
     },
+}
+
+/// The parent edges of one inventory read, resolved once.
+struct Topology<'a> {
+    /// Direct children per parent, in family rank order.
+    children: BTreeMap<AgentId, Vec<&'a AgentCard>>,
+    /// The agents no parent in this inventory claims, in family rank order.
+    roots: Vec<&'a AgentCard>,
 }
 
 /// The client Model. One per daemon connection; renderers borrow it and
@@ -598,6 +663,113 @@ impl Model {
         card.status_label(self.effective_attention(card))
     }
 
+    /// Every descendant of an agent, ranked exactly as the fleet ranks a
+    /// family's children. Empty when the agent has spawned nobody — which
+    /// is also the answer for an agent this inventory does not hold.
+    pub fn family_of(&self, agent: AgentId) -> Vec<FamilyMember<'_>> {
+        let topology = self.topology();
+        let mut placed = std::collections::BTreeSet::new();
+        self.descendants(&topology, agent, 1, &mut placed)
+    }
+
+    /// Direct-child edges of the current inventory, plus the agents no
+    /// parent in this inventory claims. Computed once per read: an edge
+    /// naming an agent we cannot see (a parent on an unreachable host)
+    /// leaves the child a root, so a family we only half know still
+    /// renders every agent it has.
+    fn topology(&self) -> Topology<'_> {
+        let mut children: BTreeMap<AgentId, Vec<&AgentCard>> = BTreeMap::new();
+        let mut roots: Vec<&AgentCard> = Vec::new();
+        for card in self.agents.values() {
+            match card.parent() {
+                Some(parent) if self.agents.contains_key(&parent.agent_id) => {
+                    children.entry(parent.agent_id).or_default().push(card);
+                }
+                _ => roots.push(card),
+            }
+        }
+        for siblings in children.values_mut() {
+            siblings.sort_by(|a, b| self.rank_order(a, b));
+        }
+        roots.sort_by(|a, b| self.rank_order(a, b));
+        Topology { children, roots }
+    }
+
+    /// Depth-first descendants of one agent, marking each as placed so a
+    /// looping edge cannot walk forever.
+    fn descendants<'m>(
+        &'m self,
+        topology: &Topology<'m>,
+        of: AgentId,
+        depth: usize,
+        placed: &mut std::collections::BTreeSet<AgentId>,
+    ) -> Vec<FamilyMember<'m>> {
+        placed.insert(of);
+        let mut members = Vec::new();
+        for child in topology.children.get(&of).into_iter().flatten() {
+            if !placed.insert(child.agent.id) {
+                continue;
+            }
+            members.push(FamilyMember { card: child, depth });
+            members.extend(self.descendants(topology, child.agent.id, depth + 1, placed));
+        }
+        members
+    }
+
+    /// One top-level row and the keys it sorts by: a family ranks as a
+    /// unit, on its loudest attention and its most recent activity
+    /// anywhere, so a working child never sinks under the idle parent that
+    /// hides it.
+    fn family_row<'m>(
+        &'m self,
+        parent: &'m AgentCard,
+        children: Vec<FamilyMember<'m>>,
+    ) -> (u8, DateTime<Utc>, AgentId, FleetItem<'m>) {
+        let key = parent.agent.id;
+        if children.is_empty() {
+            let attention = self.effective_attention(parent);
+            return (
+                attention_rank(attention),
+                parent.last_activity,
+                key,
+                FleetItem::Agent(parent),
+            );
+        }
+        let highest_attention = children
+            .iter()
+            .map(|member| self.effective_attention(member.card))
+            .chain(std::iter::once(self.effective_attention(parent)))
+            .min_by_key(|attention| attention_severity(*attention))
+            .unwrap_or(Attention::Unknown);
+        let recency = children
+            .iter()
+            .map(|member| member.card.last_activity)
+            .chain(std::iter::once(parent.last_activity))
+            .max()
+            .unwrap_or(parent.last_activity);
+        (
+            attention_rank(highest_attention),
+            recency,
+            key,
+            FleetItem::Family {
+                parent,
+                child_count: children.len(),
+                highest_attention,
+                children,
+            },
+        )
+    }
+
+    /// The order two cards take among their siblings: the same rule the
+    /// fleet applies at top level, so an expanded family reads like the
+    /// list it sits in.
+    fn rank_order(&self, a: &AgentCard, b: &AgentCard) -> std::cmp::Ordering {
+        attention_rank(self.effective_attention(a))
+            .cmp(&attention_rank(self.effective_attention(b)))
+            .then(b.last_activity.cmp(&a.last_activity))
+            .then(a.agent.id.cmp(&b.agent.id))
+    }
+
     /// The fleet: ONE flat list, globally ranked. `NeedsYou` first
     /// (permission, question, finished), then recency; host is a column, not
     /// a grouping. Pending creates render as optimistic rows at the bottom
@@ -606,15 +778,30 @@ impl Model {
     /// drive) surface like any other row now that the chat renders them
     /// (A3: they open in chat only — the entry keys enforce it); their
     /// resting status word is `read-only`.
+    /// An agent that spawned others occupies one `Family` row carrying its
+    /// descendants: the list stays flat and globally ranked, and the family
+    /// is ranked as one thing.
     pub fn fleet(&self) -> Vec<FleetItem<'_>> {
-        let mut cards: Vec<&AgentCard> = self.agents.values().collect();
-        cards.sort_by(|a, b| {
-            attention_rank(self.effective_attention(a))
-                .cmp(&attention_rank(self.effective_attention(b)))
-                .then(b.last_activity.cmp(&a.last_activity))
-                .then(a.agent.id.cmp(&b.agent.id))
-        });
-        let mut items: Vec<FleetItem<'_>> = cards.into_iter().map(FleetItem::Agent).collect();
+        let topology = self.topology();
+        let mut placed: std::collections::BTreeSet<AgentId> = std::collections::BTreeSet::new();
+        let mut rows: Vec<(u8, DateTime<Utc>, AgentId, FleetItem<'_>)> = Vec::new();
+
+        for root in &topology.roots {
+            let children = self.descendants(&topology, root.agent.id, 1, &mut placed);
+            rows.push(self.family_row(root, children));
+        }
+        // A parent edge that loops has no root to hang from. The agents are
+        // real and must still be reachable, so each stands alone rather
+        // than vanishing into a cycle nobody can expand.
+        for card in self.agents.values() {
+            if !placed.contains(&card.agent.id) {
+                placed.insert(card.agent.id);
+                rows.push(self.family_row(card, Vec::new()));
+            }
+        }
+
+        rows.sort_by(|a, b| a.0.cmp(&b.0).then(b.1.cmp(&a.1)).then(a.2.cmp(&b.2)));
+        let mut items: Vec<FleetItem<'_>> = rows.into_iter().map(|row| row.3).collect();
 
         let mut creates: Vec<&PendingOp> = self
             .pending_ops
@@ -679,6 +866,11 @@ pub enum Violation {
         len: usize,
         cap: usize,
     },
+    /// An agent's ancestry loops, so it belongs to no family the fleet can
+    /// expand. The fleet still lists it, standing alone.
+    ParentCycle {
+        agent: AgentId,
+    },
     /// A card's cached attention disagrees with its provider projection.
     /// Codex includes the kernel stream phase; Claude is layer-only.
     AttentionMismatch {
@@ -702,6 +894,7 @@ impl Violation {
             Violation::CardEpochStale { .. } => "card-epoch-stale",
             Violation::HostEpochStale { .. } => "host-epoch-stale",
             Violation::FinishedOpsOverflow { .. } => "finished-ops-overflow",
+            Violation::ParentCycle { .. } => "parent-cycle",
             Violation::AttentionMismatch { .. } => "attention-mismatch",
             Violation::Claude(violation) => violation.kind(),
             Violation::Codex(violation) => violation.kind(),
@@ -753,6 +946,9 @@ impl std::fmt::Display for Violation {
                     f,
                     "finished_ops holds {len} entries over the bound of {cap}"
                 )
+            }
+            Violation::ParentCycle { agent } => {
+                write!(f, "agent {agent} has a looping parent edge")
             }
             Violation::AttentionMismatch {
                 agent,
@@ -828,6 +1024,20 @@ impl Model {
                         );
                     }
                 }
+            }
+        }
+
+        // Parent edges must form a forest: every agent reachable from some
+        // agent no parent claims. A loop would strand its members outside
+        // every family, so it is named here rather than silently flattened.
+        let topology = self.topology();
+        let mut reachable = std::collections::BTreeSet::new();
+        for root in &topology.roots {
+            self.descendants(&topology, root.agent.id, 1, &mut reachable);
+        }
+        for id in self.agents.keys() {
+            if !reachable.contains(id) {
+                violations.push(Violation::ParentCycle { agent: *id });
             }
         }
 

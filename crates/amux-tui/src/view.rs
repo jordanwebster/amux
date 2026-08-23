@@ -216,23 +216,38 @@ pub fn visible_rows<'a>(model: &'a Model, view: &ViewState) -> Vec<VisibleRow<'a
     model
         .fleet()
         .into_iter()
-        .filter_map(|item| {
-            let row = match item {
-                FleetItem::Agent(card) => VisibleRow::Agent(card),
-                FleetItem::PendingCreate {
-                    name,
-                    agent_type,
-                    host,
-                    ..
-                } => VisibleRow::PendingCreate {
-                    name,
-                    agent_type,
-                    host,
-                },
-            };
-            fuzzy_matches(&view.filter, &row.display_name()).then_some(row)
-        })
+        .flat_map(fleet_item_rows)
+        .filter(|row| fuzzy_matches(&view.filter, &row.display_name()))
         .collect()
+}
+
+/// The rows one ranked fleet item contributes. A family currently spends
+/// its parent and every descendant as ordinary rows, keeping the list the
+/// flat one the chrome draws today; the collapsed presentation arrives with
+/// the family chrome.
+fn fleet_item_rows(item: FleetItem<'_>) -> Vec<VisibleRow<'_>> {
+    match item {
+        FleetItem::Agent(card) => vec![VisibleRow::Agent(card)],
+        FleetItem::Family {
+            parent, children, ..
+        } => std::iter::once(VisibleRow::Agent(parent))
+            .chain(
+                children
+                    .into_iter()
+                    .map(|member| VisibleRow::Agent(member.card)),
+            )
+            .collect(),
+        FleetItem::PendingCreate {
+            name,
+            agent_type,
+            host,
+            ..
+        } => vec![VisibleRow::PendingCreate {
+            name,
+            agent_type,
+            host,
+        }],
+    }
 }
 
 /// Case-insensitive subsequence match — cheap, predictable fuzzy.
@@ -259,10 +274,13 @@ pub fn fuzzy_matches(filter: &str, candidate: &str) -> bool {
 pub fn next_agent_name(model: &Model, agent_type: &amux_ui::AgentType) -> String {
     let taken: Vec<String> = model
         .fleet()
-        .iter()
-        .map(|item| match item {
-            FleetItem::Agent(card) => card.display_name(),
-            FleetItem::PendingCreate { name, .. } => (*name).to_string(),
+        .into_iter()
+        .flat_map(|item| match item {
+            FleetItem::PendingCreate { name, .. } => vec![name.to_string()],
+            item => fleet_item_rows(item)
+                .iter()
+                .map(VisibleRow::display_name)
+                .collect(),
         })
         .collect();
     (1..)

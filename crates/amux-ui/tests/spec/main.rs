@@ -51,3 +51,5 @@ mod codex_write; // Chapter 16 — Codex writes: protobuf-native typed effects
 mod codex_agreement; // Chapter 17 — Codex phase/attention/gate agreement
 
 mod claude_agreement; // Chapter 18 — Claude classification/projection agreement
+
+mod a2a_fleet; // Chapter 19 — Families: parent edges folded into fleet rows

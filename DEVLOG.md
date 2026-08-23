@@ -4501,3 +4501,15 @@ cross-session JSONL protocol and are accepted only after the envelope id
 appears in a peer-origin user row or queued-command attachment within five
 seconds. A failed or unconfirmed post permanently moves that session to the
 safe bracketed-paste carrier and resends the message once.
+2026-08-23 — **Folded agent families into one fleet row.** A card now states
+its parent edge and current work directly, and the ranked fleet groups every
+agent under the ancestor nobody claims: one row per family, carrying the whole
+subtree in family rank order with each member's depth, the count of agents the
+collapsed row stands for, and the loudest effective attention anywhere beneath
+it. A family ranks as a unit on that attention and on its most recent activity,
+so a working child never sinks under the idle parent hiding it. Attention
+summaries prefer honest ignorance to a wrong badge: one member on an offline
+host makes the family Unknown rather than idle. Edges that name an agent this
+inventory cannot see leave the child a row of its own, and edges that loop
+strand nobody — each agent still gets a row and the Model reports the broken
+topology. The chrome keeps drawing its flat list until the family chrome lands.
