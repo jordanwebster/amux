@@ -8,7 +8,7 @@ use amux_ui::codex::{
     NetworkPolicyAction, NetworkPolicyAmendment, PromptPart, PromptSource, TokenUsage, TurnStatus,
     WorkEntry, WorkKind, WorkOutcome, WorkState,
 };
-use amux_ui::{AgentId, AgentMessageKind, Model};
+use amux_ui::{AgentId, AgentMessagePresentation, Model};
 use ratatui::style::Style;
 use ratatui::text::{Line, Span};
 use serde_json::Value;
@@ -734,15 +734,26 @@ fn entry_lines(entry: &FeedEntry, width: usize, theme: Theme) -> Vec<Line<'stati
         }
         FeedEntryKind::Work(work) => work_lines(work, width, theme),
         FeedEntryKind::McpStartup(startup) => mcp_startup_lines(startup, width, theme),
-        // U4: one directional glyph, the sender, then the body; a
-        // completion wears the finished mark instead of the arrow.
+        // One directional glyph, the sender, then the body — in the shape
+        // the kernel gives the message's kind, so this chat and every
+        // other draw a completion the same way.
         FeedEntryKind::AgentMessage(message) => {
-            let (glyph, glyph_style) = match message.kind {
-                AgentMessageKind::Completed => ("✔", theme.ok()),
-                _ => ("←", theme.emphasis()),
+            let presentation = message.kind.presentation();
+            let (glyph, glyph_style) = match presentation {
+                AgentMessagePresentation::Finished => ("✔", theme.ok()),
+                AgentMessagePresentation::Notice => ("·", theme.muted()),
+                AgentMessagePresentation::Inbound => ("←", theme.emphasis()),
             };
             let mut lines = glyph_text(glyph, &message.from, width, glyph_style, theme.muted());
-            lines.extend(continuation(&message.text, width, theme));
+            let body = match presentation {
+                // A notice has no body to open, so its one line is
+                // whatever the envelope managed to say — usually nothing.
+                AgentMessagePresentation::Notice => amux_ui::message_digest(&message.text).head,
+                _ => message.text.as_str(),
+            };
+            if !body.is_empty() {
+                lines.extend(continuation(body, width, theme));
+            }
             lines
         }
         FeedEntryKind::Turn(turn) => {

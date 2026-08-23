@@ -462,5 +462,6 @@ pub fn all_sequences() -> Vec<(&'static str, Vec<Msg>)> {
     sequences.extend(crate::a2a_claude_send_row::sequences());
     sequences.extend(crate::a2a_codex_inbound::sequences());
     sequences.extend(crate::a2a_family_needs::sequences());
+    sequences.extend(crate::a2a_completed_row::sequences());
     sequences
 }

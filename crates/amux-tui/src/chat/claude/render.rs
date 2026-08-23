@@ -13,7 +13,7 @@ use amux_ui::claude::{
     ChatPhase, FeedEntry, FeedEntryKind, InterruptionKind, PromptEcho, SuccessFacts, ToolEntry,
     ToolInvocation, ToolOutcome, TurnDuration,
 };
-use amux_ui::{AgentId, AgentMessageKind, Model};
+use amux_ui::{AgentId, AgentMessagePresentation, Model};
 use ratatui::style::Style;
 use ratatui::text::{Line, Span};
 
@@ -858,19 +858,28 @@ fn entry_block(entry: &FeedEntry, theme: Theme, width: usize, plan_hint: bool) -
             tool: false,
         },
         FeedEntryKind::Tool(tool) => tool_block(tool, theme, width, plan_hint),
-        // U4: one directional glyph, the sender, then the body. A
-        // completion wears the finished mark instead of the arrow.
+        // One directional glyph, the sender, then the body — in the shape
+        // the kernel gives the message's kind, so this chat and every
+        // other draw a completion the same way.
         FeedEntryKind::AgentMessage(message) => {
-            let (glyph, glyph_style) = match message.kind {
-                AgentMessageKind::Completed => ("✔", theme.ok()),
-                _ => ("←", theme.emphasis()),
+            let presentation = message.kind.presentation();
+            let (glyph, glyph_style) = match presentation {
+                AgentMessagePresentation::Finished => ("✔", theme.ok()),
+                AgentMessagePresentation::Notice => ("·", theme.muted()),
+                AgentMessagePresentation::Inbound => ("←", theme.emphasis()),
             };
             let mut rows = markdown::plain_rows(&message.from, text_width(width), theme.muted());
-            rows.extend(markdown::plain_rows(
-                &message.text,
-                text_width(width),
-                theme.text(),
-            ));
+            let body = match presentation {
+                // A notice has no body to open, so its one line is
+                // whatever the envelope managed to say — usually nothing.
+                AgentMessagePresentation::Notice => {
+                    amux_ui::message_digest(&message.text).head.to_string()
+                }
+                _ => message.text.clone(),
+            };
+            if !body.is_empty() {
+                rows.extend(markdown::plain_rows(&body, text_width(width), theme.text()));
+            }
             Block {
                 lines: glyph_block(glyph, glyph_style, rows),
                 tool: false,

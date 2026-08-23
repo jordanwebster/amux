@@ -4,6 +4,15 @@ This file tracks significant development work, decisions made, and current state
 
 ---
 
+2026-08-23 — **A completion reads as a completion in every chat.**
+What a delivered message makes of itself on screen now follows from its
+envelope kind, decided once in the client kernel: an ordinary message is a
+sender marker over its body, a completion wears a finished mark over a body
+that closes to its first line, and an exit is a one-line notice with nothing
+to open, because the daemon sends it with an empty body. Both native chats
+read that one decision instead of each classifying the kind themselves, and a
+kind this build does not know is still shown as the message it plainly is.
+
 2026-08-23 — **A child's ask surfaces in its parent's chat.**
 The client answers which of an agent's descendants are waiting on the human,
 each named by the child's id and the layer that draws its ask, so a parent's

@@ -444,6 +444,68 @@ impl AgentMessageKind {
             None => Self::Unstated,
         }
     }
+
+    /// What kind of row this makes. Decided here because the kind is
+    /// decided here: a completion that wore a finished mark in one layer's
+    /// chat and read as an ordinary message in the other's would be one
+    /// envelope vocabulary presented as two.
+    pub fn presentation(&self) -> AgentMessagePresentation {
+        match self {
+            Self::Completed => AgentMessagePresentation::Finished,
+            Self::Exited => AgentMessagePresentation::Notice,
+            // A kind this build does not know is shown as the message it
+            // plainly is, body and all: the unknown is in the label, not
+            // in the words someone sent.
+            Self::Message | Self::Other { .. } | Self::Unstated => {
+                AgentMessagePresentation::Inbound
+            }
+        }
+    }
+}
+
+/// How a delivered message occupies a chat.
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(tag = "presentation", rename_all = "snake_case")]
+pub enum AgentMessagePresentation {
+    /// A sender marker, then the body: another agent is talking to this
+    /// one.
+    Inbound,
+    /// The same, with a finished mark, over a body that closes to its
+    /// first line. A completion carries the sender's whole last message,
+    /// so it is as long as that message was and a chat that always spent
+    /// its full height on one would bury the conversation it belongs to.
+    Finished,
+    /// One line, no body to open. The envelope reports an event rather
+    /// than carrying words — an exit's body is empty by construction, and
+    /// a row that offered to expand nothing would be a lie about what is
+    /// there.
+    Notice,
+}
+
+/// The closed form of a message body.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub struct MessageDigest<'a> {
+    /// The line a closed body shows: its first line with anything on it.
+    pub head: &'a str,
+    /// How many further lines have anything on them. Source lines, not
+    /// screen rows — how a line wraps is the renderer's business, and the
+    /// count exists to say whether closing hides anything at all.
+    pub hidden_lines: usize,
+}
+
+/// Close a message body to one line. One derivation, so every client that
+/// draws a chat closes a body at the same place, and an empty body is
+/// honestly nothing rather than a blank line pretending to be content.
+pub fn message_digest(text: &str) -> MessageDigest<'_> {
+    let mut lines = text
+        .lines()
+        .map(str::trim_end)
+        .skip_while(|line| line.is_empty());
+    let head = lines.next().unwrap_or_default();
+    MessageDigest {
+        head,
+        hidden_lines: lines.filter(|line| !line.is_empty()).count(),
+    }
 }
 
 /// One agent below a family's top row, with the generations between them

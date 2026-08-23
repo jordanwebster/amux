@@ -29,10 +29,10 @@ pub use claude::{ClaudeCommand, SendGate};
 pub use codex::{CodexCommand, CodexDecision, CodexInput};
 pub use effect::{DumpReason, Effect, InputPayload};
 pub use model::{
-    AgentCard, AgentMessageKind, AgentPhase, Attention, Connection, FamilyMember, FamilyNeed,
-    FinishedOp, FleetItem, HostState, Model, PendingOp, StreamPhase, StreamState,
-    StructuredProtocol, Violation, Why, agent_type_label, display_name_fallback,
-    format_relative_age,
+    AgentCard, AgentMessageKind, AgentMessagePresentation, AgentPhase, Attention, Connection,
+    FamilyMember, FamilyNeed, FinishedOp, FleetItem, HostState, MessageDigest, Model, PendingOp,
+    StreamPhase, StreamState, StructuredProtocol, Violation, Why, agent_type_label,
+    display_name_fallback, format_relative_age, message_digest,
 };
 pub use msg::{
     Command, DisconnectReason, Ephemeral, FlowClass, Msg, OpError, OpId, OpOutcome, ServerMsg,
