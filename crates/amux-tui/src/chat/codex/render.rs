@@ -8,7 +8,7 @@ use amux_ui::codex::{
     NetworkPolicyAction, NetworkPolicyAmendment, PromptPart, PromptSource, TokenUsage, TurnStatus,
     WorkEntry, WorkKind, WorkOutcome, WorkState,
 };
-use amux_ui::{AgentId, Model};
+use amux_ui::{AgentId, AgentMessageKind, Model};
 use ratatui::style::Style;
 use ratatui::text::{Line, Span};
 use serde_json::Value;
@@ -734,6 +734,17 @@ fn entry_lines(entry: &FeedEntry, width: usize, theme: Theme) -> Vec<Line<'stati
         }
         FeedEntryKind::Work(work) => work_lines(work, width, theme),
         FeedEntryKind::McpStartup(startup) => mcp_startup_lines(startup, width, theme),
+        // U4: one directional glyph, the sender, then the body; a
+        // completion wears the finished mark instead of the arrow.
+        FeedEntryKind::AgentMessage(message) => {
+            let (glyph, glyph_style) = match message.kind {
+                AgentMessageKind::Completed => ("✔", theme.ok()),
+                _ => ("←", theme.emphasis()),
+            };
+            let mut lines = glyph_text(glyph, &message.from, width, glyph_style, theme.muted());
+            lines.extend(continuation(&message.text, width, theme));
+            lines
+        }
         FeedEntryKind::Turn(turn) => {
             let status = match &turn.status {
                 TurnStatus::Completed => "completed".to_string(),
@@ -923,6 +934,24 @@ fn work_lines(work: &WorkEntry, width: usize, theme: Theme) -> Vec<Line<'static>
                     width,
                     theme,
                 ));
+            }
+            lines
+        }
+        WorkKind::AmuxTool {
+            tool,
+            arguments,
+            success,
+        } => {
+            let mut lines = glyph_text(
+                glyph,
+                &format!("amux {tool} · {state}"),
+                width,
+                glyph_style,
+                theme.text(),
+            );
+            lines.extend(continuation(&json_text(arguments), width, theme));
+            if let Some(success) = success {
+                lines.extend(continuation(&format!("success {success}"), width, theme));
             }
             lines
         }

@@ -10,8 +10,8 @@
 //! The rule the chapter exists to hold: the row renders as the message it
 //! is, never as a prompt. A peer may not borrow the human's voice.
 
-use amux_ui::claude::{AgentMessageEntry, AgentMessageKind, ClaudeLayer, FeedEntryKind};
-use amux_ui::{Model, Msg};
+use amux_ui::claude::{AgentMessageEntry, ClaudeLayer, FeedEntryKind};
+use amux_ui::{AgentMessageKind, Model, Msg};
 
 use crate::harness::*;
 

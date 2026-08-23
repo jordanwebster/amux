@@ -10,10 +10,10 @@
 //! gates, counts — the code below formats and never decides.
 
 use amux_ui::claude::{
-    AgentMessageKind, ChatPhase, FeedEntry, FeedEntryKind, InterruptionKind, PromptEcho,
-    SuccessFacts, ToolEntry, ToolInvocation, ToolOutcome, TurnDuration,
+    ChatPhase, FeedEntry, FeedEntryKind, InterruptionKind, PromptEcho, SuccessFacts, ToolEntry,
+    ToolInvocation, ToolOutcome, TurnDuration,
 };
-use amux_ui::{AgentId, Model};
+use amux_ui::{AgentId, AgentMessageKind, Model};
 use ratatui::style::Style;
 use ratatui::text::{Line, Span};
 

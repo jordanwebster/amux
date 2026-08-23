@@ -31,7 +31,7 @@ use serde::{Deserialize, Serialize};
 use uuid::Uuid;
 
 use crate::claude::encoding::AskAnswer;
-use crate::model::{AgentPhase, Attention, Model, StreamPhase, Violation, Why};
+use crate::model::{AgentMessageKind, AgentPhase, Attention, Model, StreamPhase, Violation, Why};
 use crate::msg::OpId;
 
 /// The native structured protocol owned by this layer.
@@ -174,37 +174,6 @@ pub struct AgentMessageEntry {
     pub from: String,
     pub kind: AgentMessageKind,
     pub text: String,
-}
-
-/// Why an agent message was sent, as its carrier stated it.
-#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
-#[serde(tag = "message_kind", rename_all = "snake_case")]
-pub enum AgentMessageKind {
-    Message,
-    /// The sender finished a turn.
-    Completed,
-    /// The sender's session ended.
-    Exited,
-    /// A kind this build does not know.
-    Other {
-        label: String,
-    },
-    /// The carrier stated none.
-    Unstated,
-}
-
-impl AgentMessageKind {
-    pub(crate) fn read(label: Option<&str>) -> Self {
-        match label {
-            Some("message") => Self::Message,
-            Some("completed") => Self::Completed,
-            Some("exited") => Self::Exited,
-            Some(other) => Self::Other {
-                label: other.to_string(),
-            },
-            None => Self::Unstated,
-        }
-    }
 }
 
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]

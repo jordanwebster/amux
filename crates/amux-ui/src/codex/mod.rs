@@ -12,7 +12,7 @@ use chrono::{DateTime, Utc};
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
 
-use crate::model::{AgentPhase, Attention, Model, StreamPhase, Violation, Why};
+use crate::model::{AgentMessageKind, AgentPhase, Attention, Model, StreamPhase, Violation, Why};
 use crate::msg::OpId;
 
 /// The native structured protocol owned by this layer.
@@ -112,7 +112,7 @@ pub struct FeedEntry {
     pub kind: FeedEntryKind,
 }
 
-/// Nine Codex-native entry kinds.  Work subtypes express Codex's broad item
+/// Ten Codex-native entry kinds.  Work subtypes express Codex's broad item
 /// vocabulary without leaking a generic cross-agent representation.
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
 #[serde(tag = "entry", rename_all = "snake_case")]
@@ -122,10 +122,31 @@ pub enum FeedEntryKind {
     Reasoning(ReasoningEntry),
     Work(WorkEntry),
     McpStartup(McpStartupEntry),
+    /// A message another amux agent sent to this one, from the row the
+    /// daemon writes because the native thread shows nothing.
+    AgentMessage(AgentMessageEntry),
     Turn(TurnEntry),
     Boundary(BoundaryEntry),
     Error(ErrorEntry),
     Unrecognized(UnrecognizedEntry),
+}
+
+/// A message delivered by amux, as the daemon recorded accepting it.
+/// Structurally unlike Claude's: the Codex carrier injects the message
+/// into a thread rather than into text, so the fields are the daemon's own
+/// rather than whatever a transcript could recover — and the carrier that
+/// took it is a fact worth keeping, since three are possible.
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+pub struct AgentMessageEntry {
+    pub id: Option<String>,
+    pub context: Option<String>,
+    /// Who sent it: `name/host`, or `human`.
+    pub from: String,
+    pub kind: AgentMessageKind,
+    pub text: String,
+    /// Which carrier accepted it: `inject_queued`, `inject_started`, or
+    /// the `turn_started` fallback.
+    pub delivery: Option<String>,
 }
 
 #[derive(Clone, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
@@ -250,6 +271,16 @@ pub enum WorkKind {
     DynamicTool {
         tool: String,
         namespace: Option<String>,
+        arguments: Value,
+        success: Option<bool>,
+    },
+    /// One of amux's own agent tools, reached through the same dynamic-tool
+    /// carrier. Separated from `DynamicTool` because these are the fleet
+    /// acting on itself — spawning, stopping and messaging agents the human
+    /// can see — and reading them as anonymous dynamic calls would bury the
+    /// only work a chat can explain in the fleet's own words.
+    AmuxTool {
+        tool: String,
         arguments: Value,
         success: Option<bool>,
     },

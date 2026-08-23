@@ -4533,3 +4533,15 @@ it went to, and a summary — the outbound half of a conversation rather than
 an MCP tool name beside a JSON blob. It stays an ordinary tool row in every
 other respect, so a send that failed still reads as a failure, and the other
 amux tools deliberately keep the generic shape.
+2026-08-23 — **Read Codex agent messages and amux's own tool calls.** The
+Codex layer now folds the synthesized message row the daemon writes when a
+carrier accepts a delivery — keeping the sender, envelope id, context, kind
+and which of the three carriers took it — because the native thread shows
+nothing for an injected item. A message raises no attention of its own: a
+queued delivery is not the human being needed. Dynamic tool calls that amux
+itself registered fold to their own work kind, discriminated against the
+registrar's list rather than a copy of it, so the fleet's work on itself
+reads in the fleet's words while anyone else's dynamic tools stay theirs.
+The envelope-kind vocabulary moved to the kernel, where amux's own wire
+facts belong; each layer keeps its own entry, since what a Claude transcript
+can recover and what the Codex daemon authored are different facts.

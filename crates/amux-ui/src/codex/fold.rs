@@ -33,6 +33,7 @@ pub(super) fn observe(layer: &mut CodexLayer, seq: u64, _arrived: DateTime<Utc>,
         "amux.codex_approval_required" => fold_approval_required(layer, seq, row),
         "amux.codex_approval_resolved" => fold_approval_resolved(layer, row),
         "amux.input_result" => fold_input_result(layer, seq, row),
+        "amux.codex_message" => fold_agent_message(layer, seq, row),
 
         // Turn and item lifecycle.
         "turn/started" => fold_turn_started(layer, seq, row),
@@ -565,6 +566,24 @@ fn fold_mcp_item(
         work_state(item, finality),
     );
     upsert_work(layer, seq, item_id, entry, finality);
+}
+
+/// A message another agent sent this one. The native thread shows nothing
+/// for an injected item, so the daemon writes this row; every field here is
+/// its authored fact, read straight off.
+fn fold_agent_message(layer: &mut CodexLayer, seq: u64, row: &Value) {
+    push(
+        layer,
+        seq,
+        FeedEntryKind::AgentMessage(AgentMessageEntry {
+            id: string(row, "id"),
+            context: string(row, "context"),
+            from: str_or(row, "from", "unknown").to_string(),
+            kind: AgentMessageKind::read(row.get("kind").and_then(Value::as_str)),
+            text: str_or(row, "text", "").to_string(),
+            delivery: string(row, "delivery"),
+        }),
+    );
 }
 
 fn fold_dynamic_item(
@@ -1255,11 +1274,30 @@ fn command_kind(value: &Value) -> WorkKind {
 /// Dynamic tool facts, likewise shared by the item body and the raw
 /// `item/tool/call` request that precedes an approval.
 fn dynamic_tool_kind(value: &Value) -> WorkKind {
+    let tool = str_or(value, "tool", "").to_string();
+    let namespace = string(value, "namespace");
+    let arguments = value.get("arguments").cloned().unwrap_or(Value::Null);
+    let success = value.get("success").and_then(Value::as_bool);
+    // amux registers its agent tools as this thread's dynamic tools, in no
+    // namespace, so an unnamespaced call by one of those names is ours. The
+    // list comes from the registrar rather than a copy of it, so a tool
+    // added there cannot quietly start reading as somebody else's.
+    if namespace.is_none()
+        && amux::agent_tools::definitions()
+            .iter()
+            .any(|definition| definition.name == tool)
+    {
+        return WorkKind::AmuxTool {
+            tool,
+            arguments,
+            success,
+        };
+    }
     WorkKind::DynamicTool {
-        tool: str_or(value, "tool", "").to_string(),
-        namespace: string(value, "namespace"),
-        arguments: value.get("arguments").cloned().unwrap_or(Value::Null),
-        success: value.get("success").and_then(Value::as_bool),
+        tool,
+        namespace,
+        arguments,
+        success,
     }
 }
 

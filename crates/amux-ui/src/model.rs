@@ -410,6 +410,42 @@ pub enum StreamPhase {
     },
 }
 
+/// Why an agent message was sent, as its carrier stated it. Kernel
+/// vocabulary rather than either layer's: this is amux's own envelope
+/// fact, and both layers read the SAME fact off carriers that merely spell
+/// it differently. What each layer keeps to itself is the entry — Claude's
+/// is what a transcript could recover, Codex's names the carrier that
+/// accepted it — because those are per-agent facts.
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(tag = "message_kind", rename_all = "snake_case")]
+pub enum AgentMessageKind {
+    Message,
+    /// The sender finished a turn.
+    Completed,
+    /// The sender's session ended.
+    Exited,
+    /// A kind this build does not know.
+    Other {
+        label: String,
+    },
+    /// The carrier stated none.
+    Unstated,
+}
+
+impl AgentMessageKind {
+    pub(crate) fn read(label: Option<&str>) -> Self {
+        match label {
+            Some("message") => Self::Message,
+            Some("completed") => Self::Completed,
+            Some("exited") => Self::Exited,
+            Some(other) => Self::Other {
+                label: other.to_string(),
+            },
+            None => Self::Unstated,
+        }
+    }
+}
+
 /// One agent below a family's top row, with the generations between them
 /// so a renderer can indent without walking parent edges itself.
 #[derive(Clone, Copy, Debug, PartialEq)]
